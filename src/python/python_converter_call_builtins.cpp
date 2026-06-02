@@ -4345,6 +4345,24 @@ std::optional<exprt> python_convertert::try_builtin_call(
             all_num = false;
           elems.push_back(std::move(e));
         }
+        // PLR §6.10.1: min()/max() order their arguments pairwise, so
+        // mixing a number and a string is unorderable -> TypeError.
+        {
+          int cats = 0;
+          for(const auto &e : elems)
+          {
+            if(is_numeric(e.type()))
+              cats |= 1;
+            else if(is_python_string_type(e.type()))
+              cats |= 2;
+          }
+          if(cats == 3)
+          {
+            emit_conditional_exception(true_exprt{}, "TypeError");
+            return side_effect_expr_nondett{
+              python_int_type(), get_location(expr)};
+          }
+        }
         if(all_num)
         {
           // Promote to double if any is float.
