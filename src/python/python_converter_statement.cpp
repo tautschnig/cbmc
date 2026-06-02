@@ -1105,6 +1105,36 @@ codet python_convertert::convert_statement(const jsont &stmt)
     result = code_skipt{};
   }
 
+  // §12b: after a plain `x = ...` assignment statement, mark x's
+  // runtime is-bound flag true. Keyed on the AST target (not the
+  // emitted GOTO), so it is independent of how convert_assign built
+  // the value write (constructor call, comprehension result, dict
+  // rebuild, ...): this is the single assignment chokepoint. The flag
+  // is asserted at every read (convert_name) for path-sensitive
+  // UnboundLocalError detection.
+  if(node_type == "Assign" && !current_function_bit_locals.empty())
+  {
+    code_blockt with_bind;
+    with_bind.add(std::move(result));
+    for(const auto &tgt : as_array(json_member(stmt, "targets")))
+      if(is_node_type(tgt, "Name"))
+      {
+        std::string nm = json_string(json_member(tgt, "id"));
+        if(current_function_bit_locals.count(nm) > 0)
+        {
+          const symbolt *b =
+            symbol_table.lookup(irep_idt{qualify_name(nm) + "$bound"});
+          if(b != nullptr)
+            with_bind.add(
+              code_frontend_assignt{b->symbol_expr(), true_exprt{}});
+        }
+      }
+    if(with_bind.statements().size() > 1)
+      result = std::move(with_bind);
+    else
+      result = std::move(with_bind.statements().front());
+  }
+
   // If expression conversion generated checks, prepend them
   if(!pending_checks.empty())
   {

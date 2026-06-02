@@ -1,0 +1,18 @@
+CORE
+main.py
+--unwind 3
+
+^EXIT=10$
+^SIGNAL=0$
+^\[python-unbound-local\.\d+\] .*local variable 'x' referenced before assignment \(UnboundLocalError\): FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+differential2 §12b cross-branch (now detected). x is assigned only on
+the c=True branch, so f(False) raises UnboundLocalError. A runtime
+is-bound flag per plain-Assign local -- false at entry, set true after
+the binding statement at the convert_statement chokepoint (keyed on the
+AST target, independent of how the value write was built), asserted at
+each read -- makes this path-sensitive, so the c=False path is caught.
+

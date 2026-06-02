@@ -205,6 +205,15 @@ private:
   /// nonlocal. A read of one of these before its local symbol exists
   /// is reported as UnboundLocalError. Saved/restored per function.
   std::set<std::string> current_function_locals;
+  /// §12b: subset of current_function_locals bound ONLY by plain
+  /// `x = ...` Assign (never AnnAssign/AugAssign/tuple/for/with/except/
+  /// walrus/lambda-alias). Each gets a runtime `<qname>$bound` bool,
+  /// false at function entry, set true after the binding statement (at
+  /// the convert_statement chokepoint, keyed on the AST target so it is
+  /// independent of how convert_assign built the value write), and
+  /// asserted at every read. Path-sensitive: a read on a branch that
+  /// didn't assign it (cross-branch UnboundLocalError) is detected.
+  std::set<std::string> current_function_bit_locals;
 
   /// Whether to use mathematical integers instead of int64.
   bool unbounded_ints = false;
@@ -423,6 +432,12 @@ private:
   /// instance has assigned it is an AttributeError (PLR §6.10);
   /// convert_attribute asserts the field's __shadow_ flag for these.
   std::map<std::string, std::set<std::string>> class_attrerror_fields;
+  /// §11b: per-class map attr -> descriptor class name, for class
+  /// attributes bound to an instance of a class defining __get__ (a
+  /// custom descriptor). Attribute reads dispatch the descriptor's
+  /// __get__ instead of returning the stored value.
+  std::map<std::string, std::map<std::string, std::string>>
+    class_descriptor_attrs;
   /// §11 inheritance support. class_all_bare[c]: every bare-annotation
   /// instance field (`x: T`, no value) declared anywhere in c's class
   /// hierarchy. class_ctor_assigned[c]: every field that constructing
@@ -1563,6 +1578,17 @@ public:
   exprt emit_getattr_fallback(
     const exprt &value,
     const std::string &attr,
+    const source_locationt &loc);
+
+  /// §11b: dispatch a custom descriptor read. If `attr` of `class_name`
+  /// (walked via the MRO) is bound to a descriptor instance (a class
+  /// defining __get__), emit `__get__(descriptor, obj, None)` into a
+  /// temporary and return it; otherwise return nil_exprt. `obj_ptr` is
+  /// a pointer to the instance being accessed.
+  exprt emit_descriptor_get(
+    const std::string &class_name,
+    const std::string &attr,
+    const exprt &obj_ptr,
     const source_locationt &loc);
 
   /// §12c: lower a single-generator list comprehension over a runtime

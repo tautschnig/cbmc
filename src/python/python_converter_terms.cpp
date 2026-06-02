@@ -263,6 +263,25 @@ exprt python_convertert::convert_name(const jsont &expr)
   // falling back to an outer scope — CPython would raise here rather
   // than read the global/enclosing value.
   if(
+    !current_function.empty() && current_function_bit_locals.count(id) > 0 &&
+    global_names.count(id) == 0 && nonlocal_names.count(id) == 0)
+  {
+    // Path-sensitive: assert the runtime is-bound flag at the read, so
+    // a path that didn't assign `id` (e.g. a different if-branch) is
+    // caught even though the local symbol exists from another path.
+    const symbolt *bit =
+      symbol_table.lookup(irep_idt{qualify_name(id) + "$bound"});
+    if(bit != nullptr)
+      add_check(
+        bit->symbol_expr(),
+        "python-unbound-local",
+        "local variable '" + id +
+          "' referenced before assignment (UnboundLocalError)",
+        get_location(expr));
+    if(sym == nullptr)
+      return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+  }
+  else if(
     sym == nullptr && !current_function.empty() &&
     current_function_locals.count(id) > 0 && global_names.count(id) == 0 &&
     nonlocal_names.count(id) == 0)
