@@ -1548,6 +1548,21 @@ public:
     const exprt &self_ptr,
     const source_locationt &loc);
 
+  /// §12c: lower a single-generator list comprehension over a runtime
+  /// list (e.g. a `list` parameter, whose length is symbolic) into a
+  /// real GOTO while-loop that populates a fresh temporary, instead of
+  /// dropping the assignment. `iter_list` is the (dereferenced) source
+  /// list value; `ifs` are the generator's filter conditions (ANDed).
+  /// The loop body, its element-expression checks, and the capacity
+  /// guard are emitted into pending_checks; returns the temporary list,
+  /// or nil_exprt if the shape is unsupported (caller falls through).
+  exprt emit_listcomp_loop(
+    const jsont &elt,
+    const std::string &var_name,
+    const exprt &iter_list,
+    const jsont &ifs,
+    const source_locationt &loc);
+
   /// PLR §9.4: emit `obj.__shadow_<attr> = True` if `attr` is
   /// a class-level attribute of the class identified by
   /// `obj`'s struct tag AND `obj` is not the class object

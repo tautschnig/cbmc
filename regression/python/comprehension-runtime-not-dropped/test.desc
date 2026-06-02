@@ -1,0 +1,15 @@
+CORE
+main.py
+--unwind 5
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+differential2 §12c soundness. doubled([5])[0] is 10, not 999, so the
+assertion must FAIL. Previously the runtime-iterable comprehension was
+dropped and the result was nondet/stale, which could let such an
+assertion pass vacuously -- the loop lowering makes the value concrete
+and the bug is caught.
