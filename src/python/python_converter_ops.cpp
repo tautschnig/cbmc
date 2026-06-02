@@ -185,6 +185,9 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       if(!(op == "Mult" && (l_is_num || l_is_value)))
         incompatible = true;
     }
+    // str * str is invalid: only str * int repeats a string.
+    if(l_is_str && r_is_str && op == "Mult")
+      incompatible = true;
     // PLR §6.7: complex OP str / list / etc. raises TypeError.
     if(l_is_complex && (r_is_str || r_is_list || r_is_dict))
       incompatible = true;
