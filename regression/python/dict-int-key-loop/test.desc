@@ -1,0 +1,17 @@
+CORE
+main.py
+--unwind 10
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+An unannotated empty dict filled with int keys inside a range loop is
+modeled correctly: the body pre-scan infers the key/value element
+types from the first d[k] = v (key int from the range loop variable,
+value int from i * 2) and builds the {} with those types at the
+creation site, so distinct int keys aren't lossily coerced to the
+dict[str, int] default. Previously this required an explicit
+dict[int, int] annotation.

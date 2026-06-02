@@ -525,6 +525,13 @@ private:
   /// the int default. Without this the typecast at append
   /// time zeros struct-typed elements (e.g. strings).
   std::map<irep_idt, typet> empty_list_inferred_types;
+  /// Analogous to empty_list_inferred_types but for dicts: an
+  /// unannotated `d = {}` whose first `d[k] = v` is found by the
+  /// pre-scan records (key_type, value_type) here, so the `{}`
+  /// allocation is built with the real element types from creation
+  /// (works inside loops, where a first-assign rebuild cannot). Avoids
+  /// lossy coercion of e.g. int keys to the dict[str,int] default.
+  std::map<irep_idt, std::pair<typet, typet>> empty_dict_inferred_types;
   /// PLR §6.3.1: symbol IDs whose value has set-semantics —
   /// created by `set(iterable)` builtin or by a Set literal
   /// (a list-typed storage but logically order-independent).

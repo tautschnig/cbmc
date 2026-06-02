@@ -8,9 +8,8 @@ main.py
 --
 ^warning: ignoring
 --
-Unannotated empty dict with int-key subscript-assigns: the first
-d[k] = v rebuilds the dict with the actual key/value element types so
+Unannotated empty dict with int-key subscript-assigns: the dict is
+built with the actual key/value element types (via creation-time
+look-ahead from the first d[k] = v, or a first-assign rebuild) so
 distinct int keys aren't lossily coerced to the default str key type.
-(Building such a dict incrementally inside a loop still requires an
-explicit `d: dict[int, int] = {}` annotation — the rebuild only fires
-outside loops.)
+See dict-int-key-loop for the in-loop case.

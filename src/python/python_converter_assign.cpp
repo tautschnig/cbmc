@@ -1253,6 +1253,23 @@ codet python_convertert::convert_assign(const jsont &stmt)
     }
   }
 
+  // PLR §3.2: same look-ahead for an unannotated empty dict. If a
+  // following `name[k] = v` in this body let the pre-scan infer the
+  // key/value element types, build `{}` with those types from the
+  // start (works inside loops, unlike the first-assign rebuild).
+  if(
+    is_node_type(value, "Dict") && json_member(value, "keys").is_array() &&
+    as_array(json_member(value, "keys")).empty() &&
+    as_array(targets).size() == 1 &&
+    is_node_type(*as_array(targets).begin(), "Name"))
+  {
+    irep_idt lhs_id{
+      qualify_name(json_string(json_member(*as_array(targets).begin(), "id")))};
+    auto di = empty_dict_inferred_types.find(lhs_id);
+    if(di != empty_dict_inferred_types.end())
+      rhs = safe_zero(python_dict_type(di->second.first, di->second.second));
+  }
+
   // Lambda/function assignment: record alias instead of creating variable
   if(rhs.id() == ID_symbol && rhs.type().id() == ID_code)
   {
