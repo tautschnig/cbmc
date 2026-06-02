@@ -3078,6 +3078,21 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                       continue;
                     }
                   }
+                  // PLR §3.2: 'return self' (builder pattern, e.g.
+                  // datetime.replace) returns an instance of the
+                  // enclosing class.
+                  if(
+                    is_node_type(rv, "Name") &&
+                    json_string(json_member(rv, "id")) == "self" &&
+                    class_types.count(class_name))
+                  {
+                    shapes.push_back(shape_t::CLASS);
+                    if(first_class_type.id().empty())
+                      first_class_type = class_types[class_name];
+                    else if(first_class_type != class_types[class_name])
+                      class_consistent = false;
+                    continue;
+                  }
                   shapes.push_back(shape_t::OTHER);
                 }
               }
