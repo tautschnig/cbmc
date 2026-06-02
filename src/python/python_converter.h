@@ -486,6 +486,12 @@ private:
   std::map<std::string, irep_idt> lambda_returning_functions;
   // Bound methods: maps variable name → (method_id, self_expr)
   std::map<std::string, std::pair<irep_idt, exprt>> bound_methods;
+  /// §10 path-sensitive bound-method dispatch: per qualified name, the
+  /// receiver (self) expression for each candidate in
+  /// callable_candidates, aligned by index. Lets the call-site
+  /// dispatch prepend the correct receiver per branch (`if c: m=o.a
+  /// else: m=o.b`).
+  std::map<std::string, std::vector<exprt>> bound_method_receivers;
   // Closure captures: maps qualified nested function name to list of
   // (outer_param_qualified_name, param_name, type) for captured variables
   std::

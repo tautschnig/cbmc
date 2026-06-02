@@ -1,0 +1,14 @@
+CORE
+main.py
+--unwind 5
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §10 bound-method half. A bound method assigned across
+if/else branches dispatches path-sensitively via the per-branch
+$callable_tag, which selects both the method and its receiver, rather
+than the conversion-time last-branch-wins bound_methods entry.

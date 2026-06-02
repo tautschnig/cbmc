@@ -1424,6 +1424,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
           irep_idt method_id{"python::" + cls_name + "::" + attr};
           if(symbol_table.lookup(method_id) != nullptr)
           {
+            code_blockt tag_block;
             for(const auto &target : as_array(targets))
             {
               if(is_node_type(target, "Name"))
@@ -1432,9 +1433,32 @@ codet python_convertert::convert_assign(const jsont &stmt)
                 std::string qname = qualify_name(var_name);
                 function_aliases[qname] = method_id;
                 bound_methods[qname] = {method_id, address_of_exprt{obj_expr}};
+                // §10: accumulate candidates + per-branch receiver and
+                // emit a runtime tag so a branch-dependent bound-method
+                // reassignment dispatches path-sensitively at the call.
+                auto &cands = callable_candidates[qname];
+                auto &recvs = bound_method_receivers[qname];
+                long idx = static_cast<long>(cands.size());
+                cands.push_back(method_id);
+                recvs.push_back(address_of_exprt{obj_expr});
+                irep_idt tag_id{qname + "$callable_tag"};
+                if(symbol_table.lookup(tag_id) == nullptr)
+                {
+                  symbolt ts{tag_id, signedbv_typet{64}, "python"};
+                  ts.base_name = var_name + "$callable_tag";
+                  ts.is_lvalue = true;
+                  ts.is_state_var = true;
+                  ts.is_static_lifetime = current_function.empty();
+                  symbol_table.add(ts);
+                }
+                tag_block.add(code_frontend_assignt{
+                  symbol_table.lookup_ref(tag_id).symbol_expr(),
+                  from_integer(idx, signedbv_typet{64})});
               }
             }
-            return code_skipt{};
+            if(tag_block.statements().empty())
+              return code_skipt{};
+            return std::move(tag_block);
           }
         }
       }
