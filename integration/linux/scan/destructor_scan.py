@@ -159,11 +159,21 @@ def _build_dir_index(src_cache: dict[str, str]):
     func_paramtype: dict[str, tuple] = {}
     decl_type: dict[str, str] = {}
     sibling_freed: dict[str, set] = defaultdict(set)
+    # Count `struct T { ... }` definitions per type name.  When
+    # a name has >1 definition in the scanned sources (e.g.
+    # `struct workspace` in btrfs zlib.c/lzo.c/zstd.c, or
+    # `struct slot` across hotplug drivers), sibling/constructor
+    # field evidence is conflated across unrelated structs;
+    # such collision-prone types are excluded from candidacy.
+    struct_def_count: dict[str, int] = defaultdict(int)
 
     decl_re = re.compile(r"struct\s+(\w+)\s*\*\s*([A-Za-z_]\w*)\s*;")
     tvar_re = re.compile(r"struct\s+(\w+)\s*\*\s*([A-Za-z_]\w*)")
+    structdef_re = re.compile(r"\bstruct\s+(\w+)\s*\{")
 
     for name, text in src_cache.items():
+        for m in structdef_re.finditer(text):
+            struct_def_count[m.group(1)] += 1
         for m in decl_re.finditer(text):
             decl_type.setdefault(m.group(2), m.group(1))
         for fname, fbody in dc._enum_functions(text):
@@ -186,7 +196,8 @@ def _build_dir_index(src_cache: dict[str, str]):
                         r"\b(?:" + dc._FREE_APIS + r")\s*\(\s*" + esc
                         + r"\s*->\s*([A-Za-z_][\w.]*?)\s*\)", fbody):
                     sibling_freed[t].add(fm.group(1))
-    return func_body, func_paramtype, decl_type, sibling_freed
+    return (func_body, func_paramtype, decl_type, sibling_freed,
+            struct_def_count)
 
 
 def _analyze_fast(fname: str, fbody: str, func_body,
@@ -297,7 +308,7 @@ def scan_tree(tree: Path, max_files: int | None) -> list[dict]:
         if not src_cache:
             continue
         (func_body, func_paramtype, decl_type,
-         sibling_freed) = _build_dir_index(src_cache)
+         sibling_freed, struct_def_count) = _build_dir_index(src_cache)
         for cf in cfiles:
             if max_files is not None and files_done >= max_files:
                 return candidates
@@ -318,6 +329,12 @@ def scan_tree(tree: Path, max_files: int | None) -> list[dict]:
                         decl_type, sibling_freed,
                         global_helper_freed)
                 except Exception:
+                    continue
+                # Skip collision-prone struct types (multiple
+                # distinct definitions in the dir conflate the
+                # field evidence).
+                if (v.struct_type
+                        and struct_def_count.get(v.struct_type, 0) > 1):
                     continue
                 if v.missing_fields:
                     candidates.append({
