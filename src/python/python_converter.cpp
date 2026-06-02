@@ -3534,10 +3534,17 @@ exprt python_convertert::convert_expression(const jsont &expr)
     {
       // Check if all elements are constant integers
       bool all_int_constant = true;
+      bool unhashable_elt = false;
       std::vector<mp_integer> values;
       for(const auto &elt : as_array(elts))
       {
         exprt val = convert_expression(elt);
+        // PLR §3.2: list/dict/set are unhashable, so using one as a
+        // set element raises TypeError (tuple is fine).
+        if(
+          is_python_list_type(val.type()) || is_python_dict_type(val.type()) ||
+          is_python_set_type(val.type()))
+          unhashable_elt = true;
         if(val.is_constant() && val.type().id() == ID_signedbv)
         {
           mp_integer iv;
@@ -3549,6 +3556,8 @@ exprt python_convertert::convert_expression(const jsont &expr)
         else
           all_int_constant = false;
       }
+      if(unhashable_elt)
+        emit_conditional_exception(true_exprt{}, "TypeError");
       if(all_int_constant && !values.empty())
       {
         mp_integer bitmap{0};
