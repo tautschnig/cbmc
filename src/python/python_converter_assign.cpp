@@ -2092,6 +2092,27 @@ codet python_convertert::convert_assign(const jsont &stmt)
         exprt key = convert_expression(slice_node);
         if(!key.is_nil())
         {
+          // PLR §3.2: list/dict/set are unhashable, so using one as
+          // a dict key raises TypeError.
+          if(
+            is_python_list_type(key.type()) ||
+            is_python_dict_type(key.type()) || is_python_set_type(key.type()))
+          {
+            code_blockt type_error;
+            const symbolt *ea =
+              symbol_table.lookup("python::__exception_active");
+            const symbolt *et = symbol_table.lookup("python::__exception_type");
+            if(ea != nullptr)
+              type_error.add(
+                code_frontend_assignt{ea->symbol_expr(), true_exprt{}});
+            if(et != nullptr)
+              type_error.add(code_frontend_assignt{
+                et->symbol_expr(),
+                from_integer(
+                  exception_type_hash("TypeError"), python_int_type())});
+            block.add(std::move(type_error));
+            continue;
+          }
           // First `d[k] = v` on an unannotated empty dict: rebuild the
           // dict with the actual key/value types so e.g. distinct int
           // keys aren't lossily coerced to the default str key type
