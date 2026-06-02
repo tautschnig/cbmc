@@ -1,0 +1,17 @@
+KNOWNBUG
+main.py
+--unwind 6
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §12a. PLR: closures capture the loop variable's cell
+(late binding), so every lambda created in the loop returns the final
+value (fns[0]() == 2). CBMC captures the value at creation time, so it
+returns 0 and the assertion fails. The KNOWNBUG regex states the
+PLR-correct SUCCESSFUL. A faithful fix needs shared mutable cells for
+captured free variables instead of value capture; it is a precision
+gap (false positive, sound direction), not a missed bug.

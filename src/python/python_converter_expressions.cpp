@@ -1295,6 +1295,62 @@ exprt python_convertert::convert_list(const jsont &expr)
   return struct_exprt{{length, data}, list_type};
 }
 
+// §11b: resolve and call an @property getter via the MRO so that
+// inherited properties (and properties accessed through a pointer
+// receiver) dispatch to the getter instead of reading a field/nondet.
+exprt python_convertert::emit_property_get(
+  const std::string &class_name,
+  const std::string &attr,
+  const exprt &self_ptr,
+  const source_locationt &loc)
+{
+  std::vector<std::string> chain;
+  auto mro_it = class_mro.find(class_name);
+  if(mro_it != class_mro.end())
+    chain = mro_it->second;
+  if(chain.empty())
+    chain.push_back(class_name);
+
+  const symbolt *msym = nullptr;
+  for(const std::string &anc : chain)
+  {
+    auto pit = class_property_methods.find(anc);
+    if(pit == class_property_methods.end() || pit->second.count(attr) == 0)
+      continue;
+    const symbolt *s =
+      symbol_table.lookup(irep_idt{"python::" + anc + "::" + attr});
+    if(s != nullptr && s->type.id() == ID_code)
+    {
+      msym = s;
+      break;
+    }
+  }
+  if(msym == nullptr)
+    return nil_exprt{};
+
+  const code_typet &mty = to_code_type(msym->type);
+  static unsigned prop_get_ctr = 0;
+  std::string tn = "__prop_" + std::to_string(prop_get_ctr++);
+  irep_idt ti{qualify_name(tn)};
+  if(symbol_table.lookup(ti) == nullptr)
+  {
+    symbolt ts{ti, mty.return_type(), "python"};
+    ts.base_name = tn;
+    ts.is_lvalue = true;
+    ts.is_state_var = true;
+    symbol_table.add(ts);
+  }
+  symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
+  exprt self = self_ptr;
+  if(!mty.parameters().empty() && self.type() != mty.parameters()[0].type())
+    self = typecast_exprt{self, mty.parameters()[0].type()};
+  pending_checks.push_back(code_frontend_assignt{
+    tv,
+    side_effect_expr_function_callt{
+      msym->symbol_expr(), {self}, mty.return_type(), loc}});
+  return std::move(tv);
+}
+
 // PLR §6.3.1: Attribute references
 // "An attribute reference is a primary followed by a period and a name."
 exprt python_convertert::convert_attribute(const jsont &expr)
@@ -1417,6 +1473,20 @@ exprt python_convertert::convert_attribute(const jsont &expr)
     if(base.id() == ID_struct)
     {
       const auto &st = to_struct_type(base);
+      // §11b: @property dispatch on a pointer receiver (self, or a
+      // class-typed parameter). The getter is resolved via the MRO so
+      // own and inherited properties both work; without this the read
+      // fell through to a field/nondet.
+      {
+        std::string ptag = id2string(st.get_tag());
+        if(ptag.substr(0, 13) == "python_class_")
+        {
+          exprt pg =
+            emit_property_get(ptag.substr(13), attr, value, get_location(expr));
+          if(!pg.is_nil())
+            return pg;
+        }
+      }
       if(st.has_component(attr))
       {
         // PLR §9.4: instance attribute read on a class
@@ -1488,43 +1558,11 @@ exprt python_convertert::convert_attribute(const jsont &expr)
     std::string stag = id2string(st.get_tag());
     if(stag.substr(0, 13) == "python_class_")
     {
-      std::string cls = stag.substr(13);
-      auto pit = class_property_methods.find(cls);
-      if(pit != class_property_methods.end() && pit->second.count(attr))
-      {
-        irep_idt mid{"python::" + cls + "::" + attr};
-        const symbolt *msym = symbol_table.lookup(mid);
-        if(msym != nullptr && msym->type.id() == ID_code)
-        {
-          const code_typet &mty = to_code_type(msym->type);
-          // Materialise into a tmp so the ASSIGN (via
-          // pending_checks) is visible to subsequent
-          // statements. A bare side_effect_expr_function_callt
-          // return was getting dropped in some assignment
-          // paths.
-          static unsigned prop_ctr = 0;
-          std::string tn = "__prop_" + std::to_string(prop_ctr++);
-          std::string tq = qualify_name(tn);
-          irep_idt ti{tq};
-          if(symbol_table.lookup(ti) == nullptr)
-          {
-            symbolt ts{ti, mty.return_type(), "python"};
-            ts.base_name = tn;
-            ts.is_lvalue = true;
-            ts.is_state_var = true;
-            symbol_table.add(ts);
-          }
-          symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
-          pending_checks.push_back(code_frontend_assignt{
-            tv,
-            side_effect_expr_function_callt{
-              msym->symbol_expr(),
-              {address_of_exprt{value}},
-              mty.return_type(),
-              get_location(expr)}});
-          return std::move(tv);
-        }
-      }
+      // §11b: @property dispatch (own or inherited via MRO).
+      exprt pg = emit_property_get(
+        stag.substr(13), attr, address_of_exprt{value}, get_location(expr));
+      if(!pg.is_nil())
+        return pg;
     }
     if(st.has_component(attr))
     {
