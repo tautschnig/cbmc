@@ -45,6 +45,60 @@
 #include <sstream>
 #include <string>
 
+// Decide hasattr(obj, name) for a built-in (non-class) receiver from
+// the fixed protocol-attribute set of its type. Returns nullopt when
+// undecided (the caller keeps its over-approximation / struct lookup).
+// Sound: only the protocol attributes whose presence is invariant per
+// type are decided. PLR §3.2/§3.3.
+static std::optional<bool>
+builtin_protocol_attr(const typet &t, const std::string &n)
+{
+  // int / float / bool / None: numeric scalars define no container,
+  // iterator, callable or context-manager protocol.
+  bool numeric = t.id() == ID_signedbv || t.id() == ID_unsignedbv ||
+                 t.id() == ID_floatbv || t.id() == ID_integer ||
+                 t.id() == ID_bool;
+  static const std::set<std::string> protocol = {
+    "__len__",
+    "__getitem__",
+    "__setitem__",
+    "__delitem__",
+    "__contains__",
+    "__iter__",
+    "__next__",
+    "__call__",
+    "__enter__",
+    "__exit__",
+    "keys",
+    "values",
+    "items",
+    "append"};
+  if(numeric)
+    return protocol.count(n) ? std::optional<bool>{false} : std::nullopt;
+
+  bool is_str = is_python_string_type(t);
+  bool is_list = is_python_list_type(t);
+  bool is_tuple = is_python_tuple_type(t);
+  bool is_dict = is_python_dict_type(t);
+  bool is_set = is_python_set_type(t);
+  if(!(is_str || is_list || is_tuple || is_dict || is_set))
+    return std::nullopt;
+
+  // Built-in containers are sized, iterable and membership-testable,
+  // but are not iterators / callables / context managers.
+  if(n == "__len__" || n == "__iter__" || n == "__contains__")
+    return true;
+  if(n == "__next__" || n == "__call__" || n == "__enter__" || n == "__exit__")
+    return false;
+  if(n == "__getitem__") // subscriptable: all but set
+    return !is_set;
+  if(n == "__setitem__" || n == "__delitem__") // mutable mapping/sequence
+    return is_list || is_dict;
+  if(n == "keys" || n == "values" || n == "items") // mapping methods
+    return is_dict;
+  return std::nullopt;
+}
+
 std::optional<exprt> python_convertert::try_builtin_call(
   const jsont &expr,
   const std::string &func_name,
@@ -3226,40 +3280,15 @@ std::optional<exprt> python_convertert::try_builtin_call(
       }
       if(!attr.empty() && !obj.is_nil())
       {
-        // PLR §3.2/§3.3: int/float/bool/None never define the
-        // container, iterator, callable or context-manager
-        // protocols, so hasattr of any of those names on a numeric
-        // scalar is definitively False (these types genuinely lack
-        // them — sound in both directions). This also lets
-        // duck-typing guards such as `len(x) if hasattr(x,
-        // "__len__") else ...` fold away on the scalar path.
-        const typet &sot = obj.type();
-        bool numeric_scalar = sot.id() == ID_signedbv ||
-                              sot.id() == ID_unsignedbv ||
-                              sot.id() == ID_floatbv ||
-                              sot.id() == ID_integer || sot.id() == ID_bool;
-        static const std::set<std::string> absent_protocol = {
-          "__len__",
-          "__getitem__",
-          "__setitem__",
-          "__delitem__",
-          "__contains__",
-          "__iter__",
-          "__next__",
-          "__reversed__",
-          "__call__",
-          "__enter__",
-          "__exit__",
-          "__aiter__",
-          "__anext__",
-          "__aenter__",
-          "__aexit__",
-          "keys",
-          "values",
-          "items",
-          "append"};
-        if(numeric_scalar && absent_protocol.count(attr))
-          return false_exprt{};
+        // Built-in (non-class) receivers: decide protocol attributes
+        // from the type's fixed attribute set. This makes hasattr
+        // precise for numeric scalars (no container/iter/call
+        // protocols) and built-in containers (sized/iterable/etc.),
+        // and lets duck-typing guards such as
+        // `len(x) if hasattr(x, "__len__") else ...` fold correctly.
+        if(auto decided = builtin_protocol_attr(obj.type(), attr))
+          return *decided ? static_cast<exprt>(true_exprt{})
+                          : static_cast<exprt>(false_exprt{});
         // Strip pointer wrap to get to the struct.
         typet ot = obj.type();
         if(ot.id() == ID_pointer)
