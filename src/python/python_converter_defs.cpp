@@ -340,6 +340,21 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       add_positional(param, idx++, true);
   }
 
+  // Call-site signature validation metadata. Only recorded for an
+  // exact signature: an undecorated function (a decorator may wrap
+  // the callable with *args/**kwargs, which would make arity/kwarg
+  // checks unsound). At this point `parameters` holds exactly the
+  // positional-or-keyword params (posonly + regular, incl. self),
+  // before *args / kwonly / **kwargs / closure captures are added.
+  bool exact_signature =
+    !(decorators.is_array() && !as_array(decorators).empty());
+  if(exact_signature)
+  {
+    irep_idt fkey{"python::" + qualified_func_name};
+    function_signature_checkable.insert(fkey);
+    function_max_positional[fkey] = parameters.size();
+  }
+
   // PLR §8.7: keyword-only arguments are appended later (after *args),
   // since per Python's parameter ordering, kwonlyargs follow the
   // bare * or *args separator. See block below after the vararg
@@ -393,6 +408,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   if(!kwarg.is_null())
   {
     kwargs_name = json_string(json_member(kwarg, "arg"));
+    function_has_kwargs.insert(irep_idt{"python::" + qualified_func_name});
     typet kw_type = python_dict_type(python_string_type(), python_value_type());
     code_typet::parametert p{kw_type};
     p.set_identifier("python::" + qualified_func_name + "::" + kwargs_name);

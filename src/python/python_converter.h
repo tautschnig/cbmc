@@ -514,6 +514,14 @@ private:
   /// has one. Stored explicitly because closure captures are appended
   /// after *args, so its position isn't always last.
   std::map<irep_idt, std::size_t> function_vararg_index;
+  /// Call-site signature validation metadata, recorded only for
+  /// locally-defined, undecorated functions (an exact signature).
+  /// `function_max_positional` is the count of positional-or-keyword
+  /// params (posonly + regular, including self); presence in
+  /// `function_has_kwargs` means the function accepts **kwargs.
+  std::set<irep_idt> function_signature_checkable;
+  std::map<irep_idt, std::size_t> function_max_positional;
+  std::set<irep_idt> function_has_kwargs;
   // Default parameter values evaluated at definition time
   // Maps (function_name, param_index) → default value expression
   std::map<std::pair<std::string, std::size_t>, exprt> default_values;
