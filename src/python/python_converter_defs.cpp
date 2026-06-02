@@ -2845,6 +2845,22 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             add_method_param(param);
         }
 
+        // Bound-method call-site signature metadata (mirrors the
+        // free-function path). max positional incl. self, captured
+        // before *args / kwonly / **kwargs. Only for an undecorated
+        // method (an exact signature) — staticmethod / classmethod /
+        // property / custom decorators are excluded, so the implicit
+        // self always accounts for exactly one positional slot.
+        const irep_idt method_key{"python::" + class_name + "::" + method_name};
+        const jsont &m_decorators = json_member(item, "decorator_list");
+        const bool method_exact =
+          !(m_decorators.is_array() && !as_array(m_decorators).empty());
+        if(method_exact)
+        {
+          function_signature_checkable.insert(method_key);
+          function_max_positional[method_key] = parameters.size();
+        }
+
         // *args for class methods
         const jsont &vararg_m = json_member(args_node, "vararg");
         if(!vararg_m.is_null())
@@ -2855,6 +2871,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           p.set_identifier(
             "python::" + class_name + "::" + method_name + "::" + va_name);
           p.set_base_name(va_name);
+          function_vararg_index[method_key] = parameters.size();
           parameters.push_back(p);
         }
 
@@ -2883,6 +2900,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         if(!kwarg_m.is_null())
         {
           std::string kw_name = json_string(json_member(kwarg_m, "arg"));
+          function_has_kwargs.insert(method_key);
           typet kw_type =
             python_dict_type(python_string_type(), python_value_type());
           code_typet::parametert p{kw_type};
