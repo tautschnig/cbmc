@@ -114,8 +114,12 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       for(const auto &a : as_array(args_n))
       {
         exprt av = convert_expression(a);
-        // Try constant
-        if(av.is_constant() && av.type().id() == ID_signedbv)
+        // Try constant. Accept integer_typet (--python-unbounded-ints)
+        // as well as signedbv, else range() args are unrecognised
+        // under that flag and the comprehension is silently dropped.
+        if(
+          av.is_constant() &&
+          (av.type().id() == ID_signedbv || av.type().id() == ID_integer))
         {
           mp_integer v;
           if(!to_integer(to_constant_expr(av), v))
@@ -156,7 +160,11 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
         log.warning() << "range() step cannot be zero" << messaget::eom;
         return nil_exprt{};
       }
-      typet i64 = signedbv_typet{64};
+      // Iteration values take the Python int type so the bound
+      // variable composes with other int literals/operations in the
+      // element expression (under --python-unbounded-ints both are
+      // integer_typet; in the default mode both are signedbv[64]).
+      typet i64 = python_int_type();
       if(step > 0)
       {
         for(mp_integer i = start; i < stop; i += step)
@@ -503,7 +511,7 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
     typet elem_type = python_int_type();
     struct_typet list_type = python_list_type(elem_type);
     array_typet data_type{
-      elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, python_int_type())};
+      elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})};
     exprt::operandst zeros;
     while(zeros.size() < PYTHON_MAX_LIST_LENGTH)
       zeros.push_back(safe_zero(elem_type));
@@ -517,7 +525,7 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
   typet elem_type = elements[0].type();
   struct_typet list_type = python_list_type(elem_type);
   array_typet data_type{
-    elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, python_int_type())};
+    elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})};
 
   exprt::operandst data_elems;
   for(auto &e : elements)
@@ -530,7 +538,7 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
 
   array_exprt data{std::move(data_elems), data_type};
   exprt length =
-    from_integer(static_cast<long long>(elements.size()), python_int_type());
+    from_integer(static_cast<long long>(elements.size()), signedbv_typet{64});
 
   return struct_exprt{{length, data}, list_type};
 }

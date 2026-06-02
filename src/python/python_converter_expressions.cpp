@@ -1227,10 +1227,14 @@ exprt python_convertert::convert_list(const jsont &expr)
   {
     // Empty list — default to int element type
     struct_typet list_type = python_list_type(python_int_type());
-    exprt length = from_integer(0, python_int_type());
+    // length and the array dimension are always signedbv[64] to match
+    // python_list_type's invariant; using python_int_type() here would
+    // diverge under --python-unbounded-ints (integer_typet) and break
+    // the struct-assignment type check.
+    exprt length = from_integer(0, signedbv_typet{64});
     array_typet data_type{
       python_int_type(),
-      from_integer(PYTHON_MAX_LIST_LENGTH, python_int_type())};
+      from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})};
     exprt::operandst zeros;
     for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
       zeros.push_back(from_integer(0, python_int_type()));
@@ -1266,10 +1270,10 @@ exprt python_convertert::convert_list(const jsont &expr)
     auto &comps = list_type.components();
     if(comps.size() == 2)
       comps[1].type() = array_typet{
-        elem_type, from_integer(list_array_size, python_int_type())};
+        elem_type, from_integer(list_array_size, signedbv_typet{64})};
   }
   array_typet data_type{
-    elem_type, from_integer(list_array_size, python_int_type())};
+    elem_type, from_integer(list_array_size, signedbv_typet{64})};
 
   // Build data array: elements followed by zeros
   exprt::operandst data_elems;
@@ -1286,7 +1290,7 @@ exprt python_convertert::convert_list(const jsont &expr)
 
   array_exprt data{std::move(data_elems), data_type};
   exprt length =
-    from_integer(static_cast<long long>(elements.size()), python_int_type());
+    from_integer(static_cast<long long>(elements.size()), signedbv_typet{64});
 
   return struct_exprt{{length, data}, list_type};
 }
