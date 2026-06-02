@@ -1228,7 +1228,8 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
   std::map<irep_idt, typet> name_dict_key_t;
   std::map<irep_idt, typet> name_list_elem_t;
   std::set<irep_idt> name_is_string;
-  auto type_of_expr = [&](const jsont &n) -> typet
+  std::function<typet(const jsont &)> type_of_expr;
+  type_of_expr = [&](const jsont &n) -> typet
   {
     if(is_node_type(n, "Constant"))
     {
@@ -1290,6 +1291,11 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
                 iter_is_items = true;
             }
           }
+          // `for i in range(...)`: the loop target is an int.
+          else if(
+            is_node_type(fn, "Name") &&
+            json_string(json_member(fn, "id")) == "range")
+            return python_int_type();
         }
         if(src_name_node != nullptr)
         {
@@ -1378,12 +1384,30 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
       if(callee == "nondet_bool")
         return bool_typet{};
     }
+    // Arithmetic / concatenation: int op int -> int, float involved
+    // -> float, str + str -> str. Lets e.g. `d[i] = i * 2` infer an
+    // int value type.
+    if(is_node_type(n, "BinOp"))
+    {
+      typet lt = type_of_expr(json_member(n, "left"));
+      typet rt = type_of_expr(json_member(n, "right"));
+      auto is_int = [](const typet &t)
+      { return t.id() == ID_signedbv || t.id() == ID_integer; };
+      if(lt.id() == ID_floatbv || rt.id() == ID_floatbv)
+        return double_type();
+      if(is_int(lt) && is_int(rt))
+        return python_int_type();
+      if(is_python_string_type(lt) && is_python_string_type(rt))
+        return python_string_type();
+    }
     return typet{}; // unknown
   };
 
   // Track which names are pending (i.e. we've seen 'name = []'
   // but not yet seen the inferring append).
   std::set<irep_idt> pending;
+  // Names bound to an empty `{}` dict, not yet resolved by a d[k]=v.
+  std::set<irep_idt> pending_dict;
   // Walk top-level statements in order. Reset pending when we
   // see another assignment to the same name (the second assign
   // shadows the empty-list start).
@@ -1427,9 +1451,18 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
           {
             pending.insert(sid);
           }
+          else if(
+            !ann_is_parameterised && is_node_type(value, "Dict") &&
+            json_member(value, "keys").is_array() &&
+            as_array(json_member(value, "keys")).empty() &&
+            empty_dict_inferred_types.count(sid) == 0)
+          {
+            pending_dict.insert(sid);
+          }
           else
           {
             pending.erase(sid);
+            pending_dict.erase(sid);
             // Always record dict / list / string literal types
             // (regardless of annotation) so for-loop iter-
             // target lookups in type_of_expr resolve.
@@ -1553,6 +1586,35 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
                       name_dict_key_t[sid] = python_int_type();
                   }
                 }
+              }
+            }
+          }
+        }
+        // §dict: a `d[k] = v` store on a pending empty dict resolves
+        // its key/value element types (first store wins). Works inside
+        // loops because it sets the type at the `{}` creation site, not
+        // via a per-iteration rebuild.
+        if(!is_ann && targets.is_array() && as_array(targets).size() == 1)
+        {
+          const jsont &t0 = *as_array(targets).begin();
+          if(
+            is_node_type(t0, "Subscript") &&
+            is_node_type(json_member(t0, "value"), "Name"))
+          {
+            irep_idt did{qualify_name(
+              json_string(json_member(json_member(t0, "value"), "id")))};
+            if(
+              pending_dict.count(did) > 0 &&
+              empty_dict_inferred_types.count(did) == 0)
+            {
+              typet kt = type_of_expr(json_member(t0, "slice"));
+              typet vt = type_of_expr(value);
+              if(
+                !kt.id().empty() && kt.id() != ID_empty && !vt.id().empty() &&
+                vt.id() != ID_empty)
+              {
+                empty_dict_inferred_types[did] = {kt, vt};
+                pending_dict.erase(did);
               }
             }
           }
