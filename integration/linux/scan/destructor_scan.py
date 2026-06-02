@@ -101,6 +101,44 @@ def _dir_sources(d: Path) -> dict[str, str]:
     return out
 
 
+def _build_global_helper_freed(tree: Path,
+                               max_files: int | None) -> dict:
+    """One cheap pass over the whole tree: for each function,
+    record the set of field NAMES it frees via `kfree(v->f)`
+    (struct-type-agnostic).  Used to resolve transitive frees
+    across directory boundaries — a destructor that delegates
+    field teardown to a helper in a different directory (e.g.
+    part_release -> hd_free_part in block/blk.h frees
+    part->info) must not be flagged.
+
+    Returns {func_name: set(field_names)}."""
+    helper_freed: dict[str, set] = defaultdict(set)
+    field_free_re = re.compile(
+        r"\b(?:" + dc._FREE_APIS + r")\s*\(\s*[A-Za-z_]\w*"
+        r"\s*->\s*([A-Za-z_][\w.]*?)\s*\)")
+    done = 0
+    for top in sorted(tree.iterdir()):
+        if not top.is_dir() or top.name in _SKIP_TOP:
+            continue
+        for cf in list(top.rglob("*.c")) + list(top.rglob("*.h")):
+            if any(p in cf.parts for p in
+                   ("selftests", "kunit", "generated")):
+                continue
+            if max_files is not None and done >= max_files:
+                return helper_freed
+            done += 1
+            try:
+                text = cf.read_text(errors="replace")
+            except OSError:
+                continue
+            if not field_free_re.search(text):
+                continue
+            for fname, fbody in dc._enum_functions(text):
+                for m in field_free_re.finditer(fbody):
+                    helper_freed[fname].add(m.group(1))
+    return helper_freed
+
+
 def _build_dir_index(src_cache: dict[str, str]):
     """One pass over all functions in a directory's sources to
     build the maps the per-candidate analysis needs, so we
@@ -153,7 +191,8 @@ def _build_dir_index(src_cache: dict[str, str]):
 
 def _analyze_fast(fname: str, fbody: str, func_body,
                   func_paramtype, decl_type,
-                  sibling_freed) -> dc.DtorVerdict:
+                  sibling_freed,
+                  global_helper_freed=None) -> dc.DtorVerdict:
     """Per-candidate analysis using precomputed dir maps."""
     bare = dc._bare_kfree_objects(fbody)
     obj_candidates = [b for b in bare
@@ -226,6 +265,19 @@ def _analyze_fast(fname: str, fbody: str, func_body,
                 owned.add(am.group(1))
 
     missing = owned - freed
+    # Global cross-directory transitive-free pruning: if the
+    # destructor calls a helper (anywhere in the tree) that
+    # frees the missing field, it is not leaked.  Resolves
+    # delegation to helpers defined outside the candidate's
+    # own directory (e.g. part_release -> hd_free_part in
+    # block/blk.h frees part->info).
+    if missing and global_helper_freed is not None:
+        called = set(re.findall(r"\b([A-Za-z_]\w*)\s*\(", fbody))
+        helper_frees: set = set()
+        for c in called:
+            helper_frees |= global_helper_freed.get(c, set())
+        if helper_frees:
+            missing = missing - helper_frees
     return dc.DtorVerdict(True, struct_type, obj, freed, owned,
                           missing)
 
@@ -233,6 +285,10 @@ def _analyze_fast(fname: str, fbody: str, func_body,
 def scan_tree(tree: Path, max_files: int | None) -> list[dict]:
     candidates: list[dict] = []
     files_done = 0
+    print("  building global helper-free index ...", flush=True)
+    global_helper_freed = _build_global_helper_freed(tree, None)
+    print(f"  global helper-free index: "
+          f"{len(global_helper_freed)} functions", flush=True)
     for d, cfiles in _enum_dirs(tree):
         src_cache = _dir_sources(d)
         if not src_cache:
@@ -256,7 +312,8 @@ def scan_tree(tree: Path, max_files: int | None) -> list[dict]:
                 try:
                     v = _analyze_fast(
                         fname, fbody, func_body, func_paramtype,
-                        decl_type, sibling_freed)
+                        decl_type, sibling_freed,
+                        global_helper_freed)
                 except Exception:
                     continue
                 if v.missing_fields:
