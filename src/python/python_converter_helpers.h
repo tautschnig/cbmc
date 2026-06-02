@@ -147,35 +147,30 @@ collect_name_refs(const jsont &node, std::set<std::string> &names)
     t == "Lambda")
     return; // separate scope
 
-  std::function<void(const jsont &)> add_targets = [&](const jsont &tgt)
+  // Only plain single-Name binding forms are tracked. Tuple/list
+  // unpacking, for-loop targets, walrus, and with/except targets create
+  // their bindings through paths whose symbol-creation timing differs,
+  // so flagging reads of them risks false positives; they are left out
+  // (a missed UnboundLocalError there is sound, a spurious one is not).
+  if(t == "Assign")
   {
-    if(tgt.is_array())
-    {
-      for(const auto &e : to_json_array(tgt))
-        add_targets(e);
-      return;
-    }
-    if(!tgt.is_object())
-      return;
-    const jsont &tt_node = tgt["_type"];
-    const std::string tt = tt_node.is_string() ? tt_node.value : "";
-    if(tt == "Name" && tgt["id"].is_string())
-      assigned.insert(tgt["id"].value);
-    else if(tt == "Tuple" || tt == "List")
-      add_targets(tgt["elts"]);
-    else if(tt == "Starred")
-      add_targets(tgt["value"]);
-  };
-
-  if(t == "Assign" || t == "NamedExpr")
-    add_targets(node[t == "Assign" ? "targets" : "target"]);
-  else if(t == "AnnAssign")
-  {
-    if(!node["value"].is_null())
-      add_targets(node["target"]);
+    const jsont &tgts = node["targets"];
+    if(tgts.is_array())
+      for(const auto &tg : to_json_array(tgts))
+        if(
+          tg.is_object() && tg["_type"].is_string() &&
+          tg["_type"].value == "Name" && tg["id"].is_string())
+          assigned.insert(tg["id"].value);
   }
-  else if(t == "AugAssign" || t == "For" || t == "AsyncFor")
-    add_targets(node["target"]);
+  else if(t == "AnnAssign" || t == "AugAssign")
+  {
+    const jsont &tg = node["target"];
+    if(
+      !(t == "AnnAssign" && node["value"].is_null()) && tg.is_object() &&
+      tg["_type"].is_string() && tg["_type"].value == "Name" &&
+      tg["id"].is_string())
+      assigned.insert(tg["id"].value);
+  }
   else if(t == "Global" || t == "Nonlocal")
   {
     const jsont &names = node["names"];
