@@ -417,6 +417,12 @@ private:
   /// haven't shadowed still see their stale init-time copy
   /// rather than the updated class storage.
   std::map<std::string, std::set<std::string>> class_level_attrs;
+  /// §11: per-class set of bare-annotation instance fields (`x: T`
+  /// with no class-body value) that are NOT unconditionally assigned
+  /// at the top level of __init__. Reading such a field before the
+  /// instance has assigned it is an AttributeError (PLR §6.10);
+  /// convert_attribute asserts the field's __shadow_ flag for these.
+  std::map<std::string, std::set<std::string>> class_attrerror_fields;
   /// Per-class set of class-level attributes that were
   /// declared in THIS class's body (as opposed to inherited
   /// from a base class). PLR §3.3.2 / §9.4: class attribute

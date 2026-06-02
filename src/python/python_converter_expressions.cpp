@@ -1455,6 +1455,20 @@ exprt python_convertert::convert_attribute(const jsont &expr)
             typecast_exprt shadow_flag{shadow_raw, bool_typet{}};
             member_exprt class_v{
               *mro_owner, attr, st.get_component(attr).type()};
+            // §11: a bare-annotation field with no class default and
+            // no definite __init__ assignment is unbound until the
+            // instance writes it — reading it unshadowed is an
+            // AttributeError, not a silent zero/class-storage read.
+            auto ae_it = class_attrerror_fields.find(cls_name);
+            if(
+              ae_it != class_attrerror_fields.end() &&
+              ae_it->second.count(attr))
+              add_check(
+                shadow_flag,
+                "python-attribute-error",
+                "'" + cls_name + "' object has no attribute '" + attr +
+                  "' (AttributeError)",
+                get_location(expr));
             return if_exprt{
               shadow_flag, std::move(instance_v), std::move(class_v)};
           }
@@ -1547,6 +1561,15 @@ exprt python_convertert::convert_attribute(const jsont &expr)
           member_exprt shadow_raw{value, shadow_name, c_bool_typet{8}};
           typecast_exprt shadow_flag{shadow_raw, bool_typet{}};
           member_exprt class_v{*mro_owner, attr, st.get_component(attr).type()};
+          // §11: see pointer-receiver branch above.
+          auto ae_it = class_attrerror_fields.find(cls_name);
+          if(ae_it != class_attrerror_fields.end() && ae_it->second.count(attr))
+            add_check(
+              shadow_flag,
+              "python-attribute-error",
+              "'" + cls_name + "' object has no attribute '" + attr +
+                "' (AttributeError)",
+              get_location(expr));
           return if_exprt{
             shadow_flag, std::move(instance_v), std::move(class_v)};
         }
