@@ -469,6 +469,12 @@ private:
   /// picking the last-processed branch. Gated on size() > 1 so
   /// single-target aliasing is unchanged.
   std::map<std::string, std::vector<irep_idt>> callable_candidates;
+  /// Unannotated `d = {}` symbols whose key/value type is still the
+  /// dict[str,int] default. The first `d[k] = v` rebuilds the dict
+  /// with the actual (homogeneous) key/value types so int/float keys
+  /// aren't lossily coerced to str. Cleared once rebuilt or on full
+  /// reassignment to a non-empty value.
+  std::set<irep_idt> empty_dict_pending;
   /// PLR §8.7: index of the *args parameter for each function that
   /// has one. Stored explicitly because closure captures are appended
   /// after *args, so its position isn't always last.

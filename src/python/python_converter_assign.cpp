@@ -951,6 +951,26 @@ codet python_convertert::convert_assign(const jsont &stmt)
 
   source_locationt loc = get_location(stmt);
 
+  // Track unannotated `d = {}` so the first `d[k] = v` can rebuild the
+  // dict with the real key/value types (the empty literal defaults to
+  // dict[str,int]; int/float keys would otherwise be lossily coerced
+  // to str, collapsing distinct keys). Cleared when a Name target is
+  // reassigned to a non-empty value.
+  {
+    const bool empty_dict_rhs = is_node_type(value, "Dict") &&
+                                json_member(value, "keys").is_array() &&
+                                as_array(json_member(value, "keys")).empty();
+    for(const auto &tgt : as_array(targets))
+      if(is_node_type(tgt, "Name"))
+      {
+        irep_idt sid{qualify_name(json_string(json_member(tgt, "id")))};
+        if(empty_dict_rhs)
+          empty_dict_pending.insert(sid);
+        else
+          empty_dict_pending.erase(sid);
+      }
+  }
+
   // PLR §22.7.1: typing.NewType('X', T) — a marker that creates
   // a callable identity alias. Detect 'X = NewType(...)' or
   // 'X = t.NewType(...)' / 'X = typing.NewType(...)' so that
@@ -2027,6 +2047,41 @@ codet python_convertert::convert_assign(const jsont &stmt)
         exprt key = convert_expression(slice_node);
         if(!key.is_nil())
         {
+          // First `d[k] = v` on an unannotated empty dict: rebuild the
+          // dict with the actual key/value types so e.g. distinct int
+          // keys aren't lossily coerced to the default str key type
+          // (which collapses them and corrupts the found-search).
+          // Sound because the dict is still empty (it was just `{}`).
+          // Only outside loops: inside a loop the rebuild's re-init
+          // would run every iteration; the loop case is handled by
+          // look-ahead at the `d = {}` creation site instead.
+          if(
+            loop_depth == 0 && obj.id() == ID_symbol &&
+            empty_dict_pending.count(to_symbol_expr(obj).get_identifier()))
+          {
+            irep_idt did = to_symbol_expr(obj).get_identifier();
+            const auto &cs = to_struct_type(obj.type());
+            const typet ck =
+              to_array_type(cs.components()[1].type()).element_type();
+            const typet cv =
+              to_array_type(cs.components()[2].type()).element_type();
+            auto storable = [this](const typet &t)
+            {
+              return t.id() == ID_signedbv || t.id() == ID_integer ||
+                     t.id() == ID_floatbv || t.id() == ID_bool ||
+                     is_python_string_type(t);
+            };
+            const typet nk = key.type();
+            const typet nv = rhs.type();
+            if((nk != ck || nv != cv) && storable(nk) && storable(nv))
+            {
+              struct_typet ndt = python_dict_type(nk, nv);
+              symbol_table.get_writeable_ref(did).type = ndt;
+              obj = symbol_table.lookup_ref(did).symbol_expr();
+              block.add(code_frontend_assignt{obj, safe_zero(ndt)});
+            }
+            empty_dict_pending.erase(did);
+          }
           const auto &dict_st = to_struct_type(obj.type());
           const auto &keys_type = to_array_type(dict_st.components()[1].type());
           const auto &vals_type = to_array_type(dict_st.components()[2].type());
