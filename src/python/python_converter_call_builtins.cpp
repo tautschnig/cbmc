@@ -3262,6 +3262,18 @@ std::optional<exprt> python_convertert::try_builtin_call(
   // We model this as a static type tag for comparison with type names.
   else if(func_name == "hasattr" || func_name == "callable")
   {
+    // PLR §3.2: callable(x) is True iff x defines __call__. Built-in
+    // scalars and containers are not callable; decide those via the
+    // shared protocol model and leave class instances / functions
+    // over-approximated.
+    if(func_name == "callable" && args.is_array() && !as_array(args).empty())
+    {
+      exprt obj = convert_expression(*as_array(args).begin());
+      if(!obj.is_nil())
+        if(auto decided = builtin_protocol_attr(obj.type(), "__call__"))
+          return *decided ? static_cast<exprt>(true_exprt{})
+                          : static_cast<exprt>(false_exprt{});
+    }
     // PLR §3.3.5 / §4.4.4: hasattr(obj, name) — True if the
     // object has an attribute called 'name', else False.
     // For constant 'name' and a class-instance obj we can
