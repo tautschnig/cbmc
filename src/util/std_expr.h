@@ -1395,6 +1395,7 @@ public:
   notequal_exprt(exprt _lhs, exprt _rhs)
     : binary_relation_exprt(std::move(_lhs), ID_notequal, std::move(_rhs))
   {
+    PRECONDITION(lhs().type() == rhs().type());
   }
 };
 
