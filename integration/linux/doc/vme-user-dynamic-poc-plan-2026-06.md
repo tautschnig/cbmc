@@ -197,9 +197,65 @@ refinement + maintainer review.
 
 ## 10. Status checklist
 
-- [ ] qemu installed
-- [ ] KASAN kernel built (bzImage)
-- [ ] initramfs + static busybox + trigger built
-- [ ] booted; `/dev/bus/vme` enumerated
-- [ ] trigger run; serial captured
-- [ ] KASAN verdict recorded (fire / clean / oops)
+- [x] qemu installed
+- [x] KASAN kernel built (bzImage, 6.12.87 #2)
+- [x] initramfs + static busybox + trigger built
+- [x] booted; `/dev/bus/vme` enumerated (insmod vme_user bus=0)
+- [x] trigger run; serial captured
+- [x] KASAN verdict recorded — see below
+
+## 11. EXECUTION RESULT (2026-06-03)
+
+### KASAN mechanism confirmation (kasan_poc.ko, 192-byte slab buffer)
+
+```
+BUG: KASAN: slab-out-of-bounds in _copy_from_user+0x2d/0x80
+Write of size 256 at addr ffff888006822500 by task trigger_kasan/67
+  poc_write+0x1d/0x50 [kasan_poc]
+  ...
+allocated 192-byte region [ffff888006822500, ffff8880068225c0)
+```
+
+The KASAN mechanism (generic, outline) detects `copy_from_user`
+OOB into slab objects flawlessly.
+
+### vme_user real-driver test (128 KiB page-alloc buffer)
+
+Trigger: `VME_SET_SLAVE` with `size=0x40000` (256 KiB window),
+then `write(fd, buf, 0x40000)` from offset 0, and `write` of 4K
+at offset 0x20000 (past end of kern_buf).
+
+Result: **both writes succeed, NO KASAN report.**
+
+Root cause: `kmalloc(0x20000)` = 128 KiB is serviced by the
+page allocator (>KMALLOC_MAX_CACHE_SIZE=8K).  The allocator
+returns a 32-page compound page (order-5, exactly 128 KiB).
+KASAN's `poison_kmalloc_large_redzone()` computes:
+```
+redzone_start = round_up(ptr + 0x20000, 8) = ptr + 0x20000
+redzone_end   = ptr + page_size(compound) = ptr + 0x20000
+```
+→ **zero bytes of redzone** (the allocation fills its page
+group exactly).  The OOB write lands in the next physical page
+whose KASAN shadow is unpoisoned (0x00), so KASAN sees it as
+valid.  This is a **known KASAN-generic limitation** for
+power-of-2 large allocations (kernel docs acknowledge it).
+
+### Honest conclusion
+
+The `copy_from_user(kern_buf + 0, user_buf, 256K)` on a 128 KiB
+object **provably executes** (the write returns 262144), and the
+mechanism test proves KASAN catches this exact pattern in slab.
+The specific `vme_user` instance escapes detection solely because
+its buffer size = compound-page size.  The bug is real at the
+source level (CBMC witness valid); its *exploitability* depends
+on what lies after the 128 KiB object in the kernel VA space
+(corruption target: likely the next slab page or buddy-system
+free page).
+
+For a harder confirmation: a custom kernel build that changes
+`PCI_BUF_SIZE` to a non-power-of-2 (e.g. 0x20001) would
+produce a slab-OOB KASAN report.  Alternatively, HW KASAN (MTE
+on ARM) or `CONFIG_KASAN_SW_TAGS` with random tag checking would
+detect it.  These are out of scope for this PoC but recorded for
+completeness.
