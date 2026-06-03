@@ -2889,8 +2889,11 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             else if(is_python_list_type(param_type))
               // PLR §3.1: list parameters are passed by reference; the
               // safe_typecast boundary promotes element types and
-              // copies mutations back. (dict deferred — same element-
-              // conversion needed for keys+values.)
+              // copies mutations back. dict is NOT wrapped: a bare
+              // `dict` defaults to dict[str, value], so an int-keyed
+              // argument can't be promoted (str-vs-int keys is not a
+              // value-widening) — needs a uniform dict[value, value]
+              // representation first.
               param_type = pointer_type(param_type);
           }
 
