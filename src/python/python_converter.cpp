@@ -2539,10 +2539,69 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
     // the caller; an rvalue has no caller storage to propagate to, so a
     // temp is semantically correct. This makes every struct→pointer
     // boundary (all method-dispatch paths included) pointer-uniform.
-    exprt obj = e;
+    const typet &p_base = to_pointer_type(target).base_type();
+    bool e_lvalue = e.id() == ID_symbol || e.id() == ID_member ||
+                    e.id() == ID_index || e.id() == ID_dereference;
+    // PLR §3.1: a list[T] argument bound to a list[python_value]*
+    // parameter cannot be passed by raw pointer reinterpret (element
+    // layouts differ). Promote each element via wrap_value into a temp
+    // list[value], pass its address, and — for an lvalue arg — copy the
+    // (possibly mutated) elements back into the caller's storage after
+    // the call so mutations propagate. Mirrors the free-function path.
     if(
-      e.id() != ID_symbol && e.id() != ID_member && e.id() != ID_index &&
-      e.id() != ID_dereference)
+      is_python_list_type(p_base) && is_python_list_type(e.type()) &&
+      p_base != e.type() &&
+      is_python_value_type(
+        to_array_type(to_struct_type(p_base).components()[1].type())
+          .element_type()))
+    {
+      const auto &src_data_t =
+        to_array_type(to_struct_type(e.type()).components()[1].type());
+      const auto &dst_data_t =
+        to_array_type(to_struct_type(p_base).components()[1].type());
+      const typet elem_t = src_data_t.element_type();
+      member_exprt sl{e, "length", signedbv_typet{64}};
+      member_exprt sd{e, "data", src_data_t};
+      exprt::operandst elems;
+      for(std::size_t k = 0; k < (std::size_t)PYTHON_MAX_LIST_LENGTH; k++)
+        elems.push_back(
+          wrap_value(index_exprt{sd, from_integer(k, signedbv_typet{64})}));
+      exprt promoted =
+        struct_exprt{{sl, array_exprt{std::move(elems), dst_data_t}}, p_base};
+      static unsigned lp_ctr = 0;
+      irep_idt tid{qualify_name("__byref_list_" + std::to_string(lp_ctr++))};
+      if(symbol_table.lookup(tid) == nullptr)
+      {
+        symbolt ts{tid, p_base, "python"};
+        ts.base_name = id2string(tid);
+        ts.is_lvalue = true;
+        ts.is_state_var = true;
+        ts.is_static_lifetime = current_function.empty();
+        symbol_table.add(ts);
+      }
+      symbol_exprt bsym = symbol_table.lookup_ref(tid).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{bsym, promoted});
+      if(e_lvalue)
+      {
+        member_exprt bd{bsym, "data", dst_data_t};
+        member_exprt td{e, "data", src_data_t};
+        for(std::size_t k = 0; k < (std::size_t)PYTHON_MAX_LIST_LENGTH; k++)
+        {
+          exprt idx = from_integer(k, signedbv_typet{64});
+          exprt back = unwrap_value(index_exprt{bd, idx}, elem_t);
+          if(back.type() != elem_t)
+            back = safe_typecast(back, elem_t);
+          pending_post_checks.push_back(
+            code_frontend_assignt{index_exprt{td, idx}, back});
+        }
+        pending_post_checks.push_back(code_frontend_assignt{
+          member_exprt{e, "length", signedbv_typet{64}},
+          member_exprt{bsym, "length", signedbv_typet{64}}});
+      }
+      return address_of_exprt{bsym};
+    }
+    exprt obj = e;
+    if(!e_lvalue)
     {
       static unsigned byref_tmp_ctr = 0;
       std::string tn = "__byref_tmp_" + std::to_string(byref_tmp_ctr++);
