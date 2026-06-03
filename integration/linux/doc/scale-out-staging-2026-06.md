@@ -1,4 +1,39 @@
 # Scale-out: CodeQL→CBMC pipeline over drivers/staging (linux_6_12)
+# Scale-out: CodeQL→CBMC pipeline over drivers/staging (linux_6_12)
+
+> **⚠️ CORRECTION (2026-06-03, end of day).** The numbers in the
+> body below (27 candidates) were produced on a CodeQL DB that
+> **silently under-extracted ~30% of staging TUs** — CodeQL's EDG
+> frontend can't parse the `__seg_gs` named-address-space qualifier
+> in `current.h`, poisoning body extraction for a config-dependent
+> set of files (rtl8723bs, atomisp, vt665x, octeon, even
+> `vme_user.c` itself).  Root cause + fix:
+> `codeql-extractor-coverage-2026-06.md`.
+>
+> After rebuilding with the `percpu.h` fix (body coverage 329 → 455
+> of 470 processed TUs), the **corrected** sweep finds:
+>
+> | metric | seg-poisoned DB | corrected (`-noseg`) DB |
+> |--------|-----------------|--------------------------|
+> | staging candidates | 27 | **58** |
+> | CBMC SUCCESSFUL (proven safe) | 6* | **11** |
+> | CBMC FAILED | 21* | **47** |
+> | NEW candidates surfaced | — | **31** |
+>
+> \* the "6/21" reflect the post-harnesser-extension run; the
+> original body of this doc predates those extensions.  The
+> authoritative current figures are **58 / 11 / 47**.  Per-candidate
+> verdicts: `scan/abc-refinement/poc/staging_verdicts_noseg.tsv`.
+> Triage of the 47 FAILED: `staging-triage-failed-2026-06.md`.
+>
+> The 31 NEW candidates cluster in the previously-invisible drivers:
+> **rtl8723bs/rtl8192e wifi** (IE/beacon/WPS memcpys), **av7110
+> media** (DEBI/DVB), **gdm724x USB**, **atomisp**.  The vme_user
+> findings are unaffected (found via the separate `vme-db`).
+>
+> Everything below this line is the original (pre-correction) text,
+> retained for the record.
+> ─────────────────────────────────────────────────────────────
 
 **Date:** 2026-06-03
 **Purpose:** Test the automated pipeline at scale over a broader

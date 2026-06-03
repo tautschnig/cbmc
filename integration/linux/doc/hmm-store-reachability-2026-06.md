@@ -43,28 +43,35 @@ with `idx = (virt − bo->start) >> PAGE_SHIFT` past the BO's
 `pages[]` array and `memcpy`s into whatever those out-of-range
 page pointers reference — a kernel heap/BO overflow.
 
-## CodeQL status (honest)
+## CodeQL status (honest — root cause corrected 2026-06-03)
 
 The intended automated confirmation — a path query from the
 ioctl `arg` to `hmm_store`'s `bytes` argument
 (`atomisp_sizeimage_path.ql`) — returned **0 paths**.  Root cause
-is a **database-extraction gap, not absence of the flow**:
-`atomisp_cmd.c` (which holds both the call site and
-`atomisp_v4l2_framebuffer_to_css_frame`) was **not extracted**
-into the allmodconfig `staging-db` — a probe with `hmm_store_sites.ql`
-finds 20 `hmm_store` calls (all in firmware/runtime TUs) but not
-the `atomisp_cmd.c:3349` site, and `atomisp_v4l2_framebuffer_to_css_frame`
-is absent while only the *header* declaration of
-`atomisp_fixed_pattern_table` is present.  The `.o` was almost
-certainly served from a build cache, so the extractor never saw
-the source.
+is an **extractor-frontend gap, not absence of the flow**:
+`atomisp_cmd.c`'s function *bodies* were not extracted, so the
+call site and `atomisp_v4l2_framebuffer_to_css_frame` carry no
+analysable code (`hmm_store_sites.ql` finds 20 `hmm_store` calls,
+all in firmware/runtime TUs, but not `atomisp_cmd.c:3349`).
 
-To reproduce the automated path: rebuild the CodeQL DB with the
-atomisp objects cleaned first (`find drivers/staging/media/atomisp
--name '*.o' -delete`) so `atomisp_cmd.c` is freshly compiled and
-captured, then re-run `atomisp_sizeimage_path.ql`.  The manual
-call-graph trace above is the authoritative evidence and does not
-depend on that rebuild.
+**Correction:** an earlier draft of this doc blamed a make-cache /
+"file not compiled" gap.  That was wrong.  A clean rebuild
+(`find drivers/staging -name '*.o' -delete` then re-create) gave
+the *identical* result, and the extractor logs show the real
+cause: CodeQL's EDG C++ frontend fails to parse
+`arch/x86/include/asm/current.h` because `__percpu_seg_override`
+expands to the GCC named-address-space qualifier `__seg_gs`
+(under `CONFIG_CC_HAS_NAMED_AS`), poisoning body extraction for
+that TU.  This affects ~30% of staging TUs under allmodconfig —
+see `codeql-extractor-coverage-2026-06.md` for the full analysis
+and the `percpu.h` fix.
+
+To reproduce the automated path: rebuild the DB with the
+named-address-space path disabled (the one-line `percpu.h` gate
+flip in the coverage doc), which lets `atomisp_cmd.c` extract;
+then re-run `atomisp_sizeimage_path.ql`.  The manual call-graph
+trace above is the authoritative evidence and does not depend on
+that rebuild.
 
 ## Classification
 
