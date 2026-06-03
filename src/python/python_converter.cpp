@@ -2469,6 +2469,52 @@ exprt python_convertert::wrap_value(const exprt &e)
   return make_python_value(tag, e);
 }
 
+/// Tag-aware equality for two python_value operands. Compares the
+/// active variant: STR by string content (a struct equal_exprt would
+/// compare the data pointers, which differ between equal-content
+/// strings), the rest by their scalar payload. The STR branch
+/// dereferences __str_ptr unconditionally; for a non-STR operand that
+/// pointer is null and the deref yields a nondet string, but the
+/// surrounding tag guard discards it.
+exprt python_convertert::value_equal(const exprt &a, const exprt &b)
+{
+  PRECONDITION(
+    is_python_value_type(a.type()) && is_python_value_type(b.type()));
+  const signedbv_typet i32{32};
+  member_exprt at{a, "__tag", i32};
+  exprt tags_eq = equal_exprt{at, member_exprt{b, "__tag", i32}};
+  const auto tag_is = [&](python_type_tagt t) {
+    return equal_exprt{at, from_integer(static_cast<int>(t), i32)};
+  };
+  pointer_typet str_ptr_t{python_string_type(), 64};
+  exprt str_eq = emit_string_bool_function(
+    ID_cprover_string_equal_func,
+    dereference_exprt{member_exprt{a, "__str_ptr", str_ptr_t}},
+    dereference_exprt{member_exprt{b, "__str_ptr", str_ptr_t}},
+    symbol_table,
+    pending_checks);
+  if(str_eq.type() != bool_typet{})
+    str_eq = typecast_exprt{std::move(str_eq), bool_typet{}};
+  exprt float_eq = equal_exprt{
+    member_exprt{a, "__float_val", double_type()},
+    member_exprt{b, "__float_val", double_type()}};
+  exprt bool_eq = equal_exprt{
+    member_exprt{a, "__bool_val", i32}, member_exprt{b, "__bool_val", i32}};
+  // INT default also covers NONE (both payloads are 0).
+  exprt int_eq = equal_exprt{
+    member_exprt{a, "__int_val", signedbv_typet{64}},
+    member_exprt{b, "__int_val", signedbv_typet{64}}};
+  return and_exprt{
+    tags_eq,
+    if_exprt{
+      tag_is(python_type_tagt::STR),
+      str_eq,
+      if_exprt{
+        tag_is(python_type_tagt::FLOAT),
+        float_eq,
+        if_exprt{tag_is(python_type_tagt::BOOL), bool_eq, int_eq}}}};
+}
+
 exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
 {
   if(e.type() == target)
