@@ -2532,7 +2532,34 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
     e.type().id() == ID_struct && target.id() == ID_pointer &&
     to_pointer_type(target).base_type().id() == ID_struct)
   {
-    return typecast_exprt{address_of_exprt{e}, target};
+    // address_of requires an lvalue. A non-lvalue struct (a literal or
+    // a call result) is materialised into a temp first, so the callee
+    // receives a valid address. PLR §3.1: lvalue args (symbol / member
+    // / index / deref) are addressed directly so mutations propagate to
+    // the caller; an rvalue has no caller storage to propagate to, so a
+    // temp is semantically correct. This makes every struct→pointer
+    // boundary (all method-dispatch paths included) pointer-uniform.
+    exprt obj = e;
+    if(
+      e.id() != ID_symbol && e.id() != ID_member && e.id() != ID_index &&
+      e.id() != ID_dereference)
+    {
+      static unsigned byref_tmp_ctr = 0;
+      std::string tn = "__byref_tmp_" + std::to_string(byref_tmp_ctr++);
+      irep_idt tid{qualify_name(tn)};
+      if(symbol_table.lookup(tid) == nullptr)
+      {
+        symbolt ts{tid, e.type(), "python"};
+        ts.base_name = tn;
+        ts.is_lvalue = true;
+        ts.is_state_var = true;
+        ts.is_static_lifetime = current_function.empty();
+        symbol_table.add(ts);
+      }
+      obj = symbol_table.lookup_ref(tid).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{obj, e});
+    }
+    return typecast_exprt{address_of_exprt{obj}, target};
   }
 
   // Class struct cast: Derived → Base (reinterpret via byte_extract)
