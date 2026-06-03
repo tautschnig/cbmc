@@ -231,7 +231,22 @@ exprt python_convertert::convert_call(const jsont &expr)
 
   std::string func_name;
   if(is_node_type(func, "Name"))
+  {
     func_name = json_string(json_member(func, "id"));
+    // PLR §9.3: `cls(...)` inside a classmethod constructs the
+    // enclosing class. cls is bound as a pointer-to-class parameter;
+    // rewrite to the class name so the constructor dispatch below
+    // builds a real instance instead of leaving the result nondet.
+    if(
+      func_name == "cls" && !current_class.empty() &&
+      class_types.count(current_class))
+    {
+      const symbolt *cp =
+        symbol_table.lookup(irep_idt{"python::" + current_function + "::cls"});
+      if(cp != nullptr && cp->type.id() == ID_pointer)
+        func_name = current_class;
+    }
+  }
   else if(is_node_type(func, "Attribute"))
   {
     // Method-call dispatch (obj.method(args)). Extracted to

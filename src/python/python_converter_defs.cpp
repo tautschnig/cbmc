@@ -69,19 +69,26 @@ python_convertert::infer_return_type_from_body(
             has_none_return = true;
             this_is_none = true;
           }
-          // `return ClassName(...)`
+          // `return ClassName(...)`, or `return cls(...)` in a
+          // classmethod (cls constructs the enclosing class).
           if(
             is_node_type(rv, "Call") &&
             is_node_type(json_member(rv, "func"), "Name"))
           {
             std::string call_name =
               json_string(json_member(json_member(rv, "func"), "id"));
+            const typet *this_type = nullptr;
             if(class_types.count(call_name))
+              this_type = &class_types[call_name];
+            else if(
+              call_name == "cls" && !enclosing_class.empty() &&
+              class_types.count(enclosing_class))
+              this_type = &class_types[enclosing_class];
+            if(this_type != nullptr)
             {
-              typet this_type = class_types[call_name];
               if(return_type.id() == ID_empty)
-                return_type = this_type;
-              else if(return_type != this_type)
+                return_type = *this_type;
+              else if(return_type != *this_type)
                 return_type = python_value_type();
             }
           }
