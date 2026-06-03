@@ -2864,6 +2864,28 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             param_type = annotation.is_null()
                            ? python_value_type()
                            : convert_type_annotation(annotation);
+            // PLR §3.1: genuine class instances are passed by
+            // reference (matching the free-function path) so mutations
+            // to the parameter propagate to the caller. TypedDict
+            // classes are excluded: they are passed as dict literals at
+            // call sites, not by reference, so pointer-wrapping them
+            // breaks the call (the dict value is not addressable).
+            if(
+              param_type.id() == ID_struct &&
+              id2string(to_struct_type(param_type).get_tag())
+                  .find("python_class_") != std::string::npos)
+            {
+              std::string cn =
+                id2string(to_struct_type(param_type).get_tag()).substr(13);
+              auto bit = class_bases.find(cn);
+              bool is_typeddict =
+                bit != class_bases.end() &&
+                std::find(
+                  bit->second.begin(), bit->second.end(), "TypedDict") !=
+                  bit->second.end();
+              if(!is_typeddict)
+                param_type = pointer_type(param_type);
+            }
           }
 
           code_typet::parametert p{param_type};
