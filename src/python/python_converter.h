@@ -1136,6 +1136,15 @@ private:
     const std::string &qualified_name,
     const std::string &enclosing_class);
 
+  /// PLR §6.2.9: create the `__gen_result_<name>` eager-result list
+  /// symbol for a generator and emit its initialisation into
+  /// \p body_block; returns the symbol id. Shared by free functions
+  /// and methods.
+  irep_idt setup_generator_result(
+    const std::string &qualified_name,
+    const typet &list_type,
+    code_blockt &body_block);
+
   codet convert_expr_stmt(const jsont &stmt);
   codet convert_break();
   codet convert_continue();
