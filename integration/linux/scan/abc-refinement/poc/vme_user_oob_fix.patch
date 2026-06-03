@@ -1,0 +1,36 @@
+diff --git a/drivers/staging/vme_user/vme_user.c b/drivers/staging/vme_user/vme_user.c
+index 5829a4141..bacf6a7d6 100644
+--- a/drivers/staging/vme_user/vme_user.c
++++ b/drivers/staging/vme_user/vme_user.c
+@@ -156,6 +156,15 @@ static ssize_t buffer_to_user(unsigned int minor, char __user *buf,
+ {
+ 	void *image_ptr;
+ 
++	/* Clamp to the fixed kern_buf (size_buf): the VME window
++	 * (image_size) may exceed PCI_BUF_SIZE, so *ppos + count can
++	 * run past kern_buf otherwise.
++	 */
++	if (*ppos >= image[minor].size_buf)
++		return 0;
++	if (count > image[minor].size_buf - *ppos)
++		count = image[minor].size_buf - *ppos;
++
+ 	image_ptr = image[minor].kern_buf + *ppos;
+ 	if (copy_to_user(buf, image_ptr, (unsigned long)count))
+ 		return -EFAULT;
+@@ -168,6 +177,15 @@ static ssize_t buffer_from_user(unsigned int minor, const char __user *buf,
+ {
+ 	void *image_ptr;
+ 
++	/* Clamp to the fixed kern_buf (size_buf): the VME window
++	 * (image_size) may exceed PCI_BUF_SIZE, so *ppos + count can
++	 * run past kern_buf otherwise.
++	 */
++	if (*ppos >= image[minor].size_buf)
++		return 0;
++	if (count > image[minor].size_buf - *ppos)
++		count = image[minor].size_buf - *ppos;
++
+ 	image_ptr = image[minor].kern_buf + *ppos;
+ 	if (copy_from_user(image_ptr, buf, (unsigned long)count))
+ 		return -EFAULT;
