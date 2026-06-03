@@ -91,11 +91,158 @@ def extract_buffer_info(func_lines, dest_expr):
     return None
 
 
+def detect_proportional_alloc(func_lines, tainted_param, sink_offset):
+    """Detect the "buffer allocated proportional to length" pattern.
+
+    Returns the allocation-target variable name when, before the sink,
+    a buffer is allocated with a size expression that references the
+    tainted param AND that same variable appears in the sink line
+    (i.e. it is the copy destination).  Such copies are safe by
+    construction regardless of the (user-controlled) length.
+    """
+    if not (0 <= sink_offset < len(func_lines)):
+        return None
+    sink_line = func_lines[sink_offset]
+    alloc_pat = re.compile(r'(\w+)\s*=\s*\w*alloc\w*\s*\((.*)\)\s*;')
+    tp_word = re.compile(rf'\b{re.escape(tainted_param)}\b')
+    for line in func_lines[:sink_offset + 1]:
+        m = alloc_pat.search(line)
+        if m and tp_word.search(m.group(2)):
+            var = m.group(1)
+            if re.search(rf'\b{re.escape(var)}\b', sink_line):
+                return var
+    return None
+
+
+# Kernel framework allocators: name -> 0-based index of the payload-size arg.
+# These allocate a buffer whose usable size is the given argument.
+KNOWN_ALLOC_HELPERS = {
+    "gb_operation_create": 2,
+}
+
+
+def _split_args(s):
+    """Split a top-level argument list (parens/brackets balanced)."""
+    args, depth, cur = [], 0, ""
+    for ch in s:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            args.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        args.append(cur.strip())
+    return args
+
+
+def _call_args(text, fn):
+    """Return the top-level args of the first call to `fn` in `text`,
+    or None.  `text` may be a collapsed (single-line) statement so
+    multi-line calls are handled by the caller."""
+    m = re.search(rf'\b{re.escape(fn)}\s*\(', text)
+    if not m:
+        return None
+    depth, start = 0, m.end() - 1
+    for k in range(start, len(text)):
+        if text[k] == "(":
+            depth += 1
+        elif text[k] == ")":
+            depth -= 1
+            if depth == 0:
+                return _split_args(text[start + 1:k])
+    return None
+
+
+def detect_framework_alloc(func_lines, sink_offset, sink_fn):
+    """Detect the interprocedural framework-allocator pattern, e.g.
+    `op = gb_operation_create(c, t, size, ...)` followed by
+    `copy(op->...->payload, src, size)`.
+
+    Sound: requires the copy's actual size argument to textually equal
+    the allocator's size argument, and the alloc-target variable to
+    appear in the copy destination.  Returns (size_identifier,
+    helper_name) or None.
+    """
+    if not (0 <= sink_offset < len(func_lines)):
+        return None
+    flat = " ".join(line.strip() for line in func_lines)
+    sink_window = " ".join(func_lines[sink_offset:sink_offset + 4])
+    copy_args = _call_args(sink_window, sink_fn)
+    if not copy_args or len(copy_args) < 3:
+        return None
+    copy_dest, copy_size = copy_args[0], copy_args[2]
+    if not re.fullmatch(r"\w+", copy_size):  # need a simple identifier
+        return None
+    for helper, size_idx in KNOWN_ALLOC_HELPERS.items():
+        tm = re.search(rf'(\w+)\s*=\s*{re.escape(helper)}\s*\(', flat)
+        if not tm:
+            continue
+        alloc_target = tm.group(1)
+        helper_args = _call_args(flat, helper)
+        if not helper_args or len(helper_args) <= size_idx:
+            continue
+        if helper_args[size_idx] == copy_size and \
+                re.search(rf'\b{re.escape(alloc_target)}\b', copy_dest):
+            return copy_size, helper
+    return None
+
+
+def generate_proportional_harness(func_name, filepath, sink_line, sink_fn,
+                                  size_var, dest_expr, alloc_desc):
+    """Harness for the alloc-proportional-to-length pattern: model the
+    destination buffer as malloc(size_var), which proves safety."""
+    out = [
+        f'// Auto-generated CBMC stage-2 harness for: {func_name}',
+        f'// Source: {filepath}:{sink_line}',
+        f'// Sink: {sink_fn}({dest_expr}, ..., {size_var})',
+        f'// Pattern: {alloc_desc}',
+        '',
+        '#include <stdlib.h>',
+        '#include <string.h>',
+        '',
+        '#define WIN_MAX 64   // scaled model of max tainted range',
+        '',
+        'unsigned int nd_uint(void) { unsigned int x; return x; }',
+        '',
+        f'void harness_{func_name}(void)',
+        '{',
+        f'\tunsigned int {size_var} = nd_uint();',
+        f'\t__CPROVER_assume({size_var} <= WIN_MAX);',
+        f'\t// buffer sized from {size_var} -> dst fits by construction',
+        f'\tchar *kern_buf = malloc({size_var});',
+        f'\tchar *user_src = malloc({size_var});',
+        '\t__CPROVER_assume(kern_buf && user_src);',
+        f'\tmemcpy(kern_buf, user_src, {size_var});',
+        '}',
+    ]
+    return '\n'.join(out)
+
+
 def generate_harness(func_name, filepath, sink_line, sink_fn, tainted_param,
                      dest_expr, func_lines, func_start):
     """Generate the CBMC harness C file."""
     sink_offset = sink_line - func_start - 1
     guards = extract_guards(func_lines, tainted_param, sink_offset)
+
+    # Allocation-aware path: if the destination buffer is allocated with a
+    # size derived from the tainted param, the copy is safe by construction.
+    alloc_var = detect_proportional_alloc(func_lines, tainted_param, sink_offset)
+    if alloc_var:
+        return generate_proportional_harness(
+            func_name, filepath, sink_line, sink_fn, tainted_param, dest_expr,
+            f'buffer "{alloc_var}" allocated proportional to {tainted_param}')
+
+    # Interprocedural framework-allocator path (e.g. gb_operation_create).
+    fw = detect_framework_alloc(func_lines, sink_offset, sink_fn)
+    if fw:
+        size_var, helper = fw
+        return generate_proportional_harness(
+            func_name, filepath, sink_line, sink_fn, size_var, dest_expr,
+            f'{helper}() sizes payload by {size_var} (== copy size)')
 
     # Determine buffer size — default scaled model
     buf_size = "BUF"

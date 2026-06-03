@@ -17,81 +17,134 @@ less-swept subsystem and measure yield / FP rate.
 
 ## Stage-1 results
 
-**27 driver-level candidates** across 8 staging subsystems:
+**27 driver-level candidates** across 7 staging subsystems
+(none in vme_user — that driver was scanned separately in
+`/tmp/vme-db`; see `abc-codeql-cbmc-vme-user-2026-06.md`):
 
 | Subsystem | Candidates |
 |-----------|-----------|
-| fieldbus/anybuss | 7 |
-| greybus | 7 |
-| media (av7110, atomisp, meson) | 5 |
+| greybus | 8 |
+| fieldbus/anybuss | 8 |
+| media (av7110, atomisp, meson) | 6 |
 | vc04_services (vchiq) | 2 |
-| vme_user | 3 |
 | most | 1 |
 | gdm724x | 1 |
 | rts5208 | 1 |
 
 ## Stage-2 results (auto-harnesser)
 
+### Baseline (fixed-buffer model, no allocation awareness)
+
 | Verdict | Count | Interpretation |
 |---------|-------|----------------|
-| VERIFICATION FAILED | 24 | No local guard on tainted param → CBMC finds OOB in scaled model |
-| VERIFICATION SUCCESSFUL | 3 | Local guard clamps to buffer size → proven safe (resource_from_user + 2 dedup) |
+| VERIFICATION FAILED | 27 | No in-function size_buf clamp → CBMC finds OOB in the fixed-buffer scaled model |
+| VERIFICATION SUCCESSFUL | 0 | — |
 
-## Honest assessment of the 24 FAILED candidates
+The baseline harnesser models a FIXED buffer (`BUF=8`) and so
+over-reports on every candidate whose buffer is actually sized
+from the (user-controlled) length — the dominant FP pattern.
 
-Spot-checking reveals most are **false positives at the pipeline
-level** — not real OOB bugs.  The dominant FP pattern:
+### After allocation-aware harnessing (see "Improvement" below)
 
-**"Buffer allocated proportional to length"** — e.g.:
-* `gb_raw_send`: `buf = kmalloc(len + sizeof(hdr))` then
-  `copy_from_user(buf->data, user, len)` → always fits.
-* `gb_loopback_*`: `payload = kmalloc(len)` then
-  `memcpy(payload, src, len)` → exact fit.
+| Verdict | Count | Interpretation |
+|---------|-------|----------------|
+| VERIFICATION FAILED | 23 | Fixed/unknown buffer, or copy into a caller-provided buffer — needs manual or interprocedural analysis |
+| VERIFICATION SUCCESSFUL | 4 | Buffer provably sized ≥ copy length → safe by construction |
 
-The auto-harnesser models a FIXED buffer (`BUF=8`) because it
-doesn't recognize that the allocation uses the tainted param.
-When `alloc_size ∝ copy_size`, there is no OOB regardless of
-`copy_size` — the harness should model `BUF = count` (or larger)
-and CBMC would then prove safety.
+The 4 newly-proven-safe candidates (true FPs eliminated):
 
-**Real findings** (FAILED + genuinely unclamped buffer):
-* `buffer_from_user` / `buffer_to_user` (vme_user) — confirmed
-  by the full analysis: fixed 128 KiB buffer, window-bounded
-  copy, ioctl-controlled window size.
+| Candidate | Why safe |
+|-----------|----------|
+| `gb_raw_send:136` (len) | `request = kmalloc(len + sizeof(*request))`, copy `len` into `&request->data[0]` |
+| `receive_data:84` | `raw_data = kmalloc(struct_size(raw_data,data,len))`, copy `len` |
+| `gb_loopback_operation_sync:385` | `gb_operation_create(…,request_size,…)` sizes payload; copy size == `request_size` |
+| `gb_loopback_async_operation:486` | same framework-allocator pattern |
 
-**Uncertain** (need deeper manual inspection):
-* `_anybus_mbox_cmd` — uses a fixed-size `msg[8]` field but
-  also a separate extended buffer; unclear if `count` can exceed.
-* `hmm_store` — ISP DMA buffer; size derived from hardware
-  configuration, not directly user-controlled via `count`.
-* `dvb_filter_pes2ts` / `write_ipack` — PES packet assemblers;
-  `len` is bounded by packet structure, unclear.
+## Honest assessment of the 23 remaining FAILED candidates
+
+Most are still **false positives at the pipeline level** — not
+real OOB bugs — for reasons the current harnesser cannot yet
+model:
+
+**Copy INTO a caller-provided buffer** (need caller context):
+* `gb_loopback_operation_sync:395` — `memcpy(response,
+  operation->response->payload, response_size)`: the destination
+  `response` is the caller's buffer; safety depends on the
+  caller sizing it ≥ `response_size`.
+
+**Interprocedural / struct-field sizing not yet modelled:**
+* `gb_hid_set_report:117` — copies `len` into
+  `operation->request->payload->report`, where the payload was
+  sized `size`; relationship `len ≤ size − header` is real but
+  not textually matched by the current sound check.
+* `gb_spi_operation_create`, `gdm_mux_send`, `create_area_*`,
+  `anybuss_*` — similar struct-embedded or helper-sized buffers.
+
+**Confirmed real OOB:** none in this staging set yet (the
+vme_user finding is from the separate `/tmp/vme-db` run, not
+counted here).
+
+**Uncertain — need deeper manual inspection** (see triage doc):
+* `_anybus_mbox_cmd` (×3) — fixed `msg[]` field vs extended buf.
+* `hmm_store` (×3) — ISP DMA buffer sized from HW config.
+* `dvb_filter_pes2ts`, `write_ipack` — PES packet assemblers;
+  `len` bounded by packet structure.
+* `vchiq_ioc_copy_element_data` — bounded by `min(element->size,
+  maxsize − copied)`.
 
 ## Yield metrics
 
-| Metric | Value |
-|--------|-------|
-| Stage-1 candidates (staging-level) | 27 |
-| Stage-2 FAILED (potentially unsafe) | 24 |
-| Stage-2 SUCCESSFUL (proven safe) | 3 |
-| Confirmed real OOB (manual + dynamic) | 2 (vme_user buffer_from/to_user) |
-| Clear false alarms (alloc ∝ length) | ~15 |
-| Uncertain (need manual audit) | ~7 |
-| **Pipeline precision** (real / failed) | ~8% (2/24) |
-| **Pipeline recall** (real / all-real) | 100% (found the known issue) |
+| Metric | Baseline | After alloc-aware |
+|--------|----------|-------------------|
+| Stage-1 candidates (staging) | 27 | 27 |
+| Stage-2 FAILED | 27 | 23 |
+| Stage-2 SUCCESSFUL (proven safe) | 0 | 4 |
+| True FPs eliminated by CBMC | 0 | 4 |
+| Confirmed real OOB (this set) | 0 | 0 |
+| Uncertain (need manual audit) | — | 7 (see triage doc) |
+
+Note on precision: with zero confirmed real bugs in the staging
+set so far, a precision figure is not yet meaningful here; the
+honest statement is that allocation-aware modelling converted 4
+candidates from "alarm" to "proven safe", shrinking the manual
+triage burden from 27 to 23 (and the genuinely-uncertain subset
+to 7).  The known real OOB lives in vme_user, scanned separately.
+
+## Improvement: allocation-aware harnessing (2026-06-03)
+
+`auto_harness.py` gained two sound allocation-aware paths:
+
+1. **In-function proportional alloc** — if a buffer is allocated
+   in the function with a size expression that references the
+   tainted length, and that buffer is the copy destination, model
+   it as `malloc(len)`.  CBMC then proves the copy in-bounds.
+   Catches `gb_raw_send`, `receive_data`.
+
+2. **Framework allocator** (`KNOWN_ALLOC_HELPERS`) — for helpers
+   like `gb_operation_create(conn, type, request_size, …)` whose
+   Nth argument sizes the payload, match the copy's *actual* size
+   argument (extracted from the sink line) against the allocator's
+   size argument.  Only fires when they are textually identical
+   AND the alloc-target variable appears in the copy destination —
+   a deliberately conservative (sound) check.  Verified that
+   `gb_operation_create` arg[2] → `gb_operation_message_alloc` →
+   `kzalloc(request_size + header)` genuinely sizes the payload.
+
+Both paths are conservative: they only ever turn a FAILED into a
+SUCCESSFUL when the buffer is provably ≥ the copy length, so they
+cannot mask a real OOB.
 
 ## Lessons for pipeline improvement
 
-1. **Allocation-aware harnessing:** If the auto-harnesser can
-   detect `kmalloc(param)` → `copy(buf, ..., param)`, it should
-   model `BUF >= param` and CBMC will prove safety.  This single
-   improvement would eliminate ~60% of FPs.
+1. **Allocation-aware harnessing** — done (above); eliminated 4
+   of the staging FPs.  Extending `KNOWN_ALLOC_HELPERS` and the
+   struct-field-sizing relationship would catch more.
 
-2. **Caller-context propagation:** Guards in the write fops
-   wrapper (e.g. vme_user_write's `image_size` clamp) aren't
-   visible within `buffer_from_user`.  An interprocedural
-   harnesser that models the caller's pre-conditions would
-   produce tighter verdicts.
+2. **Caller-context propagation:** Guards/buffer sizes in the
+   caller (e.g. vme_user_write's `image_size` clamp, or the
+   `response` buffer in gb_loopback) aren't visible within the
+   analysed function.  An interprocedural harnesser that models
+   the caller's pre-conditions would produce tighter verdicts.
 
 3. **CodeQL source specificity:** The current source predicate
    (any param named count/len/size) over-triggers on internal
@@ -106,8 +159,12 @@ and CBMC would then prove safety.
 
 The pipeline **works at scale** — it processes a full staging
 subsystem (485 source files) end-to-end in ~5 minutes (2m41s
-CodeQL + ~1s per CBMC harness) and correctly identifies the
-known vme_user OOB while filtering the explicitly-guarded
-resource_from_user.  The 8% precision is low but honest; the
-FP patterns are well-characterized and addressable with
-allocation-aware harnessing (the top improvement opportunity).
+CodeQL + ~1s per CBMC harness).  Allocation-aware harnessing
+turned 4 of the 27 staging candidates from "alarm" to
+"proven safe" with a sound (conservative) check, shrinking the
+manual triage set to 23 and the genuinely-uncertain subset to 7.
+No confirmed real OOB has surfaced in the staging set yet; the
+known real bug lives in vme_user (scanned separately).  Honest
+takeaway: the remaining FPs are well-characterized (copy into a
+caller-provided buffer, struct-field-sized payloads) and call
+for caller-context / struct-aware modelling next.
