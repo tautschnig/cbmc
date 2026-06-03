@@ -2185,7 +2185,12 @@ exprt python_convertert::convert_compare(const jsont &expr)
       }
       else if(is_python_dict_type(container.type()))
       {
-        // key in dict: constant-key optimization
+        // key in dict: constant-key optimization. Skipped for
+        // value-typed keys (extract_string_value can't see through
+        // the wrapped key structs) — those go symbolic via value_equal.
+        bool keys_are_values = is_python_value_type(
+          to_array_type(to_struct_type(container.type()).components()[1].type())
+            .element_type());
         auto key_str = extract_string_value(item);
         const exprt *dict_val = &container;
         if(container.id() == ID_symbol)
@@ -2196,8 +2201,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
             dict_val = &it->second;
         }
         if(
-          key_str.has_value() && dict_val->id() == ID_struct &&
-          dict_val->operands().size() >= 2 &&
+          !keys_are_values && key_str.has_value() &&
+          dict_val->id() == ID_struct && dict_val->operands().size() >= 2 &&
           dict_val->operands()[0].is_constant())
         {
           mp_integer len_val;
@@ -2240,7 +2245,14 @@ exprt python_convertert::convert_compare(const jsont &expr)
             exprt in_range = binary_relation_exprt{idx, ID_lt, length};
             exprt key_i = index_exprt{keys, idx};
             exprt match;
-            if(
+            if(is_python_value_type(key_i.type()))
+            {
+              // Value-typed (heterogeneous) keys: compare in the
+              // value domain (tag-aware), mirroring the subscript
+              // read. PLR §6.10.1.
+              match = value_equal(key_i, wrap_value(item));
+            }
+            else if(
               is_python_string_type(item.type()) &&
               is_python_string_type(key_i.type()))
             {
