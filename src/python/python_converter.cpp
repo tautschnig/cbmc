@@ -1811,9 +1811,32 @@ codet python_convertert::allocate_generator_cursor(
   if(!is_node_type(value, "Call"))
     return code_skipt{};
   const jsont &func = json_member(value, "func");
-  if(!is_node_type(func, "Name"))
+  std::string callee;
+  if(is_node_type(func, "Name"))
+    callee = json_string(json_member(func, "id"));
+  else if(
+    is_node_type(func, "Attribute") &&
+    is_node_type(json_member(func, "value"), "Name"))
+  {
+    // Method generator `obj.gen()`: resolve the receiver's class so
+    // we can test <Class>::<method> in generator_functions. Restricted
+    // to a Name receiver so converting it has no side effects.
+    std::string attr = json_string(json_member(func, "attr"));
+    typet rt = convert_expression(json_member(func, "value")).type();
+    if(rt.id() == ID_pointer)
+      rt = to_pointer_type(rt).base_type();
+    std::string tag;
+    if(rt.id() == ID_struct_tag)
+      tag = id2string(to_struct_tag_type(rt).get_identifier());
+    else if(rt.id() == ID_struct)
+      tag = id2string(to_struct_type(rt).get_tag());
+    if(tag.rfind("python_class_", 0) == 0)
+      tag = tag.substr(13);
+    if(!tag.empty())
+      callee = tag + "::" + attr;
+  }
+  if(callee.empty())
     return code_skipt{};
-  std::string callee = json_string(json_member(func, "id"));
   // Try the qualified form (function defined in current scope)
   // and the unqualified form (top-level / nested function).
   std::string q_callee = qualify_name(callee);

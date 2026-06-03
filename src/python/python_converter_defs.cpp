@@ -349,6 +349,51 @@ python_convertert::infer_return_type_from_body(
   return result;
 }
 
+// PLR §6.2.9: create the eager-result list symbol `__gen_result_<name>`
+// for a generator function/method and emit its initialisation
+// (length = 0 + zeroed data) into \p body_block. Shared by free
+// functions (convert_function_def) and methods (convert_class_def);
+// \p qualified_name must equal current_function during body conversion
+// so the yield-append / return rewrites resolve the same symbol.
+irep_idt python_convertert::setup_generator_result(
+  const std::string &qualified_name,
+  const typet &list_type,
+  code_blockt &body_block)
+{
+  std::string grn = "__gen_result_" + qualified_name;
+  irep_idt gen_result_id{qualify_name(grn)};
+  if(symbol_table.lookup(gen_result_id) == nullptr)
+  {
+    symbolt grs{gen_result_id, list_type, "python"};
+    grs.base_name = grn;
+    grs.is_lvalue = true;
+    grs.is_state_var = true;
+    symbol_table.add(grs);
+  }
+  body_block.add(code_frontend_assignt{
+    member_exprt{
+      symbol_table.lookup_ref(gen_result_id).symbol_expr(),
+      "length",
+      signedbv_typet{64}},
+    from_integer(0, signedbv_typet{64})});
+  if(list_type.id() == ID_struct)
+  {
+    const auto &rt = to_struct_type(list_type);
+    if(rt.components().size() >= 2)
+    {
+      const auto &data_t = to_array_type(rt.components()[1].type());
+      exprt::operandst zero_elems;
+      while(zero_elems.size() < PYTHON_MAX_LIST_LENGTH)
+        zero_elems.push_back(safe_zero(data_t.element_type()));
+      body_block.add(code_frontend_assignt{
+        member_exprt{
+          symbol_table.lookup_ref(gen_result_id).symbol_expr(), "data", data_t},
+        array_exprt{std::move(zero_elems), data_t}});
+    }
+  }
+  return gen_result_id;
+}
+
 // "A function definition defines a user-defined function object."
 codet python_convertert::convert_function_def(const jsont &stmt)
 {
@@ -1113,56 +1158,14 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   }
 
   // For generator functions, create __gen_result list
+  code_blockt body_block;
+
+  // PLR §6.2.9: generators return an eager result list.
   bool is_generator = generator_functions.count(qualified_func_name) > 0;
   irep_idt gen_result_id;
   if(is_generator)
-  {
-    std::string grn = "__gen_result_" + qualified_func_name;
-    std::string grq = qualify_name(grn);
-    gen_result_id = irep_idt{grq};
-    if(symbol_table.lookup(gen_result_id) == nullptr)
-    {
-      symbolt grs{gen_result_id, return_type, "python"};
-      grs.base_name = grn;
-      grs.is_lvalue = true;
-      grs.is_state_var = true;
-      symbol_table.add(grs);
-    }
-  }
-
-  code_blockt body_block;
-
-  // For generators, initialize __gen_result.length = 0 and zero
-  // the data buffer so list-equality with a literal works for
-  // values beyond the populated length (PLR §6.2.9 + §6.10.1).
-  if(is_generator)
-  {
-    body_block.add(code_frontend_assignt{
-      member_exprt{
-        symbol_table.lookup_ref(gen_result_id).symbol_expr(),
-        "length",
-        signedbv_typet{64}},
-      from_integer(0, signedbv_typet{64})});
-    // Zero the data array via an assignment to a fresh
-    // zero-initialised array of the same type.
-    if(return_type.id() == ID_struct)
-    {
-      const auto &rt = to_struct_type(return_type);
-      if(rt.components().size() >= 2)
-      {
-        const auto &data_t = to_array_type(rt.components()[1].type());
-        exprt::operandst zero_elems;
-        while(zero_elems.size() < PYTHON_MAX_LIST_LENGTH)
-          zero_elems.push_back(safe_zero(data_t.element_type()));
-        body_block.add(code_frontend_assignt{
-          member_exprt{
-            symbol_table.lookup_ref(gen_result_id).symbol_expr(),
-            "data",
-            data_t},
-          array_exprt{std::move(zero_elems), data_t}});
-      }
-    }
-  }
+    gen_result_id =
+      setup_generator_result(qualified_func_name, return_type, body_block);
 
   // Phase 2 of the icontract integration plan: lower each
   // @require lambda to (a) a __CPROVER_assume at the start of
@@ -2967,10 +2970,8 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         // No annotation: infer from the body via the shared scanner
         // (the same one convert_function_def uses for free functions),
         // which covers class-instance / self / dict / list / tuple
-        // returns. Generators and pure fall-through keep the int
-        // default — generator methods need machinery convert_class_def
-        // does not emit, and a method that falls off the end has
-        // historically returned int here.
+        // returns and generator yields.
+        bool method_is_generator = false;
         if(returns.is_null() && method_name != "__init__")
         {
           inferred_returnt inf = infer_return_type_from_body(
@@ -2978,7 +2979,15 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             parameters,
             class_name + "::" + method_name,
             class_name);
-          if(!inf.has_yield && inf.type.id() != ID_empty)
+          if(inf.has_yield)
+          {
+            // PLR §6.2.9: generator method returns an eager list; the
+            // yield-append / return rewrites key on current_function.
+            return_type = python_list_type(inf.yield_element_type);
+            generator_functions.insert(class_name + "::" + method_name);
+            method_is_generator = true;
+          }
+          else if(inf.type.id() != ID_empty)
             return_type = inf.type;
         }
 
@@ -3069,6 +3078,13 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           }
 
           code_blockt method_body;
+
+          // PLR §6.2.9: initialise the generator's eager result list
+          // at method entry (before any yield in the body).
+          irep_idt method_gen_result_id;
+          if(method_is_generator)
+            method_gen_result_id = setup_generator_result(
+              class_name + "::" + method_name, return_type, method_body);
 
           // Phase 6 of the icontract integration plan:
           // translate each class-level @icontract.invariant
@@ -3564,6 +3580,12 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           {
             for(const auto &s : as_array(method_body_json))
               method_body.add(convert_statement(s));
+
+            // PLR §6.2.9: a generator method falls off the end returning
+            // its eager result list.
+            if(method_is_generator)
+              method_body.add(code_frontend_returnt{
+                symbol_table.lookup_ref(method_gen_result_id).symbol_expr()});
           }
 
           // Phase 6 of the icontract integration plan: inject
