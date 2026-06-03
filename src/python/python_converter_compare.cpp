@@ -2238,6 +2238,10 @@ exprt python_convertert::convert_compare(const jsont &expr)
           const auto &keys_type = to_array_type(dict_st.components()[1].type());
           member_exprt length{container, "length", signedbv_typet{64}};
           member_exprt keys{container, "keys", keys_type};
+          // Wrap the query once (not per key) for value-domain compares.
+          exprt wrapped_item = is_python_value_type(keys_type.element_type())
+                                 ? wrap_value(item)
+                                 : item;
           exprt in_expr = false_exprt{};
           for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
           {
@@ -2250,7 +2254,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
               // Value-typed (heterogeneous) keys: compare in the
               // value domain (tag-aware), mirroring the subscript
               // read. PLR §6.10.1.
-              match = value_equal(key_i, wrap_value(item));
+              match = value_equal(key_i, wrapped_item);
             }
             else if(
               is_python_string_type(item.type()) &&
