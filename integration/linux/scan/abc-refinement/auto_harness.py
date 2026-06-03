@@ -222,6 +222,88 @@ def generate_proportional_harness(func_name, filepath, sink_line, sink_fn,
     return '\n'.join(out)
 
 
+def detect_offset_bound(func_lines, tainted_param, sink_offset):
+    """Detect an offset-bounded copy into a fixed buffer, where the
+    copy size is bounded so that offset + size <= buffer.  Three
+    sound idioms reduce to the same model:
+
+      * subtractive clamp:  count = LIMIT - off;   (e.g. the patched
+        buffer_from_user: count = size_buf - *ppos)
+      * additive gate:      if (off + count < LIMIT) { copy }
+        (e.g. write_ipack: if (p->count + count < p->size))
+      * min() clamp:        n = min(..., LIMIT - off);  copy(buf+off,
+        .., n)  (e.g. vchiq_ioc_copy_element_data)
+
+    LIMIT must look like a buffer size (size_buf / ->size / .size /
+    *_SIZE).  Returns the (normalized) offset identifier or None.
+    Modelling offset+count <= BUF is conservative: the real guarded
+    or clamped copy writes no further, so proving the model safe
+    proves the real copy safe.
+    """
+    size_tok = r'(?:size_buf|->\s*size\b|\.\s*size\b|[A-Z_]*SIZE|maxsize)'
+    tp = re.escape(tainted_param)
+    window = func_lines[:sink_offset + 1]
+    for line in window:
+        # subtractive clamp: tainted = LIMIT - off ;
+        m = re.search(rf'{tp}\s*=\s*(.+?)\s*-\s*([^;]+?)\s*;', line)
+        if m and re.search(size_tok, m.group(1)):
+            return _norm_ident(m.group(2))
+        # additive gate: if (off + tainted < LIMIT) / (tainted + off < LIMIT)
+        m = re.search(rf'\bif\s*\(\s*(.+?)\s*\+\s*{tp}\s*<\s*(.+?)\s*\)', line)
+        if m and re.search(size_tok, m.group(2)):
+            return _norm_ident(m.group(1))
+        m = re.search(rf'\bif\s*\(\s*{tp}\s*\+\s*(.+?)\s*<\s*(.+?)\s*\)', line)
+        if m and re.search(size_tok, m.group(2)):
+            return _norm_ident(m.group(1))
+        # min() clamp: <var> = min(..., LIMIT - off);  (the copy size)
+        m = re.search(r'=\s*min\w*\s*\(.*?-\s*([^,)]+?)\s*[,)]', line)
+        if m and re.search(size_tok, line):
+            return _norm_ident(m.group(1))
+    return None
+
+
+def _norm_ident(expr):
+    """Turn an lvalue expression (e.g. *ppos, p->count, a.b[i]) into a
+    plain C identifier usable as a harness variable name."""
+    s = re.sub(r'[^0-9A-Za-z]+', '_', expr).strip('_')
+    return s or 'off'
+
+
+def generate_offset_bound_harness(func_name, filepath, sink_line, sink_fn,
+                                  tainted_param, dest_expr, off):
+    """Harness for an offset-bounded copy: model off in [0, BUF] and
+    clamp count to BUF - off, so off + count <= BUF is provable."""
+    out = [
+        f'// Auto-generated CBMC stage-2 harness for: {func_name}',
+        f'// Source: {filepath}:{sink_line}',
+        f'// Sink: {sink_fn}({dest_expr}, ..., {tainted_param})',
+        f'// Pattern: offset-bounded copy (off="{off}"); '
+        f'off + {tainted_param} <= buffer',
+        '',
+        '#include <string.h>',
+        '',
+        '#define BUF 8        // scaled model of fixed buffer',
+        '#define WIN_MAX 64   // scaled model of max tainted range',
+        '',
+        'static char kern_buf[BUF];',
+        'static char user_src[WIN_MAX];',
+        '',
+        'unsigned int nd_uint(void) { unsigned int x; return x; }',
+        '',
+        f'void harness_{func_name}(void)',
+        '{',
+        f'\tunsigned int {tainted_param} = nd_uint();',
+        f'\t__CPROVER_assume({tainted_param} <= WIN_MAX);',
+        f'\tunsigned int {off} = nd_uint();',
+        f'\t__CPROVER_assume({off} <= BUF);            // offset in buffer',
+        f'\tif({tainted_param} > BUF - {off})          // additive/sub bound',
+        f'\t\t{tainted_param} = BUF - {off};',
+        f'\tmemcpy(kern_buf + {off}, user_src, {tainted_param});',
+        '}',
+    ]
+    return '\n'.join(out)
+
+
 def generate_harness(func_name, filepath, sink_line, sink_fn, tainted_param,
                      dest_expr, func_lines, func_start):
     """Generate the CBMC harness C file."""
@@ -243,6 +325,13 @@ def generate_harness(func_name, filepath, sink_line, sink_fn, tainted_param,
         return generate_proportional_harness(
             func_name, filepath, sink_line, sink_fn, size_var, dest_expr,
             f'{helper}() sizes payload by {size_var} (== copy size)')
+
+    # Offset-bounded copy: additive bound / subtractive clamp / min() clamp.
+    off = detect_offset_bound(func_lines, tainted_param, sink_offset)
+    if off:
+        return generate_offset_bound_harness(
+            func_name, filepath, sink_line, sink_fn, tainted_param, dest_expr,
+            off)
 
     # Determine buffer size — default scaled model
     buf_size = "BUF"

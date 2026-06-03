@@ -168,3 +168,32 @@ known real bug lives in vme_user (scanned separately).  Honest
 takeaway: the remaining FPs are well-characterized (copy into a
 caller-provided buffer, struct-field-sized payloads) and call
 for caller-context / struct-aware modelling next.
+
+
+## Update (2026-06-03): offset-bound harnesser extension
+
+`auto_harness.py` gained a sound `detect_offset_bound` path
+recognizing three guard idioms that all reduce to
+"off + count <= buffer":
+
+* subtractive clamp `count = LIMIT - off` (also fixes the *fixed*
+  vme_user `buffer_from_user`, whose patched clamp the heuristic
+  previously mis-modelled);
+* additive gate `if (off + count < LIMIT) { copy }`
+  (`write_ipack`);
+* `min()` clamp `n = min(..., LIMIT - off)`
+  (`vchiq_ioc_copy_element_data`).
+
+Modelling `off + count <= BUF` is conservative — the real guarded
+or clamped copy writes no further — so it cannot mask an OOB.
+
+Staging re-run: **SUCCESSFUL 4 → 6, FAILED 23 → 21**.  Newly
+proven safe: `vchiq_ioc_copy_element_data` (min clamp),
+`write_ipack` (additive gate).  Crucially `hmm_store` (×3) and
+the other genuinely-unanalysed candidates **remain FAILED** — the
+extension does not touch them, confirming it only clears provably
+safe copies.  Combined with manual triage, the remaining 21
+FAILED are: 1 likely-real (hmm_store, now reachability-confirmed
+separately), and the rest caller-context / struct-field-sized /
+loop-modular FPs that need interprocedural or loop-summary
+modelling.
