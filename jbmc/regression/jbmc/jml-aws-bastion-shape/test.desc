@@ -1,5 +1,5 @@
 CORE
-UserGranularityCheckAdder
+privacy.UserGranularityCheckAdder
 --function "privacy.UserGranularityCheckAdder.validate:(Lprivacy/ColumnAttributes;)V" --jml-source src/main/kotlin/privacy/UserGranularityCheckAdder.kt --unwind 3 -cp target/classes
 ^EXIT=0$
 ^SIGNAL=0$
