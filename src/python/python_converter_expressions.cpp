@@ -421,6 +421,9 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       // __int_val could spuriously equal an int query. Compare in the
       // value domain (tag-aware) against the wrapped query instead.
       bool keys_are_values = is_python_value_type(keys_type.element_type());
+      // Wrap the query once (not per key): value_equal compares it
+      // against each value-typed key in the value domain.
+      exprt wrapped_slice = keys_are_values ? wrap_value(slice) : slice;
 
       // Scan: result = values[i] where keys[i] == slice
       exprt result =
@@ -434,7 +437,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         exprt match;
         if(keys_are_values)
         {
-          match = value_equal(key_i, wrap_value(slice));
+          match = value_equal(key_i, wrapped_slice);
         }
         else if(keys_are_strings && is_python_string_type(slice.type()))
         {
