@@ -1,0 +1,139 @@
+=== vme_user SLAVE-path OOB test (patched buf 0x20040, non-pow2) ===
+[    3.994642] vme_user: module is from the staging directory, the quality is unknown, you have been warned.
+[    3.996857] vme_user: VME User Space Access Driver
+[    4.008198] busybox (65) used greatest stack depth: 26904 bytes left
+[    4.101487] input: ImExPS/2 Generic Explorer Mouse as /devices/platform/i8042/serio1/input/input3
+total 0
+crw-------    1 0        0         221,   8 Jun  3 09:13 ctl
+crw-------    1 0        0         221,   0 Jun  3 09:13 m0
+crw-------    1 0        0         221,   1 Jun  3 09:13 m1
+crw-------    1 0        0         221,   2 Jun  3 09:13 m2
+crw-------    1 0        0         221,   3 Jun  3 09:13 m3
+crw-------    1 0        0         221,   4 Jun  3 09:13 s0
+crw-------    1 0        0         221,   5 Jun  3 09:13 s1
+crw-------    1 0        0         221,   6 Jun  3 09:13 s2
+crw-------    1 0        0         221,   7 Jun  3 09:13 s3
+[t] window=0x40000, buf=0x20000
+[    5.021656] ==================================================================
+[    5.022495] BUG: KASAN: slab-out-of-bounds in _copy_from_user+0x2d/0x80
+[    5.023295] Write of size 4096 at addr ffff888004120000 by task trigger/68
+[    5.024060] 
+[    5.024261] CPU: 0 UID: 0 PID: 68 Comm: trigger Tainted: G         C         6.12.87-dirty #3
+[    5.024268] Tainted: [C]=CRAP
+[    5.024269] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.15.0-1 04/01/2014
+[    5.024272] Call Trace:
+[    5.024284]  <TASK>
+[    5.024286]  dump_stack_lvl+0x55/0x70
+[    5.024322]  print_report+0xcb/0x610
+[    5.024341]  ? __virt_addr_valid+0xfb/0x1b0
+[    5.024363]  ? _copy_from_user+0x2d/0x80
+[    5.024368]  kasan_report+0xaf/0xe0
+[    5.024373]  ? _copy_from_user+0x2d/0x80
+[    5.024379]  kasan_check_range+0x39/0x1c0
+[    5.024384]  _copy_from_user+0x2d/0x80
+[    5.024390]  vme_user_write+0x13e/0x240 [vme_user]
+[    5.024397]  vfs_write+0x1b8/0x7a0
+[    5.024406]  ? fake_slave_get+0x12c/0x150
+[    5.024431]  ? __pfx_vfs_write+0x10/0x10
+[    5.024435]  ? vme_get_size+0xc9/0x1b0
+[    5.024439]  ? __pfx_vme_get_size+0x10/0x10
+[    5.024444]  ? fdget_pos+0xca/0x220
+[    5.024458]  ksys_write+0xb8/0x150
+[    5.024461]  ? __pfx_ksys_write+0x10/0x10
+[    5.024465]  ? vme_user_llseek+0xab/0xc0 [vme_user]
+[    5.024471]  ? fpregs_assert_state_consistent+0x56/0x60
+[    5.024482]  do_syscall_64+0xa6/0x1b0
+[    5.024505]  entry_SYSCALL_64_after_hwframe+0x77/0x7f
+[    5.024524] RIP: 0033:0x4479f7
+[    5.024527] Code: ff ff f7 d8 64 89 02 48 c7 c0 ff ff ff ff eb b7 0f 1f 00 f3 0f 1e fa 64 8b 04 25 18 00 00 00 85 c0 75 10 b8 01 00 00 00 0f 05 <48> 3d 00 f0 ff ff 77 51 c3 48 83 ec 28 48 89 54 24 18 48 89 74 24
+[    5.024534] RSP: 002b:00007ffd7c6c1068 EFLAGS: 00000246 ORIG_RAX: 0000000000000001
+[    5.024545] RAX: ffffffffffffffda RBX: 00007ffd7c6c2298 RCX: 00000000004479f7
+[    5.024548] RDX: 0000000000001000 RSI: 00007ffd7c6c1090 RDI: 0000000000000003
+[    5.024551] RBP: 0000000000000003 R08: 00007ffd7c6c0e80 R09: 0000000016599770
+[    5.024554] R10: 000000000000006f R11: 0000000000000246 R12: 0000000000000001
+[    5.024561] R13: 00007ffd7c6c2288 R14: 00000000004c17d0 R15: 0000000000000001
+[    5.024565]  </TASK>
+[    5.024567] 
+[    5.044385] The buggy address belongs to the physical page:
+[    5.045019] page: refcount:1 mapcount:0 mapping:0000000000000000 index:0x0 pfn:0x4100
+[    5.045882] head: order:6 mapcount:0 entire_mapcount:0 nr_pages_mapped:0 pincount:0
+[    5.046722] flags: 0x100000000000040(head|node=0|zone=1)
+[    5.047323] raw: 0100000000000040 0000000000000000 dead000000000122 0000000000000000
+[    5.048174] raw: 0000000000000000 0000000000000000 00000001ffffffff 0000000000000000
+[    5.049024] head: 0100000000000040 0000000000000000 dead000000000122 0000000000000000
+[    5.049881] head: 0000000000000000 0000000000000000 00000001ffffffff 0000000000000000
+[    5.050737] head: 0100000000000006 ffffea0000104001 ffffffffffffffff 0000000000000000
+[    5.051597] head: 0000000000000040 0000000000000000 00000000ffffffff 0000000000000000
+[    5.052453] page dumped because: kasan: bad access detected
+[    5.053072] 
+[    5.053263] Memory state around the buggy address:
+[    5.053799]  ffff88800411ff00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[    5.054595]  ffff88800411ff80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[    5.055404] >ffff888004120000: 00 00 00 00 00 00 00 00 fe fe fe fe fe fe fe fe
+[    5.056197]                                            ^
+[    5.056786]  ffff888004120080: fe fe fe fe fe fe fe fe fe fe fe fe fe fe fe fe
+[    5.057580]  ffff888004120100: fe fe fe fe fe fe fe fe fe fe fe fe fe fe fe fe
+[    5.058370] ==================================================================
+[    5.059182] Disabling lock debugging due to kernel taint
+[t] write@0x20000: 4096
+[    5.060298] ==================================================================
+[    5.061117] BUG: KASAN: slab-out-of-bounds in _copy_from_user+0x2d/0x80
+[    5.061849] Write of size 262144 at addr ffff888004100000 by task trigger/68
+[    5.062632] 
+[    5.062824] CPU: 0 UID: 0 PID: 68 Comm: trigger Tainted: G    B    C         6.12.87-dirty #3
+[    5.062831] Tainted: [B]=BAD_PAGE, [C]=CRAP
+[    5.062833] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.15.0-1 04/01/2014
+[    5.062835] Call Trace:
+[    5.062838]  <TASK>
+[    5.062839]  dump_stack_lvl+0x55/0x70
+[    5.062846]  print_report+0xcb/0x610
+[    5.062852]  ? __virt_addr_valid+0xfb/0x1b0
+[    5.062857]  ? _copy_from_user+0x2d/0x80
+[    5.062861]  kasan_report+0xaf/0xe0
+[    5.062865]  ? _copy_from_user+0x2d/0x80
+[    5.062871]  kasan_check_range+0x39/0x1c0
+[    5.062876]  _copy_from_user+0x2d/0x80
+[    5.062881]  vme_user_write+0x13e/0x240 [vme_user]
+[    5.062888]  vfs_write+0x1b8/0x7a0
+[    5.062893]  ? __pfx_vfs_write+0x10/0x10
+[    5.062898]  ? fdget_pos+0xca/0x220
+[    5.062903]  ksys_write+0xb8/0x150
+[    5.062912]  ? __pfx_ksys_write+0x10/0x10
+[    5.062918]  ? __rcu_read_unlock+0x46/0x70
+[    5.062941]  ? do_user_addr_fault+0x3c1/0x650
+[    5.062949]  do_syscall_64+0xa6/0x1b0
+[    5.062955]  entry_SYSCALL_64_after_hwframe+0x77/0x7f
+[    5.062963] RIP: 0033:0x4479f7
+[    5.062966] Code: ff ff f7 d8 64 89 02 48 c7 c0 ff ff ff ff eb b7 0f 1f 00 f3 0f 1e fa 64 8b 04 25 18 00 00 00 85 c0 75 10 b8 01 00 00 00 0f 05 <48> 3d 00 f0 ff ff 77 51 c3 48 83 ec 28 48 89 54 24 18 48 89 74 24
+[    5.062970] RSP: 002b:00007ffd7c6c1068 EFLAGS: 00000246 ORIG_RAX: 0000000000000001
+[    5.062975] RAX: ffffffffffffffda RBX: 00007ffd7c6c2298 RCX: 00000000004479f7
+[    5.062978] RDX: 0000000000040000 RSI: 00000000004c7300 RDI: 0000000000000003
+[    5.062980] RBP: 0000000000000003 R08: 00000000004c7300 R09: 0000000000000000
+[    5.062983] R10: 000000000000000a R11: 0000000000000246 R12: 0000000000000001
+[    5.062987] R13: 00007ffd7c6c2288 R14: 00000000004c17d0 R15: 0000000000000001
+[    5.062991]  </TASK>
+[    5.062993] 
+[    5.081360] The buggy address belongs to the physical page:
+[    5.081969] page: refcount:1 mapcount:0 mapping:0000000000000000 index:0x0 pfn:0x4100
+[    5.082817] head: order:6 mapcount:0 entire_mapcount:0 nr_pages_mapped:0 pincount:0
+[    5.083649] flags: 0x100000000000040(head|node=0|zone=1)
+[    5.084241] raw: 0100000000000040 0000000000000000 dead000000000122 0000000000000000
+[    5.085083] raw: 0000000000000000 0000000000000000 00000001ffffffff 0000000000000000
+[    5.085921] head: 0100000000000040 0000000000000000 dead000000000122 0000000000000000
+[    5.086772] head: 0000000000000000 0000000000000000 00000001ffffffff 0000000000000000
+[    5.087624] head: 0100000000000006 ffffea0000104001 ffffffffffffffff 0000000000000000
+[    5.088475] head: 0000000000000040 0000000000000000 00000000ffffffff 0000000000000000
+[    5.089324] page dumped because: kasan: bad access detected
+[    5.089935] 
+[    5.090128] Memory state around the buggy address:
+[    5.090659]  ffff88800411ff00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[    5.091446]  ffff88800411ff80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[    5.092238] >ffff888004120000: 00 00 00 00 00 00 00 00 fe fe fe fe fe fe fe fe
+[    5.093025]                                            ^
+[    5.093609]  ffff888004120080: fe fe fe fe fe fe fe fe fe fe fe fe fe fe fe fe
+[    5.094400]  ffff888004120100: fe fe fe fe fe fe fe fe fe fe fe fe fe fe fe fe
+[    5.095190] ==================================================================
+[t] write@0 size=0x40000: 262144
+=== done ===
+[    6.708970] ACPI: PM: Preparing to enter system sleep state S5
+[    6.709924] reboot: Power down

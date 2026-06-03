@@ -259,3 +259,61 @@ produce a slab-OOB KASAN report.  Alternatively, HW KASAN (MTE
 on ARM) or `CONFIG_KASAN_SW_TAGS` with random tag checking would
 detect it.  These are out of scope for this PoC but recorded for
 completeness.
+
+## 12. PATCHED-BUFFER CONFIRMATION (2026-06-03) — KASAN FIRES
+
+The "harder confirmation" above was carried out.  One-line
+kernel change in `drivers/staging/vme_user/vme_user.c`:
+
+```
+-#define PCI_BUF_SIZE  0x20000  /* Size of one slave image buffer */
++#define PCI_BUF_SIZE  0x20040  /* Size of one slave image buffer */
+```
+
+`kmalloc(0x20040)` (131 136 B) no longer fits an order-5 page; it
+is served from an **order-6 (256 KiB) compound page**, leaving
+~128 KiB of redzone past the object — exactly the coverage the
+power-of-2 case lacked.  Rebuilt `vme_user.ko` (KASAN-generic,
+outline), same QEMU/KVM setup, same trigger (256 KiB window,
+256 KiB write).
+
+Result: **KASAN fires in the real driver path.** Captured splat
+(`scan/abc-refinement/poc/vme_user_kasan_splat.log`):
+
+```
+BUG: KASAN: slab-out-of-bounds in _copy_from_user+0x2d/0x80
+Write of size 262144 at addr ffff888004100000 by task trigger/68
+  _copy_from_user+0x2d/0x80
+  vme_user_write+0x13e/0x240 [vme_user]   <-- the flagged function
+  vfs_write+0x1b8/0x7a0
+  ksys_write+0xb8/0x150
+  do_syscall_64+0xa6/0x1b0
+...
+head: order:6 ...                         <-- 256 KiB compound page
+Memory state around the buggy address:
+>ffff888004120000: 00 00 00 00 00 00 00 00 fe fe fe fe fe fe fe fe
+                                           ^                       (redzone)
+```
+
+`RDX=0x40000` (262 144) is the `write` length; the shadow shows
+the 131 136-byte object followed by `fe` (slab) redzone.  This is
+the **same OOB the CBMC stage-2 harness predicted** for
+`buffer_from_user` (FAILED verdict), now observed dynamically in
+`vme_user_write`.
+
+### Honest framing
+
+* The bug exists at the *original* `PCI_BUF_SIZE = 0x20000` too —
+  the copy provably runs 128 KiB past the object (write returns
+  262144 in the unpatched run).  The +64-byte change does not
+  *create* the bug; it only gives KASAN-generic a redzone to
+  observe it, working around the documented power-of-2
+  large-allocation blind spot.
+* The dynamic confirmation therefore validates the static
+  finding end-to-end: CodeQL flagged it, CBMC produced an OOB
+  witness, and KASAN now exhibits the runtime slab-out-of-bounds
+  on the real driver function.
+* The kernel-source edit was reverted after the run; it is a
+  diagnostic instrument, not a proposed fix.  (A real fix clamps
+  `count` against `image[i].size_buf` in `buffer_from_user`, the
+  same clamp `resource_from_user` already has.)
