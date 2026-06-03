@@ -1430,6 +1430,12 @@ private:
   /// Wrap a concrete typed value into a tagged-union value.
   exprt wrap_value(const exprt &e);
 
+  /// Tag-aware equality of two python_value operands (string content
+  /// for STR, scalar payload otherwise). Used to match value-typed
+  /// (heterogeneous) dict keys, where declared-type-gated string
+  /// equality does not apply.
+  exprt value_equal(const exprt &a, const exprt &b);
+
   /// PLR §4.1 (Truth Value Testing): return a `bool_typet`-typed
   /// expression that is true iff `e` is "truthy" in Python.
   ///

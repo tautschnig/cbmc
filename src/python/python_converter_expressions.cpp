@@ -415,6 +415,12 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       // equality so dict comprehensions like {str(i): v for ...}
       // can be looked up via d["0"].
       bool keys_are_strings = is_python_string_type(keys_type.element_type());
+      // PLR §6.10.1: value-typed (heterogeneous) keys cannot be matched
+      // by a declared-type-gated equality — a str key would compare via
+      // struct data-pointer (always miss) and a non-str key's unwrapped
+      // __int_val could spuriously equal an int query. Compare in the
+      // value domain (tag-aware) against the wrapped query instead.
+      bool keys_are_values = is_python_value_type(keys_type.element_type());
 
       // Scan: result = values[i] where keys[i] == slice
       exprt result =
@@ -425,11 +431,15 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         exprt idx = from_integer(i, signedbv_typet{64});
         exprt in_range = binary_relation_exprt{idx, ID_lt, length};
         exprt key_i = index_exprt{keys, idx};
-        if(key_i.type() != slice.type())
-          key_i = safe_typecast(key_i, slice.type());
         exprt match;
-        if(keys_are_strings && is_python_string_type(slice.type()))
+        if(keys_are_values)
         {
+          match = value_equal(key_i, wrap_value(slice));
+        }
+        else if(keys_are_strings && is_python_string_type(slice.type()))
+        {
+          if(key_i.type() != slice.type())
+            key_i = safe_typecast(key_i, slice.type());
           match = emit_string_bool_function(
             ID_cprover_string_equal_func,
             key_i,
@@ -442,6 +452,8 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         }
         else
         {
+          if(key_i.type() != slice.type())
+            key_i = safe_typecast(key_i, slice.type());
           match = equal_exprt{key_i, slice};
         }
         exprt cond = and_exprt{in_range, match};
