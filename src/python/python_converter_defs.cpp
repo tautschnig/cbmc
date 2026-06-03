@@ -2886,6 +2886,12 @@ codet python_convertert::convert_class_def(const jsont &stmt)
               if(!is_typeddict)
                 param_type = pointer_type(param_type);
             }
+            else if(is_python_list_type(param_type))
+              // PLR §3.1: list parameters are passed by reference; the
+              // safe_typecast boundary promotes element types and
+              // copies mutations back. (dict deferred — same element-
+              // conversion needed for keys+values.)
+              param_type = pointer_type(param_type);
           }
 
           code_typet::parametert p{param_type};
