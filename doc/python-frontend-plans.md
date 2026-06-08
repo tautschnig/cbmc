@@ -412,20 +412,21 @@ alarms). Verified against the 2026-06-08 sweep baseline.
   shape:* declarative `@c_intrinsic` domain annotations (depends on
   [§6](#modules)); cross-function tracking of return constants for
   dict/list literals.
-- **`jpl` / `jpl_1` — higher-order polymorphic dispatch (NEW, exposed
+- **`jpl` / `jpl_1` — higher-order function-value call (NEW, exposed
   2026-06-08).** Both newly fail (false positive) after the
   string-refinement scoping fix ([§0](#false-proofs)) removed the vacuity
   that had been masking them. The model reaches `counter == -1`, which
   CPython never does: a state machine filters enabled actions with
   `list_comp(actions, lambda a: a.pre())` then runs
-  `enabled_actions[random.randint(0, len-1)].act()`. The over-approximation
-  is in resolving the virtual `pre()`/`act()` through a lambda passed to a
-  higher-order helper combined with a nondet `random.randint` index — the
-  verifier admits selecting a not-actually-enabled action. Confirmed
-  independent of f-strings (removing the `print(f"…")` lines still reaches
-  `counter == -1`). *Fix shape:* precise per-element virtual dispatch for
-  callables stored/passed through higher-order functions (overlaps
-  [§12](#higher-order)); until then these are sound false positives.
+  `enabled_actions[random.randint(0, len-1)].act()`. Two parts were in
+  play: (a) the lambda's object parameter typed as nondet int — **fixed**
+  (`4d808cefda`, see [§12](#higher-order)); (b) `list_comp` calling its
+  function-valued parameter `condition(action)` → "no body for callee" →
+  nondet, which still admits selecting a not-actually-enabled action.
+  Part (b) is the open function-value-call gap ([§12](#higher-order));
+  until it lands these remain sound false positives. Confirmed independent
+  of f-strings (removing the `print(f"…")` lines still reaches
+  `counter == -1`).
 - **`github` real-world cluster:** many small sub-clusters (int(string,
   base) edge cases, isinstance-narrowing for union params + datetime stub
   fields, reversed-range iteration, list index-out-of-range, fail-shape
@@ -492,16 +493,40 @@ doc's contracts section for the bridge semantics.
 
 **Status: PARTIAL.** Function aliasing (`g = h`), lambda-returning
 functions, and bound-method reassignment are tracked via
-`function_aliases` / `lambda_returning_functions` side-tables. What is
-missing is a first-class **function value** that can be stored in a
-container, passed generically, and called indirectly (true function
-pointers).
+`function_aliases` / `lambda_returning_functions` side-tables.
 
-*Fix shape:* a tagged callable handle (code-symbol id + captured cells)
-usable as a list/dict element and a `python_value` variant; dispatch at
-indirect call sites. This is the shared dependency for
-[§2 phase 4 (closures through containers)](#closures). **No committed
-scope** — escalates with demand.
+**Object-accessing lambda parameters — FIXED (`4d808cefda`).** A lambda
+parameter used as an object (`lambda p: p.age`, `lambda a: a.m()`) was
+typed by the body heuristic as `int`, so member access / virtual dispatch
+on it was nondet. It is now typed `python_value` (matching regular
+unannotated parameters), so these resolve on the argument's runtime class.
+This is what made the polymorphic-dispatch half of jpl tractable, and it
+also makes object key/predicate lambdas work as arguments to the builtin
+HOFs `filter()` and `map()` (verified).
+
+**Still missing — calling a function *value* indirectly.** A callable
+passed as an argument and invoked through the *parameter* gets "no body
+for callee" → nondet. Pinpointed cases:
+- a **user-defined** higher-order function (`def list_comp(xs, cond):
+  ... cond(x) ...` called with a lambda — the jpl/jpl_1 pattern);
+- an **immediately-applied** lambda `(lambda a: a.x)(obj)`;
+- `sorted(key=...)` over objects (separate from filter/map, which work).
+
+These are the same first-class **function value** gap: a callable that can
+be stored in a container, passed generically, and called indirectly.
+
+*Fix shape:* the cleanest sound design is **per-call-site monomorphisation**
+— at a call `hof(..., f, ...)` where `f` is a lambda/function and the
+callee invokes the corresponding parameter, clone the callee, bind the
+parameter to `f` (the existing `function_aliases` + body re-conversion
+that decorators already use), and call the clone. A clone per call site
+keeps it sound when the same HOF is called with different callables.
+Alternatively, a tagged callable handle (code-symbol id + captured cells)
+as a `python_value` variant with function-pointer dispatch at indirect
+call sites. Both are non-trivial (symbol cloning / captures / recursion,
+or function-pointer modelling with JBMC blast radius); **no committed
+scope** — escalates with demand. This is also the shared dependency for
+[§2 phase 4 (closures through containers)](#closures).
 
 ---
 
