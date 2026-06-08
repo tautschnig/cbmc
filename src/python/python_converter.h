@@ -494,6 +494,12 @@ private:
 
   /// Map from variable name to function symbol (for lambda assignments)
   std::map<std::string, irep_idt> function_aliases;
+  /// §12 higher-order monomorphisation: cache of specialised clones of a
+  /// user higher-order function keyed by "<hof_id>$mono$<callable_ids>",
+  /// so the same call pattern (e.g. a loop body) reuses one clone and
+  /// distinct callables get distinct, sound clones.
+  std::map<std::string, irep_idt> monomorph_cache;
+  unsigned monomorph_counter = 0;
   /// §10 path-sensitive callable dispatch: per qualified name, the
   /// ordered list of distinct callable targets it has been bound to
   /// (e.g. `if c: h=f else: h=g` records [f, g]). Unlike
@@ -1251,8 +1257,23 @@ private:
     const std::string &func_name,
     const jsont &args);
 
-  /// Dispatch the built-in free-function group (handled by
-  /// python_converter_call_builtins.cpp): map / zip / filter /
+  /// §12 higher-order monomorphisation. If \p hof_sym is a user
+  /// function with a parameter that is *called* in its body and the
+  /// matching positional argument in \p args is a resolvable callable
+  /// (a lambda, or a name bound to a function/lambda), build (or reuse)
+  /// a specialised clone of the function with that parameter bound to
+  /// the callable, and report the clone plus which positional argument
+  /// slots are the (now redundant) callable arguments. Returns true and
+  /// fills \p clone_id / \p callable_positions on success; returns false
+  /// (leaving the normal nondet-on-indirect-call path) otherwise.
+  bool try_monomorphise_call(
+    const std::string &func_name,
+    const jsont &args,
+    const symbolt &hof_sym,
+    const irep_idt &hof_id,
+    irep_idt &clone_id,
+    std::set<std::size_t> &callable_positions);
+
   /// iter / next / len / int / float / bool / print / input /
   /// hex / oct / bin / repr / ascii / hash / chr / ord /
   /// complex / dict / set / list / reversed / enumerate /
