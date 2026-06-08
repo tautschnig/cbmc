@@ -37,7 +37,8 @@ exprt python_convertert::convert_lambda(const jsont &expr)
     // double. This matches Python's dynamic typing where the
     // arithmetic forces the operand to be promoted to float.
     std::function<bool(const jsont &)> body_uses_float =
-      [&](const jsont &n) -> bool {
+      [&](const jsont &n) -> bool
+    {
       if(!n.is_object())
       {
         if(n.is_array())
@@ -156,6 +157,7 @@ exprt python_convertert::convert_lambda(const jsont &expr)
       [&](const std::string &pname) -> std::optional<typet>
     {
       std::optional<typet> chosen;
+      bool used_as_object = false;
       auto promote = [&](const typet &t)
       {
         if(!chosen.has_value())
@@ -206,6 +208,20 @@ exprt python_convertert::convert_lambda(const jsont &expr)
             for(const auto &e : as_array(n))
               walk(e);
           return;
+        }
+        // Attribute access on the param (`a.attr`, or a method
+        // call `a.method()` which is Call(func=Attribute(value=a)))
+        // means the param is an OBJECT. Type it as the universal
+        // tagged union python_value, exactly as an unannotated
+        // regular-function parameter is typed, so attribute reads
+        // and virtual method dispatch resolve on the argument's
+        // runtime class tag instead of collapsing to a nondet int.
+        // Without this, `lambda a: a.f()` typed `a` as int and every
+        // member access on it was nondet (jpl / sorted-key idioms).
+        if(is_node_type(n, "Attribute"))
+        {
+          if(is_param_name(json_member(n, "value")))
+            used_as_object = true;
         }
         // Compare: param < / > / == Constant
         if(is_node_type(n, "Compare"))
@@ -272,6 +288,8 @@ exprt python_convertert::convert_lambda(const jsont &expr)
         }
       };
       walk(body_expr);
+      if(used_as_object)
+        return python_value_type();
       return chosen;
     };
     for(const auto &param : as_array(params))
