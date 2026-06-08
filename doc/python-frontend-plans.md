@@ -291,11 +291,15 @@ sweep.
   `nondet_list5` (loop-unwinding sensitivity), `nondet_dict14`
   (`k in x` membership on nondet-content string keys — needs richer
   string-solver modelling).
-- **TIMEOUT tests (PLANNED per-test, 8 open):** `dict65`, `github_3626`,
-  `github_3667_2`, `github_3684`, `list31`, `nondet_list6`, `shedskin`,
-  `string-nondet-in-success`. No shared root cause — each needs a profile
-  to find the hot path (dict `.items()` schema-walking, type-promotion
-  multiplication, symbolic-size × bounded-unroll interactions).
+- **TIMEOUT tests (PLANNED per-test, 12 open):** as of the
+  2026-06-08 baseline (`PASS 2905`): `dict65`, `github_3560_1`,
+  `github_3560_3`, `github_3560_4`, `github_3626-nondet`,
+  `github_3667_2-nondet`, `github_3684`, `list31`, `nondet_dict13_fail`,
+  `nondet_list6`, `redundancy`, `shedskin`. (The inline-string change did
+  not move these — they are not string-refinement bound.) No shared root
+  cause — each needs a profile to find the hot path (dict `.items()`
+  schema-walking, type-promotion multiplication, symbolic-size ×
+  bounded-unroll interactions).
 - **`math` / `complex` precision (PARTIAL, ~38 / ~36 tests):** per-function
   domain handling and complex arithmetic modelling. *Fix shape:* declarative
   `@c_intrinsic` domain annotations (depends on [§6](#modules)); model
