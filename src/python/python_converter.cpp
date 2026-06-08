@@ -2588,34 +2588,80 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
     const typet &p_base = to_pointer_type(target).base_type();
     bool e_lvalue = e.id() == ID_symbol || e.id() == ID_member ||
                     e.id() == ID_index || e.id() == ID_dereference;
-    // PLR §3.1: a list[T] argument bound to a list[python_value]*
-    // parameter cannot be passed by raw pointer reinterpret (element
-    // layouts differ). Promote each element via wrap_value into a temp
-    // list[value], pass its address, and — for an lvalue arg — copy the
-    // (possibly mutated) elements back into the caller's storage after
-    // the call so mutations propagate. Mirrors the free-function path.
-    if(
-      is_python_list_type(p_base) && is_python_list_type(e.type()) &&
-      p_base != e.type() &&
-      is_python_value_type(
-        to_array_type(to_struct_type(p_base).components()[1].type())
-          .element_type()))
+    // PLR §3.1: a container argument (list / dict) bound to a
+    // by-reference parameter whose element types differ cannot be passed
+    // by raw pointer reinterpret — the element layouts differ. When the
+    // difference is a value-widening (a concrete element type → the
+    // python_value tagged union) the argument is *promotable*: each
+    // widened array component is rebuilt element-wise via wrap_value into
+    // a temp of the parameter type, its address is passed, and — for an
+    // lvalue arg — the (possibly mutated) elements are copied back so
+    // mutations propagate. This is the shared list/dict/set boundary.
+    //
+    // The soundness guard: only the value-widened components are written
+    // back; a component that differs in a non-widening way (e.g. str vs
+    // int dict KEYS) is *not* promotable, so we fall back to a by-value
+    // temp (element-wise convert, no write-back) — identical to the
+    // pre-by-reference behaviour, never an unsound reinterpret.
+    bool same_container =
+      (is_python_list_type(p_base) && is_python_list_type(e.type())) ||
+      (is_python_dict_type(p_base) && is_python_dict_type(e.type()));
+    if(same_container && p_base != e.type())
     {
-      const auto &src_data_t =
-        to_array_type(to_struct_type(e.type()).components()[1].type());
-      const auto &dst_data_t =
-        to_array_type(to_struct_type(p_base).components()[1].type());
-      const typet elem_t = src_data_t.element_type();
-      member_exprt sl{e, "length", signedbv_typet{64}};
-      member_exprt sd{e, "data", src_data_t};
-      exprt::operandst elems;
-      for(std::size_t k = 0; k < (std::size_t)PYTHON_MAX_LIST_LENGTH; k++)
-        elems.push_back(
-          wrap_value(index_exprt{sd, from_integer(k, signedbv_typet{64})}));
-      exprt promoted =
-        struct_exprt{{sl, array_exprt{std::move(elems), dst_data_t}}, p_base};
-      static unsigned lp_ctr = 0;
-      irep_idt tid{qualify_name("__byref_list_" + std::to_string(lp_ctr++))};
+      const auto &dst_st = to_struct_type(p_base);
+      const auto &src_st = to_struct_type(e.type());
+      auto widened = [&](std::size_t c)
+      {
+        const typet &de =
+          to_array_type(dst_st.components()[c].type()).element_type();
+        const typet &se =
+          to_array_type(src_st.components()[c].type()).element_type();
+        return de != se && is_python_value_type(de);
+      };
+      // Promotable iff every differing array component widens to value.
+      bool promotable =
+        dst_st.components().size() == src_st.components().size();
+      for(std::size_t c = 1; promotable && c < dst_st.components().size(); c++)
+      {
+        const typet &de =
+          to_array_type(dst_st.components()[c].type()).element_type();
+        const typet &se =
+          to_array_type(src_st.components()[c].type()).element_type();
+        if(de != se && !is_python_value_type(de))
+          promotable = false;
+      }
+      // Build a temp of the parameter type. For promotable components we
+      // wrap_value element-wise (and remember which to write back); for
+      // matching components we copy as-is; for a non-promotable component
+      // we element-wise safe_typecast (by-value, no write-back).
+      exprt::operandst comps;
+      comps.push_back(member_exprt{
+        e, dst_st.components()[0].get_name(), dst_st.components()[0].type()});
+      for(std::size_t c = 1; c < dst_st.components().size(); c++)
+      {
+        const auto &dst_at = to_array_type(dst_st.components()[c].type());
+        const auto &src_at = to_array_type(src_st.components()[c].type());
+        member_exprt sa{e, src_st.components()[c].get_name(), src_at};
+        if(dst_at.element_type() == src_at.element_type())
+        {
+          comps.push_back(sa);
+          continue;
+        }
+        mp_integer asz;
+        to_integer(to_constant_expr(dst_at.size()), asz);
+        exprt::operandst elems;
+        for(std::size_t k = 0; k < numeric_cast_v<std::size_t>(asz); k++)
+        {
+          exprt el = index_exprt{sa, from_integer(k, signedbv_typet{64})};
+          elems.push_back(
+            widened(c) ? wrap_value(el)
+                       : safe_typecast(el, dst_at.element_type()));
+        }
+        comps.push_back(array_exprt{std::move(elems), dst_at});
+      }
+      exprt promoted = struct_exprt{std::move(comps), p_base};
+      static unsigned cp_ctr = 0;
+      irep_idt tid{qualify_name("__byref_cont_" + std::to_string(cp_ctr++))};
       if(symbol_table.lookup(tid) == nullptr)
       {
         symbolt ts{tid, p_base, "python"};
@@ -2627,18 +2673,29 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
       }
       symbol_exprt bsym = symbol_table.lookup_ref(tid).symbol_expr();
       pending_checks.push_back(code_frontend_assignt{bsym, promoted});
-      if(e_lvalue)
+      // Write mutations back only when the promotion is reversible (every
+      // differing component widened to value) and the arg is an lvalue.
+      if(promotable && e_lvalue)
       {
-        member_exprt bd{bsym, "data", dst_data_t};
-        member_exprt td{e, "data", src_data_t};
-        for(std::size_t k = 0; k < (std::size_t)PYTHON_MAX_LIST_LENGTH; k++)
+        for(std::size_t c = 1; c < dst_st.components().size(); c++)
         {
-          exprt idx = from_integer(k, signedbv_typet{64});
-          exprt back = unwrap_value(index_exprt{bd, idx}, elem_t);
-          if(back.type() != elem_t)
-            back = safe_typecast(back, elem_t);
-          pending_post_checks.push_back(
-            code_frontend_assignt{index_exprt{td, idx}, back});
+          const auto &dst_at = to_array_type(dst_st.components()[c].type());
+          const auto &src_at = to_array_type(src_st.components()[c].type());
+          member_exprt ba{bsym, dst_st.components()[c].get_name(), dst_at};
+          member_exprt ta{e, src_st.components()[c].get_name(), src_at};
+          const typet et = src_at.element_type();
+          mp_integer asz;
+          to_integer(to_constant_expr(dst_at.size()), asz);
+          for(std::size_t k = 0; k < numeric_cast_v<std::size_t>(asz); k++)
+          {
+            exprt idx = from_integer(k, signedbv_typet{64});
+            exprt src_el = index_exprt{ba, idx};
+            exprt back = widened(c) ? unwrap_value(src_el, et) : exprt{src_el};
+            if(back.type() != et)
+              back = safe_typecast(back, et);
+            pending_post_checks.push_back(
+              code_frontend_assignt{index_exprt{ta, idx}, back});
+          }
         }
         pending_post_checks.push_back(code_frontend_assignt{
           member_exprt{e, "length", signedbv_typet{64}},

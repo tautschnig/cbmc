@@ -2886,14 +2886,17 @@ codet python_convertert::convert_class_def(const jsont &stmt)
               if(!is_typeddict)
                 param_type = pointer_type(param_type);
             }
-            else if(is_python_list_type(param_type))
-              // PLR §3.1: list parameters are passed by reference; the
-              // safe_typecast boundary promotes element types and
-              // copies mutations back. dict is NOT wrapped: a bare
-              // `dict` defaults to dict[str, value], so an int-keyed
-              // argument can't be promoted (str-vs-int keys is not a
-              // value-widening) — needs a uniform dict[value, value]
-              // representation first.
+            else if(
+              is_python_list_type(param_type) ||
+              is_python_dict_type(param_type))
+              // PLR §3.1: list / dict parameters are passed by
+              // reference. The safe_typecast boundary promotes
+              // value-widened element components and copies mutations
+              // back; for a dict whose KEY type genuinely differs from
+              // the argument (not a value-widening) it falls back to a
+              // by-value temp, so this is sound and never regresses the
+              // by-value behaviour. (set is a bitmap struct, not
+              // array-shaped, so it is not wrapped here.)
               param_type = pointer_type(param_type);
           }
 
