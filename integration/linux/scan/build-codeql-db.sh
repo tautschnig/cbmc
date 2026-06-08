@@ -37,7 +37,13 @@ fi
 [ "$PATCHED" = 0 ] && echo "  no known gate found (already patched or new layout?)"
 
 echo "=== [2/5] Clean target objects ==="
-find "$TREE/$TARGET" -name '*.o' -delete 2>/dev/null || true
+# $TARGET may list MULTIPLE space-separated make targets; clean each one
+# individually (a single `find "$TREE/$TARGET"` would treat the whole
+# space-joined string as one nonexistent path and silently clean nothing,
+# leaving stale .o files that block recompilation -> empty extraction).
+for _t in $TARGET; do
+  find "$TREE/$_t" -name '*.o' -delete 2>/dev/null || true
+done
 echo "  cleaned $TARGET"
 
 echo "=== [3/5] Create CodeQL database ==="
@@ -60,8 +66,11 @@ select f, f.getAbsolutePath()
 QLEOF
 codeql query run --database="$DB" --additional-packs=/home/ubuntu/codeql/qlpacks \
   --output=/tmp/_cov.bqrs "$QLDIR/_cov_check.ql" 2>&1 | tail -1
-TOTAL_C=$(find "$TREE/$TARGET" -name '*.c' | wc -l)
-BODIES=$(codeql bqrs decode --format=csv /tmp/_cov.bqrs 2>/dev/null | grep -c "$TARGET")
+TOTAL_C=$(for _t in $TARGET; do find "$TREE/$_t" -name '*.c'; done | wc -l)
+BODIES=0
+for _t in $TARGET; do
+  BODIES=$((BODIES + $(codeql bqrs decode --format=csv /tmp/_cov.bqrs 2>/dev/null | grep -c "$_t")))
+done
 echo "  $TARGET: $BODIES / $TOTAL_C .c files have extracted bodies"
 if [ "$BODIES" -lt "$((TOTAL_C * 7 / 10))" ]; then
   echo "  WARNING: <70% coverage — check extractor logs for parse errors"
