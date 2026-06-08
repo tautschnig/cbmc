@@ -67,36 +67,31 @@ The genuine false proofs and their status (2026-06-08):
   `from X import <constant>`; also repaired the errno/signal library test
   that had been passing vacuously).
 - **`class-attributes_fail` — DEFERRED, root-caused (string-refinement
-  temp aliasing).** A genuinely-false final assert
-  (`my_car.get_age(2025) == 4`, actually 3) verifies SUCCESSFUL because
-  the path is **vacuous**. Bisected minimal trigger: an f-string-returning
+- **`class-attributes_fail` — FIXED (commit `f1ea65ad1b`;
+  string-refinement temp scoping).** A genuinely-false final assert
+  (`my_car.get_age(2025) == 4`, actually 3) verified SUCCESSFUL because the
+  path was **vacuous**. Bisected minimal trigger: an f-string-returning
   method (`Vehicle.get_info`, `f"{self.year} {self.model}"`) invoked on two
   distinct objects in one run — directly on a base instance *and* via
-  `super().get_info()` from a `Car.get_info` override. Removing either the
-  f-string or the `super()` makes the path feasible again.
-  **Root cause:** `make_nondet_string` (python_converter_helpers.h) names
-  the f-string's string-refinement output symbols
-  (`python::__string_len_N` / `__string_ptr_N`) *per AST node* with no
-  function scope, so every dynamic invocation of the method shares one
-  symbol. The string-refinement backend then piles the content
-  associations from both invocations onto that single symbol, the
-  conjunction is UNSAT, and every later assertion is proved vacuously.
-  This is the same failure the existing `in_loop` havoc addresses for loop
-  iterations — the double-invocation case just isn't `in_loop`.
-  **Fix attempts ruled out (do not retry as-is):** (1) unconditional
-  havoc of the output symbols regresses `github_2992_lower` (its
-  per-instance `.lower()` results exhaust CBMC's object cap → uncaught
-  exception); (2) a targeted `force_havoc` on only the f-string
-  concat/int/float emissions *does* fix this test, but the havoc assigns a
-  **nondet pointer**, and the extra pending-check assignments perturb
-  SSA/constraint ordering enough to expose a latent nondet counterexample
-  in `jpl`/`jpl_1` (their `list_comp`+lambda precondition filtering), a
-  net-negative trade. **Correct fix (deferred):** give the string-refinement
-  output symbols proper *function-local* scope (a per-function name plus a
-  `code_declt`) so symex grants each invocation a fresh instance without a
-  nondet-pointer havoc and without unbounded fresh objects. This is a
-  focused but non-trivial change to the string-emission machinery (every
-  `make_nondet_string` site) and is left for dedicated work.
+  `super().get_info()` from a `Car.get_info` override.
+  **Root cause:** `make_nondet_string` named the f-string's output symbols
+  (`__string_len_N` / `__string_ptr_N`) globally with no function scope and
+  never DECL'd them, so every dynamic invocation of the method shared one
+  symbol; the refinement backend conjoined both content associations →
+  UNSAT → vacuous proofs. **Fix:** inside a function, the symbols are now
+  named under that function and DECL'd, so symex grants each invocation a
+  fresh instance (the mechanism the `$tmp` call-return temporaries already
+  use). Scope limited to the f-string emission path: scoping string
+  *transforms* whose result escapes the function (`self.x = s.lower()` read
+  after `__init__`, `github_2992_lower`) regresses them because a
+  function-local backing dies at return; f-string results are consumed
+  within evaluation or copied out by value, so scoping is safe there.
+  Two earlier approaches were ruled out: unconditional havoc (regresses
+  `github_2992_lower`'s object cap) and `force_havoc` (its nondet-pointer
+  havoc exposes a latent `jpl`/`jpl_1` counterexample). The DECL approach
+  avoids both. **Side effect:** the fix also removed the (same-mechanism)
+  vacuity that had been masking `jpl`/`jpl_1`; they now surface a separate
+  pre-existing precision gap — see [§9](#precision).
 - **`github_3647_9_fail` — dict mutation during iteration — DEFERRED
   (niche, regression-risky).** `for k, v in d.items(): d["x"] = 3` raises
   `RuntimeError` ("dictionary changed size during iteration") in CPython;
@@ -107,9 +102,14 @@ The genuine false proofs and their status (2026-06-08):
   loop-body analysis with false-positive risk on a common pattern.
   Disproportionate to its niche value; left as a documented residual.
 
-Net: 2 of the 4 genuine false proofs closed cleanly (ESBMC sweep PASS
-2905 → 2907, zero regressions); 2 deferred with precise root causes —
-one deep codegen, one niche-and-regression-risky.
+Net: 3 of the 4 genuine false proofs closed (`github_3647_12_fail`,
+`github_2897_2_fail`, `class-attributes_fail`); only `github_3647_9_fail`
+(dict mutation during iteration — niche) remains deferred. The
+`class-attributes_fail` fix also removed the same-mechanism vacuity that
+had been masking the `jpl`/`jpl_1` sweep entries, which now surface a
+separate pre-existing precision gap (see [§9](#precision)) — i.e. three
+vacuous false proofs eliminated, at the cost of exposing one sound
+precision false-positive.
 
 ---
 
@@ -412,6 +412,20 @@ alarms). Verified against the 2026-06-08 sweep baseline.
   shape:* declarative `@c_intrinsic` domain annotations (depends on
   [§6](#modules)); cross-function tracking of return constants for
   dict/list literals.
+- **`jpl` / `jpl_1` — higher-order polymorphic dispatch (NEW, exposed
+  2026-06-08).** Both newly fail (false positive) after the
+  string-refinement scoping fix ([§0](#false-proofs)) removed the vacuity
+  that had been masking them. The model reaches `counter == -1`, which
+  CPython never does: a state machine filters enabled actions with
+  `list_comp(actions, lambda a: a.pre())` then runs
+  `enabled_actions[random.randint(0, len-1)].act()`. The over-approximation
+  is in resolving the virtual `pre()`/`act()` through a lambda passed to a
+  higher-order helper combined with a nondet `random.randint` index — the
+  verifier admits selecting a not-actually-enabled action. Confirmed
+  independent of f-strings (removing the `print(f"…")` lines still reaches
+  `counter == -1`). *Fix shape:* precise per-element virtual dispatch for
+  callables stored/passed through higher-order functions (overlaps
+  [§12](#higher-order)); until then these are sound false positives.
 - **`github` real-world cluster:** many small sub-clusters (int(string,
   base) edge cases, isinstance-narrowing for union params + datetime stub
   fields, reversed-range iteration, list index-out-of-range, fail-shape
