@@ -3502,7 +3502,8 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
           {
             return t.id() == ID_signedbv || t.id() == ID_floatbv ||
                    t.id() == ID_bool || is_python_string_type(t) ||
-                   is_python_list_type(t) || is_python_tuple_type(t);
+                   is_python_list_type(t) || is_python_tuple_type(t) ||
+                   is_python_dict_type(t) || is_python_set_type(t);
           };
           safe = is_safe(key_t) && is_safe(val_t);
         }
