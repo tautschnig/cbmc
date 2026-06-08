@@ -66,20 +66,37 @@ The genuine false proofs and their status (2026-06-08):
   explicit binding ASSIGN at the import site (whole-group: every
   `from X import <constant>`; also repaired the errno/signal library test
   that had been passing vacuously).
-- **`class-attributes_fail` — DEFERRED (deep codegen).** A genuinely-false
-  final assert (`my_car.get_age(2025) == 4`, actually 3) verifies
-  SUCCESSFUL, but *only* when `Vehicle.get_info` (an f-string method) is
-  invoked on both a base instance and — via `super().get_info()` — a
-  subclass instance before the `get_age` call. The goto shows `my_car`
-  re-constructed (a second `Car::__init__`) between the `get_info` asserts
-  and `get_age`, `get_age` called through `cast(address_of(my_car),
-  Vehicle*)`, and the `<name>$bound` UnboundLocal machinery in play —
-  pointing at a **vacuity** (the path made infeasible by the
-  double-construction / `$bound` interaction), not a wrong value. Minimal
-  repro: two instances + both `get_info` calls + `super()`. *Fix shape:*
-  root-cause the repeated-method-call + inherited-construction +
-  `super()`-value-dispatch codegen (class-def / 1a-bis re-emission); high
-  regression risk, needs dedicated work.
+- **`class-attributes_fail` — DEFERRED, root-caused (string-refinement
+  temp aliasing).** A genuinely-false final assert
+  (`my_car.get_age(2025) == 4`, actually 3) verifies SUCCESSFUL because
+  the path is **vacuous**. Bisected minimal trigger: an f-string-returning
+  method (`Vehicle.get_info`, `f"{self.year} {self.model}"`) invoked on two
+  distinct objects in one run — directly on a base instance *and* via
+  `super().get_info()` from a `Car.get_info` override. Removing either the
+  f-string or the `super()` makes the path feasible again.
+  **Root cause:** `make_nondet_string` (python_converter_helpers.h) names
+  the f-string's string-refinement output symbols
+  (`python::__string_len_N` / `__string_ptr_N`) *per AST node* with no
+  function scope, so every dynamic invocation of the method shares one
+  symbol. The string-refinement backend then piles the content
+  associations from both invocations onto that single symbol, the
+  conjunction is UNSAT, and every later assertion is proved vacuously.
+  This is the same failure the existing `in_loop` havoc addresses for loop
+  iterations — the double-invocation case just isn't `in_loop`.
+  **Fix attempts ruled out (do not retry as-is):** (1) unconditional
+  havoc of the output symbols regresses `github_2992_lower` (its
+  per-instance `.lower()` results exhaust CBMC's object cap → uncaught
+  exception); (2) a targeted `force_havoc` on only the f-string
+  concat/int/float emissions *does* fix this test, but the havoc assigns a
+  **nondet pointer**, and the extra pending-check assignments perturb
+  SSA/constraint ordering enough to expose a latent nondet counterexample
+  in `jpl`/`jpl_1` (their `list_comp`+lambda precondition filtering), a
+  net-negative trade. **Correct fix (deferred):** give the string-refinement
+  output symbols proper *function-local* scope (a per-function name plus a
+  `code_declt`) so symex grants each invocation a fresh instance without a
+  nondet-pointer havoc and without unbounded fresh objects. This is a
+  focused but non-trivial change to the string-emission machinery (every
+  `make_nondet_string` site) and is left for dedicated work.
 - **`github_3647_9_fail` — dict mutation during iteration — DEFERRED
   (niche, regression-risky).** `for k, v in d.items(): d["x"] = 3` raises
   `RuntimeError` ("dictionary changed size during iteration") in CPython;
