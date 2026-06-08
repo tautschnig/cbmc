@@ -420,12 +420,16 @@ alarms). Verified against the 2026-06-08 sweep baseline.
   `list_comp(actions, lambda a: a.pre())` then runs
   `enabled_actions[random.randint(0, len-1)].act()`. Two parts were in
   play: (a) the lambda's object parameter typed as nondet int — **fixed**
-  (`4d808cefda`, see [§12](#higher-order)); (b) `list_comp` calling its
-  function-valued parameter `condition(action)` → "no body for callee" →
-  nondet, which still admits selecting a not-actually-enabled action.
-  Part (b) is the open function-value-call gap ([§12](#higher-order));
-  until it lands these remain sound false positives. Confirmed independent
-  of f-strings (removing the `print(f"…")` lines still reaches
+  (`4d808cefda`); (b) `list_comp` calling its function-valued parameter
+  `condition(action)` → "no body for callee" — **fixed** by per-call-site
+  monomorphisation (`54b829c6bd`, see [§12](#higher-order)). What still
+  blocks jpl/jpl_1 are two precision residuals exposed underneath: the
+  monomorphised `list_comp` clone runs the comprehension over its **list
+  parameter** `actions`, whose elements are symbolic to the clone, and
+  dispatching the object element through the function value loses
+  precision (double `python_value` wrapping). Until those land (tracked in
+  [§12](#higher-order)) jpl/jpl_1 remain sound false positives. Confirmed
+  independent of f-strings (removing the `print(f"…")` lines still reaches
   `counter == -1`).
 - **`github` real-world cluster:** many small sub-clusters (int(string,
   base) edge cases, isinstance-narrowing for union params + datetime stub
@@ -504,29 +508,40 @@ This is what made the polymorphic-dispatch half of jpl tractable, and it
 also makes object key/predicate lambdas work as arguments to the builtin
 HOFs `filter()` and `map()` (verified).
 
-**Still missing — calling a function *value* indirectly.** A callable
-passed as an argument and invoked through the *parameter* gets "no body
-for callee" → nondet. Pinpointed cases:
-- a **user-defined** higher-order function (`def list_comp(xs, cond):
-  ... cond(x) ...` called with a lambda — the jpl/jpl_1 pattern);
-- an **immediately-applied** lambda `(lambda a: a.x)(obj)`;
-- `sorted(key=...)` over objects (separate from filter/map, which work).
+**Calling a function value indirectly — LANDED via per-call-site
+monomorphisation (`54b829c6bd`).** A callable passed as an argument and
+invoked through the *parameter* (`def apply(fn, x): return fn(x)`) used to
+hit "no body for callee" → nondet. `convert_user_call` now detects a
+positional argument that is a resolvable callable (lambda, or a name bound
+to a function/lambda) whose matching parameter is *called* in the callee
+body, builds/reuses a freshly-scoped **clone** of the callee with that
+parameter bound to the callable (reusing the decorator `function_aliases`
++ body-re-conversion machinery), and redirects the call to the clone;
+redundant callable args become nondet placeholders. The clone is cached
+keyed by callee + bound-callable ids, so a loop reuses one clone and
+distinct callables get distinct clones — sound for multi-callable HOFs
+(no last-binding-wins). Handles lambda/named-function args and nested HOF
+application; gained `higher-order2`, `callable4`, `github_3720`. Falls
+back to the sound nondet path for the unresolved cases below.
 
-These are the same first-class **function value** gap: a callable that can
-be stored in a container, passed generically, and called indirectly.
-
-*Fix shape:* the cleanest sound design is **per-call-site monomorphisation**
-— at a call `hof(..., f, ...)` where `f` is a lambda/function and the
-callee invokes the corresponding parameter, clone the callee, bind the
-parameter to `f` (the existing `function_aliases` + body re-conversion
-that decorators already use), and call the clone. A clone per call site
-keeps it sound when the same HOF is called with different callables.
-Alternatively, a tagged callable handle (code-symbol id + captured cells)
-as a `python_value` variant with function-pointer dispatch at indirect
-call sites. Both are non-trivial (symbol cloning / captures / recursion,
-or function-pointer modelling with JBMC blast radius); **no committed
-scope** — escalates with demand. This is also the shared dependency for
-[§2 phase 4 (closures through containers)](#closures).
+**Residuals (sound; still open).**
+- An object argument dispatched *through* a HOF and then through the
+  function value (double `python_value` wrapping) can lose field
+  precision — `apply(lambda p: p.v, P(7))` may not pin `== 7`.
+- A comprehension over a HOF's **list parameter** sees symbolic elements
+  (`def lc(xs, c): return [x for x in xs if c(x)]` — the clone's `xs` is a
+  parameter, so `x` ranges over nondet content). This is a
+  comprehension-over-list-parameter precision gap, largely independent of
+  the function-value call.
+- Both of the above block **jpl/jpl_1** (which combine HOF + comprehension
+  over a list parameter of objects); see [§9](#precision).
+- Immediately-applied lambdas `(lambda a: a.x)(obj)` and `sorted(key=...)`
+  over objects are still nondet.
+- First-class function values stored in a container and called indirectly
+  (the shared dependency for
+  [§2 phase 4, closures through containers](#closures)) remain unmodelled;
+  the monomorphisation clone covers *argument-passed* callables, not
+  container-stored ones.
 
 ---
 
