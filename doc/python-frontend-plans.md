@@ -36,6 +36,54 @@ record of what already landed, use `git log` — this doc deliberately does
 
 ---
 
+## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
+
+From a per-test triage (2026-06-08) of the 26 baseline DIFFs in the
+*expected-FAILED / got-SUCCESSFUL* direction: **20 are out-of-scope**
+(import-error detection, opt-in `--python-check-annotations` /
+`--python-missing-return-check` not passed, the always-truthy `re.Match`
+modelling choice, ESBMC-only intrinsics/flags such as `nondet_*` /
+`__ESBMC_assume` / `--strict-types` / `--fixedbv`, and the known
+`github_3836` recursion-under-`--unwind 10` artifact). A further two
+(`github_2892_fail`, `global2_fail`) are **not** real — they verify
+FAILED correctly under adequate unwinding; their sweep SUCCESSFUL was a
+uniform-`--unwind 10` under-approximation artifact.
+
+The genuine false proofs (we report SUCCESSFUL on a program that
+demonstrably fails in CPython) are:
+
+- **`github_3647_12_fail` — nested `dict.items()` value not extracted
+  (PLANNED, clearest).** `f({"a": {"b": 1}})` then
+  `for k1, inner in d.items(): for k2, v in inner.items(): assert v < 0`
+  verifies SUCCESSFUL although `v == 1`. The inner value of a
+  `dict[str, dict[str, int]]` iterated via `.items()` isn't bound to the
+  real element, so the false assertion is proved. *Fix shape:* extend the
+  `dict.items()` runtime-tuple construction (already done for flat dicts)
+  to nested/value-typed value components.
+- **`class-attributes_fail` — earlier-exception masking
+  (PLANNED).** A function whose last assertion is genuinely false
+  (`get_age(2025) == 4`, actually 3) verifies SUCCESSFUL. A minimal
+  no-loop repro computes `get_age` correctly, so the masking comes from an
+  earlier statement in the body (the `super().get_info()` f-string on a
+  subclass) raising/!setting `__exception_active`, making the later buggy
+  assert unreachable. *Fix shape:* root-cause the subclass
+  `super().<method>()` + f-string path; ensure it doesn't spuriously
+  short-circuit the enclosing function.
+- **`github_3647_9_fail` — dict mutation during iteration (NICHE).**
+  `for k, v in d.items(): d["x"] = 3` raises `RuntimeError` ("dictionary
+  changed size during iteration") in CPython; we don't model
+  concurrent-modification detection. Genuine but esoteric; low priority.
+- **`github_2897_2_fail` — imported-variable value (MURKY).**
+  `from l2 import x` (`x = 42`) then `assert x == 41` verifies SUCCESSFUL.
+  Likely the `import c` / `c.create()` chain leaves the assert unreachable
+  (import-handling), rather than a wrong `x`. Needs root-cause; related to
+  the import-resolution area.
+
+Recommended next implementation target: **`github_3647_12_fail`** — it is
+a clean, minimal, clearly-frontend soundness bug with an obvious fix shape.
+
+---
+
 ## 1. Generators / `yield` (PLR §6.2.9)  {#generators}
 
 **Status: DONE for the modelled scope.** The **list-with-cursor** model is
