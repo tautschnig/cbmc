@@ -369,13 +369,32 @@ alarms). Verified against the 2026-06-08 sweep baseline.
   cause — each needs a profile to find the hot path (dict `.items()`
   schema-walking, type-promotion multiplication, symbolic-size ×
   bounded-unroll interactions).
-- **`math` / `complex` precision (PARTIAL):** per-function domain handling
-  and complex arithmetic modelling. *Fix shape:* declarative `@c_intrinsic`
-  domain annotations (depends on [§6](#modules)); model complex arithmetic
-  edges (signed-zero, NaN, ValueError for malformed `complex("bad")`);
-  cross-function tracking of return constants for dict/list literals
-  containing complex. (Test counts inherited from the old roadmap are
-  unverified — needs a fresh DIFF triage; see note below.)
+- **`complex` precision (PARTIAL — numeric core fixed 2026-06-08).** A
+  fresh triage of the 10 `complex_*` DIFFs found the cluster is *not* one
+  root but six sub-groups. The two genuine **numeric-precision** roots are
+  fixed: (a) `abs(complex)` now pins the IEEE boundaries (zero/inf/nan)
+  instead of leaving a non-injective `r*r == re²+im²` constraint
+  (`94e5d2fef4`); (b) integer/bool complex powers now use exact repeated
+  multiplication, exact and symbolic-base-capable, instead of the lossy
+  `exp(w·log z)` form (`c0e69a8aca`). Gained complex_abs_handler,
+  complex_pow_handler, complex_attr_div_pow, complex_pow_special_cases
+  (sweep PASS → 2911, no regressions). The remaining four sub-groups are
+  *not* numeric precision and remain open as distinct point/feature gaps:
+  **(C) signed-zero preservation** through `complex()` construction and
+  +/−/* (e.g. `complex(-0.0,0.0).real` must keep its sign) — delicate IEEE,
+  low value; **(D) `complex(<str variable>)`** parsing — only constant
+  strings parse today, a runtime form needs solver-level string parsing;
+  **(E) `complex()` argument-validation TypeErrors** — unknown kwargs,
+  duplicate `real`/`imag`, `bytes`/`bytearray` rejection (a clean
+  whole-group fix localised to the constructor handler, if pursued);
+  **(F) `math.*` on complex → TypeError**. (C)/(E)/(F) affect
+  complex_binop_promotion, complex_conjugate_handler, complex_builtins,
+  complex_constructor_extended, complex_keyword_args,
+  complex_math_typeerror_edges.
+- **`math` precision (PARTIAL):** per-function domain handling. *Fix
+  shape:* declarative `@c_intrinsic` domain annotations (depends on
+  [§6](#modules)); cross-function tracking of return constants for
+  dict/list literals.
 - **`github` real-world cluster:** many small sub-clusters (int(string,
   base) edge cases, isinstance-narrowing for union params + datetime stub
   fields, reversed-range iteration, list index-out-of-range, fail-shape
