@@ -2150,9 +2150,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
           extract_string_value(item).has_value())
         {
           // Reconstruct a python_string-typed expression for
-          // the container (deref __str_ptr).
-          dereference_exprt str_val{member_exprt{
-            container, "__str_ptr", pointer_typet{python_string_type(), 64}}};
+          // the container (inline __str).
+          member_exprt str_val{container, "__str", python_string_type()};
           exprt key_item = item;
           if(!is_python_string_type(key_item.type()))
           {

@@ -83,8 +83,14 @@ inline struct_typet python_value_struct_def()
   components.push_back(struct_typet::componentt{"__float_val", double_type()});
   components.push_back(
     struct_typet::componentt{"__bool_val", signedbv_typet{32}});
-  components.push_back(struct_typet::componentt{
-    "__str_ptr", pointer_typet{python_string_type(), 64}});
+  // Inline refined string (rather than a pointer to one). python_string
+  // is not self-referential (it does not contain python_value), so unlike
+  // __list_ptr / __class_ptr this needs no opaque-pointer indirection and
+  // raises no forward-reference issue in smt2_conv. Storing it inline
+  // avoids a pointer hop that, in bulk (e.g. a value-keyed string dict
+  // copied by value), forced the string-refinement solver to reason about
+  // many aliased refined strings at once and blew up.
+  components.push_back(struct_typet::componentt{"__str", python_string_type()});
   // List values use an opaque pointer (like __class_ptr) — typed
   // pointer would create a recursive type definition
   // (python_value -> pointer to python_list[python_value]) which
@@ -128,7 +134,11 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
       ieee_floatt::rounding_modet::ROUND_TO_EVEN}
       .to_expr();
   exprt bool_val = from_integer(0, signedbv_typet{32});
-  exprt str_ptr = null_pointer_exprt{pointer_typet{python_string_type(), 64}};
+  // Inline empty string {length=0, data=NULL} (the default __str).
+  exprt str_val = struct_exprt{
+    {from_integer(0, signedbv_typet{64}),
+     null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
+    python_string_type()};
   exprt list_ptr = null_pointer_exprt{pointer_typet{empty_typet{}, 64}};
   exprt class_ptr = null_pointer_exprt{pointer_typet{empty_typet{}, 64}};
 
@@ -148,7 +158,8 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
                  : value;
     break;
   case python_type_tagt::STR:
-    str_ptr = value.type().id() == ID_pointer ? value : address_of_exprt{value};
+    str_val =
+      value.type().id() == ID_pointer ? exprt{dereference_exprt{value}} : value;
     break;
   case python_type_tagt::LIST:
     list_ptr = value.type().id() == ID_pointer
@@ -188,7 +199,7 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
   }
 
   struct_exprt result{
-    {tag_expr, int_val, float_val, bool_val, str_ptr, list_ptr, class_ptr},
+    {tag_expr, int_val, float_val, bool_val, str_val, list_ptr, class_ptr},
     vtype};
   // Set the expression type to the canonical tag type
   result.type() = python_value_type();
@@ -219,11 +230,10 @@ inline member_exprt python_value_bool(const exprt &value)
   return member_exprt{value, "__bool_val", signedbv_typet{32}};
 }
 
-/// Extract the string pointer from a tagged-union value.
-inline dereference_exprt python_value_str(const exprt &value)
+/// Extract the (inline) string from a tagged-union value.
+inline exprt python_value_str(const exprt &value)
 {
-  return dereference_exprt{
-    member_exprt{value, "__str_ptr", pointer_typet{python_string_type(), 64}}};
+  return member_exprt{value, "__str", python_string_type()};
 }
 
 /// Extract the list pointer from a tagged-union value.

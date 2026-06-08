@@ -2472,10 +2472,10 @@ exprt python_convertert::wrap_value(const exprt &e)
 /// Tag-aware equality for two python_value operands. Compares the
 /// active variant: STR by string content (a struct equal_exprt would
 /// compare the data pointers, which differ between equal-content
-/// strings), the rest by their scalar payload. The STR branch
-/// dereferences __str_ptr unconditionally; for a non-STR operand that
-/// pointer is null and the deref yields a nondet string, but the
-/// surrounding tag guard discards it.
+/// strings), the rest by their scalar payload. The STR comparison reads
+/// the inline __str field on both operands; for a non-STR operand __str
+/// is the empty {0, NULL} default, and the surrounding tag guard
+/// discards the result anyway.
 exprt python_convertert::value_equal(const exprt &a, const exprt &b)
 {
   PRECONDITION(
@@ -2486,11 +2486,10 @@ exprt python_convertert::value_equal(const exprt &a, const exprt &b)
   const auto tag_is = [&](python_type_tagt t) {
     return equal_exprt{at, from_integer(static_cast<int>(t), i32)};
   };
-  pointer_typet str_ptr_t{python_string_type(), 64};
   exprt str_eq = emit_string_bool_function(
     ID_cprover_string_equal_func,
-    dereference_exprt{member_exprt{a, "__str_ptr", str_ptr_t}},
-    dereference_exprt{member_exprt{b, "__str_ptr", str_ptr_t}},
+    member_exprt{a, "__str", python_string_type()},
+    member_exprt{b, "__str", python_string_type()},
     symbol_table,
     pending_checks);
   if(str_eq.type() != bool_typet{})
@@ -3650,7 +3649,7 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     // element type. python_value is the closest match.
     return python_list_type(python_value_type());
   else if(type_name == "dict" || type_name == "Dict")
-    return python_dict_type(python_string_type(), python_value_type());
+    return python_dict_type(python_value_type(), python_value_type());
   else if(type_name == "set" || type_name == "Set")
     return python_set_type();
   else if(type_name == "tuple" || type_name == "Tuple")
