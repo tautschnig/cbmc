@@ -528,6 +528,48 @@ void python_convertert::process_imported_module(
     {
       // Module-level variable — register as a global symbol.
       //
+      // General case: a module-level constant binding
+      // `name = <const>` / `name: T = <const>` is registered as
+      // `python::name` (unprefixed, mirroring how classes and
+      // functions are registered) carrying its value, so that a
+      // `from MODULE import name` in the importer binds the actual
+      // value. Without this, the imported name is undefined and
+      // assertions over it collapse to vacuously-true — a false
+      // proof (github_2897_2_fail).
+      {
+        const jsont *target = nullptr;
+        if(is_node_type(stmt, "AnnAssign"))
+          target = &json_member(stmt, "target");
+        else
+        {
+          const jsont &tgts = json_member(stmt, "targets");
+          if(tgts.is_array() && !as_array(tgts).empty())
+            target = &(*as_array(tgts).begin());
+        }
+        const jsont &value = json_member(stmt, "value");
+        if(
+          target != nullptr && is_node_type(*target, "Name") &&
+          is_node_type(value, "Constant"))
+        {
+          std::string vname = json_string(json_member(*target, "id"));
+          irep_idt vid{"python::" + vname};
+          if(symbol_table.lookup(vid) == nullptr)
+          {
+            exprt v = convert_expression(value);
+            if(v.is_not_nil())
+            {
+              symbolt vs{vid, v.type(), "python"};
+              vs.base_name = vname;
+              vs.is_lvalue = true;
+              vs.is_state_var = true;
+              vs.is_static_lifetime = true;
+              vs.value = v;
+              symbol_table.add(vs);
+            }
+          }
+        }
+      }
+      //
       // Special case: TypedDict definitions of the functional
       // form 'Name = TypedDict("Name", {"K": Required[T], ...})'
       // are the PySpec stub convention. Scan for these and
