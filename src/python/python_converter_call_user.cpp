@@ -45,6 +45,244 @@
 #include <sstream>
 #include <string>
 
+// §12 higher-order monomorphisation. See the declaration in
+// python_converter.h for the contract.
+bool python_convertert::try_monomorphise_call(
+  const std::string &func_name,
+  const jsont &args,
+  const symbolt &hof_sym,
+  const irep_idt &hof_id,
+  irep_idt &clone_id,
+  std::set<std::size_t> &callable_positions)
+{
+  if(!args.is_array() || hof_sym.type.id() != ID_code)
+    return false;
+  // Only specialise a defined body; a placeholder / nil value has
+  // nothing to re-convert.
+  if(hof_sym.value.is_nil() || hof_sym.value.id() != ID_code)
+    return false;
+
+  // Copy everything we need from hof_sym BY VALUE up front: the calls
+  // below (convert_lambda, symbol_table.add, convert_statement) mutate
+  // the symbol table and may invalidate references into it.
+  const code_typet hof_type = to_code_type(hof_sym.type);
+  const source_locationt hof_loc = hof_sym.location;
+  const auto &hparams = hof_type.parameters();
+  // Methods (first param `self`) dispatch differently; free
+  // functions only here.
+  if(!hparams.empty() && id2string(hparams[0].get_base_name()) == "self")
+    return false;
+
+  // Locate the function's FunctionDef AST (top level, or nested one
+  // level inside another function/class). We need its body to
+  // re-convert specialised.
+  std::function<const jsont *(const jsont &, const std::string &)> find_fn =
+    [&](const jsont &scope_body, const std::string &name) -> const jsont *
+  {
+    if(!scope_body.is_array())
+      return nullptr;
+    for(const auto &s : as_array(scope_body))
+    {
+      if(
+        is_node_type(s, "FunctionDef") &&
+        json_string(json_member(s, "name")) == name)
+        return &s;
+      if(is_node_type(s, "FunctionDef") || is_node_type(s, "ClassDef"))
+      {
+        if(const jsont *r = find_fn(json_member(s, "body"), name))
+          return r;
+      }
+    }
+    return nullptr;
+  };
+  const jsont *fn_ast =
+    find_fn(json_member(parse_tree.ast_json, "body"), func_name);
+  if(fn_ast == nullptr)
+    return false;
+  // A decorated HOF is already handled by the decorator path.
+  {
+    const jsont &decs = json_member(*fn_ast, "decorator_list");
+    if(decs.is_array() && !as_array(decs).empty())
+      return false;
+  }
+
+  // Does the body call the parameter named `pname` (i.e. `pname(...)`)?
+  std::function<bool(const jsont &, const std::string &)> body_calls =
+    [&](const jsont &n, const std::string &pname) -> bool
+  {
+    if(n.is_array())
+    {
+      for(const auto &e : as_array(n))
+        if(body_calls(e, pname))
+          return true;
+      return false;
+    }
+    if(!n.is_object())
+      return false;
+    if(is_node_type(n, "Call"))
+    {
+      const jsont &f = json_member(n, "func");
+      if(is_node_type(f, "Name") && json_string(json_member(f, "id")) == pname)
+        return true;
+    }
+    static const std::vector<std::string> fields{
+      "body",  "orelse",  "finalbody",   "handlers", "elt",        "key",
+      "value", "values",  "elts",        "keys",     "generators", "iter",
+      "ifs",   "test",    "comparators", "left",     "right",      "operand",
+      "func",  "args",    "keywords",    "slice",    "targets",    "target",
+      "items", "operands"};
+    for(const auto &fld : fields)
+    {
+      const jsont &c = json_member(n, fld);
+      if(!c.is_null() && body_calls(c, pname))
+        return true;
+    }
+    return false;
+  };
+
+  // Resolve a positional argument AST to a callable symbol id, or
+  // empty if it isn't a (resolvable) callable.
+  auto resolve_callable = [&](const jsont &arg) -> irep_idt
+  {
+    if(is_node_type(arg, "Lambda"))
+    {
+      exprt l = convert_lambda(arg);
+      if(l.id() == ID_symbol && l.type().id() == ID_code)
+        return to_symbol_expr(l).get_identifier();
+      return irep_idt{};
+    }
+    if(is_node_type(arg, "Name"))
+    {
+      std::string nm = json_string(json_member(arg, "id"));
+      auto ai = function_aliases.find(qualify_name(nm));
+      if(ai != function_aliases.end())
+        return ai->second;
+      irep_idt scoped{"python::" + current_function + "::" + nm};
+      const symbolt *ss = symbol_table.lookup(scoped);
+      if(ss != nullptr && ss->type.id() == ID_code)
+        return scoped;
+      irep_idt bare{"python::" + nm};
+      const symbolt *bs = symbol_table.lookup(bare);
+      if(bs != nullptr && bs->type.id() == ID_code)
+        return bare;
+    }
+    return irep_idt{};
+  };
+
+  // Gather bindings: positional arg i → callable, when param i is
+  // actually called in the body.
+  struct bindingt
+  {
+    std::size_t pos;
+    std::string pname;
+    irep_idt callable;
+  };
+  std::vector<bindingt> bindings;
+  const auto &arg_array = as_array(args);
+  std::size_t i = 0;
+  for(const auto &arg : arg_array)
+  {
+    if(is_node_type(arg, "Starred"))
+      return false; // keep it simple/sound
+    if(i < hparams.size())
+    {
+      const std::string pname = id2string(hparams[i].get_base_name());
+      if(body_calls(*fn_ast, pname))
+      {
+        irep_idt cid = resolve_callable(arg);
+        if(!cid.empty())
+          bindings.push_back({i, pname, cid});
+      }
+    }
+    ++i;
+  }
+  if(bindings.empty())
+    return false;
+
+  for(const auto &b : bindings)
+    callable_positions.insert(b.pos);
+
+  // Cache key: HOF + each (position, callable). Distinct callables
+  // (e.g. different lambdas per call site) get distinct, sound clones;
+  // identical patterns (a loop body) reuse one clone.
+  std::string key = id2string(hof_id) + "$mono";
+  for(const auto &b : bindings)
+    key += "$" + std::to_string(b.pos) + "@" + id2string(b.callable);
+  if(auto it = monomorph_cache.find(key); it != monomorph_cache.end())
+  {
+    clone_id = it->second;
+    return true;
+  }
+
+  // Build a freshly-scoped clone.
+  const std::string clone_scope =
+    func_name + "$mono_" + std::to_string(monomorph_counter++);
+  clone_id = irep_idt{"python::" + clone_scope};
+
+  code_typet::parameterst cparams;
+  for(const auto &hp : hparams)
+  {
+    const std::string pbase = id2string(hp.get_base_name());
+    irep_idt pid{"python::" + clone_scope + "::" + pbase};
+    if(symbol_table.lookup(pid) == nullptr)
+    {
+      symbolt ps{pid, hp.type(), "python"};
+      ps.base_name = pbase;
+      ps.is_lvalue = true;
+      ps.is_state_var = true;
+      ps.is_parameter = true;
+      symbol_table.add(ps);
+    }
+    code_typet::parametert p{hp.type()};
+    p.set_identifier(pid);
+    p.set_base_name(pbase);
+    cparams.push_back(p);
+  }
+
+  // Register the clone symbol (placeholder body) before conversion so
+  // a (self-)recursive HOF resolves to the clone.
+  symbolt clone_sym{
+    clone_id, code_typet{cparams, hof_type.return_type()}, "python"};
+  clone_sym.base_name = clone_scope;
+  clone_sym.location = hof_loc;
+  clone_sym.is_lvalue = true;
+  clone_sym.value = code_blockt{};
+  symbol_table.add(clone_sym);
+  monomorph_cache[key] = clone_id;
+
+  // Bind the callable parameters in the clone scope; convert the body.
+  std::vector<std::string> alias_keys;
+  for(const auto &b : bindings)
+  {
+    std::string akey = "python::" + clone_scope + "::" + b.pname;
+    function_aliases[akey] = b.callable;
+    alias_keys.push_back(akey);
+  }
+  const std::string saved_fn = current_function;
+  std::vector<std::string> saved_encl;
+  saved_encl.swap(enclosing_functions);
+  current_function = clone_scope;
+  std::vector<codet> saved_pending;
+  saved_pending.swap(pending_checks);
+
+  code_blockt new_body;
+  const jsont &body_ast = json_member(*fn_ast, "body");
+  if(body_ast.is_array())
+    for(const auto &st : as_array(body_ast))
+      new_body.add(convert_statement(st));
+  if(hof_type.return_type().id() != ID_empty)
+    new_body.add(code_frontend_returnt{safe_zero(hof_type.return_type())});
+
+  saved_pending.swap(pending_checks);
+  current_function = saved_fn;
+  saved_encl.swap(enclosing_functions);
+  for(const auto &akey : alias_keys)
+    function_aliases.erase(akey);
+
+  symbol_table.get_writeable_ref(clone_id).value = new_body;
+  return true;
+}
+
 exprt python_convertert::convert_user_call(
   const jsont &expr,
   const std::string &func_name,
@@ -260,6 +498,35 @@ exprt python_convertert::convert_user_call(
     return std::move(nondet);
   }
 
+  // §12 higher-order monomorphisation: if a callable argument is
+  // passed to a user function that calls the matching parameter,
+  // redirect this call to a specialised clone where that parameter is
+  // bound to the callable (so `fn(...)` inside resolves precisely
+  // instead of becoming a nondet "no body for callee"). The bound
+  // callable arguments are then redundant and passed as nondet
+  // placeholders.
+  std::set<std::size_t> monomorph_nondet_positions;
+  {
+    const irep_idt resolved_id = sym->name;
+    irep_idt clone_id;
+    std::set<std::size_t> cps;
+    if(try_monomorphise_call(func_name, args, *sym, symbol_id, clone_id, cps))
+    {
+      symbol_id = clone_id;
+      monomorph_nondet_positions = std::move(cps);
+      sym = symbol_table.lookup(clone_id);
+    }
+    else
+    {
+      // Refresh from the already-resolved id: try_monomorphise_call may
+      // have added symbols (invalidating the previous pointer), but the
+      // callee resolution above (incl. alias redirects) still holds.
+      sym = symbol_table.lookup(resolved_id);
+    }
+    if(sym == nullptr || sym->type.id() != ID_code)
+      return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+  }
+
   const code_typet &func_type = to_code_type(sym->type);
   const auto &params = func_type.parameters();
 
@@ -267,8 +534,20 @@ exprt python_convertert::convert_user_call(
   exprt::operandst arguments;
   if(args.is_array())
   {
+    std::size_t arg_index = 0;
     for(const auto &arg : as_array(args))
     {
+      const std::size_t cur_idx = arg_index++;
+      // Monomorphised callable argument: bound into the clone via
+      // function_aliases, its value is unused — pass a nondet
+      // placeholder of the parameter type.
+      if(monomorph_nondet_positions.count(cur_idx))
+      {
+        const typet pt = cur_idx < params.size() ? params[cur_idx].type()
+                                                 : python_value_type();
+        arguments.push_back(side_effect_expr_nondett{pt, get_location(expr)});
+        continue;
+      }
       // PEP 448: f(*c) — spread known list literals at
       // conversion time. Non-literal iterables are
       // over-approximated by appending a single nondet.
