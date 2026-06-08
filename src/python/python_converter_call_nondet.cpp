@@ -2,7 +2,7 @@
 /// (PLR §6.3.4). Handles nondet_*, __VERIFIER_nondet_*, randint,
 /// the assume family, and the __cbmc_re_{match,search,fullmatch}
 /// regex frontend hooks. Extracted from python_converter_call.cpp
-/// per doc/python-frontend-call-refactor-plan.md (Phase 3.1) — pure
+/// per doc/python-frontend-architecture.md — pure
 /// source-split; semantics are preserved.
 
 #include <util/arith_tools.h>

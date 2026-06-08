@@ -2,7 +2,7 @@
 
 A snapshot of how CBMC's Python frontend models the `re` module
 as of 2026-05-27 (wave 40). For the long-term plan see
-[python-re-support-plan.md](architectural/python-re-support-plan.md).
+[python-frontend-plans.md §4](python-frontend-plans.md#regex).
 
 ## TL;DR
 
@@ -138,7 +138,7 @@ that uses `re` exercises the stub).
 ## Roadmap
 
 The full plan is in
-[architectural/python-re-support-plan.md](architectural/python-re-support-plan.md).
+[python-frontend-plans.md §4](python-frontend-plans.md#regex).
 Three design options are documented:
 
 - **Option A** — shallow Python stub (current state for the

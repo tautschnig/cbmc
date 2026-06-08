@@ -4,12 +4,10 @@
 /// [0, 64). Falls through to a sound nondet for elements
 /// outside that range or for set-typed structs whose
 /// elements are not int. Extracted from
-/// python_converter_call_method.cpp per
-/// doc/python-frontend-call-refactor-plan.md (Phase 3.3
-/// follow-up — set methods grouped with list because the
-/// plan does not call them out separately, but kept in their
-/// own file for clarity given the bitmap-specific logic).
-/// Pure source-split — semantics are preserved.
+/// python_converter_call_method.cpp as a pure source-split
+/// (documented in doc/python-frontend-architecture.md); kept
+/// in its own file for clarity given the bitmap-specific logic.
+/// Semantics are preserved.
 
 #include <util/arith_tools.h>
 #include <util/bitvector_expr.h>

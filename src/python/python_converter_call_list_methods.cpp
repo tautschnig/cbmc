@@ -4,7 +4,7 @@
 /// __iter__ / __contains__ / count / clear, plus the
 /// bytes-as-list[uint8] decode/encode methods. Extracted
 /// from python_converter_call_method.cpp per
-/// doc/python-frontend-call-refactor-plan.md (Phase 3.3).
+/// doc/python-frontend-architecture.md.
 /// Pure source-split — semantics are preserved.
 
 #include <util/arith_tools.h>

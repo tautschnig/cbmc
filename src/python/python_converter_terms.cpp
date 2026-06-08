@@ -75,7 +75,7 @@ exprt python_convertert::convert_constant(const jsont &expr)
     // sentinel via safe_typecast/unwrap_value at the assignment site;
     // this preserves backwards compatibility while letting NONE-aware
     // consumers see a tagged value. See
-    // doc/python-frontend-blocked-items-plan.md (P0).
+    // doc/python-frontend-plans.md (deferred residuals).
     return python_none_value();
   }
   else if(value.is_number())

@@ -4,7 +4,7 @@
 This integration test exercises the CBMC Python front-end against the
 real CPython standard library source tree. Its purpose is to make sure
 that progress on broadening the set of stdlib modules we can ingest
-(Step 1 of `doc/architectural/python-module-support-plan.md`) is
+(Step 1 of `doc/python-frontend-plans.md` (§6 modules)) is
 monitored by CI and cannot silently regress.
 
 ## What the test does

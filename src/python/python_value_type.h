@@ -259,7 +259,7 @@ inline equal_exprt python_value_is(const exprt &value, python_type_tagt tag)
 /// signedbv. Centralised here so we don't have the magic number
 /// scattered across the converter. Long term this encoding will
 /// be replaced by `python_none_value()` everywhere — see
-/// doc/python-frontend-blocked-items-plan.md (P0).
+/// doc/python-frontend-plans.md (deferred residuals).
 inline mp_integer python_none_sentinel_int()
 {
   return mp_integer{-4611686018427387904LL}; // -2^62

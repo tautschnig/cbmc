@@ -3,8 +3,8 @@
 
 Status: **design draft**, May 2026. This is the Phase 2
 deliverable of the Python-string representation refactor
-documented in ``python-string-representation-plan.md``. The
-Phase 1 inventory (``python-string-phase1-inventory.md``) listed
+documented in the strings plan (`../python-frontend-plans.md` §3). The
+Phase 1 inventory (the Phase 1 inventory (folded into `../python-frontend-plans.md` §3)) listed
 the ~50 front-end sites that reach into the refined-string
 struct; this document specifies the back-end interface those
 sites will compile through so that each back-end can pick its

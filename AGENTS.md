@@ -911,14 +911,18 @@ To understand how data flows through CBMC:
 - [doc/architectural/compilation-and-development.md](doc/architectural/compilation-and-development.md) - Development guide
 
 ### Python Frontend
-- [doc/python-verification-guide.md](doc/python-verification-guide.md) - User-facing guide for verifying Python programs
-- [doc/python-frontend-architecture.md](doc/python-frontend-architecture.md) - Frontend internals: passes, type system, generator/annotation semantics, symbol naming, where to add features
-- [doc/python-frontend-roadmap.md](doc/python-frontend-roadmap.md) - Open-work backlog: status snapshot through wave 41, sub-clusters with fix shapes, remaining work
-- [doc/python-frontend-call-refactor-plan.md](doc/python-frontend-call-refactor-plan.md) - Layout of `python_converter_call.cpp` after the 9-file split (string / list / dict / set methods, builtins, nondet, user-call dispatchers)
-- [doc/python-frontend-regex-story.md](doc/python-frontend-regex-story.md) - Current regex support (shallow stub + `__cbmc_re_*` SMT intrinsics) and the deferred Wave 2 subject-at-SMT-time refactor
-- [doc/python-frontend-icontract-plan.md](doc/python-frontend-icontract-plan.md) - icontract → DFCC integration, all 8 phases including multi-level Liskov + inherited-method invariant wrappers
-- [doc/python-frontend-diff-cluster-2026-05-27.md](doc/python-frontend-diff-cluster-2026-05-27.md) - DIFF cluster analysis snapshot with closed/deferred items per cluster
-- [doc/python-frontend-dict-byref-plan.md](doc/python-frontend-dict-byref-plan.md) - dict pass-by-reference: why a uniform dict[value,value] default is blocked (string-behind-pointer perf explosion), the landed value_equal foundation, and the option set (targeted string-keyed by-ref vs python_value string-storage change)
+
+Two authoritative docs, plus the user guide and a few linked deep-dives:
+
+- [doc/python-frontend-architecture.md](doc/python-frontend-architecture.md) - **The** architecture reference: passes, type system, constant-tracking maps, symbol naming, generator/annotation/exception/method-dispatch semantics, regex/contracts/module/parse-daemon/any-erasure features, type-coercion boundaries, and a "Gaps & PLR deviations" table that links to the plans doc.
+- [doc/python-frontend-plans.md](doc/python-frontend-plans.md) - **The** single forward-looking backlog: every gap/PLR deviation as a concrete plan or explicit "no plan yet" (generators, closures, strings, regex, dict-by-ref, modules, check-annotations blockers, performance, precision clusters, descriptors, icontract, higher-order, async, residuals). Architecture-doc gaps link to its anchors.
+- [doc/python-verification-guide.md](doc/python-verification-guide.md) - User-facing guide for verifying Python programs.
+
+Linked deep-dives (referenced from the two docs above):
+- [doc/python-frontend-dict-byref-plan.md](doc/python-frontend-dict-byref-plan.md) - dict pass-by-reference: why a uniform `dict[value,value]` default is blocked (string-behind-pointer perf explosion), the landed `value_equal` foundation, and the option set (targeted string-keyed by-ref vs `python_value` string-storage change).
+- [doc/python-frontend-regex-story.md](doc/python-frontend-regex-story.md) - Current regex support (shallow stub + `__cbmc_re_*` SMT intrinsics), backend-portability matrix, what doesn't work.
+- [doc/architectural/python-string-phase2-backend-abstraction.md](doc/architectural/python-string-phase2-backend-abstraction.md) - Detailed SMT-LIB String backend design (intrinsic↔term table, backend impact, PR ordering) for the strings plan.
+- [doc/architectural/python-perf-analysis.md](doc/architectural/python-perf-analysis.md) - Empirical 51-benchmark performance analysis and the slicer ↔ string-refinement contract.
 
 CLI flags worth knowing about:
 - `--python-check-annotations` — emit annotation-mismatch properties when value/return/argument types don't match declared annotations. Includes class-vs-class via MRO, reassignment after AnnAssign, and `Union[...]` member checking.
