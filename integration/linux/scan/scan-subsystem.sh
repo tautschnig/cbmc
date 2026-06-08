@@ -27,7 +27,7 @@ echo "[1/4] Building CodeQL DB..."
 # Step 2: run all queries
 echo "[2/4] Running queries..."
 RESULTS=""
-for q in tlv_parse_loop tlv_parse_loop_helper tainted_into_fixed_dest tainted_alloc_overflow; do
+for q in tlv_parse_loop tlv_parse_loop_helper tainted_into_fixed_dest tainted_alloc_overflow tainted_count_into_fixed_array skb_field_before_lencheck; do
   OUT="/tmp/scan_${q}_$$.bqrs"
   timeout 600 codeql query run --database="$DB" --additional-packs=/home/ubuntu/codeql/qlpacks \
     --output="$OUT" "$DIR/abc-refinement/$q.ql" >/dev/null 2>&1
@@ -78,7 +78,7 @@ rm -f "$TLV_OUT" /tmp/scan_tlv_hits_$$
 echo
 echo "[4/4] Summary"
 echo "  DB: $DB"
-echo "  Queries: tlv_parse_loop, tlv_parse_loop_helper, tainted_into_fixed_dest, tainted_alloc_overflow"
+echo "  Queries: tlv_parse_loop, tlv_parse_loop_helper, tainted_into_fixed_dest, tainted_alloc_overflow, tainted_count_into_fixed_array, skb_field_before_lencheck"
 echo "  CBMC unwind: $UNWIND"
 echo -e "  All candidates:\n$RESULTS" | head -30
 echo "========================================"
