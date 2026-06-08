@@ -160,23 +160,45 @@ performance cliffs (related to [§5](#dict-byref)).
 **Status: PARTIAL.** Current support is a shallow library stub plus
 `__cbmc_re_*` SMT intrinsics, and a Stage-1 call-site `regex-no-match`
 check that flags statically-impossible matches. The current-state
-reference is [python-frontend-regex-story.md](python-frontend-regex-story.md)
-(what's modelled, what works, the backend-portability matrix, what
-doesn't). The architectural invariant: the **frontend emits refined-string
+reference is [python-frontend-regex-story.md](python-frontend-regex-story.md).
+The architectural invariant: the **frontend emits refined-string
 arguments; the backend bridges them to SMT `String`**.
 
-**Open work:**
+**Already built (verified 2026-06-08):**
 
-- **Wave 2 — subject → SMT-String bridge (PLANNED).** Teach `smt2_conv` to
-  bridge a refined-string subject to an SMT `String` so
-  `(str.in_re subject <regex>)` fires for symbolic subjects. The contained
-  form ("Approach C2") intercepts only the regex intrinsics in
-  `smt2_conv.cpp` (~250 lines) rather than migrating all strings — it is
-  the same dependency as [§3 phase 4](#strings) but scoped to regex.
-  Closes ~11 regex precision tests incl. `sagemaker_labeling_job`.
-- **`--python-strict-re-result` flag (PLANNED, ~30 lines).** A gated
-  library mode where `Pattern.search` returns `None` on a proven
-  no-match, for callers that branch on the result.
+- The **subject → SMT-String bridge (Approach C2) is implemented** in
+  `smt2_conv.cpp` (regex-intrinsic interception around the
+  `cprover_string_{match,search,fullmatch}_func` lowering): a constant
+  pattern is translated by `python_regex_to_smt.cpp`, a constant subject
+  lowers to a precise `(str.in_re "subj" re)`, and a *symbolic* subject is
+  bridged from the refined-string struct via
+  `str.++ (str.from_code (bv2nat (select array i)))` truncated to length.
+  Unsupported patterns / unrecognised subject shapes fall back to a sound
+  `bv0`.
+
+**The actual remaining gaps (the Wave-2 payoff), verified 2026-06-08:**
+
+1. **Symbol subjects fall through to `bv0` (the deep gap).** The bridge's
+   subject extractor only recognises a *syntactic* refined-string
+   `struct_exprt{len, address_of(index(array, 0))}`. A subject that is a
+   plain symbol (the common `s = nondet_str()` case) — whose bytes live in
+   the string-refinement `array_pool`, not syntactically in the expr —
+   hits the sound `bv0` fall-through, so the match is *never* taken and
+   queries over symbolic subjects are vacuous (measured: both
+   "`matches ⇒ len≥1`" and the contradictory "`matches ⇒ len==0`" verify
+   SUCCESSFUL, i.e. the branch is unreachable). Closing this needs
+   `smt2_conv` to expose an `array_pool`-tracked refined string to the
+   SMT-LIB String theory — deep CBMC-core work (shared with JBMC code
+   paths; the spec mandates a JBMC regression run per PR). Constant-subject
+   matching already works precisely under `--cvc5` (`re-wave2-cvc5`).
+2. **Library `Match`/`None` result not tied to the intrinsic.** The `re`
+   stub calls `__cbmc_re_{match,search,fullmatch}` but always returns
+   `Match()` (a deliberate choice so `re.match(...) is not None` stays
+   provable under the nondet default). Even with gap 1 fixed, a flag-gated
+   `--python-strict-re-result` is needed so a matched call returns `Match()`
+   and a proven no-match returns `None`, without regressing the existing
+   `re*` tests that rely on always-`Match()`. Smaller than gap 1, and only
+   meaningful once gap 1 lands.
 - **Compilation flags** (`re.IGNORECASE` etc.): currently fall back to
   nondet. *Fix shape:* rewrite the regex AST per flag before lowering.
 - **Wave 3 — native regex axioms in the string-refinement loop: NO PLAN
