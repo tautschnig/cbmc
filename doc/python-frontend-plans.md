@@ -187,36 +187,24 @@ arguments; the backend bridges them to SMT `String`**.
 
 ## 5. dict pass-by-reference & value-string storage  {#dict-byref}
 
-**Status: PARTIAL.** List and class-instance parameters pass by reference
-soundly. **Option B has landed** (commit `714ca9866b`): a *key-matching*
-dict parameter (the common string-keyed case) now passes by reference via
-the shared `safe_typecast` container promotion — the values array widens
-to the tagged union and is copied back, keys stay inline — so mutations
-propagate. This closed the latent unsoundness for that case.
+**Status: DONE.** List and class-instance parameters pass by reference
+soundly. Dict parameters now do too, for **all** key types:
 
-**Remaining residual (still latently unsound):** a dict whose key type
-*cannot* match the parameter — most notably a bare `dict` parameter
-(modelled as `dict[str, value]`) given a non-string-keyed argument
-(`dict[int, int]`) — falls back to **by value**, so mutations through it
-are still dropped. The `value_equal` read/membership machinery is sound
-and landed, but the natural enabler — a uniform `dict[value, value]`
-default that would cover non-string keys — is **blocked on performance**
-at the representation layer (value-keyed *string* dicts explode the
-string-refinement solver because `python_value` stores strings behind a
-pointer).
+- **Option B** (commit `714ca9866b`) landed by-reference for key-matching
+  (string-keyed) dicts via the shared `safe_typecast` container promotion.
+- **Option A** (commit `9da530b0e4`) then inlined the refined string into
+  `python_value` (`__str` field instead of `__str_ptr`), which removed the
+  string-refinement perf cliff and unblocked flipping the bare-`dict`
+  default to `dict[value, value]`. With that, a **non-string-keyed** dict
+  argument also promotes through the generic boundary (keys and values
+  both widen to the tagged union) and its mutations propagate — closing
+  the last dict pass-by-reference latent unsoundness.
 
-The full diagnosis, options, and recommendation are in
+The full diagnosis and option analysis that led here is preserved in
 [python-frontend-dict-byref-plan.md](python-frontend-dict-byref-plan.md).
-Summary of the path:
-
-- **Recommended near-term (Option B):** targeted by-reference for
-  *string-keyed* dicts — promote only the values array, keep keys inline;
-  no representation change; sound for the common case. Needs
-  `is_python_dict_type` to resolve `struct_tag` at the wrap site.
-- **Root-cause (Option A):** inline the refined string into `python_value`
-  — large blast radius; must be **spiked behind a measurement** first
-  (the refined string still carries a `data` pointer, so the win is
-  unproven). Would also help [§3](#strings) workloads.
+Remaining (precision, not soundness): a dict literal larger than
+`PYTHON_MAX_DICT_SIZE` is bounded; deeply heterogeneous value-keyed dicts
+carry the usual tagged-union precision cost.
 
 ---
 

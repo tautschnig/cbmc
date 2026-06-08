@@ -1,9 +1,13 @@
 # Python frontend: dict pass-by-reference & the value-string storage question
 
-Status: **design / decision doc**. No global representation change has been
-made. This records where the dict-by-reference work landed, *why* the
-"obvious" next step (a uniform `dict[value, value]` default) is blocked, and
-the options for arriving at a sound, performant end state.
+Status: **RESOLVED** (kept as the design/decision record). Both options
+landed: Option B (commit `714ca9866b`, key-matching dicts by reference)
+then Option A (commit `9da530b0e4`, inline the refined string into
+`python_value` — the measured spike below confirmed it removes the
+string-refinement perf cliff), which unblocked the uniform
+`dict[value, value]` default. Dict parameters now pass by reference for
+all key types and the latent unsoundness is closed. The analysis below is
+retained for context. See [python-frontend-plans.md §5](python-frontend-plans.md#dict-byref).
 
 Last updated: 2026-06-08.
 
