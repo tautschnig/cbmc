@@ -75,14 +75,19 @@ inter-yield side effects.
 
 ## 2. Closures & late binding (PLR §4.2.2)  {#closures}
 
-**Status: PLANNED (design only, not implemented).** Closures currently
-capture by **value** at definition time, so the late-binding idiom
-`fns = [lambda: i for i in range(3)]` (all should return 2) is wrong, and
-a closure that mutates a captured variable does not share storage with the
-enclosing scope. Tracked by `closure-late-binding-knownbug`.
+**Status: PLANNED (precision improvement; design only).** This is a
+**sound precision gap, not an unsoundness** (verified 2026-06-08):
+*non-escaping* closures are already correct — late binding within the
+defining scope (`x = 10; g = lambda: x; x = 20; g()` → 20) and `nonlocal`
+mutation both work (the latter via the `qualify_name` nonlocal redirect).
+An *escaping* closure (returned or stored and called later) over-
+approximates its captured free variables to **nondet**, so the
+late-binding idiom `fns = [lambda: i for i in range(3)]` yields nondet
+rather than the PLR-correct final value — a **false positive** (sound
+direction), never a false proof. Tracked by `closure-late-binding-knownbug`.
 
-The sound fix is a **cell substrate** mirroring CPython's cell/free-variable
-model. Five phases:
+The precision fix is a **cell substrate** mirroring CPython's
+cell/free-variable model. Five phases:
 
 1. **Cell-variable identification pre-pass.** Compute, per scope,
    `cell_vars(S) = assigned(S) ∩ free_vars(nested defs in S)`. Reuse the
@@ -182,14 +187,23 @@ arguments; the backend bridges them to SMT `String`**.
 
 ## 5. dict pass-by-reference & value-string storage  {#dict-byref}
 
-**Status: PARTIAL / BLOCKED.** List and class-instance parameters pass by
-reference soundly; **dict parameters pass by value**, silently dropping
-mutations made through the parameter (a latent unsoundness). The
-value-keyed read/membership machinery (`value_equal`) is sound and landed,
-but the natural enabler — a uniform `dict[value, value]` default — is
-**blocked on performance** at the representation layer (value-keyed
-*string* dicts explode the string-refinement solver because `python_value`
-stores strings behind a pointer).
+**Status: PARTIAL.** List and class-instance parameters pass by reference
+soundly. **Option B has landed** (commit `714ca9866b`): a *key-matching*
+dict parameter (the common string-keyed case) now passes by reference via
+the shared `safe_typecast` container promotion — the values array widens
+to the tagged union and is copied back, keys stay inline — so mutations
+propagate. This closed the latent unsoundness for that case.
+
+**Remaining residual (still latently unsound):** a dict whose key type
+*cannot* match the parameter — most notably a bare `dict` parameter
+(modelled as `dict[str, value]`) given a non-string-keyed argument
+(`dict[int, int]`) — falls back to **by value**, so mutations through it
+are still dropped. The `value_equal` read/membership machinery is sound
+and landed, but the natural enabler — a uniform `dict[value, value]`
+default that would cover non-string keys — is **blocked on performance**
+at the representation layer (value-keyed *string* dicts explode the
+string-refinement solver because `python_value` stores strings behind a
+pointer).
 
 The full diagnosis, options, and recommendation are in
 [python-frontend-dict-byref-plan.md](python-frontend-dict-byref-plan.md).
