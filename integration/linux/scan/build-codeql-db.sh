@@ -17,13 +17,24 @@ export PATH=/home/ubuntu/codeql:$PATH
 export CODEQL_ALLOW_INSTALLATION_ANYWHERE=true
 export CCACHE_DISABLE=1
 
-echo "=== [1/5] Apply percpu.h __seg_gs workaround ==="
+echo "=== [1/5] Apply __seg_gs (named-address-space) workaround ==="
+# The gate location moved across kernel versions; patch whichever form
+# is present.  Goal: force __percpu_seg_override empty so current.h does
+# not use the __seg_gs qualifier the EDG extractor frontend can't parse.
+PERCPU_TYPES="$TREE/arch/x86/include/asm/percpu_types.h"
+PATCHED=0
+# (a) <= 6.x form: percpu.h gate `#ifdef CONFIG_CC_HAS_NAMED_AS`
 if grep -q '^#ifdef CONFIG_CC_HAS_NAMED_AS' "$PERCPU"; then
   sed -i 's/^#ifdef CONFIG_CC_HAS_NAMED_AS/#if 0 \/* codeql: disable __seg_gs *\//' "$PERCPU"
-  echo "  patched (disabled named-address-space path)"
-else
-  echo "  already patched or not applicable"
+  echo "  patched percpu.h gate"; PATCHED=1
 fi
+# (b) 7.x form: percpu_types.h gate `#if defined(CONFIG_SMP) && defined(CONFIG_CC_HAS_NAMED_AS)`
+if [ -f "$PERCPU_TYPES" ] && \
+   grep -q '^#if defined(CONFIG_SMP) && defined(CONFIG_CC_HAS_NAMED_AS)' "$PERCPU_TYPES"; then
+  sed -i 's/^#if defined(CONFIG_SMP) && defined(CONFIG_CC_HAS_NAMED_AS)$/#if 0 \/* codeql: disable __seg_gs *\//' "$PERCPU_TYPES"
+  echo "  patched percpu_types.h gate"; PATCHED=1
+fi
+[ "$PATCHED" = 0 ] && echo "  no known gate found (already patched or new layout?)"
 
 echo "=== [2/5] Clean target objects ==="
 find "$TREE/$TARGET" -name '*.o' -delete 2>/dev/null || true
@@ -59,5 +70,8 @@ rm -f "$QLDIR/_cov_check.ql" /tmp/_cov.bqrs
 
 echo "=== [5/5] Revert percpu.h ==="
 sed -i 's|^#if 0 /\* codeql: disable __seg_gs \*/|#ifdef CONFIG_CC_HAS_NAMED_AS|' "$PERCPU"
+if [ -f "$PERCPU_TYPES" ]; then
+  sed -i 's|^#if 0 /\* codeql: disable __seg_gs \*/|#if defined(CONFIG_SMP) \&\& defined(CONFIG_CC_HAS_NAMED_AS)|' "$PERCPU_TYPES"
+fi
 echo "  reverted"
 echo "=== DONE: $DB ==="
