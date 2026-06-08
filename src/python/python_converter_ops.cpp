@@ -590,6 +590,94 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       };
       auto bc = try_components(left);
       auto ec = try_components(right);
+      // PLR §6.5: exact integer power via repeated multiplication.
+      // For an integer exponent n, z**n is exact field-wise
+      // arithmetic — unlike the exp(w·log z) form below, which
+      // injects floating-point error and so breaks exact result
+      // comparisons (e.g. (0+1j)**2 == -1+0j). This also works for
+      // a *symbolic* base: only the exponent need be a constant
+      // integer (covers z**0/1, bool exponents via 0/1, and
+      // negative powers as 1 / z**|n|).
+      if(
+        ec.has_value() && ec->second == 0.0 &&
+        ec->first == std::floor(ec->first) && std::fabs(ec->first) <= 64.0)
+      {
+        const long n = static_cast<long>(ec->first);
+        if(n == 0)
+          return struct_exprt{
+            {double_to_floatbv(1.0), double_to_floatbv(0.0)}, ct};
+        // Materialise each intermediate into a temp to keep the
+        // expression size linear in |n| (a bare nested product
+        // references the accumulator twice per step → 2^|n|).
+        auto fresh_complex = [&](exprt val) -> exprt
+        {
+          static unsigned cpow_ctr = 0;
+          std::string tn = "__cpow_" + std::to_string(cpow_ctr++);
+          irep_idt ti{qualify_name(tn)};
+          if(symbol_table.lookup(ti) == nullptr)
+          {
+            symbolt ts{ti, ct, "python"};
+            ts.base_name = tn;
+            ts.is_lvalue = true;
+            ts.is_state_var = true;
+            symbol_table.add(ts);
+          }
+          symbol_exprt s = symbol_table.lookup_ref(ti).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{s, std::move(val)});
+          return std::move(s);
+        };
+        auto cmul = [&](const exprt &x, const exprt &y) -> exprt
+        {
+          member_exprt xr{x, "real", double_type()};
+          member_exprt xi{x, "imag", double_type()};
+          member_exprt yr{y, "real", double_type()};
+          member_exprt yi{y, "imag", double_type()};
+          return struct_exprt{
+            {minus_exprt{mult_exprt{xr, yr}, mult_exprt{xi, yi}},
+             plus_exprt{mult_exprt{xr, yi}, mult_exprt{xi, yr}}},
+            ct};
+        };
+        const long an = n < 0 ? -n : n;
+        exprt base_t = fresh_complex(left);
+        exprt acc = base_t;
+        for(long i = 1; i < an; ++i)
+          acc = fresh_complex(cmul(acc, base_t));
+        if(n > 0)
+          return acc;
+        // Negative exponent: (1+0j) / acc = (ar - ai·j) / |acc|².
+        member_exprt ar{acc, "real", double_type()};
+        member_exprt ai{acc, "imag", double_type()};
+        exprt denom = plus_exprt{mult_exprt{ar, ar}, mult_exprt{ai, ai}};
+        // PLR §6.5: (0+0j) ** negative raises ZeroDivisionError
+        // (it computes 1 / 0). Raise when the accumulated
+        // magnitude is zero, mirroring the complex Div handler.
+        {
+          const symbolt *exc_sym =
+            symbol_table.lookup("python::__exception_active");
+          const symbolt *exc_type_sym =
+            symbol_table.lookup("python::__exception_type");
+          if(exc_sym != nullptr)
+          {
+            exprt is_zero_denom =
+              ieee_float_equal_exprt{denom, safe_zero(double_type())};
+            pending_checks.push_back(code_frontend_assignt{
+              exc_sym->symbol_expr(),
+              or_exprt{exc_sym->symbol_expr(), is_zero_denom}});
+            if(exc_type_sym != nullptr)
+            {
+              long h = exception_type_hash("ZeroDivisionError");
+              pending_checks.push_back(code_frontend_assignt{
+                exc_type_sym->symbol_expr(),
+                if_exprt{
+                  is_zero_denom,
+                  from_integer(h, exc_type_sym->type),
+                  exc_type_sym->symbol_expr()}});
+            }
+          }
+        }
+        return struct_exprt{
+          {div_exprt{ar, denom}, div_exprt{unary_minus_exprt{ai}, denom}}, ct};
+      }
       if(bc.has_value() && ec.has_value())
       {
         const double a = bc->first, b = bc->second;
