@@ -49,38 +49,50 @@ modelling choice, ESBMC-only intrinsics/flags such as `nondet_*` /
 FAILED correctly under adequate unwinding; their sweep SUCCESSFUL was a
 uniform-`--unwind 10` under-approximation artifact.
 
-The genuine false proofs (we report SUCCESSFUL on a program that
-demonstrably fails in CPython) are:
+The genuine false proofs and their status (2026-06-08):
 
-- **`github_3647_12_fail` — nested `dict.items()` value not extracted
-  (PLANNED, clearest).** `f({"a": {"b": 1}})` then
-  `for k1, inner in d.items(): for k2, v in inner.items(): assert v < 0`
-  verifies SUCCESSFUL although `v == 1`. The inner value of a
-  `dict[str, dict[str, int]]` iterated via `.items()` isn't bound to the
-  real element, so the false assertion is proved. *Fix shape:* extend the
-  `dict.items()` runtime-tuple construction (already done for flat dicts)
-  to nested/value-typed value components.
-- **`class-attributes_fail` — earlier-exception masking
-  (PLANNED).** A function whose last assertion is genuinely false
-  (`get_age(2025) == 4`, actually 3) verifies SUCCESSFUL. A minimal
-  no-loop repro computes `get_age` correctly, so the masking comes from an
-  earlier statement in the body (the `super().get_info()` f-string on a
-  subclass) raising/!setting `__exception_active`, making the later buggy
-  assert unreachable. *Fix shape:* root-cause the subclass
-  `super().<method>()` + f-string path; ensure it doesn't spuriously
-  short-circuit the enclosing function.
-- **`github_3647_9_fail` — dict mutation during iteration (NICHE).**
-  `for k, v in d.items(): d["x"] = 3` raises `RuntimeError` ("dictionary
-  changed size during iteration") in CPython; we don't model
-  concurrent-modification detection. Genuine but esoteric; low priority.
-- **`github_2897_2_fail` — imported-variable value (MURKY).**
-  `from l2 import x` (`x = 42`) then `assert x == 41` verifies SUCCESSFUL.
-  Likely the `import c` / `c.create()` chain leaves the assert unreachable
-  (import-handling), rather than a wrong `x`. Needs root-cause; related to
-  the import-resolution area.
+- **`github_3647_12_fail` — nested `dict.items()` value not extracted —
+  FIXED (commit `97ceba8e0c`).** Root cause was *not* in `dict.items()`:
+  `convert_type_annotation(dict[K,V])`'s `is_safe` allowlist omitted dict
+  and set, so `dict[str, dict[str, int]]` degraded to `int`, the parameter
+  carried no value, and assertions over it were vacuous. Fixed by adding
+  dict/set to the allowlist (whole-group: repairs every nested-dict /
+  set-valued dict annotation).
+- **`github_2897_2_fail` — imported module-level constant not bound —
+  FIXED (commit `4988dc5755`).** `from MODULE import name` never bound a
+  module-level constant (only TypedDict was special-cased), so the name
+  was undefined and `assert name == X` was vacuous. Fixed by registering
+  module-level constants in `process_imported_module` and emitting an
+  explicit binding ASSIGN at the import site (whole-group: every
+  `from X import <constant>`; also repaired the errno/signal library test
+  that had been passing vacuously).
+- **`class-attributes_fail` — DEFERRED (deep codegen).** A genuinely-false
+  final assert (`my_car.get_age(2025) == 4`, actually 3) verifies
+  SUCCESSFUL, but *only* when `Vehicle.get_info` (an f-string method) is
+  invoked on both a base instance and — via `super().get_info()` — a
+  subclass instance before the `get_age` call. The goto shows `my_car`
+  re-constructed (a second `Car::__init__`) between the `get_info` asserts
+  and `get_age`, `get_age` called through `cast(address_of(my_car),
+  Vehicle*)`, and the `<name>$bound` UnboundLocal machinery in play —
+  pointing at a **vacuity** (the path made infeasible by the
+  double-construction / `$bound` interaction), not a wrong value. Minimal
+  repro: two instances + both `get_info` calls + `super()`. *Fix shape:*
+  root-cause the repeated-method-call + inherited-construction +
+  `super()`-value-dispatch codegen (class-def / 1a-bis re-emission); high
+  regression risk, needs dedicated work.
+- **`github_3647_9_fail` — dict mutation during iteration — DEFERRED
+  (niche, regression-risky).** `for k, v in d.items(): d["x"] = 3` raises
+  `RuntimeError` ("dictionary changed size during iteration") in CPython;
+  we don't model concurrent-modification detection. A sound model must
+  (a) track the iterated dict's identity *through* `.items()`/`.keys()`/
+  `.values()` and (b) distinguish size-changing mutations from
+  value-updates (`for k in d: d[k] = ...` must **not** fire) — a delicate
+  loop-body analysis with false-positive risk on a common pattern.
+  Disproportionate to its niche value; left as a documented residual.
 
-Recommended next implementation target: **`github_3647_12_fail`** — it is
-a clean, minimal, clearly-frontend soundness bug with an obvious fix shape.
+Net: 2 of the 4 genuine false proofs closed cleanly (ESBMC sweep PASS
+2905 → 2907, zero regressions); 2 deferred with precise root causes —
+one deep codegen, one niche-and-regression-risky.
 
 ---
 
