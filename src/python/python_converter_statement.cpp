@@ -281,6 +281,38 @@ codet python_convertert::convert_statement(const jsont &stmt)
             if(module == "collections")
               collections_imports[asname] = name;
           }
+
+          // Generic: bind an imported module-level CONSTANT to its
+          // value. process_imported_module registered the source
+          // module's `python::<name>` with the constant value, but
+          // the static initialiser isn't reliably applied when the
+          // symbol is added during the import pre-pass — so emit an
+          // explicit ASSIGN here (mirroring the math-constant path
+          // above). Guarded to data values only: function/class
+          // symbols (ID_code / type symbols) and nondet stubs (nil
+          // value) are skipped, so this only binds genuine constants.
+          {
+            const symbolt *src = symbol_table.lookup("python::" + name);
+            if(
+              src != nullptr && src->value.is_not_nil() &&
+              src->type.id() != ID_code && src->value.id() != ID_code)
+            {
+              irep_idt did{"python::" + asname};
+              if(symbol_table.lookup(did) == nullptr)
+              {
+                symbolt ds{did, src->type, "python"};
+                ds.base_name = asname;
+                ds.is_lvalue = true;
+                ds.is_state_var = true;
+                ds.is_static_lifetime = true;
+                ds.value = src->value;
+                symbol_table.add(ds);
+              }
+              import_block.add(code_frontend_assignt{
+                symbol_table.lookup_ref(did).symbol_expr(), src->value});
+              has_assigns = true;
+            }
+          }
         }
       }
     }
