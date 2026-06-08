@@ -14,7 +14,7 @@ decorator-list inspection in `convert_function_def` and lowers
 each contract clause to the corresponding `__CPROVER_requires`
 / `__CPROVER_ensures` annotation on the GOTO function (or to
 class-invariant emission on every method, for `@invariant` on
-classes). See `doc/python-frontend-icontract-plan.md`.
+classes). See the Contracts section of `doc/python-frontend-architecture.md`.
 
 When the frontend's icontract integration is disabled (or for
 contracts that the lambda-to-contract translator can't handle),

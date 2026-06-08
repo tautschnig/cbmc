@@ -7,7 +7,7 @@
 /// count, partition, rpartition, ljust, rjust, center,
 /// expandtabs, zfill. Extracted from
 /// python_converter_call_method.cpp per
-/// doc/python-frontend-call-refactor-plan.md (Phase 3.2).
+/// doc/python-frontend-architecture.md.
 /// Pure source-split — semantics are preserved.
 
 #include <util/arith_tools.h>

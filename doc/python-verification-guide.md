@@ -6,7 +6,7 @@ bounded model checking. This guide explains how to use it.
 For frontend internals (passes, type system, generator semantics, etc.)
 see [python-frontend-architecture.md](python-frontend-architecture.md).
 For the open-work backlog see
-[python-frontend-roadmap.md](python-frontend-roadmap.md).
+[python-frontend-plans.md](python-frontend-plans.md).
 
 ## Quick Start
 

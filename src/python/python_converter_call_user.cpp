@@ -7,7 +7,7 @@
 /// argument binding that produces the final
 /// side_effect_expr_function_callt. Extracted from
 /// python_converter_call.cpp per
-/// doc/python-frontend-call-refactor-plan.md (Phases 3.7 + 3.8).
+/// doc/python-frontend-architecture.md.
 /// Pure source-split — semantics are preserved.
 
 #include <util/arith_tools.h>

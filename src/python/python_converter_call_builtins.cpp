@@ -6,7 +6,7 @@
 /// sorted, sum, range, round, divmod, str, all, any,
 /// hasattr, callable, type, isinstance, abs, min, max.
 /// Extracted from python_converter_call.cpp per
-/// doc/python-frontend-call-refactor-plan.md (Phase 3.5).
+/// doc/python-frontend-architecture.md.
 /// Pure source-split — semantics are preserved.
 
 #include <util/arith_tools.h>

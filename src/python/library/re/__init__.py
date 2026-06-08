@@ -2,8 +2,8 @@
 Verification-optimized model of the `re` module (regular
 expressions).
 
-This is Wave 1 of the plan in
-``doc/architectural/python-re-support-plan.md``: a shallow stub that
+This is the shallow-stub layer described in
+``doc/python-frontend-regex-story.md``: a shallow stub that
 exposes the public surface of ``re`` with each function returning
 a nondet value of the right shape. Wave 2 (SMT regex via --cvc5)
 will replace this file with a version that carries the pattern as

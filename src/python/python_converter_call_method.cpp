@@ -7,7 +7,7 @@
 /// random / re module receivers, generators, iterators, and
 /// the regex-stub fallback for unknown methods. Extracted from
 /// python_converter_call.cpp per
-/// doc/python-frontend-call-refactor-plan.md (Phase 3.6).
+/// doc/python-frontend-architecture.md.
 /// Pure source-split — semantics are preserved.
 
 #include <util/arith_tools.h>
@@ -1662,8 +1662,8 @@ std::optional<exprt> python_convertert::try_method_call(
           // Option-4 domain check: raise ValueError for known-bad
           // constant arguments, and emit a guarded ValueError for
           // non-constant arguments. See math_function_domain() /
-          // emit_value_error() and doc/architectural/
-          // python-module-support-plan.md.
+          // emit_value_error() and doc/python-frontend-plans.md
+          // (module support).
           {
             auto domain_opt = math_function_domain(func_name, math_arg);
             auto pre_eval = try_eval_double(math_arg);

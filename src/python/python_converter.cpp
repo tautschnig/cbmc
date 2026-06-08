@@ -2323,8 +2323,8 @@ exprt python_convertert::wrap_value(const exprt &e)
   // tagged-union truthiness check would have to special-case
   // the sentinel value in the INT-tagged slot. Long-term this
   // should disappear once typed numeric slots stop using the
-  // sentinel encoding altogether (see P0 in
-  // doc/python-frontend-blocked-items-plan.md).
+  // sentinel encoding altogether (see the typed-numeric is-None
+  // residual in doc/python-frontend-plans.md).
   if(is_python_none_constant(e))
     return python_none_value();
 

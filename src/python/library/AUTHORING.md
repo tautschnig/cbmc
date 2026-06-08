@@ -3,7 +3,7 @@
 
 This document is a practical guide to writing a new model for
 CBMC's Python front-end. It complements the architectural plan in
-`python-module-support-plan.md` by answering: *how do I add
+`doc/python-frontend-plans.md` (§6 modules) by answering: *how do I add
 `yourmodule.py` to the library?*
 
 ## File layout

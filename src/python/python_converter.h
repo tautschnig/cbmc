@@ -120,10 +120,10 @@ private:
 
   /// Map from Python function identifier (python::name) to the C
   /// intrinsic it should lower to. Populated by the @c_intrinsic('C-NAME')
-  /// decorator in library stubs (see doc/architectural/
-  /// python-module-support-plan.md, Step 3 / annotation-driven
-  /// C-routing primitive). When a call's resolved symbol is in this
-  /// map, the front-end emits a call to the named C function
+  /// decorator in library stubs (see the Module & library support
+  /// section of doc/python-frontend-architecture.md; open work in
+  /// doc/python-frontend-plans.md §6). When a call's resolved symbol
+  /// is in this map, the front-end emits a call to the named C function
   /// instead of calling the Python body. The C function is resolved
   /// at link-to-library time; the declared Python signature must
   /// match the C function's argument and return types.

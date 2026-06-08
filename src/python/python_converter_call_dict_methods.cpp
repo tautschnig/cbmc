@@ -3,7 +3,7 @@
 /// pop / popitem / update / clear / keys / values / items /
 /// fromkeys / copy / __contains__ on the array-based dict
 /// model. Extracted from python_converter_call_method.cpp
-/// per doc/python-frontend-call-refactor-plan.md (Phase 3.4).
+/// per doc/python-frontend-architecture.md.
 /// Pure source-split — semantics are preserved.
 
 #include <util/arith_tools.h>

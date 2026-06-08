@@ -486,7 +486,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   }
 
   // Phase 2 of the icontract integration plan
-  // (doc/python-frontend-icontract-plan.md): collect the
+  // (see the Contracts section of doc/python-frontend-architecture.md): collect the
   // @icontract.require / bare @require decorators so we can
   // emit the corresponding precondition assumes at function
   // entry, and (for DFCC) attach __CPROVER_requires clauses to
@@ -1883,7 +1883,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   source_locationt loc = get_location(stmt);
 
   // Phase 6 of the icontract integration plan
-  // (doc/python-frontend-icontract-plan.md): collect class-level
+  // (see the Contracts section of doc/python-frontend-architecture.md): collect class-level
   // @icontract.invariant decorators. Each invariant lambda is
   // asserted at the entry and exit of every public method (with
   // a special exception for __init__ which only gets the exit

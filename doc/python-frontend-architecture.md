@@ -5,8 +5,10 @@ turns a Python source file into a CBMC GOTO program. It is
 intended for contributors and AI agents extending the
 frontend. For verification usage see
 [python-verification-guide.md](python-verification-guide.md).
-For the open-work backlog see
-[python-frontend-roadmap.md](python-frontend-roadmap.md).
+For known gaps, PLR deviations, and the forward-looking
+backlog see
+[python-frontend-plans.md](python-frontend-plans.md) — every
+gap noted below links to a specific section there.
 
 ## Top-level flow
 
@@ -40,6 +42,13 @@ ops / statement / terms / comprehension), but they all share
 the single `python_convertert` object via friend-method
 patterns over a master class declaration in
 `python_converter.h`.
+
+The call-handling code is split further: `python_converter_call.cpp`
+holds the user-call dispatchers, and
+`python_converter_call_{builtins,nondet,string_methods,list_methods,dict_methods,set_methods,method,user}.cpp`
+hold the per-category handlers (builtins, ESBMC-nondet
+primitives, str/list/dict/set methods, method dispatch, and
+user-function call binding).
 
 ## Pass structure
 
@@ -467,6 +476,65 @@ When both operands are constants tracked in
 string-solver path — the solver is correct but
 substantially slower.
 
+## Regex (`re` module)
+
+`re` is modelled by a shallow library stub plus `__cbmc_re_*`
+SMT intrinsics, with a call-site `regex-no-match` check that
+flags statically-impossible matches. The layering invariant is
+that the **frontend emits refined-string arguments and the
+back-end is responsible for bridging them to SMT `String`**.
+Precise symbolic-subject matching needs that bridge, which is
+not yet implemented. The current-state reference (what's
+modelled, the backend-portability matrix, what doesn't work) is
+[python-frontend-regex-story.md](python-frontend-regex-story.md);
+the open work is [plans §4](python-frontend-plans.md#regex).
+
+## Contracts (icontract → DFCC)
+
+icontract decorators (`@require` / `@ensure` / `@snapshot` /
+`@invariant`) are routed into CBMC's DFCC contracts machinery:
+the decorator's lambda body is converted as a contract clause
+attached to the function. Inheritance follows Liskov — a
+subclass precondition is OR-weakened against the base
+(`require_else`), a postcondition AND-strengthened
+(`ensure_then`) — using the class MRO. Single-level inheritance
+composition works; the residual (multi-level Liskov, strict-C3
+mixin precedence, async) is [plans §11](python-frontend-plans.md#icontract).
+
+## Module & library support
+
+Imports resolve to pure-Python library models under
+`src/python/library/<name>.py`, which the converter ingests
+exactly like user code (`random`, `datetime`, `math`, …). A
+C-backed primitive can be marked `@c_intrinsic` so it lowers to
+the corresponding CBMC/C-library routine instead of a Python
+body. Unresolved imports set `__exception_active` to
+`ImportError` so `try/except ImportError` composes. Open
+coverage work is [plans §6](python-frontend-plans.md#modules).
+
+## Parse daemon & performance
+
+The AST parser can run as a persistent Unix-socket daemon
+(`python_ast_server.py`, selected via `CBMC_PYTHON_SERVER_SOCKET`),
+eliminating per-module Python interpreter startup — a large
+win when a program imports many library modules. The frontend
+also relies on `--slice-formula` (default-on) and the
+`irept` sharing fast-path. The empirical per-benchmark analysis
+and the slicer ↔ string-refinement contract are documented in
+[architectural/python-perf-analysis.md](architectural/python-perf-analysis.md);
+open optimization targets are
+[plans §8](python-frontend-plans.md#performance).
+
+## Any-erasure attribute check
+
+`--python-check-any-arg-attrs` detects attribute-error bugs that
+type-erasure hides: when a concrete-typed argument flows through
+an `Any`-annotated parameter and the body does `param.attr`, the
+checker (caller-side body sniff via `function_param_attr_uses`,
+narrowed by `isinstance` gates) emits an `attribute-error`
+property at call sites whose argument class doesn't declare
+`attr`. PLR §3.3.5 isinstance-narrowing is respected.
+
 ## Key flags
 
 | Flag | Default | Effect |
@@ -626,6 +694,35 @@ arg = coerce_return_value(arg, return_type);   // return boundary
 intermediate type-coercion inside an expression, internal
 representation conversions, etc. — anywhere there is no typed
 slot semantics involved.
+
+## Gaps & PLR deviations
+
+This section is the honest inventory of where the frontend
+deviates from the Python Language Reference or is incomplete.
+Each entry links to the plan that addresses it (or records that
+there is no plan yet). Two ground rules hold throughout: the
+deviations below are **sound** (over-approximations / precision
+misses, not false proofs) unless explicitly flagged as a latent
+unsoundness, and bounded-container/64-bit-int limits are
+intrinsic design choices, not bugs.
+
+| Area | Gap / deviation | Sound? | Plan |
+|---|---|---|---|
+| Generators | List-with-cursor model: inter-yield side-effect ordering not faithful; module-global free vars in generator `if` drop the body; cross-boundary list-shape | yes | [§1](python-frontend-plans.md#generators) |
+| Closures | Capture by **value**, not by cell — late binding (`lambda: i` in a loop) is wrong; mutation of a captured var doesn't share storage | **latent unsound** for the mutation case (KNOWNBUG) | [§2](python-frontend-plans.md#closures) |
+| Strings | Modelled as refined-string struct; no native SMT-LIB String backend yet (selector exists, migration pending) | yes (precision/perf) | [§3](python-frontend-plans.md#strings) |
+| Regex | Shallow stub + intrinsics; symbolic-subject matching needs the backend String bridge | yes (precision) | [§4](python-frontend-plans.md#regex) |
+| dict params | Passed **by value** — mutation through a dict parameter is dropped | **latent unsound** | [§5](python-frontend-plans.md#dict-byref) |
+| Modules | `cmath`, `os`, `time`, `dataclasses`, `collections`, fuller `datetime`/`json` not modelled | yes (nondet) | [§6](python-frontend-plans.md#modules) |
+| Annotation checks | `--python-check-annotations` can't be default-on (two CBMC-core blockers) | yes | [§7](python-frontend-plans.md#check-annotations) |
+| Performance | `python_value` SSA expansion, kwarg-check axiom volume, `irept::operator==` hot path, 8 TIMEOUT tests | n/a | [§8](python-frontend-plans.md#performance), [§9](python-frontend-plans.md#precision) |
+| Descriptors | Non-data-descriptor (method) shadowing; custom `__set__` / stateful `__get__` (need instance-`__dict__` storage) | yes (KNOWNBUG) | [§10](python-frontend-plans.md#descriptors) |
+| Contracts | Multi-level Liskov; strict-C3 mixin precedence; async | yes | [§11](python-frontend-plans.md#icontract) |
+| Higher-order | No first-class function value storable in a container / called indirectly | yes | [§12](python-frontend-plans.md#higher-order) |
+| Async | `async`/`await`/async generators not modelled | n/a | [§13](python-frontend-plans.md#async) |
+| Comprehensions | dict-comprehension over a runtime iterable (nondet); iteration-var scope leak; inner-iterator shadow | yes | [§14](python-frontend-plans.md#residuals) |
+| Numbers | Default 64-bit `int` (`--python-unbounded-ints` opt-in); `math`/`complex` edge precision | intrinsic / precision | [§9](python-frontend-plans.md#precision) |
+| Identity | `is` + small-int interning approximated; `id()` deterministic | yes (warned) | — (intrinsic, by design) |
 
 ## Where to make changes
 
