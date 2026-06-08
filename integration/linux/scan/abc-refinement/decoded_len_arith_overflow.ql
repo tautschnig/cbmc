@@ -68,8 +68,12 @@ predicate feedsRoundup(Function f, Variable v, string detail, int line) {
 }
 
 /** The decoded length `v` is an operand of a multiplication in `f`
- *  (classic size = count * elem overflow). */
+ *  (classic size = count * elem overflow).  We require `v` to be at least
+ *  32-bit: a 16-/8-bit decoded value (e.g. ntohs -> u16) times a small
+ *  constant cannot overflow the 32-bit arithmetic it is promoted to, so
+ *  those are not real overflow candidates (e.g. IGMPv3 grec_nsrcs). */
 predicate feedsMultiply(Function f, Variable v, string detail, int line) {
+  v.getType().getSize() >= 4 and
   exists(MulExpr mul |
     mul.getEnclosingFunction() = f and
     mul.getAnOperand() = v.getAnAccess() and

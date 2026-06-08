@@ -129,13 +129,35 @@ predicate countLoopWrite(
   arrName = write.getArrayBase().toString() and
   // the write is an lvalue (assigned into)
   exists(Assignment a | a.getLValue() = write) and
-  not guardedAgainstConstant(cnt, f)
+  not guardedAgainstConstant(cnt, f) and
+  not maskGuarded(cnt, f)
 }
 
 /** The variable/field underlying a count source (for crement/assign checks). */
 Declaration countTarget(CountSource c) {
   result = c.(VariableAccess).getTarget() or
   result = c.(FieldAccess).getTarget()
+}
+
+/** Holds if the index/count `e` is masked with a compile-time constant in
+ *  `f` -- `idx &= CONST` or `idx & CONST` -- which bounds it as soundly as
+ *  a relational guard (e.g. `can_id &= CAN_SFF_MASK` before `rx_sff[id]`).
+ *  Masking uses bitwise-and, not a RelationalOperation, so the relational
+ *  guard predicate misses it. */
+predicate maskGuarded(CountSource e, Function f) {
+  exists(AssignAndExpr aa, Expr k |
+    aa.getEnclosingFunction() = f and
+    aa.getLValue().(VariableAccess).getTarget() = countTarget(e) and
+    k = aa.getRValue() and
+    (k instanceof Literal or k instanceof EnumConstantAccess or
+     k.getValue() != ""))
+  or
+  exists(BitwiseAndExpr ba, Expr k |
+    ba.getEnclosingFunction() = f and
+    ba.getAnOperand().(VariableAccess).getTarget() = countTarget(e) and
+    k = ba.getAnOperand() and
+    (k instanceof Literal or k instanceof EnumConstantAccess or
+     k.getValue() != ""))
 }
 
 /* ---- Pattern B: index subscripts a fixed array directly ---- */
@@ -149,7 +171,8 @@ predicate directIndex(
   arrName = ae.getArrayBase().toString() and
   // enum-typed indices index arrays sized by that enum -> bounded idiom.
   not idx.getUnspecifiedType() instanceof Enum and
-  not guardedAgainstConstant(idx, f)
+  not guardedAgainstConstant(idx, f) and
+  not maskGuarded(idx, f)
 }
 
 from Function f, string kind, string name, int line, string detail
