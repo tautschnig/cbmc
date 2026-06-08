@@ -44,35 +44,54 @@ for q in tlv_parse_loop tlv_parse_loop_helper tainted_into_fixed_dest tainted_al
 done
 
 # Step 3: generate harnesses + CBMC for TLV-loop hits
-echo "[3/4] CBMC triage (TLV-loop candidates)..."
-printf "%-50s %-12s %s\n" "CANDIDATE" "VERDICT" "PROPERTY"
-printf "%-50s %-12s %s\n" "---------" "-------" "--------"
+echo "[3/4] CBMC triage (auto-harnessed candidates)..."
+printf "%-46s %-10s %-12s %s\n" "CANDIDATE" "ORACLE" "VERDICT" "PROPERTY"
+printf "%-46s %-10s %-12s %s\n" "---------" "------" "-------" "--------"
 
-TLV_OUT="/tmp/scan_tlv_triage_$$.bqrs"
-timeout 600 codeql query run --database="$DB" --additional-packs=/home/ubuntu/codeql/qlpacks \
-  --output="$TLV_OUT" "$DIR/abc-refinement/tlv_parse_loop.ql" >/dev/null 2>&1
-codeql bqrs decode --format=csv "$TLV_OUT" > /tmp/scan_tlv_csv_$$ 2>/dev/null
-awk -F'","' 'NR>1{gsub(/^"/,"",$2);gsub(/"$/,"",$2);print $2}' /tmp/scan_tlv_csv_$$ | \
-  grep "${TARGET%/}" > /tmp/scan_tlv_hits_$$ || true
-rm -f /tmp/scan_tlv_csv_$$
-if [ -s /tmp/scan_tlv_hits_$$ ]; then
-while IFS='|' read -r func file line rest; do
-  H=$(mktemp /tmp/h_XXXX.c)
-  python3 "$DIR/abc-refinement/tlv_harness_gen.py" -c "${func}|${file}|${line}|${rest}" > "$H" 2>/dev/null
-  if [ ! -s "$H" ]; then
-    printf "%-50s %-12s %s\n" "$func:$line" "GEN_ERR" "-"
-    rm -f "$H"; continue
-  fi
-  GB=$(mktemp /tmp/h_XXXX.gb)
-  "$GOTOCC" -o "$GB" "$H" 2>/dev/null
-  VOUT=$( timeout 90 "$CBMC" "$GB" --function harness_buggy --bounds-check --pointer-check --unwind "$UNWIND" 2>&1 )
-  VERDICT=$(echo "$VOUT" | grep -o "VERIFICATION [A-Z]*" || echo "TIMEOUT/ERR")
-  PROP=$(echo "$VOUT" | grep "FAILURE" | head -1 | sed 's/.*] //' || echo "-")
-  printf "%-50s %-12s %s\n" "$func:$line" "$VERDICT" "$PROP"
-  rm -f "$H" "$GB"
-done < /tmp/scan_tlv_hits_$$
-fi
-rm -f "$TLV_OUT" /tmp/scan_tlv_hits_$$
+# triage_oracle <query> <gentag> <cbmc-flags...>
+#   gentag: tlv | count | decoded | skb  (selects the harness generator)
+triage_oracle() {
+  local q="$1" gentag="$2"; shift 2
+  local flags="$*"
+  local out="/tmp/scan_${gentag}_$$.bqrs"
+  timeout 600 codeql query run --database="$DB" \
+    --additional-packs=/home/ubuntu/codeql/qlpacks \
+    --output="$out" "$DIR/abc-refinement/$q" >/dev/null 2>&1 || return 0
+  codeql bqrs decode --format=csv "$out" > "/tmp/scan_${gentag}_csv_$$" 2>/dev/null
+  awk -F'","' 'NR>1{gsub(/^"/,"",$2);gsub(/"$/,"",$2);print $2}' \
+    "/tmp/scan_${gentag}_csv_$$" | grep "${TARGET%/}" \
+    > "/tmp/scan_${gentag}_hits_$$" || true
+  rm -f "/tmp/scan_${gentag}_csv_$$"
+  [ -s "/tmp/scan_${gentag}_hits_$$" ] || { rm -f "$out"; return 0; }
+  while IFS= read -r cand; do
+    local func file line H GB VOUT VERDICT PROP
+    func=$(printf '%s' "$cand" | cut -d'|' -f1)
+    file=$(printf '%s' "$cand" | cut -d'|' -f2)
+    line=$(printf '%s' "$cand" | cut -d'|' -f3)
+    H=$(mktemp /tmp/h_XXXX.c)
+    case "$gentag" in
+      tlv) python3 "$DIR/abc-refinement/tlv_harness_gen.py" -c "$cand" > "$H" 2>/dev/null ;;
+      *)   python3 "$DIR/abc-refinement/oracle_harness_gen.py" --oracle "$gentag" -c "$cand" > "$H" 2>/dev/null ;;
+    esac
+    if [ ! -s "$H" ]; then
+      printf "%-46s %-10s %-12s %s\n" "$func:$line" "$gentag" "GEN_ERR" "-"
+      rm -f "$H"; continue
+    fi
+    GB=$(mktemp /tmp/h_XXXX.gb)
+    "$GOTOCC" -o "$GB" "$H" 2>/dev/null
+    VOUT=$(timeout 90 "$CBMC" "$GB" --function harness_buggy $flags --unwind "$UNWIND" 2>&1)
+    VERDICT=$(echo "$VOUT" | grep -o "VERIFICATION [A-Z]*" || echo "TIMEOUT/ERR")
+    PROP=$(echo "$VOUT" | grep "FAILURE" | head -1 | sed 's/.*] //' || echo "-")
+    printf "%-46s %-10s %-12s %s\n" "$func:$line" "$gentag" "$VERDICT" "$PROP"
+    rm -f "$H" "$GB"
+  done < "/tmp/scan_${gentag}_hits_$$"
+  rm -f "$out" "/tmp/scan_${gentag}_hits_$$"
+}
+
+triage_oracle tlv_parse_loop.ql             tlv     --bounds-check --pointer-check
+triage_oracle tainted_count_into_fixed_array.ql count --bounds-check --pointer-check
+triage_oracle decoded_len_arith_overflow.ql decoded --unsigned-overflow-check
+triage_oracle skb_field_before_lencheck.ql  skb     --bounds-check --pointer-check
 
 # Step 4: summary
 echo
