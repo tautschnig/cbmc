@@ -38,33 +38,25 @@ record of what already landed, use `git log` — this doc deliberately does
 
 ## 1. Generators / `yield` (PLR §6.2.9)  {#generators}
 
-**Status: PARTIAL.** The **list-with-cursor** model is implemented (see the
-architecture doc's "Generator semantics" section): each `yield X` becomes
-`__gen_result.append(X)`, the function returns the eager list, and a call
-site allocates an int cursor that `next()` advances, raising
-`StopIteration` through the exception flags. This is sound for the eager
-model (side-effect ordering between yields is not faithful, which is
-acceptable for verification).
+**Status: DONE for the modelled scope.** The **list-with-cursor** model is
+implemented (see the architecture doc's "Generator semantics" section):
+each `yield X` becomes `__gen_result.append(X)`, the function returns the
+eager list, and a call site allocates an int cursor that `next()`
+advances, raising `StopIteration` through the exception flags. This is
+sound for the eager model (side-effect ordering between yields is not
+faithful, which is acceptable for verification).
 
-**Residuals:**
+The two residuals that earlier drafts listed here — free-variable
+resolution for module globals in generator `if`-conditions, and list-shape
+propagation across function boundaries for `for x in g` — are **both
+resolved** (verified 2026-06-08). The whole `github_3701` cluster verifies
+SUCCESSFUL with its per-test flags (`_2/_4/_5/_9/_11/_if_else` and the
+rest) and is PASS in the sweep baseline, with one exception:
 
-- **Free-variable resolution for module globals in generator
-  if-conditions.** A generator whose `if flag:` reads a module-global
-  `flag` drops the whole if/else body. Not generator-specific —
-  reproduces with any function reading a module global in a condition.
-  *Fix shape:* during the body pre-scan, track free variables read by a
-  function body and ensure they resolve to the module-global symbol's
-  value (or nondet) at call time.
-- **List-shape propagation across function boundaries** for `for x in g`
-  over a generator instance whose body indexes bound symbols
-  (`rand[0]`, `len(l1)`): index-out-of-bounds on indirect list reads.
-  *Fix shape:* for `for x in g` over a known generator instance, iterate
-  `g.data` up to `g.length` instead of the symbol's declared
-  `PYTHON_MAX_LIST_LENGTH` bound; extend the return-list-literal shape
-  tracking to bound-symbol shapes.
-
-**Scope:** ~2–3 days for both, which closes the remaining generator
-cluster (`github_3701_2/4/5/9/11/if_else`).
+- `github_3701_14` (TOERR): a recursive `f(k)` doing `ret.extend([1] + r)`
+  whose `test.desc` uses ESBMC-only flags (`--smt-during-symex`,
+  `--smt-symex-guard`) that this CBMC build rejects. It does not use
+  `yield` — it is a recursion/ESBMC-flag artifact, not a generator gap.
 
 **True state-machine resumption** (faithful side-effect ordering): **NO
 PLAN YET** — the list-with-cursor model is the deliberate design choice;
@@ -298,21 +290,16 @@ on `(path, mtime)`; a multi-process pool for parallel parse requests.
 ## 9. Precision clusters (sound today; precision misses)  {#precision}
 
 All items here are **sound** (misses / over-approximations, never false
-alarms). Grouped by root area with rough test counts from the last DIFF
-sweep.
+alarms). Verified against the 2026-06-08 sweep baseline.
 
-- **String operations (PLANNED, ~3 tests open):** `string-concat` in a
-  loop — `word[i]` reads on a `cprover_string_concat` result are opaque;
-  `string.digits` / `string.ascii_uppercase` constants not populated from
-  imports. *Fix shape:* resolve `word[i]` on concat results at the
-  cprover-string layer; populate the `string` module constants in library
-  hooks.
-- **ESBMC-nondet primitives (PARTIAL):** residuals `nondet_list4`
-  (typed-int nondet can take the None sentinel — excluding it is an
-  under-approximation), `nondet_list17/18` (append-then-index of strings),
-  `nondet_list5` (loop-unwinding sensitivity), `nondet_dict14`
-  (`k in x` membership on nondet-content string keys — needs richer
-  string-solver modelling).
+- **String operations:** the `string-concat` loop cluster
+  (`string-concat4/5/6/13`) and `string.digits` / `string.ascii_uppercase`
+  population are **all PASS now** — closed. No open items in this group.
+- **ESBMC-nondet primitives (PARTIAL):** most of the previously-listed
+  residuals are **closed** (`nondet_list17/18`, `nondet_dict14` now PASS).
+  Still open (DIFF): `nondet_list4` (a typed-int nondet element can take
+  the None sentinel; excluding it would be an under-approximation) and
+  `nondet_list5` (loop-unwinding sensitivity).
 - **TIMEOUT tests (PLANNED per-test, 12 open):** as of the
   2026-06-08 baseline (`PASS 2905`): `dict65`, `github_3560_1`,
   `github_3560_3`, `github_3560_4`, `github_3626-nondet`,
@@ -322,21 +309,32 @@ sweep.
   cause — each needs a profile to find the hot path (dict `.items()`
   schema-walking, type-promotion multiplication, symbolic-size ×
   bounded-unroll interactions).
-- **`math` / `complex` precision (PARTIAL, ~38 / ~36 tests):** per-function
-  domain handling and complex arithmetic modelling. *Fix shape:* declarative
-  `@c_intrinsic` domain annotations (depends on [§6](#modules)); model
-  complex arithmetic edges (signed-zero, NaN, ValueError for malformed
-  `complex("bad")`); cross-function tracking of return constants for
-  dict/list literals containing complex.
-- **`github` real-world cluster (~129 open):** many small sub-clusters
-  (int(string, base) edge cases, isinstance-narrowing for union params +
-  datetime stub fields, reversed-range iteration, list index-out-of-range,
-  fail-shape soundness tests). Tractable but no shared root cause — triage
-  per sub-cluster.
-- **`lambda7` / `lambda18` body emission (PLANNED, ~1 day):** lambda body
-  conversion leaks pending checks into the caller's GOTO for some concat
-  shapes. Worked around for the struct-call dedup case; the underlying
-  emission bug remains.
+- **`math` / `complex` precision (PARTIAL):** per-function domain handling
+  and complex arithmetic modelling. *Fix shape:* declarative `@c_intrinsic`
+  domain annotations (depends on [§6](#modules)); model complex arithmetic
+  edges (signed-zero, NaN, ValueError for malformed `complex("bad")`);
+  cross-function tracking of return constants for dict/list literals
+  containing complex. (Test counts inherited from the old roadmap are
+  unverified — needs a fresh DIFF triage; see note below.)
+- **`github` real-world cluster:** many small sub-clusters (int(string,
+  base) edge cases, isinstance-narrowing for union params + datetime stub
+  fields, reversed-range iteration, list index-out-of-range, fail-shape
+  soundness tests). No shared root cause — triage per sub-cluster. (Count
+  inherited from the old roadmap is unverified — needs a fresh DIFF triage.)
+- **`lambda7` / `lambda18` body emission:** **closed** (both PASS in the
+  2026-06-08 baseline).
+
+> **Re-validation note (2026-06-08):** this doc was consolidated from a
+> wave-41-era roadmap, and several entries proved stale on inspection —
+> the generator cluster (§1), the regex bridge state (§4), the TIMEOUT
+> list, and most of the string/nondet/lambda items above were already
+> resolved. The **actual** 2026-06-08 sweep baseline (PASS 2905/3091) has
+> 97 genuine DIFF mismatches — far fewer than the old roadmap implied —
+> bucketed as: ~30 `github_*`, ~10 `complex_*`, ~3 `nondet_*`, and ~54
+> other (notably a `casting*-fail` group). The `math`/`complex` and
+> `github` fix-shapes above are still directionally right, but their
+> scope is smaller than stated; a per-test DIFF triage should precede any
+> push on these clusters.
 
 ---
 
