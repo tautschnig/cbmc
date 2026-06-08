@@ -117,3 +117,42 @@ new = FP).  No novel bug on the post-fix tree — the expected result.
 Confirms two FP classes for future precision work: TX-side buffer
 *writers* (tlv_parse_loop) and decoded values used as *non-size*
 quantities (decoded_len multiply).
+
+## Follow-up 2: consecutive linux-next daily snapshots
+
+Fetched `next-20260604` (and `next-20260608`) alongside the existing
+`next-20260605`, and ran the scanner on the **one-day** delta
+`next-20260604 .. next-20260605` against `broad-next-db` (built at
+next-20260605), `net/` + `drivers/net/vxlan/`:
+
+```
+[delta] 71 changed files in scope (next-20260604..next-20260605)
+[delta] 6 functions touched by the patch (present in the DB)
+ORACLE      FUNCTION              FILE:LINE
+tlv_parse_  ieee80211_start_ap    net/mac80211/cfg.c:1630
+tainted_co  ieee80211_start_ap    net/mac80211/cfg.c:1656
+```
+
+From a 464-file daily delta the scanner produced a **2-candidate** set,
+both on `ieee80211_start_ap` (touched by a 3+/4- refactor), both **FP**:
+
+* count/index `sdata->link[link_id]` — the caller-validated mac80211
+  `link_id` class already documented in `broad-sweep-triage-2026-06.md`;
+* tlv_parse_loop — the AP-settings beacon/IE walk, validated on the
+  nl80211 path.
+
+**Net:** the discovery mechanism works identically on consecutive
+linux-next snapshots (the freshest possible delta) — tiny, explainable
+candidate set, no novel bug.  The recurring noise source across both
+deltas is the **caller-passed `link[link_id]` direct-index** pattern;
+deprioritising count/index hits whose index is a bare parameter (not
+decoded in-function) would remove essentially all of it.
+
+## Status
+
+Both follow-ups complete.  The differential scanner is validated on two
+independent real deltas (mainline rc6→rc7 tag delta; linux-next
+0604→0605 daily delta), with full Kconfig coverage of the parser
+subsystems.  It is ready to run as a daily linux-next gate or a
+pre-merge PR check; the single highest-leverage precision improvement is
+suppressing the bare-parameter direct-index FP class.
