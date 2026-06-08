@@ -92,3 +92,28 @@ CBMC stage-2 via `oracle_harness_gen.py`.
   generators so each patch-touched hit gets a CBMC verdict in one run.
 * Run it daily across consecutive linux-next snapshots (next-N vs
   next-N+1) — the freshest possible delta.
+
+## Follow-up 1: full Kconfig coverage (rc6 → rc7)
+
+Rebuilt the rc7 DB with `IP_SCTP=m` and `MPTCP=y` enabled (wireless/
+mac80211 were already `=y`).  Coverage of the delta's touched functions
+rose 8 → 24, and candidates 2 → 5.  The three newly-reachable candidates
+all triage to **FP** on the post-fix rc7 tree:
+
+| Candidate | Oracle | Verdict |
+|-----------|--------|---------|
+| `mptcp_write_options` (net/mptcp/options.c) | tlv_parse_loop | **FP** — TX option *writer* (`*ptr++ = mptcp_option(...)`) into the kernel's own bounded TCP-option space; lengths are kernel-computed, not attacker-derived (the TX-writer FP class, cf. `l2cap_*_send`) |
+| `sctp_sf_do_5_2_6_stale` (net/sctp/sm_statefuns.c) | skb_field_before_lencheck | **FP** — `err = (sctp_errhdr *)chunk->skb->data` then read at offset `sizeof(*err)`; chunk length is validated on the SCTP receive path before dispatch (caller-validated, function-granularity FP) |
+| `sctp_sf_do_5_2_6_stale` | decoded_len_arith_overflow | **FP** — `stale = (ntohl(...) * 2)/1000` is a cookie *lifespan time*, not a buffer size/index; the overflow is benign (wrong timer, not memory unsafety) |
+
+The rc6→rc7 changes to both functions were unrelated refactors (sctp:
+removed COOKIE-ECHO resend logic; mptcp: option-accounting cleanup), so
+the oracles surfaced pre-existing (guarded/benign) shapes, not
+patch-introduced bugs.
+
+**Net:** full coverage works and keeps the candidate set small and fully
+explainable (5 total; the 2 original = real security-fix areas, the 3
+new = FP).  No novel bug on the post-fix tree — the expected result.
+Confirms two FP classes for future precision work: TX-side buffer
+*writers* (tlv_parse_loop) and decoded values used as *non-size*
+quantities (decoded_len multiply).
