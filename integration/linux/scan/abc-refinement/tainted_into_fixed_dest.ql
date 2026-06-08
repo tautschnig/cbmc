@@ -59,6 +59,31 @@ predicate clampedToConstant(Parameter p, Function f) {
     ))
 }
 
+/** An expression subtree that mentions a compile-time bound. */
+predicate hasConstBound(Expr e) {
+  exists(Expr k |
+    k = e.getAChild*() and
+    (k instanceof Literal or k instanceof SizeofOperator or
+     k instanceof EnumConstantAccess))
+}
+
+/** Holds if the copy's size argument is the result of a
+ *  min()/min_t()/clamp() against a compile-time bound.  These kernel
+ *  macros expand to a GNU statement-expression that hoists operands
+ *  into temporaries, so the constant bound (e.g. `sizeof(buf)-1`)
+ *  lives in a temp initializer inside the StmtExpr block — not in the
+ *  ternary condition.  We therefore match: a StmtExpr whose value
+ *  flows to the size argument and whose block contains a sizeof /
+ *  literal / enum constant. */
+predicate minClampedSink(CopyCall c) {
+  exists(StmtExpr se |
+    DataFlow::localExprFlow(se, c.getArgument(2)) and
+    exists(Expr bound |
+      (bound instanceof SizeofOperator or bound instanceof Literal or
+       bound instanceof EnumConstantAccess) and
+      bound.getEnclosingStmt().getParentStmt*() = se.getStmt()))
+}
+
 from DataFlow::Node source, DataFlow::Node sink, CopyCall c, Parameter p,
   ArrayType destArr
 where
@@ -66,7 +91,8 @@ where
   sink.asExpr() = c.getArgument(2) and
   source.asExpr() = p.getAnAccess() and
   destArr = fixedDestArray(c) and
-  not clampedToConstant(p, c.getEnclosingFunction())
+  not clampedToConstant(p, c.getEnclosingFunction()) and
+  not minClampedSink(c)
 select sink,
   c.getEnclosingFunction().getName() + "|" +
   c.getFile().getAbsolutePath() + "|" +
