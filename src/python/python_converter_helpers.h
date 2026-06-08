@@ -486,8 +486,21 @@ collect_param_names(const jsont &func_def)
 
 /// Create a nondet refined string expression (length + content pointer).
 /// Used as the result of string operations that the solver will constrain.
-[[maybe_unused]] static inline exprt
-make_nondet_string(symbol_table_baset &symbol_table)
+///
+/// When emitted inside a function/method (\p scope non-empty), the
+/// length/content output symbols are named under that function and a
+/// DECL for each is pushed to \p decls, so goto-symex grants every
+/// dynamic invocation a fresh instance. Without this the symbols are
+/// global and a string-returning method called more than once (e.g. a
+/// base method invoked directly and again via super()) piles the
+/// refinement backend's conflicting content associations onto a single
+/// symbol — turning UNSAT and proving downstream assertions vacuously
+/// (class-attributes_fail). Module-level code runs once, so there the
+/// symbols stay global and no DECL is needed.
+[[maybe_unused]] static inline exprt make_nondet_string(
+  symbol_table_baset &symbol_table,
+  const std::string &scope = std::string{},
+  std::vector<codet> *decls = nullptr)
 {
   // Uniquifier based on symbol-table size — monotonic across all
   // call sites in one converter instance, TU-safe (no per-TU
@@ -496,28 +509,36 @@ make_nondet_string(symbol_table_baset &symbol_table)
   std::string len_name = "__string_len_" + std::to_string(ctr);
   std::string ptr_name = "__string_ptr_" + std::to_string(ctr);
 
-  irep_idt len_id{"python::" + len_name};
+  const bool local = !scope.empty();
+  const std::string prefix = local ? ("python::" + scope + "::") : "python::";
+
+  irep_idt len_id{prefix + len_name};
   if(symbol_table.lookup(len_id) == nullptr)
   {
     symbolt ls{len_id, signedbv_typet{64}, "python"};
     ls.base_name = len_name;
     ls.is_lvalue = true;
-    ls.is_state_var = true;
+    ls.is_state_var = !local;
     symbol_table.add(ls);
   }
 
-  irep_idt ptr_id{"python::" + ptr_name};
+  irep_idt ptr_id{prefix + ptr_name};
   if(symbol_table.lookup(ptr_id) == nullptr)
   {
     symbolt ps{ptr_id, pointer_typet(unsignedbv_typet{8}, 64), "python"};
     ps.base_name = ptr_name;
     ps.is_lvalue = true;
-    ps.is_state_var = true;
+    ps.is_state_var = !local;
     symbol_table.add(ps);
   }
 
-  exprt len_expr = symbol_table.lookup_ref(len_id).symbol_expr();
-  exprt ptr_expr = symbol_table.lookup_ref(ptr_id).symbol_expr();
+  symbol_exprt len_expr = symbol_table.lookup_ref(len_id).symbol_expr();
+  symbol_exprt ptr_expr = symbol_table.lookup_ref(ptr_id).symbol_expr();
+  if(local && decls != nullptr)
+  {
+    decls->push_back(code_frontend_declt{len_expr});
+    decls->push_back(code_frontend_declt{ptr_expr});
+  }
   return struct_exprt({len_expr, ptr_expr}, python_string_type());
 }
 
@@ -529,9 +550,17 @@ make_nondet_string(symbol_table_baset &symbol_table)
   const exprt::operandst &extra_args,
   symbol_table_baset &symbol_table,
   std::vector<codet> &pending_checks,
-  bool in_loop = false)
+  bool in_loop = false,
+  const std::string &scope = std::string{})
 {
-  exprt result = make_nondet_string(symbol_table);
+  // Scope the result's output symbols to the enclosing function (when
+  // known) and DECL them up-front, so each dynamic invocation gets a
+  // fresh instance — see make_nondet_string. The DECLs must precede the
+  // call assignment below in the emitted code.
+  std::vector<codet> decls;
+  exprt result = make_nondet_string(symbol_table, scope, &decls);
+  for(auto &d : decls)
+    pending_checks.push_back(std::move(d));
 
   // PLR §6.5.6 (str.__add__) inside loops: the same output
   // symbols (__string_len_N, __string_ptr_N) are emitted by the
