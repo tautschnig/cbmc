@@ -3942,9 +3942,24 @@ std::optional<exprt> python_convertert::try_builtin_call(
               side_effect_expr_nondett{double_type(), source_locationt{}}});
             pending_checks.push_back(code_assumet{
               binary_relation_exprt{tmp, ID_ge, safe_zero(double_type())}});
-            // Constrain: result² == real² + imag²
-            pending_checks.push_back(
-              code_assumet{ieee_float_equal_exprt{mult_exprt{tmp, tmp}, sum}});
+            // Constrain the sqrt precisely at the IEEE boundaries.
+            // A bare `tmp*tmp == sum` is non-injective there because
+            // squaring underflows to 0 and overflows to inf — so it
+            // fails to pin abs(0+0j)==0 and isinf(abs(inf+...j)).
+            // Keep `tmp*tmp == sum` for finite strictly-positive
+            // sums; pin the zero / inf / nan cases explicitly.
+            exprt fzero = safe_zero(double_type());
+            pending_checks.push_back(code_assumet{or_exprt{
+              not_exprt{and_exprt{
+                isfinite_exprt{sum}, binary_relation_exprt{sum, ID_gt, fzero}}},
+              ieee_float_equal_exprt{mult_exprt{tmp, tmp}, sum}}});
+            pending_checks.push_back(code_assumet{or_exprt{
+              not_exprt{ieee_float_equal_exprt{sum, fzero}},
+              ieee_float_equal_exprt{tmp, fzero}}});
+            pending_checks.push_back(code_assumet{
+              or_exprt{not_exprt{isinf_exprt{sum}}, isinf_exprt{tmp}}});
+            pending_checks.push_back(code_assumet{
+              or_exprt{not_exprt{isnan_exprt{sum}}, isnan_exprt{tmp}}});
             return std::move(tmp);
           }
         }
