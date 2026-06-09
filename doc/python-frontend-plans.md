@@ -412,24 +412,21 @@ alarms). Verified against the 2026-06-08 sweep baseline.
   shape:* declarative `@c_intrinsic` domain annotations (depends on
   [§6](#modules)); cross-function tracking of return constants for
   dict/list literals.
-- **`jpl` — FIXED; `jpl_1` — object-element dispatch through a function
-  value (exposed 2026-06-08).** Both had reached `counter == -1` (which
-  CPython never does) after the string-scoping fix removed the vacuity
-  masking them: a state machine filters enabled actions with
-  `list_comp(actions, lambda a: a.pre())` then runs
-  `enabled_actions[random.randint(0, len-1)].act()`. Three layers were in
-  play and all but one are fixed: (a) the lambda's object parameter typed
-  as nondet int — **fixed** (`4d808cefda`); (b) `list_comp` calling its
-  function-valued parameter — **fixed** by per-call-site monomorphisation
-  (`54b829c6bd`); (c) the monomorphised clone comprehending over its list
-  *parameter* — **fixed** by specialising the clone to call-site argument
-  types + re-inferring its return type (`eb80586ebc`). With (a)–(c) `jpl`
-  now verifies SUCCESSFUL **soundly**. `jpl_1` still fails: it is the
-  loop-based variant that dispatches the object *element* through the
-  function value (`lambda candidate: candidate.pre()` then virtual
-  `pre()`), whose dispatch precision is the remaining residual
-  ([§12](#higher-order)); it also runs under `--incremental-bmc`. Until
-  that lands `jpl_1` is a sound false positive.
+- **`jpl` / `jpl_1` — FIXED (2026-06-08/09).** Both had reached
+  `counter == -1` (which CPython never does) after the string-scoping fix
+  removed the vacuity masking them: a state machine filters enabled
+  actions with `list_comp(actions, lambda a: a.pre())` then runs
+  `enabled_actions[random.randint(0, len-1)].act()`. Four layers were in
+  play and all are now fixed: (a) the lambda's object parameter typed as
+  nondet int — `4d808cefda`; (b) `list_comp` calling its function-valued
+  parameter — per-call-site monomorphisation `54b829c6bd`; (c) the
+  monomorphised clone comprehending over its list *parameter* —
+  specialising the clone to call-site argument types + re-inferring its
+  return type `eb80586ebc`; (d) the loop-based variant building the
+  enabled list via `result.append(candidate)` and dispatching
+  `enabled[idx].act()` — preserving the object element type on append
+  `f771788f7c`. Both now verify SUCCESSFUL **soundly** (the `counter`
+  invariant holds; `counter == -1` is unreachable, as in CPython).
 - **`github` real-world cluster:** many small sub-clusters (int(string,
   base) edge cases, isinstance-narrowing for union params + datetime stub
   fields, reversed-range iteration, list index-out-of-range, fail-shape
@@ -529,12 +526,23 @@ xs if p(x)]`) verifies precisely for both int and object elements; this
 fixed **jpl** (now PASS, soundly). Falls back to the sound nondet path for
 the unresolved cases below.
 
+**Object lists built via `append` — FIXED (`f771788f7c`).** A HOF (or any
+code) that builds a list of objects with `out = []; out.append(elem)` and
+later dispatches `out[i].method()` used to mis-dispatch: the empty list
+defaulted to a scalar element type that dropped the class tag. The
+empty-list element-type prescan now infers `python_value` for object
+appends (constructor, subscript `xs[i]`, or a name bound to one), and the
+monomorphised clone re-runs the prescan in its own scope, so this works
+through a HOF over a list parameter too. This closed **jpl_1** — the last
+jpl residual — so both jpl and jpl_1 now verify SUCCESSFUL **soundly**.
+
 **Residuals (sound; still open).**
-- An object *element* dispatched through the function value — a HOF body
-  that calls `pred(element).method()` / `lambda c: c.pre()` over object
-  elements — can lose virtual-dispatch precision. This blocks **jpl_1**
-  (loop-based HOF + `candidate.pre()` over `Action` objects; also uses
-  `--incremental-bmc`); see [§9](#precision).
+- A *non-HOF* function with an **unannotated** list parameter that appends
+  a subscript of it (`def keep(xs): out=[]; ... out.append(xs[i])`) can
+  still lose element precision: the parameter is `python_value` at prescan
+  and isn't monomorphised, so `xs[i]`'s type is unknown. Annotating the
+  parameter (`xs: list`), or reaching it through a higher-order call
+  (which specialises the clone), both work.
 - Immediately-applied lambdas `(lambda a: a.x)(obj)` and `sorted(key=...)`
   over objects are still nondet.
 - First-class function values stored in a container and called indirectly
