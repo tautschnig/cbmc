@@ -398,15 +398,27 @@ alarms). Verified against the 2026-06-08 sweep baseline.
   (sweep PASS → 2911, no regressions). **(E) `complex()` argument-validation
   TypeErrors** — unknown kwargs, `real`/`imag` duplicating a positional
   arg, and `bytes`/`bytearray` rejection — is also **fixed** (`f4afdb0ac3`,
-  +complex_keyword_args). The remaining three sub-groups are *not* numeric
+  +complex_keyword_args). **(F) `math.*` on a complex argument →
+  TypeError** is **already handled architecturally**: the `math.X` dispatch
+  rejects complex for every real-domain function (except `prod`/`sumprod`)
+  and recursively walks List/Tuple literals and names bound to complex/list
+  literals — verified for direct positional args, kwargs from a literal
+  dict, and list-literal args. The remaining sub-groups are *not* numeric
   precision and remain open as distinct point/feature gaps:
   **(C) signed-zero preservation** through `complex()` construction and
   +/−/* (e.g. `complex(-0.0,0.0).real` must keep its sign) — delicate IEEE,
   low value; **(D) `complex(<str variable>)`** parsing — only constant
   strings parse today, a runtime form needs solver-level string parsing;
-  **(F) `math.*` on complex → TypeError**. (C)/(D)/(F) still affect
-  complex_binop_promotion, complex_conjugate_handler, complex_builtins,
-  complex_constructor_extended, complex_math_typeerror_edges.
+  **(F-residual) indirect complex-argument detection** —
+  `complex_math_typeerror_edges` stresses complex reaching `math.X` via
+  `**kwargs` from a *function-returned* or *aliased* dict, via an
+  unannotated function return, inside a `sumprod` list arg, and the
+  exception-ordering case (`ValueError` from `complex("bad")` before the
+  complex-guard `TypeError`). These are fragile indirection point-cases
+  with no shared root; left as a documented residual. (C)/(D)/(F-residual)
+  still affect complex_binop_promotion, complex_conjugate_handler,
+  complex_builtins, complex_constructor_extended,
+  complex_math_typeerror_edges.
 - **`math` precision (PARTIAL):** per-function domain handling. *Fix
   shape:* declarative `@c_intrinsic` domain annotations (depends on
   [§6](#modules)); cross-function tracking of return constants for
@@ -544,15 +556,13 @@ out.append(xs[i])`) dispatches correctly too.
 multiple parameters, and attribute/method dispatch on an object argument),
 instead of falling through the empty-callee path to nondet.
 
+**`sorted(key=lambda o: o.attr)` over objects — FIXED (`ef4e9735e7`).** The
+runtime sort now compares the named attribute of each element (a member
+access on the element struct) instead of the whole struct, so object lists
+order correctly (ascending and `reverse=True`). Keyless sorts and the
+constant-fold int/string fast paths are unchanged.
+
 **Residuals (sound; still open).**
-- **`sorted(key=lambda o: o.attr)` over objects.** `sorted` only folds
-  `key=lambda x: x[N]` (constant subscript) over constant-element literal
-  lists; an attribute/method key over object elements isn't applied (the
-  list is returned unsorted). The elements are constructor-symbol
-  references, not constants, so the constant-fold path can't extract the
-  key — a precise fix needs a **bounded runtime sort** (compare
-  member-access keys and permute) over a constant-length object list.
-  Deferred as disproportionate/regression-risky relative to its value.
 - First-class function values stored in a container and called indirectly
   (the shared dependency for
   [§2 phase 4, closures through containers](#closures)) remain unmodelled;
