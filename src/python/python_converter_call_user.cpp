@@ -300,6 +300,12 @@ bool python_convertert::try_monomorphise_call(
 
   code_blockt new_body;
   const jsont &body_ast = json_member(*fn_ast, "body");
+  // Re-run the empty-list element-type prescan in the clone's scope so
+  // that `result = []; result.append(...)` inside the specialised body
+  // infers its element type against the call-site-specialised parameter
+  // types (the concrete list the HOF was actually given), rather than
+  // the HOF's generic def-time parameter types.
+  collect_empty_list_inferred_types(body_ast);
   if(body_ast.is_array())
     for(const auto &st : as_array(body_ast))
       new_body.add(convert_statement(st));
