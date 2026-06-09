@@ -91,17 +91,28 @@ reads, not an arbitrary multi-field sub-decode, so an UNGUARDED cursor
 verdict is the reliable one (the caller does *not* pre-check, so the
 function must self-guard) while CALLER-GUARDED is a heuristic prior.
 
+### Struct-field bound (producer-side)
+The index is a *struct field* (`arr[s->fld]`, e.g. cgw
+`cf->data[crc8->result_idx]`), not a call argument — so the validation
+site is the **producer** (where the struct is filled from the wire), not a
+caller.  Verdict `PRODUCER-GUARDED` when the field's struct is bulk-filled
+from raw netlink/user bytes (`nla_memcpy`/`copy_from_user`) AND the field
+is validated by a `chk`/`check`/`validate`/`verify` call or a relational
+bound on the same field (linked by field identity).  cgw is the canonical
+case: `cgw_parse_attr` calls `cgw_chk_csum_parms(c->from_idx, c->to_idx,
+c->result_idx, ...)` -- bounding the indices against the CAN frame -- right
+before the `nla_memcpy` that stores the struct, so all four `cgw_csum_*`
+consumers are PRODUCER-GUARDED.
+
 ## Honest limits
 
-* **`cgw_csum`** indices are *struct fields* (`crc8->result_idx`), not a
-  call argument, so the parameter-level caller check is `no-len-param`
-  there; its validation site is the netlink parse (`cgw_parse_attr`), a
-  different (field-level) precondition problem — the remaining shape the
-  check does not yet cover.
+* **Producer-side validation is field-identity-based, not flow-precise** —
+  PRODUCER-GUARDED links a consumer's index field to a validation of the
+  *same field* anywhere in the program; it does not prove the validated
+  instance is the one consumed. Sound enough to rank, not to prove.
 * **Cursor CALLER-GUARDED is a heuristic prior, not a proof** — it shows
   the caller pre-checks the first reads, not that a multi-field sub-decode
   stays in bounds. The UNGUARDED cursor verdict is the dependable one.
-* The guard's reject branch is required to be an exit (return/goto/break)
-  and the guard condition must strictly dominate the call; what is *not*
-  modelled is reassignment of the bound variable between guard and call
-  (rare in these idioms) — a value-flow check would close that.
+* The scalar guard requires its reject branch to exit and its condition to
+  strictly dominate the call; reassignment of the bound variable between
+  guard and call is not modelled (rare; a value-flow check would close it).

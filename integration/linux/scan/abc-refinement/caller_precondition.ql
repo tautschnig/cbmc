@@ -126,6 +126,54 @@ int numGuardedCursor(Function target) {
     )
 }
 
+/** A struct field used in `f` as the offset into a fixed-size array
+ *  (`arr[s->fld]`) -- the struct-field index shape (e.g. cgw
+ *  `cf->data[crc8->result_idx]`). */
+predicate consumesIndexField(Function f, Field fld) {
+  exists(ArrayExpr ae |
+    ae.getEnclosingFunction() = f and
+    ae.getArrayOffset().(FieldAccess).getTarget() = fld and
+    exists(ae.getArrayBase().getType().getUnspecifiedType().(ArrayType).getSize())
+  )
+}
+
+/** The field's enclosing struct is bulk-populated from raw netlink/user
+ *  bytes somewhere -- so the field carries attacker-controlled data. */
+predicate fieldFromRaw(Field fld) {
+  exists(FunctionCall fc, Expr dest |
+    fc.getTarget().getName() =
+      ["nla_memcpy", "copy_from_user", "__copy_from_user", "memcpy_from_msg"] and
+    dest = fc.getArgument(0) and
+    fld.getDeclaringType() =
+      dest.getType().getUnspecifiedType().(PointerType).getBaseType().getUnspecifiedType()
+  )
+}
+
+/** The field is validated at the producer: a chk/check/validate/verify call
+ *  taking an access to the field, or a relational on the field against a
+ *  compile-time bound (e.g. cgw_chk_csum_parms(c->result_idx, ...)). */
+predicate fieldValidated(Field fld) {
+  exists(FunctionCall v |
+    v.getTarget()
+        .getName()
+        .toLowerCase()
+        .matches(["%chk%", "%check%", "%valid%", "%verify%", "%sanit%"]) and
+    v.getAnArgument().(FieldAccess).getTarget() = fld
+  )
+  or
+  exists(RelationalOperation rel, Expr k |
+    rel.getAnOperand().(FieldAccess).getTarget() = fld and
+    k = rel.getAnOperand() and
+    k != rel.getAnOperand().(FieldAccess) and
+    constBound(k)
+  )
+}
+
+/** Producer-side verdict for a struct-field bound. */
+string producerVerdict(Field fld) {
+  if fieldValidated(fld) then result = "PRODUCER-GUARDED" else result = "PRODUCER-UNGUARDED"
+}
+
 /** Verdict string. */
 bindingset[callers, guarded]
 string verdict(int callers, int guarded) {
@@ -134,26 +182,38 @@ string verdict(int callers, int guarded) {
   else if guarded > 0 then result = "PARTIAL" else result = "UNGUARDED"
 }
 
-from Function target, string kind, int callers, int guarded, string bound
+from Function target, string kind, string detail
 where
   target.hasDefinition() and
-  callers = numCallers(target) and
-  callers > 0 and
   (
-    exists(Parameter bp |
+    exists(Parameter bp, int callers, int guarded |
       boundParam(target, bp) and
+      callers = numCallers(target) and
+      callers > 0 and
+      guarded = numGuarded(target, bp) and
       kind = "len-param" and
-      bound = bp.getName() and
-      guarded = numGuarded(target, bp)
+      detail =
+        "bound=" + bp.getName() + "|callers=" + callers + "|guarded=" +
+          guarded + "|verdict=" + verdict(callers, guarded)
     )
     or
-    // cursor functions WITHOUT a scalar len param (those are covered above)
-    cursorFunction(target) and
-    not exists(Parameter bp | boundParam(target, bp)) and
-    kind = "cursor" and
-    bound = "p,end" and
-    guarded = numGuardedCursor(target)
+    exists(int callers, int guarded |
+      cursorFunction(target) and
+      not exists(Parameter bp | boundParam(target, bp)) and
+      callers = numCallers(target) and
+      callers > 0 and
+      guarded = numGuardedCursor(target) and
+      kind = "cursor" and
+      detail =
+        "bound=p,end|callers=" + callers + "|guarded=" + guarded +
+          "|verdict=" + verdict(callers, guarded)
+    )
+    or
+    exists(Field fld |
+      consumesIndexField(target, fld) and
+      fieldFromRaw(fld) and
+      kind = "struct-field" and
+      detail = "bound=" + fld.getName() + "|verdict=" + producerVerdict(fld)
+    )
   )
-select target,
-  target.getName() + "|kind=" + kind + "|bound=" + bound + "|callers=" +
-    callers + "|guarded=" + guarded + "|verdict=" + verdict(callers, guarded)
+select target, target.getName() + "|kind=" + kind + "|" + detail

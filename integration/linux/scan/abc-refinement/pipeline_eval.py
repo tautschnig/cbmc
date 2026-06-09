@@ -167,22 +167,24 @@ def main():
     print("\n## Distilled survivors -- CBMC-adjudicated (shape + reach) + caller-guard\n")
     cg = caller_verdicts(a.db)
     print(f"{'function':<24}{'oracle':<13}{'src':<6}"
-          f"{'shape:b/f':<13}{'reach:b/f':<13}{'caller':<16}{'ground-truth'}")
-    print("-" * 110)
+          f"{'shape:b/f':<13}{'reach:b/f':<13}{'caller':<18}{'ground-truth'}")
+    print("-" * 112)
     for label, otype, c in survivors:
         src, sb, sf, rb, rf = adjudicate(c["func"], c["kind"], otype)
         gt = GROUND_TRUTH.get(c["func"], ("", ""))[0]
-        cgv = cg.get(c["func"], "no-len-param")
+        cgv = cg.get(c["func"], "no-bound")
         print(f"{c['func']:<24}{label:<13}{src:<6}"
               f"{(sb[:4]+'/'+sf[:4]):<13}{(rb[:5]+'/'+rf[:5]):<13}"
-              f"{cgv:<16}{gt}")
+              f"{cgv:<18}{gt}")
 
-    print("\n## Caller-precondition automation (function-granularity FP filter)\n")
-    print("  Of the distilled survivors, those marked CALLER-GUARDED are")
-    print("  function-granularity hits whose bound is validated by every")
-    print("  caller -- i.e. FPs the automation resolves without a harness.")
-    ng = sum(1 for _, _, c in survivors if cg.get(c["func"]) == "CALLER-GUARDED")
-    print(f"  CALLER-GUARDED survivors: {ng} / {len(survivors)}")
+    print("\n## Precondition automation (function-granularity FP filter)\n")
+    print("  Survivors marked CALLER-GUARDED (caller validates the bound) or")
+    print("  PRODUCER-GUARDED (the field is validated where the struct is")
+    print("  filled from the wire) are FPs the automation resolves WITHOUT a")
+    print("  harness.")
+    ng = sum(1 for _, _, c in survivors
+             if cg.get(c["func"]) in ("CALLER-GUARDED", "PRODUCER-GUARDED"))
+    print(f"  precondition-resolved survivors: {ng} / {len(survivors)}")
 
     print("\n## Ground-truth coverage\n")
     for fnc, (cve, note) in GROUND_TRUTH.items():
