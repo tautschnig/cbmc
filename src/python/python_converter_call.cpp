@@ -229,6 +229,142 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
   }
 
+  // §12 container-stored callables: dispatch a call whose callee is a
+  // subscript of a dict *literal* whose values are all callables, e.g.
+  // `{'+': lambda: 1.0, '-': minus}[op](args)`. Select the entry whose
+  // key equals the subscript and call it; a non-matching key is a
+  // KeyError (PLR §6.10). Falls through to the generic (nondet) callee
+  // path when the values are not all resolvable callables.
+  if(is_node_type(func, "Subscript"))
+  {
+    const jsont &container = json_member(func, "value");
+    if(is_node_type(container, "Dict"))
+    {
+      const jsont &keys = json_member(container, "keys");
+      const jsont &vals = json_member(container, "values");
+      if(
+        keys.is_array() && vals.is_array() && !as_array(keys).empty() &&
+        as_array(keys).size() == as_array(vals).size())
+      {
+        std::vector<irep_idt> callables;
+        bool all_callable = true;
+        for(const auto &v : as_array(vals))
+        {
+          irep_idt cid;
+          if(is_node_type(v, "Lambda"))
+          {
+            exprt l = convert_lambda(v);
+            if(l.id() == ID_symbol && l.type().id() == ID_code)
+              cid = to_symbol_expr(l).get_identifier();
+          }
+          else if(is_node_type(v, "Name"))
+          {
+            std::string nm = json_string(json_member(v, "id"));
+            auto ai = function_aliases.find(qualify_name(nm));
+            if(ai != function_aliases.end())
+              cid = ai->second;
+            else
+            {
+              const symbolt *bs =
+                symbol_table.lookup(irep_idt{"python::" + nm});
+              if(bs != nullptr && bs->type.id() == ID_code)
+                cid = bs->name;
+            }
+          }
+          if(cid.empty())
+          {
+            all_callable = false;
+            break;
+          }
+          callables.push_back(cid);
+        }
+
+        exprt::operandst call_args;
+        bool args_ok = all_callable;
+        if(all_callable && args.is_array())
+          for(const auto &a : as_array(args))
+          {
+            exprt ae = convert_expression(a);
+            if(ae.is_nil())
+            {
+              args_ok = false;
+              break;
+            }
+            call_args.push_back(ae);
+          }
+
+        exprt key_expr = args_ok
+                           ? convert_expression(json_member(func, "slice"))
+                           : nil_exprt{};
+
+        if(args_ok && key_expr.is_not_nil())
+        {
+          const symbolt &c0 = symbol_table.lookup_ref(callables[0]);
+          typet ret_t = to_code_type(c0.type).return_type();
+          if(ret_t.id() == ID_empty)
+            ret_t = python_value_type();
+          static unsigned disp_ctr = 0;
+          std::string rn = "__call_dispatch_" + std::to_string(disp_ctr++);
+          irep_idt rid{qualify_name(rn)};
+          if(symbol_table.lookup(rid) == nullptr)
+          {
+            symbolt rs{rid, ret_t, "python"};
+            rs.base_name = rn;
+            rs.is_lvalue = true;
+            rs.is_state_var = true;
+            rs.is_static_lifetime = current_function.empty();
+            symbol_table.add(rs);
+          }
+          symbol_exprt result = symbol_table.lookup_ref(rid).symbol_expr();
+          // Build the dispatch statements locally; commit to
+          // pending_checks only if every key type-checks, so a partial
+          // build never leaks spurious (side-effecting) calls.
+          std::vector<codet> disp;
+          // Start nondet (covers the no-key-matched fallback).
+          disp.push_back(code_frontend_assignt{
+            result, side_effect_expr_nondett{ret_t, get_location(expr)}});
+
+          exprt any_match = false_exprt{};
+          auto kit = as_array(keys).begin();
+          bool key_types_ok = true;
+          for(std::size_t i = 0; i < callables.size(); ++i, ++kit)
+          {
+            exprt kexpr = convert_expression(*kit);
+            if(kexpr.is_nil() || kexpr.type() != key_expr.type())
+            {
+              key_types_ok = false;
+              break;
+            }
+            equal_exprt eq{key_expr, kexpr};
+            const symbolt &cs = symbol_table.lookup_ref(callables[i]);
+            side_effect_expr_function_callt call{
+              cs.symbol_expr(),
+              call_args,
+              to_code_type(cs.type).return_type(),
+              get_location(expr)};
+            exprt cv = call;
+            if(cv.type() != ret_t)
+              cv = typecast_exprt{std::move(cv), ret_t};
+            code_blockt body;
+            body.add(code_frontend_assignt{result, std::move(cv)});
+            disp.push_back(code_ifthenelset{eq, std::move(body)});
+            any_match = (any_match.id() == ID_false)
+                          ? static_cast<exprt>(eq)
+                          : static_cast<exprt>(or_exprt{any_match, eq});
+          }
+          if(key_types_ok)
+          {
+            for(auto &c : disp)
+              pending_checks.push_back(std::move(c));
+            // PLR §6.10: a subscript key that matches no entry is a KeyError.
+            emit_conditional_exception(not_exprt{any_match}, "KeyError");
+            return std::move(result);
+          }
+        }
+      }
+    }
+  }
+
   std::string func_name;
   if(is_node_type(func, "Name"))
   {

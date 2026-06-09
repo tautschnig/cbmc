@@ -196,6 +196,47 @@ bool python_convertert::try_monomorphise_call(
     }
     ++i;
   }
+
+  // Also bind parameters whose DEFAULT value is a resolvable callable and
+  // which are called in the body, for call sites that rely on the default
+  // (e.g. `g = f; def h(op=g): return op(1, 1)` called as `h()`). The
+  // default is filled by the normal default-argument path; the clone's
+  // function_aliases entry makes `op(...)` resolve to the callable.
+  {
+    const jsont &fargs = json_member(*fn_ast, "args");
+    const jsont &params = json_member(fargs, "args");
+    const jsont &defaults = json_member(fargs, "defaults");
+    if(params.is_array() && defaults.is_array())
+    {
+      std::vector<const jsont *> default_nodes;
+      for(const auto &d : as_array(defaults))
+        default_nodes.push_back(&d);
+      const std::size_t nparams = as_array(params).size();
+      const std::size_t ndefaults = default_nodes.size();
+      const std::size_t first_default =
+        nparams >= ndefaults ? nparams - ndefaults : 0;
+      for(std::size_t pi = 0; pi < hparams.size() && pi < nparams; ++pi)
+      {
+        if(pi < arg_array.size())
+          continue; // supplied positionally (handled above)
+        if(pi < first_default)
+          continue; // no default for this parameter
+        bool already = false;
+        for(const auto &b : bindings)
+          if(b.pos == pi)
+            already = true;
+        if(already)
+          continue;
+        const std::string pname = id2string(hparams[pi].get_base_name());
+        if(!body_calls(*fn_ast, pname))
+          continue;
+        irep_idt cid = resolve_callable(*default_nodes[pi - first_default]);
+        if(!cid.empty())
+          bindings.push_back({pi, pname, cid});
+      }
+    }
+  }
+
   if(bindings.empty())
     return false;
 
