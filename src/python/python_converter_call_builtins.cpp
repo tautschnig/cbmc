@@ -1204,6 +1204,86 @@ std::optional<exprt> python_convertert::try_builtin_call(
     struct_typet complex_type{comps};
     complex_type.set_tag("python_complex");
 
+    // PLR §6.10.1 argument validation. complex() accepts at most two
+    // positional args and the keywords real/imag; the argument must be a
+    // number or string (bytes/bytearray are rejected). Surface the
+    // CPython TypeErrors before building a value so `try/except
+    // TypeError` works.
+    {
+      const jsont &kws = json_member(expr, "keywords");
+      std::size_t n_pos = 0;
+      bool has_starred = false;
+      if(args.is_array())
+        for(const auto &a : as_array(args))
+        {
+          if(is_node_type(a, "Starred"))
+            has_starred = true;
+          else
+            ++n_pos;
+        }
+      bool type_error = false;
+      // Unknown keyword, or a keyword that duplicates a positional arg
+      // (positional binds real then imag).
+      if(kws.is_array() && !has_starred)
+      {
+        bool have_real_kw = false, have_imag_kw = false;
+        for(const auto &kw : as_array(kws))
+        {
+          const jsont &an = json_member(kw, "arg");
+          if(an.is_null()) // **kwargs spread — can't validate statically
+            continue;
+          std::string kn = json_string(an);
+          if(kn != "real" && kn != "imag")
+            type_error = true;
+          else if(kn == "real")
+            have_real_kw = true;
+          else
+            have_imag_kw = true;
+        }
+        if((n_pos >= 1 && have_real_kw) || (n_pos >= 2 && have_imag_kw))
+          type_error = true;
+      }
+      // bytes / bytearray argument (modelled as a list of unsignedbv[8],
+      // or a direct bytes()/bytearray() constructor call).
+      if(!type_error && n_pos >= 1 && args.is_array())
+      {
+        const jsont &a0 = *as_array(args).begin();
+        if(
+          is_node_type(a0, "Bytes") ||
+          (is_node_type(a0, "Call") &&
+           is_node_type(json_member(a0, "func"), "Name") &&
+           (json_string(json_member(json_member(a0, "func"), "id")) ==
+              "bytes" ||
+            json_string(json_member(json_member(a0, "func"), "id")) ==
+              "bytearray")))
+          type_error = true;
+        else
+        {
+          std::vector<codet> saved_pc;
+          saved_pc.swap(pending_checks);
+          exprt e0 = convert_expression(a0);
+          saved_pc.swap(pending_checks);
+          if(is_python_list_type(e0.type()))
+          {
+            const auto &lt = to_struct_type(e0.type());
+            if(lt.components().size() >= 2)
+            {
+              const auto &dt = to_array_type(lt.components()[1].type());
+              if(
+                dt.element_type().id() == ID_unsignedbv &&
+                to_unsignedbv_type(dt.element_type()).get_width() == 8)
+                type_error = true;
+            }
+          }
+        }
+      }
+      if(type_error)
+      {
+        emit_conditional_exception(true_exprt{}, "TypeError");
+        return side_effect_expr_nondett{complex_type, get_location(expr)};
+      }
+    }
+
     // Helper: turn an argument expression into a (real, imag)
     // pair of double exprts, consistent with PLR §6.10.1's
     // complex constructor semantics:
