@@ -63,9 +63,15 @@ def funnel(db, query, otype, cg):
     high_write = [c for c in high if c["impact"] == "WRITE"]
     # precondition verdict split (the precision lever for the decoded/skb
     # oracles, whose raw-taint is baked in by construction)
-    resolved = [f for f in funcs
-                if cg.get(f) in ("CALLER-GUARDED", "PRODUCER-GUARDED")]
-    unguarded = [f for f in funcs if cg.get(f) == "UNGUARDED"]
+    resolved = [f for f in funcs if cg.get(f, ("", ""))[1] in GUARDED]
+    # genuine UNGUARDED -- but skb-pull UNGUARDED is a WEAK signal (the
+    # pskb_may_pull may live higher in the rx stack than the immediate
+    # caller), so it does not count as a high-confidence genuine concern.
+    unguarded = [f for f in funcs
+                 if cg.get(f, ("", ""))[1] == "UNGUARDED"
+                 and cg.get(f, ("", ""))[0] != "skb-pull"]
+    skb_pull_weak = [f for f in funcs
+                     if cg.get(f, ("", "")) == ("skb-pull", "UNGUARDED")]
     # per-oracle "distilled" set a human would be handed:
     if otype == "count":
         distilled = high_write
@@ -79,6 +85,7 @@ def funnel(db, query, otype, cg):
         "high_write": high_write,
         "resolved": resolved,
         "unguarded": unguarded,
+        "skb_pull_weak": skb_pull_weak,
         "distilled": distilled,
         "by_func": funcs,
     }
@@ -122,15 +129,22 @@ CAND_CACHE = []
 
 
 def caller_verdicts(db):
-    """func -> caller-precondition verdict (CALLER-GUARDED/PARTIAL/UNGUARDED)
-    from caller_precondition.ql."""
+    """func -> (kind, verdict) from caller_precondition.ql."""
     m = {}
     for line in tl.run_oracle(db, "caller_precondition.ql"):
         p = line.split("|")
+        kind, verdict = "", ""
         for field in p:
+            if field.startswith("kind="):
+                kind = field.split("=", 1)[1]
             if field.startswith("verdict="):
-                m[p[0]] = field.split("=", 1)[1]
+                verdict = field.split("=", 1)[1]
+        if verdict:
+            m[p[0]] = (kind, verdict)
     return m
+
+
+GUARDED = ("CALLER-GUARDED", "PRODUCER-GUARDED")
 
 
 def main():
@@ -149,8 +163,8 @@ def main():
     print("## Funnel (per oracle)\n")
     print(f"{'oracle':<14}{'raw_hits':<10}{'raw_funcs':<11}"
           f"{'HIGH&WR':<9}{'precond-resolved':<18}{'genuine(UNGUARDED)':<20}"
-          f"{'distilled':<10}")
-    print("-" * 92)
+          f"{'skb-pull-weak':<15}{'distilled':<10}")
+    print("-" * 107)
     survivors = []  # (oracle_label, otype, candidate)
     funnels = {}
     for label, q, otype in oracles:
@@ -160,7 +174,7 @@ def main():
         print(f"{label:<14}{fn['raw_hits']:<10}{fn['raw_funcs']:<11}"
               f"{(str(len(fn['high_write'])) if otype=='count' else 'n/a'):<9}"
               f"{len(fn['resolved']):<18}{len(fn['unguarded']):<20}"
-              f"{len(fn['distilled']):<10}")
+              f"{len(fn['skb_pull_weak']):<15}{len(fn['distilled']):<10}")
         # adjudicate: count -> the HIGH&WRITE distilled set; all oracles ->
         # any ground-truth function present in their hits.
         if otype == "count":
@@ -177,7 +191,7 @@ def main():
     for label, otype, c in survivors:
         src, sb, sf, rb, rf = adjudicate(c["func"], c["kind"], otype)
         gt = GROUND_TRUTH.get(c["func"], ("", ""))[0]
-        cgv = cg.get(c["func"], "no-bound")
+        cgv = cg.get(c["func"], ("", "no-bound"))[1]
         print(f"{c['func']:<24}{label:<13}{src:<6}"
               f"{(sb[:4]+'/'+sf[:4]):<13}{(rb[:5]+'/'+rf[:5]):<13}"
               f"{cgv:<18}{gt}")
@@ -188,7 +202,7 @@ def main():
     print("  filled from the wire) are FPs the automation resolves WITHOUT a")
     print("  harness.")
     ng = sum(1 for _, _, c in survivors
-             if cg.get(c["func"]) in ("CALLER-GUARDED", "PRODUCER-GUARDED"))
+             if cg.get(c["func"], ("", ""))[1] in GUARDED)
     print(f"  precondition-resolved survivors: {ng} / {len(survivors)}")
 
     print("\n## Ground-truth coverage\n")

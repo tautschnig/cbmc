@@ -21,6 +21,7 @@
  */
 import cpp
 import semmle.code.cpp.controlflow.Dominance
+import KernelTaint
 
 /** A "bound" parameter: a len/size/count-named integral parameter. */
 predicate boundParam(Function f, Parameter bp) {
@@ -174,6 +175,60 @@ string producerVerdict(Field fld) {
   if fieldValidated(fld) then result = "PRODUCER-GUARDED" else result = "PRODUCER-UNGUARDED"
 }
 
+/** An `struct sk_buff *` parameter. */
+predicate skbParam(Function f, Parameter skb) {
+  skb.getFunction() = f and
+  skb.getType()
+      .getUnspecifiedType()
+      .(PointerType)
+      .getBaseType()
+      .getUnspecifiedType()
+      .(Struct)
+      .getName() = "sk_buff"
+}
+
+/** `f` reads `skb->data` (the skb-parser shape the skb oracle flags). */
+predicate readsSkbData(Function f) {
+  exists(KernelTaint::SkbDataAccess s | s.getEnclosingFunction() = f)
+}
+
+/** A call site where the caller establishes the skb length before the
+ *  call: a dominating `pskb_may_pull`-family check, or a relational on
+ *  `skb->len`, on the same skb passed as the `skb` parameter. */
+predicate skbCallerGuard(FunctionCall fc, Parameter skb) {
+  exists(Variable v |
+    fc.getArgument(skb.getIndex()).(VariableAccess).getTarget() = v
+  |
+    exists(FunctionCall g |
+      g.getEnclosingFunction() = fc.getEnclosingFunction() and
+      g.getTarget()
+          .getName()
+          .matches([
+              "pskb_may_pull", "skb_may_pull", "__pskb_pull%",
+              "pskb_network_may_pull", "skb_header_pointer"
+            ]) and
+      g.getAnArgument().(VariableAccess).getTarget() = v and
+      strictlyDominates(g, fc)
+    )
+    or
+    exists(RelationalOperation rel, FieldAccess len |
+      rel.getEnclosingFunction() = fc.getEnclosingFunction() and
+      len = rel.getAnOperand() and
+      len.getTarget().getName() = "len" and
+      len.getQualifier().(VariableAccess).getTarget() = v and
+      strictlyDominates(rel, fc)
+    )
+  )
+}
+
+/** Number of call sites where the skb length is established by the caller. */
+int numGuardedSkb(Function target, Parameter skb) {
+  result =
+    count(FunctionCall fc |
+      fc.getTarget() = target and skbCallerGuard(fc, skb)
+    )
+}
+
 /** Verdict string. */
 bindingset[callers, guarded]
 string verdict(int callers, int guarded) {
@@ -214,6 +269,19 @@ where
       fieldFromRaw(fld) and
       kind = "struct-field" and
       detail = "bound=" + fld.getName() + "|verdict=" + producerVerdict(fld)
+    )
+    or
+    exists(Parameter skb, int callers, int guarded |
+      skbParam(target, skb) and
+      readsSkbData(target) and
+      not boundParam(target, _) and
+      callers = numCallers(target) and
+      callers > 0 and
+      guarded = numGuardedSkb(target, skb) and
+      kind = "skb-pull" and
+      detail =
+        "bound=skb|callers=" + callers + "|guarded=" + guarded + "|verdict=" +
+          verdict(callers, guarded)
     )
   )
 select target, target.getName() + "|kind=" + kind + "|" + detail

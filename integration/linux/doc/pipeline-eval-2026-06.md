@@ -7,24 +7,27 @@ the pipeline actually help triage?" that the talk's lesson demands.
 
 ## The candidate funnel
 
-| oracle | raw hits | raw functions | HIGH&WRITE | precond-resolved | genuine (UNGUARDED) | distilled |
-|--------|---------:|--------------:|-----------:|-----------------:|--------------------:|----------:|
-| count/index | 92 | 65 | 4 | 4 | 3 | **4** |
-| decoded-len | 28 | 11 | n/a | 4 | 1 | **1** |
-| skb / cursor | 170 | 135 | n/a | 1 | 19 | **19** |
-| **total** | **290** | **211** | | | | **24** |
+| oracle | raw hits | raw functions | HIGH&WRITE | precond-resolved | genuine (UNGUARDED) | skb-pull-weak | distilled |
+|--------|---------:|--------------:|-----------:|-----------------:|--------------------:|--------------:|----------:|
+| count/index | 92 | 65 | 4 | 4 | 3 | 3 | **4** |
+| decoded-len | 28 | 11 | n/a | 4 | 1 | 0 | **1** |
+| skb / cursor | 170 | 135 | n/a | 1 | 19 | 55 | **19** |
+| **total** | **290** | **211** | | | | | **24** |
 
 *precond-resolved* = functions the caller/producer-precondition automation
 marks CALLER-GUARDED or PRODUCER-GUARDED (FPs resolved without a harness).
-*genuine (UNGUARDED)* = bounded hits the automation does NOT dismiss — the
-precision-relevant set a human is handed for the decoded/skb oracles
-(which read wire data by construction, so raw-taint is baked in and the
-precondition verdict is the discriminator). For count/index the
-distillation is the confidence×impact HIGH&WRITE tier.
+*genuine (UNGUARDED)* = the high-confidence concern set for the decoded/skb
+oracles (raw-taint is baked in for them, so the precondition verdict is the
+discriminator). *skb-pull-weak* = `skb->data` parsers not pulled by their
+*immediate* caller — a weak signal, since `pskb_may_pull` is often done
+once high in the rx stack, so these are held in a separate bucket rather
+than the genuine set. For count/index the distillation is the
+confidence×impact HIGH&WRITE tier.
 
 The count/index oracle narrows 92→4 via confidence×impact; the previously
 weakly-narrowed oracles now narrow via the precondition automation —
-**decoded-len 11 functions → 1 genuine concern, skb 135 → 19**.
+**decoded-len 11 functions → 1 genuine concern, skb 135 → 19** (with 55
+more held as `skb-pull-weak` pending interprocedural depth).
 
 ## CBMC-adjudicated survivors (shape + reach)
 
@@ -103,11 +106,11 @@ hides:
   * The two survivors the automation does NOT dismiss (`ieee80211_get_ttlm`,
     `try_rfc959`) are exactly the ones CBMC then adjudicates — a real OOB
     and a cleared true negative.
-* **Remaining frontier:** (a) 113 skb hits are `no-bound` — skb→data
-  parsers whose guard is a *caller `pskb_may_pull`* (a 4th precondition
-  shape, beyond len-param / cursor / struct-field); (b) scale `src=REAL`
-  toward auto-generated harnesses; (c) value-flow precision in the
-  precondition guards (reassignment between guard and call).
+* **Remaining frontier:** (a) the 55 `skb-pull-weak` functions need
+  *interprocedural-depth* precondition tracking (the `pskb_may_pull` lives
+  in a grand-caller, not the immediate one); (b) scale `src=REAL` toward
+  auto-generated harnesses; (c) value-flow precision in the precondition
+  guards (reassignment between guard and call).
 
 ## Reproduce
 

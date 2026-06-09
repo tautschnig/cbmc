@@ -104,6 +104,19 @@ c->result_idx, ...)` -- bounding the indices against the CAN frame -- right
 before the `nla_memcpy` that stores the struct, so all four `cgw_csum_*`
 consumers are PRODUCER-GUARDED.
 
+### `skb` pull (caller `pskb_may_pull`)
+The function takes a `struct sk_buff *` and reads `skb->data` with no
+in-function length check (the skb oracle's `skb->data` shape).  The
+validation is the caller pulling the skb: a dominating `pskb_may_pull` /
+`skb_may_pull` / `skb_header_pointer` call, or a relational on `skb->len`,
+on the same skb passed in.  **Single-level only**: `pskb_may_pull` is often
+done once high in the rx stack, several parser layers above the flagged
+function, so a CALLER-GUARDED verdict (immediate caller pulls) is reliable
+FP evidence, but an UNGUARDED verdict is *weak* (the pull may live in a
+grand-caller).  Downstream (`pipeline_eval`) therefore counts skb-pull
+CALLER-GUARDED as a resolved FP but keeps skb-pull UNGUARDED in a separate
+`skb-pull-weak` bucket rather than the high-confidence genuine set.
+
 ## Honest limits
 
 * **Producer-side validation is field-identity-based, not flow-precise** —
