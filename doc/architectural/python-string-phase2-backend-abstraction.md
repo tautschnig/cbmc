@@ -295,3 +295,61 @@ This document represents the Phase 2 design deliverable.
 Approval is the gate to PR 1 (infrastructure). If any of the
 open questions or design choices need revision, that revision
 happens in this document before any code lands.
+
+## Spike findings (2026-06-09) — github_3090_4, multi-backend diagnosis
+
+A spike on `github_3090_4` (`s = chr(i1)+chr(i2)+chr(i3); assert s ==
+"foo"` under `__ESBMC_assume(i1==102)` etc.) precisely root-caused why
+symbolic-string **content** equality fails today, across **every**
+back-end. The front-end already emits the right intrinsics
+(`cprover_string_concat_func`, `cprover_string_equal_func`); the gap is
+purely that no back-end solves them for *symbolic* content of the Python
+`{length, data: char*}` representation:
+
+* **Default back-end (the sweep).** `cbmc_parse_options` auto-enables
+  `--refine-strings` (when not `--z3/--smt2/--cvc5`), so the sweep *does*
+  run the string refinement — but it **does not engage** for Python
+  strings. The refinement's `add_axioms_for_equals` expects
+  `refined_string_typet` operands with a **content array** (`char[]`),
+  whereas the Python string carries a **content pointer** (`char*` =
+  `address_of(array[0])`). Confirmed empirically: `--refine-strings` flips
+  *none* of `github_3090_4`, `string-rfind-nondet`, `string-index-nondet`,
+  `re2`.
+* **SMT2 back-ends (`--z3`, `--cvc5`).** `smt2_conv.cpp` lowers
+  `cprover_string_equal_func` to **structural** equality `(= s1 s2)` —
+  comparing the `{length, data-pointer}` structs. `chr(i)` and `"f"` live
+  in different local arrays, so the pointers differ → "not equal" →
+  spurious FAIL (sound but imprecise, as its comment states). Both `--z3`
+  and `--cvc5` FAIL `github_3090_4`.
+* **Symex constant-propagation.** `constant_propagate_string_concat` (and
+  friends) only fire for **constant** strings (`try_evaluate_constant_string`
+  bails on a symbolic char), which is why *literal* concatenation
+  (`"f"+"o"+"o" == "foo"`) verifies but `chr(<symbolic>)` does not.
+
+Feasibility of the underlying solving is **not** in doubt — the residual
+constraint is trivially `i1==102 ∧ i2==111 ∧ i3==111`. The blocker is
+entirely the **representation/plumbing**: the `char*`-vs-`char[]` mismatch
+(refinement) and the structural-vs-content lowering (SMT2).
+
+**Why a point-fix is not clean.** A narrow content-equality rewrite would
+have to live in shared core code (`simplify_expr` / `smt2_conv` /
+`boolbv`) used by all of CBMC and JBMC, handle the `char*`→content
+indirection and symbolic element-wise comparison with a length bound, and
+do so without regressing the constant-only fast paths — i.e. it
+re-implements a slice of the refinement against the wrong representation.
+That is fragile and does not generalise to the other ~19 string/`re`
+cluster DIFFs.
+
+**Go / no-go: GO on the representation refactor (PR 1 → …).** The spike
+confirms this is the single architectural root for the whole string/`re`
+precision cluster: once a string is the back-end's chosen type (SMT-LIB
+`String` on CVC5/Z3, proper `refined_string_typet` on refine-strings) and
+every `.length`/`.data` access is an intrinsic, content equality (and
+concat/contains/find/slice/regex) is solved natively per back-end.
+Recommended first concrete step is **PR 1** (selector + `--python-smt-strings`
+opt-in + the new intrinsic ids/stubs, no behaviour change), then **PR 2**
+(literal producer migration), validating end-to-end on `github_3090_4`
+with `--cvc5 --python-smt-strings` before the broader call-site migration.
+Solver impact is expected positive on CVC5 (`str.=`/`str.++` are native and
+the refinement axiom path is already proven at scale in JBMC); the cost is
+engineering scope, not solver capability.
