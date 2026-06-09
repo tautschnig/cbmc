@@ -156,3 +156,20 @@ independent real deltas (mainline rc6→rc7 tag delta; linux-next
 subsystems.  It is ready to run as a daily linux-next gate or a
 pre-merge PR check; the single highest-leverage precision improvement is
 suppressing the bare-parameter direct-index FP class.
+
+## Precision improvement: bare-parameter index/count suppression
+
+Implemented the proposed fix for the recurring `link[link_id]` noise:
+`tainted_count_into_fixed_array.ql` now excludes a count/index that is a
+**bare incoming parameter** never reassigned in-function (the bound is
+the caller's job).  Decoded-in-function locals (b43 `keyidx`) and wire
+struct fields (nci `n_targets`, cgw `result_idx`) are kept.
+
+Effect: mac80211 `link_id` direct-index hits 112 → 60 on broad-next-db;
+all genuine candidates retained.  The residual 60 are `link_id` LOCALS
+assigned from a *parameter's field* (`link_id = params->beacon.link_id`)
+— structurally identical to genuine wire-field indices (nci
+`n_targets = ntf->...`), so separating them is a semantic-trust question
+CodeQL cannot decide without annotations.  Pushing further would drop
+true positives, so this is the sound stopping point; the residual is a
+fast FP dismissal on review (the source struct is in-kernel-validated).
