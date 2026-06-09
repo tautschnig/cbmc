@@ -7,24 +7,24 @@ the pipeline actually help triage?" that the talk's lesson demands.
 
 ## The candidate funnel
 
-| oracle | raw hits | raw functions | HIGH | HIGH&WRITE | distilled |
-|--------|---------:|--------------:|-----:|-----------:|----------:|
-| count/index | 92 | 65 | 4 | 4 | **4** |
-| decoded-len | 28 | 11 | n/a | n/a | **11** |
-| skb / bounded-cursor | 170 | 135 | n/a | n/a | **11** |
-| **total** | **290** | **211** | | | **26** |
+| oracle | raw hits | raw functions | HIGH&WRITE | precond-resolved | genuine (UNGUARDED) | distilled |
+|--------|---------:|--------------:|-----------:|-----------------:|--------------------:|----------:|
+| count/index | 92 | 65 | 4 | 4 | 3 | **4** |
+| decoded-len | 28 | 11 | n/a | 4 | 1 | **1** |
+| skb / cursor | 170 | 135 | n/a | 1 | 19 | **19** |
+| **total** | **290** | **211** | | | | **24** |
 
-*distilled* = the precision-relevant subset a human would actually be
-handed: HIGH&WRITE for count/index (the confidence×impact tiers);
-bounded-cursor functions for the skb oracle; the arithmetic-overflow hits
-for decoded-len.
+*precond-resolved* = functions the caller/producer-precondition automation
+marks CALLER-GUARDED or PRODUCER-GUARDED (FPs resolved without a harness).
+*genuine (UNGUARDED)* = bounded hits the automation does NOT dismiss — the
+precision-relevant set a human is handed for the decoded/skb oracles
+(which read wire data by construction, so raw-taint is baked in and the
+precondition verdict is the discriminator). For count/index the
+distillation is the confidence×impact HIGH&WRITE tier.
 
-The headline narrowing is the count/index column: the
-confidence×impact tiers take **92 raw hits across 65 functions down to 4**,
-and CBMC then confirms all four. The other two oracles lack a confidence
-tier (taint can't be applied to them yet), so they narrow only to their
-precision-relevant subset (11 each) — a clear, honest signal of where the
-tiering pays off and where it is still missing.
+The count/index oracle narrows 92→4 via confidence×impact; the previously
+weakly-narrowed oracles now narrow via the precondition automation —
+**decoded-len 11 functions → 1 genuine concern, skb 135 → 19**.
 
 ## CBMC-adjudicated survivors (shape + reach)
 
@@ -90,19 +90,24 @@ hides:
   — a concrete, measured narrowing, not an anecdote.
 * **Recall:** no ground-truth function is dropped by the distillation.
 * **Progress on the frontier (since first run):**
-  * The **caller-precondition automation** (`caller_precondition.ql`, now
-    a `caller` column here) resolves the dominant FP class without a
-    harness: `rxkad_decrypt_ticket` is auto-marked CALLER-GUARDED, while
-    `ieee80211_get_ttlm` stays UNGUARDED (a kept genuine concern). See
-    `caller-precondition-2026-06.md`.
-  * `src=REAL` coverage grew 2 → 5 functions (cgw, nfc, rxkad, ttlm, ftp),
-    including a verbatim **true negative** (`try_rfc959`: SUCC/SUCC,
-    BLOCK/BLOCK — CBMC *clears* a flagged function on real code) and a
-    verbatim **true positive** (`ieee80211_get_ttlm`).
-* **Remaining frontier:** (a) the decoded-len and skb oracles still lack a
-  confidence tier (extend the taint tier to them); (b) the caller check
-  does not yet handle `(p, end)` pointer cursors or struct-field bounds
-  (cgw); (c) scale `src=REAL` further toward auto-generated harnesses.
+  * The **caller/producer-precondition automation** (`caller_precondition.ql`,
+    surfaced here as a `caller` column and as the `precond-resolved` /
+    `genuine(UNGUARDED)` funnel split) is now the precision lever for the
+    decoded-len and skb oracles — whose raw-taint is baked in, so the
+    precondition verdict is the real discriminator. It narrows skb 135→19
+    and decoded 11→1, and auto-resolves **6/8 distilled survivors** as FPs
+    without a harness (4 cgw PRODUCER-GUARDED, crush + rxkad CALLER-GUARDED).
+  * `src=REAL` coverage grew 2 → 5 functions, including a verbatim **true
+    negative** (`try_rfc959`) and a verbatim **true positive**
+    (`ieee80211_get_ttlm`).
+  * The two survivors the automation does NOT dismiss (`ieee80211_get_ttlm`,
+    `try_rfc959`) are exactly the ones CBMC then adjudicates — a real OOB
+    and a cleared true negative.
+* **Remaining frontier:** (a) 113 skb hits are `no-bound` — skb→data
+  parsers whose guard is a *caller `pskb_may_pull`* (a 4th precondition
+  shape, beyond len-param / cursor / struct-field); (b) scale `src=REAL`
+  toward auto-generated harnesses; (c) value-flow precision in the
+  precondition guards (reassignment between guard and call).
 
 ## Reproduce
 

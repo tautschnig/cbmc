@@ -53,7 +53,7 @@ GROUND_TRUTH = {
 }
 
 
-def funnel(db, query, otype):
+def funnel(db, query, otype, cg):
     rows = tl.run_oracle(db, query)
     cands = [tl.parse_candidate(l) for l in rows]
     funcs = {}
@@ -61,20 +61,24 @@ def funnel(db, query, otype):
         funcs.setdefault(c["func"], c)  # first hit per function
     high = [c for c in funcs.values() if c["confidence"] == "HIGH"]
     high_write = [c for c in high if c["impact"] == "WRITE"]
-    # per-oracle "distilled" set: the precision-relevant subset a human
-    # would actually be handed.
+    # precondition verdict split (the precision lever for the decoded/skb
+    # oracles, whose raw-taint is baked in by construction)
+    resolved = [f for f in funcs
+                if cg.get(f) in ("CALLER-GUARDED", "PRODUCER-GUARDED")]
+    unguarded = [f for f in funcs if cg.get(f) == "UNGUARDED"]
+    # per-oracle "distilled" set a human would be handed:
     if otype == "count":
         distilled = high_write
-    elif otype == "skb":
-        distilled = [c for c in funcs.values()
-                     if "bounded-cursor" in c["kind"]]
-    else:  # decoded: the multiply/round-up arithmetic hits (all are that)
-        distilled = list(funcs.values())
+    else:
+        # decoded/skb: the genuine (precondition-UNGUARDED) concerns
+        distilled = unguarded
     return {
         "raw_hits": len(rows),
         "raw_funcs": len(funcs),
         "high": high,
         "high_write": high_write,
+        "resolved": resolved,
+        "unguarded": unguarded,
         "distilled": distilled,
         "by_func": funcs,
     }
@@ -141,19 +145,21 @@ def main():
     ]
 
     print(f"# pipeline_eval on {a.db}\n")
+    cg = caller_verdicts(a.db)  # precondition verdicts (precision lever)
     print("## Funnel (per oracle)\n")
     print(f"{'oracle':<14}{'raw_hits':<10}{'raw_funcs':<11}"
-          f"{'HIGH':<6}{'HIGH&WRITE':<11}{'distilled':<10}")
-    print("-" * 62)
+          f"{'HIGH&WR':<9}{'precond-resolved':<18}{'genuine(UNGUARDED)':<20}"
+          f"{'distilled':<10}")
+    print("-" * 92)
     survivors = []  # (oracle_label, otype, candidate)
     funnels = {}
     for label, q, otype in oracles:
-        fn = funnel(a.db, q, otype)
+        fn = funnel(a.db, q, otype, cg)
         funnels[label] = (fn, otype)
         CAND_CACHE.extend(fn["by_func"].values())
         print(f"{label:<14}{fn['raw_hits']:<10}{fn['raw_funcs']:<11}"
-              f"{(str(len(fn['high'])) if otype=='count' else 'n/a'):<6}"
-              f"{(str(len(fn['high_write'])) if otype=='count' else 'n/a'):<11}"
+              f"{(str(len(fn['high_write'])) if otype=='count' else 'n/a'):<9}"
+              f"{len(fn['resolved']):<18}{len(fn['unguarded']):<20}"
               f"{len(fn['distilled']):<10}")
         # adjudicate: count -> the HIGH&WRITE distilled set; all oracles ->
         # any ground-truth function present in their hits.
@@ -165,7 +171,6 @@ def main():
                 survivors.append((label, otype, fn["by_func"][f]))
 
     print("\n## Distilled survivors -- CBMC-adjudicated (shape + reach) + caller-guard\n")
-    cg = caller_verdicts(a.db)
     print(f"{'function':<24}{'oracle':<13}{'src':<6}"
           f"{'shape:b/f':<13}{'reach:b/f':<13}{'caller':<18}{'ground-truth'}")
     print("-" * 112)
