@@ -14,6 +14,21 @@
  * @problem.severity warning
  */
 import cpp
+import KernelTaint
+
+/** Confidence tier: HIGH when the function actually reads an untrusted
+ *  buffer (skb->data, a decode accessor, or a bounded (buf,len)/(p,end)
+ *  cursor parameter) -- i.e. it is an RX parser; MEDIUM otherwise (e.g. a
+ *  TX option builder such as mptcp_write_options that walks a buffer it is
+ *  WRITING).  See KernelTaint.qll. */
+string tlvConfidence(Function f) {
+  if
+    exists(KernelTaint::SkbDataAccess s | s.getEnclosingFunction() = f) or
+    exists(KernelTaint::DecodeCall d | d.getEnclosingFunction() = f) or
+    KernelTaint::isBoundedBufferParam(f, _)
+  then result = "HIGH"
+  else result = "MEDIUM"
+}
 
 /** += / -=, integer or pointer flavour. */
 class AdvanceOp extends AssignOperation {
@@ -70,4 +85,5 @@ where
   )
 select f,
   f.getName() + "|" + f.getFile().getAbsolutePath() + "|" +
-  f.getLocation().getStartLine().toString() + "|" + kind
+  f.getLocation().getStartLine().toString() + "|" + kind + "|confidence=" +
+  tlvConfidence(f)
