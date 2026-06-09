@@ -94,7 +94,7 @@ def parse_candidate(line):
 def cbmc_verdict(harness, func, flags, unwind):
     try:
         out = subprocess.run(
-            [CBMC, harness, "--function", func, *flags,
+            [CBMC, harness, "-I", HERE, "--function", func, *flags,
              "--unwind", str(unwind)],
             capture_output=True, text=True, timeout=90).stdout
     except subprocess.TimeoutExpired:
@@ -103,6 +103,30 @@ def cbmc_verdict(harness, func, flags, unwind):
         if ln.startswith("VERIFICATION"):
             return "FAILED" if "FAILED" in ln else "SUCCESSFUL"
     return "ERROR"
+
+
+# matches a --cover cover goal line, capturing the enclosing function
+COVER_RE = re.compile(
+    r"\.coverage\.\d+\].*function\s+(?P<func>\w+)\s+condition\s+'.*':\s+"
+    r"(?P<verdict>SATISFIED|FAILED)")
+
+
+def cover_verdict(harness, func):
+    """Reachability of the OOB-precondition CHECKPOINT inside `func`:
+    REACHABLE if its cover goal is SATISFIED, BLOCKED if FAILED, NONE if the
+    harness carries no probe.  CBMC instruments the whole TU, so we keep
+    only the goal whose enclosing function is `func`."""
+    try:
+        out = subprocess.run(
+            [CBMC, harness, "-I", HERE, "-DCBMC_PROBE", "--function", func,
+             "--cover", "cover"],
+            capture_output=True, text=True, timeout=90).stdout
+    except subprocess.TimeoutExpired:
+        return "TIMEOUT"
+    for m in COVER_RE.finditer(out):
+        if m.group("func") == func:
+            return "REACHABLE" if m.group("verdict") == "SATISFIED" else "BLOCKED"
+    return "NONE"
 
 
 def main():
@@ -127,10 +151,11 @@ def main():
     print(f"# triage_loop: {a.query} on {a.db}")
     print(f"# {len(cands)} candidate(s)"
           f"{' (>= ' + a.min_confidence + ')' if a.min_confidence else ''}\n")
-    hdr = ("function", "kind", "conf", "impact", "CBMC:buggy", "CBMC:fixed")
-    print(f"{hdr[0]:<28}{hdr[1]:<18}{hdr[2]:<7}{hdr[3]:<7}"
-          f"{hdr[4]:<12}{hdr[5]:<12}")
-    print("-" * 84)
+    hdr = ("function", "kind", "conf", "impact",
+           "shape:bug", "shape:fix", "reach:bug", "reach:fix")
+    print(f"{hdr[0]:<26}{hdr[1]:<18}{hdr[2]:<8}{hdr[3]:<7}"
+          f"{hdr[4]:<11}{hdr[5]:<11}{hdr[6]:<11}{hdr[7]:<11}")
+    print("-" * 100)
     for c in cands:
         h = tempfile.mktemp(suffix=".c")
         with open(h, "w") as f:
@@ -140,9 +165,15 @@ def main():
                 check=True, stdout=f)
         buggy = cbmc_verdict(h, "harness_buggy", flags, unwind)
         fixed = cbmc_verdict(h, "harness_fixed", flags, unwind)
+        rbuggy = cover_verdict(h, "harness_buggy")
+        rfixed = cover_verdict(h, "harness_fixed")
         os.unlink(h)
-        print(f"{c['func']:<28}{c['kind']:<18}{c['confidence']:<7}"
-              f"{c['impact']:<7}{buggy:<12}{fixed:<12}")
+        print(f"{c['func']:<26}{c['kind']:<18}{c['confidence']:<8}"
+              f"{c['impact']:<7}{buggy:<11}{fixed:<11}{rbuggy:<11}{rfixed:<11}")
+
+    print("\n# shape: CBMC bounds/overflow verdict (FAILED=bug present).")
+    print("# reach: cover-probe on the OOB precondition "
+          "(REACHABLE=precondition feasible; BLOCKED=guard closes the path).")
 
 
 if __name__ == "__main__":

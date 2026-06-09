@@ -45,6 +45,7 @@ def gen_count(func, filepath, line, kind, detail):
 //   goto-cc -o h.gb <this> && cbmc h.gb --function harness_buggy \\
 //       --bounds-check --pointer-check --unwind {msize + 2}
 #include <stdint.h>
+#include "cover_probe.h"
 #define DEST {msize}
 unsigned nd(void) {{ unsigned x; return x; }}
 
@@ -52,6 +53,7 @@ int harness_buggy(void)
 {{
   int dest[DEST];
   unsigned count = nd();          // attacker/firmware-controlled count
+  CHECKPOINT(oob, count > DEST);  // OOB-write precondition reachable?
   for (unsigned i = 0; i < count; i++)
     dest[i] = (int)i;             // OOB write when count > DEST
   return dest[0];
@@ -63,6 +65,7 @@ int harness_fixed(void)
   unsigned count = nd();
   if (count > DEST)               // FIX: bound count against ARRAY_SIZE
     return -1;
+  CHECKPOINT(oob, count > DEST);  // after guard: BLOCKED
   for (unsigned i = 0; i < count; i++)
     dest[i] = (int)i;
   return dest[0];
@@ -75,6 +78,7 @@ int harness_fixed(void)
 //   goto-cc -o h.gb <this> && cbmc h.gb --function harness_buggy \\
 //       --bounds-check --pointer-check --unwind 4
 #include <stdint.h>
+#include "cover_probe.h"
 #define DEST {msize}
 unsigned nd(void) {{ unsigned x; return x; }}
 
@@ -82,6 +86,7 @@ int harness_buggy(void)
 {{
   int dest[DEST];
   unsigned idx = nd();            // attacker/firmware-controlled index
+  CHECKPOINT(oob, idx >= DEST);   // OOB precondition reachable?
   return dest[idx];               // OOB when idx >= DEST
 }}
 
@@ -91,6 +96,7 @@ int harness_fixed(void)
   unsigned idx = nd();
   if (idx >= DEST)                // FIX: bound the index
     return -1;
+  CHECKPOINT(oob, idx >= DEST);   // after guard: BLOCKED
   return dest[idx];
 }}
 """
@@ -100,18 +106,22 @@ def gen_decoded(func, filepath, line, detail):
     is_mul = "multiply" in detail
     if is_mul:
         body = """  uint32_t n = nd();              // length/count decoded from the wire
+  CHECKPOINT(oob, n > 0xffffffffu / 16u); // overflow precondition reachable?
   return n * 16u;                 // BUG: multiplication overflows"""
         fixedbody = """  uint32_t n = nd();
   if (n > 0xffffffffu / 16u)      // FIX: bound so product cannot overflow
     return 0;
+  CHECKPOINT(oob, n > 0xffffffffu / 16u); // after guard: BLOCKED
   return n * 16u;"""
         flag = "multiply"
     else:
         body = """  uint32_t len = nd();            // length decoded from the wire
+  CHECKPOINT(oob, len > 0xfffffffbu); // overflow precondition reachable?
   return (len + 3u) & ~3u;        // BUG: round-up overflows near UINT_MAX"""
         fixedbody = """  uint32_t len = nd();
   if (len > 0xfffffffbu)          // FIX: UINT_MAX-3, round-up cannot overflow
     return 0;
+  CHECKPOINT(oob, len > 0xfffffffbu); // after guard: BLOCKED
   return (len + 3u) & ~3u;"""
         flag = "round-up"
     return f"""// Auto-generated decoded-length CBMC harness (Gap #3, {flag}).
@@ -122,6 +132,7 @@ def gen_decoded(func, filepath, line, detail):
 //   goto-cc -o h.gb <this> && cbmc h.gb --function harness_buggy \\
 //       --unsigned-overflow-check --unwind 4
 #include <stdint.h>
+#include "cover_probe.h"
 uint32_t nd(void) {{ uint32_t x; return x; }}
 
 uint32_t harness_buggy(void)
@@ -148,6 +159,7 @@ def gen_skb(func, filepath, line, detail):
 //       --bounds-check --pointer-check --unwind 4
 #include <stdint.h>
 #include <stdlib.h>
+#include "cover_probe.h"
 unsigned nd(void) {{ unsigned x; return x; }}
 
 // read a u16 field at byte offset 2 (e.g. an SDU/length field)
@@ -158,6 +170,7 @@ int harness_buggy(void)
   uint8_t *data = malloc(len);    // exactly `len` valid bytes, like skb->data
   __CPROVER_assume(data != 0);
   // BUG: no check that len >= 4 before reading the field at offset 2..3
+  CHECKPOINT(oob, len < 4);        // OOB-read precondition reachable?
   return data[2] | (data[3] << 8); // OOB read when len < 4
 }}
 
@@ -169,6 +182,7 @@ int harness_fixed(void)
   __CPROVER_assume(data != 0);
   if (len < 4)                     // FIX: pskb_may_pull equivalent
     return -1;
+  CHECKPOINT(oob, len < 4);        // after guard: BLOCKED
   return data[2] | (data[3] << 8);
 }}
 """
