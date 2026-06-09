@@ -38,8 +38,38 @@ record of what already landed, use `git log` — this doc deliberately does
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
-From a per-test triage (2026-06-08) of the 26 baseline DIFFs in the
-*expected-FAILED / got-SUCCESSFUL* direction: **20 are out-of-scope**
+**Refreshed triage (2026-06-09, sweep PASS 2916/3091).** Of the 23
+*expected-FAILED / got-SUCCESSFUL* DIFFs, **none is a genuine
+high-value false proof**: 22 are flag/scope artifacts and 1 is a niche
+embedded-NUL edge. Breakdown verified by hand:
+- **ESBMC-only flags the cbmc frontend doesn't implement** (the test's
+  bug-detection depends on them): `--strict-types` (github_3020_5,
+  github_3093_1/2), `--fixedbv` (neural-net_fail), `--function`
+  (ethereum_bug-fail). The sweep runs uniform `--unwind 10`, so these
+  "pass" SUCCESSFUL.
+- **`--incremental-bmc` tests** (15): the sweep's fixed `--unwind 10`
+  can't replicate incremental bug-finding. Four of these
+  (`github_2224-fail`, `github_2892_fail`, `github_3836_fail`,
+  `global2_fail`) verify FAILED correctly at `--unwind 25` — pure
+  under-approximation artifacts. The rest are out-of-scope by nature
+  (import-error detection, `input()`, regex always-truthy `re.Match`,
+  unsupported `str.encode`, missing-return opt-in, and the deferred
+  `github_3647_9_fail` dict-mutation-during-iteration).
+- **One genuine but niche edge:** `string-nondet-in-embedded-null-longer-fail`
+  — `assume(s == "a\0b")` then `assert "a\0bc" in s` (a needle longer than
+  the haystack can't be a substring). Tied to `nondet_string` length /
+  embedded-`\0` substring semantics (possibly a vacuity from the length-4
+  nondet vs length-3 literal). Low value; recorded with the string cluster
+  in [§9](#precision).
+
+Net: the frontend is effectively free of genuine false proofs; the only
+deliberately-deferred soundness item is `github_3647_9_fail`
+(dict-mutation-during-iteration, below).
+
+### Earlier triage history (2026-06-08)
+
+From the prior per-test triage of the 26 baseline DIFFs in the
+*expected-FAILED / got-SUCCESSFUL* direction: **20 were out-of-scope**
 (import-error detection, opt-in `--python-check-annotations` /
 `--python-missing-return-check` not passed, the always-truthy `re.Match`
 modelling choice, ESBMC-only intrinsics/flags such as `nondet_*` /
@@ -438,11 +468,35 @@ alarms). Verified against the 2026-06-08 sweep baseline.
   `enabled[idx].act()` — preserving the object element type on append
   `f771788f7c`. Both now verify SUCCESSFUL **soundly** (the `counter`
   invariant holds; `counter == -1` is unreachable, as in CPython).
-- **`github` real-world cluster:** many small sub-clusters (int(string,
-  base) edge cases, isinstance-narrowing for union params + datetime stub
-  fields, reversed-range iteration, list index-out-of-range, fail-shape
-  soundness tests). No shared root cause — triage per sub-cluster. (Count
-  inherited from the old roadmap is unverified — needs a fresh DIFF triage.)
+- **`github` real-world cluster — refreshed triage 2026-06-09 (17
+  precision DIFFs).** Grouped into shared-root sub-clusters (biggest /
+  cleanest first):
+  - **Enum (2):** `github_3642` (member `==` comparison /
+    `light == TrafficLight.GREEN`), `github_3642_alias` (`A.X.value` with
+    `Enum as E` base). A coherent feature — Enum member value + identity.
+    *Likely the cleanest whole-group win.*
+  - **Heterogeneous dict values (3):** `github_3719_4/5-nondet`
+    (`{"a": int, "b": float}` iterated via `.values()`), `github_3783_5-nondet`
+    (`popitem()` over a branch-dependent dict). Shared root: a dict literal
+    with mixed value types loses per-value typing.
+  - **`chr()` string building (2):** `github_3090_4/5`
+    (`s = "" ; s += chr(i)` then `assert s == "foo"`) — string-refinement
+    over `chr()` concatenation of assumed code points.
+  - **Module-stub + isinstance (2):** `github_2960`, `github_3286`
+    (`import ll; ll.create(...)` then `isinstance(x, ll.Bar)`).
+  - **Container-stored / default-arg callables (2):** `github_3690`
+    (`{'+': lambda: 1.0}[x]()` — a callable in a dict), `github_3707`
+    (`g = f; def h(op=g): op(...)` — function as default arg). These are
+    the first-class-function-value gap ([§12](#higher-order)).
+  - **Singletons:** `github_3667` (shallow `list.copy()` inner-list
+    aliasing), `github_3728` (linked-structure `y.tail.head` attribute
+    chain / `Optional` self-ref), `github_3313` (isinstance-narrowing on
+    `str | datetime` + datetime stub fields), `github_3560` (`input()` +
+    `split`), `github_3594` (`"ß".upper()` unicode case mapping),
+    `github_3772_3` (annotation says `str`, returns `int`).
+- **`decimal` cluster (4):** `decimal`/`decimal2`/`decimal3`/`decimal4`
+  read `Decimal` internal attributes (`_sign`, `_int`, `_exp`) — needs a
+  `Decimal` model exposing those; niche (private API).
 - **`lambda7` / `lambda18` body emission:** **closed** (both PASS in the
   2026-06-08 baseline).
 
