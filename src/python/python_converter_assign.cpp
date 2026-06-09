@@ -1176,6 +1176,61 @@ codet python_convertert::convert_assign(const jsont &stmt)
         const symbolt &var_sym = symbol_table.lookup_ref(symbol_id);
         code_blockt result;
 
+        // PLR §3.1/§3.2: destination is a tagged-union (e.g. a
+        // variable declared `d: str | datetime`, or a class field
+        // typed Optional[...]/Union[...]). `&d` is not a valid
+        // class-struct pointer, so constructing in place would run
+        // __init__ on a nondet self and never initialise the
+        // instance. Instead construct into a temp of the class
+        // struct type, run __init__ on it, then wrap the temp into
+        // the union (CLASS tag + __class_ptr) — mirroring
+        // coerce_to_typed_slot's class-into-union boundary — so
+        // later attribute reads resolve through __class_ptr.
+        if(is_python_value_type(var_sym.type))
+        {
+          std::string tmp_name = "__ctor_union_" + var_name;
+          std::string tmp_qname = qualify_name(tmp_name);
+          irep_idt tmp_id{tmp_qname};
+          if(symbol_table.lookup(tmp_id) == nullptr)
+          {
+            symbolt tmp_sym{tmp_id, cls_type, "python"};
+            tmp_sym.base_name = tmp_name;
+            tmp_sym.is_lvalue = true;
+            tmp_sym.is_state_var = true;
+            tmp_sym.is_static_lifetime = current_function.empty();
+            symbol_table.add(tmp_sym);
+          }
+          const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
+
+          if(class_tag_ids.count(call_name))
+            result.add(code_frontend_assignt{
+              member_exprt{
+                tmp_sym.symbol_expr(), "__class_tag", signedbv_typet{32}},
+              from_integer(class_tag_ids[call_name], signedbv_typet{32})});
+
+          irep_idt class_obj_id{"python::" + call_name};
+          const symbolt *class_obj = symbol_table.lookup(class_obj_id);
+          if(class_obj != nullptr && !class_obj->value.is_nil())
+            result.add(code_frontend_assignt{
+              tmp_sym.symbol_expr(), class_obj->symbol_expr()});
+
+          auto init_call =
+            build_class_init_call(call_name, tmp_sym.symbol_expr(), value, loc);
+          if(init_call)
+          {
+            code_expressiont call_stmt{*init_call};
+            call_stmt.add_source_location() = loc;
+            result.add(std::move(call_stmt));
+          }
+
+          exprt wrapped =
+            coerce_assign_rhs(tmp_sym.symbol_expr(), python_value_type());
+          code_frontend_assignt assign{var_sym.symbol_expr(), wrapped};
+          assign.add_source_location() = loc;
+          result.add(std::move(assign));
+          return std::move(result);
+        }
+
         // Identify whether the destination symbol's type can actually
         // hold class-instance state. Python allows rebinding a name
         // to a different type, so a previous scalar use of the same
