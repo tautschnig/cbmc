@@ -54,3 +54,22 @@ def t() -> None:
 
 
 t()
+
+
+def collect(xs):
+    out = []
+    i = 0
+    while i < len(xs):
+        out.append(xs[i])
+        i += 1
+    return out
+
+
+def t2() -> None:
+    # non-HOF function, unannotated list parameter, append a subscript
+    e = collect([A(), B()])
+    assert e[0].m() == 1
+    assert e[1].m() == 2
+
+
+t2()
