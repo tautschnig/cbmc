@@ -14,6 +14,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/c_types.h>
 #include <util/config.h>
 #include <util/cprover_prefix.h>
+#include <util/expr_iterator.h>
 #include <util/expr_util.h>
 #include <util/floatbv_expr.h>
 #include <util/ieee_float.h>
@@ -3832,6 +3833,64 @@ exprt c_typecheck_baset::do_special_functions(
     tmp2.add_source_location()=source_location;
 
     return tmp2;
+  }
+  else if(identifier == "__builtin_strlen")
+  {
+    // GCC folds __builtin_strlen of a string literal to its length at
+    // compile time; the Linux kernel relies on this in module_param
+    // _Static_asserts (e.g. sizeof(name)-1 == __builtin_strlen(name)).
+    // Fold the literal case here; otherwise fall back to the library
+    // model (runtime strlen) by returning nil.
+    if(expr.arguments().size() != 1)
+    {
+      error().source_location = f_op.source_location();
+      error() << "__builtin_strlen expects one argument" << eom;
+      throw 0;
+    }
+
+    typecheck_function_call_arguments(expr);
+
+    exprt arg = expr.arguments()[0];
+    simplify(arg, *this);
+
+    // A string literal argument decays to a pointer into the literal, e.g.
+    // (char *)&("lit"[0]) or &("lit"[0]); locate the underlying
+    // string_constant wherever it sits in the (simplified) argument.
+    const string_constantt *str = nullptr;
+    for(auto it = arg.depth_cbegin(); it != arg.depth_cend(); ++it)
+    {
+      if(it->id() == ID_string_constant)
+      {
+        str = &to_string_constant(*it);
+        break;
+      }
+    }
+
+    if(str != nullptr)
+    {
+      // the string_constant's array type size includes the terminating
+      // NUL; fall back to the stored value length if unavailable.
+      std::optional<mp_integer> len;
+      if(str->type().id() == ID_array)
+      {
+        const exprt &array_size = to_array_type(str->type()).size();
+        mp_integer size_int;
+        if(
+          array_size.id() == ID_constant &&
+          !to_integer(to_constant_expr(array_size), size_int) && size_int >= 1)
+        {
+          len = size_int - 1;
+        }
+      }
+      if(!len.has_value())
+        len = mp_integer{(long long)id2string(str->value()).size()};
+
+      exprt result = from_integer(*len, expr.type());
+      result.add_source_location() = source_location;
+      return result;
+    }
+
+    return nil_exprt(); // not a literal: use the library model
   }
   else if(identifier=="__builtin_classify_type")
   {
