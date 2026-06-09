@@ -33,7 +33,7 @@ stage-2 (CBMC) or manual review.  Next step: build a CodeQL DB over
 `crypto/ lib/scatterlist.c fs/splice.c` and run it on real af_alg /
 algif_{aead,skcipher} code.
 
-## 2. "BPF-checkpoint" assumption bisection → CBMC cover probes
+## 2. "BPF-checkpoint" assumption bisection → CBMC cover probes (IMPLEMENTED)
 
 The talk reports that stronger models validate a claimed path A→B→C→D by
 *sprinkling BPF probes* at the intermediate nodes to confirm each hop is
@@ -45,6 +45,11 @@ program point and let CBMC report which hops are feasible.  This turns a
 narrative "this is reachable" into a machine-checked reachability witness
 and pinpoints the first infeasible hop.  Good fit for our stage-2
 harnessing infra (`oracle_harness_gen.py`).
+
+**Implemented** (`cover-probe-bisection-2026-06.md`): `cover_probe.{h,py}`
++ `cover_bisect_test.c` + a real CVE-2026-31622 demo
+(`real_nfc_llcp_cover.c`) where the OOB-read precondition is REACHABLE in
+the vulnerable parser and BLOCKED by the fix.
 
 ## 3. Exploitability/impact axis on the confidence tier
 
