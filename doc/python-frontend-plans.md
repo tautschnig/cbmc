@@ -412,25 +412,24 @@ alarms). Verified against the 2026-06-08 sweep baseline.
   shape:* declarative `@c_intrinsic` domain annotations (depends on
   [§6](#modules)); cross-function tracking of return constants for
   dict/list literals.
-- **`jpl` / `jpl_1` — higher-order function-value call (NEW, exposed
-  2026-06-08).** Both newly fail (false positive) after the
-  string-refinement scoping fix ([§0](#false-proofs)) removed the vacuity
-  that had been masking them. The model reaches `counter == -1`, which
-  CPython never does: a state machine filters enabled actions with
+- **`jpl` — FIXED; `jpl_1` — object-element dispatch through a function
+  value (exposed 2026-06-08).** Both had reached `counter == -1` (which
+  CPython never does) after the string-scoping fix removed the vacuity
+  masking them: a state machine filters enabled actions with
   `list_comp(actions, lambda a: a.pre())` then runs
-  `enabled_actions[random.randint(0, len-1)].act()`. Two parts were in
-  play: (a) the lambda's object parameter typed as nondet int — **fixed**
-  (`4d808cefda`); (b) `list_comp` calling its function-valued parameter
-  `condition(action)` → "no body for callee" — **fixed** by per-call-site
-  monomorphisation (`54b829c6bd`, see [§12](#higher-order)). What still
-  blocks jpl/jpl_1 are two precision residuals exposed underneath: the
-  monomorphised `list_comp` clone runs the comprehension over its **list
-  parameter** `actions`, whose elements are symbolic to the clone, and
-  dispatching the object element through the function value loses
-  precision (double `python_value` wrapping). Until those land (tracked in
-  [§12](#higher-order)) jpl/jpl_1 remain sound false positives. Confirmed
-  independent of f-strings (removing the `print(f"…")` lines still reaches
-  `counter == -1`).
+  `enabled_actions[random.randint(0, len-1)].act()`. Three layers were in
+  play and all but one are fixed: (a) the lambda's object parameter typed
+  as nondet int — **fixed** (`4d808cefda`); (b) `list_comp` calling its
+  function-valued parameter — **fixed** by per-call-site monomorphisation
+  (`54b829c6bd`); (c) the monomorphised clone comprehending over its list
+  *parameter* — **fixed** by specialising the clone to call-site argument
+  types + re-inferring its return type (`eb80586ebc`). With (a)–(c) `jpl`
+  now verifies SUCCESSFUL **soundly**. `jpl_1` still fails: it is the
+  loop-based variant that dispatches the object *element* through the
+  function value (`lambda candidate: candidate.pre()` then virtual
+  `pre()`), whose dispatch precision is the remaining residual
+  ([§12](#higher-order)); it also runs under `--incremental-bmc`. Until
+  that lands `jpl_1` is a sound false positive.
 - **`github` real-world cluster:** many small sub-clusters (int(string,
   base) edge cases, isinstance-narrowing for union params + datetime stub
   fields, reversed-range iteration, list index-out-of-range, fail-shape
@@ -521,20 +520,21 @@ redundant callable args become nondet placeholders. The clone is cached
 keyed by callee + bound-callable ids, so a loop reuses one clone and
 distinct callables get distinct clones — sound for multi-callable HOFs
 (no last-binding-wins). Handles lambda/named-function args and nested HOF
-application; gained `higher-order2`, `callable4`, `github_3720`. Falls
-back to the sound nondet path for the unresolved cases below.
+application; gained `higher-order2`, `callable4`, `github_3720`. The clone
+is also **specialised to the call-site argument types** (refining an
+unannotated `python_value` parameter to the concrete `list[int]` passed)
+and **re-infers its return type from the specialised body**, so a HOF that
+comprehends over its list parameter (`def keep(xs, p): return [x for x in
+xs if p(x)]`) verifies precisely for both int and object elements; this
+fixed **jpl** (now PASS, soundly). Falls back to the sound nondet path for
+the unresolved cases below.
 
 **Residuals (sound; still open).**
-- An object argument dispatched *through* a HOF and then through the
-  function value (double `python_value` wrapping) can lose field
-  precision — `apply(lambda p: p.v, P(7))` may not pin `== 7`.
-- A comprehension over a HOF's **list parameter** sees symbolic elements
-  (`def lc(xs, c): return [x for x in xs if c(x)]` — the clone's `xs` is a
-  parameter, so `x` ranges over nondet content). This is a
-  comprehension-over-list-parameter precision gap, largely independent of
-  the function-value call.
-- Both of the above block **jpl/jpl_1** (which combine HOF + comprehension
-  over a list parameter of objects); see [§9](#precision).
+- An object *element* dispatched through the function value — a HOF body
+  that calls `pred(element).method()` / `lambda c: c.pre()` over object
+  elements — can lose virtual-dispatch precision. This blocks **jpl_1**
+  (loop-based HOF + `candidate.pre()` over `Action` objects; also uses
+  `--incremental-bmc`); see [§9](#precision).
 - Immediately-applied lambdas `(lambda a: a.x)(obj)` and `sorted(key=...)`
   over objects are still nondet.
 - First-class function values stored in a container and called indirectly
