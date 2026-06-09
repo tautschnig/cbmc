@@ -472,14 +472,28 @@ void c_typecheck_baset::typecheck_expr_main(exprt &expr)
     exprt default_match=nil_exprt();
     exprt assoc_match=nil_exprt();
 
-    const typet &op_type = op.type();
+    // C11 6.5.1.1: the controlling expression undergoes lvalue conversion,
+    // which drops its top-level qualifiers; pointee qualifiers are kept.
+    typet op_type = op.type();
+    op_type.remove(ID_C_constant);
+    op_type.remove(ID_C_volatile);
+    op_type.remove(ID_C_restricted);
 
     for(const auto &irep : generic_associations)
     {
       if(irep.get(ID_type_arg) == ID_default)
         default_match = static_cast<const exprt &>(irep.find(ID_value));
-      else if(op_type == static_cast<const typet &>(irep.find(ID_type_arg)))
+      else if(gcc_types_compatible_p(
+                op_type, static_cast<const typet &>(irep.find(ID_type_arg))))
       {
+        // Must NOT use plain irept == here: it ignores the qualifier
+        // "comments" (#constant/#volatile), so it would wrongly match e.g.
+        // `int *` against `const int *` -- which breaks the kernel's
+        // container_of_const()/inet_sk() _Generic that selects on pointee
+        // const-ness.  gcc_types_compatible_p respects pointee qualifiers;
+        // we drop the controlling expression's top-level qualifiers above
+        // (per lvalue conversion) so e.g. `const seqcount_spinlock_t`
+        // matches a `seqcount_spinlock_t` association (kernel seqlock).
         assoc_match = static_cast<const exprt &>(irep.find(ID_value));
       }
     }
