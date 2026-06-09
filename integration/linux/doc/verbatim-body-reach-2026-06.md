@@ -86,6 +86,42 @@ no new front-end fix was required to reach verbatim bodies here; the
 remaining work to scale verbatim-body adjudication is harness authoring
 (real struct stubs + vuln/fixed entries), not front-end capability.
 
+## Auto-generated verbatim harnesses (scaling src=REAL)
+
+Hand-authoring a harness per function does not scale.  `auto_real_harness.py`
+generates the verbatim reach verdict for ANY function in a buildable TU
+using CBMC's `goto-harness`:
+
+```
+goto-cc (full TU) -> TU.gb
+goto-harness --harness-type call-function --function F  -> harness.gb
+cbmc harness.gb --function h_F --bounds-check --pointer-check
+```
+
+`goto-harness` nondet-initialises and *validly allocates* F's pointer
+arguments (so there is no NULL-pointer noise — the deref checks pass), then
+CBMC checks the verbatim body.  A failing `array_bounds` / outside-object
+property in F means the body is OOB-reachable for some input — the
+function-in-isolation (worst-case / `probe_vuln`) view, with **no manual
+struct stubs or entries**.  Combined with `caller_precondition.ql` it gives
+the full triage (isolation-OOB + UNGUARDED = genuine; + GUARDED = the
+caller/producer saves it).
+
+Results (auto, zero authoring):
+* `cgw_csum_crc8_pos` (gw.gb) → **REAL-OOB**, both sites — the loop read
+  `cf->data[i]` (line 410) and the write `cf->data[crc8->result_idx]`
+  (line 427).  Matches the hand-authored `real_cgw_csum.c`.
+* `__decode_pg_upmap_items` (osdmap.gb) → **CLEAN** — a ceph decoder using
+  `ceph_decode_*_safe`; CBMC clears it (auto true-negative).
+
+Honest boundary: auto-harness scales to self-contained functions;
+crypto/alloc-heavy ones still need a hand-authored stub.
+`rxkad_decrypt_ticket` **times out** (goto-harness allocates the
+`skcipher_request` and CBMC symexes `crypto_skcipher_decrypt`) — which is
+exactly why `real_rxkad_ticket.c` stubs the in-place decrypt.  So the two
+approaches are complementary: auto-harness for breadth, hand-authored for
+the heavy dependencies.
+
 ## Two routes to a verbatim body
 
 1. **Verbatim extraction** (used by `real_cgw_csum.c`,
@@ -100,6 +136,8 @@ remaining work to scale verbatim-body adjudication is harness authoring
 
 ## Files
 
+* `auto_real_harness.py` — auto-generated verbatim harness via goto-harness
+  (scales src=REAL to any self-contained function in a buildable TU).
 * `real_cgw_csum.c` — verbatim CVE-2019-3701 (CAN-gw) harness.
 * `real_rxkad_ticket.c` — verbatim rxkad ticket-parse core (FP-resolved).
 * `triage_loop.py` — `REAL_HARNESS` registry, `src` column, `--only`.
