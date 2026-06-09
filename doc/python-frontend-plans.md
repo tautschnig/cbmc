@@ -534,15 +534,20 @@ empty-list element-type prescan now infers `python_value` for object
 appends (constructor, subscript `xs[i]`, or a name bound to one), and the
 monomorphised clone re-runs the prescan in its own scope, so this works
 through a HOF over a list parameter too. This closed **jpl_1** — the last
-jpl residual — so both jpl and jpl_1 now verify SUCCESSFUL **soundly**.
+jpl residual — so both jpl and jpl_1 now verify SUCCESSFUL **soundly**. A
+follow-up (`1ad49a3c60`) extended the subscript handler to deref a
+**by-reference list parameter**, so a *non-HOF* function building an
+object list from a list parameter (`def collect(xs): out=[];
+out.append(xs[i])`) dispatches correctly too.
 
 **Residuals (sound; still open).**
-- A *non-HOF* function with an **unannotated** list parameter that appends
-  a subscript of it (`def keep(xs): out=[]; ... out.append(xs[i])`) can
-  still lose element precision: the parameter is `python_value` at prescan
-  and isn't monomorphised, so `xs[i]`'s type is unknown. Annotating the
-  parameter (`xs: list`), or reaching it through a higher-order call
-  (which specialises the clone), both work.
+- Immediately-applied lambdas `(lambda a: a.x)(obj)` and `sorted(key=...)`
+  over objects are still nondet.
+- First-class function values stored in a container and called indirectly
+  (the shared dependency for
+  [§2 phase 4, closures through containers](#closures)) remain unmodelled;
+  the monomorphisation clone covers *argument-passed* callables, not
+  container-stored ones.
 - Immediately-applied lambdas `(lambda a: a.x)(obj)` and `sorted(key=...)`
   over objects are still nondet.
 - First-class function values stored in a container and called indirectly
