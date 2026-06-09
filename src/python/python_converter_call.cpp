@@ -256,6 +256,15 @@ exprt python_convertert::convert_call(const jsont &expr)
     if(auto r = try_method_call(expr, func_name, args))
       return std::move(*r);
   }
+  else if(is_node_type(func, "Lambda"))
+  {
+    // PLR §6.14: immediately-applied lambda `(lambda ...: ...)(args)`.
+    // Convert the lambda to its function symbol and dispatch the call to
+    // it by name, exactly as `g = lambda ...; g(args)` does.
+    exprt l = convert_lambda(func);
+    if(l.id() == ID_symbol && l.type().id() == ID_code)
+      func_name = id2string(to_symbol_expr(l).get_identifier()).substr(8);
+  }
   // Verification-primitive dispatch group (nondet_*, randint,
   // assume family, __cbmc_re_* regex hooks). Extracted to
   // python_converter_call_nondet.cpp for clarity.
