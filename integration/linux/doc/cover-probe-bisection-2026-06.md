@@ -68,6 +68,34 @@ The two are complementary: the loop ranks and confirms the shape; the
 cover-probe adjudicates a specific claimed path / whether a guard closes
 it. Both reuse the same goto-cc/CBMC infrastructure.
 
+### Unified output (integrated)
+
+`triage_loop.py` now runs BOTH per candidate in one pass.  The generated
+harnesses (`oracle_harness_gen.py`) carry an OOB-precondition CHECKPOINT
+at the sink, so the table is:
+
+```
+function | conf | impact | shape:bug | shape:fix | reach:bug | reach:fix
+```
+
+* **shape** — CBMC bounds/overflow verdict (FAILED = the bug shape is
+  present).
+* **reach** — cover-probe on the OOB precondition (REACHABLE = the
+  precondition is feasible at the sink; BLOCKED = the canonical guard
+  closes the path).
+
+broad-next-db HIGH tier:
+
+```
+cgw_csum_crc8_pos  HIGH  WRITE  shape:FAILED  shape:SUCCESSFUL  reach:REACHABLE  reach:BLOCKED
+... (all four cgw_csum_*)
+```
+
+The two axes reinforce each other: the bounds check proves the shape is
+buggy; the cover-probe independently confirms the OOB precondition is
+reachable in the vulnerable shape and that the guard closes it in the
+fixed shape.
+
 ## Files
 
 * `cover_probe.h`, `cover_probe.py` — the tool.
