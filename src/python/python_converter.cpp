@@ -3482,6 +3482,22 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
         inner.id() == ID_signedbv || inner.id() == ID_floatbv ||
         inner.id() == ID_bool || is_python_string_type(inner))
         return python_value_type();
+      // PLR §3.2: Optional[ClassName] is Union[ClassName, None]. Lower
+      // a class-typed inner to the tagged union too, so the NONE tag is
+      // distinguishable from a real instance and — crucially for
+      // self-referential fields (`tail: Optional["List"]`) — the field
+      // is a fixed-size union (instance reached via __class_ptr) rather
+      // than the class struct, which for a recursive class would be
+      // infinitely sized and is otherwise truncated to a bare
+      // {__class_tag} placeholder that loses all instance state.
+      if(
+        (inner.id() == ID_struct &&
+         id2string(to_struct_type(inner).get_tag()).rfind("python_class_", 0) ==
+           0) ||
+        (inner.id() == ID_struct_tag &&
+         id2string(to_struct_tag_type(inner).get_identifier())
+             .rfind("python_class_", 0) == 0))
+        return python_value_type();
       return inner;
     }
     else if(base == "Union")
