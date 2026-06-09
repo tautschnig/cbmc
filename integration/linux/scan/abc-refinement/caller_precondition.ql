@@ -21,6 +21,7 @@
  */
 import cpp
 import semmle.code.cpp.controlflow.Dominance
+import semmle.code.cpp.controlflow.SSA
 import KernelTaint
 
 /** A "bound" parameter: a len/size/count-named integral parameter. */
@@ -47,13 +48,20 @@ predicate constBound(Expr e) {
  *  guard, and -- the then-branch being an exit -- the reject did not
  *  fire). */
 predicate guardedArg(FunctionCall fc, Expr arg) {
-  exists(Variable v, IfStmt ifs, RelationalOperation rel, Expr k |
-    arg.(VariableAccess).getTarget() = v and
+  exists(
+    SsaDefinition ssa, StackVariable v, IfStmt ifs, RelationalOperation rel,
+    VariableAccess guse, Expr k
+  |
+    // call argument and guard operand are uses of the SAME SSA definition
+    // of v -> v is not reassigned between the guard and the call (no stale
+    // guard)
+    arg = ssa.getAUse(v) and
+    guse = ssa.getAUse(v) and
     ifs.getEnclosingFunction() = fc.getEnclosingFunction() and
     rel = ifs.getCondition().getAChild*() and
-    rel.getAnOperand().(VariableAccess).getTarget() = v and
+    rel.getAnOperand() = guse and
     k = rel.getAnOperand() and
-    k != rel.getAnOperand().(VariableAccess) and
+    k != guse and
     constBound(k) and
     // the then-branch is an early exit (reject)
     exists(Stmt jump |

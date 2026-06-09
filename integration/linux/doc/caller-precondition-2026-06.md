@@ -132,5 +132,9 @@ origin), not the high-confidence genuine set.
   the caller pre-checks the first reads, not that a multi-field sub-decode
   stays in bounds. The UNGUARDED cursor verdict is the dependable one.
 * The scalar guard requires its reject branch to exit and its condition to
-  strictly dominate the call; reassignment of the bound variable between
-  guard and call is not modelled (rare; a value-flow check would close it).
+  strictly dominate the call, and uses **SSA value-flow** so a guard whose
+  bound variable is reassigned between guard and call (or cannot be
+  SSA-proven stable, e.g. address-taken) is not credited — no stale-guard
+  false dismissals. The cursor/skb-pull shapes still match by variable
+  identity (their guards are calls / `end` relationships, less prone to the
+  scalar-reassign hazard).

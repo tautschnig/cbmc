@@ -9,10 +9,10 @@ the pipeline actually help triage?" that the talk's lesson demands.
 
 | oracle | raw hits | raw functions | HIGH&WRITE | precond-resolved | genuine (UNGUARDED) | skb-pull-weak | distilled |
 |--------|---------:|--------------:|-----------:|-----------------:|--------------------:|--------------:|----------:|
-| count/index | 92 | 65 | 4 | 4 | 3 | 3 | **4** |
-| decoded-len | 28 | 11 | n/a | 4 | 1 | 0 | **1** |
-| skb / cursor | 170 | 135 | n/a | 8 | 19 | 48 | **19** |
-| **total** | **290** | **211** | | | | | **24** |
+| count/index | 92 | 65 | 4 | 4 | 5 | 3 | **4** |
+| decoded-len | 28 | 11 | n/a | 2 | 3 | 0 | **3** |
+| skb / cursor | 170 | 135 | n/a | 8 | 21 | 48 | **21** |
+| **total** | **290** | **211** | | | | | **28** |
 
 *precond-resolved* = functions the caller/producer-precondition automation
 marks CALLER-GUARDED or PRODUCER-GUARDED (FPs resolved without a harness).
@@ -26,9 +26,12 @@ confidence×impact HIGH&WRITE tier.
 
 The count/index oracle narrows 92→4 via confidence×impact; the previously
 weakly-narrowed oracles now narrow via the precondition automation —
-**decoded-len 11 functions → 1 genuine concern, skb 135 → 19** (with 48
-more held as `skb-pull-weak`; interprocedural depth-3 tracking already
-resolved several multi-hop `pskb_may_pull` cases down from 55).
+**decoded-len 11 functions → 3 genuine concerns, skb 135 → 21** (with 48
+more held as `skb-pull-weak`). The genuine sets are slightly larger than a
+naive count because the guard check is *sound*: it uses control-flow
+dominance and SSA value-flow (a guard whose bound variable is reassigned
+before the call, or cannot be SSA-proven stable, is not credited), so it
+errs toward keeping a concern rather than wrongly dismissing it.
 
 ## CBMC-adjudicated survivors (shape + reach)
 
