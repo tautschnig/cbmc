@@ -74,6 +74,27 @@ def _pow10(n: int) -> int:
     return r
 
 
+def _rescale_coeff(coeff: int, exp: int, target: int) -> int:
+    # Round the unsigned coefficient of value (coeff * 10**exp) to the
+    # target exponent using ROUND_HALF_EVEN (the decimal default), and
+    # return the new coefficient (the result's exponent is `target`).
+    # Shared by quantize and (after extra guard digits) division/sqrt.
+    if target <= exp:
+        # Padding with zeros — exact, no rounding.
+        return coeff * _pow10(exp - target)
+    div = _pow10(target - exp)
+    q = coeff // div
+    rem = coeff - q * div
+    twice = rem * 2
+    if twice > div:
+        q = q + 1
+    elif twice == div:
+        # Tie: round to even.
+        if q % 2 == 1:
+            q = q + 1
+    return q
+
+
 class Decimal:
     # Exact base-10 model: value = (-1)**_sign * _int * 10**_exp.
     # See doc/python-frontend-decimal-plan.md. String/int *literals* are
@@ -101,16 +122,26 @@ class Decimal:
             self._is_special = 0
             self._special_kind = 0
         else:
-            # A non-literal value (symbolic string, float) reaching here
-            # is modelled conservatively as zero (sound residual); literal
-            # str/int args are intercepted by the converter.
-            self._sign = 0
-            self._int = 0
-            self._exp = 0
+            # A non-literal value reaching here is a float (Decimal(1.1) —
+            # whose exact binary expansion exceeds the 64-bit coefficient)
+            # or a symbolic string. Model it as an unconstrained finite
+            # Decimal: sound (never fabricates a specific wrong value such
+            # as 0, which would let `Decimal(1.1) == 0` false-prove).
+            self._sign = nondet_int()
+            self._int = nondet_int()
+            self._exp = nondet_int()
             self._is_special = 0
             self._special_kind = 0
 
     def __add__(self, other):
+        if self._is_special or other._is_special:
+            r = Decimal(0)
+            r._sign = nondet_int()
+            r._int = nondet_int()
+            r._exp = nondet_int()
+            r._is_special = nondet_int()
+            r._special_kind = nondet_int()
+            return r
         if self._exp <= other._exp:
             e = self._exp
             sa = -self._int if self._sign else self._int
@@ -129,6 +160,14 @@ class Decimal:
         return r
 
     def __sub__(self, other):
+        if self._is_special or other._is_special:
+            r = Decimal(0)
+            r._sign = nondet_int()
+            r._int = nondet_int()
+            r._exp = nondet_int()
+            r._is_special = nondet_int()
+            r._special_kind = nondet_int()
+            return r
         if self._exp <= other._exp:
             e = self._exp
             sa = -self._int if self._sign else self._int
@@ -147,6 +186,14 @@ class Decimal:
         return r
 
     def __mul__(self, other):
+        if self._is_special or other._is_special:
+            r = Decimal(0)
+            r._sign = nondet_int()
+            r._int = nondet_int()
+            r._exp = nondet_int()
+            r._is_special = nondet_int()
+            r._special_kind = nondet_int()
+            return r
         r = Decimal(0)
         r._sign = 0 if self._sign == other._sign else 1
         r._int = self._int * other._int
@@ -172,6 +219,14 @@ class Decimal:
         return r
 
     def __floordiv__(self, other):
+        if self._is_special or other._is_special or other._int == 0:
+            r = Decimal(0)
+            r._sign = nondet_int()
+            r._int = nondet_int()
+            r._exp = nondet_int()
+            r._is_special = nondet_int()
+            r._special_kind = nondet_int()
+            return r
         if self._exp <= other._exp:
             e = self._exp
             sa = -self._int if self._sign else self._int
@@ -194,6 +249,14 @@ class Decimal:
         return r
 
     def __mod__(self, other):
+        if self._is_special or other._is_special or other._int == 0:
+            r = Decimal(0)
+            r._sign = nondet_int()
+            r._int = nondet_int()
+            r._exp = nondet_int()
+            r._is_special = nondet_int()
+            r._special_kind = nondet_int()
+            return r
         if self._exp <= other._exp:
             e = self._exp
             sa = -self._int if self._sign else self._int
@@ -217,18 +280,48 @@ class Decimal:
         return r
 
     def __truediv__(self, other):
-        # Exact decimal division needs round-to-context (P3); model the
-        # result as an unconstrained finite Decimal so we never fabricate
-        # a specific (possibly wrong) value.
+        # Exact when the quotient terminates within a bounded number of
+        # decimal digits (denominator with only 2/5 factors); otherwise
+        # (e.g. 1/3) the exact value needs round-to-context at 28 digits,
+        # which exceeds the 64-bit coefficient, so fall back to a sound
+        # unconstrained finite Decimal.
+        if self._is_special or other._is_special or other._int == 0:
+            r = Decimal(0)
+            r._sign = nondet_int()
+            r._int = nondet_int()
+            r._exp = nondet_int()
+            r._is_special = nondet_int()
+            r._special_kind = nondet_int()
+            return r
+        ca = self._int
+        cb = other._int
+        q = ca // cb
+        rem = ca - q * cb
+        extra = 0
+        while rem != 0 and extra < 15:
+            num = rem * 10
+            d = num // cb
+            q = q * 10 + d
+            rem = num - d * cb
+            extra = extra + 1
+        if rem != 0:
+            # Non-terminating within the bound: conservative nondet.
+            r = Decimal(0)
+            r._sign = nondet_int()
+            r._int = nondet_int()
+            r._exp = nondet_int()
+            return r
         r = Decimal(0)
-        r._sign = nondet_int()
-        r._int = nondet_int()
-        r._exp = nondet_int()
+        r._sign = (0 if self._sign == other._sign else 1) if q != 0 else 0
+        r._int = q
+        r._exp = self._exp - other._exp - extra
         return r
 
     def __eq__(self, other):
-        if self._is_special or other._is_special:
+        if self._special_kind >= 3 or other._special_kind >= 3:
             return False
+        if self._is_special or other._is_special:
+            return nondet_bool()
         if self._exp <= other._exp:
             sa = -self._int if self._sign else self._int
             sb = (-other._int if other._sign else other._int) * (
@@ -243,8 +336,10 @@ class Decimal:
         return not self.__eq__(other)
 
     def __lt__(self, other):
-        if self._is_special or other._is_special:
+        if self._special_kind >= 3 or other._special_kind >= 3:
             return False
+        if self._is_special or other._is_special:
+            return nondet_bool()
         if self._exp <= other._exp:
             sa = -self._int if self._sign else self._int
             sb = (-other._int if other._sign else other._int) * (
@@ -256,8 +351,10 @@ class Decimal:
         return sa < sb
 
     def __le__(self, other):
-        if self._is_special or other._is_special:
+        if self._special_kind >= 3 or other._special_kind >= 3:
             return False
+        if self._is_special or other._is_special:
+            return nondet_bool()
         if self._exp <= other._exp:
             sa = -self._int if self._sign else self._int
             sb = (-other._int if other._sign else other._int) * (
@@ -269,8 +366,10 @@ class Decimal:
         return sa <= sb
 
     def __gt__(self, other):
-        if self._is_special or other._is_special:
+        if self._special_kind >= 3 or other._special_kind >= 3:
             return False
+        if self._is_special or other._is_special:
+            return nondet_bool()
         if self._exp <= other._exp:
             sa = -self._int if self._sign else self._int
             sb = (-other._int if other._sign else other._int) * (
@@ -282,8 +381,10 @@ class Decimal:
         return sa > sb
 
     def __ge__(self, other):
-        if self._is_special or other._is_special:
+        if self._special_kind >= 3 or other._special_kind >= 3:
             return False
+        if self._is_special or other._is_special:
+            return nondet_bool()
         if self._exp <= other._exp:
             sa = -self._int if self._sign else self._int
             sb = (-other._int if other._sign else other._int) * (
@@ -310,15 +411,27 @@ class Decimal:
         return self._special_kind == 3 or self._special_kind == 4
 
     def quantize(self, exp, rounding=None, context=None):
-        # Rounding to a target exponent needs context rounding (P3).
+        # Round self to the exponent of `exp` using ROUND_HALF_EVEN (the
+        # decimal default). `exp` is a Decimal whose _exp is the target.
+        if self._is_special or exp._is_special:
+            r = Decimal(0)
+            r._sign = nondet_int()
+            r._int = nondet_int()
+            r._exp = nondet_int()
+            r._is_special = nondet_int()
+            r._special_kind = nondet_int()
+            return r
         r = Decimal(0)
-        r._sign = nondet_int()
-        r._int = nondet_int()
-        r._exp = nondet_int()
+        r._sign = self._sign
+        r._int = _rescale_coeff(self._int, self._exp, exp._exp)
+        r._exp = exp._exp
         return r
 
     def sqrt(self, context=None):
-        # Needs round-to-context (P3); conservative residual.
+        # Decimal.sqrt is irrational in general and rounds to context
+        # precision (28 digits > 64-bit coefficient), so the result is
+        # modelled as a sound unconstrained finite Decimal. (Remaining
+        # P3 residual; see doc/python-frontend-decimal-plan.md.)
         r = Decimal(0)
         r._sign = nondet_int()
         r._int = nondet_int()
