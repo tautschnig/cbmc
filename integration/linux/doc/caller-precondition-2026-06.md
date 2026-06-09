@@ -29,17 +29,25 @@ arg is so guarded), and a `verdict`:
   used safely inside the function for other reasons).
 
 The guard model is AST-level (the kernel's pervasive validate-then-reject
-idiom) with line-order as a dominance proxy — robust and fast, no
-IR-`GuardCondition` machinery.
+idiom) but the "before the call" test is real **control-flow dominance**
+(`strictlyDominates`): the guard's condition must dominate the call, so
+every path reaching the call has passed the guard. This is sound for the
+dismissal use (a CALLER-GUARDED verdict means the guard provably runs),
+not a line-order approximation.
 
 ## Validation (broad-next-db, net/)
 
 * **`rxkad_decrypt_ticket` → CALLER-GUARDED** (callers=1, guarded=1) —
   reproduces, automatically, the manual finding that the OOB flags-read is
   closed by `rxkad_verify_response`'s `ticket_len >= 4` check (rxkad.c:1167).
-* Distribution over the surface: scalar **30 CALLER-GUARDED / 39 PARTIAL /
-  802 UNGUARDED**; cursor (new) **51 CALLER-GUARDED / 12 PARTIAL / 45
-  UNGUARDED** (108 cursor functions previously invisible to the check).
+* Distribution over the surface: scalar **24 CALLER-GUARDED / 35 PARTIAL /
+  812 UNGUARDED**; cursor **51 CALLER-GUARDED / 12 PARTIAL / 45 UNGUARDED**
+  (108 cursor functions the check classifies on top of the scalar case).
+  Switching the guard test from line-order to control-flow dominance moved
+  6 scalar functions out of CALLER-GUARDED (e.g. `memdup_sockptr_noprof`,
+  the mesh `*_size_ok` helpers) -- their textually-preceding guard sat in a
+  sibling branch and did not dominate the call, so line-order had
+  over-credited them (a potential false dismissal now avoided).
 * Cross-referenced against the 12 bounded-cursor oracle hits: rxkad is the
   one CALLER-GUARDED scalar (auto-dismissed FP); `decode_lockers` is now
   classified `cursor`/UNGUARDED (its caller sets `end = p + reply_len` but
@@ -93,6 +101,7 @@ function must self-guard) while CALLER-GUARDED is a heuristic prior.
 * **Cursor CALLER-GUARDED is a heuristic prior, not a proof** — it shows
   the caller pre-checks the first reads, not that a multi-field sub-decode
   stays in bounds. The UNGUARDED cursor verdict is the dependable one.
-* The guard model uses line-order as a dominance proxy; it can in
-  principle over-credit a guard that does not actually dominate the call.
-  A precise dominator check (IR `GuardCondition`) would tighten this.
+* The guard's reject branch is required to be an exit (return/goto/break)
+  and the guard condition must strictly dominate the call; what is *not*
+  modelled is reassignment of the bound variable between guard and call
+  (rare in these idioms) — a value-flow check would close that.

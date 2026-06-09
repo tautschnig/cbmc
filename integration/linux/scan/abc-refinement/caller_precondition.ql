@@ -20,6 +20,7 @@
  * @problem.severity warning
  */
 import cpp
+import semmle.code.cpp.controlflow.Dominance
 
 /** A "bound" parameter: a len/size/count-named integral parameter. */
 predicate boundParam(Function f, Parameter bp) {
@@ -39,8 +40,11 @@ predicate constBound(Expr e) {
 }
 
 /** Holds if `arg` (an actual argument at a call) is a variable that the
- *  caller constrains with a validate-then-reject guard before the call:
- *  `if (V <relop> CONST) { return|goto|break; }` located before `fc`. */
+ *  caller constrains with a validate-then-reject guard that DOMINATES the
+ *  call: `if (V <relop> CONST) { return|goto|break; }` whose condition
+ *  strictly dominates `fc` (so every path to the call has passed the
+ *  guard, and -- the then-branch being an exit -- the reject did not
+ *  fire). */
 predicate guardedArg(FunctionCall fc, Expr arg) {
   exists(Variable v, IfStmt ifs, RelationalOperation rel, Expr k |
     arg.(VariableAccess).getTarget() = v and
@@ -55,9 +59,8 @@ predicate guardedArg(FunctionCall fc, Expr arg) {
       jump.getParentStmt*() = ifs.getThen() and
       (jump instanceof ReturnStmt or jump instanceof JumpStmt)
     ) and
-    // guard precedes the call (line-order proxy for dominance)
-    ifs.getLocation().getStartLine() < fc.getLocation().getStartLine() and
-    ifs.getLocation().getFile() = fc.getLocation().getFile()
+    // the guard provably dominates the call (control-flow, not line-order)
+    strictlyDominates(ifs.getCondition(), fc)
   )
 }
 
@@ -100,8 +103,7 @@ predicate cursorCallerGuard(FunctionCall fc) {
             "ceph_decode_need", "ceph_has_room", "pskb_may_pull",
             "skb_header_pointer", "%\\_safe"
           ]) and
-    g.getLocation().getStartLine() < fc.getLocation().getStartLine() and
-    g.getLocation().getFile() = fc.getLocation().getFile()
+    strictlyDominates(g, fc)
   )
   or
   exists(RelationalOperation rel |
@@ -112,8 +114,7 @@ predicate cursorCallerGuard(FunctionCall fc) {
         .getName()
         .toLowerCase()
         .matches(["%end%", "%limit%"]) and
-    rel.getLocation().getStartLine() < fc.getLocation().getStartLine() and
-    rel.getLocation().getFile() = fc.getLocation().getFile()
+    strictlyDominates(rel, fc)
   )
 }
 
