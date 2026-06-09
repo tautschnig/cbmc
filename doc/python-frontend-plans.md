@@ -546,20 +546,22 @@ alarms). Verified against the 2026-06-08 sweep baseline.
     - `github_3560` (`input()` + `split`), `github_3594` (`"ß".upper()`
       unicode case mapping) — reduce to the symbolic-string /
       string-refinement root ([§3](#strings)).
-- **`decimal` cluster (4) — sound exact model landing (see
+- **`decimal` cluster (4) — P1/P2 LANDED (`8f8ebf3aea`; see
   [decimal plan](python-frontend-decimal-plan.md)):** the old `decimal.py`
   stub modelled `Decimal` as a **float wrapper**, unsound for exact
   decimal (e.g. `Decimal("0.1") + Decimal("0.2") == Decimal("0.3")` is
   True for `Decimal` but False in float) and unable to construct from a
-  string (`float(<runtime string>)` is nondet). The fix is a base-10
+  string (`float(<runtime string>)` is nondet). Replaced with a base-10
   exact `(sign, coefficient, exponent)` model: a thin converter intrinsic
   parses `Decimal(<str/int literal>)` into the typed struct, and the stub
-  implements comparison/arithmetic on the parts via `10 ** Δexp`
-  alignment. P1 (parse + accessors + equality/ordering) and P2
-  (`+,-,neg,abs,*,//,%`) cover all four `decimal*` tests;
-  `truediv`/`sqrt`/`quantize`/context-rounding are a documented P3
-  residual. See the plan for representation, soundness bounds (64-bit
-  coefficient inherits the frontend-wide int model), and phasing.
+  implements comparison/arithmetic on the parts, aligning exponents via an
+  integer `_pow10` loop (NOT `10 ** n`, which Python types as float and
+  would route the exact arithmetic through floatbv). P1 (parse +
+  accessors + equality/ordering) and P2 (`+,-,neg,abs,*,//,%`) cover all
+  four `decimal*` tests (+ `_fail` variants stay failing). **P3 residual:**
+  `truediv`/`sqrt`/`quantize`/context-rounding (sound nondet for now);
+  64-bit coefficient + bounded exponent alignment inherit the
+  frontend-wide int / loop-unwinding approximation.
 - **`lambda7` / `lambda18` body emission:** **closed** (both PASS in the
   2026-06-08 baseline).
 

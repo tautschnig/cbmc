@@ -1,6 +1,7 @@
 # Python frontend: sound exact-`Decimal` model
 
-Status: **P1/P2 landing** (see [§9 of the plans doc](python-frontend-plans.md#precision)).
+Status: **P1/P2 landed** (`8f8ebf3aea`); P3 (context rounding / division)
+is the remaining residual. See [§9 of the plans doc](python-frontend-plans.md#precision).
 
 This deep-dive specifies a sound, exact model of the `decimal.Decimal`
 stdlib type for the CBMC Python frontend, replacing the previous
