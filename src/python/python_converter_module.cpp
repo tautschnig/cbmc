@@ -749,6 +749,85 @@ bool python_convertert::convert()
 {
   const jsont &body = json_member(parse_tree.ast_json, "body");
 
+  // PLR §8.13: pre-scan top-level `from enum import <base> as <alias>` so
+  // a class deriving from the alias is recognised as an enum during the
+  // (earlier) class-definition / signature passes. The standard base
+  // names are already seeded in enum_base_aliases.
+  if(body.is_array())
+    for(const auto &stmt : as_array(body))
+    {
+      if(!is_node_type(stmt, "ImportFrom"))
+        continue;
+      if(json_string(json_member(stmt, "module")) != "enum")
+        continue;
+      const jsont &names = json_member(stmt, "names");
+      if(!names.is_array())
+        continue;
+      for(const auto &alias : as_array(names))
+      {
+        std::string nm = json_string(json_member(alias, "name"));
+        std::string as = json_string(json_member(alias, "asname"));
+        if(
+          (nm == "Enum" || nm == "IntEnum" || nm == "IntFlag" || nm == "Flag" ||
+           nm == "StrEnum" || nm == "ReprEnum") &&
+          !as.empty())
+          enum_base_aliases.insert(as);
+      }
+    }
+  // Now (aliases known) pre-scan top-level enum class definitions so their
+  // member names and value type are available to every later pass — in
+  // particular parameter-annotation conversion, which runs before
+  // convert_class_def.
+  if(body.is_array())
+    for(const auto &stmt : as_array(body))
+    {
+      if(!is_node_type(stmt, "ClassDef"))
+        continue;
+      const jsont &cbases = json_member(stmt, "bases");
+      bool is_enum = false;
+      if(cbases.is_array())
+        for(const auto &b : as_array(cbases))
+          if(
+            is_node_type(b, "Name") &&
+            enum_base_aliases.count(json_string(json_member(b, "id"))))
+            is_enum = true;
+      if(!is_enum)
+        continue;
+      const std::string cname = json_string(json_member(stmt, "name"));
+      auto &members = enum_members[cname];
+      typet &vtype = enum_value_type[cname];
+      vtype = python_int_type();
+      const jsont &cbody = json_member(stmt, "body");
+      if(cbody.is_array())
+        for(const auto &item : as_array(cbody))
+        {
+          const jsont *tgt = nullptr;
+          const jsont *valnode = nullptr;
+          if(is_node_type(item, "Assign"))
+          {
+            const jsont &tgts = json_member(item, "targets");
+            if(tgts.is_array() && !as_array(tgts).empty())
+              tgt = &(*as_array(tgts).begin());
+            valnode = &json_member(item, "value");
+          }
+          else if(is_node_type(item, "AnnAssign"))
+          {
+            tgt = &json_member(item, "target");
+            valnode = &json_member(item, "value");
+          }
+          if(tgt != nullptr && is_node_type(*tgt, "Name"))
+          {
+            const bool first = members.empty();
+            members.insert(json_string(json_member(*tgt, "id")));
+            if(
+              first && valnode != nullptr &&
+              is_node_type(*valnode, "Constant") &&
+              json_member(*valnode, "value").is_string())
+              vtype = python_string_type();
+          }
+        }
+    }
+
   // Register python_value_type as a named type in the symbol table.
   // This enables self-referential types (list[python_value_type])
   // via struct_tag_typet.

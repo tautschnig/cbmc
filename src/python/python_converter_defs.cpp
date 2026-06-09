@@ -1991,6 +1991,52 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   // two selectors with the same name. Pre-populated with the
   // names already inherited so subclass scans skip them too.
   std::set<std::string> declared_fields;
+  // PLR §8.13: is this an enum class (derives from enum.Enum or an
+  // alias / a known enum base)? If so, record its member names so
+  // `Member.value` / `Member.name` resolve.
+  if(bases.is_array())
+  {
+    for(const auto &base : as_array(bases))
+    {
+      if(
+        is_node_type(base, "Name") &&
+        enum_base_aliases.count(json_string(json_member(base, "id"))))
+      {
+        auto &members = enum_members[class_name];
+        typet &vtype = enum_value_type[class_name];
+        vtype = python_int_type(); // default for int-valued enums
+        if(body.is_array())
+          for(const auto &item : as_array(body))
+          {
+            const jsont *tgt = nullptr;
+            const jsont *valnode = nullptr;
+            if(is_node_type(item, "Assign"))
+            {
+              const jsont &tgts = json_member(item, "targets");
+              if(tgts.is_array() && !as_array(tgts).empty())
+                tgt = &(*as_array(tgts).begin());
+              valnode = &json_member(item, "value");
+            }
+            else if(is_node_type(item, "AnnAssign"))
+            {
+              tgt = &json_member(item, "target");
+              valnode = &json_member(item, "value");
+            }
+            if(tgt != nullptr && is_node_type(*tgt, "Name"))
+            {
+              const bool first = members.empty();
+              members.insert(json_string(json_member(*tgt, "id")));
+              if(
+                first && valnode != nullptr &&
+                is_node_type(*valnode, "Constant") &&
+                json_member(*valnode, "value").is_string())
+                vtype = python_string_type();
+            }
+          }
+        break;
+      }
+    }
+  }
   if(bases.is_array())
   {
     for(const auto &base : as_array(bases))

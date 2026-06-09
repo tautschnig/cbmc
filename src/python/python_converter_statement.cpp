@@ -280,6 +280,14 @@ codet python_convertert::convert_statement(const jsont &stmt)
             // regardless of how the user imported it.
             if(module == "collections")
               collections_imports[asname] = name;
+            // PLR §8.13: `from enum import Enum as E` — record the
+            // alias so a class deriving from E is recognised as an
+            // enum (for .value / .name resolution).
+            if(
+              module == "enum" &&
+              (name == "Enum" || name == "IntEnum" || name == "IntFlag" ||
+               name == "Flag" || name == "StrEnum" || name == "ReprEnum"))
+              enum_base_aliases.insert(asname);
           }
 
           // Generic: bind an imported module-level CONSTANT to its
