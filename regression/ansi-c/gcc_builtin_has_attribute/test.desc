@@ -1,0 +1,12 @@
+CORE gcc-only
+main.c
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Tests that __builtin_has_attribute(expr, attr) parses (both the bare-name
+and name-with-arguments forms) and is modelled as a constant (false), as
+used by the Linux kernel fortify-string macros.
