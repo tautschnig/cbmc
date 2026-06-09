@@ -395,19 +395,18 @@ alarms). Verified against the 2026-06-08 sweep baseline.
   multiplication, exact and symbolic-base-capable, instead of the lossy
   `exp(w·log z)` form (`c0e69a8aca`). Gained complex_abs_handler,
   complex_pow_handler, complex_attr_div_pow, complex_pow_special_cases
-  (sweep PASS → 2911, no regressions). The remaining four sub-groups are
-  *not* numeric precision and remain open as distinct point/feature gaps:
+  (sweep PASS → 2911, no regressions). **(E) `complex()` argument-validation
+  TypeErrors** — unknown kwargs, `real`/`imag` duplicating a positional
+  arg, and `bytes`/`bytearray` rejection — is also **fixed** (`f4afdb0ac3`,
+  +complex_keyword_args). The remaining three sub-groups are *not* numeric
+  precision and remain open as distinct point/feature gaps:
   **(C) signed-zero preservation** through `complex()` construction and
   +/−/* (e.g. `complex(-0.0,0.0).real` must keep its sign) — delicate IEEE,
   low value; **(D) `complex(<str variable>)`** parsing — only constant
   strings parse today, a runtime form needs solver-level string parsing;
-  **(E) `complex()` argument-validation TypeErrors** — unknown kwargs,
-  duplicate `real`/`imag`, `bytes`/`bytearray` rejection (a clean
-  whole-group fix localised to the constructor handler, if pursued);
-  **(F) `math.*` on complex → TypeError**. (C)/(E)/(F) affect
+  **(F) `math.*` on complex → TypeError**. (C)/(D)/(F) still affect
   complex_binop_promotion, complex_conjugate_handler, complex_builtins,
-  complex_constructor_extended, complex_keyword_args,
-  complex_math_typeerror_edges.
+  complex_constructor_extended, complex_math_typeerror_edges.
 - **`math` precision (PARTIAL):** per-function domain handling. *Fix
   shape:* declarative `@c_intrinsic` domain annotations (depends on
   [§6](#modules)); cross-function tracking of return constants for
@@ -540,16 +539,20 @@ follow-up (`1ad49a3c60`) extended the subscript handler to deref a
 object list from a list parameter (`def collect(xs): out=[];
 out.append(xs[i])`) dispatches correctly too.
 
+**Immediately-applied lambdas — FIXED (`528355daab`).**
+`(lambda ...: ...)(args)` is now converted and called (arithmetic,
+multiple parameters, and attribute/method dispatch on an object argument),
+instead of falling through the empty-callee path to nondet.
+
 **Residuals (sound; still open).**
-- Immediately-applied lambdas `(lambda a: a.x)(obj)` and `sorted(key=...)`
-  over objects are still nondet.
-- First-class function values stored in a container and called indirectly
-  (the shared dependency for
-  [§2 phase 4, closures through containers](#closures)) remain unmodelled;
-  the monomorphisation clone covers *argument-passed* callables, not
-  container-stored ones.
-- Immediately-applied lambdas `(lambda a: a.x)(obj)` and `sorted(key=...)`
-  over objects are still nondet.
+- **`sorted(key=lambda o: o.attr)` over objects.** `sorted` only folds
+  `key=lambda x: x[N]` (constant subscript) over constant-element literal
+  lists; an attribute/method key over object elements isn't applied (the
+  list is returned unsorted). The elements are constructor-symbol
+  references, not constants, so the constant-fold path can't extract the
+  key — a precise fix needs a **bounded runtime sort** (compare
+  member-access keys and permute) over a constant-length object list.
+  Deferred as disproportionate/regression-risky relative to its value.
 - First-class function values stored in a container and called indirectly
   (the shared dependency for
   [§2 phase 4, closures through containers](#closures)) remain unmodelled;
