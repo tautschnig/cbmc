@@ -471,17 +471,31 @@ alarms). Verified against the 2026-06-08 sweep baseline.
 - **`github` real-world cluster — refreshed triage 2026-06-09 (17
   precision DIFFs).** Grouped into shared-root sub-clusters (biggest /
   cleanest first):
-  - **Enum (2):** `github_3642` (member `==` comparison /
+  - **Enum (2) — FIXED (`4f58e3f7d5`).** `github_3642` (member `==` /
     `light == TrafficLight.GREEN`), `github_3642_alias` (`A.X.value` with
-    `Enum as E` base). A coherent feature — Enum member value + identity.
-    *Likely the cleanest whole-group win.*
-  - **Heterogeneous dict values (3):** `github_3719_4/5-nondet`
-    (`{"a": int, "b": float}` iterated via `.values()`), `github_3783_5-nondet`
-    (`popitem()` over a branch-dependent dict). Shared root: a dict literal
-    with mixed value types loses per-value typing.
-  - **`chr()` string building (2):** `github_3090_4/5`
-    (`s = "" ; s += chr(i)` then `assert s == "foo"`) — string-refinement
-    over `chr()` concatenation of assumed code points.
+    `Enum as E` base). Member `.value`/`.name` resolution + enum-typed
+    parameters + aliased-base recognition; see [§12](#higher-order)-style
+    pre-scan in convert(). PASS 2916 → 2918.
+  - **Heterogeneous dict values (3) — investigated; no sound fix.** The
+    mixed-value modelling is already correct: `convert_dict` promotes a
+    heterogeneous value array to `python_value`, and tagged comparison
+    works (verified). `github_3719_4/5-nondet` fail only because
+    `nondet_float()` may be **NaN** and `v == NaN` is correctly False (the
+    assertion is false for NaN in CPython too); excluding NaN to "pass"
+    would be **unsound**. `github_3783_5-nondet` is a different issue —
+    `popitem()` after a string-keyed `d["y"]=v` returns the wrong key,
+    which reduces to **symbolic-string-key equality** (int keys work; see
+    below).
+  - **`chr()` string building (2) — investigated; string-refinement.**
+    `github_3090_4/5` (`s += chr(i)` over `nondet_int` assumed-constant
+    code points, then `assert s == "foo"`). Constant `chr()` already folds
+    and compares correctly; the symbolic case builds a non-interned string
+    struct, and string `==` compares structurally (length + pointer)
+    rather than by **content**, so it never equals the interned literal.
+    This same **symbolic-string content-equality** gap underlies the
+    `github_3783_5` string-key `popitem`. It is string-refinement
+    territory best addressed by the native SMT-LIB String backend
+    ([§3](#strings)), not a fragile point fix.
   - **Module-stub + isinstance (2):** `github_2960`, `github_3286`
     (`import ll; ll.create(...)` then `isinstance(x, ll.Bar)`).
   - **Container-stored / default-arg callables (2):** `github_3690`
