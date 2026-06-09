@@ -1646,6 +1646,34 @@ exprt python_convertert::convert_attribute(const jsont &expr)
 {
   std::string attr = json_string(json_member(expr, "attr"));
 
+  // PLR §8.13: enum member `.value` / `.name`.
+  // `EnumClass.MEMBER.value` → the member's value (which is what the
+  // member access already resolves to); `.name` → the member-name string.
+  // Member access and `==` already work via the class-object machinery;
+  // this only fills in the two accessors that were returning nondet.
+  if(attr == "value" || attr == "name")
+  {
+    const jsont &inner = json_member(expr, "value");
+    if(is_node_type(inner, "Attribute"))
+    {
+      const jsont &inner_obj = json_member(inner, "value");
+      if(is_node_type(inner_obj, "Name"))
+      {
+        const std::string cls = json_string(json_member(inner_obj, "id"));
+        const std::string mem = json_string(json_member(inner, "attr"));
+        auto eit = enum_members.find(cls);
+        if(eit != enum_members.end() && eit->second.count(mem) > 0)
+        {
+          if(attr == "name")
+            return python_string_literal(mem);
+          // `.value`: the member access (EnumClass.MEMBER) resolves to
+          // the assigned value via the class object.
+          return convert_expression(inner);
+        }
+      }
+    }
+  }
+
   // icontract Phase 5: resolve OLD.<name> to the captured
   // snapshot symbol while translating an ensure lambda body.
   // active_old_snapshots is populated by convert_function_def

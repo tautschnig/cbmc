@@ -402,6 +402,27 @@ private:
 
   /// Map from class name to its base class names (for isinstance)
   std::map<std::string, std::vector<std::string>> class_bases;
+  /// PLR §8.13: enum classes (a class deriving from enum.Enum, possibly
+  /// via an alias) and their member names. An `Enum` subclass turns each
+  /// `NAME = value` class attribute into a member whose `.value` is that
+  /// value and whose `.name` is "NAME"; member access and `==` already
+  /// work through the class-object machinery, so this only records what is
+  /// needed to resolve `.value` / `.name`.
+  std::map<std::string, std::set<std::string>> enum_members;
+  /// Per enum class, the (common) value type of its members — what a
+  /// member resolves to and therefore the effective type of a parameter
+  /// or variable annotated with the enum class. Defaults to int.
+  std::map<std::string, typet> enum_value_type;
+  /// Names bound to an enum base via `from enum import Enum as E` (so a
+  /// class deriving from `E` is recognised as an enum). Seeded with the
+  /// standard base names.
+  std::set<std::string> enum_base_aliases{
+    "Enum",
+    "IntEnum",
+    "IntFlag",
+    "Flag",
+    "StrEnum",
+    "ReprEnum"};
   /// PLR §3.3.2.1 C3 linearization. The MRO for each class,
   /// starting with the class itself. Populated on ClassDef by
   /// compute_c3_mro().

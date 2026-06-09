@@ -3631,6 +3631,14 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
         ref_name.rfind("typing.Union[", 0) == 0 ||
         ref_name.rfind("typing.Optional[", 0) == 0)
         return python_value_type();
+      // PLR §8.13: an enum-class annotation types the binding as the
+      // enum's member value type (members resolve to their values), so an
+      // argument like `EnumClass.MEMBER` matches the parameter.
+      if(enum_members.count(ref_name))
+      {
+        auto vit = enum_value_type.find(ref_name);
+        return vit != enum_value_type.end() ? vit->second : python_int_type();
+      }
       if(class_types.count(ref_name))
         return class_types[ref_name];
       // Try as a built-in type name
@@ -3715,6 +3723,15 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     type_name == "Mapping" || type_name == "Type" || type_name == "ClassVar" ||
     type_name == "Final" || type_name == "object")
     return python_value_type();
+  // PLR §8.13: an enum-class annotation types the binding as the enum's
+  // member value type — members resolve to their values, so an argument
+  // like `EnumClass.MEMBER` matches the parameter (rather than the class
+  // struct, which a member value can't be coerced to).
+  else if(enum_members.count(type_name))
+  {
+    auto vit = enum_value_type.find(type_name);
+    return vit != enum_value_type.end() ? vit->second : python_int_type();
+  }
   else if(class_types.count(type_name))
     return class_types[type_name];
   else
