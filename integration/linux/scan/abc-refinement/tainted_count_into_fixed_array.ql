@@ -17,6 +17,7 @@
  * @problem.severity warning
  */
 import cpp
+import KernelTaintFlow
 
 /** A name string suggesting an attacker-supplied count or index. */
 bindingset[n]
@@ -160,6 +161,17 @@ Declaration countTarget(CountSource c) {
   result = c.(FieldAccess).getTarget()
 }
 
+/** Confidence tier for a count/index hit.  HIGH when the value is
+ *  raw-taint-reachable (flows from a modelled untrusted wire/netlink/user
+ *  source, or is a field of a struct bulk-filled from raw bytes -- cgw
+ *  `result_idx`, ceph, b43 `key_index`); MEDIUM otherwise (suspicious name
+ *  + unguarded, but no taint evidence -- e.g. dpaa2 `num_ifs`, the
+ *  mac80211 `link_id` cluster, which taint cannot separate).  See
+ *  KernelTaintFlow.qll. */
+string confidence(CountSource e) {
+  if KernelTaintFlow::isRawTaintReachable(e) then result = "HIGH" else result = "MEDIUM"
+}
+
 /** Holds if the index/count `e` is masked with a compile-time constant in
  *  `f` -- `idx &= CONST` or `idx & CONST` -- which bounds it as soundly as
  *  a relational guard (e.g. `can_id &= CAN_SFF_MASK` before `rx_sff[id]`).
@@ -205,14 +217,18 @@ where
       countLoopWrite(f, loop, cnt, w, an, sz) and
       kind = "count-loop-write" and
       line = loop.getLocation().getStartLine() and
-      detail = "count=" + cnt.getSourceName() + "|arr=" + an + "[" + sz + "]"
+      detail =
+        "count=" + cnt.getSourceName() + "|arr=" + an + "[" + sz + "]" +
+          "|confidence=" + confidence(cnt)
     )
     or
     exists(ArrayExpr ae, CountSource idx, string an, int sz |
       directIndex(f, ae, idx, an, sz) and
       kind = "direct-index" and
       line = ae.getLocation().getStartLine() and
-      detail = "index=" + idx.getSourceName() + "|arr=" + an + "[" + sz + "]"
+      detail =
+        "index=" + idx.getSourceName() + "|arr=" + an + "[" + sz + "]" +
+          "|confidence=" + confidence(idx)
     )
   )
 select f,
