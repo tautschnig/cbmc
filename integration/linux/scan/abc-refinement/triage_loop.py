@@ -68,6 +68,12 @@ REAL_HARNESS = {
         "probe_vuln": "llcp_parse_vuln", "probe_fixed": "llcp_parse_fixed",
         "flags": ["--bounds-check", "--pointer-check"], "unwind": 8,
     },
+    "rxkad_decrypt_ticket": {
+        "file": "real_rxkad_ticket.c",
+        "vuln": "probe_vuln", "fixed": "probe_fixed",
+        "probe": "rxkad_parse_ticket",
+        "flags": ["--bounds-check", "--pointer-check"], "unwind": 12,
+    },
 }
 
 
@@ -131,17 +137,19 @@ COVER_RE = re.compile(
     r"(?P<verdict>SATISFIED|FAILED)")
 
 
-def cover_verdict(harness, func, probe_func):
+def cover_verdict(harness, func, probe_func, unwind):
     """Reachability of the OOB-precondition CHECKPOINT inside `probe_func`,
     with `func` as the CBMC entry: REACHABLE if its cover goal is
     SATISFIED, BLOCKED if FAILED, NONE if the harness carries no probe.
     CBMC instruments the whole TU, so we keep only the goal whose enclosing
     function is `probe_func` (which may be a callee of `func`)."""
+    cmd = [CBMC, harness, "-I", HERE, "-DCBMC_PROBE", "--function", func,
+           "--cover", "cover"]
+    if unwind:
+        cmd += ["--unwind", str(unwind)]
     try:
         out = subprocess.run(
-            [CBMC, harness, "-I", HERE, "-DCBMC_PROBE", "--function", func,
-             "--cover", "cover"],
-            capture_output=True, text=True, timeout=90).stdout
+            cmd, capture_output=True, text=True, timeout=120).stdout
     except subprocess.TimeoutExpired:
         return "TIMEOUT"
     for m in COVER_RE.finditer(out):
@@ -156,10 +164,22 @@ def main():
     ap.add_argument("--query", required=True, choices=list(ORACLES))
     ap.add_argument("--min-confidence", default="", choices=["", "MEDIUM", "HIGH"])
     ap.add_argument("--limit", type=int, default=0, help="0 = no limit")
+    ap.add_argument("--only", default="",
+                    help="comma-separated candidate function names to keep")
     a = ap.parse_args()
 
     otype, flags, unwind = ORACLES[a.query]
     cands = [parse_candidate(l) for l in run_oracle(a.db, a.query)]
+    # one triage row per function (the harness verdict is per-function)
+    seen, deduped = set(), []
+    for c in cands:
+        if c["func"] not in seen:
+            seen.add(c["func"])
+            deduped.append(c)
+    cands = deduped
+    if a.only:
+        keep = set(a.only.split(","))
+        cands = [c for c in cands if c["func"] in keep]
     if a.min_confidence:
         floor = CONF_RANK[a.min_confidence]
         cands = [c for c in cands if CONF_RANK.get(c["confidence"], 0) >= floor]
@@ -186,9 +206,11 @@ def main():
             buggy = cbmc_verdict(hf, real["vuln"], rflags, runwind)
             fixed = cbmc_verdict(hf, real["fixed"], rflags, runwind)
             rbuggy = cover_verdict(
-                hf, real["vuln"], real.get("probe_vuln", real.get("probe")))
+                hf, real["vuln"], real.get("probe_vuln", real.get("probe")),
+                runwind)
             rfixed = cover_verdict(
-                hf, real["fixed"], real.get("probe_fixed", real.get("probe")))
+                hf, real["fixed"], real.get("probe_fixed", real.get("probe")),
+                runwind)
             src = "REAL"
         else:
             # adjudicate on the abstract shape model
@@ -200,8 +222,8 @@ def main():
                     check=True, stdout=f)
             buggy = cbmc_verdict(hf, "harness_buggy", flags, unwind)
             fixed = cbmc_verdict(hf, "harness_fixed", flags, unwind)
-            rbuggy = cover_verdict(hf, "harness_buggy", "harness_buggy")
-            rfixed = cover_verdict(hf, "harness_fixed", "harness_fixed")
+            rbuggy = cover_verdict(hf, "harness_buggy", "harness_buggy", unwind)
+            rfixed = cover_verdict(hf, "harness_fixed", "harness_fixed", unwind)
             os.unlink(hf)
             src = "shape"
         print(f"{c['func']:<26}{c['kind']:<18}{c['confidence']:<8}"
