@@ -1879,6 +1879,8 @@ std::optional<exprt> python_convertert::try_builtin_call(
       bool sorted_reverse = false;
       // -1 means "no key" (identity).
       long long sorted_key_index = -1;
+      // key=lambda o: o.attr — sort by an object attribute.
+      std::string sorted_key_attr;
       // key=lambda is not yet modelled — the lambda body
       // would need per-element evaluation. We accept the
       // argument silently but ignore it. The caller gets
@@ -1925,6 +1927,13 @@ std::optional<exprt> python_convertert::try_builtin_call(
                     }
                   }
                 }
+              }
+              // key=lambda o: o.attr  →  sort by the attribute.
+              else if(is_node_type(body, "Attribute"))
+              {
+                const jsont &av = json_member(body, "value");
+                if(is_node_type(av, "Name"))
+                  sorted_key_attr = json_string(json_member(body, "attr"));
               }
             }
           }
@@ -2083,6 +2092,23 @@ std::optional<exprt> python_convertert::try_builtin_call(
         const auto &data_type = to_array_type(list_st.components()[1].type());
         member_exprt data{tmp, "data", data_type};
         member_exprt length{tmp, "length", signedbv_typet{64}};
+        // Comparison key for each element. With `key=lambda o: o.attr`
+        // over object elements (a class struct), compare the named
+        // attribute rather than the whole struct (a struct `>` is
+        // meaningless). Other element types compare directly.
+        auto key_of = [&](const exprt &elem) -> exprt
+        {
+          if(
+            !sorted_key_attr.empty() &&
+            data_type.element_type().id() == ID_struct)
+          {
+            const auto &est = to_struct_type(data_type.element_type());
+            if(est.has_component(sorted_key_attr))
+              return member_exprt{
+                elem, sorted_key_attr, est.component_type(sorted_key_attr)};
+          }
+          return elem;
+        };
         for(std::size_t pass = 0; pass < PYTHON_MAX_LIST_LENGTH; pass++)
         {
           for(std::size_t i = 0; i + 1 < PYTHON_MAX_LIST_LENGTH; i++)
@@ -2092,9 +2118,9 @@ std::optional<exprt> python_convertert::try_builtin_call(
             exprt guard = and_exprt{
               binary_relation_exprt{next, ID_lt, length},
               binary_relation_exprt{
-                index_exprt{data, idx},
+                key_of(index_exprt{data, idx}),
                 sorted_reverse ? ID_lt : ID_gt,
-                index_exprt{data, next}}};
+                key_of(index_exprt{data, next})}};
             static unsigned stmp = 0;
             std::string sn = "__stmp_" + std::to_string(stmp++);
             std::string sq = qualify_name(sn);
