@@ -81,3 +81,58 @@ matters.
 * Route A's `-Werror` strip is a keeper; the attribute long-tail is a
   scoped CBMC-front-end task (ignore unknown `__attribute__`s) that, once
   done, would let us verify whole real TUs without extraction.
+
+## UPDATE (2026-06-09): Route A now works — full-TU verdict achieved
+
+Three CBMC C front-end fixes unblocked compiling real kernel objects
+with goto-cc (each committed with a regression test):
+
+1. `__builtin_has_attribute` — parse + model as constant `false`
+   (commit 6e35acd7c1).  The actual blocker behind the earlier
+   "failed to find symbol 'nonstring'": the fortify `strscpy` macro
+   expands to `_Static_assert(!(!(!__builtin_has_attribute(dst,
+   nonstring))), …)`.  (Unknown *attributes* were already ignored —
+   the original assumption was right; this builtin was the gap.)
+2. `-fms-extensions` anonymous *tagged* struct/union members
+   (commit 718e6b17e9) — `struct __filename_head;` in struct filename;
+   added `config.ansi_c.ms_extensions`, gated so non-ms code is
+   unchanged.
+3. `a ? : b` (gcc_conditional_expression) constant-folding in
+   `make_constant` (commit 71658b0ac6) — the kernel's
+   `__aligned((x + 0) ? : SMP_CACHE_BYTES)` cache-line macro.
+
+### Recipe (goto-cc as the kernel CC)
+```sh
+# 1. capture the exact gcc command kbuild uses
+CMD=$(make V=1 net/nfc/llcp_commands.o 2>&1 | grep -E '^\s*gcc .*\.c\s*$' | tail -1)
+# 2. swap compiler + output, strip -Werror* (goto-cc emits
+#    incompatible-pointer-types as a warning; the kernel -Werror would
+#    escalate it)
+GCMD=$(echo "$CMD" | sed "s#^\s*gcc #goto-cc #; s#-o [^ ]*\.o#-o llcp.gb#; s/-Werror[=a-z-]*//g")
+bash -c "$GCMD"            # -> llcp.gb  (full TU, real kernel headers)
+```
+
+### Verdict on the REAL compiled function
+`llcp_gb_tlv_realtu_harness.c` allocates a `malloc(len)` buffer and calls
+the real `nfc_llcp_parse_gb_tlv` from `llcp.gb`:
+```sh
+goto-cc -o h.gb llcp_gb_tlv_realtu_harness.c
+cbmc llcp.gb h.gb --function harness --bounds-check --pointer-check --unwind 6
+```
+Result: **VERIFICATION FAILED** — CBMC finds the genuine CVE-2026-31622
+OOB in the *actual compiled* helpers:
+```
+[llcp_tlv16.pointer_dereference] line 42 pointer outside object bounds in tlv[0/1] / *((__be16*)(tlv+2)): FAILURE
+[llcp_tlv8.pointer_dereference]  line 34/37 pointer outside object bounds in tlv[0/1/2]: FAILURE
+```
+This is a true per-candidate verdict on the real function — real loop,
+real `llcp_tlv8/16` helpers, real `llcp_tlv_length[]` table — not an
+extraction or abstraction.  Route A (full TU) and Route B (faithful
+extraction) now agree.
+
+### Caveat
+Compile the harness with the kernel's `-funsigned-char -fshort-wchar`
+to silence benign `__CPROVER_architecture_*` link warnings (they don't
+affect the verdict).  Further kernel TUs may surface additional
+front-end gaps; the three above cleared net/nfc/llcp_commands.c
+end-to-end.
