@@ -651,30 +651,38 @@ exprt python_convertert::convert_call(const jsont &expr)
     // the stub cannot parse a runtime string (float(<runtime str>) is
     // nondet). Non-literal args fall through to the stub __init__.
     // See doc/python-frontend-decimal-plan.md.
-    if(func_name == "Decimal" && args.is_array() && as_array(args).size() == 1)
+    if(func_name == "Decimal" && args.is_array() && as_array(args).size() <= 1)
     {
-      const jsont &arg0 = *as_array(args).begin();
       std::optional<std::tuple<long, long long, long, long, long>> parts;
-      if(is_node_type(arg0, "Constant"))
+      if(as_array(args).empty())
       {
-        const jsont &cv = json_member(arg0, "value");
-        if(cv.is_string())
-          parts = parse_decimal_literal(cv.value);
-        else if(cv.is_number())
+        // Decimal() == Decimal(0).
+        parts = std::make_tuple(0L, 0LL, 0L, 0L, 0L);
+      }
+      else
+      {
+        const jsont &arg0 = *as_array(args).begin();
+        if(is_node_type(arg0, "Constant"))
         {
-          // Integer literal (a float literal falls through — residual).
-          const std::string &vs = cv.value;
-          if(
-            vs.find('.') == std::string::npos &&
-            vs.find('e') == std::string::npos &&
-            vs.find('E') == std::string::npos)
+          const jsont &cv = json_member(arg0, "value");
+          if(cv.is_string())
+            parts = parse_decimal_literal(cv.value);
+          else if(cv.is_number())
           {
-            errno = 0;
-            char *end = nullptr;
-            long long iv = std::strtoll(vs.c_str(), &end, 10);
-            if(errno == 0 && end != nullptr && *end == '\0')
-              parts = std::make_tuple(
-                iv < 0 ? 1L : 0L, iv < 0 ? -iv : iv, 0L, 0L, 0L);
+            // Integer literal (a float literal falls through — residual).
+            const std::string &vs = cv.value;
+            if(
+              vs.find('.') == std::string::npos &&
+              vs.find('e') == std::string::npos &&
+              vs.find('E') == std::string::npos)
+            {
+              errno = 0;
+              char *end = nullptr;
+              long long iv = std::strtoll(vs.c_str(), &end, 10);
+              if(errno == 0 && end != nullptr && *end == '\0')
+                parts = std::make_tuple(
+                  iv < 0 ? 1L : 0L, iv < 0 ? -iv : iv, 0L, 0L, 0L);
+            }
           }
         }
       }
@@ -710,7 +718,25 @@ exprt python_convertert::convert_call(const jsont &expr)
           else
             fields.push_back(safe_zero(comp.type()));
         }
-        return struct_exprt{std::move(fields), class_types.at("Decimal")};
+        struct_exprt dval{std::move(fields), class_types.at("Decimal")};
+        // Materialise into a temp lvalue so the result is addressable
+        // (binary-operator dunder dispatch takes address_of(self), which
+        // fails on a struct rvalue), mirroring the normal constructor path.
+        static unsigned dec_tmp_counter = 0;
+        std::string tn = "__dec_lit_" + std::to_string(dec_tmp_counter++);
+        irep_idt tid{qualify_name(tn)};
+        if(symbol_table.lookup(tid) == nullptr)
+        {
+          symbolt ts{tid, class_types.at("Decimal"), "python"};
+          ts.base_name = tn;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          ts.is_static_lifetime = current_function.empty();
+          symbol_table.add(ts);
+        }
+        symbol_exprt tsym = symbol_table.lookup_ref(tid).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{tsym, std::move(dval)});
+        return std::move(tsym);
       }
     }
 
