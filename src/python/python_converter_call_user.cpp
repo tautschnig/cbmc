@@ -202,12 +202,43 @@ bool python_convertert::try_monomorphise_call(
   for(const auto &b : bindings)
     callable_positions.insert(b.pos);
 
-  // Cache key: HOF + each (position, callable). Distinct callables
-  // (e.g. different lambdas per call site) get distinct, sound clones;
-  // identical patterns (a loop body) reuse one clone.
+  // Specialise the clone's parameter types to THIS call site's argument
+  // types (like a template instantiation), refining e.g. an unannotated
+  // `python_value` parameter to the concrete `list[int]` actually passed.
+  // Without this the callee body is converted against the generic type —
+  // a comprehension over a `python_value` parameter, for instance, is not
+  // recognised as iterating a list and is silently dropped. Convert each
+  // non-callable positional argument for its type only (its checks are
+  // discarded here; the real call below re-converts it).
+  std::vector<typet> refined_types;
+  for(const auto &hp : hparams)
+    refined_types.push_back(hp.type());
+  {
+    std::vector<codet> saved_pc;
+    saved_pc.swap(pending_checks);
+    std::size_t ai = 0;
+    for(const auto &arg : arg_array)
+    {
+      if(ai < hparams.size() && !callable_positions.count(ai))
+      {
+        exprt a = convert_expression(arg);
+        if(a.is_not_nil() && a.type().id() != ID_empty)
+          refined_types[ai] = a.type();
+      }
+      ++ai;
+    }
+    saved_pc.swap(pending_checks);
+  }
+
+  // Cache key: HOF + each (position, callable) + the refined parameter
+  // types. Distinct callables (e.g. different lambdas per call site) and
+  // distinct argument types get distinct, sound clones; an identical
+  // pattern (a loop body) reuses one clone.
   std::string key = id2string(hof_id) + "$mono";
   for(const auto &b : bindings)
     key += "$" + std::to_string(b.pos) + "@" + id2string(b.callable);
+  for(const auto &t : refined_types)
+    key += "#" + t.id_string();
   if(auto it = monomorph_cache.find(key); it != monomorph_cache.end())
   {
     clone_id = it->second;
@@ -220,20 +251,22 @@ bool python_convertert::try_monomorphise_call(
   clone_id = irep_idt{"python::" + clone_scope};
 
   code_typet::parameterst cparams;
+  std::size_t pidx = 0;
   for(const auto &hp : hparams)
   {
     const std::string pbase = id2string(hp.get_base_name());
+    const typet ptype = refined_types[pidx++];
     irep_idt pid{"python::" + clone_scope + "::" + pbase};
     if(symbol_table.lookup(pid) == nullptr)
     {
-      symbolt ps{pid, hp.type(), "python"};
+      symbolt ps{pid, ptype, "python"};
       ps.base_name = pbase;
       ps.is_lvalue = true;
       ps.is_state_var = true;
       ps.is_parameter = true;
       symbol_table.add(ps);
     }
-    code_typet::parametert p{hp.type()};
+    code_typet::parametert p{ptype};
     p.set_identifier(pid);
     p.set_base_name(pbase);
     cparams.push_back(p);
@@ -270,8 +303,37 @@ bool python_convertert::try_monomorphise_call(
   if(body_ast.is_array())
     for(const auto &st : as_array(body_ast))
       new_body.add(convert_statement(st));
-  if(hof_type.return_type().id() != ID_empty)
-    new_body.add(code_frontend_returnt{safe_zero(hof_type.return_type())});
+  // Infer the clone's return type from its *specialised* body: with the
+  // callable resolved, `return [x for x in xs if cond(x)]` now yields a
+  // proper list, whereas the HOF's def-time return type was inferred
+  // while the parameter call was an unresolved nondet (which made e.g.
+  // `len(result)` raise a spurious TypeError). The return may be nested
+  // inside a block (convert_statement prepends the comprehension loop to
+  // it), so search recursively; prefer the first explicit return's value
+  // type and fall back to the HOF's declared return type.
+  typet clone_ret = hof_type.return_type();
+  {
+    std::function<const exprt *(const codet &)> find_ret =
+      [&](const codet &c) -> const exprt *
+    {
+      if(c.get_statement() == ID_return)
+      {
+        const auto &ret = static_cast<const code_frontend_returnt &>(c);
+        if(ret.has_return_value() && ret.return_value().type().id() != ID_empty)
+          return &ret.return_value();
+        return nullptr;
+      }
+      for(const auto &op : c.operands())
+        if(op.id() == ID_code)
+          if(const exprt *r = find_ret(static_cast<const codet &>(op)))
+            return r;
+      return nullptr;
+    };
+    if(const exprt *r = find_ret(new_body))
+      clone_ret = r->type();
+  }
+  if(clone_ret.id() != ID_empty)
+    new_body.add(code_frontend_returnt{safe_zero(clone_ret)});
 
   saved_pending.swap(pending_checks);
   current_function = saved_fn;
@@ -279,7 +341,9 @@ bool python_convertert::try_monomorphise_call(
   for(const auto &akey : alias_keys)
     function_aliases.erase(akey);
 
-  symbol_table.get_writeable_ref(clone_id).value = new_body;
+  symbolt &clone_writeable = symbol_table.get_writeable_ref(clone_id);
+  clone_writeable.type = code_typet{cparams, clone_ret};
+  clone_writeable.value = new_body;
   return true;
 }
 
