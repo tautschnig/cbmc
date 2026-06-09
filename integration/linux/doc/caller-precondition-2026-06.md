@@ -6,10 +6,13 @@ whose bound is validated not in the flagged function but in its **callers**.
 
 ## The query — `caller_precondition.ql`
 
-For a function with a **bound parameter** (a `len`/`size`/`count`-named
-integral; the `(p, end)` pointer-cursor case is a known gap, see below),
-it inspects every call site and asks whether the bound argument is
-constrained by a *validate-then-reject* guard in the caller:
+For a function with a **bound** -- either a `len`/`size`/`count`-named
+integral parameter, or a `(p, end)` / `(p, limit)` pointer cursor (ceph /
+XDR / rxrpc style) -- it inspects every call site and asks whether the
+bound is established by the caller before the call.
+
+For the **scalar** shape that means a *validate-then-reject* guard in the
+caller:
 
 ```c
 if (V <relop> CONST) { return ...; }   // or goto / break
@@ -34,13 +37,17 @@ IR-`GuardCondition` machinery.
 * **`rxkad_decrypt_ticket` → CALLER-GUARDED** (callers=1, guarded=1) —
   reproduces, automatically, the manual finding that the OOB flags-read is
   closed by `rxkad_verify_response`'s `ticket_len >= 4` check (rxkad.c:1167).
-* Distribution over the surface: **30 CALLER-GUARDED, 39 PARTIAL, 802
-  UNGUARDED**.
+* Distribution over the surface: scalar **30 CALLER-GUARDED / 39 PARTIAL /
+  802 UNGUARDED**; cursor (new) **51 CALLER-GUARDED / 12 PARTIAL / 45
+  UNGUARDED** (108 cursor functions previously invisible to the check).
 * Cross-referenced against the 12 bounded-cursor oracle hits: rxkad is the
-  one CALLER-GUARDED (auto-dismissed FP); 5 are UNGUARDED genuine concerns
-  (`br_send_bpdu`, `ieee80211_get_ttlm`, `ieee80211_key_alloc`,
-  `nf_nat_ipv4/6_csum_recalc`, `nft_payload_n2h`); 5 are `(p,end)`
-  pointer-cursors the bound model does not yet match.
+  one CALLER-GUARDED scalar (auto-dismissed FP); `decode_lockers` is now
+  classified `cursor`/UNGUARDED (its caller sets `end = p + reply_len` but
+  does no `ceph_decode_need`, so it must self-guard); `nft_payload_n2h`
+  resolves to `len-param`/UNGUARDED; the remaining genuine concerns
+  (`ieee80211_get_ttlm`, `ieee80211_key_alloc`, `nf_nat_ipv4/6_csum_recalc`)
+  stay UNGUARDED. Only the non-cursor, non-len functions (`addr_match`, the
+  TX builders) remain unmatched — they are not bounded parsers.
 
 ## Integration
 
@@ -60,16 +67,32 @@ So a survivor that is `shape FAILED` (bug shape present) but
 verbatim harness** — and one that is `UNGUARDED` (ttlm) is kept as a
 genuine concern.
 
+## Two parameter shapes
+
+### Scalar bound (`len`/`size`/`count`)
+The caller validates the bound argument with a `if (V <relop> CONST)
+{ return | goto | break }` guard before the call (the rxkad case).
+
+### `(p, end)` / `(p, limit)` cursor
+A pointer cursor parameter plus an `end`/`limit` pointer parameter (ceph /
+XDR / rxrpc style).  The caller is "guarded" if, before the call, it
+establishes a byte-availability bound — a `ceph_decode_need` /
+`ceph_has_room` / `pskb_may_pull` / `*_safe` check, or a relational on the
+`end`/`limit` cursor.  **Necessary-not-sufficient**: it bounds the first
+reads, not an arbitrary multi-field sub-decode, so an UNGUARDED cursor
+verdict is the reliable one (the caller does *not* pre-check, so the
+function must self-guard) while CALLER-GUARDED is a heuristic prior.
+
 ## Honest limits
 
-* **`(p, end)` pointer cursors** (the ceph/XDR style) have no integral
-  length parameter, so `boundParam` does not match them — 5 of the 12
-  bounded-cursor hits are `no-len-param`. Extending the model to
-  end-pointer guards (`if (p + n > end) ...`) is the natural follow-on.
 * **`cgw_csum`** indices are *struct fields* (`crc8->result_idx`), not a
   call argument, so the parameter-level caller check is `no-len-param`
   there; its validation site is the netlink parse (`cgw_parse_attr`), a
-  different (field-level) precondition problem.
+  different (field-level) precondition problem — the remaining shape the
+  check does not yet cover.
+* **Cursor CALLER-GUARDED is a heuristic prior, not a proof** — it shows
+  the caller pre-checks the first reads, not that a multi-field sub-decode
+  stays in bounds. The UNGUARDED cursor verdict is the dependable one.
 * The guard model uses line-order as a dominance proxy; it can in
   principle over-credit a guard that does not actually dominate the call.
   A precise dominator check (IR `GuardCondition`) would tighten this.

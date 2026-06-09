@@ -75,6 +75,56 @@ int numGuarded(Function target, Parameter bp) {
     )
 }
 
+/** A `(p, end)` / `(p, limit)` cursor function: a pointer cursor parameter
+ *  plus an `end`/`limit` pointer parameter (ceph / XDR / rxrpc style). */
+predicate cursorFunction(Function f) {
+  exists(Parameter p, Parameter e |
+    p.getFunction() = f and e.getFunction() = f and p != e and
+    p.getUnspecifiedType() instanceof PointerType and
+    e.getUnspecifiedType() instanceof PointerType and
+    e.getName().toLowerCase().matches(["%end%", "%limit%"])
+  )
+}
+
+/** A caller establishes a byte-availability bound before the call: a
+ *  ceph_decode_need / ceph_has_room / pskb_may_pull / *_safe check, or a
+ *  relational comparison mentioning an `end`/`limit` cursor, located before
+ *  the call.  Necessary-not-sufficient: it bounds the FIRST reads, not an
+ *  arbitrary multi-field sub-decode. */
+predicate cursorCallerGuard(FunctionCall fc) {
+  exists(FunctionCall g |
+    g.getEnclosingFunction() = fc.getEnclosingFunction() and
+    g.getTarget()
+        .getName()
+        .matches([
+            "ceph_decode_need", "ceph_has_room", "pskb_may_pull",
+            "skb_header_pointer", "%\\_safe"
+          ]) and
+    g.getLocation().getStartLine() < fc.getLocation().getStartLine() and
+    g.getLocation().getFile() = fc.getLocation().getFile()
+  )
+  or
+  exists(RelationalOperation rel |
+    rel.getEnclosingFunction() = fc.getEnclosingFunction() and
+    rel.getAnOperand()
+        .(VariableAccess)
+        .getTarget()
+        .getName()
+        .toLowerCase()
+        .matches(["%end%", "%limit%"]) and
+    rel.getLocation().getStartLine() < fc.getLocation().getStartLine() and
+    rel.getLocation().getFile() = fc.getLocation().getFile()
+  )
+}
+
+/** Number of call sites where the cursor bound is established by the caller. */
+int numGuardedCursor(Function target) {
+  result =
+    count(FunctionCall fc |
+      fc.getTarget() = target and cursorCallerGuard(fc)
+    )
+}
+
 /** Verdict string. */
 bindingset[callers, guarded]
 string verdict(int callers, int guarded) {
@@ -83,13 +133,26 @@ string verdict(int callers, int guarded) {
   else if guarded > 0 then result = "PARTIAL" else result = "UNGUARDED"
 }
 
-from Function target, Parameter bp, int callers, int guarded
+from Function target, string kind, int callers, int guarded, string bound
 where
   target.hasDefinition() and
-  boundParam(target, bp) and
   callers = numCallers(target) and
   callers > 0 and
-  guarded = numGuarded(target, bp)
+  (
+    exists(Parameter bp |
+      boundParam(target, bp) and
+      kind = "len-param" and
+      bound = bp.getName() and
+      guarded = numGuarded(target, bp)
+    )
+    or
+    // cursor functions WITHOUT a scalar len param (those are covered above)
+    cursorFunction(target) and
+    not exists(Parameter bp | boundParam(target, bp)) and
+    kind = "cursor" and
+    bound = "p,end" and
+    guarded = numGuardedCursor(target)
+  )
 select target,
-  target.getName() + "|bound=" + bp.getName() + "|callers=" + callers +
-    "|guarded=" + guarded + "|verdict=" + verdict(callers, guarded)
+  target.getName() + "|kind=" + kind + "|bound=" + bound + "|callers=" +
+    callers + "|guarded=" + guarded + "|verdict=" + verdict(callers, guarded)
