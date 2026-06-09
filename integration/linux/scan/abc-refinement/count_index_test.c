@@ -44,17 +44,31 @@ void flood_cfg_fixed(struct sw *ethsw, struct cfg *cfg)
 }
 
 // (B) BUGGY: direct-index — b43/wl1251 CVE-2026-46122 shape.
-// A firmware-supplied key index used directly to subscript a fixed array.
+// A firmware-supplied key index DECODED in-function (from the RX
+// descriptor) and used directly to subscript a fixed array.  Faithful to
+// b43_rx: `keyidx = (macstat & MASK) >> SHIFT; dev->key[keyidx]`.  The
+// index is a LOCAL decoded from untrusted data, not a caller parameter.
 int tx_frames[NUM_KEYS];
-int rx_key_buggy(int key_index)
+int rx_key_buggy(const unsigned char *desc)
 {
+  int key_index = desc[1];     // decoded from the wire/descriptor
   return tx_frames[key_index]; // no bound check on key_index
 }
 
 // (B') GUARDED negative control.
-int rx_key_fixed(int key_index)
+int rx_key_fixed(const unsigned char *desc)
 {
+  int key_index = desc[1];
   if(key_index >= NUM_KEYS)
     return -1;
   return tx_frames[key_index];
+}
+
+// (B'') FP control: index is a BARE caller-passed parameter (caller
+// validates it).  Must NOT be flagged (function-granularity recall FP,
+// e.g. mac80211 link[link_id]).
+int link_conf[NUM_KEYS];
+int get_link_buggy(int link_id)
+{
+  return link_conf[link_id]; // caller-validated -> not our candidate
 }

@@ -130,7 +130,28 @@ predicate countLoopWrite(
   // the write is an lvalue (assigned into)
   exists(Assignment a | a.getLValue() = write) and
   not guardedAgainstConstant(cnt, f) and
-  not maskGuarded(cnt, f)
+  not maskGuarded(cnt, f) and
+  not bareParameter(cnt, f)
+}
+
+/** Holds if `e` is a bare incoming PARAMETER value used directly (the
+ *  parameter is never assigned within `f`).  Such an index/count is the
+ *  CALLER's responsibility to bound, so flagging it at function
+ *  granularity is a recall-only false positive (e.g. mac80211
+ *  `link[link_id]` where `link_id` is a validated parameter).  We keep
+ *  indices that are DECODED in-function (a local assigned from untrusted
+ *  data, e.g. b43 `keyidx` from the RX descriptor) or struct FIELDS
+ *  (wire fields, e.g. nci `n_targets`). */
+predicate bareParameter(CountSource e, Function f) {
+  exists(Parameter p |
+    e.(VariableAccess).getTarget() = p and
+    p.getFunction() = f and
+    not exists(Assignment a |
+      a.getEnclosingFunction() = f and
+      a.getLValue().(VariableAccess).getTarget() = p) and
+    not exists(CrementOperation cr |
+      cr.getEnclosingFunction() = f and
+      cr.getOperand().(VariableAccess).getTarget() = p))
 }
 
 /** The variable/field underlying a count source (for crement/assign checks). */
@@ -172,7 +193,8 @@ predicate directIndex(
   // enum-typed indices index arrays sized by that enum -> bounded idiom.
   not idx.getUnspecifiedType() instanceof Enum and
   not guardedAgainstConstant(idx, f) and
-  not maskGuarded(idx, f)
+  not maskGuarded(idx, f) and
+  not bareParameter(idx, f)
 }
 
 from Function f, string kind, string name, int line, string detail
