@@ -507,26 +507,34 @@ alarms). Verified against the 2026-06-08 sweep baseline.
       (`afe6acb0e0`)**: a variable annotation is a hint, so an
       incompatible scalar/string RHS keeps its value instead of coercing
       to nondet.
+    - `github_3313` (isinstance-narrowing on `str | datetime`) — **FIXED
+      (`49fcc4a5fe`)**: a class instance assigned to a tagged-union
+      variable is now constructed into a temp and wrapped (CLASS tag +
+      `__class_ptr`); previously `__init__` ran on a nondet self so the
+      instance was uninitialised and the post-narrowing field read was
+      nondet.
+    - `github_3728` (`y.tail.head` over `Optional["List"]`) — **FIXED
+      (`be02fbcffa`)**: `Optional[ClassName]` now lowers to the tagged
+      union (like `Optional[container]`/`Optional[scalar]`), so a
+      self-referential field reaches the instance via `__class_ptr` and is
+      fixed-size, instead of being truncated to a `{__class_tag}`
+      placeholder. Linked lists and trees verify; a None link still fails
+      soundly (AttributeError). This + 3313 are the same architectural
+      capability — the **class-instance ↔ python_value union boundary**
+      (construction wrapping + field access through `__class_ptr`).
+    - `github_2960` / `github_3286` (cross-module class resolution) —
+      **FIXED (`15961b484f`)**: (a) `process_imported_module` resolves the
+      imported module's own imports transitively (so ll.py's
+      `from md import Foo` registers md's classes), (b) `isinstance` now
+      resolves a module-qualified classinfo (`ll.Bar`), (c) `@overload`
+      stub defs are skipped in imported modules so the real implementation
+      registers.
     - `github_3667` (shallow `list.copy()` inner-list aliasing) —
-      **substantial:** `list.copy()` is modelled as a value (deep) copy,
-      but Python's copy is shallow (inner lists shared), so after
+      **substantial (open):** `list.copy()` is modelled as a value (deep)
+      copy, but Python's copy is shallow (inner lists shared), so after
       `nested[0].append(99)` the snapshot `shallow[0]` is still length 1
       and `shallow[0][1]` raises IndexError. Needs by-reference inner
       containers (the nested-container-aliasing root).
-    - `github_3728` (`y.tail.head` over `Optional["List"]`) —
-      **architectural:** a self-referential class field is truncated to a
-      minimal `{__class_tag}` struct (to break infinite recursion), losing
-      `head`/`tail`. Needs pointer-to-class self-referential fields +
-      attribute-deref (recursive data structures: linked lists / trees).
-    - `github_3313` (isinstance-narrowing on `str | datetime`) —
-      **substantial:** datetime construction, field access and
-      `isinstance` all work in isolation; the gap is **field access on a
-      union (`python_value`) parameter after isinstance narrowing** (union
-      unwrap to the datetime struct).
-    - `github_2960` / `github_3286` (module-stub + isinstance) —
-      **substantial:** `ll.py` does `from md import Foo`; `Foo(s)` is
-      "no body" — multi-level cross-module class resolution, plus a union
-      (`Foo | Bar`) return and module-qualified `isinstance(x, ll.Bar)`.
     - `github_3560` (`input()` + `split`), `github_3594` (`"ß".upper()`
       unicode case mapping) — reduce to the symbolic-string /
       string-refinement root ([§3](#strings)).
