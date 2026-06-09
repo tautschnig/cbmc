@@ -122,6 +122,24 @@ exactly why `real_rxkad_ticket.c` stubs the in-place decrypt.  So the two
 approaches are complementary: auto-harness for breadth, hand-authored for
 the heavy dependencies.
 
+## src= column (adjudication source)
+
+`pipeline_eval` adjudicates each survivor with this precedence, recorded in
+the `src` column:
+
+1. **`auto`** — auto-generated verbatim harness (`auto_real_harness.py` +
+   `goto-harness` on the TU `.gb`).  Cheapest: no authoring.  Gives the
+   isolation OOB verdict (`shape:bug`); no fixed/reach counterpart.
+2. **`REAL`** — hand-authored verbatim harness (fallback when auto times
+   out on heavy deps, e.g. rxkad's crypto/pointer-arithmetic).  Gives the
+   full shape + reach (vuln/fixed) verdict.
+3. **`shape`** — parameterised shape model (no TU `.gb` available).
+
+On broad-next-db the four `cgw_csum_*` now resolve via `src=auto`
+(REAL-OOB, both sites), harness-free; `rxkad_decrypt_ticket` falls back to
+`src=REAL` (auto TIMEOUT) — demonstrating that `src=REAL` no longer
+requires manual authoring for the tractable majority.
+
 ## Two routes to a verbatim body
 
 1. **Verbatim extraction** (used by `real_cgw_csum.c`,

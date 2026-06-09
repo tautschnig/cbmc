@@ -37,6 +37,41 @@ OOB_RE = re.compile(
     r"(upper bound|lower bound|outside object bounds).*: FAILURE")
 
 
+def auto_verdict(gb, function, unwind=16, max_array=64, timeout=300):
+    """Auto-generate a verbatim harness for `function` in goto binary `gb`
+    and return (verdict, sites): verdict is 'REAL-OOB' / 'CLEAN' /
+    'TIMEOUT' / 'HARNESS-FAIL'; sites is a list of (kind, line, property)."""
+    hgb = tempfile.mktemp(suffix=".gb")
+    hname = "h_" + function
+    gh = subprocess.run(
+        [GOTO_HARNESS, gb, hgb, "--harness-function-name", hname,
+         "--harness-type", "call-function", "--function", function,
+         "--min-null-tree-depth", "4", "--max-array-size", str(max_array)],
+        capture_output=True, text=True)
+    if not os.path.exists(hgb):
+        return "HARNESS-FAIL", []
+    try:
+        out = subprocess.run(
+            [CBMC, hgb, "--function", hname, "--bounds-check",
+             "--pointer-check", "--no-unwinding-assertions",
+             "--unwind", str(unwind)],
+            capture_output=True, text=True, timeout=timeout).stdout
+    except subprocess.TimeoutExpired:
+        os.unlink(hgb)
+        return "TIMEOUT", []
+    os.unlink(hgb)
+    sites = []
+    for ln in out.splitlines():
+        m = OOB_RE.search(ln)
+        if m and m.group("fn") == function:
+            loc = re.search(r"line \d+", ln)
+            prop = re.search(r"\] (.*?): FAILURE", ln)
+            sites.append((m.group("kind"),
+                          loc.group(0) if loc else "?",
+                          prop.group(1) if prop else ""))
+    return ("REAL-OOB" if sites else "CLEAN"), sites
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gb", required=True, help="full-TU goto binary")
@@ -45,40 +80,11 @@ def main():
     ap.add_argument("--max-array-size", type=int, default=64)
     ap.add_argument("--timeout", type=int, default=300)
     a = ap.parse_args()
-
-    hgb = tempfile.mktemp(suffix=".gb")
-    hname = "h_" + a.function
-    gh = subprocess.run(
-        [GOTO_HARNESS, a.gb, hgb, "--harness-function-name", hname,
-         "--harness-type", "call-function", "--function", a.function,
-         "--min-null-tree-depth", "4",
-         "--max-array-size", str(a.max_array_size)],
-        capture_output=True, text=True)
-    if not os.path.exists(hgb):
-        print(f"goto-harness failed for {a.function}:")
-        print(gh.stdout[-800:] + gh.stderr[-400:])
-        return
-    try:
-        out = subprocess.run(
-            [CBMC, hgb, "--function", hname, "--bounds-check",
-             "--pointer-check", "--no-unwinding-assertions",
-             "--unwind", str(a.unwind)],
-            capture_output=True, text=True, timeout=a.timeout).stdout
-    except subprocess.TimeoutExpired:
-        print(f"{a.function}: CBMC TIMEOUT")
-        os.unlink(hgb)
-        return
-    os.unlink(hgb)
-
-    oob = [(m.group("kind"), ln) for ln in out.splitlines()
-           for m in [OOB_RE.search(ln)] if m and m.group("fn") == a.function]
-    verdict = "REAL-OOB" if oob else "CLEAN"
+    verdict, sites = auto_verdict(a.gb, a.function, a.unwind,
+                                  a.max_array_size, a.timeout)
     print(f"{a.function}: {verdict} (auto-harness, verbatim body)")
-    for kind, ln in oob[:6]:
-        loc = re.search(r"line \d+", ln)
-        prop = re.search(r"\] (.*?): FAILURE", ln)
-        print(f"    {kind} @ {loc.group(0) if loc else '?'}: "
-              f"{prop.group(1) if prop else ''}")
+    for kind, loc, prop in sites[:6]:
+        print(f"    {kind} @ {loc}: {prop}")
 
 
 if __name__ == "__main__":

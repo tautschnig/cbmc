@@ -91,10 +91,37 @@ def funnel(db, query, otype, cg):
     }
 
 
+import auto_real_harness as arh
+
+# function -> full-TU goto binary, for auto-generated verbatim adjudication
+# (built once with goto-cc; see verbatim-body-reach doc). Auto-harness is
+# preferred over a hand-authored harness when the .gb is present and the
+# function is tractable; hand-authored is the fallback for heavy deps.
+GB_REGISTRY = {
+    "cgw_csum_crc8_pos": ("/tmp/gw.gb", 70),
+    "cgw_csum_crc8_neg": ("/tmp/gw.gb", 70),
+    "cgw_csum_xor_pos": ("/tmp/gw.gb", 70),
+    "cgw_csum_xor_neg": ("/tmp/gw.gb", 70),
+    "rxkad_decrypt_ticket": ("/tmp/rxkad.gb", 8),
+}
+
+
 def adjudicate(func, kind_oracle, otype):
-    """Return (src, shape_bug, shape_fix, reach_bug, reach_fix) for a
-    candidate function: verbatim REAL harness if registered, else the
-    parameterised shape model."""
+    """Return (src, shape_bug, shape_fix, reach_bug, reach_fix).
+
+    Precedence: AUTO-generated verbatim harness (goto-harness on the TU
+    .gb, cheapest -- no authoring) -> hand-authored verbatim harness (for
+    heavy deps where auto times out) -> parameterised shape model."""
+    # (1) auto-generated verbatim harness
+    gbrec = GB_REGISTRY.get(func)
+    if gbrec and os.path.exists(gbrec[0]):
+        verdict, _ = arh.auto_verdict(gbrec[0], func, unwind=gbrec[1],
+                                      timeout=90)
+        if verdict in ("REAL-OOB", "CLEAN"):
+            sb = "FAILED" if verdict == "REAL-OOB" else "SUCCESSFUL"
+            return ("auto", sb, "-", "-", "-")
+        # else (TIMEOUT / HARNESS-FAIL) fall through to hand-authored
+    # (2) hand-authored verbatim harness
     real = tl.REAL_HARNESS.get(func)
     if real:
         hf = os.path.join(HERE, real["file"])
@@ -106,7 +133,7 @@ def adjudicate(func, kind_oracle, otype):
         rf = tl.cover_verdict(hf, real["fixed"],
                               real.get("probe_fixed", real.get("probe")), uw)
         return ("REAL", sb, sf, rb, rf)
-    # shape model
+    # (3) shape model
     import subprocess, tempfile
     cand = next((c for c in CAND_CACHE if c["func"] == func), None)
     raw = cand["raw"] if cand else f"{func}|x|0|{kind_oracle}|x|arr=x[8]"
