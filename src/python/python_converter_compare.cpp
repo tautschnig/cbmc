@@ -1435,6 +1435,48 @@ exprt python_convertert::convert_compare(const jsont &expr)
         goto done_cmp;
       }
 
+      // PLR §3.3.1: class instances with a custom __ne__ / __eq__ must
+      // compare by value, not by struct layout. Without this, `!=` fell
+      // through to structural inequality, so e.g.
+      // `Decimal("1.0") != Decimal("1.00")` was wrongly True (their
+      // (coeff, exp) structs differ though the values are equal). Mirrors
+      // the __eq__ dispatch in the Eq arm; prefers __ne__, else negates
+      // __eq__.
+      if(
+        current_left.type().id() == ID_struct && right.type().id() == ID_struct)
+      {
+        const auto &ne_st = to_struct_type(current_left.type());
+        std::string ne_tag = id2string(ne_st.get_tag());
+        if(ne_tag.substr(0, 13) == "python_class_")
+        {
+          std::string cls = ne_tag.substr(13);
+          for(const char *meth : {"__ne__", "__eq__"})
+          {
+            irep_idt mid{std::string{"python::"} + cls + "::" + meth};
+            const symbolt *msym = symbol_table.lookup(mid);
+            if(msym == nullptr || msym->type.id() != ID_code)
+              continue;
+            const code_typet &mty = to_code_type(msym->type);
+            exprt other_arg = right;
+            if(
+              mty.parameters().size() >= 2 &&
+              other_arg.type() != mty.parameters()[1].type())
+              other_arg = safe_typecast(other_arg, mty.parameters()[1].type());
+            side_effect_expr_function_callt call{
+              msym->symbol_expr(),
+              {address_of_exprt{current_left}, std::move(other_arg)},
+              mty.return_type(),
+              get_location(expr)};
+            if(std::string{meth} == "__ne__")
+              cmp = std::move(call);
+            else
+              cmp =
+                not_exprt{typecast_exprt{exprt{std::move(call)}, bool_typet{}}};
+            goto done_cmp;
+          }
+        }
+      }
+
       // PLR §6.10.1: dict inequality is the negation of dict
       // equality (order-independent).
       if(
