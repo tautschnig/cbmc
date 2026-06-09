@@ -1228,6 +1228,11 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
   std::map<irep_idt, typet> name_dict_key_t;
   std::map<irep_idt, typet> name_list_elem_t;
   std::set<irep_idt> name_is_string;
+  // General name → value type, recorded for simple `name = <expr>`
+  // assignments seen earlier in the same walk (e.g.
+  // `candidate = actions[index]`), so a later `lst.append(candidate)`
+  // can resolve the element type even when `name` is not a literal.
+  std::map<irep_idt, typet> name_value_t;
   std::function<typet(const jsont &)> type_of_expr;
   type_of_expr = [&](const jsont &n) -> typet
   {
@@ -1363,6 +1368,9 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
       auto le_it = name_list_elem_t.find(sid);
       if(le_it != name_list_elem_t.end())
         return python_list_type(le_it->second);
+      auto nv_it = name_value_t.find(sid);
+      if(nv_it != name_value_t.end())
+        return nv_it->second;
       const symbolt *s = symbol_table.lookup(sid);
       if(s != nullptr && s->type.id() != ID_empty)
         return s->type;
@@ -1383,6 +1391,15 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
         return double_type();
       if(callee == "nondet_bool")
         return bool_typet{};
+      // User-class constructor `ClassName(...)` → an object element.
+      // Use the universal tagged `python_value` (the same element type a
+      // list literal of objects uses), so `lst = []; lst.append(Obj())`
+      // followed by `lst[i].method()` dispatches on the stored runtime
+      // class via the tag — and this stays sound when the list ends up
+      // holding mixed subclasses (a concrete struct element type would
+      // lose the tag of any other subclass appended later).
+      if(class_types.find(callee) != class_types.end())
+        return python_value_type();
     }
     // Arithmetic / concatenation: int op int -> int, float involved
     // -> float, str + str -> str. Lets e.g. `d[i] = i * 2` infer an
@@ -1399,6 +1416,25 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
         return python_int_type();
       if(is_python_string_type(lt) && is_python_string_type(rt))
         return python_string_type();
+    }
+    // Subscript `xs[i]` → element type of xs, so `r = [];
+    // r.append(xs[i])` over an object list infers a `python_value`
+    // (object) element and later `r[k].method()` dispatches correctly.
+    if(is_node_type(n, "Subscript"))
+    {
+      const jsont &v = json_member(n, "value");
+      if(is_node_type(v, "Name"))
+      {
+        std::string vn = json_string(json_member(v, "id"));
+        irep_idt vid{qualify_name(vn)};
+        auto le = name_list_elem_t.find(vid);
+        if(le != name_list_elem_t.end())
+          return le->second;
+        const symbolt *vs = symbol_table.lookup(vid);
+        if(vs != nullptr && is_python_list_type(vs->type))
+          return to_array_type(to_struct_type(vs->type).components()[1].type())
+            .element_type();
+      }
     }
     return typet{}; // unknown
   };
@@ -1433,6 +1469,14 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
             is_ann ? json_string(json_member(target_single, "id"))
                    : json_string(json_member(*as_array(targets).begin(), "id"));
           irep_idt sid{qualify_name(nm)};
+          // Record the value's type for a simple `name = <expr>` (e.g.
+          // `candidate = actions[index]`) so a later append of `name`
+          // resolves its element type.
+          {
+            typet vt = type_of_expr(value);
+            if(!vt.id().empty() && vt.id() != ID_empty)
+              name_value_t[sid] = vt;
+          }
           // For AnnAssign 'name: list[T] = []' we skip the
           // empty-list pending register because the declared
           // element type T is already precise. Bare 'list'
