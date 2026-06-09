@@ -142,6 +142,13 @@ void python_convertert::process_imported_module(
   const std::string &module_name,
   const jsont &module_ast)
 {
+  // Transitive resolution is idempotent and cycle-safe: a module is
+  // processed at most once. main.py may import the same module twice
+  // (`import ll` + `from ll import Foo`), and modules may import each
+  // other; the guard makes both cases a no-op after the first pass.
+  if(!processed_import_modules.insert(module_name).second)
+    return;
+
   bool saved_processing = processing_import;
   processing_import = true;
 
@@ -192,7 +199,32 @@ void python_convertert::process_imported_module(
             mod_sym.is_static_lifetime = true;
             symbol_table.add(mod_sym);
           }
+          // Transitive resolution: process the imported module's own
+          // sources so its definitions are available to this module's
+          // bodies (e.g. `import md` here, then `md.Foo(...)` below).
+          if(module_resolver && nm != "typing")
+          {
+            const jsont *sub_ast = module_resolver(nm);
+            if(sub_ast != nullptr && !sub_ast->is_null())
+              process_imported_module(nm, *sub_ast);
+          }
         }
+      }
+      continue;
+    }
+    // Transitive `from <module> import ...`: resolve and process the
+    // sub-module so its classes/functions are registered before this
+    // module's function bodies (which may reference them) are
+    // converted. Without this, e.g. ll.py's `from md import Foo` left
+    // `Foo(...)` inside ll.create with no body.
+    if(is_node_type(stmt, "ImportFrom"))
+    {
+      std::string submodule = json_string(json_member(stmt, "module"));
+      if(module_resolver && !submodule.empty() && submodule != "typing")
+      {
+        const jsont *sub_ast = module_resolver(submodule);
+        if(sub_ast != nullptr && !sub_ast->is_null())
+          process_imported_module(submodule, *sub_ast);
       }
       continue;
     }
@@ -201,6 +233,23 @@ void python_convertert::process_imported_module(
       is_node_type(stmt, "AsyncFunctionDef"))
     {
       std::string fname = json_string(json_member(stmt, "name"));
+      // PLR §8.7 / typing.overload: @overload-decorated defs are
+      // type-only stubs (empty `...` bodies). Skip them so the real
+      // implementation (same name, no @overload) is the one registered;
+      // otherwise the first stub claims `python::<fname>` and the real
+      // body is dropped.
+      {
+        const jsont &decos = json_member(stmt, "decorator_list");
+        bool is_overload = false;
+        if(decos.is_array())
+          for(const auto &dec : as_array(decos))
+            if(
+              is_node_type(dec, "Name") &&
+              json_string(json_member(dec, "id")) == "overload")
+              is_overload = true;
+        if(is_overload)
+          continue;
+      }
       // Detect @c_intrinsic('NAME') decorators so imported library
       // stubs can route calls to C library functions (parallel to
       // the same detection in convert_function_def).

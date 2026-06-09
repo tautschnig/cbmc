@@ -815,6 +815,9 @@ private:
 
   /// Known imported module names (for `import math` style)
   std::set<std::string> imported_modules;
+  /// Modules already handed to process_imported_module, to make
+  /// transitive import resolution idempotent and break import cycles.
+  std::set<std::string> processed_import_modules;
   /// Names assigned from typing.NewType('X', T) — treated as
   /// identity-call aliases so `UserId(42) == 42`.
   std::set<std::string> newtype_aliases;
