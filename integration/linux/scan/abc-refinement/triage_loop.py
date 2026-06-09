@@ -50,6 +50,26 @@ ORACLES = {
 
 CONF_RANK = {"HIGH": 2, "MEDIUM": 1, "": 0}
 
+# Verbatim real-function harnesses: candidate function name -> a harness
+# that wraps the ACTUAL kernel function body (real struct layouts, real
+# arithmetic, real guards) with vuln/fixed entries and a CHECKPOINT at the
+# sink.  When a candidate has one, the shape+reach verdict is computed on
+# the verbatim body instead of the abstract shape model.
+REAL_HARNESS = {
+    "cgw_csum_crc8_pos": {
+        "file": "real_cgw_csum.c",
+        "vuln": "probe_vuln", "fixed": "probe_fixed",
+        "probe": "cgw_csum_crc8_pos",
+        "flags": ["--bounds-check", "--pointer-check"], "unwind": 4,
+    },
+    "nfc_llcp_parse_gb_tlv": {
+        "file": "real_nfc_llcp_cover.c",
+        "vuln": "probe_vuln", "fixed": "probe_fixed",
+        "probe_vuln": "llcp_parse_vuln", "probe_fixed": "llcp_parse_fixed",
+        "flags": ["--bounds-check", "--pointer-check"], "unwind": 8,
+    },
+}
+
 
 def run_oracle(db, query):
     """Run the CodeQL query, return the list of structured candidate lines."""
@@ -111,11 +131,12 @@ COVER_RE = re.compile(
     r"(?P<verdict>SATISFIED|FAILED)")
 
 
-def cover_verdict(harness, func):
-    """Reachability of the OOB-precondition CHECKPOINT inside `func`:
-    REACHABLE if its cover goal is SATISFIED, BLOCKED if FAILED, NONE if the
-    harness carries no probe.  CBMC instruments the whole TU, so we keep
-    only the goal whose enclosing function is `func`."""
+def cover_verdict(harness, func, probe_func):
+    """Reachability of the OOB-precondition CHECKPOINT inside `probe_func`,
+    with `func` as the CBMC entry: REACHABLE if its cover goal is
+    SATISFIED, BLOCKED if FAILED, NONE if the harness carries no probe.
+    CBMC instruments the whole TU, so we keep only the goal whose enclosing
+    function is `probe_func` (which may be a callee of `func`)."""
     try:
         out = subprocess.run(
             [CBMC, harness, "-I", HERE, "-DCBMC_PROBE", "--function", func,
@@ -124,7 +145,7 @@ def cover_verdict(harness, func):
     except subprocess.TimeoutExpired:
         return "TIMEOUT"
     for m in COVER_RE.finditer(out):
-        if m.group("func") == func:
+        if m.group("func") == probe_func:
             return "REACHABLE" if m.group("verdict") == "SATISFIED" else "BLOCKED"
     return "NONE"
 
@@ -151,27 +172,45 @@ def main():
     print(f"# triage_loop: {a.query} on {a.db}")
     print(f"# {len(cands)} candidate(s)"
           f"{' (>= ' + a.min_confidence + ')' if a.min_confidence else ''}\n")
-    hdr = ("function", "kind", "conf", "impact",
+    hdr = ("function", "kind", "conf", "impact", "src",
            "shape:bug", "shape:fix", "reach:bug", "reach:fix")
-    print(f"{hdr[0]:<26}{hdr[1]:<18}{hdr[2]:<8}{hdr[3]:<7}"
-          f"{hdr[4]:<11}{hdr[5]:<11}{hdr[6]:<11}{hdr[7]:<11}")
-    print("-" * 100)
+    print(f"{hdr[0]:<26}{hdr[1]:<18}{hdr[2]:<8}{hdr[3]:<7}{hdr[4]:<7}"
+          f"{hdr[5]:<11}{hdr[6]:<11}{hdr[7]:<11}{hdr[8]:<11}")
+    print("-" * 106)
     for c in cands:
-        h = tempfile.mktemp(suffix=".c")
-        with open(h, "w") as f:
-            subprocess.run(
-                [sys.executable, os.path.join(HERE, "oracle_harness_gen.py"),
-                 "--oracle", otype, "-c", c["raw"]],
-                check=True, stdout=f)
-        buggy = cbmc_verdict(h, "harness_buggy", flags, unwind)
-        fixed = cbmc_verdict(h, "harness_fixed", flags, unwind)
-        rbuggy = cover_verdict(h, "harness_buggy")
-        rfixed = cover_verdict(h, "harness_fixed")
-        os.unlink(h)
+        real = REAL_HARNESS.get(c["func"])
+        if real:
+            # adjudicate on the VERBATIM function body
+            hf = os.path.join(HERE, real["file"])
+            rflags, runwind = real["flags"], real["unwind"]
+            buggy = cbmc_verdict(hf, real["vuln"], rflags, runwind)
+            fixed = cbmc_verdict(hf, real["fixed"], rflags, runwind)
+            rbuggy = cover_verdict(
+                hf, real["vuln"], real.get("probe_vuln", real.get("probe")))
+            rfixed = cover_verdict(
+                hf, real["fixed"], real.get("probe_fixed", real.get("probe")))
+            src = "REAL"
+        else:
+            # adjudicate on the abstract shape model
+            hf = tempfile.mktemp(suffix=".c")
+            with open(hf, "w") as f:
+                subprocess.run(
+                    [sys.executable, os.path.join(HERE, "oracle_harness_gen.py"),
+                     "--oracle", otype, "-c", c["raw"]],
+                    check=True, stdout=f)
+            buggy = cbmc_verdict(hf, "harness_buggy", flags, unwind)
+            fixed = cbmc_verdict(hf, "harness_fixed", flags, unwind)
+            rbuggy = cover_verdict(hf, "harness_buggy", "harness_buggy")
+            rfixed = cover_verdict(hf, "harness_fixed", "harness_fixed")
+            os.unlink(hf)
+            src = "shape"
         print(f"{c['func']:<26}{c['kind']:<18}{c['confidence']:<8}"
-              f"{c['impact']:<7}{buggy:<11}{fixed:<11}{rbuggy:<11}{rfixed:<11}")
+              f"{c['impact']:<7}{src:<7}{buggy:<11}{fixed:<11}"
+              f"{rbuggy:<11}{rfixed:<11}")
 
-    print("\n# shape: CBMC bounds/overflow verdict (FAILED=bug present).")
+    print("\n# src:   REAL = verbatim kernel function body; "
+          "shape = parameterised shape model.")
+    print("# shape: CBMC bounds/overflow verdict (FAILED=bug present).")
     print("# reach: cover-probe on the OOB precondition "
           "(REACHABLE=precondition feasible; BLOCKED=guard closes the path).")
 
