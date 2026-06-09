@@ -4884,11 +4884,12 @@ protected:
       e.id() == ID_typecast || e.id() == ID_array_of || e.id() == ID_plus ||
       e.id() == ID_mult || e.id() == ID_array || e.id() == ID_with ||
       e.id() == ID_struct || e.id() == ID_union || e.id() == ID_empty_union ||
-      e.id() == ID_equal || e.id() == ID_notequal || e.id() == ID_lt ||
-      e.id() == ID_le || e.id() == ID_gt || e.id() == ID_ge ||
-      e.id() == ID_if || e.id() == ID_not || e.id() == ID_and ||
-      e.id() == ID_or || e.id() == ID_bitnot || e.id() == ID_bitand ||
-      e.id() == ID_bitor || e.id() == ID_bitxor || e.id() == ID_vector)
+      e.id() == ID_compound_literal || e.id() == ID_equal ||
+      e.id() == ID_notequal || e.id() == ID_lt || e.id() == ID_le ||
+      e.id() == ID_gt || e.id() == ID_ge || e.id() == ID_if ||
+      e.id() == ID_not || e.id() == ID_and || e.id() == ID_or ||
+      e.id() == ID_bitnot || e.id() == ID_bitand || e.id() == ID_bitor ||
+      e.id() == ID_bitxor || e.id() == ID_vector)
     {
       return std::all_of(
         e.operands().begin(), e.operands().end(), [this](const exprt &op) {
