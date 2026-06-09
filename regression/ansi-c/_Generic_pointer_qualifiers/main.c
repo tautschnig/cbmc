@@ -43,5 +43,11 @@ int main(void)
   container_of_const(&is.sk, struct inet_sock, sk)->csum++; // must compile
   __CPROVER_assert(is.csum == 1, "container_of_const writable");
 
+  // C11 lvalue conversion: an array controlling expression decays to a
+  // pointer (kernel ATTRIBUTE_GROUPS: _Generic(attrs[], struct X **: ...)).
+  static struct sock *arr[2] = {0, 0};
+  int r4 = _Generic(arr, struct sock * * : 5, default : 6);
+  __CPROVER_assert(r4 == 5, "array decays to pointer");
+
   return 0;
 }

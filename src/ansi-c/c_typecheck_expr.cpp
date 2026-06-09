@@ -473,11 +473,16 @@ void c_typecheck_baset::typecheck_expr_main(exprt &expr)
     exprt assoc_match=nil_exprt();
 
     // C11 6.5.1.1: the controlling expression undergoes lvalue conversion,
-    // which drops its top-level qualifiers; pointee qualifiers are kept.
+    // which drops its top-level qualifiers and decays array/function types
+    // to pointers; pointee qualifiers are kept.
     typet op_type = op.type();
     op_type.remove(ID_C_constant);
     op_type.remove(ID_C_volatile);
     op_type.remove(ID_C_restricted);
+    if(op_type.id() == ID_array)
+      op_type = pointer_type(to_array_type(op_type).element_type());
+    else if(op_type.id() == ID_code)
+      op_type = pointer_type(op_type);
 
     for(const auto &irep : generic_associations)
     {
