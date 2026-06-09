@@ -920,6 +920,7 @@ Two authoritative docs, plus the user guide and a few linked deep-dives:
 
 Linked deep-dives (referenced from the two docs above):
 - [doc/python-frontend-dict-byref-plan.md](doc/python-frontend-dict-byref-plan.md) - dict pass-by-reference: why a uniform `dict[value,value]` default is blocked (string-behind-pointer perf explosion), the landed `value_equal` foundation, and the option set (targeted string-keyed by-ref vs `python_value` string-storage change).
+- [doc/python-frontend-decimal-plan.md](doc/python-frontend-decimal-plan.md) - sound exact `Decimal` model: why float/`fixedbv` are unsound (base-2 vs base-10), the base-10 `(sign, coefficient, exponent)` representation, the stub+converter hybrid (literal parsing intrinsic + parts arithmetic via `10 ** Δexp`), soundness bounds, and P1–P3 phasing.
 - [doc/python-frontend-regex-story.md](doc/python-frontend-regex-story.md) - Current regex support (shallow stub + `__cbmc_re_*` SMT intrinsics), backend-portability matrix, what doesn't work.
 - [doc/architectural/python-string-phase2-backend-abstraction.md](doc/architectural/python-string-phase2-backend-abstraction.md) - Detailed SMT-LIB String backend design (intrinsic↔term table, backend impact, PR ordering) for the strings plan.
 - [doc/architectural/python-perf-analysis.md](doc/architectural/python-perf-analysis.md) - Empirical 51-benchmark performance analysis and the slicer ↔ string-refinement contract.

@@ -546,19 +546,20 @@ alarms). Verified against the 2026-06-08 sweep baseline.
     - `github_3560` (`input()` + `split`), `github_3594` (`"ß".upper()`
       unicode case mapping) — reduce to the symbolic-string /
       string-refinement root ([§3](#strings)).
-- **`decimal` cluster (4) — substantial/blocked (open):** the `decimal.py`
-  stub models `Decimal` as a **float wrapper**, which is unsound for exact
-  decimal semantics (e.g. `Decimal("0.1") + Decimal("0.2") ==
-  Decimal("0.3")` is True for `Decimal` but False in float). It also can't
-  construct from a string: `Decimal("1.0")` passes the literal as a
-  runtime `python_value`, and `float(<runtime string>)` is nondet (the
-  frontend only parses *literal* strings at convert time), so
-  `decimal2`/`decimal3` (equality/ordering) get nondet `_v`.
-  `decimal`/`decimal4` additionally read CPython-internal attributes
-  (`_sign`, `_int`, `_exp`, `_is_special`). A correct fix is a single
-  **exact (sign, coefficient, exponent) Decimal model** — broadening the
-  float model to "pass" the tests would expand an unsound model and is
-  rejected on the soundness constraint. Niche (private API).
+- **`decimal` cluster (4) — sound exact model landing (see
+  [decimal plan](python-frontend-decimal-plan.md)):** the old `decimal.py`
+  stub modelled `Decimal` as a **float wrapper**, unsound for exact
+  decimal (e.g. `Decimal("0.1") + Decimal("0.2") == Decimal("0.3")` is
+  True for `Decimal` but False in float) and unable to construct from a
+  string (`float(<runtime string>)` is nondet). The fix is a base-10
+  exact `(sign, coefficient, exponent)` model: a thin converter intrinsic
+  parses `Decimal(<str/int literal>)` into the typed struct, and the stub
+  implements comparison/arithmetic on the parts via `10 ** Δexp`
+  alignment. P1 (parse + accessors + equality/ordering) and P2
+  (`+,-,neg,abs,*,//,%`) cover all four `decimal*` tests;
+  `truediv`/`sqrt`/`quantize`/context-rounding are a documented P3
+  residual. See the plan for representation, soundness bounds (64-bit
+  coefficient inherits the frontend-wide int model), and phasing.
 - **`lambda7` / `lambda18` body emission:** **closed** (both PASS in the
   2026-06-08 baseline).
 
