@@ -69,4 +69,4 @@ where
   )
 select f,
   f.getName() + "|" + f.getFile().getAbsolutePath() + "|" + line.toString() +
-  "|" + kind
+  "|" + kind + "|impact=READ"

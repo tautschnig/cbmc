@@ -209,6 +209,19 @@ predicate directIndex(
   not bareParameter(idx, f)
 }
 
+/** Impact tier of a count/index hit.  WRITE (high impact -- OOB write,
+ *  the primitive that escalates to control-flow / data corruption) when
+ *  the array access is an assignment destination; READ (lower impact --
+ *  OOB read / info-leak / DoS) otherwise.  The talk's point: triage must
+ *  separate write/control primitives from read/DoS, and LLMs overstate the
+ *  latter as the former. */
+predicate writeImpact(ArrayExpr ae) { exists(Assignment a | a.getLValue() = ae) }
+
+/** Impact string for a direct-index access. */
+string indexImpact(ArrayExpr ae) {
+  if writeImpact(ae) then result = "WRITE" else result = "READ"
+}
+
 from Function f, string kind, string name, int line, string detail
 where
   name = f.getName() and
@@ -219,7 +232,7 @@ where
       line = loop.getLocation().getStartLine() and
       detail =
         "count=" + cnt.getSourceName() + "|arr=" + an + "[" + sz + "]" +
-          "|confidence=" + confidence(cnt)
+          "|confidence=" + confidence(cnt) + "|impact=WRITE"
     )
     or
     exists(ArrayExpr ae, CountSource idx, string an, int sz |
@@ -228,7 +241,7 @@ where
       line = ae.getLocation().getStartLine() and
       detail =
         "index=" + idx.getSourceName() + "|arr=" + an + "[" + sz + "]" +
-          "|confidence=" + confidence(idx)
+          "|confidence=" + confidence(idx) + "|impact=" + indexImpact(ae)
     )
   )
 select f,
