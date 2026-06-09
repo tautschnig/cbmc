@@ -41,7 +41,76 @@
 #include <cstring>
 #include <functional>
 #include <iomanip>
+#include <optional>
 #include <sstream>
+#include <tuple>
+
+// Parse a decimal.Decimal literal string into its base-10 parts
+// (sign, coefficient, exponent, is_special, special_kind) for the exact
+// Decimal model (see doc/python-frontend-decimal-plan.md). Returns
+// nullopt for shapes we don't model exactly (malformed, or > 18
+// coefficient digits which would overflow the 64-bit coefficient), so
+// the caller falls through to conservative construction.
+//   "10.5" -> (0,105,-1,0,0)   "1.00" -> (0,100,-2,0,0)
+//   "3" -> (0,3,0,0,0)  "-0" -> (1,0,0,0,0)  "1.5e3" -> (0,15,2,0,0)
+//   "inf"/"-inf"/"nan"/"snan" -> is_special set
+static std::optional<std::tuple<long, long long, long, long, long>>
+parse_decimal_literal(const std::string &in)
+{
+  std::string s = in;
+  long sign = 0;
+  std::size_t i = 0;
+  if(i < s.size() && (s[i] == '+' || s[i] == '-'))
+  {
+    sign = (s[i] == '-') ? 1 : 0;
+    ++i;
+  }
+  std::string rest = s.substr(i);
+  std::string low;
+  for(char c : rest)
+    low += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  if(low == "inf" || low == "infinity")
+    return std::make_tuple(sign, 0LL, 0L, 1L, sign ? 2L : 1L);
+  if(low == "nan")
+    return std::make_tuple(sign, 0LL, 0L, 1L, 3L);
+  if(low == "snan")
+    return std::make_tuple(sign, 0LL, 0L, 1L, 4L);
+
+  // Numeric: mantissa [eE [+-] exp].
+  std::string mant = rest;
+  long exp_explicit = 0;
+  std::size_t epos = rest.find_first_of("eE");
+  if(epos != std::string::npos)
+  {
+    mant = rest.substr(0, epos);
+    const std::string es = rest.substr(epos + 1);
+    if(es.empty())
+      return std::nullopt;
+    errno = 0;
+    char *end = nullptr;
+    exp_explicit = std::strtol(es.c_str(), &end, 10);
+    if(errno != 0 || end == nullptr || *end != '\0')
+      return std::nullopt;
+  }
+  std::size_t dot = mant.find('.');
+  std::string digits;
+  long fracdigits = 0;
+  if(dot == std::string::npos)
+    digits = mant;
+  else
+  {
+    digits = mant.substr(0, dot) + mant.substr(dot + 1);
+    fracdigits = static_cast<long>(mant.size() - dot - 1);
+  }
+  if(digits.empty() || digits.size() > 18)
+    return std::nullopt;
+  for(char c : digits)
+    if(!std::isdigit(static_cast<unsigned char>(c)))
+      return std::nullopt;
+  const long long coeff = std::stoll(digits);
+  const long exp = -fracdigits + exp_explicit;
+  return std::make_tuple(sign, coeff, exp, 0L, 0L);
+}
 
 // PLR §6.3.4: Calls
 // "A call calls a callable object (e.g., a function) with a possibly
@@ -577,6 +646,74 @@ exprt python_convertert::convert_call(const jsont &expr)
   // Regular function call — check if it's a class constructor
   if(class_types.count(func_name))
   {
+    // Sound exact-Decimal model: Decimal(<str/int literal>) is folded at
+    // convert time into the base-10 (sign, coeff, exp) struct, because
+    // the stub cannot parse a runtime string (float(<runtime str>) is
+    // nondet). Non-literal args fall through to the stub __init__.
+    // See doc/python-frontend-decimal-plan.md.
+    if(func_name == "Decimal" && args.is_array() && as_array(args).size() == 1)
+    {
+      const jsont &arg0 = *as_array(args).begin();
+      std::optional<std::tuple<long, long long, long, long, long>> parts;
+      if(is_node_type(arg0, "Constant"))
+      {
+        const jsont &cv = json_member(arg0, "value");
+        if(cv.is_string())
+          parts = parse_decimal_literal(cv.value);
+        else if(cv.is_number())
+        {
+          // Integer literal (a float literal falls through — residual).
+          const std::string &vs = cv.value;
+          if(
+            vs.find('.') == std::string::npos &&
+            vs.find('e') == std::string::npos &&
+            vs.find('E') == std::string::npos)
+          {
+            errno = 0;
+            char *end = nullptr;
+            long long iv = std::strtoll(vs.c_str(), &end, 10);
+            if(errno == 0 && end != nullptr && *end == '\0')
+              parts = std::make_tuple(
+                iv < 0 ? 1L : 0L, iv < 0 ? -iv : iv, 0L, 0L, 0L);
+          }
+        }
+      }
+      if(parts.has_value())
+      {
+        const auto [psign, pcoeff, pexp, pspec, pkind] = *parts;
+        const struct_typet &dt = to_struct_type(class_types.at("Decimal"));
+        exprt::operandst fields;
+        for(const auto &comp : dt.components())
+        {
+          const std::string nm = id2string(comp.get_name());
+          long long v = 0;
+          bool set = true;
+          if(nm == "__class_tag")
+            v =
+              class_tag_ids.count("Decimal") ? class_tag_ids.at("Decimal") : 0;
+          else if(nm == "_sign")
+            v = psign;
+          else if(nm == "_int")
+            v = pcoeff;
+          else if(nm == "_exp")
+            v = pexp;
+          else if(nm == "_is_special")
+            v = pspec;
+          else if(nm == "_special_kind")
+            v = pkind;
+          else if(nm.rfind("__shadow_", 0) == 0)
+            v = 1; // a directly-built field is present on the instance
+          else
+            set = false;
+          if(set)
+            fields.push_back(from_integer(v, comp.type()));
+          else
+            fields.push_back(safe_zero(comp.type()));
+        }
+        return struct_exprt{std::move(fields), class_types.at("Decimal")};
+      }
+    }
+
     // Constructor call as expression: create temp, call __init__, return temp
     const struct_typet &cls_type = class_types[func_name];
     static unsigned ctor_tmp_counter = 0;
