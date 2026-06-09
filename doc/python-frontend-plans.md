@@ -502,12 +502,34 @@ alarms). Verified against the 2026-06-08 sweep baseline.
     (`{'+': lambda: 1.0}[x]()` — a callable in a dict), `github_3707`
     (`g = f; def h(op=g): op(...)` — function as default arg). These are
     the first-class-function-value gap ([§12](#higher-order)).
-  - **Singletons:** `github_3667` (shallow `list.copy()` inner-list
-    aliasing), `github_3728` (linked-structure `y.tail.head` attribute
-    chain / `Optional` self-ref), `github_3313` (isinstance-narrowing on
-    `str | datetime` + datetime stub fields), `github_3560` (`input()` +
-    `split`), `github_3594` (`"ß".upper()` unicode case mapping),
-    `github_3772_3` (annotation says `str`, returns `int`).
+  - **Singletons (per-test root, triaged 2026-06-09):**
+    - `github_3772_3` (annotation says `str`, returns `int`) — **FIXED
+      (`afe6acb0e0`)**: a variable annotation is a hint, so an
+      incompatible scalar/string RHS keeps its value instead of coercing
+      to nondet.
+    - `github_3667` (shallow `list.copy()` inner-list aliasing) —
+      **substantial:** `list.copy()` is modelled as a value (deep) copy,
+      but Python's copy is shallow (inner lists shared), so after
+      `nested[0].append(99)` the snapshot `shallow[0]` is still length 1
+      and `shallow[0][1]` raises IndexError. Needs by-reference inner
+      containers (the nested-container-aliasing root).
+    - `github_3728` (`y.tail.head` over `Optional["List"]`) —
+      **architectural:** a self-referential class field is truncated to a
+      minimal `{__class_tag}` struct (to break infinite recursion), losing
+      `head`/`tail`. Needs pointer-to-class self-referential fields +
+      attribute-deref (recursive data structures: linked lists / trees).
+    - `github_3313` (isinstance-narrowing on `str | datetime`) —
+      **substantial:** datetime construction, field access and
+      `isinstance` all work in isolation; the gap is **field access on a
+      union (`python_value`) parameter after isinstance narrowing** (union
+      unwrap to the datetime struct).
+    - `github_2960` / `github_3286` (module-stub + isinstance) —
+      **substantial:** `ll.py` does `from md import Foo`; `Foo(s)` is
+      "no body" — multi-level cross-module class resolution, plus a union
+      (`Foo | Bar`) return and module-qualified `isinstance(x, ll.Bar)`.
+    - `github_3560` (`input()` + `split`), `github_3594` (`"ß".upper()`
+      unicode case mapping) — reduce to the symbolic-string /
+      string-refinement root ([§3](#strings)).
 - **`decimal` cluster (4):** `decimal`/`decimal2`/`decimal3`/`decimal4`
   read `Decimal` internal attributes (`_sign`, `_int`, `_exp`) — needs a
   `Decimal` model exposing those; niche (private API).
