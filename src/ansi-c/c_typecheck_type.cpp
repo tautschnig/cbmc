@@ -986,32 +986,32 @@ void c_typecheck_baset::typecheck_compound_body(
           }
           else
           {
-            // GCC and Clang ignore anything other than an untagged struct or
-            // union; we could print a warning, but there isn't any ambiguity in
-            // semantics here. Printing a warning could elevate this to an error
-            // when compiling code with goto-cc with -Werror.
-            // Note that our type checking always creates a struct_tag/union_tag
-            // type, but only named struct/union types have an ID_tag member.
-            if(
-              new_component.type().id() == ID_struct_tag &&
-              follow_tag(to_struct_tag_type(new_component.type()))
-                .find(ID_tag)
-                .is_nil())
-            {
-              // ok, anonymous struct
-            }
-            else if(
-              new_component.type().id() == ID_union_tag &&
-              follow_tag(to_union_tag_type(new_component.type()))
-                .find(ID_tag)
-                .is_nil())
-            {
-              // ok, anonymous union
-            }
-            else
-            {
-              continue;
-            }
+            // C11 allows an *untagged* struct/union as an anonymous member.
+            // -fms-extensions (and MSVC) additionally allow a *tagged*
+            // struct/union as an anonymous member, injecting its members
+            // and contributing its size -- used throughout the Linux kernel
+            // (e.g. `struct __filename_head;` embedded in struct filename).
+            // Without -fms-extensions, GCC/Clang ignore such a member (it
+            // contributes no size); we preserve that.  A non-struct/union
+            // unnamed member (e.g. a bare `int;`) is always ignored.
+            const bool is_struct_tag =
+              new_component.type().id() == ID_struct_tag;
+            const bool is_union_tag = new_component.type().id() == ID_union_tag;
+
+            bool is_untagged = false;
+            if(is_struct_tag)
+              is_untagged = follow_tag(to_struct_tag_type(new_component.type()))
+                              .find(ID_tag)
+                              .is_nil();
+            else if(is_union_tag)
+              is_untagged = follow_tag(to_union_tag_type(new_component.type()))
+                              .find(ID_tag)
+                              .is_nil();
+
+            if(!is_struct_tag && !is_union_tag)
+              continue; // not a struct/union: ignore
+            if(!is_untagged && !config.ansi_c.ms_extensions)
+              continue; // tagged anonymous member needs -fms-extensions
           }
         }
 

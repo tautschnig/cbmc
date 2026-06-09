@@ -584,6 +584,14 @@ int gcc_modet::doit()
   if(cmdline.isset("-fsingle-precision-constant"))
     config.ansi_c.single_precision_constant=true;
 
+  // -fms-extensions enables MS/GCC extensions such as anonymous members
+  // that are a *tagged* struct/union type (used throughout the Linux
+  // kernel, e.g. struct __filename_head embedded in struct filename).
+  // Note: goto_cc_cmdlinet stores long options without the leading '-',
+  // so we query "fms-extensions" (cf. the "fshort-double" check below).
+  if(cmdline.isset("fms-extensions"))
+    config.ansi_c.ms_extensions = true;
+
   // -fshort-double makes double the same as float
   if(cmdline.isset("fshort-double"))
     config.ansi_c.double_width=config.ansi_c.single_width;
