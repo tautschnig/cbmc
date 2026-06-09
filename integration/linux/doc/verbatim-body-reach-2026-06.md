@@ -14,11 +14,15 @@ a `CHECKPOINT` at the sink. When a candidate has one, both the shape
 body; the table marks it `src=REAL`. Candidates without one fall back to
 the shape model (`src=shape`).
 
-First real harness: `real_cgw_csum.c` — the verbatim `net/can/gw.c`
-`cgw_csum_crc8_pos` body and the verbatim uapi struct layouts
-(`canfd_frame`, `cgw_csum_crc8`). The OOB primitive is
-`cf->data[crc8->result_idx]` with `result_idx` an `__s8` copied raw from a
-netlink attribute (`nla_memcpy`).
+First real harnesses: `real_cgw_csum.c` (the verbatim `net/can/gw.c`
+`cgw_csum_crc8_pos` body) and `real_rxkad_ticket.c` (the verbatim
+bounded-cursor ticket-parse core of `net/rxrpc/rxkad.c`
+`rxkad_decrypt_ticket`).
+
+### cgw_csum_crc8_pos
+
+The OOB primitive is `cf->data[crc8->result_idx]` with `result_idx` an
+`__s8` copied raw from a netlink attribute (`nla_memcpy`).
 
 ```
 function           ... src    shape:bug  shape:fix   reach:bug   reach:fix
@@ -29,6 +33,37 @@ cgw_csum_crc8_neg  ... shape  FAILED     SUCCESSFUL  REACHABLE   BLOCKED
 `probe_vuln` (raw attacker `result_idx`) → shape FAILED / reach REACHABLE;
 `probe_fixed` (caller-validated index, as the CVE fix enforces) → shape
 SUCCESSFUL / reach BLOCKED — on the real body.
+
+### rxkad_decrypt_ticket (verbatim resolves a function-granularity FP)
+
+The bounded-cursor oracle flags this at *function* granularity: the flags
+byte `*p` is read with no in-function length check.  But the OOB is closed
+by the **caller's** precondition — `rxkad_verify_response` (rxkad.c:1167)
+rejects `ticket_len < 4`.  The verbatim harness makes this precise:
+
+```
+function              ... src    shape:bug  shape:fix   reach:bug   reach:fix
+rxkad_decrypt_ticket  ... REAL   FAILED     SUCCESSFUL  REACHABLE   BLOCKED
+```
+
+`probe_vuln` (function in isolation, `ticket_len` unconstrained) is
+OOB-reachable; `probe_fixed` (with the real caller guard `ticket_len >= 4`)
+is safe.  So the verbatim+precondition analysis adjudicates the
+function-granularity hit as an FP closed by the caller — exactly the
+triage distinction the talk calls for.
+
+### crush_decode — not a verbatim target (BMC-intractable), by design
+
+`net/ceph/osdmap.c crush_decode` (flagged by the decoded-length oracle for
+a count→multiply) is deliberately *not* harnessed verbatim: its bucket
+loop iterates a `u32` count (up to 2³²), which bounded model checking
+cannot unwind without bounding the count — and bounding it removes the
+overflow scenario.  Moreover, on 64-bit a `u32 × sizeof` cannot overflow
+`size_t`, and the real code uses `kzalloc_objs`→`array_size`/`size_mul`
+(overflow-checked) regardless.  The arithmetic-overflow question is
+precisely what the loop-free **shape model** answers (which `triage_loop`
+already runs for the `decoded` oracle); the verbatim unbounded-count loop
+is the wrong tool.  An honest boundary of the verbatim approach.
 
 ## On the "further C front-end fixes" hypothesis
 
@@ -66,5 +101,6 @@ remaining work to scale verbatim-body adjudication is harness authoring
 ## Files
 
 * `real_cgw_csum.c` — verbatim CVE-2019-3701 (CAN-gw) harness.
-* `triage_loop.py` — `REAL_HARNESS` registry + `src` column.
+* `real_rxkad_ticket.c` — verbatim rxkad ticket-parse core (FP-resolved).
+* `triage_loop.py` — `REAL_HARNESS` registry, `src` column, `--only`.
 * `real_nfc_llcp_cover.c` — verbatim CVE-2026-31622 (also registered).
