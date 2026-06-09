@@ -245,8 +245,13 @@ void c_typecheck_baset::typecheck_type(typet &type)
             c_index_type(), unsigned_int_type(), from_integer(4, size_type()));
         }
       }
-      else // give up, just use subtype
-        result = to_type_with_subtype(type).subtype();
+      else // give up, just use the (resolved) underlying type.  For an
+           // enum subtype this is the enum's underlying bitvector, NOT the
+           // c_enum_tag -- using the tag would make the enum's underlying
+           // type its own tag (a cycle), which later crashes
+           // pointer_offset_bits/alignment.  This happens for mode names we
+           // don't special-case (e.g. mode(byte) without underscores).
+        result = underlying_type;
 
       // save the location
       result.add_source_location()=type.source_location();

@@ -1,0 +1,14 @@
+CORE gcc-only
+main.c
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR$
+--
+An enum with __attribute__((mode(...))) must not produce a self-referential
+underlying type (enum whose underlying type is its own c_enum_tag), which
+crashed pointer_offset_bits/alignment.  Covers a special-cased mode (__QI__)
+and a fall-back mode name (byte).
