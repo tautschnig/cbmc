@@ -44,6 +44,12 @@ GROUND_TRUTH = {
     "crush_decode": ("ceph osdmap",
         "count->multiply; array_size/size_mul guarded, u32 cannot overflow "
         "size_t on 64-bit -- shape-model territory, BMC-intractable verbatim"),
+    "ieee80211_get_ttlm": ("mac80211 T2L map",
+        "bounded-cursor: read width chosen by bm_size, no length arg; "
+        "UNGUARDED in caller-precondition -- genuine concern (verbatim TP)"),
+    "try_rfc959": ("nf_conntrack_ftp",
+        "FTP PORT parser (try_number); loop bounded by dlen, index by "
+        "array_size -- CBMC-clear TRUE NEGATIVE (verbatim)"),
 }
 
 
@@ -111,6 +117,18 @@ def adjudicate(func, kind_oracle, otype):
 CAND_CACHE = []
 
 
+def caller_verdicts(db):
+    """func -> caller-precondition verdict (CALLER-GUARDED/PARTIAL/UNGUARDED)
+    from caller_precondition.ql."""
+    m = {}
+    for line in tl.run_oracle(db, "caller_precondition.ql"):
+        p = line.split("|")
+        for field in p:
+            if field.startswith("verdict="):
+                m[p[0]] = field.split("=", 1)[1]
+    return m
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
@@ -146,15 +164,25 @@ def main():
             if f in GROUND_TRUTH and not any(s[2]["func"] == f for s in survivors):
                 survivors.append((label, otype, fn["by_func"][f]))
 
-    print("\n## Distilled survivors -- CBMC-adjudicated (shape + reach)\n")
+    print("\n## Distilled survivors -- CBMC-adjudicated (shape + reach) + caller-guard\n")
+    cg = caller_verdicts(a.db)
     print(f"{'function':<24}{'oracle':<13}{'src':<6}"
-          f"{'shape:b/f':<13}{'reach:b/f':<13}{'ground-truth'}")
-    print("-" * 100)
+          f"{'shape:b/f':<13}{'reach:b/f':<13}{'caller':<16}{'ground-truth'}")
+    print("-" * 110)
     for label, otype, c in survivors:
         src, sb, sf, rb, rf = adjudicate(c["func"], c["kind"], otype)
         gt = GROUND_TRUTH.get(c["func"], ("", ""))[0]
+        cgv = cg.get(c["func"], "no-len-param")
         print(f"{c['func']:<24}{label:<13}{src:<6}"
-              f"{(sb[:4]+'/'+sf[:4]):<13}{(rb[:5]+'/'+rf[:5]):<13}{gt}")
+              f"{(sb[:4]+'/'+sf[:4]):<13}{(rb[:5]+'/'+rf[:5]):<13}"
+              f"{cgv:<16}{gt}")
+
+    print("\n## Caller-precondition automation (function-granularity FP filter)\n")
+    print("  Of the distilled survivors, those marked CALLER-GUARDED are")
+    print("  function-granularity hits whose bound is validated by every")
+    print("  caller -- i.e. FPs the automation resolves without a harness.")
+    ng = sum(1 for _, _, c in survivors if cg.get(c["func"]) == "CALLER-GUARDED")
+    print(f"  CALLER-GUARDED survivors: {ng} / {len(survivors)}")
 
     print("\n## Ground-truth coverage\n")
     for fnc, (cve, note) in GROUND_TRUTH.items():

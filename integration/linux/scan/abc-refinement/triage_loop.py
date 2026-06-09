@@ -74,6 +74,18 @@ REAL_HARNESS = {
         "probe": "rxkad_parse_ticket",
         "flags": ["--bounds-check", "--pointer-check"], "unwind": 12,
     },
+    "ieee80211_get_ttlm": {
+        "file": "real_ttlm.c",
+        "vuln": "probe_vuln", "fixed": "probe_fixed",
+        "probe_vuln": "probe_vuln", "probe_fixed": "probe_fixed",
+        "flags": ["--bounds-check", "--pointer-check"], "unwind": 4,
+    },
+    "try_rfc959": {
+        "file": "real_ftp_number.c",
+        "vuln": "probe_vuln", "fixed": "probe_fixed",
+        "probe": "run",
+        "flags": ["--bounds-check", "--pointer-check"], "unwind": 10,
+    },
 }
 
 

@@ -89,15 +89,20 @@ hides:
   real CVE cluster surfacing at the top tier and CBMC confirming the shape
   — a concrete, measured narrowing, not an anecdote.
 * **Recall:** no ground-truth function is dropped by the distillation.
-* **The honest frontier (motivates next work):** (a) the decoded-len and
-  skb oracles have no confidence tier, so they narrow far less (290→26
-  overall is dominated by their 170+28); extending the taint tier to them
-  is the obvious precision lever. (b) The dominant residual is
-  *function-granularity hits closed by caller preconditions* (cgw, rxkad,
-  and the whole mac80211 MEDIUM cluster); automating the caller-precondition
-  check is the highest-leverage FP-reduction step. (c) `src=REAL` coverage
-  is 2 functions; scaling verbatim harness authoring (or auto-generation)
-  is what turns shape verdicts into real-code verdicts.
+* **Progress on the frontier (since first run):**
+  * The **caller-precondition automation** (`caller_precondition.ql`, now
+    a `caller` column here) resolves the dominant FP class without a
+    harness: `rxkad_decrypt_ticket` is auto-marked CALLER-GUARDED, while
+    `ieee80211_get_ttlm` stays UNGUARDED (a kept genuine concern). See
+    `caller-precondition-2026-06.md`.
+  * `src=REAL` coverage grew 2 → 5 functions (cgw, nfc, rxkad, ttlm, ftp),
+    including a verbatim **true negative** (`try_rfc959`: SUCC/SUCC,
+    BLOCK/BLOCK — CBMC *clears* a flagged function on real code) and a
+    verbatim **true positive** (`ieee80211_get_ttlm`).
+* **Remaining frontier:** (a) the decoded-len and skb oracles still lack a
+  confidence tier (extend the taint tier to them); (b) the caller check
+  does not yet handle `(p, end)` pointer cursors or struct-field bounds
+  (cgw); (c) scale `src=REAL` further toward auto-generated harnesses.
 
 ## Reproduce
 
