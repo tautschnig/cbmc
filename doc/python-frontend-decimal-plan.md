@@ -1,7 +1,11 @@
 # Python frontend: sound exact-`Decimal` model
 
-Status: **P1/P2 landed** (`8f8ebf3aea`); P3 (context rounding / division)
-is the remaining residual. See [§9 of the plans doc](python-frontend-plans.md#precision).
+Status: **P1/P2/P3 landed** (`8f8ebf3aea`, `2fcd9c7b46`; `!=` class
+dispatch `7367a713bf`). Remaining residuals: non-terminating division and
+`sqrt` (28-digit context rounding exceeds the 64-bit coefficient → sound
+nondet), Inf-comparison precision (sound nondet), and the bounded
+exponent-alignment / 64-bit coefficient. See
+[§9 of the plans doc](python-frontend-plans.md#precision).
 
 This deep-dive specifies a sound, exact model of the `decimal.Decimal`
 stdlib type for the CBMC Python frontend, replacing the previous
