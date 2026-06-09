@@ -11,7 +11,7 @@ the pipeline actually help triage?" that the talk's lesson demands.
 |--------|---------:|--------------:|-----------:|-----------------:|--------------------:|--------------:|----------:|
 | count/index | 92 | 65 | 4 | 4 | 3 | 3 | **4** |
 | decoded-len | 28 | 11 | n/a | 4 | 1 | 0 | **1** |
-| skb / cursor | 170 | 135 | n/a | 1 | 19 | 55 | **19** |
+| skb / cursor | 170 | 135 | n/a | 8 | 19 | 48 | **19** |
 | **total** | **290** | **211** | | | | | **24** |
 
 *precond-resolved* = functions the caller/producer-precondition automation
@@ -26,8 +26,9 @@ confidence×impact HIGH&WRITE tier.
 
 The count/index oracle narrows 92→4 via confidence×impact; the previously
 weakly-narrowed oracles now narrow via the precondition automation —
-**decoded-len 11 functions → 1 genuine concern, skb 135 → 19** (with 55
-more held as `skb-pull-weak` pending interprocedural depth).
+**decoded-len 11 functions → 1 genuine concern, skb 135 → 19** (with 48
+more held as `skb-pull-weak`; interprocedural depth-3 tracking already
+resolved several multi-hop `pskb_may_pull` cases down from 55).
 
 ## CBMC-adjudicated survivors (shape + reach)
 
@@ -106,11 +107,12 @@ hides:
   * The two survivors the automation does NOT dismiss (`ieee80211_get_ttlm`,
     `try_rfc959`) are exactly the ones CBMC then adjudicates — a real OOB
     and a cleared true negative.
-* **Remaining frontier:** (a) the 55 `skb-pull-weak` functions need
-  *interprocedural-depth* precondition tracking (the `pskb_may_pull` lives
-  in a grand-caller, not the immediate one); (b) scale `src=REAL` toward
-  auto-generated harnesses; (c) value-flow precision in the precondition
-  guards (reassignment between guard and call).
+* **Remaining frontier:** (a) the 48 `skb-pull-weak` functions are guarded
+  beyond depth 3 or via an untraceable skb origin (queue/list rather than a
+  forwarded parameter) — deeper or value-flow-aware tracking would resolve
+  more; (b) scale `src=REAL` toward auto-generated harnesses; (c)
+  value-flow precision in the precondition guards (reassignment between
+  guard and call).
 
 ## Reproduce
 

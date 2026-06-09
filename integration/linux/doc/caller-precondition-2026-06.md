@@ -104,18 +104,23 @@ c->result_idx, ...)` -- bounding the indices against the CAN frame -- right
 before the `nla_memcpy` that stores the struct, so all four `cgw_csum_*`
 consumers are PRODUCER-GUARDED.
 
-### `skb` pull (caller `pskb_may_pull`)
+### `skb` pull (caller `pskb_may_pull`), interprocedural
 The function takes a `struct sk_buff *` and reads `skb->data` with no
 in-function length check (the skb oracle's `skb->data` shape).  The
-validation is the caller pulling the skb: a dominating `pskb_may_pull` /
-`skb_may_pull` / `skb_header_pointer` call, or a relational on `skb->len`,
-on the same skb passed in.  **Single-level only**: `pskb_may_pull` is often
-done once high in the rx stack, several parser layers above the flagged
-function, so a CALLER-GUARDED verdict (immediate caller pulls) is reliable
-FP evidence, but an UNGUARDED verdict is *weak* (the pull may live in a
-grand-caller).  Downstream (`pipeline_eval`) therefore counts skb-pull
-CALLER-GUARDED as a resolved FP but keeps skb-pull UNGUARDED in a separate
-`skb-pull-weak` bucket rather than the high-confidence genuine set.
+validation is an ancestor pulling the skb: a dominating `pskb_may_pull` /
+`skb_may_pull` / `skb_header_pointer` call, or an `skb->len` relational, on
+the skb threaded down to the function.  Because `pskb_may_pull` is usually
+done **once high in the rx stack**, the check is **interprocedural to depth
+3**: CALLER-GUARDED holds only when *no* call path within three frames
+reaches the function with the skb unpulled (`hasUnpulledPath` is the
+positive witness, negated once).  It is conservative — an skb whose origin
+in a frame cannot be traced to a forwarded, pulled parameter counts as
+unpulled — so CALLER-GUARDED never wrongly certifies a function.  Depth-3
+resolves the classic dispatch pattern (`ieee80211_scan_rx`,
+`j1939_xtp_rx_*`, `icmp_manip_pkt`: pulled at the rx entry, then handed to
+per-message handlers).  `pipeline_eval` still keeps any residual skb-pull
+UNGUARDED in a separate `skb-pull-weak` bucket (depth > 3, or untraceable
+origin), not the high-confidence genuine set.
 
 ## Honest limits
 

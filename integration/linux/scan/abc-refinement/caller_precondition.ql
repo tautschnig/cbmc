@@ -229,6 +229,54 @@ int numGuardedSkb(Function target, Parameter skb) {
     )
 }
 
+/** The skb passed to call `fc` is forwarded from the caller's own skb
+ *  parameter (so the bound can be tracked one frame up). */
+predicate skbForwarded(
+  FunctionCall fc, Parameter calleeSkb, Function caller, Parameter callerSkb
+) {
+  caller = fc.getEnclosingFunction() and
+  skbParam(caller, callerSkb) and
+  fc.getArgument(calleeSkb.getIndex()).(VariableAccess).getTarget() = callerSkb
+}
+
+/** A witness that `f` is NOT guarded on all paths: a call chain of length
+ *  <= d up which the skb reaches `f` with no ancestor pulling it.
+ *  Conservative -- if the skb at a call cannot be traced to a forwarded
+ *  caller parameter, the path counts as unpulled (so we never wrongly
+ *  certify a function as guarded). */
+predicate hasUnpulledPath(Function f, Parameter skb, int d) {
+  skbParam(f, skb) and
+  d = [0 .. 3] and
+  (
+    // f is a root: the skb arrives from outside this TU, unpulled here
+    not exists(FunctionCall fc | fc.getTarget() = f)
+    or
+    exists(FunctionCall fc | fc.getTarget() = f and not skbCallerGuard(fc, skb) |
+      // skb does not come from the caller's forwarded param -> can't trace
+      not skbForwarded(fc, skb, _, _)
+      or
+      // the caller is itself a root (no further frame to pull in)
+      not exists(FunctionCall up | up.getTarget() = fc.getEnclosingFunction())
+      or
+      // recurse one frame up on the forwarded skb
+      d > 0 and
+      exists(Function caller, Parameter callerSkb |
+        skbForwarded(fc, skb, caller, callerSkb) and
+        hasUnpulledPath(caller, callerSkb, d - 1)
+      )
+    )
+  )
+}
+
+/** skb-pull verdict, interprocedural to depth 3.  CALLER-GUARDED only when
+ *  EVERY path (within depth 3) pulls the skb before reaching `f`. */
+string skbVerdict(Function f, Parameter skb) {
+  if not hasUnpulledPath(f, skb, 3)
+  then result = "CALLER-GUARDED"
+  else if numGuardedSkb(f, skb) > 0 then result = "PARTIAL"
+  else result = "UNGUARDED"
+}
+
 /** Verdict string. */
 bindingset[callers, guarded]
 string verdict(int callers, int guarded) {
@@ -281,7 +329,7 @@ where
       kind = "skb-pull" and
       detail =
         "bound=skb|callers=" + callers + "|guarded=" + guarded + "|verdict=" +
-          verdict(callers, guarded)
+          skbVerdict(target, skb)
     )
   )
 select target, target.getName() + "|kind=" + kind + "|" + detail
