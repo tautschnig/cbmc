@@ -1431,9 +1431,17 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
         if(le != name_list_elem_t.end())
           return le->second;
         const symbolt *vs = symbol_table.lookup(vid);
-        if(vs != nullptr && is_python_list_type(vs->type))
-          return to_array_type(to_struct_type(vs->type).components()[1].type())
-            .element_type();
+        if(vs != nullptr)
+        {
+          // A mutable-container parameter is passed by reference, so the
+          // symbol is a pointer to the list struct — deref to reach it.
+          typet vt = vs->type;
+          if(vt.id() == ID_pointer)
+            vt = to_pointer_type(vt).base_type();
+          if(is_python_list_type(vt))
+            return to_array_type(to_struct_type(vt).components()[1].type())
+              .element_type();
+        }
       }
     }
     return typet{}; // unknown
