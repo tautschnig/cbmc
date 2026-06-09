@@ -498,10 +498,12 @@ alarms). Verified against the 2026-06-08 sweep baseline.
     ([§3](#strings)), not a fragile point fix.
   - **Module-stub + isinstance (2):** `github_2960`, `github_3286`
     (`import ll; ll.create(...)` then `isinstance(x, ll.Bar)`).
-  - **Container-stored / default-arg callables (2):** `github_3690`
-    (`{'+': lambda: 1.0}[x]()` — a callable in a dict), `github_3707`
-    (`g = f; def h(op=g): op(...)` — function as default arg). These are
-    the first-class-function-value gap ([§12](#higher-order)).
+  - **Container-stored / default-arg callables (2) — FIXED
+    (`efb707770a`):** `github_3690` (`{'+': lambda: 1.0}[x]()` — a callable
+    in a dict-literal callee) via dict-of-callables dispatch + KeyError;
+    `github_3707` (`g = f; def h(op=g): op(...)` — function as default arg)
+    via default-arg callable monomorphisation. See
+    [§12](#higher-order). Bonus gain `lambda12`.
   - **Singletons (per-test root, triaged 2026-06-09):**
     - `github_3772_3` (annotation says `str`, returns `int`) — **FIXED
       (`afe6acb0e0`)**: a variable annotation is a hint, so an
@@ -530,17 +532,33 @@ alarms). Verified against the 2026-06-08 sweep baseline.
       stub defs are skipped in imported modules so the real implementation
       registers.
     - `github_3667` (shallow `list.copy()` inner-list aliasing) —
-      **substantial (open):** `list.copy()` is modelled as a value (deep)
-      copy, but Python's copy is shallow (inner lists shared), so after
+      **substantial (open):** `list.copy()` is a struct (deep) copy, but
+      Python's copy is shallow (inner lists shared), so after
       `nested[0].append(99)` the snapshot `shallow[0]` is still length 1
-      and `shallow[0][1]` raises IndexError. Needs by-reference inner
-      containers (the nested-container-aliasing root).
+      and `shallow[0][1]` raises a spurious IndexError (imprecision, not
+      unsoundness). The inner lists in `[[1],[2]]` are *anonymous* nested
+      literals stored by value; `escaped_mutables` only makes *named*
+      lists by-reference, so it does not apply. A sound fix needs
+      anonymous nested mutable literals stored by reference + shallow-copy
+      sharing + subscript/append deref — the full nested-container
+      by-reference root; no minimal sound fix exists on the value-based
+      representation.
     - `github_3560` (`input()` + `split`), `github_3594` (`"ß".upper()`
       unicode case mapping) — reduce to the symbolic-string /
       string-refinement root ([§3](#strings)).
-- **`decimal` cluster (4):** `decimal`/`decimal2`/`decimal3`/`decimal4`
-  read `Decimal` internal attributes (`_sign`, `_int`, `_exp`) — needs a
-  `Decimal` model exposing those; niche (private API).
+- **`decimal` cluster (4) — substantial/blocked (open):** the `decimal.py`
+  stub models `Decimal` as a **float wrapper**, which is unsound for exact
+  decimal semantics (e.g. `Decimal("0.1") + Decimal("0.2") ==
+  Decimal("0.3")` is True for `Decimal` but False in float). It also can't
+  construct from a string: `Decimal("1.0")` passes the literal as a
+  runtime `python_value`, and `float(<runtime string>)` is nondet (the
+  frontend only parses *literal* strings at convert time), so
+  `decimal2`/`decimal3` (equality/ordering) get nondet `_v`.
+  `decimal`/`decimal4` additionally read CPython-internal attributes
+  (`_sign`, `_int`, `_exp`, `_is_special`). A correct fix is a single
+  **exact (sign, coefficient, exponent) Decimal model** — broadening the
+  float model to "pass" the tests would expand an unsound model and is
+  rejected on the soundness constraint. Niche (private API).
 - **`lambda7` / `lambda18` body emission:** **closed** (both PASS in the
   2026-06-08 baseline).
 
@@ -660,12 +678,27 @@ access on the element struct) instead of the whole struct, so object lists
 order correctly (ascending and `reverse=True`). Keyless sorts and the
 constant-fold int/string fast paths are unchanged.
 
+**Container-stored callables — LANDED (`efb707770a`).** A call whose callee
+is a subscript of a dict *literal* of callables
+(`{'+': add, '-': sub}[op](5, 3)`, `{'+': lambda: 1.0}[x]()`) now
+dispatches: a result temp is assigned per entry under a `key == entry_key`
+guard that calls that entry's callable, and a key matching no entry raises
+KeyError (PLR §6.10). Falls through to the generic nondet callee path when
+the dict values are not all resolvable callables (so non-callable dict
+subscripts are unaffected). Gained `github_3690` (+ bonus `lambda12`).
+
+**Default-arg callables — LANDED (`efb707770a`).** `try_monomorphise_call`
+now also binds a parameter whose *default* value is a resolvable callable
+and which is called in the body (`g = f; def h(op=g): return op(1, 1)`
+called as `h()`), not only positionally-passed callables. Gained
+`github_3707`.
+
 **Residuals (sound; still open).**
-- First-class function values stored in a container and called indirectly
-  (the shared dependency for
-  [§2 phase 4, closures through containers](#closures)) remain unmodelled;
-  the monomorphisation clone covers *argument-passed* callables, not
-  container-stored ones.
+- Callables stored in a *named* container (`d = {...}; d[k]()`) or in a
+  list, and closures through containers
+  ([§2 phase 4](#closures)), remain unmodelled — the dispatch above
+  covers dict *literal* callees and the monomorphisation clone covers
+  *argument-passed* / *default-arg* callables.
 
 ---
 
