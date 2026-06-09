@@ -28,7 +28,15 @@ class DecodeCall extends FunctionCall {
         .matches(["__builtin_bswap%", "__swab16%", "__swab32%", "__swab64%",
                    "__fswab%", "get_unaligned%", "__get_unaligned%",
                    "be16_to_cpu%", "be32_to_cpu%", "be64_to_cpu%",
-                   "le16_to_cpu%", "le32_to_cpu%", "le64_to_cpu%"])
+                   "le16_to_cpu%", "le32_to_cpu%", "le64_to_cpu%",
+                   // subsystem decode accessors (taint sources): ceph and
+                   // netlink read a length from the wire much like the
+                   // byte-order builtins do.
+                   "ceph_decode_8", "ceph_decode_16", "ceph_decode_32",
+                   "ceph_decode_64", "nla_get_u8", "nla_get_u16",
+                   "nla_get_u32", "nla_get_u64", "nla_get_be16",
+                   "nla_get_be32", "nla_get_be64", "nla_get_le16",
+                   "nla_get_le32", "nla_get_le64"])
   }
 }
 

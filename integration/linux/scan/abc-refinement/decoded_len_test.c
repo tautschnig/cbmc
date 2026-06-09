@@ -27,6 +27,15 @@ unsigned int alloc_size(const uint32_t *buf)
   return nsrcs * 16;              // BUG: overflows
 }
 
+// (2b) subsystem decode accessor (ceph): a count decoded via ceph_decode_32
+// fed into an allocation-size multiply (ceph osdmap/crush pattern).
+extern unsigned int ceph_decode_32(void **p);
+unsigned int ceph_alloc_size(void **p)
+{
+  unsigned int n = ceph_decode_32(p); // decoded count from the wire
+  return n * 24;                      // BUG: overflows
+}
+
 // (3) NEGATIVE control: a decoded length NOT fed into round-up/multiply
 // (just compared) should NOT be flagged by this oracle.
 unsigned int plain_len(const uint32_t *buf, unsigned int len)
