@@ -4862,9 +4862,44 @@ protected:
   }
 };
 
+/// Recursively rewrite GCC `a ? : b` (gcc_conditional_expression side
+/// effects) into `(a != 0) ? a : b` if-expressions.  Used in constant
+/// contexts, where the once-only evaluation of `a` is immaterial (there are
+/// no side effects), so the simplifier can fold the result.
+static void lower_gcc_conditional_expressions(exprt &expr)
+{
+  for(auto &op : expr.operands())
+    lower_gcc_conditional_expressions(op);
+
+  if(
+    expr.id() == ID_side_effect &&
+    to_side_effect_expr(expr).get_statement() ==
+      ID_gcc_conditional_expression &&
+    expr.operands().size() == 2)
+  {
+    const exprt true_case = to_binary_expr(expr).op0();
+    const exprt false_case = to_binary_expr(expr).op1();
+    if_exprt if_expr{
+      typecast_exprt{true_case, bool_typet{}},
+      true_case,
+      false_case,
+      expr.type()};
+    if_expr.add_source_location() = expr.source_location();
+    expr.swap(if_expr);
+  }
+}
+
 void c_typecheck_baset::make_constant(exprt &expr)
 {
   source_locationt location = expr.find_source_location();
+
+  // GCC's `a ? : b` (omitted middle operand) is kept as a side-effect
+  // expression for goto-conversion (a is evaluated once).  In a constant
+  // context there are no side effects, so it is equivalent to
+  // `(a != 0) ? a : b`; lower it to an if-expression here so that the
+  // simplifier can fold it (e.g. the kernel's `__aligned((x + 0) ? :
+  // SMP_CACHE_BYTES)` cache-line alignment).
+  lower_gcc_conditional_expressions(expr);
 
   // Floating-point expressions may require a rounding mode.
   // ISO 9899:1999 F.7.2 says that the default is "round to nearest".

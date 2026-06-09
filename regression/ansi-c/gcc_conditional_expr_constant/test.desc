@@ -1,0 +1,13 @@
+CORE gcc-only
+main.c
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR$
+--
+GCC's `a ? : b` (omitted middle operand) must constant-fold in constant
+contexts (aligned attribute, enum value), as used by the Linux kernel
+cache-line alignment macros.
