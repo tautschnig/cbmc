@@ -664,7 +664,26 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
           "'",
         loc);
     }
-    rhs = coerce_assign_rhs(rhs, sym2.type);
+    // PLR §3.2: a variable annotation is a hint — it does not coerce the
+    // runtime value. When the declared annotation and the RHS are both
+    // simple value types (numeric or string) but in incompatible
+    // categories (e.g. `s: str = get_num()` where get_num returns int),
+    // keep the RHS value and retype the binding to its actual type,
+    // rather than coercing through an incompatible slot (which yields a
+    // value-losing nondet). Restricted to scalar/string on both sides so
+    // container/class/unsupported-op results still coerce as before.
+    auto simple_value_type = [this](const typet &t)
+    {
+      return t.id() == ID_signedbv || t.id() == ID_unsignedbv ||
+             t.id() == ID_integer || t.id() == ID_floatbv ||
+             t.id() == ID_bool || is_python_string_type(t);
+    };
+    if(
+      annotation_types_incompatible(sym2.type, rhs.type()) &&
+      simple_value_type(sym2.type) && simple_value_type(rhs.type()))
+      symbol_table.get_writeable_ref(symbol_id).type = rhs.type();
+    else
+      rhs = coerce_assign_rhs(rhs, sym2.type);
   }
 
   code_frontend_assignt assign{sym2.symbol_expr(), rhs};
