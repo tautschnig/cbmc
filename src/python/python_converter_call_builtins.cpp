@@ -3533,6 +3533,20 @@ std::optional<exprt> python_convertert::try_builtin_call(
       std::string cls_name;
       if(is_node_type(*it, "Name"))
         cls_name = json_string(json_member(*it, "id"));
+      // PLR §6.10.2: module-qualified class, e.g. `isinstance(b, ll.Bar)`.
+      // Classes are registered unprefixed (class_types["Bar"]), so when the
+      // attribute base is an imported module resolve to the attribute name.
+      else if(is_node_type(*it, "Attribute"))
+      {
+        const jsont &av = json_member(*it, "value");
+        if(is_node_type(av, "Name"))
+        {
+          std::string base = json_string(json_member(av, "id"));
+          std::string attr = json_string(json_member(*it, "attr"));
+          if(imported_modules.count(base) > 0 && class_types.count(attr) > 0)
+            cls_name = attr;
+        }
+      }
 
       // PLR §6.10.2: isinstance(x, (A, B)) — tuple of types
       if(is_node_type(*it, "Tuple"))
