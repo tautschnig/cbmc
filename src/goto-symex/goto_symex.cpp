@@ -19,6 +19,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/mathematical_types.h>
 #include <util/pointer_expr.h>
 #include <util/pointer_offset_size.h>
+#include <util/prefix.h>
 #include <util/refined_string_type.h>
 #include <util/simplify_utils.h>
 #include <util/std_code.h>
@@ -126,10 +127,13 @@ void goto_symext::symex_assign(
       language_mode,
       target};
 
-    // Python string backend (choice B): canonicalise cprover_string
-    // comparison content pointers to their backing array object so the
-    // refinement reasons over real, constrained content (no front-end
-    // association). Gated to Python; JBMC/other modes untouched.
+    // String backend (choice B): canonicalise cprover_string comparison
+    // content pointers to their backing array object so the refinement
+    // reasons over real, constrained content. Currently Python-specific: the
+    // materialisation is only valid for symex-resolved leaf content (Python's
+    // chr symbol arrays); it is harmful for refinement-constrained associated
+    // content (e.g. JBMC's char[]), which has no clean symex-side condition,
+    // so this stays gated while phase-2 backing (below) is language-agnostic.
     if(language_mode == "python" && rhs.id() == ID_function_application)
       resolve_python_string_content(to_function_application_expr(rhs), state);
 
@@ -328,20 +332,22 @@ bool goto_symext::constant_propagate_assignment_with_side_effects(
       // String-producing intrinsics whose first two arguments are the output
       // (length, content). When constant propagation below succeeds it
       // installs real backing for the result; when it fails (symbolic
-      // inputs), for Python we still install a fresh nondet backing array and
-      // associate it, so the produced result has real content memory the
-      // refinement constrains (phase 2). JBMC sets up its own backing before
-      // symex, so this is gated to Python.
-      auto with_python_backing = [&](bool constant_folded) -> bool
+      // inputs) and the result is not already backed by a concrete array
+      // (i.e. the front-end has not installed one -- JBMC does, the Python
+      // front-end does not), install a fresh nondet backing array and
+      // associate it so the produced result has real content memory the
+      // refinement constrains. Language-agnostic: gated on whether backing
+      // already exists, not on the source language.
+      auto with_backing = [&](bool constant_folded) -> bool
       {
-        if(!constant_folded && language_mode == "python")
-          setup_python_string_result_backing(state, symex_assign, f_l1);
+        if(!constant_folded && !string_result_already_backed(state, f_l1))
+          setup_string_result_backing(state, symex_assign, f_l1);
         return constant_folded;
       };
 
       if(func_id == ID_cprover_string_concat_func)
       {
-        return with_python_backing(
+        return with_backing(
           constant_propagate_string_concat(state, symex_assign, f_l1));
       }
       else if(func_id == ID_cprover_string_empty_string_func)
@@ -353,54 +359,53 @@ bool goto_symext::constant_propagate_assignment_with_side_effects(
       }
       else if(func_id == ID_cprover_string_substring_func)
       {
-        return with_python_backing(
+        return with_backing(
           constant_propagate_string_substring(state, symex_assign, f_l1));
       }
       else if(
         func_id == ID_cprover_string_of_int_func ||
         func_id == ID_cprover_string_of_long_func)
       {
-        return with_python_backing(
+        return with_backing(
           constant_propagate_integer_to_string(state, symex_assign, f_l1));
       }
       else if(func_id == ID_cprover_string_delete_char_at_func)
       {
-        return with_python_backing(
+        return with_backing(
           constant_propagate_delete_char_at(state, symex_assign, f_l1));
       }
       else if(func_id == ID_cprover_string_delete_func)
       {
-        return with_python_backing(
+        return with_backing(
           constant_propagate_delete(state, symex_assign, f_l1));
       }
       else if(func_id == ID_cprover_string_set_length_func)
       {
-        return with_python_backing(
+        return with_backing(
           constant_propagate_set_length(state, symex_assign, f_l1));
       }
       else if(func_id == ID_cprover_string_char_set_func)
       {
-        return with_python_backing(
+        return with_backing(
           constant_propagate_set_char_at(state, symex_assign, f_l1));
       }
       else if(func_id == ID_cprover_string_trim_func)
       {
-        return with_python_backing(
-          constant_propagate_trim(state, symex_assign, f_l1));
+        return with_backing(constant_propagate_trim(state, symex_assign, f_l1));
       }
       else if(func_id == ID_cprover_string_to_lower_case_func)
       {
-        return with_python_backing(
+        return with_backing(
           constant_propagate_case_change(state, symex_assign, f_l1, false));
       }
       else if(func_id == ID_cprover_string_to_upper_case_func)
       {
-        return with_python_backing(
+        return with_backing(
           constant_propagate_case_change(state, symex_assign, f_l1, true));
       }
       else if(func_id == ID_cprover_string_replace_func)
       {
-        return with_python_backing(
+        return with_backing(
           constant_propagate_replace(state, symex_assign, f_l1));
       }
     }
@@ -518,7 +523,7 @@ void goto_symext::associate_array_to_pointer(
     ssa_expr, expr_skeletont{}, array_to_pointer_app, {});
 }
 
-void goto_symext::setup_python_string_result_backing(
+void goto_symext::setup_string_result_backing(
   statet &state,
   symex_assignt &symex_assign,
   const function_application_exprt &f_l1)
@@ -531,6 +536,14 @@ void goto_symext::setup_python_string_result_backing(
     return;
   const typet char_type = to_pointer_type(content_arg.type()).base_type();
 
+  // Mode of the backing matches the result content's symbol (language of the
+  // producing front-end), keeping this routine language-agnostic.
+  irep_idt mode = ID_C;
+  if(
+    const symbolt *content_sym =
+      state.symbol_table.lookup(to_ssa_expr(content_arg).get_object_name()))
+    mode = content_sym->mode;
+
   // Fresh per-execution backing array (a distinct aux symbol per dynamic
   // call, mirroring the constant-string path, so loops never re-associate a
   // single pointer to two arrays).
@@ -540,7 +553,7 @@ void goto_symext::setup_python_string_result_backing(
     "",
     "string_content_backing",
     source_locationt{},
-    irep_idt{"python"},
+    mode,
     ns,
     state.symbol_table);
   backing.is_state_var = true;
@@ -565,7 +578,7 @@ void goto_symext::setup_python_string_result_backing(
         fn_id,
         mathematical_function_typet(
           {backing_type, b.type()}, signedbv_typet{32}),
-        irep_idt{"python"}};
+        mode};
       fs.base_name = id2string(fn_id);
       state.symbol_table.insert(std::move(fs));
     }
@@ -577,7 +590,7 @@ void goto_symext::setup_python_string_result_backing(
         "",
         "return_value",
         source_locationt{},
-        irep_idt{"python"},
+        mode,
         ns,
         state.symbol_table)
         .symbol_expr();
@@ -585,6 +598,38 @@ void goto_symext::setup_python_string_result_backing(
   };
   emit_associate(ID_cprover_associate_array_to_pointer_func, string_data);
   emit_associate(ID_cprover_associate_length_to_array_func, length_arg);
+}
+
+bool goto_symext::string_result_already_backed(
+  statet &state,
+  const function_application_exprt &f_l1)
+{
+  if(f_l1.arguments().size() < 2)
+    return true;
+  const exprt &content = f_l1.arguments().at(1);
+  if(content.type().id() != ID_pointer)
+    return true;
+  // If the value-set resolves the content pointer to a concrete object, a
+  // front-end (e.g. JBMC) has already installed and associated real backing
+  // and we must not install a second one (double association is a crash). A
+  // bare nondet result pointer (e.g. the Python front-end's __string_ptr)
+  // resolves to nothing concrete -> not backed -> symex installs backing.
+  const std::vector<exprt> vs = state.value_set.get_value_set(content, ns);
+  for(const auto &v : vs)
+  {
+    const exprt &obj = v.id() == ID_object_descriptor
+                         ? to_object_descriptor_expr(v).object()
+                         : v;
+    if(obj.id() == ID_unknown || obj.id() == ID_invalid)
+      continue;
+    if(
+      obj.id() == ID_symbol &&
+      has_prefix(
+        id2string(to_symbol_expr(obj).get_identifier()), "symex::invalid"))
+      continue;
+    return true;
+  }
+  return false;
 }
 
 std::optional<std::reference_wrapper<const array_exprt>>
