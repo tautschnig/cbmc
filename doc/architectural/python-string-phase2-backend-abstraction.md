@@ -1018,3 +1018,47 @@ The dedicated `chr` builtin (and the other stubbed axioms) remain worthwhile
 as **solver precision** improvements, but `chr` specifically must not be wired
 to the loop-fragile backing path for Python; it would only help a caller that
 does not route the result through `contains`-in-a-loop.
+
+
+### Query-intrinsic migration (2026-06-10): find/index landed; compare and producers deferred
+
+Investigating "implement repeat/compare/strip/split/index_of_from" revealed
+the Python front-end emits **none** of these refined-string intrinsics for
+symbolic strings — symbolic string methods fall back to constrained-nondet or
+byte-level approximations. So "implement the axioms" really means **migrate
+front-end call-sites** to emit intrinsics whose axioms mostly already exist
+(`index_of` already takes a from-index; `compare_to` already has axioms).
+Split by risk:
+
+* **`find` / `index` (queries) — LANDED.** Symbolic `str.find`/`str.index`
+  now emit `cprover_string_index_of_func` (existing axiom; returns an int, no
+  result string, so **no produced-result backing and loop-safe**). Precise
+  and sound; ESBMC sweep **+`string-index-nondet`**, zero regressions. This
+  is the realisation of "index_of_from" (index_of with an optional
+  from-index). (Committed.)
+
+* **`compare` (string ordering) — attempted via `compare_to`, reverted.**
+  Routing symbolic `<`/`>`/`<=`/`>=` through `cprover_string_compare_to_func`
+  did **not** improve precision: totality (`s<z or s>=z`), antisymmetry
+  (`s<t ⟹ ¬t<s`), and even **constrained** 1-char `s<t` (with
+  `assume s[0]=='a', t[0]=='b'`) all stayed unprovable. The compare_to result
+  is not being tied to the (symbolic) content for the Python call shape —
+  either the axioms under-determine the result or the content is
+  insufficiently resolved for ordering. The pre-existing byte-level
+  approximation (also imprecise for symbolic, but sound and exact for the
+  common 1-char `is_digit`/`isalpha` pattern) is kept. Making symbolic
+  ordering precise needs solver-side work (strengthen/connect the compare_to
+  axioms to resolved content), not just a front-end reroute.
+
+* **`repeat` / `strip` / `split` (producers) — deferred.** These produce
+  *strings*, so they route through the produced-result backing and therefore
+  share the `contains`-in-a-loop SAT-inconsistency that the chr experiment
+  exposed. They should not be migrated until the refinement is made
+  loop-stable for associated results under `contains` (the same solver-level
+  fix that would unlock the chr gate).
+
+**Net:** the safe, high-value query migration (`find`/`index`) landed (+1
+sweep gain, 0 regressions); `compare` needs solver-axiom work; the producing
+intrinsics are blocked on the same loop-stability fix as chr. The string
+backend's precise, low-risk wins are now captured; further gains require
+solver-internal loop-stability work in `src/solvers/strings`.
