@@ -171,7 +171,14 @@ def caller_verdicts(db):
                 kind = field.split("=", 1)[1]
             if field.startswith("verdict="):
                 verdict = field.split("=", 1)[1]
-        if verdict:
+        if not verdict:
+            continue
+        # a function can match several shapes (e.g. a len-param UNGUARDED
+        # row AND a validated-storage CALLER-GUARDED row).  Prefer a guarded
+        # verdict: a single proof that the bound is established anywhere
+        # (local OR non-local) clears the function.
+        prev = m.get(p[0])
+        if prev is None or (prev[1] not in GUARDED and verdict in GUARDED):
             m[p[0]] = (kind, verdict)
     return m
 

@@ -138,3 +138,60 @@ origin), not the high-confidence genuine set.
   false dismissals. The cursor/skb-pull shapes still match by variable
   identity (their guards are calls / `end` relationships, less prone to the
   scalar-reassign hazard).
+
+## Shape 5 — validate-at-storage-then-parse-later (non-local validator)
+
+**Date:** 2026-06-10. Added after triaging the survey's lone verbatim
+REAL+reachable hit, `ieee80211_get_ttlm`, to ground truth: a confirmed
+false positive whose length guard sits **two layers up**, at the point the
+element is stashed into an array — not in the immediate caller, so the four
+local shapes above all report UNGUARDED.
+
+The recognised idiom (pervasive in mac80211/cfg80211 element parsing):
+
+```c
+/* storage gate, parse.c */
+if (ieee80211_tid_to_link_map_size_ok(data, len) && n < ARRAY_SIZE(e->ttlm))
+    e->ttlm[n++] = (void *)data;          // only length-validated elements land here
+...
+/* later walk */
+parse_adv_t2l(.., e->ttlm[i], ..);        // -> pos = ttlm->optional
+                                          //    -> get_ttlm(map_size, pos)
+```
+
+The query recognises it structurally:
+
+* **validatedStorageField(F)** — a store `s->F = data` (or `s->F[..] = data`)
+  gated by an `if` whose condition calls a `*_ok` / `*_size_ok` / `*_check`
+  / `*may_pull` validator **applied to the stored value** *and* taking a
+  length/size (integral) argument. The integral-arg requirement is what
+  keeps `CONFIG_DEBUG_LIST` primitives (`__list_add_valid`, all-pointer
+  args) out.
+* **validatedParam(f, p)** — every call site of `f` passes a
+  validatedStorageField element for `p` (e.g. `parse_adv_t2l(.., e->ttlm[i])`).
+* **derivedFromValidatedParam / validatedPointerArg** — a local assigned
+  from a validated param (`pos = ttlm->optional`) carries the property one
+  hop further, so the leaf `get_ttlm(map_size, pos)` is certified too.
+
+Verdict is the usual `verdict(callers, guarded)`; the shape only emits when
+`guarded > 0` (the data-pointer-param precondition is otherwise far too
+broad). `caller_verdicts()` in `pipeline_eval.py` now prefers a guarded
+verdict when a function matches several shapes — `get_ttlm` also matches the
+scalar `len-param` shape (its `bm_size` arg) as UNGUARDED, and the
+non-local CALLER-GUARDED proof wins.
+
+**Funnel delta (rc7-db net surface).** Of the 29 genuine-UNGUARDED
+skb/cursor survivors, **2 collapse to CALLER-GUARDED** (29 → 27; precond-
+resolved 7 → 9). The shape certifies 6 functions, all genuine validate-
+then-store parsers — the ttlm trio (`get_ttlm`, `parse_adv_t2l`,
+`parse_neg_ttlm`) plus the HE/EHT capability parsers
+(`he_cap_ie_to_sta_he_cap`, `verify_peer_he_mcs_support`,
+`verify_sta_eht_mcs_support`) — and the previously verbatim-REAL survivor
+`ieee80211_get_ttlm` is now correctly resolved without a harness.
+
+* **Soundness caveat** — like the struct-field shape, this is a ranking
+  signal, not a proof: it shows the consumed element came from a length-
+  validated storage slot, but it does not prove the validator's byte budget
+  covers *every* downstream read (for `get_ttlm` the manual triage did that
+  separately and exactly). It dependably retires the non-local-validator FP
+  *class*; it should not be read as a bound proof for an arbitrary parser.

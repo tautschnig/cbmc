@@ -293,6 +293,119 @@ string verdict(int callers, int guarded) {
   else if guarded > 0 then result = "PARTIAL" else result = "UNGUARDED"
 }
 
+//----------------------------------------------------------------------------
+// Shape 5: validate-at-storage-then-parse-later (NON-LOCAL validator).
+//
+// The dominant residual FP after the four local shapes is a function whose
+// bytes were length-validated TWO LAYERS UP, at the point the element was
+// stashed into an array, not in the immediate caller.  Canonical case:
+// mac80211 `ieee80211_get_ttlm` -- parse.c stores a T2L element into
+// `elems->ttlm[]` only when `ieee80211_tid_to_link_map_size_ok(data,len)`
+// passes; `ieee80211_process_adv_ttlm` later walks `elems->ttlm[i]` ->
+// `ieee80211_parse_adv_t2l(.., elems->ttlm[i], ..)` -> `pos =
+// ttlm->optional` -> `ieee80211_get_ttlm(map_size, pos)`.  The local
+// caller-precondition shapes report UNGUARDED because no guard sits in the
+// immediate caller; this shape follows the validator to the storage gate.
+//----------------------------------------------------------------------------
+
+/** A struct field used as a "validated storage" slot: some store into it
+ *  (`s->F = data` or `s->F[..] = data`) is gated by a `*_ok` / `*_size_ok`
+ *  / `*_check` / `*may_pull` validator APPLIED TO THE STORED VALUE, so only
+ *  length-validated objects ever land in `F`. */
+predicate validatedStorageField(Field arrFld) {
+  exists(Assignment a, FieldAccess lhsF, FunctionCall val, IfStmt ifs, Variable dv |
+    lhsF.getTarget() = arrFld and
+    (a.getLValue() = lhsF or a.getLValue().(ArrayExpr).getArrayBase() = lhsF) and
+    val.getTarget()
+        .getName()
+        .toLowerCase()
+        .matches(["%\\_ok", "%size\\_ok", "%\\_check%", "%\\_valid%", "%may\\_pull%"]) and
+    ifs.getCondition().getAChild*() = val and
+    a.getEnclosingStmt().getParentStmt*() = ifs.getThen() and
+    // tie the validator to the stored object: both mention the same value
+    val.getAnArgument().(VariableAccess).getTarget() = dv and
+    a.getRValue().getAChild*().(VariableAccess).getTarget() = dv and
+    // the validator must take a LENGTH/SIZE argument -- this is a byte-budget
+    // validator, not a structural sanity check.  Excludes CONFIG_DEBUG_LIST
+    // primitives (__list_add_valid etc.) whose args are all pointers.
+    exists(Expr lenArg |
+      lenArg = val.getAnArgument() and
+      lenArg.getUnspecifiedType() instanceof IntegralType and
+      not lenArg.getUnspecifiedType() instanceof PointerType
+    )
+  )
+}
+
+/** `e` reads an element of a validated-storage array field (`elems->ttlm[i]`
+ *  or `elems->ttlm`). */
+predicate elementFromValidatedStorage(Expr e) {
+  exists(Field arrFld | validatedStorageField(arrFld) |
+    e.(ArrayExpr).getArrayBase().(FieldAccess).getTarget() = arrFld or
+    e.(FieldAccess).getTarget() = arrFld
+  )
+}
+
+/** A pointer parameter `p` of `f` validated at the non-local source: every
+ *  call site of `f` passes a validated-storage element for `p`. */
+predicate validatedParam(Function f, Parameter p) {
+  p.getFunction() = f and
+  p.getUnspecifiedType() instanceof PointerType and
+  exists(FunctionCall fc | fc.getTarget() = f) and
+  forall(FunctionCall fc | fc.getTarget() = f |
+    elementFromValidatedStorage(fc.getArgument(p.getIndex()))
+  )
+}
+
+/** A local in `f` derived from a validated param via a field read / pointer
+ *  arithmetic: `pos = ttlm->optional;`. */
+predicate derivedFromValidatedParam(Function f, Variable pos) {
+  exists(Parameter vp, Assignment a |
+    validatedParam(f, vp) and
+    a.getLValue().(VariableAccess).getTarget() = pos and
+    a.getRValue().getAChild*().(VariableAccess).getTarget() = vp
+  )
+}
+
+/** An argument validated at the non-local source: a validated-storage
+ *  element directly, a local derived from a validated param, or a field
+ *  access off a validated param. */
+predicate validatedPointerArg(FunctionCall fc, Expr arg) {
+  elementFromValidatedStorage(arg)
+  or
+  exists(Variable pos |
+    derivedFromValidatedParam(fc.getEnclosingFunction(), pos) and
+    arg.(VariableAccess).getTarget() = pos
+  )
+  or
+  exists(Parameter vp |
+    validatedParam(fc.getEnclosingFunction(), vp) and
+    arg.getAChild*().(VariableAccess).getTarget() = vp
+  )
+}
+
+/** A non-skb data-pointer parameter (the parsed cursor). */
+predicate dataPointerParam(Function f, Parameter dp) {
+  dp.getFunction() = f and
+  dp.getUnspecifiedType() instanceof PointerType and
+  not dp.getType()
+        .getUnspecifiedType()
+        .(PointerType)
+        .getBaseType()
+        .getUnspecifiedType()
+        .(Struct)
+        .getName() = "sk_buff"
+}
+
+/** Number of call sites where the parsed pointer is validated at the
+ *  non-local source. */
+int numValidatedSource(Function target, Parameter dp) {
+  result =
+    count(FunctionCall fc |
+      fc.getTarget() = target and
+      validatedPointerArg(fc, fc.getArgument(dp.getIndex()))
+    )
+}
+
 from Function target, string kind, string detail
 where
   target.hasDefinition() and
@@ -338,6 +451,20 @@ where
       detail =
         "bound=skb|callers=" + callers + "|guarded=" + guarded + "|verdict=" +
           skbVerdict(target, skb)
+    )
+    or
+    exists(Parameter dp, int callers, int guarded |
+      dataPointerParam(target, dp) and
+      callers = numCallers(target) and
+      callers > 0 and
+      guarded = numValidatedSource(target, dp) and
+      // only emit when this non-local shape actually certifies a source --
+      // dataPointerParam alone is far too broad
+      guarded > 0 and
+      kind = "validated-storage" and
+      detail =
+        "bound=" + dp.getName() + "|callers=" + callers + "|guarded=" + guarded +
+          "|verdict=" + verdict(callers, guarded)
     )
   )
 select target, target.getName() + "|kind=" + kind + "|" + detail
