@@ -44,7 +44,9 @@ module KernelTaintFlow {
       [
         "nla_memcpy", "copy_from_user", "__copy_from_user",
         "raw_copy_from_user", "memcpy_from_msg", "copy_from_sockptr",
-        "copy_from_sockptr_offset", "memdup_sockptr"
+        "copy_from_sockptr_offset", "memdup_sockptr",
+        "copy_from_iter", "_copy_from_iter", "copy_from_iter_full",
+        "copy_page_from_iter", "skb_copy_datagram_iter"
       ] and
     dest = fc.getArgument(0)
   }
@@ -95,6 +97,9 @@ module KernelTaintFlow {
     n.asExpr() instanceof KernelTaint::FirmwareDataAccess
     or
     n.asExpr() instanceof KernelTaint::UrbBufferAccess
+    or
+    // parsed HID report values (malicious HID device)
+    n.asExpr() instanceof KernelTaint::HidFieldValueAccess
     or
     // generic user->kernel input buffer (memdup_user / copy_from_sockptr ..)
     KernelTaint::isUserInputCall(n.asExpr())

@@ -118,6 +118,22 @@ module KernelTaint {
     }
   }
 
+  /** A read of `hid_field->value` -- the parsed HID report values (a
+   *  malicious HID device controls the report), covering the HID stack. */
+  class HidFieldValueAccess extends FieldAccess {
+    HidFieldValueAccess() {
+      this.getTarget().getName() = "value" and
+      this.getQualifier()
+          .getType()
+          .getUnspecifiedType()
+          .(PointerType)
+          .getBaseType()
+          .getUnspecifiedType()
+          .(Struct)
+          .getName() = "hid_field"
+    }
+  }
+
   /**
    * A function parameter that is a received-buffer cursor: a pointer
    * (void, u8 or char pointer) accompanied by a companion "bound"
