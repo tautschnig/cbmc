@@ -203,9 +203,15 @@ Two clear lessons:
   taint-gated A1-UB / A4-alloc finders key on net sources (skb / nla /
   ceph_decode / copy_from_user).  HID's report buffer and ext4's on-disk
   buffers are different input models, so those finders are quiet there.
-  Covering them needs per-subsystem taint SOURCES added to KernelTaint
-  (HID `hid_field`/report buffer; ext4 `bh->b_data` / on-disk structs) --
-  the natural next extension.
+  This is addressed by extending KernelTaint's taint SOURCES beyond net:
+  a `BufferHeadDataAccess` (`bh->b_data` -- the fs on-disk analogue of
+  `skb->data`) and a generic user-input set (`memdup_user`/`vmemdup_user`/
+  `copy_from_sockptr`/`raw_copy_from_user`).  Effect: ext4's taint-gated
+  finders go 0 -> 10 (A4 loops) and 0 -> 7 (A4 interproc allocs:
+  ext4_xattr_block_set, ext4_update_inline_data, ...), with net unchanged
+  (av_alloc_interproc still 94 on broad-next -- additive, no regression).
+  HID's report buffer is already covered by the byte-buffer-parameter
+  source; fuller HID coverage would add a `hid_field` source.
 
 ## Build-out status (#1-#4)
 

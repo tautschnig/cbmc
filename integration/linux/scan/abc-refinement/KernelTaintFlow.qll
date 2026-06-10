@@ -41,7 +41,11 @@ module KernelTaintFlow {
   /** A bulk copy of raw wire/netlink/user bytes into `dest`. */
   predicate isRawBulkCopy(FunctionCall fc, Expr dest) {
     fc.getTarget().getName() =
-      ["nla_memcpy", "copy_from_user", "__copy_from_user", "memcpy_from_msg"] and
+      [
+        "nla_memcpy", "copy_from_user", "__copy_from_user",
+        "raw_copy_from_user", "memcpy_from_msg", "copy_from_sockptr",
+        "copy_from_sockptr_offset", "memdup_sockptr"
+      ] and
     dest = fc.getArgument(0)
   }
 
@@ -83,6 +87,12 @@ module KernelTaintFlow {
     n.asExpr() instanceof KernelTaint::DecodeCall
     or
     n.asExpr() instanceof KernelTaint::SkbDataAccess
+    or
+    // filesystem on-disk bytes (buffer_head) -- attacker-controlled image
+    n.asExpr() instanceof KernelTaint::BufferHeadDataAccess
+    or
+    // generic user->kernel input buffer (memdup_user / copy_from_sockptr ..)
+    KernelTaint::isUserInputCall(n.asExpr())
     or
     isRawPayloadCall(n.asExpr())
     or

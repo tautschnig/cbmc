@@ -58,6 +58,34 @@ module KernelTaint {
     }
   }
 
+  /** A read of `bh->b_data` -- the on-disk bytes behind a `buffer_head`.
+   *  The attacker controls the mounted image, so this is the filesystem
+   *  analogue of `skb->data` (covers ext4 and every block filesystem). */
+  class BufferHeadDataAccess extends FieldAccess {
+    BufferHeadDataAccess() {
+      this.getTarget().getName() = "b_data" and
+      this.getQualifier()
+          .getType()
+          .getUnspecifiedType()
+          .(PointerType)
+          .getBaseType()
+          .getUnspecifiedType()
+          .(Struct)
+          .getName() = "buffer_head"
+    }
+  }
+
+  /** A call returning an attacker-controlled user buffer -- the generic
+   *  user->kernel input across all syscall/ioctl paths (any subsystem). */
+  predicate isUserInputCall(FunctionCall fc) {
+    fc.getTarget()
+        .getName()
+        .matches([
+            "memdup_user%", "vmemdup_user%", "strndup_user", "kmemdup_nul",
+            "memdup_sockptr%", "copy_from_sockptr%"
+          ])
+  }
+
   /**
    * A function parameter that is a received-buffer cursor: a pointer
    * (void, u8 or char pointer) accompanied by a companion "bound"
