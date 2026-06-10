@@ -81,7 +81,7 @@ analysis (`caller_precondition.ql`) already encode for A1.
 | asset | finder template | CBMC obligation | status |
 |-------|-----------------|-----------------|--------|
 | A1 (memory safety) | `tainted_count_into_fixed_array`, `decoded_len_arith_overflow`, `skb_field_before_lencheck`, `tlv_parse_loop*` | `--bounds-check` / `--*-overflow-check` (shape / verbatim / cover-probe) | **mature** |
-| A1 (other UB: div0, shift, conv) | *(to derive — same taint actor-gate)* | `--div-by-zero-check` / `--undefined-shift-check` / `--conversion-check` (ready; see `ub_test.c`) | obligation ready, finder gap |
+| A1 (other UB: div0, shift, conv) | **`tainted_ub_arith.ql`** (div/mod + shift; same taint actor-gate) | `--div-by-zero-check` / `--undefined-shift-check` / `--conversion-check` (ready; see `ub_test.c`) | **finder + obligation ready** |
 | A2 | **`infoleak_uninit_to_user.ql`** (NEW) | all copied bytes initialised (`infoleak_test.c`) | **prototype** |
 | A3 | (to derive) write to a `*_ops`/function-pointer field from tainted data | post-write the pointer is among the legitimate set | gap |
 | A4 | (to derive) loop bound / alloc size is unbounded attacker input | loop terminates / size ≤ K (`--unwinding-assertions`) | gap |
@@ -150,3 +150,6 @@ template, a different CBMC obligation.  That is the point of the pivot.
 * `infoleak_test.c` — the A2 CBMC obligation (buggy/fixed).
 * `ub_test.c` — A1 non-memory UB obligations (div-by-zero, signed
   overflow, undefined shift) discharged by CBMC's per-class checks.
+* `tainted_ub_arith.ql` — A1 non-memory UB finder (tainted divisor /
+  shift amount); 10 candidates on broad-next-db (`__qdisc_calculate_pkt_len`
+  div+mod, `mldv2_mrd`, `rate_idx_match_*` shifts).
