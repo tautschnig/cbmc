@@ -190,8 +190,11 @@ are reused across assets.
 * **#4 refinements**: A2 padding-layout + full-init mitigations (34
   UNMITIGATED -> 0 genuine on broad-next-db, each cleared principledly);
   A5 GENL_ADMIN_PERM-at-registration (`genl_admin_perm.ql`: 120/141
-  netlink handlers registration-guarded).  Remaining: A4 interprocedural
-  taint to alloc sizes (needs TaintTracking::Global).
+  netlink handlers registration-guarded).  A4 interprocedural taint to alloc sizes (`av_alloc_interproc.ql`,
+  TaintTracking::Global): 94 candidates on broad-next-db (92 UNMITIGATED)
+  -- ceph decoders, rxrpc XDR ticket parsers (rxgk), bridge get_fdb_entries
+  -- the intra-proc finder reached 0.  (Sink set must match the kernel's
+  alloc-profiling `_noprof` allocator names.)
 
 ## Refinements to derive next
 
