@@ -25,11 +25,42 @@ the model makes the *other* assets we had ignored explicit and actionable.
 
 | asset | violated when | example threat |
 |-------|---------------|----------------|
-| **A1 memory safety / no-UB** | OOB read/write, integer overflow, UAF, null deref | attacker index/len → OOB |
+| **A1 well-definedness (absence of UB)** | the program leaves defined C semantics (see sub-classes below) | attacker operand triggers UB |
 | **A2 confidentiality** | non-public kernel data reaches a lower-privilege actor | uninitialised padding copied to user (info leak) |
 | **A3 integrity / CFI** | control data or protected state overwritten | function-pointer / vtable overwrite, write-what-where |
 | **A4 availability / termination** | unbounded work or resource on attacker input | unbounded loop / huge alloc (DoS) |
 | **A5 authorization** | an action taken without the required capability/namespace check | missing `capable()` / cross-namespace access |
+
+### A1 is an umbrella: UB sub-classes and where they route
+
+"Absence of UB" is broad — **memory safety is only its most
+exploitation-relevant sub-class**, not the whole of it.  Integer overflow,
+division by zero, oversized shifts, uninitialised reads, etc. are sibling
+sub-classes.  Two things place a UB instance in the threat model: an
+**actor** must control an operand (an internal constant-bounded counter
+overflowing is not a threat), and the violation **chains** to a downstream
+asset.  Each sub-class has its **own** CBMC obligation:
+
+| UB sub-class | CBMC obligation | downstream asset | finder template |
+|--------------|-----------------|------------------|-----------------|
+| spatial memory (OOB r/w) | `--bounds-check` | A1→A3/A2 (exploit primitive) | count/index, skb_field, tlv |
+| temporal (UAF) / null deref | `--pointer-check` | A1/A3 ; A4 (oops) | (UAF design docs) |
+| **signed/unsigned overflow** | `--signed/unsigned-overflow-check` | **A1 (wrong size/index) or miscompile** | `decoded_len_arith_overflow` |
+| **division / modulo by zero** | `--div-by-zero-check` | **A4 (oops / DoS)** | *(to derive)* |
+| **oversized / negative shift** | `--undefined-shift-check` | correctness → A1 | *(to derive)* |
+| **uninitialised read** | modelled (see `infoleak_test.c`) | **A2 (info leak)** | `infoleak_uninit_to_user` |
+| invalid pointer arithmetic | `--pointer-overflow-check` | A1 | *(to derive)* |
+| lossy conversion / enum range | `--conversion-check` / `--enum-range-check` | A1 (truncated size) | *(to derive)* |
+
+So the answer to "where do integer overflow / div-by-zero fit": they are
+**A1 sub-classes**, each with a ready CBMC obligation (verified in
+`ub_test.c`: div-by-zero, signed overflow, and undefined shift all FAIL on
+the attacker-operand case and pass once guarded).  Their *finder* templates
+are mostly still to derive — but the proof half already exists in CBMC, and
+the actor gate (which operand is attacker-controlled?) is the same taint
+analysis A1-memory-safety already uses.  `decoded_len_arith_overflow` is in
+fact an arithmetic-overflow (UB) finder already; div-by-zero and shift
+finders are cheap to add for the same reason.
 
 ## Actor taxonomy
 
@@ -49,7 +80,8 @@ analysis (`caller_precondition.ql`) already encode for A1.
 
 | asset | finder template | CBMC obligation | status |
 |-------|-----------------|-----------------|--------|
-| A1 | `tainted_count_into_fixed_array`, `decoded_len_arith_overflow`, `skb_field_before_lencheck`, `tlv_parse_loop*` | `--bounds-check` / `--*-overflow-check` (shape / verbatim / cover-probe) | **mature** |
+| A1 (memory safety) | `tainted_count_into_fixed_array`, `decoded_len_arith_overflow`, `skb_field_before_lencheck`, `tlv_parse_loop*` | `--bounds-check` / `--*-overflow-check` (shape / verbatim / cover-probe) | **mature** |
+| A1 (other UB: div0, shift, conv) | *(to derive — same taint actor-gate)* | `--div-by-zero-check` / `--undefined-shift-check` / `--conversion-check` (ready; see `ub_test.c`) | obligation ready, finder gap |
 | A2 | **`infoleak_uninit_to_user.ql`** (NEW) | all copied bytes initialised (`infoleak_test.c`) | **prototype** |
 | A3 | (to derive) write to a `*_ops`/function-pointer field from tainted data | post-write the pointer is among the legitimate set | gap |
 | A4 | (to derive) loop bound / alloc size is unbounded attacker input | loop terminates / size ≤ K (`--unwinding-assertions`) | gap |
@@ -116,3 +148,5 @@ template, a different CBMC obligation.  That is the point of the pivot.
 
 * `infoleak_uninit_to_user.ql` — A2 confidentiality finder template.
 * `infoleak_test.c` — the A2 CBMC obligation (buggy/fixed).
+* `ub_test.c` — A1 non-memory UB obligations (div-by-zero, signed
+  overflow, undefined shift) discharged by CBMC's per-class checks.
