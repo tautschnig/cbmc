@@ -19,13 +19,43 @@
  */
 import cpp
 import MitigationDominance
+import semmle.code.cpp.controlflow.Dominance
 
-/** Mitigation verdict for a confidentiality candidate: MITIGATED when a
- *  zeroing memset of the local dominates the copy. */
+/** The local is fully initialised before the copy: a dominating zeroing
+ *  memset, OR a dominating full `copy_from_user(&v, .., sizeof v)` (the
+ *  struct -- padding included -- then holds the user's own bytes, so
+ *  copying it back leaks no kernel data). */
+predicate fullyInit(Variable v, ExfilCall c) {
+  Mitigation::memsetDominates(v, c)
+  or
+  exists(FunctionCall cf |
+    cf.getTarget().getName() =
+      ["copy_from_user", "_copy_from_user", "__copy_from_user",
+       "memcpy_from_msg", "memcpy"] and
+    cf.getArgument(0).(AddressOfExpr).getOperand().(VariableAccess).getTarget() =
+      v and
+    strictlyDominates(cf, c)
+  )
+}
+
+/** Mitigation verdict for a confidentiality candidate. */
 string ilVerdict(Variable v, ExfilCall c) {
-  if Mitigation::memsetDominates(v, c)
-  then result = "MITIGATED"
-  else result = "UNMITIGATED"
+  if fullyInit(v, c) then result = "MITIGATED" else result = "UNMITIGATED"
+}
+
+/** The struct has layout padding: the sum of its field sizes is less than
+ *  its size (equal exactly when packed / contiguous).  Padding bytes are
+ *  the classic uninitialised info-leak surface; a packed, fully-filled
+ *  struct (e.g. cgw_frame_mod) has none. */
+predicate hasPadding(Struct s) {
+  sum(Field f | f = s.getAField() | f.getType().getSize()) < s.getSize()
+}
+
+/** Layout flag for the candidate's aggregate. */
+string paddingFlag(Variable v) {
+  if hasPadding(v.getType().getUnspecifiedType())
+  then result = "yes"
+  else result = "no"
 }
 
 /** A kernel->user / kernel->wire copy sink and its kernel-source argument. */
@@ -70,4 +100,5 @@ select c,
     c.getLocation().getStartLine().toString() +
     "|confidentiality: local '" + v.getName() + "' (" +
     v.getType().getUnspecifiedType().toString() +
-    ") copied to user/wire|mitigation=" + ilVerdict(v, c)
+    ") copied to user/wire|mitigation=" + ilVerdict(v, c) + "|padding=" +
+    paddingFlag(v)
