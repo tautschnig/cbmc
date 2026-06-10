@@ -604,10 +604,12 @@ or a fresh-unconstrained pool array. Given that, the only real difference is
 
 B is **DRY** (one pointer-resolution path, not a second string-specific
 one the front-end must feed correctly — the source of Python's string
-bugs), **removes front-end burden and a footgun**, is **loop-safe by
-construction**, and **unifies Python with Java** (enables eventually
-dropping `java_string_library_preprocess`'s explicit char-array
-association). A remains the safe, solver-untouching **fallback** if symex
+bugs), **removes front-end burden and a footgun**, and is **loop-safe by
+construction**. (An early version of this note also claimed B would let JBMC
+drop its char-array association; the Java migration assessment below shows
+that does **not** apply — Java's produced/heap-backed content genuinely needs
+association, and the front-ends instead converged on association for produced
+content.) A remains the safe, solver-untouching **fallback** if symex
 integration proves too risky or regresses performance.
 
 **Implementation discipline (non-negotiable):**
@@ -642,9 +644,10 @@ integration proves too risky or regresses performance.
    (`chr(i)=="f"` SUCCESS, `github_3090_4` SUCCESS, `github_3130_fail`
    FAILED-no-crash) and soundness (`chr(<nondet>)` / `chr(103)` FAIL).
    Measure solver impact; no regressions vs the PASS-2930 baseline.
-2. **Java migration second** — a separate, later effort with the full JBMC
-   regression suite, *enabled by* B but not a prerequisite. The mature Java
-   path is not touched until Python has proven the model.
+2. **Java migration — assessed, not applicable** (see the Java migration
+   assessment below). Java's produced/heap-backed strings genuinely need the
+   association mechanism; symex resolution applies only to static-value
+   leaves, which Java lacks. JBMC is left untouched.
 
 **Phase 1 landed (2026-06-10).** `goto_symext::resolve_python_string_content`
 (gated `language_mode == "python"`) rewrites each refined-string argument of
@@ -784,3 +787,45 @@ prove; soundness holds (`(chr(<nondet>)+"z")[0]=="f"` FAILs); `str(int)` /
 backing). ESBMC sweep: PASS 2932, **zero regressions**; three Python suites
 green; new regression test `string-produced-subscript`. This closes the
 `(produced-result)[i]` residual from phase-1's scoping.
+
+
+### Java migration assessment (2026-06-10): not applicable — corrects the earlier "enables dropping Java association" framing
+
+The original choice-B write-up speculated that symex content-pointer
+resolution could eventually replace `java_string_library_preprocess`'s
+explicit char-array association. Investigating the JBMC code, **that
+unification does not apply** and the migration should **not** be done. The
+reason is the *form* of Java's content array:
+
+* **Java string literals** (`java_string_literals.cpp`): content is
+  `address_of(index(<static symbol array>, 0))` — like Python literals.
+  These could in principle use symex resolution, but it is one of three
+  sites and on mature shipped code.
+* **Java produced results, nondet inputs, and object-factory strings**
+  (`make_nondet_string_expr`, `make_nondet_infinite_char_array`, the
+  `code_assign_function_application` conversion path, `java_object_factory`):
+  the content array is a **`dereference_exprt` of a freshly heap-allocated
+  pointer** (`make_allocate_code(...); dereference_exprt{data_pointer}`).
+  `array_pool::find`'s crash-free fast path resolves a literal `ID_array`
+  and (with the phase-1/2 extension) an array-typed **symbol**, but **not a
+  heap `dereference`**. So symex resolution cannot produce a fast-path-
+  resolvable form for heap-backed Java content — **association is the
+  natural and necessary mechanism** there.
+
+**The unification that actually happened is the reverse.** Phase 2 gave
+Python's *produced* results real backing via the very same
+`cprover_associate_array_to_pointer` + `cprover_associate_length_to_array`
+primitives JBMC uses (with fresh per-execution allocation for loop-safety).
+So the two front-ends have **converged on association for produced /
+heap-backed content**, and use symex resolution only for **static-value
+leaves** (Python `chr`/literals). Java has no static-value leaf strings
+beyond literals, so there is essentially **nothing to migrate**: dropping
+JBMC's association would mean re-deriving the heap-array connection that
+association already expresses, for a DRY-only benefit, at high regression
+risk to a mature, shipped verifier.
+
+**Decision: do not migrate JBMC.** Keep association as the shared mechanism
+for produced/heap-backed content (Python and Java alike); keep symex
+resolution for static-value leaves (Python). The choice-B design stands —
+its scope is "leaves resolve via symex; produced/heap content associates" —
+which both front-ends now follow. Java is left untouched.
