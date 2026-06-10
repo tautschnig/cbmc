@@ -84,7 +84,7 @@ analysis (`caller_precondition.ql`) already encode for A1.
 | A1 (other UB: div0, shift, conv) | **`tainted_ub_arith.ql`** (div/mod + shift; same taint actor-gate) | `--div-by-zero-check` / `--undefined-shift-check` / `--conversion-check` (ready; see `ub_test.c`) | **finder + obligation ready** |
 | A2 | **`infoleak_uninit_to_user.ql`** (NEW) | all copied bytes initialised (`infoleak_test.c`) | **prototype** |
 | A3 | (to derive) write to a `*_ops`/function-pointer field from tainted data | post-write the pointer is among the legitimate set | gap |
-| A4 | (to derive) loop bound / alloc size is unbounded attacker input | loop terminates / size ≤ K (`--unwinding-assertions`) | gap |
+| A4 | **`av_unbounded.ql`** (taint-reachable loop bound / alloc size) | loop terminates within K (`--unwinding-assertions`) / size ≤ K (`av_test.c`) | **finder + obligation** |
 | A5 | **`auth_missing_capable.ql`** (privileged sink not dominated by a `capable()` check; reuses the dominance relation) | privileged action ⇒ capability held (`auth_test.c`) | **finder + obligation** |
 
 ## The first top-down template: A2 confidentiality (info leak)
@@ -150,6 +150,9 @@ template, a different CBMC obligation.  That is the point of the pivot.
 * `infoleak_test.c` — the A2 CBMC obligation (buggy/fixed).
 * `ub_test.c` — A1 non-memory UB obligations (div-by-zero, signed
   overflow, undefined shift) discharged by CBMC's per-class checks.
+* `av_unbounded.ql` / `av_test.c` — A4 availability finder + obligation
+  (loop termination / size<=K); 47 loop candidates on broad-next-db (ceph
+  count-loop decoders, br IGMP/MLD reports, CAN bcm/cgw loops).
 * `auth_missing_capable.ql` / `auth_test.c` — A5 authorization finder +
   obligation (privileged action ⇒ capability held); 9 candidates on each
   of broad-next-db and rc7-db (`devinet_ioctl`/`dev_change_flags`, bridge
