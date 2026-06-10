@@ -130,6 +130,38 @@ The memory-safety lens (all of our prior work) **never raised A2** for this
 file — the same code, a different asset, a different threat, a different
 template, a different CBMC obligation.  That is the point of the pivot.
 
+
+## Multi-asset evaluation and a fresh-module threat model (#3)
+
+`threat_model_eval.py` runs every asset's finder over a DB with the unified
+mitigation filter.  broad-next-db (net/):
+
+| asset | raw | mitigated | genuine |
+|-------|----:|----------:|--------:|
+| A1-mem count/index | 92 | (confidence/precond) | |
+| A1-mem decoded-len | 28 | | |
+| A1-mem skb/cursor | 170 | | |
+| A1-UB div/shift | 10 | 2 | 8 |
+| A2 confidentiality | 39 | 5 | 34 |
+| A3 integrity/CFI | 1 | | |
+| A4 availability | 47 | 9 | 38 |
+| A5 authorization | 9 | 0 | 9 |
+
+With `--module net/bridge/` the same tool produces the FULL cross-asset
+threat model of one (previously unfocused) module -- the literal
+realization of "for each piece of code, consider its threat model":
+
+* **A1** memory: `br_get_ticks` (decoded-len), `br_send_bpdu` (skb cursor)
+* **A2** confidentiality: `br_fill_info`, `fdb_fill_info`,
+  `br_fill_ifvlaninfo[_range]` (netlink fill handlers -- info-leak candidates)
+* **A4** availability: `br_ip4/6_multicast_{igmp3,mld2}_report` (IGMP/MLD
+  count loops), `br_process_vlan_info`
+* **A5** authorization: `br_add_if`, `br_port_{set,clear}_promisc`,
+  `nbp_delete_promisc`, `br_stp_call_user`
+
+One module, threats enumerated across confidentiality, availability,
+authorization and memory safety -- not "more of the same CVE shape".
+
 ## Status: all five assets now have a template
 
 A1 (memory safety: count/index, decoded_len, skb_field, tlv; non-memory UB:
