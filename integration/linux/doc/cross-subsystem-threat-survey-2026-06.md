@@ -83,9 +83,12 @@ limits:
 * **goto-cc front-end gap on linux_6_12** -- the dynamic-debug `_ddebug`
   descriptor (`.function = __func__` in a `__section` static initializer)
   is rejected as a non-constant expression, blocking goto-cc (hence the
-  discharge step) on 6_12 sound/usb, hfsplus, jfs.  (The CodeQL DBs use the
-  gcc extractor, so the census/eval above are unaffected.)  A goto-cc
-  hardening item.
+  discharge step) on 6_12 sound/usb, hfsplus, jfs.  Narrowed by a minimal
+  repro: `.function = __func__` alone compiles fine -- the rejected operand
+  is the CONFIG_JUMP_LABEL `static_key` init in `_ddebug.key`.  (The CodeQL
+  DBs use the gcc extractor, so the census/eval above are unaffected.)  A
+  separable goto-cc hardening item; marginal discharge payoff since the
+  large new candidates time out regardless.
 
 Successfully discharged real candidates remain: net (cgw REAL-OOB, rxkad
 caller-guarded, mldv2 mask-bounded SUCCESSFUL), net/nfc (CVE-2026-31622
