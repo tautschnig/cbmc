@@ -172,6 +172,41 @@ auth_test).  The same actor/taint gate and the same dominance machinery
 are reused across assets.
 
 
+
+## Cross-subsystem application (beyond net/)
+
+The framework was pointed at two non-net subsystems via fresh CodeQL DBs.
+
+| asset | net/ (broad-next) | drivers/hid | fs/ext4 |
+|-------|-------------------|-------------|---------|
+| A1-mem count/index | 92 | 4 (sony_led*) | 1 (get_groupinfo_cache) |
+| A1-UB div/shift | 10 | 0 | 0 |
+| A2 confidentiality | 39 | 6 (hidraw/hiddev) | 9 (ext4 ioctls) |
+| A3 integrity/CFI | 1 | 1 | 1 |
+| A4 availability | 47 | 2 (hiddev loops) | 0 |
+| A5 authorization | 9 | 1 | 1 |
+
+Genuine candidates: HID -- `hidraw_fixed_size_ioctl`, `hiddev_read`
+(A2 copy-to-user), `hiddev_ioctl_usage` (A4 loop), `sony_led*` (A1 device
+array index); ext4 -- `ext4_ioctl_getuuid/getlabel`, `ext4_getfsmap_format`
+(A2 ioctl info-leak), `get_groupinfo_cache` (A1).
+
+Two clear lessons:
+
+* **Structural finders generalize directly** -- A1-mem count/index,
+  A2 confidentiality (any copy-to-user boundary), A3 CFI, A5 authorization,
+  A4 loops depend only on control/data shape, so they fire across net/HID/
+  ext4 unchanged.  **A2 is the most portable**: it fires at every
+  userspace boundary (netlink fill, hidraw/hiddev, ext4 ioctls).
+* **Wire-format / taint-gated finders are net-specific by construction** --
+  decoded-len (ceph/nla accessors), skb_field (skb->data), and the
+  taint-gated A1-UB / A4-alloc finders key on net sources (skb / nla /
+  ceph_decode / copy_from_user).  HID's report buffer and ext4's on-disk
+  buffers are different input models, so those finders are quiet there.
+  Covering them needs per-subsystem taint SOURCES added to KernelTaint
+  (HID `hid_field`/report buffer; ext4 `bh->b_data` / on-disk structs) --
+  the natural next extension.
+
 ## Build-out status (#1-#4)
 
 * **#1 unified mitigation-dominance** (`MitigationDominance.qll`): one
