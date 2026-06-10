@@ -1143,13 +1143,35 @@ std::optional<exprt> python_convertert::try_builtin_call(
         }
         return python_string_literal(s);
       }
-      // Non-constant: build pointer-based string
+      // Non-constant: build pointer-based string whose content lives in a
+      // real, symex-tracked symbol array. Storing the byte(s) in a genuine
+      // object (rather than an inline literal temporary) lets symex resolve
+      // the content pointer back to this array after the string is stored in
+      // a variable and read again (the variable-indirection case); see the
+      // symex content-pointer resolution (choice B) in
+      // doc/architectural/python-string-phase2-backend-abstraction.md.
       array_typet at(
         unsignedbv_typet{8},
         from_integer(static_cast<long long>(chars.size()), signedbv_typet{64}));
       array_exprt arr(std::move(chars), at);
+
+      static unsigned chr_ctr = 0;
+      std::string cn = "__chr_content_" + std::to_string(chr_ctr++);
+      std::string cq = qualify_name(cn);
+      irep_idt ci{cq};
+      if(symbol_table.lookup(ci) == nullptr)
+      {
+        symbolt cs{ci, at, "python"};
+        cs.base_name = cn;
+        cs.is_lvalue = true;
+        cs.is_state_var = true;
+        symbol_table.add(cs);
+      }
+      symbol_exprt content_sym = symbol_table.lookup_ref(ci).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{content_sym, arr});
+
       exprt ptr = address_of_exprt(index_exprt(
-        arr, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
+        content_sym, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
       exprt length = from_integer(1LL, signedbv_typet{64});
       return struct_exprt{{length, ptr}, str_type};
     }
