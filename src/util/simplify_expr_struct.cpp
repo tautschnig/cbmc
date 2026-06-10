@@ -125,6 +125,20 @@ simplify_exprt::simplify_member(const member_exprt &expr)
       return op.operands()[number];
     }
   }
+  else if(op.id() == ID_compound_literal && op.operands().size() == 1)
+  {
+    // member(compound_literal(v), .m) -> member(v, .m)
+    // A compound literal `(TYPE){ ... }` wraps its initializer value (a
+    // struct/union/array expression) as its single operand; unwrap it so
+    // the struct/union member-extraction rules below can fold the access.
+    // This is needed for constant static initializers that nest a
+    // compound literal (e.g. the kernel's dynamic-debug _ddebug descriptor
+    // whose .key field is initialised from the STATIC_KEY_FALSE_INIT
+    // compound literal).
+    auto new_expr = expr;
+    new_expr.struct_op() = op.operands().front();
+    return changed(simplify_member(new_expr));
+  }
   else if(op.id()==ID_byte_extract_little_endian ||
           op.id()==ID_byte_extract_big_endian)
   {
