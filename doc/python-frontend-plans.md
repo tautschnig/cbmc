@@ -223,20 +223,26 @@ selector and the `--python-smt-strings` flag exist and are threaded through
 the frontend target either backend uniformly, and the SMT-String backend
 implementation itself.
 
-**Spike (2026-06-09, `github_3090_4`) — confirms GO.** A multi-backend
-diagnosis established that symbolic-string *content* equality fails on
-*every* back-end purely because of the `{length, char*}`-vs-`char[]`
-representation: `--refine-strings` is auto-on for the default sweep but its
-`add_axioms_for_equals` doesn't engage (content **pointer**, not array);
-`smt2_conv` lowers `_equal_func` to **structural** (pointer) equality; and
-symex constant-propagation only fires for **constant** strings (so
-`"f"+"o"+"o"=="foo"` verifies but `chr(<symbolic>)` does not). The
-underlying constraint is trivially solvable — the blocker is representation,
-not solver power. A point-fix would re-implement a slice of the refinement
-in shared core code against the wrong representation (fragile, doesn't
-generalise to the ~19-test string/`re` cluster). Decision: GO on the
-representation refactor below, starting at PR 1. Full write-up:
-[python-string-phase2-backend-abstraction.md](architectural/python-string-phase2-backend-abstraction.md#spike-findings-2026-06-09--github_3090_4-multi-backend-diagnosis).
+**Spike (2026-06-09/10, `github_3090_4`) — diagnosis corrected; the blocker
+is the array_pool *association*, not the representation.** Symbolic-string
+content equality fails on the default `--refine-strings` sweep not because
+of `char*`-vs-`char[]` (JBMC's refined string is *also* `{length, char*}`
+and proves fine), but because the front-end never establishes the
+`array_pool` association between a leaf string's content pointer and its
+char array — so `add_axioms_for_equals` reasons about a *fresh
+unconstrained* array. **Experiment 2** confirmed this: associating
+`chr(i)`'s content array made `chr(i)=="f"` and `github_3090_4`/`3090_5`
+**verify under the default backend**, soundly. **However**, broadly
+emitting `array_pool` associations is the *wrong* mechanism for leaf
+strings in **loops**: a fixed-address content pointer re-associated each
+unwind maps one pointer to many SSA arrays and hits the
+`array_pool.cpp:175` invariant (crashed `github_3130_fail`). **Backlog
+decision (favoured): make symex dereference string content pointers** and
+feed the dereferenced array to the refinement, instead of per-pointer pool
+associations — this handles loops naturally. The SMT-string backend
+(`--python-smt-strings` / CVC5) remains an orthogonal precision option, not
+a prerequisite. Full write-up + the array_pool-vs-symex-deref analysis:
+[python-string-phase2-backend-abstraction.md](architectural/python-string-phase2-backend-abstraction.md#experiment-2-2026-06-10--array_pool-content-association-and-the-loop-limitation).
 
 **Plan (5 phases; phases 1–2 designed, 3–5 open):**
 
