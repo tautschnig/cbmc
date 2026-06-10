@@ -91,6 +91,11 @@ module KernelTaintFlow {
     // filesystem on-disk bytes (buffer_head) -- attacker-controlled image
     n.asExpr() instanceof KernelTaint::BufferHeadDataAccess
     or
+    // firmware payload (request_firmware) and USB transfer buffers
+    n.asExpr() instanceof KernelTaint::FirmwareDataAccess
+    or
+    n.asExpr() instanceof KernelTaint::UrbBufferAccess
+    or
     // generic user->kernel input buffer (memdup_user / copy_from_sockptr ..)
     KernelTaint::isUserInputCall(n.asExpr())
     or

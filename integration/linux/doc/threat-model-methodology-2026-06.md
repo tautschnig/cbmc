@@ -210,8 +210,14 @@ Two clear lessons:
   finders go 0 -> 10 (A4 loops) and 0 -> 7 (A4 interproc allocs:
   ext4_xattr_block_set, ext4_update_inline_data, ...), with net unchanged
   (av_alloc_interproc still 94 on broad-next -- additive, no regression).
-  HID's report buffer is already covered by the byte-buffer-parameter
-  source; fuller HID coverage would add a `hid_field` source.
+  Driver subsystems are covered by adding `fw->data` (request_firmware
+  payload) and `urb->transfer_buffer` (USB) sources -- HID's
+  interproc-alloc goes 0 -> 4 with these + the user sources, net still 94.
+  The taint source set now spans: net (skb/nla/ceph/byte-order), generic
+  user (copy_from_user/memdup_user/sockptr), filesystem (bh->b_data),
+  firmware (fw->data), USB (urb->transfer_buffer), and device byte-buffer
+  parameters -- so the taint-gated finders apply across net, fs, and driver
+  subsystems, not just net.
 
 ## Build-out status (#1-#4)
 

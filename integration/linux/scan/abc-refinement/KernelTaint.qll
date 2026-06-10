@@ -86,6 +86,38 @@ module KernelTaint {
           ])
   }
 
+  /** A read of `fw->data` -- request_firmware() payload (attacker / vendor
+   *  controlled), covering driver subsystems that load firmware/EEPROM. */
+  class FirmwareDataAccess extends FieldAccess {
+    FirmwareDataAccess() {
+      this.getTarget().getName() = "data" and
+      this.getQualifier()
+          .getType()
+          .getUnspecifiedType()
+          .(PointerType)
+          .getBaseType()
+          .getUnspecifiedType()
+          .(Struct)
+          .getName() = "firmware"
+    }
+  }
+
+  /** A read of `urb->transfer_buffer` -- USB transfer payload (a malicious
+   *  / compromised device controls it), covering USB driver subsystems. */
+  class UrbBufferAccess extends FieldAccess {
+    UrbBufferAccess() {
+      this.getTarget().getName() = "transfer_buffer" and
+      this.getQualifier()
+          .getType()
+          .getUnspecifiedType()
+          .(PointerType)
+          .getBaseType()
+          .getUnspecifiedType()
+          .(Struct)
+          .getName() = "urb"
+    }
+  }
+
   /**
    * A function parameter that is a received-buffer cursor: a pointer
    * (void, u8 or char pointer) accompanied by a companion "bound"
