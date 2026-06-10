@@ -353,3 +353,74 @@ with `--cvc5 --python-smt-strings` before the broader call-site migration.
 Solver impact is expected positive on CVC5 (`str.=`/`str.++` are native and
 the refinement axiom path is already proven at scale in JBMC); the cost is
 engineering scope, not solver capability.
+
+
+## Experiment 2 (2026-06-10) — array_pool content-association; and the loop limitation
+
+A follow-up experiment **corrected** the spike's representation claim and
+surfaced a decisive design finding.
+
+**Correction: the `char*` representation is NOT the blocker.** JBMC's
+refined string is *also* `{length, content}` with `content` a **`char*`**
+(`refined_string_exprt` stores `to_pointer_type(content)`; JBMC builds
+`content = a->data`), and JBMC proves symbolic strings fine. The real
+difference is that `add_axioms_for_equals` reads content via
+`get_string_expr(array_pool, arg)`, and the **`array_pool` must associate
+the content pointer with a backing char array**. JBMC establishes that
+association (`code_assign_java_string_to_string_expr` → `checked_dereference`
++ `replace_char_array`); the Python front-end does **not** for leaf strings
+(`chr`, etc.), so `array_pool.find` invents a *fresh unconstrained* array
+and the equality is unprovable.
+
+**Experiment: associate `chr`'s content array.** Materialising `chr(i)`'s
+content into a symbol array and emitting
+`cprover_associate_array_to_pointer` / `..._length_to_array` for it made
+`chr(i) == "f"` **and** `github_3090_4` / `github_3090_5` (the concat
+chain) **verify under the default `--refine-strings` backend** — and
+soundly (`chr(<nondet>) == "f"` and `chr(103) == "f"` still FAIL). So the
+diagnosis is confirmed: the missing **association**, not the
+representation, is the blocker, and the fix lives in the **front-end**
+(reusing the existing refinement) — *not* a new SMT-string backend.
+
+**But the array_pool association has a fundamental loop limitation.** The
+same experiment **crashed** `github_3130_fail`
+(`for i in range(97,100): assert chr(i) not in s`) at
+`array_pool.cpp:175` — *"should not associate two arrays to the same
+pointer"*. A `chr` in a loop is converted once; symex unrolls it, so the
+single static content pointer (a fixed symbol's address, version-
+independent) is associated **every iteration**, while the content array
+symbol is **SSA-versioned** — i.e. the *same pointer* legitimately maps to
+*different arrays* per unwind, which is exactly the (correct) invariant the
+pool enforces. An idempotent relaxation does **not** help (the SSA versions
+are genuinely different arrays). Making it work would require **fresh
+per-execution storage** for every `chr` (distinct pointer per dynamic call,
+i.e. allocation), which is heavy. The experiment was reverted (can't ship a
+crash); tree is clean.
+
+### Backlog: array_pool association vs. symex content-pointer dereference
+
+This is direct evidence for the open question of whether `array_pool`
+association is the right mechanism, or whether **symex should also
+dereference string content pointers** before the back-end.
+
+* **array_pool association (today):** keys content by *pointer identity*.
+  Works for straight-line leaf strings, but a fixed-address leaf string
+  re-built in a loop maps one pointer to many SSA arrays → invariant
+  crash. Robust use would require per-call fresh allocation.
+* **symex content-pointer deref (alternative):** have symex resolve the
+  content pointer to the actual (SSA-versioned) char array at each use, and
+  feed *that* to the refinement, instead of relying on a per-pointer pool
+  association. Each loop unwind reads the current content naturally — no
+  association, no re-association crash — and straight-line cases still
+  work. This sidesteps the pointer-identity constraint entirely and is the
+  more promising route; the cost is teaching the string solver / front-end
+  to obtain content via the dereferenced array rather than `array_pool`.
+
+Recommendation for the string-precision work: prefer the **symex-deref**
+integration over broadly emitting `array_pool` associations from the
+front-end, and re-evaluate the SMT-string backend (`--python-smt-strings`)
+as the orthogonal CVC5/Z3 precision option. The `chr`-association
+experiment proves the refinement *can* solve these once it sees the real
+content — the remaining design choice is purely *how* to deliver that
+content (pointer-association vs. dereference), and the loop crash makes the
+case for dereference.
