@@ -325,9 +325,24 @@ bool goto_symext::constant_propagate_assignment_with_side_effects(
       const irep_idt &func_id =
         to_symbol_expr(f_l1.function()).get_identifier();
 
+      // String-producing intrinsics whose first two arguments are the output
+      // (length, content). When constant propagation below succeeds it
+      // installs real backing for the result; when it fails (symbolic
+      // inputs), for Python we still install a fresh nondet backing array and
+      // associate it, so the produced result has real content memory the
+      // refinement constrains (phase 2). JBMC sets up its own backing before
+      // symex, so this is gated to Python.
+      auto with_python_backing = [&](bool constant_folded) -> bool
+      {
+        if(!constant_folded && language_mode == "python")
+          setup_python_string_result_backing(state, symex_assign, f_l1);
+        return constant_folded;
+      };
+
       if(func_id == ID_cprover_string_concat_func)
       {
-        return constant_propagate_string_concat(state, symex_assign, f_l1);
+        return with_python_backing(
+          constant_propagate_string_concat(state, symex_assign, f_l1));
       }
       else if(func_id == ID_cprover_string_empty_string_func)
       {
@@ -338,45 +353,55 @@ bool goto_symext::constant_propagate_assignment_with_side_effects(
       }
       else if(func_id == ID_cprover_string_substring_func)
       {
-        return constant_propagate_string_substring(state, symex_assign, f_l1);
+        return with_python_backing(
+          constant_propagate_string_substring(state, symex_assign, f_l1));
       }
       else if(
         func_id == ID_cprover_string_of_int_func ||
         func_id == ID_cprover_string_of_long_func)
       {
-        return constant_propagate_integer_to_string(state, symex_assign, f_l1);
+        return with_python_backing(
+          constant_propagate_integer_to_string(state, symex_assign, f_l1));
       }
       else if(func_id == ID_cprover_string_delete_char_at_func)
       {
-        return constant_propagate_delete_char_at(state, symex_assign, f_l1);
+        return with_python_backing(
+          constant_propagate_delete_char_at(state, symex_assign, f_l1));
       }
       else if(func_id == ID_cprover_string_delete_func)
       {
-        return constant_propagate_delete(state, symex_assign, f_l1);
+        return with_python_backing(
+          constant_propagate_delete(state, symex_assign, f_l1));
       }
       else if(func_id == ID_cprover_string_set_length_func)
       {
-        return constant_propagate_set_length(state, symex_assign, f_l1);
+        return with_python_backing(
+          constant_propagate_set_length(state, symex_assign, f_l1));
       }
       else if(func_id == ID_cprover_string_char_set_func)
       {
-        return constant_propagate_set_char_at(state, symex_assign, f_l1);
+        return with_python_backing(
+          constant_propagate_set_char_at(state, symex_assign, f_l1));
       }
       else if(func_id == ID_cprover_string_trim_func)
       {
-        return constant_propagate_trim(state, symex_assign, f_l1);
+        return with_python_backing(
+          constant_propagate_trim(state, symex_assign, f_l1));
       }
       else if(func_id == ID_cprover_string_to_lower_case_func)
       {
-        return constant_propagate_case_change(state, symex_assign, f_l1, false);
+        return with_python_backing(
+          constant_propagate_case_change(state, symex_assign, f_l1, false));
       }
       else if(func_id == ID_cprover_string_to_upper_case_func)
       {
-        return constant_propagate_case_change(state, symex_assign, f_l1, true);
+        return with_python_backing(
+          constant_propagate_case_change(state, symex_assign, f_l1, true));
       }
       else if(func_id == ID_cprover_string_replace_func)
       {
-        return constant_propagate_replace(state, symex_assign, f_l1);
+        return with_python_backing(
+          constant_propagate_replace(state, symex_assign, f_l1));
       }
     }
   }
@@ -491,6 +516,75 @@ void goto_symext::associate_array_to_pointer(
 
   symex_assign.assign_symbol(
     ssa_expr, expr_skeletont{}, array_to_pointer_app, {});
+}
+
+void goto_symext::setup_python_string_result_backing(
+  statet &state,
+  symex_assignt &symex_assign,
+  const function_application_exprt &f_l1)
+{
+  if(f_l1.arguments().size() < 2)
+    return;
+  const exprt &length_arg = f_l1.arguments().at(0);
+  const exprt &content_arg = f_l1.arguments().at(1);
+  if(!is_ssa_expr(content_arg) || content_arg.type().id() != ID_pointer)
+    return;
+  const typet char_type = to_pointer_type(content_arg.type()).base_type();
+
+  // Fresh per-execution backing array (a distinct aux symbol per dynamic
+  // call, mirroring the constant-string path, so loops never re-associate a
+  // single pointer to two arrays).
+  const array_typet backing_type{char_type, infinity_exprt(signedbv_typet{64})};
+  symbolt &backing = get_fresh_aux_symbol(
+    backing_type,
+    "",
+    "string_content_backing",
+    source_locationt{},
+    irep_idt{"python"},
+    ns,
+    state.symbol_table);
+  backing.is_state_var = true;
+  backing.is_lvalue = true;
+  const symbol_exprt backing_expr = backing.symbol_expr();
+
+  const address_of_exprt string_data{
+    index_exprt{backing_expr, from_integer(0, signedbv_typet{64})}};
+
+  // result.content := &backing[0]
+  symex_assign.assign_symbol(
+    to_ssa_expr(content_arg), expr_skeletont{}, string_data, {});
+
+  // Associate backing<->pointer and backing<->length with the string solver,
+  // so find(content) resolves to `backing` (real memory the refinement's
+  // axioms for this operation will constrain) with the result length.
+  auto emit_associate = [&](const irep_idt &fn_id, const exprt &b)
+  {
+    if(!state.symbol_table.has_symbol(fn_id))
+    {
+      symbolt fs{
+        fn_id,
+        mathematical_function_typet(
+          {backing_type, b.type()}, signedbv_typet{32}),
+        irep_idt{"python"}};
+      fs.base_name = id2string(fn_id);
+      state.symbol_table.insert(std::move(fs));
+    }
+    const symbolt &fsym = ns.lookup(fn_id);
+    function_application_exprt app{fsym.symbol_expr(), {backing_expr, b}};
+    const symbol_exprt rc =
+      get_fresh_aux_symbol(
+        to_mathematical_function_type(fsym.type).codomain(),
+        "",
+        "return_value",
+        source_locationt{},
+        irep_idt{"python"},
+        ns,
+        state.symbol_table)
+        .symbol_expr();
+    symex_assign.assign_symbol(ssa_exprt{rc}, expr_skeletont{}, app, {});
+  };
+  emit_associate(ID_cprover_associate_array_to_pointer_func, string_data);
+  emit_associate(ID_cprover_associate_length_to_array_func, length_arg);
 }
 
 std::optional<std::reference_wrapper<const array_exprt>>

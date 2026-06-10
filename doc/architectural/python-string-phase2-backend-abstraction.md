@@ -752,3 +752,35 @@ string-result path and must be regression-gated against the full sweep +
 JBMC. The prototype is reverted; phase 1 remains the clean landing, and the
 `(produced-result)[i]` chained/byte-op case stays a documented residual until
 this larger change is explicitly scheduled.
+
+
+### Phase 2 landed (2026-06-10): produced-result backing in the symex handlers
+
+The handler-rework succeeded where the front-end prototype could not. Rather
+than changing the result-content *form* (which broke the const-prop handlers'
+`to_ssa_expr` on the output), the backing is installed **inside symex, on the
+symbolic path of the const-prop handlers**:
+
+* `goto_symext::setup_python_string_result_backing` creates a **fresh
+  per-execution** backing char array (`get_fresh_aux_symbol`, like the
+  constant-string path's aux symbol — so loops never re-associate one
+  pointer), points the result's content operand at `&backing[0]`, and emits
+  `cprover_associate_array_to_pointer` + `cprover_associate_length_to_array`.
+* It is invoked from `constant_propagate_assignment_with_side_effects` via a
+  `with_python_backing(...)` wrapper around each producing handler: when the
+  handler **constant-folds** (constant inputs) it already installs real
+  backing and returns true unchanged; when it **fails** (symbolic inputs) and
+  `language_mode == "python"`, the backing is installed and the handler's
+  `false` is returned so the refinement still emits the operation's
+  constraint over the now-backed array.
+* The const-prop handlers themselves are **unchanged**, and the wrapper is a
+  pure pass-through for non-Python modes, so **JBMC is provably untouched**
+  (confirmed: `jbmc-strings` + `strings-smoke-tests` green).
+
+Result: byte-level / chained operations on produced results now work and are
+loop-safe — `(chr(i)+"oo")[0]=="f"`, `s[2]`, and `for c in (chr(i)+"z")`
+prove; soundness holds (`(chr(<nondet>)+"z")[0]=="f"` FAILs); `str(int)` /
+`format` constant cases are unaffected (constant path returns true → no
+backing). ESBMC sweep: PASS 2932, **zero regressions**; three Python suites
+green; new regression test `string-produced-subscript`. This closes the
+`(produced-result)[i]` residual from phase-1's scoping.
