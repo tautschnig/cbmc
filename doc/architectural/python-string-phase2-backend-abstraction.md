@@ -645,3 +645,25 @@ integration proves too risky or regresses performance.
 2. **Java migration second** — a separate, later effort with the full JBMC
    regression suite, *enabled by* B but not a prerequisite. The mature Java
    path is not touched until Python has proven the model.
+
+**Phase 1 landed (2026-06-10).** `goto_symext::resolve_python_string_content`
+(gated `language_mode == "python"`) rewrites each refined-string argument of
+any `cprover_string_*` application to a literal char array of its real
+content, sized to the backing array's actual byte length and pinned to the
+current SSA version, routing through `array_pool`'s existing crash-free
+literal-array fast path (no association → loop-safe). A read-only value-set
+pre-check fires the rewrite only when the content pointer resolves to a
+single concrete array object, so refinement-produced (unconstrained) content
+(e.g. concat results) and literal-array content are left untouched. The
+front-end change is minimal: non-constant `chr()` stores its byte(s) in a
+real symbol array (so the content survives variable indirection). The
+`array_pool.find` extension explored earlier proved **unnecessary** — the
+symex side emits literal `ID_array`s that the existing fast path already
+resolves — and was dropped. Results: `chr(i)=="f"` (stored), concat chains
+`github_3090_4/_5`, and `chr(...) not in s` prove soundly; `github_3130_fail`
+is loop-safe; soundness holds; ESBMC sweep +`github_3090_4/_5` with **zero
+regressions**; three Python suites green. Implementation discipline #1
+(whole-content, not fixed-bound) is honoured by sizing to the real array
+length — which also preserves multibyte UTF-8. Remaining for later phases:
+broader content producers (slices, `str()` of ints, `join`, …) and the Java
+migration.

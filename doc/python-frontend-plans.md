@@ -256,7 +256,10 @@ fast paths; materialise concat *producers*, not just comparison operands).
 **Decision (2026-06-10): route (b) is adopted** as the production direction
 — symex resolves content pointers to their array *object* (not per-element
 unroll), the Python front-end drops `array_pool`-style association, and Java
-migration follows later. Implementation discipline + sequencing in the
+migration follows later. **Phase 1 landed (2026-06-10):** symbolic `chr`
+content equality/contains and symbolic-`chr` concat chains
+(`github_3090_4/_5`) prove soundly and loop-safely, zero sweep regressions;
+see the design-decision section. Implementation discipline + sequencing in the
 [design-decision section](architectural/python-string-phase2-backend-abstraction.md#design-decision-2026-06-10-choice-b--symex-content-pointer-resolution).
 The SMT-string backend (`--python-smt-strings` / CVC5) remains an orthogonal
 precision option.
