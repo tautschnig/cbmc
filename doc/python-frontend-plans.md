@@ -253,6 +253,11 @@ sweep tests (constant strings, multibyte UTF-8 `chr`, concat results) with
 0 new gains, so a production version must be **carefully scoped** (only the
 symbolic/variable-indirection case; preserve constant/literal/multibyte
 fast paths; materialise concat *producers*, not just comparison operands).
+**Decision (2026-06-10): route (b) is adopted** as the production direction
+— symex resolves content pointers to their array *object* (not per-element
+unroll), the Python front-end drops `array_pool`-style association, and Java
+migration follows later. Implementation discipline + sequencing in the
+[design-decision section](architectural/python-string-phase2-backend-abstraction.md#design-decision-2026-06-10-choice-b--symex-content-pointer-resolution).
 The SMT-string backend (`--python-smt-strings` / CVC5) remains an orthogonal
 precision option.
 Full analysis (JBMC loop handling, `find` fast path, storage options,
