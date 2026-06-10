@@ -710,3 +710,45 @@ association. This touches the shared refinement result path and must be
 validated against the full sweep + suites for regressions before landing; it
 is deferred to an explicitly-scoped phase 2 rather than bundled here, to keep
 phase 1 a clean, low-risk landing.
+
+
+### Phase 2 prototype measured (2026-06-10, reverted): producer-backing conflicts with the const-prop handlers
+
+Prototyped the JBMC-style producer backing in `emit_string_function`: give
+each produced result a real infinite backing char array, set
+`content = &backing[0]`, and emit `cprover_associate_array_to_pointer` +
+`cprover_associate_length_to_array`. Measured outcome:
+
+* **It works for the target, outside loops.** `(chr(i)+"z")[0] == "f"` and
+  other byte-level/chained ops on a *non-loop* produced result prove; phase 1
+  cases, multibyte, and soundness all hold.
+* **It crashes inside loops** (`for c in chr(i)+"z"`): the static backing
+  re-associates the same content pointer every iteration →
+  `array_pool`: "should not associate two arrays to the same pointer". JBMC
+  avoids this only because it **allocates a fresh object per execution**;
+  reproducing that needs per-iteration allocation, not a shared symbol.
+  (Gating backing to non-loop call sites avoids the crash but leaves the loop
+  case unfixed.)
+* **Decisive blocker — it conflicts with the whole family of symex
+  const-prop handlers.** `constant_propagate_{string_concat, string_substring,
+  integer_to_string, delete, delete_char_at, set_length, set_char_at, trim,
+  case_change, replace, ...}` each take the produced result's output operands
+  and do `to_ssa_expr(f_l1.arguments().at(0/1))` — i.e. they require the
+  output **length and content to be plain writable ssa symbols** that they
+  write the computed result into. Changing `content` to
+  `address_of(index(backing, 0))` fails `ssa_exprt::check` and **crashes
+  `str(int)` / `"{}".format(int)`** (regression: `str-format-int-precision`,
+  `limit-fstring`).
+
+**Conclusion.** Producer-backing *by changing the result-content form in the
+front-end* is **not a contained change**: the produced-result content is an
+output lvalue the entire const-prop-handler family writes into as a plain ssa
+symbol. Doing this properly means either (i) reworking those symex handlers
+to allocate a real backing object for their output and write through it (the
+JBMC pattern, lifted to the Python intrinsic path; also solves loop-safety
+via per-execution allocation), or (ii) a separate post-production
+materialisation pass. Both are substantial changes to the shared symex
+string-result path and must be regression-gated against the full sweep +
+JBMC. The prototype is reverted; phase 1 remains the clean landing, and the
+`(produced-result)[i]` chained/byte-op case stays a documented residual until
+this larger change is explicitly scheduled.
