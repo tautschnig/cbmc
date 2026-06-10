@@ -970,3 +970,51 @@ code, but in the **solver** — implementing the still-stubbed
 `split`, `index_of_from`). Those live in the shared `src/solvers/strings`
 layer and benefit every front-end at once. That is the high-leverage
 "more common infrastructure" direction for strings.
+
+
+### chr-axiom implemented and tested (2026-06-10): fails to remove the gate — phase 1 stays
+
+The chr-axiom plan above was implemented in full and reverted:
+* Solver: added `string_chr_builtin_functiont` (a `string_creation_builtin_functiont`
+  like `of_int`): `result.length==1`, `result[0]==(char)arg`, `return_code==0`,
+  eval truncates the code point to the char width (mp_integer modulo, no
+  bitwise ops). Registered in `string_dependencies`; removed `chr` from the
+  no-axiom stub list.
+* Front-end: non-constant `chr` emits `cprover_string_chr_func`; added it to
+  the producing-func dispatch (`with_backing`).
+
+**Result: the axiom itself is fine, but routing `chr` through the
+produced-result backing regresses `github_3130_fail`** (`for i in range(...):
+assert chr(i) not in s`) into a non-terminating **"SAT checker inconsistent:
+UNSATISFIABLE"** refinement loop (~10^6 iterations). Crucially, this happens
+**even with phase 1 fully disabled**, so it is not a phase-1 interaction: it
+is fundamental to *association-based backing of a leaf used by `contains`
+inside a loop*. The non-loop case (`chr(i) not in "xbm"`) is fine. A multibyte
+regression (`casting-chr-var-multibyte`) also appeared.
+
+**Root cause (the key lesson):** phase 1's **literal-materialisation** of leaf
+content (`resolve_python_string_content` builds an `address_of(index(ID_array,
+0))` that routes through `array_pool::find`'s **map-free** fast path) is
+**loop-safe** — no per-pointer association entry, so no per-iteration
+re-association and no inconsistent constraint accumulation. The phase-2
+**association-based backing** (`associate_array_to_pointer`) is loop-safe for
+*produced* results (concat/substring) but **not** for a leaf consumed by
+`contains` in a loop. So materialisation and association are *not*
+interchangeable; phase 1 is the correct mechanism for symex-resolved leaf
+content, and the produced-result backing is correct for refinement-produced
+content.
+
+**Conclusion:** the last `language_mode == "python"` gate
+(`resolve_python_string_content`) **stays**. It is not expedient — it encodes
+a genuine distinction (symex-resolved leaf, loop-safe via materialisation)
+that has no clean language-agnostic condition and that the association path
+cannot replicate without the loop inconsistency. Four approaches to remove it
+(de-gate; `concat_char` reroute; dedicated `chr` builtin; `chr` builtin with
+phase 1 removed) all fail. Eliminating it would require making the refinement
+itself loop-stable for associated leaves under `contains` — a solver-level
+change beyond the scope of removing one gate.
+
+The dedicated `chr` builtin (and the other stubbed axioms) remain worthwhile
+as **solver precision** improvements, but `chr` specifically must not be wired
+to the loop-fragile backing path for Python; it would only help a caller that
+does not route the result through `contains`-in-a-loop.
