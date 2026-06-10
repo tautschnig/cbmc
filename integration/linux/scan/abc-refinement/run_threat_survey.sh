@@ -15,7 +15,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SCAN="$(cd "$HERE/.." && pwd)"
 NEXT=/home/ubuntu/linux_next
 M612=/home/ubuntu/linux_6_12
-BUILD_TIMEOUT="${BUILD_TIMEOUT:-3300}"   # per-DB wall-clock cap (s)
+# per-DB wall-clock cap (s).  Whole-class builds are ~6-10 min EXCEPT the
+# 6.12 whole-drivers build (broad distro config, ~78 min, 36 GB) -- hence a
+# generous default so it completes rather than tripping BUILD-TIMEOUT.
+BUILD_TIMEOUT="${BUILD_TIMEOUT:-6000}"
 LOG=/tmp/threat_survey.log
 
 # manifest: tree|make-target|dbname.  Whole-class builds (net/ fs/ drivers/

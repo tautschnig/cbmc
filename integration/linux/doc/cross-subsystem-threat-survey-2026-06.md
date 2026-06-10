@@ -64,17 +64,70 @@ covers all configured net subsystems, etc.) unioned across two trees
 |-------|------:|--------:|----:|
 | net/* | 67 | 63 | 94.0% |
 | fs/* | 78 | 73 | 93.6% |
-| drivers/* | 144 | 43 | 29.9% |
+| drivers/* | 144 | 126 | 87.5% |
 | sound/* | 25 | 16 | 64.0% |
-| top-level atomic | 9 | 7 | 77.8% |
-| **TOTAL** | **323** | **202** | **62.5%** |
+| top-level atomic | 9 | 8 | 88.9% |
+| **TOTAL** | **323** | **286** | **88.5%** |
 
-(Up from 6.2%.)  `drivers/*` is the residual gap: a whole-`drivers/` build
-on linux-next (~9 min, covered 43/144 -- the configured subset); the 6.12
-whole-`drivers/` build hit the 55-min cap (`run_threat_survey.sh` records
-it as BUILD-TIMEOUT).  Covering more drivers/ needs a broader config
-(allmodconfig) or a longer build budget -- a reproducibility/perf matter,
-tracked by the automation.  Whole-class build cost is ~6-10 min each.
+(Up from 6.2% -> 62.5% -> 88.5%.)  The drivers jump came from the 6.12
+whole-`drivers/` build under 6.12's broad distro config (127/144 leaves,
+~78 min, 36 GB peak) -- linux-next/mainline configs only enable ~43 driver
+leaves, so the broad 6.12 config is what closes the gap.  Whole-class build
+cost is ~6-10 min each except 6.12 drivers (~78 min); the residual ~11.5%
+is leaves no available config enables (would need allmodconfig).  All
+reproducible via `run_threat_survey.sh` (BUILD_TIMEOUT default 6000 s).
+
+## What outcomes do we see? (`outcome_summary.py` + `pipeline_eval.py`)
+
+Coverage is breadth; this is what the analysis *says* about the covered
+code.  Outcomes split across three levels.
+
+**Finder-run outcomes** -- running the 8 finders on a whole-class DB:
+completes on net/fs/sound (~fast), but **whole-`drivers/` global taint
+analysis does not scale** (QUERY-TIMEOUT/ERROR at 360 s even with a 200 GB
+cap).  Honest finding: the *structural* finders are subsystem-agnostic and
+cheap, but interprocedural taint on a monster DB needs per-leaf scoping
+(run with `--module drivers/<leaf>`), not a single whole-drivers query.
+
+**Candidate outcomes** -- aggregate over net-all + fs-all + sound-all
+(24 finder runs completed, 1 query-timeout, 7 query-error):
+
+| asset | raw | mitigated/cleared | genuine residual |
+|-------|----:|------------------:|-----------------:|
+| A1-mem count/index | 225 | (structural) | 225 |
+| A1-mem decoded-len | 36 | (structural) | 36 |
+| A1-mem skb/cursor | 315 | (structural) | 315 |
+| A1-UB div/shift | 44 | 15 | 29 |
+| A2 confidentiality | 195 | 87 | 108 |
+| A3 integrity/CFI | 4 | (structural) | 4 |
+| A4 availability | 113 | 13 | 100 |
+| A5 authorization | 31 | (structural) | 31 |
+| **TOTAL** | **963** | **115** | **848** |
+
+Of the mitigation-capable assets (A1-UB / A2 / A4: 352 raw), 115 (33%)
+clear via a recognised mitigation (memset / clamp / nonzero / shift-bound /
+capability gate).  The structural finders (611 raw) carry no auto-mitigation
+column -- every hit enters the discharge/dominance stage below.
+
+**Discharge outcomes** -- the CBMC-adjudicated tail (rc7-db funnel, the
+ground-truth-rich net surface).  The skb/cursor funnel: 200 raw / 159 funcs
+-> 7 precondition-resolved -> 54 skb-pull-weak -> 29 distilled survivors,
+of which CBMC adjudicates a handful.  The verdicts seen are NOT all
+timeouts -- the full spectrum:
+
+| discharge verdict | example | meaning |
+|-------------------|---------|---------|
+| REAL, reach REACH | `ieee80211_get_ttlm` | shape-bug witnessed AND reachable in the verbatim body |
+| REAL shape, reach BLOCK | `try_rfc959` | bug shape exists but CBMC proves it unreachable -- true negative |
+| CALLER-GUARDED | `rxkad_decrypt_ticket` | caller validates the bound (`ticket_len>=4`) -- FP resolved without a harness |
+| PRODUCER-GUARDED | (struct-fill sites) | field validated where filled from the wire |
+| shape-model / BMC-intractable | `crush_decode` | `u32*u32` cannot overflow `size_t` on 64-bit -- needs a shape model, verbatim BMC intractable |
+| CLEAR (mitigated) | A2 padding/full-init | memset/full copy dominates the leak |
+| **TIMEOUT** | `parse_uac2_sample_rate_range`, `parse_audio_format_rates_v1` | large descriptor-parser; tracked by `pipeline_eval.py` "CBMC-discharge timeouts: N/M" |
+
+So timeouts are one bucket among several; the dominant outcomes are
+mitigation/guard CLEARs, with a small genuine-and-reachable REAL tail and a
+shape-model-territory bucket that BMC can't settle verbatim.
 
 ## CBMC-obligation discharge status on the new candidates
 
