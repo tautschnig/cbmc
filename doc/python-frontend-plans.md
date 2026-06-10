@@ -255,8 +255,11 @@ symbolic/variable-indirection case; preserve constant/literal/multibyte
 fast paths; materialise concat *producers*, not just comparison operands).
 **Decision (2026-06-10): route (b) is adopted** as the production direction
 — symex resolves content pointers to their array *object* (not per-element
-unroll), the Python front-end drops `array_pool`-style association, and Java
-migration follows later. **Phase 1 landed (2026-06-10):** symbolic `chr`
+unroll) for static-value leaves, while produced/heap-backed content uses
+association (a Java migration was assessed and found **not applicable** —
+Java's strings are heap-backed and genuinely need association; the
+front-ends converged on association for produced content). **Phase 1 landed
+(2026-06-10):** symbolic `chr`
 content equality/contains and symbolic-`chr` concat chains
 (`github_3090_4/_5`) prove soundly and loop-safely, zero sweep regressions;
 see the design-decision section. **Phase 2 landed (2026-06-10):**
