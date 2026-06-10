@@ -171,6 +171,28 @@ and a CBMC obligation (infoleak_test / ub_test / a3_test / av_test /
 auth_test).  The same actor/taint gate and the same dominance machinery
 are reused across assets.
 
+
+## Build-out status (#1-#4)
+
+* **#1 unified mitigation-dominance** (`MitigationDominance.qll`): one
+  dominance relation, instantiated per asset (memset/clamp/zero-shift-
+  check/capability), now drives a MITIGATED/UNMITIGATED verdict on every
+  finder -- the shared FP filter across A1/A1-UB/A2/A4/A5.
+* **#2 obligations discharged on real candidates**: on the hardened
+  current net/ surface the headline candidates clear -- A2 cgw_put_job
+  (packed, full memcpy), A1-UB mldv2_mrd (mask-bounded shift, CBMC
+  SUCCESSFUL), A4 ceph loops (ceph_decode_need-bounded) -- consistent with
+  the A1 verdicts; the value is systematic coverage + machine-checked
+  clearing.
+* **#3 multi-asset eval** (`threat_model_eval.py`): per-asset funnel + a
+  full cross-asset threat model of a fresh module (net/bridge/ across
+  A1/A2/A4/A5).
+* **#4 refinements**: A2 padding-layout + full-init mitigations (34
+  UNMITIGATED -> 0 genuine on broad-next-db, each cleared principledly);
+  A5 GENL_ADMIN_PERM-at-registration (`genl_admin_perm.ql`: 120/141
+  netlink handlers registration-guarded).  Remaining: A4 interprocedural
+  taint to alloc sizes (needs TaintTracking::Global).
+
 ## Refinements to derive next
 
 * **A3 CFI / integrity** — tainted write into a function-pointer / `*_ops`
