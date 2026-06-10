@@ -745,19 +745,30 @@ protected:
     const array_exprt &new_char_array,
     const address_of_exprt &string_data);
 
-  /// Python string backend (choice B, phase 2): for a refinement-produced
-  /// string result whose content could not be constant-folded, install a
-  /// fresh per-execution backing char array, point the result's content
-  /// operand at it, and associate the array+length with the string solver.
-  /// This gives the produced result real backing memory so downstream
-  /// byte-level / chained operations ((chr(i)+"z")[0], iteration of a concat
-  /// result, ...) read the same array the refinement constrains. A fresh aux
-  /// symbol per dynamic call keeps it loop-safe (no re-association of one
-  /// pointer). Gated to Python by the caller; JBMC sets up its own backing
-  /// before symex and is not affected.
-  void setup_python_string_result_backing(
+  /// String backend (choice B, phase 2): for a refinement-produced string
+  /// result whose content could not be constant-folded and is not already
+  /// backed by a concrete array, install a fresh per-execution backing char
+  /// array, point the result's content operand at it, and associate the
+  /// array+length with the string solver. This gives the produced result
+  /// real backing memory so downstream byte-level / chained operations
+  /// ((chr(i)+"z")[0], iteration of a concat result, ...) read the same array
+  /// the refinement constrains. A fresh aux symbol per dynamic call keeps it
+  /// loop-safe (no re-association of one pointer). Language-agnostic: the
+  /// caller invokes it only when \ref string_result_already_backed is false,
+  /// so a front-end that already installs backing (e.g. JBMC) is skipped.
+  void setup_string_result_backing(
     statet &state,
     symex_assignt &symex_assign,
+    const function_application_exprt &f_l1);
+
+  /// \return true if the string-producing application's output content
+  /// operand already points to a concrete backing array object (so the
+  /// front-end, e.g. JBMC, has already installed and associated it and symex
+  /// must not install a second one). Language-agnostic: distinguishes a
+  /// pre-backed result (value-set resolves to a real object) from a bare
+  /// nondet result pointer (value-set unknown).
+  bool string_result_already_backed(
+    statet &state,
     const function_application_exprt &f_l1);
 
   std::optional<std::reference_wrapper<const array_exprt>>
