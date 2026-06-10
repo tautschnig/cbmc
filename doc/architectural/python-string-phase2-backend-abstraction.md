@@ -667,3 +667,46 @@ regressions**; three Python suites green. Implementation discipline #1
 length — which also preserves multibyte UTF-8. Remaining for later phases:
 broader content producers (slices, `str()` of ints, `join`, …) and the Java
 migration.
+
+
+### Phase 2 scoping (2026-06-10): the remaining gap is *chained ops on produced results*
+
+Empirical probing after phase 1 shows phase 1 already covers more than the
+leaf-comparison target. The following all prove soundly today:
+* `chr(i)=="f"` stored in a variable; `chr(i) not in s`.
+* Concat chains compared directly: `chr(i)+"z" == "fz"` (`github_3090_4/_5`).
+* `startswith`, `len`, `in`/contains on a concat result.
+* Subscript, iteration (`for c in s`), `startswith`, `s[0]==…` on a **chr
+  leaf** stored in a variable.
+* Subscript of a **single** `nondet_str()` object (`assume(s[0]=="a")` →
+  `s[0]=="a"`).
+
+The remaining gap is narrow and well-defined: **a byte-level / chained
+operation applied to a refinement-*produced* result**, e.g. `(chr(i)+"z")[0]
+== "f"`. Here `s[0]` lowers to `cprover_string_substring(s,0,1)` (Strategy
+(b)) whose result then feeds `cprover_string_equal(res,"f")` — two chained
+refinement ops where the middle operand `s` is itself a produced (concat)
+result. Direct ops on a produced result connect fine; the *chain through a
+produced result's content pointer* does not. The symex resolution of phase 1
+cannot help here: a produced result's content is defined by the refinement,
+not by symex (its `.data` pointer has no backing memory and the value-set is
+`unknown`), so the value-set guard correctly leaves it untouched.
+
+Root cause: a produced result is represented as `{nondet_len, nondet_ptr}`
+(`make_nondet_string`) with no backing storage; the refinement connects two
+uses of the *same* result pointer through `array_pool`'s per-pointer map, but
+a chain that stores the result in a variable and reads it back, then feeds it
+to a further intrinsic, does not reliably re-connect (SSA version / pointer
+identity through the store-reload).
+
+**This is exactly the "materialise producers / per-execution storage" item**
+flagged in the design decision (discipline #4) and the original
+storage-options analysis — the larger, higher-risk change. The tractable,
+sound shape: give each `cprover_string_*` *result* a real symbol-array
+backing (sized to its bounded max length) and have symex connect that array
+to the result the same way phase 1 connects leaves, so downstream
+byte-level/chained ops read real memory and `array_pool` never needs
+association. This touches the shared refinement result path and must be
+validated against the full sweep + suites for regressions before landing; it
+is deferred to an explicitly-scoped phase 2 rather than bundled here, to keep
+phase 1 a clean, low-risk landing.
