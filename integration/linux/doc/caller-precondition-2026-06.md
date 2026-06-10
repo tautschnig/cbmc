@@ -195,3 +195,10 @@ then-store parsers — the ttlm trio (`get_ttlm`, `parse_adv_t2l`,
   covers *every* downstream read (for `get_ttlm` the manual triage did that
   separately and exactly). It dependably retires the non-local-validator FP
   *class*; it should not be read as a bound proof for an arbitrary parser.
+* **Generalization + cost** — on the whole-6.12-`net` DB the shape certifies
+  the same precise family (5 functions: the ttlm trio + HE/EHT MCS verify
+  parsers, no list-primitive false certs), confirming it is not a one-off.
+  But the global predicates (`forall` over call sites, field-wide
+  `validatedStorageField`) cost ~19 min on whole-net vs ~68 s on the scoped
+  rc7 funnel — same scaling wall the whole-class taint queries hit; scope
+  per-subsystem for interactive use.
