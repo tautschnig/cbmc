@@ -829,3 +829,54 @@ for produced/heap-backed content (Python and Java alike); keep symex
 resolution for static-value leaves (Python). The choice-B design stands —
 its scope is "leaves resolve via symex; produced/heap content associates" —
 which both front-ends now follow. Java is left untouched.
+
+
+### De-gating for shared code (2026-06-10): phase 2 de-gated; phase 1 stays gated
+
+Goal: maximise shared, language-agnostic symex code and remove
+`language_mode == "python"` checks from the engine, with Java leveraging the
+shared mechanism. Outcome, by experiment:
+
+**Phase 2 (produced-result backing): de-gated successfully.** The
+`language_mode == "python"` gate was replaced with a semantic condition,
+`string_result_already_backed()`, which checks (via the value-set) whether
+the result's content operand already points to a concrete array object:
+* JBMC assigns the result content `= &heap_char[0]` before symex → resolves
+  to a concrete object → already backed → symex installs nothing (no double
+  association).
+* The Python front-end's bare `__string_ptr` resolves to nothing concrete →
+  symex installs a fresh backing array + association.
+
+So produced-result backing is now **shared, language-agnostic code**: any
+front-end that produces an unbacked string result gets backing from symex,
+and JBMC is handled by the *same* code path (correctly skipped) rather than
+by a language check. `setup_string_result_backing` derives its symbol mode
+from the content operand. Validated: `jbmc-strings` + `strings-smoke` green,
+Python suites green, ESBMC sweep PASS 2932 / 0 regressions. (Committed.)
+
+**Phase 1 (comparison-content resolution): cannot be cleanly de-gated.** Two
+routes were tried and reverted:
+1. *Remove the gate.* `resolve_python_string_content` materialises a literal
+   char array from the content operand. That is only valid when the bytes are
+   **symex-resolved** (Python's `chr` symbol arrays assigned a byte); for
+   **refinement-constrained** content (JBMC's associated `char[]`) it produces
+   a wrong/redundant array. De-gating **breaks `jbmc-strings`**
+   (`java_concat`, `java_append_char`, `float-to-string`, ...). There is no
+   clean symex-side condition distinguishing "symex-resolved" from
+   "refinement-constrained" content (it depends on whether the front-end
+   associated it, which is solver-side state symex cannot query).
+2. *Eliminate phase 1 by routing `chr` through the shared backing* via
+   `concat_char(empty, byte)` (a properly axiomatised intrinsic, unlike the
+   `cprover_string_chr_func` stub). This made the result flow through phase-2
+   backing, but the `empty_string` + `concat_char` + backing combination in a
+   loop produced **"SAT checker inconsistent: UNSATISFIABLE"** (contradictory
+   constraints — a soundness hazard) on `github_3130_fail`, plus a multibyte
+   regression. Reverted.
+
+**Net:** one of the two symex string hooks is now shared/language-agnostic
+(phase 2). Phase 1 remains a single `language_mode == "python"`-gated hook;
+removing it cleanly would require proper solver-side `chr` axioms (the
+documented "Phase 3" infrastructure work) so Python leaves can flow through
+the shared produced-result path without the `concat_char`/`empty_string`
+inconsistency. Until that solver work is done, phase 1 stays gated — a small,
+isolated, JBMC-inert specialization.
