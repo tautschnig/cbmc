@@ -122,6 +122,36 @@ exactly why `real_rxkad_ticket.c` stubs the in-place decrypt.  So the two
 approaches are complementary: auto-harness for breadth, hand-authored for
 the heavy dependencies.
 
+### Auto-harness applicability (measured)
+
+Tested across the genuine-concern set, auto-harness has a precise sweet
+spot — **small, self-contained, fixed-array functions** — and two distinct
+failure modes:
+
+| function | TU | auto verdict | note |
+|----------|----|--------------|------|
+| `cgw_csum_crc8_pos` | gw.gb | **REAL-OOB** | fixed-array index > allocation; correct |
+| `__decode_pg_upmap_items` | osdmap.gb | **CLEAN** | `ceph_decode_*_safe`; correct TN |
+| `ieee80211_get_ttlm` | mlme.gb | CLEAN (**false neg**) | under-provision bug: goto-harness over-allocates the `data` buffer, so `data[1]` is in-bounds; the *caller* supplies 1 byte |
+| `rxkad_decrypt_ticket` | rxkad.gb | **TIMEOUT** | pointer-arithmetic parse (`p=ticket; end=p+len; memchr`) |
+| `ieee80211_rx_mgmt_beacon`, `ieee80211_assoc_config_link`, `ieee80211_bss_info_update` | mlme.gb | **TIMEOUT** | large RX dispatchers (deep call trees) |
+| `ieee80211_sta_rx_queued_frame` | mlme.gb | **HARNESS-FAIL** | goto-harness could not synthesise the args |
+
+So auto-harness **scales `src=REAL` for the small-leaf subset** (fixed-array
+index/count vs allocation — the count/index oracle's strength), but the
+two genuine-concern classes it does *not* cover are:
+
+* **under-provision** (bounded-cursor / skb READ): goto-harness allocates a
+  generous buffer, hiding "caller supplied fewer bytes than read" — the
+  hand-authored harness models the tight buffer (`real_ttlm.c`,
+  `real_rxkad_ticket.c`);
+* **large/heavy** functions: time out (RX dispatchers, crypto, pointer
+  arithmetic) — focused hand-authored slices are required.
+
+This sharpens the auto-vs-hand split: auto for *breadth over small leaf
+computations*, hand-authored for *under-provision bugs and large/heavy
+functions*.
+
 ## src= column (adjudication source)
 
 `pipeline_eval` adjudicates each survivor with this precedence, recorded in
