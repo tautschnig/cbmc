@@ -45,8 +45,13 @@ GROUND_TRUTH = {
         "count->multiply; array_size/size_mul guarded, u32 cannot overflow "
         "size_t on 64-bit -- shape-model territory, BMC-intractable verbatim"),
     "ieee80211_get_ttlm": ("mac80211 T2L map",
-        "bounded-cursor: read width chosen by bm_size, no length arg; "
-        "UNGUARDED in caller-precondition -- genuine concern (verbatim TP)"),
+        "bounded-cursor: 2-byte le16 read width chosen by bm_size, no length "
+        "arg; flagged UNGUARDED because the guard is NON-LOCAL -- manual "
+        "triage confirms FALSE POSITIVE: ieee80211_tid_to_link_map_size_ok() "
+        "(parse.c:186 storage gate) budgets 1+2+[3]+hweight8(presence)*bm_size "
+        "bytes and the parser rejects unless presence==0xff (hweight8==8), so "
+        "the 8 map reads are exactly covered. Verbatim harness over-approx: "
+        "models get_ttlm in isolation, can't see the 2-layers-up validator"),
     "try_rfc959": ("nf_conntrack_ftp",
         "FTP PORT parser (try_number); loop bounded by dlen, index by "
         "array_size -- CBMC-clear TRUE NEGATIVE (verbatim)"),

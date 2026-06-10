@@ -117,7 +117,7 @@ timeouts -- the full spectrum:
 
 | discharge verdict | example | meaning |
 |-------------------|---------|---------|
-| REAL, reach REACH | `ieee80211_get_ttlm` | shape-bug witnessed AND reachable in the verbatim body |
+| REAL in verbatim harness, then triaged FP | `ieee80211_get_ttlm` | shape-bug witnessed AND reachable in the *isolated* body -- but manual triage (below) shows a non-local validator makes it safe |
 | REAL shape, reach BLOCK | `try_rfc959` | bug shape exists but CBMC proves it unreachable -- true negative |
 | CALLER-GUARDED | `rxkad_decrypt_ticket` | caller validates the bound (`ticket_len>=4`) -- FP resolved without a harness |
 | PRODUCER-GUARDED | (struct-fill sites) | field validated where filled from the wire |
@@ -128,6 +128,42 @@ timeouts -- the full spectrum:
 So timeouts are one bucket among several; the dominant outcomes are
 mitigation/guard CLEARs, with a small genuine-and-reachable REAL tail and a
 shape-model-territory bucket that BMC can't settle verbatim.
+
+### Deep-dive triage: `ieee80211_get_ttlm` (the lone REAL+reachable hit)
+
+Followed the one verbatim-REAL+reachable candidate to ground truth.
+
+```c
+static u16 ieee80211_get_ttlm(u8 bm_size, u8 *data) {
+    if (bm_size == 1) return *data;          // 1-byte read
+    else return get_unaligned_le16(data);    // 2-byte read, NO length arg
+}
+```
+
+The leaf trusts that `data` has `bm_size` bytes; the verbatim-body harness
+(nondet `data`, no length) therefore witnesses a 1-byte OOB read and our
+function-granularity caller-precondition finder reports UNGUARDED.  But the
+guard is **non-local**, at the element-*storage* gate two layers up:
+
+* `parse.c:186` stores an element in `elems->ttlm[]` only if
+  `ieee80211_tid_to_link_map_size_ok(data, len)` passes;
+* that validator budgets `fixed(1) + 2[switch] + 3[dur?] + 1[presence] +
+  hweight8(optional[0])*bm_size`;
+* `ieee80211_parse_adv_t2l` rejects unless `link_map_presence (optional[0])
+  == 0xff`, so when it reaches the 8 `get_ttlm(map_size,pos)` reads
+  `hweight8(optional[0]) == 8` and `bm_size == map_size`.
+
+The validator's budget (`...+ 8*bm_size`) therefore **exactly covers** the
+parser's `1 + 2 + [3] + 8*map_size` bytes.  No OOB is reachable on a frame
+that survives parsing -> **caller-guarded TRUE NEGATIVE (false positive)**.
+
+Outcome of the deep-dive: not a kernel bug, but a concrete finder
+improvement -- teach the caller-precondition analysis the
+**validate-at-storage-then-parse-later** pattern (an element validated by a
+`*_size_ok()` predicate before being stashed in an `elems->X[]` array that a
+later function walks).  This is a recurring mac80211/cfg80211 idiom, so
+modelling it should retire a class of non-local-validator false positives,
+not just this one.
 
 ## CBMC-obligation discharge status on the new candidates
 
