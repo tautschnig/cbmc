@@ -424,3 +424,99 @@ experiment proves the refinement *can* solve these once it sees the real
 content — the remaining design choice is purely *how* to deliver that
 content (pointer-association vs. dereference), and the loop crash makes the
 case for dereference.
+
+
+### Update (2026-06-10) — corrected conclusion + symex-deref feasibility
+
+Two further investigations refine the backlog note above.
+
+**(a) How JBMC survives the loop — and why our crash was self-inflicted.**
+JBMC's refined-string `content` is a *declared `char*` variable*
+(`cprover_string_content`) **assigned `= a->data` per execution**
+(`decl_string_expr` adds `DECL`; `code_assign_java_string_to_string_expr`
+adds the assignment), and each loop iteration constructs a **distinct heap
+object**, so `a->data` is a genuinely **different pointer value** per
+iteration and `cprover_string_content` gets a **fresh SSA version**. The
+`array_pool`'s one-array-per-pointer invariant is therefore satisfied —
+**JBMC does not crash**. Our experiment crashed only because `chr` used a
+**single static array** with a constant, version-independent
+`address_of(...)` pointer that every unwind re-associated. So the crash is
+an artifact of *static, shared content storage*, **not** a fundamental
+`array_pool` flaw. **Corrected bottleneck: per-execution content storage**,
+not the association mechanism.
+
+**(b) `array_pool.find` already has a crash-free fast path.** For a content
+pointer of the *syntactic* form `address_of(index(<ID_array>, 0))`,
+`array_poolt::find` (`array_pool.cpp`) **returns that array directly and
+does NOT insert into `arrays_of_pointers`** — so it never trips the
+invariant, even in loops, and it handles arrays with *symbolic elements*
+(`[cast(i,uint8)]`). It falls through to a *fresh unconstrained* array only
+when the pointer is a `member`/`symbol` (e.g. `s.data` after the string is
+stored in a variable). **So the real gap is variable indirection hiding the
+literal array behind a member pointer** — not the pointer representation,
+and not loops per se.
+
+**Storage options (if staying on the association route):**
+* *Fresh per-construction allocation* (JBMC-style): each string producer
+  allocates its own content (distinct pointer per dynamic execution). Most
+  faithful; costs an allocation per produced string (strings are already
+  pointer-backed, so this is storage-shape, not a new indirection).
+* *Pooled/arena per call site*: cheaper but reintroduces aliasing across
+  iterations unless versioned.
+* *Escape-only*: only allocate fresh storage for strings that outlive a
+  loop iteration; keep the static-array shortcut for within-iteration
+  temporaries. Smallest change, but needs an escape analysis.
+
+**(c) symex content-pointer dereference — FEASIBLE.** Verified that symex
+can resolve a content pointer to its backing array:
+`value_set_dereferencet` (`value_set_dereference.cpp`, `try_add_offset_to_
+indices`) explicitly handles `*(p + i)` for **symbolic `i`**, producing
+`object[i]` (guarded across multiple value-set targets) — and
+`symex_dereference.cpp` lowers `index`/`member`/`byte_extract` over
+pointers to offsets from the root object. The natural hook is the **existing
+`cprover_string_*` handling in `constant_propagate_assignment_with_side_
+effects`** (`goto_symex.cpp:205`), which is already scoped to those
+intrinsics (so C/C++/Java are untouched) but today only handles *constant*
+content (`try_evaluate_constant_string`).
+
+The clean variant: at a `cprover_string_*` call, for each string-pointer
+argument, **re-materialise a bounded literal array** `array_exprt{[ *(p+0),
+…, *(p+BOUND-1) ]}` by dereferencing each element through the value-set, and
+rewrite the argument's content pointer to `address_of(index(that_array,
+0))`. This routes through `find`'s existing `is_constant_array` fast path
+(**no `array_pool` insertion → no loop crash**), needs **no front-end
+storage change**, and works through variable indirection because the
+value-set resolves `s.data` to its backing object.
+
+*Advantages of symex-deref:* (1) avoids the pointer-identity crash entirely
+(no map insertion); (2) handles loops naturally — each unwind dereferences
+the current SSA content; (3) handles variable indirection (`s.data`) that
+`find`'s syntactic fast path misses; (4) front-end keeps the current string
+shape — no fresh-allocation refactor; (5) reuses the existing, JBMC-proven
+refinement unchanged.
+
+*Disadvantages / risks:* (1) **bounded unroll** — up to `PYTHON_MAX_STRING_
+LENGTH` (64) element dereferences per string operand per call, each possibly
+a guarded `if`-chain over value-set targets → formula-size / perf cost
+(heavier than a single association); (2) it **touches core symex**
+(`goto_symex.cpp`) shared with C/C++/Java — must stay strictly scoped to the
+`cprover_string_*` path and be covered by the JBMC regression suite; (3)
+**accumulation across iterations** (a string genuinely grown in a loop) is
+*orthogonal* to deref-vs-association: if producers write into shared static
+storage, the deref reads the current (aliased) content — correct for
+within-iteration consumption, but a string accumulated across iterations
+still needs per-execution storage for its *result*. In practice Python's
+`concat` produces a fresh refinement result array, so the leaf-deref handles
+the common cases; (4) the `BOUND` truncation is sound only because the model
+already caps strings at 64 (consistent).
+
+**Net recommendation.** symex-deref is feasible and is the **lower-front-end-
+impact, loop-safe** route, reusing the existing refinement and `find` fast
+path; its cost is bounded-deref performance and a carefully-scoped core-symex
+change. The association route is equally sound but, to be loop-safe, requires
+the per-execution-storage refactor (fresh allocation per producer). Suggested
+order: prototype symex-deref on `chr(i)=="f"` + `github_3090_4` + the loop
+case `github_3130_fail` *together* (the three that pin the design), measure
+solver impact, and only then decide whether to generalise it across the
+string producers or invest in per-execution storage. The SMT-string backend
+(`--python-smt-strings`, CVC5/Z3) remains an orthogonal precision option.

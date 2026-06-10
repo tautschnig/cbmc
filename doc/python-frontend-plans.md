@@ -223,26 +223,33 @@ selector and the `--python-smt-strings` flag exist and are threaded through
 the frontend target either backend uniformly, and the SMT-String backend
 implementation itself.
 
-**Spike (2026-06-09/10, `github_3090_4`) — diagnosis corrected; the blocker
-is the array_pool *association*, not the representation.** Symbolic-string
-content equality fails on the default `--refine-strings` sweep not because
-of `char*`-vs-`char[]` (JBMC's refined string is *also* `{length, char*}`
-and proves fine), but because the front-end never establishes the
-`array_pool` association between a leaf string's content pointer and its
-char array — so `add_axioms_for_equals` reasons about a *fresh
-unconstrained* array. **Experiment 2** confirmed this: associating
-`chr(i)`'s content array made `chr(i)=="f"` and `github_3090_4`/`3090_5`
-**verify under the default backend**, soundly. **However**, broadly
-emitting `array_pool` associations is the *wrong* mechanism for leaf
-strings in **loops**: a fixed-address content pointer re-associated each
-unwind maps one pointer to many SSA arrays and hits the
-`array_pool.cpp:175` invariant (crashed `github_3130_fail`). **Backlog
-decision (favoured): make symex dereference string content pointers** and
-feed the dereferenced array to the refinement, instead of per-pointer pool
-associations — this handles loops naturally. The SMT-string backend
-(`--python-smt-strings` / CVC5) remains an orthogonal precision option, not
-a prerequisite. Full write-up + the array_pool-vs-symex-deref analysis:
-[python-string-phase2-backend-abstraction.md](architectural/python-string-phase2-backend-abstraction.md#experiment-2-2026-06-10--array_pool-content-association-and-the-loop-limitation).
+**Spike (2026-06-09/10, `github_3090_4`) — diagnosis corrected.** The
+blocker is *not* `char*`-vs-`char[]` (JBMC's refined string is *also*
+`{length, char*}` and proves fine) and *not* the `array_pool` mechanism
+itself. It is **variable indirection + content storage**: `array_pool.find`
+already extracts the real array (crash-free, even with symbolic elements)
+when the content pointer is the syntactic form `address_of(index(<array>,
+0))`, but falls through to a *fresh unconstrained* array when the pointer is
+a `member` (e.g. `s.data` once the string is stored in a variable). Adding
+an explicit association fixed `chr(i)=="f"` + `github_3090_4/5` under the
+default backend (soundly) **but crashed `github_3130_fail`** — because
+`chr` used *static, shared* content storage, so one constant pointer was
+re-associated across loop unwinds. JBMC avoids this by giving each string
+**per-execution heap content** (distinct pointer per iteration), so the
+real bottleneck is **per-execution content storage**, not association.
+**Two viable, sound routes:** (a) JBMC-style per-execution storage (fresh
+allocation per producer) + the existing association — the "bigger change";
+(b) **symex content-pointer dereference** — verified feasible
+(`value_set_dereferencet` resolves `*(p+i)` for symbolic `i`; hook is the
+already-`cprover_string`-scoped `constant_propagate_assignment_with_side_
+effects`), re-materialising a bounded literal array that routes through
+`find`'s crash-free fast path with **no front-end storage change** and **no
+loop crash**, at the cost of bounded-deref perf + a scoped core-symex
+change. Route (b) is the lower-impact lean. The SMT-string backend
+(`--python-smt-strings` / CVC5) remains an orthogonal precision option.
+Full analysis (JBMC loop handling, `find` fast path, storage options,
+symex-deref pros/cons):
+[python-string-phase2-backend-abstraction.md](architectural/python-string-phase2-backend-abstraction.md#update-2026-06-10--corrected-conclusion--symex-deref-feasibility).
 
 **Plan (5 phases; phases 1–2 designed, 3–5 open):**
 
