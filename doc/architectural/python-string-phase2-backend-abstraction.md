@@ -578,3 +578,70 @@ symex-deref as the favoured route, but budget it as a scoped feature
 JBMC-safe), validated incrementally on the constant/multibyte/concat
 cases — not a single `symex_assign` interception. Tree was reverted to the
 PASS-2930 baseline.
+
+
+## Design decision (2026-06-10): Choice B — symex content-pointer resolution
+
+**Decision.** The production direction is **symex resolution of string
+content pointers** (choice B), retiring the front-end `array_pool`-style
+association in Python and, eventually, in Java. A string is just
+`{length, char*}`; symex resolves the `char*` to its backing array object
+via the **same value-set machinery used for every other pointer**, and the
+refinement reasons over that array. The front-end no longer emits
+`associate_array_to_pointer` / `register_string_with_solver` intrinsics.
+
+**Why B over A (front-end-only association).** Both options share the same
+prerequisite — Python string content must live in a real, symex-tracked
+array object (a symbol array, SSA-versioned), not a dead literal temporary
+or a fresh-unconstrained pool array. Given that, the only real difference is
+*who connects the content pointer to its array*:
+* **A (association):** the front-end emits explicit association intrinsics;
+  loop-safety additionally requires distinct per-execution pointers (fresh
+  allocation per produced string, JBMC-style).
+* **B (symex resolution):** symex resolves the pointer like any other; no
+  association intrinsics; loop-safe by SSA versioning (no pointer-identity
+  map to collide).
+
+B is **DRY** (one pointer-resolution path, not a second string-specific
+one the front-end must feed correctly — the source of Python's string
+bugs), **removes front-end burden and a footgun**, is **loop-safe by
+construction**, and **unifies Python with Java** (enables eventually
+dropping `java_string_library_preprocess`'s explicit char-array
+association). A remains the safe, solver-untouching **fallback** if symex
+integration proves too risky or regresses performance.
+
+**Implementation discipline (non-negotiable):**
+1. **Array-object resolution, not per-element unroll.** Resolve the content
+   pointer to the *whole* array object (canonical
+   `address_of(index(<object>, 0))` form) and let the refinement quantify
+   over it symbolically, exactly as today. The reverted prototype's
+   64×-per-element unroll was the source of its perf hit and its
+   multibyte/constant regressions — *not* the approach itself.
+2. **Preserve the existing fast paths.** Constant strings, string literals,
+   and constant-folded concats must keep proving via symex
+   constant-propagation and `find`'s native literal-array fast path. The
+   new resolution must only engage where it adds value (symbolic content /
+   variable indirection), never displace a working path.
+3. **Preserve multibyte (UTF-8) content.** `chr(cp ≥ 0x80)` and any
+   multi-byte content keep their true byte length; the array-object model
+   carries the bytes as-is.
+4. **Concat results are producers too.** Materialise content at the
+   *producer* (leaf: literals/`chr`; results: concat), so a concat carries
+   a real array object its consumers can resolve — not only at comparison
+   operands.
+5. **`array_pool` survives as the refinement-internal registry**, but it is
+   *populated by symex resolution*, not front-end association. Extend
+   `find`'s fast path to accept a **symbol**-array object
+   (`address_of(index(<symbol>, 0))`), not only a literal `ID_array`.
+6. **Gated to Python; JBMC untouched** in phase 1.
+
+**Sequencing:**
+1. **Python first** — gated to Python mode, array-object resolution,
+   validated on the cases the prototype flagged (constant strings,
+   multibyte `chr`, concat *results*) plus the three design-pinning tests
+   (`chr(i)=="f"` SUCCESS, `github_3090_4` SUCCESS, `github_3130_fail`
+   FAILED-no-crash) and soundness (`chr(<nondet>)` / `chr(103)` FAIL).
+   Measure solver impact; no regressions vs the PASS-2930 baseline.
+2. **Java migration second** — a separate, later effort with the full JBMC
+   regression suite, *enabled by* B but not a prerequisite. The mature Java
+   path is not touched until Python has proven the model.
