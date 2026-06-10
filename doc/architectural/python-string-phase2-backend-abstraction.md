@@ -520,3 +520,61 @@ case `github_3130_fail` *together* (the three that pin the design), measure
 solver impact, and only then decide whether to generalise it across the
 string producers or invest in per-execution storage. The SMT-string backend
 (`--python-smt-strings`, CVC5/Z3) remains an orthogonal precision option.
+
+
+### Prototype (2026-06-10) — symex-deref: concept validated, loop-safe, but naive integration regresses
+
+Built a throwaway symex-deref prototype (reverted) to pin the design on
+`chr(i)=="f"` + `github_3090_4` + `github_3130_fail` together. A
+`language_mode=="python"`-gated hook in `symex_assign` intercepted
+`cprover_string_equal/contains/is_prefix/is_suffix` applications and, for
+each refined-string argument, **re-materialised a literal char array**
+`[*(content+0) … *(content+n-1)]` via `value_set` dereference, rewriting the
+content pointer to `address_of(index(<that array>, 0))` to route through
+`array_pool`'s crash-free literal-array fast path.
+
+**What worked (validates the approach):**
+* `value_set` dereference resolves `*(s.data+k)` to the backing array
+  element even through a member pointer (`s.data` → `__chr_arr_0[k]`) — *if*
+  the content lives in a real symbol (the `chr` literal-temp had to be
+  materialised into a symbol first; a dead literal temp doesn't resolve).
+* Each deref'd element must be **L2-renamed** (`state.rename<L2>`) before
+  going under `address_of`, otherwise `address_of` suppresses renaming and
+  the array references the unconstrained base symbol.
+* The literal array's **static size must equal the string length** (the
+  fast path uses array size as length); the length is read from the symex
+  **propagation map** (`try_evaluate_constant`), not `do_simplify`.
+* With all three, `chr(i)=="f"` **proves soundly** (`chr(<nondet>)` and
+  `chr(103)` still FAIL), `chr(122) not in "abc"` proves, and crucially
+  **`github_3130_fail` does NOT crash** (loop-safe — the array_pool
+  re-association crash is gone). This is the key advantage over the
+  association route.
+
+**What broke (why it's not shippable as-is):** the broad hook regressed **9
+sweep tests** with **0 new gains**. The hook intercepts *all* python string
+equality/contains, including cases that already worked and that
+materialisation harms:
+* **Constant strings / constant concats** (`github_3090_2`, `string13`):
+  previously folded by symex constant-propagation or `find`'s native fast
+  path; materialising at the comparison broke them.
+* **Multibyte UTF-8 `chr`** (`casting-chr-var-multibyte`): `chr(cp≥0x80)`
+  is a length>1 byte sequence; the prototype's leaf model / length handling
+  didn't preserve it.
+* **Concat results** (`github_3090_4/5`): the concat *result* string's
+  content is produced by the refinement, not a symex symbol, so the deref
+  can't materialise it — these stayed unproven.
+
+**Conclusion.** symex-deref is **feasible and the right direction** — the
+deref resolves real content, it is loop-safe, and it is sound. But a naive
+"materialise every string comparison" hook is net-negative: it must be
+**carefully scoped** to *only* the symbolic-content / variable-indirection
+case it actually fixes, must **preserve multibyte and constant/literal fast
+paths**, and must be **extended to concat results** (materialise producers,
+not just comparison operands — i.e. bring the leaf into a symex-trackable
+array at production time and let concat carry it). That is a real,
+multi-part production change, not a point hook. Net for planning: keep
+symex-deref as the favoured route, but budget it as a scoped feature
+(producer-side materialisation + comparison-side use, gated to Python,
+JBMC-safe), validated incrementally on the constant/multibyte/concat
+cases — not a single `symex_assign` interception. Tree was reverted to the
+PASS-2930 baseline.

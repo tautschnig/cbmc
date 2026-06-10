@@ -245,10 +245,18 @@ already-`cprover_string`-scoped `constant_propagate_assignment_with_side_
 effects`), re-materialising a bounded literal array that routes through
 `find`'s crash-free fast path with **no front-end storage change** and **no
 loop crash**, at the cost of bounded-deref perf + a scoped core-symex
-change. Route (b) is the lower-impact lean. The SMT-string backend
-(`--python-smt-strings` / CVC5) remains an orthogonal precision option.
+change. Route (b) is the lower-impact lean. A throwaway **prototype
+(2026-06-10, reverted) validated route (b)**: `chr(i)=="f"` and
+`chr(122) not in "abc"` prove **soundly** and `github_3130_fail` is
+**loop-safe (no crash)** — but a *broad* `symex_assign` hook regressed 9
+sweep tests (constant strings, multibyte UTF-8 `chr`, concat results) with
+0 new gains, so a production version must be **carefully scoped** (only the
+symbolic/variable-indirection case; preserve constant/literal/multibyte
+fast paths; materialise concat *producers*, not just comparison operands).
+The SMT-string backend (`--python-smt-strings` / CVC5) remains an orthogonal
+precision option.
 Full analysis (JBMC loop handling, `find` fast path, storage options,
-symex-deref pros/cons):
+symex-deref pros/cons, prototype results):
 [python-string-phase2-backend-abstraction.md](architectural/python-string-phase2-backend-abstraction.md#update-2026-06-10--corrected-conclusion--symex-deref-feasibility).
 
 **Plan (5 phases; phases 1–2 designed, 3–5 open):**
