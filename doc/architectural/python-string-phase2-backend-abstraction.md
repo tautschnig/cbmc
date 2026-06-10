@@ -880,3 +880,93 @@ documented "Phase 3" infrastructure work) so Python leaves can flow through
 the shared produced-result path without the `concat_char`/`empty_string`
 inconsistency. Until that solver work is done, phase 1 stays gated — a small,
 isolated, JBMC-inert specialization.
+
+
+### Plan: solver-side `chr` axioms (to remove the last `language_mode` gate)
+
+Goal: give `cprover_string_chr_func` real refined-string axioms so Python's
+non-constant `chr(i)` can produce its result through the **shared** symex
+produced-result backing (phase 2), making phase 1's Python-gated
+content-resolution unnecessary — eliminating the last `language_mode` check.
+A *dedicated* `chr` builtin (not the `concat_char(empty, …)` reroute) is the
+key: it produces a length-1 result directly, with no `empty_string`
+intermediate, which is what caused the SAT-inconsistency in the reverted
+experiment.
+
+**Solver (src/solvers/strings):**
+1. Add `string_chr_builtin_functiont : public string_creation_builtin_functiont`
+   in `string_builtin_function.{h,cpp}` (mirror `string_of_int_builtin_functiont`,
+   which already creates a string from a value with no input string):
+   - ctor: `PRECONDITION(fun_args.size() == 3)` (`result.length`,
+     `&result[0]`, codepoint); `arg = fun_args[2]`.
+   - `eval`: `make_string({ (char)arg }, length-1-array-type)`.
+   - `constraints`: `result.length == 1`; `result[0] == typecast(arg, char)`;
+     `return_code == 0`.
+   - `length_constraint`: `result.length == 1`.
+   - `name`: `"chr"`.
+2. Register it in `string_dependenciest`'s `to_string_builtin_function`
+   dispatch (`string_dependencies.cpp`) alongside `concat_char`/`of_int`.
+3. Remove `ID_cprover_string_chr_func` from the no-axiom stub list in
+   `string_constraint_generator_main.cpp` (it now has a real builtin).
+   Note: this models the **bounded/truncated** char already used by the
+   front-end for symbolic `chr` (one char wide); true multi-byte UTF-8 of a
+   *symbolic* codepoint stays out of scope (constant `chr` keeps its exact
+   `python_string_literal` multibyte path).
+
+**Python front-end (src/python):**
+4. Non-constant `chr` emits
+   `emit_string_function(ID_cprover_string_chr_func, {codepoint}, …)` instead
+   of building a symbol-array struct (revert component B). The result flows
+   through the const-prop dispatch → `with_backing(false)` (already wired for
+   producing funcs) → shared backing installs a fresh associated array; the
+   `chr` axioms constrain `content[0]`. Loop-safe (fresh aux per execution),
+   resolvable everywhere (comparisons, concat args) via the association.
+5. Add `ID_cprover_string_chr_func` to the producing-func branch in
+   `constant_propagate_assignment_with_side_effects` so `with_backing` runs.
+
+**Cleanup once validated:**
+6. Remove `resolve_python_string_content` and the last
+   `if(language_mode == "python")` in `symex_assign` — symex string code is
+   then fully language-agnostic.
+
+**Validation gates:** the three design-pinning cases (`chr(i)=="f"` stored,
+`github_3090_4/_5`, `github_3130_fail` FAILED-**no-SAT-inconsistency**),
+soundness (`chr(<nondet>)`/`chr(103)` FAIL), multibyte (`casting-chr-var-
+multibyte`), three Python suites, ESBMC sweep (no regressions vs PASS-2932),
+and `jbmc-strings` + `strings-smoke` (the new builtin is shared — confirm
+Java, which has no `chr` intrinsic today, is unaffected). Risk: a heavily
+used builtin (`chr`) changes representation; the SAT-inconsistency that sank
+the `concat_char` reroute must be re-checked specifically on the loop case.
+
+### Java front-end: common-infrastructure assessment
+
+**Finding: the genuinely common infrastructure is already shared; the Java
+front-end's remaining code is irreducibly JVM-specific.** Both front-ends
+emit the same `cprover_string_*` intrinsic vocabulary into the same shared
+refined-string solver (`src/solvers/strings`, `array_pool`), and produced-
+result backing/association (`cprover_associate_*`) is now installed by the
+language-agnostic `setup_string_result_backing` in symex (Python) or the
+front-end (Java) — both feeding the same solver contract.
+
+What is left in `java_string_library_preprocess` (≈1900 lines) is JVM string-
+object *mapping*: type predicates (`is_java_string_type`, …), `String`/
+`char[]` heap-object layout, fresh heap allocation (`make_allocate_code`),
+`code_assign_*_to_java_string`, and the Java-method→intrinsic conversion
+table. This **cannot** move to common code: it encodes JVM semantics (the
+`String.value` `char[]` must be a real heap object for array operations,
+the object model, and GC), which symex's aux-symbol backing deliberately is
+not. So Java cannot adopt `setup_string_result_backing` for its produced
+results without losing `char[]` object semantics.
+
+The associate helpers (`add_pointer_to_array_association` /
+`add_array_to_length_association`) are *conceptually* the same as symex's
+`associate_array_to_pointer`, but operate at different layers (front-end GOTO
+emission vs symex SSA assignment), so factoring a shared helper would be
+awkward and low-value.
+
+**Where shared investment actually pays off:** not in moving Java front-end
+code, but in the **solver** — implementing the still-stubbed
+`cprover_string_*` axioms (`chr` above, plus `repeat`, `compare`, `strip`,
+`split`, `index_of_from`). Those live in the shared `src/solvers/strings`
+layer and benefit every front-end at once. That is the high-leverage
+"more common infrastructure" direction for strings.
