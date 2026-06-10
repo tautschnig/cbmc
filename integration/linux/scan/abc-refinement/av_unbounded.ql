@@ -20,6 +20,18 @@
  */
 import cpp
 import KernelTaintFlow
+import MitigationDominance
+
+/** Availability mitigation verdict: MITIGATED when a dominating clamp
+ *  bounds the operand variable before the loop/alloc. */
+string avVerdict(Expr e) {
+  if
+    exists(Variable v |
+      e.(VariableAccess).getTarget() = v and Mitigation::clampDominates(v, e)
+    )
+  then result = "MITIGATED"
+  else result = "UNMITIGATED"
+}
 
 /** A loop bound or an allocation size expression. */
 predicate availabilitySink(Expr e, string kind) {
@@ -51,4 +63,4 @@ select e,
   e.getEnclosingFunction().getName() + "|" +
     e.getLocation().getFile().getAbsolutePath() + "|" +
     e.getLocation().getStartLine().toString() + "|A4-availability:" + kind +
-    "|attacker-controlled '" + e.toString() + "'"
+    "|attacker-controlled '" + e.toString() + "'|mitigation=" + avVerdict(e)

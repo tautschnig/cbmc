@@ -20,6 +20,21 @@
  */
 import cpp
 import KernelTaintFlow
+import MitigationDominance
+
+/** UB mitigation verdict: MITIGATED when a dominating guard bounds the
+ *  operand -- nonzero check (div/mod) or shift-amount bound (shift). */
+bindingset[op]
+string ubVerdict(Expr operand, string op) {
+  if
+    exists(Variable v | operand.(VariableAccess).getTarget() = v |
+      op.matches("%shift%") and Mitigation::shiftBoundChecked(v, operand)
+      or
+      not op.matches("%shift%") and Mitigation::nonzeroChecked(v, operand)
+    )
+  then result = "MITIGATED"
+  else result = "UNMITIGATED"
+}
 
 /** The divisor of a `/` or `%`. */
 predicate divisor(Expr e, string op) {
@@ -45,4 +60,4 @@ select operand,
   operand.getEnclosingFunction().getName() + "|" +
     operand.getLocation().getFile().getAbsolutePath() + "|" +
     operand.getLocation().getStartLine().toString() + "|A1-UB:" + op +
-    "|operand '" + operand.toString() + "' is attacker-controlled"
+    "|operand '" + operand.toString() + "'|mitigation=" + ubVerdict(operand, op)

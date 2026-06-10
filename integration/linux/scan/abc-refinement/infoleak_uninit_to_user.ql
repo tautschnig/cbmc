@@ -18,6 +18,15 @@
  * @problem.severity warning
  */
 import cpp
+import MitigationDominance
+
+/** Mitigation verdict for a confidentiality candidate: MITIGATED when a
+ *  zeroing memset of the local dominates the copy. */
+string ilVerdict(Variable v, ExfilCall c) {
+  if Mitigation::memsetDominates(v, c)
+  then result = "MITIGATED"
+  else result = "UNMITIGATED"
+}
 
 /** A kernel->user / kernel->wire copy sink and its kernel-source argument. */
 class ExfilCall extends FunctionCall {
@@ -52,26 +61,13 @@ predicate localAggregateSource(ExfilCall c, LocalVariable v) {
   )
 }
 
-/** The whole local is zeroed in the function (`memset(&v, 0, ...)` /
- *  `memzero_explicit`). Recall-oriented: presence anywhere is taken as a
- *  mitigation (CBMC adjudicates whether it actually covers the leak). */
-predicate memzeroed(LocalVariable v, Function f) {
-  exists(FunctionCall mz |
-    mz.getEnclosingFunction() = f and
-    mz.getTarget().getName() =
-      ["memset", "__builtin_memset", "memzero_explicit", "__memset"] and
-    mz.getArgument(0).(AddressOfExpr).getOperand().(VariableAccess).getTarget() = v
-  )
-}
-
 from Function f, ExfilCall c, LocalVariable v
 where
   c.getEnclosingFunction() = f and
-  localAggregateSource(c, v) and
-  not memzeroed(v, f)
+  localAggregateSource(c, v)
 select c,
   f.getName() + "|" + f.getFile().getAbsolutePath() + "|" +
     c.getLocation().getStartLine().toString() +
     "|confidentiality: local '" + v.getName() + "' (" +
     v.getType().getUnspecifiedType().toString() +
-    ") copied to user/wire with no zeroing memset -- possible info-leak"
+    ") copied to user/wire|mitigation=" + ilVerdict(v, c)
