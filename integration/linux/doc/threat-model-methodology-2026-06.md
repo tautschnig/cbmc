@@ -83,7 +83,7 @@ analysis (`caller_precondition.ql`) already encode for A1.
 | A1 (memory safety) | `tainted_count_into_fixed_array`, `decoded_len_arith_overflow`, `skb_field_before_lencheck`, `tlv_parse_loop*` | `--bounds-check` / `--*-overflow-check` (shape / verbatim / cover-probe) | **mature** |
 | A1 (other UB: div0, shift, conv) | **`tainted_ub_arith.ql`** (div/mod + shift; same taint actor-gate) | `--div-by-zero-check` / `--undefined-shift-check` / `--conversion-check` (ready; see `ub_test.c`) | **finder + obligation ready** |
 | A2 | **`infoleak_uninit_to_user.ql`** (NEW) | all copied bytes initialised (`infoleak_test.c`) | **prototype** |
-| A3 | (to derive) write to a `*_ops`/function-pointer field from tainted data | post-write the pointer is among the legitimate set | gap |
+| A3 | **`a3_tainted_fnptr.ql`** (non-function value written into a function pointer) | the stored pointer ∈ {legit targets} (`a3_test.c`) | **finder + obligation** |
 | A4 | **`av_unbounded.ql`** (taint-reachable loop bound / alloc size) | loop terminates within K (`--unwinding-assertions`) / size ≤ K (`av_test.c`) | **finder + obligation** |
 | A5 | **`auth_missing_capable.ql`** (privileged sink not dominated by a `capable()` check; reuses the dominance relation) | privileged action ⇒ capability held (`auth_test.c`) | **finder + obligation** |
 
@@ -130,7 +130,16 @@ The memory-safety lens (all of our prior work) **never raised A2** for this
 file — the same code, a different asset, a different threat, a different
 template, a different CBMC obligation.  That is the point of the pivot.
 
-## Coverage gaps (templates to derive next)
+## Status: all five assets now have a template
+
+A1 (memory safety: count/index, decoded_len, skb_field, tlv; non-memory UB:
+tainted_ub_arith), A2 (infoleak_uninit_to_user), A3 (a3_tainted_fnptr),
+A4 (av_unbounded), A5 (auth_missing_capable) -- each with a CodeQL finder
+and a CBMC obligation (infoleak_test / ub_test / a3_test / av_test /
+auth_test).  The same actor/taint gate and the same dominance machinery
+are reused across assets.
+
+## Refinements to derive next
 
 * **A3 CFI / integrity** — tainted write into a function-pointer / `*_ops`
   field (the UAF→vtable-hijack class the talk described); obligation: the
@@ -150,6 +159,9 @@ template, a different CBMC obligation.  That is the point of the pivot.
 * `infoleak_test.c` — the A2 CBMC obligation (buggy/fixed).
 * `ub_test.c` — A1 non-memory UB obligations (div-by-zero, signed
   overflow, undefined shift) discharged by CBMC's per-class checks.
+* `a3_tainted_fnptr.ql` / `a3_test.c` — A3 CFI finder + obligation (fn-ptr
+  in legit set); direct writes are rare (1 benign hit on broad-next-db) --
+  the indirect threat (UAF/OOB onto an ops field) routes through A1.
 * `av_unbounded.ql` / `av_test.c` — A4 availability finder + obligation
   (loop termination / size<=K); 47 loop candidates on broad-next-db (ceph
   count-loop decoders, br IGMP/MLD reports, CAN bcm/cgw loops).
