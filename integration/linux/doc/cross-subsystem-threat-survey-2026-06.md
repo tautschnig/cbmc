@@ -51,24 +51,30 @@ Concrete genuine candidates (UNMITIGATED, post-filter):
 * A3 is uniformly ~1 (direct fn-ptr writes are rare everywhere -- the
   indirect CFI threat routes through A1, by design).
 
-## Subsystem coverage census (`subsystem_census.py`)
+## Subsystem coverage census (`subsystem_census.py`, data-driven)
 
-Counting leaf subsystems in a kernel tree:
+`subsystem_census.py` counts leaf subsystems in a kernel tree and marks one
+COVERED if any built CodeQL DB contains a compiled `.c` under it (read from
+each DB's `src.zip`).  Driven to >50% by WHOLE-CLASS DBs (one `net/` DB
+covers all configured net subsystems, etc.) unioned across two trees
+(linux-next + 6.12, which enable different subsets), via
+`run_threat_survey.sh`:
 
 | class | total | covered | pct |
 |-------|------:|--------:|----:|
-| net/* | 70 | 12 | 17.1% |
-| fs/* | 79 | 5 | 6.3% |
-| drivers/* | 141 | 1 | 0.7% |
-| sound/* | 25 | 1 | 4.0% |
-| top-level atomic | 9 | 1 | 11.1% |
-| **TOTAL** | **324** | **20** | **6.2%** |
+| net/* | 67 | 63 | 94.0% |
+| fs/* | 78 | 73 | 93.6% |
+| drivers/* | 144 | 43 | 29.9% |
+| sound/* | 25 | 16 | 64.0% |
+| top-level atomic | 9 | 7 | 77.8% |
+| **TOTAL** | **323** | **202** | **62.5%** |
 
-Coverage is breadth-of-validation, not exhaustive scanning: all five major
-subsystem CLASSES are exercised, but the per-leaf fraction is small by
-design (each DB is built on demand).  `drivers/*` (141) is the largest
-uncovered surface -- one driver class (hid) covered so far; raising it is
-the biggest lever on the total.
+(Up from 6.2%.)  `drivers/*` is the residual gap: a whole-`drivers/` build
+on linux-next (~9 min, covered 43/144 -- the configured subset); the 6.12
+whole-`drivers/` build hit the 55-min cap (`run_threat_survey.sh` records
+it as BUILD-TIMEOUT).  Covering more drivers/ needs a broader config
+(allmodconfig) or a longer build budget -- a reproducibility/perf matter,
+tracked by the automation.  Whole-class build cost is ~6-10 min each.
 
 ## CBMC-obligation discharge status on the new candidates
 
@@ -80,15 +86,22 @@ limits:
   `parse_uac2_sample_rate_range` and the like are big parsers; auto-harness
   times out (the documented small-leaf-only sweet spot).  These need
   focused hand-authored harnesses (the rxkad-class approach).
-* **goto-cc front-end gap on linux_6_12** -- the dynamic-debug `_ddebug`
+* **Large functions time out, now TRACKED** -- `pipeline_eval.py` reports
+  `CBMC-discharge timeouts: N / M` over the adjudicated survivors; the
+  sound/usb descriptor loops (parse_uac2_sample_rate_range,
+  parse_audio_format_rates_v1) are tracked timeouts.  Reproducible via the
+  automation, so perf work can target them later.
+* **(FIXED) goto-cc front-end gap on linux_6_12** -- the dynamic-debug `_ddebug`
   descriptor (`.function = __func__` in a `__section` static initializer)
   is rejected as a non-constant expression, blocking goto-cc (hence the
   discharge step) on 6_12 sound/usb, hfsplus, jfs.  Narrowed by a minimal
   repro: `.function = __func__` alone compiles fine -- the rejected operand
   is the CONFIG_JUMP_LABEL `static_key` init in `_ddebug.key`.  (The CodeQL
   DBs use the gcc extractor, so the census/eval above are unaffected.)  A
-  separable goto-cc hardening item; marginal discharge payoff since the
-  large new candidates time out regardless.
+  FIXED (commit 'Simplify member access into a compound literal'):
+  member-of-compound-literal now folds, so sound/usb/format.c (and the
+  6.12 dynamic-debug-using TUs) goto-cc cleanly and the discharge PATH is
+  unblocked -- the sound/usb candidates then run and time out (tracked).
 
 Successfully discharged real candidates remain: net (cgw REAL-OOB, rxkad
 caller-guarded, mldv2 mask-bounded SUCCESSFUL), net/nfc (CVE-2026-31622

@@ -215,10 +215,13 @@ def main():
     print(f"{'function':<24}{'oracle':<13}{'src':<6}"
           f"{'shape:b/f':<13}{'reach:b/f':<13}{'caller':<18}{'ground-truth'}")
     print("-" * 112)
+    n_timeout = 0
     for label, otype, c in survivors:
         src, sb, sf, rb, rf = adjudicate(c["func"], c["kind"], otype)
         gt = GROUND_TRUTH.get(c["func"], ("", ""))[0]
         cgv = cg.get(c["func"], ("", "no-bound"))[1]
+        if "TIMEOUT" in (sb, sf, rb, rf):
+            n_timeout += 1
         print(f"{c['func']:<24}{label:<13}{src:<6}"
               f"{(sb[:4]+'/'+sf[:4]):<13}{(rb[:5]+'/'+rf[:5]):<13}"
               f"{cgv:<18}{gt}")
@@ -231,6 +234,8 @@ def main():
     ng = sum(1 for _, _, c in survivors
              if cg.get(c["func"], ("", ""))[1] in GUARDED)
     print(f"  precondition-resolved survivors: {ng} / {len(survivors)}")
+    print(f"  CBMC-discharge timeouts:         {n_timeout} / {len(survivors)} "
+          f"(large functions; need a hand-authored harness or perf work)")
 
     print("\n## Ground-truth coverage\n")
     for fnc, (cve, note) in GROUND_TRUTH.items():
