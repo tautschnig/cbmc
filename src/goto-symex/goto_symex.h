@@ -89,8 +89,8 @@ public:
   /// \remarks
   /// This allows goto_symext to be divorced from the particular type of
   /// goto_modelt that provides the function bodies
-  typedef
-    std::function<const goto_functionst::goto_functiont &(const irep_idt &)>
+  typedef std::function<const goto_functionst::goto_functiont &(
+    const irep_idt &)>
     get_goto_functiont;
 
   /// Return a function to get/load a goto function from the given goto model
@@ -305,10 +305,7 @@ protected:
     statet &state,
     bool write,
     bool is_in_quantifier);
-  exprt address_arithmetic(
-    const exprt &,
-    statet &,
-    bool keep_array);
+  exprt address_arithmetic(const exprt &, statet &, bool keep_array);
 
   /// Symbolically execute a GOTO instruction
   /// \param state: Symbolic execution state for current instruction
@@ -548,6 +545,20 @@ protected:
     symex_assignt &symex_assign,
     const exprt &lhs,
     const exprt &rhs);
+
+  /// Python string backend (choice B): resolve the content pointers of a
+  /// `cprover_string_*` comparison to their backing char-array *object* in
+  /// canonical `address_of(index(<array>, 0))` form, at the array's current
+  /// SSA version, so the string refinement's array_pool fast path reasons
+  /// over the real (constrained) content without any front-end association.
+  /// Whole-array resolution (not per-element unroll) preserves multibyte
+  /// content and the refinement's symbolic-array efficiency. Gated to
+  /// `language_mode == ID_python`; literal-array content is left untouched
+  /// (its existing fast path already works). See
+  /// doc/architectural/python-string-phase2-backend-abstraction.md.
+  void resolve_python_string_content(
+    class function_application_exprt &app,
+    statet &state);
 
   /// Create an empty string constant
   ///

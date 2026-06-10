@@ -17,9 +17,12 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/fresh_symbol.h>
 #include <util/mathematical_expr.h>
 #include <util/mathematical_types.h>
+#include <util/pointer_expr.h>
 #include <util/pointer_offset_size.h>
+#include <util/refined_string_type.h>
 #include <util/simplify_utils.h>
 #include <util/std_code.h>
+#include <util/std_expr.h>
 #include <util/string_expr.h>
 #include <util/string_utils.h>
 
@@ -60,7 +63,9 @@ void goto_symext::symex_assign(
     state.source.pc->source_location());
 
   log.conditional_output(
-    log.debug(), [this, &lhs](messaget::mstreamt &mstream) {
+    log.debug(),
+    [this, &lhs](messaget::mstreamt &mstream)
+    {
       mstream << "Assignment to " << format(lhs) << " ["
               << pointer_offset_bits(lhs.type(), ns).value_or(0) << " bits]"
               << messaget::eom;
@@ -120,6 +125,13 @@ void goto_symext::symex_assign(
       symex_config,
       language_mode,
       target};
+
+    // Python string backend (choice B): canonicalise cprover_string
+    // comparison content pointers to their backing array object so the
+    // refinement reasons over real, constrained content (no front-end
+    // association). Gated to Python; JBMC/other modes untouched.
+    if(language_mode == "python" && rhs.id() == ID_function_application)
+      resolve_python_string_content(to_function_application_expr(rhs), state);
 
     // Try to constant propagate potential side effects of the assignment, when
     // simplification is turned on and there is one thread only. Constant
@@ -200,6 +212,102 @@ static std::string get_alnum_string(const array_exprt &char_array)
   }
 
   return escape_non_alnum(result);
+}
+
+/// Resolve a Python string content pointer to a literal char array of its
+/// real content, sized to the backing array's actual byte length and pinned
+/// to the current SSA version, so the string refinement's array_pool fast
+/// path reasons over the constrained content with no front-end association.
+/// Sizing to the true length (not a fixed bound) keeps chr cheap and
+/// preserves multibyte content. \p app's refined-string content operands are
+/// rewritten in place. Gated to Python by the caller; literal-array and
+/// unresolved (e.g. refinement-produced) content are left untouched.
+void goto_symext::resolve_python_string_content(
+  function_application_exprt &app,
+  statet &state)
+{
+  if(app.function().id() != ID_symbol)
+    return;
+  const irep_idt fn = to_symbol_expr(app.function()).get_identifier();
+  // Any string intrinsic: the value-set guard below only rewrites content
+  // that resolves to a single concrete array object, so refinement-produced
+  // (unconstrained) output content is left untouched.
+  if(id2string(fn).find("cprover_string") == std::string::npos)
+    return;
+
+  const typet index_type = signedbv_typet{64};
+
+  for(auto &arg : app.arguments())
+  {
+    if(
+      arg.id() != ID_struct || arg.operands().size() != 2 ||
+      !is_refined_string_type(arg.type()))
+      continue;
+    const exprt content = arg.operands()[1];
+    if(content.type().id() != ID_pointer)
+      continue;
+
+    // Determine the backing array object the content pointer denotes.
+    exprt backing;
+    if(
+      content.id() == ID_address_of &&
+      to_address_of_expr(content).object().id() == ID_index)
+    {
+      const exprt &a =
+        to_index_expr(to_address_of_expr(content).object()).array();
+      // A literal constant array already routes through the refinement's fast
+      // path unchanged; leave it alone.
+      if(a.id() == ID_array || a.type().id() != ID_array)
+        continue;
+      backing = a;
+    }
+    else
+    {
+      // Opaque pointer (e.g. a struct member read after the string was stored
+      // in a variable). Query the value-set read-only first: only proceed if
+      // it resolves to exactly one array object. This avoids calling
+      // dereference() on an unconstrained/invalid pointer (e.g. a
+      // refinement-produced concat result), whose failed-object side effect
+      // would otherwise disturb the refinement.
+      const std::vector<exprt> vs = state.value_set.get_value_set(content, ns);
+      if(vs.size() != 1)
+        continue;
+      exprt obj = vs.front();
+      if(obj.id() == ID_object_descriptor)
+        obj = to_object_descriptor_expr(obj).object();
+      backing = obj.id() == ID_index ? to_index_expr(obj).array() : obj;
+    }
+
+    // The byte length is the backing array's static size.
+    if(backing.type().id() != ID_array)
+      continue;
+    const exprt &size_expr = to_array_type(backing.type()).size();
+    if(!size_expr.is_constant())
+      continue;
+    mp_integer n;
+    if(to_integer(to_constant_expr(size_expr), n) || n < 0 || n > 64)
+      continue;
+    const std::size_t len = numeric_cast_v<std::size_t>(n);
+
+    // Materialise *(content + k) for each byte, pinned to its current SSA
+    // version (address_of below would otherwise leave the symbol at its
+    // unconstrained base), into a literal array the fast path resolves.
+    const typet char_type = to_pointer_type(content.type()).base_type();
+    exprt::operandst elems;
+    elems.reserve(len);
+    for(std::size_t k = 0; k < len; ++k)
+    {
+      exprt e = dereference_exprt{
+        plus_exprt{content, from_integer(k, index_type)}, char_type};
+      dereference(e, state, false);
+      e = state.rename<L2>(std::move(e), ns).get();
+      elems.push_back(std::move(e));
+    }
+    array_typet array_type{char_type, from_integer(len, index_type)};
+    array_exprt materialised{std::move(elems), array_type};
+    arg.operands()[1] = address_of_exprt{
+      index_exprt{std::move(materialised), from_integer(0, index_type)}};
+  }
 }
 
 bool goto_symext::constant_propagate_assignment_with_side_effects(
@@ -1173,7 +1281,8 @@ bool goto_symext::constant_propagate_trim(
   if(!s_data_opt)
     return false;
 
-  auto is_not_whitespace = [](const exprt &expr) {
+  auto is_not_whitespace = [](const exprt &expr)
+  {
     auto character = numeric_cast_v<unsigned int>(to_constant_expr(expr));
     return character > ' ';
   };
