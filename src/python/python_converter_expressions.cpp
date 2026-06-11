@@ -983,6 +983,78 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     // We pick (a) when value has a known byte array reachable
     // (constant struct content, or tracked via string_constants),
     // (b) otherwise.
+    if(use_smt_string_backend)
+    {
+      // SMT-String back-end: s[i] is a 1-char string tied to src at the
+      // *string* level via str.substr (str(res) == str.substr(str(src),i,1)),
+      // rather than reading the byte src.data[i] directly. A direct byte read
+      // is imprecise and slow under this back-end because the byte<->str
+      // bridge does not force individual bytes from a str-level equality.
+      const pointer_typet ptr_u8{unsignedbv_typet{8}, 64};
+      const array_typet at{
+        unsignedbv_typet{8},
+        from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64})};
+      static unsigned smt_sub_ctr = 0;
+      const unsigned uid = smt_sub_ctr++;
+      auto mk = [&](const std::string &base, const typet &t)
+      {
+        std::string nm = base + std::to_string(uid);
+        irep_idt sid{qualify_name(nm)};
+        if(symbol_table.lookup(sid) == nullptr)
+        {
+          symbolt s{sid, t, "python"};
+          s.base_name = nm;
+          s.is_lvalue = true;
+          s.is_state_var = true;
+          symbol_table.add(s);
+        }
+        return symbol_table.lookup_ref(sid).symbol_expr();
+      };
+      auto to_struct = [&](const exprt &s) -> exprt
+      {
+        if(s.id() == ID_struct && s.operands().size() == 2)
+          return s;
+        return struct_exprt(
+          {member_exprt(s, "length", signedbv_typet{64}),
+           member_exprt(s, "data", ptr_u8)},
+          s.type());
+      };
+      symbol_exprt backing = mk("__smt_sub_data_", at);
+      symbol_exprt res = mk("__smt_sub_", python_string_type());
+      exprt start64 = adjusted_idx;
+      if(start64.type() != signedbv_typet{64})
+        start64 = safe_typecast(start64, signedbv_typet{64});
+      const exprt content = address_of_exprt(index_exprt(
+        backing, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
+      pending_checks.push_back(code_frontend_assignt{
+        res,
+        struct_exprt(
+          {from_integer(1, signedbv_typet{64}), content},
+          python_string_type())});
+      const typet bt = c_bool_typet{8};
+      const irep_idt fn{ID_cprover_string_smt_substr_eq_func};
+      if(symbol_table.lookup(fn) == nullptr)
+      {
+        std::vector<typet> ats{
+          res.type(),
+          to_struct(value).type(),
+          signedbv_typet{64},
+          signedbv_typet{64}};
+        symbolt fs{
+          fn, mathematical_function_typet(std::move(ats), bt), "python"};
+        fs.base_name = id2string(fn);
+        symbol_table.add(fs);
+      }
+      function_application_exprt app{
+        symbol_table.lookup_ref(fn).symbol_expr(),
+        {res, to_struct(value), start64, from_integer(1, signedbv_typet{64})}};
+      app.type() = bt;
+      symbol_exprt rc = mk("__smt_sub_rc_", bt);
+      pending_checks.push_back(code_frontend_assignt{rc, app});
+      pending_checks.push_back(
+        code_assumet{notequal_exprt{rc, from_integer(0, bt)}});
+      return std::move(res);
+    }
     bool value_has_known_bytes = false;
     {
       auto sv = extract_string_value(value);
