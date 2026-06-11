@@ -1476,3 +1476,39 @@ residual membership/ordering case remains the SMT-String backend (step 5).
 Note: positive `in` (contains) is independently slow (~14 s at HEAD for a
 pinned 1-char needle) — a separate pre-existing performance issue, not a
 correctness one.
+
+### Implementation progress + validation (2026-06-11)
+
+Two sound+precise refined-string wins landed and validated; the rest of the
+refined-string precision frontier is characterized by measurement.
+
+**Landed (committed):**
+- `rfind`/`rindex` → `last_index_of` (query, loop-safe). Precise + sound.
+- Python-whitespace `strip`/`lstrip`/`rstrip` axiom
+  (`cprover_string_strip_func`, mode arg). Precise + sound; correctly keeps
+  non-whitespace control bytes (e.g. `\x01`) that Java `trim` would strip.
+
+**Validation:** ESBMC sweep vs `/tmp/cbmc-baseline-20260609.csv`:
+**0 regressions**, PASS 2916 → 2935 (+19); the string improvements include
+`string-rfind-nondet`, `string-rstrip-nondet`, `string-index-nondet`. Three
+python suites green; `clang-format` clean. (jbmc unaffected: Java emits
+`trim_func`, never `strip_func`.)
+
+**Measured / root-caused (not landed, with reasons):**
+- Membership convergence (step 4): already handled at HEAD for every
+  reproducible shape (50–200 ms, guard never fires); bounded eager
+  instantiation gave no precision gain and regressed positive-contains
+  (index-pair blow-up). Reverted.
+- Ordering via `compare_to` (step 2d): root-caused to axiom a3's existential
+  first-differing-index witness not being instantiated by the refinement
+  (reflexive res=0 works; differing comparisons leave res free). Same class as
+  the membership existential. Kept the sound first-byte over-approximation.
+- `replace` (step 2c): the existing axiom is char-to-char only, not substring.
+- `repeat`/`strip(chars)`/`split` (step 3): need new axioms (repeat has a
+  nonlinear `|s|*n`; split returns a list).
+
+**Net:** the cleanly-achievable refined-string precision wins are done; the
+remaining gaps (ordering, substring replace, split, and any residual
+membership) are blocked on either existential-witness instantiation or new
+nonlinear/list-valued axioms. The unconditional route for all of them is the
+SMT-String backend (step 5), which remains the recommended next major effort.
