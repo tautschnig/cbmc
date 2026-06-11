@@ -17,6 +17,7 @@
  * @problem.severity warning
  */
 import cpp
+import Scope
 
 /** A value decoded from a buffer: a byte-order / unaligned read.  Note
  *  ntohl/ntohs/be*_to_cpu are MACROS that bottom out in __builtin_bswap*
@@ -91,6 +92,7 @@ predicate feedsMultiply(Function f, Variable v, string detail, int line) {
 
 from Function f, Variable v, DecodeCall dc, string detail, int line
 where
+  inScope(f) and
   decodedLenVar(f, v, dc) and
   (feedsRoundup(f, v, detail, line) or feedsMultiply(f, v, detail, line))
 select f,

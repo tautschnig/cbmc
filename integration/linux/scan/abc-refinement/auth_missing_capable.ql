@@ -21,6 +21,7 @@
  * @problem.severity warning
  */
 import cpp
+import Scope
 import semmle.code.cpp.controlflow.Dominance
 
 /** A capability check (the authorization guard). */
@@ -48,6 +49,7 @@ predicate privilegedSink(FunctionCall c, string what) {
 
 from FunctionCall sink, Function f, string what
 where
+  inScope(sink) and
   privilegedSink(sink, what) and
   f = sink.getEnclosingFunction() and
   not exists(FunctionCall chk |

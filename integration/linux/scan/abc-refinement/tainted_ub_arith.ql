@@ -19,6 +19,7 @@
  * @problem.severity warning
  */
 import cpp
+import Scope
 import KernelTaintFlow
 import MitigationDominance
 
@@ -52,6 +53,7 @@ predicate shiftAmount(Expr e, string op) {
 
 from Expr operand, string op
 where
+  inScope(operand) and
   (divisor(operand, op) or shiftAmount(operand, op)) and
   not operand instanceof Literal and
   not exists(operand.getValue()) and // not a compile-time constant

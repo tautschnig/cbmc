@@ -18,6 +18,7 @@
  * @problem.severity warning
  */
 import cpp
+import Scope
 import MitigationDominance
 import semmle.code.cpp.controlflow.Dominance
 
@@ -93,6 +94,7 @@ predicate localAggregateSource(ExfilCall c, LocalVariable v) {
 
 from Function f, ExfilCall c, LocalVariable v
 where
+  inScope(f) and
   c.getEnclosingFunction() = f and
   localAggregateSource(c, v)
 select c,

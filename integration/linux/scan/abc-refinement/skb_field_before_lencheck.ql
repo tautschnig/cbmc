@@ -19,6 +19,7 @@
  * @problem.severity warning
  */
 import cpp
+import Scope
 import KernelTaint
 
 /** A "structured" read of skb->data: cast to a pointer-to-struct, passed
@@ -49,6 +50,7 @@ predicate trivialAccessor(Function f, KernelTaint::SkbDataAccess sda) {
 
 from Function f, int line, string kind
 where
+  inScope(f) and
   not KernelTaint::hasLengthGuard(f) and
   (
     // (a) skb->data parser

@@ -19,6 +19,7 @@
  * @problem.severity warning
  */
 import cpp
+import Scope
 import KernelTaintFlow
 import MitigationDominance
 
@@ -55,6 +56,7 @@ predicate availabilitySink(Expr e, string kind) {
 
 from Expr e, string kind
 where
+  inScope(e) and
   availabilitySink(e, kind) and
   not e instanceof Literal and
   not exists(e.getValue()) and

@@ -95,9 +95,19 @@ def run_oracle(db, query):
                CODEQL_ALLOW_INSTALLATION_ANYWHERE="true")
     bqrs = tempfile.mktemp(suffix=".bqrs")
     csvf = tempfile.mktemp(suffix=".csv")
+    # Per-subsystem scoping (Scope.qll): the finders declare the external
+    # predicate `scopePrefix`, so it must always be supplied.  ABC_SCOPE_PREFIX
+    # (kernel-relative path prefix, e.g. "drivers/usb/") scopes the run; unset
+    # / empty -> empty relation -> inScope is universally true (unscoped).
+    scopef = tempfile.mktemp(suffix=".scope.csv")
+    prefix = os.environ.get("ABC_SCOPE_PREFIX", "").strip()
+    with open(scopef, "w") as f:
+        if prefix:
+            f.write('"' + prefix + '"\n')
     subprocess.run(
         [CODEQL, "query", "run", f"--database={db}",
-         f"--additional-packs={PACKS}", f"--output={bqrs}",
+         f"--additional-packs={PACKS}", f"--external=scopePrefix={scopef}",
+         f"--output={bqrs}",
          os.path.join(HERE, query)],
         check=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     with open(csvf, "w") as f:
@@ -108,7 +118,7 @@ def run_oracle(db, query):
         for row in csv.reader(f):
             if len(row) >= 2 and "|" in row[1]:
                 lines.append(row[1])
-    for p in (bqrs, csvf):
+    for p in (bqrs, csvf, scopef):
         try:
             os.unlink(p)
         except OSError:

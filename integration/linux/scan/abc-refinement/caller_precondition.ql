@@ -20,6 +20,7 @@
  * @problem.severity warning
  */
 import cpp
+import Scope
 import semmle.code.cpp.controlflow.Dominance
 import semmle.code.cpp.controlflow.SSA
 import KernelTaint
@@ -408,6 +409,7 @@ int numValidatedSource(Function target, Parameter dp) {
 
 from Function target, string kind, string detail
 where
+  inScope(target) and
   target.hasDefinition() and
   (
     exists(Parameter bp, int callers, int guarded |

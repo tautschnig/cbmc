@@ -17,6 +17,7 @@
  * @problem.severity warning
  */
 import cpp
+import Scope
 import KernelTaintFlow
 
 /** A name string suggesting an attacker-supplied count or index. */
@@ -224,6 +225,7 @@ string indexImpact(ArrayExpr ae) {
 
 from Function f, string kind, string name, int line, string detail
 where
+  inScope(f) and
   name = f.getName() and
   (
     exists(Loop loop, CountSource cnt, ArrayExpr w, string an, int sz |

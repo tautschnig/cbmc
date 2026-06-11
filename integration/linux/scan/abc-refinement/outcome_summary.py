@@ -54,11 +54,17 @@ def run_query(db, query, timeout):
                CODEQL_ALLOW_INSTALLATION_ANYWHERE="true")
     bqrs = tempfile.mktemp(suffix=".bqrs")
     csvf = tempfile.mktemp(suffix=".csv")
+    # per-subsystem scope (Scope.qll); empty => unscoped (see triage_loop)
+    scopef = tempfile.mktemp(suffix=".scope.csv")
+    prefix = os.environ.get("ABC_SCOPE_PREFIX", "").strip()
+    with open(scopef, "w") as f:
+        if prefix:
+            f.write('"' + prefix + '"\n')
     try:
         subprocess.run(
             [CODEQL, "query", "run", f"--database={db}",
-             f"--additional-packs={PACKS}", f"--output={bqrs}",
-             os.path.join(HERE, query)],
+             f"--additional-packs={PACKS}", f"--external=scopePrefix={scopef}",
+             f"--output={bqrs}", os.path.join(HERE, query)],
             check=True, env=env, timeout=timeout,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
@@ -73,7 +79,7 @@ def run_query(db, query, timeout):
         for row in csv.reader(f):
             if len(row) >= 2 and "|" in row[1]:
                 lines.append(row[1])
-    for p in (bqrs, csvf):
+    for p in (bqrs, csvf, scopef):
         try:
             os.unlink(p)
         except OSError:

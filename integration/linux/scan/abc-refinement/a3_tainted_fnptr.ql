@@ -20,6 +20,7 @@
  * @problem.severity warning
  */
 import cpp
+import Scope
 
 /** A function-pointer-typed target (field or variable). */
 predicate fnPtrTarget(Variable v) {
@@ -28,6 +29,7 @@ predicate fnPtrTarget(Variable v) {
 
 from Assignment a, Variable v, Expr rhs
 where
+  inScope(a) and
   rhs = a.getRValue() and
   (
     a.getLValue().(VariableAccess).getTarget() = v or
