@@ -2246,6 +2246,17 @@ std::optional<exprt> python_convertert::try_method_call(
       }
     }
 
+    // Native SMT-String back-end (Plan A): smt_string is not a struct/
+    // struct_tag, so the struct-gated string-method dispatch below would miss
+    // it. Dispatch here.
+    if(obj_base_type.id() == ID_smt_string)
+    {
+      if(
+        auto r =
+          try_string_method(expr, obj, obj_base_type, method_name, args))
+        return std::move(*r);
+    }
+
     if(obj_base_type.id() == ID_struct || obj_base_type.id() == ID_struct_tag)
     {
       // PLR §3.2: Complex number methods
