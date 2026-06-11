@@ -1267,3 +1267,95 @@ merely expedient. The convergence difficulty was an artefact of the
 gate-removal attempt; with the gate in place there is no convergence problem
 for the motivating chr-loop case. The genuinely-symbolic-length-needle case
 (produced results) remains latent and guard-terminated, as documented above.
+
+
+## String correctness roadmap — sound AND precise, across the board (2026-06-11)
+
+Reframed goal: **every** Python `str` operation, on **every** input shape
+(constant, symbolic, produced, in loops), should be both **sound** (never a
+false proof) and **precise** (never a spurious failure). Commonness is
+irrelevant; correctness is the bar.
+
+### Invariant 0 — soundness everywhere (gates all precision work)
+
+Every string op must *over-approximate*: when the backend cannot decide it,
+it must report the property as possibly-violated (`D_SATISFIABLE` → FAILED),
+never possibly-proved. Today's mechanisms are sound by construction —
+refined-string axioms, the nondet fallbacks for un-migrated methods, the
+bounded conservative guard, and the phase-1/2 content backing. Two duties:
+1. **Soundness audit (TOP PRIORITY).** Systematically confirm over-
+   approximation for every op, including the embedded-`\0` / needle-longer-
+   than-haystack edge `string-nondet-in-embedded-null-longer-fail`, which is
+   recorded as a *possible false proof* (got SUCCESSFUL where FAILED is
+   expected). A genuine false proof here is a soundness bug and outranks all
+   precision work.
+2. **No precision change may weaken soundness** (validated on the sweep:
+   every produced verdict must stay correct-or-conservative).
+
+### Precision inventory — status of each `str` operation
+
+Sound today throughout; ✓ = precise, ✗ = imprecise (spurious nondet/
+conservative result), with the means to close it:
+
+* ✓ `==` `!=` `+` `len` `chr` `ord` `str(int/float)` `startswith`/`endswith`
+  `find`/`index` (migrated) subscript/slice `upper`/`lower`.
+* ✗ `rfind`/`rindex` — nondet; **axiom exists** (`last_index_of`) → front-end
+  migration (same pattern as find/index).
+* ✗ `strip`/`lstrip`/`rstrip` (no-arg) — nondet; **axiom exists** (`trim`) →
+  migration. `strip(chars)` needs argument handling beyond `trim`.
+* ✗ `replace` (symbolic) — nondet; **axiom exists** (`replace`) → migration.
+* ✗ ordering `<` `>` `<=` `>=` — first-byte approximation; **axiom exists**
+  (`compare_to`) → fix the front-end wiring (the earlier attempt failed to
+  tie the result to resolved content; re-do it correctly, and link the
+  per-operator calls so totality/antisymmetry hold).
+* ✗ `count` (symbolic) — nondet; needs a counting axiom (or bounded count).
+* ✗ `casefold`/`title` — partial; `casefold`≈`to_lower` (exists), `title`
+  needs work.
+* ✗ `repeat` (`s*n`) — **solver stub**: needs a new axiom
+  (`result[i]=s[i mod |s|]`, `|result|=|s|*n`).
+* ✗ `split` — **solver stub**: produces a *list* of strings; hardest
+  (variable-count result).
+* ✗ **membership (`in`/`not in`) over a symbolic-length *produced-result*
+  needle** — the one **fundamental refined-string ceiling**: the
+  index-set/witness instantiation does not converge for a symbolic needle
+  length, so this is sound-but-conservative (guard-terminated) and the
+  refined-string backend *cannot* make it precise. (Constant-needle and
+  symbolic-haystack membership are already precise.)
+
+### Two engines — and why both are needed for full precision
+
+* **Refined-string (default).** Can reach precision for everything *except*
+  the membership-convergence class. The bulk of the ✗ items above close by
+  **front-end migration to already-existing axioms** (proven by find/index),
+  plus a few **new axioms** (repeat; split). It has a hard precision ceiling
+  at symbolic-length-needle membership.
+* **SMT-String / CVC5 (`--python-smt-strings`).** Native string theory →
+  precise for **all** string ops/shapes at once, *including* the
+  membership-convergence class the refined-string backend cannot. Scaffolding
+  (selector + flag) exists; the intrinsic↔SMT-string-term lowering (designed
+  earlier in this doc) is unimplemented. This is the **only** route to
+  precision for the refinement-ceiling cases, and a uniform precise engine
+  for the rest.
+
+### Sequenced plan (soundness-gated, then precision to completion)
+
+1. **Soundness audit** — confirm over-approximation across every op; fix the
+   embedded-`\0` membership edge if it is a real false proof. (Foundation.)
+2. **Refined-string precision migration** (tractable, proven pattern, no new
+   convergence risk): `rfind`/`rindex`→`last_index_of`; `strip` no-arg→`trim`;
+   `replace`→`replace`; ordering→`compare_to` (wire correctly + link
+   per-operator results); `casefold`→`to_lower`; `count`. Each gated on
+   sound+precise + the three suites + sweep + jbmc-strings/smoke.
+3. **New refined-string axioms**: `repeat` (moderate); `strip(chars)`; `split`
+   (hard — list result; may remain sound-nondet until the SMT backend).
+4. **SMT-String backend** — implement the intrinsic↔term lowering; validate it
+   makes the **membership-convergence class** (and everything else) precise.
+   This is the only path to full precision for the refined-string ceiling.
+5. **Backend policy** — invariant: *every* `str` op is **sound on both**
+   backends and **precise on at least one**; route the ceiling cases to
+   SMT-String (or make SMT-String the precise default once mature), keeping
+   refined-string for speed where it is already precise.
+
+**Definition of done:** no string operation, on any input shape, produces a
+false proof (soundness) or a spurious failure on a backend that should decide
+it (precision); the membership-convergence ceiling is covered by SMT-String.
