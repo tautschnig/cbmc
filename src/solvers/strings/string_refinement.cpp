@@ -352,6 +352,7 @@ static bool is_cprover_string_application(const function_application_exprt &fa)
     ID_cprover_string_replace_func,
     ID_cprover_string_set_length_func,
     ID_cprover_string_startswith_func,
+    ID_cprover_string_strip_func,
     ID_cprover_string_substring_func,
     ID_cprover_string_to_lower_case_func,
     ID_cprover_string_to_upper_case_func,

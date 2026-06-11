@@ -263,6 +263,118 @@ string_constraint_generatort::add_axioms_for_trim(
   return {from_integer(0, f.type()), constraints};
 }
 
+/// Add axioms for Python str.strip / lstrip / rstrip (whitespace form).
+///
+/// Like add_axioms_for_trim, but uses the *Python* whitespace predicate
+/// `c == 0x20 || (0x09 <= c <= 0x0d)` (space, \t, \n, \v, \f, \r) rather than
+/// Java's `c <= 0x20` (which would unsoundly strip other control bytes), and
+/// supports one-sided stripping via a constant mode argument.
+///
+/// \param f: function application with arguments: result length, result
+///   content pointer, input refined_string, and a constant mode
+///   (0 = strip both ends, 1 = lstrip, 2 = rstrip).
+/// \return integer expression equal to 0 (success)
+std::pair<exprt, string_constraintst>
+string_constraint_generatort::add_axioms_for_python_strip(
+  const function_application_exprt &f)
+{
+  PRECONDITION(f.arguments().size() == 4);
+  string_constraintst constraints;
+  const array_string_exprt &str = get_string_expr(array_pool, f.arguments()[2]);
+  const array_string_exprt &res =
+    array_pool.find(f.arguments()[1], f.arguments()[0]);
+  const typet &index_type = str.length_type();
+  const typet &char_type = to_type_with_subtype(str.content().type()).subtype();
+
+  // mode: 0 = both (strip), 1 = left (lstrip), 2 = right (rstrip).
+  const mp_integer mode =
+    numeric_cast_v<mp_integer>(to_constant_expr(f.arguments()[3]));
+  const bool strip_front = (mode == 0 || mode == 1);
+  const bool strip_back = (mode == 0 || mode == 2);
+
+  // idx is the number of characters removed from the front.
+  const symbol_exprt idx = fresh_symbol("index_strip", index_type);
+
+  // Python whitespace predicate.
+  auto is_py_ws = [&](const exprt &c) -> exprt
+  {
+    return or_exprt(
+      equal_exprt(c, from_integer(0x20, char_type)),
+      and_exprt(
+        binary_relation_exprt(c, ID_ge, from_integer(0x09, char_type)),
+        binary_relation_exprt(c, ID_le, from_integer(0x0d, char_type))));
+  };
+
+  const exprt str_len = array_pool.get_or_create_length(str);
+  const exprt res_len = array_pool.get_or_create_length(res);
+
+  // Basic bounds: 0 <= idx, idx + |res| <= |str|, 0 <= |res| <= |str|.
+  constraints.existential.push_back(
+    greater_or_equal_to(str_len, plus_exprt(idx, res_len)));
+  constraints.existential.push_back(
+    binary_relation_exprt(idx, ID_ge, from_integer(0, index_type)));
+  constraints.existential.push_back(greater_or_equal_to(str_len, idx));
+  constraints.existential.push_back(
+    greater_or_equal_to(res_len, from_integer(0, index_type)));
+  constraints.existential.push_back(less_than_or_equal_to(res_len, str_len));
+
+  // When a side is not stripped, pin the corresponding boundary.
+  if(!strip_front)
+    constraints.existential.push_back(
+      equal_exprt(idx, from_integer(0, index_type)));
+  if(!strip_back)
+    constraints.existential.push_back(
+      equal_exprt(res_len, minus_exprt(str_len, idx)));
+
+  // res[n] == str[n + idx] for n < |res| (result is the kept middle slice).
+  {
+    const symbol_exprt n = fresh_symbol("QA_strip_copy", index_type);
+    constraints.universal.push_back(string_constraintt(
+      n,
+      zero_if_negative(res_len),
+      equal_exprt(res[n], str[plus_exprt(n, idx)]),
+      ns,
+      message_handler));
+  }
+
+  // Removed front characters [0, idx) are whitespace.
+  if(strip_front)
+  {
+    const symbol_exprt n = fresh_symbol("QA_strip_front", index_type);
+    constraints.universal.push_back(string_constraintt(
+      n, zero_if_negative(idx), is_py_ws(str[n]), ns, message_handler));
+  }
+  // Removed trailing characters [idx+|res|, |str|) are whitespace.
+  if(strip_back)
+  {
+    const symbol_exprt n = fresh_symbol("QA_strip_back", index_type);
+    const exprt bound = minus_exprt(minus_exprt(str_len, idx), res_len);
+    constraints.universal.push_back(string_constraintt(
+      n,
+      zero_if_negative(bound),
+      is_py_ws(str[plus_exprt(idx, plus_exprt(res_len, n))]),
+      ns,
+      message_handler));
+  }
+
+  // Maximality: either the result is empty (idx == |str|), or the kept
+  // boundary characters are non-whitespace (so we stripped *all* leading /
+  // trailing whitespace).
+  exprt non_ws = static_cast<exprt>(true_exprt{});
+  if(strip_front)
+    non_ws = and_exprt(non_ws, not_exprt(is_py_ws(str[idx])));
+  if(strip_back)
+  {
+    const exprt last =
+      minus_exprt(plus_exprt(idx, res_len), from_integer(1, index_type));
+    non_ws = and_exprt(non_ws, not_exprt(is_py_ws(str[last])));
+  }
+  constraints.existential.push_back(
+    or_exprt(equal_exprt(idx, str_len), non_ws));
+
+  return {from_integer(0, f.type()), std::move(constraints)};
+}
+
 /// Convert two expressions to pair of chars
 /// If both expressions are characters, return pair of them
 /// If both expressions are 1-length strings, return first character of each

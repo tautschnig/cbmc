@@ -254,7 +254,6 @@ string_constraint_generatort::add_axioms_for_function_application(
   else if(
     id == ID_cprover_string_repeat_func ||
     id == ID_cprover_string_compare_func || id == ID_cprover_string_chr_func ||
-    id == ID_cprover_string_strip_func ||
     id == ID_cprover_string_index_of_from_func ||
     id == ID_cprover_string_split_func)
   {
@@ -294,6 +293,8 @@ string_constraint_generatort::add_axioms_for_function_application(
     return add_axioms_for_substring(expr);
   else if(id == ID_cprover_string_trim_func)
     return add_axioms_for_trim(expr);
+  else if(id == ID_cprover_string_strip_func)
+    return add_axioms_for_python_strip(expr);
   else if(id == ID_cprover_string_empty_string_func)
     return add_axioms_for_empty_string(expr);
   else if(id == ID_cprover_string_copy_func)
