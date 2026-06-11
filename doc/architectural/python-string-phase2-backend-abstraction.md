@@ -1662,3 +1662,32 @@ equality) realise step 2's core. Step 1 (leaf backing) is the next concrete
 implementation task and the one that makes symbol-operand membership and
 ordering precise end-to-end under `--cvc5` — exactly the refined-backend
 ceiling cases.
+
+## SMT-String backend — ordering + symbol-operand membership landed (2026-06-11)
+
+The revised "leaf backing + smt2_conv lowering" plan is realised for the core
+query ops; the refined-backend **ordering ceiling is now closed** on the SMT
+path.
+
+Committed:
+- Leaf backing for `nondet_string` under `--python-smt-strings`
+  (`{len, address_of(index(backing,0))}` over a bounded array), so symbol
+  operands resolve to the reachable struct shape via symex substitution.
+- `smt2_conv` precise lowering: `equal` (content `=`), `contains`/`prefixof`/
+  `suffixof`, and `compare_to` → lexicographic sign via `str.<`. Front-end
+  routes ordering through `compare_to` under the SMT kind.
+
+**Validated under `--cvc5 --python-smt-strings`** (regression
+`string-smt-ordering-membership`): ordering `s<t`/`<=`/`>=`/`not(<)`,
+membership `"b" in u` / `"z" not in u`, `startswith`, `==`/`!=` — all **precise
+for symbol operands**, soundness preserved (nondet `s<t` and `"b" in s` FAIL).
+Default refined path unchanged (gated on `use_smt_string_backend`); 3 python
+suites + `re-wave2-cvc5` green.
+
+Ledger updates: **step 2d (ordering) is now precise on the SMT backend** (the
+refined existential ceiling is sound-but-imprecise there, precise here). Step 5
+foundation + the equality/membership/prefix/suffix/ordering query ops are done.
+Remaining for the SMT backend: `length` (`str.len`), `index_of` (`str.indexof`),
+and producing ops (concat/slice/replace/strip already get Phase-2 backing, so
+their results lower via the same path — to be wired/validated), then model
+extraction + policy.
