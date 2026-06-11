@@ -1796,3 +1796,150 @@ values**, **subscript**. Deferred (symbolic result length / refined handles
 them): slice, replace, strip-producing. Default backend remains refined;
 `--python-smt-strings` adds the above precision (notably ordering and
 symbol-operand membership) on top.
+
+## Consolidated forward plan (2026-06-11) — supersedes earlier scattered plans
+
+This section is the single current plan for all deferred string work. It
+**supersedes** the older, now-partly-stale plan fragments: the "Target design:
+`smt_string_typet` end-to-end" / "Phasing (4 phases)" subsections above (written
+before the hybrid landed) and the 5-phase plan in `python-frontend-plans.md`
+§3 (pre-session). Where those conflict, this section wins.
+
+Plan-coverage audit (✅ detailed+current here · ⚠️ existed but stale, refreshed
+here · ❌ had no plan, created here):
+
+| Item | Backend | Status | Plan |
+|------|---------|--------|------|
+| `smt_string_typet` refactor | SMT | ⚠️→✅ | Plan A below |
+| slice `s[a:b]` (precise) | SMT | ❌→✅ | subsumed by Plan A (native `str.substr`) |
+| `replace` (precise) | SMT | ❌→✅ | subsumed by Plan A (`str.replace_all`) |
+| strip-producing (precise) | SMT | ❌→✅ | subsumed by Plan A |
+| model extraction (trace string values) | SMT | ❌→✅ | Plan B below |
+| substring `replace` axiom | refined | ❌→✅ | Plan C1 (recommend SMT instead) |
+| ordering via `compare_to` | refined | ⚠️→✅ | Plan C2 (recommend SMT instead) |
+| `repeat` (`s*n`) axiom | refined | ❌→✅ | Plan C3 |
+| `strip(chars)` axiom | refined | ❌→✅ | Plan C4 |
+| `split` axiom | refined | ❌→✅ | Plan C5 |
+| `casefold`, `count` | refined | ❌→✅ | Plan C6 |
+
+### Plan A — the `smt_string_typet` refactor (the SMT-backend endgame)
+
+**Goal.** Under `--python-smt-strings`, represent a Python `str` as a *native*
+SMT `String` value rather than the `{length, char*}` refined struct, so every
+op lowers to a native `str.*` term whose **result carries its own length**.
+This is the principled fix for the producing ops that the byte-array+`str`
+hybrid cannot do (slice, replace, strip-producing — all blocked on the
+symbolic-`res_len` truncation wall), and it unifies the ops the hybrid already
+does precisely (queries, concat, subscript).
+
+**Why the hybrid can't be extended instead.** The hybrid keeps the
+`{len, byte[]}` struct and bridges to `str` at each op via
+`str.substr(str.++(from_code byte_i ...), 0, len)`. Producing ops whose result
+length is symbolic leave that outer `str.substr` truncation ambiguous, and the
+solver must jointly discharge bit-vector clamp arithmetic + `bv2nat` + string
+constraints — which it does not do in reasonable time. Native `String` has no
+`len`/byte array and no truncation, so `str.substr`/`str.replace_all` results
+are well-formed by construction.
+
+**Pieces.**
+1. *Type.* Add `smt_string_typet` (a `typet` mapping to SMT sort `String`).
+   `is_python_string_type()` must accept BOTH the refined struct type and
+   `smt_string_typet`; `python_string_type()` returns the kind-appropriate
+   type. `smt2_conv::convert_type(smt_string_typet)` → `String`. The
+   SAT/`boolbv` path rejects it (SMT-solver-only; `--python-smt-strings` must
+   pair with an SMT String solver — enforce/diagnose in the driver).
+2. *Front-end string-op abstraction layer* (the bulk of the work). Introduce
+   helpers that every string site calls instead of touching the struct:
+   `str_literal`, `str_nondet`, `str_len`, `str_char_at`, `str_concat`,
+   `str_substr`, `str_eq`, `str_contains`/`prefix`/`suffix`, `str_compare`,
+   `str_index_of`, `str_replace`, `str_strip`, `str_repeat`, `str_split`. Each
+   branches on the backend: refined → today's struct/`cprover_string_*`
+   emission; smt_string → an op node/intrinsic over `String` operands. Migrate
+   the inventoried sites (≈33 `build_string_struct`, 17 `.length`, 7
+   `.data[i]`, plus comparison loops and producers — see §3 inventory) to the
+   abstraction. Each migration is immediately testable under the refined
+   backend (unchanged), de-risking the labor; the smt branch is exercised
+   under `--cvc5`.
+3. *Back-end lowering.* For `String` operands, lower each op directly:
+   `str_len`→`str.len`, `str_char_at`→`(str.to_code (str.at s i))`,
+   `str_concat`→`str.++`, `str_substr`→`str.substr`, `str_eq`→`=`,
+   `contains`→`str.contains`, `prefix/suffix`→`str.prefixof/suffixof`,
+   `compare`→`str.<`, `index_of`→`str.indexof`, `replace`→`str.replace_all`,
+   `repeat`→bounded `str.++` (or a helper), `split`→sequence of `str.substr`.
+   Constants → quoted literals (escape NUL via `\u{0}`). nondet → a free
+   `String` with `(str.len s) <= bound`.
+4. *Model extraction.* In smt2_conv model readback, a `String`-sorted symbol's
+   value is a quoted string; surface it directly in the trace (Plan B becomes
+   trivial under native `String`).
+5. *C/marshalling boundary.* Where a `str` reaches C APIs (`char*`), convert
+   `String` → bounded byte array (`str.at` loop). Retire the regex
+   subject-literal byte→`str` materialisation hack and the hybrid producing-op
+   constraints (`cprover_string_smt_concat_eq_func` / `_substr_eq_func`) once
+   producers are native.
+
+**Phasing** (each phase keeps the refined backend green and is `--cvc5`-testable):
+- *Phase 0 — DONE (hybrid).* Byte-array+`str` lowering proved the `str.*`
+  lowerings and the leaf-backing reachability idea; delivers queries + concat +
+  subscript precisely. Interim; superseded by phases 1–3.
+- *Phase 1.* `smt_string_typet` + abstraction layer + constants/nondet; migrate
+  leaf + query sites; validate query results match the hybrid (no regression),
+  now via native `String`.
+- *Phase 2.* Migrate producers to native `str.*` — **slice, replace,
+  strip-producing, repeat, split become precise** (results are native
+  `String`, no truncation).
+- *Phase 3.* Model extraction + marshalling boundary + retire hybrid hacks.
+
+**Effort/risk.** Large (multi-PR, ≈50 sites). Risk: the type switch is global
+per backend kind, so a site that bypasses the abstraction breaks typing under
+the SMT kind — mitigated by routing *all* sites through the abstraction (a
+mechanical, refined-test-covered change) before flipping producers to native.
+
+### Plan B — SMT-backend model extraction (interim, before Plan A phase 3)
+
+Under the current hybrid, counterexample traces show a string's length but not
+its bytes. Fix: in smt2_conv's struct model readback, when a value has
+`python_string` tag, read the backing array elements `[0, len)` from the model
+and assemble a string literal for the trace. Locate the struct-value
+construction in the model build; add a python_string special case. Moderate
+effort; usability only (verdicts already correct). Becomes trivial once Plan A
+lands (native `String` values read directly).
+
+### Plan C — refined-backend axioms (for ops not covered by Plan A's backend)
+
+These make ops precise on the **default** backend. Note: ordering and substring
+replace are *already* (or more cheaply) precise via the SMT backend, so C1/C2
+are low priority — prefer routing users to `--python-smt-strings`.
+
+- **C1 substring `replace`.** A refined axiom for `replace(src, old, new)` over
+  multi-char `old`/`new` needs occurrence-alignment reasoning of the same
+  existential class that blocks `compare_to`/`not_contains`; expect the same
+  instantiation difficulty. *Recommendation:* do `replace` via the SMT backend
+  (`str.replace_all`, lands in Plan A phase 2), not a refined axiom. If a
+  refined version is required, scope it to a bounded number of occurrences with
+  eager witness instantiation.
+- **C2 ordering via `compare_to`.** Root-caused: axiom a3's existential
+  first-differing-index witness is not instantiated by the refinement. Fixing
+  it needs solver-level eager instantiation of that witness (cf. the
+  not_contains witness machinery). *Recommendation:* ordering is precise via
+  the SMT backend (`str.<`, done); keep the refined first-byte sound
+  approximation and treat the refined compare_to fix as deep, low-priority
+  solver work.
+- **C3 `repeat` (`s*n`).** New axiom: `|res| = |s|*n`, `res[i] = s[i mod |s|]`.
+  Concrete `n` (the common case, constant-folded in the front-end) gives a
+  linear length and can be emitted as `n` concats or a bounded axiom — do this
+  first. Symbolic `n` introduces a nonlinear `|s|*n` (bounded multiplication;
+  bit-blasts but is heavier) — second. Moderate effort.
+- **C4 `strip(chars)`.** Parameterise the landed `add_axioms_for_python_strip`
+  predicate: replace the fixed Python-whitespace test with membership in the
+  `chars` argument's character set. Small/moderate (extends the existing
+  axiom + front-end routing of the 1-arg form).
+- **C5 `split`.** Produces a *list* of strings — hardest. Bounded version: at
+  most K parts, each a substring delimited by the separator; result is a
+  K-length list with split semantics and a part count. Large effort; likely
+  better served by the SMT backend once list-of-String is modelled.
+- **C6 `casefold`, `count`.** `casefold` can change length in Unicode
+  (`ß`→`ss`), which the byte-array model cannot represent — keep the sound
+  nondet model and document (do **not** approximate via `to_lower`, which would
+  be unsound for such code points). `count(sub)` needs a counting axiom (number
+  of non-overlapping occurrences) or routing through the SMT backend; bounded
+  counting is the pragmatic refined option. Both low priority.
