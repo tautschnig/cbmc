@@ -1616,3 +1616,49 @@ and lowering them in the back-end would suffice.
 This is a major multi-PR effort (the front-end refactor in phase 1–3 touches
 ~50 sites); it should proceed as its own focused push. The first brick above
 plus this de-risked design are the starting point.
+
+## SMT-String backend — revised design via backing-array resolution (2026-06-11)
+
+**Key insight (validated): symex content-pointer resolution removes the need
+for the full `smt_string_typet` front-end refactor.** The earlier finding
+("symbol operands hit the indirection wall") is true *only when the string has
+no concrete backing array*. When the string's `data` pointer resolves — via
+symex value-substitution — to a real array (`address_of(index(<array>, 0))`),
+the operand reaching `smt2_conv` is the reachable struct shape, and the
+`str.*` lowering fires for *symbol* operands too.
+
+**Empirical confirmation (`--cvc5`):**
+- `"b" in (a + b)` → SUCCESSFUL. A *produced* string already gets Phase-2
+  backing (`setup_string_result_backing` → `associate_array_to_pointer`), so
+  its `data` is `address_of(backing[0])`; the contains lowering is precise.
+- `(a + b) == "abc"` / `!= "abd"` → precise (content equality over the backing).
+- `"b" in s` for a bare `nondet_string` leaf → still falls back, *only* because
+  the leaf has **no backing array** (its `data` is a nondet pointer).
+
+So the gap is exactly the missing **leaf backing**, not the representation.
+This is the same mechanism as Phase 1/2 of the refined work, reused for the
+SMT back-end. It is far less invasive than re-routing ~50 front-end sites onto
+a native `smt_string_typet`.
+
+**Revised plan (supersedes the `smt_string_typet` end-to-end plan above):**
+1. **Leaf backing (the remaining crux):** under `python_string_kind ==
+   smt_string`, give every string *leaf* (`nondet_string`, and string-typed
+   parameters/symbols) a concrete bounded backing array, so `s.data ==
+   address_of(index(backing, 0))` syntactically after symex. Reuse
+   `associate_array_to_pointer` / the Phase-2 backing machinery; gate on the
+   SMT kind so the refined backend is untouched. (Threads
+   `python_string_kind` into the converter, currently only on
+   `python_languaget`.)
+2. **Precise query lowering in `smt2_conv` (mostly done):** `equal`
+   (content) ✓, `contains`/`prefixof`/`suffixof` ✓; add `compare_to`
+   (ordering via `str.<`/`str.<=`), `length` (`str.len`), `index_of`
+   (`str.indexof`). All over the reachable backing arrays.
+3. **Producers** already get Phase-2 backing; their results lower via the same
+   path. `str(int)`, slice, replace, strip follow.
+4. **Policy + model extraction + retire byte-array marshalling hacks.**
+
+The two committed `smt2_conv` bricks (precise contains/prefix/suffix + content
+equality) realise step 2's core. Step 1 (leaf backing) is the next concrete
+implementation task and the one that makes symbol-operand membership and
+ordering precise end-to-end under `--cvc5` — exactly the refined-backend
+ceiling cases.
