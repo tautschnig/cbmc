@@ -43,35 +43,62 @@ def leaves():
                    if n.endswith(".c") and pat.search(n)})
 
 
-def leaf_db(leaf):
-    return f"/tmp/leaf-drivers-{leaf}-db"
+# Heavy leaves whose per-leaf DB is too big for the (slower) sound
+# over-approximate collector at the per-query budget -- expanded into
+# per-depth-1-subdir units so every unit completes.
+HEAVY = {"media", "gpu", "net", "staging", "usb", "scsi", "infiniband",
+         "iio", "clk"}
 
 
-def build_leaf(leaf):
-    db = leaf_db(leaf)
+def subdirs(leaf):
+    p = os.path.join(TREE, "drivers", leaf)
+    if not os.path.isdir(p):
+        return []
+    return sorted(d for d in os.listdir(p)
+                  if os.path.isdir(os.path.join(p, d)))
+
+
+def units():
+    """(target, db, key) for every unit; heavy leaves are expanded into
+    per-subdir units so the sound (slower) collector completes.  Flat leaves
+    are yielded FIRST (their per-leaf DBs already exist -> they re-baseline
+    fast), heavy sub-units second (they pay a build cost)."""
+    flat = []
+    heavy = []
+    for leaf in leaves():
+        if leaf in HEAVY and subdirs(leaf):
+            for s in subdirs(leaf):
+                heavy.append((f"drivers/{leaf}/{s}/",
+                              f"/tmp/leaf-drivers-{leaf}-{s}-db", f"{leaf}__{s}"))
+        else:
+            flat.append((f"drivers/{leaf}/",
+                         f"/tmp/leaf-drivers-{leaf}-db", leaf))
+    return flat + heavy
+
+
+def build_unit(target, db):
     if os.path.isdir(db) and os.path.isfile(db + "/src.zip"):
         return "cached"
     cmd = ["bash", "-c",
            f"ulimit -v 96000000; timeout {BUILD_TIMEOUT} "
-           f"{SCAN}/build-codeql-db.sh {TREE} {db} drivers/{leaf}/ 16 "
-           f">/dev/null 2>&1"]
+           f"{SCAN}/build-codeql-db.sh {TREE} {db} {target} 16 >/dev/null 2>&1"]
     subprocess.run(cmd)
-    if os.path.isfile(db + "/src.zip"):
-        return "built"
-    return "build-fail"
+    return "built" if os.path.isfile(db + "/src.zip") else "build-fail"
 
 
-def eval_leaf(leaf):
-    """Build + run finders; return a result dict.  Cached via JSON."""
-    jpath = f"{OUT}/{leaf}.json"
+def eval_unit(unit):
+    """Build + run finders on one unit; cached via JSON.  `high` collects all
+    confidence=HIGH count/index candidate lines (with advisories) for the
+    ranking layer."""
+    target, db, key = unit
+    jpath = f"{OUT}/{key}.json"
     if os.path.isfile(jpath):
         return json.load(open(jpath))
-    res = {"leaf": leaf, "build": build_leaf(leaf), "assets": {},
-           "high_write": []}
-    if not os.path.isfile(leaf_db(leaf) + "/src.zip"):
+    res = {"leaf": key, "build": build_unit(target, db), "assets": {},
+           "high": []}
+    if not os.path.isfile(db + "/src.zip"):
         json.dump(res, open(jpath, "w"))
         return res
-    db = leaf_db(leaf)
     for label, q, mfield, mtok in osum.ASSETS:
         status, lines = osum.run_query(db, q, Q_TIMEOUT)
         a = {"status": status, "raw": len(lines), "mitigated": 0,
@@ -85,8 +112,8 @@ def eval_leaf(leaf):
                 a["genuine"] = a["raw"]
             if q == "tainted_count_into_fixed_array.ql":
                 for l in lines:
-                    if "confidence=HIGH" in l and "impact=WRITE" in l:
-                        res["high_write"].append(l)
+                    if "confidence=HIGH" in l:
+                        res["high"].append(l)
         res["assets"][label] = a
     json.dump(res, open(jpath, "w"))
     return res
@@ -99,36 +126,36 @@ def main():
     ap.add_argument("--workers", type=int, default=4)
     a = ap.parse_args()
     os.makedirs(OUT, exist_ok=True)
-    ls = leaves()
+    us = list(units())
 
     if a.build:
         # pre-compile the finders once (serial) so parallel workers hit the
         # compile cache rather than racing on first-compile.
-        osum.run_query(leaf_db("nfc"), "tainted_count_into_fixed_array.ql", 60) \
-            if os.path.isdir(leaf_db("nfc")) else None
+        nfc = "/tmp/leaf-drivers-nfc-db"
+        if os.path.isdir(nfc):
+            osum.run_query(nfc, "tainted_count_into_fixed_array.ql", 60)
         with mp.Pool(a.workers) as p:
-            for i, r in enumerate(p.imap_unordered(eval_leaf, ls), 1):
+            for i, r in enumerate(p.imap_unordered(eval_unit, us), 1):
                 done = sum(v["status"] == "ok"
                            for v in r["assets"].values())
-                print(f"[{i}/{len(ls)}] {r['leaf']:<14} build={r['build']:<10} "
-                      f"finders_ok={done}/8 high_write={len(r['high_write'])}",
+                print(f"[{i}/{len(us)}] {r['leaf']:<22} build={r['build']:<10} "
+                      f"finders_ok={done}/8 high={len(r.get('high', []))}",
                       flush=True)
 
     if a.report or not a.build:
-        report(ls)
+        report(us)
 
 
-def report(ls):
+def report(us):
     rows = []
-    for leaf in ls:
-        jp = f"{OUT}/{leaf}.json"
+    for _, _, key in us:
+        jp = f"{OUT}/{key}.json"
         if os.path.isfile(jp):
             rows.append(json.load(open(jp)))
-    print(f"\n# drivers/* candidate census ({len(rows)}/{len(ls)} leaves "
+    print(f"\n# drivers/* candidate census ({len(rows)}/{len(us)} units "
           f"evaluated)\n")
     tot = {}
-    hw = []
-    to = 0
+    hi = []
     nbuilt = 0
     for r in rows:
         if not r["assets"]:
@@ -142,8 +169,10 @@ def report(ls):
             d["gen"] += a["genuine"]
             d["to"] += 1 if a["status"] == "timeout" else 0
             d["err"] += 1 if a["status"] == "error" else 0
-        hw += r["high_write"]
-    print(f"leaves with a built DB: {nbuilt}\n")
+        hi += r.get("high", [])
+        # backward-compat with older high_write-only JSONs
+        hi += [l for l in r.get("high_write", []) if l not in hi]
+    print(f"units with a built DB: {nbuilt}\n")
     print(f"{'asset':<22}{'raw':<8}{'mitigated':<11}{'genuine':<9}"
           f"{'q-TO':<6}{'q-err':<6}")
     print("-" * 62)
@@ -158,6 +187,7 @@ def report(ls):
               f"{d['to']:<6}{d['err']:<6}")
     print("-" * 62)
     print(f"{'TOTAL':<22}{traw:<8}{'':<11}{tgen:<9}")
+    hw = [l for l in hi if "impact=WRITE" in l]
     print(f"\nHIGH-confidence count/index WRITE candidates -- a RANKING over "
           f"the full retained set, NOT a filtered subset ({len(hw)}):")
     print("  (advisories rank only; CBMC / sound check / manual review is the "
