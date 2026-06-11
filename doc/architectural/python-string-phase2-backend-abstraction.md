@@ -1545,3 +1545,74 @@ split) are blocked on **existential-witness instantiation** in the refinement
 or on **new nonlinear / list-valued axioms** — i.e. one-off refinement axioms
 hit diminishing returns. The SMT-String backend (step 5) is the right
 comprehensive answer and is where effort should go next.
+
+## SMT-String backend — design finding + implementation plan (2026-06-11)
+
+Started step 5. Established the architecture empirically.
+
+### What works today (committed first brick)
+`smt2_conv` now lowers `cprover_string_contains/is_prefix/is_suffix`
+**precisely** to `str.contains`/`str.prefixof`/`str.suffixof` when both
+operands are *reachable* refined-string structs (`{length,
+address_of(index(array,0))}`), bridging bytes → SMT String via
+`str.from_code`/`str.++`/`str.substr` (the regex path's mechanism). Validated
+under `--cvc5`: `"b" in "abc"` → SUCCESSFUL (was nondet → FAILED). Sound
+fallback (nondet) preserved for unreachable operands.
+
+### The decisive finding: byte-array lowering hits the symbol-indirection wall
+`"b" in s` (where `s` is a *symbol*, the common shape after
+`s = nondet_string(); assume(s == ...)`) still falls back to nondet, because
+`s`'s bytes live behind a pointer (`s.data`) that is **not syntactically
+reachable** inside `smt2_conv`. The same wall blocks ordering (`compare_to`)
+and every query whose operand is a variable rather than an inline struct.
+
+Conclusion (empirically confirmed): a `smt2_conv`-only lowering over the
+byte-array representation is **not sufficient** for the cases that matter. The
+full SMT-String backend must represent Python strings as a **native SMT String
+sort end-to-end** (`smt_string_typet`), so that a string *variable* is itself
+an SMT `String` term and every op is a `str.*` term over it. This supersedes
+the earlier assumption that emitting the existing `cprover_string_*` intrinsics
+and lowering them in the back-end would suffice.
+
+### Target design: `smt_string_typet` end-to-end
+- **Type:** add `smt_string_typet` (a `typet` with id mapping to SMT `String`).
+  `smt2_conv::convert_type` emits `String`; the SAT/`boolbv` path is not used
+  for this type (the backend is CVC5/Z3-only, gated by `--python-smt-strings`,
+  which must also select an SMT solver with string theory).
+- **Constants:** `smt_string_constant_exprt` (already referenced in the
+  front-end comments) → `convert_expr` emits the quoted SMT-LIB string literal
+  (with proper escaping), incl. embedded NUL via `\u{0}`.
+- **Front-end (`python_string_kind == smt_string`):**
+  - `python_string_literal` → `smt_string_constant_exprt`.
+  - `nondet_string()` → a nondet symbol of `smt_string_typet` (a free
+    `String`), with `len` bound via `str.len`.
+  - Re-route the ~50 struct-shaped sites (`.length`, `.data[i]`, comparison
+    loops, producers) onto string ops: `len`→`str.len`, `s[i]`→`str.at`/
+    `str.substr`, `==`→`=`, `<`/ordering→`str.<=`/`str.<`, `in`→`str.contains`,
+    `find`→`str.indexof`, `+`→`str.++`, slice→`str.substr`,
+    `replace`→`str.replace_all`, `strip`→ derived, etc. This is the bulk
+    (front-end refactor, plans §3 step 3) and should be gated entirely behind
+    the `smt_string` kind so the refined path is untouched.
+- **Back-end (`smt2_conv`):** a lowering for each string-op expr node to its
+  `str.*` term; model extraction to read `String` values back for traces.
+- **Policy:** refined stays the default (fast, handles producers, ordering/
+  membership at the documented ceiling); `--python-smt-strings` selects the
+  SMT path for unconditional precision (incl. ordering and symbol-operand
+  membership). Every op sound on both; precise on at least one.
+
+### Phasing (each independently testable under `--cvc5`)
+1. **Foundation:** `smt_string_typet` + `smt_string_constant_exprt` +
+   `convert_type`/`convert_expr`; nondet `String` symbols. Prove
+   `s = nondet_string(); assume(s == "ab"); assert s == "ab"` and
+   `assert len(s) == 2` precise end-to-end.
+2. **Queries:** `==`/`!=`, `len`, `in`/`contains`, `startswith`/`endswith`,
+   ordering (`< <= > >=` via `str.<`/`str.<=`), `find`/`index`/`rfind`. This is
+   where the refined ceiling (ordering, symbol-operand membership) is closed.
+3. **Producers:** `+` (`str.++`), slice/`[i]` (`str.substr`/`str.at`),
+   `replace` (`str.replace_all`), `strip`/`lstrip`/`rstrip`, `*`
+   (`str.repeat` if available), `split` (`str.split` / sequence).
+4. **Model extraction + policy + retire the byte-array marshalling hacks.**
+
+This is a major multi-PR effort (the front-end refactor in phase 1–3 touches
+~50 sites); it should proceed as its own focused push. The first brick above
+plus this de-risked design are the starting point.
