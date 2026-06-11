@@ -1316,26 +1316,41 @@ conservative result), with the means to close it:
 * ✗ `split` — **solver stub**: produces a *list* of strings; hardest
   (variable-count result).
 * ✗ **membership (`in`/`not in`) over a symbolic-length *produced-result*
-  needle** — the one **fundamental refined-string ceiling**: the
-  index-set/witness instantiation does not converge for a symbolic needle
-  length, so this is sound-but-conservative (guard-terminated) and the
-  refined-string backend *cannot* make it precise. (Constant-needle and
-  symbolic-haystack membership are already precise.)
+  needle** — the hardest case, but **not** a fundamental impossibility for
+  refined-string. The *lazy* refinement seeds the needle's index set with the
+  *symbolic* `|needle|-1`, so it never reaches a fixpoint. For a
+  *constant-length* needle the same code instantiates the witness over
+  *concrete* `0..k-1` and converges precisely — so the fix is **bounded eager
+  instantiation**: when `|needle|` is symbolic, instantiate the witness over a
+  concrete `[0, bound)` (the haystack length when concrete, else the model's
+  max string length). Since BMC strings are bounded, this is sound and
+  complete. The obstacles are engineering, not theory: (i) the lazy
+  `initial_index_set` must use a concrete bound; (ii) the bound must be small
+  — fine for a concrete haystack or a configured `--max-nondet-string-length`,
+  but the `1<<26` default makes naive eager instantiation infeasible; (iii) it
+  is shared with JBMC and is `O(bound)` lemmas per axiom. (Constant-needle and
+  symbolic-haystack membership are already precise; only this case is
+  guard-conservative today.)
 
-### Two engines — and why both are needed for full precision
+### Two engines — both can reach full precision; different tradeoffs
 
-* **Refined-string (default).** Can reach precision for everything *except*
-  the membership-convergence class. The bulk of the ✗ items above close by
-  **front-end migration to already-existing axioms** (proven by find/index),
-  plus a few **new axioms** (repeat; split). It has a hard precision ceiling
-  at symbolic-length-needle membership.
+* **Refined-string (default).** Can reach precision for *every* case,
+  including symbolic-length-needle membership via the bounded-eager-
+  instantiation fix above (feasible for bounded/small string lengths, which
+  BMC has; perf-sensitive and shared with JBMC). The bulk of the ✗ items
+  close by **front-end migration to already-existing axioms** (proven by
+  find/index), plus a few **new axioms** (repeat; split) and the eager-
+  instantiation change for membership.
 * **SMT-String / CVC5 (`--python-smt-strings`).** Native string theory →
-  precise for **all** string ops/shapes at once, *including* the
-  membership-convergence class the refined-string backend cannot. Scaffolding
-  (selector + flag) exists; the intrinsic↔SMT-string-term lowering (designed
-  earlier in this doc) is unimplemented. This is the **only** route to
-  precision for the refinement-ceiling cases, and a uniform precise engine
-  for the rest.
+  precise for **all** string ops/shapes at once *without* instantiation,
+  including symbolic-length-needle membership, unconditionally and more
+  cleanly. Scaffolding (selector + flag) exists; the intrinsic↔SMT-string-term
+  lowering (designed earlier in this doc) is unimplemented.
+
+So the membership-convergence case is reachable on *both* backends:
+refined-string via bounded eager instantiation (the pragmatic, BMC-bounded
+route), SMT-String via native theory (the clean, unconditional route). Earlier
+text calling SMT-String the "only" route was wrong.
 
 ### Sequenced plan (soundness-gated, then precision to completion)
 
@@ -1347,15 +1362,19 @@ conservative result), with the means to close it:
    per-operator results); `casefold`→`to_lower`; `count`. Each gated on
    sound+precise + the three suites + sweep + jbmc-strings/smoke.
 3. **New refined-string axioms**: `repeat` (moderate); `strip(chars)`; `split`
-   (hard — list result; may remain sound-nondet until the SMT backend).
-4. **SMT-String backend** — implement the intrinsic↔term lowering; validate it
-   makes the **membership-convergence class** (and everything else) precise.
-   This is the only path to full precision for the refined-string ceiling.
-5. **Backend policy** — invariant: *every* `str` op is **sound on both**
-   backends and **precise on at least one**; route the ceiling cases to
-   SMT-String (or make SMT-String the precise default once mature), keeping
-   refined-string for speed where it is already precise.
+   (hard — list result).
+4. **Refined-string membership convergence** — bounded eager instantiation of
+   the not_contains witness over a concrete bound when the needle length is
+   symbolic; validate it makes the membership case precise + does not regress
+   JBMC or blow up perf (watch the bound source / `1<<26` default).
+5. **SMT-String backend** — implement the intrinsic↔term lowering; the clean,
+   unconditional route to precision for every op (and a cross-check for the
+   refined-string results).
+6. **Backend policy** — invariant: *every* `str` op is **sound on both**
+   backends and **precise on at least one**; prefer whichever is precise (and
+   faster) per op.
 
 **Definition of done:** no string operation, on any input shape, produces a
 false proof (soundness) or a spurious failure on a backend that should decide
-it (precision); the membership-convergence ceiling is covered by SMT-String.
+it (precision); the membership case is precise via bounded eager instantiation
+on refined-string and/or natively on SMT-String.
