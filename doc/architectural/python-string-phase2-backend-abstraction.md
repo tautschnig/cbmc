@@ -1512,3 +1512,36 @@ remaining gaps (ordering, substring replace, split, and any residual
 membership) are blocked on either existential-witness instantiation or new
 nonlinear/list-valued axioms. The unconditional route for all of them is the
 SMT-String backend (step 5), which remains the recommended next major effort.
+
+## String-correctness plan — consolidated outcome ledger (2026-06-11)
+
+This is the definitive per-step record of the "sound + precise, across the
+board" string effort. Each item: **status**, what was done, and — when not
+landed — **why**. Detail for each is in the dated sections above.
+
+| Step | Item | Status | Outcome / why |
+|------|------|--------|----------------|
+| 1 | Soundness audit | **DONE** | No false proofs found across the string ops. The one flagged case, `string-nondet-in-embedded-null-longer-fail`, is **vacuously sound**, not a bug: `len("a\0b")==3` / `len("a\0bc")==4` are computed correctly and `nondet_string(N)` is length *exactly* N (other tests depend on this), so `nondet_string(4)=="a\0b"`(len 3) is UNSAT (verified: `assert False` after the assume is SUCCESSFUL ⇒ path infeasible). ESBMC passes it only by treating `"a\0b"` as length 4 (unprocessed `\0`). Correct model kept. |
+| 2a | `rfind`/`rindex` → `last_index_of` | **DONE, committed** (`ee0b89d939`) | Generalised the find/index precise query block; backward search routes to `last_index_of` (2-arg, upper bound = `|haystack|`), precise path only with no start/end. Precise + sound + loop-safe. `regression/python/string-rfind-symbolic`. |
+| 2b | `strip`/`lstrip`/`rstrip` (no-arg) | **DONE as new axiom, committed** (`6cabf82209`) | **Not** migrated to `trim`: `trim` strips every char `<= 0x20` (Java), but Python `strip` removes only `{0x09..0x0d, 0x20}` — they differ on control bytes (`\x01`), so trim would be **unsound**. Implemented a dedicated Python-whitespace axiom (`cprover_string_strip_func`, mode 0/1/2) with maximality. Precise + sound; `\x01` kept. `regression/python/string-strip-symbolic`. |
+| 2c | `replace` (substring) | **NOT DONE — needs new axiom** | The existing `replace` axiom is **char-to-char only** (single `old_char`→`new_char`; returns code 1 / no constraint for substrings). Python `str.replace` replaces arbitrary-length substrings. A new substring-replace axiom (or the SMT backend) is required. |
+| 2d | ordering `< > <= >=` → `compare_to` | **NOT DONE — root-caused** | `compare_to` reflexivity (`res=0`) proves, but any *differing* comparison leaves `res` **free** (observed `res=3/4`): axiom **a3**'s existential first-differing-index witness `x` is **not instantiated** by the refinement. Not a wiring bug (equal/index_of resolve the same operands fine). Same existential-instantiation class as membership. Kept the sound first-byte over-approximation. |
+| 2e | `casefold`, `count` | **NOT DONE** | `casefold` cannot reuse `to_lower` soundly (Unicode case-folding diverges, e.g. `ß`→`ss`); `count` has no existing axiom (needs a counting axiom). Both left at the sound nondet model. |
+| 3 | new axioms `repeat`, `strip(chars)`, `split` | **PARTIAL** | `strip` (whitespace) done under 2b. `repeat` (`s*n`) needs a new axiom with a **nonlinear** `|s|·n` length; `strip(chars)` needs an arbitrary-char-set predicate; `split` is **list-valued** (hardest). Not yet implemented. |
+| 4 | membership convergence (bounded eager instantiation) | **IMPLEMENTED, MEASURED, REVERTED** | Every reproducible membership shape (constant / char-pinned / produced / content-based / loop+concat needle) **already converges precisely at HEAD** (50–200 ms, guard never fires). Eager seeding of concrete witnesses gave **no precision gain** and **regressed** positive-contains (14 s→40 s at K=8, OOM at K=32) via index-pair blow-up. Net negative; reverted. The "symbolic-length-needle ceiling" is latent (no reproducible spinning case). |
+| 5 | SMT-String backend (`--python-smt-strings`) | **OPEN — next major effort** | The unconditional precision route for 2c/2d/3-split/any residual membership. Scaffolding (selector + flag) exists; the intrinsic↔SMT-string-term lowering is unimplemented. Design spec is this document's earlier sections. |
+| 6 | backend policy | **OPEN** | Depends on step 5. |
+
+**Validation of the landed work:** ESBMC sweep vs
+`/tmp/cbmc-baseline-20260609.csv` — **0 regressions**, PASS 2916 → 2935
+(+19), string wins `string-rfind-nondet` / `string-rstrip-nondet` /
+`string-index-nondet` flipped DIFF→PASS. Three python suites green;
+`clang-format` clean. jbmc unaffected by construction (Java emits
+`trim_func`, never `strip_func`).
+
+**Cross-cutting finding:** the refined-string backend's *cleanly-achievable*
+precision wins are now done. The remaining gaps (ordering, substring replace,
+split) are blocked on **existential-witness instantiation** in the refinement
+or on **new nonlinear / list-valued axioms** — i.e. one-off refinement axioms
+hit diminishing returns. The SMT-String backend (step 5) is the right
+comprehensive answer and is where effort should go next.
