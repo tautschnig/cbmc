@@ -64,6 +64,10 @@ inline struct_typet python_string_struct_def()
 /// Check if a type is a Python string type.
 inline bool is_python_string_type(const typet &type)
 {
+  // Native SMT-String back-end (Plan A): a string value is the SMT String
+  // sort rather than the refined struct.
+  if(type.id() == ID_smt_string)
+    return true;
   if(type.id() == ID_struct_tag)
     return to_struct_tag_type(type).get_identifier() == PYTHON_STRING_TAG;
   return is_refined_string_type(type);
