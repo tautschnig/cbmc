@@ -2963,6 +2963,34 @@ void smt2_convt::convert_expr(const exprt &expr)
         out << "(_ bv0 " << width << ")";
         return;
       }
+      // cprover_string_smt_concat_eq_func(res, left, right) → boolean
+      // SMT-String back-end producing-op support: a single str.++ constraint
+      // tying the result's string view to the concatenation of the inputs,
+      // i.e. (= (str res) (str.++ (str left) (str right))). The front-end
+      // assumes this; queries on res then read the same (str res) term, so
+      // they are precise. Using one str.++ equality (rather than byte-level
+      // array constraints) keeps proofs cheap for CVC5's string solver.
+      if(fn_id == ID_cprover_string_smt_concat_eq_func && args.size() == 3)
+      {
+        std::size_t width = boolbv_width(expr.type());
+        if(width == 0)
+          width = 8;
+        if(reachable(args[0]) && reachable(args[1]) && reachable(args[2]))
+        {
+          out << "(ite (= ";
+          emit_smt_string(args[0]);
+          out << " (str.++ ";
+          emit_smt_string(args[1]);
+          out << " ";
+          emit_smt_string(args[2]);
+          out << ")) (_ bv1 " << width << ") (_ bv0 " << width << "))";
+          return;
+        }
+        // Unreachable operand: emit bv1 (assume holds vacuously / sound: the
+        // result stays unconstrained, i.e. over-approximated).
+        out << "(_ bv1 " << width << ")";
+        return;
+      }
       // Wave 2 of Python re support: intercept calls carrying a
       // compile-time-constant pattern and lower to SMT-LIB
       // (str.in_re subject <regex>). If the pattern cannot be
