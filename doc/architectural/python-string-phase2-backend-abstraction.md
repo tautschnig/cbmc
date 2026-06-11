@@ -1169,3 +1169,25 @@ work. `5abee1595d` / `8fd1144b50` / `d86893623e` are sound, orthogonal
 improvements that could be cherry-picked for parity (with their own
 validation); `c7fb844a60` is incompatible with this branch's exhaustion
 handling.
+
+### Update: the four commits are now cherry-picked (2026-06-11)
+
+Per the goal of accumulating all available string-solver improvements, the
+four commits were cherry-picked (solver hunks) and committed:
+`5abee1595d` (array_pool re-association), `8fd1144b50` + `d86893623e`
+(multi-assertion axiom recording), and `c7fb844a60` **adapted**. The
+adaptation reconciles c7fb's "add counter-examples for all violated axioms and
+continue" with this branch's anti-hang invariant: a bounded number
+(`max_empty_index_set_rounds = 16`) of consecutive empty-index-set rounds,
+after which we fall back to the conservative sound `D_SATISFIABLE` rather than
+spin. This keeps the precision gain without the non-termination an unadapted
+c7fb caused on symbolic-length-needle membership.
+
+They still do **not** make symbolic-length-needle membership *converge*
+(the repro `for j: t = produced(); assert t not in s` now *terminates* — soundly,
+conservatively FAILED — instead of hanging, but is not proved precisely). The
+precise convergence fix remains future solver-research work. Net validation:
+ESBMC sweep PASS 2933, zero regressions; three Python suites + jbmc-strings +
+strings-smoke green. `dict45_fail` (whose constant-string-key dict ops 8fd now
+correctly refines, which had pushed it past the timeout) terminates in time
+under the bounded guard with the correct verdict.
