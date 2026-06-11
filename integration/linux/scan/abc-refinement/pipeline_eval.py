@@ -18,6 +18,12 @@ Funnel stages
   CBMC reach         OOB precondition REACHABLE (cover-probe)
 
 Usage:  pipeline_eval.py --db /tmp/broad-next-db
+
+Collector-architecture contract (doc/collector-architecture-2026-06.md):
+the finders are a SOUND over-approximate collector; the mitigated /
+genuine / resolved / distilled splits below are ADVISORY tiers over the
+FULL retained candidate set -- they rank, they never drop.  Only CBMC, a
+provably-sound static check, or manual review may remove a candidate.
 """
 import argparse
 import collections

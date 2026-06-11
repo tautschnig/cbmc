@@ -75,3 +75,44 @@ A "triage shortlist" is a RANKING over the full candidate set (e.g.
 `confidence=HIGH & impact=WRITE & adv_guard=UNGUARDED & adv_mask=none`), not
 a filtered subset.  The advisory fields order the work; CBMC / review close
 each candidate.  No candidate leaves the set without a sound verdict.
+
+## Re-baseline under the over-approximate collector (2026-06-11)
+
+Aligned the remaining finders: `av_alloc_interproc` (allocator-wrapper
+name-match -> `adv_alloc_wrapper`) and `tainted_into_fixed_dest`
+(clamp/min-clamp -> `adv_clamp`/`adv_minclamp`).  Audit kept as sound:
+`a3_tainted_fnptr` (excluding a named-function/NULL/&func RHS is threat-
+scoping -- those are provably not attacker-controlled CFI values),
+`tainted_ub_arith`/`av_unbounded` (constant-operand scoping),
+`auth_missing_capable` (dominance).  Consumers carry the contract note;
+their mitigated/genuine/resolved/distilled splits are advisory tiers over
+the full retained set (`drivers_census` HIGH/WRITE is now an explicit
+RANKING that prints each candidate's advisories).
+
+Sample re-baseline (old exclusion-filtered finder -> new sound collector):
+
+| leaf | count/idx | skb/cursor | HIGH/WRITE |
+|------|-----------|------------|-----------|
+| misc | 29 -> 62 | 11 -> 71 | 0 -> 1 (altera retained, adv_mask=MASKED) |
+| acpi | 29 -> 125 | 7 -> 10 | 0 -> 0 |
+| nfc | 1 -> 26 | 115 -> 176 | 0 -> 0 |
+| bluetooth | 8 -> 24 | 74 -> 127 | 0 -> 0 |
+| hid | 78 -> 135 | 19 -> 39 | 0 -> 1 |
+| media | 484 -> (timeout) | 16 -> (timeout) | 20 -> (timeout) |
+
+Two honest consequences:
+
+1. **Counts rise ~2-4x** on the count/index and skb tiers (the previously-
+   dropped guarded/masked/bareparam/trivial candidates are retained +
+   annotated), and previously-dropped HIGH/WRITE candidates reappear
+   (misc/altera, a hid one) -- the old "genuine" and HIGH/WRITE totals were
+   *understated* by the unsound drops, exactly as predicted.
+2. **The sound collector is more expensive.**  Over-approximation removes
+   the cheap early `not <guard>` pruning, so the heavy leaves (media, gpu,
+   net, staging, usb) now exceed even the 600 s per-query budget and must be
+   sub-scoped (e.g. `drivers/media/platform/`) -- the same scaling wall,
+   pushed harder by soundness.  A full kernel-wide re-baseline is therefore a
+   batch job with per-leaf sub-scoping; the sample establishes the direction.
+
+The candidate set is now sound (over-approximate); CBMC / sound static
+checks / manual review remain the only definitive filters.

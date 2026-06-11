@@ -10,6 +10,12 @@ shortlist).  Resumable: a leaf whose JSON exists is skipped.
 
   drivers_census.py --build [--workers N]   # build+eval all leaves
   drivers_census.py --report                # aggregate cached JSONs
+
+Collector-architecture contract (doc/collector-architecture-2026-06.md):
+the finders are a SOUND over-approximate collector; the mitigated /
+genuine / resolved / distilled splits below are ADVISORY tiers over the
+FULL retained candidate set -- they rank, they never drop.  Only CBMC, a
+provably-sound static check, or manual review may remove a candidate.
 """
 import argparse
 import json
@@ -152,12 +158,15 @@ def report(ls):
               f"{d['to']:<6}{d['err']:<6}")
     print("-" * 62)
     print(f"{'TOTAL':<22}{traw:<8}{'':<11}{tgen:<9}")
-    print(f"\nHIGH-confidence count/index WRITE candidates "
-          f"(likely OOB-write): {len(hw)}")
+    print(f"\nHIGH-confidence count/index WRITE candidates -- a RANKING over "
+          f"the full retained set, NOT a filtered subset ({len(hw)}):")
+    print("  (advisories rank only; CBMC / sound check / manual review is the "
+          "sole definitive filter)")
     for l in hw:
         p = l.split("|")
-        print(f"  {p[0]:<32} {p[1] if len(p)>1 else ''}:"
-              f"{p[2] if len(p)>2 else ''}  {p[-1]}")
+        adv = "|".join(x for x in p if x.startswith("adv_"))
+        print(f"  {p[0]:<28} {p[1].split('/')[-1] if len(p)>1 else ''}:"
+              f"{p[2] if len(p)>2 else '':<6} {adv}")
 
 
 if __name__ == "__main__":

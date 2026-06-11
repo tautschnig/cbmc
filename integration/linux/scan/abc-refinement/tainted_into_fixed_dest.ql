@@ -84,18 +84,29 @@ predicate minClampedSink(CopyCall c) {
       bound.getEnclosingStmt().getParentStmt*() = se.getStmt()))
 }
 
+/** advisory: the copied size is clamped to a compile-time constant (value-
+ *  bounded, but clamp-constant-vs-dest-size unchecked) -- advisory only. */
+string clampAdvisory(Parameter p, Function f) {
+  if clampedToConstant(p, f) then result = "yes" else result = "no"
+}
+
+/** advisory: the size is the result of a min/min_t/clamp StmtExpr. */
+string minClampAdvisory(CopyCall c) {
+  if minClampedSink(c) then result = "yes" else result = "no"
+}
+
 from DataFlow::Node source, DataFlow::Node sink, CopyCall c, Parameter p,
   ArrayType destArr
 where
   Flow::flow(source, sink) and
   sink.asExpr() = c.getArgument(2) and
   source.asExpr() = p.getAnAccess() and
-  destArr = fixedDestArray(c) and
-  not clampedToConstant(p, c.getEnclosingFunction()) and
-  not minClampedSink(c)
+  destArr = fixedDestArray(c)
 select sink,
   c.getEnclosingFunction().getName() + "|" +
   c.getFile().getAbsolutePath() + "|" +
   c.getLocation().getStartLine().toString() + "|" +
   c.getTarget().getName() + "|" + p.getName() + "|" +
-  "destArr[" + destArr.getSize().toString() + "]"
+  "destArr[" + destArr.getSize().toString() + "]" +
+  "|adv_clamp=" + clampAdvisory(p, c.getEnclosingFunction()) +
+  "|adv_minclamp=" + minClampAdvisory(c)

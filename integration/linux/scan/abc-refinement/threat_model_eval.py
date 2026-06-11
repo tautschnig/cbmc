@@ -9,6 +9,12 @@ producing the full cross-asset threat model of a single (fresh) module.
 
 Usage:
   threat_model_eval.py --db /tmp/broad-next-db [--module net/l2tp/]
+
+Collector-architecture contract (doc/collector-architecture-2026-06.md):
+the finders are a SOUND over-approximate collector; the mitigated /
+genuine / resolved / distilled splits below are ADVISORY tiers over the
+FULL retained candidate set -- they rank, they never drop.  Only CBMC, a
+provably-sound static check, or manual review may remove a candidate.
 """
 import argparse
 import os

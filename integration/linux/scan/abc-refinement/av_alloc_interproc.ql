@@ -57,17 +57,23 @@ string avAllocVerdict(Expr sizeArg) {
   else result = "UNMITIGATED"
 }
 
+/** advisory: the enclosing function is itself an allocator wrapper (the
+ *  alloc-profiling forwarding chain _k*alloc_noprof / kvmalloc_node ...),
+ *  i.e. infrastructure forwarding its own size arg, not a subsystem passing
+ *  attacker input.  Name-based -> advisory, never a drop. */
+string allocWrapperAdvisory(FunctionCall c) {
+  if
+    c.getEnclosingFunction()
+        .getName()
+        .matches(["%alloc%", "%malloc%", "kmemdup%", "krealloc%", "vmemdup%"])
+  then result = "yes"
+  else result = "no"
+}
+
 from DataFlow::Node src, DataFlow::Node snk, FunctionCall c
 where
   AllocFlow::flow(src, snk) and
-  allocSizeArg(snk, c) and
-  // exclude the allocator wrappers calling each other (alloc-profiling
-  // forwards size through _k*alloc_noprof / kvmalloc_node etc.)
-  not c.getEnclosingFunction()
-      .getName()
-      .matches([
-          "%alloc%", "%malloc%", "kmemdup%", "krealloc%", "vmemdup%"
-        ])
+  allocSizeArg(snk, c)
 select c,
   c.getEnclosingFunction().getName() + "|" +
     c.getLocation().getFile().getAbsolutePath() + "|" +
@@ -76,4 +82,5 @@ select c,
     "' size from attacker input (src " +
     src.getLocation().getFile().getBaseName() + ":" +
     src.getLocation().getStartLine().toString() + ")|mitigation=" +
-    avAllocVerdict(snk.asExpr())
+    avAllocVerdict(snk.asExpr()) + "|adv_alloc_wrapper=" +
+    allocWrapperAdvisory(c)
