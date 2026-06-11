@@ -226,6 +226,7 @@ private:
   /// warning level. Intended for debugging spurious verification
   /// results where a silent over-approximation may be at fault.
   bool python_strict_warnings = false;
+  bool use_smt_string_backend = false;
 
 public:
   void set_no_body_check(bool v)
@@ -236,6 +237,14 @@ public:
   void set_python_strict_warnings(bool v)
   {
     python_strict_warnings = v;
+  }
+
+  /// Select the SMT-String back-end (--python-smt-strings): string leaves get
+  /// a concrete backing array so the smt2_conv str.* lowering can reach their
+  /// bytes. See python-string-phase2-backend-abstraction.md.
+  void set_use_smt_string_backend(bool v)
+  {
+    use_smt_string_backend = v;
   }
 
   void set_python_lazy_stubs(bool v)
