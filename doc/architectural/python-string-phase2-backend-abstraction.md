@@ -1691,3 +1691,33 @@ Remaining for the SMT backend: `length` (`str.len`), `index_of` (`str.indexof`),
 and producing ops (concat/slice/replace/strip already get Phase-2 backing, so
 their results lower via the same path — to be wired/validated), then model
 extraction + policy.
+
+## SMT-String backend — query ops complete; producing ops deferred (2026-06-11)
+
+**Query ops are precise and fast under `--cvc5 --python-smt-strings`** (all
+validated in `string-smt-ordering-membership`, sub-second):
+`==`/`!=` (content), `in`/`not in` (`str.contains`), `startswith`/`endswith`
+(`str.prefixof`/`str.suffixof`), ordering `< <= > >=` (`compare_to` →
+`str.<`), `len` (`str.len`), `find`/`index` (`str.indexof`, −1 when absent) —
+all precise for **symbol** operands via leaf backing, soundness preserved.
+This closes the refined-backend ordering ceiling on the SMT path.
+
+**Producing ops (concat `+`, slice, replace, strip-producing) are deferred.**
+On *symbolic* inputs they are currently **sound but imprecise**: the result's
+backing array is not constrained to `str.++`/`str.substr` of the inputs (the
+producing intrinsics are still over-approximated in `smt2_conv`), so a direct
+assertion on the produced value (`assert (s + "cd") == "abcd"`) is not proved
+(it *is* precise once the result is `assume`-constrained, since `equal` then
+ties the backing). No false proofs were observed. Two caveats:
+- **Imprecision:** producing-op *values* aren't computed under the SMT path.
+- **Performance:** model-finding *through* the byte-array→`str` bridge (the
+  64-byte `str.++` unroll) is expensive in CVC5 for satisfiable producing-op
+  goals (e.g. `assert (s+"cd") != "abcd"` is slow), unlike the fast query
+  (proof-side) goals.
+
+The String→array bridge needed to compute producing-op values precisely is the
+remaining SMT-backend piece (constrain `res[i] == str.at(s1 ++ s2, i)`), and is
+genuinely harder. **Policy:** the refined backend remains the default and
+handles producing ops well; `--python-smt-strings` is the precise+fast path for
+the *query* ceiling cases (ordering, symbol-operand membership). Every op stays
+sound on both backends.
