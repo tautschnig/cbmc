@@ -757,6 +757,27 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       if(lv.has_value() && rv.has_value())
         return python_string_literal(lv.value() + rv.value());
     }
+    if(use_smt_string_native)
+    {
+      // Native SMT-String back-end (Plan A): s + t is a native str.++; the
+      // result is an SMT String carrying its own length (no backing/
+      // truncation).
+      const irep_idt fn{ID_cprover_string_smt_strcat_func};
+      if(symbol_table.lookup(fn) == nullptr)
+      {
+        std::vector<typet> ats{left.type(), right.type()};
+        symbolt fs{
+          fn,
+          mathematical_function_typet(std::move(ats), smt_string_typet{}),
+          "python"};
+        fs.base_name = id2string(fn);
+        symbol_table.add(fs);
+      }
+      function_application_exprt app{
+        symbol_table.lookup_ref(fn).symbol_expr(), {left, right}};
+      app.type() = smt_string_typet{};
+      return std::move(app);
+    }
     if(use_smt_string_backend)
     {
       // SMT-String back-end: give the concat result a backing array (so its
