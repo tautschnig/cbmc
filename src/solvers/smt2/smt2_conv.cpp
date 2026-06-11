@@ -2890,7 +2890,32 @@ void smt2_convt::convert_expr(const exprt &expr)
         out << "(_ bv0 " << width << ")";
         return;
       }
-      // cprover_string_{match,search,fullmatch}_func(pattern, subject)
+      // cprover_string_compare_to_func(s1, s2) → lexicographic sign
+      // SMT-String back-end: lower to a signed -1/0/+1 result via str.<
+      // when both operands' arrays are reachable. The front-end maps the
+      // sign to the requested ordering operator (`<`, `<=`, `>`, `>=`).
+      // Falls back to nondet (sound) otherwise.
+      if(fn_id == ID_cprover_string_compare_to_func && args.size() == 2)
+      {
+        std::size_t width = boolbv_width(expr.type());
+        if(width == 0)
+          width = 32;
+        if(reachable(args[0]) && reachable(args[1]))
+        {
+          out << "(ite (= ";
+          emit_smt_string(args[0]);
+          out << " ";
+          emit_smt_string(args[1]);
+          out << ") (_ bv0 " << width << ") (ite (str.< ";
+          emit_smt_string(args[0]);
+          out << " ";
+          emit_smt_string(args[1]);
+          out << ") (bvneg (_ bv1 " << width << ")) (_ bv1 " << width << ")))";
+          return;
+        }
+        out << "(_ bv0 " << width << ")";
+        return;
+      }
       // Wave 2 of Python re support: intercept calls carrying a
       // compile-time-constant pattern and lower to SMT-LIB
       // (str.in_re subject <regex>). If the pattern cannot be
