@@ -1668,6 +1668,8 @@ std::optional<exprt> python_convertert::try_string_method(
         {
           auto as_str_struct = [](const exprt &s) -> exprt
           {
+            if(s.type().id() == ID_smt_string)
+              return s;
             if(s.id() == ID_struct && s.operands().size() == 2)
               return s;
             return struct_exprt(
