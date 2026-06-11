@@ -61,3 +61,43 @@ over the full call graph (it does not complete even at unwind 2), so the
 verbatim-slice discharge (cbmc-discharge-netsched-2026-06.md) remains the
 right tool for those properties.  The EXTERNAL -> havoc-stub path (which
 WOULD make such whole-function discharges tractable) is the next increment.
+
+## Update: EXTERNAL -> havoc-stub path (`--stub-external`)
+
+For EXTERNAL call sites (real target out-of-TU), the tool now routes the call
+to a nondet/havoc STUB instead of leaving CBMC to inline the spurious
+type-matched in-TU function.  Mechanism (reusing an existing type-compatible
+candidate as the stub symbol, since `--restrict-function-pointer` needs an
+in-binary target):
+
+1. `goto-instrument --remove-function-body <cand>` -- drop the spurious
+   candidate's real body;
+2. `--generate-function-body '^(<cands>)$' --generate-function-body-options
+   nondet-return` -- regenerate it as a nondet stub (use `havoc` for the
+   sound-everywhere model that also havocs pointee args);
+3. `--restrict-function-pointer <func>.function_pointer_call.<N>/<cand>` --
+   dispatch the EXTERNAL call to the (now stub) symbol.
+
+```
+fp_restrict.py <gb> --stub-external <out.gb> [--stub-option nondet-return|havoc]
+```
+
+Sound for a `--function <target>` discharge: the reused stub symbol is reached
+only via the restricted dispatch.
+
+**Validation** (`extstub.c`): `target()` does `a[4]` writes then calls
+`o->cb(n)`, where `.cb` is unbound in-TU and the only type-compatible
+candidate `big` (a 64x64-loop function bound to `.other`) is spurious.
+`--report` -> EXTERNAL; `--stub-external` -> `big` becomes a nondet-return
+stub (confirmed: body is `return_value := nondet`, no loops) and `target`'s
+`o->cb` dispatches to it.  CBMC then finds the `a[4]` OOB
+(`array 'a' upper bound: FAILURE`) in **0.02s** -- the spurious `big` inline
+that would otherwise be unwound is gone.
+
+**mqprio (honest):** `--stub-external` applies cleanly, but
+mqprio_enable_offload still does not complete -- its blowup is dominated by
+the DIRECT call `mqprio_fp_to_offload` (loops over fp[16]) and nondet-pointer
+reasoning over `qopt`/`priv`/`dev`, NOT the fn-ptr.  So fn-ptr stubbing is
+necessary-not-sufficient there; the verbatim slice remains the right tool for
+that property.  The stub path pays off where a spurious fn-ptr inline is the
+dominant cost (the synthetic case, and large dispatch-heavy callees).

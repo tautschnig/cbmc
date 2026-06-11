@@ -131,6 +131,13 @@ def main():
     ap.add_argument("gb")
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--apply", metavar="OUT")
+    ap.add_argument("--stub-external", metavar="OUT",
+                    help="route EXTERNAL indirect calls to a nondet/havoc "
+                         "stub (reuse a type-compatible candidate, drop its "
+                         "body, regenerate as a stub, restrict to it)")
+    ap.add_argument("--stub-option", default="nondet-return",
+                    help="generate-function-body-options for the stub "
+                         "(nondet-return | havoc | assert-false-assume-false)")
     a = ap.parse_args()
     sites = analyse(a.gb)
 
@@ -159,6 +166,40 @@ def main():
         print(f"\napplied {len(set(restr))} narrowing restriction(s) -> "
               f"{a.apply}" + ("" if os.path.isfile(a.apply)
                               else f"\nFAILED: {r.stderr[:300]}"))
+
+    if a.stub_external:
+        ext = [s for s in sites if s["status"] == "EXTERNAL" and s["cands"]]
+        # reuse the first type-compatible candidate per site as the stub
+        # symbol (its body is dropped + regenerated as a havoc/nondet stub).
+        # Sound for a `--function <target>` discharge: the stub symbol is
+        # reached only via the restricted dispatch.
+        targets = sorted({s["cands"][0] for s in ext})
+        restr = [f"{s['func']}.function_pointer_call.{s['idx']}/{s['cands'][0]}"
+                 for s in ext]
+        g1 = f"/tmp/_fpr_s1_{os.getpid()}.gb"
+        g2 = f"/tmp/_fpr_s2_{os.getpid()}.gb"
+        a1 = [GI]
+        for t in targets:
+            a1 += ["--remove-function-body", t]
+        a1 += [a.gb, g1]
+        _run(a1)
+        regex = "^(" + "|".join(re.escape(t) for t in targets) + ")$"
+        _run([GI, "--generate-function-body", regex,
+              "--generate-function-body-options", a.stub_option, g1, g2])
+        a3 = [GI]
+        for r in sorted(set(restr)):
+            a3 += ["--restrict-function-pointer", r]
+        a3 += [g2, a.stub_external]
+        res = _run(a3)
+        for p in (g1, g2):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        print(f"\nstubbed {len(ext)} EXTERNAL call(s) ({a.stub_option}) over "
+              f"{len(targets)} symbol(s) -> {a.stub_external}" +
+              ("" if os.path.isfile(a.stub_external)
+               else f"\nFAILED: {res.stderr[:300]}"))
 
 
 if __name__ == "__main__":
