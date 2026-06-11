@@ -1378,3 +1378,24 @@ text calling SMT-String the "only" route was wrong.
 false proof (soundness) or a spurious failure on a backend that should decide
 it (precision); the membership case is precise via bounded eager instantiation
 on refined-string and/or natively on SMT-String.
+
+### Step 1 — soundness audit outcome (2026-06-11)
+
+Audited over-approximation across the string ops. **No false proofs found.**
+All `string-nondet-*-fail` / `string-char-symbolic-fail` cases genuinely
+report FAILED; all `*-success` cases are precise.
+
+The one flagged item — `string-nondet-in-embedded-null-longer-fail`
+(`s=nondet_string(4); assume(s=="a\0b"); assert "a\0bc" in s`, expected
+FAILED, we get SUCCESSFUL) — is **not** a soundness bug. Verified:
+`len("a\0b")==3` and `len("a\0bc")==4` are computed correctly (embedded NUL
+handled, Python semantics), and `nondet_string(N)` means length *exactly* N
+(other tests, e.g. `string-nondet-length-success`'s `assert len(s)==10`,
+depend on this). So `nondet_string(4)` (length 4) `== "a\0b"` (length 3) is
+**UNSAT** — confirmed by an `assert False` after the assume reporting
+SUCCESSFUL (path infeasible). The SUCCESSFUL is therefore *vacuously sound*.
+With a length-matched `nondet_string(3)` the same assertion correctly FAILS.
+The test passes under ESBMC only because ESBMC treats `"a\0b"` as length 4
+(it does not process the `\0` escape) — a frontend-semantics divergence, not
+a false proof. We keep the correct length model; the test stays a documented
+sweep DIFF. No code change for soundness.
