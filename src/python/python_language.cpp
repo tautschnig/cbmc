@@ -351,6 +351,8 @@ bool python_languaget::typecheck(
 {
   python_convertert converter{symbol_table, parse_tree, message_handler};
   converter.set_unbounded_ints(unbounded_ints);
+  converter.set_use_smt_string_backend(
+    python_string_kind == python_string_kindt::smt_string);
   converter.set_no_body_check(no_body_check);
   converter.set_python_strict_warnings(python_strict_warnings);
   converter.set_python_lazy_stubs(python_lazy_stubs);
