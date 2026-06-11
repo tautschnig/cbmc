@@ -2991,6 +2991,32 @@ void smt2_convt::convert_expr(const exprt &expr)
         out << "(_ bv1 " << width << ")";
         return;
       }
+      // cprover_string_smt_substr_eq_func(res, src, start, len) → boolean
+      // Ties res to a substring of src: (= (str res)
+      //   (str.substr (str src) start len)). Used to lower string subscript
+      // and slicing precisely at the *string* level (str.substr), avoiding
+      // the imprecise/slow byte<->str inversion of a direct array read.
+      if(fn_id == ID_cprover_string_smt_substr_eq_func && args.size() == 4)
+      {
+        std::size_t width = boolbv_width(expr.type());
+        if(width == 0)
+          width = 8;
+        if(reachable(args[0]) && reachable(args[1]))
+        {
+          out << "(ite (= ";
+          emit_smt_string(args[0]);
+          out << " (str.substr ";
+          emit_smt_string(args[1]);
+          out << " (bv2nat ";
+          convert_expr(args[2]);
+          out << ") (bv2nat ";
+          convert_expr(args[3]);
+          out << "))) (_ bv1 " << width << ") (_ bv0 " << width << "))";
+          return;
+        }
+        out << "(_ bv1 " << width << ")";
+        return;
+      }
       // Wave 2 of Python re support: intercept calls carrying a
       // compile-time-constant pattern and lower to SMT-LIB
       // (str.in_re subject <regex>). If the pattern cannot be
