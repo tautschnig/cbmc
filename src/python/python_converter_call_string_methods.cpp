@@ -845,6 +845,30 @@ std::optional<exprt> python_convertert::try_string_method(
       // str.replace(old, new) on general strings needs
       // a new multi-char solver intrinsic. Falls through
       // to nondet for now.
+      //
+      // Native SMT-String back-end (Plan A): replace(old, new) with no count
+      // limit is exactly str.replace_all over native SMT Strings.
+      if(
+        use_smt_string_native && max_count < 0 &&
+        is_python_string_type(old_expr.type()) &&
+        is_python_string_type(new_expr.type()))
+      {
+        const irep_idt fn{ID_cprover_string_smt_strreplace_func};
+        if(symbol_table.lookup(fn) == nullptr)
+        {
+          std::vector<typet> ats{obj.type(), old_expr.type(), new_expr.type()};
+          symbolt fs{
+            fn,
+            mathematical_function_typet(std::move(ats), smt_string_typet{}),
+            "python"};
+          fs.base_name = id2string(fn);
+          symbol_table.add(fs);
+        }
+        function_application_exprt app{
+          symbol_table.lookup_ref(fn).symbol_expr(), {obj, old_expr, new_expr}};
+        app.type() = smt_string_typet{};
+        return std::move(app);
+      }
     }
     // PLib stdtypes: str.format_map(mapping) — raise
     // KeyError when a {name} placeholder isn't a key in
