@@ -704,6 +704,32 @@ std::optional<exprt> python_convertert::try_string_method(
       if(result.size() <= PYTHON_MAX_STRING_LENGTH)
         return python_string_literal(result);
     }
+    // Precise symbolic strip/lstrip/rstrip (whitespace form, no `chars`
+    // argument) via the Python-whitespace strip axiom. With a `chars`
+    // argument the semantics differ (arbitrary character set), so that case
+    // falls through to the sound nondet model below.
+    if(
+      (method_name == "strip" || method_name == "lstrip" ||
+       method_name == "rstrip") &&
+      (!args.is_array() || as_array(args).empty()))
+    {
+      const exprt src =
+        obj.id() == ID_struct
+          ? obj
+          : exprt(struct_exprt(
+              {member_exprt(obj, "length", signedbv_typet{64}),
+               member_exprt(
+                 obj, "data", pointer_typet(unsignedbv_typet{8}, 64))},
+              obj.type()));
+      const int mode =
+        method_name == "strip" ? 0 : (method_name == "lstrip" ? 1 : 2);
+      return emit_string_function(
+        ID_cprover_string_strip_func,
+        {src, from_integer(mode, signedbv_typet{32})},
+        symbol_table,
+        pending_checks,
+        loop_depth > 0);
+    }
     // Return nondet string with constraints for symbolic strings
     {
       static unsigned str_method_ctr = 0;

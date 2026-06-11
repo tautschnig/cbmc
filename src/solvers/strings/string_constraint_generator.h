@@ -263,6 +263,9 @@ public:
   std::pair<exprt, string_constraintst>
   add_axioms_for_trim(const function_application_exprt &f);
 
+  std::pair<exprt, string_constraintst>
+  add_axioms_for_python_strip(const function_application_exprt &f);
+
   std::pair<exprt, string_constraintst> add_axioms_for_code_point(
     const array_string_exprt &res,
     const exprt &code_point);
