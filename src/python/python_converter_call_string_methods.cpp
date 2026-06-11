@@ -1606,83 +1606,103 @@ std::optional<exprt> python_convertert::try_string_method(
         }
       }
     }
-    // Precise symbolic find/index via the refined-string index_of axiom.
-    // This is a query (returns an int; no result string, hence no backing),
-    // so it is safe in loops. Only for forward search (find/index) of a
-    // string needle with no explicit end restriction; other cases fall back
-    // to the constrained nondet below.
-    if(
-      (method_name == "find" || method_name == "index") && args.is_array() &&
-      !as_array(args).empty())
+    // Precise symbolic find/index/rfind/rindex via the refined-string
+    // index_of / last_index_of axioms. These are queries (return an int; no
+    // result string, hence no backing), so they are safe in loops. Forward
+    // search (find/index) supports an optional start argument; backward
+    // search (rfind/rindex) routes to last_index_of, whose third argument is
+    // an *upper* bound (not a start), so its precise path is only taken with
+    // no start/end restriction (searching the whole string from the end).
+    // Other cases fall back to the constrained nondet below.
     {
-      auto ait2 = as_array(args).begin();
-      exprt needle = convert_expression(*ait2);
-      // Optional start (default 0); skip the precise path if an end
-      // restriction is present (index_of searches to the end of the string).
-      exprt from = from_integer(0, signedbv_typet{64});
-      bool has_end = false;
-      ++ait2;
-      if(ait2 != as_array(args).end())
+      const bool is_forward = (method_name == "find" || method_name == "index");
+      const bool is_backward =
+        (method_name == "rfind" || method_name == "rindex");
+      if(
+        (is_forward || is_backward) && args.is_array() &&
+        !as_array(args).empty())
       {
-        from = safe_typecast(convert_expression(*ait2), signedbv_typet{64});
+        auto ait2 = as_array(args).begin();
+        exprt needle = convert_expression(*ait2);
+        exprt from = from_integer(0, signedbv_typet{64});
+        bool has_start = false, has_end = false;
         ++ait2;
         if(ait2 != as_array(args).end())
-          has_end = true;
-      }
-      if(!has_end && is_python_string_type(needle.type()))
-      {
-        auto as_str_struct = [](const exprt &s) -> exprt
         {
-          if(s.id() == ID_struct && s.operands().size() == 2)
-            return s;
-          return struct_exprt(
-            {member_exprt(s, "length", signedbv_typet{64}),
-             member_exprt(s, "data", pointer_typet(unsignedbv_typet{8}, 64))},
-            s.type());
-        };
-        const exprt hay = as_str_struct(obj);
-        const exprt ndl = as_str_struct(needle);
-        const typet int_type = signedbv_typet{64};
-        const irep_idt fn{ID_cprover_string_index_of_func};
-        if(symbol_table.lookup(fn) == nullptr)
-        {
-          std::vector<typet> ats{hay.type(), ndl.type(), int_type};
-          symbolt fs{
-            fn,
-            mathematical_function_typet(std::move(ats), int_type),
-            "python"};
-          fs.base_name = id2string(fn);
-          symbol_table.add(fs);
+          from = safe_typecast(convert_expression(*ait2), signedbv_typet{64});
+          has_start = true;
+          ++ait2;
+          if(ait2 != as_array(args).end())
+            has_end = true;
         }
-        function_application_exprt app{
-          symbol_table.lookup_ref(fn).symbol_expr(), {hay, ndl, from}};
-        app.type() = int_type;
-        static unsigned iof_ctr = 0;
-        const irep_idt rid{"python::__index_of_" + std::to_string(iof_ctr++)};
-        if(symbol_table.lookup(rid) == nullptr)
+        const bool precise_ok =
+          is_python_string_type(needle.type()) &&
+          (is_forward ? !has_end : (!has_start && !has_end));
+        if(precise_ok)
         {
-          symbolt rs{rid, int_type, "python"};
-          rs.base_name = "__index_of_" + std::to_string(iof_ctr - 1);
-          rs.is_lvalue = true;
-          rs.is_state_var = true;
-          symbol_table.add(rs);
-        }
-        const symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
-        pending_checks.push_back(code_frontend_assignt{res, app});
-        if(method_name == "index")
-        {
-          // str.index raises ValueError when the substring is absent
-          // (index_of returns -1).
-          const symbolt *exc_sym =
-            symbol_table.lookup("python::__exception_active");
-          if(exc_sym != nullptr)
-            pending_checks.push_back(code_frontend_assignt{
-              exc_sym->symbol_expr(),
-              or_exprt{
+          auto as_str_struct = [](const exprt &s) -> exprt
+          {
+            if(s.id() == ID_struct && s.operands().size() == 2)
+              return s;
+            return struct_exprt(
+              {member_exprt(s, "length", signedbv_typet{64}),
+               member_exprt(s, "data", pointer_typet(unsignedbv_typet{8}, 64))},
+              s.type());
+          };
+          const exprt hay = as_str_struct(obj);
+          const exprt ndl = as_str_struct(needle);
+          const typet int_type = signedbv_typet{64};
+          // index_of takes (hay, ndl, from); last_index_of takes (hay, ndl)
+          // and defaults its upper bound to |hay| (whole-string backward).
+          const irep_idt fn =
+            is_forward ? irep_idt{ID_cprover_string_index_of_func}
+                       : irep_idt{ID_cprover_string_last_index_of_func};
+          exprt::operandst call_args = is_forward
+                                         ? exprt::operandst{hay, ndl, from}
+                                         : exprt::operandst{hay, ndl};
+          if(symbol_table.lookup(fn) == nullptr)
+          {
+            std::vector<typet> ats;
+            ats.reserve(call_args.size());
+            for(const auto &a : call_args)
+              ats.push_back(a.type());
+            symbolt fs{
+              fn,
+              mathematical_function_typet(std::move(ats), int_type),
+              "python"};
+            fs.base_name = id2string(fn);
+            symbol_table.add(fs);
+          }
+          function_application_exprt app{
+            symbol_table.lookup_ref(fn).symbol_expr(), std::move(call_args)};
+          app.type() = int_type;
+          static unsigned iof_ctr = 0;
+          const irep_idt rid{"python::__index_of_" + std::to_string(iof_ctr++)};
+          if(symbol_table.lookup(rid) == nullptr)
+          {
+            symbolt rs{rid, int_type, "python"};
+            rs.base_name = "__index_of_" + std::to_string(iof_ctr - 1);
+            rs.is_lvalue = true;
+            rs.is_state_var = true;
+            symbol_table.add(rs);
+          }
+          const symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{res, app});
+          if(method_name == "index" || method_name == "rindex")
+          {
+            // str.index/str.rindex raise ValueError when the substring is
+            // absent (index_of/last_index_of return -1).
+            const symbolt *exc_sym =
+              symbol_table.lookup("python::__exception_active");
+            if(exc_sym != nullptr)
+              pending_checks.push_back(code_frontend_assignt{
                 exc_sym->symbol_expr(),
-                equal_exprt{res, from_integer(-1, int_type)}}});
+                or_exprt{
+                  exc_sym->symbol_expr(),
+                  equal_exprt{res, from_integer(-1, int_type)}}});
+          }
+          return safe_typecast(res, python_int_type());
         }
-        return safe_typecast(res, python_int_type());
       }
     }
     // Constrained nondet for symbolic find/count
