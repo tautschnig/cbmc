@@ -1444,3 +1444,35 @@ instantiation gap** as the not_contains membership-convergence ceiling
 now (no regression — it over-approximates), and fold ordering precision into
 the step-4 bounded-eager-instantiation work, which addresses the existential
 witness generally. Reverted the compare_to wiring.
+
+### Step 4 — membership convergence is already handled; eager instantiation is a net negative (2026-06-11)
+
+Implemented bounded eager instantiation of the not_contains existential
+witness: in the not_contains overload of `initial_index_set`, when
+`exists_upper_bound` (the needle length) is non-constant, seed concrete
+witness positions `0..K-1` in addition to the symbolic `kminus1`. This is
+sound (it only adds valid witness lemmas) and generalises the constant-length
+path.
+
+**Measured outcome: revert.** Across every reproducible membership shape —
+constant needle, char-pinned needle, **produced** (concat, symbolic-length)
+needle, content-based not-contains (needle fits but differs), and the
+**loop+concat** pattern — the refinement *already converges precisely at
+HEAD* (50–200 ms, the bounded guard never fires). The cherry-picked solver
+commits (array_pool re-association, multi-assertion axiom recording,
+counter-examples on empty index set) plus the bounded anti-stall guard plus
+the refinement's natural convergence already close the practical
+membership-convergence gap; the "symbolic-length-needle ceiling" is latent,
+with no reproducible spinning case found.
+
+Against that, eager instantiation only *costs*: it explodes the
+(haystack × needle) index-pair product. `'b' in s` (positive contains, whose
+counter-example search is not_contains) went from ~14 s at HEAD to ~40 s at
+K=8 and OOM at K=32, with **no precision gain** on any case. So bounded eager
+instantiation is a net-negative micro-optimisation with no demonstrable
+benefit; reverted. The genuinely-unconditional precision route for any
+residual membership/ordering case remains the SMT-String backend (step 5).
+
+Note: positive `in` (contains) is independently slow (~14 s at HEAD for a
+pinned 1-char needle) — a separate pre-existing performance issue, not a
+correctness one.
