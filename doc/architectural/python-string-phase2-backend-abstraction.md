@@ -1943,3 +1943,44 @@ are low priority — prefer routing users to `--python-smt-strings`.
   be unsound for such code points). `count(sub)` needs a counting axiom (number
   of non-overlapping occurrences) or routing through the SMT backend; bounded
   counting is the pragmatic refined option. Both low priority.
+
+## Plan A implementation progress (2026-06-11) — native SMT-String backend
+
+Plan A (the `smt_string_typet` refactor) is under way behind the experimental
+`--python-smt-strings-native` flag (kind `smt_string_native`); the refined and
+byte-array+`str` hybrid back-ends are untouched (native branches gated on
+`use_smt_string_native`; refined regression suite green throughout).
+
+**Landed + validated (`--cvc5 --python-smt-strings-native`, all sound, <=1s):**
+- *Foundation:* `smt_string_typet` (SMT `String` sort) + `convert_type` +
+  string-constant lowering; `is_python_string_type` accepts it;
+  `emit_smt_string`/`reachable` in `smt2_conv` accept native String operands,
+  so the existing `str.*` query lowerings work for free.
+- *Phase 1 (queries):* literals, `nondet_string`, `==`/`!=`, ordering
+  `< <= > >=` (via `str.<`), `len` (`str.len`), `in`/`not in`
+  (`str.contains`), `startswith`/`endswith`, `find`/`index` (`str.indexof`).
+  Regression `string-smt-native-queries`.
+- *Phase 2 (producers):* `+` (`str.++`), subscript `s[i]` and slice `s[a:b]`
+  (`str.substr`, bounds via `str.len`), `replace` (`str.replace_all`).
+  Regression `string-smt-native-producers`. **Slice — which the byte-array+
+  `str` hybrid fundamentally could not do (the symbolic-`res_len` truncation
+  wall) — is now precise and fast (0 s),** because a native String result
+  carries its own length (no backing array, no truncation).
+
+**Why native succeeds where the hybrid failed.** In the hybrid, a producing
+result is a `{len, byte[]}` struct whose `str` view is
+`str.substr(str.++(from_code byte_i…), 0, res_len)`; a symbolic `res_len`
+leaves that truncation ambiguous. A native String result IS the
+`str.++`/`str.substr`/`str.replace_all` term — well-formed by construction.
+
+**Remaining for Plan A:**
+- `strip`/`lstrip`/`rstrip` under native (SMT-LIB has no whitespace-strip
+  primitive; express via `str.len`/`str.substr`/find-of-non-whitespace, or a
+  bounded form).
+- Model extraction: surface native String values in counterexample traces
+  (CVC5 returns them as quoted strings — read directly).
+- Broader migration: route the remaining ~50 struct-access sites through the
+  abstraction so native mode handles arbitrary Python string code; then make
+  native the precise default and retire the hybrid (Plan A phase 3).
+- Driver: diagnose/require an SMT String solver when `--python-smt-strings-
+  native` is set without `--cvc5`/`--z3`.
