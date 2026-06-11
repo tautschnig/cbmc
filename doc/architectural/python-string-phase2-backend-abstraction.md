@@ -1191,3 +1191,50 @@ ESBMC sweep PASS 2933, zero regressions; three Python suites + jbmc-strings +
 strings-smoke green. `dict45_fail` (whose constant-string-key dict ops 8fd now
 correctly refines, which had pushed it past the timeout) terminates in time
 under the bounded guard with the correct verdict.
+
+### Convergence investigation, round 2 (2026-06-11): corrected diagnosis + fix-feasibility
+
+Instrumenting the repro corrected the earlier diagnosis. The non-convergence
+is **not** an unboundedly-growing index set; the index set goes *empty* after
+~2 rounds and the loop is then stuck in the **counter-example path**
+(string_refinementt::dec_solve, empty-index-set branch), adding ~6 *distinct*
+counter-examples per round forever. Cause: `initial_index_set` for a
+not_contains axiom seeds the needle's index set with
+`exists_upper_bound - 1` = `|needle| - 1`; when `|needle|` is symbolic this is
+a symbolic index, so check_axioms keeps finding the axiom violated at a *new*
+symbolic witness each round and the counter-examples never dedupe to a
+fixpoint. A needle with a *structurally constant* length seeds concrete
+indices and converges (this is why phase-1 literal-materialisation, and any
+constant-needle membership, converge).
+
+**Scope (important): the non-convergent case is uncommon and currently
+latent.** The common membership patterns converge today:
+* `"const" in symbolic_s` / `"const" not in symbolic_s` (constant needle,
+  symbolic haystack) — terminates with the right/sound verdict.
+* membership tautologies under `assume` — prove.
+Only a **symbolic-length produced-result needle** (e.g. `t = a + b` with
+symbolic content) used in membership — especially repeated in a loop — fails
+to converge. No regression-suite test exercises this; the bounded guard makes
+it terminate soundly (conservative `D_SATISFIABLE`).
+
+**Fix avenues, all rejected:**
+* *Front-end length pinning* (pin a produced result's length to the constant
+  sum of operand lengths): too narrow — the length is lost once the operand is
+  stored in a variable (`c = chr(i); c + "Q"` → `c` is a symbol, not the
+  struct), so it only helps inline concats; and it risks unsoundness for
+  multibyte (the struct length field is code points, the refinement needs
+  bytes). Prototyped and reverted.
+* *Solver concrete-index instantiation* (instantiate the needle index over
+  `[0, MAX)` when `|needle|` is symbolic): infeasible — the only available
+  bound is `MAX_CONCRETE_STRING_SIZE = 1<<26` (~67M), far too many lemmas. A
+  *haystack-length* bound is concrete only in the uncommon symbolic-needle/
+  concrete-haystack pattern, and changing the shared not_contains
+  instantiation risks the mature JBMC string solver.
+* *Deeper symbolic-witness reasoning*: genuine solver-research.
+
+**Conclusion / recommendation.** Precise convergence for symbolic-length-needle
+membership is not achievable with a tractable, sound, low-risk change, and the
+case is uncommon + latent. The bounded guard (sound termination) is the right
+pragmatic solution and is in place. A precise fix would be a dedicated
+solver-research project (with JBMC-regression resourcing); it is not justified
+by current need. Common membership patterns already converge.
