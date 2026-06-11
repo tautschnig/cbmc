@@ -2739,6 +2739,48 @@ void smt2_convt::convert_expr(const exprt &expr)
       const irep_idt &fn_id =
         to_symbol_expr(function_application_expr.function()).get_identifier();
       const auto &args = function_application_expr.arguments();
+
+      // Bridge a refined-string operand to an SMT-LIB String term, for the
+      // SMT-String back-end's precise lowering of the string *query*
+      // intrinsics (equal/contains/prefix/suffix/compare_to). Recognised
+      // operand shapes:
+      //   * struct_exprt {length, address_of(index(<array>, 0))}
+      //     (string literals / freshly built structs), or
+      //   * a constant string represented as such a struct.
+      // For each byte i in [0, BOUND) emit (str.from_code (bv2nat
+      // (select <array> i))) and concatenate via str.++, then truncate to
+      // the actual length via str.substr. BOUND mirrors the front-end's
+      // bounded string model. Returns false if the operand's array is not
+      // syntactically reachable here (e.g. a bare symbol whose data lives
+      // behind a pointer); callers then fall back to a sound
+      // over-approximation.
+      constexpr std::size_t SMT_STRING_BOUND = 64;
+      auto emit_smt_string = [&](const exprt &e) -> bool
+      {
+        if(e.id() != ID_struct || e.operands().size() != 2)
+          return false;
+        const exprt &len_op = e.operands()[0];
+        const exprt &data_op = e.operands()[1];
+        if(
+          data_op.id() != ID_address_of || data_op.operands().size() != 1 ||
+          data_op.operands()[0].id() != ID_index ||
+          data_op.operands()[0].operands().size() != 2)
+          return false;
+        const exprt &array = data_op.operands()[0].operands()[0];
+        if(array.type().id() != ID_array)
+          return false;
+        out << "(str.substr (str.++";
+        for(std::size_t i = 0; i < SMT_STRING_BOUND; i++)
+        {
+          out << " (str.from_code (bv2nat ";
+          convert_expr(index_exprt(array, from_integer(i, signedbv_typet{64})));
+          out << "))";
+        }
+        out << ") 0 (bv2nat ";
+        convert_expr(len_op);
+        out << "))";
+        return true;
+      };
       // cprover_string_equal_func(s1, s2) → sound structural equality
       // Compares both length AND data pointer. This is sound:
       // - Same pointer = same content (from deduplication of constants)
@@ -2783,13 +2825,53 @@ void smt2_convt::convert_expr(const exprt &expr)
         out << "(_ bv0 " << boolbv_width(expr.type()) << ")";
         return;
       }
-      // cprover_string_contains_func(s1, s2) → true/false (overapprox: nondet)
+      // cprover_string_contains_func / is_prefix / is_suffix (s1, s2)
+      // SMT-String back-end: lower precisely to (str.contains /
+      // str.prefixof / str.suffixof) when both operands' arrays are
+      // reachable; otherwise fall back to a sound nondet over-approximation.
       if(fn_id == ID_cprover_string_contains_func ||
          fn_id == ID_cprover_string_is_prefix_func ||
          fn_id == ID_cprover_string_is_suffix_func)
       {
-        // Overapproximation: return nondet (the solver will handle it)
-        out << "(_ bv0 " << boolbv_width(expr.type()) << ")";
+        std::size_t width = boolbv_width(expr.type());
+        if(width == 0)
+          width = 8;
+        // contains(hay, needle): hay=args[0], needle=args[1].
+        // is_prefix(prefix, str[, offset]) / is_suffix(suffix, str):
+        // the CPROVER convention puts the (sub)string first and the full
+        // string second.
+        const char *op =
+          fn_id == ID_cprover_string_contains_func
+            ? "str.contains"
+            : (fn_id == ID_cprover_string_is_prefix_func ? "str.prefixof"
+                                                         : "str.suffixof");
+        // For contains the order is (str.contains hay needle); for
+        // prefix/suffix it is (str.prefixof needle hay).
+        auto reachable = [&](const exprt &e)
+        {
+          return e.id() == ID_struct && e.operands().size() == 2 &&
+                 e.operands()[1].id() == ID_address_of;
+        };
+        if(args.size() == 2 && reachable(args[0]) && reachable(args[1]))
+        {
+          out << "(ite (" << op << " ";
+          if(fn_id == ID_cprover_string_contains_func)
+          {
+            emit_smt_string(args[0]); // haystack
+            out << " ";
+            emit_smt_string(args[1]); // needle
+          }
+          else
+          {
+            emit_smt_string(args[0]); // affix (prefix/suffix)
+            out << " ";
+            emit_smt_string(args[1]); // full string
+          }
+          out << ") (_ bv1 " << width << ") (_ bv0 " << width << "))";
+          return;
+        }
+        // Sound over-approximation: nondet.
+        out << "(_ bv0 " << width << ")";
         return;
       }
       // cprover_string_{match,search,fullmatch}_func(pattern, subject)
