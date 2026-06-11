@@ -296,6 +296,14 @@ symex-deref pros/cons, prototype results):
 
 **Plan (5 phases; phases 1–2 designed, 3–5 open):**
 
+> **Superseded (2026-06-11).** The single current plan for all deferred string
+> work — the `smt_string_typet` refactor (Plan A), interim SMT model extraction
+> (Plan B), and the refined-backend axioms replace/repeat/strip(chars)/split/
+> casefold/count and the compare_to existential (Plan C1–C6) — lives in
+> [python-string-phase2-backend-abstraction.md § Consolidated forward plan](architectural/python-string-phase2-backend-abstraction.md#consolidated-forward-plan-2026-06-11--supersedes-earlier-scattered-plans).
+> The 5 phases below are retained for the site inventory (phase 1) only.
+
+
 1. *Inventory* (done) — ~50 frontend sites reach into the refined-string
    struct (`build_string_struct`, `.length`, `.data[i]`, scratch-loop
    comparisons), classified as producers / consumers / mutators.
