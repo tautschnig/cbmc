@@ -584,7 +584,13 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     const jsont &upper_json = json_member(slice_json, "upper");
     const jsont &step_json = json_member(slice_json, "step");
 
-    member_exprt length{value, "length", signedbv_typet{64}};
+    // Native SMT-String back-end (Plan A): value is an SMT String, not a
+    // struct, so its length comes from str.len rather than a member access.
+    exprt length =
+      (use_smt_string_native && is_python_string_type(value.type()))
+        ? emit_string_int_function(
+            ID_cprover_string_length_func, value, symbol_table, pending_checks)
+        : exprt(member_exprt{value, "length", signedbv_typet{64}});
 
     // Check for step=-1 (reverse). Use try_eval_double to fold
     // through UnaryOp(USub, Constant(1)) — the AST shape for
@@ -689,7 +695,14 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           return side_effect_expr_nondett{
             python_string_type(), source_locationt{}};
       }
-      member_exprt str_length{value, "length", signedbv_typet{64}};
+      exprt str_length =
+        (use_smt_string_native && is_python_string_type(value.type()))
+          ? emit_string_int_function(
+              ID_cprover_string_length_func,
+              value,
+              symbol_table,
+              pending_checks)
+          : exprt(member_exprt{value, "length", signedbv_typet{64}});
       auto normalize_bound = [&](exprt bound) -> exprt
       {
         if(bound.type() != signedbv_typet{64})
@@ -708,6 +721,28 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       exprt hi_e = upper_json.is_null()
                      ? exprt{str_length}
                      : normalize_bound(convert_expression(upper_json));
+      if(use_smt_string_native)
+      {
+        // Native SMT-String back-end (Plan A): s[a:b] = str.substr(s, a,
+        // b-a). The result is a native SMT String (no res_len truncation).
+        const irep_idt fn{ID_cprover_string_smt_strsub_func};
+        if(symbol_table.lookup(fn) == nullptr)
+        {
+          std::vector<typet> ats{
+            value.type(), signedbv_typet{64}, signedbv_typet{64}};
+          symbolt fs{
+            fn,
+            mathematical_function_typet(std::move(ats), smt_string_typet{}),
+            "python"};
+          fs.base_name = id2string(fn);
+          symbol_table.add(fs);
+        }
+        function_application_exprt app{
+          symbol_table.lookup_ref(fn).symbol_expr(),
+          {value, lo_e, minus_exprt{hi_e, lo_e}}};
+        app.type() = smt_string_typet{};
+        return std::move(app);
+      }
       exprt src_struct =
         (value.id() == ID_struct && value.operands().size() == 2)
           ? value
@@ -843,6 +878,39 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       te_block.add(std::move(te));
       pending_checks.push_back(std::move(te_block));
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
+    }
+    if(use_smt_string_native)
+    {
+      // Native SMT-String back-end (Plan A): s[i] = str.substr(s, adj, 1),
+      // where adj handles a negative index via str.len. Computed before any
+      // struct member access (value is an SMT String, not a struct).
+      exprt len_e = emit_string_int_function(
+        ID_cprover_string_length_func, value, symbol_table, pending_checks);
+      exprt idx64 = slice;
+      if(idx64.type() != signedbv_typet{64})
+        idx64 = safe_typecast(idx64, signedbv_typet{64});
+      exprt adj = if_exprt{
+        binary_relation_exprt{
+          idx64, ID_lt, from_integer(0, signedbv_typet{64})},
+        plus_exprt{len_e, idx64},
+        idx64};
+      const irep_idt fn{ID_cprover_string_smt_strsub_func};
+      if(symbol_table.lookup(fn) == nullptr)
+      {
+        std::vector<typet> ats{
+          value.type(), signedbv_typet{64}, signedbv_typet{64}};
+        symbolt fs{
+          fn,
+          mathematical_function_typet(std::move(ats), smt_string_typet{}),
+          "python"};
+        fs.base_name = id2string(fn);
+        symbol_table.add(fs);
+      }
+      function_application_exprt app{
+        symbol_table.lookup_ref(fn).symbol_expr(),
+        {value, adj, from_integer(1, signedbv_typet{64})}};
+      app.type() = smt_string_typet{};
+      return std::move(app);
     }
     member_exprt length{value, "length", python_int_type()};
     // PLR §6.3.3: negative indices count from the end

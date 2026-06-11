@@ -3025,6 +3025,41 @@ void smt2_convt::convert_expr(const exprt &expr)
         out << "(_ bv1 " << width << ")";
         return;
       }
+      // Native SMT-String producing ops (Plan A): return an SMT String.
+      // Operands are already SMT String (smt_string); results carry their own
+      // length, so slice/replace need no res_len truncation (unlike the
+      // byte-array+str hybrid).
+      if(fn_id == ID_cprover_string_smt_strcat_func && args.size() == 2)
+      {
+        out << "(str.++ ";
+        emit_smt_string(args[0]);
+        out << " ";
+        emit_smt_string(args[1]);
+        out << ")";
+        return;
+      }
+      if(fn_id == ID_cprover_string_smt_strsub_func && args.size() == 3)
+      {
+        out << "(str.substr ";
+        emit_smt_string(args[0]);
+        out << " (bv2nat ";
+        convert_expr(args[1]);
+        out << ") (bv2nat ";
+        convert_expr(args[2]);
+        out << "))";
+        return;
+      }
+      if(fn_id == ID_cprover_string_smt_strreplace_func && args.size() == 3)
+      {
+        out << "(str.replace_all ";
+        emit_smt_string(args[0]);
+        out << " ";
+        emit_smt_string(args[1]);
+        out << " ";
+        emit_smt_string(args[2]);
+        out << ")";
+        return;
+      }
       // Wave 2 of Python re support: intercept calls carrying a
       // compile-time-constant pattern and lower to SMT-LIB
       // (str.in_re subject <regex>). If the pattern cannot be
