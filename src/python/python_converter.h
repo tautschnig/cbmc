@@ -227,6 +227,7 @@ private:
   /// results where a silent over-approximation may be at fault.
   bool python_strict_warnings = false;
   bool use_smt_string_backend = false;
+  bool use_smt_string_native = false;
 
 public:
   void set_no_body_check(bool v)
@@ -245,6 +246,14 @@ public:
   void set_use_smt_string_backend(bool v)
   {
     use_smt_string_backend = v;
+  }
+
+  /// Select the native SMT-String representation (--python-smt-strings-native,
+  /// Plan A): strings are smt_string_typet (SMT String sort) rather than the
+  /// refined {length,char*} struct. Experimental; in development.
+  void set_use_smt_string_native(bool v)
+  {
+    use_smt_string_native = v;
   }
 
   void set_python_lazy_stubs(bool v)

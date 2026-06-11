@@ -128,6 +128,7 @@ protected:
   {
     refined,
     smt_string,
+    smt_string_native,
   };
   python_string_kindt python_string_kind = python_string_kindt::refined;
   std::size_t max_string_length = PYTHON_MAX_STRING_LENGTH;

@@ -138,6 +138,26 @@ std::optional<exprt> python_convertert::try_nondet_call(
     }
     symbol_exprt tmp = symbol_table.lookup_ref(ti).symbol_expr();
 
+    if(use_smt_string_native)
+    {
+      // Native SMT-String back-end (Plan A): a free SMT String variable.
+      static unsigned nsn_ctr = 0;
+      std::string nm = "__nondet_smtstr_" + std::to_string(nsn_ctr++);
+      irep_idt nid{qualify_name(nm)};
+      if(symbol_table.lookup(nid) == nullptr)
+      {
+        symbolt s{nid, smt_string_typet{}, "python"};
+        s.base_name = nm;
+        s.is_lvalue = true;
+        s.is_state_var = true;
+        symbol_table.add(s);
+      }
+      symbol_exprt t = symbol_table.lookup_ref(nid).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{
+        t, side_effect_expr_nondett{smt_string_typet{}, get_location(expr)}});
+      return std::move(t);
+    }
+
     if(use_smt_string_backend)
     {
       // SMT-String back-end: give the leaf a concrete backing array so its
