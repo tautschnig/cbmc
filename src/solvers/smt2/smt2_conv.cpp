@@ -2916,6 +2916,53 @@ void smt2_convt::convert_expr(const exprt &expr)
         out << "(_ bv0 " << width << ")";
         return;
       }
+      // cprover_string_length_func(s) → (str.len s)
+      // str.len returns an SMT Int; convert to the result bit-vector width.
+      if(fn_id == ID_cprover_string_length_func && args.size() == 1)
+      {
+        std::size_t width = boolbv_width(expr.type());
+        if(width == 0)
+          width = 64;
+        if(reachable(args[0]))
+        {
+          out << "((_ int2bv " << width << ") (str.len ";
+          emit_smt_string(args[0]);
+          out << "))";
+          return;
+        }
+        out << "(_ bv0 " << width << ")";
+        return;
+      }
+      // cprover_string_index_of_func(hay, needle[, from]) → (str.indexof ...)
+      // str.indexof returns -1 when not found, matching Python find/index.
+      if(
+        fn_id == ID_cprover_string_index_of_func &&
+        (args.size() == 2 || args.size() == 3))
+      {
+        std::size_t width = boolbv_width(expr.type());
+        if(width == 0)
+          width = 64;
+        if(reachable(args[0]) && reachable(args[1]))
+        {
+          out << "((_ int2bv " << width << ") (str.indexof ";
+          emit_smt_string(args[0]);
+          out << " ";
+          emit_smt_string(args[1]);
+          out << " ";
+          if(args.size() == 3)
+          {
+            out << "(bv2nat ";
+            convert_expr(args[2]);
+            out << ")";
+          }
+          else
+            out << "0";
+          out << "))";
+          return;
+        }
+        out << "(_ bv0 " << width << ")";
+        return;
+      }
       // Wave 2 of Python re support: intercept calls carrying a
       // compile-time-constant pattern and lower to SMT-LIB
       // (str.in_re subject <regex>). If the pattern cannot be
