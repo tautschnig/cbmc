@@ -4232,13 +4232,33 @@ void smt2_convt::convert_constant(const constant_exprt &expr)
 {
   const typet &expr_type=expr.type();
 
-  if(expr_type.id()==ID_unsignedbv ||
-     expr_type.id()==ID_signedbv ||
-     expr_type.id()==ID_bv ||
-     expr_type.id()==ID_c_enum ||
-     expr_type.id()==ID_c_enum_tag ||
-     expr_type.id()==ID_c_bool ||
-     expr_type.id()==ID_c_bit_field)
+  if(expr_type.id() == ID_smt_string)
+  {
+    // Python SMT-String back-end: emit an SMT-LIB String literal. The
+    // constant's value holds the raw string bytes. SMT-LIB escapes a double
+    // quote by doubling it; other bytes (incl. NUL and non-printables) use
+    // the \u{XX} escape.
+    const std::string s = id2string(expr.get_value());
+    out << '"';
+    for(unsigned char c : s)
+    {
+      if(c == '"')
+        out << "\"\"";
+      else if(c >= 0x20 && c < 0x7f)
+        out << static_cast<char>(c);
+      else
+      {
+        out << "\\u{" << std::hex << static_cast<unsigned>(c) << std::dec
+            << '}';
+      }
+    }
+    out << '"';
+  }
+  else if(
+    expr_type.id() == ID_unsignedbv || expr_type.id() == ID_signedbv ||
+    expr_type.id() == ID_bv || expr_type.id() == ID_c_enum ||
+    expr_type.id() == ID_c_enum_tag || expr_type.id() == ID_c_bool ||
+    expr_type.id() == ID_c_bit_field)
   {
     const std::size_t width = boolbv_width(expr_type);
 
@@ -6618,7 +6638,12 @@ bool smt2_convt::use_array_theory(const exprt &expr)
 
 void smt2_convt::convert_type(const typet &type)
 {
-  if(type.id()==ID_array)
+  if(type.id() == ID_smt_string)
+  {
+    // Python SMT-String back-end: native SMT-LIB String sort (Plan A).
+    out << "String";
+  }
+  else if(type.id() == ID_array)
   {
     const array_typet &array_type=to_array_type(type);
     CHECK_RETURN(array_type.size().is_not_nil());
