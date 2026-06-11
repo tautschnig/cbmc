@@ -1062,3 +1062,77 @@ sweep gain, 0 regressions); `compare` needs solver-axiom work; the producing
 intrinsics are blocked on the same loop-stability fix as chr. The string
 backend's precise, low-risk wins are now captured; further gains require
 solver-internal loop-stability work in `src/solvers/strings`.
+
+
+### Refinement loop-stability diagnosis (2026-06-11): membership over a symbolic-length needle does not converge
+
+Dug into the "SAT checker inconsistent: UNSATISFIABLE" non-termination
+(`string_refinementt::dec_solve`, `src/solvers/strings/string_refinement.cpp`).
+
+**Clean reproduction on committed code** (no chr changes needed — phase-2
+produced-result backing is enough):
+
+```python
+s = "xbmYZ"
+for j in range(3):
+    c: str = chr(nondet_int())   # fresh symbolic leaf per iteration
+    t: str = c + "Q"             # produced (concat) result -> phase-2 backing
+    assert t not in s            # membership (contains / not_contains)
+```
+
+* This **spins** (`dec_solve` runs >1000 refinement iterations, each "got SAT
+  but the model is not correct", emitting ~10^5–10^6 SAT-inconsistent solves)
+  until timeout.
+* The **same without the loop** (`v2`) converges (FAILED).
+* The **same with `==` instead of `not in`** (`v3`) converges.
+* **Both `t in s` and `t not in s`** spin — it is the whole *membership*
+  family, not just `not_contains`.
+
+**Root cause.** Membership constraints (`cprover_string_contains` /
+`string_not_contains_constraintt`) are refined by an index-set / witness
+instantiation loop: each round the SAT model is checked, and if a membership
+axiom is "violated" new indices are added and the axioms re-instantiated. When
+the **needle** string has a **structurally symbolic length** — which a
+produced/associated result has (its length is a nondet symbol constrained by
+the producing op's axiom, e.g. `string_length#3`, *not* a literal `2`) — the
+violated index sits at the symbolic length boundary (`violated_for:
+univ_var=3` against a `string_length ≥ 6` bound), so `update_index_set` keeps
+generating fresh indices derived from the symbolic length and **never reaches
+a fixpoint**. A loop multiplies this (one fresh produced needle + membership
+axiom per iteration), making non-convergence reliable. By contrast, phase-1
+**literal-materialisation** gives the needle a literal char array with a
+**structurally constant length**, so the index range is concrete and the
+membership refinement converges — which is exactly why `chr`-via-phase-1
+handles `github_3130_fail` but `chr`-via-backing (and produced results
+generally) do not.
+
+**Why it spins rather than erroring out:** `loop_bound_` is
+`info.refinement_bound`, set to `DEFAULT_MAX_NB_REFINEMENT =
+numeric_limits<size_t>::max()` (`solver_factory.cpp`). So the non-convergent
+loop is effectively **unbounded** and runs to wall-clock timeout instead of
+giving up.
+
+**Fixability.**
+* *Precise fix* (make membership refinement converge for symbolic-length
+  needles): deep refinement-algorithm work in the shared `src/solvers/strings`
+  index-set / witness instantiation — uncertain, and high regression risk to
+  the mature JBMC string support. Not a contained change.
+* *Sound robustness guard*: the unbounded `refinement_bound` means the
+  pathological case hangs. A finite bound that, on expiry, returns the
+  conservative `D_SATISFIABLE` (treat as counterexample — sound, already the
+  behaviour for the "empty index set" path) would turn the hang into a
+  bounded, sound "cannot prove" result. But `refinement_bound` is **shared
+  with JBMC**, and lowering it risks cutting off legitimately-slow-but-
+  convergent Java cases — so this must not be a blanket change.
+
+**Recommendation.** This confirms phase-1 literal-materialisation is the
+*correct* mechanism for leaves (concrete needle length → convergent
+membership), and the last `language_mode == "python"` gate is justified.
+The latent phase-2 case (produced result under membership *in a loop*) is a
+real but currently-unexercised limitation; routing `chr` through backing is
+therefore not worthwhile (it would trade phase-1's precise+convergent
+behaviour for this non-convergence). Closing the gate and the
+producing-intrinsic membership precision both depend on the precise solver
+fix above, which is genuinely solver-research-scoped. If desired, a *sound*
+defensive guard (finite bound → conservative `D_SATISFIABLE`, scoped so JBMC
+is unaffected) would at least prevent the hang; it does not add precision.
