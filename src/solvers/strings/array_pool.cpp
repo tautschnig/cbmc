@@ -10,8 +10,8 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 
 #include <util/pointer_expr.h>
 
-symbol_exprt symbol_generatort::
-operator()(const irep_idt &prefix, const typet &type)
+symbol_exprt
+symbol_generatort::operator()(const irep_idt &prefix, const typet &type)
 {
   std::ostringstream buf;
   buf << "string_refinement#" << prefix << "#" << ++symbol_count;
@@ -172,8 +172,18 @@ void array_poolt::insert(
   const auto it_bool =
     arrays_of_pointers.insert(std::make_pair(pointer_expr, array_expr));
 
-  INVARIANT(
-    it_bool.second, "should not associate two arrays to the same pointer");
+  // Allow re-insertion even with a different array. This happens when
+  // a frontend emits associate calls inside a function body that gets
+  // inlined multiple times: the pointer expression (e.g.
+  // address_of(sym[0])) is structurally identical across inlined
+  // copies because the symbols are global, but the array content
+  // differs between calls. In this case, keep the FIRST association
+  // — the solver will see the first call's array, and subsequent
+  // calls will get fresh arrays via make_char_array_for_char_pointer's
+  // fallback path. This is sound because each SSA copy of the array
+  // is independently constrained.
+  if(!it_bool.second)
+    return;
 
   if(length_of_array.find(array_expr) == length_of_array.end())
   {

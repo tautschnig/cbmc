@@ -19,10 +19,6 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
 
 #include "string_refinement.h"
 
-#include <solvers/sat/satcheck.h>
-#include <stack>
-#include <unordered_set>
-
 #include <util/expr_iterator.h>
 #include <util/expr_util.h>
 #include <util/format_type.h>
@@ -30,10 +26,15 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
 #include <util/range.h>
 #include <util/simplify_expr.h>
 
+#include <solvers/sat/satcheck.h>
+
 #include "equation_symbol_mapping.h"
 #include "string_constraint_instantiation.h"
 #include "string_dependencies.h"
 #include "string_refinement_invariant.h"
+
+#include <stack>
+#include <unordered_set>
 
 static bool is_valid_string_constraint(
   messaget::mstreamt &stream,
@@ -288,6 +289,119 @@ void string_refinementt::set_to(const exprt &expr, bool value)
     equations.push_back(not_exprt{expr});
   else
     equations.push_back(expr);
+}
+
+/// Return true if the given function_application's target is one of
+/// the refined-string solver's interpreted built-ins
+/// (ID_cprover_string_*) or one of its associate primitives. These
+/// need to be fed into the dependency graph even when CBMC's BMC
+/// pipeline consumes them via handle() before they reach set_to().
+///
+/// The set mirrors the dispatch tables in
+/// `string_constraint_generatort::add_axioms_for_function_application`
+/// (string_constraint_generator_main.cpp) and
+/// `make_array_pointer_association` there. Keep the two in sync.
+static bool is_cprover_string_application(const function_application_exprt &fa)
+{
+  if(fa.function().id() != ID_symbol)
+    return false;
+  const irep_idt &id = to_symbol_expr(fa.function()).get_identifier();
+
+  // clang-format off
+  static const std::unordered_set<irep_idt> interpreted_ids = {
+    ID_cprover_associate_array_to_pointer_func,
+    ID_cprover_associate_length_to_array_func,
+    ID_cprover_char_literal_func,
+    ID_cprover_string_literal_func,
+    ID_cprover_string_char_at_func,
+    ID_cprover_string_char_set_func,
+    ID_cprover_string_code_point_at_func,
+    ID_cprover_string_code_point_before_func,
+    ID_cprover_string_code_point_count_func,
+    ID_cprover_string_offset_by_code_point_func,
+    ID_cprover_string_compare_to_func,
+    ID_cprover_string_concat_func,
+    ID_cprover_string_concat_char_func,
+    ID_cprover_string_concat_code_point_func,
+    ID_cprover_string_constrain_characters_func,
+    ID_cprover_string_contains_func,
+    ID_cprover_string_copy_func,
+    ID_cprover_string_delete_func,
+    ID_cprover_string_delete_char_at_func,
+    ID_cprover_string_equal_func,
+    ID_cprover_string_equals_ignore_case_func,
+    ID_cprover_string_empty_string_func,
+    ID_cprover_string_endswith_func,
+    ID_cprover_string_format_func,
+    ID_cprover_string_index_of_func,
+    ID_cprover_string_insert_func,
+    ID_cprover_string_is_prefix_func,
+    ID_cprover_string_is_suffix_func,
+    ID_cprover_string_is_empty_func,
+    ID_cprover_string_last_index_of_func,
+    ID_cprover_string_length_func,
+    ID_cprover_string_of_int_func,
+    ID_cprover_string_of_int_hex_func,
+    ID_cprover_string_of_long_func,
+    ID_cprover_string_of_float_func,
+    ID_cprover_string_of_float_scientific_notation_func,
+    ID_cprover_string_of_double_func,
+    ID_cprover_string_parse_int_func,
+    ID_cprover_string_is_valid_int_func,
+    ID_cprover_string_is_valid_long_func,
+    ID_cprover_string_replace_func,
+    ID_cprover_string_set_length_func,
+    ID_cprover_string_startswith_func,
+    ID_cprover_string_substring_func,
+    ID_cprover_string_to_lower_case_func,
+    ID_cprover_string_to_upper_case_func,
+    ID_cprover_string_trim_func,
+  };
+  // clang-format on
+  return interpreted_ids.count(id) > 0;
+}
+
+literalt string_refinementt::convert_rest(const exprt &expr)
+{
+  if(expr.id() == ID_function_application)
+  {
+    const auto &fa = to_function_application_expr(expr);
+    if(is_cprover_string_application(fa))
+    {
+      // Let the base class do the conversion first so we capture the
+      // fresh literal it allocated. That same literal is what the
+      // composed goal uses, so tying our string-builtin return_code
+      // to it propagates the axiom-assigned truth value back.
+      //
+      // Note: the base class additionally records the application
+      // into `functions.function_map`, so at finish_eager_conversion
+      // it will emit Ackermann extensionality constraints (if args
+      // are pairwise equal, results are equal). Those are redundant
+      // with the string-specific axioms generated via add_node but
+      // also harmless — the SAT literal forced equal to
+      // return_code's literal here makes the two sets of constraints
+      // consistent.
+      literalt lit = supert::convert_rest(expr);
+      recorded_string_applications.push_back({fa, lit, {}});
+      return lit;
+    }
+  }
+  return supert::convert_rest(expr);
+}
+
+bvt string_refinementt::convert_function_application(
+  const function_application_exprt &expr)
+{
+  if(is_cprover_string_application(expr))
+  {
+    // See note in convert_rest above regarding the base class's
+    // record and the resulting (redundant-but-consistent)
+    // extensionality constraints.
+    bvt bv = supert::convert_function_application(expr);
+    recorded_string_applications.push_back({expr, {}, bv});
+    return bv;
+  }
+  return supert::convert_function_application(expr);
 }
 
 /// Add association for each char pointer in the equation
@@ -643,7 +757,8 @@ string_refinementt::dec_solve(const exprt &assumption)
 
   const union_find_replacet string_id_symbol_resolve =
     string_identifiers_resolution_from_equations(
-      [&] {
+      [&]
+      {
         std::vector<equal_exprt> equalities;
         for(const auto &eq : equations)
         {
@@ -756,6 +871,65 @@ string_refinementt::dec_solve(const exprt &assumption)
   }
   equations.clear();
 
+  // Also feed the dependency graph from cprover_string_* function
+  // applications that were recorded in convert_rest /
+  // convert_function_application but never appeared inside any
+  // equation passed to set_to(). This happens in CBMC's
+  // multi-assertion path
+  // (symex_target_equationt::convert_assertions): each assertion is
+  // wrapped in a handle() call that bit-blasts the expression into
+  // a fresh literal before the composed goal is given to set_to().
+  // Without this, the add_node walk above never sees the
+  // cprover_string_* applications and the refined-string solver
+  // reports "0 universal axioms" for those assertions.
+  //
+  // Snapshot + clear before processing: this preserves any entries
+  // that might be added during the processing (via further convert()
+  // calls) for a subsequent dec_solve() invocation. Today no such
+  // recursion happens — add_node produces fresh return_code symbols
+  // and converting a symbol doesn't re-enter convert_rest — but the
+  // snapshot pattern keeps the code robust to future changes.
+  const std::size_t recorded_count = recorded_string_applications.size();
+  const auto recorded_snapshot = std::move(recorded_string_applications);
+  recorded_string_applications.clear();
+  for(const auto &entry : recorded_snapshot)
+  {
+    log.debug() << "dec_solve: feeding recorded string application: "
+                << format(entry.application) << messaget::eom;
+    exprt fa_expr = static_cast<const exprt &>(entry.application);
+    symbol_resolve.replace_expr(fa_expr);
+    string_id_symbol_resolve.replace_expr(fa_expr);
+    const auto replacement = add_node(
+      dependencies, fa_expr, generator.array_pool, generator.fresh_symbol);
+    if(replacement)
+    {
+      // add_node replaced the function_application with a fresh
+      // return_code symbol and stored axioms in `dependencies` that
+      // constrain that symbol. We need the SAT literal of
+      // replacement (the return_code) to be forced equal to the
+      // literal that was already created for the original
+      // function_application (entry.bool_lit / entry.bv). That link
+      // is what makes the assertion's converted form observe the
+      // axiom-assigned truth.
+      if(entry.bool_lit)
+      {
+        // Boolean return: convert the return_code symbol to a
+        // literal and set it equal to the recorded literal.
+        const literalt ret_lit = supert::convert(*replacement);
+        prop.set_equal(*entry.bool_lit, ret_lit);
+      }
+      else if(entry.bv)
+      {
+        // Bitvector return: tie the whole word.
+        const bvt ret_bv = supert::convert_bv(*replacement);
+        POSTCONDITION(ret_bv.size() == entry.bv->size());
+        bv_utils.set_equal(*entry.bv, ret_bv);
+      }
+    }
+  }
+  log.debug() << "dec_solve: fed " << recorded_count
+              << " recorded string applications" << messaget::eom;
+
 #ifdef DEBUG
   dependencies.output_dot(log.debug());
 #endif
@@ -813,7 +987,8 @@ string_refinementt::dec_solve(const exprt &assumption)
     constraints.not_contains.begin(),
     constraints.not_contains.end(),
     std::back_inserter(axioms.not_contains),
-    [&](string_not_contains_constraintt axiom) {
+    [&](string_not_contains_constraintt axiom)
+    {
       replace(symbol_resolve, axiom);
       return axiom;
     });
@@ -823,7 +998,8 @@ string_refinementt::dec_solve(const exprt &assumption)
     not_contain_witnesses;
   for(const auto &nc_axiom : axioms.not_contains)
   {
-    const auto &witness_type = [&] {
+    const auto &witness_type = [&]
+    {
       const auto &rtype = to_array_type(nc_axiom.s0.type());
       const typet &index_type = rtype.size().type();
       return array_typet(index_type, infinity_exprt(index_type));
@@ -887,6 +1063,12 @@ string_refinementt::dec_solve(const exprt &assumption)
     add_lemma(substitute_array_access(instance, generator.fresh_symbol, true));
   }
 
+  // Consecutive refinement rounds where update_index_set found no new index
+  // (only counter-examples can advance). Bounded to keep the loop terminating
+  // for symbolic-length-needle membership (see the empty-index-set handling
+  // below).
+  std::size_t empty_index_set_rounds = 0;
+
   while((loop_bound_--) > 0)
   {
     dependencies.clean_cache();
@@ -927,40 +1109,46 @@ string_refinementt::dec_solve(const exprt &assumption)
 
       if(index_sets.current.empty())
       {
-        if(axioms.not_contains.empty())
+        // c7fb844a60: counter-examples advance the solver for *any* violated
+        // axiom, not just not_contains -- they are ground-level facts at the
+        // concrete witnesses check_axioms produced, and add_lemma's
+        // seen_instances dedupes, so adding them narrows the SAT model on the
+        // next iteration. The original upstream code only did this for
+        // not_contains axioms and otherwise bailed with D_ERROR.
+        //
+        // This branch's anti-hang invariant: when the model is unrefinable we
+        // terminate conservatively with a sound D_SATISFIABLE (treat the
+        // model as a real counterexample -- no missed bugs) rather than spin
+        // or surface D_ERROR ("VERIFICATION ERROR"). The risk with c7fb's
+        // "keep adding counter-examples" is needles with a *symbolic* length:
+        // their violation witnesses are distinct symbolic expressions each
+        // round, never dedupe to a fixpoint, and -- with refinement_bound
+        // effectively unbounded -- would spin. So bound the counter-example
+        // rounds: try them (precision for cases that converge quickly), but
+        // after a finite number of consecutive empty-index-set rounds, or
+        // when there are no counter-examples to add, fall back to the
+        // conservative result.
+        constexpr std::size_t max_empty_index_set_rounds = 16;
+        if(
+          counter_examples.empty() ||
+          ++empty_index_set_rounds > max_empty_index_set_rounds)
         {
-          // The propositional SAT layer returned a model that
-          // check_axioms judged inconsistent with our universal
-          // string axioms, but update_index_set walked the most
-          // recent constraint instances and couldn't find any new
-          // index to refine on. We've reached a fixed point: every
-          // index referenced in the refined constraints is already
-          // in cumulative, so further index-based instantiation
-          // can't tighten the problem.
-          //
-          // The historical behaviour was to give up with D_ERROR,
-          // surfacing as "VERIFICATION ERROR" — the worst possible
-          // outcome for a regression-test framework that expects a
-          // SUCCESSFUL/FAILED verdict. Instead, log a warning and
-          // return D_SATISFIABLE conservatively. This treats the
-          // unrefinable model as if it were a real counterexample,
-          // which is sound for safety verification (no missed
-          // bugs) at the cost of potentially over-reporting on
-          // properties the string solver cannot prove. Callers
-          // that care about precision can spot the warning in the
-          // output.
           log.warning() << "dec_solve: current index set is empty after "
-                        << "refinement, treating model as a counterexample"
+                        << "refinement and no further counter-example "
+                        << "progress, treating model as a counterexample"
                         << messaget::eom;
           return resultt::D_SATISFIABLE;
         }
-        else
-        {
-          log.debug() << "dec_solve: current index set is empty, "
-                      << "adding counter examples" << messaget::eom;
-          for(const auto &counter : counter_examples)
-            add_lemma(counter);
-        }
+        log.debug() << "dec_solve: current index set is empty, adding "
+                    << counter_examples.size() << " counter examples"
+                    << messaget::eom;
+        for(const auto &counter : counter_examples)
+          add_lemma(counter);
+      }
+      else
+      {
+        // Real index-set progress this round; reset the stall counter.
+        empty_index_set_rounds = 0;
       }
       current_constraints.clear();
       const auto instances =
@@ -1519,9 +1707,9 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
     const symbol_exprt univ_var = generator.fresh_symbol(
       "not_contains_univ_var", nc_axiom.s0.length_type());
     const exprt negated_axiom = negation_of_not_contains_constraint(
-      nc_axiom, univ_var, [&](const exprt &expr) {
-        return simplify_expr(get(expr), ns);
-      });
+      nc_axiom,
+      univ_var,
+      [&](const exprt &expr) { return simplify_expr(get(expr), ns); });
 
     stream << std::string(2, ' ') << i << ".\n";
     debug_check_axioms_step(
@@ -1909,9 +2097,8 @@ exprt substitute_array_lists(exprt expr, size_t string_max_length)
 /// \return evaluated expression
 exprt string_refinementt::get(const exprt &expr) const
 {
-  const auto super_get = [this](const exprt &expr) {
-    return supert::get(expr);
-  };
+  const auto super_get = [this](const exprt &expr)
+  { return supert::get(expr); };
   exprt ecopy(expr);
   (void)symbol_resolve.replace_expr(ecopy);
 
@@ -1959,9 +2146,11 @@ exprt string_refinementt::get(const exprt &expr) const
       return sparse_array->to_if_expression(index);
     }
 
-    INVARIANT(array.id() == ID_symbol || array.id() == ID_nondet_symbol,
-              "Apart from symbols, array valuations can be interpreted as "
-              "sparse arrays. Array model : " + array.pretty());
+    INVARIANT(
+      array.id() == ID_symbol || array.id() == ID_nondet_symbol,
+      "Apart from symbols, array valuations can be interpreted as "
+      "sparse arrays. Array model : " +
+        array.pretty());
     return index_exprt(array, index);
   }
 

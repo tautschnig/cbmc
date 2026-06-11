@@ -28,11 +28,11 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
 #include "string_dependencies.h"
 #include "string_refinement_util.h"
 
-#define OPT_STRING_REFINEMENT \
-  "(no-refine-strings)" \
-  "(string-printable)" \
-  "(string-input-value):" \
-  "(string-non-empty)" \
+#define OPT_STRING_REFINEMENT                                                  \
+  "(no-refine-strings)"                                                        \
+  "(string-printable)"                                                         \
+  "(string-input-value):"                                                      \
+  "(string-non-empty)"                                                         \
   "(max-nondet-string-length):"
 
 #define HELP_STRING_REFINEMENT                                                 \
@@ -50,8 +50,8 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
 
 // The integration of the string solver into CBMC is incomplete. Therefore,
 // it is not turned on by default and not all options are available.
-#define OPT_STRING_REFINEMENT_CBMC \
-  "(refine-strings)" \
+#define OPT_STRING_REFINEMENT_CBMC                                             \
+  "(refine-strings)"                                                           \
   "(string-printable)"
 
 #define HELP_STRING_REFINEMENT_CBMC                                            \
@@ -88,6 +88,21 @@ public:
 protected:
   decision_proceduret::resultt dec_solve(const exprt &) override;
 
+  // Override to capture boolean-typed string function applications
+  // (e.g. cprover_string_is_prefix_func) before they are converted
+  // to fresh SAT literals. The multi-assertion path in
+  // symex_target_equationt::convert_assertions calls handle() on
+  // each assertion, which triggers convert() and bit-blasts the
+  // function_application into a fresh literal; by the time set_to()
+  // is invoked on the composed goal, the original function_application
+  // is gone and add_node never sees it. Tracking them here and
+  // feeding them to add_node in dec_solve() ensures axioms are
+  // generated regardless of whether the goal was a single assertion
+  // or a multi-assertion disjunction.
+  literalt convert_rest(const exprt &expr) override;
+  bvt convert_function_application(
+    const function_application_exprt &expr) override;
+
 private:
   // Base class
   typedef bv_refinementt supert;
@@ -113,6 +128,24 @@ private:
   union_find_replacet symbol_resolve;
 
   std::vector<exprt> equations;
+
+  // String-specific function_applications captured via convert_*
+  // before bit-blasting strips them. Feeds into add_node in
+  // dec_solve(). Cleared at the end of each dec_solve call.
+  // Each entry holds the original application plus the fresh literal
+  // variable that convert_rest / convert_function_application
+  // returned for it; we tie that literal to the axiom-generated
+  // return_code so the assertion's converted form sees the same
+  // truth value the string axioms assign.
+  struct recorded_string_application_entryt
+  {
+    function_application_exprt application;
+    // For boolean results: the literal converted-to. bvt for bitvector
+    // results. Only one of these is populated.
+    std::optional<literalt> bool_lit;
+    std::optional<bvt> bv;
+  };
+  std::vector<recorded_string_application_entryt> recorded_string_applications;
 
   string_dependenciest dependencies;
 
