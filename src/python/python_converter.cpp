@@ -860,6 +860,10 @@ void python_convertert::merge_tracking(
 /// python-string-phase2-backend-abstraction.md.
 exprt python_convertert::python_string_literal(const std::string &s)
 {
+  // Native SMT-String back-end (Plan A): an opaque SMT String constant whose
+  // smt2_conv lowering produces the SMT-LIB literal "...".
+  if(use_smt_string_native)
+    return constant_exprt{irep_idt{s}, smt_string_typet{}};
   // Refined-string back-end: the struct-exprt shape is
   // what every downstream site already expects. For the
   // SMT-string back-end this will emit an

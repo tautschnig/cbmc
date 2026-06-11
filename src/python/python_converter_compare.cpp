@@ -48,6 +48,59 @@ exprt python_convertert::convert_compare(const jsont &expr)
     if(current_left.is_nil() || right.is_nil())
       return nil_exprt{};
 
+    // Native SMT-String back-end (Plan A): compare two SMT String values
+    // directly. ==/!= lower to (= s t); ordering routes through compare_to
+    // (lowered to str.< in smt2_conv). Bypasses the refined struct path.
+    if(
+      use_smt_string_native && current_left.type().id() == ID_smt_string &&
+      right.type().id() == ID_smt_string &&
+      (op == "Eq" || op == "NotEq" || op == "Lt" || op == "LtE" || op == "Gt" ||
+       op == "GtE"))
+    {
+      exprt c;
+      if(op == "Eq")
+        c = equal_exprt{current_left, right};
+      else if(op == "NotEq")
+        c = not_exprt{equal_exprt{current_left, right}};
+      else
+      {
+        const typet i32 = signedbv_typet{32};
+        const irep_idt fn{ID_cprover_string_compare_to_func};
+        if(symbol_table.lookup(fn) == nullptr)
+        {
+          std::vector<typet> ats{current_left.type(), right.type()};
+          symbolt fs{
+            fn, mathematical_function_typet(std::move(ats), i32), "python"};
+          fs.base_name = id2string(fn);
+          symbol_table.add(fs);
+        }
+        function_application_exprt app{
+          symbol_table.lookup_ref(fn).symbol_expr(), {current_left, right}};
+        app.type() = i32;
+        static unsigned nscmp_ctr = 0;
+        const irep_idt rid{"python::__smtn_cmp_" + std::to_string(nscmp_ctr++)};
+        if(symbol_table.lookup(rid) == nullptr)
+        {
+          symbolt rs{rid, i32, "python"};
+          rs.base_name = "__smtn_cmp_" + std::to_string(nscmp_ctr - 1);
+          rs.is_lvalue = true;
+          rs.is_state_var = true;
+          symbol_table.add(rs);
+        }
+        const symbol_exprt cres = symbol_table.lookup_ref(rid).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{cres, app});
+        const exprt z = from_integer(0, i32);
+        c = binary_relation_exprt{
+          cres,
+          op == "Lt" ? ID_lt
+                     : (op == "LtE" ? ID_le : (op == "Gt" ? ID_gt : ID_ge)),
+          z};
+      }
+      result = result.is_nil() ? c : exprt(and_exprt{result, c});
+      current_left = right;
+      continue;
+    }
+
     // PLR §6.10.1: chained-comparison single-evaluation.
     // If there is another comparator after this one, the
     // current right operand becomes the next left operand,

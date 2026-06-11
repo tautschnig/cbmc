@@ -67,6 +67,8 @@ void python_languaget::set_language_options(
   python_string_kind = options.get_bool_option("python-smt-strings")
                          ? python_string_kindt::smt_string
                          : python_string_kindt::refined;
+  if(options.get_bool_option("python-smt-strings-native"))
+    python_string_kind = python_string_kindt::smt_string_native;
   std::string max_str = options.get_option("python-max-string-length");
   if(!max_str.empty())
     max_string_length = std::stoul(max_str);
@@ -352,7 +354,10 @@ bool python_languaget::typecheck(
   python_convertert converter{symbol_table, parse_tree, message_handler};
   converter.set_unbounded_ints(unbounded_ints);
   converter.set_use_smt_string_backend(
-    python_string_kind == python_string_kindt::smt_string);
+    python_string_kind == python_string_kindt::smt_string ||
+    python_string_kind == python_string_kindt::smt_string_native);
+  converter.set_use_smt_string_native(
+    python_string_kind == python_string_kindt::smt_string_native);
   converter.set_no_body_check(no_body_check);
   converter.set_python_strict_warnings(python_strict_warnings);
   converter.set_python_lazy_stubs(python_lazy_stubs);

@@ -2757,6 +2757,13 @@ void smt2_convt::convert_expr(const exprt &expr)
       constexpr std::size_t SMT_STRING_BOUND = 64;
       auto emit_smt_string = [&](const exprt &e) -> bool
       {
+        // Native SMT String operand (Plan A): already an SMT-LIB String;
+        // emit it directly.
+        if(e.type().id() == ID_smt_string)
+        {
+          convert_expr(e);
+          return true;
+        }
         if(e.id() != ID_struct || e.operands().size() != 2)
           return false;
         const exprt &len_op = e.operands()[0];
@@ -2785,8 +2792,9 @@ void smt2_convt::convert_expr(const exprt &expr)
       // emit_smt_string can build an SMT String term from it.
       auto reachable = [&](const exprt &e)
       {
-        return e.id() == ID_struct && e.operands().size() == 2 &&
-               e.operands()[1].id() == ID_address_of;
+        return e.type().id() == ID_smt_string ||
+               (e.id() == ID_struct && e.operands().size() == 2 &&
+                e.operands()[1].id() == ID_address_of);
       };
       // cprover_string_equal_func(s1, s2) → sound structural equality
       // Compares both length AND data pointer. This is sound:
