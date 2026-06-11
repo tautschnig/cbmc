@@ -192,6 +192,20 @@ predicate maskGuarded(CountSource e, Function f) {
     k = ba.getAnOperand() and
     (k instanceof Literal or k instanceof EnumConstantAccess or
      k.getValue() != ""))
+  or
+  // count = <expr> & CONST -- the mask is applied to the RHS expression
+  // before assignment (e.g. altera-stapl `arg_count = (opcode >> 6) & 3`,
+  // bounding arg_count to <= 3 for the `args[3]` write loop).  Bounds the
+  // count as soundly as `count &= CONST`; the operand-form check above
+  // misses it because the masked operand is the sub-expression, not the
+  // count variable itself.
+  exists(Assignment a, BitwiseAndExpr ba, Expr k |
+    a.getEnclosingFunction() = f and
+    a.getLValue().(VariableAccess).getTarget() = countTarget(e) and
+    ba = a.getRValue() and
+    k = ba.getAnOperand() and
+    (k instanceof Literal or k instanceof EnumConstantAccess or
+     k.getValue() != ""))
 }
 
 /* ---- Pattern B: index subscripts a fixed array directly ---- */
