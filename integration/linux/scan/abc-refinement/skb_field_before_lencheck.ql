@@ -48,27 +48,41 @@ predicate trivialAccessor(Function f, KernelTaint::SkbDataAccess sda) {
     f.getBlock().getNumStmt() <= 2)
 }
 
-from Function f, int line, string kind
+/** advisory: the enclosing function has SOME length-guard call (existential,
+ *  NOT proven to dominate this read -- advisory only, never a drop). */
+string lenGuardAdvisory(Function f) {
+  if KernelTaint::hasLengthGuard(f) then result = "GUARDED" else result = "UNGUARDED"
+}
+
+/** advisory: a trivial `*_hdr`-style accessor (caller owns the check by
+ *  design) -- a recall heuristic, advisory only. */
+string trivialAdvisory(Function f, KernelTaint::SkbDataAccess sda) {
+  if trivialAccessor(f, sda) then result = "yes" else result = "no"
+}
+
+from Function f, int line, string kind, string adv
 where
   inScope(f) and
-  not KernelTaint::hasLengthGuard(f) and
   (
-    // (a) skb->data parser
+    // (a) skb->data parser -- emitted regardless of guard/trivial status;
+    //     those become ADVISORY fields (sound over-approximate collector).
     exists(KernelTaint::SkbDataAccess sda |
       sda.getEnclosingFunction() = f and
       structuredSkbRead(sda) and
-      not trivialAccessor(f, sda) and
       line = sda.getLocation().getStartLine() and
-      kind = "skb->data read, no length guard")
+      kind = "skb->data read" and
+      adv = "adv_lenguard=" + lenGuardAdvisory(f) +
+        "|adv_trivial=" + trivialAdvisory(f, sda))
     or
     // (b) bounded-cursor parser: a (buf,len)/(p,end) function that decodes
-    //     a field from the cursor with no guard
+    //     a field from the cursor
     exists(KernelTaint::DecodeCall dc |
       KernelTaint::isBoundedBufferParam(f, _) and
       dc.getEnclosingFunction() = f and
       line = dc.getLocation().getStartLine() and
-      kind = "bounded-cursor decode, no length guard")
+      kind = "bounded-cursor decode" and
+      adv = "adv_lenguard=" + lenGuardAdvisory(f))
   )
 select f,
   f.getName() + "|" + f.getFile().getAbsolutePath() + "|" + line.toString() +
-  "|" + kind + "|impact=READ"
+  "|" + kind + "|impact=READ|" + adv

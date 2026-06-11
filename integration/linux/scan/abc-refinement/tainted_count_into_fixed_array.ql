@@ -130,10 +130,7 @@ predicate countLoopWrite(
   arrSize = write.getArrayBase().getType().getUnspecifiedType().(ArrayType).getArraySize() and
   arrName = write.getArrayBase().toString() and
   // the write is an lvalue (assigned into)
-  exists(Assignment a | a.getLValue() = write) and
-  not guardedAgainstConstant(cnt, f) and
-  not maskGuarded(cnt, f) and
-  not bareParameter(cnt, f)
+  exists(Assignment a | a.getLValue() = write)
 }
 
 /** Holds if `e` is a bare incoming PARAMETER value used directly (the
@@ -229,12 +226,7 @@ predicate directIndex(
   ae.getArrayOffset() = idx and
   ae.getArrayBase().getType().getUnspecifiedType() = fixedArray() and
   arrSize = ae.getArrayBase().getType().getUnspecifiedType().(ArrayType).getArraySize() and
-  arrName = ae.getArrayBase().toString() and
-  // enum-typed indices index arrays sized by that enum -> bounded idiom.
-  not idx.getUnspecifiedType() instanceof Enum and
-  not guardedAgainstConstant(idx, f) and
-  not maskGuarded(idx, f) and
-  not bareParameter(idx, f)
+  arrName = ae.getArrayBase().toString()
 }
 
 /** Impact tier of a count/index hit.  WRITE (high impact -- OOB write,
@@ -250,6 +242,40 @@ string indexImpact(ArrayExpr ae) {
   if writeImpact(ae) then result = "WRITE" else result = "READ"
 }
 
+/* ---- ADVISORY annotations (never drop a candidate) ----------------------
+ * Per the collector architecture: the finder is a SOUND over-approximate
+ * collector; the only definitive filters are CBMC, a provably-sound static
+ * check, or manual review.  Every signal below that previously EXCLUDED a
+ * candidate (an in-function relational guard, a compile-time mask, a bare
+ * caller-responsibility parameter, an enum-typed index) is now emitted as
+ * an ADVISORY field so triage can rank without ever removing a candidate.
+ * Each is UNSOUND as a safety proof (existential / no dominance / mask-vs-
+ * size unchecked), hence advisory-only. */
+
+/** advisory: an in-function relational comparison against a const bound
+ *  exists (NOT dominance-checked -- existential, unsound). */
+string guardAdvisory(CountSource e, Function f) {
+  if guardedAgainstConstant(e, f) then result = "GUARDED" else result = "UNGUARDED"
+}
+
+/** advisory: the value is masked / shift-bounded by a compile-time constant
+ *  (value-bounded, but the mask-vs-array-size relation is NOT checked). */
+string maskAdvisory(CountSource e, Function f) {
+  if maskGuarded(e, f) then result = "MASKED" else result = "none"
+}
+
+/** advisory: provenance of the count/index. */
+string boundAdvisory(CountSource e, Function f) {
+  if bareParameter(e, f)
+  then result = "bareparam"
+  else if e instanceof FieldAccess then result = "field" else result = "local"
+}
+
+/** advisory: an enum-typed index (usually but not provably in range). */
+string enumAdvisory(CountSource e) {
+  if e.getUnspecifiedType() instanceof Enum then result = "yes" else result = "no"
+}
+
 from Function f, string kind, string name, int line, string detail
 where
   inScope(f) and
@@ -261,7 +287,10 @@ where
       line = loop.getLocation().getStartLine() and
       detail =
         "count=" + cnt.getSourceName() + "|arr=" + an + "[" + sz + "]" +
-          "|confidence=" + confidence(cnt) + "|impact=WRITE"
+          "|confidence=" + confidence(cnt) + "|impact=WRITE" +
+          "|adv_guard=" + guardAdvisory(cnt, f) +
+          "|adv_mask=" + maskAdvisory(cnt, f) +
+          "|adv_bound=" + boundAdvisory(cnt, f)
     )
     or
     exists(ArrayExpr ae, CountSource idx, string an, int sz |
@@ -270,7 +299,11 @@ where
       line = ae.getLocation().getStartLine() and
       detail =
         "index=" + idx.getSourceName() + "|arr=" + an + "[" + sz + "]" +
-          "|confidence=" + confidence(idx) + "|impact=" + indexImpact(ae)
+          "|confidence=" + confidence(idx) + "|impact=" + indexImpact(ae) +
+          "|adv_guard=" + guardAdvisory(idx, f) +
+          "|adv_mask=" + maskAdvisory(idx, f) +
+          "|adv_bound=" + boundAdvisory(idx, f) +
+          "|adv_enum=" + enumAdvisory(idx)
     )
   )
 select f,
