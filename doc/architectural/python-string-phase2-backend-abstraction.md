@@ -1399,3 +1399,26 @@ The test passes under ESBMC only because ESBMC treats `"a\0b"` as length 4
 (it does not process the `\0` escape) — a frontend-semantics divergence, not
 a false proof. We keep the correct length model; the test stays a documented
 sweep DIFF. No code change for soundness.
+
+### Step 2 migration — Java-vs-Python semantic audit (2026-06-11)
+
+Not every "existing axiom" matches Python semantics; migrating blindly would
+be unsound. Audit of each candidate:
+
+* `rfind`/`rindex` → `last_index_of`: **sound + precise** (purely positional,
+  char-interpretation-independent). Migrated (commit ee0b89d939).
+* `strip`/`lstrip`/`rstrip` (no-arg) → `trim`: **UNSOUND**. `trim` strips every
+  char `<= 0x20` (Java), but Python `str.strip()` removes only the whitespace
+  set `{0x09..0x0d, 0x20}`. For a symbolic byte string they differ (e.g.
+  `\x01`: trim strips it, Python keeps it), so this would compute a wrong
+  (shorter) result. Needs a new Python-whitespace axiom → moved to step 3.
+* `replace` → `replace`: **char-only**. The axiom handles only single-char
+  `replace(old_char, new_char)` (returns code 1 / no constraint otherwise);
+  Python `str.replace` replaces arbitrary-length substrings. Only the
+  single-char case is precisely migratable; general substring replace needs a
+  new axiom (step 3) or the SMT-String backend.
+* ordering `<` `>` `<=` `>=` → `compare_to`: lexicographic by char value =
+  Python byte-order comparison; expected sound + precise (step 2d).
+* `casefold` → `to_lower`: ASCII case-fold matches `to_lower`; for bytes
+  `0x80..0xff` Python casefold/lower (Unicode) and `to_lower` may differ —
+  only safe to migrate over the ASCII domain. Treat with care (step 2e).
