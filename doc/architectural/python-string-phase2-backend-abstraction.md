@@ -1136,3 +1136,36 @@ producing-intrinsic membership precision both depend on the precise solver
 fix above, which is genuinely solver-research-scoped. If desired, a *sound*
 defensive guard (finite bound → conservative `D_SATISFIABLE`, scoped so JBMC
 is unaffected) would at least prevent the hang; it does not add precision.
+
+### Evaluated upstream string-refinement commits (2026-06-11): none fix the loop-stability issue
+
+Checked four sibling-branch commits against the membership-non-convergence
+diagnosed above, by applying their `src/solvers/strings` hunks and testing the
+repro (`for j in range(3): t = chr(nondet)+"Q"; assert t not in s`):
+
+* **`5abee1595d`** (array_pool: allow re-association instead of the
+  `INVARIANT("should not associate two arrays to the same pointer")`):
+  applies cleanly, sound, and *does* remove the crash the original
+  chr-association approach hit — but orthogonal to the spin (phase-2 already
+  avoids that crash via fresh aux symbols).
+* **`8fd1144b50` / `d86893623e`** (record `cprover_string_*` applications so
+  refined-string axioms aren't lost under multi-assertion BMC): apply cleanly;
+  a real precision fix for the *axioms-lost* scenario, but **does not** address
+  the spin — with all four applied, the repro still does not terminate.
+* **`c7fb844a60`** (on empty index set, add counter-examples for *all* violated
+  axioms and **continue** the loop, instead of bailing): **conflicts with this
+  branch's deliberate anti-hang design.** This branch already modified that
+  exact path to *terminate* with a conservative `D_SATISFIABLE` on index-set
+  exhaustion (sound over-approximation) precisely to avoid non-termination;
+  c7fb inverts it to *continue*, which reintroduced a hang in the Python
+  regression suite. So c7fb must **not** be cherry-picked as-is.
+
+**Conclusion:** none of the four address the diagnosed root cause (membership
+over a *symbolic-length* needle grows the index set without reaching a
+fixpoint — the index set is never *empty*, so the exhaustion-path commits
+don't engage, and the multi-assertion/array_pool commits target different
+mechanisms). The precise fix remains the symbolic-length-needle convergence
+work. `5abee1595d` / `8fd1144b50` / `d86893623e` are sound, orthogonal
+improvements that could be cherry-picked for parity (with their own
+validation); `c7fb844a60` is incompatible with this branch's exhaustion
+handling.
