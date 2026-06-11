@@ -1422,3 +1422,25 @@ be unsound. Audit of each candidate:
 * `casefold` → `to_lower`: ASCII case-fold matches `to_lower`; for bytes
   `0x80..0xff` Python casefold/lower (Unicode) and `to_lower` may differ —
   only safe to migrate over the ASCII domain. Treat with care (step 2e).
+
+### Step 2d — ordering via compare_to: root-caused to the same existential ceiling (2026-06-11)
+
+Wiring symbolic ordering through `cprover_string_compare_to_func` fails for
+the same underlying reason twice over, now root-caused:
+
+* `assert not (s < s)` (reflexive) **succeeds** — `compare_to(s,s)=0` is forced
+  by axioms a1/a2 (equal lengths + equal chars ⇒ res 0), so the result *is*
+  tied to content for the equal case.
+* Any *differing* comparison (`s < "ac"` with `s` pinned to `"ab"`, etc.)
+  **fails**: the model leaves `res` free (observed `res = 3/4` with the
+  resolved data pointer NULL). The culprit is axiom **a3**, an *existential*
+  witness `x` for the first-differing index — the refinement does not
+  instantiate it, so `res` is unconstrained when the strings differ.
+
+This is **not** a front-end wiring bug (equal/index_of/last_index_of all
+resolve the same operands fine). It is the **same existential-witness
+instantiation gap** as the not_contains membership-convergence ceiling
+(step 4). Decision: keep the sound first-byte approximation for ordering for
+now (no regression — it over-approximates), and fold ordering precision into
+the step-4 bounded-eager-instantiation work, which addresses the existential
+witness generally. Reverted the compare_to wiring.
