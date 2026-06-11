@@ -761,6 +761,50 @@ exprt python_convertert::convert_compare(const jsont &expr)
           return result ? exprt(true_exprt()) : exprt(false_exprt());
         }
       }
+      // SMT-String back-end: route ordering through the compare_to
+      // intrinsic, which smt2_conv lowers to a lexicographic str.< sign.
+      // This is precise (full lexicographic order), unlike the first-byte
+      // approximation below, and works because string leaves carry a
+      // backing array under this back-end (see python_converter_call_nondet
+      // and python-string-phase2-backend-abstraction.md).
+      if(use_smt_string_backend)
+      {
+        const typet i32 = signedbv_typet{32};
+        const irep_idt fn{ID_cprover_string_compare_to_func};
+        if(symbol_table.lookup(fn) == nullptr)
+        {
+          std::vector<typet> ats{current_left.type(), right.type()};
+          symbolt fs{
+            fn, mathematical_function_typet(std::move(ats), i32), "python"};
+          fs.base_name = id2string(fn);
+          symbol_table.add(fs);
+        }
+        function_application_exprt app{
+          symbol_table.lookup_ref(fn).symbol_expr(), {current_left, right}};
+        app.type() = i32;
+        static unsigned scmp_ctr = 0;
+        const irep_idt rid{"python::__str_cmp_" + std::to_string(scmp_ctr++)};
+        if(symbol_table.lookup(rid) == nullptr)
+        {
+          symbolt rs{rid, i32, "python"};
+          rs.base_name = "__str_cmp_" + std::to_string(scmp_ctr - 1);
+          rs.is_lvalue = true;
+          rs.is_state_var = true;
+          symbol_table.add(rs);
+        }
+        const symbol_exprt cres = symbol_table.lookup_ref(rid).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{cres, app});
+        const exprt zero32 = from_integer(0, i32);
+        if(op == "Lt")
+          cmp = binary_relation_exprt{cres, ID_lt, zero32};
+        else if(op == "LtE")
+          cmp = binary_relation_exprt{cres, ID_le, zero32};
+        else if(op == "Gt")
+          cmp = binary_relation_exprt{cres, ID_gt, zero32};
+        else // GtE
+          cmp = binary_relation_exprt{cres, ID_ge, zero32};
+        goto done_cmp;
+      }
       // PLR §6.10.1: lexicographic ordering on string data
       // arrays. For 1-char operands (the common is_digit /
       // isalpha pattern), comparing data[0] is exact. For
