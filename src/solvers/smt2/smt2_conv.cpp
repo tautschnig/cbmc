@@ -2781,6 +2781,13 @@ void smt2_convt::convert_expr(const exprt &expr)
         out << "))";
         return true;
       };
+      // True when an operand's byte array is syntactically reachable, i.e.
+      // emit_smt_string can build an SMT String term from it.
+      auto reachable = [&](const exprt &e)
+      {
+        return e.id() == ID_struct && e.operands().size() == 2 &&
+               e.operands()[1].id() == ID_address_of;
+      };
       // cprover_string_equal_func(s1, s2) → sound structural equality
       // Compares both length AND data pointer. This is sound:
       // - Same pointer = same content (from deduplication of constants)
@@ -2789,11 +2796,25 @@ void smt2_convt::convert_expr(const exprt &expr)
       if(fn_id == ID_cprover_string_equal_func && args.size() == 2)
       {
         std::size_t width = boolbv_width(expr.type());
-        if(width == 0) width = 8;
+        if(width == 0)
+          width = 8;
+        // SMT-String back-end: precise content equality (= str1 str2) when
+        // both operands' arrays are reachable; otherwise fall back to the
+        // structural (length + data-pointer) comparison, which is sound
+        // (same pointer ⇒ equal; different pointer ⇒ conservatively unequal).
         out << "(ite (= ";
-        convert_expr(args[0]);
-        out << " ";
-        convert_expr(args[1]);
+        if(reachable(args[0]) && reachable(args[1]))
+        {
+          emit_smt_string(args[0]);
+          out << " ";
+          emit_smt_string(args[1]);
+        }
+        else
+        {
+          convert_expr(args[0]);
+          out << " ";
+          convert_expr(args[1]);
+        }
         out << ") (_ bv1 " << width << ") (_ bv0 " << width << "))";
         return;
       }
@@ -2847,11 +2868,6 @@ void smt2_convt::convert_expr(const exprt &expr)
                                                          : "str.suffixof");
         // For contains the order is (str.contains hay needle); for
         // prefix/suffix it is (str.prefixof needle hay).
-        auto reachable = [&](const exprt &e)
-        {
-          return e.id() == ID_struct && e.operands().size() == 2 &&
-                 e.operands()[1].id() == ID_address_of;
-        };
         if(args.size() == 2 && reachable(args[0]) && reachable(args[1]))
         {
           out << "(ite (" << op << " ";
