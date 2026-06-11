@@ -193,19 +193,32 @@ predicate maskGuarded(CountSource e, Function f) {
     (k instanceof Literal or k instanceof EnumConstantAccess or
      k.getValue() != ""))
   or
-  // count = <expr> & CONST -- the mask is applied to the RHS expression
-  // before assignment (e.g. altera-stapl `arg_count = (opcode >> 6) & 3`,
-  // bounding arg_count to <= 3 for the `args[3]` write loop).  Bounds the
-  // count as soundly as `count &= CONST`; the operand-form check above
-  // misses it because the masked operand is the sub-expression, not the
-  // count variable itself.
-  exists(Assignment a, BitwiseAndExpr ba, Expr k |
+  // count = <mask-bounded expr> -- a bitwise-AND with a compile-time
+  // constant on the value spine, possibly wrapped in right-shifts (which
+  // only lower the value) or casts.  Catches altera `arg_count =
+  // (opcode>>6) & 3` AND ACPI `resource_index = (u8)((rtype & MASK) >> 3)`,
+  // where the mask is nested under a shift/cast so the operand-form checks
+  // above miss it.
+  exists(Assignment a |
     a.getEnclosingFunction() = f and
     a.getLValue().(VariableAccess).getTarget() = countTarget(e) and
-    ba = a.getRValue() and
-    k = ba.getAnOperand() and
+    maskBoundedExpr(a.getRValue()))
+}
+
+/** An expression bounded by a compile-time mask: a bitwise-AND with a
+ *  constant, possibly wrapped in right-shifts (value only decreases) or
+ *  casts (a bounded small value is preserved).  Sound modulo the same
+ *  heuristic the other mask clauses share -- a mask constant >= the array
+ *  size would be wrongly treated as bounding. */
+predicate maskBoundedExpr(Expr e) {
+  exists(Expr k |
+    k = e.(BitwiseAndExpr).getAnOperand() and
     (k instanceof Literal or k instanceof EnumConstantAccess or
-     k.getValue() != ""))
+     (exists(k.getValue()) and not k instanceof VariableAccess)))
+  or
+  maskBoundedExpr(e.(RShiftExpr).getLeftOperand())
+  or
+  maskBoundedExpr(e.(Conversion).getExpr())
 }
 
 /* ---- Pattern B: index subscripts a fixed array directly ---- */

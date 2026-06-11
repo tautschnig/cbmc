@@ -27,7 +27,7 @@ TREE = "/home/ubuntu/linux_6_12"
 DRIVERS_DB = "/tmp/612-drivers-db"
 OUT = "/tmp/dcensus"
 BUILD_TIMEOUT = 1500
-Q_TIMEOUT = 180
+Q_TIMEOUT = int(os.environ.get("DCENSUS_Q_TIMEOUT", "180"))
 
 
 def leaves():
