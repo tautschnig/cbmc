@@ -1721,3 +1721,36 @@ genuinely harder. **Policy:** the refined backend remains the default and
 handles producing ops well; `--python-smt-strings` is the precise+fast path for
 the *query* ceiling cases (ordering, symbol-operand membership). Every op stays
 sound on both backends.
+
+## SMT-String backend — producing-op values (concat, subscript) landed (2026-06-11)
+
+Producing-op **values** are now precise under `--cvc5 --python-smt-strings`,
+via str-level constraints rather than byte-level array constraints (which were
+correct but made proofs time out, and the byte↔str bridge does not force
+individual bytes from a str-level equality):
+
+- **Concatenation** `s + t`: result gets a backing array and is tied to the
+  inputs by one constraint, `str(res) == str.++(str(left), str(right))`, via
+  `cprover_string_smt_concat_eq_func`.
+- **Subscript** `s[i]`: a 1-char result tied by
+  `str(res) == str.substr(str(src), i, 1)` via
+  `cprover_string_smt_substr_eq_func` (a direct byte read was imprecise/slow).
+
+Validated (regression `string-smt-ordering-membership`, ~1 s total):
+`(s+t)=="abcd"`, `len(s+t)==4`, `"bc" in (s+t)`, `(s+t)[2]=="c"`, `s[1]=="b"`
+— all precise for symbol operands; `(s+"cd")!="abcd"` and `s[1]=="c"` soundly
+FAIL. Default refined path unchanged (python suite green).
+
+**Performance note:** proof goals (assert a *true* property) are fast (sub-second).
+Model-finding goals (counterexamples for *false* properties) go through the
+byte→`str` bridge and can be slow (tens of seconds) though they terminate and
+are sound.
+
+**Remaining:** string **slicing** `s[a:b]` is not yet routed through
+`str.substr` — its index-clamping `if`-expressions make the `str.substr`
+arguments non-constant and the constraint hard, so it stays byte-level
+(imprecise) under the SMT backend for now. `replace`/`strip`-producing under
+the SMT path, and model extraction for traces, also remain. The refined
+backend continues to handle all producing ops; `--python-smt-strings` adds
+precise concat/subscript on top of the precise query ops (ordering, membership,
+len, find).
