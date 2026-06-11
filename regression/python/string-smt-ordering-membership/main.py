@@ -18,3 +18,9 @@ assert "z" not in u
 assert u.startswith("a")
 assert u == "abc"
 assert u != "xyz"
+
+# length (str.len) and find/index (str.indexof) query lowerings.
+assert len(u) == 3
+assert u.find("b") == 1
+assert u.find("z") == -1
+assert u.index("c") == 2
