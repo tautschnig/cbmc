@@ -223,6 +223,24 @@ selector and the `--python-smt-strings` flag exist and are threaded through
 the frontend target either backend uniformly, and the SMT-String backend
 implementation itself.
 
+**Refined-string precision pass (2026-06-11, landed).** A "sound + precise,
+across the board" pass over the refined-string backend landed its
+cleanly-achievable wins and characterised the rest by measurement. Landed +
+validated (ESBMC sweep: 0 regressions, PASS 2916→2935): symbolic
+`rfind`/`rindex` → `last_index_of` (`ee0b89d939`); a dedicated
+Python-whitespace `strip`/`lstrip`/`rstrip` axiom (`6cabf82209`, *not* a
+`trim` reuse, which is unsound for control bytes). Measured/root-caused as
+blocked (kept sound): ordering via `compare_to` (axiom a3's existential
+first-diff-index witness isn't instantiated by the refinement); substring
+`replace` (existing axiom is char-only); `split` (list-valued); membership
+convergence (already handled at HEAD — eager instantiation measured as a net
+negative and reverted). **Net: the refined-string precision frontier is
+largely tapped; the remaining gaps need either existential-witness
+instantiation or new nonlinear/list-valued axioms, for which the SMT-String
+backend is the comprehensive answer.** Full per-step ledger:
+[python-string-phase2-backend-abstraction.md § consolidated outcome ledger](architectural/python-string-phase2-backend-abstraction.md#string-correctness-plan--consolidated-outcome-ledger-2026-06-11).
+
+
 **Spike (2026-06-09/10, `github_3090_4`) — diagnosis corrected.** The
 blocker is *not* `char*`-vs-`char[]` (JBMC's refined string is *also*
 `{length, char*}` and proves fine) and *not* the `array_pool` mechanism
