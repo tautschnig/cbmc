@@ -1238,3 +1238,32 @@ case is uncommon + latent. The bounded guard (sound termination) is the right
 pragmatic solution and is in place. A precise fix would be a dedicated
 solver-research project (with JBMC-regression resourcing); it is not justified
 by current need. Common membership patterns already converge.
+
+### The chr-loop case is already solved precisely by phase 1 (2026-06-11)
+
+Returning to the original motivator — `github_3130_fail`
+(`for i in range(...): assert chr(i) not in s`) — clarifies the whole
+convergence question. `chr`'s needle length is a *known constant* (1), so it
+is **not** the hard symbolic-length case. Phase-1 literal-materialisation
+already handles the chr-loop case **precisely and convergently**:
+`github_3130_fail` → FAILED (correct, `'b'` ∈ `"xbm"`), `chr(122) not in "abc"`
+→ SUCCESSFUL, `casting-chr-var-multibyte` → SUCCESSFUL — all with no spin.
+
+The convergence problem only appeared when *removing the gate* by routing chr
+through the produced-result backing. Tested that route (re-add chr builtin +
+pin result length to the constant 1 so membership has a concrete needle
+length): `github_3130_fail` then *terminates* (concrete length-1 needle ⇒
+bounded instantiation), but `chr(122) not in "abc"` and the multibyte tests
+**regress to a false FAILED** — the not_contains needle's content is not
+constrained to `(char)i` at the membership use (an SSA/association disconnect
+that the equality path avoids but not_contains does not). So the backing route
+*terminates but is imprecise* for chr membership, while phase-1
+materialisation is *precise*.
+
+**Conclusion:** phase-1 literal-materialisation is the *correct* mechanism for
+chr leaves — precise, convergent, and loop-safe — and the last
+`language_mode == "python"` gate guarding it is justified on the merits, not
+merely expedient. The convergence difficulty was an artefact of the
+gate-removal attempt; with the gate in place there is no convergence problem
+for the motivating chr-loop case. The genuinely-symbolic-length-needle case
+(produced results) remains latent and guard-terminated, as documented above.
