@@ -1754,3 +1754,45 @@ the SMT path, and model extraction for traces, also remain. The refined
 backend continues to handle all producing ops; `--python-smt-strings` adds
 precise concat/subscript on top of the precise query ops (ordering, membership,
 len, find).
+
+## SMT-String backend — producing-op boundary: static vs symbolic result length (2026-06-11)
+
+Investigating the next producing ops (slice, replace) revealed a clean
+boundary for the byte-array + `str` hybrid:
+
+- **Works (precise + fast):** producing ops whose **result length is
+  statically determined** — concat (`|res| = |left| + |right|`, and `str.++`
+  yields exactly that) and subscript (`|res| = 1`). `str(res)` truncates by a
+  known length, so CVC5 pins it directly.
+- **Hard (reverted / deferred):** producing ops whose **result length is
+  symbolic** — slice `s[a:b]` (`|res| = b - a`, with `a`/`b` index-clamping
+  `if`-expressions over the length symbol) and `replace` (`|res|` depends on
+  the match count). `str(res) = str.substr(str.++(backing), 0, res_len)` with a
+  symbolic `res_len` leaves the truncation ambiguous, and CVC5 must jointly
+  solve the bit-vector clamp arithmetic, the `bv2nat` conversions, and the
+  `str` constraints — which it does not discharge in reasonable time (slice
+  `s[1:3]=="bc"` stayed FAILED at ~80 s). Attempted slice via `str.substr`
+  (incl. simplifying the bounds) and reverted; replace hits the same wall.
+  These remain byte-level (imprecise) under the SMT backend.
+
+The principled fix is the pure `smt_string_typet` representation, where the
+result *is* an SMT `String` (no backing array, no `res_len` truncation), so
+`str.substr`/`str.replace_all` results carry their own length — the larger
+refactor deferred earlier. Until then, slice/replace use the refined backend
+(precise there).
+
+**Model extraction:** counterexample traces under `--cvc5 --python-smt-strings`
+show the string *length* and the assume constraints but not the reconstructed
+string *value* (the backing-array bytes are in the CVC5 model but the trace
+formatter does not assemble them into a readable string). This is a
+usability gap, not a soundness issue — verdicts are correct. Pretty-printing
+string values in SMT-backend traces is a separate follow-up.
+
+### SMT-String backend — current capability summary
+Precise + fast (proof goals) under `--cvc5 --python-smt-strings`, all sound,
+0 default-path regressions: `==`/`!=`, `in`/`not in`, `startswith`/`endswith`,
+ordering `< <= > >=` (the refined ceiling), `len`, `find`/`index`, **concat
+values**, **subscript**. Deferred (symbolic result length / refined handles
+them): slice, replace, strip-producing. Default backend remains refined;
+`--python-smt-strings` adds the above precision (notably ordering and
+symbol-operand membership) on top.
