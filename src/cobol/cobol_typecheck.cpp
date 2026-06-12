@@ -282,25 +282,10 @@ struct paragrapht
 bool is_verb(const std::string &w)
 {
   static const std::set<std::string> verbs = {
-    "MOVE",
-    "ADD",
-    "SUBTRACT",
-    "MULTIPLY",
-    "DIVIDE",
-    "COMPUTE",
-    "IF",
-    "EVALUATE",
-    "PERFORM",
-    "GO",
-    "STOP",
-    "GOBACK",
-    "EXIT",
-    "DISPLAY",
-    "ACCEPT",
-    "CONTINUE",
-    "CALL",
-    "NEXT",
-    "SET"};
+    "MOVE",     "ADD",    "SUBTRACT", "MULTIPLY", "DIVIDE",
+    "COMPUTE",  "IF",     "EVALUATE", "PERFORM",  "GO",
+    "STOP",     "GOBACK", "EXIT",     "DISPLAY",  "ACCEPT",
+    "CONTINUE", "CALL",   "NEXT",     "SET",      "EXEC"};
   return verbs.find(w) != verbs.end();
 }
 
@@ -631,6 +616,9 @@ protected:
   std::vector<stmtt> parse_compute();
   std::vector<stmtt> parse_call();
   std::vector<stmtt> parse_set();
+  std::vector<stmtt> parse_exec();
+  stmtt havoc_field(const reft &r, source_locationt loc);
+  void inject_eib();
   void skip_to_sentence_end();
 
   stmtt make_assign_ref(const reft &target, valuet v, source_locationt loc);
@@ -912,6 +900,9 @@ void cobol_typecheckt::parse_program()
 
   if(is_word("DATA"))
     parse_data_division();
+
+  // Provide the CICS EXEC INTERFACE BLOCK so EIB* references resolve.
+  inject_eib();
 
   if(is_word("PROCEDURE"))
     parse_procedure_division();
@@ -1972,6 +1963,8 @@ std::vector<stmtt> cobol_typecheckt::parse_statement()
   }
   if(verb == "SET")
     return parse_set();
+  if(verb == "EXEC")
+    return parse_exec();
   error("unsupported statement '" + verb + "'");
 }
 
@@ -2357,6 +2350,181 @@ std::vector<stmtt> cobol_typecheckt::parse_set()
   // Unsupported value form: no-op.
   skip_to_sentence_end();
   return result;
+}
+
+stmtt cobol_typecheckt::havoc_field(const reft &r, source_locationt loc)
+{
+  // Set the field's storage bytes to a nondeterministic value (a sound
+  // over-approximation of an unknown result).
+  const array_typet bytes_type{
+    unsignedbv_typet{8}, from_integer(r.info->byte_size, size_type())};
+  stmtt s;
+  s.kind = stmtt::kindt::ASSIGN;
+  s.location = loc;
+  s.lhs = r.record;
+  s.rhs = make_byte_update(
+    r.record, r.offset, side_effect_expr_nondett{bytes_type, loc});
+  return s;
+}
+
+std::vector<stmtt> cobol_typecheckt::parse_exec()
+{
+  // EXEC CICS|SQL|DLI ... END-EXEC is an embedded sub-language processed by a
+  // separate translator (the COBOL LR treats EXEC ... END-EXEC as embedded
+  // text). We stub it as the project notes prescribe (cobol-semantics.md S8):
+  // output operands and the per-command EIB status fields are havoced (nondet)
+  // and command verbs that return control (CICS RETURN / XCTL) terminate the
+  // run unit. Input operands (FROM, COMMAREA, MAP, ...) are ignored.
+  const source_locationt loc = cur().location;
+  expect_word("EXEC");
+
+  // sub-language (CICS / SQL / DLI)
+  if(cur().kind == cobol_token_kindt::WORD)
+    advance();
+
+  // Output operands whose named item receives data and is therefore havoced.
+  const auto is_output_kw = [](const std::string &w)
+  {
+    return w == "INTO" || w == "SET" || w == "RESP" || w == "RESP2" ||
+           w == "LENGTH" || w == "FLENGTH" || w == "RETURNING" ||
+           w == "NUMITEMS" || w == "COUNTER" || w == "TOLENGTH";
+  };
+
+  std::string command;
+  std::vector<std::string> output_names;
+  bool first = true;
+  while(!at_eof() && !is_word("END-EXEC"))
+  {
+    if(first && cur().kind == cobol_token_kindt::WORD)
+    {
+      command = cur().text;
+      first = false;
+      advance();
+      continue;
+    }
+    first = false;
+    if(cur().kind == cobol_token_kindt::WORD && is_output_kw(cur().text))
+    {
+      advance();
+      if(is_kind(cobol_token_kindt::LPAREN))
+      {
+        advance();
+        if(cur().kind == cobol_token_kindt::WORD)
+          output_names.push_back(cur().text);
+        // skip to the matching ')'
+        int depth = 1;
+        while(!at_eof() && depth > 0)
+        {
+          if(is_kind(cobol_token_kindt::LPAREN))
+            ++depth;
+          else if(is_kind(cobol_token_kindt::RPAREN))
+            --depth;
+          advance();
+        }
+      }
+      continue;
+    }
+    advance();
+  }
+  eat_word("END-EXEC");
+
+  std::vector<stmtt> result;
+
+  // CICS RETURN / XCTL pass control away from this program: terminate the path
+  // (CICS Application Programming Reference, RETURN / XCTL).
+  if(command == "RETURN" || command == "XCTL")
+  {
+    stmtt s;
+    s.kind = stmtt::kindt::STOP;
+    s.location = loc;
+    result.push_back(s);
+    return result;
+  }
+  if(command == "ABEND")
+  {
+    stmtt s;
+    s.kind = stmtt::kindt::STOP;
+    s.location = loc;
+    result.push_back(s);
+    return result;
+  }
+
+  // Havoc the named output operands.
+  for(const std::string &name : output_names)
+  {
+    auto it = items.find(name);
+    if(it != items.end())
+      result.push_back(havoc_field(ref_of(it->second), loc));
+  }
+  // Havoc the per-command EIB status fields (set by every CICS command).
+  for(const char *eib : {"EIBRESP", "EIBRESP2", "EIBAID", "EIBRCODE", "EIBFN"})
+  {
+    auto it = items.find(eib);
+    if(it != items.end())
+      result.push_back(havoc_field(ref_of(it->second), loc));
+  }
+  return result;
+}
+
+void cobol_typecheckt::inject_eib()
+{
+  // Synthesise the CICS EXEC INTERFACE BLOCK (DFHEIBLK), which the integrated
+  // CICS translator injects into the LINKAGE SECTION. Fields are modelled as a
+  // nondeterministic record so references such as EIBCALEN type-check and read
+  // as unknown values (cobol-semantics.md S8; CICS DFHEIBLK layout). Sizes
+  // follow IBM USAGE rules; exact offsets are immaterial as the record is
+  // nondet and never aliased.
+  struct eib_fieldt
+  {
+    const char *name;
+    bool numeric;
+    std::size_t digits;
+    std::size_t chars;
+    const char *usage;
+  };
+  static const std::vector<eib_fieldt> fields = {
+    {"EIBTIME", true, 7, 0, "COMP-3"}, {"EIBDATE", true, 7, 0, "COMP-3"},
+    {"EIBTRNID", false, 0, 4, ""},     {"EIBTASKN", true, 7, 0, "COMP-3"},
+    {"EIBTRMID", false, 0, 4, ""},     {"EIBCPOSN", true, 4, 0, "COMP"},
+    {"EIBCALEN", true, 4, 0, "COMP"},  {"EIBAID", false, 0, 1, ""},
+    {"EIBFN", false, 0, 2, ""},        {"EIBRCODE", false, 0, 6, ""},
+    {"EIBDS", false, 0, 8, ""},        {"EIBREQID", false, 0, 8, ""},
+    {"EIBRSRCE", false, 0, 8, ""},     {"EIBSYNC", false, 0, 1, ""},
+    {"EIBFREE", false, 0, 1, ""},      {"EIBRECV", false, 0, 1, ""},
+    {"EIBATT", false, 0, 1, ""},       {"EIBEOC", false, 0, 1, ""},
+    {"EIBFMH", false, 0, 1, ""},       {"EIBCOMPL", false, 0, 1, ""},
+    {"EIBSIG", false, 0, 1, ""},       {"EIBCONF", false, 0, 1, ""},
+    {"EIBERR", false, 0, 1, ""},       {"EIBERRCD", false, 0, 4, ""},
+    {"EIBSYNRB", false, 0, 1, ""},     {"EIBNODAT", false, 0, 1, ""},
+    {"EIBRESP", true, 8, 0, "COMP"},   {"EIBRESP2", true, 8, 0, "COMP"},
+    {"EIBRLDBK", false, 0, 1, ""}};
+
+  const std::string base = "DFHEIBLK";
+  const irep_idt rec = "cobol::" + program_id + "::" + base;
+  std::size_t off = 0;
+  for(const eib_fieldt &f : fields)
+  {
+    item_infot info;
+    info.record_symbol = rec;
+    info.offset = off;
+    info.is_numeric = f.numeric;
+    info.digits = f.digits;
+    info.char_count = f.chars;
+    info.is_signed = f.numeric;
+    info.byte_size = phys_size_of(f.usage, f.numeric, f.digits, f.chars);
+    items[f.name] = info;
+    all_items.push_back(entryt{f.name, info, {base}});
+    off += info.byte_size;
+  }
+  record_sizes[rec] = std::max<std::size_t>(off, 1);
+
+  symbolt symbol{rec, record_type(rec), COBOL_MODE};
+  symbol.base_name = base;
+  symbol.is_static_lifetime = true;
+  symbol.is_lvalue = true;
+  symbol.is_state_var = true;
+  // No initial value: the EIB is nondeterministic.
+  symbol_table.add(symbol);
 }
 
 stmtt cobol_typecheckt::parse_if()

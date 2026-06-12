@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+EXEC CICS is stubbed: EIB fields resolve as nondet, output operands are
+havoced, and CICS RETURN terminates the path so the trailing false
+assertion is unreachable. See cobol-semantics.md section 8.
