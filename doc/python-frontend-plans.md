@@ -153,10 +153,16 @@ path is **missed** — e.g. `f(x).attr` when `f` returns `None` should raise
 
 ### Any-typed mutable-container by-reference mutation is lost — HIGH PRIORITY (2026-06-12)
 
-**Latent unsoundness (false proof), both back-ends.** A mutable container
+### Any-typed mutable-container by-reference mutation — FIXED for element mutation (2026-06-12)
+
+**Status: RESOLVED for dict/list element mutation** (commit *"python: propagate
+by-reference mutation of containers passed to Any params"*). A residual gap
+remains for length-changing methods (e.g. `list.append`) — see below.
+
+**The bug (was a latent false proof, both back-ends).** A mutable container
 (dict/list) passed to an **unannotated / `Any` (`python_value`) parameter** and
-mutated by the callee does **not** propagate the mutation back to the caller —
-the caller's object keeps its stale pre-call value — and a post-call read folds
+mutated by the callee did **not** propagate the mutation back to the caller —
+the caller's object kept its stale pre-call value — and a post-call read folded
 against that stale value, proving a false assertion:
 
 ```python
@@ -164,34 +170,56 @@ def f(d):          # d unannotated -> python_value parameter
     d["k"] = 9
 m = {"k": 1}
 f(m)
-assert m["k"] == 1   # VERIFICATION SUCCESSFUL (WRONG: CPython has m["k"] == 9)
-assert m["k"] == 9   # VERIFICATION FAILED   (WRONG: should hold)
+assert m["k"] == 1   # was: VERIFICATION SUCCESSFUL (WRONG: CPython has 9)
+assert m["k"] == 9   # was: VERIFICATION FAILED   (WRONG: should hold)
 ```
 
-Verified under the default (refined) back-end *and* `--cvc5`. The **annotated**
-control `def f(d: dict): …` is correct (FAILED for `== 1`, SUCCESSFUL for
-`== 9`): a concrete-container parameter is a by-reference pointer and its
-mutation propagates (and `convert_user_call` already invalidates the caller's
-constant-tracking for it). The `Any`/`python_value` parameter path loses the
-mutation entirely (the dict is reachable only via `python_value.__class_ptr`,
-and the write through it is not modelled as aliasing the caller's object) *and*
-does not invalidate the caller's tracking.
+**Root cause.** The `Any` path wrapped the argument via `wrap_value`, which
+materialises a throwaway *copy* of the container into a temp and wraps its
+address with **no write-back** — so the callee's mutation (applied through
+`python_value.__class_ptr`) hit the discarded copy. The caller's
+constant-tracking for the argument was also not invalidated, so the post-call
+read folded against the literal. (The **annotated** control `def f(d: dict): …`
+was always correct: a concrete-container parameter is a by-reference pointer
+that propagates, via `safe_typecast`'s struct→pointer promotion + post-call
+write-back, and `convert_user_call` already invalidated its tracking.) Under
+`--python-smt-strings` the same shape *crashed* in `lower_byte_operators` /
+`unpack_struct` (byte-unpacking the `smt_string`-keyed dict reached via the
+opaque `__class_ptr` cast — see [#native-byte-ops](#native-byte-ops)).
 
-- **Native manifestation:** under `--python-smt-strings`, the same shape
-  *crashes* instead for `== 9` (`lower_byte_operators` / `unpack_struct` cannot
-  byte-unpack the `smt_string`-keyed dict reached via the opaque `__class_ptr`
-  cast — see [#native-byte-ops](#native-byte-ops)). A crash is *safe* (no false
-  proof); the `== 1` direction still false-proves.
-- **Fix direction (sound + precise):** make the `Any`/`python_value` wrap of a
-  mutable container share it by reference and propagate mutations to the
-  caller's object (as the concrete-container pointer path already does) — which
-  also requires the native byte-op handling above. **Interim sound fix:** havoc
-  the caller's container after a call that passes it to an `Any` parameter the
-  callee may mutate (eliminates the false proof at the cost of precision; note
-  it may turn the native case into the safe crash rather than a verdict).
-  *A first invalidation-only attempt (2026-06-12) did NOT suffice — the loss is
-  at the value level, not just the constant-fold, so havoc/propagation is
-  required.*
+**The fix (sound + precise).** Route a mutable-container *lvalue* argument bound
+to an `Any` parameter through the **same** promote + post-call write-back
+boundary the concrete by-reference path already uses (`safe_typecast`
+struct→pointer), promoting to the **exact** canonical layout the `python_value`
+subscript handlers assume (`dict[str, value]` / `list[value]` — matching
+`python_dict_type(python_string_type(), python_value_type())` in
+`python_converter_assign.cpp`), then wrapping the resulting pointer into the
+tagged union via `make_python_value`. The caller's constant-tracking for the
+argument is invalidated. Because the promoted temp is a clean, field-sensitive
+typed object, this *also* eliminates the native byte-op crash (the opaque
+`__class_ptr` now points at a properly-typed `dict[str, value]`, which symex
+handles field-sensitively rather than byte-reinterpreting). Two lessons that
+shaped the fix: (1) an invalidation-only attempt was insufficient — the loss
+was at the value level, not just the constant-fold; (2) using `dict[value,
+value]` for the promotion silently corrupted via type-punning — the canonical
+key type must be the **string** type the handlers assume, not `value`.
+
+Validated: dict + list element mutation propagate precisely under refined and
+`--cvc5 --python-smt-strings`; the false proof is gone (asserting the stale
+value now FAILS — `regression/python/any-param-dict-byref-falseproof`);
+positive propagation guarded by `any-param-dict-byref` /
+`any-param-list-byref`; native crash-scan 0 crashes; ESBMC sweep
+fallout-neutral (PASS 2929, 0 regressions).
+
+**Residual gap — length-changing methods on an `Any` parameter.** `x.append(y)`
+(and other size-changing mutators) on an `Any`-typed parameter still do **not**
+propagate: e.g. `a=[1,2]; g(a) [g(x): x.append(99)]; assert len(a)==3` fails
+(and `len(a)==2` still false-proves). Element *subscript* mutation propagates;
+the method-dispatch path for size-changing list/set methods does not yet write
+through `__list_ptr` to the shared object. Also out of scope so far: `set`
+arguments, and non-string-keyed dicts (the `python_value` dict handler assumes
+string keys). These are sound-imprecise or latent-false-proof in the same
+family and should reuse the same promote+write-back boundary.
 
 ### Earlier triage history (2026-06-08)
 
@@ -591,21 +619,31 @@ symbolic literal "holes", `re.*` constructors for the constant structure.
 
 ## Native robustness: smt_string members in byte-operated structs  {#native-byte-ops}
 
-**Status: KNOWN GAP (native only; sound — crashes, never a false proof).**
-A struct that embeds an `smt_string` member (e.g. `python_value.__str`, or a
-class/dict struct holding a string) cannot currently be **byte-operated**
+**Status: PARTLY RESOLVED — the dict-by-reference-mutation crash is fixed; a
+general byte-op gap remains for other shapes (native only; sound — crashes,
+never a false proof).**
+
+The original trigger — **dict pass-by-reference *mutation*** through an
+`Any`/`python_value` parameter (`def f(d): d["k"]=v` then asserting the caller
+sees the mutation) — **no longer crashes** and now propagates *precisely* under
+native (see [the §0 by-reference fix](#false-proofs)): the argument is promoted
+to a clean, field-sensitive `dict[str, value]` temp instead of being reached
+via a byte-reinterpreting opaque `__class_ptr` cast, so no `byte_extract` /
+`byte_update` is generated for it.
+
+The underlying lowering limitation is still present for *other* shapes: a struct
+that embeds an `smt_string` member (e.g. `python_value.__str`, or a class/dict
+struct holding a string) cannot be **byte-operated**
 (`byte_extract`/`byte_update` → `lower_byte_operators`), because `smt_string`
 has no fixed bit-width and the lowering requires non-constant-width members to
 come last: `lower_byte_operators.cpp` fires *"members of non-constant width
-should come last in a struct"*. Surfaces on **dict pass-by-reference
-*mutation*** under native (`def f(d): d["k"]=v` then asserting the caller sees
-the mutation), which routes the dict struct through a byte op. The
-`regression/python` corpus (541/541 under native) does **not** exercise this
-shape, so it is latent. Note dict-by-ref subscript-assign *mutation propagation*
-is **also imprecise under the refined default** for the same shape (verifies
-FAILED), so §5's "DONE" covers by-reference *passing/promotion*, not this
-mutate-and-observe pattern. Candidate fixes (both shared-code, non-trivial):
-(a) teach `lower_byte_operators` to treat `smt_string` members opaquely;
+should come last in a struct"*. The `regression/python` corpus (543/543 under
+native, 0 crashes) does not currently exercise a remaining instance, so it is
+latent. Candidate fixes (both shared-code, non-trivial):
+(a) teach `lower_byte_operators` to treat `smt_string` members opaquely (NB: a
+naive "replace the unlowerable byte op with a fresh nondet" is **unsound** when
+the byte op is a write whose effect must alias a caller object — it silently
+drops the mutation; only safe for genuinely value-less reads);
 (b) order `smt_string` members last in the affected struct layouts. Lower
 priority than the regex items; recorded so it is not mistaken for soundness.
 - **Wave 3 — native regex axioms in the string-refinement loop: NO PLAN
