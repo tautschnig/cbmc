@@ -4335,6 +4335,26 @@ exprt python_convertert::convert_expression(const jsont &expr)
         exprt acc = parts[0];
         for(std::size_t i = 1; i < parts.size(); i++)
         {
+          if(use_smt_string_native)
+          {
+            // Native SMT-String back-end (Plan A): chain via native str.++.
+            const irep_idt fn{ID_cprover_string_smt_strcat_func};
+            if(symbol_table.lookup(fn) == nullptr)
+            {
+              std::vector<typet> ats{acc.type(), parts[i].type()};
+              symbolt fs{
+                fn,
+                mathematical_function_typet(std::move(ats), smt_string_typet{}),
+                "python"};
+              fs.base_name = id2string(fn);
+              symbol_table.add(fs);
+            }
+            function_application_exprt app{
+              symbol_table.lookup_ref(fn).symbol_expr(), {acc, parts[i]}};
+            app.type() = smt_string_typet{};
+            acc = std::move(app);
+            continue;
+          }
           acc = emit_string_function(
             ID_cprover_string_concat_func,
             {to_struct(acc), to_struct(parts[i])},
