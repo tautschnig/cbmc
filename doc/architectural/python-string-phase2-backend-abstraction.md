@@ -2132,3 +2132,40 @@ f-strings; 506/540 corpus tests OK, 29 crashes on string-in-union/object/
 container code); the byte-array hybrid remains the robust `--python-smt-strings`
 fallback; refined stays the default. Retiring the hybrid is blocked on the
 value-model rework above, now precisely diagnosed.
+
+## Plan A — viability re-assessment: migration IS tractable (2026-06-12, corrects prior entry)
+
+The prior entry concluded crash-free native was blocked on a by-reference
+value-model rework. **That diagnosis was wrong.** Viability experiments show the
+migration is a bounded, mechanical sequence of site fixes — no representation
+redesign needed.
+
+Method: re-applied the flip, then isolated crashes with minimal probes +
+goto dumps instead of trusting the symex backtrace category. Findings:
+- Direct string ops already work under the flip: subscript, slice,
+  str-in-list, dict-string-value, untyped str params/returns, tuples.
+- The 73 `to_struct_type` crashes were **not** the `python_value` by-value
+  embedding per se. Root cause: `make_python_value` initialised the default
+  `__str` slot with a *struct_exprt* (`{0, NULL}`) while the slot type is now
+  `smt_string` — a malformed struct-expr that crashes symex's
+  `assign_from_struct` on *every* `python_value` (e.g. `x: Any = 42`). One
+  native-aware line (empty `smt_string` constant) fixed it.
+
+Measured trajectory (corpus crash count, 540 tests):
+- flip only: **107**
+- + `make_python_value` default `__str` native-aware: **42** (−65)
+- + native string truthiness (`str.len`, via `native_or_member_string_length`):
+  **37** (−5)
+
+Each fix removes a category predictably. The remaining 37 are the same shape —
+consuming `.length`/`.data` sites in `convert_compare`, `convert_for`,
+`try_builtin_call`, `try_nondet_call`, `convert_user_call`,
+`convert_aug_assign` — each resolved by routing through the native length /
+`str.*` helpers already established. Plus a handful of producer sites (7
+`to_struct_type`) and 2 `convert_typecast` boundaries.
+
+**Verdict: VIABLE.** Completing crash-free native is an incremental,
+low-risk grind (no core-representation refactor), convergent toward 0. The
+`python_value.__str` slot can stay **inline** (the refined-perf rationale for
+inlining is moot under native, and inline avoids a pointer hop). Experiment
+preserved on git stash ("WIP: native string type-flip VIABLE …").
