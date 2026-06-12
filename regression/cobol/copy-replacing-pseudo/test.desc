@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+COPY ... REPLACING with pseudo-text forms partial words from the
+fragments it leaves adjacent. See IBM LR "COPY statement".

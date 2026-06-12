@@ -116,6 +116,10 @@ cobol_scan(std::istream &in, const std::string &file_name)
 
     std::size_t i = 0;
     const std::size_t n = code.size();
+    // Whether the previous character was a separator (space, comma, etc.) or
+    // start-of-line; used to record token adjacency (glued_to_prev). Tokens on
+    // different lines are never glued.
+    bool prev_was_space = true;
     while(i < n)
     {
       const char c = code[i];
@@ -123,12 +127,15 @@ cobol_scan(std::istream &in, const std::string &file_name)
       // Whitespace.
       if(std::isspace(static_cast<unsigned char>(c)) != 0)
       {
+        prev_was_space = true;
         ++i;
         continue;
       }
 
       cobol_tokent token;
       token.location = make_location(i + 7);
+      token.glued_to_prev = !prev_was_space;
+      prev_was_space = false;
 
       // Hexadecimal-alphanumeric literal X"hh..." / X'hh...' (IBM LR
       // "Hexadecimal-alphanumeric literals"): the quote must immediately
@@ -345,6 +352,7 @@ cobol_scan(std::istream &in, const std::string &file_name)
       case ',':
       case ';':
         // COBOL treats comma and semicolon as optional separators; drop them.
+        prev_was_space = true;
         ++i;
         continue;
       case '>':
@@ -381,6 +389,7 @@ cobol_scan(std::istream &in, const std::string &file_name)
         break;
       default:
         // Unknown character: skip it.
+        prev_was_space = true;
         ++i;
         continue;
       }
@@ -479,8 +488,19 @@ std::vector<cobol_tokent> apply_replacing(
         }
       if(eq)
       {
-        for(const auto &r : pair.second)
-          out.push_back(r);
+        // Splice the replacement. The first replacement token inherits the
+        // adjacency of the first matched token, and every replacement token is
+        // flagged so a partial word it forms with adjacent fragments can be
+        // re-joined (see reflow_partial_words). The token following the match
+        // keeps its own glued_to_prev, which still records "no space here".
+        for(std::size_t r = 0; r < pair.second.size(); ++r)
+        {
+          cobol_tokent t = pair.second[r];
+          t.from_replacement = true;
+          if(r == 0)
+            t.glued_to_prev = in[i].glued_to_prev;
+          out.push_back(t);
+        }
         i += pat.size();
         matched = true;
         break;
@@ -488,6 +508,58 @@ std::vector<cobol_tokent> apply_replacing(
     }
     if(!matched)
       out.push_back(in[i++]);
+  }
+  return out;
+}
+
+/// Re-join word fragments that a pseudo-text REPLACING left adjacent into a
+/// single word (IBM LR "COPY statement": pseudo-text replacement operates on
+/// source text, so e.g. FLG-(TESTVAR1)-NOT-OK with (TESTVAR1) -> ACCT-STATUS
+/// yields the one word FLG-ACCT-STATUS-NOT-OK). A maximal run of glued
+/// word-fragment tokens (a word, an unsigned integer, or a hyphen separator)
+/// is merged only when it contains a token spliced in by REPLACING, so that
+/// ordinary subscripted references such as WS-X(I) are left untouched.
+std::vector<cobol_tokent>
+reflow_partial_words(const std::vector<cobol_tokent> &in)
+{
+  const auto is_fragment = [](const cobol_tokent &t)
+  {
+    return t.kind == cobol_token_kindt::WORD ||
+           t.kind == cobol_token_kindt::NUMBER ||
+           (t.kind == cobol_token_kindt::PUNCT && t.text == "-");
+  };
+
+  std::vector<cobol_tokent> out;
+  std::size_t i = 0;
+  while(i < in.size())
+  {
+    if(is_fragment(in[i]))
+    {
+      // Maximal run starting at i: subsequent fragments must be glued.
+      std::size_t j = i + 1;
+      bool has_replacement = in[i].from_replacement;
+      while(j < in.size() && is_fragment(in[j]) && in[j].glued_to_prev)
+      {
+        has_replacement = has_replacement || in[j].from_replacement;
+        ++j;
+      }
+      if(j - i >= 2 && has_replacement)
+      {
+        cobol_tokent merged = in[i];
+        merged.kind = cobol_token_kindt::WORD;
+        merged.from_replacement = false;
+        std::string text;
+        for(std::size_t k = i; k < j; ++k)
+          text += in[k].text;
+        merged.text = text;
+        out.push_back(merged);
+        i = j;
+        continue;
+      }
+    }
+    cobol_tokent t = in[i++];
+    t.from_replacement = false;
+    out.push_back(t);
   }
   return out;
 }
@@ -634,6 +706,7 @@ std::vector<cobol_tokent> cobol_expand_copy(
           if(!sub.empty() && sub.back().kind == cobol_token_kindt::END_OF_FILE)
             sub.pop_back();
           sub = apply_replacing(sub, replacing);
+          sub = reflow_partial_words(sub);
           for(auto &tok : sub)
             out.push_back(std::move(tok));
         }
@@ -658,6 +731,7 @@ std::vector<cobol_tokent> cobol_expand_copy(
     if(!sub.empty() && sub.back().kind == cobol_token_kindt::END_OF_FILE)
       sub.pop_back();
     sub = apply_replacing(sub, replacing);
+    sub = reflow_partial_words(sub);
     for(auto &tok : sub)
       out.push_back(std::move(tok));
   }

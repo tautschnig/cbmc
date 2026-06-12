@@ -44,6 +44,14 @@ struct cobol_tokent
   /// matching is case-insensitive; for STRING it is the unquoted contents.
   std::string text;
   source_locationt location;
+  /// True if this token immediately follows the previous token on the same
+  /// line with no intervening space. COPY REPLACING is defined on source text
+  /// (IBM LR "COPY statement"); preserving adjacency lets a pseudo-text
+  /// replacement re-form a partial word from the fragments it leaves adjacent.
+  bool glued_to_prev = false;
+  /// True if this token was spliced in by a COPY REPLACING substitution. Used
+  /// transiently to re-join word fragments only across replacement seams.
+  bool from_replacement = false;
 };
 
 /// Tokenise a COBOL source stream.

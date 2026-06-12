@@ -370,7 +370,7 @@ CardDemo blockers, in order, are:
 2. A long tail (`MOVE without a target`, a few parse edges, and
    numeric/alphanumeric comparisons).
 
-As of this milestone, **27 of the 44 CardDemo programs reach
+As of this milestone, **28 of the 44 CardDemo programs reach
 `VERIFICATION SUCCESSFUL`**, and another ~9 parse and lower to GOTO
 fully but exceed the default bound during bounded model checking (batch
 file loops). The remaining failures are a small, well-understood long
@@ -382,13 +382,32 @@ tail:
   not-yet-supported **recursive `PERFORM`**, and one program
   (`COPAUA0C`) that renames an MQ structure with `COPY ... REPLACING`
   and then qualifies a field by the renamed group.
-- `COPY ... REPLACING` with **pseudo-text partial-word** replacement
-  (e.g. `CSSETATY` builds `FLG-(TESTVAR1)-NOT-OK` into
-  `FLG-TRANFILTER-NOT-OK`): a character-level text-manipulation feature
-  of COPY not yet implemented (IBM LR "COPY statement", REPLACING with
-  pseudo-text).
 - A couple of programs that reference items defined only in copybooks
-  they do not themselves COPY.
+  they do not themselves COPY (`WS-DB2-ERROR`, `WS-DECL-RSN-IDX`).
+
+### Architectural note: REPLACING is a source-text operation
+
+`COPY ... REPLACING` is defined on source *text* (IBM LR "COPY
+statement"), not on a token stream. With pseudo-text it can replace a
+fragment of a word: the CardDemo screen-handling copybook `CSSETATY`
+contains `FLG-(TESTVAR1)-NOT-OK` and is copied with
+`REPLACING ==(TESTVAR1)== BY ==ACCT-STATUS==`, which must yield the
+single data-name `FLG-ACCT-STATUS-NOT-OK`. A token-level REPLACING
+cannot express this, because tokenisation has already discarded the fact
+that `FLG-`, `(TESTVAR1)` and `-NOT-OK` were written with no intervening
+spaces.
+
+Rather than re-plumb the whole pipeline to operate on text, the
+proportionate change was to make tokens carry the missing information:
+the scanner records `glued_to_prev` (no separator before this token),
+`apply_replacing` marks spliced tokens and propagates the matched
+region's adjacency, and a `reflow_partial_words` pass re-joins a maximal
+run of glued word-fragment tokens into one word — but only when the run
+contains a replacement, so ordinary subscripts like `WS-X(I)` are left
+untouched. The general principle: when an operation is defined on a
+representation earlier than the one you hold, either move the operation
+earlier or carry forward enough of the earlier representation to
+reconstruct its result.
 
 ### Architectural note: a single operand abstraction
 
