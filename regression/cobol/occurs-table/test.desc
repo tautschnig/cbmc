@@ -1,0 +1,9 @@
+CORE
+main.cob
+--unwind 8
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Fixed OCCURS table: subscripted MOVE target and subscripted read in an
+expression, 1-based subscripts lowered to 0-based array indices.

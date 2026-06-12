@@ -77,6 +77,8 @@ struct item_infot
   std::size_t scale = 0;
   bool is_signed = false;
   std::size_t char_count = 0;
+  bool is_table = false;  ///< has a fixed OCCURS clause
+  std::size_t occurs = 0; ///< number of elements when is_table
 };
 
 /// 88-level condition name: value ranges/values over its parent item.
@@ -92,6 +94,17 @@ struct valuet
 {
   exprt expr;
   std::size_t scale = 0;
+};
+
+// Forward declaration; defined above.
+struct item_infot;
+
+/// A reference to a data item, possibly subscripted (e.g. WS-TABLE(I)). The
+/// expr is usable both as an rvalue and as an assignment target.
+struct reft
+{
+  const item_infot *info = nullptr;
+  exprt expr;
 };
 
 /// A parsed VALUE / 88-level literal, before interpretation against the
@@ -466,6 +479,10 @@ protected:
   valuet parse_primary();
   valuet parse_operand();
   std::vector<valuet> parse_operand_list();
+  reft parse_ref();
+  typet element_type(const item_infot &item) const;
+  typet symbol_type(const item_infot &item) const;
+  const item_infot *item_of(const exprt &e) const;
 
   exprt parse_condition();
   exprt parse_and_condition();
@@ -488,7 +505,11 @@ protected:
   std::vector<stmtt> parse_call();
   void skip_to_sentence_end();
 
-  stmtt make_assign(const item_infot &item, valuet v, source_locationt loc);
+  stmtt make_assign_ref(
+    const item_infot &item,
+    exprt lhs,
+    valuet v,
+    source_locationt loc);
 
   // ---- code generation ----
   void build_function();
@@ -883,6 +904,8 @@ void cobol_typecheckt::parse_data_item()
   std::string pic;
   bool has_pic = false;
   bool has_value = false;
+  bool is_table = false;
+  std::size_t occurs = 0;
   value_spect value_spec;
 
   while(!is_kind(cobol_token_kindt::PERIOD) && !at_eof())
@@ -901,7 +924,14 @@ void cobol_typecheckt::parse_data_item()
     }
     else if(eat_word("OCCURS"))
     {
-      error("OCCURS is not yet supported");
+      if(cur().kind != cobol_token_kindt::NUMBER)
+        error("expected a count after OCCURS");
+      occurs = static_cast<std::size_t>(std::stoul(cur().text));
+      advance();
+      eat_word("TIMES");
+      if(is_word("DEPENDING"))
+        error("OCCURS DEPENDING ON is not yet supported");
+      is_table = true;
     }
     else if(eat_word("REDEFINES"))
     {
@@ -928,12 +958,11 @@ void cobol_typecheckt::parse_data_item()
   info.scale = scale;
   info.is_signed = is_signed;
   info.char_count = char_count;
+  info.is_table = is_table;
+  info.occurs = occurs;
   info.symbol_name = "cobol::" + program_id + "::" + name;
 
-  typet type =
-    is_numeric ? static_cast<typet>(cobol_value_type())
-               : static_cast<typet>(array_typet{
-                   unsignedbv_typet{8}, from_integer(char_count, size_type())});
+  const typet type = symbol_type(info);
 
   symbolt symbol{info.symbol_name, type, COBOL_MODE};
   symbol.base_name = name;
@@ -941,12 +970,12 @@ void cobol_typecheckt::parse_data_item()
   symbol.is_lvalue = true;
   symbol.is_state_var = true;
   symbol.location = loc;
-  if(has_value)
+  if(has_value && !is_table)
   {
     if(is_numeric)
     {
       if(auto v = spec_to_numeric(value_spec, scale))
-        symbol.value = from_integer(*v, type);
+        symbol.value = from_integer(*v, element_type(info));
     }
     else
     {
@@ -962,6 +991,59 @@ void cobol_typecheckt::parse_data_item()
 // ---------------------------------------------------------------------------
 // expressions
 // ---------------------------------------------------------------------------
+
+typet cobol_typecheckt::element_type(const item_infot &item) const
+{
+  if(item.is_numeric)
+    return cobol_value_type();
+  return array_typet{
+    unsignedbv_typet{8}, from_integer(item.char_count, size_type())};
+}
+
+typet cobol_typecheckt::symbol_type(const item_infot &item) const
+{
+  const typet elem = element_type(item);
+  if(item.is_table)
+    return array_typet{elem, from_integer(item.occurs, size_type())};
+  return elem;
+}
+
+const item_infot *cobol_typecheckt::item_of(const exprt &e) const
+{
+  irep_idt id;
+  if(e.id() == ID_symbol)
+    id = to_symbol_expr(e).get_identifier();
+  else if(e.id() == ID_index && to_index_expr(e).array().id() == ID_symbol)
+    id = to_symbol_expr(to_index_expr(e).array()).get_identifier();
+  else
+    return nullptr;
+  for(const auto &pair : items)
+    if(pair.second.symbol_name == id)
+      return &pair.second;
+  return nullptr;
+}
+
+reft cobol_typecheckt::parse_ref()
+{
+  const item_infot &item = lookup_item(cur().text);
+  advance();
+  exprt base = symbol_exprt{item.symbol_name, symbol_type(item)};
+  if(is_kind(cobol_token_kindt::LPAREN))
+  {
+    if(!item.is_table)
+      error("subscript on a non-table item");
+    advance();
+    valuet idx = parse_expr();
+    if(!is_kind(cobol_token_kindt::RPAREN))
+      error("expected ')' after subscript");
+    advance();
+    // COBOL subscripts are 1-based; the IR array is 0-based.
+    const exprt zero_based = minus_exprt{
+      rescale(idx.expr, idx.scale, 0), from_integer(1, cobol_value_type())};
+    base = index_exprt{base, zero_based};
+  }
+  return reft{&item, base};
+}
 
 valuet cobol_typecheckt::parse_primary()
 {
@@ -982,12 +1064,12 @@ valuet cobol_typecheckt::parse_primary()
   }
   if(cur().kind == cobol_token_kindt::WORD)
   {
-    const item_infot &item = lookup_item(cur().text);
-    if(!item.is_numeric)
-      error("non-numeric item '" + cur().text + "' used in expression");
-    advance();
-    return valuet{
-      symbol_exprt{item.symbol_name, cobol_value_type()}, item.scale};
+    reft r = parse_ref();
+    if(!r.info->is_numeric)
+      error(
+        "non-numeric item '" + id2string(r.info->symbol_name) +
+        "' used in expression");
+    return valuet{r.expr, r.info->scale};
   }
   error("expected an operand but got '" + cur().text + "'");
 }
@@ -1217,15 +1299,16 @@ exprt cobol_typecheckt::parse_condition()
 // statements
 // ---------------------------------------------------------------------------
 
-stmtt cobol_typecheckt::make_assign(
+stmtt cobol_typecheckt::make_assign_ref(
   const item_infot &item,
+  exprt lhs,
   valuet v,
   source_locationt loc)
 {
   stmtt s;
   s.kind = stmtt::kindt::ASSIGN;
   s.location = loc;
-  s.lhs = symbol_exprt{item.symbol_name, cobol_value_type()};
+  s.lhs = std::move(lhs);
   s.rhs = store_to_item(item, std::move(v));
   return s;
 }
@@ -1345,9 +1428,8 @@ std::vector<stmtt> cobol_typecheckt::parse_move()
   std::vector<stmtt> result;
   while(is_item_word())
   {
-    const item_infot &item = lookup_item(cur().text);
-    advance();
-    result.push_back(make_assign(item, src, loc));
+    reft r = parse_ref();
+    result.push_back(make_assign_ref(*r.info, r.expr, src, loc));
   }
   if(result.empty())
     error("MOVE without a target");
@@ -1371,41 +1453,36 @@ std::vector<stmtt> cobol_typecheckt::parse_add()
   std::vector<stmtt> result;
   if(eat_word("TO"))
   {
-    std::vector<std::string> targets;
+    std::vector<reft> targets;
     while(is_item_word())
-    {
-      targets.push_back(cur().text);
-      advance();
-    }
+      targets.push_back(parse_ref());
     if(eat_word("GIVING"))
     {
       // ADD ops TO addend GIVING results: result = sum + addend
       if(targets.size() != 1)
         error("ADD ... TO ... GIVING expects a single addend");
-      valuet addend{
-        symbol_exprt{lookup_item(targets[0]).symbol_name, cobol_value_type()},
-        lookup_item(targets[0]).scale};
+      valuet addend{targets[0].expr, targets[0].info->scale};
       align(sum, addend);
       valuet total{plus_exprt{sum.expr, addend.expr}, sum.scale};
       while(is_item_word())
       {
-        const item_infot &r = lookup_item(cur().text);
-        advance();
-        result.push_back(make_assign(r, total, loc));
+        reft r = parse_ref();
+        result.push_back(make_assign_ref(*r.info, r.expr, total, loc));
       }
     }
     else
     {
       // ADD ops TO targets: each target += sum
-      for(const std::string &t : targets)
+      for(const reft &t : targets)
       {
-        const item_infot &item = lookup_item(t);
-        valuet cur_val{
-          symbol_exprt{item.symbol_name, cobol_value_type()}, item.scale};
+        valuet cur_val{t.expr, t.info->scale};
         valuet s = sum;
         align(cur_val, s);
-        result.push_back(make_assign(
-          item, valuet{plus_exprt{cur_val.expr, s.expr}, s.scale}, loc));
+        result.push_back(make_assign_ref(
+          *t.info,
+          t.expr,
+          valuet{plus_exprt{cur_val.expr, s.expr}, s.scale},
+          loc));
       }
     }
   }
@@ -1413,9 +1490,8 @@ std::vector<stmtt> cobol_typecheckt::parse_add()
   {
     while(is_item_word())
     {
-      const item_infot &r = lookup_item(cur().text);
-      advance();
-      result.push_back(make_assign(r, sum, loc));
+      reft r = parse_ref();
+      result.push_back(make_assign_ref(*r.info, r.expr, sum, loc));
     }
   }
   else
@@ -1441,39 +1517,33 @@ std::vector<stmtt> cobol_typecheckt::parse_subtract()
   }
   expect_word("FROM");
 
-  std::vector<std::string> minuends;
+  std::vector<reft> minuends;
   while(is_item_word())
-  {
-    minuends.push_back(cur().text);
-    advance();
-  }
+    minuends.push_back(parse_ref());
 
   std::vector<stmtt> result;
   if(eat_word("GIVING"))
   {
     if(minuends.size() != 1)
       error("SUBTRACT ... FROM ... GIVING expects a single minuend");
-    const item_infot &m = lookup_item(minuends[0]);
-    valuet mv{symbol_exprt{m.symbol_name, cobol_value_type()}, m.scale};
+    valuet mv{minuends[0].expr, minuends[0].info->scale};
     align(mv, sum);
     valuet diff{minus_exprt{mv.expr, sum.expr}, mv.scale};
     while(is_item_word())
     {
-      const item_infot &r = lookup_item(cur().text);
-      advance();
-      result.push_back(make_assign(r, diff, loc));
+      reft r = parse_ref();
+      result.push_back(make_assign_ref(*r.info, r.expr, diff, loc));
     }
   }
   else
   {
-    for(const std::string &t : minuends)
+    for(const reft &t : minuends)
     {
-      const item_infot &item = lookup_item(t);
-      valuet mv{symbol_exprt{item.symbol_name, cobol_value_type()}, item.scale};
+      valuet mv{t.expr, t.info->scale};
       valuet s = sum;
       align(mv, s);
-      result.push_back(
-        make_assign(item, valuet{minus_exprt{mv.expr, s.expr}, s.scale}, loc));
+      result.push_back(make_assign_ref(
+        *t.info, t.expr, valuet{minus_exprt{mv.expr, s.expr}, s.scale}, loc));
     }
   }
   if(result.empty())
@@ -1494,20 +1564,17 @@ std::vector<stmtt> cobol_typecheckt::parse_multiply()
   {
     while(is_item_word())
     {
-      const item_infot &r = lookup_item(cur().text);
-      advance();
-      result.push_back(make_assign(r, product, loc));
+      reft r = parse_ref();
+      result.push_back(make_assign_ref(*r.info, r.expr, product, loc));
     }
   }
   else
   {
-    // MULTIPLY a BY b : b = a * b (b must be an item)
-    if(b.expr.id() != ID_symbol)
+    // MULTIPLY a BY b : b = a * b (b must be a data item)
+    const item_infot *t = item_of(b.expr);
+    if(t == nullptr)
       error("MULTIPLY without GIVING requires an item operand");
-    const irep_idt id = to_symbol_expr(b.expr).get_identifier();
-    for(const auto &pair : items)
-      if(pair.second.symbol_name == id)
-        result.push_back(make_assign(pair.second, product, loc));
+    result.push_back(make_assign_ref(*t, b.expr, product, loc));
   }
   if(result.empty())
     error("MULTIPLY without a target");
@@ -1530,19 +1597,16 @@ std::vector<stmtt> cobol_typecheckt::parse_divide()
     {
       while(is_item_word())
       {
-        const item_infot &r = lookup_item(cur().text);
-        advance();
-        result.push_back(make_assign(r, quotient, loc));
+        reft r = parse_ref();
+        result.push_back(make_assign_ref(*r.info, r.expr, quotient, loc));
       }
     }
     else
     {
-      if(dividend.expr.id() != ID_symbol)
+      const item_infot *t = item_of(dividend.expr);
+      if(t == nullptr)
         error("DIVIDE without GIVING requires an item operand");
-      const irep_idt id = to_symbol_expr(dividend.expr).get_identifier();
-      for(const auto &pair : items)
-        if(pair.second.symbol_name == id)
-          result.push_back(make_assign(pair.second, quotient, loc));
+      result.push_back(make_assign_ref(*t, dividend.expr, quotient, loc));
     }
   }
   else if(eat_word("BY"))
@@ -1554,9 +1618,8 @@ std::vector<stmtt> cobol_typecheckt::parse_divide()
     expect_word("GIVING");
     while(is_item_word())
     {
-      const item_infot &r = lookup_item(cur().text);
-      advance();
-      result.push_back(make_assign(r, quotient, loc));
+      reft r = parse_ref();
+      result.push_back(make_assign_ref(*r.info, r.expr, quotient, loc));
     }
   }
   else
@@ -1571,11 +1634,10 @@ std::vector<stmtt> cobol_typecheckt::parse_compute()
 {
   const source_locationt loc = cur().location;
   expect_word("COMPUTE");
-  std::vector<std::string> targets;
+  std::vector<reft> targets;
   while(is_item_word())
   {
-    targets.push_back(cur().text);
-    advance();
+    targets.push_back(parse_ref());
     eat_word("ROUNDED");
   }
   if(!is_kind(cobol_token_kindt::PUNCT) || cur().text != "=")
@@ -1583,8 +1645,8 @@ std::vector<stmtt> cobol_typecheckt::parse_compute()
   advance();
   valuet v = parse_expr();
   std::vector<stmtt> result;
-  for(const std::string &t : targets)
-    result.push_back(make_assign(lookup_item(t), v, loc));
+  for(const reft &t : targets)
+    result.push_back(make_assign_ref(*t.info, t.expr, v, loc));
   if(result.empty())
     error("COMPUTE without a target");
   return result;
