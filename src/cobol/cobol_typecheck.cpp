@@ -2839,13 +2839,14 @@ std::vector<stmtt> cobol_typecheckt::parse_call()
 {
   const source_locationt loc = cur().location;
   expect_word("CALL");
-  if(cur().kind != cobol_token_kindt::STRING)
-    error("only static CALL with a literal program name is supported");
-  const std::string name = cur().text;
-  advance();
 
-  if(name == "__CPROVER_assert" || name == "__CPROVER_assume")
+  // The CPROVER verification primitives, exposed via the static-CALL syntax.
+  if(
+    cur().kind == cobol_token_kindt::STRING &&
+    (cur().text == "__CPROVER_assert" || cur().text == "__CPROVER_assume"))
   {
+    const std::string name = cur().text;
+    advance();
     expect_word("USING");
     exprt cond = parse_condition();
     stmtt s;
@@ -2856,7 +2857,50 @@ std::vector<stmtt> cobol_typecheckt::parse_call()
     return {s};
   }
 
-  error("CALL to '" + name + "' is not supported");
+  // Any other CALL is to a separately-compiled program that the frontend does
+  // not link. We stub it (approach.md "day-one feature scope"): a called
+  // program may modify its BY REFERENCE arguments and its RETURNING value, so
+  // those receivers are havoced; BY CONTENT / BY VALUE arguments are not
+  // modified at the caller. The program-name operand (a literal or, for a
+  // dynamic call, a data item) is consumed.
+  if(
+    cur().kind == cobol_token_kindt::STRING ||
+    cur().kind == cobol_token_kindt::WORD)
+    advance();
+
+  std::vector<stmtt> result;
+  if(eat_word("USING"))
+  {
+    bool by_reference = true; // BY REFERENCE is the default
+    while(!at_eof())
+    {
+      if(eat_word("BY"))
+      {
+        if(eat_word("REFERENCE"))
+          by_reference = true;
+        else if(eat_word("CONTENT") || eat_word("VALUE"))
+          by_reference = false;
+        continue;
+      }
+      if(is_item_word())
+      {
+        reft r = parse_ref();
+        if(by_reference)
+          result.push_back(havoc_field(r, loc));
+        continue;
+      }
+      break;
+    }
+  }
+  if(eat_word("RETURNING") || eat_word("GIVING"))
+  {
+    if(is_item_word())
+    {
+      reft r = parse_ref();
+      result.push_back(havoc_field(r, loc));
+    }
+  }
+  return result;
 }
 
 std::vector<stmtt> cobol_typecheckt::parse_set()

@@ -311,9 +311,10 @@ clean and use curly-brace constructor syntax.
   editing (formatting) semantics.
 - `EXEC CICS` is stubbed (output operands and EIB status fields nondet;
   RETURN/XCTL terminate; a nondet EXEC INTERFACE BLOCK is synthesised).
-  `EXEC SQL`/`EXEC DLI` are stubbed the same way but untested. Static
-  `CALL "program"` to another compilation unit is not yet linked, and
-  `DFHCOMMAREA` is not injected (programs declaring it themselves work).
+  `EXEC SQL`/`EXEC DLI` are stubbed the same way but untested. A `CALL`
+  to a separately-compiled program is stubbed (its `BY REFERENCE`
+  arguments and `RETURNING` value are havoced); `DFHCOMMAREA` is not
+  injected (programs declaring it themselves work).
 - The `LENGTH OF` special register and `FUNCTION LENGTH` give the exact
   byte size; `DFHRESP`/`DFHVALUE` are distinct constants; the SQLCA
   (`SQLCODE`, …) is a nondet synthesised record. Other intrinsics
@@ -364,14 +365,14 @@ nondet EIB), edited PICTUREs, subfield subscripting inside `OCCURS`
 groups, and reference modification are now supported. The remaining
 CardDemo blockers, in order, are:
 
-1. **Static `CALL "program"`** to another compilation unit (10).
+1. **`MOVE`/`ADD` with an unresolved target** (`MOVE`/`ADD without a
+   target`) — typically a receiver the frontend does not resolve.
 2. **Unknown data items** (8) — residual `DFHCOMMAREA` and BMS map
    fields the frontend does not synthesise.
-3. **`MOVE`/`ADD` with an unresolved target**.
 
-As of this milestone, **7 CardDemo programs reach `VERIFICATION
+As of this milestone, **10 CardDemo programs reach `VERIFICATION
 SUCCESSFUL`** — they parse, lower to GOTO and complete bounded model
-checking end-to-end.
+checking end-to-end (a `CALL` to another program is stubbed).
 
 Registering the frontend with the other tools (`goto-cc`,
 `goto-instrument`, …) remains a small follow-up.

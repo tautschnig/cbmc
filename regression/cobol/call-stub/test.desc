@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+A CALL to a separately-compiled program is stubbed: BY REFERENCE
+arguments are havoced, other storage is unchanged. See approach.md
+"day-one feature scope".
