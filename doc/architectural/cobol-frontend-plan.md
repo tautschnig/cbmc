@@ -370,11 +370,22 @@ CardDemo blockers, in order, are:
 2. A long tail (`MOVE without a target`, a few parse edges, and
    numeric/alphanumeric comparisons).
 
-As of this milestone, **25 of the 44 CardDemo programs reach
-`VERIFICATION SUCCESSFUL`**, and another ~6 parse and lower to GOTO
+As of this milestone, **27 of the 44 CardDemo programs reach
+`VERIFICATION SUCCESSFUL`**, and another ~9 parse and lower to GOTO
 fully but exceed the default bound during bounded model checking (batch
-file loops). The remaining failures are a long tail: a few fields in
-copybooks not on the search path and a handful of parser edges.
+file loops). The remaining failures are a small, well-understood long
+tail:
+
+- MQ object-descriptor fields (`MQOD-*`, `MQOT-*`): more
+  subsystem-supplied copybooks — the case for the bundled copybook
+  library described above, rather than yet more hand-coded synthesis.
+- `COPY ... REPLACING` with **pseudo-text partial-word** replacement
+  (e.g. `CSSETATY` builds `FLG-(TESTVAR1)-NOT-OK` into
+  `FLG-TRANFILTER-NOT-OK`): a character-level text-manipulation feature
+  of COPY not yet implemented (IBM LR "COPY statement", REPLACING with
+  pseudo-text).
+- A couple of programs that reference items defined only in copybooks
+  they do not themselves COPY.
 
 ### Architectural note: a single operand abstraction
 
