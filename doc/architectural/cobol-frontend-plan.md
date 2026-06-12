@@ -370,20 +370,41 @@ CardDemo blockers, in order, are:
 2. A long tail (`MOVE without a target`, a few parse edges, and
    numeric/alphanumeric comparisons).
 
-As of this milestone, **28 of the 44 CardDemo programs reach
-`VERIFICATION SUCCESSFUL`**, and another ~9 parse and lower to GOTO
+As of this milestone, **29 of the 44 CardDemo programs reach
+`VERIFICATION SUCCESSFUL`**, and another ~11 parse and lower to GOTO
 fully but exceed the default bound during bounded model checking (batch
-file loops). The remaining failures are a small, well-understood long
-tail:
+file loops and the MQ programs). The remaining hard failures are a small
+long tail:
 
-- The IBM MQ copybooks (`MQOD-*`, `MQOT-*`, `MQTM-*`, …) are now
-  provided by the bundled copybook library (see below); the MQ programs
-  consequently advance past copybook resolution to later blockers — a
-  not-yet-supported **recursive `PERFORM`**, and one program
-  (`COPAUA0C`) that renames an MQ structure with `COPY ... REPLACING`
-  and then qualifies a field by the renamed group.
-- A couple of programs that reference items defined only in copybooks
-  they do not themselves COPY (`WS-DB2-ERROR`, `WS-DECL-RSN-IDX`).
+- Two programs (`COTRTLIC`, `COPAUS1C`) that reference items
+  (`WS-DB2-ERROR`, `WS-DECL-RSN-IDX`) defined only in copybooks they do
+  not themselves COPY.
+
+The IBM MQ programs (`COACCT01`, `CODATE01`, `COPAUA0C`) now lower
+fully: the bundled MQ copybooks are structured as sub-level field groups
+copied under a program-provided 01 (so qualified references such as
+`MQOD-OBJECTTYPE OF MQM-OD-REQUEST` resolve), and recursive `PERFORM` is
+handled (see below) rather than rejected.
+
+### Architectural note: PERFORM, recursion, and inlining
+
+`PERFORM` is lowered by inlining the performed procedure(s) at the call
+site. This is simple and correct for the common acyclic case, but it
+cannot represent a *recursive* `PERFORM` — e.g. CardDemo's `COACCT01`
+has `9000-ERROR` → `8000-TERMINATION` → `5200-CLOSE-ERROR-QUEUE` →
+`9000-ERROR` (an error raised while handling an error). Inlining such a
+cycle does not terminate.
+
+As an interim, bounded-model-checking-consistent treatment, a procedure
+performed while it is already being inlined has its re-entrant call
+pruned with `assume(false)`: the procedure is modelled up to the point
+of re-entry and the deeper recursion is cut, exactly as loop unwinding
+bounds a loop. The faithful, unbounded treatment — and the recommended
+architectural follow-up — is to lower each paragraph as its own GOTO
+function and `PERFORM` as a call, letting CBMC unwind the recursion with
+proper call/return semantics; the obstacle is that COBOL `GO TO` and
+fall-through also cross paragraph boundaries, so that change must rework
+the whole procedure-division control-flow lowering at once.
 
 ### Architectural note: REPLACING is a source-text operation
 

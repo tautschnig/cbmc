@@ -3744,9 +3744,21 @@ void cobol_typecheckt::gen_perform_invocation(
   if(end < start)
     error("PERFORM THRU range ends before it starts");
 
+  // PERFORM is lowered by inlining the performed procedures. A procedure that
+  // is (transitively) performed while it is already being inlined is a
+  // recursive PERFORM, which cannot be inlined to a fixed depth. As with loop
+  // unwinding in bounded model checking, we model the procedure up to the
+  // point of re-entry and prune the re-entrant path with assume(false): the
+  // recursion is bounded rather than the program rejected. (A faithful,
+  // unbounded treatment would lower each paragraph as its own GOTO function
+  // and PERFORM as a call, letting CBMC unwind the recursion; that is the
+  // recommended architectural follow-up.)
   for(std::size_t i = start; i <= end; ++i)
     if(inlining.find(paragraphs[i].name) != inlining.end())
-      error("recursive PERFORM is not supported");
+    {
+      out.add(code_assumet{false_exprt{}});
+      return;
+    }
 
   for(std::size_t i = start; i <= end; ++i)
     inlining.insert(paragraphs[i].name);
