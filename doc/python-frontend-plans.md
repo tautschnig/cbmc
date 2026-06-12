@@ -64,7 +64,38 @@ embedded-NUL edge. Breakdown verified by hand:
 
 Net: the frontend is effectively free of genuine false proofs; the only
 deliberately-deferred soundness item is `github_3647_9_fail`
-(dict-mutation-during-iteration, below).
+(dict-mutation-during-iteration, below) — **plus** the newly-found
+return-type `None`-erasure vector immediately below.
+
+### Return-type inference erases `None` from `X`-or-`None` returns — HIGH PRIORITY (2026-06-12)
+
+**Latent unsoundness (false-proof vector).** A function/method with **no return
+annotation** whose body returns a concrete type `X` on one path and `None` on
+another has its return type **inferred as `X`**, and the `return None` branch is
+then **coerced to `X`** (via `coerce_return_value` → `coerce_to_typed_slot`'s
+non-`None` marker) — so the function can never actually return `None`.
+Concretely, `def f(c): return C() if c else None` makes `f(...) is None`
+**unprovable** (the result is always not-`None`). A caller's `None` guard
+(`if f(x) is None: …`) becomes dead code, so a bug reachable only on the `None`
+path is **missed** — e.g. `f(x).attr` when `f` returns `None` should raise
+`AttributeError`, but that path is never explored.
+
+- **Discovered via** the `re` stub: module-level `re.match`/`search`/`fullmatch`
+  returned always-`Match` for exactly this reason. The *targeted* fix there was
+  the CPython-accurate `-> "Match | None"` annotation (commit `7221966fd3`),
+  which preserves `None`. The **general inference bug remains** and affects any
+  unannotated `X`-or-`None`-returning function.
+- **Scope / non-scope:** only *inferred* return types are affected;
+  `Optional[...]` / `X | None`-annotated returns are honoured correctly. Methods
+  and main-module functions are equally affected (the `re` Pattern-method path
+  only appeared correct incidentally).
+- **Fix direction:** when inferring a function's return type, if **any** return
+  path yields `None` (or an already-`Optional` value), infer the **union**
+  `inferred | None` (i.e. `Optional[X]`) so the `None` branch is not coerced
+  away. Expect benchmark fallout: callers currently relying on the
+  erased-`None` (always-non-`None`) behaviour — including several regex
+  benchmarks already affected by the `re` annotation fix — will start exploring
+  the real (sound) `None` path.
 
 ### Earlier triage history (2026-06-08)
 
