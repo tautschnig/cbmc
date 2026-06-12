@@ -117,75 +117,113 @@ def resolve_macro(tok):
     return _DEFINE[tok]
 
 
-def derive_rhs(path, var):
-    """extract the count/index var's single-line assignment RHS from source,
-    macro-resolved, with type-casts stripped; (rhs, [free_vars]) or None if
-    the RHS is too complex (call / array / member access)."""
+def derive_all_rhs(path, var):
+    """All assignments to `var` in the source, each abstracted to a provable
+    slice RHS.  Returns (defs, complete): defs is a list of (rhs, free_vars)
+    -- one per assignment -- with member/array/call sub-expressions abstracted
+    to nondet placeholders (a SOUND over-approximation) and ALL-CAPS macros
+    resolved to literals; complete is False if any assignment could not be
+    resolved (so the caller must NOT claim safe).  SOUNDNESS: to prove the
+    candidate safe, EVERY reaching definition must prove safe -- this avoids
+    the trap of matching only a benign initializer (`int idx = 0;`) and
+    missing the dangerous real assignment."""
     src = path if os.path.isfile(path) else TREE + "/" + path.split(
         "linux_6_12/")[-1]
     if not os.path.isfile(src):
-        return None
+        return None, False
     txt = open(src, errors="ignore").read()
-    m = re.search(rf"\b{re.escape(var)}\s*=\s*([^;=][^;]*);", txt)
-    if not m:
-        return None
-    rhs = m.group(1).strip()
-    if re.search(r"\w\s*\(|\[|->|\.\w|\bsizeof\b", rhs):  # call/array/member
-        return None
-    rhs = re.sub(r"\((?:u8|u16|u32|u64|s8|s16|s32|s64|int|unsigned|long|"
-                 r"char|short|__\w+)\s*\)", "", rhs)  # strip type casts
-    toks = set(re.findall(r"[A-Za-z_]\w*", rhs))
-    free = []
-    for t in toks:
-        if t == var:
+    rhss = re.findall(rf"\b{re.escape(var)}\s*=\s*([^;=][^;]*);", txt)
+    if not rhss:
+        return None, False
+    # SOUNDNESS: textual `var =` defs are complete only for a local scalar
+    # that is neither address-taken nor cremented / compound-assigned.
+    if re.search(rf"&\s*{re.escape(var)}\b", txt) or \
+       re.search(rf"(\+\+|--)\s*{re.escape(var)}\b|"
+                 rf"\b{re.escape(var)}\s*(\+\+|--|[-+*/%&|^]=|<<=|>>=)", txt):
+        return None, False
+    defs, complete = [], True
+    for rhs in rhss:
+        rhs = rhs.strip()
+        if re.search(r"\bsizeof\b", rhs):
+            complete = False
             continue
-        if t.isupper() or "_" in t and t.upper() == t:  # macro-ish
-            val = resolve_macro(t)
-            if val is None:
-                return None
-            rhs = re.sub(rf"\b{t}\b", val, rhs)
+        rhs = re.sub(r"\((?:u8|u16|u32|u64|s8|s16|s32|s64|int|unsigned|long|"
+                     r"char|short|__\w+)\s*\)", "", rhs)        # strip casts
+        cnt = [0]
+
+        def _ph(_m):
+            cnt[0] += 1
+            return f"ph{cnt[0]}"
+        prev = None
+        while prev != rhs:                                      # abstract
+            prev = rhs
+            rhs = re.sub(r"\b\w+\s*\([^()]*\)", _ph, rhs)            # calls
+            rhs = re.sub(r"[A-Za-z_]\w*(?:\s*(?:->|\.)\s*\w+)+", _ph, rhs)
+            rhs = re.sub(r"[A-Za-z_]\w*\s*\[[^\[\]]*\]", _ph, rhs)   # array
+        ok = True
+        free = []
+        for t in set(re.findall(r"[A-Za-z_]\w*", rhs)):
+            if t == var:
+                continue
+            if t.isupper() or (t.upper() == t and "_" in t):    # macro
+                val = resolve_macro(t)
+                if val is None:
+                    ok = False
+                    break
+                rhs = re.sub(rf"\b{t}\b", val, rhs)
+            else:
+                free.append(t)
+        if ok:
+            defs.append((rhs, free))
         else:
-            free.append(t)
-    return rhs, free
+            complete = False
+    return defs, complete
 
 
 def derive_slice_src(d, rhs, free):
     decls = "".join(f"unsigned long {v};\n" for v in free)
-    body = (f"unsigned long {d['var']} = {rhs};\n")
+    body = f"unsigned long {d['var']} = {rhs};\n"
     if d["kind"] == "count-loop-write":
         body += (f"unsigned long _i; __CPROVER_assume(_i < {d['var']});\n"
-                 f"arr[_i] = 0;\n")
+                 "arr[_i] = 0;\n")
     else:
         body += f"arr[{d['var']}] = 0;\n"
     return f"unsigned char arr[{d['n']}];\n" + decls + body
 
 
 def derive_run():
-    cands = [c for c in candidates()
-             if "adv_mask=MASKED" in c["adv"]]
-    print(f"# derivation-inlining discharge of {len(cands)} MASKED "
-          f"candidates (prove SAFE via the real local expression, no "
-          f"precond)\n")
+    cands = candidates()
+    print(f"# derivation-inlining discharge of {len(cands)} count/index "
+          f"candidates (prove SAFE via the REAL local expression, no "
+          f"precond; ALL reaching defs must prove)\n")
     from collections import Counter
     agg = Counter()
     for c in cands:
-        dr = derive_rhs(c["path"], c["var"])
-        if not dr:
-            agg["RHS-too-complex"] += 1
-            print(f"  {c['func']:<30}{c['var']:<18}N={c['n']:<5} "
-                  f"RHS-too-complex (fallback: advisory)")
+        if "adv_bound=local" not in c["adv"]:
+            agg["skip-nonlocal-storage"] += 1
             continue
-        rhs, free = dr
-        src = derive_slice_src(c, rhs, free)
-        v = run_cbmc(src, False, 2)
-        verdict = "PROVED-SAFE (local expr bounds it)" if v == "PROVED" \
-            else f"{v} (not locally proven)"
-        agg["PROVED-SAFE" if v == "PROVED" else v] += 1
-        print(f"  {c['func']:<30}{c['var']:<18}N={c['n']:<5} "
-              f"{c['var']}={rhs}  -> {verdict}")
+        defs, complete = derive_all_rhs(c["path"], c["var"])
+        if not defs:
+            agg["RHS-too-complex"] += 1
+            print(f"  {c['func']:<30}{c['var']:<16}N={c['n']:<5} "
+                  f"RHS-too-complex -> advisory")
+            continue
+        verdicts = [run_cbmc(derive_slice_src(c, rhs, free), False, 2)
+                    for rhs, free in defs]
+        if complete and all(v == "PROVED" for v in verdicts):
+            res = "PROVED-SAFE (every reaching def bounds it)"
+            agg["PROVED-SAFE"] += 1
+        else:
+            res = (f"not locally proven ({len(defs)} defs, "
+                   f"{verdicts.count('PROVED')} proved, complete={complete})"
+                   " -> advisory")
+            agg["not-locally-proven"] += 1
+        print(f"  {c['func']:<30}{c['var']:<16}N={c['n']:<5} {res}")
     print("\n## derivation-discharge distribution")
     for k, n in agg.most_common():
         print(f"  {n:>3}  {k}")
+
+
 
 
 def main():

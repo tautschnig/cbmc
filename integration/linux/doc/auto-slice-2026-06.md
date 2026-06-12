@@ -90,3 +90,51 @@ bounds property, or multi-line tracing) -- the next refinement.
 The non-local-validator 13 remain the genuine frontier (settle via a
 caller-precondition slice carrying the validator's `count<=N`, several
 validators already identified: mqprio_validate_qopt, netdev_set_num_tc).
+
+## Update: goto-slicing (negative) + sound derivation + validator search
+
+**Effort A -- goto-level slicing: NEGATIVE.**  Tried `goto-instrument
+--bounds-check` then `--full-slice` then cbmc on altera and acpi.  Full-slice
+removes almost nothing (every array/pointer op generates a bounds assert, so
+nearly all code feeds *some* assertion: acpi 98 KB vs 107 KB), and both still
+time out.  Slicing w.r.t. ONE specific property needs the property id a
+priori.  Conclusion: goto-slicing does not tame these; source-derivation
+handles the simple cases, the rest stay advisory.
+
+**Effort B -- validator search + sound derivation.**  A crude grep for a
+bound on the count/index over-matched (use-sites look like bounds), but it
+surfaced that the advisory's "locally bounded" detection MISSES two operator
+classes: modulo (`idx = (...) % NUM_MSGS`, pulse8_interrupt) and byte-shift
+(`idx = skb->data[..] >> 6`, rtllib_rx_get_crypt).
+
+Extending `--derive` to these exposed -- and the fix enforces -- two
+SOUNDNESS requirements (both were initially violated and would have produced
+FALSE "PROVED-SAFE"):
+
+1. **All reaching definitions must prove.**  Matching only the first `var =`
+   often grabs a benign initializer (`int idx = 0;`) and misses the dangerous
+   real assignment.  Now every textual `var =` def must prove safe.
+2. **Local scalars only.**  A struct FIELD (`num_log_addrs`, ...) can be set
+   via struct-copy / memcpy that `field =` regex cannot see, so "all defs
+   found" is false -- cec was briefly falsely PROVED this way.  `--derive`
+   now restricts to `adv_bound=local` vars that are neither address-taken nor
+   cremented / compound-assigned, where textual `=` defs ARE complete.
+
+Sound result: only `altera_execute` (local `arg_count=(opcode>>6)&3`) is
+DEFINITIVELY cleared; everything else declines to advisory (18 skipped as
+non-local storage, 7 not-locally-proven, 7 RHS-too-complex) -- ZERO false
+clears.  The byte-shift (rtllib) and field-invariant (pulse8/cec) cases need
+type-aware abstraction or a non-local-validator proof respectively.
+
+## Net status
+
+* count/index discharge: collector -> auto_slice (sound: 33 "safe iff
+  count<=N") -> advisory split -> `--derive` (sound: definitively clears
+  local-scalar simple-mask; altera).
+* The genuine non-local-validator frontier (mqprio/taprio/cec, validated;
+  plus the field-invariant pulse8/rtllib) is settled by a caller-precondition
+  slice carrying `count<=N` -- already PROVED-with-precond in auto_slice; the
+  remaining step is confirming the validator establishes that bound (done
+  manually for mqprio/taprio/cec).
+* Two soundness pitfalls in source-derived slicing were found and closed
+  (initializer-only match; struct-field reaching-defs).
