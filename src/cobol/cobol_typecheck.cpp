@@ -1028,6 +1028,21 @@ void cobol_typecheckt::parse_data_division()
       eat_word("SECTION");
       expect_period();
     }
+    else if(is_word("FD") || is_word("SD"))
+    {
+      // A file/sort description entry: skip its clauses (RECORDING MODE,
+      // RECORD [IS VARYING ... DEPENDING ON ...], BLOCK CONTAINS, LABEL
+      // RECORDS, ...) up to the terminating separator period. The record
+      // descriptions that follow are parsed as ordinary records (IBM LR
+      // "File description entry"). This avoids interpreting numeric tokens in
+      // the clauses (e.g. FROM 10 TO 80) as level numbers.
+      advance();
+      while(!at_eof() && !is_kind(cobol_token_kindt::PERIOD) &&
+            !is_word("PROCEDURE"))
+        advance();
+      if(is_kind(cobol_token_kindt::PERIOD))
+        advance();
+    }
     else if(cur().kind == cobol_token_kindt::NUMBER)
     {
       const std::size_t level =

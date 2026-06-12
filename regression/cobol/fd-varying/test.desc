@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+A file description entry's clauses are skipped, so numeric tokens such
+as FROM 10 TO 80 are not mistaken for level numbers. See IBM LR "File
+description entry".
