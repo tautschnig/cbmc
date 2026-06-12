@@ -1420,7 +1420,34 @@ exprt python_convertert::convert_user_call(
           }
         skip_any_attr_check:;
         }
-        arguments[i] = coerce_call_argument(arguments[i], params[i].type());
+        // PLR §3.1: a mutable container (dict/list) bound to an Any /
+        // python_value parameter is shared by reference -- route it through
+        // the same promote+write-back boundary the concrete by-reference path
+        // uses (safe_typecast struct->pointer), then wrap the resulting
+        // pointer into the tagged union. This makes callee mutations propagate
+        // back to the caller's object instead of being lost in wrap_value's
+        // throwaway copy (a false proof: a post-call read would fold against
+        // the stale value).
+        if(
+          is_python_value_type(params[i].type()) &&
+          arguments[i].id() == ID_symbol &&
+          (is_python_dict_type(arguments[i].type()) ||
+           is_python_list_type(arguments[i].type())))
+        {
+          const bool is_dict = is_python_dict_type(arguments[i].type());
+          const irep_idt sid = to_symbol_expr(arguments[i]).get_identifier();
+          dict_literals.erase(sid);
+          list_literals.erase(sid);
+          typet canon =
+            is_dict
+              ? python_dict_type(python_string_type(), python_value_type())
+              : python_list_type(python_value_type());
+          exprt ptr = safe_typecast(arguments[i], pointer_typet{canon, 64});
+          arguments[i] = make_python_value(
+            is_dict ? python_type_tagt::DICT : python_type_tagt::LIST, ptr);
+        }
+        else
+          arguments[i] = coerce_call_argument(arguments[i], params[i].type());
       }
     }
   }
