@@ -1,0 +1,12 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. COMPUTE-DECIMAL.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-X    PIC 9V9  VALUE 0.1.
+       01  WS-Y    PIC 9V9  VALUE 0.2.
+       01  WS-Z    PIC 9V99.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           COMPUTE WS-Z = WS-X + WS-Y.
+           CALL "__CPROVER_assert" USING WS-Z = 0.30.
+           STOP RUN.

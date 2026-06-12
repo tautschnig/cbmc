@@ -1,0 +1,8 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+IF / ELSE / END-IF with a relational condition.

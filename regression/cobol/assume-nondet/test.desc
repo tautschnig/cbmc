@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+An item with no VALUE is nondeterministic; __CPROVER_assume constrains
+it so the subsequent assertion holds.

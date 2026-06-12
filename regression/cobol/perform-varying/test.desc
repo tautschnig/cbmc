@@ -1,0 +1,8 @@
+CORE
+main.cob
+--unwind 8
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Inline PERFORM VARYING ... UNTIL summing 1..5 == 15.

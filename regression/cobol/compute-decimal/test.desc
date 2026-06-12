@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Exact base-10 fixed-point: 0.1 + 0.2 == 0.3 (not 0.30000004).
+This is the property C-lowering tools lose.

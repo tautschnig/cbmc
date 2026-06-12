@@ -37,6 +37,7 @@ endmacro(add_test_pl_tests)
 # running tests in parallel, it is important that these directories are
 # listed with decreasing runtimes (i.e. longest running at the top)
 add_subdirectory(cbmc)
+add_subdirectory(cobol)
 add_subdirectory(cbmc-library)
 add_subdirectory(cprover)
 if(NOT WIN32)

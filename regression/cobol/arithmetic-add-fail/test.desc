@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+Negative case: the asserted value is wrong, verification must fail.
+This guards against assertions being silently dropped.
