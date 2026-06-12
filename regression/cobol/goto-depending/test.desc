@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+GO TO ... DEPENDING ON transfers to the n-th procedure. See IBM LR
+"GO TO statement".

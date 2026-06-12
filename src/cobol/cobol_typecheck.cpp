@@ -2700,15 +2700,57 @@ std::vector<stmtt> cobol_typecheckt::parse_statement()
     return parse_call();
   if(verb == "GO")
   {
+    const source_locationt go_loc = cur().location;
     advance();
     eat_word("TO");
     if(cur().kind != cobol_token_kindt::WORD)
       error("expected paragraph name after GO TO");
+    // Collect the procedure-name list (one for an unconditional GO TO; several
+    // for the DEPENDING ON form, IBM LR "GO TO statement" formats 1 and 3).
+    // Stop at DEPENDING or any statement boundary (a verb, a scope terminator,
+    // ELSE or WHEN) so an unconditional GO TO inside IF/EVALUATE/etc. does not
+    // swallow the following keyword.
+    std::vector<std::string> labels;
+    while(cur().kind == cobol_token_kindt::WORD && !is_word("DEPENDING") &&
+          !is_verb(cur().text) && !is_word("ELSE") && !is_word("WHEN") &&
+          cur().text.rfind("END-", 0) != 0)
+    {
+      labels.push_back(cur().text);
+      advance();
+    }
+    if(eat_word("DEPENDING"))
+    {
+      // GO TO p-1 ... p-n DEPENDING ON id: transfer to the id-th procedure
+      // (1-based); if id is outside 1..n, control falls through.
+      eat_word("ON");
+      const valuet sel = parse_operand();
+      std::vector<stmtt> result;
+      for(std::size_t k = 0; k < labels.size(); ++k)
+      {
+        stmtt go;
+        go.kind = stmtt::kindt::GOTO;
+        go.location = go_loc;
+        go.target = labels[k];
+        stmtt s;
+        s.kind = stmtt::kindt::IFTE;
+        s.location = go_loc;
+        s.cond = equal_exprt{
+          sel.expr,
+          rescale(
+            from_integer(static_cast<int>(k) + 1, cobol_value_type()),
+            0,
+            sel.scale)};
+        s.then_stmts = {go};
+        result.push_back(s);
+      }
+      return result;
+    }
+    if(labels.size() != 1)
+      error("GO TO with multiple targets requires DEPENDING ON");
     stmtt s;
     s.kind = stmtt::kindt::GOTO;
-    s.location = cur().location;
-    s.target = cur().text;
-    advance();
+    s.location = go_loc;
+    s.target = labels.front();
     return {s};
   }
   if(verb == "STOP")
