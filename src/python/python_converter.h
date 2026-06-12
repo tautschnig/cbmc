@@ -1532,6 +1532,32 @@ private:
   /// assumption into pending_checks; returns the bounded symbol.
   exprt bounded_nondet_string(const source_locationt &loc);
 
+  // --- Representation-neutral string primitives (Plan A) ----------------
+  // These are the single place each string operation branches on backend
+  // (native smt_string vs refined {length,data} struct). New sites should
+  // call these rather than open-coding member access / str.* intrinsics, so a
+  // backend change (and the eventual hybrid retirement) is localized here.
+
+  /// Build and register a native SMT-String producing/relational intrinsic
+  /// application (e.g. str.++ / str.substr), returning it typed as `ret`.
+  exprt native_string_app(
+    const irep_idt &fn,
+    std::vector<typet> arg_types,
+    const exprt::operandst &args,
+    const typet &ret);
+
+  /// Refined-backend {length,data} struct view of a string expression.
+  exprt string_struct_view(const exprt &s);
+
+  /// Concatenation a + b (returns a string of the active representation).
+  exprt string_concat(const exprt &a, const exprt &b);
+
+  /// Substring s[start : start+len] (returns a string).
+  exprt string_substr(const exprt &s, const exprt &start, const exprt &len);
+
+  /// Content equality a == b (returns bool).
+  exprt string_equal(const exprt &a, const exprt &b);
+
   /// PLR §3.1: rebuild a list-struct expression so its element type
   /// is `python_value`. Each existing data element is `wrap_value`'d
   /// individually. Used when promoting an escaped mutable's storage

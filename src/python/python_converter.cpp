@@ -2228,6 +2228,90 @@ exprt python_convertert::bounded_nondet_string(const source_locationt &loc)
   return sym;
 }
 
+exprt python_convertert::native_string_app(
+  const irep_idt &fn,
+  std::vector<typet> arg_types,
+  const exprt::operandst &args,
+  const typet &ret)
+{
+  if(symbol_table.lookup(fn) == nullptr)
+  {
+    symbolt fs{
+      fn, mathematical_function_typet(std::move(arg_types), ret), "python"};
+    fs.base_name = id2string(fn);
+    symbol_table.add(fs);
+  }
+  function_application_exprt app{
+    symbol_table.lookup_ref(fn).symbol_expr(), args};
+  app.type() = ret;
+  return std::move(app);
+}
+
+exprt python_convertert::string_struct_view(const exprt &s)
+{
+  if(s.id() == ID_struct && s.operands().size() == 2)
+    return s;
+  return struct_exprt{
+    {member_exprt{s, "length", signedbv_typet{64}},
+     member_exprt{s, "data", pointer_typet{unsignedbv_typet{8}, 64}}},
+    s.type()};
+}
+
+exprt python_convertert::string_concat(const exprt &a, const exprt &b)
+{
+  if(a.type().id() == ID_smt_string || b.type().id() == ID_smt_string)
+    return native_string_app(
+      ID_cprover_string_smt_strcat_func,
+      {a.type(), b.type()},
+      {a, b},
+      smt_string_typet{});
+  return emit_string_function(
+    ID_cprover_string_concat_func,
+    {string_struct_view(a), string_struct_view(b)},
+    symbol_table,
+    pending_checks,
+    loop_depth > 0,
+    current_function);
+}
+
+exprt python_convertert::string_substr(
+  const exprt &s,
+  const exprt &start,
+  const exprt &len)
+{
+  const signedbv_typet i64{64};
+  const exprt start64 = start.type() == i64 ? start : safe_typecast(start, i64);
+  const exprt len64 = len.type() == i64 ? len : safe_typecast(len, i64);
+  if(s.type().id() == ID_smt_string)
+    return native_string_app(
+      ID_cprover_string_smt_strsub_func,
+      {s.type(), i64, i64},
+      {s, start64, len64},
+      smt_string_typet{});
+  return emit_string_function(
+    ID_cprover_string_substring_func,
+    {string_struct_view(s), start64, plus_exprt{start64, len64}},
+    symbol_table,
+    pending_checks,
+    loop_depth > 0,
+    current_function);
+}
+
+exprt python_convertert::string_equal(const exprt &a, const exprt &b)
+{
+  if(a.type().id() == ID_smt_string && b.type().id() == ID_smt_string)
+    return equal_exprt{a, b};
+  exprt r = emit_string_bool_function(
+    ID_cprover_string_equal_func,
+    string_struct_view(a),
+    string_struct_view(b),
+    symbol_table,
+    pending_checks);
+  if(r.type() != bool_typet{})
+    r = typecast_exprt{std::move(r), bool_typet{}};
+  return r;
+}
+
 exprt python_convertert::python_truthiness(const exprt &e)
 {
   const typet &t = e.type();
@@ -4346,22 +4430,11 @@ exprt python_convertert::convert_expression(const jsont &expr)
             // Native: str(n) = cprover_string_smt_from_int_func(n) → an SMT
             // String (str.from_int with sign handling). Pass a mathematical
             // integer so the lowering's str.from_int/</- operate on SMT Int.
-            const irep_idt fn{ID_cprover_string_smt_from_int_func};
-            if(symbol_table.lookup(fn) == nullptr)
-            {
-              symbolt fs{
-                fn,
-                mathematical_function_typet(
-                  {integer_typet{}}, smt_string_typet{}),
-                "python"};
-              fs.base_name = id2string(fn);
-              symbol_table.add(fs);
-            }
-            function_application_exprt app{
-              symbol_table.lookup_ref(fn).symbol_expr(),
-              {typecast_exprt{i64, integer_typet{}}}};
-            app.type() = smt_string_typet{};
-            parts.push_back(std::move(app));
+            parts.push_back(native_string_app(
+              ID_cprover_string_smt_from_int_func,
+              {integer_typet{}},
+              {typecast_exprt{i64, integer_typet{}}},
+              smt_string_typet{}));
           }
           else
           {
@@ -4406,50 +4479,10 @@ exprt python_convertert::convert_expression(const jsont &expr)
       }
       if(parts_ok && !parts.empty())
       {
-        // Chain-concatenate. emit_string_function with
-        // ID_cprover_string_concat_func takes two string
-        // args (each a {length, data} struct) and returns a
-        // new string.
-        auto to_struct = [](const exprt &s) -> exprt
-        {
-          if(s.id() == ID_struct && s.operands().size() == 2)
-            return s;
-          return struct_exprt(
-            {member_exprt(s, "length", signedbv_typet{64}),
-             member_exprt(s, "data", pointer_typet(unsignedbv_typet{8}, 64))},
-            s.type());
-        };
+        // Chain-concatenate via the representation-neutral primitive.
         exprt acc = parts[0];
         for(std::size_t i = 1; i < parts.size(); i++)
-        {
-          if(use_smt_string_native)
-          {
-            // Native SMT-String back-end (Plan A): chain via native str.++.
-            const irep_idt fn{ID_cprover_string_smt_strcat_func};
-            if(symbol_table.lookup(fn) == nullptr)
-            {
-              std::vector<typet> ats{acc.type(), parts[i].type()};
-              symbolt fs{
-                fn,
-                mathematical_function_typet(std::move(ats), smt_string_typet{}),
-                "python"};
-              fs.base_name = id2string(fn);
-              symbol_table.add(fs);
-            }
-            function_application_exprt app{
-              symbol_table.lookup_ref(fn).symbol_expr(), {acc, parts[i]}};
-            app.type() = smt_string_typet{};
-            acc = std::move(app);
-            continue;
-          }
-          acc = emit_string_function(
-            ID_cprover_string_concat_func,
-            {to_struct(acc), to_struct(parts[i])},
-            symbol_table,
-            pending_checks,
-            loop_depth > 0,
-            current_function);
-        }
+          acc = string_concat(acc, parts[i]);
         return acc;
       }
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
