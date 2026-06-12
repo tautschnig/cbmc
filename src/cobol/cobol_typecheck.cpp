@@ -30,6 +30,7 @@ Author: Kiro
 
 #include <algorithm>
 #include <cctype>
+#include <deque>
 #include <map>
 #include <optional>
 #include <set>
@@ -83,6 +84,9 @@ struct item_infot
   std::size_t char_count = 0;
   bool is_table = false;  ///< has a fixed OCCURS clause
   std::size_t occurs = 0; ///< number of elements when is_table
+  /// Indices into all_items of the enclosing OCCURS groups (outermost first);
+  /// each is a subscript dimension whose stride is the group's byte_size.
+  std::vector<std::size_t> occurs_dims;
 };
 
 /// A data item together with its own name and the names of its containing
@@ -485,6 +489,8 @@ protected:
   std::string program_id;
   std::map<std::string, item_infot> items;
   std::vector<entryt> all_items; ///< every field, for qualified-name resolution
+  /// stable storage for synthetic field descriptors (reference modification)
+  std::deque<item_infot> synth_items;
   std::map<std::string, cond_infot> conds;
   std::vector<paragrapht> paragraphs;
   std::size_t unique = 0;
@@ -499,6 +505,8 @@ protected:
     std::size_t start = 0;  ///< byte offset where this group begins
     std::size_t cursor = 0; ///< next free byte offset within this group
     bool is_redefines = false;
+    bool is_occurs = false;      ///< this group has an OCCURS clause
+    std::size_t entry_index = 0; ///< index of this group in all_items
   };
   std::vector<layout_framet> layout_stack;
   irep_idt cur_record;         ///< current 01/77 record byte-array symbol
@@ -780,6 +788,9 @@ void cobol_typecheckt::finalize_record()
     const std::size_t gsize = g.cursor - g.start;
     if(items.count(g.name))
       items[g.name].byte_size = gsize;
+    // Refresh the group's recorded size so subscript strides are correct.
+    if(g.entry_index < all_items.size())
+      all_items[g.entry_index].info.byte_size = gsize;
     const std::size_t occ =
       items.count(g.name) && items[g.name].is_table ? items[g.name].occurs : 1;
     record_max = std::max(record_max, g.start + gsize * occ);
@@ -1323,6 +1334,9 @@ void cobol_typecheckt::close_groups_below(std::size_t level)
     const std::size_t gsize = g.cursor - g.start;
     if(items.count(g.name))
       items[g.name].byte_size = gsize;
+    // Refresh the group's recorded size so subscript strides are correct.
+    if(g.entry_index < all_items.size())
+      all_items[g.entry_index].info.byte_size = gsize;
     const std::size_t occ =
       items.count(g.name) && items[g.name].is_table ? items[g.name].occurs : 1;
     record_max = std::max(record_max, g.start + gsize * occ);
@@ -1354,6 +1368,14 @@ void cobol_typecheckt::place_field(
     if(!it->name.empty())
       ancestors.push_back(it->name);
 
+  // Subscript dimensions: the enclosing OCCURS groups, outermost first
+  // (IBM LR "Subscripting": one subscript per OCCURS, written in order of
+  // successively less inclusive dimensions).
+  std::vector<std::size_t> occurs_dims;
+  for(const layout_framet &frame : layout_stack)
+    if(frame.is_occurs)
+      occurs_dims.push_back(frame.entry_index);
+
   const bool is_redefines = !redefines_target.empty();
   std::size_t base_offset;
   if(is_redefines)
@@ -1371,6 +1393,7 @@ void cobol_typecheckt::place_field(
   info.offset = base_offset;
   info.is_table = is_table;
   info.occurs = occurs;
+  info.occurs_dims = occurs_dims;
 
   if(!has_pic)
   {
@@ -1378,9 +1401,17 @@ void cobol_typecheckt::place_field(
     info.is_group = true;
     info.is_numeric = false;
     items[name] = info;
+    const std::size_t entry_index = all_items.size();
     all_items.push_back(entryt{name, info, ancestors});
-    layout_stack.push_back(
-      layout_framet{level, name, base_offset, base_offset, is_redefines});
+    layout_framet frame;
+    frame.level = level;
+    frame.name = name;
+    frame.start = base_offset;
+    frame.cursor = base_offset;
+    frame.is_redefines = is_redefines;
+    frame.is_occurs = is_table;
+    frame.entry_index = entry_index;
+    layout_stack.push_back(frame);
     return;
   }
 
@@ -1462,25 +1493,132 @@ reft cobol_typecheckt::parse_ref()
     advance();
   }
   const item_infot &item = resolve_item(name, quals);
+  const item_infot *info = &item;
   exprt offset = from_integer(item.offset, size_type());
+
+  const auto is_colon = [&]()
+  { return cur().kind == cobol_token_kindt::PUNCT && cur().text == ":"; };
+
+  // Reference modification data-name(start:length) selects a substring
+  // (IBM LR "Reference modification"): the result is an alphanumeric item of
+  // `length` characters starting at 1-based character position `start`.
+  const auto apply_refmod =
+    [&](const valuet &start, const std::optional<valuet> &len)
+  {
+    offset = plus_exprt{
+      offset,
+      typecast_exprt{
+        minus_exprt{
+          rescale(start.expr, start.scale, 0),
+          from_integer(1, cobol_value_type())},
+        size_type()}};
+    std::size_t length;
+    const auto start_const = numeric_cast<mp_integer>(start.expr);
+    if(len.has_value())
+    {
+      const auto c = numeric_cast<mp_integer>(len->expr);
+      length =
+        c.has_value() ? numeric_cast_v<std::size_t>(*c) : info->byte_size;
+    }
+    else if(
+      start_const.has_value() &&
+      info->byte_size >= numeric_cast_v<std::size_t>(*start_const) - 1 + 1)
+    {
+      // Length omitted: from `start` to the end of the item.
+      length =
+        info->byte_size - (numeric_cast_v<std::size_t>(*start_const) - 1);
+    }
+    else
+      length = info->byte_size;
+    if(length == 0)
+      length = 1;
+
+    item_infot synth = *info;
+    synth.is_group = false;
+    synth.is_numeric = false;
+    synth.is_table = false;
+    synth.occurs = 0;
+    synth.occurs_dims.clear();
+    synth.byte_size = length;
+    synth.char_count = length;
+    synth.digits = 0;
+    synth.scale = 0;
+    synth_items.push_back(synth);
+    info = &synth_items.back();
+  };
+
   if(is_kind(cobol_token_kindt::LPAREN))
   {
-    if(!item.is_table)
-      error("subscript on a non-table item");
     advance();
-    valuet idx = parse_expr();
-    if(!is_kind(cobol_token_kindt::RPAREN))
-      error("expected ')' after subscript");
-    advance();
-    // COBOL subscripts are 1-based; convert to a 0-based byte offset:
-    // offset += (idx - 1) * element_byte_size.
-    const exprt idx0 = minus_exprt{
-      typecast_exprt{rescale(idx.expr, idx.scale, 0), size_type()},
-      from_integer(1, size_type())};
-    offset = plus_exprt{
-      offset, mult_exprt{idx0, from_integer(item.byte_size, size_type())}};
+    valuet first = parse_expr();
+    if(is_colon())
+    {
+      // Reference modification with no subscripts.
+      advance();
+      std::optional<valuet> len;
+      if(!is_kind(cobol_token_kindt::RPAREN))
+        len = parse_expr();
+      if(!is_kind(cobol_token_kindt::RPAREN))
+        error("expected ')' after reference modification");
+      advance();
+      apply_refmod(first, len);
+    }
+    else
+    {
+      // Subscript strides, outermost first: the enclosing OCCURS groups then
+      // this item's own OCCURS dimension (IBM LR "Subscripting": one subscript
+      // per OCCURS, in order of successively less inclusive dimensions).
+      std::vector<std::size_t> strides;
+      for(std::size_t dim : item.occurs_dims)
+        if(dim < all_items.size())
+          strides.push_back(all_items[dim].info.byte_size);
+      if(item.is_table)
+        strides.push_back(item.byte_size);
+      if(strides.empty())
+        error("subscript on a non-table item");
+
+      std::vector<valuet> subs;
+      subs.push_back(first);
+      while(!is_kind(cobol_token_kindt::RPAREN) && !at_eof())
+        subs.push_back(parse_expr());
+      if(!is_kind(cobol_token_kindt::RPAREN))
+        error("expected ')' after subscript");
+      advance();
+
+      if(subs.size() != strides.size())
+        error(
+          "wrong number of subscripts for '" + name + "' (expected " +
+          std::to_string(strides.size()) + ")");
+
+      // COBOL subscripts are 1-based; offset += sum_k (subscript_k - 1)*stride.
+      for(std::size_t k = 0; k < subs.size(); ++k)
+      {
+        const exprt idx0 = minus_exprt{
+          typecast_exprt{rescale(subs[k].expr, subs[k].scale, 0), size_type()},
+          from_integer(1, size_type())};
+        offset = plus_exprt{
+          offset, mult_exprt{idx0, from_integer(strides[k], size_type())}};
+      }
+
+      // Optional trailing reference modification: data-name(subs)(start:len).
+      if(is_kind(cobol_token_kindt::LPAREN))
+      {
+        advance();
+        valuet start = parse_expr();
+        if(!is_colon())
+          error("expected ':' in reference modification");
+        advance();
+        std::optional<valuet> len;
+        if(!is_kind(cobol_token_kindt::RPAREN))
+          len = parse_expr();
+        if(!is_kind(cobol_token_kindt::RPAREN))
+          error("expected ')' after reference modification");
+        advance();
+        apply_refmod(start, len);
+      }
+    }
   }
-  return reft{&item, record_expr(item.record_symbol), offset};
+  return reft{info, record_expr(item.record_symbol), offset};
 }
 
 valuet cobol_typecheckt::parse_primary()

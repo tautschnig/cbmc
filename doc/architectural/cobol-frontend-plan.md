@@ -281,9 +281,11 @@ clean and use curly-brace constructor syntax.
   `phys_size_of`, IBM LR pp. 9048-9075.)
 - Group `MOVE` copies `min(sizes)` bytes with no space/zero padding of a
   longer receiver.
-- Subscripting a subfield *inside* an `OCCURS` group (`FIELD(I)` where
-  `FIELD` is subordinate to the table) is not supported — only the
-  table item itself is subscriptable.
+- Subscripting handles subfields inside (possibly nested) `OCCURS`
+  groups: one subscript per dimension, outermost first (IBM LR
+  "Subscripting"). Reference modification `data-name(start:length)` is
+  supported (IBM LR "Reference modification"); a non-constant `length`
+  is over-approximated by the item's remaining size.
 - Qualified references (`FIELD OF GROUP` / `IN`) are resolved by the
   field's containing-group chain (IBM LR "Qualification", pp. 67-68);
   a still-ambiguous reference takes the first match with a warning.
@@ -333,15 +335,15 @@ After the byte-level storage model, every program parses its entire
 DATA DIVISION (including `REDEFINES`, group items and fixed `OCCURS`)
 and fails only on PROCEDURE-level constructs. Alphanumeric comparisons,
 qualified references (`FIELD OF GROUP`), `EXEC CICS` stubbing (with a
-nondet EIB), and edited PICTUREs are now supported. With EXEC CICS
-stubbed, the "unknown data item" blocker collapsed from 19 to ~5. The
-remaining CardDemo blockers, in order, are:
+nondet EIB), edited PICTUREs, subfield subscripting inside `OCCURS`
+groups, and reference modification are now supported. The remaining
+CardDemo blockers, in order, are:
 
-1. **Subscripting subfields inside `OCCURS` groups** (`FIELD(I)` where
-   `FIELD` is subordinate to the table) — 15 programs.
-2. **Class / sign / combined conditions** (`IF X IS NUMERIC`,
+1. **Class / sign / combined conditions** (`IF X IS NUMERIC`,
    `IF X IS POSITIVE`, abbreviated `IF A = 1 OR 2`) — surfaces as
-   "expected a relational operator".
+   "expected a relational operator" (15 programs).
+2. **Numeric use of edited / alphanumeric items** ("non-numeric item")
+   — e.g. arithmetic on a `DISPLAY`/edited field.
 3. **Static `CALL "program"`** to another compilation unit, and
    `DFHCOMMAREA`.
 

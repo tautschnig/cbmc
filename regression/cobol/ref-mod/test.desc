@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Reference modification data-name(start:length) selects a substring, with
+an explicit or omitted length. See IBM LR "Reference modification".

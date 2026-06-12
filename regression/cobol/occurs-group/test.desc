@@ -1,0 +1,10 @@
+CORE
+main.cob
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Subscripting subfields inside OCCURS groups, including a two-dimensional
+nested table WS-CELL(row, col). One subscript per OCCURS dimension,
+written outermost first. See IBM LR "Subscripting".

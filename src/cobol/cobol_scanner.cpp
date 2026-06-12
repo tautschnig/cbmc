@@ -294,6 +294,12 @@ cobol_scan(std::istream &in, const std::string &file_name)
         token.text = ")";
         ++i;
         break;
+      case ':':
+        // Reference-modification separator data-name(start:length).
+        token.kind = cobol_token_kindt::PUNCT;
+        token.text = ":";
+        ++i;
+        break;
       case ',':
       case ';':
         // COBOL treats comma and semicolon as optional separators; drop them.
