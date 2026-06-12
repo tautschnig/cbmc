@@ -665,6 +665,8 @@ protected:
 
   valuet parse_expr();
   valuet parse_term();
+  valuet parse_expr_from(valuet a);
+  valuet parse_term_from(valuet a);
   valuet parse_factor();
   valuet parse_primary();
   valuet parse_operand();
@@ -1715,7 +1717,11 @@ valuet cobol_typecheckt::parse_factor()
 
 valuet cobol_typecheckt::parse_term()
 {
-  valuet a = parse_factor();
+  return parse_term_from(parse_factor());
+}
+
+valuet cobol_typecheckt::parse_term_from(valuet a)
+{
   while(cur().kind == cobol_token_kindt::PUNCT &&
         (cur().text == "*" || cur().text == "/"))
   {
@@ -1738,7 +1744,12 @@ valuet cobol_typecheckt::parse_term()
 
 valuet cobol_typecheckt::parse_expr()
 {
-  valuet a = parse_term();
+  return parse_expr_from(parse_term());
+}
+
+valuet cobol_typecheckt::parse_expr_from(valuet a)
+{
+  a = parse_term_from(a);
   while(cur().kind == cobol_token_kindt::PUNCT &&
         (cur().text == "+" || cur().text == "-"))
   {
@@ -2022,9 +2033,22 @@ cond_operandt cobol_typecheckt::parse_cond_operand()
   }
   if(
     cur().kind == cobol_token_kindt::WORD &&
-    items.find(cur().text) != items.end() && !items.at(cur().text).is_numeric)
+    items.find(cur().text) != items.end())
   {
+    // Parse the full reference first (qualifiers, subscripts and reference
+    // modification) and classify by the *result*: reference modification
+    // always yields an alphanumeric data item, even over a numeric base (IBM
+    // LR "Reference modification"), so the base item's category must not be
+    // used to decide numeric vs alphanumeric.
     const reft r = parse_ref();
+    if(r.info->is_numeric)
+    {
+      // A numeric operand may begin an arithmetic expression (e.g. A + B in a
+      // relation condition), so continue the expression from this value.
+      op.numeric = true;
+      op.num = parse_expr_from(read_field(r));
+      return op;
+    }
     op.is_item = true;
     op.record = r.record;
     op.offset = r.offset;
@@ -2578,74 +2602,69 @@ std::vector<stmtt> cobol_typecheckt::parse_move()
   const source_locationt loc = cur().location;
   expect_word("MOVE");
 
-  // The source is either an alphanumeric literal, a numeric literal, or a
-  // (possibly group/alphanumeric) item reference.
-  bool src_is_string = false;
-  value_spect src_spec;
-  std::optional<reft> src_ref;
-  valuet src_val;
-  if(at_intrinsic())
-  {
-    cond_operandt o = parse_intrinsic();
-    if(o.numeric)
-      src_val = o.num;
-    else
-      src_ref = reft{o.item, o.record, o.offset};
-  }
-  else if(at_value_start() && !is_item_word())
-  {
-    src_spec = read_value_spec();
-    src_is_string = src_spec.kind != value_spect::kindt::NUMERIC &&
-                    src_spec.kind != value_spect::kindt::ZEROS;
-    if(!src_is_string)
-      src_val = valuet{
-        from_integer(
-          spec_to_numeric(src_spec, 0).value_or(mp_integer{0}),
-          cobol_value_type()),
-        0};
-  }
-  else
-  {
-    src_ref = parse_ref();
-    if(src_ref->info->is_numeric)
-      src_val = read_field(*src_ref);
-  }
-
+  // The MOVE source is a single sending operand: a literal, figurative
+  // constant, (group/alphanumeric/numeric) item, reference-modified item, or
+  // intrinsic (IBM LR "MOVE statement"). It is parsed through the one shared
+  // operand parser used by conditions and arithmetic.
+  cond_operandt src = parse_cond_operand();
   expect_word("TO");
+
   std::vector<stmtt> result;
   while(is_item_word())
   {
     reft t = parse_ref();
     if(t.info->is_numeric)
     {
-      // MOVE of an alphanumeric source to a numeric receiver performs a
-      // de-editing conversion of the source's character content (IBM LR
-      // "MOVE statement"). The value-domain model does not represent that
-      // content, so the converted value is nondeterministic.
-      if((src_ref && !src_ref->info->is_numeric) || src_is_string)
+      if(src.numeric)
+        result.push_back(make_assign_ref(t, src.num, loc));
+      else if(
+        src.is_spec && spec_to_numeric(src.spec, t.info->scale).has_value())
+        result.push_back(make_assign_ref(
+          t,
+          valuet{
+            from_integer(
+              *spec_to_numeric(src.spec, t.info->scale), cobol_value_type()),
+            t.info->scale},
+          loc));
+      else
+        // Alphanumeric source to a numeric receiver: a de-editing conversion
+        // of the source characters that the value model does not represent
+        // (IBM LR "MOVE statement") -> nondeterministic.
         result.push_back(make_assign_ref(
           t,
           valuet{side_effect_expr_nondett{cobol_value_type(), loc}, 0},
           loc));
-      else
-        result.push_back(make_assign_ref(t, src_val, loc));
+    }
+    else if(src.is_item)
+    {
+      // Group / alphanumeric copy.
+      result.push_back(
+        make_move_group(t, reft{src.item, src.record, src.offset}, loc));
+    }
+    else if(src.is_spec)
+    {
+      // Literal / figurative into an alphanumeric field: write its bytes.
+      const exprt c = make_alnum_constant(src.spec, t.info->byte_size);
+      stmtt s;
+      s.kind = stmtt::kindt::ASSIGN;
+      s.location = loc;
+      s.lhs = t.record;
+      s.rhs = make_byte_update(t.record, t.offset, c);
+      result.push_back(s);
     }
     else
     {
-      // Alphanumeric / group receiver.
-      if(src_ref)
-        result.push_back(make_move_group(t, *src_ref, loc));
-      else
-      {
-        // Literal / figurative into an alphanumeric field: write its bytes.
-        const exprt c = make_alnum_constant(src_spec, t.info->byte_size);
-        stmtt s;
-        s.kind = stmtt::kindt::ASSIGN;
-        s.location = loc;
-        s.lhs = t.record;
-        s.rhs = make_byte_update(t.record, t.offset, c);
-        result.push_back(s);
-      }
+      // Numeric source to an alphanumeric (edited) receiver: a formatting move
+      // not modelled exactly -> nondeterministic bytes.
+      const array_typet bytes_type{
+        unsignedbv_typet{8}, from_integer(t.info->byte_size, size_type())};
+      stmtt s;
+      s.kind = stmtt::kindt::ASSIGN;
+      s.location = loc;
+      s.lhs = t.record;
+      s.rhs = make_byte_update(
+        t.record, t.offset, side_effect_expr_nondett{bytes_type, loc});
+      result.push_back(s);
     }
   }
   if(result.empty())
@@ -3249,6 +3268,30 @@ void cobol_typecheckt::inject_eib()
     {"SORT-RETURN", true, 9, 0, "COMP"},
     {"TALLY", true, 9, 0, "COMP"}};
   inject_builtin_record("$SPECIAL", special, 2);
+
+  // MQ trigger message (CMQTML copybook); referenced by MQ trigger-monitor
+  // programs. Nondeterministic.
+  static const std::vector<builtin_fieldt> mqtm = {
+    {"MQTM-STRUCID", false, 0, 4, ""},
+    {"MQTM-VERSION", true, 9, 0, "COMP"},
+    {"MQTM-QNAME", false, 0, 48, ""},
+    {"MQTM-PROCESSNAME", false, 0, 48, ""},
+    {"MQTM-TRIGGERDATA", false, 0, 64, ""},
+    {"MQTM-APPLTYPE", true, 9, 0, "COMP"},
+    {"MQTM-APPLID", false, 0, 256, ""},
+    {"MQTM-ENVDATA", false, 0, 128, ""},
+    {"MQTM-USERDATA", false, 0, 128, ""}};
+  inject_builtin_record("MQTM", mqtm, 0);
+
+  // IMS DL/I interface block (DIB), referenced by IMS programs. Nondet.
+  static const std::vector<builtin_fieldt> dib = {
+    {"DIBVER", false, 0, 2, ""},
+    {"DIBSTAT", false, 0, 2, ""},
+    {"DIBSEGM", false, 0, 8, ""},
+    {"DIBSEGLV", false, 0, 2, ""},
+    {"DIBDBORG", false, 0, 8, ""},
+    {"DIBDBMOD", false, 0, 8, ""}};
+  inject_builtin_record("DLIDIB", dib, 0);
 }
 
 void cobol_typecheckt::inject_builtin_record(

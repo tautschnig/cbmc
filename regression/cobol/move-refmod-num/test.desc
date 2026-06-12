@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+A reference-modified numeric item is alphanumeric and is accepted as a
+MOVE source. See IBM LR "Reference modification" and "MOVE statement".

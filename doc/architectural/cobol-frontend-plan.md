@@ -370,12 +370,11 @@ CardDemo blockers, in order, are:
 2. A long tail (`MOVE without a target`, a few parse edges, and
    numeric/alphanumeric comparisons).
 
-As of this milestone, **24 of the 44 CardDemo programs reach
-`VERIFICATION SUCCESSFUL`**, and another ~5 parse and lower to GOTO
+As of this milestone, **25 of the 44 CardDemo programs reach
+`VERIFICATION SUCCESSFUL`**, and another ~6 parse and lower to GOTO
 fully but exceed the default bound during bounded model checking (batch
-file loops). The remaining failures are a long tail: MQ-/IMS-supplied
-copybooks (`CMQTML`, the IMS `DIB`), a few fields in copybooks not on
-the search path, and a handful of parser edges.
+file loops). The remaining failures are a long tail: a few fields in
+copybooks not on the search path and a handful of parser edges.
 
 ### Architectural note: a single operand abstraction
 
@@ -391,9 +390,41 @@ post-`TO`/`FROM` lists as **operands** (via the shared `parse_operand` /
 no-`GIVING` case. Routing reads through `read_field`, writes through
 `make_assign_ref`/`make_byte_update`, and all operands through one
 parser is what lets each new feature (intrinsics, reference
-modification, figuratives) work uniformly everywhere. The remaining
-fragmentation to consolidate is the MOVE source parser, which still has
-a bespoke path.
+modification, figuratives) work uniformly everywhere.
+
+The MOVE source parser, previously the last bespoke operand path, now
+also goes through `parse_cond_operand`. Doing so surfaced a latent
+classification bug: the operand parser decided *numeric vs
+alphanumeric* from the **base item's** category before parsing any
+reference modification, but reference modification always yields an
+alphanumeric result (IBM LR "Reference modification"), so
+`MOVE WS-YEAR(3:2) TO …` over a numeric `WS-YEAR` was misrouted into a
+numeric expression. The fix is the general principle: **classify an
+operand by the result of `parse_ref` (which resolves qualifiers,
+subscripts and reference modification), never by a pre-parse peek at the
+base name.** A numeric result may still begin an arithmetic expression,
+so `parse_expr`/`parse_term` were split into continuation forms
+(`parse_expr_from`/`parse_term_from`) that resume from an already-parsed
+value. This corrected reference-modified numeric operands everywhere
+(MOVE, relation conditions, arithmetic), not just in MOVE.
+
+### Built-in copybooks: the next architectural step
+
+Compiler-/subsystem-supplied copybooks (the CICS `DFHEIBLK`, `DFHAID`,
+`DFHBMSCA`; `SQLCA`; the special registers; the MQ trigger message
+`MQTM`; the IMS `DIB`) are currently *synthesised* from hand-coded
+`builtin_fieldt` tables. This pattern is growing and is a code smell:
+each new subsystem copybook is another table to maintain, and the
+layouts/initial values are approximate. The cleaner architecture is a
+**bundled copybook library** — the real copybook *text* shipped with the
+frontend (either as files on the default search path or as embedded
+string constants) and expanded through the ordinary COPY/layout path, so
+built-in copybooks get the exact same byte layout, VALUE handling and
+REDEFINES support as user copybooks. The auto-injected ones (`DFHEIBLK`,
+special registers) would be prepended as implicit COPYs. This is
+deferred because it is a larger refactor than the current long-tail
+gains justify, but it is the recommended consolidation once more
+subsystem copybooks are needed.
 
 Registering the frontend with the other tools (`goto-cc`,
 `goto-instrument`, …) remains a small follow-up.
