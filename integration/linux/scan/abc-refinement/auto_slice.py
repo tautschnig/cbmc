@@ -50,7 +50,11 @@ def candidates():
                 continue
             seen.add(key)
             adv = "|".join(x for x in p if x.startswith("adv_"))
-            out.append({"func": func, "kind": kind, "n": n, "adv": adv})
+            path = p[1] if len(p) > 1 else ""
+            var = next((x.split("=", 1)[1] for x in p
+                        if x.startswith(("count=", "index="))), "")
+            out.append({"func": func, "kind": kind, "n": n, "adv": adv,
+                        "path": path, "var": var})
     return out
 
 
@@ -94,12 +98,106 @@ def run_cbmc(src, precond, unwind):
     return "ERROR"
 
 
+
+TREE = "/home/ubuntu/linux_6_12"
+_DEFINE = {}
+
+
+def resolve_macro(tok):
+    """ALL_CAPS macro -> integer-literal value (cached), or None."""
+    if tok in _DEFINE:
+        return _DEFINE[tok]
+    r = subprocess.run(
+        ["bash", "-c",
+         f"grep -rhE '^#define[[:space:]]+{tok}[[:space:]]' {TREE}/include "
+         f"{TREE}/drivers {TREE}/net {TREE}/fs 2>/dev/null | head -1"],
+        capture_output=True, text=True).stdout
+    m = re.search(rf"#define\s+{tok}\s+(\(?\s*0[xX][0-9a-fA-F]+|\(?\s*\d+)", r)
+    _DEFINE[tok] = (m.group(1).strip("( ") if m else None)
+    return _DEFINE[tok]
+
+
+def derive_rhs(path, var):
+    """extract the count/index var's single-line assignment RHS from source,
+    macro-resolved, with type-casts stripped; (rhs, [free_vars]) or None if
+    the RHS is too complex (call / array / member access)."""
+    src = path if os.path.isfile(path) else TREE + "/" + path.split(
+        "linux_6_12/")[-1]
+    if not os.path.isfile(src):
+        return None
+    txt = open(src, errors="ignore").read()
+    m = re.search(rf"\b{re.escape(var)}\s*=\s*([^;=][^;]*);", txt)
+    if not m:
+        return None
+    rhs = m.group(1).strip()
+    if re.search(r"\w\s*\(|\[|->|\.\w|\bsizeof\b", rhs):  # call/array/member
+        return None
+    rhs = re.sub(r"\((?:u8|u16|u32|u64|s8|s16|s32|s64|int|unsigned|long|"
+                 r"char|short|__\w+)\s*\)", "", rhs)  # strip type casts
+    toks = set(re.findall(r"[A-Za-z_]\w*", rhs))
+    free = []
+    for t in toks:
+        if t == var:
+            continue
+        if t.isupper() or "_" in t and t.upper() == t:  # macro-ish
+            val = resolve_macro(t)
+            if val is None:
+                return None
+            rhs = re.sub(rf"\b{t}\b", val, rhs)
+        else:
+            free.append(t)
+    return rhs, free
+
+
+def derive_slice_src(d, rhs, free):
+    decls = "".join(f"unsigned long {v};\n" for v in free)
+    body = (f"unsigned long {d['var']} = {rhs};\n")
+    if d["kind"] == "count-loop-write":
+        body += (f"unsigned long _i; __CPROVER_assume(_i < {d['var']});\n"
+                 f"arr[_i] = 0;\n")
+    else:
+        body += f"arr[{d['var']}] = 0;\n"
+    return f"unsigned char arr[{d['n']}];\n" + decls + body
+
+
+def derive_run():
+    cands = [c for c in candidates()
+             if "adv_mask=MASKED" in c["adv"]]
+    print(f"# derivation-inlining discharge of {len(cands)} MASKED "
+          f"candidates (prove SAFE via the real local expression, no "
+          f"precond)\n")
+    from collections import Counter
+    agg = Counter()
+    for c in cands:
+        dr = derive_rhs(c["path"], c["var"])
+        if not dr:
+            agg["RHS-too-complex"] += 1
+            print(f"  {c['func']:<30}{c['var']:<18}N={c['n']:<5} "
+                  f"RHS-too-complex (fallback: advisory)")
+            continue
+        rhs, free = dr
+        src = derive_slice_src(c, rhs, free)
+        v = run_cbmc(src, False, 2)
+        verdict = "PROVED-SAFE (local expr bounds it)" if v == "PROVED" \
+            else f"{v} (not locally proven)"
+        agg["PROVED-SAFE" if v == "PROVED" else v] += 1
+        print(f"  {c['func']:<30}{c['var']:<18}N={c['n']:<5} "
+              f"{c['var']}={rhs}  -> {verdict}")
+    print("\n## derivation-discharge distribution")
+    for k, n in agg.most_common():
+        print(f"  {n:>3}  {k}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--emit")
+    ap.add_argument("--derive", action="store_true")
     a = ap.parse_args()
     if a.emit:
         os.makedirs(a.emit, exist_ok=True)
+    if a.derive:
+        derive_run()
+        return
     cands = candidates()
     print(f"# auto-slice discharge of {len(cands)} count/index candidates\n")
     print(f"{'func':<34}{'kind':<18}{'N':<6}{'verbatim':<10}{'precond':<9}"

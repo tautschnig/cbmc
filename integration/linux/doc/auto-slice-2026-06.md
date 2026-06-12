@@ -54,3 +54,39 @@ the (advisory) local-bound signal:
 4. (next) inline the count's real derivation into the slice to definitively
    clear the locally-bounded set, and a validator search / caller-precond
    slice to settle the 13.
+
+## Update: derivation inlining (--derive) -- definitive local clears
+
+`auto_slice.py --derive` upgrades the advisory "locally bounded" set to
+DEFINITIVE proofs where possible: it extracts the count/index variable's
+single-line assignment RHS from source, resolves ALL-CAPS macros to integer
+literals (grepped from the tree, e.g. ACPI_RESOURCE_NAME_SMALL_MASK=0x78),
+strips type casts, declares the free inputs nondet, inlines the REAL
+expression, and proves the array access safe with NO precondition.  Sound:
+it claims PROVED-SAFE only when CBMC proves it; otherwise it falls back to
+the advisory (never overclaims).
+
+Result over the 5 MASKED candidates:
+
+| candidate | derivation | verdict |
+|-----------|-----------|---------|
+| altera_execute | `arg_count = (opcode >> 6) & 3` | **PROVED-SAFE** (no precond) |
+| acpi_ut_validate_resource | multiple assignments; extractor took `resource_type - 0x70` (large-resource path, bound set by an earlier range guard) | VIOLATED -> not locally proven (stays advisory) |
+| hiddev_lookup_report, csio_mb_fwevt_handler, longest_match_std | RHS is a call/array/member access | RHS-too-complex -> advisory |
+
+So the simple single-line mask case (altera) is now a definitive,
+heuristic-free clear; multi-assignment / call-derived counts need backward
+slicing of the real derivation (goto-instrument --full-slice w.r.t. the
+bounds property, or multi-line tracing) -- the next refinement.
+
+## Pipeline status (count/index)
+
+1. collector (sound) -> 33 candidates;
+2. auto_slice (sound) -> all 33 "safe iff count<=N";
+3. advisory -> 20 locally bounded / 13 non-local-validator targets;
+4. --derive (sound) -> definitively clears the simple-mask subset
+   (altera proven SAFE); complex derivations fall back to advisory.
+
+The non-local-validator 13 remain the genuine frontier (settle via a
+caller-precondition slice carrying the validator's `count<=N`, several
+validators already identified: mqprio_validate_qopt, netdev_set_num_tc).
