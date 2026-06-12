@@ -84,9 +84,20 @@ def build_tu(rel):
 
 def discharge(gb, func):
     """PROVED | VIOLATED | TIMEOUT | OBJECT-BITS | OOM | NO-BODY |
-    ERROR:<reason>."""
+    ERROR:<reason>.
+
+    NB: --bounds-check only (no --pointer-check).  Under `--function` the
+    input pointers are nondet, so --pointer-check flags every nondet-input
+    deref (NULL/invalid) and array fields of nondet input structs become
+    "dynamic objects" of unknown size -- both produce ARTIFACT failures
+    unrelated to the candidate property (see cbmc-discharge-survey: even the
+    locally-guarded nfc_hci_cmd_received reports a spurious bounds failure).
+    A VIOLATED here is therefore a real OOB *shape under unconstrained
+    input*, NOT a confirmed bug; meaningful adjudication needs a harness that
+    allocates the inputs with concrete sizes (the verbatim-slice / caller-
+    precondition approach)."""
     r = sh(f"ulimit -v 48000000; timeout {CTIMEOUT} {CBMC} {gb} --function {func} "
-           f"--bounds-check --pointer-check --object-bits 16 --unwind {UNWIND} "
+           f"--bounds-check --object-bits 16 --unwind {UNWIND} "
            f"--partial-loops --no-unwinding-assertions 2>&1")
     out = r.stdout
     if r.returncode == 124:

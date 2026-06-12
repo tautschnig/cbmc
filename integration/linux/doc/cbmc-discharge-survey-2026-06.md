@@ -56,3 +56,42 @@ This is a required flag for whole-function kernel discharge.
    62 % time out and need slicing/preconditioning.
 4. The 10 VIOLATED are concrete triage targets (real OOB shapes); the 1
    PROVED is a clean clear.  Neither came from a heuristic -- only from CBMC.
+
+## Update: triage of VIOLATED + higher timeout (efforts 1+2)
+
+**Triage finding -- whole-function VIOLATED verdicts are largely
+nondet-INPUT artifacts, not bugs.**  Extracting the failing properties:
+
+* with `--pointer-check`, 9/10 VIOLATED failed on a nondet-INPUT pointer
+  deref (`dev->driver_data`, `file->private_data`, `mpls->used_lses`,
+  `ul_adb->dest_skb` ... all NULL/invalid because the input struct pointer
+  is unconstrained), NOT the candidate array;
+* with `--bounds-check` only, they still FAIL -- but the decisive case is
+  `nfc_hci_cmd_received`, which is LOCALLY guarded
+  (`if (pipe >= NFC_HCI_MAX_PIPES) goto exit;` before `hdev->pipes[pipe]`)
+  yet reports `array.pipes dynamic object upper bound: FAILURE`.  Reason:
+  under `--function`, `hdev` is a nondet pointer, so `hdev->pipes` is a
+  "dynamic object" of unknown size and the bounds check fails spuriously
+  even for safe code.
+
+So raw whole-function `--function` discharge with nondet input pointers is
+**unsuitable for adjudicating these candidates**: it manufactures spurious
+bounds/pointer failures from unconstrained inputs.  A VIOLATED here means
+"real OOB shape *under unconstrained input*", which is the non-local-
+validator class (cf. mqprio/cec) -- NOT a confirmed bug.  Meaningful
+adjudication needs a harness that allocates inputs with CONCRETE sizes (the
+verbatim-slice / caller-precondition approach) -- so that approach is
+*necessary*, not merely a tractability convenience.  The survey now runs
+bounds-check ONLY (pointer-check removed) to cut the worst of the noise.
+
+**Higher timeout (120s -> 300s):** TIMEOUT 18 -> 14 (4 resolved, all to
+VIOLATED), +1 OOM (csio_mb_fwevt_handler, hit the 48 GB cap).  More time
+mostly converts timeouts into (artifact-prone) VIOLATED, not into clean
+PROVED -- diminishing returns, confirming the bottleneck is the methodology
+(nondet whole-function inputs), not just the budget.
+
+Refined distribution (bounds-only, 300 s, object-bits 16): TIMEOUT 14,
+VIOLATED 12, OOM 1, PROVED 1.  Net: only `supinfo_to_lineinfo` is a clean
+whole-function clear; the rest are timeouts or nondet-input artifacts.  The
+actionable conclusion: route candidates through harnessed slices (concrete
+input sizes) rather than raw `--function`.
