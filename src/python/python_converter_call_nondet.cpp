@@ -57,6 +57,12 @@ std::optional<exprt> python_convertert::try_nondet_call(
       {
         auto to_str = [](const exprt &s) -> exprt
         {
+          // Native SMT-String back-end (Plan A): the regex intrinsics are
+          // lowered with smt_string operands directly (str.in_re), so pass
+          // the string through rather than wrapping it in a {length,data}
+          // struct (which is malformed for smt_string).
+          if(s.type().id() == ID_smt_string)
+            return s;
           if(s.id() == ID_struct && s.operands().size() == 2)
             return s;
           return struct_exprt{

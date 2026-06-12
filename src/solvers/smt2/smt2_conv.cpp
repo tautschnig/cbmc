@@ -3068,6 +3068,44 @@ void smt2_convt::convert_expr(const exprt &expr)
         out << ")";
         return;
       }
+      // cprover_string_smt_from_int_func(n) -> SMT String: str(n) for a
+      // signed integer. SMT-LIB str.from_int is defined only for naturals
+      // (negatives yield ""), so handle the sign explicitly:
+      //   n < 0 ? "-" ++ str.from_int(-n) : str.from_int(n).
+      if(fn_id == ID_cprover_string_smt_from_int_func && args.size() == 1)
+      {
+        out << "(ite (< ";
+        convert_expr(args[0]);
+        out << " 0) (str.++ \"-\" (str.from_int (- ";
+        convert_expr(args[0]);
+        out << "))) (str.from_int ";
+        convert_expr(args[0]);
+        out << "))";
+        return;
+      }
+      // cprover_string_smt_from_code_func(n) -> SMT String: the single-char
+      // string for code point n (Python chr(n)). args[0] is a mathematical
+      // integer.
+      if(fn_id == ID_cprover_string_smt_from_code_func && args.size() == 1)
+      {
+        out << "(str.from_code ";
+        convert_expr(args[0]);
+        out << ")";
+        return;
+      }
+      // cprover_string_smt_to_code_func(s) -> int: the code point of the
+      // single-char string s (Python ord(s)); str.to_code yields an SMT Int,
+      // converted to the result bit-vector width.
+      if(fn_id == ID_cprover_string_smt_to_code_func && args.size() == 1)
+      {
+        std::size_t width = boolbv_width(expr.type());
+        if(width == 0)
+          width = 32;
+        out << "((_ int2bv " << width << ") (str.to_code ";
+        emit_smt_string(args[0]);
+        out << "))";
+        return;
+      }
       // cprover_string_smt_re_ws_func(x, mode) -> boolean. Whitespace regex
       // membership used to encode strip/lstrip/rstrip natively (Plan A):
       //   mode 0: x in (re.* WS)        -- x is all whitespace
@@ -3333,6 +3371,21 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
   if(dest_type == src.type()) // identity
   {
     convert_expr(src);
+    return;
+  }
+
+  // Native SMT-String: a string cast to an integer bit-vector uses
+  // str.to_int (SMT-LIB: -1 for non-numeric), then int2bv to the width.
+  // Mirrors Python int(str); also catches spurious string->int coercions
+  // from tagged-union/dict value plumbing without hitting boolbv_width.
+  if(
+    src.type().id() == ID_smt_string &&
+    (dest_type.id() == ID_signedbv || dest_type.id() == ID_unsignedbv))
+  {
+    const std::size_t width = to_bitvector_type(dest_type).get_width();
+    out << "((_ int2bv " << width << ") (str.to_int ";
+    convert_expr(src);
+    out << "))";
     return;
   }
 
@@ -3633,6 +3686,19 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
     (src_type.id() == ID_struct || src_type.id() == ID_struct_tag) &&
     (dest_type.id() == ID_struct || dest_type.id() == ID_struct_tag))
   {
+    // Under use_datatypes, structs are SMT datatypes with no bit-width, so
+    // a differing struct->struct cast must use the pre-registered nondet
+    // (computing boolbv_width below would crash on non-bitvector members
+    // such as smt_string). src_type == dest_type was already handled above.
+    if(use_datatypes)
+    {
+      auto it = defined_expressions.find(expr);
+      if(it != defined_expressions.end())
+      {
+            out << it->second;
+            return;
+      }
+    }
     // Same-layout struct cast — emit identity (reinterpret)
     std::size_t src_width = boolbv_width(src_type);
     std::size_t dest_width = boolbv_width(dest_type);
@@ -3932,6 +3998,23 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
       out << "(ite ";
       convert_expr(src);
       out <<" 1 0)";
+    }
+    else if(src_type.id() == ID_unsignedbv || src_type.id() == ID_c_bool)
+    {
+      out << "(bv2nat ";
+      convert_expr(src);
+      out << ")";
+    }
+    else if(src_type.id() == ID_signedbv)
+    {
+      // signed bitvector -> mathematical integer (used e.g. by str(int)'s
+      // native str.from_int lowering). Sign-aware: negatives map to the
+      // negated magnitude.
+      const std::size_t w = to_bitvector_type(src_type).get_width();
+      out << "(let ((?sbv2int ";
+      convert_expr(src);
+      out << ")) (ite (bvslt ?sbv2int (_ bv0 " << w
+          << ")) (- (bv2nat (bvneg ?sbv2int))) (bv2nat ?sbv2int)))";
     }
     else
       UNEXPECTEDCASE("Unknown typecast "+src_type.id_string()+" -> integer");

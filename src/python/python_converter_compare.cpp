@@ -52,53 +52,80 @@ exprt python_convertert::convert_compare(const jsont &expr)
     // directly. ==/!= lower to (= s t); ordering routes through compare_to
     // (lowered to str.< in smt2_conv). Bypasses the refined struct path.
     if(
-      use_smt_string_native && current_left.type().id() == ID_smt_string &&
-      right.type().id() == ID_smt_string &&
+      use_smt_string_native &&
       (op == "Eq" || op == "NotEq" || op == "Lt" || op == "LtE" || op == "Gt" ||
        op == "GtE"))
     {
-      exprt c;
-      if(op == "Eq")
-        c = equal_exprt{current_left, right};
-      else if(op == "NotEq")
-        c = not_exprt{equal_exprt{current_left, right}};
-      else
+      // Allow one side to be a python_value carrying a string (e.g. an
+      // untyped class attribute): unwrap its __str slot and, for equality,
+      // guard on the STR tag so a non-string value compares unequal.
+      exprt L = current_left, R = right;
+      exprt str_tag_pred = nil_exprt{};
+      if(op == "Eq" || op == "NotEq")
       {
-        const typet i32 = signedbv_typet{32};
-        const irep_idt fn{ID_cprover_string_compare_to_func};
-        if(symbol_table.lookup(fn) == nullptr)
+        if(is_python_value_type(L.type()) && R.type().id() == ID_smt_string)
         {
-          std::vector<typet> ats{current_left.type(), right.type()};
-          symbolt fs{
-            fn, mathematical_function_typet(std::move(ats), i32), "python"};
-          fs.base_name = id2string(fn);
-          symbol_table.add(fs);
+          str_tag_pred = python_value_is(L, python_type_tagt::STR);
+          L = python_value_str(L);
         }
-        function_application_exprt app{
-          symbol_table.lookup_ref(fn).symbol_expr(), {current_left, right}};
-        app.type() = i32;
-        static unsigned nscmp_ctr = 0;
-        const irep_idt rid{"python::__smtn_cmp_" + std::to_string(nscmp_ctr++)};
-        if(symbol_table.lookup(rid) == nullptr)
+        else if(
+          is_python_value_type(R.type()) && L.type().id() == ID_smt_string)
         {
-          symbolt rs{rid, i32, "python"};
-          rs.base_name = "__smtn_cmp_" + std::to_string(nscmp_ctr - 1);
-          rs.is_lvalue = true;
-          rs.is_state_var = true;
-          symbol_table.add(rs);
+          str_tag_pred = python_value_is(R, python_type_tagt::STR);
+          R = python_value_str(R);
         }
-        const symbol_exprt cres = symbol_table.lookup_ref(rid).symbol_expr();
-        pending_checks.push_back(code_frontend_assignt{cres, app});
-        const exprt z = from_integer(0, i32);
-        c = binary_relation_exprt{
-          cres,
-          op == "Lt" ? ID_lt
-                     : (op == "LtE" ? ID_le : (op == "Gt" ? ID_gt : ID_ge)),
-          z};
       }
-      result = result.is_nil() ? c : exprt(and_exprt{result, c});
-      current_left = right;
-      continue;
+      if(L.type().id() == ID_smt_string && R.type().id() == ID_smt_string)
+      {
+        exprt c;
+        if(op == "Eq")
+          c = str_tag_pred.is_nil()
+                ? exprt{equal_exprt{L, R}}
+                : exprt{and_exprt{str_tag_pred, equal_exprt{L, R}}};
+        else if(op == "NotEq")
+          c = str_tag_pred.is_nil()
+                ? exprt{not_exprt{equal_exprt{L, R}}}
+                : exprt{or_exprt{
+                    not_exprt{str_tag_pred}, not_exprt{equal_exprt{L, R}}}};
+        else
+        {
+          const typet i32 = signedbv_typet{32};
+          const irep_idt fn{ID_cprover_string_compare_to_func};
+          if(symbol_table.lookup(fn) == nullptr)
+          {
+            std::vector<typet> ats{L.type(), R.type()};
+            symbolt fs{
+              fn, mathematical_function_typet(std::move(ats), i32), "python"};
+            fs.base_name = id2string(fn);
+            symbol_table.add(fs);
+          }
+          function_application_exprt app{
+            symbol_table.lookup_ref(fn).symbol_expr(), {L, R}};
+          app.type() = i32;
+          static unsigned nscmp_ctr = 0;
+          const irep_idt rid{
+            "python::__smtn_cmp_" + std::to_string(nscmp_ctr++)};
+          if(symbol_table.lookup(rid) == nullptr)
+          {
+            symbolt rs{rid, i32, "python"};
+            rs.base_name = "__smtn_cmp_" + std::to_string(nscmp_ctr - 1);
+            rs.is_lvalue = true;
+            rs.is_state_var = true;
+            symbol_table.add(rs);
+          }
+          const symbol_exprt cres = symbol_table.lookup_ref(rid).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{cres, app});
+          const exprt z = from_integer(0, i32);
+          c = binary_relation_exprt{
+            cres,
+            op == "Lt" ? ID_lt
+                       : (op == "LtE" ? ID_le : (op == "Gt" ? ID_gt : ID_ge)),
+            z};
+        }
+        result = result.is_nil() ? c : exprt(and_exprt{result, c});
+        current_left = right;
+        continue;
+      }
     }
 
     // PLR §6.10.1: chained-comparison single-evaluation.
@@ -2398,6 +2425,16 @@ exprt python_convertert::convert_compare(const jsont &expr)
               is_python_string_type(item.type()) &&
               is_python_string_type(key_i.type()))
             {
+              if(
+                use_smt_string_native &&
+                item.type().id() == ID_smt_string &&
+                key_i.type().id() == ID_smt_string)
+              {
+                // Native SMT-String: key equality is str.= directly.
+                match = equal_exprt{item, key_i};
+              }
+              else
+              {
               // Use string solver for key comparison
               auto to_str = [](const exprt &s) -> exprt
               {
@@ -2415,6 +2452,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
                 to_str(key_i),
                 symbol_table,
                 pending_checks);
+              }
             }
             else
             {

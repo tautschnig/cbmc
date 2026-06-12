@@ -74,6 +74,19 @@ std::optional<exprt> expr_initializert::expr_initializer_rec(
     result.add_source_location()=source_location;
     return result;
   }
+  else if(type_id == ID_smt_string)
+  {
+    // Native SMT-String values: zero-initialise to the empty string,
+    // nondet-initialise to a fresh nondet String.
+    exprt result;
+    if(init_expr.id() == ID_nondet)
+      result = side_effect_expr_nondett(type, source_location);
+    else
+      result = constant_exprt(irep_idt{""}, type);
+
+    result.add_source_location() = source_location;
+    return result;
+  }
   else if(type_id==ID_rational ||
           type_id==ID_real)
   {

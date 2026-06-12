@@ -1518,7 +1518,12 @@ skip_string_unroll:;
   }
   symbol_exprt idx_var = symbol_table.lookup_ref(idx_id).symbol_expr();
 
-  member_exprt length{iterable, "length", int_type};
+  const bool native_str_iter =
+    use_smt_string_native && is_string && iterable.type().id() == ID_smt_string;
+  exprt length =
+    native_str_iter
+      ? safe_typecast(native_or_member_string_length(iterable), int_type)
+      : exprt(member_exprt{iterable, "length", int_type});
   typet data_field_type;
   if(is_python_string_type(iterable.type()))
     data_field_type = pointer_typet(unsignedbv_typet{8}, 64);
@@ -1526,7 +1531,11 @@ skip_string_unroll:;
     data_field_type = to_struct_type(iterable.type()).components()[1].type();
   else
     data_field_type = signedbv_typet{64}; // fallback
-  member_exprt data{iterable, "data", data_field_type};
+  // Native SMT-String iteration has no `data` array; the element is produced
+  // by str.substr below. Avoid a member_exprt on an smt_string operand.
+  exprt data = native_str_iter
+                 ? exprt{nil_exprt{}}
+                 : exprt{member_exprt{iterable, "data", data_field_type}};
 
   code_blockt result;
 
@@ -1536,10 +1545,13 @@ skip_string_unroll:;
   // while(__idx < iterable.length)
   code_blockt body_block;
 
-  // x = iterable.data[__idx] (typecast if needed)
-  exprt elem_val = is_string
-                     ? exprt(dereference_exprt{plus_exprt{data, idx_var}})
-                     : exprt(index_exprt{data, idx_var});
+  // x = iterable.data[__idx] (typecast if needed). For native string
+  // iteration this placeholder is overwritten by the str.substr branch below.
+  exprt elem_val =
+    native_str_iter
+      ? exprt{side_effect_expr_nondett{smt_string_typet{}, get_location(stmt)}}
+      : (is_string ? exprt(dereference_exprt{plus_exprt{data, idx_var}})
+                   : exprt(index_exprt{data, idx_var}));
 
   // Handle tuple unpacking: for a, b in list_of_tuples
   if(is_node_type(target, "Tuple") && is_list)
@@ -1614,78 +1626,106 @@ skip_string_unroll:;
     // For string iteration, wrap the char byte in a single-char string struct
     if(is_string && is_python_string_type(loop_var.type()))
     {
-      // PLR §6.3.4 + P1.B parity: choose substring intrinsic for
-      // symbolic-content sources, byte-array wrap for known-byte
-      // sources. Mirrors the convert_subscript two-strategy split:
-      //   (a) byte-level wrap — exact for constant strings; bytes
-      //       at the result struct's data pointer reflect the actual
-      //       source bytes, so byte-level operations like .isalpha()
-      //       work.
-      //   (b) cprover_string_substring(s, idx, idx+1) — the refined-
-      //       string solver registers the result as a substring of
-      //       `s` so byte-level constraints from
-      //       `assume(s == "abc")` propagate to the loop body's
-      //       reads of c.
-      bool source_has_known_bytes = false;
+      if(use_smt_string_native)
       {
-        auto sv = extract_string_value(iterable);
-        if(!sv.has_value() && iterable.id() == ID_symbol)
+        // Native SMT-String back-end (Plan A): the loop element is
+        // iterable[idx] = str.substr(iterable, idx, 1), a native SMT String.
+        const irep_idt fn{ID_cprover_string_smt_strsub_func};
+        if(symbol_table.lookup(fn) == nullptr)
         {
-          auto it =
-            string_constants.find(to_symbol_expr(iterable).get_identifier());
-          if(it != string_constants.end())
-            sv = it->second;
+          std::vector<typet> ats{
+            iterable.type(), signedbv_typet{64}, signedbv_typet{64}};
+          symbolt fs{
+            fn,
+            mathematical_function_typet(std::move(ats), smt_string_typet{}),
+            "python"};
+          fs.base_name = id2string(fn);
+          symbol_table.add(fs);
         }
-        if(sv.has_value())
-          source_has_known_bytes = true;
-      }
-      if(source_has_known_bytes)
-      {
-        // Strategy (a): build pointer-based single-char string.
-        exprt::operandst chars;
-        chars.push_back(elem_val);
-        array_typet at(
-          unsignedbv_typet{8}, from_integer(1, signedbv_typet{64}));
-        array_exprt arr(std::move(chars), at);
-        exprt ptr = address_of_exprt(index_exprt(
-          arr, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
-        exprt len_one = from_integer(1, signedbv_typet{64});
-        elem_val = struct_exprt{{len_one, ptr}, python_string_type()};
+        exprt start64 = idx_var;
+        if(start64.type() != signedbv_typet{64})
+          start64 = typecast_exprt{start64, signedbv_typet{64}};
+        function_application_exprt app{
+          symbol_table.lookup_ref(fn).symbol_expr(),
+          {iterable, start64, from_integer(1, signedbv_typet{64})}};
+        app.type() = smt_string_typet{};
+        elem_val = std::move(app);
       }
       else
       {
-        // Strategy (b): cprover_string_substring intrinsic. We're
-        // inside a while-loop body (loop_depth > 0 once the outer
-        // for-loop translation steps in below), so emit_string_function
-        // havocs the result symbols per iteration.
-        exprt src_struct =
-          (iterable.id() == ID_struct && iterable.operands().size() == 2)
-            ? iterable
-            : exprt(struct_exprt{
-                {member_exprt{iterable, "length", signedbv_typet{64}},
-                 member_exprt{
-                   iterable, "data", pointer_typet(unsignedbv_typet{8}, 64)}},
-                iterable.type()});
-        exprt start64 = idx_var;
-        if(start64.type() != signedbv_typet{64})
-          start64 = safe_typecast(start64, signedbv_typet{64});
-        exprt end64 = plus_exprt{start64, from_integer(1, signedbv_typet{64})};
-        // emit_string_function emits its pending checks into the
-        // outer pending_checks list. We need them inside the loop
-        // body so they run each iteration. Capture-and-flush.
-        std::size_t pre_size = pending_checks.size();
-        elem_val = emit_string_function(
-          ID_cprover_string_substring_func,
-          {src_struct, start64, end64},
-          symbol_table,
-          pending_checks,
-          /*in_loop=*/true);
-        // Move the new pending checks into body_block so they
-        // execute inside the loop, before the loop_var assign.
-        for(std::size_t k = pre_size; k < pending_checks.size(); ++k)
-          body_block.add(std::move(pending_checks[k]));
-        pending_checks.erase(
-          pending_checks.begin() + pre_size, pending_checks.end());
+        // symbolic-content sources, byte-array wrap for known-byte
+        // sources. Mirrors the convert_subscript two-strategy split:
+        //   (a) byte-level wrap — exact for constant strings; bytes
+        //       at the result struct's data pointer reflect the actual
+        //       source bytes, so byte-level operations like .isalpha()
+        //       work.
+        //   (b) cprover_string_substring(s, idx, idx+1) — the refined-
+        //       string solver registers the result as a substring of
+        //       `s` so byte-level constraints from
+        //       `assume(s == "abc")` propagate to the loop body's
+        //       reads of c.
+        bool source_has_known_bytes = false;
+        {
+          auto sv = extract_string_value(iterable);
+          if(!sv.has_value() && iterable.id() == ID_symbol)
+          {
+            auto it =
+              string_constants.find(to_symbol_expr(iterable).get_identifier());
+            if(it != string_constants.end())
+              sv = it->second;
+          }
+          if(sv.has_value())
+            source_has_known_bytes = true;
+        }
+        if(source_has_known_bytes)
+        {
+          // Strategy (a): build pointer-based single-char string.
+          exprt::operandst chars;
+          chars.push_back(elem_val);
+          array_typet at(
+            unsignedbv_typet{8}, from_integer(1, signedbv_typet{64}));
+          array_exprt arr(std::move(chars), at);
+          exprt ptr = address_of_exprt(index_exprt(
+            arr, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
+          exprt len_one = from_integer(1, signedbv_typet{64});
+          elem_val = struct_exprt{{len_one, ptr}, python_string_type()};
+        }
+        else
+        {
+          // Strategy (b): cprover_string_substring intrinsic. We're
+          // inside a while-loop body (loop_depth > 0 once the outer
+          // for-loop translation steps in below), so emit_string_function
+          // havocs the result symbols per iteration.
+          exprt src_struct =
+            (iterable.id() == ID_struct && iterable.operands().size() == 2)
+              ? iterable
+              : exprt(struct_exprt{
+                  {member_exprt{iterable, "length", signedbv_typet{64}},
+                   member_exprt{
+                     iterable, "data", pointer_typet(unsignedbv_typet{8}, 64)}},
+                  iterable.type()});
+          exprt start64 = idx_var;
+          if(start64.type() != signedbv_typet{64})
+            start64 = safe_typecast(start64, signedbv_typet{64});
+          exprt end64 =
+            plus_exprt{start64, from_integer(1, signedbv_typet{64})};
+          // emit_string_function emits its pending checks into the
+          // outer pending_checks list. We need them inside the loop
+          // body so they run each iteration. Capture-and-flush.
+          std::size_t pre_size = pending_checks.size();
+          elem_val = emit_string_function(
+            ID_cprover_string_substring_func,
+            {src_struct, start64, end64},
+            symbol_table,
+            pending_checks,
+            /*in_loop=*/true);
+          // Move the new pending checks into body_block so they
+          // execute inside the loop, before the loop_var assign.
+          for(std::size_t k = pre_size; k < pending_checks.size(); ++k)
+            body_block.add(std::move(pending_checks[k]));
+          pending_checks.erase(
+            pending_checks.begin() + pre_size, pending_checks.end());
+        }
       }
     }
     else if(elem_val.type() != loop_var.type())

@@ -654,6 +654,10 @@ std::string python_convertert::ast_value_category(const jsont &node) const
 std::optional<std::string>
 python_convertert::extract_string_value(const exprt &e) const
 {
+  // Native SMT-String constant: the value is carried directly as the
+  // constant's id (e.g. constant_exprt{"inf", smt_string}).
+  if(e.id() == ID_constant && e.type().id() == ID_smt_string)
+    return id2string(to_constant_expr(e).get_value());
   // Direct struct literal
   if(
     e.id() == ID_struct && e.operands().size() >= 2 &&
@@ -2174,6 +2178,28 @@ exprt python_convertert::rebuild_list_as_pv(const exprt &list_expr)
 /// PLR §4.1 (Truth Value Testing): return a bool-typed expression
 /// that is true iff `e` is truthy in Python. See header for the
 /// list of false values.
+exprt python_convertert::native_or_member_string_length(const exprt &s)
+{
+  if(s.type().id() == ID_smt_string)
+  {
+    const irep_idt fn{ID_cprover_string_length_func};
+    if(symbol_table.lookup(fn) == nullptr)
+    {
+      symbolt fs{
+        fn,
+        mathematical_function_typet({s.type()}, signedbv_typet{64}),
+        "python"};
+      fs.base_name = id2string(fn);
+      symbol_table.add(fs);
+    }
+    function_application_exprt app{
+      symbol_table.lookup_ref(fn).symbol_expr(), {s}};
+    app.type() = signedbv_typet{64};
+    return std::move(app);
+  }
+  return member_exprt{s, "length", signedbv_typet{64}};
+}
+
 exprt python_convertert::python_truthiness(const exprt &e)
 {
   const typet &t = e.type();
@@ -2237,7 +2263,7 @@ exprt python_convertert::python_truthiness(const exprt &e)
     auto str_truthy = and_exprt{
       python_value_is(e, python_type_tagt::STR),
       notequal_exprt{
-        member_exprt{python_value_str(e), "length", signedbv_typet{64}},
+        native_or_member_string_length(python_value_str(e)),
         from_integer(0, signedbv_typet{64})}};
     auto list_truthy = and_exprt{
       python_value_is(e, python_type_tagt::LIST),
@@ -2295,7 +2321,7 @@ exprt python_convertert::python_truthiness(const exprt &e)
     is_python_dict_type(t))
   {
     return notequal_exprt{
-      member_exprt{e, "length", signedbv_typet{64}},
+      native_or_member_string_length(e),
       from_integer(0, signedbv_typet{64})};
   }
 
@@ -4287,27 +4313,61 @@ exprt python_convertert::convert_expression(const jsont &expr)
           exprt i64 = inner.type() == signedbv_typet{64}
                         ? inner
                         : safe_typecast(inner, signedbv_typet{64});
-          parts.push_back(emit_string_function(
-            ID_cprover_string_of_int_func,
-            {i64},
-            symbol_table,
-            pending_checks,
-            loop_depth > 0,
-            current_function));
-          ensure_fn(ID_cprover_associate_array_to_pointer_func);
-          ensure_fn(ID_cprover_associate_length_to_array_func);
+          if(use_smt_string_native)
+          {
+            // Native: str(n) = cprover_string_smt_from_int_func(n) → an SMT
+            // String (str.from_int with sign handling). Pass a mathematical
+            // integer so the lowering's str.from_int/</- operate on SMT Int.
+            const irep_idt fn{ID_cprover_string_smt_from_int_func};
+            if(symbol_table.lookup(fn) == nullptr)
+            {
+              symbolt fs{
+                fn,
+                mathematical_function_typet(
+                  {integer_typet{}}, smt_string_typet{}),
+                "python"};
+              fs.base_name = id2string(fn);
+              symbol_table.add(fs);
+            }
+            function_application_exprt app{
+              symbol_table.lookup_ref(fn).symbol_expr(),
+              {typecast_exprt{i64, integer_typet{}}}};
+            app.type() = smt_string_typet{};
+            parts.push_back(std::move(app));
+          }
+          else
+          {
+            parts.push_back(emit_string_function(
+              ID_cprover_string_of_int_func,
+              {i64},
+              symbol_table,
+              pending_checks,
+              loop_depth > 0,
+              current_function));
+            ensure_fn(ID_cprover_associate_array_to_pointer_func);
+            ensure_fn(ID_cprover_associate_length_to_array_func);
+          }
         }
         else if(inner.type().id() == ID_floatbv)
         {
-          parts.push_back(emit_string_function(
-            ID_cprover_string_of_double_func,
-            {inner},
-            symbol_table,
-            pending_checks,
-            loop_depth > 0,
-            current_function));
-          ensure_fn(ID_cprover_associate_array_to_pointer_func);
-          ensure_fn(ID_cprover_associate_length_to_array_func);
+          if(use_smt_string_native)
+          {
+            // No SMT primitive for str(float); sound nondet SMT String.
+            parts.push_back(side_effect_expr_nondett{
+              smt_string_typet{}, get_location(v)});
+          }
+          else
+          {
+            parts.push_back(emit_string_function(
+              ID_cprover_string_of_double_func,
+              {inner},
+              symbol_table,
+              pending_checks,
+              loop_depth > 0,
+              current_function));
+            ensure_fn(ID_cprover_associate_array_to_pointer_func);
+            ensure_fn(ID_cprover_associate_length_to_array_func);
+          }
         }
         else if(is_python_string_type(inner.type()))
           parts.push_back(inner);

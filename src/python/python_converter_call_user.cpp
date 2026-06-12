@@ -1776,11 +1776,23 @@ exprt python_convertert::convert_user_call(
           }
         }
 
-        exprt data = member_exprt{
-          arguments[i],
-          "data",
-          pointer_typet{unsignedbv_typet{8}, config.ansi_c.pointer_width}};
-        arguments[i] = typecast_exprt{std::move(data), c_char_ptr};
+        if(
+          use_smt_string_native &&
+          arguments[i].type().id() == ID_smt_string)
+        {
+          // No char* view of an SMT String; the C intrinsic is a stub, so
+          // pass a sound nondet char* (it is not dereferenced by the stub).
+          arguments[i] =
+            side_effect_expr_nondett{c_char_ptr, get_location(expr)};
+        }
+        else
+        {
+          exprt data = member_exprt{
+            arguments[i],
+            "data",
+            pointer_typet{unsignedbv_typet{8}, config.ansi_c.pointer_width}};
+          arguments[i] = typecast_exprt{std::move(data), c_char_ptr};
+        }
       }
       else if(
         arguments[i].type().id() == ID_signedbv &&
@@ -1816,6 +1828,14 @@ exprt python_convertert::convert_user_call(
     }
 
     // Marshal the return: wrap the returned char* into a Python
+    if(use_smt_string_native)
+    {
+      // The C string content can't be modelled precisely as an SMT String
+      // (no strlen reasoning); emit the call for its side effects and return
+      // a sound nondet SMT String.
+      pending_checks.push_back(code_expressiont{call});
+      return side_effect_expr_nondett{smt_string_typet{}, get_location(expr)};
+    }
     // refined-string struct. The length is nondet (we can't
     // compute strlen precisely without a separate intrinsic), but
     // for a sound verification over-approximation we constrain it

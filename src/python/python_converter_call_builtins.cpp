@@ -536,8 +536,9 @@ std::optional<exprt> python_convertert::try_builtin_call(
         // Tagged union: dispatch on tag
         if(is_python_value_type(arg.type()))
         {
-          exprt str_len =
-            member_exprt{python_value_str(arg), "length", python_int_type()};
+          exprt str_len = native_or_member_string_length(python_value_str(arg));
+          if(str_len.type() != python_int_type())
+            str_len = safe_typecast(str_len, python_int_type());
           exprt list_len =
             member_exprt{python_value_list(arg), "length", python_int_type()};
           // DICT tag: the pointed-to dict struct has .length at
@@ -1080,6 +1081,26 @@ std::optional<exprt> python_convertert::try_builtin_call(
         }
       }
       typet str_type = python_string_type();
+      if(use_smt_string_native)
+      {
+        // Native: chr(n) = cprover_string_smt_from_code_func(n) (str.from_code),
+        // the single-char SMT String for code point n.
+        const irep_idt fn{ID_cprover_string_smt_from_code_func};
+        if(symbol_table.lookup(fn) == nullptr)
+        {
+          symbolt fs{
+            fn,
+            mathematical_function_typet({integer_typet{}}, smt_string_typet{}),
+            "python"};
+          fs.base_name = id2string(fn);
+          symbol_table.add(fs);
+        }
+        function_application_exprt app{
+          symbol_table.lookup_ref(fn).symbol_expr(),
+          {typecast_exprt{code_point, integer_typet{}}}};
+        app.type() = smt_string_typet{};
+        return std::move(app);
+      }
       const auto &data_type = array_typet(
         unsignedbv_typet{8},
         from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
@@ -1206,6 +1227,24 @@ std::optional<exprt> python_convertert::try_builtin_call(
           return from_integer(cp, python_int_type());
         }
         // Symbolic: return first byte
+        if(use_smt_string_native && arg.type().id() == ID_smt_string)
+        {
+          // Native: ord(s) = cprover_string_smt_to_code_func(s) (str.to_code).
+          const irep_idt fn{ID_cprover_string_smt_to_code_func};
+          if(symbol_table.lookup(fn) == nullptr)
+          {
+            symbolt fs{
+              fn,
+              mathematical_function_typet({arg.type()}, python_int_type()),
+              "python"};
+            fs.base_name = id2string(fn);
+            symbol_table.add(fs);
+          }
+          function_application_exprt app{
+            symbol_table.lookup_ref(fn).symbol_expr(), {arg}};
+          app.type() = python_int_type();
+          return std::move(app);
+        }
         const auto &data_type = array_typet(
           unsignedbv_typet{8},
           from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
@@ -2691,6 +2730,26 @@ std::optional<exprt> python_convertert::try_builtin_call(
         exprt as_i64 = arg.type() == signedbv_typet{64}
                          ? arg
                          : safe_typecast(arg, signedbv_typet{64});
+        if(use_smt_string_native)
+        {
+          // Native: str(n) = cprover_string_smt_from_int_func(n) (str.from_int
+          // with sign handling), an SMT String.
+          const irep_idt fn{ID_cprover_string_smt_from_int_func};
+          if(symbol_table.lookup(fn) == nullptr)
+          {
+            symbolt fs{
+              fn,
+              mathematical_function_typet({integer_typet{}}, smt_string_typet{}),
+              "python"};
+            fs.base_name = id2string(fn);
+            symbol_table.add(fs);
+          }
+          function_application_exprt app{
+            symbol_table.lookup_ref(fn).symbol_expr(),
+            {typecast_exprt{as_i64, integer_typet{}}}};
+          app.type() = smt_string_typet{};
+          return std::move(app);
+        }
         exprt result = emit_string_function(
           ID_cprover_string_of_int_func,
           {as_i64},
@@ -2731,6 +2790,12 @@ std::optional<exprt> python_convertert::try_builtin_call(
       // knows the result's content precisely.
       if(arg.type().id() == ID_floatbv)
       {
+        if(use_smt_string_native)
+        {
+          // No SMT primitive for str(float); sound nondet SMT String.
+          return side_effect_expr_nondett{
+            smt_string_typet{}, get_location(expr)};
+        }
         exprt result = emit_string_function(
           ID_cprover_string_of_double_func,
           {arg},
