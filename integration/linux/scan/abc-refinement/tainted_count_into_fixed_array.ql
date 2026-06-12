@@ -276,6 +276,60 @@ string enumAdvisory(CountSource e) {
   if e.getUnspecifiedType() instanceof Enum then result = "yes" else result = "no"
 }
 
+/** advisory (SOUND value bound): the index/count TYPE cannot reach the array
+ *  size -- an unsigned u8 index (max 255) into arr[>=256], u16 into
+ *  arr[>=65536] (e.g. arcnet `uint8_t proto_num` into `[256]`). */
+bindingset[arrSize]
+string typeBoundAdvisory(Expr e, int arrSize) {
+  if
+    exists(Type t |
+      t = e.getUnspecifiedType() and t.getName().matches("unsigned %")
+    |
+      t.getSize() = 1 and arrSize > 255
+      or
+      t.getSize() = 2 and arrSize > 65535
+    )
+  then result = "TYPEBOUND"
+  else result = "no"
+}
+
+/** advisory: the index/count is ASSIGNED from a source variable that is
+ *  itself guarded against a compile-time constant in the function -- e.g.
+ *  fl_set_key_mpls_lse `lse_index = depth - 1` with
+ *  `if (depth > FLOW_DIS_MPLS_MAX) reject`.  Existential -> advisory. */
+predicate srcGuarded(CountSource e, Function f) {
+  exists(Assignment a, VariableAccess src |
+    a.getEnclosingFunction() = f and
+    a.getLValue().(VariableAccess).getTarget() = countTarget(e) and
+    src = a.getRValue().getAChild*() and
+    src.getTarget() != countTarget(e) and
+    exists(RelationalOperation rel, Expr k |
+      rel.getEnclosingFunction() = f and
+      rel.getAnOperand().(VariableAccess).getTarget() = src.getTarget() and
+      k = rel.getAnOperand() and
+      not k = rel.getAnOperand().(VariableAccess) and
+      (k instanceof Literal or k instanceof EnumConstantAccess or
+       k instanceof SizeofOperator or exists(k.getValue()))))
+}
+
+string srcGuardAdvisory(CountSource e, Function f) {
+  if srcGuarded(e, f) then result = "SRCGUARDED" else result = "no"
+}
+
+/** advisory: the count/index var/field is assigned via a modulo (`%`)
+ *  anywhere -- a maintained data-structure invariant, e.g. pulse8
+ *  `rx_msg_cur_idx = (rx_msg_cur_idx + 1) % NUM_MSGS`.  Existential. */
+predicate moduloInvariant(CountSource e) {
+  exists(Assignment a |
+    (a.getLValue().(VariableAccess).getTarget() = countTarget(e) or
+     a.getLValue().(FieldAccess).getTarget() = countTarget(e)) and
+    a.getRValue() instanceof RemExpr)
+}
+
+string invariantAdvisory(CountSource e) {
+  if moduloInvariant(e) then result = "MODULO" else result = "no"
+}
+
 from Function f, string kind, string name, int line, string detail
 where
   inScope(f) and
@@ -290,7 +344,10 @@ where
           "|confidence=" + confidence(cnt) + "|impact=WRITE" +
           "|adv_guard=" + guardAdvisory(cnt, f) +
           "|adv_mask=" + maskAdvisory(cnt, f) +
-          "|adv_bound=" + boundAdvisory(cnt, f)
+          "|adv_bound=" + boundAdvisory(cnt, f) +
+          "|adv_typebound=" + typeBoundAdvisory(cnt, sz) +
+          "|adv_srcguard=" + srcGuardAdvisory(cnt, f) +
+          "|adv_inv=" + invariantAdvisory(cnt)
     )
     or
     exists(ArrayExpr ae, CountSource idx, string an, int sz |
@@ -303,7 +360,10 @@ where
           "|adv_guard=" + guardAdvisory(idx, f) +
           "|adv_mask=" + maskAdvisory(idx, f) +
           "|adv_bound=" + boundAdvisory(idx, f) +
-          "|adv_enum=" + enumAdvisory(idx)
+          "|adv_enum=" + enumAdvisory(idx) +
+          "|adv_typebound=" + typeBoundAdvisory(idx, sz) +
+          "|adv_srcguard=" + srcGuardAdvisory(idx, f) +
+          "|adv_inv=" + invariantAdvisory(idx)
     )
   )
 select f,
