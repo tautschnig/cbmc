@@ -11,7 +11,10 @@ Author: Kiro
 
 #include "cobol_scanner.h"
 
+#include <util/message.h>
+
 #include <cctype>
+#include <fstream>
 #include <istream>
 
 /// Returns true if \p c may appear inside a COBOL word (letter, digit, or an
@@ -287,4 +290,249 @@ cobol_scan(std::istream &in, const std::string &file_name)
   tokens.push_back(eof);
 
   return tokens;
+}
+
+// ---------------------------------------------------------------------------
+// COPY statement expansion
+//
+// IBM Enterprise COBOL for z/OS 6.4 Language Reference, "COPY statement",
+// pp. 688-697. "The effect of processing a COPY statement is that the library
+// text associated with text-name is copied into the compilation unit,
+// logically replacing the entire COPY statement, beginning with the word COPY
+// and ending with the period, inclusive." (p. 688)
+// ---------------------------------------------------------------------------
+
+namespace
+{
+bool tok_is_word(const cobol_tokent &t, const char *w)
+{
+  return t.kind == cobol_token_kindt::WORD && t.text == w;
+}
+
+bool tok_is_eq(const cobol_tokent &t)
+{
+  return t.kind == cobol_token_kindt::PUNCT && t.text == "=";
+}
+
+bool tokens_equal(const cobol_tokent &a, const cobol_tokent &b)
+{
+  return a.kind == b.kind && a.text == b.text;
+}
+
+/// Read a REPLACING operand starting at \p pos: either a pseudo-text run
+/// bounded by `==` ... `==` (LR p. 690) or a single text word / literal.
+/// Advances \p pos past the operand and returns its token sequence.
+std::vector<cobol_tokent>
+read_replacing_operand(const std::vector<cobol_tokent> &t, std::size_t &pos)
+{
+  std::vector<cobol_tokent> operand;
+  // Pseudo-text: two consecutive '=' tokens open and close the run.
+  if(pos + 1 < t.size() && tok_is_eq(t[pos]) && tok_is_eq(t[pos + 1]))
+  {
+    pos += 2; // opening ==
+    while(pos + 1 < t.size() && !(tok_is_eq(t[pos]) && tok_is_eq(t[pos + 1])))
+      operand.push_back(t[pos++]);
+    if(pos + 1 < t.size())
+      pos += 2; // closing ==
+    return operand;
+  }
+  // Single word / literal operand.
+  if(t[pos].kind != cobol_token_kindt::END_OF_FILE)
+    operand.push_back(t[pos++]);
+  return operand;
+}
+
+/// Apply REPLACING pairs to a copybook token sequence (LR p. 690). Each
+/// occurrence of a pattern subsequence is replaced by its replacement; pairs
+/// are tried left-to-right at each position.
+std::vector<cobol_tokent> apply_replacing(
+  const std::vector<cobol_tokent> &in,
+  const std::vector<
+    std::pair<std::vector<cobol_tokent>, std::vector<cobol_tokent>>> &pairs)
+{
+  if(pairs.empty())
+    return in;
+
+  std::vector<cobol_tokent> out;
+  std::size_t i = 0;
+  while(i < in.size())
+  {
+    bool matched = false;
+    for(const auto &pair : pairs)
+    {
+      const auto &pat = pair.first;
+      if(pat.empty() || i + pat.size() > in.size())
+        continue;
+      bool eq = true;
+      for(std::size_t k = 0; k < pat.size(); ++k)
+        if(!tokens_equal(in[i + k], pat[k]))
+        {
+          eq = false;
+          break;
+        }
+      if(eq)
+      {
+        for(const auto &r : pair.second)
+          out.push_back(r);
+        i += pat.size();
+        matched = true;
+        break;
+      }
+    }
+    if(!matched)
+      out.push_back(in[i++]);
+  }
+  return out;
+}
+
+/// Resolve a copybook name to a path. Tries each search directory with the
+/// common copybook extensions. text-name is matched case-insensitively via the
+/// extensions; the name itself is used as given (LR p. 688: 1-30 chars,
+/// A-Z/a-z/0-9/hyphen).
+std::string
+resolve_copybook(const std::string &name, const std::vector<std::string> &dirs)
+{
+  static const char *exts[] = {".cpy", ".CPY", ".cbl", ".CBL", ""};
+  for(const std::string &dir : dirs)
+  {
+    const std::string base = dir.empty() ? name : dir + "/" + name;
+    for(const char *ext : exts)
+    {
+      const std::string candidate = base + ext;
+      std::ifstream probe(candidate);
+      if(probe.good())
+        return candidate;
+    }
+  }
+  return std::string{};
+}
+} // namespace
+
+std::vector<cobol_tokent> cobol_expand_copy(
+  std::vector<cobol_tokent> tokens,
+  const std::vector<std::string> &copybook_dirs,
+  message_handlert &message_handler)
+{
+  // Bound recursion to guard against cyclic copybooks.
+  static thread_local std::size_t depth = 0;
+  struct depth_guardt
+  {
+    std::size_t &d;
+    explicit depth_guardt(std::size_t &d) : d(d)
+    {
+      ++d;
+    }
+    ~depth_guardt()
+    {
+      --d;
+    }
+  } guard{depth};
+
+  messaget log{message_handler};
+
+  std::vector<cobol_tokent> out;
+  std::size_t i = 0;
+  while(i < tokens.size())
+  {
+    if(tokens[i].kind == cobol_token_kindt::END_OF_FILE)
+    {
+      out.push_back(tokens[i]);
+      break;
+    }
+
+    if(!tok_is_word(tokens[i], "COPY"))
+    {
+      out.push_back(tokens[i++]);
+      continue;
+    }
+
+    // COPY directive.
+    const source_locationt copy_loc = tokens[i].location;
+    ++i; // consume COPY
+
+    if(
+      i >= tokens.size() || (tokens[i].kind != cobol_token_kindt::WORD &&
+                             tokens[i].kind != cobol_token_kindt::STRING))
+    {
+      log.error() << "COBOL: COPY without a text-name" << messaget::eom;
+      // Skip to the terminating period to recover.
+      while(i < tokens.size() && tokens[i].kind != cobol_token_kindt::PERIOD &&
+            tokens[i].kind != cobol_token_kindt::END_OF_FILE)
+        ++i;
+      if(i < tokens.size() && tokens[i].kind == cobol_token_kindt::PERIOD)
+        ++i;
+      continue;
+    }
+
+    const std::string name = tokens[i].text;
+    ++i;
+
+    // Optional OF/IN library-name (LR p. 688).
+    if(
+      i < tokens.size() &&
+      (tok_is_word(tokens[i], "OF") || tok_is_word(tokens[i], "IN")))
+    {
+      i += 2; // OF/IN and the library-name
+    }
+    // Optional SUPPRESS phrase.
+    if(i < tokens.size() && tok_is_word(tokens[i], "SUPPRESS"))
+      ++i;
+
+    // Optional REPLACING phrase (LR p. 690).
+    std::vector<std::pair<std::vector<cobol_tokent>, std::vector<cobol_tokent>>>
+      replacing;
+    if(i < tokens.size() && tok_is_word(tokens[i], "REPLACING"))
+    {
+      ++i;
+      while(i < tokens.size() && tokens[i].kind != cobol_token_kindt::PERIOD &&
+            tokens[i].kind != cobol_token_kindt::END_OF_FILE)
+      {
+        // LEADING / TRAILING partial-word replacement is not modelled; skip
+        // the keyword and fall through to read the operands.
+        if(
+          tok_is_word(tokens[i], "LEADING") ||
+          tok_is_word(tokens[i], "TRAILING"))
+          ++i;
+        std::vector<cobol_tokent> pattern = read_replacing_operand(tokens, i);
+        if(i < tokens.size() && tok_is_word(tokens[i], "BY"))
+          ++i;
+        std::vector<cobol_tokent> replacement =
+          read_replacing_operand(tokens, i);
+        replacing.emplace_back(std::move(pattern), std::move(replacement));
+      }
+    }
+
+    // Consume the terminating period (it is part of the COPY statement and is
+    // not emitted; LR p. 688).
+    if(i < tokens.size() && tokens[i].kind == cobol_token_kindt::PERIOD)
+      ++i;
+
+    // Resolve and splice the copybook.
+    const std::string path = resolve_copybook(name, copybook_dirs);
+    if(path.empty())
+    {
+      log.warning().source_location = copy_loc;
+      log.warning() << "COBOL: copybook '" << name
+                    << "' not found; skipping COPY" << messaget::eom;
+      continue;
+    }
+    if(depth > 40)
+    {
+      log.error() << "COBOL: COPY nesting too deep (cyclic copybook '" << name
+                  << "'?)" << messaget::eom;
+      continue;
+    }
+
+    std::ifstream in{path};
+    std::vector<cobol_tokent> sub =
+      cobol_expand_copy(cobol_scan(in, path), copybook_dirs, message_handler);
+    // Drop the copybook's trailing END_OF_FILE before splicing.
+    if(!sub.empty() && sub.back().kind == cobol_token_kindt::END_OF_FILE)
+      sub.pop_back();
+    sub = apply_replacing(sub, replacing);
+    for(auto &tok : sub)
+      out.push_back(std::move(tok));
+  }
+
+  return out;
 }

@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+COPY ... REPLACING with pseudo-text (==(VAR)== BY ==WS-NUM==)
+(IBM LR "COPY statement" REPLACING phrase, p. 690).

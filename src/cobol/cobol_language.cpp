@@ -21,13 +21,54 @@ Author: Kiro
 #include "cobol_typecheck.h"
 #include "expr2cobol.h"
 
+#include <cstdlib>
+
+/// Directories searched for copybooks, in order. Covers the source file's own
+/// directory, the conventional CardDemo-style sibling/child cpy and cpy-bms
+/// directories, the GnuCOBOL COBCPY environment variable (GnuCOBOL
+/// Programmer's Guide, "COPY" / library search), and the current directory.
+static std::vector<std::string> copybook_dirs(const std::string &path)
+{
+  std::vector<std::string> dirs;
+  const std::size_t slash = path.find_last_of("/\\");
+  const std::string dir =
+    slash == std::string::npos ? "." : path.substr(0, slash);
+
+  dirs.push_back(dir);
+  dirs.push_back(dir + "/../cpy");
+  dirs.push_back(dir + "/../cpy-bms");
+  dirs.push_back(dir + "/cpy");
+  dirs.push_back(dir + "/cpy-bms");
+
+  if(const char *cobcpy = std::getenv("COBCPY"))
+  {
+    std::string s{cobcpy};
+    std::size_t start = 0;
+    while(start <= s.size())
+    {
+      const std::size_t sep = s.find(':', start);
+      const std::size_t end = sep == std::string::npos ? s.size() : sep;
+      if(end > start)
+        dirs.push_back(s.substr(start, end - start));
+      if(sep == std::string::npos)
+        break;
+      start = sep + 1;
+    }
+  }
+
+  dirs.emplace_back(".");
+  return dirs;
+}
+
 bool cobol_languaget::parse(
   std::istream &instream,
   const std::string &path,
-  message_handlert &)
+  message_handlert &message_handler)
 {
   parse_path = path;
   tokens = cobol_scan(instream, path);
+  tokens =
+    cobol_expand_copy(std::move(tokens), copybook_dirs(path), message_handler);
   return false;
 }
 

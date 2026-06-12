@@ -53,4 +53,19 @@ struct cobol_tokent
 std::vector<cobol_tokent>
 cobol_scan(std::istream &in, const std::string &file_name);
 
+class message_handlert;
+
+/// Expand COPY statements in a token stream (IBM Enterprise COBOL for z/OS 6.4
+/// Language Reference, "COPY statement", pp. 688-697). Each COPY ... [.]
+/// directive is replaced by the (recursively expanded, optionally REPLACING-
+/// substituted) tokens of the named copybook, located via \p copybook_dirs.
+/// \param tokens: token stream (END_OF_FILE-terminated) to expand
+/// \param copybook_dirs: directories searched for copybooks, in order
+/// \param message_handler: for "copybook not found" warnings
+/// \return the expanded token stream (END_OF_FILE-terminated)
+std::vector<cobol_tokent> cobol_expand_copy(
+  std::vector<cobol_tokent> tokens,
+  const std::vector<std::string> &copybook_dirs,
+  message_handlert &message_handler);
+
 #endif // CPROVER_COBOL_COBOL_SCANNER_H

@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+COPY splices a copybook's data items into WORKING-STORAGE
+(IBM LR "COPY statement", pp. 688-697).

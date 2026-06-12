@@ -1,0 +1,10 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. COPY-TEST.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       COPY WSREC.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           ADD WS-A TO WS-B GIVING WS-C.
+           CALL "__CPROVER_assert" USING WS-C = 5.
+           STOP RUN.
