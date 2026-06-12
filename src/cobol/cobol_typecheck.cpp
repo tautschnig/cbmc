@@ -1727,6 +1727,9 @@ std::vector<valuet> cobol_typecheckt::parse_operand_list()
 
 std::string cobol_typecheckt::parse_relop()
 {
+  // Relational operator only; a leading IS and a leading NOT are handled by
+  // parse_relation (IBM LR "Relation condition": the operators may be written
+  // as symbols or as the reserved words GREATER/LESS/EQUAL ...).
   if(cur().kind == cobol_token_kindt::PUNCT)
   {
     const std::string t = cur().text;
@@ -1737,8 +1740,6 @@ std::string cobol_typecheckt::parse_relop()
     }
   }
 
-  const bool neg = eat_word("NOT");
-  std::string op;
   if(eat_word("GREATER"))
   {
     eat_word("THAN");
@@ -1746,44 +1747,46 @@ std::string cobol_typecheckt::parse_relop()
     {
       expect_word("EQUAL");
       eat_word("TO");
-      op = ">=";
+      return ">=";
     }
-    else
-      op = ">";
+    return ">";
   }
-  else if(eat_word("LESS"))
+  if(eat_word("LESS"))
   {
     eat_word("THAN");
     if(eat_word("OR"))
     {
       expect_word("EQUAL");
       eat_word("TO");
-      op = "<=";
+      return "<=";
     }
-    else
-      op = "<";
+    return "<";
   }
-  else if(eat_word("EQUAL"))
+  if(eat_word("EQUAL") || eat_word("EQUALS"))
   {
     eat_word("TO");
-    op = "=";
+    return "=";
   }
-  else
-    error("expected a relational operator");
+  if(eat_word("EXCEEDS"))
+    return ">";
+  error("expected a relational operator");
+}
 
-  if(neg)
-  {
-    if(op == "=")
-      return "<>";
-    if(op == ">")
-      return "<=";
-    if(op == "<")
-      return ">=";
-    if(op == ">=")
-      return "<";
-    if(op == "<=")
-      return ">";
-  }
+/// Reverse a relational operator (for a NOT-negated relation).
+static std::string negate_relop(const std::string &op)
+{
+  if(op == "=")
+    return "<>";
+  if(op == "<>")
+    return "=";
+  if(op == "<")
+    return ">=";
+  if(op == ">")
+    return "<=";
+  if(op == "<=")
+    return ">";
+  if(op == ">=")
+    return "<";
   return op;
 }
 
@@ -1848,7 +1851,52 @@ exprt cobol_typecheckt::parse_relation()
   }
 
   cond_operandt a = parse_cond_operand();
-  const std::string op = parse_relop();
+
+  // An optional "IS" precedes the operator or the class/sign keyword
+  // (IBM LR "Conditional expressions").
+  eat_word("IS");
+  const bool neg = eat_word("NOT");
+
+  // Class condition: identifier IS [NOT] NUMERIC | ALPHABETIC[-LOWER|-UPPER]
+  // (IBM LR "Class condition", p. 269). The test inspects the physical
+  // character content of the item, which the value-domain model abstracts, so
+  // it is modelled as a nondeterministic Boolean (a sound over-approximation).
+  if(
+    is_word("NUMERIC") || is_word("ALPHABETIC") ||
+    is_word("ALPHABETIC-LOWER") || is_word("ALPHABETIC-UPPER") ||
+    is_word("ALPHANUMERIC"))
+  {
+    const source_locationt loc = cur().location;
+    advance();
+    // The negation of a nondeterministic Boolean is still nondeterministic.
+    (void)neg;
+    return side_effect_expr_nondett{bool_typet{}, loc};
+  }
+
+  // Sign condition: identifier IS [NOT] POSITIVE | NEGATIVE | ZERO
+  // (IBM LR "Sign condition", p. 283). This tests the algebraic value, which
+  // the value-domain model represents exactly.
+  if(is_word("POSITIVE") || is_word("NEGATIVE") || is_word("ZERO"))
+  {
+    const std::string sign = cur().text;
+    advance();
+    if(!a.numeric)
+      error("sign condition requires a numeric operand");
+    const exprt zero = from_integer(0, cobol_value_type());
+    exprt c;
+    if(sign == "POSITIVE")
+      c = binary_relation_exprt{a.num.expr, ID_gt, zero};
+    else if(sign == "NEGATIVE")
+      c = binary_relation_exprt{a.num.expr, ID_lt, zero};
+    else
+      c = equal_exprt{a.num.expr, zero};
+    return neg ? static_cast<exprt>(not_exprt{c}) : c;
+  }
+
+  // Relation condition.
+  std::string op = parse_relop();
+  if(neg)
+    op = negate_relop(op);
   cond_operandt b = parse_cond_operand();
 
   // A figurative constant such as ZERO compared with a numeric operand is

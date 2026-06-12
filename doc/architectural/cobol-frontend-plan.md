@@ -291,6 +291,13 @@ clean and use curly-brace constructor syntax.
   a still-ambiguous reference takes the first match with a warning.
 - Numeric-to-alphanumeric relational comparisons are rejected (only
   numeric/numeric and alphanumeric/alphanumeric are supported).
+- Relation conditions accept symbol and word operators with optional
+  `IS`/`NOT` (IBM LR "Relation condition"). Sign conditions
+  (`IS [NOT] POSITIVE/NEGATIVE/ZERO`) are modelled exactly on the value;
+  class conditions (`IS [NOT] NUMERIC/ALPHABETIC...`) inspect physical
+  character content that the value model abstracts, so they are modelled
+  as nondeterministic (sound over-approximation). Abbreviated combined
+  conditions (`IF A = 1 OR 2`) are not yet supported.
 - Edited PICTUREs (insertion/suppression characters `Z * . , + - $ CR
   DB /`) are read as a single character-string (IBM LR "PICTURE
   character-strings", pp. 48 / 3723-3725) and modelled as alphanumeric
@@ -339,11 +346,11 @@ nondet EIB), edited PICTUREs, subfield subscripting inside `OCCURS`
 groups, and reference modification are now supported. The remaining
 CardDemo blockers, in order, are:
 
-1. **Class / sign / combined conditions** (`IF X IS NUMERIC`,
-   `IF X IS POSITIVE`, abbreviated `IF A = 1 OR 2`) — surfaces as
-   "expected a relational operator" (15 programs).
-2. **Numeric use of edited / alphanumeric items** ("non-numeric item")
-   — e.g. arithmetic on a `DISPLAY`/edited field.
+1. **Numeric use of edited / alphanumeric items** ("non-numeric item",
+   14) — arithmetic or numeric MOVE involving a `DISPLAY`/edited field,
+   and `MOVE`/`ADD` whose target is such an item.
+2. **Abbreviated combined conditions** (`IF A = 1 OR 2`) and other
+   residual condition forms ("expected a relational operator", 7).
 3. **Static `CALL "program"`** to another compilation unit, and
    `DFHCOMMAREA`.
 

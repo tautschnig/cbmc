@@ -1,0 +1,11 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Word relational operators with IS / NOT, sign conditions, and the
+class condition (modelled as nondeterministic). See IBM LR "Conditional
+expressions" / "Relation condition" / "Sign condition" / "Class
+condition".
