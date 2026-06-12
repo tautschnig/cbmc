@@ -1523,6 +1523,15 @@ private:
   /// it reads the struct's .length member.
   exprt native_or_member_string_length(const exprt &s);
 
+  /// A fresh nondet native SMT String whose length is constrained to
+  /// [0, PYTHON_MAX_STRING_LENGTH]. The bound keeps len() of a nondet string
+  /// both sound and precise: str.len is an unbounded SMT Int and its int2bv to
+  /// signed 64-bit can appear negative for spurious astronomically-long
+  /// strings, which would otherwise make `len(s) >= 0` unprovable. Mirrors the
+  /// refined backend's length bound. Emits the nondet assignment and the bound
+  /// assumption into pending_checks; returns the bounded symbol.
+  exprt bounded_nondet_string(const source_locationt &loc);
+
   /// PLR §3.1: rebuild a list-struct expression so its element type
   /// is `python_value`. Each existing data element is `wrap_value`'d
   /// individually. Used when promoting an escaped mutable's storage
