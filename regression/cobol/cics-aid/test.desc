@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+The CICS-supplied DFHAID (e.g. DFHENTER) and DFHBMSCA copybooks are
+synthesised built-in, so EIBAID = DFHENTER resolves. See
+cobol-semantics.md section 8.

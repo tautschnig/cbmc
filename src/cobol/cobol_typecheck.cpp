@@ -99,6 +99,16 @@ struct entryt
   std::vector<std::string> ancestors;
 };
 
+/// A field of a synthesised built-in record (EIB / DFHAID / DFHBMSCA).
+struct builtin_fieldt
+{
+  const char *name;
+  bool numeric;
+  std::size_t digits;
+  std::size_t chars;
+  const char *usage;
+};
+
 /// Physical size of one occurrence of an elementary item, in bytes.
 ///
 /// IBM Enterprise COBOL for z/OS 6.4 Language Reference, USAGE clause /
@@ -687,6 +697,10 @@ protected:
   std::vector<stmtt> parse_exec();
   stmtt havoc_field(const reft &r, source_locationt loc);
   void inject_eib();
+  void inject_builtin_record(
+    const std::string &base,
+    const std::vector<builtin_fieldt> &fields,
+    bool valued);
   void skip_to_sentence_end();
 
   stmtt make_assign_ref(const reft &target, valuet v, source_locationt loc);
@@ -2787,20 +2801,12 @@ std::vector<stmtt> cobol_typecheckt::parse_exec()
 void cobol_typecheckt::inject_eib()
 {
   // Synthesise the CICS EXEC INTERFACE BLOCK (DFHEIBLK), which the integrated
-  // CICS translator injects into the LINKAGE SECTION. Fields are modelled as a
-  // nondeterministic record so references such as EIBCALEN type-check and read
-  // as unknown values (cobol-semantics.md S8; CICS DFHEIBLK layout). Sizes
-  // follow IBM USAGE rules; exact offsets are immaterial as the record is
-  // nondet and never aliased.
-  struct eib_fieldt
-  {
-    const char *name;
-    bool numeric;
-    std::size_t digits;
-    std::size_t chars;
-    const char *usage;
-  };
-  static const std::vector<eib_fieldt> fields = {
+  // CICS translator injects into the LINKAGE SECTION, plus the CICS-supplied
+  // DFHAID (attention-id values, e.g. DFHENTER) and DFHBMSCA (BMS attribute
+  // constants) copybooks, which are not part of the application source. Fields
+  // resolve so references type-check (cobol-semantics.md S8). The EIB is
+  // nondeterministic; DFHAID/DFHBMSCA constants are given distinct byte values.
+  static const std::vector<builtin_fieldt> eib = {
     {"EIBTIME", true, 7, 0, "COMP-3"}, {"EIBDATE", true, 7, 0, "COMP-3"},
     {"EIBTRNID", false, 0, 4, ""},     {"EIBTASKN", true, 7, 0, "COMP-3"},
     {"EIBTRMID", false, 0, 4, ""},     {"EIBCPOSN", true, 4, 0, "COMP"},
@@ -2816,11 +2822,69 @@ void cobol_typecheckt::inject_eib()
     {"EIBSYNRB", false, 0, 1, ""},     {"EIBNODAT", false, 0, 1, ""},
     {"EIBRESP", true, 8, 0, "COMP"},   {"EIBRESP2", true, 8, 0, "COMP"},
     {"EIBRLDBK", false, 0, 1, ""}};
+  inject_builtin_record("DFHEIBLK", eib, false);
 
-  const std::string base = "DFHEIBLK";
+  // DFHAID: 3270 attention identifiers, each PIC X.
+  std::vector<builtin_fieldt> aid = {
+    {"DFHNULL", false, 0, 1, ""},
+    {"DFHENTER", false, 0, 1, ""},
+    {"DFHCLEAR", false, 0, 1, ""},
+    {"DFHPEN", false, 0, 1, ""},
+    {"DFHOPID", false, 0, 1, ""},
+    {"DFHPA1", false, 0, 1, ""},
+    {"DFHPA2", false, 0, 1, ""},
+    {"DFHPA3", false, 0, 1, ""},
+    {"DFHCLRP", false, 0, 1, ""},
+    {"DFHMSRE", false, 0, 1, ""},
+    {"DFHSTRF", false, 0, 1, ""},
+    {"DFHTRIG", false, 0, 1, ""}};
+  static const std::vector<std::string> pf_names = []
+  {
+    std::vector<std::string> v;
+    for(int i = 1; i <= 24; ++i)
+      v.push_back("DFHPF" + std::to_string(i));
+    return v;
+  }();
+  for(const std::string &n : pf_names)
+    aid.push_back(builtin_fieldt{n.c_str(), false, 0, 1, ""});
+  inject_builtin_record("DFHAID", aid, true);
+
+  // DFHBMSCA: BMS attribute / control bytes, each PIC X.
+  static const std::vector<builtin_fieldt> bmsca = {
+    {"DFHBMPEM", false, 0, 1, ""}, {"DFHBMPNL", false, 0, 1, ""},
+    {"DFHBMASK", false, 0, 1, ""}, {"DFHBMUNP", false, 0, 1, ""},
+    {"DFHBMUNN", false, 0, 1, ""}, {"DFHBMPRO", false, 0, 1, ""},
+    {"DFHBMASB", false, 0, 1, ""}, {"DFHBMDAR", false, 0, 1, ""},
+    {"DFHBMFSE", false, 0, 1, ""}, {"DFHBMPRF", false, 0, 1, ""},
+    {"DFHBMASF", false, 0, 1, ""}, {"DFHBMASN", false, 0, 1, ""},
+    {"DFHBMEOF", false, 0, 1, ""}, {"DFHBMCUR", false, 0, 1, ""},
+    {"DFHBMEC", false, 0, 1, ""},  {"DFHBMEN", false, 0, 1, ""},
+    {"DFHBMENT", false, 0, 1, ""}, {"DFHBMFLG", false, 0, 1, ""},
+    {"DFHBMDET", false, 0, 1, ""}, {"DFHSA", false, 0, 1, ""},
+    {"DFHCOLOR", false, 0, 1, ""}, {"DFHPS", false, 0, 1, ""},
+    {"DFHHLT", false, 0, 1, ""},   {"DFHBLUE", false, 0, 1, ""},
+    {"DFHRED", false, 0, 1, ""},   {"DFHPINK", false, 0, 1, ""},
+    {"DFHGREEN", false, 0, 1, ""}, {"DFHTURQ", false, 0, 1, ""},
+    {"DFHYELLO", false, 0, 1, ""}, {"DFHNEUTR", false, 0, 1, ""},
+    {"DFHBASE", false, 0, 1, ""},  {"DFHDFHI", false, 0, 1, ""},
+    {"DFHBLINK", false, 0, 1, ""}, {"DFHREVRS", false, 0, 1, ""},
+    {"DFHUNDLN", false, 0, 1, ""}, {"DFHUNDER", false, 0, 1, ""},
+    {"DFHUNNUM", false, 0, 1, ""}, {"DFHPROTI", false, 0, 1, ""},
+    {"DFHUNIMD", false, 0, 1, ""}, {"DFHUNINT", false, 0, 1, ""},
+    {"DFHALL", false, 0, 1, ""},   {"DFHERROR", false, 0, 1, ""}};
+  inject_builtin_record("DFHBMSCA", bmsca, true);
+}
+
+void cobol_typecheckt::inject_builtin_record(
+  const std::string &base,
+  const std::vector<builtin_fieldt> &fields,
+  bool valued)
+{
   const irep_idt rec = "cobol::" + program_id + "::" + base;
   std::size_t off = 0;
-  for(const eib_fieldt &f : fields)
+  std::vector<unsigned char> init;
+  unsigned char value_counter = 1;
+  for(const builtin_fieldt &f : fields)
   {
     item_infot info;
     info.record_symbol = rec;
@@ -2832,6 +2896,15 @@ void cobol_typecheckt::inject_eib()
     info.byte_size = phys_size_of(f.usage, f.numeric, f.digits, f.chars);
     items[f.name] = info;
     all_items.push_back(entryt{f.name, info, {base}});
+    if(valued)
+    {
+      // Give each constant a distinct byte value (the exact code is
+      // implementation-defined and irrelevant: it is compared against the
+      // nondeterministic EIBAID etc.).
+      for(std::size_t b = 0; b < info.byte_size; ++b)
+        init.push_back(value_counter);
+      ++value_counter;
+    }
     off += info.byte_size;
   }
   record_sizes[rec] = std::max<std::size_t>(off, 1);
@@ -2841,7 +2914,16 @@ void cobol_typecheckt::inject_eib()
   symbol.is_static_lifetime = true;
   symbol.is_lvalue = true;
   symbol.is_state_var = true;
-  // No initial value: the EIB is nondeterministic.
+  if(valued)
+  {
+    init.resize(record_sizes[rec], 0);
+    const unsignedbv_typet byte_type{8};
+    array_exprt::operandst ops;
+    ops.reserve(init.size());
+    for(unsigned char b : init)
+      ops.push_back(from_integer(b, byte_type));
+    symbol.value = array_exprt{std::move(ops), to_array_type(record_type(rec))};
+  }
   symbol_table.add(symbol);
 }
 
