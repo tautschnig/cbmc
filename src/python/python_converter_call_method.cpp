@@ -2248,13 +2248,41 @@ std::optional<exprt> python_convertert::try_method_call(
 
     // Native SMT-String back-end (Plan A): smt_string is not a struct/
     // struct_tag, so the struct-gated string-method dispatch below would miss
-    // it. Dispatch here.
+    // it. Dispatch here, but only for methods with a native str.* lowering;
+    // others (upper/lower/strip/split/count/... — no SMT-LIB String
+    // primitive) would otherwise hit struct member access and crash, so they
+    // return a sound nondet SMT String over-approximation.
     if(obj_base_type.id() == ID_smt_string)
     {
-      if(
-        auto r =
-          try_string_method(expr, obj, obj_base_type, method_name, args))
-        return std::move(*r);
+      static const std::set<std::string> native_supported = {
+        "startswith", "endswith", "find", "index", "replace"};
+      if(native_supported.count(method_name))
+      {
+        if(
+          auto r =
+            try_string_method(expr, obj, obj_base_type, method_name, args))
+          return std::move(*r);
+      }
+      // Unsupported under native (no SMT-LIB String primitive): sound nondet
+      // of the method's natural return type.
+      static const std::set<std::string> bool_methods = {
+        "isdigit",
+        "isalpha",
+        "isalnum",
+        "isupper",
+        "islower",
+        "isspace",
+        "isascii",
+        "isnumeric",
+        "isidentifier",
+        "isdecimal",
+        "istitle",
+        "isprintable"};
+      if(bool_methods.count(method_name))
+        return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
+      if(method_name == "count")
+        return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+      return side_effect_expr_nondett{smt_string_typet{}, get_location(expr)};
     }
 
     if(obj_base_type.id() == ID_struct || obj_base_type.id() == ID_struct_tag)
