@@ -2251,3 +2251,36 @@ neutral string primitives (pattern 1) and migrate the open-coded sites to them.
 That converts the hybrid-retirement and any future representation change from a
 site hunt into a localized edit, and shrinks the soundness-review surface to the
 coercion centers (pattern 2).
+
+## Plan A — length-bound hardening + representation-neutral primitives (2026-06-12)
+
+Two follow-ups from the coercion-bypass review:
+
+1. **Native nondet-string length bound.** `len(s)` lowers to
+   `((_ int2bv 64) (str.len s))`; since `str.len` is an unbounded SMT Int, a
+   spurious astronomically-long string made the signed result wrap negative, so
+   `len(s) >= 0` was unprovable (sound over-approximation, but imprecise).
+   `bounded_nondet_string()` now creates every nondet native string with its
+   length assumed in `[0, PYTHON_MAX_STRING_LENGTH]` (matching the refined
+   backend). All nondet-native-string sources route through it (nondet_string,
+   unsupported-method results, str(float), C-intrinsic returns). `len(nondet)
+   >= 0` now verifies; the soundness guard (`if len>=0: assert False` → FAILED)
+   is preserved.
+
+2. **Representation-neutral string primitives.** Per the architectural
+   reflection, the open-coded per-backend branches were consolidated into a
+   single set of primitives — `string_concat`, `string_substr`, `string_equal`
+   (over `native_string_app` + `string_struct_view`, alongside the existing
+   `python_string_literal` and `native_or_member_string_length`). Each is the
+   *one* place that branches on representation (native `smt_string` `str.*`
+   intrinsics vs the refined `{length,data}` struct via `emit_string_*`).
+   Migrated sites: binop `+` / `+=` / f-string chain (`string_concat`); slice /
+   subscript-char / for-iteration element (`string_substr`); dict-key
+   membership and dict-subscript key-match (`string_equal`). This localizes
+   future backend changes — and the hybrid retirement — to the primitives, and
+   shrinks the soundness-review surface. (A refined regression from dropping
+   `emit_string_*`'s `current_function` scoping was caught by the suite and
+   fixed; the primitives now thread it.)
+
+Validated: native corpus 0 crashes (539/540, 1 perf timeout); regression/python
+(refined) green; native suites green.
