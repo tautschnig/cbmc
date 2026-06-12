@@ -52,3 +52,27 @@ well-defended, and the pipeline (with 100% shape-recall) would have surfaced
 a real one.  The run identifies one more sound refinement (taint precision on
 IRQ-cookie void* derefs).  ~220 leaf DBs remain (resumable) but the
 priority-set conclusion is stable.
+
+## Update: after the IRQ-cookie taint refinement (+ wider run)
+
+Re-ran (416/536 leaf DBs, 5797 distinct candidates) with the
+isTrustedCookieParam fix (IRQ-handler dev_id cookies no longer raw-tainted):
+
+| triage class | count | % |
+|--------------|------:|--:|
+| LOCALLY-BOUNDED | 2909 | 50% |
+| GENUINE-FRONTIER | 2888 | 49% |
+
+HIGH confidence dropped 52 -> 46 (the vpif cookie reads are now MEDIUM).
+The new advisories now account for srcguard 210, mask 100, modulo 44,
+typebound 9 of the locally-bounded set.
+
+**Bug-hunt priority set (GENUINE-FRONTIER & HIGH & WRITE): 9 -> 4**, and all
+4 are `cec_config_thread_func` -- the non-local-validator class CONFIRMED in
+#1 (cec-adap.c:1835).  The vpif class is gone (taint FP fixed).  So EVERY
+top-priority count/index OOB-write candidate kernel-wide is now explained:
+either a confirmed non-local validator (cec) or a recognised local bound.
+**No unexplained candidate; no genuine bug.**
+
+~120 leaf DBs remain (resumable, the slow gpu/staging/usb subdir DBs); the
+priority-set conclusion is stable.
