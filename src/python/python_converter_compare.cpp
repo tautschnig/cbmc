@@ -2425,34 +2425,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
               is_python_string_type(item.type()) &&
               is_python_string_type(key_i.type()))
             {
-              if(
-                use_smt_string_native &&
-                item.type().id() == ID_smt_string &&
-                key_i.type().id() == ID_smt_string)
-              {
-                // Native SMT-String: key equality is str.= directly.
-                match = equal_exprt{item, key_i};
-              }
-              else
-              {
-              // Use string solver for key comparison
-              auto to_str = [](const exprt &s) -> exprt
-              {
-                if(s.id() == ID_struct && s.operands().size() == 2)
-                  return s;
-                return struct_exprt(
-                  {member_exprt(s, "length", signedbv_typet{64}),
-                   member_exprt(
-                     s, "data", pointer_typet(unsignedbv_typet{8}, 64))},
-                  s.type());
-              };
-              match = emit_string_bool_function(
-                ID_cprover_string_equal_func,
-                to_str(item),
-                to_str(key_i),
-                symbol_table,
-                pending_checks);
-              }
+              // Representation-neutral string content equality.
+              match = string_equal(item, key_i);
             }
             else
             {

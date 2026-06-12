@@ -1630,26 +1630,8 @@ skip_string_unroll:;
       {
         // Native SMT-String back-end (Plan A): the loop element is
         // iterable[idx] = str.substr(iterable, idx, 1), a native SMT String.
-        const irep_idt fn{ID_cprover_string_smt_strsub_func};
-        if(symbol_table.lookup(fn) == nullptr)
-        {
-          std::vector<typet> ats{
-            iterable.type(), signedbv_typet{64}, signedbv_typet{64}};
-          symbolt fs{
-            fn,
-            mathematical_function_typet(std::move(ats), smt_string_typet{}),
-            "python"};
-          fs.base_name = id2string(fn);
-          symbol_table.add(fs);
-        }
-        exprt start64 = idx_var;
-        if(start64.type() != signedbv_typet{64})
-          start64 = typecast_exprt{start64, signedbv_typet{64}};
-        function_application_exprt app{
-          symbol_table.lookup_ref(fn).symbol_expr(),
-          {iterable, start64, from_integer(1, signedbv_typet{64})}};
-        app.type() = smt_string_typet{};
-        elem_val = std::move(app);
+        elem_val =
+          string_substr(iterable, idx_var, from_integer(1, signedbv_typet{64}));
       }
       else
       {

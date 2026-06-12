@@ -453,15 +453,8 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         {
           if(key_i.type() != slice.type())
             key_i = safe_typecast(key_i, slice.type());
-          match = emit_string_bool_function(
-            ID_cprover_string_equal_func,
-            key_i,
-            slice,
-            symbol_table,
-            pending_checks);
-          // emit_string_bool_function returns c_bool — coerce
-          if(match.type() != bool_typet{})
-            match = typecast_exprt{std::move(match), bool_typet{}};
+          // Representation-neutral string content equality.
+          match = string_equal(key_i, slice);
         }
         else
         {
@@ -735,23 +728,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       {
         // Native SMT-String back-end (Plan A): s[a:b] = str.substr(s, a,
         // b-a). The result is a native SMT String (no res_len truncation).
-        const irep_idt fn{ID_cprover_string_smt_strsub_func};
-        if(symbol_table.lookup(fn) == nullptr)
-        {
-          std::vector<typet> ats{
-            value.type(), signedbv_typet{64}, signedbv_typet{64}};
-          symbolt fs{
-            fn,
-            mathematical_function_typet(std::move(ats), smt_string_typet{}),
-            "python"};
-          fs.base_name = id2string(fn);
-          symbol_table.add(fs);
-        }
-        function_application_exprt app{
-          symbol_table.lookup_ref(fn).symbol_expr(),
-          {value, lo_e, minus_exprt{hi_e, lo_e}}};
-        app.type() = smt_string_typet{};
-        return std::move(app);
+        return string_substr(value, lo_e, minus_exprt{hi_e, lo_e});
       }
       exprt src_struct =
         (value.id() == ID_struct && value.operands().size() == 2)
@@ -904,23 +881,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           idx64, ID_lt, from_integer(0, signedbv_typet{64})},
         plus_exprt{len_e, idx64},
         idx64};
-      const irep_idt fn{ID_cprover_string_smt_strsub_func};
-      if(symbol_table.lookup(fn) == nullptr)
-      {
-        std::vector<typet> ats{
-          value.type(), signedbv_typet{64}, signedbv_typet{64}};
-        symbolt fs{
-          fn,
-          mathematical_function_typet(std::move(ats), smt_string_typet{}),
-          "python"};
-        fs.base_name = id2string(fn);
-        symbol_table.add(fs);
-      }
-      function_application_exprt app{
-        symbol_table.lookup_ref(fn).symbol_expr(),
-        {value, adj, from_integer(1, signedbv_typet{64})}};
-      app.type() = smt_string_typet{};
-      return std::move(app);
+      return string_substr(value, adj, from_integer(1, signedbv_typet{64}));
     }
     member_exprt length{value, "length", python_int_type()};
     // PLR §6.3.3: negative indices count from the end
