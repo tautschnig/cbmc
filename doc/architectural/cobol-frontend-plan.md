@@ -273,9 +273,53 @@ clean and use curly-brace constructor syntax.
 
 - Numerics modelled by value, not bytes → byte-level `REDEFINES`,
   group `MOVE` across mismatched numeric layout, and `COMP-3`
-  nibble-level access are not byte-accurate.
+  nibble-level access are not byte-accurate. Group items are flattened
+  (their elementary leaves become standalone symbols), so group-level
+  `MOVE`/comparison and group `OCCURS` are not yet modelled.
+- `COPY` copybook directives are not expanded; references to
+  copybook-defined items therefore fail as "unknown data item".
+- Edited PICTUREs (insertion/suppression characters `Z * . , + - $ CR
+  DB /`) are not parsed; the embedded `.` currently mis-tokenises.
 - EBCDIC and sign-nibble/zone codecs not implemented (ASCII host only).
 - Float (`COMP-1`/`COMP-2`), `OCCURS DEPENDING ON`, files, `EXEC`
   sub-languages, `SORT`/`MERGE`, dynamic `CALL`, `ALTER` unsupported.
+- `SET ... TO FALSE` and pointer/`ADDRESS OF` forms are no-ops.
 - Single compilation unit focus; multi-program `CALL` linkage is a
   follow-up.
+
+---
+
+## 11. Baseline against AWS CardDemo and progress
+
+We track progress against the AWS CardDemo corpus (44 real COBOL
+programs, heavy on CICS/VSAM/DB2/copybooks) by recording the *first*
+construct that blocks each program. This is a coverage signal, not a
+verification target — most of these programs ultimately need `EXEC
+CICS`/`COPY`/file modelling to verify.
+
+Progression of the dominant first-blocker (programs affected):
+
+| Blocker | Initial | After alnum VALUE | After OCCURS+SET |
+|---|---|---|---|
+| alphanumeric / figurative `VALUE` | ~26 | 0 | 0 |
+| `OCCURS` | 9 | 13 | 0 |
+| `SET` | — | — | 0 |
+| digit-leading paragraph / `VALUES` | 10 | 0 | 0 |
+| `REDEFINES` | — | 13 | **19** |
+| unknown data item (`COPY` books) | — | 1 | **15** |
+| edited PICTUREs / misc | — | ~4 | ~10 |
+
+Programs now parse their entire inline DATA DIVISION and reach
+PROCEDURE code. The two remaining high-impact items are, in order:
+
+1. **Byte-level storage model** (records as byte arrays, fields as
+   typed views) — unblocks `REDEFINES`, group `MOVE`, and group
+   `OCCURS`. This is the largest single change and the prerequisite for
+   sound aliasing (see `cobol-to-goto-lowering.md` §1.5).
+2. **`COPY` expansion** — splice copybook source at `COPY` points
+   during scanning, with a copybook search path. Unblocks the "unknown
+   data item" failures.
+
+Cheaper follow-ups: edited PICTUREs (scanner-level PIC handling),
+`EXEC CICS`/`EXEC SQL` stubbing (treat as nondet I/O), and registering
+the frontend with the other tools (`goto-cc`, `goto-instrument`, …).
