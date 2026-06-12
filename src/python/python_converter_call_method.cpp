@@ -2255,7 +2255,14 @@ std::optional<exprt> python_convertert::try_method_call(
     if(obj_base_type.id() == ID_smt_string)
     {
       static const std::set<std::string> native_supported = {
-        "startswith", "endswith", "find", "index", "replace"};
+        "startswith",
+        "endswith",
+        "find",
+        "index",
+        "replace",
+        "strip",
+        "lstrip",
+        "rstrip"};
       if(native_supported.count(method_name))
       {
         if(

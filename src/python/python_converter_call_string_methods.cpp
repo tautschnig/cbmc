@@ -704,6 +704,91 @@ std::optional<exprt> python_convertert::try_string_method(
       if(result.size() <= PYTHON_MAX_STRING_LENGTH)
         return python_string_literal(result);
     }
+    // Native SMT-String back-end (Plan A): strip/lstrip/rstrip (whitespace,
+    // no `chars` arg) encoded with SMT-LIB regex. Introduce the result r and
+    // whitespace prefix p / suffix q with s = p ++ r ++ q, p,q in (re.* WS),
+    // and maximality (r empty, or its boundary chars are non-whitespace) so
+    // p/q capture ALL leading/trailing whitespace. This uniquely determines
+    // r = the stripped string. WS is the Python whitespace set.
+    if(
+      use_smt_string_native &&
+      (method_name == "strip" || method_name == "lstrip" ||
+       method_name == "rstrip") &&
+      (!args.is_array() || as_array(args).empty()))
+    {
+      const bool strip_l = method_name != "rstrip";
+      const bool strip_r = method_name != "lstrip";
+      const typet i64 = signedbv_typet{64};
+      const typet bt = c_bool_typet{8};
+      auto mk = [&]() -> symbol_exprt
+      {
+        std::string nm =
+          "__smt_strip_" + std::to_string(symbol_table.symbols.size());
+        irep_idt id{qualify_name(nm)};
+        symbolt s{id, smt_string_typet{}, "python"};
+        s.base_name = nm;
+        s.is_lvalue = true;
+        s.is_state_var = true;
+        symbol_table.add(s);
+        return symbol_table.lookup_ref(id).symbol_expr();
+      };
+      auto reg = [&](
+                   const irep_idt &fn,
+                   std::vector<typet> ats,
+                   const typet &ret) -> symbol_exprt
+      {
+        if(symbol_table.lookup(fn) == nullptr)
+        {
+          symbolt fs{
+            fn, mathematical_function_typet(std::move(ats), ret), "python"};
+          fs.base_name = id2string(fn);
+          symbol_table.add(fs);
+        }
+        return symbol_table.lookup_ref(fn).symbol_expr();
+      };
+      auto strcat = [&](const exprt &a, const exprt &b) -> exprt
+      {
+        function_application_exprt app{
+          reg(
+            ID_cprover_string_smt_strcat_func,
+            {a.type(), b.type()},
+            smt_string_typet{}),
+          {a, b}};
+        app.type() = smt_string_typet{};
+        return std::move(app);
+      };
+      // re_ws(x, mode): mode 0 = x all whitespace; 1 = starts with ws;
+      // 2 = ends with ws.
+      auto re_ws = [&](const exprt &x, int mode) -> exprt
+      {
+        function_application_exprt app{
+          reg(ID_cprover_string_smt_re_ws_func, {x.type(), i64}, bt),
+          {x, from_integer(mode, i64)}};
+        app.type() = bt;
+        return notequal_exprt{std::move(app), from_integer(0, bt)};
+      };
+      symbol_exprt r = mk();
+      exprt recon = r;
+      if(strip_l)
+      {
+        symbol_exprt p = mk();
+        recon = strcat(p, recon);
+        pending_checks.push_back(code_assumet{re_ws(p, 0)});
+        // Maximality: r does not start with whitespace (so p captured ALL
+        // leading whitespace). Vacuously holds for empty r.
+        pending_checks.push_back(code_assumet{not_exprt{re_ws(r, 1)}});
+      }
+      if(strip_r)
+      {
+        symbol_exprt q = mk();
+        recon = strcat(recon, q);
+        pending_checks.push_back(code_assumet{re_ws(q, 0)});
+        // Maximality: r does not end with whitespace.
+        pending_checks.push_back(code_assumet{not_exprt{re_ws(r, 2)}});
+      }
+      pending_checks.push_back(code_assumet{equal_exprt{obj, recon}});
+      return std::move(r);
+    }
     // Precise symbolic strip/lstrip/rstrip (whitespace form, no `chars`
     // argument) via the Python-whitespace strip axiom. With a `chars`
     // argument the semantics differ (arbitrary character set), so that case

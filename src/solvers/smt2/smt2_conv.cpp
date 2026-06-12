@@ -3068,6 +3068,42 @@ void smt2_convt::convert_expr(const exprt &expr)
         out << ")";
         return;
       }
+      // cprover_string_smt_re_ws_func(x, mode) -> boolean. Whitespace regex
+      // membership used to encode strip/lstrip/rstrip natively (Plan A):
+      //   mode 0: x in (re.* WS)        -- x is all whitespace
+      //   mode 1: x in (WS ++ re.all*)  -- x starts with whitespace
+      //   mode 2: x in (re.all* ++ WS)  -- x ends with whitespace
+      // WS = Python whitespace set {\t\n\v\f\r space}. Using regex membership
+      // (rather than str.at at a symbolic index) keeps the trailing-boundary
+      // maximality check tractable for CVC5.
+      if(fn_id == ID_cprover_string_smt_re_ws_func && args.size() == 2)
+      {
+        std::size_t width = boolbv_width(expr.type());
+        if(width == 0)
+          width = 8;
+        mp_integer mode = 0;
+        to_integer(to_constant_expr(args[1]), mode);
+        const char *ws =
+          "(re.union (str.to_re \"\\u{9}\") (str.to_re \"\\u{a}\") "
+          "(str.to_re \"\\u{b}\") (str.to_re \"\\u{c}\") (str.to_re "
+          "\"\\u{d}\") (str.to_re \" \"))";
+        if(reachable(args[0]))
+        {
+          out << "(ite (str.in_re ";
+          emit_smt_string(args[0]);
+          out << " ";
+          if(mode == 1)
+            out << "(re.++ " << ws << " (re.* re.allchar))";
+          else if(mode == 2)
+            out << "(re.++ (re.* re.allchar) " << ws << ")";
+          else
+            out << "(re.* " << ws << ")";
+          out << ") (_ bv1 " << width << ") (_ bv0 " << width << "))";
+          return;
+        }
+        out << "(_ bv0 " << width << ")";
+        return;
+      }
       // Wave 2 of Python re support: intercept calls carrying a
       // compile-time-constant pattern and lower to SMT-LIB
       // (str.in_re subject <regex>). If the pattern cannot be
