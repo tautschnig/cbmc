@@ -2200,6 +2200,34 @@ exprt python_convertert::native_or_member_string_length(const exprt &s)
   return member_exprt{s, "length", signedbv_typet{64}};
 }
 
+exprt python_convertert::bounded_nondet_string(const source_locationt &loc)
+{
+  static unsigned ctr = 0;
+  const std::string nm = "__bnd_smtstr_" + std::to_string(ctr++);
+  const irep_idt id{qualify_name(nm)};
+  if(symbol_table.lookup(id) == nullptr)
+  {
+    symbolt s{id, smt_string_typet{}, "python"};
+    s.base_name = nm;
+    s.is_lvalue = true;
+    s.is_state_var = true;
+    symbol_table.add(s);
+  }
+  const symbol_exprt sym = symbol_table.lookup_ref(id).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{
+    sym, side_effect_expr_nondett{smt_string_typet{}, loc}});
+  // Constrain length to [0, PYTHON_MAX_STRING_LENGTH]. The lower bound rules
+  // out the spurious negative (int2bv-wrapped) length models; the upper bound
+  // matches the refined backend.
+  const exprt len = native_or_member_string_length(sym);
+  const typet lt = len.type();
+  pending_checks.push_back(code_assumet{and_exprt{
+    binary_relation_exprt{len, ID_ge, from_integer(0, lt)},
+    binary_relation_exprt{
+      len, ID_le, from_integer(PYTHON_MAX_STRING_LENGTH, lt)}}});
+  return sym;
+}
+
 exprt python_convertert::python_truthiness(const exprt &e)
 {
   const typet &t = e.type();
@@ -4353,8 +4381,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
           if(use_smt_string_native)
           {
             // No SMT primitive for str(float); sound nondet SMT String.
-            parts.push_back(side_effect_expr_nondett{
-              smt_string_typet{}, get_location(v)});
+            parts.push_back(bounded_nondet_string(get_location(v)));
           }
           else
           {

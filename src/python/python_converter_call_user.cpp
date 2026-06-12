@@ -1834,7 +1834,7 @@ exprt python_convertert::convert_user_call(
       // (no strlen reasoning); emit the call for its side effects and return
       // a sound nondet SMT String.
       pending_checks.push_back(code_expressiont{call});
-      return side_effect_expr_nondett{smt_string_typet{}, get_location(expr)};
+      return bounded_nondet_string(get_location(expr));
     }
     // refined-string struct. The length is nondet (we can't
     // compute strlen precisely without a separate intrinsic), but

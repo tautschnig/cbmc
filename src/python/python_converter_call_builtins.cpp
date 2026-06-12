@@ -2793,8 +2793,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
         if(use_smt_string_native)
         {
           // No SMT primitive for str(float); sound nondet SMT String.
-          return side_effect_expr_nondett{
-            smt_string_typet{}, get_location(expr)};
+          return bounded_nondet_string(get_location(expr));
         }
         exprt result = emit_string_function(
           ID_cprover_string_of_double_func,
