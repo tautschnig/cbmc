@@ -62,6 +62,11 @@ std::string expr2python(const exprt &expr, const namespacet &ns)
       return constant.get_value().empty() ? "0.0"
                                           : id2string(constant.get_value());
     }
+
+    // Native SMT-String value (Plan A): the constant's value is the string
+    // content; render it as a Python string literal.
+    if(constant.type().id() == ID_smt_string)
+      return "'" + id2string(constant.get_value()) + "'";
   }
 
   if(expr.id() == ID_symbol)
