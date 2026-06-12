@@ -2979,60 +2979,6 @@ void smt2_convt::convert_expr(const exprt &expr)
         out << "(_ bv0 " << width << ")";
         return;
       }
-      // cprover_string_smt_concat_eq_func(res, left, right) → boolean
-      // SMT-String back-end producing-op support: a single str.++ constraint
-      // tying the result's string view to the concatenation of the inputs,
-      // i.e. (= (str res) (str.++ (str left) (str right))). The front-end
-      // assumes this; queries on res then read the same (str res) term, so
-      // they are precise. Using one str.++ equality (rather than byte-level
-      // array constraints) keeps proofs cheap for CVC5's string solver.
-      if(fn_id == ID_cprover_string_smt_concat_eq_func && args.size() == 3)
-      {
-        std::size_t width = boolbv_width(expr.type());
-        if(width == 0)
-          width = 8;
-        if(reachable(args[0]) && reachable(args[1]) && reachable(args[2]))
-        {
-          out << "(ite (= ";
-          emit_smt_string(args[0]);
-          out << " (str.++ ";
-          emit_smt_string(args[1]);
-          out << " ";
-          emit_smt_string(args[2]);
-          out << ")) (_ bv1 " << width << ") (_ bv0 " << width << "))";
-          return;
-        }
-        // Unreachable operand: emit bv1 (assume holds vacuously / sound: the
-        // result stays unconstrained, i.e. over-approximated).
-        out << "(_ bv1 " << width << ")";
-        return;
-      }
-      // cprover_string_smt_substr_eq_func(res, src, start, len) → boolean
-      // Ties res to a substring of src: (= (str res)
-      //   (str.substr (str src) start len)). Used to lower string subscript
-      // and slicing precisely at the *string* level (str.substr), avoiding
-      // the imprecise/slow byte<->str inversion of a direct array read.
-      if(fn_id == ID_cprover_string_smt_substr_eq_func && args.size() == 4)
-      {
-        std::size_t width = boolbv_width(expr.type());
-        if(width == 0)
-          width = 8;
-        if(reachable(args[0]) && reachable(args[1]))
-        {
-          out << "(ite (= ";
-          emit_smt_string(args[0]);
-          out << " (str.substr ";
-          emit_smt_string(args[1]);
-          out << " (bv2nat ";
-          convert_expr(args[2]);
-          out << ") (bv2nat ";
-          convert_expr(args[3]);
-          out << "))) (_ bv1 " << width << ") (_ bv0 " << width << "))";
-          return;
-        }
-        out << "(_ bv1 " << width << ")";
-        return;
-      }
       // Native SMT-String producing ops (Plan A): return an SMT String.
       // Operands are already SMT String (smt_string); results carry their own
       // length, so slice/replace need no res_len truncation (unlike the

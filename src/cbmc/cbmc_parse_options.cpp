@@ -179,6 +179,17 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-smt-strings", true);
   if(cmdline.isset("python-smt-strings-native"))
     options.set_option("python-smt-strings-native", true);
+  if(
+    (cmdline.isset("python-smt-strings") ||
+     cmdline.isset("python-smt-strings-native")) &&
+    !cmdline.isset("cvc5") && !cmdline.isset("z3") && !cmdline.isset("outfile"))
+  {
+    log.error()
+      << "--python-smt-strings selects the native SMT-LIB String backend, "
+         "which requires an SMT String solver: pass --cvc5 or --z3."
+      << messaget::eom;
+    exit(CPROVER_EXIT_USAGE_ERROR);
+  }
   if(cmdline.isset("python-lazy-stubs"))
     options.set_option("python-lazy-stubs", true);
   if(cmdline.isset("python-no-exception-checks"))
