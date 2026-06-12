@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+LENGTH OF and FUNCTION LENGTH give the exact byte size; DFHRESP is a
+distinct constant; other intrinsics such as NUMVAL are nondeterministic.
+See IBM LR "LENGTH OF special register" and "Intrinsic functions".

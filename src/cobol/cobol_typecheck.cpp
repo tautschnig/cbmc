@@ -211,6 +211,7 @@ struct cond_operandt
   exprt record;
   exprt offset;
   std::size_t length = 0;
+  const item_infot *item = nullptr; ///< the field, when is_item
 
   // alphanumeric literal / figurative:
   bool is_spec = false;
@@ -678,6 +679,9 @@ protected:
   bool is_relop_start() const;
   exprt parse_relation();
   cond_operandt parse_cond_operand();
+  bool at_intrinsic() const;
+  cond_operandt parse_intrinsic();
+  cond_operandt nondet_alnum_operand(std::size_t len);
   exprt
   build_cond_relation(cond_operandt a, const std::string &op, cond_operandt b);
   exprt build_alnum_relation(
@@ -1646,6 +1650,14 @@ reft cobol_typecheckt::parse_ref()
 
 valuet cobol_typecheckt::parse_primary()
 {
+  if(at_intrinsic())
+  {
+    last_ref.reset();
+    cond_operandt o = parse_intrinsic();
+    if(!o.numeric)
+      error("alphanumeric intrinsic used in an arithmetic expression");
+    return o.num;
+  }
   if(is_kind(cobol_token_kindt::LPAREN))
   {
     advance();
@@ -1961,6 +1973,8 @@ exprt cobol_typecheckt::build_cond_relation(
 cond_operandt cobol_typecheckt::parse_cond_operand()
 {
   cond_operandt op;
+  if(at_intrinsic())
+    return parse_intrinsic();
   if(cur().kind == cobol_token_kindt::STRING)
   {
     op.is_spec = true;
@@ -1984,10 +1998,187 @@ cond_operandt cobol_typecheckt::parse_cond_operand()
     op.record = r.record;
     op.offset = r.offset;
     op.length = r.info->byte_size;
+    op.item = r.info;
     return op;
   }
   op.numeric = true;
   op.num = parse_expr();
+  return op;
+}
+
+bool cobol_typecheckt::at_intrinsic() const
+{
+  if(cur().kind != cobol_token_kindt::WORD)
+    return false;
+  const std::string &w = cur().text;
+  if(w == "FUNCTION")
+    return true;
+  if(
+    w == "LENGTH" && peek(1).kind == cobol_token_kindt::WORD &&
+    peek(1).text == "OF")
+    return true;
+  if(
+    (w == "DFHRESP" || w == "DFHVALUE") &&
+    peek(1).kind == cobol_token_kindt::LPAREN)
+    return true;
+  return false;
+}
+
+/// A fresh nondeterministic alphanumeric operand of \p len bytes, backed by a
+/// unique uninitialised (hence nondet) scratch record.
+cond_operandt cobol_typecheckt::nondet_alnum_operand(std::size_t len)
+{
+  if(len == 0)
+    len = 1;
+  const std::string base = "$intr" + std::to_string(unique++);
+  const irep_idt rec = "cobol::" + program_id + "::" + base;
+  record_sizes[rec] = len;
+  symbolt symbol{rec, record_type(rec), COBOL_MODE};
+  symbol.base_name = base;
+  symbol.is_static_lifetime = true;
+  symbol.is_lvalue = true;
+  symbol.is_state_var = true;
+  symbol_table.add(symbol);
+
+  item_infot synth;
+  synth.record_symbol = rec;
+  synth.byte_size = len;
+  synth.char_count = len;
+  synth.is_numeric = false;
+  synth_items.push_back(synth);
+
+  cond_operandt op;
+  op.is_item = true;
+  op.record = record_expr(rec);
+  op.offset = from_integer(0, size_type());
+  op.length = len;
+  op.item = &synth_items.back();
+  return op;
+}
+
+/// Parse a special register / intrinsic-function / CICS-built-in reference and
+/// model its result (IBM LR "LENGTH OF special register" p. 2323, "Intrinsic
+/// functions"; CICS DFHRESP). LENGTH is exact; other numeric results are
+/// nondeterministic; alphanumeric results are nondet byte sequences.
+cond_operandt cobol_typecheckt::parse_intrinsic()
+{
+  cond_operandt op;
+
+  // LENGTH OF identifier -> the item's byte size.
+  if(is_word("LENGTH"))
+  {
+    advance();
+    expect_word("OF");
+    const reft r = parse_ref();
+    op.numeric = true;
+    op.num = valuet{from_integer(r.info->byte_size, cobol_value_type()), 0};
+    return op;
+  }
+
+  // DFHRESP(name) / DFHVALUE(name): a distinct constant per CICS condition.
+  if(eat_word("DFHRESP") || eat_word("DFHVALUE"))
+  {
+    std::string name;
+    if(is_kind(cobol_token_kindt::LPAREN))
+    {
+      advance();
+      if(cur().kind == cobol_token_kindt::WORD)
+        name = cur().text;
+      while(!is_kind(cobol_token_kindt::RPAREN) && !at_eof())
+        advance();
+      if(is_kind(cobol_token_kindt::RPAREN))
+        advance();
+    }
+    // NORMAL is 0; other conditions get a distinct nonzero code (the exact
+    // value is irrelevant: it is compared against a nondet RESP field).
+    mp_integer value = 0;
+    if(name != "NORMAL")
+    {
+      std::size_t h = 1;
+      for(char c : name)
+        h = h * 31 + static_cast<unsigned char>(c);
+      value = static_cast<long>(h % 1000) + 1;
+    }
+    op.numeric = true;
+    op.num = valuet{from_integer(value, cobol_value_type()), 0};
+    return op;
+  }
+
+  // FUNCTION function-name(args).
+  expect_word("FUNCTION");
+  std::string fname;
+  if(cur().kind == cobol_token_kindt::WORD)
+  {
+    fname = cur().text;
+    advance();
+  }
+  std::size_t first_item_len = 0;
+  bool first_item_len_set = false;
+  if(is_kind(cobol_token_kindt::LPAREN))
+  {
+    advance();
+    int depth = 1;
+    while(!at_eof() && depth > 0)
+    {
+      if(is_kind(cobol_token_kindt::LPAREN))
+        ++depth;
+      else if(is_kind(cobol_token_kindt::RPAREN))
+      {
+        --depth;
+        if(depth == 0)
+        {
+          advance();
+          break;
+        }
+      }
+      else if(
+        !first_item_len_set && cur().kind == cobol_token_kindt::WORD &&
+        items.find(cur().text) != items.end())
+      {
+        first_item_len = items.at(cur().text).byte_size;
+        first_item_len_set = true;
+      }
+      advance();
+    }
+  }
+
+  // Alphanumeric-returning intrinsics.
+  static const std::set<std::string> alnum_funcs = {
+    "TRIM",
+    "UPPER-CASE",
+    "LOWER-CASE",
+    "REVERSE",
+    "CURRENT-DATE",
+    "WHEN-COMPILED",
+    "SUBSTITUTE",
+    "CHAR"};
+  if(alnum_funcs.count(fname) != 0)
+  {
+    std::size_t len = first_item_len_set ? first_item_len : 64;
+    if(fname == "CURRENT-DATE")
+      len = 21;
+    if(fname == "WHEN-COMPILED")
+      len = 16;
+    if(fname == "CHAR")
+      len = 1;
+    return nondet_alnum_operand(len);
+  }
+
+  // LENGTH function: exact byte size of the (item) argument.
+  if(fname == "LENGTH" && first_item_len_set)
+  {
+    op.numeric = true;
+    op.num = valuet{from_integer(first_item_len, cobol_value_type()), 0};
+    return op;
+  }
+
+  // Other numeric-returning intrinsics: nondeterministic.
+  op.numeric = true;
+  op.num = valuet{
+    typecast_exprt{
+      side_effect_expr_nondett{cobol_value_type(), cur().location},
+      cobol_value_type()},
+    0};
   return op;
 }
 
@@ -2362,7 +2553,15 @@ std::vector<stmtt> cobol_typecheckt::parse_move()
   value_spect src_spec;
   std::optional<reft> src_ref;
   valuet src_val;
-  if(at_value_start() && !is_item_word())
+  if(at_intrinsic())
+  {
+    cond_operandt o = parse_intrinsic();
+    if(o.numeric)
+      src_val = o.num;
+    else
+      src_ref = reft{o.item, o.record, o.offset};
+  }
+  else if(at_value_start() && !is_item_word())
   {
     src_spec = read_value_spec();
     src_is_string = src_spec.kind != value_spect::kindt::NUMERIC &&
@@ -2924,6 +3123,23 @@ void cobol_typecheckt::inject_eib()
     {"DFHUNIMD", false, 0, 1, ""}, {"DFHUNINT", false, 0, 1, ""},
     {"DFHALL", false, 0, 1, ""},   {"DFHERROR", false, 0, 1, ""}};
   inject_builtin_record("DFHBMSCA", bmsca, true);
+
+  // SQL communication area (SQLCA), referenced by EXEC SQL programs; nondet.
+  static const std::vector<builtin_fieldt> sqlca = {
+    {"SQLCODE", true, 9, 0, "COMP"},
+    {"SQLSTATE", false, 0, 5, ""},
+    {"SQLERRM", false, 0, 72, ""},
+    {"SQLERRMC", false, 0, 70, ""},
+    {"SQLERRP", false, 0, 8, ""},
+    {"SQLWARN0", false, 0, 1, ""},
+    {"SQLWARN1", false, 0, 1, ""},
+    {"SQLWARN2", false, 0, 1, ""},
+    {"SQLWARN3", false, 0, 1, ""},
+    {"SQLWARN4", false, 0, 1, ""},
+    {"SQLWARN5", false, 0, 1, ""},
+    {"SQLWARN6", false, 0, 1, ""},
+    {"SQLWARN7", false, 0, 1, ""}};
+  inject_builtin_record("SQLCA", sqlca, false);
 }
 
 void cobol_typecheckt::inject_builtin_record(

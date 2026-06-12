@@ -314,6 +314,14 @@ clean and use curly-brace constructor syntax.
   `EXEC SQL`/`EXEC DLI` are stubbed the same way but untested. Static
   `CALL "program"` to another compilation unit is not yet linked, and
   `DFHCOMMAREA` is not injected (programs declaring it themselves work).
+- The `LENGTH OF` special register and `FUNCTION LENGTH` give the exact
+  byte size; `DFHRESP`/`DFHVALUE` are distinct constants; the SQLCA
+  (`SQLCODE`, …) is a nondet synthesised record. Other intrinsics
+  (`NUMVAL`, `TRIM`, `UPPER-CASE`, `CURRENT-DATE`, …) return a
+  nondeterministic value of the appropriate category (IBM LR "Intrinsic
+  functions").
+- Unsigned numerics (`PIC 9`) are modelled with a signed value domain,
+  so a stored value is not constrained to be non-negative.
 - EBCDIC and sign-nibble/zone codecs not implemented (ASCII host only).
 - Float (`COMP-1`/`COMP-2`), `OCCURS DEPENDING ON`, files,
   `SORT`/`MERGE`, dynamic `CALL`, `ALTER`, class/sign conditions
@@ -352,12 +360,10 @@ nondet EIB), edited PICTUREs, subfield subscripting inside `OCCURS`
 groups, and reference modification are now supported. The remaining
 CardDemo blockers, in order, are:
 
-1. **Unknown data items** (23) — the `LENGTH OF` special register, the
-   `FUNCTION` intrinsics, `DFHRESP(...)`, the SQL `SQLCODE`, and BMS
-   screen-map fields the frontend does not synthesise.
-2. **Static `CALL "program"`** to another compilation unit (5).
-3. **`MOVE` of an alphanumeric item to a numeric item** (de-editing
-   conversion) and `MOVE`/`ADD` whose target is unresolved.
+1. **`MOVE` of an alphanumeric item to a numeric item** (16) — the
+   de-editing conversion, which the value model cannot perform exactly.
+2. **Static `CALL "program"`** to another compilation unit (9).
+3. **`MOVE`/`ADD` with an unresolved or intrinsic target**.
 
 Registering the frontend with the other tools (`goto-cc`,
 `goto-instrument`, …) remains a small follow-up.
