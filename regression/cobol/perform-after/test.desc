@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+PERFORM VARYING ... AFTER iterates nested loops, re-initialising the
+inner variable per outer iteration. See IBM LR "PERFORM statement".

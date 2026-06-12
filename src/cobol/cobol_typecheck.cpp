@@ -3849,23 +3849,80 @@ stmtt cobol_typecheckt::parse_perform()
   // control phrase
   if(eat_word("VARYING"))
   {
-    s.pkind = stmtt::perform_kindt::VARYING;
-    const reft var_ref = parse_ref();
-    if(!var_ref.info->is_numeric)
-      error("PERFORM VARYING requires a numeric loop variable");
-    expect_word("FROM");
-    valuet from = parse_operand();
-    s.var_init.push_back(make_assign_ref(var_ref, from, s.location));
-    expect_word("BY");
-    valuet by = parse_operand();
-    valuet cur_v = read_field(var_ref);
-    align(cur_v, by);
-    s.var_step.push_back(make_assign_ref(
-      var_ref,
-      valuet{plus_exprt{cur_v.expr, by.expr}, cur_v.scale},
-      s.location));
-    expect_word("UNTIL");
-    s.cond = parse_condition();
+    // PERFORM ... VARYING id FROM x BY y UNTIL c [AFTER id2 FROM .. UNTIL c2]...
+    // (IBM LR "PERFORM statement", format 4). Each dimension is its own
+    // counted loop; an AFTER dimension is re-initialised on every iteration of
+    // the dimension before it. This is exactly the behaviour of *nesting* a
+    // single-dimension VARYING loop inside the body of the previous one, so
+    // the statement is lowered as nested VARYING PERFORMs and reuses the
+    // single-dimension code generation.
+    struct dimt
+    {
+      std::vector<stmtt> init;
+      std::vector<stmtt> step;
+      exprt cond;
+    };
+    const auto parse_dim = [&]()
+    {
+      dimt d;
+      const reft var_ref = parse_ref();
+      if(!var_ref.info->is_numeric)
+        error("PERFORM VARYING requires a numeric loop variable");
+      expect_word("FROM");
+      valuet from = parse_operand();
+      d.init.push_back(make_assign_ref(var_ref, from, s.location));
+      expect_word("BY");
+      valuet by = parse_operand();
+      valuet cur_v = read_field(var_ref);
+      align(cur_v, by);
+      d.step.push_back(make_assign_ref(
+        var_ref,
+        valuet{plus_exprt{cur_v.expr, by.expr}, cur_v.scale},
+        s.location));
+      expect_word("UNTIL");
+      d.cond = parse_condition();
+      return d;
+    };
+
+    std::vector<dimt> dims;
+    dims.push_back(parse_dim());
+    while(eat_word("AFTER"))
+      dims.push_back(parse_dim());
+
+    // The actual loop body (out-of-line target or inline statements) belongs
+    // to the innermost dimension.
+    std::vector<stmtt> body;
+    if(s.inline_body)
+    {
+      body = parse_statements();
+      expect_word("END-PERFORM");
+    }
+
+    stmtt inner;
+    inner.kind = stmtt::kindt::PERFORM;
+    inner.location = s.location;
+    inner.pkind = stmtt::perform_kindt::VARYING;
+    inner.var_init = dims.back().init;
+    inner.var_step = dims.back().step;
+    inner.cond = dims.back().cond;
+    inner.inline_body = s.inline_body;
+    inner.body = std::move(body);
+    inner.target = s.target;
+    inner.target_end = s.target_end;
+    for(std::size_t k = dims.size() - 1; k-- > 0;)
+    {
+      stmtt wrapper;
+      wrapper.kind = stmtt::kindt::PERFORM;
+      wrapper.location = s.location;
+      wrapper.pkind = stmtt::perform_kindt::VARYING;
+      wrapper.var_init = dims[k].init;
+      wrapper.var_step = dims[k].step;
+      wrapper.cond = dims[k].cond;
+      wrapper.inline_body = true;
+      wrapper.body = {std::move(inner)};
+      inner = std::move(wrapper);
+    }
+    return inner;
   }
   else if(eat_word("UNTIL"))
   {
