@@ -151,59 +151,6 @@ std::optional<exprt> python_convertert::try_nondet_call(
       return bounded_nondet_string(get_location(expr));
     }
 
-    if(use_smt_string_backend)
-    {
-      // SMT-String back-end: give the leaf a concrete backing array so its
-      // data pointer resolves (via symex value-substitution) to
-      // address_of(index(backing, 0)) -- the shape smt2_conv's str.*
-      // lowering recognises. This makes symbol-operand membership/ordering
-      // precise under an SMT String solver (--cvc5), reusing the same
-      // content-pointer-resolution idea as the refined back-end's Phase 1/2.
-      // The backing size matches smt2_conv's fixed unroll bound so every
-      // byte index it emits is in-bounds.
-      const std::size_t bound = PYTHON_MAX_STRING_LENGTH;
-      array_typet at{
-        unsignedbv_typet{8}, from_integer(bound, signedbv_typet{64})};
-      auto make_sym = [&](const std::string &base, const typet &t)
-      {
-        std::string nm = base + std::to_string(ns_ctr - 1);
-        irep_idt id{qualify_name(nm)};
-        if(symbol_table.lookup(id) == nullptr)
-        {
-          symbolt s{id, t, "python"};
-          s.base_name = nm;
-          s.is_lvalue = true;
-          s.is_state_var = true;
-          symbol_table.add(s);
-        }
-        return symbol_table.lookup_ref(id).symbol_expr();
-      };
-      symbol_exprt backing = make_sym("__nondet_str_data_", at);
-      symbol_exprt len_sym = make_sym("__nondet_str_len_", signedbv_typet{64});
-      exprt content = address_of_exprt(index_exprt(
-        backing, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
-      pending_checks.push_back(code_frontend_assignt{
-        tmp, struct_exprt({len_sym, content}, python_string_type())});
-      // Constrain the length: == size when given, else the default range;
-      // always within the backing bound.
-      if(args.is_array() && !as_array(args).empty())
-      {
-        exprt size_i64 = safe_typecast(
-          convert_expression(*as_array(args).begin()), signedbv_typet{64});
-        pending_checks.push_back(code_assumet{equal_exprt{len_sym, size_i64}});
-      }
-      else
-      {
-        pending_checks.push_back(code_assumet{and_exprt{
-          binary_relation_exprt{
-            len_sym, ID_ge, from_integer(0, signedbv_typet{64})},
-          binary_relation_exprt{
-            len_sym, ID_le, from_integer(15, signedbv_typet{64})}}});
-      }
-      pending_checks.push_back(code_assumet{binary_relation_exprt{
-        len_sym, ID_le, from_integer(bound, signedbv_typet{64})}});
-      return std::move(tmp);
-    }
     pending_checks.push_back(code_frontend_assignt{
       tmp, side_effect_expr_nondett{python_string_type(), get_location(expr)}});
     // Emit the length constraint through the intrinsic so

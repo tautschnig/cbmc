@@ -119,15 +119,13 @@ protected:
   /// Python string back-end selector. Default
   /// 'python_string_kindt::refined' keeps every string as a
   /// refined-string struct {length, data}. When
-  /// 'python_string_kindt::smt_string' is set, SMT-capable
-  /// back-ends (CVC5, Z3) receive strings as SMT-LIB String
-  /// values instead; other back-ends fall back to refined.
-  /// Controlled by --python-smt-strings. See
+  /// 'python_string_kindt::smt_string_native' is set
+  /// (--python-smt-strings), strings are the native SMT-LIB String sort and
+  /// require an SMT String solver (--cvc5/--z3). See
   /// doc/architectural/python-string-phase2-backend-abstraction.md.
   enum class python_string_kindt
   {
     refined,
-    smt_string,
     smt_string_native,
   };
   python_string_kindt python_string_kind = python_string_kindt::refined;

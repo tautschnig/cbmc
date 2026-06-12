@@ -227,7 +227,6 @@ private:
   /// warning level. Intended for debugging spurious verification
   /// results where a silent over-approximation may be at fault.
   bool python_strict_warnings = false;
-  bool use_smt_string_backend = false;
   bool use_smt_string_native = false;
 
 public:
@@ -241,17 +240,10 @@ public:
     python_strict_warnings = v;
   }
 
-  /// Select the SMT-String back-end (--python-smt-strings): string leaves get
-  /// a concrete backing array so the smt2_conv str.* lowering can reach their
-  /// bytes. See python-string-phase2-backend-abstraction.md.
-  void set_use_smt_string_backend(bool v)
-  {
-    use_smt_string_backend = v;
-  }
-
-  /// Select the native SMT-String representation (--python-smt-strings-native,
-  /// Plan A): strings are smt_string_typet (SMT String sort) rather than the
-  /// refined {length,char*} struct. Experimental; in development.
+  /// Select the native SMT-String representation (--python-smt-strings,
+  /// Plan A): strings are smt_string_typet (the SMT-LIB String sort) rather
+  /// than the refined {length,char*} struct. Requires an SMT String solver
+  /// (--cvc5/--z3).
   void set_use_smt_string_native(bool v)
   {
     use_smt_string_native = v;
