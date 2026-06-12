@@ -546,7 +546,7 @@ property at call sites whose argument class doesn't declare
 | `--python-required-kwarg-checks` | off | Stub-completeness checks for `Required[T]` keys in `Unpack[TypedDict]` kwargs |
 | `--python-check-typeddict-fields` | off | Field-type checks on PEP 448 `**kwargs` spreads |
 | `--python-lazy-stubs` | off | Skip method bodies in imported stubs; signatures-only |
-| `--python-smt-strings` | off | Represent `str` with the native SMT-LIB String sort instead of refinement-strings. Requires an SMT String solver (`--cvc5`/`--z3`). `--python-smt-strings-native` is a backward-compatible alias. |
+| `--python-smt-strings` | off | Represent `str` with the native SMT-LIB String sort instead of refinement-strings. Requires an SMT String solver (`--cvc5`/`--z3`). |
 
 ## Type-coercion at boundaries (PLR §3.2)
 

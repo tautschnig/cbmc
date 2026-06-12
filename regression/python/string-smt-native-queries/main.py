@@ -1,4 +1,4 @@
-# Plan A: native SMT-String backend (--python-smt-strings-native).
+# Plan A: native SMT-String backend (--python-smt-strings).
 # Query ops over native SMT String values.
 s = nondet_string(3)
 assume(s == "abc")
