@@ -95,3 +95,33 @@ VIOLATED 12, OOM 1, PROVED 1.  Net: only `supinfo_to_lineinfo` is a clean
 whole-function clear; the rest are timeouts or nondet-input artifacts.  The
 actionable conclusion: route candidates through harnessed slices (concrete
 input sizes) rather than raw `--function`.
+
+## Update: widening to skb/cursor + A2 candidate types (effort 3)
+
+Added a class-diverse sample of skb/cursor + A2 (infoleak) candidates
+(bfusb_rx_submit, hfcmulti_rx, at91_start_xmit,
+fdp_nci_core_get_config_rsp_packet, br2684_push, ax25_ioctl) via
+`cbmc_discharge_survey.py` + an `extra.json` candidate file (extracted by
+running skb_field_before_lencheck / infoleak on cached leaf DBs).  All built
+OK (front-end again 100%); discharge: 5 TIMEOUT + 1 VIOLATED -- the SAME
+distribution as the count/index set.  The failure-mode profile is therefore
+candidate-type-independent: front-end solid, whole-function symex dominated
+by timeout and nondet-input artifacts.
+
+## Combined survey conclusions (35 candidates, all classes + asset types)
+
+* **Front-end: 100% build** -- not the bottleneck anywhere.
+* **`--object-bits 16` required** (eliminated 12 spurious "too many objects").
+* **Whole-function raw `--function` discharge is the wrong tool** for these:
+  nondet input pointers => spurious pointer/bounds artifacts (even locally
+  guarded code fails), and >~half time out.  Only robustly-safe leaves
+  (supinfo_to_lineinfo) clear cleanly.
+* **The path that works** is the harnessed verbatim slice / caller-
+  precondition (concrete input sizes), as already demonstrated for
+  cec / mqprio / taprio / altera -- those gave definitive verdicts where the
+  raw whole-function run only times out or manufactures artifacts.
+
+Net: the survey's value is the *map* -- it cheaply sorts candidates into
+"clean PROVED" (rare), "needs a harness" (the VIOLATED/TIMEOUT bulk), and
+confirms the front-end + object-bits prerequisites -- so effort focuses on
+harnessing the genuine-shape candidates, not on raw whole-function runs.

@@ -39,6 +39,12 @@ def manifest():
             func, path = p[0], (p[1] if len(p) > 1 else "")
             if path.endswith(".c") and "linux_6_12/" in path:
                 m.setdefault(path.split("linux_6_12/")[-1], set()).add(func)
+    # widen: merge extra candidates (skb/cursor + A2) from extra.json,
+    # format {relpath: [funcs]}
+    extra = f"{OUT}/extra.json"
+    if os.path.isfile(extra):
+        for rel, funcs in json.load(open(extra)).items():
+            m.setdefault(rel, set()).update(funcs)
     return {k: sorted(v) for k, v in sorted(m.items())}
 
 
