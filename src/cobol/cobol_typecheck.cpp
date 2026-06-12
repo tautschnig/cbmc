@@ -297,10 +297,10 @@ struct paragrapht
 bool is_verb(const std::string &w)
 {
   static const std::set<std::string> verbs = {
-    "MOVE", "ADD",      "SUBTRACT", "MULTIPLY", "DIVIDE", "COMPUTE",
-    "IF",   "EVALUATE", "PERFORM",  "GO",       "STOP",   "GOBACK",
-    "EXIT", "DISPLAY",  "ACCEPT",   "CONTINUE", "CALL",   "NEXT",
-    "SET",  "EXEC",     "STRING"};
+    "MOVE", "ADD",      "SUBTRACT", "MULTIPLY",  "DIVIDE", "COMPUTE",
+    "IF",   "EVALUATE", "PERFORM",  "GO",        "STOP",   "GOBACK",
+    "EXIT", "DISPLAY",  "ACCEPT",   "CONTINUE",  "CALL",   "NEXT",
+    "SET",  "EXEC",     "STRING",   "INITIALIZE"};
   return verbs.find(w) != verbs.end();
 }
 
@@ -712,6 +712,7 @@ protected:
   stmtt parse_perform();
   std::vector<stmtt> parse_move();
   std::vector<stmtt> parse_string();
+  std::vector<stmtt> parse_initialize();
   std::vector<stmtt> parse_add();
   std::vector<stmtt> parse_subtract();
   std::vector<stmtt> parse_multiply();
@@ -2616,6 +2617,8 @@ std::vector<stmtt> cobol_typecheckt::parse_statement()
     return parse_move();
   if(verb == "STRING")
     return parse_string();
+  if(verb == "INITIALIZE")
+    return parse_initialize();
   if(verb == "ADD")
     return parse_add();
   if(verb == "SUBTRACT")
@@ -2808,6 +2811,84 @@ std::vector<stmtt> cobol_typecheckt::parse_string()
   s.rhs = make_byte_update(
     t.record, t.offset, side_effect_expr_nondett{bytes_type, loc});
   return {s};
+}
+
+std::vector<stmtt> cobol_typecheckt::parse_initialize()
+{
+  // INITIALIZE sets the elementary items of each receiver to their category
+  // default: numeric / numeric-edited to ZERO, alphanumeric / alphabetic to
+  // SPACES (IBM LR "INITIALIZE statement"). A group is initialised
+  // field-by-field.
+  const source_locationt loc = cur().location;
+  expect_word("INITIALIZE");
+
+  std::vector<reft> targets;
+  while(is_item_word())
+    targets.push_back(parse_ref());
+
+  // Optional REPLACING category DATA BY value ...: the category defaults above
+  // already match the common "REPLACING NUMERIC BY ZEROES" usage, so the
+  // phrase is parsed and skipped rather than modelled in detail.
+  if(eat_word("REPLACING"))
+    skip_to_sentence_end();
+
+  value_spect spaces;
+  spaces.kind = value_spect::kindt::SPACES;
+
+  std::vector<stmtt> result;
+  for(const reft &t : targets)
+  {
+    // Initialise the elementary fields contained in the receiver. The byte
+    // offset of each child relative to the (possibly subscripted) receiver
+    // base is preserved.
+    bool any_child = false;
+    for(const entryt &e : all_items)
+    {
+      const item_infot &info = e.info;
+      if(
+        info.is_group || info.record_symbol != t.info->record_symbol ||
+        info.offset < t.info->offset ||
+        info.offset >= t.info->offset + t.info->byte_size)
+        continue;
+      any_child = true;
+      const exprt offset = plus_exprt{
+        t.offset, from_integer(info.offset - t.info->offset, size_type())};
+      // make_assign_ref needs the record expression; supply it here.
+      if(info.is_numeric)
+        result.push_back(make_assign_ref(
+          reft{&info, t.record, offset},
+          valuet{from_integer(0, cobol_value_type()), info.scale},
+          loc));
+      else
+      {
+        stmtt s;
+        s.kind = stmtt::kindt::ASSIGN;
+        s.location = loc;
+        s.lhs = t.record;
+        s.rhs = make_byte_update(
+          t.record, offset, make_alnum_constant(spaces, info.byte_size));
+        result.push_back(s);
+      }
+    }
+    if(!any_child)
+    {
+      // The receiver is itself an elementary item.
+      if(t.info->is_numeric)
+        result.push_back(make_assign_ref(
+          t, valuet{from_integer(0, cobol_value_type()), t.info->scale}, loc));
+      else
+      {
+        stmtt s;
+        s.kind = stmtt::kindt::ASSIGN;
+        s.location = loc;
+        s.lhs = t.record;
+        s.rhs = make_byte_update(
+          t.record, t.offset, make_alnum_constant(spaces, t.info->byte_size));
+        result.push_back(s);
+      }
+    }
+  }
+  return result;
 }
 
 std::vector<stmtt> cobol_typecheckt::parse_add()

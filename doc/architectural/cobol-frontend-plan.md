@@ -370,21 +370,22 @@ CardDemo blockers, in order, are:
 2. A long tail (`MOVE without a target`, a few parse edges, and
    numeric/alphanumeric comparisons).
 
-As of this milestone, **29 of the 44 CardDemo programs reach
+As of this milestone, **30 of the 44 CardDemo programs reach
 `VERIFICATION SUCCESSFUL`**, and another ~11 parse and lower to GOTO
 fully but exceed the default bound during bounded model checking (batch
-file loops and the MQ programs). The remaining hard failures are a small
+file loops and the MQ programs). The remaining hard failures are a short
 long tail:
 
-- Two programs (`COTRTLIC`, `COPAUS1C`) that reference items
-  (`WS-DB2-ERROR`, `WS-DECL-RSN-IDX`) defined only in copybooks they do
-  not themselves COPY.
+- `COTRTUPC` and `COPAUS2C` (`MOVE without a target`): receivers the
+  frontend does not yet resolve (BMS map fields / a copybook field).
+- `COTRTLIC`: an `EXEC SQL` host-variable reference the SQL stub does not
+  fully consume.
 
-The IBM MQ programs (`COACCT01`, `CODATE01`, `COPAUA0C`) now lower
-fully: the bundled MQ copybooks are structured as sub-level field groups
-copied under a program-provided 01 (so qualified references such as
-`MQOD-OBJECTTYPE OF MQM-OD-REQUEST` resolve), and recursive `PERFORM` is
-handled (see below) rather than rejected.
+Recent increments cleared the previous long tail: `OCCURS ... INDEXED
+BY` index-names are registered (IBM LR "INDEXED BY phrase"); `EXEC SQL
+INCLUDE` includes a copybook member like COPY (Db2 SQL Reference,
+"INCLUDE"); and `INITIALIZE` sets numeric fields to zero and
+alphanumeric fields to spaces (IBM LR "INITIALIZE statement").
 
 ### Architectural note: PERFORM, recursion, and inlining
 

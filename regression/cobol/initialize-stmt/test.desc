@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+INITIALIZE sets numeric fields to zero and alphanumeric fields to
+spaces. See IBM LR "INITIALIZE statement".
