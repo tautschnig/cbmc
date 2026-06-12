@@ -829,6 +829,14 @@ exprt smt2_convt::parse_rec(const irept &src, const typet &type)
     else if(src.id()==ID_0 || src.id()==ID_false)
       return false_exprt();
   }
+  else if(type.id() == ID_smt_string)
+  {
+    // SMT-LIB String model value (Plan A): the tokenizer stores the
+    // de-quoted string content in the irep id, so surface it as an
+    // smt_string constant for the trace. (CVC5 \u{XX} escapes for
+    // non-printable bytes are not decoded here -- rare in traces.)
+    return constant_exprt{src.id(), smt_string_typet{}};
+  }
   else if(type.id()==ID_pointer)
   {
     // these come in as bit-vector literals
