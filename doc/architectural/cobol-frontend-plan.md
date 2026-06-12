@@ -298,6 +298,10 @@ clean and use curly-brace constructor syntax.
   character content that the value model abstracts, so they are modelled
   as nondeterministic (sound over-approximation). Abbreviated combined
   conditions (`IF A = 1 OR 2`) are not yet supported.
+- EVALUATE supports a single subject (numeric or alphanumeric), `WHEN`
+  values with `THRU` ranges and `ANY`, and `WHEN OTHER`; multi-subject
+  EVALUATE (`ALSO`) is not yet supported. Parenthesised conditions are
+  supported.
 - Edited PICTUREs (insertion/suppression characters `Z * . , + - $ CR
   DB /`) are read as a single character-string (IBM LR "PICTURE
   character-strings", pp. 48 / 3723-3725) and modelled as alphanumeric
@@ -346,13 +350,12 @@ nondet EIB), edited PICTUREs, subfield subscripting inside `OCCURS`
 groups, and reference modification are now supported. The remaining
 CardDemo blockers, in order, are:
 
-1. **Numeric use of edited / alphanumeric items** ("non-numeric item",
-   14) — arithmetic or numeric MOVE involving a `DISPLAY`/edited field,
-   and `MOVE`/`ADD` whose target is such an item.
-2. **Abbreviated combined conditions** (`IF A = 1 OR 2`) and other
-   residual condition forms ("expected a relational operator", 7).
-3. **Static `CALL "program"`** to another compilation unit, and
-   `DFHCOMMAREA`.
+1. **Unknown data items** (20) — references to items the frontend does
+   not synthesise: `DFHCOMMAREA`, and BMS screen-map fields brought in by
+   `cpy-bms` copybooks the frontend cannot resolve to a record.
+2. **Abbreviated combined conditions** (`IF A = 1 OR 2`) and residual
+   condition forms ("expected a relational operator", 7).
+3. **Static `CALL "program"`** to another compilation unit.
 
 Registering the frontend with the other tools (`goto-cc`,
 `goto-instrument`, …) remains a small follow-up.

@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+EVALUATE over an alphanumeric subject, and a parenthesised condition
+mixing alphanumeric and numeric tests. See IBM LR "EVALUATE statement"
+and "Conditional expressions".

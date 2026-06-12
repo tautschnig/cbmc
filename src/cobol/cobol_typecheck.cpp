@@ -659,8 +659,11 @@ protected:
   exprt parse_condition();
   exprt parse_and_condition();
   exprt parse_not_condition();
+  bool paren_is_condition() const;
   exprt parse_relation();
   cond_operandt parse_cond_operand();
+  exprt
+  build_cond_relation(cond_operandt a, const std::string &op, cond_operandt b);
   exprt build_alnum_relation(
     cond_operandt &l,
     const std::string &op,
@@ -1898,7 +1901,14 @@ exprt cobol_typecheckt::parse_relation()
   if(neg)
     op = negate_relop(op);
   cond_operandt b = parse_cond_operand();
+  return build_cond_relation(std::move(a), op, std::move(b));
+}
 
+exprt cobol_typecheckt::build_cond_relation(
+  cond_operandt a,
+  const std::string &op,
+  cond_operandt b)
+{
   // A figurative constant such as ZERO compared with a numeric operand is
   // numeric (value 0); SPACES etc. are alphanumeric.
   const auto numeric_like = [](const cond_operandt &o)
@@ -2045,7 +2055,72 @@ exprt cobol_typecheckt::parse_not_condition()
 {
   if(eat_word("NOT"))
     return not_exprt{parse_not_condition()};
+  // A parenthesised condition, e.g. (A = B AND C = D). Distinguished from a
+  // parenthesised arithmetic operand by a top-level condition marker inside.
+  if(is_kind(cobol_token_kindt::LPAREN) && paren_is_condition())
+  {
+    advance();
+    exprt c = parse_condition();
+    if(!is_kind(cobol_token_kindt::RPAREN))
+      error("expected ')' after parenthesised condition");
+    advance();
+    return c;
+  }
   return parse_relation();
+}
+
+/// Look ahead from the current '(' to its matching ')' and decide whether the
+/// parenthesised group is a condition (contains a top-level relational/logical
+/// operator or class/sign keyword) rather than an arithmetic operand.
+bool cobol_typecheckt::paren_is_condition() const
+{
+  int depth = 0;
+  for(std::size_t p = pos; p < tokens.size(); ++p)
+  {
+    const cobol_tokent &t = tokens[p];
+    if(t.kind == cobol_token_kindt::END_OF_FILE)
+      break;
+    if(t.kind == cobol_token_kindt::LPAREN)
+      ++depth;
+    else if(t.kind == cobol_token_kindt::RPAREN)
+    {
+      --depth;
+      if(depth == 0)
+        break;
+    }
+    else if(depth == 1)
+    {
+      if(
+        t.kind == cobol_token_kindt::PUNCT &&
+        (t.text == "=" || t.text == "<" || t.text == ">" || t.text == "<=" ||
+         t.text == ">=" || t.text == "<>"))
+        return true;
+      if(t.kind == cobol_token_kindt::WORD)
+      {
+        static const std::set<std::string> markers = {
+          "AND",
+          "OR",
+          "IS",
+          "GREATER",
+          "LESS",
+          "EQUAL",
+          "EQUALS",
+          "EXCEEDS",
+          "NUMERIC",
+          "ALPHABETIC",
+          "ALPHABETIC-LOWER",
+          "ALPHABETIC-UPPER",
+          "POSITIVE",
+          "NEGATIVE"};
+        if(markers.count(t.text) != 0)
+          return true;
+        // A bare condition-name inside parentheses is also a condition.
+        if(conds.find(t.text) != conds.end())
+          return true;
+      }
+    }
+  }
+  return false;
 }
 
 exprt cobol_typecheckt::parse_and_condition()
@@ -2792,10 +2867,13 @@ stmtt cobol_typecheckt::parse_evaluate()
   s.location = cur().location;
   expect_word("EVALUATE");
 
+  // Single-subject EVALUATE (IBM LR "EVALUATE statement"). The subject is
+  // either the word TRUE (each WHEN is a condition) or a (numeric or
+  // alphanumeric) operand that each WHEN is compared against for equality.
   const bool subject_true = eat_word("TRUE");
-  valuet subject;
+  cond_operandt subject;
   if(!subject_true)
-    subject = parse_expr();
+    subject = parse_cond_operand();
 
   while(eat_word("WHEN"))
   {
@@ -2809,11 +2887,24 @@ stmtt cobol_typecheckt::parse_evaluate()
     {
       cond = parse_condition();
     }
+    else if(is_word("ANY"))
+    {
+      advance();
+      cond = true_exprt{};
+    }
     else
     {
-      valuet w = parse_operand();
-      valuet subj = subject;
-      cond = build_relation(subj, "=", w);
+      cond_operandt w = parse_cond_operand();
+      if(eat_word("THRU") || eat_word("THROUGH"))
+      {
+        // WHEN low THRU high: subject in [low, high].
+        cond_operandt hi = parse_cond_operand();
+        cond = and_exprt{
+          build_cond_relation(subject, ">=", w),
+          build_cond_relation(subject, "<=", hi)};
+      }
+      else
+        cond = build_cond_relation(subject, "=", w);
     }
     std::vector<stmtt> body = parse_statements();
     s.when_clauses.emplace_back(cond, std::move(body));
