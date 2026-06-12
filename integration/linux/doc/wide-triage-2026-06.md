@@ -76,3 +76,19 @@ either a confirmed non-local validator (cec) or a recognised local bound.
 
 ~120 leaf DBs remain (resumable, the slow gpu/staging/usb subdir DBs); the
 priority-set conclusion is stable.
+
+## Final (525/536 leaf DBs, near-complete)
+
+7172 distinct count/index candidates kernel-wide.  GENUINE-FRONTIER 3466; of
+which HIGH-confidence WRITE (top bug-hunt priority): **7**, and ALL 7 are the
+known non-local-validator class confirmed in #1:
+  * mqprio_enable_offload x2 (min_rate/max_rate[16]) -- mqprio_validate_qopt;
+  * taprio_change (cur_txq[16]) -- netdev_set_num_tc;
+  * cec_config_thread_func x4 (log_addr[4]/msg[16]) -- cec-adap.c:1835.
+
+Every top-priority OOB-write candidate kernel-wide is an explained,
+validator-guarded false positive.  The vpif taint-FP class is gone (the
+IRQ-cookie refinement held).  Final verdict: **NO genuine count/index
+OOB-write bug across 7172 candidates / 525 leaf DBs** -- a sound true
+negative (the #2 recall harness confirms the pipeline would flag a real one),
+i.e. the count/index OOB-write surface is well-defended kernel-wide.
