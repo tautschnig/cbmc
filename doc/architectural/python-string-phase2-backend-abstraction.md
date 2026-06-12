@@ -2204,3 +2204,50 @@ front-end follow-up (eliminate the spurious coercion at source).
 performance encoding; (2) flip `--python-smt-strings` onto native and delete
 the byte-array hybrid + the separate `-native` flag. The viability question is
 fully resolved — the migration was an incremental, low-risk grind as predicted.
+
+## Plan A — soundness fix at source + architectural reflection (2026-06-12)
+
+The `smt_string`->bitvector `str.to_int` band-aid in smt2_conv was removed and
+its root cause fixed in the front-end: the `python_value` subscript handler only
+implemented the LIST tag and indexed the data array with *any* subscript, so a
+string dict key forced an unsound `smt_string`->int index cast. It now
+dispatches on the subscript type (int->LIST; string->DICT, currently sound
+nondet). int(str) is unaffected (its own builtin path; `int("42")==42` holds).
+
+### Are the migration's point fixes symptoms of architectural issues?
+
+Reviewing the ~16 site fixes from the crash-free migration, they cluster under
+**two architectural root patterns**, both worth addressing centrally rather
+than per-site:
+
+1. **Hardcoded refined-string representation.** Many sites built
+   `member_exprt{x,"length"/"data"}` or `struct_exprt({...},
+   python_string_type())` inline, assuming the `{length,data}` struct. Under a
+   different representation (smt_string) each is a separate breakage. *Clean
+   architecture:* a small set of representation-neutral primitives —
+   `string_length(x)`, `string_char_at(x,i)`, `string_concat`,
+   `string_equal(a,b)`, `make_string_literal` — that every site goes through.
+   A backend change then touches only those primitives. `python_string_literal`
+   and `native_or_member_string_length` are the first two; the rest are still
+   open-coded. This is the single highest-leverage refactor and would also make
+   the eventual hybrid retirement (collapsing `--python-smt-strings` onto
+   native) nearly mechanical.
+
+2. **Bypassing the central coercion helpers.** `safe_typecast` /
+   `unwrap_value` / `coerce_to_typed_slot` are the value-coercion centers and
+   are sound (the unhandled-pair fallback is a nondet over-approximation, never
+   a wrong concrete value). The spurious-cast bug existed precisely because the
+   subscript path built a raw `index_exprt`/typecast that bypassed them. Sites
+   that construct raw `typecast_exprt`/`index_exprt`/`member_exprt` on Python
+   values are the risk surface; routing them through the coercion centers (or
+   tag-dispatching first, as the subscript now does) keeps soundness local.
+
+The remaining per-op fixes (str(int)/chr/ord via `str.from_int`/`from_code`/
+`to_code`) are *not* symptomatic — each genuinely needs its own SMT primitive
+and has no shared root.
+
+**Recommendation:** before retiring the hybrid, introduce the representation-
+neutral string primitives (pattern 1) and migrate the open-coded sites to them.
+That converts the hybrid-retirement and any future representation change from a
+site hunt into a localized edit, and shrinks the soundness-review surface to the
+coercion centers (pattern 2).
