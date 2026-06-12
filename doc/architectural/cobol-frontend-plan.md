@@ -370,22 +370,22 @@ CardDemo blockers, in order, are:
 2. A long tail (`MOVE without a target`, a few parse edges, and
    numeric/alphanumeric comparisons).
 
-As of this milestone, **30 of the 44 CardDemo programs reach
-`VERIFICATION SUCCESSFUL`**, and another ~11 parse and lower to GOTO
-fully but exceed the default bound during bounded model checking (batch
-file loops and the MQ programs). The remaining hard failures are a short
-long tail:
+As of this milestone, **all 44 CardDemo programs parse and lower to GOTO
+with no conversion errors**: **33 reach `VERIFICATION SUCCESSFUL`**
+end-to-end, and the other 11 lower fully but exceed the default bound
+during bounded model checking (batch file loops and the MQ programs).
+There is no longer a front-end coverage gap on this corpus; the
+remaining 11 need explicit unwind bounds rather than new language
+support.
 
-- `COTRTUPC` and `COPAUS2C` (`MOVE without a target`): receivers the
-  frontend does not yet resolve (BMS map fields / a copybook field).
-- `COTRTLIC`: an `EXEC SQL` host-variable reference the SQL stub does not
-  fully consume.
-
-Recent increments cleared the previous long tail: `OCCURS ... INDEXED
-BY` index-names are registered (IBM LR "INDEXED BY phrase"); `EXEC SQL
-INCLUDE` includes a copybook member like COPY (Db2 SQL Reference,
-"INCLUDE"); and `INITIALIZE` sets numeric fields to zero and
-alphanumeric fields to spaces (IBM LR "INITIALIZE statement").
+Recent increments cleared the long tail: `OCCURS ... INDEXED BY`
+index-names are registered (IBM LR "INDEXED BY phrase"); `EXEC SQL
+INCLUDE` includes a copybook member like COPY, including DB2 DCLGEN
+members kept as `.dcl` in a `dcl/` directory (Db2 SQL Reference,
+"INCLUDE"); an `EXEC SQL DECLARE ... TABLE ... END-EXEC` directive in
+the DATA DIVISION is skipped so its column lengths are not read as level
+numbers; and `INITIALIZE` sets numeric fields to zero and alphanumeric
+fields to spaces (IBM LR "INITIALIZE statement").
 
 ### Architectural note: PERFORM, recursion, and inlining
 

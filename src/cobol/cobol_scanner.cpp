@@ -571,7 +571,10 @@ reflow_partial_words(const std::vector<cobol_tokent> &in)
 std::string
 resolve_copybook(const std::string &name, const std::vector<std::string> &dirs)
 {
-  static const char *exts[] = {".cpy", ".CPY", ".cbl", ".CBL", ""};
+  // .dcl is the conventional extension for DB2 DCLGEN output (the host-
+  // variable structures brought in by EXEC SQL INCLUDE).
+  static const char *exts[] = {
+    ".cpy", ".CPY", ".cbl", ".CBL", ".dcl", ".DCL", ""};
   for(const std::string &dir : dirs)
   {
     const std::string base = dir.empty() ? name : dir + "/" + name;

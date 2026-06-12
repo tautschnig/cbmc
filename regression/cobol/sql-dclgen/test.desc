@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+A DB2 DCLGEN member (.dcl) is included via EXEC SQL INCLUDE; its DECLARE
+TABLE directive is skipped and its host structure parsed. See Db2 SQL
+Reference, "INCLUDE" and "DECLARE TABLE".

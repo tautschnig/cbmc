@@ -1057,6 +1057,20 @@ void cobol_typecheckt::parse_data_division()
       if(is_kind(cobol_token_kindt::PERIOD))
         advance();
     }
+    else if(is_word("EXEC"))
+    {
+      // An EXEC SQL DECLARE ... TABLE ... END-EXEC block (as produced by
+      // DCLGEN ahead of the host-variable structure) is a declaration for the
+      // SQL precompiler, not COBOL data. Skip it to its END-EXEC terminator so
+      // that numeric tokens inside it (e.g. CHAR(2)) are not taken as level
+      // numbers; the data description that follows is parsed normally.
+      while(!at_eof() && !is_word("END-EXEC") && !is_word("PROCEDURE"))
+        advance();
+      if(is_word("END-EXEC"))
+        advance();
+      if(is_kind(cobol_token_kindt::PERIOD))
+        advance();
+    }
     else if(cur().kind == cobol_token_kindt::NUMBER)
     {
       const std::size_t level =

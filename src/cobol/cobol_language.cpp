@@ -43,6 +43,11 @@ static std::vector<std::string> copybook_dirs(const std::string &path)
   // copying from the common app/cpy directory).
   dirs.push_back(dir + "/../../cpy");
   dirs.push_back(dir + "/../../cpy-bms");
+  // DB2 DCLGEN members (host-variable structures included via EXEC SQL
+  // INCLUDE) are conventionally kept in a dcl/ directory.
+  dirs.push_back(dir + "/../dcl");
+  dirs.push_back(dir + "/dcl");
+  dirs.push_back(dir + "/../../dcl");
 
   if(const char *cobcpy = std::getenv("COBCPY"))
   {
