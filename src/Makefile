@@ -3,6 +3,7 @@ DIRS = analyses \
        assembler \
        big-int \
        cbmc \
+       cobol \
        cpp \
        cprover \
        crangler \
@@ -81,7 +82,10 @@ crangler.dir: util.dir json.dir
 
 languages: util.dir langapi.dir \
            cpp.dir ansi-c.dir xmllang.dir assembler.dir \
-           json.dir json-symtab-language.dir statement-list.dir
+           json.dir json-symtab-language.dir statement-list.dir \
+           cobol.dir
+
+cobol.dir: util.dir langapi.dir goto-programs.dir linking.dir
 
 solvers.dir: util.dir
 
