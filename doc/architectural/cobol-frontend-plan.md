@@ -322,6 +322,10 @@ clean and use curly-brace constructor syntax.
   functions").
 - Unsigned numerics (`PIC 9`) are modelled with a signed value domain,
   so a stored value is not constrained to be non-negative.
+- `MOVE` of an alphanumeric source to a numeric receiver performs a
+  de-editing conversion of the source's characters (IBM LR "MOVE
+  statement"); the value model does not represent that content, so the
+  converted value is nondeterministic.
 - EBCDIC and sign-nibble/zone codecs not implemented (ASCII host only).
 - Float (`COMP-1`/`COMP-2`), `OCCURS DEPENDING ON`, files,
   `SORT`/`MERGE`, dynamic `CALL`, `ALTER`, class/sign conditions
@@ -360,10 +364,14 @@ nondet EIB), edited PICTUREs, subfield subscripting inside `OCCURS`
 groups, and reference modification are now supported. The remaining
 CardDemo blockers, in order, are:
 
-1. **`MOVE` of an alphanumeric item to a numeric item** (16) — the
-   de-editing conversion, which the value model cannot perform exactly.
-2. **Static `CALL "program"`** to another compilation unit (9).
-3. **`MOVE`/`ADD` with an unresolved or intrinsic target**.
+1. **Static `CALL "program"`** to another compilation unit (10).
+2. **Unknown data items** (8) — residual `DFHCOMMAREA` and BMS map
+   fields the frontend does not synthesise.
+3. **`MOVE`/`ADD` with an unresolved target**.
+
+As of this milestone, **7 CardDemo programs reach `VERIFICATION
+SUCCESSFUL`** — they parse, lower to GOTO and complete bounded model
+checking end-to-end.
 
 Registering the frontend with the other tools (`goto-cc`,
 `goto-instrument`, …) remains a small follow-up.

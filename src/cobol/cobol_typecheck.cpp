@@ -2587,11 +2587,17 @@ std::vector<stmtt> cobol_typecheckt::parse_move()
     reft t = parse_ref();
     if(t.info->is_numeric)
     {
-      if(src_ref && !src_ref->info->is_numeric)
-        error("MOVE of a non-numeric item to a numeric item");
-      if(src_is_string)
-        error("MOVE of an alphanumeric literal to a numeric item");
-      result.push_back(make_assign_ref(t, src_val, loc));
+      // MOVE of an alphanumeric source to a numeric receiver performs a
+      // de-editing conversion of the source's character content (IBM LR
+      // "MOVE statement"). The value-domain model does not represent that
+      // content, so the converted value is nondeterministic.
+      if((src_ref && !src_ref->info->is_numeric) || src_is_string)
+        result.push_back(make_assign_ref(
+          t,
+          valuet{side_effect_expr_nondett{cobol_value_type(), loc}, 0},
+          loc));
+      else
+        result.push_back(make_assign_ref(t, src_val, loc));
     }
     else
     {
