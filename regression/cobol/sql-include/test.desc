@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+EXEC SQL INCLUDE includes a copybook member, like COPY. See Db2 SQL
+Reference, "INCLUDE".

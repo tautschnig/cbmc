@@ -609,7 +609,64 @@ std::vector<cobol_tokent> cobol_expand_copy(
 
   messaget log{message_handler};
 
+  // Resolve a copybook by name and append its expanded tokens to `out`. Used
+  // for both the COPY statement and the SQL INCLUDE statement (the Db2
+  // precompiler's INCLUDE includes a copybook member, equivalent to COPY).
   std::vector<cobol_tokent> out;
+  const auto splice_copybook =
+    [&](
+      const std::string &name,
+      const std::vector<
+        std::pair<std::vector<cobol_tokent>, std::vector<cobol_tokent>>>
+        &replacing,
+      const source_locationt &loc)
+  {
+    const std::string path = resolve_copybook(name, copybook_dirs);
+    std::vector<cobol_tokent> sub;
+    if(path.empty())
+    {
+      // Fall back to the bundled copybook library for compiler-/subsystem-
+      // supplied copybooks not in the application source tree (CICS, IBM MQ;
+      // see cobol_copybooks.h).
+      if(const std::string *builtin = cobol_builtin_copybook(name))
+      {
+        if(depth > 40)
+          return;
+        std::istringstream bin{*builtin};
+        sub = cobol_expand_copy(
+          cobol_scan(bin, "<builtin:" + name + ">"),
+          copybook_dirs,
+          message_handler);
+      }
+      else
+      {
+        log.warning().source_location = loc;
+        log.warning() << "COBOL: copybook '" << name << "' not found; skipping"
+                      << messaget::eom;
+        return;
+      }
+    }
+    else
+    {
+      if(depth > 40)
+      {
+        log.error() << "COBOL: COPY nesting too deep (cyclic copybook '" << name
+                    << "'?)" << messaget::eom;
+        return;
+      }
+      std::ifstream in{path};
+      sub =
+        cobol_expand_copy(cobol_scan(in, path), copybook_dirs, message_handler);
+    }
+    // Drop the copybook's trailing END_OF_FILE before splicing.
+    if(!sub.empty() && sub.back().kind == cobol_token_kindt::END_OF_FILE)
+      sub.pop_back();
+    sub = apply_replacing(sub, replacing);
+    sub = reflow_partial_words(sub);
+    for(auto &tok : sub)
+      out.push_back(std::move(tok));
+  };
+
   std::size_t i = 0;
   while(i < tokens.size())
   {
@@ -617,6 +674,37 @@ std::vector<cobol_tokent> cobol_expand_copy(
     {
       out.push_back(tokens[i]);
       break;
+    }
+
+    // SQL INCLUDE: EXEC SQL INCLUDE text-name END-EXEC. The Db2 precompiler
+    // copies the named member, like COPY (Db2 SQL Reference, "INCLUDE"). SQLCA
+    // is supplied separately (auto-injected), so its INCLUDE simply finds no
+    // member and is skipped.
+    if(
+      tok_is_word(tokens[i], "EXEC") && i + 2 < tokens.size() &&
+      tok_is_word(tokens[i + 1], "SQL") &&
+      tok_is_word(tokens[i + 2], "INCLUDE"))
+    {
+      const source_locationt inc_loc = tokens[i].location;
+      i += 3; // EXEC SQL INCLUDE
+      std::string name;
+      if(i < tokens.size() && tokens[i].kind == cobol_token_kindt::WORD)
+      {
+        name = tokens[i].text;
+        ++i;
+      }
+      // Skip to and past END-EXEC / terminating period.
+      while(i < tokens.size() && !tok_is_word(tokens[i], "END-EXEC") &&
+            tokens[i].kind != cobol_token_kindt::PERIOD &&
+            tokens[i].kind != cobol_token_kindt::END_OF_FILE)
+        ++i;
+      if(i < tokens.size() && tok_is_word(tokens[i], "END-EXEC"))
+        ++i;
+      if(i < tokens.size() && tokens[i].kind == cobol_token_kindt::PERIOD)
+        ++i;
+      if(!name.empty())
+        splice_copybook(name, {}, inc_loc);
+      continue;
     }
 
     if(!tok_is_word(tokens[i], "COPY"))
@@ -686,54 +774,7 @@ std::vector<cobol_tokent> cobol_expand_copy(
     if(i < tokens.size() && tokens[i].kind == cobol_token_kindt::PERIOD)
       ++i;
 
-    // Resolve and splice the copybook.
-    const std::string path = resolve_copybook(name, copybook_dirs);
-    if(path.empty())
-    {
-      // Fall back to the bundled copybook library for compiler-/subsystem-
-      // supplied copybooks (CICS, IBM MQ) that are not part of the application
-      // source tree (see cobol_copybooks.h). The bundled text is expanded
-      // exactly like an on-disk copybook.
-      if(const std::string *builtin = cobol_builtin_copybook(name))
-      {
-        if(depth <= 40)
-        {
-          std::istringstream bin{*builtin};
-          std::vector<cobol_tokent> sub = cobol_expand_copy(
-            cobol_scan(bin, "<builtin:" + name + ">"),
-            copybook_dirs,
-            message_handler);
-          if(!sub.empty() && sub.back().kind == cobol_token_kindt::END_OF_FILE)
-            sub.pop_back();
-          sub = apply_replacing(sub, replacing);
-          sub = reflow_partial_words(sub);
-          for(auto &tok : sub)
-            out.push_back(std::move(tok));
-        }
-        continue;
-      }
-      log.warning().source_location = copy_loc;
-      log.warning() << "COBOL: copybook '" << name
-                    << "' not found; skipping COPY" << messaget::eom;
-      continue;
-    }
-    if(depth > 40)
-    {
-      log.error() << "COBOL: COPY nesting too deep (cyclic copybook '" << name
-                  << "'?)" << messaget::eom;
-      continue;
-    }
-
-    std::ifstream in{path};
-    std::vector<cobol_tokent> sub =
-      cobol_expand_copy(cobol_scan(in, path), copybook_dirs, message_handler);
-    // Drop the copybook's trailing END_OF_FILE before splicing.
-    if(!sub.empty() && sub.back().kind == cobol_token_kindt::END_OF_FILE)
-      sub.pop_back();
-    sub = apply_replacing(sub, replacing);
-    sub = reflow_partial_words(sub);
-    for(auto &tok : sub)
-      out.push_back(std::move(tok));
+    splice_copybook(name, replacing, copy_loc);
   }
 
   return out;
