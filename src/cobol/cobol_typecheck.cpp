@@ -173,6 +173,26 @@ struct value_spect
   bool all = false; ///< ALL <literal> repetition
 };
 
+/// An operand of a relation condition: either a numeric value or an
+/// alphanumeric operand (an item's bytes, or a literal / figurative constant).
+/// Drives numeric vs. alphanumeric comparison (IBM LR "Comparison of two
+/// alphanumeric operands", pp. 276-277).
+struct cond_operandt
+{
+  bool numeric = false;
+  valuet num; ///< when numeric
+
+  // alphanumeric item bytes:
+  bool is_item = false;
+  exprt record;
+  exprt offset;
+  std::size_t length = 0;
+
+  // alphanumeric literal / figurative:
+  bool is_spec = false;
+  value_spect spec;
+};
+
 bool is_figurative(const std::string &w)
 {
   static const std::set<std::string> f = {
@@ -577,6 +597,11 @@ protected:
   exprt parse_and_condition();
   exprt parse_not_condition();
   exprt parse_relation();
+  cond_operandt parse_cond_operand();
+  exprt build_alnum_relation(
+    cond_operandt &l,
+    const std::string &op,
+    cond_operandt &r);
   std::string parse_relop();
   exprt cond_predicate(const std::string &name);
 
@@ -1551,10 +1576,151 @@ exprt cobol_typecheckt::parse_relation()
     advance();
     return cond_predicate(name);
   }
-  valuet a = parse_expr();
+
+  cond_operandt a = parse_cond_operand();
   const std::string op = parse_relop();
-  valuet b = parse_expr();
-  return build_relation(a, op, b);
+  cond_operandt b = parse_cond_operand();
+
+  // A figurative constant such as ZERO compared with a numeric operand is
+  // numeric (value 0); SPACES etc. are alphanumeric.
+  const auto numeric_like = [](const cond_operandt &o)
+  {
+    return o.numeric || (o.is_spec && o.spec.kind == value_spect::kindt::ZEROS);
+  };
+  const auto to_numeric = [](const cond_operandt &o) {
+    return o.numeric ? o.num : valuet{from_integer(0, cobol_value_type()), 0};
+  };
+
+  if((a.numeric || b.numeric) && numeric_like(a) && numeric_like(b))
+    return build_relation(to_numeric(a), op, to_numeric(b));
+
+  if(a.numeric || b.numeric)
+    error(
+      "comparison between numeric and alphanumeric operands is not "
+      "supported");
+
+  return build_alnum_relation(a, op, b);
+}
+
+cond_operandt cobol_typecheckt::parse_cond_operand()
+{
+  cond_operandt op;
+  if(cur().kind == cobol_token_kindt::STRING)
+  {
+    op.is_spec = true;
+    op.spec = read_value_spec();
+    return op;
+  }
+  if(
+    cur().kind == cobol_token_kindt::WORD &&
+    (is_figurative(cur().text) || cur().text == "ALL"))
+  {
+    op.is_spec = true;
+    op.spec = read_value_spec();
+    return op;
+  }
+  if(
+    cur().kind == cobol_token_kindt::WORD &&
+    items.find(cur().text) != items.end() && !items.at(cur().text).is_numeric)
+  {
+    const reft r = parse_ref();
+    op.is_item = true;
+    op.record = r.record;
+    op.offset = r.offset;
+    op.length = r.info->byte_size;
+    return op;
+  }
+  op.numeric = true;
+  op.num = parse_expr();
+  return op;
+}
+
+exprt cobol_typecheckt::build_alnum_relation(
+  cond_operandt &l,
+  const std::string &op,
+  cond_operandt &r)
+{
+  // IBM Enterprise COBOL for z/OS 6.4 Language Reference, "Comparison of two
+  // alphanumeric operands" (pp. 276-277): corresponding character positions
+  // are compared left to right by the collating sequence (ASCII = hexadecimal
+  // value), and the shorter operand is treated as if padded on the right with
+  // spaces.
+  const unsignedbv_typet byte_type{8};
+  const auto length_of = [](const cond_operandt &o) -> std::size_t
+  {
+    if(o.is_item)
+      return o.length;
+    if(o.is_spec && o.spec.kind == value_spect::kindt::STRING)
+      return o.spec.str.size();
+    return 0; // figurative: takes the size of the other operand
+  };
+  std::size_t n = std::max(length_of(l), length_of(r));
+  if(n == 0)
+    n = 1;
+
+  const exprt space = from_integer(' ', byte_type);
+  const auto bytes_of = [&](const cond_operandt &o)
+  {
+    std::vector<exprt> v;
+    v.reserve(n);
+    if(o.is_item)
+    {
+      for(std::size_t i = 0; i < n; ++i)
+      {
+        if(i < o.length)
+          v.push_back(make_byte_extract(
+            o.record,
+            plus_exprt{o.offset, from_integer(i, size_type())},
+            byte_type));
+        else
+          v.push_back(space); // right-padding with spaces (LR p. 277)
+      }
+    }
+    else
+    {
+      // Materialise the literal / figurative to n bytes; make_alnum_constant
+      // right-pads a short literal with spaces, matching the LR rule.
+      const exprt c = make_alnum_constant(o.spec, n);
+      for(std::size_t i = 0; i < n; ++i)
+        v.push_back(index_exprt{c, from_integer(i, size_type())});
+    }
+    return v;
+  };
+
+  const std::vector<exprt> a = bytes_of(l);
+  const std::vector<exprt> b = bytes_of(r);
+
+  exprt eq = true_exprt{};
+  for(std::size_t i = 0; i < n; ++i)
+    eq = and_exprt{eq, equal_exprt{a[i], b[i]}};
+
+  if(op == "=")
+    return eq;
+  if(op == "<>")
+    return not_exprt{eq};
+
+  // Lexicographic ordering: at the first differing position the operand with
+  // the higher hexadecimal value is greater (LR p. 277).
+  exprt lt = false_exprt{};
+  exprt gt = false_exprt{};
+  for(std::size_t k = n; k-- > 0;)
+  {
+    lt = or_exprt{
+      binary_relation_exprt{a[k], ID_lt, b[k]},
+      and_exprt{equal_exprt{a[k], b[k]}, lt}};
+    gt = or_exprt{
+      binary_relation_exprt{a[k], ID_gt, b[k]},
+      and_exprt{equal_exprt{a[k], b[k]}, gt}};
+  }
+  if(op == "<")
+    return lt;
+  if(op == ">")
+    return gt;
+  if(op == "<=")
+    return not_exprt{gt};
+  if(op == ">=")
+    return not_exprt{lt};
+  error("unsupported relational operator '" + op + "'");
 }
 
 exprt cobol_typecheckt::parse_not_condition()

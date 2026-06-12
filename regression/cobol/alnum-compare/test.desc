@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Alphanumeric relation conditions: equality with right space-padding,
+figurative SPACES, and lexicographic ordering by collating sequence
+(IBM LR "Comparison of two alphanumeric operands", pp. 276-277).
