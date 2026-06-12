@@ -94,7 +94,7 @@ bool cobol_languaget::to_expr(
 
 std::set<std::string> cobol_languaget::extensions() const
 {
-  return {"cob", "cbl", "cobol"};
+  return {"cob", "cbl", "cobol", "CBL", "COB", "COBOL", "Cbl", "Cob"};
 }
 
 void cobol_languaget::modules_provided(std::set<std::string> &modules)

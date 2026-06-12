@@ -21,6 +21,30 @@ static bool is_word_char(char c)
   return std::isalnum(static_cast<unsigned char>(c)) != 0;
 }
 
+/// Given that `s[i]` is a digit, decide whether the maximal word-run starting
+/// there is a COBOL word (identifier / paragraph name such as `1000-MAIN`)
+/// rather than a numeric literal. It is a word if the run contains a letter or
+/// an internal hyphen.
+static bool digit_run_is_word(const std::string &s, std::size_t i)
+{
+  const std::size_t n = s.size();
+  std::size_t j = i;
+  while(j < n)
+  {
+    if(std::isalpha(static_cast<unsigned char>(s[j])) != 0)
+      return true;
+    if(std::isdigit(static_cast<unsigned char>(s[j])) != 0)
+    {
+      ++j;
+      continue;
+    }
+    if(s[j] == '-' && j + 1 < n && is_word_char(s[j + 1]))
+      return true;
+    break;
+  }
+  return false;
+}
+
 /// Extract the code portion of one physical source line, honouring fixed
 /// format. Columns 1-6 are the sequence area, column 7 is the indicator
 /// (`*` and `/` start a comment, `-` is continuation which we treat as a
@@ -131,8 +155,11 @@ cobol_scan(std::istream &in, const std::string &file_name)
 
       // Numeric literal: a run of digits, with an optional internal decimal
       // point (only when followed by a further digit so the sentence period
-      // is not consumed).
-      if(std::isdigit(static_cast<unsigned char>(c)) != 0)
+      // is not consumed). A digit-led run containing a letter or hyphen is a
+      // COBOL word (e.g. the paragraph name 1000-MAIN), handled below.
+      if(
+        std::isdigit(static_cast<unsigned char>(c)) != 0 &&
+        !digit_run_is_word(code, i))
       {
         std::string text;
         while(i < n)

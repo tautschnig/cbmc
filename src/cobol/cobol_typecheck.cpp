@@ -30,6 +30,7 @@ Author: Kiro
 #include <algorithm>
 #include <cctype>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -78,12 +79,12 @@ struct item_infot
   std::size_t char_count = 0;
 };
 
-/// 88-level condition name: value ranges over a numeric parent.
+/// 88-level condition name: value ranges/values over its parent item.
 struct cond_infot
 {
-  irep_idt parent_symbol;
-  std::size_t parent_scale = 0;
-  std::vector<std::pair<mp_integer, mp_integer>> ranges;
+  item_infot parent;
+  std::vector<std::pair<mp_integer, mp_integer>> num_ranges; // numeric parent
+  std::vector<exprt> alnum_values;                           // alphanumeric
 };
 
 /// A numeric expression together with its decimal scale.
@@ -92,6 +93,47 @@ struct valuet
   exprt expr;
   std::size_t scale = 0;
 };
+
+/// A parsed VALUE / 88-level literal, before interpretation against the
+/// receiving item's picture. Captures numeric literals, quoted strings, and
+/// COBOL figurative constants.
+struct value_spect
+{
+  enum class kindt
+  {
+    NONE,
+    NUMERIC,
+    STRING,
+    SPACES,
+    ZEROS,
+    HIGH_VALUES,
+    LOW_VALUES,
+    QUOTES
+  } kind = kindt::NONE;
+  mp_integer num = 0;
+  std::size_t scale = 0;
+  std::string str;
+  bool all = false; ///< ALL <literal> repetition
+};
+
+bool is_figurative(const std::string &w)
+{
+  static const std::set<std::string> f = {
+    "SPACE",
+    "SPACES",
+    "ZERO",
+    "ZEROS",
+    "ZEROES",
+    "HIGH-VALUE",
+    "HIGH-VALUES",
+    "LOW-VALUE",
+    "LOW-VALUES",
+    "QUOTE",
+    "QUOTES",
+    "NULL",
+    "NULLS"};
+  return f.find(w) != f.end();
+}
 
 /// A parsed statement. Operands are pre-lowered to exprt/codet during parsing;
 /// only control-flow structure is retained for code generation and PERFORM
@@ -411,7 +453,11 @@ protected:
   void parse_data_division();
   void parse_data_item();
   std::string read_picture_string();
-  std::pair<mp_integer, std::size_t> read_literal_value();
+  value_spect read_value_spec();
+  bool at_value_start() const;
+  std::optional<mp_integer>
+  spec_to_numeric(const value_spect &spec, std::size_t target_scale);
+  exprt make_alnum_constant(const value_spect &spec, std::size_t n);
   void parse_procedure_division();
 
   valuet parse_expr();
@@ -644,8 +690,11 @@ std::string cobol_typecheckt::read_picture_string()
   return s;
 }
 
-std::pair<mp_integer, std::size_t> cobol_typecheckt::read_literal_value()
+value_spect cobol_typecheckt::read_value_spec()
 {
+  value_spect spec;
+  spec.all = eat_word("ALL");
+
   bool neg = false;
   if(
     cur().kind == cobol_token_kindt::PUNCT &&
@@ -658,16 +707,122 @@ std::pair<mp_integer, std::size_t> cobol_typecheckt::read_literal_value()
   {
     auto r = parse_decimal(cur().text);
     advance();
-    if(neg)
-      r.first = -r.first;
-    return r;
+    spec.kind = value_spect::kindt::NUMERIC;
+    spec.num = neg ? -r.first : r.first;
+    spec.scale = r.second;
+    return spec;
   }
-  if(is_word("ZERO") || is_word("ZEROS") || is_word("ZEROES"))
+  if(cur().kind == cobol_token_kindt::STRING)
   {
+    spec.kind = value_spect::kindt::STRING;
+    spec.str = cur().text;
     advance();
-    return {mp_integer{0}, std::size_t{0}};
+    return spec;
+  }
+  if(cur().kind == cobol_token_kindt::WORD)
+  {
+    const std::string w = cur().text;
+    if(w == "SPACE" || w == "SPACES")
+      spec.kind = value_spect::kindt::SPACES;
+    else if(w == "ZERO" || w == "ZEROS" || w == "ZEROES")
+      spec.kind = value_spect::kindt::ZEROS;
+    else if(w == "HIGH-VALUE" || w == "HIGH-VALUES")
+      spec.kind = value_spect::kindt::HIGH_VALUES;
+    else if(
+      w == "LOW-VALUE" || w == "LOW-VALUES" || w == "NULL" || w == "NULLS")
+      spec.kind = value_spect::kindt::LOW_VALUES;
+    else if(w == "QUOTE" || w == "QUOTES")
+      spec.kind = value_spect::kindt::QUOTES;
+    else
+      error("unsupported literal '" + w + "'");
+    advance();
+    return spec;
   }
   error("unsupported literal '" + cur().text + "'");
+}
+
+bool cobol_typecheckt::at_value_start() const
+{
+  if(
+    cur().kind == cobol_token_kindt::NUMBER ||
+    cur().kind == cobol_token_kindt::STRING)
+    return true;
+  if(
+    cur().kind == cobol_token_kindt::PUNCT &&
+    (cur().text == "+" || cur().text == "-"))
+    return true;
+  if(cur().kind == cobol_token_kindt::WORD)
+    return is_figurative(cur().text) || cur().text == "ALL";
+  return false;
+}
+
+std::optional<mp_integer> cobol_typecheckt::spec_to_numeric(
+  const value_spect &spec,
+  std::size_t target_scale)
+{
+  if(spec.kind == value_spect::kindt::NUMERIC)
+    return rescale_int(spec.num, spec.scale, target_scale);
+  if(spec.kind == value_spect::kindt::ZEROS)
+    return mp_integer{0};
+  return std::nullopt;
+}
+
+exprt cobol_typecheckt::make_alnum_constant(
+  const value_spect &spec,
+  std::size_t n)
+{
+  const unsignedbv_typet byte_type{8};
+  const array_typet array_type{byte_type, from_integer(n, size_type())};
+
+  std::string pattern;
+  bool repeat = spec.all;
+  switch(spec.kind)
+  {
+  case value_spect::kindt::STRING:
+    pattern = spec.str;
+    break;
+  case value_spect::kindt::SPACES:
+    pattern = " ";
+    repeat = true;
+    break;
+  case value_spect::kindt::ZEROS:
+    pattern = "0";
+    repeat = true;
+    break;
+  case value_spect::kindt::QUOTES:
+    pattern = "\"";
+    repeat = true;
+    break;
+  case value_spect::kindt::HIGH_VALUES:
+    pattern = std::string(1, static_cast<char>(0xff));
+    repeat = true;
+    break;
+  case value_spect::kindt::LOW_VALUES:
+    pattern = std::string(1, static_cast<char>(0x00));
+    repeat = true;
+    break;
+  case value_spect::kindt::NUMERIC:
+    pattern = integer2string(spec.num);
+    break;
+  case value_spect::kindt::NONE:
+    break;
+  }
+  if(pattern.empty())
+    pattern = " ";
+
+  array_exprt::operandst ops;
+  ops.reserve(n);
+  for(std::size_t i = 0; i < n; ++i)
+  {
+    unsigned char ch;
+    if(repeat)
+      ch = static_cast<unsigned char>(pattern[i % pattern.size()]);
+    else
+      ch = i < pattern.size() ? static_cast<unsigned char>(pattern[i])
+                              : static_cast<unsigned char>(' ');
+    ops.push_back(from_integer(ch, byte_type));
+  }
+  return array_exprt{std::move(ops), array_type};
 }
 
 void cobol_typecheckt::parse_data_item()
@@ -685,27 +840,41 @@ void cobol_typecheckt::parse_data_item()
   {
     if(last_elementary.empty())
       error("88-level without a preceding elementary item");
-    const item_infot &parent = items.at(last_elementary);
+    const item_infot parent = items.at(last_elementary);
     cond_infot cinfo;
-    cinfo.parent_symbol = parent.symbol_name;
-    cinfo.parent_scale = parent.scale;
+    cinfo.parent = parent;
 
-    expect_word("VALUE");
-    eat_word("VALUES");
+    if(!eat_word("VALUE"))
+      expect_word("VALUES");
     eat_word("IS");
     eat_word("ARE");
     do
     {
-      auto lo = read_literal_value();
-      mp_integer lo_v = rescale_int(lo.first, lo.second, parent.scale);
-      mp_integer hi_v = lo_v;
-      if(eat_word("THRU") || eat_word("THROUGH"))
+      const value_spect lo = read_value_spec();
+      if(parent.is_numeric)
       {
-        auto hi = read_literal_value();
-        hi_v = rescale_int(hi.first, hi.second, parent.scale);
+        const mp_integer lo_v =
+          spec_to_numeric(lo, parent.scale).value_or(mp_integer{0});
+        mp_integer hi_v = lo_v;
+        if(eat_word("THRU") || eat_word("THROUGH"))
+        {
+          const value_spect hi = read_value_spec();
+          hi_v = spec_to_numeric(hi, parent.scale).value_or(lo_v);
+        }
+        cinfo.num_ranges.emplace_back(lo_v, hi_v);
       }
-      cinfo.ranges.emplace_back(lo_v, hi_v);
-    } while(cur().kind == cobol_token_kindt::NUMBER || is_word("ZERO"));
+      else
+      {
+        cinfo.alnum_values.push_back(
+          make_alnum_constant(lo, parent.char_count));
+        if(eat_word("THRU") || eat_word("THROUGH"))
+        {
+          const value_spect hi = read_value_spec();
+          cinfo.alnum_values.push_back(
+            make_alnum_constant(hi, parent.char_count));
+        }
+      }
+    } while(at_value_start());
     conds[name] = cinfo;
     expect_period();
     return;
@@ -714,8 +883,7 @@ void cobol_typecheckt::parse_data_item()
   std::string pic;
   bool has_pic = false;
   bool has_value = false;
-  mp_integer value_int = 0;
-  std::size_t value_scale = 0;
+  value_spect value_spec;
 
   while(!is_kind(cobol_token_kindt::PERIOD) && !at_eof())
   {
@@ -728,9 +896,7 @@ void cobol_typecheckt::parse_data_item()
     else if(eat_word("VALUE"))
     {
       eat_word("IS");
-      auto v = read_literal_value();
-      value_int = v.first;
-      value_scale = v.second;
+      value_spec = read_value_spec();
       has_value = true;
     }
     else if(eat_word("OCCURS"))
@@ -775,16 +941,22 @@ void cobol_typecheckt::parse_data_item()
   symbol.is_lvalue = true;
   symbol.is_state_var = true;
   symbol.location = loc;
-  if(has_value && is_numeric)
+  if(has_value)
   {
-    const mp_integer scaled = rescale_int(value_int, value_scale, scale);
-    symbol.value = from_integer(scaled, type);
+    if(is_numeric)
+    {
+      if(auto v = spec_to_numeric(value_spec, scale))
+        symbol.value = from_integer(*v, type);
+    }
+    else
+    {
+      symbol.value = make_alnum_constant(value_spec, char_count);
+    }
   }
   symbol_table.add(symbol);
 
   items[name] = info;
-  if(is_numeric)
-    last_elementary = name;
+  last_elementary = name;
 }
 
 // ---------------------------------------------------------------------------
@@ -959,10 +1131,28 @@ std::string cobol_typecheckt::parse_relop()
 exprt cobol_typecheckt::cond_predicate(const std::string &name)
 {
   const cond_infot &c = conds.at(name);
-  const symbol_exprt parent{c.parent_symbol, cobol_value_type()};
+
+  if(!c.parent.is_numeric)
+  {
+    // Alphanumeric parent: OR of equalities against the byte-array constants.
+    const array_typet parent_type{
+      unsignedbv_typet{8}, from_integer(c.parent.char_count, size_type())};
+    const symbol_exprt parent{c.parent.symbol_name, parent_type};
+    exprt result = false_exprt{};
+    bool first = true;
+    for(const auto &value : c.alnum_values)
+    {
+      exprt clause = equal_exprt{parent, value};
+      result = first ? clause : or_exprt{result, clause};
+      first = false;
+    }
+    return result;
+  }
+
+  const symbol_exprt parent{c.parent.symbol_name, cobol_value_type()};
   exprt result = false_exprt{};
   bool first = true;
-  for(const auto &range : c.ranges)
+  for(const auto &range : c.num_ranges)
   {
     exprt clause;
     if(range.first == range.second)

@@ -1,0 +1,12 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. DIGIT-PARA.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-I    PIC 9(4) VALUE 0.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           PERFORM 1000-ADD-ONE 3 TIMES.
+           CALL "__CPROVER_assert" USING WS-I = 3.
+           STOP RUN.
+       1000-ADD-ONE.
+           ADD 1 TO WS-I.

@@ -1,0 +1,9 @@
+CORE
+main.cob
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Paragraph names that begin with a digit (e.g. 1000-ADD-ONE) tokenise as a
+single COBOL word, not a number followed by a hyphen.

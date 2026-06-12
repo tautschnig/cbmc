@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Alphanumeric VALUE initialisation and an 88-level condition name over an
+alphanumeric (PIC X) parent.
