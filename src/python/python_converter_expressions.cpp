@@ -267,9 +267,19 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           typet return_type = python_int_type();
           if(gs->type.id() == ID_code)
             return_type = to_code_type(gs->type).return_type();
+          // Coerce the key to the __getitem__ parameter type (e.g. wrap a
+          // string/int into python_value for an Any-typed key); otherwise a
+          // native smt_string argument mismatches the declared parameter.
+          exprt key_arg = slice;
+          if(gs->type.id() == ID_code)
+          {
+            const auto &gparams = to_code_type(gs->type).parameters();
+            if(gparams.size() >= 2)
+              key_arg = coerce_call_argument(slice, gparams[1].type());
+          }
           return side_effect_expr_function_callt{
             gs->symbol_expr(),
-            {address_of_exprt{value}, slice},
+            {address_of_exprt{value}, key_arg},
             return_type,
             get_location(expr)};
         }
