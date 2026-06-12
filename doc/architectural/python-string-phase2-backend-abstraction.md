@@ -2284,3 +2284,32 @@ Two follow-ups from the coercion-bypass review:
 
 Validated: native corpus 0 crashes (539/540, 1 perf timeout); regression/python
 (refined) green; native suites green.
+
+## Plan A — COMPLETE: hybrid retired, native is the SMT-String backend (2026-06-12)
+
+The endgame is done. `--python-smt-strings` now selects the **native**
+smt_string representation (the SMT-LIB `String` sort); the byte-array+`str`
+hybrid is deleted. Summary of the final state:
+
+- **Flag:** `--python-smt-strings` → native; `--python-smt-strings-native` is a
+  backward-compatible alias. A driver diagnostic requires `--cvc5`/`--z3` (the
+  String sort needs an SMT String solver), unless `--outfile` is given.
+- **Deleted:** the hybrid front-end branches (leaf-backing nondet, byte-array
+  concat/subscript, compare_to ordering), the `cprover_string_smt_concat_eq_func`
+  / `_substr_eq_func` intrinsics + their smt2_conv lowerings, the
+  `use_smt_string_backend` flag/member/setter, and the vestigial
+  `python_string_kindt::smt_string` enum value.
+- **fstring-pad-spec performance** fixed: an f-string whose parts all have
+  statically-known length is emitted as one nondet string of the summed length
+  (no slow multi-`str.++`).
+- **Result:** the `regression/python` corpus is 540/540 with a verdict under
+  native (0 crashes, 0 timeouts); `regression/python` (refined, the default) is
+  green; the default ESBMC sweep has 0 regressions.
+
+The full native string surface (==, ordering, len, in, startswith/endswith,
+find/index, +, subscript, slice, replace, strip family, f-strings incl.
+str(int)/chr/ord, model extraction) is precise and fast under `--cvc5`. refined
+remains the no-external-solver default. The representation-neutral primitives
+(`string_concat`/`string_substr`/`string_equal` + `python_string_literal` +
+`native_or_member_string_length`) are the single backend-branch point for any
+future representation work.

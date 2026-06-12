@@ -394,7 +394,7 @@ added regression coverage and fixes for several PLR
 | `--python-no-body-check` | Suppress the missing-function-body check |
 | `--python-strict-warnings` | Raise over-approximation log messages to warning level |
 | `--python-use-stdlib-source` | Skip CBMC's bundled stubs; resolve via system CPython |
-| `--python-smt-strings` | Use the SMT string theory instead of refinement strings |
+| `--python-smt-strings` | Represent `str` with the native SMT-LIB String sort instead of refinement strings (requires `--cvc5`/`--z3`) |
 | `--python-lazy-stubs` | Import module signatures only; skip stub bodies |
 | `--unwind N` | Bound loop/recursion unwinding to N iterations |
 | `--z3` | Use Z3 SMT solver (required for unbounded ints) |
