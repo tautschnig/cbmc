@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+An OCCURS ... INDEXED BY index-name is registered and usable as a
+subscript. See IBM LR "INDEXED BY phrase".

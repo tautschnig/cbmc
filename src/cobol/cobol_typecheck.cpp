@@ -333,6 +333,16 @@ bool is_pic_stop_word(const std::string &w)
   return s.find(w) != s.end();
 }
 
+/// True for a word that begins (or belongs to) a data-description clause, used
+/// to bound the name lists of the INDEXED BY and ASCENDING/DESCENDING KEY
+/// phrases (IBM LR "OCCURS clause").
+bool is_clause_keyword(const std::string &w)
+{
+  return is_pic_stop_word(w) || w == "INDEXED" || w == "ASCENDING" ||
+         w == "DESCENDING" || w == "KEY" || w == "BY" || w == "TIMES" ||
+         w == "DEPENDING";
+}
+
 /// Parse a PICTURE string body, e.g. "9(5)V99", "S9(4)", "X(20)", "ZZ,ZZ9.99".
 ///
 /// IBM Enterprise COBOL for z/OS 6.4 Language Reference, "The PICTURE clause"
@@ -716,6 +726,7 @@ protected:
     const std::string &base,
     const std::vector<builtin_fieldt> &fields,
     int value_mode);
+  void register_index(const std::string &name);
   void skip_to_sentence_end();
 
   stmtt make_assign_ref(const reft &target, valuet v, source_locationt loc);
@@ -1345,6 +1356,29 @@ void cobol_typecheckt::parse_data_item()
     {
       usage = cur().text;
       advance();
+    }
+    else if(eat_word("INDEXED"))
+    {
+      // OCCURS ... INDEXED BY index-name-1 [index-name-2] ... (IBM LR "INDEXED
+      // BY phrase"). Each index-name is registered as an index data item.
+      eat_word("BY");
+      while(cur().kind == cobol_token_kindt::WORD &&
+            !is_clause_keyword(cur().text))
+      {
+        register_index(cur().text);
+        advance();
+      }
+    }
+    else if(is_word("ASCENDING") || is_word("DESCENDING"))
+    {
+      // ASCENDING/DESCENDING KEY IS data-name ... (search key for SEARCH ALL);
+      // consumed but not otherwise modelled.
+      advance();
+      eat_word("KEY");
+      eat_word("IS");
+      while(cur().kind == cobol_token_kindt::WORD &&
+            !is_clause_keyword(cur().text))
+        advance();
     }
     else
     {
@@ -3396,6 +3430,33 @@ void cobol_typecheckt::inject_builtin_record(
       ops.push_back(from_integer(b, byte_type));
     symbol.value = array_exprt{std::move(ops), to_array_type(record_type(rec))};
   }
+  symbol_table.add(symbol);
+}
+
+void cobol_typecheckt::register_index(const std::string &name)
+{
+  // An index-name from an OCCURS ... INDEXED BY phrase names an index data
+  // item associated with the table (IBM LR "INDEXED BY phrase"). It is not
+  // part of any record's storage; model it as a standalone binary integer so
+  // it can be SET, used as a subscript, and varied by PERFORM.
+  const irep_idt rec = "cobol::" + program_id + "::IDX$" + name;
+  item_infot info;
+  info.record_symbol = rec;
+  info.offset = 0;
+  info.is_numeric = true;
+  info.is_signed = true;
+  info.digits = 9;
+  info.scale = 0;
+  info.byte_size = phys_size_of("COMP", true, 9, 0);
+  items[name] = info;
+  all_items.push_back(entryt{name, info, {}});
+  record_sizes[rec] = info.byte_size;
+
+  symbolt symbol{rec, record_type(rec), COBOL_MODE};
+  symbol.base_name = name;
+  symbol.is_static_lifetime = true;
+  symbol.is_lvalue = true;
+  symbol.is_state_var = true;
   symbol_table.add(symbol);
 }
 
