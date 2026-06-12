@@ -214,6 +214,65 @@ cobol_scan(std::istream &in, const std::string &file_name)
         token.kind = cobol_token_kindt::WORD;
         token.text = text;
         tokens.push_back(token);
+
+        // A PICTURE character-string is a single token "delimited only by the
+        // separator space" (IBM Enterprise COBOL for z/OS 6.4 Language
+        // Reference, "PICTURE character-strings", pp. 48 / 3723-3725). Read it
+        // verbatim so edit characters (. , - + $ Z * B 0 / CR DB) are not
+        // mistaken for separators (in particular, an embedded '.' is not the
+        // sentence period).
+        if(text == "PIC" || text == "PICTURE")
+        {
+          while(i < n && std::isspace(static_cast<unsigned char>(code[i])) != 0)
+            ++i;
+          // optional "IS"
+          if(
+            i + 1 < n &&
+            std::toupper(static_cast<unsigned char>(code[i])) == 'I' &&
+            std::toupper(static_cast<unsigned char>(code[i + 1])) == 'S' &&
+            (i + 2 >= n ||
+             std::isspace(static_cast<unsigned char>(code[i + 2])) != 0))
+          {
+            i += 2;
+            while(i < n &&
+                  std::isspace(static_cast<unsigned char>(code[i])) != 0)
+              ++i;
+          }
+          if(i < n && std::isspace(static_cast<unsigned char>(code[i])) == 0)
+          {
+            std::string pic;
+            while(i < n &&
+                  std::isspace(static_cast<unsigned char>(code[i])) == 0)
+            {
+              pic.push_back(code[i]);
+              ++i;
+            }
+            // A trailing '.' is the sentence/clause separator period, not part
+            // of the picture.
+            bool trailing_period = false;
+            if(!pic.empty() && pic.back() == '.')
+            {
+              pic.pop_back();
+              trailing_period = true;
+            }
+            for(char &ch : pic)
+              ch =
+                static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            cobol_tokent pic_token;
+            pic_token.kind = cobol_token_kindt::WORD;
+            pic_token.text = pic;
+            pic_token.location = token.location;
+            tokens.push_back(pic_token);
+            if(trailing_period)
+            {
+              cobol_tokent period;
+              period.kind = cobol_token_kindt::PERIOD;
+              period.text = ".";
+              period.location = token.location;
+              tokens.push_back(period);
+            }
+          }
+        }
         continue;
       }
 

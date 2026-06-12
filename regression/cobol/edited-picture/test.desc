@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Edited PICTUREs are read as a single space-delimited character-string,
+so embedded edit characters such as '.' ',' '-' '$' 'CR' do not break
+the scanner. See IBM LR "PICTURE character-strings" pp. 48 / 3723-3725.

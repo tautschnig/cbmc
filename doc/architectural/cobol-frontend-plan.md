@@ -290,13 +290,19 @@ clean and use curly-brace constructor syntax.
 - Numeric-to-alphanumeric relational comparisons are rejected (only
   numeric/numeric and alphanumeric/alphanumeric are supported).
 - Edited PICTUREs (insertion/suppression characters `Z * . , + - $ CR
-  DB /`) are not parsed; the embedded `.` currently mis-tokenises.
-- `EXEC CICS` / `EXEC SQL` and the CICS EXEC INTERFACE BLOCK (e.g.
-  `EIBCALEN`) are not modelled; static `CALL "program"` to another
-  compilation unit is not yet linked.
+  DB /`) are read as a single character-string (IBM LR "PICTURE
+  character-strings", pp. 48 / 3723-3725) and modelled as alphanumeric
+  display fields; `MOVE` to an edited item does not yet apply the
+  editing (formatting) semantics.
+- `EXEC CICS` is stubbed (output operands and EIB status fields nondet;
+  RETURN/XCTL terminate; a nondet EXEC INTERFACE BLOCK is synthesised).
+  `EXEC SQL`/`EXEC DLI` are stubbed the same way but untested. Static
+  `CALL "program"` to another compilation unit is not yet linked, and
+  `DFHCOMMAREA` is not injected (programs declaring it themselves work).
 - EBCDIC and sign-nibble/zone codecs not implemented (ASCII host only).
-- Float (`COMP-1`/`COMP-2`), `OCCURS DEPENDING ON`, files, `EXEC`
-  sub-languages, `SORT`/`MERGE`, dynamic `CALL`, `ALTER` unsupported.
+- Float (`COMP-1`/`COMP-2`), `OCCURS DEPENDING ON`, files,
+  `SORT`/`MERGE`, dynamic `CALL`, `ALTER`, class/sign conditions
+  (`IF X IS NUMERIC`) unsupported.
 - `SET ... TO FALSE` and pointer/`ADDRESS OF` forms are no-ops.
 - Single compilation unit focus; multi-program `CALL` linkage is a
   follow-up.
@@ -325,19 +331,19 @@ Progression of the dominant first-blocker (programs affected):
 
 After the byte-level storage model, every program parses its entire
 DATA DIVISION (including `REDEFINES`, group items and fixed `OCCURS`)
-and fails only on PROCEDURE-level constructs. Alphanumeric comparisons
-and qualified references (`FIELD OF GROUP`) are now supported. The
-remaining CardDemo blockers are dominated by features that are out of
-the day-one scope:
+and fails only on PROCEDURE-level constructs. Alphanumeric comparisons,
+qualified references (`FIELD OF GROUP`), `EXEC CICS` stubbing (with a
+nondet EIB), and edited PICTUREs are now supported. With EXEC CICS
+stubbed, the "unknown data item" blocker collapsed from 19 to ~5. The
+remaining CardDemo blockers, in order, are:
 
-1. **`EXEC CICS` and the EXEC INTERFACE BLOCK** (`EIBCALEN`, `EIBAID`,
-   …) — most CardDemo programs are CICS transactions; the "unknown data
-   item" failures are EIB references. Stubbing `EXEC CICS` (nondet I/O)
-   and providing an EIB is the dominant remaining gate.
-2. **Static `CALL "program"`** to another compilation unit (e.g.
-   `CALL "COBDATFT"`) — needs cross-program linking or nondet stubs.
-3. **Edited PICTUREs** — scanner-level PIC handling (the `.` mis-token).
-4. **Subfield subscripting inside `OCCURS` groups**.
+1. **Subscripting subfields inside `OCCURS` groups** (`FIELD(I)` where
+   `FIELD` is subordinate to the table) — 15 programs.
+2. **Class / sign / combined conditions** (`IF X IS NUMERIC`,
+   `IF X IS POSITIVE`, abbreviated `IF A = 1 OR 2`) — surfaces as
+   "expected a relational operator".
+3. **Static `CALL "program"`** to another compilation unit, and
+   `DFHCOMMAREA`.
 
 Registering the frontend with the other tools (`goto-cc`,
 `goto-instrument`, …) remains a small follow-up.

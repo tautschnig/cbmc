@@ -318,7 +318,13 @@ bool is_pic_stop_word(const std::string &w)
   return s.find(w) != s.end();
 }
 
-/// Parse a PICTURE string body, e.g. "9(5)V99", "S9(4)", "X(20)".
+/// Parse a PICTURE string body, e.g. "9(5)V99", "S9(4)", "X(20)", "ZZ,ZZ9.99".
+///
+/// IBM Enterprise COBOL for z/OS 6.4 Language Reference, "The PICTURE clause"
+/// and "PICTURE character-strings" (pp. 44-62). A picture with editing symbols
+/// (Z * . , + - $ B 0 / CR DB) denotes a numeric-edited or alphanumeric-edited
+/// item; such items are display-only formatting fields, so we model them as
+/// alphanumeric storage whose size is the number of character positions.
 void parse_picture(
   const std::string &pic,
   bool &is_numeric,
@@ -334,12 +340,29 @@ void parse_picture(
   char_count = 0;
 
   bool after_v = false;
+  bool has_alpha = false;
+  bool has_edit = false;
   std::size_t i = 0;
   const std::size_t n = pic.size();
   while(i < n)
   {
-    const char sym =
+    char sym =
       static_cast<char>(std::toupper(static_cast<unsigned char>(pic[i])));
+
+    // Two-character insertion editing symbols CR and DB (LR p. 57).
+    if(
+      i + 1 < n &&
+      ((sym == 'C' &&
+        std::toupper(static_cast<unsigned char>(pic[i + 1])) == 'R') ||
+       (sym == 'D' &&
+        std::toupper(static_cast<unsigned char>(pic[i + 1])) == 'B')))
+    {
+      char_count += 2;
+      has_edit = true;
+      i += 2;
+      continue;
+    }
+
     std::size_t rep = 1;
     ++i;
     if(i < n && pic[i] == '(')
@@ -355,26 +378,60 @@ void parse_picture(
 
     switch(sym)
     {
-    case 'S':
+    case 'S': // sign; no character position unless SEPARATE (not modelled)
       is_signed = true;
       break;
-    case 'V':
+    case 'V': // implied decimal point: no storage position
       after_v = true;
+      break;
+    case 'P': // assumed scaling position: no storage position
       break;
     case '9':
       digits += rep;
+      char_count += rep;
+      if(after_v)
+        scale += rep;
+      break;
+    case 'Z': // zero suppression (editing)
+    case '*': // asterisk (check protection) suppression (editing)
+      digits += rep;
+      char_count += rep;
+      has_edit = true;
       if(after_v)
         scale += rep;
       break;
     case 'X':
-    case 'A':
-      is_numeric = false;
+      has_alpha = true;
       char_count += rep;
       break;
+    case 'A':
+      has_alpha = true;
+      char_count += rep;
+      break;
+    case '.': // actual decimal point insertion (editing); also marks scale
+      char_count += rep;
+      has_edit = true;
+      after_v = true;
+      break;
+    case ',': // insertion characters (editing)
+    case '+':
+    case '-':
+    case '$':
+    case 'B':
+    case '0':
+    case '/':
+      char_count += rep;
+      has_edit = true;
+      break;
     default:
+      char_count += rep;
       break;
     }
   }
+
+  // Numeric only if it has no alphabetic and no editing symbols; otherwise it
+  // is an (alphanumeric- or numeric-) edited item modelled as alphanumeric.
+  is_numeric = !has_alpha && !has_edit;
 }
 
 /// Parse a decimal literal into (value, frac_digit_count).
