@@ -120,6 +120,7 @@ module KernelTaintFlow {
     exists(Parameter p, VariableAccess base |
       base.getTarget() = p and
       p.getUnspecifiedType() instanceof PointerType and
+      not isTrustedCookieParam(p) and
       (
         p.getUnspecifiedType().(PointerType).getBaseType().getUnspecifiedType()
           instanceof VoidType
@@ -136,6 +137,19 @@ module KernelTaintFlow {
       or
       e.(PointerDereferenceExpr).getOperand() = base
     )
+  }
+
+  /** An IRQ-handler dev_id cookie: a void* parameter of a function returning
+   *  irqreturn_t.  It is set by the driver at request_irq -- a trusted kernel
+   *  pointer, NOT attacker-controlled wire data -- so its deref must not be a
+   *  raw-taint source (this was over-tainting vpif_channel_isr's
+   *  `channel_id = *(int *)dev_id`).  Sound: the cookie is provably trusted. */
+  predicate isTrustedCookieParam(Parameter p) {
+    p.getFunction().getType().getName() = "irqreturn_t" and
+    p.getUnspecifiedType()
+        .(PointerType)
+        .getBaseType()
+        .getUnspecifiedType() instanceof VoidType
   }
 
   /**
