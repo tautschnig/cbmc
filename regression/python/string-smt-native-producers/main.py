@@ -21,3 +21,10 @@ assert s[-1] == "d"
 r = nondet_string(3)
 assume(r == "aba")
 assert r.replace("a", "X") == "XbX"
+
+# strip/lstrip/rstrip via SMT-LIB regex (Python whitespace semantics).
+w = nondet_string(5)
+assume(w == "  ab ")
+assert w.strip() == "ab"
+assert w.lstrip() == "ab "
+assert w.rstrip() == "  ab"
