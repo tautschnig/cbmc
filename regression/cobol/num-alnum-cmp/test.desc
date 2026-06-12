@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+A comparison between a numeric and an alphanumeric operand is modelled
+as nondeterministic. See IBM LR "Comparison of numeric and nonnumeric
+operands".

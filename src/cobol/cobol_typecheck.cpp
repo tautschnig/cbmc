@@ -1991,10 +1991,12 @@ exprt cobol_typecheckt::build_cond_relation(
   if((a.numeric || b.numeric) && numeric_like(a) && numeric_like(b))
     return build_relation(to_numeric(a), op, to_numeric(b));
 
+  // Comparison of a numeric operand with a nonnumeric one: the numeric operand
+  // is compared by its display representation (IBM LR "Comparison of numeric
+  // and nonnumeric operands"). The value-domain model does not represent that
+  // representation, so the result is nondeterministic (sound).
   if(a.numeric || b.numeric)
-    error(
-      "comparison between numeric and alphanumeric operands is not "
-      "supported");
+    return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
 
   return build_alnum_relation(a, op, b);
 }

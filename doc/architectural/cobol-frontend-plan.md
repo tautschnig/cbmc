@@ -370,9 +370,12 @@ CardDemo blockers, in order, are:
 2. A long tail (`MOVE without a target`, a few parse edges, and
    numeric/alphanumeric comparisons).
 
-As of this milestone, **20 of the 44 CardDemo programs reach
-`VERIFICATION SUCCESSFUL`** — they parse, lower to GOTO and complete
-bounded model checking end-to-end.
+As of this milestone, **24 of the 44 CardDemo programs reach
+`VERIFICATION SUCCESSFUL`**, and another ~5 parse and lower to GOTO
+fully but exceed the default bound during bounded model checking (batch
+file loops). The remaining failures are a long tail: MQ-/IMS-supplied
+copybooks (`CMQTML`, the IMS `DIB`), a few fields in copybooks not on
+the search path, and a handful of parser edges.
 
 ### Architectural note: a single operand abstraction
 
