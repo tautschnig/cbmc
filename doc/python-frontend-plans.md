@@ -424,6 +424,63 @@ symbolic literal "holes", `re.*` constructors for the constant structure.
 
 - **Compilation flags** (`re.IGNORECASE` etc.): currently fall back to
   nondet. *Fix shape:* rewrite the regex AST per flag before lowering.
+
+**Implementation findings (2026-06-12).**
+
+- **Native regex pattern-extraction fix — LANDED** (commit `5231f3b61d`).
+  `__cbmc_re_{match,search,fullmatch}` is now precise under
+  `--cvc5 --python-smt-strings` for a constant pattern over **both constant and
+  symbolic subjects** (incl. character classes), via `str.in_re` directly on
+  the `smt_string` subject. This closes the old "symbol subjects fall through to
+  `bv0`" gap (gap 1) for the native backend — the refined bridge is no longer on
+  the path. (`string-smt-native-regex`.) A CVC5 perf edge remains: combining
+  `str.in_re` with a `len()` query on the same symbolic subject can time out;
+  match/no-match decisions themselves are fast.
+- **a-prime is *result-precision*, not *routing*.** The `re.*` stub **already
+  calls** `__cbmc_re_*` (for the SMT side-effect). The remaining work is to make
+  the returned `Match`/`None` *reflect* the intrinsic result. This is entangled:
+  the current always-`Match()` is itself a latent **unsoundness** (it never
+  explores the `None` path, so a missing-`None`-guard bug such as
+  `re.match(...).group()` on a non-match is not caught), but switching to real
+  `Match`/`None` makes the result **nondet under the default backend** (the
+  intrinsic is nondet there), which changes many benchmark outcomes. So a-prime
+  needs an opt-in `--python-strict-re-result` flag (off by default) and a
+  stub→flag mechanism, not just a stub rewrite. Higher-stakes than the doc
+  implied; prerequisite for the literal-symbolic and `re.sub` items having
+  real-world reach.
+- **Literal-symbolic patterns: anchor-soundness caveat.** The fragment-wise
+  composition (above) must handle `^`/`$` only at the *whole-pattern*
+  boundaries; a `^` at the start of a non-first fragment or `$` at the end of a
+  non-last fragment must **bail to nondet** (not be stripped per-fragment),
+  otherwise the regex is over-permissive (unsound). The translator currently
+  strips leading-`^`/trailing-`$` per input string, so a body-only fragment
+  translator + boundary handling is required.
+- **`re.sub` native:** expressible via CVC5 `str.replace_re_all` (a new
+  `__cbmc_re_sub` intrinsic + `str.replace_re_all` lowering), but also entangled
+  with the stub (`sub` returns `""` today) and only reaches real code via
+  a-prime-style routing.
+
+---
+
+## Native robustness: smt_string members in byte-operated structs  {#native-byte-ops}
+
+**Status: KNOWN GAP (native only; sound — crashes, never a false proof).**
+A struct that embeds an `smt_string` member (e.g. `python_value.__str`, or a
+class/dict struct holding a string) cannot currently be **byte-operated**
+(`byte_extract`/`byte_update` → `lower_byte_operators`), because `smt_string`
+has no fixed bit-width and the lowering requires non-constant-width members to
+come last: `lower_byte_operators.cpp` fires *"members of non-constant width
+should come last in a struct"*. Surfaces on **dict pass-by-reference
+*mutation*** under native (`def f(d): d["k"]=v` then asserting the caller sees
+the mutation), which routes the dict struct through a byte op. The
+`regression/python` corpus (541/541 under native) does **not** exercise this
+shape, so it is latent. Note dict-by-ref subscript-assign *mutation propagation*
+is **also imprecise under the refined default** for the same shape (verifies
+FAILED), so §5's "DONE" covers by-reference *passing/promotion*, not this
+mutate-and-observe pattern. Candidate fixes (both shared-code, non-trivial):
+(a) teach `lower_byte_operators` to treat `smt_string` members opaquely;
+(b) order `smt_string` members last in the affected struct layouts. Lower
+priority than the regex items; recorded so it is not mistaken for soundness.
 - **Wave 3 — native regex axioms in the string-refinement loop: NO PLAN
   YET** (research-grade; deferred). Back-references, lookahead, and capture
   groups are explicitly out of scope.
