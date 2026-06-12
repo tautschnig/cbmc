@@ -46,6 +46,7 @@
 #include "python_types.h"
 #include "python_value_type.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
@@ -4222,6 +4223,23 @@ exprt python_convertert::convert_expression(const jsont &expr)
         }
       };
       std::vector<exprt> parts;
+      // Parallel to `parts`: each part's statically-known code-point length
+      // (nullopt if variable). When ALL parts are known under the native
+      // backend, the whole f-string is emitted as one nondet string of the
+      // summed length, avoiding a slow CVC5 concat of several length-
+      // constrained nondet strings (see the all-known shortcut below).
+      std::vector<std::optional<mp_integer>> part_len;
+      auto cp_count = [](const std::string &s) -> mp_integer
+      {
+        mp_integer n = 0;
+        for(char c : s)
+        {
+          const unsigned char uc = static_cast<unsigned char>(c);
+          if(uc < 0x80 || uc >= 0xC0)
+            ++n;
+        }
+        return n;
+      };
       bool parts_ok = true;
       for(const auto &v : as_array(values))
       {
@@ -4235,6 +4253,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
             parts_ok = false;
             break;
           }
+          part_len.push_back(cp_count(cval.value));
           continue;
         }
         if(!is_node_type(v, "FormattedValue"))
@@ -4340,6 +4359,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
             pending_checks.push_back(code_assumet{
               equal_exprt{len_intr, from_integer(width, signedbv_typet{64})}});
             parts.push_back(std::move(tv));
+            part_len.push_back(mp_integer{width});
             handled_by_pad_spec = true;
           }
         }
@@ -4391,6 +4411,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
             if(ok)
             {
               parts.push_back(python_string_literal(formatted));
+              part_len.push_back(cp_count(formatted));
               continue;
             }
           }
@@ -4418,6 +4439,12 @@ exprt python_convertert::convert_expression(const jsont &expr)
               python_string_literal("True"),
               python_string_literal("False")});
           }
+          // "True"=4, "False"=5; a symbolic bool is one or the other so its
+          // length is not statically fixed.
+          part_len.push_back(
+            inner.is_true()    ? std::optional<mp_integer>{mp_integer{4}}
+            : inner.is_false() ? std::optional<mp_integer>{mp_integer{5}}
+                               : std::nullopt);
           continue;
         }
         if(inner.type().id() == ID_signedbv || inner.type().id() == ID_integer)
@@ -4476,9 +4503,47 @@ exprt python_convertert::convert_expression(const jsont &expr)
           parts_ok = false;
           break;
         }
+        // int / float / str interpolations have a runtime-variable length.
+        part_len.push_back(std::nullopt);
       }
       if(parts_ok && !parts.empty())
       {
+        // Native fast path: if every part has a statically-known length, the
+        // whole f-string has a known total length, so emit ONE nondet SMT
+        // String of that length rather than concatenating several length-
+        // constrained nondet strings (which CVC5's string solver handles
+        // poorly — e.g. f"{h:02}:{m:02}:{s:02}" timed out as a 5-way concat).
+        // Sound over-approximation: content is nondet, length is exact.
+        if(
+          use_smt_string_native && parts.size() == part_len.size() &&
+          std::all_of(
+            part_len.begin(),
+            part_len.end(),
+            [](const auto &o) { return o.has_value(); }))
+        {
+          mp_integer total = 0;
+          for(const auto &o : part_len)
+            total += *o;
+          static unsigned fctr = 0;
+          const std::string nm = "__fstr_len_" + std::to_string(fctr++);
+          const irep_idt id{qualify_name(nm)};
+          if(symbol_table.lookup(id) == nullptr)
+          {
+            symbolt s{id, smt_string_typet{}, "python"};
+            s.base_name = nm;
+            s.is_lvalue = true;
+            s.is_state_var = true;
+            symbol_table.add(s);
+          }
+          const symbol_exprt sym = symbol_table.lookup_ref(id).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{
+            sym,
+            side_effect_expr_nondett{smt_string_typet{}, get_location(expr)}});
+          pending_checks.push_back(code_assumet{equal_exprt{
+            native_or_member_string_length(sym),
+            from_integer(total, signedbv_typet{64})}});
+          return sym;
+        }
         // Chain-concatenate via the representation-neutral primitive.
         exprt acc = parts[0];
         for(std::size_t i = 1; i < parts.size(); i++)
