@@ -1367,17 +1367,29 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     return side_effect_expr_nondett{python_value_type(), get_location(expr)};
   }
 
-  // Tagged union subscript: unwrap to list and index
+  // Tagged union subscript: dispatch on the subscript type. An integer
+  // index targets the LIST tag; a string key targets the DICT tag. (Blindly
+  // taking the list path for a string key indexed a list array with a string,
+  // forcing an unsound smt_string->int cast on the index.)
   if(is_python_value_type(value.type()))
   {
-    exprt list_val = python_value_list(value);
-    if(is_python_list_type(list_val.type()))
+    const bool int_slice =
+      slice.type().id() == ID_signedbv || slice.type().id() == ID_unsignedbv ||
+      slice.type().id() == ID_integer || slice.type() == python_int_type();
+    if(int_slice)
     {
-      const auto &list_st = to_struct_type(list_val.type());
-      const auto &data_type = to_array_type(list_st.components()[1].type());
-      member_exprt data{list_val, "data", data_type};
-      return index_exprt{data, slice};
+      exprt list_val = python_value_list(value);
+      if(is_python_list_type(list_val.type()))
+      {
+        const auto &list_st = to_struct_type(list_val.type());
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        member_exprt data{list_val, "data", data_type};
+        return index_exprt{data, slice};
+      }
     }
+    // String key on a python_value (DICT tag) is not yet resolved to a
+    // precise value here; fall through to the sound nondet python_value
+    // over-approximation below rather than mis-indexing a list.
   }
 
   log_overapprox("Subscript: unsupported operand type, using nondet");

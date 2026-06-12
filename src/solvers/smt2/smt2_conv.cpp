@@ -3374,21 +3374,6 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
     return;
   }
 
-  // Native SMT-String: a string cast to an integer bit-vector uses
-  // str.to_int (SMT-LIB: -1 for non-numeric), then int2bv to the width.
-  // Mirrors Python int(str); also catches spurious string->int coercions
-  // from tagged-union/dict value plumbing without hitting boolbv_width.
-  if(
-    src.type().id() == ID_smt_string &&
-    (dest_type.id() == ID_signedbv || dest_type.id() == ID_unsignedbv))
-  {
-    const std::size_t width = to_bitvector_type(dest_type).get_width();
-    out << "((_ int2bv " << width << ") (str.to_int ";
-    convert_expr(src);
-    out << "))";
-    return;
-  }
-
   if(dest_type.id()==ID_c_enum_tag)
     dest_type=ns.follow_tag(to_c_enum_tag_type(dest_type));
 
