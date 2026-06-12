@@ -86,85 +86,82 @@ std::string dfhbmsca_copybook()
   return one_byte_constants("DFHBMSCA", names);
 }
 
-// IBM MQ object descriptor (CMQODV copybook), version-1 fields. Layout per the
-// MQI "MQOD - Object descriptor" structure.
+// IBM MQ object descriptor (CMQODV copybook), version-1 fields. Per the IBM MQ
+// convention these copybooks are field definitions included *under* a
+// program-provided 01 group (e.g. "01 MQOD. COPY CMQODV."), so they start at a
+// subordinate level rather than defining their own 01.
 const char *cmqodv =
-  "       01  MQOD.\n"
-  "           05  MQOD-STRUCID            PIC X(4).\n"
-  "           05  MQOD-VERSION            PIC S9(9) COMP.\n"
-  "           05  MQOD-OBJECTTYPE         PIC S9(9) COMP.\n"
-  "           05  MQOD-OBJECTNAME         PIC X(48).\n"
-  "           05  MQOD-OBJECTQMGRNAME     PIC X(48).\n"
-  "           05  MQOD-DYNAMICQNAME       PIC X(48).\n"
-  "           05  MQOD-ALTERNATEUSERID    PIC X(12).\n";
+  "       10  MQOD-STRUCID            PIC X(4).\n"
+  "       10  MQOD-VERSION            PIC S9(9) COMP.\n"
+  "       10  MQOD-OBJECTTYPE         PIC S9(9) COMP.\n"
+  "       10  MQOD-OBJECTNAME         PIC X(48).\n"
+  "       10  MQOD-OBJECTQMGRNAME     PIC X(48).\n"
+  "       10  MQOD-DYNAMICQNAME       PIC X(48).\n"
+  "       10  MQOD-ALTERNATEUSERID    PIC X(12).\n";
 
 // IBM MQ message descriptor (CMQMDV copybook), version-1 fields. Layout per
 // the MQI "MQMD - Message descriptor" structure.
 const char *cmqmdv =
-  "       01  MQMD.\n"
-  "           05  MQMD-STRUCID            PIC X(4).\n"
-  "           05  MQMD-VERSION            PIC S9(9) COMP.\n"
-  "           05  MQMD-REPORT             PIC S9(9) COMP.\n"
-  "           05  MQMD-MSGTYPE            PIC S9(9) COMP.\n"
-  "           05  MQMD-EXPIRY             PIC S9(9) COMP.\n"
-  "           05  MQMD-FEEDBACK           PIC S9(9) COMP.\n"
-  "           05  MQMD-ENCODING           PIC S9(9) COMP.\n"
-  "           05  MQMD-CODEDCHARSETID     PIC S9(9) COMP.\n"
-  "           05  MQMD-FORMAT             PIC X(8).\n"
-  "           05  MQMD-PRIORITY           PIC S9(9) COMP.\n"
-  "           05  MQMD-PERSISTENCE        PIC S9(9) COMP.\n"
-  "           05  MQMD-MSGID              PIC X(24).\n"
-  "           05  MQMD-CORRELID           PIC X(24).\n"
-  "           05  MQMD-BACKOUTCOUNT       PIC S9(9) COMP.\n"
-  "           05  MQMD-REPLYTOQ           PIC X(48).\n"
-  "           05  MQMD-REPLYTOQMGR        PIC X(48).\n"
-  "           05  MQMD-USERIDENTIFIER     PIC X(12).\n"
-  "           05  MQMD-ACCOUNTINGTOKEN    PIC X(32).\n"
-  "           05  MQMD-APPLIDENTITYDATA   PIC X(32).\n"
-  "           05  MQMD-PUTAPPLTYPE        PIC S9(9) COMP.\n"
-  "           05  MQMD-PUTAPPLNAME        PIC X(28).\n"
-  "           05  MQMD-PUTDATE            PIC X(8).\n"
-  "           05  MQMD-PUTTIME            PIC X(8).\n"
-  "           05  MQMD-APPLORIGINDATA     PIC X(4).\n";
+  "       10  MQMD-STRUCID            PIC X(4).\n"
+  "       10  MQMD-VERSION            PIC S9(9) COMP.\n"
+  "       10  MQMD-REPORT             PIC S9(9) COMP.\n"
+  "       10  MQMD-MSGTYPE            PIC S9(9) COMP.\n"
+  "       10  MQMD-EXPIRY             PIC S9(9) COMP.\n"
+  "       10  MQMD-FEEDBACK           PIC S9(9) COMP.\n"
+  "       10  MQMD-ENCODING           PIC S9(9) COMP.\n"
+  "       10  MQMD-CODEDCHARSETID     PIC S9(9) COMP.\n"
+  "       10  MQMD-FORMAT             PIC X(8).\n"
+  "       10  MQMD-PRIORITY           PIC S9(9) COMP.\n"
+  "       10  MQMD-PERSISTENCE        PIC S9(9) COMP.\n"
+  "       10  MQMD-MSGID              PIC X(24).\n"
+  "       10  MQMD-CORRELID           PIC X(24).\n"
+  "       10  MQMD-BACKOUTCOUNT       PIC S9(9) COMP.\n"
+  "       10  MQMD-REPLYTOQ           PIC X(48).\n"
+  "       10  MQMD-REPLYTOQMGR        PIC X(48).\n"
+  "       10  MQMD-USERIDENTIFIER     PIC X(12).\n"
+  "       10  MQMD-ACCOUNTINGTOKEN    PIC X(32).\n"
+  "       10  MQMD-APPLIDENTITYDATA   PIC X(32).\n"
+  "       10  MQMD-PUTAPPLTYPE        PIC S9(9) COMP.\n"
+  "       10  MQMD-PUTAPPLNAME        PIC X(28).\n"
+  "       10  MQMD-PUTDATE            PIC X(8).\n"
+  "       10  MQMD-PUTTIME            PIC X(8).\n"
+  "       10  MQMD-APPLORIGINDATA     PIC X(4).\n";
 
 // IBM MQ get-message options (CMQGMOV copybook), version-1 fields.
 const char *cmqgmov =
-  "       01  MQGMO.\n"
-  "           05  MQGMO-STRUCID           PIC X(4).\n"
-  "           05  MQGMO-VERSION           PIC S9(9) COMP.\n"
-  "           05  MQGMO-OPTIONS           PIC S9(9) COMP.\n"
-  "           05  MQGMO-WAITINTERVAL      PIC S9(9) COMP.\n"
-  "           05  MQGMO-SIGNAL1           PIC S9(9) COMP.\n"
-  "           05  MQGMO-SIGNAL2           PIC S9(9) COMP.\n"
-  "           05  MQGMO-RESOLVEDQNAME     PIC X(48).\n";
+  "       10  MQGMO-STRUCID           PIC X(4).\n"
+  "       10  MQGMO-VERSION           PIC S9(9) COMP.\n"
+  "       10  MQGMO-OPTIONS           PIC S9(9) COMP.\n"
+  "       10  MQGMO-WAITINTERVAL      PIC S9(9) COMP.\n"
+  "       10  MQGMO-SIGNAL1           PIC S9(9) COMP.\n"
+  "       10  MQGMO-SIGNAL2           PIC S9(9) COMP.\n"
+  "       10  MQGMO-RESOLVEDQNAME     PIC X(48).\n";
 
 // IBM MQ put-message options (CMQPMOV copybook), version-1 fields.
 const char *cmqpmov =
-  "       01  MQPMO.\n"
-  "           05  MQPMO-STRUCID           PIC X(4).\n"
-  "           05  MQPMO-VERSION           PIC S9(9) COMP.\n"
-  "           05  MQPMO-OPTIONS           PIC S9(9) COMP.\n"
-  "           05  MQPMO-TIMEOUT           PIC S9(9) COMP.\n"
-  "           05  MQPMO-CONTEXT           PIC S9(9) COMP.\n"
-  "           05  MQPMO-KNOWNDESTCOUNT    PIC S9(9) COMP.\n"
-  "           05  MQPMO-UNKNOWNDESTCOUNT  PIC S9(9) COMP.\n"
-  "           05  MQPMO-INVALIDDESTCOUNT  PIC S9(9) COMP.\n"
-  "           05  MQPMO-RESOLVEDQNAME     PIC X(48).\n"
-  "           05  MQPMO-RESOLVEDQMGRNAME  PIC X(48).\n";
+  "       10  MQPMO-STRUCID           PIC X(4).\n"
+  "       10  MQPMO-VERSION           PIC S9(9) COMP.\n"
+  "       10  MQPMO-OPTIONS           PIC S9(9) COMP.\n"
+  "       10  MQPMO-TIMEOUT           PIC S9(9) COMP.\n"
+  "       10  MQPMO-CONTEXT           PIC S9(9) COMP.\n"
+  "       10  MQPMO-KNOWNDESTCOUNT    PIC S9(9) COMP.\n"
+  "       10  MQPMO-UNKNOWNDESTCOUNT  PIC S9(9) COMP.\n"
+  "       10  MQPMO-INVALIDDESTCOUNT  PIC S9(9) COMP.\n"
+  "       10  MQPMO-RESOLVEDQNAME     PIC X(48).\n"
+  "       10  MQPMO-RESOLVEDQMGRNAME  PIC X(48).\n";
 
 // IBM MQ trigger message (CMQTML copybook). Layout per the MQI "MQTM -
 // Trigger message" structure.
 const char *cmqtml =
-  "       01  MQTM.\n"
-  "           05  MQTM-STRUCID            PIC X(4).\n"
-  "           05  MQTM-VERSION            PIC S9(9) COMP.\n"
-  "           05  MQTM-QNAME              PIC X(48).\n"
-  "           05  MQTM-PROCESSNAME        PIC X(48).\n"
-  "           05  MQTM-TRIGGERDATA        PIC X(64).\n"
-  "           05  MQTM-APPLTYPE           PIC S9(9) COMP.\n"
-  "           05  MQTM-APPLID             PIC X(256).\n"
-  "           05  MQTM-ENVDATA            PIC X(128).\n"
-  "           05  MQTM-USERDATA           PIC X(128).\n";
+  "       10  MQTM-STRUCID            PIC X(4).\n"
+  "       10  MQTM-VERSION            PIC S9(9) COMP.\n"
+  "       10  MQTM-QNAME              PIC X(48).\n"
+  "       10  MQTM-PROCESSNAME        PIC X(48).\n"
+  "       10  MQTM-TRIGGERDATA        PIC X(64).\n"
+  "       10  MQTM-APPLTYPE           PIC S9(9) COMP.\n"
+  "       10  MQTM-APPLID             PIC X(256).\n"
+  "       10  MQTM-ENVDATA            PIC X(128).\n"
+  "       10  MQTM-USERDATA           PIC X(128).\n";
 
 // IBM MQ named constants (CMQV copybook), the subset referenced by the
 // CardDemo MQ programs. Values per the MQI constant definitions. Each is a
@@ -185,11 +182,15 @@ const char *cmqv =
   "       01  MQOO-FAIL-IF-QUIESCING  PIC S9(9) COMP VALUE 8192.\n"
   "       01  MQGMO-WAIT              PIC S9(9) COMP VALUE 1.\n"
   "       01  MQGMO-SYNCPOINT         PIC S9(9) COMP VALUE 2.\n"
+  "       01  MQGMO-NO-SYNCPOINT      PIC S9(9) COMP VALUE 4.\n"
   "       01  MQGMO-FAIL-IF-QUIESCING PIC S9(9) COMP VALUE 8192.\n"
   "       01  MQGMO-CONVERT           PIC S9(9) COMP VALUE 16384.\n"
   "       01  MQPMO-SYNCPOINT         PIC S9(9) COMP VALUE 2.\n"
+  "       01  MQPMO-NO-SYNCPOINT      PIC S9(9) COMP VALUE 4.\n"
   "       01  MQPMO-DEFAULT-CONTEXT   PIC S9(9) COMP VALUE 32.\n"
   "       01  MQPMO-FAIL-IF-QUIESCING PIC S9(9) COMP VALUE 8192.\n"
+  "       01  MQMT-REPLY              PIC S9(9) COMP VALUE 2.\n"
+  "       01  MQPER-NOT-PERSISTENT    PIC S9(9) COMP VALUE 0.\n"
   "       01  MQFMT-STRING            PIC X(8) VALUE 'MQSTR'.\n"
   "       01  MQCI-NONE               PIC X(24) VALUE LOW-VALUES.\n"
   "       01  MQMI-NONE               PIC X(24) VALUE LOW-VALUES.\n";
