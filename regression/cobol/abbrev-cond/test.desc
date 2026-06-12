@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Abbreviated combined relation conditions: the subject, or subject and
+operator, of a relation after the first may be omitted. See IBM LR
+"Abbreviated combined relation conditions" p. 287.

@@ -297,7 +297,9 @@ clean and use curly-brace constructor syntax.
   class conditions (`IS [NOT] NUMERIC/ALPHABETIC...`) inspect physical
   character content that the value model abstracts, so they are modelled
   as nondeterministic (sound over-approximation). Abbreviated combined
-  conditions (`IF A = 1 OR 2`) are not yet supported.
+  conditions (`IF A = 1 OR 2`, `IF A = 1 OR > 5`) are supported: the
+  subject, or subject and operator, of a relation after the first is
+  implied from the preceding one (IBM LR p. 287).
 - EVALUATE supports a single subject (numeric or alphanumeric), `WHEN`
   values with `THRU` ranges and `ANY`, and `WHEN OTHER`; multi-subject
   EVALUATE (`ALSO`) is not yet supported. Parenthesised conditions are
@@ -350,12 +352,12 @@ nondet EIB), edited PICTUREs, subfield subscripting inside `OCCURS`
 groups, and reference modification are now supported. The remaining
 CardDemo blockers, in order, are:
 
-1. **Unknown data items** (20) — references to items the frontend does
-   not synthesise: `DFHCOMMAREA`, and BMS screen-map fields brought in by
-   `cpy-bms` copybooks the frontend cannot resolve to a record.
-2. **Abbreviated combined conditions** (`IF A = 1 OR 2`) and residual
-   condition forms ("expected a relational operator", 7).
-3. **Static `CALL "program"`** to another compilation unit.
+1. **Unknown data items** (23) — the `LENGTH OF` special register, the
+   `FUNCTION` intrinsics, `DFHRESP(...)`, the SQL `SQLCODE`, and BMS
+   screen-map fields the frontend does not synthesise.
+2. **Static `CALL "program"`** to another compilation unit (5).
+3. **`MOVE` of an alphanumeric item to a numeric item** (de-editing
+   conversion) and `MOVE`/`ADD` whose target is unresolved.
 
 Registering the frontend with the other tools (`goto-cc`,
 `goto-instrument`, …) remains a small follow-up.

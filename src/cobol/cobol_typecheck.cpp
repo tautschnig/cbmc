@@ -526,6 +526,11 @@ protected:
   std::vector<std::pair<std::size_t, std::vector<unsigned char>>> record_inits;
   bool record_has_value = false;
   std::string last_field; ///< most recent elementary field (for 88-levels)
+  /// Implied subject/operator for abbreviated combined relation conditions
+  /// (IBM LR "Abbreviated combined relation conditions", p. 287).
+  cond_operandt abbr_subject;
+  std::string abbr_op;
+  bool have_abbr = false;
 
   // ---- token cursor ----
   const cobol_tokent &cur() const
@@ -670,6 +675,7 @@ protected:
   exprt parse_and_condition();
   exprt parse_not_condition();
   bool paren_is_condition() const;
+  bool is_relop_start() const;
   exprt parse_relation();
   cond_operandt parse_cond_operand();
   exprt
@@ -1910,11 +1916,19 @@ exprt cobol_typecheckt::parse_relation()
     return neg ? static_cast<exprt>(not_exprt{c}) : c;
   }
 
-  // Relation condition.
+  // Relation condition, or a value-only abbreviated term (subject and operator
+  // implied from the preceding relation; IBM LR p. 287).
+  if(!is_relop_start() && have_abbr)
+    return build_cond_relation(abbr_subject, abbr_op, std::move(a));
+
   std::string op = parse_relop();
   if(neg)
     op = negate_relop(op);
   cond_operandt b = parse_cond_operand();
+  // Record the subject and operator for any following abbreviated terms.
+  abbr_subject = a;
+  abbr_op = op;
+  have_abbr = true;
   return build_cond_relation(std::move(a), op, std::move(b));
 }
 
@@ -2073,14 +2087,48 @@ exprt cobol_typecheckt::parse_not_condition()
   // parenthesised arithmetic operand by a top-level condition marker inside.
   if(is_kind(cobol_token_kindt::LPAREN) && paren_is_condition())
   {
+    // Abbreviation does not carry into/out of a parenthesised condition.
+    const cond_operandt saved_subject = abbr_subject;
+    const std::string saved_op = abbr_op;
+    const bool saved_have = have_abbr;
     advance();
     exprt c = parse_condition();
     if(!is_kind(cobol_token_kindt::RPAREN))
       error("expected ')' after parenthesised condition");
     advance();
+    abbr_subject = saved_subject;
+    abbr_op = saved_op;
+    have_abbr = saved_have;
     return c;
   }
+  // Abbreviated combined relation condition with the subject omitted: the term
+  // begins directly with a relational operator (IBM LR p. 287). The operator
+  // may itself follow it; the implied subject is the previous one.
+  if(have_abbr && is_relop_start())
+  {
+    std::string op = parse_relop();
+    cond_operandt b = parse_cond_operand();
+    abbr_op = op;
+    return build_cond_relation(abbr_subject, op, b);
+  }
   return parse_relation();
+}
+
+bool cobol_typecheckt::is_relop_start() const
+{
+  if(cur().kind == cobol_token_kindt::PUNCT)
+  {
+    const std::string &t = cur().text;
+    return t == "=" || t == "<" || t == ">" || t == "<=" || t == ">=" ||
+           t == "<>";
+  }
+  if(cur().kind == cobol_token_kindt::WORD)
+  {
+    const std::string &t = cur().text;
+    return t == "GREATER" || t == "LESS" || t == "EQUAL" || t == "EQUALS" ||
+           t == "EXCEEDS";
+  }
+  return false;
 }
 
 /// Look ahead from the current '(' to its matching ')' and decide whether the
@@ -2147,6 +2195,9 @@ exprt cobol_typecheckt::parse_and_condition()
 
 exprt cobol_typecheckt::parse_condition()
 {
+  // Abbreviation context is local to each (sub-)condition; parse_not_condition
+  // saves and restores it around a parenthesised condition.
+  have_abbr = false;
   exprt l = parse_and_condition();
   while(eat_word("OR"))
     l = or_exprt{l, parse_and_condition()};
