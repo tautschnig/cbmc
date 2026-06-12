@@ -3539,6 +3539,29 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     // helper builds string-struct views of both operands when
     // they aren't already in struct form, and havocs SSA outputs
     // when called from inside a loop body.
+    if(
+      use_smt_string_native && lhs.type().id() == ID_smt_string &&
+      rhs.type().id() == ID_smt_string)
+    {
+      // Native SMT-String back-end: s += t  ->  s = str.++(s, t).
+      const irep_idt fn{ID_cprover_string_smt_strcat_func};
+      if(symbol_table.lookup(fn) == nullptr)
+      {
+        symbolt fs{
+          fn,
+          mathematical_function_typet(
+            {lhs.type(), rhs.type()}, smt_string_typet{}),
+          "python"};
+        fs.base_name = id2string(fn);
+        symbol_table.add(fs);
+      }
+      function_application_exprt app{
+        symbol_table.lookup_ref(fn).symbol_expr(), {lhs, rhs}};
+      app.type() = smt_string_typet{};
+      if(lhs.id() == ID_symbol)
+        string_constants.erase(to_symbol_expr(lhs).get_identifier());
+      return code_frontend_assignt{lhs, std::move(app)};
+    }
     auto to_string_struct = [&](const exprt &s)
     {
       if(s.id() == ID_struct && s.operands().size() == 2)

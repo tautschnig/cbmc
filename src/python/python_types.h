@@ -43,20 +43,22 @@
 #  define PYTHON_MAX_LIST_LENGTH 64
 #endif
 
-/// Return the CBMC type used to represent Python str.
-/// This is a struct { signedbv[64] length; unsignedbv[8] data[N]; }.
-///
-/// Note (Plan A): the native SMT-String backend keeps this returning the
-/// struct on purpose. A measured experiment flipping it to smt_string under
-/// --python-smt-strings-native took the native crash count on the Python
-/// regression corpus from 29 to 107: unifying the type removes the
-/// mixed-representation mismatches but exposes ~80 `.length`/`.data` member-
-/// access sites that must be migrated to str.len/str.at in lockstep. So the
-/// unification + member-access migration is a single coordinated change (the
-/// remaining work to make native crash-free and retire the hybrid), not a
-/// safe incremental flip.
-inline struct_tag_typet python_string_type()
+/// Process-wide flag: when true (set by the Python converter under
+/// --python-smt-strings-native), Python `str` is represented as the native
+/// SMT String sort rather than the refined-string struct.
+inline bool &python_smt_string_native_flag()
 {
+  static bool flag = false;
+  return flag;
+}
+
+/// Return the CBMC type used to represent Python str.
+/// Default: a struct { signedbv[64] length; unsignedbv[8] data[N]; }.
+/// Native SMT-String backend: the SMT `String` sort (smt_string_typet).
+inline typet python_string_type()
+{
+  if(python_smt_string_native_flag())
+    return smt_string_typet{};
   return struct_tag_typet{PYTHON_STRING_TAG};
 }
 

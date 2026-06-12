@@ -134,11 +134,17 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
       ieee_floatt::rounding_modet::ROUND_TO_EVEN}
       .to_expr();
   exprt bool_val = from_integer(0, signedbv_typet{32});
-  // Inline empty string {length=0, data=NULL} (the default __str).
-  exprt str_val = struct_exprt{
-    {from_integer(0, signedbv_typet{64}),
-     null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
-    python_string_type()};
+  // Inline empty string (the default __str). Native SMT-String back-end
+  // (Plan A): an empty smt_string constant, since __str is smt_string-typed;
+  // a struct_exprt typed smt_string would be malformed and crash symex's
+  // struct-assignment recursion.
+  exprt str_val =
+    python_smt_string_native_flag()
+      ? exprt{constant_exprt{irep_idt{""}, smt_string_typet{}}}
+      : exprt{struct_exprt{
+          {from_integer(0, signedbv_typet{64}),
+           null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
+          python_string_type()}};
   exprt list_ptr = null_pointer_exprt{pointer_typet{empty_typet{}, 64}};
   exprt class_ptr = null_pointer_exprt{pointer_typet{empty_typet{}, 64}};
 

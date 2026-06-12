@@ -693,6 +693,12 @@ collect_param_names(const jsont &func_def)
 /// backing char array of exactly s.size() bytes.
 [[maybe_unused]] static inline exprt build_string_struct(const std::string &s)
 {
+  // Native SMT-String back-end (Plan A): a string is the SMT String sort, so
+  // a compile-time literal is an opaque smt_string constant, not a {length,
+  // data} struct. (Producing a struct_exprt with smt_string type here is
+  // malformed and crashes downstream assignment/typecast handling.)
+  if(python_smt_string_native_flag())
+    return constant_exprt{irep_idt{s}, smt_string_typet{}};
   exprt::operandst chars;
   for(char c : s)
     chars.push_back(

@@ -255,6 +255,7 @@ public:
   void set_use_smt_string_native(bool v)
   {
     use_smt_string_native = v;
+    python_smt_string_native_flag() = v;
   }
 
   void set_python_lazy_stubs(bool v)
@@ -1516,6 +1517,11 @@ private:
   /// done by the caller via dunder-method lookup at call sites
   /// (so a single helper doesn't need access to symbol_table state).
   exprt python_truthiness(const exprt &e);
+
+  /// Length of a string/list/dict expression. For native SMT-String operands
+  /// (smt_string) this emits cprover_string_length_func (→ str.len); otherwise
+  /// it reads the struct's .length member.
+  exprt native_or_member_string_length(const exprt &s);
 
   /// PLR §3.1: rebuild a list-struct expression so its element type
   /// is `python_value`. Each existing data element is `wrap_value`'d

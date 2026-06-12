@@ -2287,7 +2287,11 @@ std::optional<exprt> python_convertert::try_method_call(
         "isprintable"};
       if(bool_methods.count(method_name))
         return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
-      if(method_name == "count")
+      // Int-returning methods with no SMT-LIB String primitive (str.indexof
+      // is first-match only, so rfind/rindex/count are nondet here).
+      static const std::set<std::string> int_methods = {
+        "count", "rfind", "rindex"};
+      if(int_methods.count(method_name))
         return side_effect_expr_nondett{python_int_type(), get_location(expr)};
       return side_effect_expr_nondett{smt_string_typet{}, get_location(expr)};
     }
