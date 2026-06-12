@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Arithmetic operands may be literals or figurative constants, not only
+items; the RETURN-CODE special register is available. See IBM LR "ADD
+statement" and "Special registers".

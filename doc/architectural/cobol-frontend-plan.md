@@ -365,14 +365,32 @@ nondet EIB), edited PICTUREs, subfield subscripting inside `OCCURS`
 groups, and reference modification are now supported. The remaining
 CardDemo blockers, in order, are:
 
-1. **`MOVE`/`ADD` with an unresolved target** (`MOVE`/`ADD without a
-   target`) — typically a receiver the frontend does not resolve.
-2. **Unknown data items** (8) — residual `DFHCOMMAREA` and BMS map
+1. **Unknown data items** (8) — residual `DFHCOMMAREA` and BMS map
    fields the frontend does not synthesise.
+2. A long tail (`MOVE without a target`, a few parse edges, and
+   numeric/alphanumeric comparisons).
 
-As of this milestone, **10 CardDemo programs reach `VERIFICATION
-SUCCESSFUL`** — they parse, lower to GOTO and complete bounded model
-checking end-to-end (a `CALL` to another program is stubbed).
+As of this milestone, **20 of the 44 CardDemo programs reach
+`VERIFICATION SUCCESSFUL`** — they parse, lower to GOTO and complete
+bounded model checking end-to-end.
+
+### Architectural note: a single operand abstraction
+
+A recurring source of failures was that operands were parsed by several
+inconsistent paths: arithmetic verbs used *item-only* loops, while
+conditions used the richer `cond_operandt` (which already handled
+literals, figurative constants, intrinsics and reference modification).
+Constructs such as `ADD 8 TO ZERO GIVING X` failed only because the
+addend position did not accept a figurative constant. The fix was
+architectural rather than local: arithmetic verbs now parse their
+post-`TO`/`FROM` lists as **operands** (via the shared `parse_operand` /
+`at_operand`), capturing the receiver reference (`last_ref`) for the
+no-`GIVING` case. Routing reads through `read_field`, writes through
+`make_assign_ref`/`make_byte_update`, and all operands through one
+parser is what lets each new feature (intrinsics, reference
+modification, figuratives) work uniformly everywhere. The remaining
+fragmentation to consolidate is the MOVE source parser, which still has
+a bespoke path.
 
 Registering the frontend with the other tools (`goto-cc`,
 `goto-instrument`, …) remains a small follow-up.

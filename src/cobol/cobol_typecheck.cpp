@@ -668,6 +668,7 @@ protected:
   valuet parse_factor();
   valuet parse_primary();
   valuet parse_operand();
+  bool at_operand() const;
   std::vector<valuet> parse_operand_list();
   reft parse_ref();
   std::optional<reft> last_ref; ///< set when an operand was a bare field
@@ -710,7 +711,7 @@ protected:
   void inject_builtin_record(
     const std::string &base,
     const std::vector<builtin_fieldt> &fields,
-    bool valued);
+    int value_mode);
   void skip_to_sentence_end();
 
   stmtt make_assign_ref(const reft &target, valuet v, source_locationt loc);
@@ -1674,6 +1675,16 @@ valuet cobol_typecheckt::parse_primary()
     advance();
     return valuet{from_integer(r.first, cobol_value_type()), r.second};
   }
+  // The figurative constant ZERO/ZEROS is the numeric value 0 in an arithmetic
+  // context (IBM LR "Figurative constants").
+  if(
+    cur().kind == cobol_token_kindt::WORD &&
+    (cur().text == "ZERO" || cur().text == "ZEROS" || cur().text == "ZEROES"))
+  {
+    last_ref.reset();
+    advance();
+    return valuet{from_integer(0, cobol_value_type()), 0};
+  }
   if(cur().kind == cobol_token_kindt::WORD)
   {
     const std::string nm = cur().text;
@@ -1748,10 +1759,28 @@ valuet cobol_typecheckt::parse_operand()
   return parse_factor();
 }
 
+bool cobol_typecheckt::at_operand() const
+{
+  if(
+    cur().kind == cobol_token_kindt::NUMBER ||
+    cur().kind == cobol_token_kindt::LPAREN)
+    return true;
+  if(
+    cur().kind == cobol_token_kindt::PUNCT &&
+    (cur().text == "+" || cur().text == "-"))
+    return true;
+  if(at_intrinsic())
+    return true;
+  if(cur().kind == cobol_token_kindt::WORD)
+    return is_item_word() || cur().text == "ZERO" || cur().text == "ZEROS" ||
+           cur().text == "ZEROES";
+  return false;
+}
+
 std::vector<valuet> cobol_typecheckt::parse_operand_list()
 {
   std::vector<valuet> result;
-  while(cur().kind == cobol_token_kindt::NUMBER || is_item_word())
+  while(at_operand())
     result.push_back(parse_operand());
   return result;
 }
@@ -2639,33 +2668,42 @@ std::vector<stmtt> cobol_typecheckt::parse_add()
   std::vector<stmtt> result;
   if(eat_word("TO"))
   {
-    std::vector<reft> targets;
-    while(is_item_word())
-      targets.push_back(parse_ref());
+    // The items/literals after TO are addends when GIVING follows (their sum
+    // is added to the pre-TO sum) and receivers otherwise. Parse them as
+    // operands, capturing the receiver reference for the no-GIVING case
+    // (IBM LR "ADD statement").
+    std::vector<std::pair<valuet, std::optional<reft>>> post;
+    while(at_operand())
+    {
+      valuet v = parse_operand();
+      post.push_back({v, last_ref});
+    }
     if(eat_word("GIVING"))
     {
-      // ADD ops TO addend GIVING results: result = sum + addend
-      if(targets.size() != 1)
-        error("ADD ... TO ... GIVING expects a single addend");
-      valuet addend = read_field(targets[0]);
-      align(sum, addend);
-      valuet total{plus_exprt{sum.expr, addend.expr}, sum.scale};
+      // result = sum(pre-TO operands) + sum(post-TO operands)
+      for(auto &p : post)
+      {
+        align(sum, p.first);
+        sum = valuet{plus_exprt{sum.expr, p.first.expr}, sum.scale};
+      }
       while(is_item_word())
       {
         reft r = parse_ref();
-        result.push_back(make_assign_ref(r, total, loc));
+        result.push_back(make_assign_ref(r, sum, loc));
       }
     }
     else
     {
-      // ADD ops TO targets: each target += sum
-      for(const reft &t : targets)
+      // ADD ops TO receivers: each receiver += sum.
+      for(auto &p : post)
       {
-        valuet cur_val = read_field(t);
+        if(!p.second.has_value())
+          error("ADD ... TO requires a receiving item");
+        valuet cur_val = read_field(*p.second);
         valuet s = sum;
         align(cur_val, s);
         result.push_back(make_assign_ref(
-          t, valuet{plus_exprt{cur_val.expr, s.expr}, s.scale}, loc));
+          *p.second, valuet{plus_exprt{cur_val.expr, s.expr}, s.scale}, loc));
       }
     }
   }
@@ -2700,16 +2738,23 @@ std::vector<stmtt> cobol_typecheckt::parse_subtract()
   }
   expect_word("FROM");
 
-  std::vector<reft> minuends;
-  while(is_item_word())
-    minuends.push_back(parse_ref());
+  // The items/literals after FROM are minuends: with GIVING the (single)
+  // minuend's value is used and the difference stored in the results; without
+  // GIVING each minuend is a receiver that is decremented (IBM LR "SUBTRACT
+  // statement"). Parse as operands, capturing the receiver reference.
+  std::vector<std::pair<valuet, std::optional<reft>>> minuends;
+  while(at_operand())
+  {
+    valuet v = parse_operand();
+    minuends.push_back({v, last_ref});
+  }
 
   std::vector<stmtt> result;
   if(eat_word("GIVING"))
   {
     if(minuends.size() != 1)
       error("SUBTRACT ... FROM ... GIVING expects a single minuend");
-    valuet mv = read_field(minuends[0]);
+    valuet mv = minuends[0].first;
     align(mv, sum);
     valuet diff{minus_exprt{mv.expr, sum.expr}, mv.scale};
     while(is_item_word())
@@ -2720,13 +2765,15 @@ std::vector<stmtt> cobol_typecheckt::parse_subtract()
   }
   else
   {
-    for(const reft &t : minuends)
+    for(auto &m : minuends)
     {
-      valuet mv = read_field(t);
+      if(!m.second.has_value())
+        error("SUBTRACT ... FROM requires a receiving item");
+      valuet mv = read_field(*m.second);
       valuet s = sum;
       align(mv, s);
-      result.push_back(
-        make_assign_ref(t, valuet{minus_exprt{mv.expr, s.expr}, s.scale}, loc));
+      result.push_back(make_assign_ref(
+        *m.second, valuet{minus_exprt{mv.expr, s.expr}, s.scale}, loc));
     }
   }
   if(result.empty())
@@ -3122,7 +3169,7 @@ void cobol_typecheckt::inject_eib()
     {"EIBSYNRB", false, 0, 1, ""},     {"EIBNODAT", false, 0, 1, ""},
     {"EIBRESP", true, 8, 0, "COMP"},   {"EIBRESP2", true, 8, 0, "COMP"},
     {"EIBRLDBK", false, 0, 1, ""}};
-  inject_builtin_record("DFHEIBLK", eib, false);
+  inject_builtin_record("DFHEIBLK", eib, 0);
 
   // DFHAID: 3270 attention identifiers, each PIC X.
   std::vector<builtin_fieldt> aid = {
@@ -3147,7 +3194,7 @@ void cobol_typecheckt::inject_eib()
   }();
   for(const std::string &n : pf_names)
     aid.push_back(builtin_fieldt{n.c_str(), false, 0, 1, ""});
-  inject_builtin_record("DFHAID", aid, true);
+  inject_builtin_record("DFHAID", aid, 1);
 
   // DFHBMSCA: BMS attribute / control bytes, each PIC X.
   static const std::vector<builtin_fieldt> bmsca = {
@@ -3172,7 +3219,7 @@ void cobol_typecheckt::inject_eib()
     {"DFHUNNUM", false, 0, 1, ""}, {"DFHPROTI", false, 0, 1, ""},
     {"DFHUNIMD", false, 0, 1, ""}, {"DFHUNINT", false, 0, 1, ""},
     {"DFHALL", false, 0, 1, ""},   {"DFHERROR", false, 0, 1, ""}};
-  inject_builtin_record("DFHBMSCA", bmsca, true);
+  inject_builtin_record("DFHBMSCA", bmsca, 1);
 
   // SQL communication area (SQLCA), referenced by EXEC SQL programs; nondet.
   static const std::vector<builtin_fieldt> sqlca = {
@@ -3189,14 +3236,24 @@ void cobol_typecheckt::inject_eib()
     {"SQLWARN5", false, 0, 1, ""},
     {"SQLWARN6", false, 0, 1, ""},
     {"SQLWARN7", false, 0, 1, ""}};
-  inject_builtin_record("SQLCA", sqlca, false);
+  inject_builtin_record("SQLCA", sqlca, 0);
+
+  // Special registers (IBM LR "Special registers"): RETURN-CODE etc. are
+  // numeric globals with an initial value of zero.
+  static const std::vector<builtin_fieldt> special = {
+    {"RETURN-CODE", true, 9, 0, "COMP"},
+    {"SORT-RETURN", true, 9, 0, "COMP"},
+    {"TALLY", true, 9, 0, "COMP"}};
+  inject_builtin_record("$SPECIAL", special, 2);
 }
 
 void cobol_typecheckt::inject_builtin_record(
   const std::string &base,
   const std::vector<builtin_fieldt> &fields,
-  bool valued)
+  int value_mode)
 {
+  // value_mode: 0 = nondeterministic (no initial value); 1 = distinct constant
+  // byte per field; 2 = zero-initialised.
   const irep_idt rec = "cobol::" + program_id + "::" + base;
   std::size_t off = 0;
   std::vector<unsigned char> init;
@@ -3213,14 +3270,18 @@ void cobol_typecheckt::inject_builtin_record(
     info.byte_size = phys_size_of(f.usage, f.numeric, f.digits, f.chars);
     items[f.name] = info;
     all_items.push_back(entryt{f.name, info, {base}});
-    if(valued)
+    if(value_mode == 1)
     {
-      // Give each constant a distinct byte value (the exact code is
-      // implementation-defined and irrelevant: it is compared against the
-      // nondeterministic EIBAID etc.).
+      // Distinct byte value per field (the exact code is implementation-
+      // defined and irrelevant: it is compared against the nondet EIBAID etc.).
       for(std::size_t b = 0; b < info.byte_size; ++b)
         init.push_back(value_counter);
       ++value_counter;
+    }
+    else if(value_mode == 2)
+    {
+      for(std::size_t b = 0; b < info.byte_size; ++b)
+        init.push_back(0);
     }
     off += info.byte_size;
   }
@@ -3231,7 +3292,7 @@ void cobol_typecheckt::inject_builtin_record(
   symbol.is_static_lifetime = true;
   symbol.is_lvalue = true;
   symbol.is_state_var = true;
-  if(valued)
+  if(value_mode != 0)
   {
     init.resize(record_sizes[rec], 0);
     const unsignedbv_typet byte_type{8};
