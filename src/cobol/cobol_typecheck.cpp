@@ -503,6 +503,7 @@ protected:
   std::vector<stmtt> parse_divide();
   std::vector<stmtt> parse_compute();
   std::vector<stmtt> parse_call();
+  std::vector<stmtt> parse_set();
   void skip_to_sentence_end();
 
   stmtt make_assign_ref(
@@ -1415,7 +1416,7 @@ std::vector<stmtt> cobol_typecheckt::parse_statement()
     return {};
   }
   if(verb == "SET")
-    error("SET is not yet supported");
+    return parse_set();
   error("unsupported statement '" + verb + "'");
 }
 
@@ -1674,6 +1675,90 @@ std::vector<stmtt> cobol_typecheckt::parse_call()
   }
 
   error("CALL to '" + name + "' is not supported");
+}
+
+std::vector<stmtt> cobol_typecheckt::parse_set()
+{
+  const source_locationt loc = cur().location;
+  expect_word("SET");
+
+  // Collect target names up to TO.
+  std::vector<std::string> targets;
+  while(cur().kind == cobol_token_kindt::WORD && !is_word("TO"))
+  {
+    targets.push_back(cur().text);
+    advance();
+  }
+  if(!eat_word("TO"))
+  {
+    // Unrecognised SET form (e.g. SET ADDRESS OF ...): no-op.
+    skip_to_sentence_end();
+    return {};
+  }
+
+  std::vector<stmtt> result;
+
+  if(eat_word("TRUE"))
+  {
+    // SET cond-name TO TRUE: assign the parent its first 88-level value.
+    for(const std::string &t : targets)
+    {
+      auto it = conds.find(t);
+      if(it == conds.end())
+        continue;
+      const cond_infot &c = it->second;
+      if(c.parent.is_numeric && !c.num_ranges.empty())
+      {
+        const symbol_exprt parent{c.parent.symbol_name, cobol_value_type()};
+        result.push_back(make_assign_ref(
+          c.parent,
+          parent,
+          valuet{
+            from_integer(c.num_ranges.front().first, cobol_value_type()),
+            c.parent.scale},
+          loc));
+      }
+      else if(!c.parent.is_numeric && !c.alnum_values.empty())
+      {
+        stmtt s;
+        s.kind = stmtt::kindt::ASSIGN;
+        s.location = loc;
+        s.lhs = symbol_exprt{c.parent.symbol_name, symbol_type(c.parent)};
+        s.rhs = c.alnum_values.front();
+        result.push_back(s);
+      }
+    }
+    return result;
+  }
+
+  if(eat_word("FALSE"))
+  {
+    // SET cond-name TO FALSE is implementor-defined without a FALSE clause;
+    // treat as a no-op.
+    return {};
+  }
+
+  // SET item TO <numeric value> (e.g. an index). Other forms are no-ops.
+  if(
+    cur().kind == cobol_token_kindt::NUMBER ||
+    (is_item_word() && lookup_item(cur().text).is_numeric))
+  {
+    valuet v = parse_operand();
+    for(const std::string &t : targets)
+    {
+      auto it = items.find(t);
+      if(it != items.end() && it->second.is_numeric)
+      {
+        const symbol_exprt sym{it->second.symbol_name, cobol_value_type()};
+        result.push_back(make_assign_ref(it->second, sym, v, loc));
+      }
+    }
+    return result;
+  }
+
+  // Unsupported value form: no-op.
+  skip_to_sentence_end();
+  return result;
 }
 
 stmtt cobol_typecheckt::parse_if()

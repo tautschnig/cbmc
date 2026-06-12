@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+SET cond-name TO TRUE assigns the parent its first 88 VALUE; SET item TO
+numeric assigns a value (e.g. an index).
