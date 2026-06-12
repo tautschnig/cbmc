@@ -448,6 +448,19 @@ no-`GIVING` case. Routing reads through `read_field`, writes through
 parser is what lets each new feature (intrinsics, reference
 modification, figuratives) work uniformly everywhere.
 
+The mirror image of the operand list is the **result phrase** shared by
+all five arithmetic verbs: `receiver-1 [ROUNDED] ... [ON SIZE ERROR
+imperative] [NOT ON SIZE ERROR imperative] [END-verb]` (IBM LR "ROUNDED
+phrase", "SIZE ERROR phrases"). Each verb previously open-coded its
+receiver loop, dropped `ROUNDED` (so results always truncated) and could
+not parse `ON SIZE ERROR` at all. This was unified the same way: a
+shared `assign_giving` parses the `GIVING` receiver list with per-receiver
+`ROUNDED` and accumulates each receiver's size-error condition, and a
+shared `finish_arith` parses the trailing `ON SIZE ERROR` / `NOT ON SIZE
+ERROR` / `END-verb` and wraps the assignments in a conditional on the
+overflow condition. Rounding is applied in `encode_numeric` (round half
+away from zero when discarding fractional digits).
+
 The MOVE source parser, previously the last bespoke operand path, now
 also goes through `parse_cond_operand`. Doing so surfaced a latent
 classification bug: the operand parser decided *numeric vs

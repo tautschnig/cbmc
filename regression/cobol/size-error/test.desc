@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+ON SIZE ERROR runs and the receiver is unchanged when a result overflows;
+NOT ON SIZE ERROR runs otherwise. See IBM LR "SIZE ERROR phrases".

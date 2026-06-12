@@ -644,7 +644,8 @@ protected:
   /// rvalue of a field: byte_extract + decode to the value domain.
   valuet read_field(const reft &r) const;
   /// encode a value-domain number into the field's physical storage type.
-  exprt encode_numeric(const item_infot &item, valuet v) const;
+  exprt
+  encode_numeric(const item_infot &item, valuet v, bool rounded = false) const;
   /// finalise the current record: create its byte-array symbol + initialiser.
   void finalize_record();
 
@@ -718,6 +719,25 @@ protected:
   std::vector<stmtt> parse_multiply();
   std::vector<stmtt> parse_divide();
   std::vector<stmtt> parse_compute();
+  /// The size-error condition for storing \p v into receiver \p r: true when
+  /// the value does not fit the receiver's digit capacity (IBM LR "SIZE ERROR
+  /// phrases").
+  exprt size_error_cond(const reft &r, const valuet &v);
+  /// Parse a "GIVING receiver-1 [ROUNDED] ..." receiver list, appending the
+  /// assignments of \p v and OR-ing each receiver's size-error condition into
+  /// \p overflow.
+  void assign_giving(
+    const valuet &v,
+    std::vector<stmtt> &result,
+    exprt &overflow,
+    source_locationt loc);
+  /// Parse the optional [ON SIZE ERROR ...] [NOT ON SIZE ERROR ...] [END-verb]
+  /// tail and combine it with the receiver assignments.
+  std::vector<stmtt> finish_arith(
+    std::vector<stmtt> assigns,
+    exprt overflow,
+    const char *end_kw,
+    source_locationt loc);
   std::vector<stmtt> parse_call();
   std::vector<stmtt> parse_set();
   std::vector<stmtt> parse_exec();
@@ -730,7 +750,11 @@ protected:
   void register_index(const std::string &name);
   void skip_to_sentence_end();
 
-  stmtt make_assign_ref(const reft &target, valuet v, source_locationt loc);
+  stmtt make_assign_ref(
+    const reft &target,
+    valuet v,
+    source_locationt loc,
+    bool rounded = false);
   stmtt
   make_move_group(const reft &target, const reft &src, source_locationt loc);
 
@@ -811,9 +835,29 @@ valuet cobol_typecheckt::read_field(const reft &r) const
   return valuet{typecast_exprt{phys, cobol_value_type()}, item.scale};
 }
 
-exprt cobol_typecheckt::encode_numeric(const item_infot &item, valuet v) const
+exprt cobol_typecheckt::encode_numeric(
+  const item_infot &item,
+  valuet v,
+  bool rounded) const
 {
-  exprt e = rescale(v.expr, v.scale, item.scale);
+  exprt e;
+  if(rounded && v.scale > item.scale)
+  {
+    // ROUNDED: when fractional digits are discarded, round to nearest,
+    // half away from zero (IBM LR "ROUNDED phrase", default mode
+    // NEAREST-AWAY-FROM-ZERO). Truncating integer division gives this for
+    // (x + d/2)/d when x >= 0 and (x - d/2)/d when x < 0.
+    const mp_integer d = power10(v.scale - item.scale);
+    const exprt zero = from_integer(0, cobol_value_type());
+    const exprt half = from_integer(d / 2, cobol_value_type());
+    const exprt adj = if_exprt{
+      binary_relation_exprt{v.expr, ID_ge, zero},
+      plus_exprt{v.expr, half},
+      minus_exprt{v.expr, half}};
+    e = div_exprt{adj, from_integer(d, cobol_value_type())};
+  }
+  else
+    e = rescale(v.expr, v.scale, item.scale);
   if(item.digits > 0 && item.digits <= 18)
     e = mod_exprt{e, from_integer(power10(item.digits), cobol_value_type())};
   return typecast_exprt{e, phys_type(item)};
@@ -2566,7 +2610,8 @@ exprt cobol_typecheckt::parse_condition()
 stmtt cobol_typecheckt::make_assign_ref(
   const reft &target,
   valuet v,
-  source_locationt loc)
+  source_locationt loc,
+  bool rounded)
 {
   // record := byte_update(record, offset, encode(value))
   stmtt s;
@@ -2574,7 +2619,9 @@ stmtt cobol_typecheckt::make_assign_ref(
   s.location = loc;
   s.lhs = target.record;
   s.rhs = make_byte_update(
-    target.record, target.offset, encode_numeric(*target.info, std::move(v)));
+    target.record,
+    target.offset,
+    encode_numeric(*target.info, std::move(v), rounded));
   return s;
 }
 
@@ -2905,6 +2952,84 @@ std::vector<stmtt> cobol_typecheckt::parse_initialize()
   return result;
 }
 
+exprt cobol_typecheckt::size_error_cond(const reft &r, const valuet &v)
+{
+  // A size error occurs when the result, aligned to the receiver's scale, has
+  // more integer positions than the receiver can hold, i.e. its magnitude
+  // reaches 10^digits (IBM LR "SIZE ERROR phrases").
+  if(r.info->digits == 0 || r.info->digits > 18)
+    return false_exprt{};
+  const exprt scaled = rescale(v.expr, v.scale, r.info->scale);
+  const mp_integer limit = power10(r.info->digits);
+  return or_exprt{
+    binary_relation_exprt{
+      scaled, ID_ge, from_integer(limit, cobol_value_type())},
+    binary_relation_exprt{
+      scaled, ID_le, from_integer(-limit, cobol_value_type())}};
+}
+
+void cobol_typecheckt::assign_giving(
+  const valuet &v,
+  std::vector<stmtt> &result,
+  exprt &overflow,
+  source_locationt loc)
+{
+  while(is_item_word())
+  {
+    reft r = parse_ref();
+    const bool rounded = eat_word("ROUNDED");
+    result.push_back(make_assign_ref(r, v, loc, rounded));
+    overflow = or_exprt{overflow, size_error_cond(r, v)};
+  }
+}
+
+std::vector<stmtt> cobol_typecheckt::finish_arith(
+  std::vector<stmtt> assigns,
+  exprt overflow,
+  const char *end_kw,
+  source_locationt loc)
+{
+  // [ON SIZE ERROR imperative-1] [NOT ON SIZE ERROR imperative-2] [END-verb].
+  std::vector<stmtt> on_size;
+  std::vector<stmtt> not_on_size;
+  bool has_phrase = false;
+  if(eat_word("ON") || is_word("SIZE"))
+  {
+    expect_word("SIZE");
+    expect_word("ERROR");
+    on_size = parse_statements();
+    has_phrase = true;
+  }
+  if(eat_word("NOT"))
+  {
+    eat_word("ON");
+    expect_word("SIZE");
+    expect_word("ERROR");
+    not_on_size = parse_statements();
+    has_phrase = true;
+  }
+  eat_word(end_kw);
+
+  if(!has_phrase)
+    return assigns;
+
+  // On a size error the result is not stored and the ON SIZE ERROR imperative
+  // runs; otherwise the result is stored and any NOT ON SIZE ERROR imperative
+  // runs (IBM LR "SIZE ERROR phrases"). With several receivers this uses the
+  // disjunction of their conditions (a documented simplification of the
+  // per-receiver rule).
+  std::vector<stmtt> else_stmts = std::move(assigns);
+  for(stmtt &s : not_on_size)
+    else_stmts.push_back(std::move(s));
+  stmtt s;
+  s.kind = stmtt::kindt::IFTE;
+  s.location = loc;
+  s.cond = std::move(overflow);
+  s.then_stmts = std::move(on_size);
+  s.else_stmts = std::move(else_stmts);
+  return {s};
+}
+
 std::vector<stmtt> cobol_typecheckt::parse_add()
 {
   const source_locationt loc = cur().location;
@@ -2920,61 +3045,62 @@ std::vector<stmtt> cobol_typecheckt::parse_add()
   }
 
   std::vector<stmtt> result;
+  exprt overflow = false_exprt{};
   if(eat_word("TO"))
   {
     // The items/literals after TO are addends when GIVING follows (their sum
     // is added to the pre-TO sum) and receivers otherwise. Parse them as
-    // operands, capturing the receiver reference for the no-GIVING case
-    // (IBM LR "ADD statement").
-    std::vector<std::pair<valuet, std::optional<reft>>> post;
+    // operands, capturing the receiver reference and a trailing ROUNDED for
+    // the no-GIVING case (IBM LR "ADD statement").
+    struct postt
+    {
+      valuet v;
+      std::optional<reft> ref;
+      bool rounded;
+    };
+    std::vector<postt> post;
     while(at_operand())
     {
       valuet v = parse_operand();
-      post.push_back({v, last_ref});
+      std::optional<reft> ref = last_ref;
+      post.push_back({v, ref, eat_word("ROUNDED")});
     }
     if(eat_word("GIVING"))
     {
       // result = sum(pre-TO operands) + sum(post-TO operands)
       for(auto &p : post)
       {
-        align(sum, p.first);
-        sum = valuet{plus_exprt{sum.expr, p.first.expr}, sum.scale};
+        align(sum, p.v);
+        sum = valuet{plus_exprt{sum.expr, p.v.expr}, sum.scale};
       }
-      while(is_item_word())
-      {
-        reft r = parse_ref();
-        result.push_back(make_assign_ref(r, sum, loc));
-      }
+      assign_giving(sum, result, overflow, loc);
     }
     else
     {
       // ADD ops TO receivers: each receiver += sum.
       for(auto &p : post)
       {
-        if(!p.second.has_value())
+        if(!p.ref.has_value())
           error("ADD ... TO requires a receiving item");
-        valuet cur_val = read_field(*p.second);
+        valuet cur_val = read_field(*p.ref);
         valuet s = sum;
         align(cur_val, s);
-        result.push_back(make_assign_ref(
-          *p.second, valuet{plus_exprt{cur_val.expr, s.expr}, s.scale}, loc));
+        const valuet nv{plus_exprt{cur_val.expr, s.expr}, s.scale};
+        result.push_back(make_assign_ref(*p.ref, nv, loc, p.rounded));
+        overflow = or_exprt{overflow, size_error_cond(*p.ref, nv)};
       }
     }
   }
   else if(eat_word("GIVING"))
   {
-    while(is_item_word())
-    {
-      reft r = parse_ref();
-      result.push_back(make_assign_ref(r, sum, loc));
-    }
+    assign_giving(sum, result, overflow, loc);
   }
   else
     error("ADD requires TO or GIVING");
 
   if(result.empty())
     error("ADD without a target");
-  return result;
+  return finish_arith(std::move(result), std::move(overflow), "END-ADD", loc);
 }
 
 std::vector<stmtt> cobol_typecheckt::parse_subtract()
@@ -2995,44 +3121,51 @@ std::vector<stmtt> cobol_typecheckt::parse_subtract()
   // The items/literals after FROM are minuends: with GIVING the (single)
   // minuend's value is used and the difference stored in the results; without
   // GIVING each minuend is a receiver that is decremented (IBM LR "SUBTRACT
-  // statement"). Parse as operands, capturing the receiver reference.
-  std::vector<std::pair<valuet, std::optional<reft>>> minuends;
+  // statement"). Parse as operands, capturing the receiver reference and a
+  // trailing ROUNDED.
+  struct minuendt
+  {
+    valuet v;
+    std::optional<reft> ref;
+    bool rounded;
+  };
+  std::vector<minuendt> minuends;
   while(at_operand())
   {
     valuet v = parse_operand();
-    minuends.push_back({v, last_ref});
+    std::optional<reft> ref = last_ref;
+    minuends.push_back({v, ref, eat_word("ROUNDED")});
   }
 
   std::vector<stmtt> result;
+  exprt overflow = false_exprt{};
   if(eat_word("GIVING"))
   {
     if(minuends.size() != 1)
       error("SUBTRACT ... FROM ... GIVING expects a single minuend");
-    valuet mv = minuends[0].first;
+    valuet mv = minuends[0].v;
     align(mv, sum);
-    valuet diff{minus_exprt{mv.expr, sum.expr}, mv.scale};
-    while(is_item_word())
-    {
-      reft r = parse_ref();
-      result.push_back(make_assign_ref(r, diff, loc));
-    }
+    const valuet diff{minus_exprt{mv.expr, sum.expr}, mv.scale};
+    assign_giving(diff, result, overflow, loc);
   }
   else
   {
     for(auto &m : minuends)
     {
-      if(!m.second.has_value())
+      if(!m.ref.has_value())
         error("SUBTRACT ... FROM requires a receiving item");
-      valuet mv = read_field(*m.second);
+      valuet mv = read_field(*m.ref);
       valuet s = sum;
       align(mv, s);
-      result.push_back(make_assign_ref(
-        *m.second, valuet{minus_exprt{mv.expr, s.expr}, s.scale}, loc));
+      const valuet nv{minus_exprt{mv.expr, s.expr}, s.scale};
+      result.push_back(make_assign_ref(*m.ref, nv, loc, m.rounded));
+      overflow = or_exprt{overflow, size_error_cond(*m.ref, nv)};
     }
   }
   if(result.empty())
     error("SUBTRACT without a target");
-  return result;
+  return finish_arith(
+    std::move(result), std::move(overflow), "END-SUBTRACT", loc);
 }
 
 std::vector<stmtt> cobol_typecheckt::parse_multiply()
@@ -3043,26 +3176,26 @@ std::vector<stmtt> cobol_typecheckt::parse_multiply()
   expect_word("BY");
   valuet b = parse_operand();
   const std::optional<reft> b_ref = last_ref;
+  const bool b_rounded = eat_word("ROUNDED");
   valuet product{mult_exprt{a.expr, b.expr}, a.scale + b.scale};
   std::vector<stmtt> result;
+  exprt overflow = false_exprt{};
   if(eat_word("GIVING"))
   {
-    while(is_item_word())
-    {
-      reft r = parse_ref();
-      result.push_back(make_assign_ref(r, product, loc));
-    }
+    assign_giving(product, result, overflow, loc);
   }
   else
   {
     // MULTIPLY a BY b : b = a * b (b must be a data item)
     if(!b_ref.has_value())
       error("MULTIPLY without GIVING requires an item operand");
-    result.push_back(make_assign_ref(*b_ref, product, loc));
+    result.push_back(make_assign_ref(*b_ref, product, loc, b_rounded));
+    overflow = size_error_cond(*b_ref, product);
   }
   if(result.empty())
     error("MULTIPLY without a target");
-  return result;
+  return finish_arith(
+    std::move(result), std::move(overflow), "END-MULTIPLY", loc);
 }
 
 std::vector<stmtt> cobol_typecheckt::parse_divide()
@@ -3071,26 +3204,42 @@ std::vector<stmtt> cobol_typecheckt::parse_divide()
   expect_word("DIVIDE");
   valuet first = parse_operand();
   std::vector<stmtt> result;
+  exprt overflow = false_exprt{};
+  // Compute quotient = dividend / divisor and, for the REMAINDER phrase,
+  // remainder = dividend - quotient * divisor (IBM LR "DIVIDE statement").
+  const auto do_remainder =
+    [&](const valuet &dividend, const valuet &divisor, const valuet &quotient)
+  {
+    if(!eat_word("REMAINDER"))
+      return;
+    const valuet rem{
+      minus_exprt{dividend.expr, mult_exprt{quotient.expr, divisor.expr}},
+      dividend.scale};
+    reft r = parse_ref();
+    const bool rounded = eat_word("ROUNDED");
+    result.push_back(make_assign_ref(r, rem, loc, rounded));
+    overflow = or_exprt{overflow, size_error_cond(r, rem)};
+  };
   if(eat_word("INTO"))
   {
     valuet dividend = parse_operand();
     const std::optional<reft> dividend_ref = last_ref;
+    const bool dividend_rounded = eat_word("ROUNDED");
     valuet divisor = first;
     align(dividend, divisor);
     valuet quotient{div_exprt{dividend.expr, divisor.expr}, 0};
     if(eat_word("GIVING"))
     {
-      while(is_item_word())
-      {
-        reft r = parse_ref();
-        result.push_back(make_assign_ref(r, quotient, loc));
-      }
+      assign_giving(quotient, result, overflow, loc);
+      do_remainder(dividend, divisor, quotient);
     }
     else
     {
       if(!dividend_ref.has_value())
         error("DIVIDE without GIVING requires an item operand");
-      result.push_back(make_assign_ref(*dividend_ref, quotient, loc));
+      result.push_back(
+        make_assign_ref(*dividend_ref, quotient, loc, dividend_rounded));
+      overflow = size_error_cond(*dividend_ref, quotient);
     }
   }
   else if(eat_word("BY"))
@@ -3100,40 +3249,43 @@ std::vector<stmtt> cobol_typecheckt::parse_divide()
     align(dividend, divisor);
     valuet quotient{div_exprt{dividend.expr, divisor.expr}, 0};
     expect_word("GIVING");
-    while(is_item_word())
-    {
-      reft r = parse_ref();
-      result.push_back(make_assign_ref(r, quotient, loc));
-    }
+    assign_giving(quotient, result, overflow, loc);
+    do_remainder(dividend, divisor, quotient);
   }
   else
     error("DIVIDE requires INTO or BY");
 
   if(result.empty())
     error("DIVIDE without a target");
-  return result;
+  return finish_arith(
+    std::move(result), std::move(overflow), "END-DIVIDE", loc);
 }
 
 std::vector<stmtt> cobol_typecheckt::parse_compute()
 {
   const source_locationt loc = cur().location;
   expect_word("COMPUTE");
-  std::vector<reft> targets;
+  std::vector<std::pair<reft, bool>> targets;
   while(is_item_word())
   {
-    targets.push_back(parse_ref());
-    eat_word("ROUNDED");
+    reft r = parse_ref();
+    targets.push_back({r, eat_word("ROUNDED")});
   }
   if(!is_kind(cobol_token_kindt::PUNCT) || cur().text != "=")
     error("expected '=' in COMPUTE");
   advance();
   valuet v = parse_expr();
   std::vector<stmtt> result;
-  for(const reft &t : targets)
-    result.push_back(make_assign_ref(t, v, loc));
+  exprt overflow = false_exprt{};
+  for(const auto &t : targets)
+  {
+    result.push_back(make_assign_ref(t.first, v, loc, t.second));
+    overflow = or_exprt{overflow, size_error_cond(t.first, v)};
+  }
   if(result.empty())
     error("COMPUTE without a target");
-  return result;
+  return finish_arith(
+    std::move(result), std::move(overflow), "END-COMPUTE", loc);
 }
 
 std::vector<stmtt> cobol_typecheckt::parse_call()

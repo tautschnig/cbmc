@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+The ROUNDED phrase rounds discarded fractional digits; the default
+truncates. See IBM LR "ROUNDED phrase".
