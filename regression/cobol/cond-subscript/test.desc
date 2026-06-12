@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+A condition-name over a table element is referenced with a subscript.
+See IBM LR "Condition-name" and "Subscripting".

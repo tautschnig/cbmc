@@ -692,7 +692,8 @@ protected:
     const std::string &op,
     cond_operandt &r);
   std::string parse_relop();
-  exprt cond_predicate(const std::string &name);
+  exprt cond_predicate(const std::string &name, const reft &parent_ref);
+  reft apply_cond_subscript(const item_infot &item, reft r);
 
   std::vector<stmtt> parse_statements();
   std::vector<stmtt> parse_statement();
@@ -1881,10 +1882,47 @@ static std::string negate_relop(const std::string &op)
   return op;
 }
 
-exprt cobol_typecheckt::cond_predicate(const std::string &name)
+reft cobol_typecheckt::apply_cond_subscript(const item_infot &item, reft r)
+{
+  // Apply OCCURS subscripts to a condition variable's reference, using the
+  // same 1-based stride arithmetic as parse_ref (IBM LR "Subscripting").
+  // Assumes the current token is the opening parenthesis.
+  advance();
+  std::vector<std::size_t> strides;
+  for(std::size_t dim : item.occurs_dims)
+    if(dim < all_items.size())
+      strides.push_back(all_items[dim].info.byte_size);
+  if(item.is_table)
+    strides.push_back(item.byte_size);
+  if(strides.empty())
+    error("subscript on a non-table condition variable");
+
+  std::vector<valuet> subs;
+  subs.push_back(parse_expr());
+  while(!is_kind(cobol_token_kindt::RPAREN) && !at_eof())
+    subs.push_back(parse_expr());
+  if(!is_kind(cobol_token_kindt::RPAREN))
+    error("expected ')' after subscript");
+  advance();
+  if(subs.size() != strides.size())
+    error("wrong number of subscripts for a condition variable");
+
+  for(std::size_t k = 0; k < subs.size(); ++k)
+  {
+    const exprt idx0 = minus_exprt{
+      typecast_exprt{rescale(subs[k].expr, subs[k].scale, 0), size_type()},
+      from_integer(1, size_type())};
+    r.offset = plus_exprt{
+      r.offset, mult_exprt{idx0, from_integer(strides[k], size_type())}};
+  }
+  return r;
+}
+
+exprt cobol_typecheckt::cond_predicate(
+  const std::string &name,
+  const reft &parent_ref)
 {
   const cond_infot &c = conds.at(name);
-  const reft parent_ref = ref_of(c.parent);
 
   if(!c.parent.is_numeric)
   {
@@ -1938,7 +1976,13 @@ exprt cobol_typecheckt::parse_relation()
   {
     const std::string name = cur().text;
     advance();
-    return cond_predicate(name);
+    // The conditional variable of a condition-name may itself be subscripted
+    // (IBM LR "Condition-name"): SELECT-OK(I) tests the I-th table element.
+    const cond_infot &c = conds.at(name);
+    reft parent_ref = ref_of(c.parent);
+    if(is_kind(cobol_token_kindt::LPAREN))
+      parent_ref = apply_cond_subscript(c.parent, parent_ref);
+    return cond_predicate(name, parent_ref);
   }
 
   cond_operandt a = parse_cond_operand();
