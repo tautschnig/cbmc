@@ -513,6 +513,21 @@ void python_convertert::process_imported_module(
           params.push_back(param);
         }
 
+        // Architectural: imported-module functions share the SAME return-type
+        // inference as convert_function_def, rather than the partial Tuple/
+        // class scans above. This is what makes an unannotated X-or-None
+        // function infer Optional (python_value) instead of erasing None by
+        // coercing the `return None` branch to X (a latent false proof —
+        // see plans §0). Generators (has_yield) and no-value-return functions
+        // keep the existing handling.
+        if(returns.is_null())
+        {
+          inferred_returnt inf = infer_return_type_from_body(
+            json_member(stmt, "body"), params, fname, "");
+          if(!inf.has_yield && inf.type.id() != ID_empty)
+            ret_type = inf.type;
+        }
+
         code_typet func_type{params, ret_type};
         symbolt func_sym{sym_id, func_type, "python"};
         func_sym.base_name = fname;
