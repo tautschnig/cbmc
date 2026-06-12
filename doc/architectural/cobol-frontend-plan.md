@@ -271,13 +271,23 @@ clean and use curly-brace constructor syntax.
 
 ## 10. Known limitations (tracked, to be kept current)
 
-- Numerics modelled by value, not bytes → byte-level `REDEFINES`,
-  group `MOVE` across mismatched numeric layout, and `COMP-3`
-  nibble-level access are not byte-accurate. Group items are flattened
-  (their elementary leaves become standalone symbols), so group-level
-  `MOVE`/comparison and group `OCCURS` are not yet modelled.
-- `COPY` copybook directives are not expanded; references to
-  copybook-defined items therefore fail as "unknown data item".
+- **Storage is byte-addressed** (records are byte arrays; fields are
+  `byte_extract`/`byte_update` views), so `REDEFINES`, group items, and
+  fixed `OCCURS` are modelled soundly. However the *physical encoding*
+  is a uniform little-endian two's-complement binary, **not** real
+  zoned-decimal / packed-decimal / EBCDIC. The byte *sizes* follow the
+  IBM LR (so `REDEFINES` offsets line up), but code that inspects the
+  actual zoned/packed bytes will not see IBM-faithful content. (See
+  `phys_size_of`, IBM LR pp. 9048-9075.)
+- Group `MOVE` copies `min(sizes)` bytes with no space/zero padding of a
+  longer receiver.
+- Subscripting a subfield *inside* an `OCCURS` group (`FIELD(I)` where
+  `FIELD` is subordinate to the table) is not supported — only the
+  table item itself is subscriptable.
+- Alphanumeric relational comparisons in conditions (`IF X = "Y"`,
+  `IF X = SPACES`) are not yet supported in expressions; 88-level
+  condition names over alphanumeric parents are.
+- Qualified references (`FIELD OF GROUP` / `IN`) are not yet resolved.
 - Edited PICTUREs (insertion/suppression characters `Z * . , + - $ CR
   DB /`) are not parsed; the embedded `.` currently mis-tokenises.
 - EBCDIC and sign-nibble/zone codecs not implemented (ASCII host only).
@@ -299,27 +309,29 @@ CICS`/`COPY`/file modelling to verify.
 
 Progression of the dominant first-blocker (programs affected):
 
-| Blocker | Initial | After alnum VALUE | After OCCURS+SET |
-|---|---|---|---|
-| alphanumeric / figurative `VALUE` | ~26 | 0 | 0 |
-| `OCCURS` | 9 | 13 | 0 |
-| `SET` | — | — | 0 |
-| digit-leading paragraph / `VALUES` | 10 | 0 | 0 |
-| `REDEFINES` | — | 13 | **19** |
-| unknown data item (`COPY` books) | — | 1 | **15** |
-| edited PICTUREs / misc | — | ~4 | ~10 |
+| Blocker | Initial | alnum VALUE | OCCURS+SET | COPY | byte model |
+|---|---|---|---|---|---|
+| alphanumeric / figurative `VALUE` | ~26 | 0 | 0 | 0 | 0 |
+| `OCCURS` | 9 | 13 | 0 | 0 | 0 |
+| digit paragraph / `VALUES` | 10 | 0 | 0 | 0 | 0 |
+| `REDEFINES` | — | 13 | 19 | 32 | **0** |
+| unknown data item (`COPY` books) | — | 1 | 15 | 2 | **19** |
+| non-numeric item in expression | — | — | — | — | **14** |
+| edited PICTUREs / misc | — | ~4 | ~10 | ~10 | ~9 |
 
-Programs now parse their entire inline DATA DIVISION and reach
-PROCEDURE code. The two remaining high-impact items are, in order:
+After the byte-level storage model, every program parses its entire
+DATA DIVISION (including `REDEFINES`, group items and fixed `OCCURS`)
+and fails only on PROCEDURE-level constructs. The next high-impact
+items, in order, are now:
 
-1. **Byte-level storage model** (records as byte arrays, fields as
-   typed views) — unblocks `REDEFINES`, group `MOVE`, and group
-   `OCCURS`. This is the largest single change and the prerequisite for
-   sound aliasing (see `cobol-to-goto-lowering.md` §1.5).
-2. **`COPY` expansion** — splice copybook source at `COPY` points
-   during scanning, with a copybook search path. Unblocks the "unknown
-   data item" failures.
+1. **Alphanumeric comparisons** in conditions (`IF X = "Y"`,
+   `IF X = SPACES`) — needed by most procedure code (14 programs).
+2. **Qualified references** (`FIELD OF GROUP`) and subscripting of
+   subfields inside `OCCURS` groups — the "unknown data item" /
+   "subscript on a non-table item" failures.
+3. **Edited PICTUREs** — scanner-level PIC handling (the `.` mis-token).
+4. **`EXEC CICS` / `EXEC SQL`** stubbing (treat as nondet I/O) — the
+   ultimate gate for the CICS programs.
 
-Cheaper follow-ups: edited PICTUREs (scanner-level PIC handling),
-`EXEC CICS`/`EXEC SQL` stubbing (treat as nondet I/O), and registering
-the frontend with the other tools (`goto-cc`, `goto-instrument`, …).
+Registering the frontend with the other tools (`goto-cc`,
+`goto-instrument`, …) remains a small follow-up.

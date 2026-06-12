@@ -17,6 +17,7 @@ Author: Kiro
 
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
+#include <util/byte_operators.h>
 #include <util/c_types.h>
 #include <util/message.h>
 #include <util/mp_arith.h>
@@ -71,7 +72,10 @@ mp_integer rescale_int(const mp_integer &v, std::size_t from, std::size_t to)
 /// Description of an elementary data item.
 struct item_infot
 {
-  irep_idt symbol_name;
+  irep_idt record_symbol;    ///< enclosing 01/77 record's byte-array symbol
+  std::size_t offset = 0;    ///< byte offset of this field within the record
+  std::size_t byte_size = 0; ///< physical size of one occurrence, in bytes
+  bool is_group = false;     ///< true for group items (no PICTURE)
   bool is_numeric = true;
   std::size_t digits = 0;
   std::size_t scale = 0;
@@ -80,6 +84,44 @@ struct item_infot
   bool is_table = false;  ///< has a fixed OCCURS clause
   std::size_t occurs = 0; ///< number of elements when is_table
 };
+
+/// Physical size of one occurrence of an elementary item, in bytes.
+///
+/// IBM Enterprise COBOL for z/OS 6.4 Language Reference, USAGE clause /
+/// "Storage" (pp. 9048-9075):
+///   * DISPLAY external decimal / alphanumeric: 1 byte per digit/character.
+///   * BINARY/COMP/COMP-4 (COMP-5 modelled likewise): halfword (2 bytes) for
+///     1-4 digits, fullword (4) for 5-9, doubleword (8) for 10-18.
+///   * PACKED-DECIMAL/COMP-3: ceil((digits + 1) / 2) bytes.
+///   * COMP-1: 4 bytes; COMP-2: 8 bytes.
+inline std::size_t phys_size_of(
+  const std::string &usage,
+  bool is_numeric,
+  std::size_t digits,
+  std::size_t char_count)
+{
+  if(!is_numeric)
+    return char_count == 0 ? 1 : char_count;
+
+  if(usage == "COMP-3" || usage == "PACKED-DECIMAL" || usage == "COMP-6")
+    return (digits + 2) / 2; // ceil((digits + 1) / 2)
+  if(
+    usage == "COMP" || usage == "COMP-4" || usage == "COMP-5" ||
+    usage == "BINARY" || usage == "COMPUTATIONAL" ||
+    usage == "COMPUTATIONAL-4" || usage == "COMPUTATIONAL-5")
+  {
+    if(digits <= 4)
+      return 2;
+    if(digits <= 9)
+      return 4;
+    return 8;
+  }
+  if(usage == "COMP-1" || usage == "COMPUTATIONAL-1")
+    return 4;
+  if(usage == "COMP-2" || usage == "COMPUTATIONAL-2")
+    return 8;
+  return digits == 0 ? 1 : digits; // DISPLAY external decimal
+}
 
 /// 88-level condition name: value ranges/values over its parent item.
 struct cond_infot
@@ -99,12 +141,14 @@ struct valuet
 // Forward declaration; defined above.
 struct item_infot;
 
-/// A reference to a data item, possibly subscripted (e.g. WS-TABLE(I)). The
-/// expr is usable both as an rvalue and as an assignment target.
+/// A reference to a data item, possibly subscripted (e.g. WS-TABLE(I)).
+/// In the byte-level model a reference is the enclosing record byte array
+/// plus a byte offset within it; reads use byte_extract and writes byte_update.
 struct reft
 {
   const item_infot *info = nullptr;
-  exprt expr;
+  exprt record; ///< symbol_exprt of the record byte array
+  exprt offset; ///< byte offset within the record (size_type)
 };
 
 /// A parsed VALUE / 88-level literal, before interpretation against the
@@ -195,6 +239,8 @@ struct stmtt
   exprt var;
   exprt from_val;
   exprt by_val;
+  std::vector<stmtt> var_init; ///< VARYING: initialise the loop variable
+  std::vector<stmtt> var_step; ///< VARYING: step the loop variable
 };
 
 struct paragrapht
@@ -368,8 +414,27 @@ protected:
   std::map<std::string, item_infot> items;
   std::map<std::string, cond_infot> conds;
   std::vector<paragrapht> paragraphs;
-  std::string last_elementary;
   std::size_t unique = 0;
+
+  // ---- DATA DIVISION layout state ----
+  /// byte size of each record (its byte-array symbol)
+  std::map<irep_idt, std::size_t> record_sizes;
+  struct layout_framet
+  {
+    std::size_t level = 0;
+    std::string name;       ///< group field name ("" if anonymous/FILLER)
+    std::size_t start = 0;  ///< byte offset where this group begins
+    std::size_t cursor = 0; ///< next free byte offset within this group
+    bool is_redefines = false;
+  };
+  std::vector<layout_framet> layout_stack;
+  irep_idt cur_record;         ///< current 01/77 record byte-array symbol
+  std::string cur_record_base; ///< base name of the current record
+  std::size_t record_max = 0;  ///< max end offset placed in the current record
+  /// pending VALUE writes for the current record: (offset, little-endian bytes)
+  std::vector<std::pair<std::size_t, std::vector<unsigned char>>> record_inits;
+  bool record_has_value = false;
+  std::string last_field; ///< most recent elementary field (for 88-levels)
 
   // ---- token cursor ----
   const cobol_tokent &cur() const
@@ -453,18 +518,44 @@ protected:
     return "cobol::" + program_id + "::$end";
   }
 
-  exprt rescale(const exprt &e, std::size_t from, std::size_t to);
+  exprt rescale(const exprt &e, std::size_t from, std::size_t to) const;
   std::size_t align(valuet &a, valuet &b);
-  exprt store_to_item(const item_infot &item, valuet v);
   exprt build_relation(valuet a, const std::string &op, valuet b);
 
   const item_infot &lookup_item(const std::string &name);
   std::size_t paragraph_index(const std::string &name);
 
+  // ---- byte-level storage helpers ----
+  typet record_type(const irep_idt &record) const;
+  symbol_exprt record_expr(const irep_idt &record) const;
+  /// build a reference (record + offset) for a field descriptor
+  reft ref_of(const item_infot &info) const;
+  /// Storage (physical) integer type of a numeric field: signedbv(8*size).
+  signedbv_typet phys_type(const item_infot &item) const;
+  /// rvalue of a field: byte_extract + decode to the value domain.
+  valuet read_field(const reft &r) const;
+  /// encode a value-domain number into the field's physical storage type.
+  exprt encode_numeric(const item_infot &item, valuet v) const;
+  /// finalise the current record: create its byte-array symbol + initialiser.
+  void finalize_record();
+
   // ---- parsers ----
   void parse_program();
   void parse_data_division();
   void parse_data_item();
+  void place_field(
+    std::size_t level,
+    const std::string &name,
+    bool has_pic,
+    const std::string &pic,
+    const std::string &usage,
+    bool is_table,
+    std::size_t occurs,
+    const std::string &redefines_target,
+    bool has_value,
+    const value_spect &value_spec,
+    const source_locationt &loc);
+  void close_groups_below(std::size_t level);
   std::string read_picture_string();
   value_spect read_value_spec();
   bool at_value_start() const;
@@ -480,9 +571,7 @@ protected:
   valuet parse_operand();
   std::vector<valuet> parse_operand_list();
   reft parse_ref();
-  typet element_type(const item_infot &item) const;
-  typet symbol_type(const item_infot &item) const;
-  const item_infot *item_of(const exprt &e) const;
+  std::optional<reft> last_ref; ///< set when an operand was a bare field
 
   exprt parse_condition();
   exprt parse_and_condition();
@@ -506,11 +595,9 @@ protected:
   std::vector<stmtt> parse_set();
   void skip_to_sentence_end();
 
-  stmtt make_assign_ref(
-    const item_infot &item,
-    exprt lhs,
-    valuet v,
-    source_locationt loc);
+  stmtt make_assign_ref(const reft &target, valuet v, source_locationt loc);
+  stmtt
+  make_move_group(const reft &target, const reft &src, source_locationt loc);
 
   // ---- code generation ----
   void build_function();
@@ -535,7 +622,7 @@ protected:
 exprt cobol_typecheckt::rescale(
   const exprt &e,
   std::size_t from,
-  std::size_t to)
+  std::size_t to) const
 {
   if(from == to)
     return e;
@@ -554,12 +641,97 @@ std::size_t cobol_typecheckt::align(valuet &a, valuet &b)
   return s;
 }
 
-exprt cobol_typecheckt::store_to_item(const item_infot &item, valuet v)
+reft cobol_typecheckt::ref_of(const item_infot &info) const
+{
+  return reft{
+    &info,
+    record_expr(info.record_symbol),
+    from_integer(info.offset, size_type())};
+}
+
+typet cobol_typecheckt::record_type(const irep_idt &record) const
+{
+  auto it = record_sizes.find(record);
+  const std::size_t size = it == record_sizes.end() ? 1 : it->second;
+  return array_typet{unsignedbv_typet{8}, from_integer(size, size_type())};
+}
+
+symbol_exprt cobol_typecheckt::record_expr(const irep_idt &record) const
+{
+  return symbol_exprt{record, record_type(record)};
+}
+
+signedbv_typet cobol_typecheckt::phys_type(const item_infot &item) const
+{
+  return signedbv_typet{item.byte_size * 8};
+}
+
+valuet cobol_typecheckt::read_field(const reft &r) const
+{
+  const item_infot &item = *r.info;
+  // Uniform little-endian binary storage (documented deviation from real
+  // zoned/packed/EBCDIC encodings; the byte SIZES follow IBM LR so that
+  // REDEFINES overlap and group MOVE line up).
+  const exprt phys = make_byte_extract(r.record, r.offset, phys_type(item));
+  return valuet{typecast_exprt{phys, cobol_value_type()}, item.scale};
+}
+
+exprt cobol_typecheckt::encode_numeric(const item_infot &item, valuet v) const
 {
   exprt e = rescale(v.expr, v.scale, item.scale);
   if(item.digits > 0 && item.digits <= 18)
     e = mod_exprt{e, from_integer(power10(item.digits), cobol_value_type())};
-  return e;
+  return typecast_exprt{e, phys_type(item)};
+}
+
+void cobol_typecheckt::finalize_record()
+{
+  if(cur_record.empty())
+    return;
+
+  // Close any still-open group frames.
+  while(!layout_stack.empty())
+  {
+    layout_framet g = layout_stack.back();
+    layout_stack.pop_back();
+    const std::size_t gsize = g.cursor - g.start;
+    if(items.count(g.name))
+      items[g.name].byte_size = gsize;
+    const std::size_t occ =
+      items.count(g.name) && items[g.name].is_table ? items[g.name].occurs : 1;
+    record_max = std::max(record_max, g.start + gsize * occ);
+    if(!g.is_redefines && !layout_stack.empty())
+      layout_stack.back().cursor += gsize * occ;
+  }
+
+  const std::size_t size = std::max<std::size_t>(record_max, 1);
+  record_sizes[cur_record] = size;
+
+  symbolt symbol{cur_record, record_type(cur_record), COBOL_MODE};
+  symbol.base_name = cur_record_base;
+  symbol.is_static_lifetime = true;
+  symbol.is_lvalue = true;
+  symbol.is_state_var = true;
+
+  if(record_has_value)
+  {
+    std::vector<unsigned char> bytes(size, 0);
+    for(const auto &write : record_inits)
+      for(std::size_t b = 0; b < write.second.size() && write.first + b < size;
+          ++b)
+        bytes[write.first + b] = write.second[b];
+
+    const unsignedbv_typet byte_type{8};
+    array_exprt::operandst ops;
+    ops.reserve(size);
+    for(unsigned char b : bytes)
+      ops.push_back(from_integer(b, byte_type));
+    symbol.value =
+      array_exprt{std::move(ops), to_array_type(record_type(cur_record))};
+  }
+
+  symbol_table.add(symbol);
+  cur_record.clear();
 }
 
 exprt cobol_typecheckt::build_relation(
@@ -632,7 +804,7 @@ void cobol_typecheckt::parse_program()
   items.clear();
   conds.clear();
   paragraphs.clear();
-  last_elementary.clear();
+  last_field.clear();
 
   expect_word("IDENTIFICATION");
   expect_word("DIVISION");
@@ -681,6 +853,21 @@ void cobol_typecheckt::parse_data_division()
     }
     else if(cur().kind == cobol_token_kindt::NUMBER)
     {
+      const std::size_t level =
+        static_cast<std::size_t>(std::stoul(cur().text));
+      if(level == 1 || level == 77)
+      {
+        // A new record begins; close the previous one and open this.
+        finalize_record();
+        const std::string rname =
+          peek(1).kind == cobol_token_kindt::WORD ? peek(1).text : "FILLER";
+        cur_record_base = rname;
+        cur_record = "cobol::" + program_id + "::" + rname;
+        layout_stack.clear();
+        record_max = 0;
+        record_inits.clear();
+        record_has_value = false;
+      }
       parse_data_item();
     }
     else
@@ -688,6 +875,7 @@ void cobol_typecheckt::parse_data_division()
       advance();
     }
   }
+  finalize_record();
 }
 
 std::string cobol_typecheckt::read_picture_string()
@@ -860,9 +1048,9 @@ void cobol_typecheckt::parse_data_item()
 
   if(level == 88)
   {
-    if(last_elementary.empty())
+    if(last_field.empty())
       error("88-level without a preceding elementary item");
-    const item_infot parent = items.at(last_elementary);
+    const item_infot parent = items.at(last_field);
     cond_infot cinfo;
     cinfo.parent = parent;
 
@@ -907,6 +1095,8 @@ void cobol_typecheckt::parse_data_item()
   bool has_value = false;
   bool is_table = false;
   std::size_t occurs = 0;
+  std::string usage = "DISPLAY";
+  std::string redefines_target;
   value_spect value_spec;
 
   while(!is_kind(cobol_token_kindt::PERIOD) && !at_eof())
@@ -936,99 +1126,186 @@ void cobol_typecheckt::parse_data_item()
     }
     else if(eat_word("REDEFINES"))
     {
-      error("REDEFINES is not yet supported");
+      if(cur().kind != cobol_token_kindt::WORD)
+        error("expected a data name after REDEFINES");
+      redefines_target = cur().text;
+      advance();
+    }
+    else if(eat_word("USAGE"))
+    {
+      eat_word("IS");
+      if(cur().kind == cobol_token_kindt::WORD)
+      {
+        usage = cur().text;
+        advance();
+      }
+    }
+    else if(
+      is_word("COMP") || is_word("COMP-1") || is_word("COMP-2") ||
+      is_word("COMP-3") || is_word("COMP-4") || is_word("COMP-5") ||
+      is_word("COMP-6") || is_word("BINARY") || is_word("PACKED-DECIMAL") ||
+      is_word("COMPUTATIONAL") || is_word("COMPUTATIONAL-1") ||
+      is_word("COMPUTATIONAL-2") || is_word("COMPUTATIONAL-3") ||
+      is_word("COMPUTATIONAL-4") || is_word("COMPUTATIONAL-5") ||
+      is_word("DISPLAY"))
+    {
+      usage = cur().text;
+      advance();
     }
     else
     {
-      // USAGE / SIGN / SYNC / ... : consume one token.
+      // SIGN / SYNC / JUSTIFIED / ... : consume one token.
       advance();
     }
   }
   expect_period();
 
-  if(!has_pic)
-    return; // group item: flattened in the MVP
-
-  item_infot info;
-  bool is_numeric;
-  std::size_t digits, scale, char_count;
-  bool is_signed;
-  parse_picture(pic, is_numeric, digits, scale, is_signed, char_count);
-  info.is_numeric = is_numeric;
-  info.digits = digits;
-  info.scale = scale;
-  info.is_signed = is_signed;
-  info.char_count = char_count;
-  info.is_table = is_table;
-  info.occurs = occurs;
-  info.symbol_name = "cobol::" + program_id + "::" + name;
-
-  const typet type = symbol_type(info);
-
-  symbolt symbol{info.symbol_name, type, COBOL_MODE};
-  symbol.base_name = name;
-  symbol.is_static_lifetime = true;
-  symbol.is_lvalue = true;
-  symbol.is_state_var = true;
-  symbol.location = loc;
-  if(has_value && !is_table)
-  {
-    if(is_numeric)
-    {
-      if(auto v = spec_to_numeric(value_spec, scale))
-        symbol.value = from_integer(*v, element_type(info));
-    }
-    else
-    {
-      symbol.value = make_alnum_constant(value_spec, char_count);
-    }
-  }
-  symbol_table.add(symbol);
-
-  items[name] = info;
-  last_elementary = name;
+  place_field(
+    level,
+    name,
+    has_pic,
+    pic,
+    usage,
+    is_table,
+    occurs,
+    redefines_target,
+    has_value,
+    value_spec,
+    loc);
 }
 
 // ---------------------------------------------------------------------------
 // expressions
 // ---------------------------------------------------------------------------
 
-typet cobol_typecheckt::element_type(const item_infot &item) const
+void cobol_typecheckt::close_groups_below(std::size_t level)
 {
-  if(item.is_numeric)
-    return cobol_value_type();
-  return array_typet{
-    unsignedbv_typet{8}, from_integer(item.char_count, size_type())};
+  while(!layout_stack.empty() && layout_stack.back().level >= level)
+  {
+    layout_framet g = layout_stack.back();
+    layout_stack.pop_back();
+    const std::size_t gsize = g.cursor - g.start;
+    if(items.count(g.name))
+      items[g.name].byte_size = gsize;
+    const std::size_t occ =
+      items.count(g.name) && items[g.name].is_table ? items[g.name].occurs : 1;
+    record_max = std::max(record_max, g.start + gsize * occ);
+    if(!g.is_redefines && !layout_stack.empty())
+      layout_stack.back().cursor += gsize * occ;
+  }
 }
 
-typet cobol_typecheckt::symbol_type(const item_infot &item) const
+void cobol_typecheckt::place_field(
+  std::size_t level,
+  const std::string &name,
+  bool has_pic,
+  const std::string &pic,
+  const std::string &usage,
+  bool is_table,
+  std::size_t occurs,
+  const std::string &redefines_target,
+  bool has_value,
+  const value_spect &value_spec,
+  const source_locationt &loc)
 {
-  const typet elem = element_type(item);
-  if(item.is_table)
-    return array_typet{elem, from_integer(item.occurs, size_type())};
-  return elem;
-}
+  (void)loc;
+  close_groups_below(level);
 
-const item_infot *cobol_typecheckt::item_of(const exprt &e) const
-{
-  irep_idt id;
-  if(e.id() == ID_symbol)
-    id = to_symbol_expr(e).get_identifier();
-  else if(e.id() == ID_index && to_index_expr(e).array().id() == ID_symbol)
-    id = to_symbol_expr(to_index_expr(e).array()).get_identifier();
+  const bool is_redefines = !redefines_target.empty();
+  std::size_t base_offset;
+  if(is_redefines)
+  {
+    auto it = items.find(redefines_target);
+    base_offset = it == items.end()
+                    ? (layout_stack.empty() ? 0 : layout_stack.back().cursor)
+                    : it->second.offset;
+  }
   else
-    return nullptr;
-  for(const auto &pair : items)
-    if(pair.second.symbol_name == id)
-      return &pair.second;
-  return nullptr;
+    base_offset = layout_stack.empty() ? 0 : layout_stack.back().cursor;
+
+  item_infot info;
+  info.record_symbol = cur_record;
+  info.offset = base_offset;
+  info.is_table = is_table;
+  info.occurs = occurs;
+
+  if(!has_pic)
+  {
+    // Group item: its byte_size is the span of its children, set at close.
+    info.is_group = true;
+    info.is_numeric = false;
+    items[name] = info;
+    layout_stack.push_back(
+      layout_framet{level, name, base_offset, base_offset, is_redefines});
+    return;
+  }
+
+  bool is_numeric;
+  std::size_t digits, scale, char_count;
+  bool is_signed;
+  parse_picture(pic, is_numeric, digits, scale, is_signed, char_count);
+  info.is_group = false;
+  info.is_numeric = is_numeric;
+  info.digits = digits;
+  info.scale = scale;
+  info.is_signed = is_signed;
+  info.char_count = char_count;
+  info.byte_size = phys_size_of(usage, is_numeric, digits, char_count);
+
+  const std::size_t total = info.byte_size * (is_table ? occurs : 1);
+  record_max = std::max(record_max, base_offset + total);
+  if(!is_redefines && !layout_stack.empty())
+    layout_stack.back().cursor += total;
+
+  items[name] = info;
+  last_field = name;
+
+  // VALUE initialisation (single occurrence only).
+  if(has_value && !is_table)
+  {
+    record_has_value = true;
+    if(is_numeric)
+    {
+      if(auto v = spec_to_numeric(value_spec, scale))
+      {
+        mp_integer modulus = power(mp_integer{2}, info.byte_size * 8);
+        mp_integer u = *v % modulus;
+        if(u < 0)
+          u += modulus;
+        std::vector<unsigned char> bytes(info.byte_size);
+        for(std::size_t b = 0; b < info.byte_size; ++b)
+        {
+          bytes[b] = static_cast<unsigned char>((u % 256).to_long());
+          u /= 256;
+        }
+        record_inits.emplace_back(base_offset, std::move(bytes));
+      }
+    }
+    else
+    {
+      const exprt c = make_alnum_constant(value_spec, char_count);
+      std::vector<unsigned char> bytes;
+      bytes.reserve(c.operands().size());
+      for(const exprt &op : c.operands())
+      {
+        const auto n = numeric_cast<mp_integer>(op);
+        bytes.push_back(
+          static_cast<unsigned char>(n.has_value() ? n->to_long() : 0));
+      }
+      record_inits.emplace_back(base_offset, std::move(bytes));
+    }
+  }
 }
+
+// ---------------------------------------------------------------------------
+// expressions
+// ---------------------------------------------------------------------------
 
 reft cobol_typecheckt::parse_ref()
 {
   const item_infot &item = lookup_item(cur().text);
   advance();
-  exprt base = symbol_exprt{item.symbol_name, symbol_type(item)};
+  exprt offset = from_integer(item.offset, size_type());
   if(is_kind(cobol_token_kindt::LPAREN))
   {
     if(!item.is_table)
@@ -1038,12 +1315,15 @@ reft cobol_typecheckt::parse_ref()
     if(!is_kind(cobol_token_kindt::RPAREN))
       error("expected ')' after subscript");
     advance();
-    // COBOL subscripts are 1-based; the IR array is 0-based.
-    const exprt zero_based = minus_exprt{
-      rescale(idx.expr, idx.scale, 0), from_integer(1, cobol_value_type())};
-    base = index_exprt{base, zero_based};
+    // COBOL subscripts are 1-based; convert to a 0-based byte offset:
+    // offset += (idx - 1) * element_byte_size.
+    const exprt idx0 = minus_exprt{
+      typecast_exprt{rescale(idx.expr, idx.scale, 0), size_type()},
+      from_integer(1, size_type())};
+    offset = plus_exprt{
+      offset, mult_exprt{idx0, from_integer(item.byte_size, size_type())}};
   }
-  return reft{&item, base};
+  return reft{&item, record_expr(item.record_symbol), offset};
 }
 
 valuet cobol_typecheckt::parse_primary()
@@ -1059,18 +1339,19 @@ valuet cobol_typecheckt::parse_primary()
   }
   if(cur().kind == cobol_token_kindt::NUMBER)
   {
+    last_ref.reset();
     auto r = parse_decimal(cur().text);
     advance();
     return valuet{from_integer(r.first, cobol_value_type()), r.second};
   }
   if(cur().kind == cobol_token_kindt::WORD)
   {
+    const std::string nm = cur().text;
     reft r = parse_ref();
     if(!r.info->is_numeric)
-      error(
-        "non-numeric item '" + id2string(r.info->symbol_name) +
-        "' used in expression");
-    return valuet{r.expr, r.info->scale};
+      error("non-numeric item '" + nm + "' used in expression");
+    last_ref = r;
+    return read_field(r);
   }
   error("expected an operand but got '" + cur().text + "'");
 }
@@ -1214,13 +1495,16 @@ std::string cobol_typecheckt::parse_relop()
 exprt cobol_typecheckt::cond_predicate(const std::string &name)
 {
   const cond_infot &c = conds.at(name);
+  const reft parent_ref = ref_of(c.parent);
 
   if(!c.parent.is_numeric)
   {
-    // Alphanumeric parent: OR of equalities against the byte-array constants.
+    // Alphanumeric parent: OR of equalities against the byte-array constants,
+    // comparing the field's bytes via byte_extract.
     const array_typet parent_type{
-      unsignedbv_typet{8}, from_integer(c.parent.char_count, size_type())};
-    const symbol_exprt parent{c.parent.symbol_name, parent_type};
+      unsignedbv_typet{8}, from_integer(c.parent.byte_size, size_type())};
+    const exprt parent =
+      make_byte_extract(parent_ref.record, parent_ref.offset, parent_type);
     exprt result = false_exprt{};
     bool first = true;
     for(const auto &value : c.alnum_values)
@@ -1232,7 +1516,7 @@ exprt cobol_typecheckt::cond_predicate(const std::string &name)
     return result;
   }
 
-  const symbol_exprt parent{c.parent.symbol_name, cobol_value_type()};
+  const exprt parent = read_field(parent_ref).expr;
   exprt result = false_exprt{};
   bool first = true;
   for(const auto &range : c.num_ranges)
@@ -1301,16 +1585,37 @@ exprt cobol_typecheckt::parse_condition()
 // ---------------------------------------------------------------------------
 
 stmtt cobol_typecheckt::make_assign_ref(
-  const item_infot &item,
-  exprt lhs,
+  const reft &target,
   valuet v,
   source_locationt loc)
 {
+  // record := byte_update(record, offset, encode(value))
   stmtt s;
   s.kind = stmtt::kindt::ASSIGN;
   s.location = loc;
-  s.lhs = std::move(lhs);
-  s.rhs = store_to_item(item, std::move(v));
+  s.lhs = target.record;
+  s.rhs = make_byte_update(
+    target.record, target.offset, encode_numeric(*target.info, std::move(v)));
+  return s;
+}
+
+stmtt cobol_typecheckt::make_move_group(
+  const reft &target,
+  const reft &src,
+  source_locationt loc)
+{
+  // Group / alphanumeric MOVE is a byte copy (IBM LR "MOVE statement": a group
+  // move is an unconverted copy). Copy min(sizes) bytes; padding of a longer
+  // receiver is a documented limitation.
+  const std::size_t n = std::min(target.info->byte_size, src.info->byte_size);
+  const array_typet bytes_type{
+    unsignedbv_typet{8}, from_integer(n, size_type())};
+  const exprt src_bytes = make_byte_extract(src.record, src.offset, bytes_type);
+  stmtt s;
+  s.kind = stmtt::kindt::ASSIGN;
+  s.location = loc;
+  s.lhs = target.record;
+  s.rhs = make_byte_update(target.record, target.offset, src_bytes);
   return s;
 }
 
@@ -1424,13 +1729,62 @@ std::vector<stmtt> cobol_typecheckt::parse_move()
 {
   const source_locationt loc = cur().location;
   expect_word("MOVE");
-  valuet src = parse_operand();
+
+  // The source is either an alphanumeric literal, a numeric literal, or a
+  // (possibly group/alphanumeric) item reference.
+  bool src_is_string = false;
+  value_spect src_spec;
+  std::optional<reft> src_ref;
+  valuet src_val;
+  if(at_value_start() && !is_item_word())
+  {
+    src_spec = read_value_spec();
+    src_is_string = src_spec.kind != value_spect::kindt::NUMERIC &&
+                    src_spec.kind != value_spect::kindt::ZEROS;
+    if(!src_is_string)
+      src_val = valuet{
+        from_integer(
+          spec_to_numeric(src_spec, 0).value_or(mp_integer{0}),
+          cobol_value_type()),
+        0};
+  }
+  else
+  {
+    src_ref = parse_ref();
+    if(src_ref->info->is_numeric)
+      src_val = read_field(*src_ref);
+  }
+
   expect_word("TO");
   std::vector<stmtt> result;
   while(is_item_word())
   {
-    reft r = parse_ref();
-    result.push_back(make_assign_ref(*r.info, r.expr, src, loc));
+    reft t = parse_ref();
+    if(t.info->is_numeric)
+    {
+      if(src_ref && !src_ref->info->is_numeric)
+        error("MOVE of a non-numeric item to a numeric item");
+      if(src_is_string)
+        error("MOVE of an alphanumeric literal to a numeric item");
+      result.push_back(make_assign_ref(t, src_val, loc));
+    }
+    else
+    {
+      // Alphanumeric / group receiver.
+      if(src_ref)
+        result.push_back(make_move_group(t, *src_ref, loc));
+      else
+      {
+        // Literal / figurative into an alphanumeric field: write its bytes.
+        const exprt c = make_alnum_constant(src_spec, t.info->byte_size);
+        stmtt s;
+        s.kind = stmtt::kindt::ASSIGN;
+        s.location = loc;
+        s.lhs = t.record;
+        s.rhs = make_byte_update(t.record, t.offset, c);
+        result.push_back(s);
+      }
+    }
   }
   if(result.empty())
     error("MOVE without a target");
@@ -1462,13 +1816,13 @@ std::vector<stmtt> cobol_typecheckt::parse_add()
       // ADD ops TO addend GIVING results: result = sum + addend
       if(targets.size() != 1)
         error("ADD ... TO ... GIVING expects a single addend");
-      valuet addend{targets[0].expr, targets[0].info->scale};
+      valuet addend = read_field(targets[0]);
       align(sum, addend);
       valuet total{plus_exprt{sum.expr, addend.expr}, sum.scale};
       while(is_item_word())
       {
         reft r = parse_ref();
-        result.push_back(make_assign_ref(*r.info, r.expr, total, loc));
+        result.push_back(make_assign_ref(r, total, loc));
       }
     }
     else
@@ -1476,14 +1830,11 @@ std::vector<stmtt> cobol_typecheckt::parse_add()
       // ADD ops TO targets: each target += sum
       for(const reft &t : targets)
       {
-        valuet cur_val{t.expr, t.info->scale};
+        valuet cur_val = read_field(t);
         valuet s = sum;
         align(cur_val, s);
         result.push_back(make_assign_ref(
-          *t.info,
-          t.expr,
-          valuet{plus_exprt{cur_val.expr, s.expr}, s.scale},
-          loc));
+          t, valuet{plus_exprt{cur_val.expr, s.expr}, s.scale}, loc));
       }
     }
   }
@@ -1492,7 +1843,7 @@ std::vector<stmtt> cobol_typecheckt::parse_add()
     while(is_item_word())
     {
       reft r = parse_ref();
-      result.push_back(make_assign_ref(*r.info, r.expr, sum, loc));
+      result.push_back(make_assign_ref(r, sum, loc));
     }
   }
   else
@@ -1527,24 +1878,24 @@ std::vector<stmtt> cobol_typecheckt::parse_subtract()
   {
     if(minuends.size() != 1)
       error("SUBTRACT ... FROM ... GIVING expects a single minuend");
-    valuet mv{minuends[0].expr, minuends[0].info->scale};
+    valuet mv = read_field(minuends[0]);
     align(mv, sum);
     valuet diff{minus_exprt{mv.expr, sum.expr}, mv.scale};
     while(is_item_word())
     {
       reft r = parse_ref();
-      result.push_back(make_assign_ref(*r.info, r.expr, diff, loc));
+      result.push_back(make_assign_ref(r, diff, loc));
     }
   }
   else
   {
     for(const reft &t : minuends)
     {
-      valuet mv{t.expr, t.info->scale};
+      valuet mv = read_field(t);
       valuet s = sum;
       align(mv, s);
-      result.push_back(make_assign_ref(
-        *t.info, t.expr, valuet{minus_exprt{mv.expr, s.expr}, s.scale}, loc));
+      result.push_back(
+        make_assign_ref(t, valuet{minus_exprt{mv.expr, s.expr}, s.scale}, loc));
     }
   }
   if(result.empty())
@@ -1559,6 +1910,7 @@ std::vector<stmtt> cobol_typecheckt::parse_multiply()
   valuet a = parse_operand();
   expect_word("BY");
   valuet b = parse_operand();
+  const std::optional<reft> b_ref = last_ref;
   valuet product{mult_exprt{a.expr, b.expr}, a.scale + b.scale};
   std::vector<stmtt> result;
   if(eat_word("GIVING"))
@@ -1566,16 +1918,15 @@ std::vector<stmtt> cobol_typecheckt::parse_multiply()
     while(is_item_word())
     {
       reft r = parse_ref();
-      result.push_back(make_assign_ref(*r.info, r.expr, product, loc));
+      result.push_back(make_assign_ref(r, product, loc));
     }
   }
   else
   {
     // MULTIPLY a BY b : b = a * b (b must be a data item)
-    const item_infot *t = item_of(b.expr);
-    if(t == nullptr)
+    if(!b_ref.has_value())
       error("MULTIPLY without GIVING requires an item operand");
-    result.push_back(make_assign_ref(*t, b.expr, product, loc));
+    result.push_back(make_assign_ref(*b_ref, product, loc));
   }
   if(result.empty())
     error("MULTIPLY without a target");
@@ -1591,6 +1942,7 @@ std::vector<stmtt> cobol_typecheckt::parse_divide()
   if(eat_word("INTO"))
   {
     valuet dividend = parse_operand();
+    const std::optional<reft> dividend_ref = last_ref;
     valuet divisor = first;
     align(dividend, divisor);
     valuet quotient{div_exprt{dividend.expr, divisor.expr}, 0};
@@ -1599,15 +1951,14 @@ std::vector<stmtt> cobol_typecheckt::parse_divide()
       while(is_item_word())
       {
         reft r = parse_ref();
-        result.push_back(make_assign_ref(*r.info, r.expr, quotient, loc));
+        result.push_back(make_assign_ref(r, quotient, loc));
       }
     }
     else
     {
-      const item_infot *t = item_of(dividend.expr);
-      if(t == nullptr)
+      if(!dividend_ref.has_value())
         error("DIVIDE without GIVING requires an item operand");
-      result.push_back(make_assign_ref(*t, dividend.expr, quotient, loc));
+      result.push_back(make_assign_ref(*dividend_ref, quotient, loc));
     }
   }
   else if(eat_word("BY"))
@@ -1620,7 +1971,7 @@ std::vector<stmtt> cobol_typecheckt::parse_divide()
     while(is_item_word())
     {
       reft r = parse_ref();
-      result.push_back(make_assign_ref(*r.info, r.expr, quotient, loc));
+      result.push_back(make_assign_ref(r, quotient, loc));
     }
   }
   else
@@ -1647,7 +1998,7 @@ std::vector<stmtt> cobol_typecheckt::parse_compute()
   valuet v = parse_expr();
   std::vector<stmtt> result;
   for(const reft &t : targets)
-    result.push_back(make_assign_ref(*t.info, t.expr, v, loc));
+    result.push_back(make_assign_ref(t, v, loc));
   if(result.empty())
     error("COMPUTE without a target");
   return result;
@@ -1709,10 +2060,8 @@ std::vector<stmtt> cobol_typecheckt::parse_set()
       const cond_infot &c = it->second;
       if(c.parent.is_numeric && !c.num_ranges.empty())
       {
-        const symbol_exprt parent{c.parent.symbol_name, cobol_value_type()};
         result.push_back(make_assign_ref(
-          c.parent,
-          parent,
+          ref_of(c.parent),
           valuet{
             from_integer(c.num_ranges.front().first, cobol_value_type()),
             c.parent.scale},
@@ -1720,11 +2069,13 @@ std::vector<stmtt> cobol_typecheckt::parse_set()
       }
       else if(!c.parent.is_numeric && !c.alnum_values.empty())
       {
+        const reft target = ref_of(c.parent);
         stmtt s;
         s.kind = stmtt::kindt::ASSIGN;
         s.location = loc;
-        s.lhs = symbol_exprt{c.parent.symbol_name, symbol_type(c.parent)};
-        s.rhs = c.alnum_values.front();
+        s.lhs = target.record;
+        s.rhs = make_byte_update(
+          target.record, target.offset, c.alnum_values.front());
         result.push_back(s);
       }
     }
@@ -1748,10 +2099,7 @@ std::vector<stmtt> cobol_typecheckt::parse_set()
     {
       auto it = items.find(t);
       if(it != items.end() && it->second.is_numeric)
-      {
-        const symbol_exprt sym{it->second.symbol_name, cobol_value_type()};
-        result.push_back(make_assign_ref(it->second, sym, v, loc));
-      }
+        result.push_back(make_assign_ref(ref_of(it->second), v, loc));
     }
     return result;
   }
@@ -1846,18 +2194,20 @@ stmtt cobol_typecheckt::parse_perform()
   if(eat_word("VARYING"))
   {
     s.pkind = stmtt::perform_kindt::VARYING;
-    const item_infot &var = lookup_item(cur().text);
-    s.var = symbol_exprt{var.symbol_name, cobol_value_type()};
-    advance();
+    const reft var_ref = parse_ref();
+    if(!var_ref.info->is_numeric)
+      error("PERFORM VARYING requires a numeric loop variable");
     expect_word("FROM");
     valuet from = parse_operand();
-    s.from_val = store_to_item(var, from);
+    s.var_init.push_back(make_assign_ref(var_ref, from, s.location));
     expect_word("BY");
     valuet by = parse_operand();
-    valuet var_v{s.var, var.scale};
-    align(var_v, by);
-    s.by_val = by.expr;
-    s.var = var_v.expr;
+    valuet cur_v = read_field(var_ref);
+    align(cur_v, by);
+    s.var_step.push_back(make_assign_ref(
+      var_ref,
+      valuet{plus_exprt{cur_v.expr, by.expr}, cur_v.scale},
+      s.location));
     expect_word("UNTIL");
     s.cond = parse_condition();
   }
@@ -2056,11 +2406,11 @@ void cobol_typecheckt::gen_statement(
     {
       const std::string test = fresh_label("ptest");
       const std::string done = fresh_label("pdone");
-      out.add(code_frontend_assignt{s.var, s.from_val});
+      gen_statements(s.var_init, out, inlining);
       out.add(code_labelt{test, code_skipt{}});
       out.add(code_ifthenelset{s.cond, code_gotot{done}});
       gen_perform_invocation(s, out, inlining);
-      out.add(code_frontend_assignt{s.var, plus_exprt{s.var, s.by_val}});
+      gen_statements(s.var_step, out, inlining);
       out.add(code_gotot{test});
       out.add(code_labelt{done, code_skipt{}});
       break;

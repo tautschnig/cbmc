@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+REDEFINES aliasing: WS-B overlays WS-A's bytes, so writing WS-A is
+observable through WS-B (IBM LR "REDEFINES clause", p. 225). WS-C, which
+follows the redefinition, keeps its own distinct storage.
