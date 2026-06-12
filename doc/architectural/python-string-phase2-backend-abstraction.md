@@ -1984,3 +1984,43 @@ leaves that truncation ambiguous. A native String result IS the
   native the precise default and retire the hybrid (Plan A phase 3).
 - Driver: diagnose/require an SMT String solver when `--python-smt-strings-
   native` is set without `--cvc5`/`--z3`.
+
+## Plan A — state after the second implementation pass (2026-06-11/12)
+
+Added this pass (all behind `--python-smt-strings-native`, refined/hybrid
+untouched, sweep 0 regressions):
+- **Model extraction:** `parse_rec` reads SMT-LIB String model values into an
+  `smt_string` constant; `expr2python` renders it; counterexample traces show
+  the actual string (e.g. `s='abc'`).
+- **Robustness:** native string-method dispatch allows only methods with a
+  native `str.*` lowering (startswith/endswith/find/index/replace); others
+  (upper/lower/strip/split/count/isX/…) return a sound nondet of the right type
+  instead of crashing on struct member access.
+- **f-strings:** string-interpolation f-strings chain through native `str.++`.
+
+**Native backend capability now:** precise (+fast, sound) for `==`/`!=`,
+ordering, `len`, `in`/`not in`, `startswith`/`endswith`, `find`/`index`,
+`+`/concat, subscript, slice, `replace`, f-string interpolation, `str(int)`,
+string-in-list, dict string-keys; counterexample traces show string values.
+Sound nondet (over-approximation) for ops with no SMT-LIB String primitive.
+
+**Remaining Plan A work:**
+- *No-SMT-primitive ops (precise):* `strip`/`lstrip`/`rstrip`, `upper`/`lower`/
+  `casefold`/`title`, `split`, `count`. SMT-LIB String has no whitespace-strip,
+  case, or split primitive, so a *precise* native version needs a bounded
+  encoding (nested `ite` over `str.at`/`str.to_code` up to the length bound) or
+  must stay on the refined backend. Currently sound-nondet under native.
+- *Mixed-type f-strings:* a formatted part that is still a refined struct
+  (e.g. `f"{int_x}"` via `str(int)`'s of_int producing a struct) mixes
+  representations; needs `str(int)`/`str(float)` to produce native String
+  under the native backend.
+- *Endgame:* once the above + a full audit of the remaining struct-access
+  sites are done, make native the precise default and retire the
+  byte-array+`str` hybrid; add a driver diagnostic requiring an SMT String
+  solver (`--cvc5`/`--z3`) when `--python-smt-strings-native` is set.
+
+**Assessment:** the SMT-theory-expressible string surface is now fully native
+and precise (including the refined-backend ceiling cases: ordering, membership,
+slice). The residual gaps are genuinely SMT-theory-limited ops (strip/case/
+split/count), which need bounded encodings, and the breadth audit to flip the
+default — not blocked, but incremental.
