@@ -127,6 +127,45 @@ cobol_scan(std::istream &in, const std::string &file_name)
       cobol_tokent token;
       token.location = make_location(i + 7);
 
+      // Hexadecimal-alphanumeric literal X"hh..." / X'hh...' (IBM LR
+      // "Hexadecimal-alphanumeric literals"): the quote must immediately
+      // follow the X, so this is unambiguous against an identifier. Each pair
+      // of hexadecimal digits denotes one byte; the decoded bytes are emitted
+      // as an ordinary alphanumeric string token.
+      if(
+        (c == 'X' || c == 'x') && i + 1 < n &&
+        (code[i + 1] == '"' || code[i + 1] == '\''))
+      {
+        const char quote = code[i + 1];
+        i += 2;
+        std::string hex;
+        while(i < n && code[i] != quote)
+        {
+          hex.push_back(code[i]);
+          ++i;
+        }
+        if(i < n)
+          ++i; // closing quote
+        const auto hex_val = [](char h) -> int
+        {
+          if(h >= '0' && h <= '9')
+            return h - '0';
+          if(h >= 'A' && h <= 'F')
+            return 10 + (h - 'A');
+          if(h >= 'a' && h <= 'f')
+            return 10 + (h - 'a');
+          return 0;
+        };
+        std::string bytes;
+        for(std::size_t k = 0; k + 1 < hex.size(); k += 2)
+          bytes.push_back(
+            static_cast<char>((hex_val(hex[k]) << 4) | hex_val(hex[k + 1])));
+        token.kind = cobol_token_kindt::STRING;
+        token.text = bytes;
+        tokens.push_back(token);
+        continue;
+      }
+
       // Quoted string literal: "..." or '...'.
       if(c == '"' || c == '\'')
       {

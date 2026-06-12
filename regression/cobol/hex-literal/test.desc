@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+A hexadecimal-alphanumeric literal X'hh...' decodes to its bytes. See
+IBM LR "Hexadecimal-alphanumeric literals".
