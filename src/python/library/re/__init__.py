@@ -102,23 +102,24 @@ class Pattern:
         self.groups = 0
 
     def match(self, string: str, pos: int = 0, endpos: int = 0):
-        # Always returns a Match object. Under the default solver
-        # the ``__cbmc_re_match`` hook's return value is nondet,
-        # so the precise 'Match or None' semantics would require
-        # the caller to handle a potentially-nondet None and that
-        # breaks the common 'if pat.search(s) is not None: ...'
-        # idiom. The hook is still called so the frontend records
-        # the regex intent for future (option-a') backends.
-        __cbmc_re_match(self.pattern, string)
-        return Match()
+        # Return a real Match-or-None reflecting the SMT regex decision.
+        # Under an SMT String solver (--cvc5 --python-smt-strings) the
+        # __cbmc_re_match hook is precise, so Match()/None is exact; under the
+        # default backend the hook is nondet, so the result is a nondet
+        # Match-or-None and both `is not None` branches are explored (sound).
+        if __cbmc_re_match(self.pattern, string):
+            return Match()
+        return None
 
     def fullmatch(self, string: str, pos: int = 0, endpos: int = 0):
-        __cbmc_re_fullmatch(self.pattern, string)
-        return Match()
+        if __cbmc_re_fullmatch(self.pattern, string):
+            return Match()
+        return None
 
     def search(self, string: str, pos: int = 0, endpos: int = 0):
-        __cbmc_re_search(self.pattern, string)
-        return Match()
+        if __cbmc_re_search(self.pattern, string):
+            return Match()
+        return None
 
     def findall(self, string, pos: int = 0, endpos: int = 0):
         return []
@@ -145,21 +146,22 @@ def compile(pattern, flags: int = 0) -> Pattern:
 
 
 def match(pattern: str, string: str, flags: int = 0):
-    # Always returns a Match; see Pattern.search docstring for the
-    # rationale (under nondet hook results, the 'Match or None'
-    # return type would make 'is not None' unprovable).
-    __cbmc_re_match(pattern, string)
-    return Match()
+    # Real Match-or-None from the SMT regex decision; see Pattern.match.
+    if __cbmc_re_match(pattern, string):
+        return Match()
+    return None
 
 
 def fullmatch(pattern: str, string: str, flags: int = 0):
-    __cbmc_re_fullmatch(pattern, string)
-    return Match()
+    if __cbmc_re_fullmatch(pattern, string):
+        return Match()
+    return None
 
 
 def search(pattern: str, string: str, flags: int = 0):
-    __cbmc_re_search(pattern, string)
-    return Match()
+    if __cbmc_re_search(pattern, string):
+        return Match()
+    return None
 
 
 def findall(pattern, string, flags: int = 0):
