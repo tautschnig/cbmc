@@ -12,6 +12,7 @@
 #include <util/symbol_table_base.h>
 
 #include "python_parse_tree.h"
+#include "python_types.h"
 
 #include <functional>
 #include <map>

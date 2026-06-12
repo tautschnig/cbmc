@@ -2047,3 +2047,45 @@ bounded encoding) and `split` (list-valued) as native precision gaps; both stay
 sound-nondet under native (precise on refined). The remaining Plan A breadth
 work (mixed-type f-strings, full site audit, make-default + retire-hybrid,
 driver diagnostic) is unchanged.
+
+## Plan A — native crash-surface audit + hybrid-retirement scope (2026-06-12)
+
+To decide whether the byte-array+`str` hybrid can be retired in favour of
+native, ran the full `regression/python` corpus (540 tests) under
+`--cvc5 --python-smt-strings-native` and classified outcomes:
+
+- **506 OK** (verdict produced, no crash), **29 CRASH**, 5 other.
+
+The 29 crashes root-cause (by invariant location):
+- 8 × `value_set::assign` type-mismatch, 8 × `convert_typecast`, 2 ×
+  `equal_exprt` — **mixed-representation symptoms**: an `smt_string` value
+  meets the refined struct because `python_string_type()` still yields a
+  struct for *declared* string entities (class fields, dict values, params,
+  annotations), while *values* (literals/nondet) are `smt_string`.
+- 8 × `member_exprt` — `.length`/`.data` access on an `smt_string` value
+  (un-migrated sites, e.g. string iteration `for c in s`).
+- 2 × `boolbv_width` — an `smt_string` reaching the SAT/`boolbv` path.
+
+**Measured experiment:** flipping `python_string_type()` to `smt_string` under
+native (to remove the mixed representation) took the crash count from **29 to
+107** — it eliminates the mismatch crashes but *exposes ~80 `.length`/`.data`
+member-access sites* that then crash. So the type unification and the
+member-access migration must land **together, atomically**: a partial flip
+regresses native. Reverted the flip; native keeps the (more robust)
+mixed-representation state.
+
+**Conclusion / scope to retire the hybrid.** Making native crash-free is a
+single coordinated breadth migration:
+1. Flip `python_string_type()` → `smt_string` under native (one global gate).
+2. Migrate all ~80 `.length`/`.data`/comparison-loop sites to `str.len`/
+   `str.at`/`str.*` (string iteration, class-attr/dict/param/annotation
+   storage, etc.).
+3. Handle the residual `smt_string`↔struct boundaries (`convert_typecast`,
+   marshalling to C).
+Only then can `--python-smt-strings` be re-pointed at native and the hybrid
+deleted. This is a large dedicated effort (the ~80-site migration), not a
+piecemeal change — attempting it partially leaves native more broken (29→107).
+Until then: refined stays the no-external-solver default; native
+(`--python-smt-strings-native`) is the precise experimental backend for the
+SMT-theory surface; the hybrid remains the robust `--python-smt-strings`
+fallback.

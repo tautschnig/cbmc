@@ -44,7 +44,17 @@
 #endif
 
 /// Return the CBMC type used to represent Python str.
-/// This is a struct { signedbv[64] length; unsignedbv[8] data[N]; }
+/// This is a struct { signedbv[64] length; unsignedbv[8] data[N]; }.
+///
+/// Note (Plan A): the native SMT-String backend keeps this returning the
+/// struct on purpose. A measured experiment flipping it to smt_string under
+/// --python-smt-strings-native took the native crash count on the Python
+/// regression corpus from 29 to 107: unifying the type removes the
+/// mixed-representation mismatches but exposes ~80 `.length`/`.data` member-
+/// access sites that must be migrated to str.len/str.at in lockstep. So the
+/// unification + member-access migration is a single coordinated change (the
+/// remaining work to make native crash-free and retire the hybrid), not a
+/// safe incremental flip.
 inline struct_tag_typet python_string_type()
 {
   return struct_tag_typet{PYTHON_STRING_TAG};
