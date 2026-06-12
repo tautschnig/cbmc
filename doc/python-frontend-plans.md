@@ -151,6 +151,48 @@ path is **missed** — e.g. `f(x).attr` when `f` returns `None` should raise
   benchmarks already affected by the `re` annotation fix — will start exploring
   the real (sound) `None` path.
 
+### Any-typed mutable-container by-reference mutation is lost — HIGH PRIORITY (2026-06-12)
+
+**Latent unsoundness (false proof), both back-ends.** A mutable container
+(dict/list) passed to an **unannotated / `Any` (`python_value`) parameter** and
+mutated by the callee does **not** propagate the mutation back to the caller —
+the caller's object keeps its stale pre-call value — and a post-call read folds
+against that stale value, proving a false assertion:
+
+```python
+def f(d):          # d unannotated -> python_value parameter
+    d["k"] = 9
+m = {"k": 1}
+f(m)
+assert m["k"] == 1   # VERIFICATION SUCCESSFUL (WRONG: CPython has m["k"] == 9)
+assert m["k"] == 9   # VERIFICATION FAILED   (WRONG: should hold)
+```
+
+Verified under the default (refined) back-end *and* `--cvc5`. The **annotated**
+control `def f(d: dict): …` is correct (FAILED for `== 1`, SUCCESSFUL for
+`== 9`): a concrete-container parameter is a by-reference pointer and its
+mutation propagates (and `convert_user_call` already invalidates the caller's
+constant-tracking for it). The `Any`/`python_value` parameter path loses the
+mutation entirely (the dict is reachable only via `python_value.__class_ptr`,
+and the write through it is not modelled as aliasing the caller's object) *and*
+does not invalidate the caller's tracking.
+
+- **Native manifestation:** under `--python-smt-strings`, the same shape
+  *crashes* instead for `== 9` (`lower_byte_operators` / `unpack_struct` cannot
+  byte-unpack the `smt_string`-keyed dict reached via the opaque `__class_ptr`
+  cast — see [#native-byte-ops](#native-byte-ops)). A crash is *safe* (no false
+  proof); the `== 1` direction still false-proves.
+- **Fix direction (sound + precise):** make the `Any`/`python_value` wrap of a
+  mutable container share it by reference and propagate mutations to the
+  caller's object (as the concrete-container pointer path already does) — which
+  also requires the native byte-op handling above. **Interim sound fix:** havoc
+  the caller's container after a call that passes it to an `Any` parameter the
+  callee may mutate (eliminates the false proof at the cost of precision; note
+  it may turn the native case into the safe crash rather than a verdict).
+  *A first invalidation-only attempt (2026-06-12) did NOT suffice — the loss is
+  at the value level, not just the constant-fold, so havoc/propagation is
+  required.*
+
 ### Earlier triage history (2026-06-08)
 
 From the prior per-test triage of the 26 baseline DIFFs in the
