@@ -2024,3 +2024,26 @@ and precise (including the refined-backend ceiling cases: ordering, membership,
 slice). The residual gaps are genuinely SMT-theory-limited ops (strip/case/
 split/count), which need bounded encodings, and the breadth audit to flip the
 default — not blocked, but incremental.
+
+## Plan A — native strip via SMT-LIB regex (2026-06-12)
+
+`strip`/`lstrip`/`rstrip` are now **precise and fast** under
+`--python-smt-strings-native`, using SMT-LIB regular expressions (the regex
+idea). Encoding: introduce result `r` and whitespace prefix `p` / suffix `q`
+with `s = p ++ r ++ q`, `p,q ∈ (re.* WS)`, and maximality as regex membership
+— `r` does not start with whitespace (`¬ r ∈ (WS ++ re.all*)`) and/or does not
+end with whitespace (`¬ r ∈ (re.all* ++ WS)`). This uniquely determines
+`r = strip(s)`. WS is the Python whitespace set `{\t \n \v \f \r space}`, so
+control bytes like `\x01` are correctly *kept* (unlike Java `trim`).
+
+**Performance note:** expressing maximality as regex membership is essential —
+an `str.at`-at-`len-1` boundary check timed out for rstrip/strip, while the
+regex form proves in <1 s. This shows SMT-LIB regex extends native coverage to
+ops with no direct String primitive.
+
+This leaves, of the previously "no-SMT-primitive" ops, only `upper`/`lower`/
+`casefold`/`title` (case mapping — no SMT-LIB primitive; would need per-char
+bounded encoding) and `split` (list-valued) as native precision gaps; both stay
+sound-nondet under native (precise on refined). The remaining Plan A breadth
+work (mixed-type f-strings, full site audit, make-default + retire-hybrid,
+driver diagnostic) is unchanged.
