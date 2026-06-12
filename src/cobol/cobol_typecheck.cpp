@@ -85,6 +85,16 @@ struct item_infot
   std::size_t occurs = 0; ///< number of elements when is_table
 };
 
+/// A data item together with its own name and the names of its containing
+/// groups (innermost first), used to resolve qualified references
+/// "name OF group OF ..." (IBM LR "Qualification", pp. 67-68).
+struct entryt
+{
+  std::string name;
+  item_infot info;
+  std::vector<std::string> ancestors;
+};
+
 /// Physical size of one occurrence of an elementary item, in bytes.
 ///
 /// IBM Enterprise COBOL for z/OS 6.4 Language Reference, USAGE clause /
@@ -432,6 +442,7 @@ protected:
 
   std::string program_id;
   std::map<std::string, item_infot> items;
+  std::vector<entryt> all_items; ///< every field, for qualified-name resolution
   std::map<std::string, cond_infot> conds;
   std::vector<paragrapht> paragraphs;
   std::size_t unique = 0;
@@ -543,6 +554,8 @@ protected:
   exprt build_relation(valuet a, const std::string &op, valuet b);
 
   const item_infot &lookup_item(const std::string &name);
+  const item_infot &
+  resolve_item(const std::string &name, const std::vector<std::string> &quals);
   std::size_t paragraph_index(const std::string &name);
 
   // ---- byte-level storage helpers ----
@@ -788,6 +801,55 @@ const item_infot &cobol_typecheckt::lookup_item(const std::string &name)
   return it->second;
 }
 
+const item_infot &cobol_typecheckt::resolve_item(
+  const std::string &name,
+  const std::vector<std::string> &quals)
+{
+  // Resolve a (possibly qualified) reference "name OF q1 OF q2 ..."
+  // (IBM LR "Qualification", pp. 67-68): each qualifier must be a higher-level
+  // name in the same hierarchy, and enough qualifiers must be given to make
+  // the reference unique.
+  std::vector<const entryt *> candidates;
+  for(const entryt &e : all_items)
+    if(e.name == name)
+      candidates.push_back(&e);
+
+  if(candidates.empty())
+    error("unknown data item '" + name + "'");
+  if(candidates.size() == 1)
+    return candidates.front()->info;
+
+  // Filter by qualifiers: each qualifier must appear among the candidate's
+  // ancestors (not necessarily at a consecutive level).
+  std::vector<const entryt *> matching;
+  for(const entryt *c : candidates)
+  {
+    bool ok = true;
+    for(const std::string &q : quals)
+      if(
+        std::find(c->ancestors.begin(), c->ancestors.end(), q) ==
+        c->ancestors.end())
+      {
+        ok = false;
+        break;
+      }
+    if(ok)
+      matching.push_back(c);
+  }
+
+  if(matching.size() == 1)
+    return matching.front()->info;
+  if(matching.empty())
+    error("no '" + name + "' matches the given qualification");
+
+  // Still ambiguous: COBOL would reject this, but to keep parsing we take the
+  // first match and warn.
+  log.warning() << "COBOL: reference to '" << name
+                << "' is ambiguous; using the first definition"
+                << messaget::eom;
+  return matching.front()->info;
+}
+
 std::size_t cobol_typecheckt::paragraph_index(const std::string &name)
 {
   for(std::size_t i = 0; i < paragraphs.size(); ++i)
@@ -827,6 +889,7 @@ void cobol_typecheckt::parse_program()
 {
   program_id.clear();
   items.clear();
+  all_items.clear();
   conds.clear();
   paragraphs.clear();
   last_field.clear();
@@ -1236,6 +1299,13 @@ void cobol_typecheckt::place_field(
   (void)loc;
   close_groups_below(level);
 
+  // Ancestors (containing groups, innermost first) for qualified-name
+  // resolution (IBM LR "Qualification", pp. 67-68).
+  std::vector<std::string> ancestors;
+  for(auto it = layout_stack.rbegin(); it != layout_stack.rend(); ++it)
+    if(!it->name.empty())
+      ancestors.push_back(it->name);
+
   const bool is_redefines = !redefines_target.empty();
   std::size_t base_offset;
   if(is_redefines)
@@ -1260,6 +1330,7 @@ void cobol_typecheckt::place_field(
     info.is_group = true;
     info.is_numeric = false;
     items[name] = info;
+    all_items.push_back(entryt{name, info, ancestors});
     layout_stack.push_back(
       layout_framet{level, name, base_offset, base_offset, is_redefines});
     return;
@@ -1283,6 +1354,7 @@ void cobol_typecheckt::place_field(
     layout_stack.back().cursor += total;
 
   items[name] = info;
+  all_items.push_back(entryt{name, info, ancestors});
   last_field = name;
 
   // VALUE initialisation (single occurrence only).
@@ -1328,8 +1400,20 @@ void cobol_typecheckt::place_field(
 
 reft cobol_typecheckt::parse_ref()
 {
-  const item_infot &item = lookup_item(cur().text);
+  const std::string name = cur().text;
   advance();
+  // Optional qualification: name OF/IN qualifier OF/IN qualifier ...
+  // (IBM LR "Qualification", pp. 67-68; IN and OF are equivalent).
+  std::vector<std::string> quals;
+  while(is_word("OF") || is_word("IN"))
+  {
+    advance();
+    if(cur().kind != cobol_token_kindt::WORD)
+      error("expected a qualifier name after OF/IN");
+    quals.push_back(cur().text);
+    advance();
+  }
+  const item_infot &item = resolve_item(name, quals);
   exprt offset = from_integer(item.offset, size_type());
   if(is_kind(cobol_token_kindt::LPAREN))
   {

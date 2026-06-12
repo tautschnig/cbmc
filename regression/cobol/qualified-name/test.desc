@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Qualified references disambiguate the duplicate field name AMT defined
+in both REC-A and REC-B. IBM LR "Qualification" pp. 67-68; OF and IN
+are equivalent.

@@ -284,12 +284,16 @@ clean and use curly-brace constructor syntax.
 - Subscripting a subfield *inside* an `OCCURS` group (`FIELD(I)` where
   `FIELD` is subordinate to the table) is not supported — only the
   table item itself is subscriptable.
-- Alphanumeric relational comparisons in conditions (`IF X = "Y"`,
-  `IF X = SPACES`) are not yet supported in expressions; 88-level
-  condition names over alphanumeric parents are.
-- Qualified references (`FIELD OF GROUP` / `IN`) are not yet resolved.
+- Qualified references (`FIELD OF GROUP` / `IN`) are resolved by the
+  field's containing-group chain (IBM LR "Qualification", pp. 67-68);
+  a still-ambiguous reference takes the first match with a warning.
+- Numeric-to-alphanumeric relational comparisons are rejected (only
+  numeric/numeric and alphanumeric/alphanumeric are supported).
 - Edited PICTUREs (insertion/suppression characters `Z * . , + - $ CR
   DB /`) are not parsed; the embedded `.` currently mis-tokenises.
+- `EXEC CICS` / `EXEC SQL` and the CICS EXEC INTERFACE BLOCK (e.g.
+  `EIBCALEN`) are not modelled; static `CALL "program"` to another
+  compilation unit is not yet linked.
 - EBCDIC and sign-nibble/zone codecs not implemented (ASCII host only).
 - Float (`COMP-1`/`COMP-2`), `OCCURS DEPENDING ON`, files, `EXEC`
   sub-languages, `SORT`/`MERGE`, dynamic `CALL`, `ALTER` unsupported.
@@ -321,17 +325,19 @@ Progression of the dominant first-blocker (programs affected):
 
 After the byte-level storage model, every program parses its entire
 DATA DIVISION (including `REDEFINES`, group items and fixed `OCCURS`)
-and fails only on PROCEDURE-level constructs. The next high-impact
-items, in order, are now:
+and fails only on PROCEDURE-level constructs. Alphanumeric comparisons
+and qualified references (`FIELD OF GROUP`) are now supported. The
+remaining CardDemo blockers are dominated by features that are out of
+the day-one scope:
 
-1. **Alphanumeric comparisons** in conditions (`IF X = "Y"`,
-   `IF X = SPACES`) — needed by most procedure code (14 programs).
-2. **Qualified references** (`FIELD OF GROUP`) and subscripting of
-   subfields inside `OCCURS` groups — the "unknown data item" /
-   "subscript on a non-table item" failures.
+1. **`EXEC CICS` and the EXEC INTERFACE BLOCK** (`EIBCALEN`, `EIBAID`,
+   …) — most CardDemo programs are CICS transactions; the "unknown data
+   item" failures are EIB references. Stubbing `EXEC CICS` (nondet I/O)
+   and providing an EIB is the dominant remaining gate.
+2. **Static `CALL "program"`** to another compilation unit (e.g.
+   `CALL "COBDATFT"`) — needs cross-program linking or nondet stubs.
 3. **Edited PICTUREs** — scanner-level PIC handling (the `.` mis-token).
-4. **`EXEC CICS` / `EXEC SQL`** stubbing (treat as nondet I/O) — the
-   ultimate gate for the CICS programs.
+4. **Subfield subscripting inside `OCCURS` groups**.
 
 Registering the frontend with the other tools (`goto-cc`,
 `goto-instrument`, …) remains a small follow-up.
