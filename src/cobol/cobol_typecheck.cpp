@@ -3218,7 +3218,9 @@ void cobol_typecheckt::inject_eib()
     {"DFHUNDLN", false, 0, 1, ""}, {"DFHUNDER", false, 0, 1, ""},
     {"DFHUNNUM", false, 0, 1, ""}, {"DFHPROTI", false, 0, 1, ""},
     {"DFHUNIMD", false, 0, 1, ""}, {"DFHUNINT", false, 0, 1, ""},
-    {"DFHALL", false, 0, 1, ""},   {"DFHERROR", false, 0, 1, ""}};
+    {"DFHALL", false, 0, 1, ""},   {"DFHERROR", false, 0, 1, ""},
+    {"DFHDFCOL", false, 0, 1, ""}, {"DFHDFT", false, 0, 1, ""},
+    {"DFHBMBRY", false, 0, 1, ""}};
   inject_builtin_record("DFHBMSCA", bmsca, 1);
 
   // SQL communication area (SQLCA), referenced by EXEC SQL programs; nondet.

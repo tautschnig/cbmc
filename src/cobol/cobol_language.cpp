@@ -39,6 +39,10 @@ static std::vector<std::string> copybook_dirs(const std::string &path)
   dirs.push_back(dir + "/../cpy-bms");
   dirs.push_back(dir + "/cpy");
   dirs.push_back(dir + "/cpy-bms");
+  // Shared copybook libraries one level up (e.g. a sub-application's programs
+  // copying from the common app/cpy directory).
+  dirs.push_back(dir + "/../../cpy");
+  dirs.push_back(dir + "/../../cpy-bms");
 
   if(const char *cobcpy = std::getenv("COBCPY"))
   {
