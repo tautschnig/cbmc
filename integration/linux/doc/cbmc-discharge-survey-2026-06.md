@@ -125,3 +125,44 @@ Net: the survey's value is the *map* -- it cheaply sorts candidates into
 "clean PROVED" (rare), "needs a harness" (the VIOLATED/TIMEOUT bulk), and
 confirms the front-end + object-bits prerequisites -- so effort focuses on
 harnessing the genuine-shape candidates, not on raw whole-function runs.
+
+## Update: auto caller-precondition harness over the VIOLATED set
+
+`harness_discharge.py` re-discharges each VIOLATED candidate through a
+`goto-harness --harness-type call-function` that allocates the input pointers
+to CONCRETE objects (min-null-tree-depth 2, max-nondet-tree-depth 2,
+max-array-size 4) -- removing the nondet-input "dynamic object" artifact.
+
+Result over the 13 VIOLATED: **11 TIMEOUT, 2 VIOLATED, 0 PROVED.**  Harnessing
+fixes soundness (concrete object sizes) but EXPOSES full-function complexity,
+so symex stalls on most (even the locally-guarded nfc_hci_cmd_received times
+out at unwind 3).  So full-function harnessing trades artifacts for
+intractability; the verbatim SLICE (concrete AND small) remains the effective
+path.
+
+The 2 that completed give REAL verdicts -- genuine OOB shapes safe only under
+a NON-LOCAL invariant/validator (the recurring class):
+
+* `pulse8_irq_work_handler` -- `pulse8->rx_msg[rx_msg_cur_idx]`
+  (`rx_msg[NUM_MSGS]`), no local guard; relies on the driver maintaining the
+  data-structure invariant `rx_msg_cur_idx < NUM_MSGS`.
+* `fl_set_key_mpls_lse` -- indexes `ls[FLOW_DIS_MPLS_MAX=7]` by `lse_index`
+  derived from a netlink attribute; relies on upstream bounding
+  `lse_index < 7`.
+
+These are the genuine triage targets the survey surfaced: real index-OOB
+shapes whose safety is a non-local precondition, to be confirmed with a
+slice carrying that bound (as for cec/mqprio).
+
+## Methodology conclusion
+
+The discharge ladder, cheapest-to-soundest:
+1. raw `--function` -- fast triage but nondet-input artifacts + timeouts;
+2. full-function `goto-harness` -- removes artifacts, but ~85% timeout;
+3. **verbatim slice / caller-precondition** (concrete + small) -- the only
+   approach that gives definitive verdicts at scale (cec/mqprio/taprio/altera
+   PROVED-or-witnessed instantly).
+
+So auto-generating SLICES (minimal loop + concrete array + nondet count +
+the non-local bound as a precondition) is the productive next investment,
+not full-function harnessing.
