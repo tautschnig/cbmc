@@ -2169,3 +2169,38 @@ low-risk grind (no core-representation refactor), convergent toward 0. The
 `python_value.__str` slot can stay **inline** (the refined-perf rationale for
 inlining is moot under native, and inline avoids a pointer hop). Experiment
 preserved on git stash ("WIP: native string type-flip VIABLE …").
+
+## Plan A — native migration driven to CRASH-FREE (2026-06-12)
+
+The coordinated migration is complete: under `--cvc5 --python-smt-strings-native`
+the `regression/python` corpus (540 tests) has **0 crashes** (was 107 right
+after the type flip): **539 produce a verification verdict, 1 times out**
+(`fstring-pad-spec` — symbolic-parameter padding `f"{i:0W}"` encoded as
+length-constrained nondet strings + concatenation; expensive for CVC5's String
+theory; a performance limitation, not a crash). All previously-crashing tests
+now produce the correct verdict (e.g. `fstring-method-super-no-vacuity`
+VERIFICATION FAILED as expected).
+
+Site migrations (all committed): the `python_value.__str` default slot and
+`build_string_struct` (producers); `make_python_value`; str(int)/chr/ord via
+new `str.from_int`/`str.from_code`/`str.to_code` intrinsics; string for-
+iteration (`str.substr`); `s += t` (`str.++`); truthiness/len (`str.len`);
+comparison incl. python_value-unwrap and dict string-key membership; regex
+intrinsics; float()/int() of string constants (extract_string_value);
+`__getitem__` key coercion. Shared support, gated to `smt_string` /
+`use_datatypes` (refined + C suites unaffected — `regression/python` green,
+the 3 `regression/cbmc/python-*` failures are pre-existing): smt2_conv
+lowerings + `smt_string`->bitvector via `str.to_int`; struct-cast via
+`defined_expressions`; `expr_initializer` and `boolbv_width` `smt_string`
+cases; `pointer_logic` graceful counterexample reconstruction.
+
+**Soundness caveat (documented):** the `smt_string`->bitvector typecast lowers
+to `str.to_int` (SMT-LIB: -1 for non-numeric). This is exact for genuine
+`int(str)` on numeric strings; for the rare spurious string->int coercion from
+value plumbing it yields a defined-but-approximate value. Flagged for a
+front-end follow-up (eliminate the spurious coercion at source).
+
+**Remaining before retiring the hybrid:** (1) the `fstring-pad-spec`
+performance encoding; (2) flip `--python-smt-strings` onto native and delete
+the byte-array hybrid + the separate `-native` flag. The viability question is
+fully resolved — the migration was an incremental, low-risk grind as predicted.
