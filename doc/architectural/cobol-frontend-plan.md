@@ -371,12 +371,13 @@ CardDemo blockers, in order, are:
    numeric/alphanumeric comparisons).
 
 As of this milestone, **all 44 CardDemo programs parse and lower to GOTO
-with no conversion errors**: **33 reach `VERIFICATION SUCCESSFUL`**
-end-to-end, and the other 11 lower fully but exceed the default bound
-during bounded model checking (batch file loops and the MQ programs).
-There is no longer a front-end coverage gap on this corpus; the
-remaining 11 need explicit unwind bounds rather than new language
-support.
+with no conversion errors**: **33 reach `VERIFICATION SUCCESSFUL`** under
+default settings, and the other 11 lower fully but contain unbounded
+`PERFORM UNTIL` file-read loops, so they need an explicit unwind bound.
+With `cbmc --unwind 3 --no-unwinding-assertions`, **all 44 programs reach
+`VERIFICATION SUCCESSFUL`**. There is no remaining front-end coverage gap
+on this corpus; further work is verification-driver tuning (loop bounds,
+file modelling), not new language support.
 
 Recent increments cleared the long tail: `OCCURS ... INDEXED BY`
 index-names are registered (IBM LR "INDEXED BY phrase"); `EXEC SQL
