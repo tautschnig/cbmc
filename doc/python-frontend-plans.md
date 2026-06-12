@@ -36,6 +36,60 @@ record of what already landed, use `git log` — this doc deliberately does
 
 ---
 
+## Prioritized worklist (2026-06-12)  {#worklist}
+
+Cross-cutting list consolidating the native SMT-String work and its unblocked
+follow-ons. **Both back-ends are first-class.** The refined (string-refinement /
+default, no-external-solver) back-end is to *reach parity* with the SMT-String
+path — the refined-precision items below are goals to pursue, **not** "use
+`--python-smt-strings` instead". Items are sequenced by soundness-first, then
+robustness, then capability; difficulty is noted where high.
+
+**P0 — Soundness (always first).**
+- **Return-type inference erases `None` from `X`-or-`None` returns**
+  ([§0](#false-proofs)): infer `Optional[X]` when any return path yields `None`.
+  (`re` stub already annotated; the general inference fix is outstanding.)
+- **`github_3647_9_fail`**: dict-mutation-during-iteration ([§0](#false-proofs)).
+
+**P1 — Native robustness (crash on valid code).**
+- **`smt_string` members in byte-operated structs**
+  ([#native-byte-ops](#native-byte-ops)): dict by-reference *mutation*
+  (`def f(d): d["k"]=v` then observing the caller) crashes under
+  `--python-smt-strings`. Fix: treat `smt_string` opaquely in
+  `lower_byte_operators`, or order such members last.
+
+**P2 — Back-end capability parity (two tracks, both first-class).**
+- *Refined track — default back-end toward SMT parity (kept, not downgraded):*
+  - constant-pattern **regex precision under refinement strings** — the proper
+    fix for the `re*` benchmarks now nondet under the default back-end
+    (string-refinement regex axioms; [§4](#regex) "Wave 3", research-grade);
+  - **membership convergence** (`not_contains` existential-witness
+    instantiation) and **lexicographic ordering**;
+  - **producing-op precision** (slice / `replace` / `repeat`) under refinement.
+- *SMT track — native reach ([§3](#strings)):*
+  - precise `upper`/`lower`/`casefold`/`title` (per-char bounded case mapping),
+    `split` (list-valued), `count`/`rfind`/`rindex`, `str(float)`;
+  - `repeat` (`s*n`, nonlinear length), `strip(chars)` (explicit fill-set).
+
+**P3 — Regex reach (SMT path; [§4](#regex)).**
+- Literal-symbolic patterns (segment list + `str.to_re` holes; anchor-soundness
+  caveat); `re.sub` (`str.replace_re_all` + `__cbmc_re_sub`); group extraction;
+  `re.split`; compilation flags (`IGNORECASE`/`MULTILINE` via per-flag AST
+  rewrite).
+
+**P4 — Cross-front-end (Java).**
+- **JBMC native-SMT-string mode**: `java.lang.String → smt_string`, reusing the
+  shared `smt_string` type + `str.*` lowerings + `expr_initializer` /
+  `boolbv_width` / `pointer_logic` handling (a spike adds Java front-end wiring;
+  no shared-code shift needed).
+
+**P5 — Maintenance / re-checks.**
+- CVC5 perf edge: `str.in_re` + `len()` on the same symbolic subject can time
+  out. Re-check string-keyed dict workarounds ([§9](#precision), e.g. the
+  `counter == -1` / `popitem()` items) under **both** back-ends.
+
+---
+
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
 **Refreshed triage (2026-06-09, sweep PASS 2916/3091).** Of the 23
