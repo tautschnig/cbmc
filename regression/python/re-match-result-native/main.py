@@ -1,11 +1,22 @@
-# Native SMT-String backend: re.compile(<literal>).match/search/fullmatch
-# now returns a real Match-or-None reflecting the SMT regex decision, rather
-# than always-Match. (Precise under --cvc5 --python-smt-strings.)
+# Native SMT-String backend: re match/search/fullmatch return a real
+# Match-or-None reflecting the SMT regex decision (not always-Match), for
+# BOTH the re.compile(p).method(s) and the module-level re.method(p, s) forms.
+# (Precise under --cvc5 --python-smt-strings; the stub annotates these as
+# returning "Match | None", matching CPython.)
 import re
 
-assert re.compile("abc").match("abcxyz") is not None      # matches at start
-assert re.compile("xyz").match("abcxyz") is None          # no match at start
-assert re.compile("bcx").search("abcxyz") is not None     # matches anywhere
-assert re.compile("zzz").search("abcxyz") is None         # not present
-assert re.compile("abc").fullmatch("abc") is not None     # exact
-assert re.compile("abc").fullmatch("abcd") is None        # not full
+# re.compile(...).method(...)
+assert re.compile("abc").match("abcxyz") is not None
+assert re.compile("xyz").match("abcxyz") is None
+assert re.compile("bcx").search("abcxyz") is not None
+assert re.compile("zzz").search("abcxyz") is None
+assert re.compile("abc").fullmatch("abc") is not None
+assert re.compile("abc").fullmatch("abcd") is None
+
+# Module-level re.method(p, s)
+assert re.match("abc", "abcxyz") is not None
+assert re.match("xyz", "abcxyz") is None
+assert re.search("bcx", "abcxyz") is not None
+assert re.search("zzz", "abcxyz") is None
+assert re.fullmatch("abc", "abc") is not None
+assert re.fullmatch("abc", "abcd") is None

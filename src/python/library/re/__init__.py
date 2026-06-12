@@ -101,7 +101,7 @@ class Pattern:
         self.flags = flags
         self.groups = 0
 
-    def match(self, string: str, pos: int = 0, endpos: int = 0):
+    def match(self, string: str, pos: int = 0, endpos: int = 0) -> "Match | None":
         # Return a real Match-or-None reflecting the SMT regex decision.
         # Under an SMT String solver (--cvc5 --python-smt-strings) the
         # __cbmc_re_match hook is precise, so Match()/None is exact; under the
@@ -111,12 +111,12 @@ class Pattern:
             return Match()
         return None
 
-    def fullmatch(self, string: str, pos: int = 0, endpos: int = 0):
+    def fullmatch(self, string: str, pos: int = 0, endpos: int = 0) -> "Match | None":
         if __cbmc_re_fullmatch(self.pattern, string):
             return Match()
         return None
 
-    def search(self, string: str, pos: int = 0, endpos: int = 0):
+    def search(self, string: str, pos: int = 0, endpos: int = 0) -> "Match | None":
         if __cbmc_re_search(self.pattern, string):
             return Match()
         return None
@@ -145,20 +145,20 @@ def compile(pattern, flags: int = 0) -> Pattern:
     return Pattern(pattern, flags)
 
 
-def match(pattern: str, string: str, flags: int = 0):
+def match(pattern: str, string: str, flags: int = 0) -> "Match | None":
     # Real Match-or-None from the SMT regex decision; see Pattern.match.
     if __cbmc_re_match(pattern, string):
         return Match()
     return None
 
 
-def fullmatch(pattern: str, string: str, flags: int = 0):
+def fullmatch(pattern: str, string: str, flags: int = 0) -> "Match | None":
     if __cbmc_re_fullmatch(pattern, string):
         return Match()
     return None
 
 
-def search(pattern: str, string: str, flags: int = 0):
+def search(pattern: str, string: str, flags: int = 0) -> "Match | None":
     if __cbmc_re_search(pattern, string):
         return Match()
     return None
