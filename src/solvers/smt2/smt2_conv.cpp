@@ -3111,6 +3111,10 @@ void smt2_convt::convert_expr(const exprt &expr)
         //   { length_const, address_of(index(array_literal, 0)) }.
         auto extract_literal = [](const exprt &e) -> std::optional<std::string>
         {
+          // Native SMT-String back-end: the pattern/subject is a constant of
+          // smt_string type, carrying its text directly as the constant value.
+          if(e.id() == ID_constant && e.type().id() == ID_smt_string)
+            return id2string(to_constant_expr(e).get_value());
           if(
             e.id() != ID_struct || e.operands().size() != 2 ||
             !e.operands()[0].is_constant())
@@ -3199,6 +3203,19 @@ void smt2_convt::convert_expr(const exprt &expr)
         {
           out << "(ite (str.in_re \"" << *subject_smt << "\" " << *smt_re
               << ") (_ bv1 " << width << ") (_ bv0 " << width << "))";
+          return;
+        }
+
+        // Native SMT-String subject (symbolic or non-literal-constant): the
+        // subject is already an SMT String, so match it directly against the
+        // regex -- no refined byte-array bridge needed. This is precise even
+        // for a symbolic subject (the str.in_re is decided by the solver).
+        if(args[1].type().id() == ID_smt_string)
+        {
+          out << "(ite (str.in_re ";
+          emit_smt_string(args[1]);
+          out << " " << *smt_re << ") (_ bv1 " << width << ") (_ bv0 " << width
+              << "))";
           return;
         }
 
