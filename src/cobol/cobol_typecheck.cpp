@@ -297,10 +297,10 @@ struct paragrapht
 bool is_verb(const std::string &w)
 {
   static const std::set<std::string> verbs = {
-    "MOVE",     "ADD",    "SUBTRACT", "MULTIPLY", "DIVIDE",
-    "COMPUTE",  "IF",     "EVALUATE", "PERFORM",  "GO",
-    "STOP",     "GOBACK", "EXIT",     "DISPLAY",  "ACCEPT",
-    "CONTINUE", "CALL",   "NEXT",     "SET",      "EXEC"};
+    "MOVE", "ADD",      "SUBTRACT", "MULTIPLY", "DIVIDE", "COMPUTE",
+    "IF",   "EVALUATE", "PERFORM",  "GO",       "STOP",   "GOBACK",
+    "EXIT", "DISPLAY",  "ACCEPT",   "CONTINUE", "CALL",   "NEXT",
+    "SET",  "EXEC",     "STRING"};
   return verbs.find(w) != verbs.end();
 }
 
@@ -700,6 +700,7 @@ protected:
   stmtt parse_evaluate();
   stmtt parse_perform();
   std::vector<stmtt> parse_move();
+  std::vector<stmtt> parse_string();
   std::vector<stmtt> parse_add();
   std::vector<stmtt> parse_subtract();
   std::vector<stmtt> parse_multiply();
@@ -2535,6 +2536,8 @@ std::vector<stmtt> cobol_typecheckt::parse_statement()
   const std::string verb = cur().text;
   if(verb == "MOVE")
     return parse_move();
+  if(verb == "STRING")
+    return parse_string();
   if(verb == "ADD")
     return parse_add();
   if(verb == "SUBTRACT")
@@ -2685,6 +2688,48 @@ std::vector<stmtt> cobol_typecheckt::parse_move()
   if(result.empty())
     error("MOVE without a target");
   return result;
+}
+
+std::vector<stmtt> cobol_typecheckt::parse_string()
+{
+  // STRING concatenates the sending operands (each governed by a DELIMITED BY
+  // phrase) into a single receiver (IBM LR "STRING statement"). The exact
+  // concatenation depends on the character content the value-domain model does
+  // not represent, so the receiver is assigned a nondeterministic value (a
+  // sound over-approximation). The optional WITH POINTER and ON OVERFLOW
+  // phrases are parsed but, lacking a content model, not given precise
+  // semantics.
+  const source_locationt loc = cur().location;
+  expect_word("STRING");
+
+  // Skip the sending operands and their DELIMITED BY phrases up to INTO.
+  while(!at_eof() && !is_word("INTO") && !is_kind(cobol_token_kindt::PERIOD))
+    advance();
+  expect_word("INTO");
+  const reft t = parse_ref();
+
+  // Optional WITH POINTER phrase.
+  eat_word("WITH");
+  if(eat_word("POINTER"))
+    (void)parse_ref();
+
+  // Optional ON OVERFLOW / NOT ON OVERFLOW phrases: skip to END-STRING when an
+  // explicit scope terminator is present.
+  if(is_word("ON") || is_word("NOT") || is_word("OVERFLOW"))
+    while(!at_eof() && !is_word("END-STRING") &&
+          !is_kind(cobol_token_kindt::PERIOD))
+      advance();
+  eat_word("END-STRING");
+
+  const array_typet bytes_type{
+    unsignedbv_typet{8}, from_integer(t.info->byte_size, size_type())};
+  stmtt s;
+  s.kind = stmtt::kindt::ASSIGN;
+  s.location = loc;
+  s.lhs = t.record;
+  s.rhs = make_byte_update(
+    t.record, t.offset, side_effect_expr_nondett{bytes_type, loc});
+  return {s};
 }
 
 std::vector<stmtt> cobol_typecheckt::parse_add()

@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+The STRING statement is parsed: sources, DELIMITED BY, INTO, optional
+POINTER/OVERFLOW/END-STRING. The receiver is over-approximated. See
+IBM LR "STRING statement".
