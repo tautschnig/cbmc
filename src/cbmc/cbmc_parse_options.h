@@ -77,7 +77,6 @@ class optionst;
   "(python-strict-warnings)" \
   "(python-use-stdlib-source)" \
   "(python-smt-strings)" \
-  "(python-smt-strings-native)" \
   "(python-lazy-stubs)" \
   "(python-no-exception-checks)" \
   "(python-required-kwarg-checks)" \

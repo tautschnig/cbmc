@@ -44,7 +44,7 @@
 #endif
 
 /// Process-wide flag: when true (set by the Python converter under
-/// --python-smt-strings-native), Python `str` is represented as the native
+/// --python-smt-strings), Python `str` is represented as the native
 /// SMT String sort rather than the refined-string struct.
 inline bool &python_smt_string_native_flag()
 {

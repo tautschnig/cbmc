@@ -2291,9 +2291,10 @@ The endgame is done. `--python-smt-strings` now selects the **native**
 smt_string representation (the SMT-LIB `String` sort); the byte-array+`str`
 hybrid is deleted. Summary of the final state:
 
-- **Flag:** `--python-smt-strings` → native; `--python-smt-strings-native` is a
-  backward-compatible alias. A driver diagnostic requires `--cvc5`/`--z3` (the
-  String sort needs an SMT String solver), unless `--outfile` is given.
+- **Flag:** `--python-smt-strings` → native (the only string-backend flag; the
+  `--python-smt-strings-native` alias was removed). A driver diagnostic
+  requires `--cvc5`/`--z3` (the String sort needs an SMT String solver), unless
+  `--outfile` is given.
 - **Deleted:** the hybrid front-end branches (leaf-backing nondet, byte-array
   concat/subscript, compare_to ordering), the `cprover_string_smt_concat_eq_func`
   / `_substr_eq_func` intrinsics + their smt2_conv lowerings, the

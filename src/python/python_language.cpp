@@ -64,11 +64,9 @@ void python_languaget::set_language_options(
   python_missing_return_check =
     options.get_bool_option("python-missing-return-check");
   python_check_iter_none = options.get_bool_option("python-check-iter-none");
-  // --python-smt-strings selects the native SMT-LIB String backend. The
-  // legacy byte-array hybrid has been retired; --python-smt-strings-native is
-  // kept as a backward-compatible alias.
-  python_string_kind = (options.get_bool_option("python-smt-strings") ||
-                        options.get_bool_option("python-smt-strings-native"))
+  // --python-smt-strings selects the native SMT-LIB String backend (the
+  // legacy byte-array hybrid has been retired).
+  python_string_kind = options.get_bool_option("python-smt-strings")
                          ? python_string_kindt::smt_string_native
                          : python_string_kindt::refined;
   std::string max_str = options.get_option("python-max-string-length");

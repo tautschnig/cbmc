@@ -177,12 +177,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-use-stdlib-source", true);
   if(cmdline.isset("python-smt-strings"))
     options.set_option("python-smt-strings", true);
-  if(cmdline.isset("python-smt-strings-native"))
-    options.set_option("python-smt-strings-native", true);
   if(
-    (cmdline.isset("python-smt-strings") ||
-     cmdline.isset("python-smt-strings-native")) &&
-    !cmdline.isset("cvc5") && !cmdline.isset("z3") && !cmdline.isset("outfile"))
+    cmdline.isset("python-smt-strings") && !cmdline.isset("cvc5") &&
+    !cmdline.isset("z3") && !cmdline.isset("outfile"))
   {
     log.error()
       << "--python-smt-strings selects the native SMT-LIB String backend, "

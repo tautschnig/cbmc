@@ -1,6 +1,6 @@
 CORE
 main.py
---cvc5 --python-smt-strings-native
+--cvc5 --python-smt-strings
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
