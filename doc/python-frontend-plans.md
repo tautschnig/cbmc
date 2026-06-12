@@ -377,6 +377,51 @@ arguments; the backend bridges them to SMT `String`**.
    and a proven no-match returns `None`, without regressing the existing
    `re*` tests that rely on always-`Match()`. Smaller than gap 1, and only
    meaningful once gap 1 lands.
+
+**Update (2026-06-12) — native SMT-String backend.** With `--python-smt-strings`
+now selecting the native `smt_string` representation (the byte-array hybrid is
+retired), the **subject** side of gap 1 is resolved: a symbolic subject is
+already an SMT `String`, so `(str.in_re <symbolic-subject> <RegLan>)` is precise
+with no `array_pool` extraction. One prerequisite fix: the
+match/search/fullmatch lowering's `extract_literal()` recognises only the
+refined `{length, address_of(array)}` struct, so under native — where the
+pattern is an `smt_string` *constant* — it returns `nullopt` and degrades to
+nondet. Teaching it to read the pattern from an `smt_string` constant restores
+regex precision under native (the **native regex pattern-extraction fix**;
+small, prerequisite for everything below).
+
+**Extension — structurally-constant patterns with symbolic literal substrings
+(native).** The pattern must remain *structurally* constant (its regex
+operators known at conversion time): SMT-LIB `RegLan` is built only from regex
+constructors (`re.union`, `re.*`, `re.range`, `str.to_re` of literals) and has
+no operation that interprets a *symbolic* string as a regex — `str.to_re(p)`
+accepts exactly the literal `p` (i.e. equality, not pattern semantics), so a
+fully-symbolic pattern degrades soundly to nondet. **But** a pattern whose
+*structure* is a compile-time constant while its *literal substrings* are
+symbolic — e.g. `re.compile("^" + prefix + "[0-9]+$")` with `prefix` a runtime
+`str` — is expressible as
+`(re.++ (str.to_re prefix) (re.+ (re.range "0" "9")))`: `str.to_re` on the
+symbolic literal "holes", `re.*` constructors for the constant structure.
+
+  *Design.*
+  - **Front-end:** when an f-string / `+`-concatenation forms a regex pattern,
+    carry it not as one flattened literal on the intrinsic but as a **list of
+    segments**, each either a constant pattern fragment or a symbolic
+    `smt_string` literal-hole. (Today the pattern is flattened to a single
+    literal, which loses this structure; a new intrinsic variant would take the
+    segment list.)
+  - **Backend** (`python_regex_to_smt.cpp` + the smt2_conv lowering): translate
+    constant fragments as today and emit `(str.to_re <hole>)` for each symbolic
+    hole, splicing them into the `RegLan` term with `re.++`.
+  - **Soundness / scope:** a symbolic hole is matched **literally** (spliced
+    verbatim as a `str`), which is exactly the intended semantics for the
+    `re.compile("..." + x + "...")` / `re.escape(x)` idiom. A hole meant to
+    carry regex *metacharacters* is out of scope (that is a fully-symbolic
+    pattern → nondet). Constant-only and fully-symbolic patterns are unchanged.
+  - **Effort / ordering:** front-end segment-tracking is the bulk; the backend
+    splice is small. Builds on the native pattern-extraction fix and the
+    `re.*`-wrapper routing ("a-prime") refactor, so it is sequenced after both.
+
 - **Compilation flags** (`re.IGNORECASE` etc.): currently fall back to
   nondet. *Fix shape:* rewrite the regex AST per flag before lowering.
 - **Wave 3 — native regex axioms in the string-refinement loop: NO PLAN
