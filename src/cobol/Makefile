@@ -1,5 +1,6 @@
 SRC = cobol_language.cpp \
       cobol_scanner.cpp \
+      cobol_copybooks.cpp \
       cobol_typecheck.cpp \
       cobol_entry_point.cpp \
       expr2cobol.cpp \

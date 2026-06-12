@@ -376,9 +376,12 @@ fully but exceed the default bound during bounded model checking (batch
 file loops). The remaining failures are a small, well-understood long
 tail:
 
-- MQ object-descriptor fields (`MQOD-*`, `MQOT-*`): more
-  subsystem-supplied copybooks — the case for the bundled copybook
-  library described above, rather than yet more hand-coded synthesis.
+- The IBM MQ copybooks (`MQOD-*`, `MQOT-*`, `MQTM-*`, …) are now
+  provided by the bundled copybook library (see below); the MQ programs
+  consequently advance past copybook resolution to later blockers — a
+  not-yet-supported **recursive `PERFORM`**, and one program
+  (`COPAUA0C`) that renames an MQ structure with `COPY ... REPLACING`
+  and then qualifies a field by the renamed group.
 - `COPY ... REPLACING` with **pseudo-text partial-word** replacement
   (e.g. `CSSETATY` builds `FLG-(TESTVAR1)-NOT-OK` into
   `FLG-TRANFILTER-NOT-OK`): a character-level text-manipulation feature
@@ -420,22 +423,35 @@ value. This corrected reference-modified numeric operands everywhere
 (MOVE, relation conditions, arithmetic), not just in MOVE.
 
 ### Built-in copybooks: the next architectural step
+### Built-in copybooks: the bundled copybook library
 
-Compiler-/subsystem-supplied copybooks (the CICS `DFHEIBLK`, `DFHAID`,
-`DFHBMSCA`; `SQLCA`; the special registers; the MQ trigger message
-`MQTM`; the IMS `DIB`) are currently *synthesised* from hand-coded
-`builtin_fieldt` tables. This pattern is growing and is a code smell:
-each new subsystem copybook is another table to maintain, and the
-layouts/initial values are approximate. The cleaner architecture is a
-**bundled copybook library** — the real copybook *text* shipped with the
-frontend (either as files on the default search path or as embedded
-string constants) and expanded through the ordinary COPY/layout path, so
-built-in copybooks get the exact same byte layout, VALUE handling and
-REDEFINES support as user copybooks. The auto-injected ones (`DFHEIBLK`,
-special registers) would be prepended as implicit COPYs. This is
-deferred because it is a larger refactor than the current long-tail
-gains justify, but it is the recommended consolidation once more
-subsystem copybooks are needed.
+Compiler-/subsystem-supplied copybooks are not part of an application's
+source tree, so they are absent when a program is analysed in isolation.
+The frontend ships their text in a **bundled copybook library**
+(`cobol_copybooks.{h,cpp}`): a name → COBOL text map, keyed by the
+text-name a program would `COPY`. `cobol_expand_copy` falls back to this
+library when a `COPY` is not resolved on the search path, scanning and
+expanding the bundled text through the *ordinary* COPY / data-description
+layout path — so a bundled copybook gets exactly the same byte layout,
+VALUE handling, REDEFINES and REPLACING support as an on-disk one. The
+DFHAID / DFHBMSCA constant copybooks are generated as text (a name list
+with distinct one-byte VALUEs); the IBM MQ structures (`CMQODV`,
+`CMQMDV`, `CMQGMOV`, `CMQPMOV`, `CMQTML`) and named constants (`CMQV`)
+are bundled as text grounded in the MQI structure/constant definitions.
+
+This replaced the hand-coded `builtin_fieldt` synthesis for everything a
+program explicitly `COPY`s. The architectural line that remains is:
+
+- **Things a program `COPY`s** (DFHAID, DFHBMSCA, the MQ `CMQ*` books) →
+  the bundled copybook library, expanded at the COPY site.
+- **Things the translator / language auto-supplies** and that a program
+  does *not* COPY (the CICS `DFHEIBLK` inserted by the translator; the
+  `RETURN-CODE` etc. special registers; `SQLCA`, brought in by
+  `EXEC SQL INCLUDE`; the IMS `DIB`) → typecheck auto-injection.
+
+A no-VALUE record leaves its symbol value empty, which CBMC
+zero-initialises, so VALUE-less bundled text reproduces the previous
+"nondeterministic / zero" initialisation exactly.
 
 Registering the frontend with the other tools (`goto-cc`,
 `goto-instrument`, …) remains a small follow-up.

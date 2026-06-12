@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Compiler-/subsystem-supplied copybooks absent from the source tree are
+expanded from the bundled copybook library. See cobol_copybooks.h.

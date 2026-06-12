@@ -13,9 +13,12 @@ Author: Kiro
 
 #include <util/message.h>
 
+#include "cobol_copybooks.h"
+
 #include <cctype>
 #include <fstream>
 #include <istream>
+#include <sstream>
 
 /// Returns true if \p c may appear inside a COBOL word (letter, digit, or an
 /// internal hyphen, which the caller handles specially).
@@ -615,6 +618,27 @@ std::vector<cobol_tokent> cobol_expand_copy(
     const std::string path = resolve_copybook(name, copybook_dirs);
     if(path.empty())
     {
+      // Fall back to the bundled copybook library for compiler-/subsystem-
+      // supplied copybooks (CICS, IBM MQ) that are not part of the application
+      // source tree (see cobol_copybooks.h). The bundled text is expanded
+      // exactly like an on-disk copybook.
+      if(const std::string *builtin = cobol_builtin_copybook(name))
+      {
+        if(depth <= 40)
+        {
+          std::istringstream bin{*builtin};
+          std::vector<cobol_tokent> sub = cobol_expand_copy(
+            cobol_scan(bin, "<builtin:" + name + ">"),
+            copybook_dirs,
+            message_handler);
+          if(!sub.empty() && sub.back().kind == cobol_token_kindt::END_OF_FILE)
+            sub.pop_back();
+          sub = apply_replacing(sub, replacing);
+          for(auto &tok : sub)
+            out.push_back(std::move(tok));
+        }
+        continue;
+      }
       log.warning().source_location = copy_loc;
       log.warning() << "COBOL: copybook '" << name
                     << "' not found; skipping COPY" << messaget::eom;

@@ -3296,57 +3296,11 @@ void cobol_typecheckt::inject_eib()
     {"EIBRLDBK", false, 0, 1, ""}};
   inject_builtin_record("DFHEIBLK", eib, 0);
 
-  // DFHAID: 3270 attention identifiers, each PIC X.
-  std::vector<builtin_fieldt> aid = {
-    {"DFHNULL", false, 0, 1, ""},
-    {"DFHENTER", false, 0, 1, ""},
-    {"DFHCLEAR", false, 0, 1, ""},
-    {"DFHPEN", false, 0, 1, ""},
-    {"DFHOPID", false, 0, 1, ""},
-    {"DFHPA1", false, 0, 1, ""},
-    {"DFHPA2", false, 0, 1, ""},
-    {"DFHPA3", false, 0, 1, ""},
-    {"DFHCLRP", false, 0, 1, ""},
-    {"DFHMSRE", false, 0, 1, ""},
-    {"DFHSTRF", false, 0, 1, ""},
-    {"DFHTRIG", false, 0, 1, ""}};
-  static const std::vector<std::string> pf_names = []
-  {
-    std::vector<std::string> v;
-    for(int i = 1; i <= 24; ++i)
-      v.push_back("DFHPF" + std::to_string(i));
-    return v;
-  }();
-  for(const std::string &n : pf_names)
-    aid.push_back(builtin_fieldt{n.c_str(), false, 0, 1, ""});
-  inject_builtin_record("DFHAID", aid, 1);
-
-  // DFHBMSCA: BMS attribute / control bytes, each PIC X.
-  static const std::vector<builtin_fieldt> bmsca = {
-    {"DFHBMPEM", false, 0, 1, ""}, {"DFHBMPNL", false, 0, 1, ""},
-    {"DFHBMASK", false, 0, 1, ""}, {"DFHBMUNP", false, 0, 1, ""},
-    {"DFHBMUNN", false, 0, 1, ""}, {"DFHBMPRO", false, 0, 1, ""},
-    {"DFHBMASB", false, 0, 1, ""}, {"DFHBMDAR", false, 0, 1, ""},
-    {"DFHBMFSE", false, 0, 1, ""}, {"DFHBMPRF", false, 0, 1, ""},
-    {"DFHBMASF", false, 0, 1, ""}, {"DFHBMASN", false, 0, 1, ""},
-    {"DFHBMEOF", false, 0, 1, ""}, {"DFHBMCUR", false, 0, 1, ""},
-    {"DFHBMEC", false, 0, 1, ""},  {"DFHBMEN", false, 0, 1, ""},
-    {"DFHBMENT", false, 0, 1, ""}, {"DFHBMFLG", false, 0, 1, ""},
-    {"DFHBMDET", false, 0, 1, ""}, {"DFHSA", false, 0, 1, ""},
-    {"DFHCOLOR", false, 0, 1, ""}, {"DFHPS", false, 0, 1, ""},
-    {"DFHHLT", false, 0, 1, ""},   {"DFHBLUE", false, 0, 1, ""},
-    {"DFHRED", false, 0, 1, ""},   {"DFHPINK", false, 0, 1, ""},
-    {"DFHGREEN", false, 0, 1, ""}, {"DFHTURQ", false, 0, 1, ""},
-    {"DFHYELLO", false, 0, 1, ""}, {"DFHNEUTR", false, 0, 1, ""},
-    {"DFHBASE", false, 0, 1, ""},  {"DFHDFHI", false, 0, 1, ""},
-    {"DFHBLINK", false, 0, 1, ""}, {"DFHREVRS", false, 0, 1, ""},
-    {"DFHUNDLN", false, 0, 1, ""}, {"DFHUNDER", false, 0, 1, ""},
-    {"DFHUNNUM", false, 0, 1, ""}, {"DFHPROTI", false, 0, 1, ""},
-    {"DFHUNIMD", false, 0, 1, ""}, {"DFHUNINT", false, 0, 1, ""},
-    {"DFHALL", false, 0, 1, ""},   {"DFHERROR", false, 0, 1, ""},
-    {"DFHDFCOL", false, 0, 1, ""}, {"DFHDFT", false, 0, 1, ""},
-    {"DFHBMBRY", false, 0, 1, ""}};
-  inject_builtin_record("DFHBMSCA", bmsca, 1);
+  // The CICS-supplied DFHAID (attention identifiers) and DFHBMSCA (BMS
+  // attribute constants) copybooks, the IBM MQ CMQ*V copybooks, and similar
+  // subsystem copybooks are provided by the bundled copybook library
+  // (cobol_copybooks.h) and expanded where the program COPYs them, rather than
+  // synthesised here.
 
   // SQL communication area (SQLCA), referenced by EXEC SQL programs; nondet.
   static const std::vector<builtin_fieldt> sqlca = {
@@ -3373,19 +3327,8 @@ void cobol_typecheckt::inject_eib()
     {"TALLY", true, 9, 0, "COMP"}};
   inject_builtin_record("$SPECIAL", special, 2);
 
-  // MQ trigger message (CMQTML copybook); referenced by MQ trigger-monitor
-  // programs. Nondeterministic.
-  static const std::vector<builtin_fieldt> mqtm = {
-    {"MQTM-STRUCID", false, 0, 4, ""},
-    {"MQTM-VERSION", true, 9, 0, "COMP"},
-    {"MQTM-QNAME", false, 0, 48, ""},
-    {"MQTM-PROCESSNAME", false, 0, 48, ""},
-    {"MQTM-TRIGGERDATA", false, 0, 64, ""},
-    {"MQTM-APPLTYPE", true, 9, 0, "COMP"},
-    {"MQTM-APPLID", false, 0, 256, ""},
-    {"MQTM-ENVDATA", false, 0, 128, ""},
-    {"MQTM-USERDATA", false, 0, 128, ""}};
-  inject_builtin_record("MQTM", mqtm, 0);
+  // The IBM MQ trigger message (CMQTML) is provided by the bundled copybook
+  // library and expanded where the program COPYs it.
 
   // IMS DL/I interface block (DIB), referenced by IMS programs. Nondet.
   static const std::vector<builtin_fieldt> dib = {
