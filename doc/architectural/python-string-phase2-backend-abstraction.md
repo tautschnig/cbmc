@@ -2089,3 +2089,46 @@ Until then: refined stays the no-external-solver default; native
 (`--python-smt-strings-native`) is the precise experimental backend for the
 SMT-theory surface; the hybrid remains the robust `--python-smt-strings`
 fallback.
+
+## Plan A — coordinated migration attempt: structural blocker (2026-06-12)
+
+Attempted the full coordinated migration (flip `python_string_type()` →
+`smt_string` + migrate member-access sites) to make native crash-free and
+retire the hybrid. **Outcome: blocked on a value-model entanglement, not a
+site count.**
+
+Findings, in order:
+- Flip alone: 29 → 107 crashes (as expected; exposes member-access + producer
+  sites).
+- Made `build_string_struct` native-aware (literal → `smt_string` constant)
+  and added a native string-iteration branch (`for c in s` → `str.substr`).
+  **Crash count stayed at exactly 107** — these front-end fixes are irrelevant
+  to the dominant failure.
+- Re-triage: **73 of 107 crashes are `to_struct_type` failures inside shared
+  goto-symex code** (`symex_assignt::assign_from_struct`), not in the Python
+  front-end. Root cause from the goto dump: the `python_value` tagged union
+  (and object/container fields) **embed a string by value** —
+  `self.value := { tag, …, *(address_of(__str_val_0)), … }`. Under
+  `smt_string`, a struct-expr carrying a string member is assigned to / from an
+  `smt_string`-typed slot, and `assign_from_struct` calls `to_struct_type` on a
+  non-struct type → invariant violation.
+
+**Conclusion.** Crash-free native is **not** an incremental member-access
+migration; it requires reworking how the Python value model stores strings
+inside `python_value` unions, object attributes, and containers — from
+**by-value embedding** to **by-reference (pointer/handle)** so a string member
+is always a scalar in struct-assignment. That is a substantial, higher-risk
+core-representation refactor (it touches tagged-union construction/projection,
+attribute storage, list/dict element storage, and their symex interaction),
+realistically a dedicated multi-step effort with its own validation plan — and
+it must still land atomically with the type flip (a partial state sits at 107
+crashes, worse than the mixed-representation 29).
+
+**Status.** Experiment preserved on git stash
+("WIP: native string type-flip …"). Reverted to the committed state: native
+(`--python-smt-strings-native`) stays the precise *experimental* backend for
+the SMT-theory surface (queries, concat, subscript, slice, replace, strip,
+f-strings; 506/540 corpus tests OK, 29 crashes on string-in-union/object/
+container code); the byte-array hybrid remains the robust `--python-smt-strings`
+fallback; refined stays the default. Retiring the hybrid is blocked on the
+value-model rework above, now precisely diagnosed.
