@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+OCCURS ... TO max ... DEPENDING ON is accepted and modelled as a fixed
+table of its maximum size. See IBM LR "OCCURS clause".

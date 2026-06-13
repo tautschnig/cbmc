@@ -1389,9 +1389,25 @@ void cobol_typecheckt::parse_data_item()
         error("expected a count after OCCURS");
       occurs = static_cast<std::size_t>(std::stoul(cur().text));
       advance();
+      // OCCURS [integer-1 TO] integer-2 TIMES [DEPENDING ON data-name]: a
+      // variable-length table (IBM LR "OCCURS clause", format 2). We model it
+      // as a fixed table of its maximum (integer-2) occurrences, a sound
+      // over-approximation; the DEPENDING ON item is an ordinary numeric field
+      // the program maintains.
+      if(eat_word("TO"))
+      {
+        if(cur().kind != cobol_token_kindt::NUMBER)
+          error("expected a maximum count after OCCURS ... TO");
+        occurs = static_cast<std::size_t>(std::stoul(cur().text));
+        advance();
+      }
       eat_word("TIMES");
-      if(is_word("DEPENDING"))
-        error("OCCURS DEPENDING ON is not yet supported");
+      if(eat_word("DEPENDING"))
+      {
+        eat_word("ON");
+        if(cur().kind == cobol_token_kindt::WORD)
+          advance(); // the DEPENDING ON data-name
+      }
       is_table = true;
     }
     else if(eat_word("REDEFINES"))
