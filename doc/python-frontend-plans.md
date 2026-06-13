@@ -211,17 +211,40 @@ positive propagation guarded by `any-param-dict-byref` /
 `any-param-list-byref`; native crash-scan 0 crashes; ESBMC sweep
 fallout-neutral (PASS 2929, 0 regressions).
 
-**Residual gap — length-changing methods on an `Any` parameter.** `x.append(y)`
-(and other size-changing mutators) on an `Any`-typed parameter still do **not**
-propagate: e.g. `a=[1,2]; g(a) [g(x): x.append(99)]; assert len(a)==3` fails
-(and `len(a)==2` still false-proves). Element *subscript* mutation propagates;
-the method-dispatch path for size-changing list/set methods does not yet write
-through `__list_ptr` to the shared object. Also out of scope so far: `set`
-arguments, and non-string-keyed dicts (the `python_value` dict handler assumes
-string keys). These are sound-imprecise or latent-false-proof in the same
-family and should reuse the same promote+write-back boundary.
+**Container methods on an `Any` parameter — RESOLVED for unambiguous built-in
+methods (2026-06-13).** `x.append(y)` / `extend` / `insert` / `sort` /
+`reverse` and `dict.setdefault` / `popitem` / `keys` / `values` / `items` on an
+`Any`-typed parameter now propagate (`a=[1,2]; g(a) [g(x): x.append(99)];
+assert len(a)==3` verifies; `len(a)==2` correctly FAILS). The architectural
+fix is a single shared helper `unwrap_any_container_receiver(obj, method_name)`
+applied at the method-receiver conversion sites
+(`python_converter_call_method.cpp` dispatch + the statement-level
+append/insert handlers in `python_converter_defs.cpp`): when the receiver is a
+`python_value` and the method name unambiguously belongs to one built-in
+container — *and no user class defines it*, so virtual dispatch is preserved —
+it derefs the shared `__list_ptr` / `__class_ptr` to the concrete
+by-reference container lvalue (`list[value]` / `dict[str, value]`), and the
+existing container-method handlers mutate it; the caller-side promote +
+write-back boundary then carries the change back. Guarded by
+`any-param-list-append{,-falseproof}`, `any-param-list-extend`,
+`any-param-userclass-method-collision`.
+
+**Remaining gaps in this family.** (1) **Ambiguous method names** shared across
+containers — `pop` / `remove` / `clear` / `copy` / `update` — are *not*
+unwrapped: disambiguating them on an `Any` receiver needs the runtime tag
+(`python_value.__tag`); they retain the prior (often imprecise) behaviour. A
+sound, more general follow-up is a `__tag`-guarded dispatch. (2) **`set`
+arguments** — `make_python_value` has no `SET` tag, so sets reach an `Any`
+parameter via the class/struct wrap; their mutators do not propagate. (3)
+**non-string-keyed dicts** — the `python_value` dict handler assumes string
+keys (`dict[str, value]`), so int-keyed dicts via `Any` neither propagate nor
+crash (sound-imprecise). All three should reuse the same promote+write-back +
+unwrap boundary.
 
 ### Earlier triage history (2026-06-08)
+
+From the prior per-test triage of the 26 baseline DIFFs in the
+*expected-FAILED / got-SUCCESSFUL* direction: **20 were out-of-scope**
 
 From the prior per-test triage of the 26 baseline DIFFs in the
 *expected-FAILED / got-SUCCESSFUL* direction: **20 were out-of-scope**
