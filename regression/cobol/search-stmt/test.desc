@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+SEARCH and SEARCH ALL scan a table for a matching WHEN, varying the
+index, or run AT END. See IBM LR "SEARCH statement".

@@ -250,6 +250,7 @@ struct stmtt
     IFTE,
     EVALUATE,
     PERFORM,
+    SEARCH,
     GOTO,
     STOP,
     SKIP
@@ -297,10 +298,10 @@ struct paragrapht
 bool is_verb(const std::string &w)
 {
   static const std::set<std::string> verbs = {
-    "MOVE", "ADD",      "SUBTRACT", "MULTIPLY",  "DIVIDE", "COMPUTE",
-    "IF",   "EVALUATE", "PERFORM",  "GO",        "STOP",   "GOBACK",
-    "EXIT", "DISPLAY",  "ACCEPT",   "CONTINUE",  "CALL",   "NEXT",
-    "SET",  "EXEC",     "STRING",   "INITIALIZE"};
+    "MOVE", "ADD",      "SUBTRACT", "MULTIPLY",   "DIVIDE", "COMPUTE",
+    "IF",   "EVALUATE", "PERFORM",  "GO",         "STOP",   "GOBACK",
+    "EXIT", "DISPLAY",  "ACCEPT",   "CONTINUE",   "CALL",   "NEXT",
+    "SET",  "EXEC",     "STRING",   "INITIALIZE", "SEARCH"};
   return verbs.find(w) != verbs.end();
 }
 
@@ -513,6 +514,9 @@ protected:
   /// stable storage for synthetic field descriptors (reference modification)
   std::deque<item_infot> synth_items;
   std::map<std::string, cond_infot> conds;
+  /// For each table (OCCURS) item, the index-names declared in its INDEXED BY
+  /// phrase, in order; used by SEARCH to choose the index to vary.
+  std::map<std::string, std::vector<std::string>> table_indexes;
   std::vector<paragrapht> paragraphs;
   std::size_t unique = 0;
 
@@ -713,6 +717,7 @@ protected:
   stmtt parse_perform();
   std::vector<stmtt> parse_move();
   std::vector<stmtt> parse_string();
+  std::vector<stmtt> parse_search();
   std::vector<stmtt> parse_initialize();
   std::vector<stmtt> parse_add();
   std::vector<stmtt> parse_subtract();
@@ -1035,6 +1040,7 @@ void cobol_typecheckt::parse_program()
   items.clear();
   all_items.clear();
   conds.clear();
+  table_indexes.clear();
   paragraphs.clear();
   last_field.clear();
 
@@ -1425,6 +1431,8 @@ void cobol_typecheckt::parse_data_item()
             !is_clause_keyword(cur().text))
       {
         register_index(cur().text);
+        // Associate the index with its table so SEARCH can vary it.
+        table_indexes[name].push_back(cur().text);
         advance();
       }
     }
@@ -2680,6 +2688,8 @@ std::vector<stmtt> cobol_typecheckt::parse_statement()
     return parse_string();
   if(verb == "INITIALIZE")
     return parse_initialize();
+  if(verb == "SEARCH")
+    return parse_search();
   if(verb == "ADD")
     return parse_add();
   if(verb == "SUBTRACT")
@@ -2992,6 +3002,84 @@ std::vector<stmtt> cobol_typecheckt::parse_initialize()
     }
   }
   return result;
+}
+
+std::vector<stmtt> cobol_typecheckt::parse_search()
+{
+  // SEARCH [ALL] table-name [VARYING index]
+  //   [AT END imperative] {WHEN condition imperative}... [END-SEARCH]
+  // (IBM LR "SEARCH statement"). A serial SEARCH scans from the table's
+  // current index; SEARCH ALL is a binary search of an ordered table. Both are
+  // modelled here as a serial scan, which finds an index satisfying a WHEN (or
+  // reaches AT END) exactly when the binary search would; SEARCH ALL only
+  // additionally starts the scan at the first element.
+  const source_locationt loc = cur().location;
+  expect_word("SEARCH");
+  const bool search_all = eat_word("ALL");
+
+  if(cur().kind != cobol_token_kindt::WORD)
+    error("expected a table name after SEARCH");
+  const std::string table_name = cur().text;
+  const reft table = parse_ref();
+  if(!table.info->is_table)
+    error("SEARCH requires a table (OCCURS) item");
+
+  // The index to vary: an explicit VARYING index, else the table's first
+  // INDEXED BY index-name.
+  std::string index_name;
+  if(eat_word("VARYING"))
+  {
+    if(cur().kind != cobol_token_kindt::WORD)
+      error("expected an index after VARYING");
+    index_name = cur().text;
+    (void)parse_ref();
+  }
+  else
+  {
+    auto it = table_indexes.find(table_name);
+    if(it == table_indexes.end() || it->second.empty())
+      error("SEARCH table has no INDEXED BY index");
+    index_name = it->second.front();
+  }
+  const reft index_ref = ref_of(lookup_item(index_name));
+
+  stmtt s;
+  s.kind = stmtt::kindt::SEARCH;
+  s.location = loc;
+
+  // SEARCH ALL starts the scan at the first element; serial SEARCH continues
+  // from the current index value.
+  if(search_all)
+    s.var_init.push_back(make_assign_ref(
+      index_ref, valuet{from_integer(1, cobol_value_type()), 0}, loc));
+
+  // Loop bound: index past the last occurrence.
+  const valuet idx_val = read_field(index_ref);
+  s.cond = binary_relation_exprt{
+    idx_val.expr, ID_gt, from_integer(table.info->occurs, cobol_value_type())};
+
+  // Index increment.
+  const valuet step_val = read_field(index_ref);
+  s.var_step.push_back(make_assign_ref(
+    index_ref,
+    valuet{
+      plus_exprt{step_val.expr, from_integer(1, cobol_value_type())},
+      step_val.scale},
+    loc));
+
+  if(eat_word("AT"))
+  {
+    expect_word("END");
+    s.other_stmts = parse_statements();
+  }
+  while(eat_word("WHEN"))
+  {
+    exprt cond = parse_condition();
+    std::vector<stmtt> imp = parse_statements();
+    s.when_clauses.emplace_back(std::move(cond), std::move(imp));
+  }
+  eat_word("END-SEARCH");
+  return {s};
 }
 
 exprt cobol_typecheckt::size_error_cond(const reft &r, const valuet &v)
@@ -4129,6 +4217,32 @@ void cobol_typecheckt::gen_statement(
       break;
     }
     }
+    break;
+  }
+  case stmtt::kindt::SEARCH:
+  {
+    // Serial scan: at each step, break to AT END if the index is past the
+    // table, or to a matching WHEN; otherwise step the index and repeat.
+    const std::string test = fresh_label("stest");
+    const std::string done = fresh_label("sdone");
+    gen_statements(s.var_init, out, inlining);
+    out.add(code_labelt{test, code_skipt{}});
+    {
+      code_blockt at_end;
+      gen_statements(s.other_stmts, at_end, inlining);
+      at_end.add(code_gotot{done});
+      out.add(code_ifthenelset{s.cond, std::move(at_end)});
+    }
+    for(const auto &when : s.when_clauses)
+    {
+      code_blockt when_block;
+      gen_statements(when.second, when_block, inlining);
+      when_block.add(code_gotot{done});
+      out.add(code_ifthenelset{when.first, std::move(when_block)});
+    }
+    gen_statements(s.var_step, out, inlining);
+    out.add(code_gotot{test});
+    out.add(code_labelt{done, code_skipt{}});
     break;
   }
   }
