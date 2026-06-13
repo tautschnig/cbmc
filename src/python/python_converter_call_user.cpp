@@ -1446,6 +1446,17 @@ exprt python_convertert::convert_user_call(
           arguments[i] = make_python_value(
             is_dict ? python_type_tagt::DICT : python_type_tagt::LIST, ptr);
         }
+        else if(
+          is_python_value_type(params[i].type()) &&
+          arguments[i].id() == ID_symbol &&
+          is_python_set_type(arguments[i].type()))
+        {
+          // A set is an element-type-agnostic fixed struct (bitmap), so it
+          // needs no promotion: share the caller's object directly by address
+          // (SET tag) so the callee's mutators propagate without a write-back.
+          arguments[i] = make_python_value(
+            python_type_tagt::SET, address_of_exprt{arguments[i]});
+        }
         else
           arguments[i] = coerce_call_argument(arguments[i], params[i].type());
       }
