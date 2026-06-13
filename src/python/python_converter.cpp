@@ -2537,10 +2537,12 @@ exprt python_convertert::unwrap_any_container_receiver(
     "append", "extend", "insert", "sort", "reverse"};
   static const std::set<std::string> dict_only = {
     "setdefault", "popitem", "keys", "values", "items"};
+  static const std::set<std::string> set_only = {"add", "discard"};
 
   const bool is_list = list_only.count(method_name) > 0;
   const bool is_dict = dict_only.count(method_name) > 0;
-  if(!is_list && !is_dict)
+  const bool is_set = set_only.count(method_name) > 0;
+  if(!is_list && !is_dict && !is_set)
     return obj;
 
   // If a user class defines this method, it is not a built-in container
@@ -2553,6 +2555,14 @@ exprt python_convertert::unwrap_any_container_receiver(
   // that mutate the returned lvalue propagate to the caller's object.
   if(is_list)
     return python_value_list(obj);
+
+  if(is_set)
+  {
+    const typet set_type = python_set_type();
+    return dereference_exprt{
+      typecast_exprt{python_value_class_ptr(obj), pointer_typet{set_type, 64}},
+      set_type};
+  }
 
   const typet dict_type =
     python_dict_type(python_string_type(), python_value_type());
@@ -2609,6 +2619,8 @@ std::optional<exprt> python_convertert::dispatch_any_container_method_by_tag(
       r = try_list_method(expr, view, view_type, method_name, args);
     else if(is_python_dict_type(view_type))
       r = try_dict_method(expr, view, view_type, method_name, args);
+    else if(is_python_set_type(view_type))
+      r = try_set_method(expr, view, view_type, method_name, args);
     if(!r.has_value())
     {
       // Handler declined: drop anything it may have emitted.
@@ -2633,6 +2645,12 @@ std::optional<exprt> python_convertert::dispatch_any_container_method_by_tag(
     typecast_exprt{python_value_class_ptr(obj), pointer_typet{dict_type, 64}},
     dict_type};
   run_branch(dict_view, dict_type, python_type_tagt::DICT);
+
+  const typet set_type = python_set_type();
+  const exprt set_view = dereference_exprt{
+    typecast_exprt{python_value_class_ptr(obj), pointer_typet{set_type, 64}},
+    set_type};
+  run_branch(set_view, set_type, python_type_tagt::SET);
 
   if(!any_branch)
     return std::nullopt;
@@ -2768,6 +2786,14 @@ exprt python_convertert::wrap_value(const exprt &e)
     {
       return make_python_value(
         python_type_tagt::DICT, address_of_exprt{tmp_sym.symbol_expr()});
+    }
+    // python_set struct: use SET tag (not CLASS) so len() / truthiness /
+    // unwrap_value and the Any-receiver method dispatch dereference it as a
+    // set struct.
+    if(is_python_set_type(e.type()))
+    {
+      return make_python_value(
+        python_type_tagt::SET, address_of_exprt{tmp_sym.symbol_expr()});
     }
     // python_complex struct: use COMPLEX tag (not CLASS).
     // Lets python_truthiness / unwrap_value dereference and

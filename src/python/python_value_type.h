@@ -57,6 +57,11 @@ enum class python_type_tagt
   /// .real / .imag at known offsets) and apply PLR §6.10.1
   /// truth-value semantics (0+0j is falsy).
   COMPLEX = 8,
+  /// Set container stored via __class_ptr pointing at a python_set
+  /// struct (bitmap, offset). Separated from CLASS / DICT so len(),
+  /// truthiness, unwrap_value and the Any-receiver method dispatch can
+  /// dereference it as a set struct.
+  SET = 9,
 };
 
 /// Tag name for the python_value type in the symbol table.
@@ -201,6 +206,16 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
             address_of_exprt{value}, pointer_typet{empty_typet{}, 64}};
     break;
   case python_type_tagt::NONE:
+    break;
+  case python_type_tagt::SET:
+    // Sets use the class_ptr slot to store the python_set-struct address.
+    // The set struct is element-type-agnostic (a bitmap), so unlike list /
+    // dict it can be shared by direct address with no element promotion.
+    class_ptr =
+      value.type().id() == ID_pointer
+        ? typecast_exprt{value, pointer_typet{empty_typet{}, 64}}
+        : typecast_exprt{
+            address_of_exprt{value}, pointer_typet{empty_typet{}, 64}};
     break;
   }
 
