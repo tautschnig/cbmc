@@ -1487,6 +1487,18 @@ private:
   /// Wrap a concrete typed value into a tagged-union value.
   exprt wrap_value(const exprt &e);
 
+  /// PLR §3.1/§3.3: unwrap an Any (`python_value`) *container* receiver to its
+  /// concrete by-reference container lvalue, so the built-in container-method
+  /// handlers (list.append/extend/insert/sort/reverse, dict.setdefault/...)
+  /// dispatch on it and mutate -- and thereby propagate to -- the shared
+  /// object. `method_name` selects the container only when it unambiguously
+  /// belongs to a single built-in type and no user class defines it; otherwise
+  /// `obj` is returned unchanged (so virtual dispatch / the existing paths are
+  /// preserved). Returns `obj` unchanged when it is not a `python_value`.
+  exprt unwrap_any_container_receiver(
+    const exprt &obj,
+    const std::string &method_name);
+
   /// Tag-aware equality of two python_value operands (string content
   /// for STR, scalar payload otherwise). Used to match value-typed
   /// (heterogeneous) dict keys, where declared-type-gated string

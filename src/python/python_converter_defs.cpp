@@ -4166,6 +4166,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
       if(method == "append")
       {
         exprt obj = convert_expression(json_member(func, "value"));
+        obj = unwrap_any_container_receiver(obj, method);
         const jsont &call_args = json_member(value, "args");
         if(
           !obj.is_nil() && is_python_list_type(obj.type()) &&
@@ -4213,6 +4214,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
       else if(method == "insert")
       {
         exprt obj = convert_expression(json_member(func, "value"));
+        obj = unwrap_any_container_receiver(obj, method);
         const jsont &call_args = json_member(value, "args");
         if(
           !obj.is_nil() && is_python_list_type(obj.type()) &&
