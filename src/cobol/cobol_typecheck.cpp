@@ -1353,6 +1353,39 @@ void cobol_typecheckt::parse_data_item()
     return;
   }
 
+  if(level == 66)
+  {
+    // 66 new-name RENAMES item-1 [{THRU|THROUGH} item-2]: an alphanumeric
+    // alias over the contiguous storage from the start of item-1 to the end of
+    // item-2 (IBM LR "RENAMES clause"). It overlays existing storage and does
+    // not take part in the record layout.
+    expect_word("RENAMES");
+    if(cur().kind != cobol_token_kindt::WORD)
+      error("expected a data name after RENAMES");
+    const item_infot first = lookup_item(cur().text);
+    advance();
+    std::size_t start = first.offset;
+    std::size_t end = first.offset + first.byte_size;
+    if(eat_word("THRU") || eat_word("THROUGH"))
+    {
+      if(cur().kind != cobol_token_kindt::WORD)
+        error("expected a data name after RENAMES ... THRU");
+      const item_infot last = lookup_item(cur().text);
+      advance();
+      end = last.offset + last.byte_size;
+    }
+    item_infot info;
+    info.record_symbol = first.record_symbol;
+    info.offset = start;
+    info.byte_size = end > start ? end - start : 1;
+    info.is_numeric = false;
+    info.char_count = info.byte_size;
+    items[name] = info;
+    all_items.push_back(entryt{name, info, {cur_record_base}});
+    expect_period();
+    return;
+  }
+
   std::string pic;
   bool has_pic = false;
   bool has_value = false;

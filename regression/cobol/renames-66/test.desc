@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+A level-66 RENAMES item aliases the storage of the renamed items. See
+IBM LR "RENAMES clause".
