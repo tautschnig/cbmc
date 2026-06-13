@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+INSPECT (TALLYING/REPLACING) and UNSTRING parse and lower; their written
+items are over-approximated. See IBM LR "INSPECT"/"UNSTRING statement".

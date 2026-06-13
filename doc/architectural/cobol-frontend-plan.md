@@ -432,6 +432,24 @@ representation earlier than the one you hold, either move the operation
 earlier or carry forward enough of the earlier representation to
 reconstruct its result.
 
+### Architectural note: character-level verbs over a value model
+
+The storage model is byte-addressed but values are kept in a numeric
+value domain; it does not track the character content that `STRING`,
+`UNSTRING` and `INSPECT` manipulate (concatenation, splitting, counting,
+character replacement). Rather than partially modelling each, these
+verbs share one treatment: **parse the statement fully and havoc the
+items it writes** — `STRING`/`UNSTRING` receivers, `INSPECT TALLYING`
+counters, and an `INSPECT REPLACING`/`CONVERTING` target. This is a
+sound over-approximation (the receiver may hold any value the real
+operation could produce) and keeps these verbs from blocking otherwise
+checkable programs. The same value-domain abstraction is why a numeric
+↔ alphanumeric comparison and a numeric class test are modelled
+nondeterministically. If character content ever needs to be reasoned
+about precisely, the architectural change would be to carry an explicit
+byte/character interpretation alongside the numeric value rather than to
+special-case each verb.
+
 ### Architectural note: a single operand abstraction
 
 A recurring source of failures was that operands were parsed by several

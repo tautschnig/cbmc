@@ -298,10 +298,11 @@ struct paragrapht
 bool is_verb(const std::string &w)
 {
   static const std::set<std::string> verbs = {
-    "MOVE", "ADD",      "SUBTRACT", "MULTIPLY",   "DIVIDE", "COMPUTE",
-    "IF",   "EVALUATE", "PERFORM",  "GO",         "STOP",   "GOBACK",
-    "EXIT", "DISPLAY",  "ACCEPT",   "CONTINUE",   "CALL",   "NEXT",
-    "SET",  "EXEC",     "STRING",   "INITIALIZE", "SEARCH"};
+    "MOVE",     "ADD",        "SUBTRACT", "MULTIPLY", "DIVIDE",
+    "COMPUTE",  "IF",         "EVALUATE", "PERFORM",  "GO",
+    "STOP",     "GOBACK",     "EXIT",     "DISPLAY",  "ACCEPT",
+    "CONTINUE", "CALL",       "NEXT",     "SET",      "EXEC",
+    "STRING",   "INITIALIZE", "SEARCH",   "INSPECT",  "UNSTRING"};
   return verbs.find(w) != verbs.end();
 }
 
@@ -717,6 +718,8 @@ protected:
   stmtt parse_perform();
   std::vector<stmtt> parse_move();
   std::vector<stmtt> parse_string();
+  std::vector<stmtt> parse_inspect();
+  std::vector<stmtt> parse_unstring();
   std::vector<stmtt> parse_search();
   std::vector<stmtt> parse_initialize();
   std::vector<stmtt> parse_add();
@@ -2706,6 +2709,10 @@ std::vector<stmtt> cobol_typecheckt::parse_statement()
     return parse_initialize();
   if(verb == "SEARCH")
     return parse_search();
+  if(verb == "INSPECT")
+    return parse_inspect();
+  if(verb == "UNSTRING")
+    return parse_unstring();
   if(verb == "ADD")
     return parse_add();
   if(verb == "SUBTRACT")
@@ -3096,6 +3103,97 @@ std::vector<stmtt> cobol_typecheckt::parse_search()
   }
   eat_word("END-SEARCH");
   return {s};
+}
+
+std::vector<stmtt> cobol_typecheckt::parse_inspect()
+{
+  // INSPECT identifier {TALLYING ... | REPLACING ... | CONVERTING ...}
+  // (IBM LR "INSPECT statement"). The character-level counting/replacement is
+  // not represented by the value-domain model, so TALLYING counters and a
+  // REPLACING/CONVERTING target are given nondeterministic values (a sound
+  // over-approximation). This follows the same approach as STRING: a
+  // string-manipulation verb is modelled by havocking the items it writes.
+  const source_locationt loc = cur().location;
+  expect_word("INSPECT");
+  eat_word("BACKWARD");
+  const reft item = parse_ref();
+
+  std::vector<stmtt> result;
+  if(eat_word("TALLYING"))
+  {
+    // {counter FOR {ALL|LEADING|CHARACTERS} ...}...: the counter is the item
+    // immediately before FOR. Havoc each counter and skip its FOR phrase.
+    while(is_item_word())
+    {
+      reft counter = parse_ref();
+      result.push_back(havoc_field(counter, loc));
+      if(!eat_word("FOR"))
+        break;
+      while(!is_kind(cobol_token_kindt::PERIOD) && !at_eof() &&
+            !is_word("REPLACING") && !is_word("CONVERTING") &&
+            !(is_item_word() && peek(1).kind == cobol_token_kindt::WORD &&
+              peek(1).text == "FOR"))
+        advance();
+      if(is_word("REPLACING") || is_word("CONVERTING"))
+        break;
+    }
+  }
+  if(eat_word("REPLACING") || eat_word("CONVERTING"))
+  {
+    // The inspected item is rewritten; its new content is not modelled.
+    skip_to_sentence_end();
+    result.push_back(havoc_field(item, loc));
+  }
+  return result;
+}
+
+std::vector<stmtt> cobol_typecheckt::parse_unstring()
+{
+  // UNSTRING source [DELIMITED BY ...] INTO r-1 [DELIMITER IN d-1]
+  //   [COUNT IN c-1] ... [WITH POINTER p] [TALLYING IN t]
+  //   [ON OVERFLOW imp] [END-UNSTRING] (IBM LR "UNSTRING statement"). The
+  // split is not represented exactly, so every receiving item gets a
+  // nondeterministic value (sound over-approximation), as for STRING.
+  const source_locationt loc = cur().location;
+  expect_word("UNSTRING");
+  (void)parse_ref(); // source
+  // Skip the DELIMITED BY phrase up to INTO.
+  while(!at_eof() && !is_word("INTO") && !is_kind(cobol_token_kindt::PERIOD))
+    advance();
+  expect_word("INTO");
+
+  std::vector<stmtt> result;
+  const auto havoc_next_item = [&]()
+  {
+    if(is_item_word())
+      result.push_back(havoc_field(parse_ref(), loc));
+  };
+  // Receiving items and their DELIMITER IN / COUNT IN sub-receivers.
+  while(is_item_word() || is_word("DELIMITER") || is_word("COUNT"))
+  {
+    if(eat_word("DELIMITER") || eat_word("COUNT"))
+    {
+      eat_word("IN");
+      havoc_next_item();
+      continue;
+    }
+    havoc_next_item();
+  }
+  eat_word("WITH");
+  if(eat_word("POINTER"))
+    havoc_next_item();
+  if(eat_word("TALLYING"))
+  {
+    eat_word("IN");
+    havoc_next_item();
+  }
+  // Optional ON OVERFLOW / NOT ON OVERFLOW phrases up to END-UNSTRING.
+  if(is_word("ON") || is_word("NOT") || is_word("OVERFLOW"))
+    while(!at_eof() && !is_word("END-UNSTRING") &&
+          !is_kind(cobol_token_kindt::PERIOD))
+      advance();
+  eat_word("END-UNSTRING");
+  return result;
 }
 
 exprt cobol_typecheckt::size_error_cond(const reft &r, const valuet &v)
