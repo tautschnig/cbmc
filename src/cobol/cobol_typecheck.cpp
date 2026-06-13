@@ -710,6 +710,10 @@ protected:
   std::vector<stmtt> parse_string();
   std::vector<stmtt> parse_inspect();
   std::vector<stmtt> parse_unstring();
+  void parse_overflow_phrase(
+    std::vector<stmtt> &result,
+    const char *end_kw,
+    source_locationt loc);
   std::vector<stmtt> parse_search();
   std::vector<stmtt> parse_initialize();
   std::vector<stmtt> parse_add();
@@ -3041,6 +3045,44 @@ std::vector<stmtt> cobol_typecheckt::parse_move()
   return result;
 }
 
+void cobol_typecheckt::parse_overflow_phrase(
+  std::vector<stmtt> &result,
+  const char *end_kw,
+  source_locationt loc)
+{
+  // [ON OVERFLOW imperative-1] [NOT ON OVERFLOW imperative-2] [END-verb]
+  // (IBM LR "STRING"/"UNSTRING statement", ON OVERFLOW phrase). Whether the
+  // operation overflows depends on character content the value model does not
+  // represent, so the two phrases are guarded by a nondeterministic choice
+  // rather than ignored.
+  std::vector<stmtt> on_overflow;
+  std::vector<stmtt> not_overflow;
+  bool has_phrase = false;
+  if(eat_word("ON") || is_word("OVERFLOW"))
+  {
+    expect_word("OVERFLOW");
+    on_overflow = parse_statements();
+    has_phrase = true;
+  }
+  if(eat_word("NOT"))
+  {
+    eat_word("ON");
+    expect_word("OVERFLOW");
+    not_overflow = parse_statements();
+    has_phrase = true;
+  }
+  eat_word(end_kw);
+  if(!has_phrase)
+    return;
+  stmtt s;
+  s.kind = stmtt::kindt::IFTE;
+  s.location = loc;
+  s.cond = side_effect_expr_nondett{bool_typet{}, loc};
+  s.then_stmts = std::move(on_overflow);
+  s.else_stmts = std::move(not_overflow);
+  result.push_back(std::move(s));
+}
+
 std::vector<stmtt> cobol_typecheckt::parse_string()
 {
   // STRING concatenates the sending operands (each governed by a DELIMITED BY
@@ -3064,14 +3106,7 @@ std::vector<stmtt> cobol_typecheckt::parse_string()
   if(eat_word("POINTER"))
     (void)parse_ref();
 
-  // Optional ON OVERFLOW / NOT ON OVERFLOW phrases: skip to END-STRING when an
-  // explicit scope terminator is present.
-  if(is_word("ON") || is_word("NOT") || is_word("OVERFLOW"))
-    while(!at_eof() && !is_word("END-STRING") &&
-          !is_kind(cobol_token_kindt::PERIOD))
-      advance();
-  eat_word("END-STRING");
-
+  // The receiver content is over-approximated.
   const array_typet bytes_type{
     unsignedbv_typet{8}, from_integer(t.info->byte_size, size_type())};
   stmtt s;
@@ -3080,7 +3115,11 @@ std::vector<stmtt> cobol_typecheckt::parse_string()
   s.lhs = t.record;
   s.rhs = make_byte_update(
     t.record, t.offset, side_effect_expr_nondett{bytes_type, loc});
-  return {s};
+
+  std::vector<stmtt> result{s};
+  // Optional ON OVERFLOW / NOT ON OVERFLOW phrases and END-STRING.
+  parse_overflow_phrase(result, "END-STRING", loc);
+  return result;
 }
 
 std::vector<stmtt> cobol_typecheckt::parse_initialize()
@@ -3351,12 +3390,8 @@ std::vector<stmtt> cobol_typecheckt::parse_unstring()
     eat_word("IN");
     havoc_next_item();
   }
-  // Optional ON OVERFLOW / NOT ON OVERFLOW phrases up to END-UNSTRING.
-  if(is_word("ON") || is_word("NOT") || is_word("OVERFLOW"))
-    while(!at_eof() && !is_word("END-UNSTRING") &&
-          !is_kind(cobol_token_kindt::PERIOD))
-      advance();
-  eat_word("END-UNSTRING");
+  // Optional ON OVERFLOW / NOT ON OVERFLOW phrases and END-UNSTRING.
+  parse_overflow_phrase(result, "END-UNSTRING", loc);
   return result;
 }
 
