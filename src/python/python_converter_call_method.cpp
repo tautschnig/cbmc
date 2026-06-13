@@ -2167,6 +2167,13 @@ std::optional<exprt> python_convertert::try_method_call(
     // dispatch and mutate the shared object.
     obj = unwrap_any_container_receiver(obj, method_name);
 
+    // PLR §3.3: an ambiguous container method (pop / remove / clear / copy /
+    // update) on an Any receiver is disambiguated at runtime on __tag.
+    if(
+      auto r =
+        dispatch_any_container_method_by_tag(expr, obj, method_name, args))
+      return std::move(*r);
+
     // Resolve class name from object's type (struct or pointer-to-struct)
     typet obj_base_type = obj.type();
     if(obj_base_type.id() == ID_pointer)
