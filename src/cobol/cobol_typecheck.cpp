@@ -687,6 +687,9 @@ protected:
   cond_operandt parse_cond_operand();
   bool at_intrinsic() const;
   cond_operandt parse_intrinsic();
+  valuet compute_numeric_intrinsic(
+    const std::string &fname,
+    std::vector<valuet> &args);
   cond_operandt nondet_alnum_operand(std::size_t len);
   exprt
   build_cond_relation(cond_operandt a, const std::string &op, cond_operandt b);
@@ -2278,6 +2281,91 @@ cond_operandt cobol_typecheckt::nondet_alnum_operand(std::size_t len)
   return op;
 }
 
+/// Compute a numeric intrinsic exactly from its arguments (IBM LR "Intrinsic
+/// functions"). \p args is non-empty.
+valuet cobol_typecheckt::compute_numeric_intrinsic(
+  const std::string &fname,
+  std::vector<valuet> &args)
+{
+  const exprt zero = from_integer(0, cobol_value_type());
+
+  if(fname == "ABS")
+  {
+    const valuet &a = args[0];
+    return valuet{
+      if_exprt{
+        binary_relation_exprt{a.expr, ID_ge, zero},
+        a.expr,
+        unary_minus_exprt{a.expr}},
+      a.scale};
+  }
+  if(fname == "MAX" || fname == "MIN")
+  {
+    const irep_idt rel = fname == "MAX" ? ID_ge : ID_le;
+    valuet r = args[0];
+    for(std::size_t i = 1; i < args.size(); ++i)
+    {
+      valuet a = args[i];
+      const std::size_t s = align(r, a);
+      r = valuet{
+        if_exprt{binary_relation_exprt{r.expr, rel, a.expr}, r.expr, a.expr},
+        s};
+    }
+    return r;
+  }
+  if(fname == "SUM")
+  {
+    valuet r = args[0];
+    for(std::size_t i = 1; i < args.size(); ++i)
+    {
+      valuet a = args[i];
+      const std::size_t s = align(r, a);
+      r = valuet{plus_exprt{r.expr, a.expr}, s};
+    }
+    return r;
+  }
+  if(fname == "INTEGER-PART")
+  {
+    // Truncate towards zero (rescaling to scale 0 uses truncating division).
+    return valuet{rescale(args[0].expr, args[0].scale, 0), 0};
+  }
+  if(fname == "INTEGER")
+  {
+    // Greatest integer not greater than the argument (floor).
+    const valuet &a = args[0];
+    if(a.scale == 0)
+      return a;
+    const exprt d = from_integer(power10(a.scale), cobol_value_type());
+    const exprt q = div_exprt{a.expr, d}; // truncates toward zero
+    const exprt rem = mod_exprt{a.expr, d};
+    const exprt needs_floor = and_exprt{
+      binary_relation_exprt{a.expr, ID_lt, zero}, notequal_exprt{rem, zero}};
+    return valuet{
+      if_exprt{
+        needs_floor, minus_exprt{q, from_integer(1, cobol_value_type())}, q},
+      0};
+  }
+  if(fname == "REM" || fname == "MOD")
+  {
+    valuet a = args[0];
+    valuet b = args.size() > 1 ? args[1] : valuet{zero, 0};
+    const std::size_t s = align(a, b);
+    const exprt rem = mod_exprt{a.expr, b.expr}; // truncated remainder
+    if(fname == "REM")
+      return valuet{rem, s};
+    // FUNCTION MOD is a floored modulo: adjust the truncated remainder when it
+    // is nonzero and its sign differs from the divisor's.
+    const exprt signs_differ = notequal_exprt{
+      binary_relation_exprt{rem, ID_lt, zero},
+      binary_relation_exprt{b.expr, ID_lt, zero}};
+    const exprt cond = and_exprt{notequal_exprt{rem, zero}, signs_differ};
+    return valuet{if_exprt{cond, plus_exprt{rem, b.expr}, rem}, s};
+  }
+
+  // Should not reach here for the listed functions.
+  return args[0];
+}
+
 /// Parse a special register / intrinsic-function / CICS-built-in reference and
 /// model its result (IBM LR "LENGTH OF special register" p. 2323, "Intrinsic
 /// functions"; CICS DFHRESP). LENGTH is exact; other numeric results are
@@ -2334,6 +2422,32 @@ cond_operandt cobol_typecheckt::parse_intrinsic()
     fname = cur().text;
     advance();
   }
+
+  // Numeric intrinsics computed exactly from their numeric arguments (IBM LR
+  // "Intrinsic functions"). Their arguments are parsed as operands rather than
+  // skipped.
+  static const std::set<std::string> numeric_exact = {
+    "ABS", "MAX", "MIN", "SUM", "MOD", "REM", "INTEGER", "INTEGER-PART"};
+  if(numeric_exact.count(fname) != 0)
+  {
+    std::vector<valuet> args;
+    if(is_kind(cobol_token_kindt::LPAREN))
+    {
+      advance();
+      while(at_operand())
+        args.push_back(parse_operand());
+      if(is_kind(cobol_token_kindt::RPAREN))
+        advance();
+    }
+    if(!args.empty())
+    {
+      op.numeric = true;
+      op.num = compute_numeric_intrinsic(fname, args);
+      return op;
+    }
+    // No usable arguments: fall through to the nondet result below.
+  }
+
   std::size_t first_item_len = 0;
   bool first_item_len_set = false;
   if(is_kind(cobol_token_kindt::LPAREN))

@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+The numeric intrinsics ABS/MAX/MIN/SUM/MOD/REM/INTEGER/INTEGER-PART are
+computed exactly. See IBM LR "Intrinsic functions".
