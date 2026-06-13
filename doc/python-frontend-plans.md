@@ -229,17 +229,28 @@ write-back boundary then carries the change back. Guarded by
 `any-param-list-append{,-falseproof}`, `any-param-list-extend`,
 `any-param-userclass-method-collision`.
 
-**Remaining gaps in this family.** (1) **Ambiguous method names** shared across
-containers — `pop` / `remove` / `clear` / `copy` / `update` — are *not*
-unwrapped: disambiguating them on an `Any` receiver needs the runtime tag
-(`python_value.__tag`); they retain the prior (often imprecise) behaviour. A
-sound, more general follow-up is a `__tag`-guarded dispatch. (2) **`set`
-arguments** — `make_python_value` has no `SET` tag, so sets reach an `Any`
-parameter via the class/struct wrap; their mutators do not propagate. (3)
-**non-string-keyed dicts** — the `python_value` dict handler assumes string
-keys (`dict[str, value]`), so int-keyed dicts via `Any` neither propagate nor
-crash (sound-imprecise). All three should reuse the same promote+write-back +
-unwrap boundary.
+**Ambiguous method names — RESOLVED via runtime `__tag` dispatch (2026-06-13).**
+Names shared across containers — `pop` / `remove` / `clear` / `copy` /
+`update` — are dispatched by `dispatch_any_container_method_by_tag`: each
+candidate container's handler runs on its by-reference view and its emitted
+effects + result are guarded by `python_value.__tag == <container>` (via
+`guard_pending_checks`), so exactly the live container is mutated at runtime.
+Guarded by `any-param-list-pop{,-falseproof}`, `any-param-dict-pop-clear`,
+`any-param-userclass-pop-collision`.
+
+**`set` arguments — RESOLVED (2026-06-13).** A `SET` tag was added to
+`python_type_tagt`; a set (an element-type-agnostic fixed bitmap struct) is
+shared by direct address via `__class_ptr` (no promotion / write-back needed),
+and the unwrap + `__tag`-dispatch paths gained a set view. `add` / `discard` /
+`remove` / `clear` on an `Any`-typed set now propagate. Guarded by
+`any-param-set-add-discard{,-falseproof}`, `any-param-set-clear-remove`.
+
+**Remaining gap in this family.** **Non-string-keyed dicts** — the
+`python_value` dict handler assumes string keys (`dict[str, value]`), so
+int-keyed dicts via `Any` neither propagate nor crash (sound-imprecise). This
+should reuse the same promote+write-back + unwrap boundary with a value-keyed
+canonical layout (gated, since value keys reintroduce the string-behind-pointer
+cost noted in [#dict-byref](#dict-byref)).
 
 ### Earlier triage history (2026-06-08)
 
