@@ -2507,6 +2507,20 @@ exprt python_convertert::python_truthiness(const exprt &e)
   return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
 }
 
+bool python_convertert::any_user_class_defines_method(
+  const std::string &method_name)
+{
+  for(const auto &[cls_name, cls_type] : class_types)
+  {
+    (void)cls_type;
+    const symbolt *msym =
+      symbol_table.lookup(irep_idt{"python::" + cls_name + "::" + method_name});
+    if(msym != nullptr && msym->type.id() == ID_code)
+      return true;
+  }
+  return false;
+}
+
 exprt python_convertert::unwrap_any_container_receiver(
   const exprt &obj,
   const std::string &method_name)
@@ -2517,7 +2531,8 @@ exprt python_convertert::unwrap_any_container_receiver(
   // Methods that unambiguously belong to a single built-in container type.
   // Ambiguous names shared across containers (pop / remove / clear / copy /
   // update / count) are intentionally excluded: disambiguating them on an
-  // Any receiver needs the runtime tag, which is not modelled here.
+  // Any receiver needs the runtime tag (see
+  // dispatch_any_container_method_by_tag).
   static const std::set<std::string> list_only = {
     "append", "extend", "insert", "sort", "reverse"};
   static const std::set<std::string> dict_only = {
@@ -2530,14 +2545,8 @@ exprt python_convertert::unwrap_any_container_receiver(
 
   // If a user class defines this method, it is not a built-in container
   // method on this receiver -- leave it for the virtual-dispatch path.
-  for(const auto &[cls_name, cls_type] : class_types)
-  {
-    (void)cls_type;
-    const symbolt *msym =
-      symbol_table.lookup(irep_idt{"python::" + cls_name + "::" + method_name});
-    if(msym != nullptr && msym->type.id() == ID_code)
-      return obj;
-  }
+  if(any_user_class_defines_method(method_name))
+    return obj;
 
   // Unwrap to the concrete, by-reference container lvalue. The container is
   // shared via __list_ptr / __class_ptr (see make_python_value), so methods
@@ -2550,6 +2559,84 @@ exprt python_convertert::unwrap_any_container_receiver(
   return dereference_exprt{
     typecast_exprt{python_value_class_ptr(obj), pointer_typet{dict_type, 64}},
     dict_type};
+}
+
+std::optional<exprt> python_convertert::dispatch_any_container_method_by_tag(
+  const jsont &expr,
+  const exprt &obj,
+  const std::string &method_name,
+  const jsont &args)
+{
+  if(!is_python_value_type(obj.type()))
+    return std::nullopt;
+
+  // Names shared across more than one built-in container. Disambiguated here
+  // at runtime via python_value.__tag.
+  static const std::set<std::string> ambiguous = {
+    "pop", "remove", "clear", "copy", "update"};
+  if(!ambiguous.count(method_name))
+    return std::nullopt;
+  if(any_user_class_defines_method(method_name))
+    return std::nullopt;
+
+  // A shared temp holds the method result on whichever branch is live; it is
+  // left nondet when the runtime tag is neither LIST nor DICT (e.g. the value
+  // is something on which this method would raise at runtime).
+  static unsigned ctr = 0;
+  const irep_idt tid{qualify_name("__any_meth_" + std::to_string(ctr++))};
+  if(symbol_table.lookup(tid) == nullptr)
+  {
+    symbolt ts{tid, python_value_type(), "python"};
+    ts.base_name = id2string(tid);
+    ts.is_lvalue = true;
+    ts.is_state_var = true;
+    ts.is_static_lifetime = current_function.empty();
+    symbol_table.add(ts);
+  }
+  const symbol_exprt result_sym = symbol_table.lookup_ref(tid).symbol_expr();
+
+  bool any_branch = false;
+
+  // Run a container handler on its by-reference view, then guard everything it
+  // emitted (effects + result assignment) by __tag == tag so it only fires
+  // when that container is the live one.
+  auto run_branch =
+    [&](const exprt &view, const typet &view_type, python_type_tagt tag)
+  {
+    const std::size_t before = pending_checks.size();
+    std::optional<exprt> r;
+    if(is_python_list_type(view_type))
+      r = try_list_method(expr, view, view_type, method_name, args);
+    else if(is_python_dict_type(view_type))
+      r = try_dict_method(expr, view, view_type, method_name, args);
+    if(!r.has_value())
+    {
+      // Handler declined: drop anything it may have emitted.
+      pending_checks.erase(
+        pending_checks.begin() + before, pending_checks.end());
+      return;
+    }
+    exprt res = *r;
+    if(!is_python_value_type(res.type()))
+      res = wrap_value(res);
+    pending_checks.push_back(code_frontend_assignt{result_sym, res});
+    guard_pending_checks(before, python_value_is(obj, tag));
+    any_branch = true;
+  };
+
+  const typet list_type = python_list_type(python_value_type());
+  run_branch(python_value_list(obj), list_type, python_type_tagt::LIST);
+
+  const typet dict_type =
+    python_dict_type(python_string_type(), python_value_type());
+  const exprt dict_view = dereference_exprt{
+    typecast_exprt{python_value_class_ptr(obj), pointer_typet{dict_type, 64}},
+    dict_type};
+  run_branch(dict_view, dict_type, python_type_tagt::DICT);
+
+  if(!any_branch)
+    return std::nullopt;
+  return result_sym;
 }
 
 exprt python_convertert::wrap_value(const exprt &e)

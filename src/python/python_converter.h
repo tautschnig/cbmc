@@ -1499,6 +1499,25 @@ private:
     const exprt &obj,
     const std::string &method_name);
 
+  /// True iff some user class defines a method named \p method_name (so an
+  /// ambiguous/builtin name on an Any receiver should go to virtual dispatch
+  /// rather than be treated as a built-in container method).
+  bool any_user_class_defines_method(const std::string &method_name);
+
+  /// PLR §3.3: dispatch a container method whose name is shared across built-in
+  /// containers (pop / remove / clear / copy / update) on an Any
+  /// (`python_value`) receiver, by branching on the runtime `__tag`. Each
+  /// candidate container's handler runs on its by-reference view and its
+  /// emitted effects are guarded by `__tag == <that container>`, so exactly
+  /// the live container is mutated (and its element/None result selected).
+  /// Returns std::nullopt when \p obj is not a `python_value`, when the method
+  /// is not an ambiguous container method, or when a user class defines it.
+  std::optional<exprt> dispatch_any_container_method_by_tag(
+    const jsont &expr,
+    const exprt &obj,
+    const std::string &method_name,
+    const jsont &args);
+
   /// Tag-aware equality of two python_value operands (string content
   /// for STR, scalar payload otherwise). Used to match value-typed
   /// (heterogeneous) dict keys, where declared-type-gated string
