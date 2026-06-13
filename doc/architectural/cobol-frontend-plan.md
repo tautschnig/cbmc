@@ -479,6 +479,22 @@ ERROR` / `END-verb` and wraps the assignments in a conditional on the
 overflow condition. Rounding is applied in `encode_numeric` (round half
 away from zero when discarding fractional digits).
 
+### Architectural note: conditional-imperative phrases
+
+Several verbs carry an *exception-condition imperative* with the same
+shape — an optional `<condition>` clause, an optional `NOT <condition>`
+clause, and a scope terminator — that lowers to a conditional:
+`ON SIZE ERROR` (arithmetic), `ON OVERFLOW` (STRING/UNSTRING), `AT END` /
+`WHEN` (SEARCH). They differ only in the guard. When the guard is
+computable from the value domain it is built exactly (arithmetic
+size-error via `size_error_cond` in `finish_arith`); when it depends on
+character content the model abstracts it is a nondeterministic Boolean
+(`parse_overflow_phrase` for STRING/UNSTRING), so both the exception and
+the normal path stay reachable rather than the exception imperative
+becoming dead code. New such phrases (e.g. file `INVALID KEY` / `AT END`)
+should reuse this shape: parse the two imperatives and a terminator, then
+emit one conditional with the appropriate guard.
+
 The MOVE source parser, previously the last bespoke operand path, now
 also goes through `parse_cond_operand`. Doing so surfaced a latent
 classification bug: the operand parser decided *numeric vs
