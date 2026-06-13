@@ -2507,6 +2507,51 @@ exprt python_convertert::python_truthiness(const exprt &e)
   return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
 }
 
+exprt python_convertert::unwrap_any_container_receiver(
+  const exprt &obj,
+  const std::string &method_name)
+{
+  if(!is_python_value_type(obj.type()))
+    return obj;
+
+  // Methods that unambiguously belong to a single built-in container type.
+  // Ambiguous names shared across containers (pop / remove / clear / copy /
+  // update / count) are intentionally excluded: disambiguating them on an
+  // Any receiver needs the runtime tag, which is not modelled here.
+  static const std::set<std::string> list_only = {
+    "append", "extend", "insert", "sort", "reverse"};
+  static const std::set<std::string> dict_only = {
+    "setdefault", "popitem", "keys", "values", "items"};
+
+  const bool is_list = list_only.count(method_name) > 0;
+  const bool is_dict = dict_only.count(method_name) > 0;
+  if(!is_list && !is_dict)
+    return obj;
+
+  // If a user class defines this method, it is not a built-in container
+  // method on this receiver -- leave it for the virtual-dispatch path.
+  for(const auto &[cls_name, cls_type] : class_types)
+  {
+    (void)cls_type;
+    const symbolt *msym =
+      symbol_table.lookup(irep_idt{"python::" + cls_name + "::" + method_name});
+    if(msym != nullptr && msym->type.id() == ID_code)
+      return obj;
+  }
+
+  // Unwrap to the concrete, by-reference container lvalue. The container is
+  // shared via __list_ptr / __class_ptr (see make_python_value), so methods
+  // that mutate the returned lvalue propagate to the caller's object.
+  if(is_list)
+    return python_value_list(obj);
+
+  const typet dict_type =
+    python_dict_type(python_string_type(), python_value_type());
+  return dereference_exprt{
+    typecast_exprt{python_value_class_ptr(obj), pointer_typet{dict_type, 64}},
+    dict_type};
+}
+
 exprt python_convertert::wrap_value(const exprt &e)
 {
   if(is_python_value_type(e.type()))

@@ -2161,6 +2161,12 @@ std::optional<exprt> python_convertert::try_method_call(
     if(obj.is_nil())
       return nil_exprt{};
 
+    // PLR §3.1/§3.3: an Any (python_value) receiver of an unambiguous built-in
+    // container method is a list/dict shared by reference -- unwrap it to the
+    // concrete container lvalue so the container-method handlers below
+    // dispatch and mutate the shared object.
+    obj = unwrap_any_container_receiver(obj, method_name);
+
     // Resolve class name from object's type (struct or pointer-to-struct)
     typet obj_base_type = obj.type();
     if(obj_base_type.id() == ID_pointer)
