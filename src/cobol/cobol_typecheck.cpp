@@ -4131,13 +4131,66 @@ stmtt cobol_typecheckt::parse_evaluate()
   s.location = cur().location;
   expect_word("EVALUATE");
 
-  // Single-subject EVALUATE (IBM LR "EVALUATE statement"). The subject is
-  // either the word TRUE (each WHEN is a condition) or a (numeric or
-  // alphanumeric) operand that each WHEN is compared against for equality.
-  const bool subject_true = eat_word("TRUE");
-  cond_operandt subject;
-  if(!subject_true)
-    subject = parse_cond_operand();
+  // EVALUATE supports several selection subjects separated by ALSO; each WHEN
+  // lists one selection object per subject, also separated by ALSO, and
+  // matches when every object matches its subject (IBM LR "EVALUATE
+  // statement"). A subject is the constant TRUE/FALSE (its objects are
+  // conditions) or an operand (its objects are values compared for equality or
+  // a THRU range).
+  struct subjectt
+  {
+    bool is_const = false; ///< subject is the word TRUE or FALSE
+    bool value = true;     ///< TRUE -> true, FALSE -> false
+    cond_operandt operand; ///< when !is_const
+  };
+  const auto parse_subject = [&]()
+  {
+    subjectt sub;
+    if(eat_word("TRUE"))
+    {
+      sub.is_const = true;
+      sub.value = true;
+    }
+    else if(eat_word("FALSE"))
+    {
+      sub.is_const = true;
+      sub.value = false;
+    }
+    else
+      sub.operand = parse_cond_operand();
+    return sub;
+  };
+
+  std::vector<subjectt> subjects;
+  subjects.push_back(parse_subject());
+  while(eat_word("ALSO"))
+    subjects.push_back(parse_subject());
+
+  // Build the condition for one selection object against its subject.
+  const auto parse_object = [&](const subjectt &subj) -> exprt
+  {
+    if(eat_word("ANY"))
+      return true_exprt{};
+    if(subj.is_const)
+    {
+      // The object is a condition; match it against the subject's truth value.
+      const exprt c = parse_condition();
+      return subj.value ? c : static_cast<exprt>(not_exprt{c});
+    }
+    const bool neg = eat_word("NOT");
+    cond_operandt w = parse_cond_operand();
+    exprt c;
+    if(eat_word("THRU") || eat_word("THROUGH"))
+    {
+      cond_operandt hi = parse_cond_operand();
+      c = and_exprt{
+        build_cond_relation(subj.operand, ">=", w),
+        build_cond_relation(subj.operand, "<=", hi)};
+    }
+    else
+      c = build_cond_relation(subj.operand, "=", w);
+    return neg ? static_cast<exprt>(not_exprt{c}) : c;
+  };
 
   while(eat_word("WHEN"))
   {
@@ -4146,32 +4199,16 @@ stmtt cobol_typecheckt::parse_evaluate()
       s.other_stmts = parse_statements();
       continue;
     }
-    exprt cond;
-    if(subject_true)
+    // One object per subject, separated by ALSO; the WHEN matches when all
+    // objects match (logical AND).
+    exprt cond = parse_object(subjects[0]);
+    for(std::size_t i = 1; i < subjects.size(); ++i)
     {
-      cond = parse_condition();
-    }
-    else if(is_word("ANY"))
-    {
-      advance();
-      cond = true_exprt{};
-    }
-    else
-    {
-      cond_operandt w = parse_cond_operand();
-      if(eat_word("THRU") || eat_word("THROUGH"))
-      {
-        // WHEN low THRU high: subject in [low, high].
-        cond_operandt hi = parse_cond_operand();
-        cond = and_exprt{
-          build_cond_relation(subject, ">=", w),
-          build_cond_relation(subject, "<=", hi)};
-      }
-      else
-        cond = build_cond_relation(subject, "=", w);
+      expect_word("ALSO");
+      cond = and_exprt{cond, parse_object(subjects[i])};
     }
     std::vector<stmtt> body = parse_statements();
-    s.when_clauses.emplace_back(cond, std::move(body));
+    s.when_clauses.emplace_back(std::move(cond), std::move(body));
   }
   eat_word("END-EVALUATE");
   return s;
