@@ -309,29 +309,16 @@ bool is_verb(const std::string &w)
 bool is_pic_stop_word(const std::string &w)
 {
   static const std::set<std::string> s = {
-    "VALUE",
-    "VALUES",
-    "USAGE",
-    "OCCURS",
-    "REDEFINES",
-    "COMP",
-    "COMP-1",
-    "COMP-2",
-    "COMP-3",
-    "COMP-4",
-    "COMP-5",
-    "BINARY",
-    "PACKED-DECIMAL",
-    "DISPLAY",
-    "SIGN",
-    "SYNC",
-    "SYNCHRONIZED",
-    "JUSTIFIED",
-    "JUST",
-    "BLANK",
-    "PIC",
-    "PICTURE",
-    "IS"};
+    "VALUE",          "VALUES",       "USAGE",
+    "OCCURS",         "REDEFINES",    "COMP",
+    "COMP-1",         "COMP-2",       "COMP-3",
+    "COMP-4",         "COMP-5",       "BINARY",
+    "PACKED-DECIMAL", "DISPLAY",      "SIGN",
+    "SYNC",           "SYNCHRONIZED", "JUSTIFIED",
+    "JUST",           "BLANK",        "PIC",
+    "PICTURE",        "IS",           "INDEXED",
+    "ASCENDING",      "DESCENDING",   "KEY",
+    "DEPENDING"};
   return s.find(w) != s.end();
 }
 
@@ -2972,24 +2959,46 @@ std::vector<stmtt> cobol_typecheckt::parse_initialize()
   spaces.kind = value_spect::kindt::SPACES;
 
   std::vector<stmtt> result;
-  for(const reft &t : targets)
+
+  // Emit the category-default assignment(s) for one elementary field `info`
+  // contained in target `t`. A field inside one or more OCCURS is initialised
+  // for *every* occurrence (IBM LR "INITIALIZE statement": all occurrences of
+  // a table element are affected), enumerating the OCCURS dimensions that lie
+  // within the target. Enumeration is capped; a larger table's later
+  // occurrences are left unconstrained (sound: nondet over-approximates the
+  // category default).
+  const auto init_field = [&](const item_infot &info, const reft &t)
   {
-    // Initialise the elementary fields contained in the receiver. The byte
-    // offset of each child relative to the (possibly subscripted) receiver
-    // base is preserved.
-    bool any_child = false;
-    for(const entryt &e : all_items)
-    {
-      const item_infot &info = e.info;
+    // Dimensions (count, stride) nested within the target: enclosing OCCURS
+    // groups inside t, plus the field's own OCCURS if any.
+    std::vector<std::pair<std::size_t, std::size_t>> dims;
+    for(std::size_t dim : info.occurs_dims)
       if(
-        info.is_group || info.record_symbol != t.info->record_symbol ||
-        info.offset < t.info->offset ||
-        info.offset >= t.info->offset + t.info->byte_size)
-        continue;
-      any_child = true;
-      const exprt offset = plus_exprt{
-        t.offset, from_integer(info.offset - t.info->offset, size_type())};
-      // make_assign_ref needs the record expression; supply it here.
+        dim < all_items.size() &&
+        all_items[dim].info.offset >= t.info->offset &&
+        all_items[dim].info.offset < t.info->offset + t.info->byte_size)
+        dims.push_back(
+          {std::max<std::size_t>(all_items[dim].info.occurs, 1),
+           all_items[dim].info.byte_size});
+    if(info.is_table)
+      dims.push_back({std::max<std::size_t>(info.occurs, 1), info.byte_size});
+
+    std::size_t total = 1;
+    for(const auto &d : dims)
+      total *= d.first;
+    static const std::size_t cap = 4096;
+    if(total > cap)
+      total = 1; // too large to enumerate; initialise the first occurrence
+
+    const std::size_t base = info.offset - t.info->offset;
+    std::vector<std::size_t> ix(dims.size(), 0);
+    for(std::size_t n = 0; n < total; ++n)
+    {
+      std::size_t delta = 0;
+      for(std::size_t i = 0; i < dims.size(); ++i)
+        delta += ix[i] * dims[i].second;
+      const exprt offset =
+        plus_exprt{t.offset, from_integer(base + delta, size_type())};
       if(info.is_numeric)
         result.push_back(make_assign_ref(
           reft{&info, t.record, offset},
@@ -3005,24 +3014,32 @@ std::vector<stmtt> cobol_typecheckt::parse_initialize()
           t.record, offset, make_alnum_constant(spaces, info.byte_size));
         result.push_back(s);
       }
-    }
-    if(!any_child)
-    {
-      // The receiver is itself an elementary item.
-      if(t.info->is_numeric)
-        result.push_back(make_assign_ref(
-          t, valuet{from_integer(0, cobol_value_type()), t.info->scale}, loc));
-      else
+      for(std::size_t i = dims.size(); i-- > 0;)
       {
-        stmtt s;
-        s.kind = stmtt::kindt::ASSIGN;
-        s.location = loc;
-        s.lhs = t.record;
-        s.rhs = make_byte_update(
-          t.record, t.offset, make_alnum_constant(spaces, t.info->byte_size));
-        result.push_back(s);
+        if(++ix[i] < dims[i].first)
+          break;
+        ix[i] = 0;
       }
     }
+  };
+
+  for(const reft &t : targets)
+  {
+    // Initialise the elementary fields contained in the receiver.
+    bool any_child = false;
+    for(const entryt &e : all_items)
+    {
+      const item_infot &info = e.info;
+      if(
+        info.is_group || info.record_symbol != t.info->record_symbol ||
+        info.offset < t.info->offset ||
+        info.offset >= t.info->offset + t.info->byte_size)
+        continue;
+      any_child = true;
+      init_field(info, t);
+    }
+    if(!any_child)
+      init_field(*t.info, t); // the receiver is itself elementary
   }
   return result;
 }
@@ -3605,21 +3622,48 @@ std::vector<stmtt> cobol_typecheckt::parse_set()
   const source_locationt loc = cur().location;
   expect_word("SET");
 
-  // Collect target names up to TO.
+  // Collect target names up to TO / UP / DOWN.
   std::vector<std::string> targets;
-  while(cur().kind == cobol_token_kindt::WORD && !is_word("TO"))
+  while(cur().kind == cobol_token_kindt::WORD && !is_word("TO") &&
+        !is_word("UP") && !is_word("DOWN"))
   {
     targets.push_back(cur().text);
     advance();
   }
+
+  std::vector<stmtt> result;
+
+  // SET index-name ... {UP | DOWN} BY n: increment/decrement each index
+  // (IBM LR "SET statement", format 4).
+  if(is_word("UP") || is_word("DOWN"))
+  {
+    const bool up = is_word("UP");
+    advance();
+    eat_word("BY");
+    valuet n = parse_operand();
+    for(const std::string &t : targets)
+    {
+      auto it = items.find(t);
+      if(it == items.end() || !it->second.is_numeric)
+        continue;
+      const reft r = ref_of(it->second);
+      valuet cur_v = read_field(r);
+      valuet step = n;
+      align(cur_v, step);
+      const exprt e =
+        up ? static_cast<exprt>(plus_exprt{cur_v.expr, step.expr})
+           : static_cast<exprt>(minus_exprt{cur_v.expr, step.expr});
+      result.push_back(make_assign_ref(r, valuet{e, cur_v.scale}, loc));
+    }
+    return result;
+  }
+
   if(!eat_word("TO"))
   {
     // Unrecognised SET form (e.g. SET ADDRESS OF ...): no-op.
     skip_to_sentence_end();
     return {};
   }
-
-  std::vector<stmtt> result;
 
   if(eat_word("TRUE"))
   {
