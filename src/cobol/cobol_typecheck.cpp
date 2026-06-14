@@ -72,6 +72,31 @@ mp_integer rescale_int(const mp_integer &v, std::size_t from, std::size_t to)
   return v / power10(from - to);
 }
 
+/// Physical encoding of a numeric item (IBM LR "USAGE clause"). The byte
+/// *size* per usage is given by phys_size_of; this records how the value is
+/// laid out within those bytes so that byte-level observation (a REDEFINES of
+/// a different category, a class condition) can be faithful.
+enum class usaget
+{
+  DISPLAY,       ///< zoned external decimal: one byte per digit
+  PACKED,        ///< COMP-3 / PACKED-DECIMAL: two digits per byte + sign nibble
+  BINARY,        ///< COMP / COMP-4 / BINARY: two's complement, picture-bounded
+  NATIVE_BINARY, ///< COMP-5: native binary, full bit-width (no decimal trunc)
+  FLOAT_SHORT,   ///< COMP-1
+  FLOAT_LONG     ///< COMP-2
+};
+
+/// Sign representation of a numeric item (IBM LR "SIGN clause"). For DISPLAY,
+/// the default is a trailing overpunch on the last digit byte.
+enum class signt
+{
+  UNSIGNED,
+  OVERPUNCH_TRAILING,
+  OVERPUNCH_LEADING,
+  SEPARATE_TRAILING,
+  SEPARATE_LEADING
+};
+
 /// Description of an elementary data item.
 struct item_infot
 {
@@ -84,8 +109,10 @@ struct item_infot
   std::size_t scale = 0;
   bool is_signed = false;
   std::size_t char_count = 0;
-  bool is_table = false;  ///< has a fixed OCCURS clause
-  std::size_t occurs = 0; ///< number of elements when is_table
+  bool is_table = false;          ///< has a fixed OCCURS clause
+  std::size_t occurs = 0;         ///< number of elements when is_table
+  usaget usage = usaget::DISPLAY; ///< physical encoding (USAGE clause)
+  signt sign = signt::UNSIGNED;   ///< sign representation (SIGN clause)
   /// Indices into all_items of the enclosing OCCURS groups (outermost first);
   /// each is a subscript dimension whose stride is the group's byte_size.
   std::vector<std::size_t> occurs_dims;
@@ -147,6 +174,26 @@ inline std::size_t phys_size_of(
   if(usage == "COMP-2" || usage == "COMPUTATIONAL-2")
     return 8;
   return digits == 0 ? 1 : digits; // DISPLAY external decimal
+}
+
+/// Map a USAGE keyword to the physical encoding kind (IBM LR "USAGE clause").
+inline usaget usage_of(const std::string &usage)
+{
+  if(
+    usage == "COMP-3" || usage == "PACKED-DECIMAL" || usage == "COMP-6" ||
+    usage == "COMPUTATIONAL-3")
+    return usaget::PACKED;
+  if(usage == "COMP-5" || usage == "COMPUTATIONAL-5")
+    return usaget::NATIVE_BINARY;
+  if(usage == "COMP-1" || usage == "COMPUTATIONAL-1")
+    return usaget::FLOAT_SHORT;
+  if(usage == "COMP-2" || usage == "COMPUTATIONAL-2")
+    return usaget::FLOAT_LONG;
+  if(
+    usage == "COMP" || usage == "COMP-4" || usage == "BINARY" ||
+    usage == "COMPUTATIONAL" || usage == "COMPUTATIONAL-4")
+    return usaget::BINARY;
+  return usaget::DISPLAY;
 }
 
 /// 88-level condition name: value ranges/values over its parent item.
@@ -729,6 +776,8 @@ protected:
     bool has_pic,
     const std::string &pic,
     const std::string &usage,
+    bool sign_leading,
+    bool sign_separate,
     bool is_table,
     std::size_t occurs,
     const std::string &redefines_target,
@@ -1533,6 +1582,8 @@ void cobol_typecheckt::parse_data_item()
   bool is_table = false;
   std::size_t occurs = 0;
   std::string usage = "DISPLAY";
+  bool sign_leading = false;  ///< SIGN IS LEADING (default TRAILING)
+  bool sign_separate = false; ///< SIGN ... SEPARATE [CHARACTER]
   std::string redefines_target;
   value_spect value_spec;
 
@@ -1630,9 +1681,25 @@ void cobol_typecheckt::parse_data_item()
             !is_clause_keyword(cur().text))
         advance();
     }
+    else if(is_word("SIGN") || is_word("LEADING") || is_word("TRAILING"))
+    {
+      // [SIGN IS] {LEADING | TRAILING} [SEPARATE CHARACTER] (IBM LR "SIGN
+      // clause"). The SIGN keyword is optional; default is TRAILING overpunch.
+      eat_word("SIGN");
+      eat_word("IS");
+      if(eat_word("LEADING"))
+        sign_leading = true;
+      else if(eat_word("TRAILING"))
+        sign_leading = false;
+      if(eat_word("SEPARATE"))
+      {
+        sign_separate = true;
+        eat_word("CHARACTER");
+      }
+    }
     else
     {
-      // SIGN / SYNC / JUSTIFIED / ... : consume one token.
+      // SYNC / JUSTIFIED / BLANK WHEN ZERO / ... : consume one token.
       advance();
     }
   }
@@ -1644,6 +1711,8 @@ void cobol_typecheckt::parse_data_item()
     has_pic,
     pic,
     usage,
+    sign_leading,
+    sign_separate,
     is_table,
     occurs,
     redefines_target,
@@ -1682,6 +1751,8 @@ void cobol_typecheckt::place_field(
   bool has_pic,
   const std::string &pic,
   const std::string &usage,
+  bool sign_leading,
+  bool sign_separate,
   bool is_table,
   std::size_t occurs,
   const std::string &redefines_target,
@@ -1757,6 +1828,17 @@ void cobol_typecheckt::place_field(
   info.is_signed = is_signed;
   info.char_count = char_count;
   info.byte_size = phys_size_of(usage, is_numeric, digits, char_count);
+  // Record the physical encoding and sign representation (IBM LR "USAGE
+  // clause" / "SIGN clause") so byte-level observation can be faithful.
+  info.usage = usage_of(usage);
+  if(!is_signed)
+    info.sign = signt::UNSIGNED;
+  else if(sign_separate)
+    info.sign =
+      sign_leading ? signt::SEPARATE_LEADING : signt::SEPARATE_TRAILING;
+  else
+    info.sign =
+      sign_leading ? signt::OVERPUNCH_LEADING : signt::OVERPUNCH_TRAILING;
 
   const std::size_t total = info.byte_size * (is_table ? occurs : 1);
   record_max = std::max(record_max, base_offset + total);
