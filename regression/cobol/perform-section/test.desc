@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+PERFORM section-name runs all paragraphs of the section. See IBM LR
+"PERFORM statement".

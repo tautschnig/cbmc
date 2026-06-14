@@ -295,6 +295,10 @@ struct paragrapht
 {
   std::string name;
   std::vector<stmtt> statements;
+  /// true if this entry is a SECTION header (vs a paragraph). A PERFORM of a
+  /// section-name runs through the last paragraph of the section, not just the
+  /// section header's own statements (IBM LR "PERFORM statement").
+  bool is_section = false;
 };
 
 bool is_verb(const std::string &w)
@@ -674,6 +678,10 @@ protected:
   const item_infot &
   resolve_item(const std::string &name, const std::vector<std::string> &quals);
   std::size_t paragraph_index(const std::string &name);
+  /// Last paragraph index of the range denoted by \p name: the item's own
+  /// index for a paragraph, or the section's last paragraph for a section name
+  /// (IBM LR "PERFORM statement").
+  std::size_t range_end(const std::string &name);
 
   // ---- byte-level storage helpers ----
   typet record_type(const irep_idt &record) const;
@@ -1060,6 +1068,20 @@ std::size_t cobol_typecheckt::paragraph_index(const std::string &name)
     if(paragraphs[i].name == name)
       return i;
   error("unknown paragraph '" + name + "'");
+}
+
+std::size_t cobol_typecheckt::range_end(const std::string &name)
+{
+  const std::size_t i = paragraph_index(name);
+  if(!paragraphs[i].is_section)
+    return i;
+  // A section runs through the paragraph just before the next section header
+  // (IBM LR "PERFORM statement": performing a section-name executes all of its
+  // paragraphs).
+  for(std::size_t j = i + 1; j < paragraphs.size(); ++j)
+    if(paragraphs[j].is_section)
+      return j - 1;
+  return paragraphs.size() - 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -4891,9 +4913,10 @@ void cobol_typecheckt::parse_procedure_division()
     {
       const std::string name = cur().text;
       advance();
+      const bool is_section = is_word("SECTION");
       eat_word("SECTION");
       expect_period();
-      paragraphs.push_back(paragrapht{name, {}});
+      paragraphs.push_back(paragrapht{name, {}, is_section});
       continue;
     }
     if(cur().kind == cobol_token_kindt::WORD && is_verb(cur().text))
@@ -5097,7 +5120,7 @@ void cobol_typecheckt::gen_perform_invocation(
 
   const std::size_t start = paragraph_index(s.target);
   const std::size_t end =
-    s.target_end.empty() ? start : paragraph_index(s.target_end);
+    range_end(s.target_end.empty() ? s.target : s.target_end);
   if(end < start)
     error("PERFORM THRU range ends before it starts");
 
