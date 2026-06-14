@@ -55,231 +55,254 @@ python_convertert::infer_return_type_from_body(
     {
       if(is_node_type(s, "Return"))
       {
-        const jsont &rv = json_member(s, "value");
-        if(!rv.is_null())
+        const jsont &rv_top = json_member(s, "value");
+        if(!rv_top.is_null())
         {
           result.has_value_return = true;
-          bool this_is_none = false;
-          if(
-            (is_node_type(rv, "Constant") &&
-             json_member(rv, "value").is_null()) ||
-            (is_node_type(rv, "Name") &&
-             json_string(json_member(rv, "id")) == "None"))
+          // A conditional-expression return (`a if cond else b`) returns `a`
+          // on one path and `b` on another; flatten nested IfExp into leaf
+          // return-values so each arm contributes to the inferred type. PLR
+          // §3.2: otherwise `C() if c else None` is an unrecognised form that
+          // defaults to int, erasing None so the None path is never explored
+          // (a false-proof vector). A non-IfExp return is a single leaf.
+          std::vector<const jsont *> rv_leaves;
+          std::function<void(const jsont &)> collect_rv = [&](const jsont &e)
           {
-            has_none_return = true;
-            this_is_none = true;
-          }
-          // `return ClassName(...)`, or `return cls(...)` in a
-          // classmethod (cls constructs the enclosing class).
-          if(
-            is_node_type(rv, "Call") &&
-            is_node_type(json_member(rv, "func"), "Name"))
-          {
-            std::string call_name =
-              json_string(json_member(json_member(rv, "func"), "id"));
-            const typet *this_type = nullptr;
-            if(class_types.count(call_name))
-              this_type = &class_types[call_name];
-            else if(
-              call_name == "cls" && !enclosing_class.empty() &&
-              class_types.count(enclosing_class))
-              this_type = &class_types[enclosing_class];
-            if(this_type != nullptr)
+            if(is_node_type(e, "IfExp"))
             {
+              collect_rv(json_member(e, "body"));
+              collect_rv(json_member(e, "orelse"));
+            }
+            else
+              rv_leaves.push_back(&e);
+          };
+          collect_rv(rv_top);
+          for(const jsont *rv_ptr : rv_leaves)
+          {
+            const jsont &rv = *rv_ptr;
+            bool this_is_none = false;
+            if(
+              (is_node_type(rv, "Constant") &&
+               json_member(rv, "value").is_null()) ||
+              (is_node_type(rv, "Name") &&
+               json_string(json_member(rv, "id")) == "None"))
+            {
+              has_none_return = true;
+              this_is_none = true;
+            }
+            // `return ClassName(...)`, or `return cls(...)` in a
+            // classmethod (cls constructs the enclosing class).
+            if(
+              is_node_type(rv, "Call") &&
+              is_node_type(json_member(rv, "func"), "Name"))
+            {
+              std::string call_name =
+                json_string(json_member(json_member(rv, "func"), "id"));
+              const typet *this_type = nullptr;
+              if(class_types.count(call_name))
+                this_type = &class_types[call_name];
+              else if(
+                call_name == "cls" && !enclosing_class.empty() &&
+                class_types.count(enclosing_class))
+                this_type = &class_types[enclosing_class];
+              if(this_type != nullptr)
+              {
+                if(return_type.id() == ID_empty)
+                  return_type = *this_type;
+                else if(return_type != *this_type)
+                  return_type = python_value_type();
+              }
+            }
+            // `return self` → the enclosing class (builder pattern).
+            if(
+              !enclosing_class.empty() && is_node_type(rv, "Name") &&
+              json_string(json_member(rv, "id")) == "self" &&
+              class_types.count(enclosing_class))
+            {
+              typet this_type = class_types[enclosing_class];
               if(return_type.id() == ID_empty)
-                return_type = *this_type;
-              else if(return_type != *this_type)
+                return_type = this_type;
+              else if(return_type != this_type)
                 return_type = python_value_type();
             }
-          }
-          // `return self` → the enclosing class (builder pattern).
-          if(
-            !enclosing_class.empty() && is_node_type(rv, "Name") &&
-            json_string(json_member(rv, "id")) == "self" &&
-            class_types.count(enclosing_class))
-          {
-            typet this_type = class_types[enclosing_class];
-            if(return_type.id() == ID_empty)
-              return_type = this_type;
-            else if(return_type != this_type)
-              return_type = python_value_type();
-          }
-          if(is_node_type(rv, "Name"))
-          {
-            std::string rname = json_string(json_member(rv, "id"));
-            // `return param` where param is a tagged-union (Any / no
-            // annotation) parameter → python_value.
-            for(const auto &p : parameters)
+            if(is_node_type(rv, "Name"))
             {
-              if(p.get_base_name() == rname)
+              std::string rname = json_string(json_member(rv, "id"));
+              // `return param` where param is a tagged-union (Any / no
+              // annotation) parameter → python_value.
+              for(const auto &p : parameters)
               {
-                if(is_python_value_type(p.type()))
-                  return_type = python_value_type();
-                break;
-              }
-            }
-            // `return varname` where varname = ClassName(...) earlier
-            // in the body.
-            if(body.is_array())
-            {
-              for(const auto &bs : as_array(body))
-              {
-                if(!is_node_type(bs, "Assign"))
-                  continue;
-                const jsont &targets = json_member(bs, "targets");
-                if(!targets.is_array() || as_array(targets).empty())
-                  continue;
-                const jsont &t0 = *as_array(targets).begin();
-                if(
-                  !is_node_type(t0, "Name") ||
-                  json_string(json_member(t0, "id")) != rname)
-                  continue;
-                const jsont &av = json_member(bs, "value");
-                if(
-                  !is_node_type(av, "Call") ||
-                  !is_node_type(json_member(av, "func"), "Name"))
-                  continue;
-                std::string cn =
-                  json_string(json_member(json_member(av, "func"), "id"));
-                if(class_types.count(cn))
+                if(p.get_base_name() == rname)
                 {
-                  typet this_type = class_types[cn];
-                  if(return_type.id() == ID_empty)
-                    return_type = this_type;
-                  else if(return_type != this_type)
+                  if(is_python_value_type(p.type()))
                     return_type = python_value_type();
+                  break;
                 }
-                break;
+              }
+              // `return varname` where varname = ClassName(...) earlier
+              // in the body.
+              if(body.is_array())
+              {
+                for(const auto &bs : as_array(body))
+                {
+                  if(!is_node_type(bs, "Assign"))
+                    continue;
+                  const jsont &targets = json_member(bs, "targets");
+                  if(!targets.is_array() || as_array(targets).empty())
+                    continue;
+                  const jsont &t0 = *as_array(targets).begin();
+                  if(
+                    !is_node_type(t0, "Name") ||
+                    json_string(json_member(t0, "id")) != rname)
+                    continue;
+                  const jsont &av = json_member(bs, "value");
+                  if(
+                    !is_node_type(av, "Call") ||
+                    !is_node_type(json_member(av, "func"), "Name"))
+                    continue;
+                  std::string cn =
+                    json_string(json_member(json_member(av, "func"), "id"));
+                  if(class_types.count(cn))
+                  {
+                    typet this_type = class_types[cn];
+                    if(return_type.id() == ID_empty)
+                      return_type = this_type;
+                    else if(return_type != this_type)
+                      return_type = python_value_type();
+                  }
+                  break;
+                }
               }
             }
-          }
-          // `return a, b` — infer the tuple type from the shape.
-          if(is_node_type(rv, "Tuple") && return_type.id() == ID_empty)
-          {
-            const jsont &telts = json_member(rv, "elts");
-            if(telts.is_array() && !as_array(telts).empty())
+            // `return a, b` — infer the tuple type from the shape.
+            if(is_node_type(rv, "Tuple") && return_type.id() == ID_empty)
             {
-              std::vector<typet> elem_types;
-              for(const auto &e : as_array(telts))
+              const jsont &telts = json_member(rv, "elts");
+              if(telts.is_array() && !as_array(telts).empty())
               {
-                typet et = python_int_type();
-                if(is_node_type(e, "Constant"))
+                std::vector<typet> elem_types;
+                for(const auto &e : as_array(telts))
                 {
-                  const jsont &cv = json_member(e, "value");
-                  if(cv.is_string())
-                    et = python_string_type();
-                  else if(cv.is_number())
+                  typet et = python_int_type();
+                  if(is_node_type(e, "Constant"))
                   {
-                    std::string vs = cv.value;
-                    if(
-                      vs.find('.') != std::string::npos ||
-                      vs.find('e') != std::string::npos)
-                      et = double_type();
-                  }
-                }
-                else if(is_node_type(e, "Name"))
-                {
-                  std::string nm = json_string(json_member(e, "id"));
-                  irep_idt nid{"python::" + qualified_name + "::" + nm};
-                  const symbolt *ns = symbol_table.lookup(nid);
-                  if(ns != nullptr && ns->type.id() != ID_empty)
-                    et = ns->type;
-                  else
-                  {
-                    if(body.is_array())
+                    const jsont &cv = json_member(e, "value");
+                    if(cv.is_string())
+                      et = python_string_type();
+                    else if(cv.is_number())
                     {
-                      for(const auto &bs : as_array(body))
-                      {
-                        if(!is_node_type(bs, "AnnAssign"))
-                          continue;
-                        const jsont &target = json_member(bs, "target");
-                        if(
-                          !is_node_type(target, "Name") ||
-                          json_string(json_member(target, "id")) != nm)
-                          continue;
-                        const jsont &ann = json_member(bs, "annotation");
-                        if(!ann.is_null())
-                          et = convert_type_annotation(ann);
-                        break;
-                      }
+                      std::string vs = cv.value;
+                      if(
+                        vs.find('.') != std::string::npos ||
+                        vs.find('e') != std::string::npos)
+                        et = double_type();
                     }
-                    if(et == python_int_type())
-                      et = double_type();
+                  }
+                  else if(is_node_type(e, "Name"))
+                  {
+                    std::string nm = json_string(json_member(e, "id"));
+                    irep_idt nid{"python::" + qualified_name + "::" + nm};
+                    const symbolt *ns = symbol_table.lookup(nid);
+                    if(ns != nullptr && ns->type.id() != ID_empty)
+                      et = ns->type;
+                    else
+                    {
+                      if(body.is_array())
+                      {
+                        for(const auto &bs : as_array(body))
+                        {
+                          if(!is_node_type(bs, "AnnAssign"))
+                            continue;
+                          const jsont &target = json_member(bs, "target");
+                          if(
+                            !is_node_type(target, "Name") ||
+                            json_string(json_member(target, "id")) != nm)
+                            continue;
+                          const jsont &ann = json_member(bs, "annotation");
+                          if(!ann.is_null())
+                            et = convert_type_annotation(ann);
+                          break;
+                        }
+                      }
+                      if(et == python_int_type())
+                        et = double_type();
+                    }
+                  }
+                  elem_types.push_back(et);
+                }
+                return_type = python_tuple_type(elem_types);
+              }
+            }
+            // Eager dict / list shapes (used only if no class/tuple type
+            // committed above).
+            if(is_node_type(rv, "Dict"))
+            {
+              has_dict = true;
+              if(first_dict_key.id_string().empty())
+              {
+                const jsont &keys = json_member(rv, "keys");
+                const jsont &values = json_member(rv, "values");
+                first_dict_key = python_string_type();
+                first_dict_val = python_value_type();
+                if(
+                  keys.is_array() && values.is_array() &&
+                  !as_array(keys).empty())
+                {
+                  const jsont &k0 = *as_array(keys).begin();
+                  const jsont &v0 = *as_array(values).begin();
+                  if(is_node_type(k0, "Constant"))
+                  {
+                    const jsont &kcv = json_member(k0, "value");
+                    if(kcv.is_number())
+                      first_dict_key = python_int_type();
+                    else if(kcv.is_string())
+                      first_dict_key = python_string_type();
+                  }
+                  if(is_node_type(v0, "Constant"))
+                  {
+                    const jsont &vcv = json_member(v0, "value");
+                    if(vcv.is_number())
+                      first_dict_val = vcv.value.find('.') != std::string::npos
+                                         ? double_type()
+                                         : python_int_type();
+                    else if(vcv.is_string())
+                      first_dict_val = python_string_type();
+                    else if(vcv.is_true() || vcv.is_false())
+                      first_dict_val = bool_typet{};
                   }
                 }
-                elem_types.push_back(et);
               }
-              return_type = python_tuple_type(elem_types);
             }
-          }
-          // Eager dict / list shapes (used only if no class/tuple type
-          // committed above).
-          if(is_node_type(rv, "Dict"))
-          {
-            has_dict = true;
-            if(first_dict_key.id_string().empty())
+            else if(!this_is_none)
+              all_dict = false;
+            if(is_node_type(rv, "List"))
             {
-              const jsont &keys = json_member(rv, "keys");
-              const jsont &values = json_member(rv, "values");
-              first_dict_key = python_string_type();
-              first_dict_val = python_value_type();
-              if(
-                keys.is_array() && values.is_array() && !as_array(keys).empty())
+              has_list = true;
+              if(first_list_elem.id_string().empty())
               {
-                const jsont &k0 = *as_array(keys).begin();
-                const jsont &v0 = *as_array(values).begin();
-                if(is_node_type(k0, "Constant"))
+                const jsont &elts = json_member(rv, "elts");
+                first_list_elem = python_value_type();
+                if(elts.is_array() && !as_array(elts).empty())
                 {
-                  const jsont &kcv = json_member(k0, "value");
-                  if(kcv.is_number())
-                    first_dict_key = python_int_type();
-                  else if(kcv.is_string())
-                    first_dict_key = python_string_type();
-                }
-                if(is_node_type(v0, "Constant"))
-                {
-                  const jsont &vcv = json_member(v0, "value");
-                  if(vcv.is_number())
-                    first_dict_val = vcv.value.find('.') != std::string::npos
-                                       ? double_type()
-                                       : python_int_type();
-                  else if(vcv.is_string())
-                    first_dict_val = python_string_type();
-                  else if(vcv.is_true() || vcv.is_false())
-                    first_dict_val = bool_typet{};
+                  const jsont &e0 = *as_array(elts).begin();
+                  if(is_node_type(e0, "Constant"))
+                  {
+                    const jsont &cv = json_member(e0, "value");
+                    if(cv.is_string())
+                      first_list_elem = python_string_type();
+                    else if(cv.is_number())
+                      first_list_elem = cv.value.find('.') != std::string::npos
+                                          ? double_type()
+                                          : python_int_type();
+                    else if(cv.is_true() || cv.is_false())
+                      first_list_elem = bool_typet{};
+                  }
                 }
               }
             }
+            else if(!this_is_none)
+              all_list = false;
           }
-          else if(!this_is_none)
-            all_dict = false;
-          if(is_node_type(rv, "List"))
-          {
-            has_list = true;
-            if(first_list_elem.id_string().empty())
-            {
-              const jsont &elts = json_member(rv, "elts");
-              first_list_elem = python_value_type();
-              if(elts.is_array() && !as_array(elts).empty())
-              {
-                const jsont &e0 = *as_array(elts).begin();
-                if(is_node_type(e0, "Constant"))
-                {
-                  const jsont &cv = json_member(e0, "value");
-                  if(cv.is_string())
-                    first_list_elem = python_string_type();
-                  else if(cv.is_number())
-                    first_list_elem = cv.value.find('.') != std::string::npos
-                                        ? double_type()
-                                        : python_int_type();
-                  else if(cv.is_true() || cv.is_false())
-                    first_list_elem = bool_typet{};
-                }
-              }
-            }
-          }
-          else if(!this_is_none)
-            all_list = false;
         }
       }
       // Generator detection.
