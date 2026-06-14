@@ -115,15 +115,25 @@ robustness, then capability; difficulty is noted where high.
     `strip(chars)` (explicit fill-set).
 
 **P3 — Regex reach (SMT path; [§4](#regex)).**
-- Literal-symbolic patterns (segment list + `str.to_re` holes; anchor-soundness
-  caveat); `re.sub` (`str.replace_re_all` + `__cbmc_re_sub`); group extraction;
-  `re.split`; compilation flags (`IGNORECASE`/`MULTILINE` via per-flag AST
-
-**P3 — Regex reach (SMT path; [§4](#regex)).**
-- Literal-symbolic patterns (segment list + `str.to_re` holes; anchor-soundness
-  caveat); `re.sub` (`str.replace_re_all` + `__cbmc_re_sub`); group extraction;
-  `re.split`; compilation flags (`IGNORECASE`/`MULTILINE` via per-flag AST
-  rewrite).
+- **Soundness hardening — LANDED (2026-06-14).** The shared
+  pattern→SMT-LIB-regex translator (`src/solvers/strings/python_regex_to_smt`)
+  underpins *every* precise regex decision, so a mistranslation is a group-wide
+  soundness hole. Fixed a cluster of over-matching bugs (anchors `^`/`$` were
+  stripped then ignored; `.` matched `\n`; negation `[^…]`/`\D`/`\S`/`\W` used
+  bare `re.comp`, accepting `""` and multi-char strings; control escapes used
+  literal `\n` instead of `\u{a}`; `\A`/`\Z` became literals; `{m,n}` with
+  `n<m`). Also fixed the **a-prime fallout**: an untranslatable/symbolic pattern
+  emitted a definite `bv0` ("no match"), which the post-a-prime stub turned into
+  an always-`None` false proof — now a fresh nondet (both branches reachable).
+  Tests `regex-translator-soundness`, `regex-unsupported-pattern-nondet`.
+- **Still to do (precision):** literal-symbolic patterns (segment list +
+  `str.to_re` holes; the anchors are now soundly modelled so the embedded-anchor
+  bail is the remaining caveat); `re.sub` (`str.replace_re_all` + a new
+  `__cbmc_re_sub` intrinsic — must use the same nondet fallback for
+  untranslatable patterns); group extraction (no SMT capture-group support —
+  needs a bespoke bounded encoding); `re.split`/`findall` (list-valued);
+  compilation flags (`IGNORECASE`/`MULTILINE` via per-flag AST rewrite or a
+  translator mode).
 
 **P4 — Cross-front-end (Java).**
 - **JBMC native-SMT-string mode**: `java.lang.String → smt_string`, reusing the
