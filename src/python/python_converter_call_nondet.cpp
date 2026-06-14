@@ -86,6 +86,52 @@ std::optional<exprt> python_convertert::try_nondet_call(
     // Fallback: nondet bool.
     return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
   }
+  else if(func_name == "__cbmc_re_sub")
+  {
+    // ``__cbmc_re_sub(pattern, repl, subject[, count])`` -> substituted
+    // string. The native SMT-String backend lowers it to
+    // (str.replace_re_all ...) only on the soundness subset (constant
+    // fixed-length pattern, literal repl); otherwise smt2_conv emits a fresh
+    // nondet String. str.replace_re_all replaces ALL occurrences, so a
+    // bounded count (count != 0) is outside the precise model -- a
+    // non-constant or non-zero count degrades here to a sound nondet string.
+    const std::size_t n =
+      args.is_array() ? as_array(args).size() : std::size_t{0};
+    if(n == 3 || n == 4)
+    {
+      auto it = as_array(args).begin();
+      exprt pattern = convert_expression(*it++);
+      exprt repl = convert_expression(*it++);
+      exprt subject = convert_expression(*it++);
+      if(
+        is_python_string_type(pattern.type()) &&
+        is_python_string_type(repl.type()) &&
+        is_python_string_type(subject.type()))
+      {
+        // Pass the operands with their actual types (smt_string for literals/
+        // locals, the PYTHON_STRING_TAG struct for str-typed parameters);
+        // smt2_conv's emit_smt_string coerces either form to an SMT String.
+        exprt precise = native_string_app(
+          ID_cprover_string_re_sub_func,
+          {pattern.type(), repl.type(), subject.type()},
+          {pattern, repl, subject},
+          smt_string_typet{});
+        if(n == 3)
+          return precise;
+        // A bounded count (count != 0) is outside the precise model
+        // (str.replace_re_all replaces ALL occurrences). Select the precise
+        // result only when count == 0, otherwise a sound nondet string. The
+        // count is typically a parameter (not a literal), so decide at
+        // runtime rather than requiring a compile-time constant.
+        exprt count = convert_expression(*it);
+        exprt nondet = bounded_nondet_string(get_location(expr));
+        exprt cnt_zero = equal_exprt{count, from_integer(0, count.type())};
+        return if_exprt{std::move(cnt_zero), std::move(precise), nondet};
+      }
+    }
+    // Fallback: nondet string.
+    return bounded_nondet_string(get_location(expr));
+  }
   else if(func_name == "nondet_float" || func_name == "__VERIFIER_nondet_float")
   {
     side_effect_expr_nondett nondet{double_type(), get_location(expr)};

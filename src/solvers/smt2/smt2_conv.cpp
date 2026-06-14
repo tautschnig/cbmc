@@ -3099,8 +3099,9 @@ void smt2_convt::convert_expr(const exprt &expr)
       if(
         (fn_id == ID_cprover_string_match_func ||
          fn_id == ID_cprover_string_search_func ||
-         fn_id == ID_cprover_string_fullmatch_func) &&
-        args.size() == 2)
+         fn_id == ID_cprover_string_fullmatch_func ||
+         fn_id == ID_cprover_string_re_sub_func) &&
+        (args.size() == 2 || args.size() == 3))
       {
         std::size_t width = boolbv_width(expr.type());
         if(width == 0)
@@ -3166,6 +3167,45 @@ void smt2_convt::convert_expr(const exprt &expr)
           }
           return out;
         };
+
+        // Python re.sub(pattern, repl, subject): precise only on the subset
+        // where SMT-LIB str.replace_re_all (which selects the leftmost-
+        // SHORTEST match and skips empty matches) coincides with CPython
+        // re.sub (leftmost-LONGEST / greedy). They agree iff the match length
+        // is forced: a constant, anchor-free, FIXED-LENGTH >= 1 pattern, with
+        // a constant literal repl (no \1 / \g<> back-references and no escape
+        // sequences). The count argument is handled in the library stub (it
+        // only calls this intrinsic for count == 0). Outside the subset, emit
+        // the fresh nondet String declared in find_symbols -- a definite
+        // result would be unsound.
+        if(fn_id == ID_cprover_string_re_sub_func && args.size() == 3)
+        {
+          auto pat = extract_literal(args[0]);
+          auto repl = extract_literal(args[1]);
+          std::optional<std::string> body;
+          std::optional<int> flen;
+          if(pat.has_value())
+          {
+            body = python_regex_to_smt_body(*pat);
+            flen = python_regex_fixed_length(*pat);
+          }
+          std::optional<std::string> repl_smt;
+          if(repl.has_value() && repl->find('\\') == std::string::npos)
+            repl_smt = smt_escape_printable_ascii(*repl);
+          if(
+            body.has_value() && flen.has_value() && *flen >= 1 &&
+            repl_smt.has_value() && args[2].type().id() == ID_smt_string)
+          {
+            out << "(str.replace_re_all ";
+            emit_smt_string(args[2]);
+            out << " " << *body << " \"" << *repl_smt << "\")";
+            return;
+          }
+          auto it = defined_expressions.find(expr);
+          CHECK_RETURN(it != defined_expressions.end());
+          out << it->second;
+          return;
+        }
 
         auto pattern_text = extract_literal(args[0]);
         std::optional<std::string> smt_re;
@@ -6551,6 +6591,19 @@ void smt2_convt::find_symbols(const exprt &expr)
       to_symbol_expr(to_function_application_expr(expr).function())
         .get_identifier();
     if(
+      fid == ID_cprover_string_re_sub_func &&
+      defined_expressions.find(expr) == defined_expressions.end())
+    {
+      // re.sub returns a string; declare a fresh nondet of the result's
+      // sort (String under the native backend) for the fallback path.
+      const irep_idt id =
+        "re_sub_nondet." + std::to_string(defined_expressions.size());
+      out << "(declare-fun " << id << " () ";
+      convert_type(expr.type());
+      out << ")\n";
+      defined_expressions[expr] = id;
+    }
+    else if(
       (fid == ID_cprover_string_match_func ||
        fid == ID_cprover_string_search_func ||
        fid == ID_cprover_string_fullmatch_func) &&

@@ -1468,6 +1468,18 @@ std::optional<exprt> python_convertert::try_method_call(
             for(const auto &arg : as_array(args))
               arguments.push_back(convert_expression(arg));
           }
+          // Fill trailing parameters that were not supplied at the call
+          // site with their default values (e.g. re.sub(p, r, s) leaving
+          // count/flags defaulted). Without this the module-call dispatch
+          // passed too few arguments and the body saw the missing
+          // parameters as unconstrained nondet.
+          for(std::size_t i = arguments.size(); i < ft.parameters().size(); i++)
+          {
+            auto def_it = default_values.find({method_name, i});
+            if(def_it == default_values.end())
+              break;
+            arguments.push_back(def_it->second);
+          }
           for(std::size_t i = 0;
               i < arguments.size() && i < ft.parameters().size();
               i++)
@@ -1937,8 +1949,13 @@ std::optional<exprt> python_convertert::try_method_call(
           pending_defaultdict_factory = factory;
           return empty;
         }
-        // PLR stdlib: re module — return nondet for all methods
-        if(obj_name == "re")
+        // PLR stdlib: re module — shallow nondet for methods without a
+        // precise model. sub/subn are excluded: they fall through to the
+        // library stub (src/python/library/re), which routes through the
+        // __cbmc_re_sub intrinsic for a precise str.replace_re_all result on
+        // the sound subset (constant fixed-length pattern, literal repl) and
+        // a sound nondet string otherwise.
+        if(obj_name == "re" && method_name != "sub" && method_name != "subn")
           return side_effect_expr_nondett{
             python_int_type(), get_location(expr)};
         // PLib: random module — constrained nondet for randint /
@@ -2846,6 +2863,25 @@ std::optional<exprt> python_convertert::try_method_call(
 
           // Handle keyword arguments for method calls
           const jsont &method_keywords = json_member(expr, "keywords");
+          if(!(method_keywords.is_array() &&
+               !as_array(method_keywords).empty()))
+          {
+            // Positional call without keyword args: fill any trailing
+            // parameters that were not supplied with their default values
+            // (e.g. p.sub("X", s) leaving count/flags defaulted). The
+            // keyword path below performs the equivalent fill for its case.
+            const auto &mparams = method_type.parameters();
+            for(std::size_t i = arguments.size(); i < mparams.size(); i++)
+            {
+              auto def_it = default_values.find({method_name, i});
+              if(def_it == default_values.end())
+                break;
+              exprt d = def_it->second;
+              if(d.type() != mparams[i].type())
+                d = safe_typecast(d, mparams[i].type());
+              arguments.push_back(std::move(d));
+            }
+          }
           if(method_keywords.is_array() && !as_array(method_keywords).empty())
           {
             const auto &mparams = method_type.parameters();

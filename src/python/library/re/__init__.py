@@ -130,11 +130,14 @@ class Pattern:
     def split(self, string, maxsplit: int = 0):
         return []
 
-    def sub(self, repl, string, count: int = 0) -> str:
-        return ""
+    def sub(self, repl: str, string: str, count: int = 0) -> str:
+        # Precise for the sound subset (constant fixed-length pattern,
+        # literal repl) when replacing all (count == 0); a bounded count or
+        # an out-of-subset pattern/repl yields a sound nondet string.
+        return __cbmc_re_sub(self.pattern, repl, string, count)
 
-    def subn(self, repl, string, count: int = 0):
-        return ("", 0)
+    def subn(self, repl: str, string: str, count: int = 0):
+        return (self.sub(repl, string, count), 0)
 
 
 # Module-level functions. Each returns a value of the shape CPython
@@ -176,12 +179,12 @@ def split(pattern, string, maxsplit: int = 0, flags: int = 0):
     return []
 
 
-def sub(pattern, repl, string, count: int = 0, flags: int = 0) -> str:
-    return ""
+def sub(pattern: str, repl: str, string: str, count: int = 0, flags: int = 0) -> str:
+    return __cbmc_re_sub(pattern, repl, string, count)
 
 
-def subn(pattern, repl, string, count: int = 0, flags: int = 0):
-    return ("", 0)
+def subn(pattern: str, repl: str, string: str, count: int = 0, flags: int = 0):
+    return (sub(pattern, repl, string, count, flags), 0)
 
 
 def escape(pattern: str) -> str:

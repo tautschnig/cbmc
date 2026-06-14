@@ -71,4 +71,22 @@ python_regex_to_smt_search(const std::string &pattern);
 ///   "^arn:.*"         → false  (literal arn: prefix is required)
 std::optional<bool> python_regex_can_match_empty(const std::string &pattern);
 
+/// Translate ``pattern`` to a bare SMT-LIB regex term for its language,
+/// with no anchoring or fullmatch/match/search wrapping. Returns
+/// ``std::nullopt`` for unsupported patterns, and also for any pattern
+/// containing a ``^`` / ``$`` anchor (a bare regex term cannot express a
+/// positional assertion). Intended for ``str.in_re`` / ``str.replace_re_all``
+/// callers that supply their own context.
+std::optional<std::string> python_regex_to_smt_body(const std::string &pattern);
+
+/// If every string in ``pattern``'s language has the same length ``L``,
+/// return ``L``; return ``std::nullopt`` for variable-length patterns
+/// (unbounded or optional quantifiers, unequal-length alternation, ``{m,n}``
+/// with ``m != n``) and for unsupported patterns. A fixed length ``>= 1`` is
+/// the condition under which ``str.replace_re_all`` (which selects the
+/// leftmost-shortest match) coincides with CPython ``re.sub`` (leftmost-
+/// longest / greedy): when the match length is forced the two agree and there
+/// are no empty matches.
+std::optional<int> python_regex_fixed_length(const std::string &pattern);
+
 #endif // CPROVER_SOLVERS_STRINGS_PYTHON_REGEX_TO_SMT_H

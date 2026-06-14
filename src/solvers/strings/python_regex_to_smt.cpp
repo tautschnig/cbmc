@@ -861,6 +861,15 @@ python_regex_to_smt_search(const std::string &pattern)
   return translate(pattern, match_kind::search);
 }
 
+std::optional<std::string> python_regex_to_smt_body(const std::string &pattern)
+{
+  // No anchor stripping and no wrapping: parse_top translates the pattern's
+  // language directly and rejects any embedded ^/$ (parse_atom returns
+  // nullopt), which is what a positional-context-free caller needs.
+  translator t{pattern};
+  return t.parse_top();
+}
+
 std::optional<bool> python_regex_can_match_empty(const std::string &pattern)
 {
   // Strip leading ^ and trailing $ — the wrappers do this for
@@ -874,5 +883,222 @@ std::optional<bool> python_regex_can_match_empty(const std::string &pattern)
   if(!core.empty() && core.back() == '$')
     core.pop_back();
   empty_acceptance_checker chk{core};
+  return chk.parse_top();
+}
+
+namespace
+{
+/// Parallel parser computing the fixed match length of a Python regex
+/// pattern's language, or std::nullopt when the length is variable or the
+/// pattern is unsupported. Mirrors the translator/empty-checker grammar but
+/// carries an int length per node:
+///   alt(a,b,...)    : a length only if all branches share it, else nullopt
+///   concat(a,b,...) : sum (empty concat -> 0)
+///   a* a+ a?        : variable -> nullopt
+///   a{m,n}          : m*len(a) if m==n, else nullopt
+///   group(a)        : len(a)
+///   literal / . / class / single-char escape : 1
+///   ^, $            : nullopt (anchors are not part of a bare regex term)
+class fixed_length_checker
+{
+public:
+  fixed_length_checker(const std::string &p) : pattern(p)
+  {
+  }
+
+  std::optional<int> parse_top()
+  {
+    auto alt = parse_alternation();
+    if(!alt.has_value())
+      return std::nullopt;
+    if(pos != pattern.size())
+      return std::nullopt;
+    return alt;
+  }
+
+private:
+  const std::string &pattern;
+  std::size_t pos = 0;
+
+  bool eof() const
+  {
+    return pos >= pattern.size();
+  }
+  char peek() const
+  {
+    return pattern[pos];
+  }
+  bool accept(char c)
+  {
+    if(!eof() && peek() == c)
+    {
+      ++pos;
+      return true;
+    }
+    return false;
+  }
+
+  std::optional<int> parse_alternation()
+  {
+    auto first = parse_concat();
+    if(!first.has_value())
+      return std::nullopt;
+    int len = *first;
+    while(accept('|'))
+    {
+      auto next = parse_concat();
+      if(!next.has_value())
+        return std::nullopt;
+      if(*next != len)
+        return std::nullopt; // unequal-length alternatives -> variable
+    }
+    return len;
+  }
+
+  std::optional<int> parse_concat()
+  {
+    int total = 0;
+    while(!eof() && peek() != '|' && peek() != ')')
+    {
+      auto q = parse_quantified();
+      if(!q.has_value())
+        return std::nullopt;
+      total += *q;
+    }
+    return total;
+  }
+
+  std::optional<int> parse_quantified()
+  {
+    auto atom = parse_atom();
+    if(!atom.has_value())
+      return std::nullopt;
+    if(eof())
+      return atom;
+    char q = peek();
+    if(q == '*' || q == '+' || q == '?')
+    {
+      ++pos;
+      if(!eof() && peek() == '?')
+        ++pos;             // non-greedy marker
+      return std::nullopt; // variable length
+    }
+    if(q == '{')
+    {
+      std::size_t save = pos;
+      ++pos;
+      std::string num;
+      while(!eof() && std::isdigit(static_cast<unsigned char>(peek())))
+      {
+        num += peek();
+        ++pos;
+      }
+      if(num.empty())
+      {
+        pos = save;
+        return atom; // not a quantifier
+      }
+      int m = std::stoi(num);
+      int n = m;
+      bool has_upper = true;
+      if(accept(','))
+      {
+        std::string num2;
+        while(!eof() && std::isdigit(static_cast<unsigned char>(peek())))
+        {
+          num2 += peek();
+          ++pos;
+        }
+        if(num2.empty())
+          has_upper = false;
+        else
+          n = std::stoi(num2);
+      }
+      if(!accept('}'))
+      {
+        pos = save;
+        return atom;
+      }
+      if(!eof() && peek() == '?')
+        ++pos;
+      if(!has_upper || n != m)
+        return std::nullopt; // {m,} or {m,n} with m!=n -> variable
+      return m * *atom;
+    }
+    return atom;
+  }
+
+  std::optional<int> parse_atom()
+  {
+    if(eof())
+      return std::nullopt;
+    char c = peek();
+    if(c == '(')
+    {
+      ++pos;
+      if(!eof() && peek() == '?')
+      {
+        ++pos;
+        if(!eof() && peek() == ':')
+          ++pos; // non-capturing group
+        else
+          return std::nullopt; // lookaround / named group etc.
+      }
+      auto inner = parse_alternation();
+      if(!inner.has_value())
+        return std::nullopt;
+      if(!accept(')'))
+        return std::nullopt;
+      return inner;
+    }
+    if(c == '[')
+    {
+      ++pos;
+      if(!eof() && peek() == '^')
+        ++pos;
+      bool first = true;
+      while(!eof() && (first || peek() != ']'))
+      {
+        if(peek() == '\\' && pos + 1 < pattern.size())
+          pos += 2;
+        else
+          ++pos;
+        first = false;
+      }
+      if(!accept(']'))
+        return std::nullopt;
+      return 1; // a single class consumes exactly one character
+    }
+    if(c == '.')
+    {
+      ++pos;
+      return 1;
+    }
+    if(c == '^' || c == '$')
+      return std::nullopt; // anchor: not a fixed-width consuming atom
+    if(c == '\\')
+    {
+      ++pos;
+      if(eof())
+        return std::nullopt;
+      char e = peek();
+      ++pos;
+      if(std::isdigit(static_cast<unsigned char>(e)))
+        return std::nullopt; // back-reference
+      if(e == 'g')
+        return std::nullopt; // named back-reference
+      if(e == 'b' || e == 'B' || e == 'A' || e == 'Z')
+        return std::nullopt; // zero-width assertion (also rejected upstream)
+      return 1;              // \d \D \s \S \w \W \n \t \r \f \v, literal escape
+    }
+    ++pos;
+    return 1; // literal character
+  }
+};
+} // namespace
+
+std::optional<int> python_regex_fixed_length(const std::string &pattern)
+{
+  fixed_length_checker chk{pattern};
   return chk.parse_top();
 }
