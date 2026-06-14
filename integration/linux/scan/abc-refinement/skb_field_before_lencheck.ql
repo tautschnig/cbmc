@@ -60,6 +60,27 @@ string trivialAdvisory(Function f, KernelTaint::SkbDataAccess sda) {
   if trivialAccessor(f, sda) then result = "yes" else result = "no"
 }
 
+/** advisory: a length-ish parameter (len/size/max/count) is PROPAGATED as an
+ *  argument to a callee -- the function delegates the bound downward (e.g.
+ *  the IB MAD dispatcher subn_get_opa_sma passing max_len to
+ *  __subn_get_opa_*).  Length-aware: the read is bounded by the callee, so
+ *  the in-function hasLengthGuard miss is not evidence of a real OOB.
+ *  Existential -> advisory. */
+predicate lenParamPropagated(Function f) {
+  exists(Parameter lp, FunctionCall fc |
+    lp.getFunction() = f and
+    lp.getUnspecifiedType() instanceof IntegralType and
+    lp.getName()
+        .toLowerCase()
+        .matches(["%len%", "%size%", "%max%", "%count%"]) and
+    fc.getEnclosingFunction() = f and
+    fc.getAnArgument().(VariableAccess).getTarget() = lp)
+}
+
+string lenPropAdvisory(Function f) {
+  if lenParamPropagated(f) then result = "LENPROP" else result = "no"
+}
+
 from Function f, int line, string kind, string adv
 where
   inScope(f) and
@@ -72,7 +93,7 @@ where
       line = sda.getLocation().getStartLine() and
       kind = "skb->data read" and
       adv = "adv_lenguard=" + lenGuardAdvisory(f) +
-        "|adv_trivial=" + trivialAdvisory(f, sda))
+        "|adv_trivial=" + trivialAdvisory(f, sda) + "|adv_lenprop=" + lenPropAdvisory(f))
     or
     // (b) bounded-cursor parser: a (buf,len)/(p,end) function that decodes
     //     a field from the cursor
@@ -81,7 +102,7 @@ where
       dc.getEnclosingFunction() = f and
       line = dc.getLocation().getStartLine() and
       kind = "bounded-cursor decode" and
-      adv = "adv_lenguard=" + lenGuardAdvisory(f))
+      adv = "adv_lenguard=" + lenGuardAdvisory(f) + "|adv_lenprop=" + lenPropAdvisory(f))
   )
 select f,
   f.getName() + "|" + f.getFile().getAbsolutePath() + "|" + line.toString() +
