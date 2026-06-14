@@ -381,13 +381,18 @@ CardDemo blockers, in order, are:
    numeric/alphanumeric comparisons).
 
 As of this milestone, **all 44 CardDemo programs parse and lower to GOTO
-with no conversion errors**: **33 reach `VERIFICATION SUCCESSFUL`** under
-default settings, and the other 11 lower fully but contain unbounded
-`PERFORM UNTIL` file-read loops, so they need an explicit unwind bound.
-With `cbmc --unwind 3 --no-unwinding-assertions`, **all 44 programs reach
-`VERIFICATION SUCCESSFUL`**. There is no remaining front-end coverage gap
-on this corpus; further work is verification-driver tuning (loop bounds,
-file modelling), not new language support.
+with no conversion errors**: **32 reach `VERIFICATION SUCCESSFUL`** under
+default settings, and the other 12 lower fully but contain unbounded
+`PERFORM UNTIL` file-read loops (11) or a recursive `PERFORM` cycle (1,
+`COACCT01`), so they need an explicit unwind bound. With `cbmc --unwind 3
+--no-unwinding-assertions`, **all 44 programs reach `VERIFICATION
+SUCCESSFUL`**. (The default count was 33 until `PERFORM` became a
+call rather than inlining: `COACCT01`'s recursive error-handler cycle
+previously "verified" only because the re-entrant path was pruned with
+`assume(false)`, which was unsound; it now needs `--unwind`, soundly.)
+There is no remaining front-end coverage gap on this corpus; further work
+is verification-driver tuning (loop bounds, file modelling), not new
+language support.
 
 Recent increments cleared the long tail: `OCCURS ... INDEXED BY`
 index-names are registered (IBM LR "INDEXED BY phrase"); `EXEC SQL
@@ -400,23 +405,40 @@ fields to spaces (IBM LR "INITIALIZE statement").
 
 ### Architectural note: PERFORM, recursion, and inlining
 
-`PERFORM` is lowered by inlining the performed procedure(s) at the call
-site. This is simple and correct for the common acyclic case, but it
-cannot represent a *recursive* `PERFORM` — e.g. CardDemo's `COACCT01`
-has `9000-ERROR` → `8000-TERMINATION` → `5200-CLOSE-ERROR-QUEUE` →
-`9000-ERROR` (an error raised while handling an error). Inlining such a
-cycle does not terminate.
+`PERFORM` is lowered to a **call to a single re-entrant procedure
+function** rather than by inlining. The whole `PROCEDURE DIVISION`
+becomes one function `$proc(entry, exit)` holding every paragraph as a
+labelled region, so `GO TO` and fall-through stay ordinary branches
+*within* it (this is what makes a literal function-per-paragraph mapping
+unworkable, and why one parameterised function is used instead — the key
+realisation of the redesign). Control enters at paragraph `entry` (an
+entry dispatch) and returns when it reaches the end of paragraph `exit`
+(a per-paragraph end check), per the LR return mechanism. `PERFORM p THRU
+q` is `$proc(index(p), index(q))`; the public program function runs
+`$proc(0, last)`. A `GO TO` to a range's `*-EXIT` paragraph naturally
+hits that paragraph's end check and returns — modelling the idiomatic
+early return for free. `STOP RUN` / `GOBACK` set a shared `$stopped` flag
+and unwind out of every frame.
 
-As an interim, bounded-model-checking-consistent treatment, a procedure
-performed while it is already being inlined has its re-entrant call
-pruned with `assume(false)`: the procedure is modelled up to the point
-of re-entry and the deeper recursion is cut, exactly as loop unwinding
-bounds a loop. The faithful, unbounded treatment — and the recommended
-architectural follow-up — is to lower each paragraph as its own GOTO
-function and `PERFORM` as a call, letting CBMC unwind the recursion with
-proper call/return semantics; the obstacle is that COBOL `GO TO` and
-fall-through also cross paragraph boundaries, so that change must rework
-the whole procedure-division control-flow lowering at once.
+Because a `PERFORM` is now a call, a **recursive** `PERFORM` (e.g.
+CardDemo's `COACCT01`: `9000-ERROR → 8000-TERMINATION →
+5200-CLOSE-ERROR-QUEUE → 9000-ERROR`) is a recursive **call**, which CBMC
+bounds by unwinding with `--unwind`. The previous treatment inlined the
+range and pruned the re-entrant copy with `assume(false)`; that made the
+recursion finite but **vacuous** — every statement after the recursion
+became unreachable, so a *false* post-recursion assertion passed
+silently. The call-based lowering fixes that soundness hole: a false
+assertion reachable at bounded recursion depth now FAILS (regression
+tests `perform-recursion` / `perform-recursion-fail`). The cost is that a
+recursive `PERFORM` needs an explicit `--unwind` (like any loop), so the
+default-settings CardDemo baseline moved from 33/44 to **32/44** —
+exactly `COACCT01`, which previously verified only vacuously; **all 44
+still verify with `--unwind 3`** and there are no `VERIFICATION FAILED`.
+The acyclic common case is unchanged (CBMC inlines the non-recursive
+calls). See `doc/architectural/cobol-perform-control-flow-design.md`;
+the implemented design refines that document by using one parameterised
+re-entrant function instead of a manual perform-return stack, so CBMC's
+own call stack provides the return mechanism.
 
 ### Architectural note: REPLACING is a source-text operation
 

@@ -1,6 +1,24 @@
 # Design: faithful PERFORM / paragraph control-flow lowering
 
-Status: design (not yet implemented). Author: Kiro.
+Status: **implemented** (with a refinement — see note below). Author: Kiro.
+
+> **Implementation note (refinement).** The shipped implementation
+> realises the return mechanism with **one re-entrant parameterised
+> function `$proc(entry, exit)`** rather than the manual perform-return
+> stack + resume-dispatch of §3. All paragraphs live in `$proc` as
+> labelled regions (so `GO TO`/fall-through stay local branches); an
+> entry dispatch jumps to `entry`, a per-paragraph end check returns at
+> `exit`, and `PERFORM p THRU q` is the call `$proc(index(p), index(q))`.
+> CBMC's own call stack then *is* the perform-return stack, and a
+> recursive `PERFORM` is a recursive call bounded by `--unwind` — with no
+> manual stack, no resume ids, and no spurious loop back-edges for the
+> acyclic case (so the default baseline is preserved except for the one
+> genuinely-recursive program). `STOP RUN`/`GOBACK` set a shared
+> `$stopped` flag that unwinds out of every frame. This is strictly
+> simpler than §3 and is why §4's "literal function-per-paragraph"
+> objection does not apply: there is exactly *one* function, entered at a
+> parameterised label, not one per paragraph. The §3 design is retained
+> below as the rationale and the considered-alternatives record.
 
 This document designs the replacement of the current *inlining* lowering
 of `PERFORM` with a control-flow model that represents the COBOL

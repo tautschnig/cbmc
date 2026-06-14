@@ -1,9 +1,9 @@
 CORE
 main.cob
-
+--unwind 8
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
-A recursive PERFORM is lowered by pruning the re-entrant path rather
-than rejected. See IBM LR "PERFORM statement".
+Recursive PERFORM bounded by --unwind, with the correct accumulated
+result. See IBM LR "PERFORM statement".

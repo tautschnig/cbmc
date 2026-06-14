@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+PERFORM THRU range with GO TO to the EXIT paragraph as an early return.
+See IBM LR "PERFORM statement" / "GO TO statement".

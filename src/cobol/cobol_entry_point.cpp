@@ -39,6 +39,10 @@ static const symbolt *find_main_program(const symbol_table_baset &symbol_table)
       continue;
     if(has_prefix(id2string(symbol.base_name), "__CPROVER"))
       continue;
+    // Skip frontend-internal helper functions (e.g. the $proc procedure
+    // body); their base names are '$'-prefixed.
+    if(has_prefix(id2string(symbol.base_name), "$"))
+      continue;
     if(symbol.value.is_nil())
       continue;
 

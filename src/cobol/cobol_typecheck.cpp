@@ -26,6 +26,8 @@ Author: Kiro
 #include <util/std_types.h>
 #include <util/symbol_table_base.h>
 
+#include <goto-programs/goto_instruction_code.h>
+
 #include "cobol_language.h"
 
 #include <algorithm>
@@ -621,6 +623,47 @@ protected:
   std::string program_end_label() const
   {
     return "cobol::" + program_id + "::$end";
+  }
+  // The PROCEDURE DIVISION is lowered to one re-entrant function
+  // $proc(entry, exit); PERFORM is a (possibly recursive) call to it. See
+  // doc/architectural/cobol-perform-control-flow-design.md.
+  irep_idt proc_name() const
+  {
+    return "cobol::" + program_id + "::$proc";
+  }
+  irep_idt entry_param_name() const
+  {
+    return "cobol::" + program_id + "::$proc::entry";
+  }
+  irep_idt exit_param_name() const
+  {
+    return "cobol::" + program_id + "::$proc::exit";
+  }
+  std::string proc_ret_label() const
+  {
+    return "cobol::" + program_id + "::$ret";
+  }
+  irep_idt stopped_name() const
+  {
+    return "cobol::" + program_id + "::$stopped";
+  }
+  symbol_exprt stopped_expr() const
+  {
+    return symbol_exprt{stopped_name(), bool_typet{}};
+  }
+  code_typet proc_type() const
+  {
+    code_typet::parametert ep{cobol_value_type()};
+    ep.set_identifier(entry_param_name());
+    ep.set_base_name("entry");
+    code_typet::parametert xp{cobol_value_type()};
+    xp.set_identifier(exit_param_name());
+    xp.set_base_name("exit");
+    return code_typet{{ep, xp}, empty_typet{}};
+  }
+  symbol_exprt proc_symbol_expr() const
+  {
+    return symbol_exprt{proc_name(), proc_type()};
   }
 
   exprt rescale(const exprt &e, std::size_t from, std::size_t to) const;
@@ -4946,7 +4989,11 @@ void cobol_typecheckt::gen_statement(
     out.add(code_gotot{para_label(s.target)});
     break;
   case stmtt::kindt::STOP:
-    out.add(code_gotot{program_end_label()});
+    // STOP RUN / GOBACK halt the program: set the shared flag and unwind out
+    // of the current $proc frame; each caller propagates it (IBM LR "STOP
+    // statement" / "GOBACK statement").
+    out.add(code_frontend_assignt{stopped_expr(), true_exprt{}});
+    out.add(code_gotot{proc_ret_label()});
     break;
   case stmtt::kindt::PERFORM:
   {
@@ -5054,41 +5101,99 @@ void cobol_typecheckt::gen_perform_invocation(
   if(end < start)
     error("PERFORM THRU range ends before it starts");
 
-  // PERFORM is lowered by inlining the performed procedures. A procedure that
-  // is (transitively) performed while it is already being inlined is a
-  // recursive PERFORM, which cannot be inlined to a fixed depth. As with loop
-  // unwinding in bounded model checking, we model the procedure up to the
-  // point of re-entry and prune the re-entrant path with assume(false): the
-  // recursion is bounded rather than the program rejected. (A faithful,
-  // unbounded treatment would lower each paragraph as its own GOTO function
-  // and PERFORM as a call, letting CBMC unwind the recursion; that is the
-  // recommended architectural follow-up.)
-  for(std::size_t i = start; i <= end; ++i)
-    if(inlining.find(paragraphs[i].name) != inlining.end())
-    {
-      out.add(code_assumet{false_exprt{}});
-      return;
-    }
+  // PERFORM proc-1 [THRU proc-2] is a call to the re-entrant procedure
+  // function, entering at proc-1 and returning at the end of the range
+  // (IBM LR "PERFORM statement"). A recursive PERFORM is therefore a recursive
+  // call, which CBMC bounds by unwinding (no translation-time pruning).
+  code_function_callt call{
+    proc_symbol_expr(),
+    {from_integer(start, cobol_value_type()),
+     from_integer(end, cobol_value_type())}};
+  call.add_source_location() = s.location;
+  out.add(std::move(call));
 
-  for(std::size_t i = start; i <= end; ++i)
-    inlining.insert(paragraphs[i].name);
-  for(std::size_t i = start; i <= end; ++i)
-    gen_statements(paragraphs[i].statements, out, inlining);
-  for(std::size_t i = start; i <= end; ++i)
-    inlining.erase(paragraphs[i].name);
+  // A STOP RUN reached inside the performed range halts the program: unwind
+  // out of the current frame too.
+  out.add(code_ifthenelset{stopped_expr(), code_gotot{proc_ret_label()}});
 }
 
 void cobol_typecheckt::build_function()
 {
-  code_blockt body;
-  std::set<std::string> inlining;
+  const typet idx_type = cobol_value_type();
+  const std::size_t n = paragraphs.size();
 
-  for(const paragrapht &p : paragraphs)
+  // The whole PROCEDURE DIVISION becomes one re-entrant function
+  //   $proc(entry, exit)
+  // holding every paragraph as a labelled region, so GO TO and fall-through
+  // stay ordinary branches within it (IBM LR "GO TO statement", "Explicit and
+  // implicit transfers of control"). Control enters at paragraph `entry` and
+  // returns when it reaches the end of paragraph `exit`; PERFORM is a
+  // (possibly recursive) call to $proc, so a recursive PERFORM is bounded by
+  // CBMC's unwinding rather than pruned (IBM LR "PERFORM statement", the
+  // return mechanism). See
+  // doc/architectural/cobol-perform-control-flow-design.md.
+
+  // The program-halt flag (STOP RUN / GOBACK), shared across all $proc frames.
   {
-    body.add(code_labelt{para_label(p.name), code_skipt{}});
-    gen_statements(p.statements, body, inlining);
+    symbolt flag{stopped_name(), bool_typet{}, COBOL_MODE};
+    flag.base_name = "$stopped";
+    flag.is_static_lifetime = true;
+    flag.is_lvalue = true;
+    flag.is_state_var = true;
+    flag.value = false_exprt{};
+    symbol_table.add(flag);
   }
-  body.add(code_labelt{program_end_label(), code_skipt{}});
+
+  // $proc parameters.
+  const auto add_param = [&](const irep_idt &name, const char *base)
+  {
+    symbolt p{name, idx_type, COBOL_MODE};
+    p.base_name = base;
+    p.is_parameter = true;
+    p.is_lvalue = true;
+    p.is_thread_local = true;
+    p.is_file_local = true;
+    symbol_table.add(p);
+  };
+  add_param(entry_param_name(), "entry");
+  add_param(exit_param_name(), "exit");
+  const symbol_exprt entry_arg{entry_param_name(), idx_type};
+  const symbol_exprt exit_arg{exit_param_name(), idx_type};
+
+  code_blockt proc_body;
+  std::set<std::string> inlining; // retained for the gen_* signatures
+
+  // Entry dispatch: jump to paragraph `entry`.
+  for(std::size_t i = 0; i < n; ++i)
+    proc_body.add(code_ifthenelset{
+      equal_exprt{entry_arg, from_integer(i, idx_type)},
+      code_gotot{para_label(paragraphs[i].name)}});
+
+  for(std::size_t i = 0; i < n; ++i)
+  {
+    proc_body.add(code_labelt{para_label(paragraphs[i].name), code_skipt{}});
+    gen_statements(paragraphs[i].statements, proc_body, inlining);
+    // Return to the activating PERFORM when control reaches the end of the
+    // range-exit paragraph (IBM LR "PERFORM statement").
+    proc_body.add(code_ifthenelset{
+      equal_exprt{from_integer(i, idx_type), exit_arg},
+      code_gotot{proc_ret_label()}});
+  }
+  proc_body.add(code_labelt{proc_ret_label(), code_skipt{}});
+
+  {
+    symbolt proc{proc_name(), proc_type(), COBOL_MODE};
+    proc.base_name = "$proc";
+    proc.value = std::move(proc_body);
+    symbol_table.add(proc);
+  }
+
+  // The public program function runs the whole range once: $proc(0, n-1).
+  code_blockt body;
+  code_function_callt call{
+    proc_symbol_expr(),
+    {from_integer(0, idx_type), from_integer(n == 0 ? 0 : n - 1, idx_type)}};
+  body.add(std::move(call));
 
   const irep_idt fname = "cobol::" + program_id;
   symbolt function{fname, code_typet{{}, empty_typet{}}, COBOL_MODE};
