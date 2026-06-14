@@ -174,6 +174,17 @@ exprt python_convertert::convert_if_exp(const jsont &expr)
         return 3;
       if(is_python_value_type(t))
         return 4;
+      if(is_python_tuple_type(t))
+        return 5;
+      if(is_python_set_type(t))
+        return 6;
+      // Class-instance struct (and any other named struct, e.g. complex):
+      // a distinct non-numeric category so a class-vs-None (or class-vs-other)
+      // conditional wraps into the tagged union and preserves None, rather
+      // than safe_typecast'ing None to the class type and erasing it (PLR
+      // §3.2 / §6.13 -- a false-proof vector via dead None-guard code).
+      if(t.id() == ID_struct || t.id() == ID_struct_tag)
+        return 7;
       return -1;
     };
     int bcat = category(body.type());
