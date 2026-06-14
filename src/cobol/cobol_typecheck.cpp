@@ -696,6 +696,7 @@ protected:
   valuet compute_numeric_intrinsic(
     const std::string &fname,
     std::vector<valuet> &args);
+  valuet numval_of_string(const std::string &s, bool currency) const;
   cond_operandt nondet_alnum_operand(std::size_t len);
   exprt
   build_cond_relation(cond_operandt a, const std::string &op, cond_operandt b);
@@ -2343,6 +2344,40 @@ cond_operandt cobol_typecheckt::nondet_alnum_operand(std::size_t len)
   return op;
 }
 
+valuet
+cobol_typecheckt::numval_of_string(const std::string &s, bool currency) const
+{
+  // Convert the character string to a number (IBM LR "NUMVAL"/"NUMVAL-C"):
+  // ignore spaces; honour a leading or trailing sign (and a trailing CR/DB,
+  // for NUMVAL-C, as negative); for NUMVAL-C also ignore the currency sign and
+  // grouping commas. Digits after a decimal point set the scale.
+  std::string upper = s;
+  for(char &c : upper)
+    c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+  bool negative = upper.find('-') != std::string::npos ||
+                  (currency && (upper.find("CR") != std::string::npos ||
+                                upper.find("DB") != std::string::npos));
+  std::string digits;
+  std::size_t scale = 0;
+  bool seen_point = false;
+  for(char c : upper)
+  {
+    if(c >= '0' && c <= '9')
+    {
+      digits.push_back(c);
+      if(seen_point)
+        ++scale;
+    }
+    else if(c == '.')
+      seen_point = true;
+    // spaces, sign, currency, commas, CR/DB letters: ignored
+  }
+  mp_integer v = digits.empty() ? mp_integer{0} : string2integer(digits);
+  if(negative)
+    v = -v;
+  return valuet{from_integer(v, cobol_value_type()), scale};
+}
+
 /// Compute a numeric intrinsic exactly from its arguments (IBM LR "Intrinsic
 /// functions"). \p args is non-empty.
 valuet cobol_typecheckt::compute_numeric_intrinsic(
@@ -2508,6 +2543,40 @@ cond_operandt cobol_typecheckt::parse_intrinsic()
       return op;
     }
     // No usable arguments: fall through to the nondet result below.
+  }
+
+  // NUMVAL / NUMVAL-C: the numeric value of a character string (IBM LR
+  // "NUMVAL"/"NUMVAL-C function"). A string *literal* argument is converted at
+  // compile time; for an item argument the character content is not modelled,
+  // so the result is nondeterministic.
+  if(fname == "NUMVAL" || fname == "NUMVAL-C")
+  {
+    const bool currency = fname == "NUMVAL-C";
+    bool exact = false;
+    if(is_kind(cobol_token_kindt::LPAREN))
+    {
+      advance();
+      if(cur().kind == cobol_token_kindt::STRING)
+      {
+        op.numeric = true;
+        op.num = numval_of_string(cur().text, currency);
+        advance();
+        exact = true;
+      }
+      while(!is_kind(cobol_token_kindt::RPAREN) && !at_eof())
+        advance();
+      if(is_kind(cobol_token_kindt::RPAREN))
+        advance();
+    }
+    if(exact)
+      return op;
+    op.numeric = true;
+    op.num = valuet{
+      typecast_exprt{
+        side_effect_expr_nondett{cobol_value_type(), cur().location},
+        cobol_value_type()},
+      0};
+    return op;
   }
 
   std::size_t first_item_len = 0;

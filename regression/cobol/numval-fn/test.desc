@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+NUMVAL/NUMVAL-C of a string literal are converted at compile time. See
+IBM LR "NUMVAL"/"NUMVAL-C function".
