@@ -302,12 +302,21 @@ Risks and mitigations:
 
 ## 6. Open questions
 
-- **Stack representation**: fixed array + bound assertion (simple,
-  CBMC-friendly) vs CBMC dynamic objects (truly unbounded, heavier).
-  Recommend the fixed array first.
-- **Sections** (`SECTION`s grouping paragraphs, `PERFORM section-name`):
-  a section is a range `[first-para … last-para-of-section]`; the same
-  exit-index mechanism applies with the exit being the section's last
-  paragraph. Needs the section→range table.
-- **Whether to special-case the well-structured subset** (§4) for
-  performance once §3 is in and measured.
+- **Stack representation**: the implementation uses CBMC's own call stack
+  (one re-entrant `$proc`), so no explicit perform stack is needed; depth
+  is bounded by `--unwind` like any recursion. (The §3 fixed-array stack
+  is therefore moot in the shipped design.)
+- **Sections** (`PERFORM section-name`): *implemented*. A section is the
+  range `[section-header … last-paragraph-before-the-next-section]`;
+  paragraphs carry an `is_section` flag and `range_end()` returns the
+  section's last paragraph, so `PERFORM section` reuses the
+  `$proc(start, end)` range mechanism unchanged.
+- **Well-structured-subset performance**: *partly addressed*. Rather than
+  a separate per-paragraph-function path (§4), the entry dispatch and the
+  per-paragraph end checks are emitted only for the indices that are
+  actually PERFORM range starts / ends (`collect_perform_targets`), so a
+  program with few PERFORM targets pays almost no dispatch overhead.
+- **Remaining**: `EXIT PERFORM` / `EXIT PERFORM CYCLE` (inline-PERFORM
+  early exit, COBOL 2002+) and `EXIT SECTION` / `EXIT PARAGRAPH` are not
+  yet modelled (currently `EXIT` is a no-op); absent from the CardDemo
+  corpus, tracked for later.
