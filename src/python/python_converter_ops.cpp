@@ -873,6 +873,22 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         return python_string_literal(result);
       }
     }
+    // Native SMT-String back-end: a (possibly symbolic) string times a
+    // compile-time constant n is n native concats. Symbolic n is nonlinear in
+    // length and left to the fall-through nondet.
+    if(str_op.type().id() == ID_smt_string && nv.has_value())
+    {
+      const long long n = static_cast<long long>(nv.value());
+      if(n <= 0)
+        return constant_exprt{irep_idt{""}, smt_string_typet{}};
+      if(n <= static_cast<long long>(PYTHON_MAX_STRING_LENGTH))
+      {
+        exprt result = str_op;
+        for(long long i = 1; i < n; ++i)
+          result = string_concat(result, str_op);
+        return result;
+      }
+    }
   }
 
   // PLR §6.7: Type-dispatched arithmetic on tagged unions

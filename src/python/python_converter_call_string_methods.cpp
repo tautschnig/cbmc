@@ -327,44 +327,61 @@ std::optional<exprt> python_convertert::try_string_method(
     return side_effect_expr_nondett{
       python_list_type(python_string_type()), get_location(expr)};
   }
+  // Native SMT-String back-end: ASCII case mapping for
+  // upper/lower/casefold/swapcase. SMT-LIB String has no case operation, so
+  // build the result per character via str.to_code / ASCII arithmetic /
+  // str.from_code + concat. ASCII only (A-Z <-> a-z); other code points pass
+  // through unchanged. For i >= len, str.substr yields "" and str.to_code("")
+  // = -1 (out of range -> ""), so trailing positions contribute nothing and a
+  // symbolic length needs no length read.
+  if(
+    obj.type().id() == ID_smt_string &&
+    (method_name == "upper" || method_name == "lower" ||
+     method_name == "casefold" || method_name == "swapcase"))
+  {
+    // upper / swapcase lower a-z to A-Z (offset -32); lower / casefold /
+    // swapcase raise A-Z to a-z (offset +32). swapcase does both (the ranges
+    // are disjoint, so the order of the two conditionals is irrelevant).
+    const bool to_upper = (method_name == "upper" || method_name == "swapcase");
+    const bool to_lower =
+      (method_name == "lower" || method_name == "casefold" ||
+       method_name == "swapcase");
+    const signedbv_typet i32{32};
+    const signedbv_typet i64{64};
+    exprt result = constant_exprt{irep_idt{""}, smt_string_typet{}};
+    for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
+    {
+      exprt ch = string_substr(obj, from_integer(i, i64), from_integer(1, i64));
+      exprt code = native_string_app(
+        ID_cprover_string_smt_to_code_func, {smt_string_typet{}}, {ch}, i32);
+      exprt mapped = code;
+      if(to_upper)
+        mapped = if_exprt{
+          and_exprt{
+            binary_relation_exprt{code, ID_ge, from_integer('a', i32)},
+            binary_relation_exprt{code, ID_le, from_integer('z', i32)}},
+          minus_exprt{code, from_integer(32, i32)},
+          mapped};
+      if(to_lower)
+        mapped = if_exprt{
+          and_exprt{
+            binary_relation_exprt{code, ID_ge, from_integer('A', i32)},
+            binary_relation_exprt{code, ID_le, from_integer('Z', i32)}},
+          plus_exprt{code, from_integer(32, i32)},
+          mapped};
+      exprt newch = native_string_app(
+        ID_cprover_string_smt_from_code_func,
+        {integer_typet{}},
+        {typecast_exprt{mapped, integer_typet{}}},
+        smt_string_typet{});
+      result = string_concat(result, newch);
+    }
+    return result;
+  }
+
   // PLib stdtypes: upper/lower — exact byte transformation
   if(method_name == "upper" || method_name == "lower")
   {
-    // Native SMT-String back-end: SMT-LIB has no case operation, so build the
-    // result per character via str.to_code / ASCII arithmetic / str.from_code
-    // and concatenate. ASCII mapping only (A-Z <-> a-z); other code points
-    // pass through unchanged. For i >= len, str.substr yields "" and
-    // str.to_code("") = -1 (out of range -> ""), so trailing positions
-    // contribute nothing and a symbolic length needs no length read.
-    if(obj.type().id() == ID_smt_string)
-    {
-      const bool is_upper = (method_name == "upper");
-      const signedbv_typet i32{32};
-      const signedbv_typet i64{64};
-      const int lo = is_upper ? 'a' : 'A';
-      const int hi = is_upper ? 'z' : 'Z';
-      const int off = is_upper ? -32 : 32;
-      exprt result = constant_exprt{irep_idt{""}, smt_string_typet{}};
-      for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
-      {
-        exprt ch =
-          string_substr(obj, from_integer(i, i64), from_integer(1, i64));
-        exprt code = native_string_app(
-          ID_cprover_string_smt_to_code_func, {smt_string_typet{}}, {ch}, i32);
-        exprt in_range = and_exprt{
-          binary_relation_exprt{code, ID_ge, from_integer(lo, i32)},
-          binary_relation_exprt{code, ID_le, from_integer(hi, i32)}};
-        exprt mapped =
-          if_exprt{in_range, plus_exprt{code, from_integer(off, i32)}, code};
-        exprt newch = native_string_app(
-          ID_cprover_string_smt_from_code_func,
-          {integer_typet{}},
-          {typecast_exprt{mapped, integer_typet{}}},
-          smt_string_typet{});
-        result = string_concat(result, newch);
-      }
-      return result;
-    }
     auto sv = extract_string_value(obj);
     if(!sv.has_value() && (obj.id() == ID_symbol || obj.id() == ID_dereference))
     {

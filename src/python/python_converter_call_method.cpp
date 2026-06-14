@@ -2270,6 +2270,8 @@ std::optional<exprt> python_convertert::try_method_call(
       static const std::set<std::string> native_supported = {
         "upper",
         "lower",
+        "casefold",
+        "swapcase",
         "startswith",
         "endswith",
         "find",
