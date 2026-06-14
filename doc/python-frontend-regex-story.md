@@ -99,7 +99,37 @@ kwarg processing.)
 - **Stage-1 regex-no-match check** — false-attribute-shape
   detection on stub-recorded patterns.
 
+## Update (2026-06-14): library routing + soundness hardening
+
+Two things changed since the snapshot above:
+
+- **`re.*` now routes through the SMT decision** (the "a-prime" refactor,
+  commits `3e2888f01f` / `5231f3b61d`). `re.match`/`re.search`/`re.fullmatch`
+  (and the `Pattern` methods) return a real `Match`/`None` derived from
+  `__cbmc_re_*`, so a supported constant pattern is precise via the library
+  wrappers, not just the direct intrinsics — under `--cvc5` for both constant
+  and symbolic subjects.
+- **The shared translator was audited and hardened for PLR soundness**
+  (commit `517d3194f4`). It feeds every precise regex decision, so its bugs
+  were group-wide. Fixed: `^`/`$` anchors were stripped then ignored (so
+  `re.search("^abc", s)` matched "abc" anywhere); `.` matched `\n`; negation
+  (`[^…]`, `\D`, `\S`, `\W`) used a bare `re.comp` whose language also contains
+  `""` and multi-char strings; control-character escapes emitted a literal
+  `\n` instead of the `\u{a}` code point; `\A`/`\Z` degraded to literals;
+  `{m,n}` with `n<m` emitted a degenerate loop. Anchoring is now a unified
+  effective-anchor model that also captures the non-MULTILINE rule that `$`
+  matches before a single trailing newline.
+- **Untranslatable/symbolic patterns are now nondet, not "no match"**
+  (commit `944e020463`). Because the stub routes through the intrinsic, the
+  previous definite `bv0` fallback became an always-`None` false proof; it is
+  now a fresh nondet so both branches stay reachable.
+
+The "What doesn't work" list below still holds for **substitution, group
+extraction, split/findall, symbolic patterns, and compilation flags** — those
+are precision features, not soundness gaps.
+
 ## What doesn't work
+
 
 - **Pattern semantics under the default backend.** Without
   `--cvc5`, `re.match("^abc$", "abc")` is nondet — same answer
