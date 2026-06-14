@@ -150,18 +150,28 @@ def compile(pattern, flags: int = 0) -> Pattern:
 
 def match(pattern: str, string: str, flags: int = 0) -> "Match | None":
     # Real Match-or-None from the SMT regex decision; see Pattern.match.
+    # Compilation flags (IGNORECASE/MULTILINE/DOTALL/...) change the match
+    # semantics and are not modelled by the SMT regex translation, so a
+    # non-zero flag must NOT commit to the flag-free (e.g. case-sensitive)
+    # decision -- that would be unsound. Fall back to a nondet Match-or-None.
+    if flags != 0:
+        return Match() if nondet_bool() else None
     if __cbmc_re_match(pattern, string):
         return Match()
     return None
 
 
 def fullmatch(pattern: str, string: str, flags: int = 0) -> "Match | None":
+    if flags != 0:
+        return Match() if nondet_bool() else None
     if __cbmc_re_fullmatch(pattern, string):
         return Match()
     return None
 
 
 def search(pattern: str, string: str, flags: int = 0) -> "Match | None":
+    if flags != 0:
+        return Match() if nondet_bool() else None
     if __cbmc_re_search(pattern, string):
         return Match()
     return None
