@@ -2530,17 +2530,56 @@ exprt cobol_typecheckt::parse_relation()
   const bool neg = eat_word("NOT");
 
   // Class condition: identifier IS [NOT] NUMERIC | ALPHABETIC[-LOWER|-UPPER]
-  // (IBM LR "Class condition", p. 269). The test inspects the physical
-  // character content of the item, which the value-domain model abstracts, so
-  // it is modelled as a nondeterministic Boolean (a sound over-approximation).
+  // (IBM LR "Class condition", p. 269). The test inspects the item's character
+  // content. For an alphanumeric item the bytes are exactly its content (the
+  // byte-array storage), so the test is built exactly: each byte must lie in
+  // the class's character range. For a numeric operand the value-domain model
+  // does not expose faithful character bytes, so it stays a nondeterministic
+  // Boolean (a sound over-approximation).
   if(
     is_word("NUMERIC") || is_word("ALPHABETIC") ||
     is_word("ALPHABETIC-LOWER") || is_word("ALPHABETIC-UPPER") ||
     is_word("ALPHANUMERIC"))
   {
+    const std::string cls = cur().text;
     const source_locationt loc = cur().location;
     advance();
-    // The negation of a nondeterministic Boolean is still nondeterministic.
+    const signedbv_typet ct{32};
+    const auto code = [&](char ch) { return from_integer(ch, ct); };
+    const auto in_range = [&](const exprt &b, char lo, char hi) -> exprt
+    {
+      return and_exprt{
+        binary_relation_exprt{b, ID_ge, code(lo)},
+        binary_relation_exprt{b, ID_le, code(hi)}};
+    };
+    if(
+      a.is_item && (cls == "NUMERIC" || cls == "ALPHABETIC" ||
+                    cls == "ALPHABETIC-LOWER" || cls == "ALPHABETIC-UPPER"))
+    {
+      exprt acc = true_exprt{};
+      for(std::size_t i = 0; i < a.length; ++i)
+      {
+        const exprt off =
+          plus_exprt{a.offset, from_integer(i, a.offset.type())};
+        const exprt b = typecast_exprt{
+          make_byte_extract(a.record, off, unsignedbv_typet{8}), ct};
+        exprt ok;
+        if(cls == "NUMERIC")
+          ok = in_range(b, '0', '9');
+        else if(cls == "ALPHABETIC")
+          ok = or_exprt{
+            or_exprt{in_range(b, 'A', 'Z'), in_range(b, 'a', 'z')},
+            equal_exprt{b, code(' ')}};
+        else if(cls == "ALPHABETIC-UPPER")
+          ok = or_exprt{in_range(b, 'A', 'Z'), equal_exprt{b, code(' ')}};
+        else // ALPHABETIC-LOWER
+          ok = or_exprt{in_range(b, 'a', 'z'), equal_exprt{b, code(' ')}};
+        acc = and_exprt{acc, ok};
+      }
+      return neg ? static_cast<exprt>(not_exprt{acc}) : acc;
+    }
+    // Numeric operand, the user-class ALPHANUMERIC, or a non-item: the value
+    // model has no faithful bytes, so the result is nondeterministic.
     (void)neg;
     return side_effect_expr_nondett{bool_typet{}, loc};
   }

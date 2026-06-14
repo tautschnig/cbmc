@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Class conditions IS [NOT] NUMERIC / ALPHABETIC on an alphanumeric item
+are exact over its bytes. See IBM LR "Class condition".

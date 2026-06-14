@@ -1,6 +1,23 @@
 # Design: faithful numeric byte encoding (DISPLAY / COMP-3 / COMP)
 
-Status: design (not yet implemented). Author: Kiro.
+Status: **partly implemented** (stages 1–2; see note). Author: Kiro.
+
+> **Implementation status.** Stage 1 (carry `usage`/`sign` on
+> `item_infot`) and stage 2 (faithful **unsigned zoned `DISPLAY`**
+> encoding for fields a different-category item aliases, via the
+> pay-as-you-go classifier of §4.1) are implemented in
+> `cobol_typecheck.cpp` (`usage_of`, `zoned_bytes`, `decode_zoned`,
+> `encode_zoned`, `classify_record_aliases`, and the deferred numeric
+> VALUE encoding in `finalize_record`). A within-record REDEFINES of an
+> unsigned DISPLAY numeric as alphanumeric now reads the digit string.
+> The `IS NUMERIC` / `IS ALPHABETIC[-LOWER|-UPPER]` class conditions are
+> now exact over an alphanumeric item's bytes (§3.3) — a precision win
+> independent of the numeric codecs, since an alphanumeric field's bytes
+> are always its content. Still to do: signed zoned (overpunch) and
+> `SIGN … SEPARATE` sizing, packed `COMP-3`, big-endian `COMP`, exact
+> class conditions on faithful *numeric* fields, edited `MOVE` (§6 step
+> 6), and 01-level REDEFINES aliasing (currently separate record
+> symbols). The migration-plan steps below track these.
 
 This document designs replacing the frontend's uniform binary numeric
 storage with **USAGE-faithful byte encodings** — zoned decimal
