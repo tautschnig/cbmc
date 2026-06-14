@@ -14,6 +14,16 @@ Background reading this plan depends on:
 - The `Cobol2Goto` design notes (`approach.md`, `cobol-semantics.md`,
   `cobol-to-goto-lowering.md`) — what COBOL means and how to lower it.
 
+Forward-looking architectural designs (the two large reworks identified
+from this corpus, with validating experiments):
+
+- `doc/architectural/cobol-perform-control-flow-design.md` — replacing
+  `PERFORM` inlining with a perform-return-stack control-flow model so
+  recursion is bounded by `--unwind` instead of vacuously pruned.
+- `doc/architectural/cobol-numeric-encoding-design.md` — USAGE-faithful
+  zoned/packed/binary numeric byte encoding (so `REDEFINES` aliasing and
+  class conditions become exact).
+
 We are building *only* the frontend (source → GOTO). The wider
 "verification-driven migration" pipeline (property inference, Java
 synthesis, differential validation) described in the Cobol2Goto README
