@@ -3700,11 +3700,20 @@ std::vector<stmtt> cobol_typecheckt::parse_write()
   advance();
   const std::string end_kw = "END-" + verb;
 
-  // record-name / file-name operand and an optional FROM source.
+  std::vector<stmtt> result;
+  // record-name / file-name operand and an optional FROM source. WRITE/REWRITE
+  // record FROM id is equivalent to MOVE id TO record then the write (IBM LR
+  // "WRITE statement", FROM phrase), so the record is updated; the write
+  // itself is external and not otherwise modelled.
+  std::optional<reft> record_ref;
   if(is_item_word())
-    (void)parse_ref();
+    record_ref = parse_ref();
   if(eat_word("FROM") && is_item_word())
-    (void)parse_ref();
+  {
+    const reft src = parse_ref();
+    if(record_ref.has_value())
+      result.push_back(make_move_group(*record_ref, src, loc));
+  }
 
   // Skip intervening phrases (ADVANCING, KEY, ...) up to an exception phrase or
   // a statement boundary.
@@ -3714,7 +3723,6 @@ std::vector<stmtt> cobol_typecheckt::parse_write()
         !is_word("WHEN") && cur().text.rfind("END-", 0) != 0)
     advance();
 
-  std::vector<stmtt> result;
   parse_io_exception(result, end_kw.c_str(), loc);
   return result;
 }
