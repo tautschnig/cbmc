@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+A COMP-3 numeric aliased by alphanumeric uses faithful packed-decimal
+bytes. See IBM LR "USAGE PACKED-DECIMAL".

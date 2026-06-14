@@ -783,6 +783,19 @@ protected:
   /// Compile-time zoned bytes for a constant value (VALUE initialisation).
   std::vector<unsigned char>
   zoned_bytes(const mp_integer &value, const item_infot &item) const;
+  /// Decode a faithfully-encoded packed-decimal (COMP-3) field to its value
+  /// (IBM LR "USAGE PACKED-DECIMAL"): two digits per byte, sign in the last
+  /// nibble.
+  valuet decode_packed(const reft &r) const;
+  /// Encode a value (at item.scale) into the little-endian integer whose bytes
+  /// are the field's packed-decimal representation.
+  exprt encode_packed(const exprt &scaled_value, const item_infot &item) const;
+  /// Compile-time packed-decimal bytes for a constant value.
+  std::vector<unsigned char>
+  packed_bytes(const mp_integer &value, const item_infot &item) const;
+  /// Whether item's faithful encoding is implemented (so the classifier may
+  /// mark it and read/write/VALUE go through the codec).
+  bool has_faithful_codec(const item_infot &item) const;
   /// Mark numeric fields whose bytes are observed at a different category
   /// (e.g. a REDEFINES alias) as needing their faithful encoding.
   void classify_record_aliases();
@@ -1056,13 +1069,131 @@ exprt cobol_typecheckt::encode_zoned(
   return acc;
 }
 
+// COMP-3 / PACKED-DECIMAL: byte_size bytes hold 2*byte_size nibbles; the last
+// nibble is the sign (0xC positive, 0xD negative, 0xF unsigned; 0xB also
+// negative), the preceding nibbles hold the digits, most significant first,
+// right-justified (IBM LR "USAGE PACKED-DECIMAL"). For n bytes there are
+// D = 2n-1 digit nibbles.
+
+std::vector<unsigned char> cobol_typecheckt::packed_bytes(
+  const mp_integer &value,
+  const item_infot &item) const
+{
+  const std::size_t n = item.byte_size;
+  const std::size_t digit_nibbles = 2 * n - 1;
+  mp_integer m = value < 0 ? -value : value;
+  m = m % power10(digit_nibbles);
+  std::vector<unsigned char> nib(2 * n, 0);
+  for(std::size_t p = 0; p < digit_nibbles; ++p)
+  {
+    const mp_integer place = power10(digit_nibbles - 1 - p);
+    nib[p] = static_cast<unsigned char>(((m / place) % 10).to_long());
+  }
+  nib[digit_nibbles] = !item.is_signed ? 0xF : (value < 0 ? 0xD : 0xC);
+  std::vector<unsigned char> bytes(n, 0);
+  for(std::size_t k = 0; k < n; ++k)
+    bytes[k] = static_cast<unsigned char>((nib[2 * k] << 4) | nib[2 * k + 1]);
+  return bytes;
+}
+
+valuet cobol_typecheckt::decode_packed(const reft &r) const
+{
+  const item_infot &item = *r.info;
+  const std::size_t n = item.byte_size;
+  const std::size_t digit_nibbles = 2 * n - 1;
+  const unsignedbv_typet u8{8};
+  const typet vt = cobol_value_type();
+  const auto nibble = [&](std::size_t p) -> exprt
+  {
+    const exprt off =
+      plus_exprt{r.offset, from_integer(p / 2, r.offset.type())};
+    const exprt byte = typecast_exprt{make_byte_extract(r.record, off, u8), vt};
+    const exprt sixteen = from_integer(16, vt);
+    return (p % 2 == 0) ? static_cast<exprt>(div_exprt{byte, sixteen})
+                        : static_cast<exprt>(mod_exprt{byte, sixteen});
+  };
+  exprt acc = from_integer(0, vt);
+  for(std::size_t p = 0; p < digit_nibbles; ++p)
+    acc = plus_exprt{
+      acc,
+      mult_exprt{nibble(p), from_integer(power10(digit_nibbles - 1 - p), vt)}};
+  // Sign nibble (the last nibble): 0xB and 0xD denote a negative value.
+  const exprt s = nibble(digit_nibbles);
+  const exprt negative = or_exprt{
+    equal_exprt{s, from_integer(0xD, vt)},
+    equal_exprt{s, from_integer(0xB, vt)}};
+  return valuet{if_exprt{negative, unary_minus_exprt{acc}, acc}, item.scale};
+}
+
+exprt cobol_typecheckt::encode_packed(
+  const exprt &scaled_value,
+  const item_infot &item) const
+{
+  const std::size_t n = item.byte_size;
+  const std::size_t digit_nibbles = 2 * n - 1;
+  const typet vt = cobol_value_type();
+  const exprt zero = from_integer(0, vt);
+  const exprt mag = if_exprt{
+    binary_relation_exprt{scaled_value, ID_ge, zero},
+    scaled_value,
+    unary_minus_exprt{scaled_value}};
+  const exprt sign_nib = !item.is_signed
+                           ? static_cast<exprt>(from_integer(0xF, vt))
+                           : static_cast<exprt>(if_exprt{
+                               binary_relation_exprt{scaled_value, ID_lt, zero},
+                               from_integer(0xD, vt),
+                               from_integer(0xC, vt)});
+  const auto nibble = [&](std::size_t p) -> exprt
+  {
+    if(p >= digit_nibbles)
+      return sign_nib;
+    const exprt place = from_integer(power10(digit_nibbles - 1 - p), vt);
+    return mod_exprt{div_exprt{mag, place}, from_integer(10, vt)};
+  };
+  exprt acc = from_integer(0, phys_type(item));
+  for(std::size_t k = 0; k < n; ++k)
+  {
+    const exprt byte = plus_exprt{
+      mult_exprt{nibble(2 * k), from_integer(16, vt)}, nibble(2 * k + 1)};
+    acc = plus_exprt{
+      acc,
+      mult_exprt{
+        typecast_exprt{byte, phys_type(item)},
+        from_integer(power(mp_integer{256}, k), phys_type(item))}};
+  }
+  return acc;
+}
+
+bool cobol_typecheckt::has_faithful_codec(const item_infot &item) const
+{
+  // Encodings with an implemented codec. DISPLAY is only faithful when
+  // unsigned (signed zoned overpunch is charset-dependent and deferred);
+  // PACKED handles both signs via its sign nibble.
+  if(item.usage == usaget::DISPLAY)
+    return !item.is_signed;
+  return item.usage == usaget::PACKED;
+}
+
 valuet cobol_typecheckt::read_field(const reft &r) const
 {
   const item_infot &item = *r.info;
   // A field whose bytes are observed at a different category keeps its
   // USAGE-faithful encoding (IBM LR "USAGE clause"); decode it accordingly.
-  if(item.faithful_bytes && item.usage == usaget::DISPLAY)
-    return decode_zoned(r);
+  if(item.faithful_bytes)
+  {
+    switch(item.usage)
+    {
+    case usaget::DISPLAY:
+      return decode_zoned(r);
+    case usaget::PACKED:
+      return decode_packed(r);
+    case usaget::BINARY:
+    case usaget::NATIVE_BINARY:
+    case usaget::FLOAT_SHORT:
+    case usaget::FLOAT_LONG:
+      break; // no faithful codec yet; fall through to the binary model
+    }
+  }
   // Otherwise: uniform little-endian binary storage (documented deviation from
   // real zoned/packed/EBCDIC encodings; the byte SIZES follow IBM LR so that
   // REDEFINES overlap and group MOVE line up).
@@ -1093,10 +1224,23 @@ exprt cobol_typecheckt::encode_numeric(
   }
   else
     e = rescale(v.expr, v.scale, item.scale);
-  // Faithful zoned fields store the value as ASCII digit bytes; e is already
-  // at item.scale (its digits, point removed).
-  if(item.faithful_bytes && item.usage == usaget::DISPLAY)
-    return encode_zoned(e, item);
+  // Faithful fields store the value in their USAGE encoding; e is already at
+  // item.scale (its digits, decimal point removed).
+  if(item.faithful_bytes)
+  {
+    switch(item.usage)
+    {
+    case usaget::DISPLAY:
+      return encode_zoned(e, item);
+    case usaget::PACKED:
+      return encode_packed(e, item);
+    case usaget::BINARY:
+    case usaget::NATIVE_BINARY:
+    case usaget::FLOAT_SHORT:
+    case usaget::FLOAT_LONG:
+      break;
+    }
+  }
   if(item.digits > 0 && item.digits <= 18)
     e = mod_exprt{e, from_integer(power10(item.digits), cobol_value_type())};
   return typecast_exprt{e, phys_type(item)};
@@ -1119,8 +1263,8 @@ void cobol_typecheckt::classify_record_aliases()
   {
     item_infot &ia = all_items[a].info;
     if(
-      ia.is_group || !ia.is_numeric || ia.is_table || ia.is_signed ||
-      ia.usage != usaget::DISPLAY || ia.faithful_bytes)
+      ia.is_group || !ia.is_numeric || ia.is_table || ia.faithful_bytes ||
+      !has_faithful_codec(ia))
       continue;
     const std::size_t a0 = ia.offset, a1 = ia.offset + ia.byte_size;
     for(std::size_t b : elem)
@@ -1187,6 +1331,8 @@ void cobol_typecheckt::finalize_record()
     std::vector<unsigned char> b;
     if(info.faithful_bytes && info.usage == usaget::DISPLAY)
       b = zoned_bytes(val, info);
+    else if(info.faithful_bytes && info.usage == usaget::PACKED)
+      b = packed_bytes(val, info);
     else
     {
       const mp_integer modulus = power(mp_integer{2}, info.byte_size * 8);
