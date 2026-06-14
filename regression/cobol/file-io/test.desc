@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+OPEN/READ/WRITE/CLOSE parse and lower; the AT END / INVALID KEY phrases
+are nondeterministic. See IBM LR "READ"/"WRITE statement".

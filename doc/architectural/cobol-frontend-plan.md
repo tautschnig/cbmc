@@ -491,9 +491,13 @@ size-error via `size_error_cond` in `finish_arith`); when it depends on
 character content the model abstracts it is a nondeterministic Boolean
 (`parse_overflow_phrase` for STRING/UNSTRING), so both the exception and
 the normal path stay reachable rather than the exception imperative
-becoming dead code. New such phrases (e.g. file `INVALID KEY` / `AT END`)
-should reuse this shape: parse the two imperatives and a terminator, then
-emit one conditional with the appropriate guard.
+becoming dead code. The file verbs follow the same shape:
+`parse_io_exception` handles `READ`'s `AT END` and `WRITE`/`REWRITE`/
+`DELETE`/`START`'s `INVALID KEY` (and their `NOT` forms) with a
+nondeterministic guard. Files are external, so `OPEN`/`CLOSE` are no-ops,
+a `READ` havocs the file's record area (associated with its FD via
+`file_records`) and any `INTO` receiver, and the output verbs model only
+the nondeterministic exception outcome.
 
 The MOVE source parser, previously the last bespoke operand path, now
 also goes through `parse_cond_operand`. Doing so surfaced a latent

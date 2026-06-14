@@ -298,11 +298,12 @@ struct paragrapht
 bool is_verb(const std::string &w)
 {
   static const std::set<std::string> verbs = {
-    "MOVE",     "ADD",        "SUBTRACT", "MULTIPLY", "DIVIDE",
-    "COMPUTE",  "IF",         "EVALUATE", "PERFORM",  "GO",
-    "STOP",     "GOBACK",     "EXIT",     "DISPLAY",  "ACCEPT",
-    "CONTINUE", "CALL",       "NEXT",     "SET",      "EXEC",
-    "STRING",   "INITIALIZE", "SEARCH",   "INSPECT",  "UNSTRING"};
+    "MOVE",     "ADD",      "SUBTRACT", "MULTIPLY",   "DIVIDE", "COMPUTE",
+    "IF",       "EVALUATE", "PERFORM",  "GO",         "STOP",   "GOBACK",
+    "EXIT",     "DISPLAY",  "ACCEPT",   "CONTINUE",   "CALL",   "NEXT",
+    "SET",      "EXEC",     "STRING",   "INITIALIZE", "SEARCH", "INSPECT",
+    "UNSTRING", "OPEN",     "CLOSE",    "READ",       "WRITE",  "REWRITE",
+    "DELETE",   "START"};
   return verbs.find(w) != verbs.end();
 }
 
@@ -505,6 +506,11 @@ protected:
   /// For each table (OCCURS) item, the index-names declared in its INDEXED BY
   /// phrase, in order; used by SEARCH to choose the index to vary.
   std::map<std::string, std::vector<std::string>> table_indexes;
+  /// For each FD file-name, the base name of its 01 record area; used by READ
+  /// to havoc the record. \ref pending_file holds the file-name between an FD
+  /// entry and the record description that follows it.
+  std::map<std::string, std::string> file_records;
+  std::string pending_file;
   std::vector<paragrapht> paragraphs;
   std::size_t unique = 0;
 
@@ -710,6 +716,13 @@ protected:
   std::vector<stmtt> parse_string();
   std::vector<stmtt> parse_inspect();
   std::vector<stmtt> parse_unstring();
+  std::vector<stmtt> parse_open_close();
+  std::vector<stmtt> parse_read();
+  std::vector<stmtt> parse_write();
+  void parse_io_exception(
+    std::vector<stmtt> &result,
+    const char *end_kw,
+    source_locationt loc);
   void parse_overflow_phrase(
     std::vector<stmtt> &result,
     const char *end_kw,
@@ -1038,6 +1051,8 @@ void cobol_typecheckt::parse_program()
   all_items.clear();
   conds.clear();
   table_indexes.clear();
+  file_records.clear();
+  pending_file.clear();
   paragraphs.clear();
   last_field.clear();
 
@@ -1098,6 +1113,9 @@ void cobol_typecheckt::parse_data_division()
       // "File description entry"). This avoids interpreting numeric tokens in
       // the clauses (e.g. FROM 10 TO 80) as level numbers.
       advance();
+      // Remember the file-name so the record description that follows can be
+      // associated with it (used by READ to havoc the file's record area).
+      pending_file = cur().kind == cobol_token_kindt::WORD ? cur().text : "";
       while(!at_eof() && !is_kind(cobol_token_kindt::PERIOD) &&
             !is_word("PROCEDURE"))
         advance();
@@ -1130,6 +1148,12 @@ void cobol_typecheckt::parse_data_division()
           peek(1).kind == cobol_token_kindt::WORD ? peek(1).text : "FILLER";
         cur_record_base = rname;
         cur_record = "cobol::" + program_id + "::" + rname;
+        // Associate the FD's file-name with this record (its 01 record area).
+        if(!pending_file.empty())
+        {
+          file_records[pending_file] = rname;
+          pending_file.clear();
+        }
         layout_stack.clear();
         record_max = 0;
         record_inits.clear();
@@ -2851,6 +2875,13 @@ std::vector<stmtt> cobol_typecheckt::parse_statement()
     return parse_inspect();
   if(verb == "UNSTRING")
     return parse_unstring();
+  if(verb == "OPEN" || verb == "CLOSE")
+    return parse_open_close();
+  if(verb == "READ")
+    return parse_read();
+  if(
+    verb == "WRITE" || verb == "REWRITE" || verb == "DELETE" || verb == "START")
+    return parse_write();
   if(verb == "ADD")
     return parse_add();
   if(verb == "SUBTRACT")
@@ -3392,6 +3423,146 @@ std::vector<stmtt> cobol_typecheckt::parse_unstring()
   }
   // Optional ON OVERFLOW / NOT ON OVERFLOW phrases and END-UNSTRING.
   parse_overflow_phrase(result, "END-UNSTRING", loc);
+  return result;
+}
+
+void cobol_typecheckt::parse_io_exception(
+  std::vector<stmtt> &result,
+  const char *end_kw,
+  source_locationt loc)
+{
+  // [AT END imp | INVALID KEY imp] [NOT AT END imp | NOT INVALID KEY imp]
+  // [END-verb] (IBM LR "READ"/"WRITE"/... statements). Whether end-of-file or
+  // an invalid key occurs is not modelled, so the phrases are guarded by a
+  // nondeterministic choice (see "conditional-imperative phrases").
+  std::vector<stmtt> exc;
+  std::vector<stmtt> not_exc;
+  bool has_phrase = false;
+  if(eat_word("AT"))
+  {
+    expect_word("END");
+    exc = parse_statements();
+    has_phrase = true;
+  }
+  else if(eat_word("INVALID"))
+  {
+    eat_word("KEY");
+    exc = parse_statements();
+    has_phrase = true;
+  }
+  if(eat_word("NOT"))
+  {
+    eat_word("AT");
+    eat_word("END");
+    eat_word("INVALID");
+    eat_word("KEY");
+    not_exc = parse_statements();
+    has_phrase = true;
+  }
+  eat_word(end_kw);
+  if(!has_phrase)
+    return;
+  stmtt s;
+  s.kind = stmtt::kindt::IFTE;
+  s.location = loc;
+  s.cond = side_effect_expr_nondett{bool_typet{}, loc};
+  s.then_stmts = std::move(exc);
+  s.else_stmts = std::move(not_exc);
+  result.push_back(std::move(s));
+}
+
+std::vector<stmtt> cobol_typecheckt::parse_open_close()
+{
+  // OPEN {INPUT|OUTPUT|I-O|EXTEND} file-name... / CLOSE file-name...: files are
+  // external; opening and closing have no modelled state effect (IBM LR
+  // "OPEN"/"CLOSE statement").
+  advance(); // OPEN or CLOSE
+  skip_to_sentence_end();
+  return {};
+}
+
+std::vector<stmtt> cobol_typecheckt::parse_read()
+{
+  // READ file-name [NEXT|PREVIOUS|RECORD] [INTO id] [KEY IS id]
+  //   [AT END imp][NOT AT END imp] | [INVALID KEY imp][NOT INVALID KEY imp]
+  //   [END-READ] (IBM LR "READ statement"). A read delivers an unknown record
+  //   or reaches end-of-file / an invalid key: the file's record area and the
+  //   INTO receiver are havoced, and the exception phrases are guarded
+  //   nondeterministically.
+  const source_locationt loc = cur().location;
+  expect_word("READ");
+  std::string file;
+  if(cur().kind == cobol_token_kindt::WORD)
+  {
+    file = cur().text;
+    advance();
+  }
+  eat_word("NEXT");
+  eat_word("PREVIOUS");
+  eat_word("RECORD");
+
+  std::vector<stmtt> result;
+  // Havoc the file's record area so its fields read as unknown.
+  auto it = file_records.find(file);
+  if(it != file_records.end())
+  {
+    const irep_idt rec = "cobol::" + program_id + "::" + it->second;
+    if(record_sizes.count(rec) != 0)
+    {
+      stmtt s;
+      s.kind = stmtt::kindt::ASSIGN;
+      s.location = loc;
+      s.lhs = record_expr(rec);
+      s.rhs = side_effect_expr_nondett{record_type(rec), loc};
+      result.push_back(std::move(s));
+    }
+  }
+  if(eat_word("INTO"))
+  {
+    if(is_item_word())
+      result.push_back(havoc_field(parse_ref(), loc));
+  }
+  eat_word("WITH");
+  eat_word("NO");
+  eat_word("LOCK");
+  if(eat_word("KEY"))
+  {
+    eat_word("IS");
+    if(is_item_word())
+      (void)parse_ref();
+  }
+  parse_io_exception(result, "END-READ", loc);
+  return result;
+}
+
+std::vector<stmtt> cobol_typecheckt::parse_write()
+{
+  // WRITE record [FROM id] [{BEFORE|AFTER} ADVANCING ...] / REWRITE / DELETE /
+  // START, each with an optional INVALID KEY / AT END-OF-PAGE phrase and scope
+  // terminator (IBM LR "WRITE"/"REWRITE"/"DELETE"/"START statements"). The
+  // output is external; only the nondeterministic exception outcome is
+  // modelled.
+  const source_locationt loc = cur().location;
+  const std::string verb = cur().text;
+  advance();
+  const std::string end_kw = "END-" + verb;
+
+  // record-name / file-name operand and an optional FROM source.
+  if(is_item_word())
+    (void)parse_ref();
+  if(eat_word("FROM") && is_item_word())
+    (void)parse_ref();
+
+  // Skip intervening phrases (ADVANCING, KEY, ...) up to an exception phrase or
+  // a statement boundary.
+  while(!at_eof() && !is_kind(cobol_token_kindt::PERIOD) &&
+        !is_word("INVALID") && !is_word("AT") && !is_word("NOT") &&
+        !is_word(end_kw.c_str()) && !is_verb(cur().text) && !is_word("ELSE") &&
+        !is_word("WHEN") && cur().text.rfind("END-", 0) != 0)
+    advance();
+
+  std::vector<stmtt> result;
+  parse_io_exception(result, end_kw.c_str(), loc);
   return result;
 }
 
