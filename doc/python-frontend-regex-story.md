@@ -141,8 +141,17 @@ are precision features, not soundness gaps.
   don't.
 - **Group extraction.** `m = re.match(p, s); m.group(1)` returns
   a nondet string regardless of the pattern's groups.
-- **Substitution.** `re.sub(p, repl, s)` returns a nondet string
-  even for fully constant inputs.
+- **Substitution.** *Partially modelled (2026-06-14).*
+  `re.sub` / `re.subn` / `Pattern.sub` are precise under
+  `--cvc5 --python-smt-strings` when the pattern is a constant,
+  anchor-free, **fixed-length (≥1)** regex and the replacement is
+  a constant literal with no back-references/escapes, replacing
+  all (`count == 0`) — these lower to `str.replace_re_all`, which
+  coincides with CPython `re.sub` exactly on that subset.
+  CVC5's `str.replace_re_all` is leftmost-**shortest** whereas
+  CPython is greedy (leftmost-longest), so variable-length
+  patterns, empty matches, a bounded `count`, or a non-literal
+  replacement fall back to a sound nondet string.
 - **Symbolic patterns.** `re.match(some_var, s)` is always nondet
   (we don't have an SMT regex of the symbolic pattern).
 - **Compilation flags.** `re.IGNORECASE`, `re.MULTILINE`, etc.
