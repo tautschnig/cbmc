@@ -752,9 +752,104 @@ codet python_convertert::convert_for(const jsont &stmt)
   if(iterable.is_nil())
     return finalize_for(code_skipt{});
 
-  // PLR §6.13: 'TypeError: 'NoneType' object is not iterable'.
-  // Iterating None raises TypeError at runtime. Opt-in via
-  // --python-check-iter-none — off by default because the
+  // PLR: "dictionary changed size during iteration" (RuntimeError). CPython's
+  // dict views (the dict itself and .items()/.keys()/.values()) check the
+  // dict's size at every __next__ and raise if it changed. Model it by
+  // snapshotting len(d) at loop entry and, at each __next__ point (the body
+  // top, plus a synthetic terminal probe at idx == snapshot), raising
+  // RuntimeError when the current size differs. This fires only on
+  // size-changing mutations (add/del) -- a value-update `d[k] = v` keeps
+  // len(d) -- and a user `break` exits before the next __next__, so it does not
+  // fire. Only a simple lvalue receiver is watched (side-effect-free to
+  // re-read).
+  std::optional<exprt> cm_dict;
+  {
+    const jsont *recv = nullptr;
+    if(is_node_type(iter, "Call"))
+    {
+      const jsont &fn = json_member(iter, "func");
+      if(is_node_type(fn, "Attribute"))
+      {
+        const std::string m = json_string(json_member(fn, "attr"));
+        if(m == "items" || m == "keys" || m == "values")
+          recv = &json_member(fn, "value");
+      }
+    }
+    else if(is_node_type(iter, "Name"))
+      recv = &iter;
+    if(
+      recv != nullptr &&
+      (is_node_type(*recv, "Name") || is_node_type(*recv, "Attribute")))
+    {
+      exprt d = convert_expression(*recv);
+      if(!d.is_nil() && is_python_dict_type(d.type()))
+        cm_dict = d;
+    }
+  }
+  std::optional<symbol_exprt> cm_snapshot;
+  if(cm_dict)
+  {
+    static unsigned cm_ctr = 0;
+    irep_idt cmid{qualify_name("__cm_size_" + std::to_string(cm_ctr++))};
+    if(symbol_table.lookup(cmid) == nullptr)
+    {
+      symbolt cs{cmid, signedbv_typet{64}, "python"};
+      cs.base_name = id2string(cmid);
+      cs.is_lvalue = true;
+      cs.is_state_var = true;
+      cs.is_static_lifetime = current_function.empty();
+      symbol_table.add(cs);
+    }
+    cm_snapshot = symbol_table.lookup_ref(cmid).symbol_expr();
+  }
+  auto cm_dict_len = [&]() -> exprt {
+    return member_exprt{*cm_dict, "length", signedbv_typet{64}};
+  };
+  auto cm_snapshot_stmt = [&]() -> codet {
+    return code_frontend_assignt{*cm_snapshot, cm_dict_len()};
+  };
+  // Loop-body prologue (the __next__ size check + synthetic terminal stop).
+  auto cm_body_prologue = [&](const exprt &idx) -> code_blockt
+  {
+    code_blockt b;
+    code_blockt raise;
+    const symbolt *exc = symbol_table.lookup("python::__exception_active");
+    const symbolt *exct = symbol_table.lookup("python::__exception_type");
+    if(exc != nullptr)
+    {
+      raise.add(code_frontend_assignt{exc->symbol_expr(), true_exprt{}});
+      if(exct != nullptr)
+        raise.add(code_frontend_assignt{
+          exct->symbol_expr(),
+          from_integer(exception_type_hash("RuntimeError"), exct->type)});
+    }
+    raise.add(code_breakt{});
+    b.add(code_ifthenelset{
+      notequal_exprt{cm_dict_len(), *cm_snapshot}, std::move(raise)});
+    exprt idx64 = idx;
+    if(idx64.type() != signedbv_typet{64})
+      idx64 = typecast_exprt{idx64, signedbv_typet{64}};
+    b.add(code_ifthenelset{
+      binary_relation_exprt{idx64, ID_ge, *cm_snapshot}, code_breakt{}});
+    return b;
+  };
+  // Loop bound for a watched dict: iterate snapshot+1 times (the +1 runs the
+  // terminal __next__ size check) while staying statically bounded by the
+  // model's max dict size.
+  auto cm_bound = [&](const exprt &idx, const exprt &orig) -> exprt
+  {
+    if(!cm_dict)
+      return orig;
+    return and_exprt{
+      binary_relation_exprt{
+        idx,
+        ID_lt,
+        plus_exprt{*cm_snapshot, from_integer(1, signedbv_typet{64})}},
+      binary_relation_exprt{
+        idx,
+        ID_lt,
+        from_integer(PYTHON_MAX_DICT_SIZE + 1, signedbv_typet{64})}};
+  };
   // symbolic check fires false positives when the iterable
   // is a function-call result whose tag CBMC cannot prove
   // statically. Populate iter_none_check (declared up at
@@ -1173,8 +1268,16 @@ skip_string_unroll:;
     code_blockt result;
     result.add(
       code_frontend_assignt{idx_var, from_integer(0, signedbv_typet{64})});
+    if(cm_dict)
+      result.add(cm_snapshot_stmt());
 
     code_blockt body_block;
+    if(cm_dict)
+    {
+      code_blockt cm_pro = cm_body_prologue(idx_var);
+      for(auto &st : cm_pro.statements())
+        body_block.add(std::move(st));
+    }
     exprt key_val = index_exprt{keys, idx_var};
     if(key_val.type() != loop_var.type())
       key_val = safe_typecast(key_val, loop_var.type());
@@ -1198,14 +1301,15 @@ skip_string_unroll:;
     // never holds more than PYTHON_MAX_DICT_SIZE entries by construction.
     // Without the constant bound a `for k in d` over a parameter dict is
     // effectively unbounded and spuriously trips the unwinding assertion.
+    // For a watched dict, cm_bound replaces this with the snapshot+1 bound.
+    exprt default_bound = and_exprt{
+      binary_relation_exprt{idx_var, ID_lt, length},
+      binary_relation_exprt{
+        idx_var,
+        ID_lt,
+        from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}};
     code_whilet while_stmt{
-      and_exprt{
-        binary_relation_exprt{idx_var, ID_lt, length},
-        binary_relation_exprt{
-          idx_var,
-          ID_lt,
-          from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}},
-      std::move(body_block)};
+      cm_bound(idx_var, default_bound), std::move(body_block)};
     result.add(std::move(while_stmt));
     return finalize_for(std::move(result));
   }
@@ -1563,9 +1667,18 @@ skip_string_unroll:;
 
   // __idx = 0
   result.add(code_frontend_assignt{idx_var, from_integer(0, int_type)});
+  if(cm_dict)
+    result.add(cm_snapshot_stmt());
 
   // while(__idx < iterable.length)
   code_blockt body_block;
+  // Concurrent-modification __next__ check at the top of each iteration.
+  if(cm_dict)
+  {
+    code_blockt cm_pro = cm_body_prologue(idx_var);
+    for(auto &st : cm_pro.statements())
+      body_block.add(std::move(st));
+  }
 
   // x = iterable.data[__idx] (typecast if needed). For native string
   // iteration this placeholder is overwritten by the str.substr branch below.
@@ -1752,7 +1865,8 @@ skip_string_unroll:;
     idx_var, plus_exprt{idx_var, from_integer(1, int_type)}});
 
   code_whilet while_stmt{
-    binary_relation_exprt{idx_var, ID_lt, length}, std::move(body_block)};
+    cm_bound(idx_var, binary_relation_exprt{idx_var, ID_lt, length}),
+    std::move(body_block)};
   while_stmt.add_source_location() = loc;
   result.add(std::move(while_stmt));
 
