@@ -345,12 +345,28 @@ The genuine false proofs and their status (2026-06-08):
     (`python_converter_assign.cpp`, the `__dict_found_` scan ~line 2312): for a
     symbolic iterated key `k = keys[idx]` the `found` disjunction is not
     discharged, so the `if(!found) append` path grows `length`.
-  - **Prerequisite / architectural fix:** make the symbolic-key dict-assign
-    prove `found` for a key that is provably already present (so a value-update
-    cannot append). That is a precision win for a *group* (any `len`-sensitive
-    code doing `for k in d: d[k]=…` on a param dict), and once it lands the
-    concurrent-mod check above becomes sound and can be re-applied as-is. Until
-    then, left deferred — shipping the check now would regress value-updates.
+  - **Prerequisite — LANDED (2026-06-14), and the root cause was more
+    surprising than first thought.** Deeper tracing showed the value-update
+    regression was *not* primarily the dict-assign `found` scan but **iteration
+    of a by-reference parameter dict**: (1) the dict-direct loop bound was the
+    unconstrained symbolic `*d.length`, so `for k in d` over a parameter dict
+    was effectively unbounded (spurious unwinding-assertion failure); and (2)
+    the loop iterated a `__iter_tmp_` **snapshot copy** of the dereference `*d`,
+    not aliased to the object the body mutates through the pointer — so
+    `d[k]=v`'s key-scan over `*d` never matched the copied key and spuriously
+    appended (runaway length growth). Fixed by bounding the loop by
+    `PYTHON_MAX_DICT_SIZE` and by iterating a dereference lvalue *in place*
+    (commit *"precise iteration of by-reference (parameter) dicts"*). Now
+    `def f(d): n0=len(d); for k in d: d[k]=99; assert len(d)==n0` verifies for
+    parameter dicts (int keys). Guarded by `param-dict-iter-value-update`.
+  - **Remaining gate for re-applying the concurrent-mod check.** Int-keyed
+    parameter dicts are now precise, so the length-based check is sound for
+    them. **String-keyed** value-updates (`dict[str,int]`) are *correct* but hit
+    the string-refinement **performance cliff** (`for k in d: d[k]=v` times out
+    in the refinement loop — see [§8](#performance)). Since `github_3647_9_fail`
+    is `dict[str,int]`, re-applying the check needs that perf cliff addressed
+    (or the check scoped to non-string-keyed dicts). The check design above is
+    validated and ready to re-apply once the str-key path is fast enough.
 
 Net: 3 of the 4 genuine false proofs closed (`github_3647_12_fail`,
 `github_2897_2_fail`, `class-attributes_fail`); only `github_3647_9_fail`
