@@ -154,8 +154,16 @@ are precision features, not soundness gaps.
   replacement fall back to a sound nondet string.
 - **Symbolic patterns.** `re.match(some_var, s)` is always nondet
   (we don't have an SMT regex of the symbolic pattern).
-- **Compilation flags.** `re.IGNORECASE`, `re.MULTILINE`, etc.
-  pass through but don't influence the SMT translation.
+- **Compilation flags.** *Sound but imprecise (2026-06-14).* The module-level
+  `re.search`/`match`/`fullmatch(pattern, string, flags)` now fall back to a
+  nondet `Match`-or-`None` whenever `flags != 0` (previously the flag was
+  dropped and the flag-free, e.g. case-sensitive, decision was used — an
+  unsound false proof). The flag semantics themselves (IGNORECASE/MULTILINE/
+  DOTALL) are still not modelled, and flags on **compiled** patterns
+  (`re.compile(p, flags)`) are not yet handled: a compiled Pattern's `self.flags`
+  int field reads as nondet (unlike its string `pattern` field), so threading it
+  is blocked on that default-propagation gap. Precise IGNORECASE/DOTALL is a
+  follow-up.
 
 ## Test coverage
 
