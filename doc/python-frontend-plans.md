@@ -50,7 +50,10 @@ robustness, then capability; difficulty is noted where high.
   ([§0](#false-proofs)): **RESOLVED (2026-06-14)** — imported-module,
   two-statement, and conditional-expression (`IfExp`) forms all preserve `None`
   now; sweep fallout-neutral.
-- **`github_3647_9_fail`**: dict-mutation-during-iteration ([§0](#false-proofs)).
+- ~~**`github_3647_9_fail`**: dict-mutation-during-iteration~~
+  ([§0](#false-proofs)): **RESOLVED (2026-06-14)** — CPython-faithful size
+  check at each `__next__`; sweep PASS 2929→2930, 0 regressions. **P0 is now
+  empty.**
 
 **P1 — Native robustness (crash on valid code).**
 - ~~**`smt_string` members in byte-operated structs**~~
@@ -117,10 +120,10 @@ embedded-NUL edge. Breakdown verified by hand:
   nondet vs length-3 literal). Low value; recorded with the string cluster
   in [§9](#precision).
 
-Net: the frontend is effectively free of genuine false proofs; the only
-deliberately-deferred soundness item is `github_3647_9_fail`
-(dict-mutation-during-iteration, below) — **plus** the newly-found
-return-type `None`-erasure vector immediately below.
+Net: the frontend is effectively free of genuine false proofs; the
+previously-deferred `github_3647_9_fail` (dict-mutation-during-iteration) is now
+**RESOLVED** (below), as is the return-type `None`-erasure vector — so there are
+no open deliberately-deferred soundness items at present.
 
 ### Return-type inference erases `None` from `X`-or-`None` returns — HIGH PRIORITY (2026-06-12)
 
@@ -319,58 +322,43 @@ The genuine false proofs and their status (2026-06-08):
   avoids both. **Side effect:** the fix also removed the (same-mechanism)
   vacuity that had been masking `jpl`/`jpl_1`; they now surface a separate
   pre-existing precision gap — see [§9](#precision).
-- **`github_3647_9_fail` — dict mutation during iteration — DEFERRED
-  (niche; BLOCKED on a pre-existing dict-assign imprecision — root-caused
-  2026-06-14).** `for k, v in d.items(): d["x"] = 3` raises `RuntimeError`
-  ("dictionary changed size during iteration") in CPython; we verify it
-  SUCCESSFUL (a missed bug). A *correct* model was prototyped (and reverted):
-  detect the iterated dict (direct `for k in d` or `d.items()/keys()/values()`,
-  the receiver recovered from the AST since `.items()` materialises a snapshot
-  list that drops the dict identity), snapshot `len(d)` at loop entry, iterate
-  `snapshot+1` times, and at each `__next__` (body top + a synthetic terminal
-  probe) raise `RuntimeError` when `len(d) != snapshot`. This is sound and
-  break-safe in principle: a value-update keeps `len(d)` (no fire), a user
-  `break` exits before the next `__next__` (no fire), and add/del fires. It
-  fixed the test and the `for k in d: d["x"]=…` add case, with no false positive
-  on `mutate-then-break` or plain iteration.
-  - **The blocker** is a *pre-existing* symbolic-dict imprecision, independent
-    of the check: `for k in d: d[k] = v` (the ubiquitous value-update over a
-    **parameter** dict) spuriously **grows `len(d)` in the model**. Verified on
-    a clean tree: `def f(d): n0=len(d); for k in d: d[k]=99; assert len(d)==n0`
-    verifies **FAILED** (a *literal* dict is precise — SUCCESSFUL — and a single
-    guarded constant-key assign `if 1 in d: d[1]=v` is precise). So a
-    length-based concurrent-mod check inherits this and **false-positives on the
-    value-update pattern** — exactly the regression to avoid. The over-approx is
-    in the symbolic-key dict subscript-assign scan-or-append
-    (`python_converter_assign.cpp`, the `__dict_found_` scan ~line 2312): for a
-    symbolic iterated key `k = keys[idx]` the `found` disjunction is not
-    discharged, so the `if(!found) append` path grows `length`.
-  - **Prerequisite — LANDED (2026-06-14), and the root cause was more
-    surprising than first thought.** Deeper tracing showed the value-update
-    regression was *not* primarily the dict-assign `found` scan but **iteration
-    of a by-reference parameter dict**: (1) the dict-direct loop bound was the
-    unconstrained symbolic `*d.length`, so `for k in d` over a parameter dict
-    was effectively unbounded (spurious unwinding-assertion failure); and (2)
-    the loop iterated a `__iter_tmp_` **snapshot copy** of the dereference `*d`,
-    not aliased to the object the body mutates through the pointer — so
-    `d[k]=v`'s key-scan over `*d` never matched the copied key and spuriously
-    appended (runaway length growth). Fixed by bounding the loop by
-    `PYTHON_MAX_DICT_SIZE` and by iterating a dereference lvalue *in place*
-    (commit *"precise iteration of by-reference (parameter) dicts"*). Now
-    `def f(d): n0=len(d); for k in d: d[k]=99; assert len(d)==n0` verifies for
-    parameter dicts (int keys). Guarded by `param-dict-iter-value-update`.
-  - **Remaining gate for re-applying the concurrent-mod check.** Int-keyed
-    parameter dicts are now precise, so the length-based check is sound for
-    them. **String-keyed** value-updates (`dict[str,int]`) are *correct* but hit
-    the string-refinement **performance cliff** (`for k in d: d[k]=v` times out
-    in the refinement loop — see [§8](#performance)). Since `github_3647_9_fail`
-    is `dict[str,int]`, re-applying the check needs that perf cliff addressed
-    (or the check scoped to non-string-keyed dicts). The check design above is
-    validated and ready to re-apply once the str-key path is fast enough.
+- **`github_3647_9_fail` — dict mutation during iteration — RESOLVED
+  (2026-06-14).** `for k, v in d.items(): d["x"] = 3` raises `RuntimeError`
+  ("dictionary changed size during iteration") in CPython; we previously
+  verified it SUCCESSFUL (a missed bug / false proof). **Fixed** by a
+  CPython-faithful size check at each `__next__`: detect the iterated dict from
+  the AST (the receiver of items/keys/values, or the directly-iterated dict),
+  snapshot `len(d)` at loop entry, iterate `snapshot+1` times (statically
+  bounded by `PYTHON_MAX_DICT_SIZE+1`), and raise `RuntimeError` at the body
+  top + a synthetic terminal probe when `len(d) != snapshot`. Sound + precise:
+  a value-update `d[k]=v` keeps `len(d)` (no fire), a user `break` exits before
+  the next `__next__` (no fire), add/del fires. Required two prerequisite fixes
+  to precise parameter-dict iteration (the bounded loop + dereference-in-place
+  aliasing). Sweep: PASS 2929→2930, `github_3647_9_fail` DIFF→PASS, 0
+  regressions. Guarded by `dict-changed-size-during-iteration` and
+  `dict-iter-value-update-no-runtimeerror`. **Residual (P2/§8, not soundness):**
+  under the refined default a *symbolic string-keyed* value-update inherits the
+  string-refinement performance cliff (correct but slow; fast under
+  `--python-smt-strings`).
+  <details><summary>Historical investigation (root-cause trail)</summary>
 
-Net: 3 of the 4 genuine false proofs closed (`github_3647_12_fail`,
-`github_2897_2_fail`, `class-attributes_fail`); only `github_3647_9_fail`
-(dict mutation during iteration — niche) remains deferred. The
+  The blocker was first mis-attributed to the dict-assign `__dict_found_` scan;
+  deeper tracing showed it was parameter-dict *iteration*: an unconstrained
+  symbolic `*d.length` loop bound (spurious unwinding-assertion failure) plus
+  iterating a `__iter_tmp_` snapshot copy of `*d` not aliased to the
+  pointer-mutated object (so `d[k]=v` spuriously appended, runaway length
+  growth). Both fixed before applying the check.
+  </details>
+
+  <!-- superseded prototype notes removed; see commit history -->
+  Prototype-era notes: the check was first prototyped, reverted when it
+  surfaced the parameter-dict iteration imprecision (see the collapsed
+  root-cause trail above), then re-applied after the two prerequisite fixes
+  landed.
+
+Net: all 4 genuine false proofs from the 2026-06-08/09 triage are now closed
+(`github_3647_12_fail`, `github_2897_2_fail`, `class-attributes_fail`, and
+`github_3647_9_fail`). The
 `class-attributes_fail` fix also removed the same-mechanism vacuity that
 had been masking the `jpl`/`jpl_1` sweep entries, which now surface a
 separate pre-existing precision gap (see [§9](#precision)) — i.e. three
