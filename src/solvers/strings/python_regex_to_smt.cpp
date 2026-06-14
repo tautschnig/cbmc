@@ -250,6 +250,11 @@ private:
       }
       if(!eof() && peek() == '?')
         ++pos; // non-greedy
+      // Python rejects {m,n} with n < m ("min repeat greater than max
+      // repeat"); bail so the caller models it as nondet rather than
+      // emitting a degenerate re.loop.
+      if(has_upper && n < m)
+        return std::nullopt;
       std::ostringstream out;
       if(has_upper)
         out << "((_ re.loop " << m << " " << n << ") " << *atom << ")";
@@ -307,10 +312,12 @@ private:
     if(c == '.')
     {
       ++pos;
-      // Dot matches any character except a line break by default,
-      // but we don't distinguish line-break handling — use any
-      // character.
-      return std::string{"re.allchar"};
+      // Python '.' (without re.DOTALL) matches any character EXCEPT a
+      // newline. SMT 're.allchar' includes '\n', so subtract it; using
+      // 're.allchar' here would be unsound (over-matching across lines).
+      // SMT-LIB encodes the newline code point as \u{a} ("\n" would be a
+      // literal backslash-n).
+      return std::string{"(re.diff re.allchar (str.to_re \"\\u{a}\"))"};
     }
 
     if(c == '^' || c == '$')
@@ -344,18 +351,22 @@ private:
     case 'd':
       return std::string{"(re.range \"0\" \"9\")"};
     case 'D':
-      return std::string{"(re.comp (re.range \"0\" \"9\"))"};
+      // Single non-digit character: allchar minus the digit range.
+      // (re.comp ...) would be unsound — its language includes "" and
+      // multi-character strings, but \D matches exactly one character.
+      return std::string{"(re.diff re.allchar (re.range \"0\" \"9\"))"};
     case 's':
-      // Whitespace: [ \t\n\r\f\v]
+      // Whitespace: [ \t\n\r\f\v]. Control characters use \u{hex}
+      // (SMT-LIB has no \t / \n escapes — "\t" would be backslash-t).
       return std::string{
-        "(re.union (str.to_re \" \") (str.to_re \"\\t\") "
-        "(str.to_re \"\\n\") (str.to_re \"\\r\") "
-        "(str.to_re \"\\f\") (str.to_re \"\\v\"))"};
+        "(re.union (str.to_re \" \") (str.to_re \"\\u{9}\") "
+        "(str.to_re \"\\u{a}\") (str.to_re \"\\u{d}\") "
+        "(str.to_re \"\\u{c}\") (str.to_re \"\\u{b}\"))"};
     case 'S':
       return std::string{
-        "(re.comp (re.union (str.to_re \" \") (str.to_re \"\\t\") "
-        "(str.to_re \"\\n\") (str.to_re \"\\r\") "
-        "(str.to_re \"\\f\") (str.to_re \"\\v\")))"};
+        "(re.diff re.allchar (re.union (str.to_re \" \") "
+        "(str.to_re \"\\u{9}\") (str.to_re \"\\u{a}\") (str.to_re \"\\u{d}\") "
+        "(str.to_re \"\\u{c}\") (str.to_re \"\\u{b}\")))"};
     case 'w':
       // Word: [A-Za-z0-9_]
       return std::string{
@@ -363,18 +374,26 @@ private:
         "(re.range \"0\" \"9\") (str.to_re \"_\"))"};
     case 'W':
       return std::string{
-        "(re.comp (re.union (re.range \"A\" \"Z\") "
+        "(re.diff re.allchar (re.union (re.range \"A\" \"Z\") "
         "(re.range \"a\" \"z\") (re.range \"0\" \"9\") "
         "(str.to_re \"_\")))"};
     case 'n':
-      return std::string{"(str.to_re \"\\n\")"};
+      return std::string{"(str.to_re \"\\u{a}\")"};
     case 't':
-      return std::string{"(str.to_re \"\\t\")"};
+      return std::string{"(str.to_re \"\\u{9}\")"};
     case 'r':
-      return std::string{"(str.to_re \"\\r\")"};
+      return std::string{"(str.to_re \"\\u{d}\")"};
+    case 'f':
+      return std::string{"(str.to_re \"\\u{c}\")"};
+    case 'v':
+      return std::string{"(str.to_re \"\\u{b}\")"};
     case 'b':
     case 'B':
-      // Word boundaries are position assertions — unsupported.
+    case 'A':
+    case 'Z':
+      // Word boundaries (\b, \B) and string-position anchors (\A, \Z)
+      // are zero-width position assertions we can't express as a regex
+      // term — bail so the caller falls back to a sound nondet model.
       return std::nullopt;
     default:
       // Backreferences \1..\9
@@ -447,10 +466,14 @@ private:
     std::ostringstream out;
     if(parts.empty())
       return std::nullopt;
+    // A negated class [^...] matches exactly one character NOT in the
+    // set (newline included, per Python). Use allchar-minus-set rather
+    // than (re.comp set): the bare complement's language also contains
+    // "" and multi-character strings, which would be unsound.
     if(parts.size() == 1)
     {
       if(negated)
-        return std::string{"(re.comp "} + parts[0] + ")";
+        return std::string{"(re.diff re.allchar "} + parts[0] + ")";
       return parts[0];
     }
     out << "(re.union";
@@ -458,7 +481,7 @@ private:
       out << " " << p;
     out << ")";
     if(negated)
-      return std::string{"(re.comp "} + out.str() + ")";
+      return std::string{"(re.diff re.allchar "} + out.str() + ")";
     return out.str();
   }
 };
@@ -725,40 +748,117 @@ private:
 
 } // namespace
 
+namespace
+{
+enum class match_kind
+{
+  fullmatch,
+  match,
+  search
+};
+
+/// Split off a single leading ^ anchor and a single trailing $ anchor,
+/// returning the anchor-free core plus flags. A trailing $ that is
+/// escaped (\$) is a literal, not an anchor, so it is not stripped.
+/// Any ^/$ that remains embedded in the core is rejected by the
+/// translator (parse_atom), which keeps the model sound.
+void strip_anchors(
+  const std::string &pattern,
+  bool &had_start,
+  bool &had_end,
+  std::string &core)
+{
+  core = pattern;
+  had_start = false;
+  had_end = false;
+  if(!core.empty() && core.front() == '^')
+  {
+    had_start = true;
+    core.erase(core.begin());
+  }
+  if(!core.empty() && core.back() == '$')
+  {
+    // Count the run of backslashes immediately before the '$'. An even
+    // count (including zero) means the '$' is unescaped → an anchor.
+    std::size_t bs = 0;
+    std::size_t i = core.size() - 1; // index of '$'
+    while(i > 0 && core[i - 1] == '\\')
+    {
+      ++bs;
+      --i;
+    }
+    if(bs % 2 == 0)
+    {
+      had_end = true;
+      core.pop_back();
+    }
+  }
+}
+
+/// Translate a pattern to the SMT regex for the whole subject string
+/// under the given match semantics. Returns nullopt for unsupported
+/// patterns (caller falls back to a sound nondet model).
+std::optional<std::string>
+translate(const std::string &pattern, match_kind kind)
+{
+  bool had_start, had_end;
+  std::string core;
+  strip_anchors(pattern, had_start, had_end, core);
+  translator t{core};
+  auto body = t.parse_top();
+  if(!body.has_value())
+    return std::nullopt;
+
+  // Effective anchoring combines the function semantics with explicit
+  // ^/$ anchors:
+  //  - start anchored unless this is search() without a leading ^;
+  //  - end anchored for fullmatch (exact, no trailing-newline slack);
+  //    for match()/search() a trailing $ anchors the end but, per
+  //    Python's non-MULTILINE rule, $ also matches just before a single
+  //    trailing newline, so allow an optional final '\n'.
+  const bool start_anchored = (kind != match_kind::search) || had_start;
+
+  std::string prefix = start_anchored ? std::string{} : "(re.* re.allchar)";
+  std::string suffix;
+  if(kind == match_kind::fullmatch)
+    suffix = std::string{}; // exact end
+  else if(had_end)
+    suffix = "(re.opt (str.to_re \"\\u{a}\"))";
+  else
+    suffix = "(re.* re.allchar)"; // match/search: end unanchored
+
+  std::vector<std::string> parts;
+  if(!prefix.empty())
+    parts.push_back(prefix);
+  parts.push_back(*body);
+  if(!suffix.empty())
+    parts.push_back(suffix);
+  if(parts.size() == 1)
+    return parts[0];
+  std::ostringstream out;
+  out << "(re.++";
+  for(const auto &p : parts)
+    out << " " << p;
+  out << ")";
+  return out.str();
+}
+} // namespace
+
 std::optional<std::string>
 python_regex_to_smt_fullmatch(const std::string &pattern)
 {
-  // Handle leading/trailing anchors specially. Python anchors
-  // inside a fullmatch are redundant but not errors; we tolerate
-  // leading ^ and trailing $.
-  std::string core = pattern;
-  if(!core.empty() && core.front() == '^')
-    core.erase(core.begin());
-  if(!core.empty() && core.back() == '$')
-    core.pop_back();
-  translator t{core};
-  return t.parse_top();
+  return translate(pattern, match_kind::fullmatch);
 }
 
 std::optional<std::string> python_regex_to_smt_match(const std::string &pattern)
 {
-  auto body = python_regex_to_smt_fullmatch(pattern);
-  if(!body.has_value())
-    return std::nullopt;
-  // match(pattern, s) is anchored at the start but not the end;
-  // allow arbitrary suffix.
-  return std::string{"(re.++ "} + *body + " (re.* re.allchar))";
+  return translate(pattern, match_kind::match);
 }
 
 std::optional<std::string>
 python_regex_to_smt_search(const std::string &pattern)
 {
-  auto body = python_regex_to_smt_fullmatch(pattern);
-  if(!body.has_value())
-    return std::nullopt;
-  // search(pattern, s): match anywhere.
-  return std::string{"(re.++ (re.* re.allchar) "} + *body +
-         " (re.* re.allchar))";
+  return translate(pattern, match_kind::search);
 }
 
 std::optional<bool> python_regex_can_match_empty(const std::string &pattern)
