@@ -3182,10 +3182,13 @@ void smt2_convt::convert_expr(const exprt &expr)
         if(!smt_re.has_value())
         {
           // Unsupported pattern (dynamic, back-ref, lookaround,
-          // non-constant). Return bv0 as a sound stub; the Python
-          // library stub models the match as 'may-or-may-not-match'
-          // independently.
-          out << "(_ bv0 " << width << ")";
+          // non-constant). Emit the fresh nondet declared in
+          // find_symbols so the match decision is unconstrained: a
+          // definite (_ bv0 ...) would force "no match" and make
+          // `if re.search(<unsupported>, s): ...` unreachable (unsound).
+          auto it = defined_expressions.find(expr);
+          CHECK_RETURN(it != defined_expressions.end());
+          out << it->second;
           return;
         }
 
@@ -3285,13 +3288,19 @@ void smt2_convt::convert_expr(const exprt &expr)
 
         // Fall-through: subject's structure isn't recognised
         // (e.g. raw symbol_exprt where the data array isn't
-        // syntactically reachable from this layer). Sound
-        // over-approximation: emit bv0. A future refinement
-        // would integrate with the array_pool / string-
-        // refinement infrastructure so symbolic refined-
-        // strings whose array contents are tracked there can
-        // be exposed here too.
-        out << "(_ bv0 " << width << ")";
+        // syntactically reachable from this layer). Emit the fresh
+        // nondet declared in find_symbols rather than a definite
+        // (_ bv0 ...): we have a supported pattern but cannot expose
+        // the subject to the string theory, so the match decision must
+        // stay unconstrained (a forced "no match" would be unsound). A
+        // future refinement would integrate with the array_pool /
+        // string-refinement infrastructure so symbolic refined-strings
+        // whose array contents are tracked there can be exposed here.
+        {
+          auto it = defined_expressions.find(expr);
+          CHECK_RETURN(it != defined_expressions.end());
+          out << it->second;
+        }
         return;
       }
     }
@@ -6524,6 +6533,35 @@ void smt2_convt::find_symbols(const exprt &expr)
       out << "(declare-fun " << id << " () ";
       convert_type(expr.type());
       out << ")\n";
+      defined_expressions[expr] = id;
+    }
+  }
+  else if(
+    expr.id() == ID_function_application &&
+    to_function_application_expr(expr).function().id() == ID_symbol)
+  {
+    // Python regex intrinsics fall back to a sound nondet result when the
+    // pattern is untranslatable (back-references, lookaround, symbolic) or
+    // the subject can't be exposed to the SMT string theory. Pre-declare a
+    // fresh nondet of the result's bit-vector sort; convert_expr emits it on
+    // those fallback paths. A definite (_ bv0 ...) "no match" would be
+    // unsound -- it makes `if re.search(<unsupported>, s): ...` unreachable
+    // and can yield false proofs.
+    const irep_idt &fid =
+      to_symbol_expr(to_function_application_expr(expr).function())
+        .get_identifier();
+    if(
+      (fid == ID_cprover_string_match_func ||
+       fid == ID_cprover_string_search_func ||
+       fid == ID_cprover_string_fullmatch_func) &&
+      defined_expressions.find(expr) == defined_expressions.end())
+    {
+      std::size_t width = boolbv_width(expr.type());
+      if(width == 0)
+        width = 8;
+      const irep_idt id =
+        "re_nondet." + std::to_string(defined_expressions.size());
+      out << "(declare-fun " << id << " () (_ BitVec " << width << "))\n";
       defined_expressions[expr] = id;
     }
   }
