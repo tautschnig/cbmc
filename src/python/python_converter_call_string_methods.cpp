@@ -1824,7 +1824,14 @@ std::optional<exprt> python_convertert::try_string_method(
         }
         const bool precise_ok =
           is_python_string_type(needle.type()) &&
-          (is_forward ? !has_end : (!has_start && !has_end));
+          (is_forward
+             ? !has_end
+             : (!has_start && !has_end &&
+                // last_index_of has no native SMT-String lowering (SMT-LIB has
+                // no str.last_indexof), so the precise backward path is refined
+                // only; a native smt_string rfind/rindex falls to the sound
+                // nondet below.
+                obj.type().id() != ID_smt_string));
         if(precise_ok)
         {
           auto as_str_struct = [](const exprt &s) -> exprt
@@ -1911,7 +1918,11 @@ std::optional<exprt> python_convertert::try_string_method(
       symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
       pending_checks.push_back(code_frontend_assignt{
         tv, side_effect_expr_nondett{python_int_type(), get_location(expr)}});
-      member_exprt slen{obj, "length", signedbv_typet{64}};
+      // Native-safe length: smt_string has no "length" member, so use the
+      // representation-neutral helper (str.len under native).
+      exprt slen = native_or_member_string_length(obj);
+      if(slen.type() != signedbv_typet{64})
+        slen = safe_typecast(slen, signedbv_typet{64});
       if(method_name == "count")
         pending_checks.push_back(code_assumet{and_exprt{
           binary_relation_exprt{tv, ID_ge, from_integer(0, python_int_type())},
