@@ -682,6 +682,14 @@ protected:
   /// index for a paragraph, or the section's last paragraph for a section name
   /// (IBM LR "PERFORM statement").
   std::size_t range_end(const std::string &name);
+  /// Collect the paragraph indices that are PERFORM range *starts* (entry
+  /// targets) and range *ends* (exit targets) anywhere in \p stmts, recursing
+  /// into nested statement lists. $proc only ever needs an entry-dispatch case
+  /// for a start and an end check for an end.
+  void collect_perform_targets(
+    const std::vector<stmtt> &stmts,
+    std::set<std::size_t> &entries,
+    std::set<std::size_t> &exits);
 
   // ---- byte-level storage helpers ----
   typet record_type(const irep_idt &record) const;
@@ -1082,6 +1090,31 @@ std::size_t cobol_typecheckt::range_end(const std::string &name)
     if(paragraphs[j].is_section)
       return j - 1;
   return paragraphs.size() - 1;
+}
+
+void cobol_typecheckt::collect_perform_targets(
+  const std::vector<stmtt> &stmts,
+  std::set<std::size_t> &entries,
+  std::set<std::size_t> &exits)
+{
+  for(const stmtt &s : stmts)
+  {
+    if(s.kind == stmtt::kindt::PERFORM && !s.inline_body)
+    {
+      entries.insert(paragraph_index(s.target));
+      exits.insert(range_end(s.target_end.empty() ? s.target : s.target_end));
+    }
+    // Recurse into every nested statement list so a PERFORM inside an IF,
+    // EVALUATE, SEARCH or an inline PERFORM body is also accounted for.
+    collect_perform_targets(s.then_stmts, entries, exits);
+    collect_perform_targets(s.else_stmts, entries, exits);
+    collect_perform_targets(s.other_stmts, entries, exits);
+    collect_perform_targets(s.body, entries, exits);
+    collect_perform_targets(s.var_init, entries, exits);
+    collect_perform_targets(s.var_step, entries, exits);
+    for(const auto &w : s.when_clauses)
+      collect_perform_targets(w.second, entries, exits);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -5186,8 +5219,19 @@ void cobol_typecheckt::build_function()
   code_blockt proc_body;
   std::set<std::string> inlining; // retained for the gen_* signatures
 
+  // $proc is only ever entered at a PERFORM range start (or paragraph 0 for
+  // the main run) and only ever returns at a range end (or the last paragraph
+  // for the main run), so the entry dispatch and the per-paragraph end checks
+  // are emitted only for those indices rather than for every paragraph.
+  std::set<std::size_t> entry_targets{0};
+  std::set<std::size_t> exit_targets;
+  if(n > 0)
+    exit_targets.insert(n - 1);
+  for(const paragrapht &p : paragraphs)
+    collect_perform_targets(p.statements, entry_targets, exit_targets);
+
   // Entry dispatch: jump to paragraph `entry`.
-  for(std::size_t i = 0; i < n; ++i)
+  for(std::size_t i : entry_targets)
     proc_body.add(code_ifthenelset{
       equal_exprt{entry_arg, from_integer(i, idx_type)},
       code_gotot{para_label(paragraphs[i].name)}});
@@ -5198,9 +5242,10 @@ void cobol_typecheckt::build_function()
     gen_statements(paragraphs[i].statements, proc_body, inlining);
     // Return to the activating PERFORM when control reaches the end of the
     // range-exit paragraph (IBM LR "PERFORM statement").
-    proc_body.add(code_ifthenelset{
-      equal_exprt{from_integer(i, idx_type), exit_arg},
-      code_gotot{proc_ret_label()}});
+    if(exit_targets.count(i) != 0)
+      proc_body.add(code_ifthenelset{
+        equal_exprt{from_integer(i, idx_type), exit_arg},
+        code_gotot{proc_ret_label()}});
   }
   proc_body.add(code_labelt{proc_ret_label(), code_skipt{}});
 
