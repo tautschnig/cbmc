@@ -97,21 +97,27 @@ robustness, then capability; difficulty is noted where high.
     instantiation) and **lexicographic ordering**;
   - **producing-op precision** (slice / `replace` / `repeat`) under refinement.
 - *SMT track — native reach ([§3](#strings)):*
-  - **`upper`/`lower` — LANDED (2026-06-14)** via per-char
-    `str.to_code`/ASCII-arithmetic/`str.from_code` + concat (commit *"precise
-    native upper()/lower()"*). **Structural fix:** native `smt_string` is not a
-    struct, so string methods were missing the struct-gated dispatch entirely
-    and *all* fell through to nondet (even constants); the fix routes them via
-    the `native_supported` set into `try_string_method`. **Perf caveat:** the
-    per-char concat is precise but, for a *fully-symbolic* subject combined with
-    a `len()` query, inherits the CVC5 str perf cost (constant / assume-pinned
-    subjects are fine; native corpus 0 crashes). The same per-char shape will
-    apply to `casefold`/`swapcase` (ASCII = lower / per-char swap) — not yet
-    wired.
-  - still nondet under native: `title`, `split` (list-valued),
-    `count`/`rfind`/`rindex` (bounded `str.indexof` loops — same perf profile as
-    upper/lower), `str(float)` (no SMT float→string), `repeat` (`s*n`, nonlinear
-    for symbolic `n`), `strip(chars)` (explicit fill-set).
+  - **LANDED (2026-06-14):** case mapping `upper`/`lower`/`casefold`/`swapcase`
+    (per-char `str.to_code`/ASCII-arithmetic/`str.from_code` + concat);
+    `count`/`rfind`/`rindex` (constant subjects fold; symbolic forward
+    find/index already lower to `str.indexof`); string `repeat` `s*n` for a
+    constant `n` (n native concats). **Structural fix:** native `smt_string` is
+    not a struct, so string methods were missing the struct-gated dispatch and
+    *all* fell through to nondet (even constants); the fix routes them via the
+    `native_supported` set into `try_string_method`. **Perf caveat:** the
+    per-char / concat shapes are precise but a *fully-symbolic* subject combined
+    with a `len()` query inherits the CVC5 str perf cost (constant /
+    assume-pinned subjects are fine; native corpus 0 crashes).
+  - still nondet (sound) under native: symbolic `count` and backward
+    `rfind`/`rindex` (no SMT `str.last_indexof`, no count primitive — bounded
+    `str.indexof` loops possible but perf-heavy); `title`; `split` (list-valued);
+    `str(float)` (no SMT float→string); `repeat` with symbolic `n` (nonlinear);
+    `strip(chars)` (explicit fill-set).
+
+**P3 — Regex reach (SMT path; [§4](#regex)).**
+- Literal-symbolic patterns (segment list + `str.to_re` holes; anchor-soundness
+  caveat); `re.sub` (`str.replace_re_all` + `__cbmc_re_sub`); group extraction;
+  `re.split`; compilation flags (`IGNORECASE`/`MULTILINE` via per-flag AST
 
 **P3 — Regex reach (SMT path; [§4](#regex)).**
 - Literal-symbolic patterns (segment list + `str.to_re` holes; anchor-soundness
