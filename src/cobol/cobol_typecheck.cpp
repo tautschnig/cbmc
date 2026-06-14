@@ -298,12 +298,12 @@ struct paragrapht
 bool is_verb(const std::string &w)
 {
   static const std::set<std::string> verbs = {
-    "MOVE",     "ADD",      "SUBTRACT", "MULTIPLY",   "DIVIDE", "COMPUTE",
-    "IF",       "EVALUATE", "PERFORM",  "GO",         "STOP",   "GOBACK",
-    "EXIT",     "DISPLAY",  "ACCEPT",   "CONTINUE",   "CALL",   "NEXT",
-    "SET",      "EXEC",     "STRING",   "INITIALIZE", "SEARCH", "INSPECT",
-    "UNSTRING", "OPEN",     "CLOSE",    "READ",       "WRITE",  "REWRITE",
-    "DELETE",   "START"};
+    "MOVE",     "ADD",      "SUBTRACT", "MULTIPLY",   "DIVIDE",  "COMPUTE",
+    "IF",       "EVALUATE", "PERFORM",  "GO",         "STOP",    "GOBACK",
+    "EXIT",     "DISPLAY",  "ACCEPT",   "CONTINUE",   "CALL",    "NEXT",
+    "SET",      "EXEC",     "STRING",   "INITIALIZE", "SEARCH",  "INSPECT",
+    "UNSTRING", "OPEN",     "CLOSE",    "READ",       "WRITE",   "REWRITE",
+    "DELETE",   "START",    "SORT",     "MERGE",      "RELEASE", "RETURN"};
   return verbs.find(w) != verbs.end();
 }
 
@@ -719,6 +719,7 @@ protected:
   std::vector<stmtt> parse_open_close();
   std::vector<stmtt> parse_read();
   std::vector<stmtt> parse_write();
+  std::vector<stmtt> parse_sort();
   void parse_io_exception(
     std::vector<stmtt> &result,
     const char *end_kw,
@@ -2882,6 +2883,12 @@ std::vector<stmtt> cobol_typecheckt::parse_statement()
   if(
     verb == "WRITE" || verb == "REWRITE" || verb == "DELETE" || verb == "START")
     return parse_write();
+  if(verb == "SORT" || verb == "MERGE")
+    return parse_sort();
+  if(verb == "RELEASE")
+    return parse_open_close(); // external output, no modelled effect (as WRITE)
+  if(verb == "RETURN")
+    return parse_read(); // RETURN a sorted record is modelled like READ
   if(verb == "ADD")
     return parse_add();
   if(verb == "SUBTRACT")
@@ -3488,9 +3495,12 @@ std::vector<stmtt> cobol_typecheckt::parse_read()
   //   [END-READ] (IBM LR "READ statement"). A read delivers an unknown record
   //   or reaches end-of-file / an invalid key: the file's record area and the
   //   INTO receiver are havoced, and the exception phrases are guarded
-  //   nondeterministically.
+  //   nondeterministically. RETURN (of a sorted record) is modelled the same
+  //   way (IBM LR "RETURN statement").
   const source_locationt loc = cur().location;
-  expect_word("READ");
+  const std::string verb = cur().text; // READ or RETURN
+  advance();
+  const std::string end_kw = "END-" + verb;
   std::string file;
   if(cur().kind == cobol_token_kindt::WORD)
   {
@@ -3531,7 +3541,7 @@ std::vector<stmtt> cobol_typecheckt::parse_read()
     if(is_item_word())
       (void)parse_ref();
   }
-  parse_io_exception(result, "END-READ", loc);
+  parse_io_exception(result, end_kw.c_str(), loc);
   return result;
 }
 
@@ -3563,6 +3573,57 @@ std::vector<stmtt> cobol_typecheckt::parse_write()
 
   std::vector<stmtt> result;
   parse_io_exception(result, end_kw.c_str(), loc);
+  return result;
+}
+
+std::vector<stmtt> cobol_typecheckt::parse_sort()
+{
+  // SORT/MERGE file ON {ASCENDING|DESCENDING} KEY key...
+  //   [INPUT PROCEDURE IS proc-1 [{THRU|THROUGH} proc-2] | USING file...]
+  //   [OUTPUT PROCEDURE IS proc-3 [{THRU|THROUGH} proc-4] | GIVING file...]
+  // (IBM LR "SORT"/"MERGE statement"). The external sort/merge itself is not
+  // modelled (records flow through RELEASE/RETURN, which are abstracted), but
+  // any INPUT PROCEDURE and OUTPUT PROCEDURE are PERFORMed so their logic is
+  // analysed. The ASCENDING/DESCENDING KEY and USING/GIVING phrases are
+  // skipped.
+  const source_locationt loc = cur().location;
+  advance(); // SORT or MERGE
+  if(cur().kind == cobol_token_kindt::WORD)
+    advance(); // sort/merge work-file name
+
+  std::vector<stmtt> result;
+  const auto perform_procedure = [&]()
+  {
+    eat_word("PROCEDURE");
+    eat_word("IS");
+    if(cur().kind != cobol_token_kindt::WORD)
+      return;
+    stmtt p;
+    p.kind = stmtt::kindt::PERFORM;
+    p.location = loc;
+    p.pkind = stmtt::perform_kindt::ONCE;
+    p.target = cur().text;
+    advance();
+    if(eat_word("THRU") || eat_word("THROUGH"))
+    {
+      if(cur().kind == cobol_token_kindt::WORD)
+      {
+        p.target_end = cur().text;
+        advance();
+      }
+    }
+    result.push_back(std::move(p));
+  };
+
+  while(!at_eof() && !is_kind(cobol_token_kindt::PERIOD) &&
+        !is_verb(cur().text) && !is_word("ELSE") && !is_word("WHEN") &&
+        cur().text.rfind("END-", 0) != 0)
+  {
+    if(eat_word("INPUT") || eat_word("OUTPUT"))
+      perform_procedure();
+    else
+      advance(); // KEY / ASCENDING / USING / GIVING / file-names / ...
+  }
   return result;
 }
 

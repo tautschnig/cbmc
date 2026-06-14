@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+SORT performs its INPUT/OUTPUT PROCEDUREs; RELEASE/RETURN are modelled
+like WRITE/READ. See IBM LR "SORT statement".
