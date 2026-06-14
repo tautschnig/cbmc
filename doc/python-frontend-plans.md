@@ -46,17 +46,18 @@ path — the refined-precision items below are goals to pursue, **not** "use
 robustness, then capability; difficulty is noted where high.
 
 **P0 — Soundness (always first).**
-- **Return-type inference erases `None` from `X`-or-`None` returns**
-  ([§0](#false-proofs)): infer `Optional[X]` when any return path yields `None`.
-  (`re` stub already annotated; the general inference fix is outstanding.)
+- ~~**Return-type inference erases `None` from `X`-or-`None` returns**~~
+  ([§0](#false-proofs)): **RESOLVED (2026-06-14)** — imported-module,
+  two-statement, and conditional-expression (`IfExp`) forms all preserve `None`
+  now; sweep fallout-neutral.
 - **`github_3647_9_fail`**: dict-mutation-during-iteration ([§0](#false-proofs)).
 
 **P1 — Native robustness (crash on valid code).**
-- **`smt_string` members in byte-operated structs**
-  ([#native-byte-ops](#native-byte-ops)): dict by-reference *mutation*
-  (`def f(d): d["k"]=v` then observing the caller) crashes under
-  `--python-smt-strings`. Fix: treat `smt_string` opaquely in
-  `lower_byte_operators`, or order such members last.
+- ~~**`smt_string` members in byte-operated structs**~~
+  ([#native-byte-ops](#native-byte-ops)): the dict by-reference *mutation* crash
+  is **RESOLVED** (the Any-container promote+write-back routes the dict through
+  a clean typed view, no byte op); only a latent general `smt_string`-in-byte-op
+  gap remains with no corpus instance.
 
 **P2 — Back-end capability parity (two tracks, both first-class).**
 - *Refined track — default back-end toward SMT parity (kept, not downgraded):*
@@ -123,33 +124,40 @@ return-type `None`-erasure vector immediately below.
 
 ### Return-type inference erases `None` from `X`-or-`None` returns — HIGH PRIORITY (2026-06-12)
 
-**Latent unsoundness (false-proof vector).** A function/method with **no return
-annotation** whose body returns a concrete type `X` on one path and `None` on
-another has its return type **inferred as `X`**, and the `return None` branch is
-then **coerced to `X`** (via `coerce_return_value` → `coerce_to_typed_slot`'s
-non-`None` marker) — so the function can never actually return `None`.
-Concretely, `def f(c): return C() if c else None` makes `f(...) is None`
-**unprovable** (the result is always not-`None`). A caller's `None` guard
-(`if f(x) is None: …`) becomes dead code, so a bug reachable only on the `None`
-path is **missed** — e.g. `f(x).attr` when `f` returns `None` should raise
-`AttributeError`, but that path is never explored.
+### Return-type inference erases `None` from `X`-or-`None` returns — RESOLVED (2026-06-14)
 
-- **Discovered via** the `re` stub: module-level `re.match`/`search`/`fullmatch`
-  returned always-`Match` for exactly this reason. The *targeted* fix there was
-  the CPython-accurate `-> "Match | None"` annotation (commit `7221966fd3`),
-  which preserves `None`. The **general inference bug remains** and affects any
-  unannotated `X`-or-`None`-returning function.
-- **Scope / non-scope:** only *inferred* return types are affected;
-  `Optional[...]` / `X | None`-annotated returns are honoured correctly. Methods
-  and main-module functions are equally affected (the `re` Pattern-method path
-  only appeared correct incidentally).
-- **Fix direction:** when inferring a function's return type, if **any** return
-  path yields `None` (or an already-`Optional` value), infer the **union**
-  `inferred | None` (i.e. `Optional[X]`) so the `None` branch is not coerced
-  away. Expect benchmark fallout: callers currently relying on the
-  erased-`None` (always-non-`None`) behaviour — including several regex
-  benchmarks already affected by the `re` annotation fix — will start exploring
-  the real (sound) `None` path.
+**Was a latent unsoundness (false-proof vector).** A function/method with **no
+return annotation** whose body returned a concrete type `X` on one path and
+`None` on another could have its return type inferred as `X` with the `None`
+branch coerced away, so the function could never return `None` — making a
+caller's `None` guard dead code and missing bugs on the `None` path (e.g.
+`f(x).attr` when `f` returns `None`).
+
+**Resolution.** Closed across three forms, each an architectural (whole-group)
+fix:
+- **Imported-module functions** (commits `8c0c50fc62`/`3c08c41f21`):
+  `process_imported_module` had its own partial inference; rerouted through the
+  shared `infer_return_type_from_body`, which already widens to the tagged
+  union when any return path yields `None`.
+- **Two-statement `if c: return X` / `return None`**: already correct via that
+  shared widening (`has_value_return && has_none_return` → `python_value`).
+- **Conditional-expression `return X if c else None`** (commit *"preserve None
+  in conditional-expression (IfExp) returns of class type"*, 2026-06-14): the
+  remaining gap. Two layers fixed: (1) `convert_if_exp`'s branch-merge
+  `category()` now classifies class-instance / tuple / set / complex structs, so
+  a class-vs-`None` conditional wraps into the tagged union (preserving `None`)
+  instead of `safe_typecast`ing `None` to the class type — fixing the whole
+  class-vs-{`None`,int,str,…} group; (2) `infer_return_type_from_body` now
+  flattens nested `IfExp` into its leaf return-values and analyses each arm, so
+  `C() if c else None` infers Optional and `[1]/{…} if c else None` infer the
+  right container-or-`None`.
+
+**Scope.** Only *inferred* return types were affected; `Optional[...]` /
+`X | None` annotations were always honoured. Fallout was expected (callers
+relying on the erased-`None` exploring the real `None` path) but measured
+**zero** on the ESBMC sweep (the only broken form, IfExp, is not exercised by
+the corpus in a relied-upon way). Guarded by `return-ifexp-class-or-none`
+/`-falseproof` and `import-optional-return-inference`.
 
 ### Any-typed mutable-container by-reference mutation is lost — HIGH PRIORITY (2026-06-12)
 
