@@ -130,8 +130,20 @@ robustness, then capability; difficulty is noted where high.
   `str.to_re` holes; the anchors are now soundly modelled so the embedded-anchor
   bail is the remaining caveat); group extraction (no SMT capture-group support —
   needs a bespoke bounded encoding); `re.split`/`findall` (list-valued);
-  compilation flags (`IGNORECASE`/`MULTILINE` via per-flag AST rewrite or a
-  translator mode).
+  precise compilation flags.
+- **Compilation flags — sound floor LANDED (2026-06-14); precision TODO.**
+  Module-level `re.search`/`match`/`fullmatch` now bail to nondet when
+  `flags != 0` (was unsound: the flag was dropped and the flag-free decision
+  used — e.g. `re.search("abc","ABC",re.IGNORECASE)` proved no-match). Remaining:
+  precise IGNORECASE (ASCII case-fold the pattern) / DOTALL (`.`→allchar) via a
+  translator flags mode, and flags on **compiled** patterns. The compiled case
+  is blocked on a propagation gap — a `re.compile(p, flags)` Pattern's `self.flags`
+  int field reads as nondet (its string `pattern` field propagates fine), so
+  threading `self.flags` either drops it (unsound) or makes every compiled match
+  nondet (regresses no-flag precision). A full precise-flags attempt (translator
+  flags param + intrinsic flags operand + module-constant folding) was
+  prototyped and reverted pending that fix and an intrinsic-arity-consistency
+  cleanup.
 - **`re.sub`/`subn` — LANDED (2026-06-14).** Precise via `str.replace_re_all`
   on the sound subset only: CVC5's `str.replace_re_all` is leftmost-*shortest*
   whereas CPython `re.sub` is greedy (leftmost-longest), so they coincide iff
