@@ -2276,6 +2276,9 @@ std::optional<exprt> python_convertert::try_method_call(
         "endswith",
         "find",
         "index",
+        "rfind",
+        "rindex",
+        "count",
         "replace",
         "strip",
         "lstrip",
@@ -2306,8 +2309,7 @@ std::optional<exprt> python_convertert::try_method_call(
         return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
       // Int-returning methods with no SMT-LIB String primitive (str.indexof
       // is first-match only, so rfind/rindex/count are nondet here).
-      static const std::set<std::string> int_methods = {
-        "count", "rfind", "rindex"};
+      static const std::set<std::string> int_methods = {};
       if(int_methods.count(method_name))
         return side_effect_expr_nondett{python_int_type(), get_location(expr)};
       return bounded_nondet_string(get_location(expr));
