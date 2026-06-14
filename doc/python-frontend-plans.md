@@ -320,14 +320,37 @@ The genuine false proofs and their status (2026-06-08):
   vacuity that had been masking `jpl`/`jpl_1`; they now surface a separate
   pre-existing precision gap — see [§9](#precision).
 - **`github_3647_9_fail` — dict mutation during iteration — DEFERRED
-  (niche, regression-risky).** `for k, v in d.items(): d["x"] = 3` raises
-  `RuntimeError` ("dictionary changed size during iteration") in CPython;
-  we don't model concurrent-modification detection. A sound model must
-  (a) track the iterated dict's identity *through* `.items()`/`.keys()`/
-  `.values()` and (b) distinguish size-changing mutations from
-  value-updates (`for k in d: d[k] = ...` must **not** fire) — a delicate
-  loop-body analysis with false-positive risk on a common pattern.
-  Disproportionate to its niche value; left as a documented residual.
+  (niche; BLOCKED on a pre-existing dict-assign imprecision — root-caused
+  2026-06-14).** `for k, v in d.items(): d["x"] = 3` raises `RuntimeError`
+  ("dictionary changed size during iteration") in CPython; we verify it
+  SUCCESSFUL (a missed bug). A *correct* model was prototyped (and reverted):
+  detect the iterated dict (direct `for k in d` or `d.items()/keys()/values()`,
+  the receiver recovered from the AST since `.items()` materialises a snapshot
+  list that drops the dict identity), snapshot `len(d)` at loop entry, iterate
+  `snapshot+1` times, and at each `__next__` (body top + a synthetic terminal
+  probe) raise `RuntimeError` when `len(d) != snapshot`. This is sound and
+  break-safe in principle: a value-update keeps `len(d)` (no fire), a user
+  `break` exits before the next `__next__` (no fire), and add/del fires. It
+  fixed the test and the `for k in d: d["x"]=…` add case, with no false positive
+  on `mutate-then-break` or plain iteration.
+  - **The blocker** is a *pre-existing* symbolic-dict imprecision, independent
+    of the check: `for k in d: d[k] = v` (the ubiquitous value-update over a
+    **parameter** dict) spuriously **grows `len(d)` in the model**. Verified on
+    a clean tree: `def f(d): n0=len(d); for k in d: d[k]=99; assert len(d)==n0`
+    verifies **FAILED** (a *literal* dict is precise — SUCCESSFUL — and a single
+    guarded constant-key assign `if 1 in d: d[1]=v` is precise). So a
+    length-based concurrent-mod check inherits this and **false-positives on the
+    value-update pattern** — exactly the regression to avoid. The over-approx is
+    in the symbolic-key dict subscript-assign scan-or-append
+    (`python_converter_assign.cpp`, the `__dict_found_` scan ~line 2312): for a
+    symbolic iterated key `k = keys[idx]` the `found` disjunction is not
+    discharged, so the `if(!found) append` path grows `length`.
+  - **Prerequisite / architectural fix:** make the symbolic-key dict-assign
+    prove `found` for a key that is provably already present (so a value-update
+    cannot append). That is a precision win for a *group* (any `len`-sensitive
+    code doing `for k in d: d[k]=…` on a param dict), and once it lands the
+    concurrent-mod check above becomes sound and can be re-applied as-is. Until
+    then, left deferred — shipping the check now would regress value-updates.
 
 Net: 3 of the 4 genuine false proofs closed (`github_3647_12_fail`,
 `github_2897_2_fail`, `class-attributes_fail`); only `github_3647_9_fail`
