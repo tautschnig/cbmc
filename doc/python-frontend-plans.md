@@ -128,12 +128,20 @@ robustness, then capability; difficulty is noted where high.
   Tests `regex-translator-soundness`, `regex-unsupported-pattern-nondet`.
 - **Still to do (precision):** literal-symbolic patterns (segment list +
   `str.to_re` holes; the anchors are now soundly modelled so the embedded-anchor
-  bail is the remaining caveat); `re.sub` (`str.replace_re_all` + a new
-  `__cbmc_re_sub` intrinsic — must use the same nondet fallback for
-  untranslatable patterns); group extraction (no SMT capture-group support —
+  bail is the remaining caveat); group extraction (no SMT capture-group support —
   needs a bespoke bounded encoding); `re.split`/`findall` (list-valued);
   compilation flags (`IGNORECASE`/`MULTILINE` via per-flag AST rewrite or a
   translator mode).
+- **`re.sub`/`subn` — LANDED (2026-06-14).** Precise via `str.replace_re_all`
+  on the sound subset only: CVC5's `str.replace_re_all` is leftmost-*shortest*
+  whereas CPython `re.sub` is greedy (leftmost-longest), so they coincide iff
+  the pattern is constant, anchor-free and **fixed-length ≥ 1** (forced match
+  length ⇒ greedy = shortest, no empty matches), the repl is a constant literal
+  (no back-references/escapes), and `count == 0`. Outside the subset → sound
+  nondet string. Added `python_regex_fixed_length`/`python_regex_to_smt_body`,
+  the `cprover_string_re_sub_func` intrinsic, and three general call-dispatch
+  fixes (the stale `re` catch-all no longer shadows sub/subn; module and
+  positional class-method dispatch now apply trailing default arguments).
 
 **P4 — Cross-front-end (Java).**
 - **JBMC native-SMT-string mode**: `java.lang.String → smt_string`, reusing the
