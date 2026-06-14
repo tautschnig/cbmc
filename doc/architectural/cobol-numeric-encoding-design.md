@@ -13,11 +13,19 @@ Status: **partly implemented** (stages 1–2; see note). Author: Kiro.
 > The `IS NUMERIC` / `IS ALPHABETIC[-LOWER|-UPPER]` class conditions are
 > now exact over an alphanumeric item's bytes (§3.3) — a precision win
 > independent of the numeric codecs, since an alphanumeric field's bytes
-> are always its content. Still to do: signed zoned (overpunch) and
-> `SIGN … SEPARATE` sizing, packed `COMP-3`, big-endian `COMP`, exact
-> class conditions on faithful *numeric* fields, edited `MOVE` (§6 step
-> 6), and 01-level REDEFINES aliasing (currently separate record
-> symbols). The migration-plan steps below track these.
+> are always its content. Packed-decimal (**COMP-3**, signed and
+> unsigned) is now faithful too, and read/write/VALUE dispatch on USAGE
+> through one codec point (`has_faithful_codec` gates which encodings the
+> classifier may mark). Still to do: big-endian **COMP** (the binary
+> value model is correct for arithmetic; only byte observation of a COMP
+> field differs, and faithful storage would need a byte-swap on the write
+> path — low value, deferred); signed zoned overpunch and `SIGN …
+> SEPARATE` sizing (charset-dependent / changes layout); exact class
+> conditions on faithful *numeric* fields; edited `MOVE` (§6 step 6); and
+> **01-level REDEFINES** aliasing — the redefined `01` is finalised into
+> its own record symbol before the redefining `01` is seen, so making
+> them share storage is a record-model rework (the largest remaining
+> structural item). The migration-plan steps below track these.
 
 This document designs replacing the frontend's uniform binary numeric
 storage with **USAGE-faithful byte encodings** — zoned decimal
