@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+PERFORM identifier TIMES and WITH TEST AFTER (do-while). See IBM LR
+"PERFORM statement".

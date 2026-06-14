@@ -4664,11 +4664,14 @@ stmtt cobol_typecheckt::parse_perform()
   s.location = cur().location;
   expect_word("PERFORM");
 
-  // Out-of-line: PERFORM proc-name [THRU proc-name] [control]
-  const bool out_of_line = cur().kind == cobol_token_kindt::WORD &&
-                           !is_word("VARYING") && !is_word("UNTIL") &&
-                           !is_word("WITH") && !is_word("TEST") &&
-                           !is_word("FOREVER");
+  // Out-of-line: PERFORM proc-name [THRU proc-name] [control]. A leading word
+  // followed by TIMES is a loop count (PERFORM n TIMES with n an identifier),
+  // not a procedure name.
+  const bool out_of_line =
+    cur().kind == cobol_token_kindt::WORD && !is_word("VARYING") &&
+    !is_word("UNTIL") && !is_word("WITH") && !is_word("TEST") &&
+    !is_word("FOREVER") &&
+    !(peek(1).kind == cobol_token_kindt::WORD && peek(1).text == "TIMES");
   if(out_of_line)
   {
     s.target = cur().text;
@@ -4687,6 +4690,19 @@ stmtt cobol_typecheckt::parse_perform()
   }
 
   // control phrase
+  // Optional WITH TEST {BEFORE|AFTER}: TEST AFTER makes UNTIL a do-while
+  // (the body runs once before the condition is tested; IBM LR "PERFORM
+  // statement", TEST phrase).
+  bool test_after = false;
+  eat_word("WITH");
+  if(eat_word("TEST"))
+  {
+    if(eat_word("AFTER"))
+      test_after = true;
+    else
+      eat_word("BEFORE");
+  }
+
   if(eat_word("VARYING"))
   {
     // PERFORM ... VARYING id FROM x BY y UNTIL c [AFTER id2 FROM .. UNTIL c2]...
@@ -4767,15 +4783,28 @@ stmtt cobol_typecheckt::parse_perform()
   else if(eat_word("UNTIL"))
   {
     s.pkind = stmtt::perform_kindt::UNTIL;
+    s.test_after = test_after;
     s.cond = parse_condition();
   }
-  else if(cur().kind == cobol_token_kindt::NUMBER)
+  else if(
+    cur().kind == cobol_token_kindt::NUMBER ||
+    (is_item_word() && peek(1).kind == cobol_token_kindt::WORD &&
+     peek(1).text == "TIMES"))
   {
+    // PERFORM [proc] {integer | identifier} TIMES.
     s.pkind = stmtt::perform_kindt::TIMES;
-    auto r = parse_decimal(cur().text);
-    advance();
-    s.times =
-      from_integer(rescale_int(r.first, r.second, 0), cobol_value_type());
+    if(cur().kind == cobol_token_kindt::NUMBER)
+    {
+      auto r = parse_decimal(cur().text);
+      advance();
+      s.times =
+        from_integer(rescale_int(r.first, r.second, 0), cobol_value_type());
+    }
+    else
+    {
+      const valuet v = read_field(parse_ref());
+      s.times = rescale(v.expr, v.scale, 0);
+    }
     expect_word("TIMES");
   }
 
