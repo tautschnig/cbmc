@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+READ ... INTO copies the record so the receiver equals it. See IBM LR
+"READ statement".

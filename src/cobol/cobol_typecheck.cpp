@@ -2587,6 +2587,40 @@ cond_operandt cobol_typecheckt::parse_intrinsic()
     return op;
   }
 
+  // UPPER-CASE / LOWER-CASE / REVERSE of a string *literal* are computed at
+  // compile time (IBM LR "Intrinsic functions"); an item argument's content is
+  // not modelled and falls through to a nondeterministic result below.
+  if(
+    (fname == "UPPER-CASE" || fname == "LOWER-CASE" || fname == "REVERSE") &&
+    is_kind(cobol_token_kindt::LPAREN) &&
+    peek(1).kind == cobol_token_kindt::STRING)
+  {
+    advance(); // (
+    std::string s = cur().text;
+    advance(); // the string literal
+    if(fname == "UPPER-CASE")
+      for(char &c : s)
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    else if(fname == "LOWER-CASE")
+      for(char &c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    else
+      std::reverse(s.begin(), s.end());
+    int depth = 1;
+    while(!at_eof() && depth > 0)
+    {
+      if(is_kind(cobol_token_kindt::LPAREN))
+        ++depth;
+      else if(is_kind(cobol_token_kindt::RPAREN))
+        --depth;
+      advance();
+    }
+    op.is_spec = true;
+    op.spec.kind = value_spect::kindt::STRING;
+    op.spec.str = std::move(s);
+    return op;
+  }
+
   std::size_t first_item_len = 0;
   bool first_item_len_set = false;
   if(is_kind(cobol_token_kindt::LPAREN))
@@ -3072,11 +3106,26 @@ std::vector<stmtt> cobol_typecheckt::parse_statement()
     eat_word("SENTENCE");
     return {};
   }
-  if(verb == "DISPLAY" || verb == "ACCEPT")
+  if(verb == "DISPLAY")
   {
+    // DISPLAY writes to the console; no modelled effect.
     advance();
     skip_to_sentence_end();
     return {};
+  }
+  if(verb == "ACCEPT")
+  {
+    // ACCEPT identifier [FROM DATE|DAY|TIME|mnemonic|...]: the value comes from
+    // the run-time environment (date/time/operator input), which is unknown at
+    // verification time, so the receiver is havoced (IBM LR "ACCEPT
+    // statement").
+    const source_locationt loc = cur().location;
+    advance();
+    std::vector<stmtt> result;
+    if(is_item_word())
+      result.push_back(havoc_field(parse_ref(), loc));
+    skip_to_sentence_end();
+    return result;
   }
   if(verb == "SET")
     return parse_set();
@@ -3590,6 +3639,8 @@ std::vector<stmtt> cobol_typecheckt::parse_read()
 
   std::vector<stmtt> result;
   // Havoc the file's record area so its fields read as unknown.
+  bool have_record = false;
+  reft record_ref;
   auto it = file_records.find(file);
   if(it != file_records.end())
   {
@@ -3603,11 +3654,26 @@ std::vector<stmtt> cobol_typecheckt::parse_read()
       s.rhs = side_effect_expr_nondett{record_type(rec), loc};
       result.push_back(std::move(s));
     }
+    auto rit = items.find(it->second);
+    if(rit != items.end())
+    {
+      record_ref = ref_of(rit->second);
+      have_record = true;
+    }
   }
   if(eat_word("INTO"))
   {
+    // READ ... INTO id is equivalent to the read followed by a group MOVE of
+    // the record to id (IBM LR "READ statement"): copy the (now unknown)
+    // record so id and the record agree. If the record is unknown, havoc id.
     if(is_item_word())
-      result.push_back(havoc_field(parse_ref(), loc));
+    {
+      const reft tgt = parse_ref();
+      if(have_record)
+        result.push_back(make_move_group(tgt, record_ref, loc));
+      else
+        result.push_back(havoc_field(tgt, loc));
+    }
   }
   eat_word("WITH");
   eat_word("NO");
