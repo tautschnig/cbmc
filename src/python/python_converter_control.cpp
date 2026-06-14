@@ -791,8 +791,18 @@ codet python_convertert::convert_for(const jsont &stmt)
   }
   // If the iterable is a complex expression (e.g., enumerate() result),
   // store it in a temp symbol so it doesn't get simplified away.
+  //
+  // A *dereference* (e.g. `*d` for a by-reference / pointer dict or list
+  // parameter) is a stable lvalue, not a transient rvalue: copying it into a
+  // temp would make the loop iterate a snapshot whose entries are NOT aliased
+  // to the object the loop body mutates through the same pointer. That breaks
+  // `for k in d: d[k] = v` -- the body's key-scan over `*d` never matches the
+  // copied loop key, so it spuriously appends (runaway length growth). Iterate
+  // the dereference in place so iteration and mutation share one object.
   code_blockt pre_loop;
-  if(iterable.id() != ID_symbol && iterable.type().id() == ID_struct)
+  if(
+    iterable.id() != ID_symbol && iterable.id() != ID_dereference &&
+    iterable.type().id() == ID_struct)
   {
     static unsigned iter_tmp_ctr = 0;
     std::string tn = "__iter_tmp_" + std::to_string(iter_tmp_ctr++);
@@ -1182,8 +1192,20 @@ skip_string_unroll:;
     body_block.add(code_frontend_assignt{
       idx_var, plus_exprt{idx_var, from_integer(1, signedbv_typet{64})}});
 
+    // Bound the iteration by the model's max dict size in addition to the
+    // (possibly symbolic) length, so the loop is *statically* bounded even
+    // when `d` is a parameter / has an unconstrained symbolic length -- a dict
+    // never holds more than PYTHON_MAX_DICT_SIZE entries by construction.
+    // Without the constant bound a `for k in d` over a parameter dict is
+    // effectively unbounded and spuriously trips the unwinding assertion.
     code_whilet while_stmt{
-      binary_relation_exprt{idx_var, ID_lt, length}, std::move(body_block)};
+      and_exprt{
+        binary_relation_exprt{idx_var, ID_lt, length},
+        binary_relation_exprt{
+          idx_var,
+          ID_lt,
+          from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}},
+      std::move(body_block)};
     result.add(std::move(while_stmt));
     return finalize_for(std::move(result));
   }
