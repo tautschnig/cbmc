@@ -80,6 +80,15 @@ jverify_contract_kindt classify_jverify_call(const irep_idt &method_id)
     return jverify_contract_kindt::DECREASES;
   if(method_name == "assigns")
     return jverify_contract_kindt::ASSIGNS;
+  // JVerify's write-frame clause is `modifies(Object)`; it carries the
+  // same meaning as a C `__CPROVER_assigns` target, so map it onto the
+  // ASSIGNS handling (which already accepts the single-argument direct
+  // form). This lets JVerify-annotated code use the pre-existing
+  // `modifies` clause for modular framing without a separate `assigns`
+  // primitive. (`reads` is the dual read-frame and is intentionally not
+  // mapped here.)
+  if(method_name == "modifies")
+    return jverify_contract_kindt::ASSIGNS;
   if(method_name == "forall")
     return jverify_contract_kindt::FORALL;
   if(method_name == "exists")
@@ -2805,6 +2814,113 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
         //     back through the body to find every
         //     `ASSIGN *(*(arg).data + i) := cast(<x>, empty*)`,
         //     unwrap autoboxing, and capture the underlying lvalue.
+        // Shared autoboxing-unwrapping helpers (used by both the direct
+        // single-argument and the varargs Object[] capture paths).
+        auto strip_casts = [](exprt e) -> exprt
+        {
+          while(e.id() == ID_typecast && e.operands().size() == 1)
+            e = e.operands()[0];
+          return e;
+        };
+
+        // Walk back from `from` looking for the most recent
+        // ASSIGN to symbol named `sym_id`. Returns nullopt if
+        // we cross a branch (so the assignment may not reach
+        // `from`).
+        auto find_unique_def = [&](
+                                 goto_programt::const_targett from,
+                                 const irep_idt &sym_id) -> std::optional<exprt>
+        {
+          if(from == body.instructions.begin())
+            return {};
+          auto cur = std::prev(from);
+          bool crossed_branch = false;
+          while(true)
+          {
+            if(cur->is_goto() || cur->is_target())
+              crossed_branch = true;
+            if(cur->is_assign())
+            {
+              const exprt &lhs = cur->assign_lhs();
+              if(
+                lhs.id() == ID_symbol &&
+                to_symbol_expr(lhs).get_identifier() == sym_id)
+              {
+                if(crossed_branch)
+                  return {};
+                return cur->assign_rhs();
+              }
+            }
+            if(cur == body.instructions.begin())
+              return {};
+            --cur;
+          }
+        };
+
+        // Trace `e_in` to a source lvalue, skipping autoboxing
+        // wrappers (Integer.valueOf, Long.valueOf, ...).
+        std::function<exprt(const exprt &, goto_programt::const_targett)>
+          trace_lvalue =
+            [&](const exprt &e_in, goto_programt::const_targett from) -> exprt
+        {
+          exprt e = strip_casts(e_in);
+          if(e.id() != ID_symbol)
+            return e;
+          const irep_idt sym_id = to_symbol_expr(e).get_identifier();
+          const std::string s = id2string(sym_id);
+          // Static / instance field (not a stack temp) IS the
+          // lvalue.
+          if(
+            s.find("$tmp") == std::string::npos &&
+            s.find("$stack_tmp") == std::string::npos &&
+            s.find("::tmp") == std::string::npos &&
+            s.find("::return_tmp") == std::string::npos &&
+            s.find("#return_value") == std::string::npos)
+          {
+            return e;
+          }
+          auto def = find_unique_def(from, sym_id);
+          if(!def.has_value())
+            return e;
+          exprt rhs = strip_casts(*def);
+          // Autoboxing wrappers: tmp := <Boxed>.valueOf:(P)L...;
+          // #return_value. Find the preceding CALL and use its
+          // first argument.
+          if(rhs.id() == ID_symbol)
+          {
+            const std::string rhs_id =
+              id2string(to_symbol_expr(rhs).get_identifier());
+            if(rhs_id.find("#return_value") != std::string::npos)
+            {
+              auto cur2 = from;
+              if(cur2 == body.instructions.begin())
+                return e;
+              while(cur2 != body.instructions.begin())
+              {
+                --cur2;
+                if(!cur2->is_function_call())
+                  continue;
+                const exprt &fn = cur2->call_function();
+                if(fn.id() != ID_symbol)
+                  continue;
+                const std::string fn_id =
+                  id2string(to_symbol_expr(fn).get_identifier());
+                bool is_box =
+                  fn_id.find(".valueOf:(") != std::string::npos &&
+                  fn_id.find("java::java.lang.") != std::string::npos;
+                if(!is_box)
+                  continue;
+                const auto &call_args = cur2->call_arguments();
+                if(call_args.empty())
+                  return e;
+                return trace_lvalue(call_args.front(), cur2);
+              }
+              return e;
+            }
+          }
+          return trace_lvalue(rhs, from);
+        };
+
         for(const auto &arg : args)
         {
           bool is_varargs_array = false;
@@ -2825,7 +2941,12 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
           }
           if(!is_varargs_array)
           {
-            assigns_per_function[func_entry.first].push_back(arg);
+            // A directly-passed target (e.g. JVerify.modifies(field) or a
+            // non-primitive assigns target). Unwrap any autoboxing so a
+            // primitive field like `modifies(counter)` resolves to the
+            // field lvalue rather than the boxed Integer temporary.
+            assigns_per_function[func_entry.first].push_back(
+              trace_lvalue(arg, it));
             continue;
           }
 
@@ -2844,112 +2965,6 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
               if(references_array(op))
                 return true;
             return false;
-          };
-
-          auto strip_casts = [](exprt e) -> exprt
-          {
-            while(e.id() == ID_typecast && e.operands().size() == 1)
-              e = e.operands()[0];
-            return e;
-          };
-
-          // Walk back from `from` looking for the most recent
-          // ASSIGN to symbol named `sym_id`. Returns nullopt if
-          // we cross a branch (so the assignment may not reach
-          // `from`).
-          auto find_unique_def =
-            [&](
-              goto_programt::const_targett from,
-              const irep_idt &sym_id) -> std::optional<exprt>
-          {
-            if(from == body.instructions.begin())
-              return {};
-            auto cur = std::prev(from);
-            bool crossed_branch = false;
-            while(true)
-            {
-              if(cur->is_goto() || cur->is_target())
-                crossed_branch = true;
-              if(cur->is_assign())
-              {
-                const exprt &lhs = cur->assign_lhs();
-                if(
-                  lhs.id() == ID_symbol &&
-                  to_symbol_expr(lhs).get_identifier() == sym_id)
-                {
-                  if(crossed_branch)
-                    return {};
-                  return cur->assign_rhs();
-                }
-              }
-              if(cur == body.instructions.begin())
-                return {};
-              --cur;
-            }
-          };
-
-          // Trace `e_in` to a source lvalue, skipping autoboxing
-          // wrappers (Integer.valueOf, Long.valueOf, ...).
-          std::function<exprt(const exprt &, goto_programt::const_targett)>
-            trace_lvalue =
-              [&](const exprt &e_in, goto_programt::const_targett from) -> exprt
-          {
-            exprt e = strip_casts(e_in);
-            if(e.id() != ID_symbol)
-              return e;
-            const irep_idt sym_id = to_symbol_expr(e).get_identifier();
-            const std::string s = id2string(sym_id);
-            // Static / instance field (not a stack temp) IS the
-            // lvalue.
-            if(
-              s.find("$tmp") == std::string::npos &&
-              s.find("$stack_tmp") == std::string::npos &&
-              s.find("::tmp") == std::string::npos &&
-              s.find("::return_tmp") == std::string::npos &&
-              s.find("#return_value") == std::string::npos)
-            {
-              return e;
-            }
-            auto def = find_unique_def(from, sym_id);
-            if(!def.has_value())
-              return e;
-            exprt rhs = strip_casts(*def);
-            // Autoboxing wrappers: tmp := <Boxed>.valueOf:(P)L...;
-            // #return_value. Find the preceding CALL and use its
-            // first argument.
-            if(rhs.id() == ID_symbol)
-            {
-              const std::string rhs_id =
-                id2string(to_symbol_expr(rhs).get_identifier());
-              if(rhs_id.find("#return_value") != std::string::npos)
-              {
-                auto cur2 = from;
-                if(cur2 == body.instructions.begin())
-                  return e;
-                while(cur2 != body.instructions.begin())
-                {
-                  --cur2;
-                  if(!cur2->is_function_call())
-                    continue;
-                  const exprt &fn = cur2->call_function();
-                  if(fn.id() != ID_symbol)
-                    continue;
-                  const std::string fn_id =
-                    id2string(to_symbol_expr(fn).get_identifier());
-                  bool is_box =
-                    fn_id.find(".valueOf:(") != std::string::npos &&
-                    fn_id.find("java::java.lang.") != std::string::npos;
-                  if(!is_box)
-                    continue;
-                  const auto &call_args = cur2->call_arguments();
-                  if(call_args.empty())
-                    return e;
-                  return trace_lvalue(call_args.front(), cur2);
-                }
-                return e;
-              }
-            }
-            return trace_lvalue(rhs, from);
           };
 
           // Walk back through the body looking for slot-stores

@@ -1,0 +1,18 @@
+CORE
+F12ModifiesTest
+--function F12ModifiesTest.caller --modular -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+type inconsistency
+falling back to inlining
+--
+The JVerify `modifies(target)` write-frame clause is mapped by
+java_bytecode_contracts onto the c_assigns frame (same as `assigns`).
+The direct-argument capture path unwraps autoboxing so a primitive
+field target (`modifies(counter)`) resolves to the field lvalue rather
+than the boxed Integer temporary, so DFCC accepts it and modular
+substitution applies WITHOUT falling back to inlining.
