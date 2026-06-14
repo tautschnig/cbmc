@@ -2563,10 +2563,18 @@ cond_operandt cobol_typecheckt::parse_intrinsic()
         advance();
         exact = true;
       }
-      while(!is_kind(cobol_token_kindt::RPAREN) && !at_eof())
+      // Consume the remaining argument tokens up to the matching ')',
+      // tracking nested parentheses (the argument may be reference-modified,
+      // e.g. NUMVAL(X(1:N))).
+      int depth = 1;
+      while(!at_eof() && depth > 0)
+      {
+        if(is_kind(cobol_token_kindt::LPAREN))
+          ++depth;
+        else if(is_kind(cobol_token_kindt::RPAREN))
+          --depth;
         advance();
-      if(is_kind(cobol_token_kindt::RPAREN))
-        advance();
+      }
     }
     if(exact)
       return op;
