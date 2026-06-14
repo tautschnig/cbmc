@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+An unsigned DISPLAY numeric aliased by an alphanumeric REDEFINES uses its
+faithful zoned (ASCII digit) byte encoding. See IBM LR "USAGE DISPLAY".

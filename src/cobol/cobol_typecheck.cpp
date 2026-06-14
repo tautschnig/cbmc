@@ -113,6 +113,11 @@ struct item_infot
   std::size_t occurs = 0;         ///< number of elements when is_table
   usaget usage = usaget::DISPLAY; ///< physical encoding (USAGE clause)
   signt sign = signt::UNSIGNED;   ///< sign representation (SIGN clause)
+  /// When set, this numeric field's bytes are kept in its USAGE-faithful
+  /// encoding (zoned/packed/...) rather than the uniform binary value model,
+  /// because its bytes are observed at a different category (e.g. a REDEFINES
+  /// alias). Set by the alias classifier at record finalisation.
+  bool faithful_bytes = false;
   /// Indices into all_items of the enclosing OCCURS groups (outermost first);
   /// each is a subscript dimension whose stride is the group's byte_size.
   std::vector<std::size_t> occurs_dims;
@@ -600,6 +605,12 @@ protected:
   /// pending VALUE writes for the current record: (offset, little-endian bytes)
   std::vector<std::pair<std::size_t, std::vector<unsigned char>>> record_inits;
   bool record_has_value = false;
+  /// Deferred numeric VALUE initialisations for the current record:
+  /// (byte offset, value at the item's scale, index into all_items). The
+  /// bytes are encoded at record finalisation, after the alias classifier has
+  /// decided whether the field uses its faithful (zoned/...) encoding.
+  std::vector<std::tuple<std::size_t, mp_integer, std::size_t>>
+    pending_num_values;
   std::string last_field; ///< most recent elementary field (for 88-levels)
   /// Implied subject/operator for abbreviated combined relation conditions
   /// (IBM LR "Abbreviated combined relation conditions", p. 287).
@@ -763,6 +774,18 @@ protected:
   /// encode a value-domain number into the field's physical storage type.
   exprt
   encode_numeric(const item_infot &item, valuet v, bool rounded = false) const;
+  /// Decode a faithfully-encoded zoned DISPLAY field's bytes to its value
+  /// (IBM LR "USAGE DISPLAY" external decimal).
+  valuet decode_zoned(const reft &r) const;
+  /// Encode a value (already at item.scale) into the little-endian integer
+  /// whose bytes are the field's zoned DISPLAY representation.
+  exprt encode_zoned(const exprt &scaled_value, const item_infot &item) const;
+  /// Compile-time zoned bytes for a constant value (VALUE initialisation).
+  std::vector<unsigned char>
+  zoned_bytes(const mp_integer &value, const item_infot &item) const;
+  /// Mark numeric fields whose bytes are observed at a different category
+  /// (e.g. a REDEFINES alias) as needing their faithful encoding.
+  void classify_record_aliases();
   /// finalise the current record: create its byte-array symbol + initialiser.
   void finalize_record();
 
@@ -963,11 +986,85 @@ signedbv_typet cobol_typecheckt::phys_type(const item_infot &item) const
   return signedbv_typet{item.byte_size * 8};
 }
 
+std::vector<unsigned char> cobol_typecheckt::zoned_bytes(
+  const mp_integer &value,
+  const item_infot &item) const
+{
+  // Unsigned zoned DISPLAY (IBM LR "USAGE DISPLAY", external decimal): one
+  // ASCII digit per byte, most significant first; the implied decimal point
+  // is not stored. (Signed/EBCDIC zoned and packed are tracked follow-ups, so
+  // the classifier only marks unsigned DISPLAY fields faithful for now.)
+  const std::size_t n = item.byte_size;
+  std::vector<unsigned char> bytes(n, '0');
+  mp_integer v = value < 0 ? -value : value;
+  if(n > 0)
+    v = v % power10(n);
+  for(std::size_t i = 0; i < n; ++i)
+  {
+    bytes[n - 1 - i] = static_cast<unsigned char>('0' + (v % 10).to_long());
+    v /= 10;
+  }
+  return bytes;
+}
+
+valuet cobol_typecheckt::decode_zoned(const reft &r) const
+{
+  // Sum the ASCII digit bytes with decreasing place value (byte at offset+i is
+  // the digit at position i, position 0 most significant).
+  const item_infot &item = *r.info;
+  const std::size_t n = item.byte_size;
+  const unsignedbv_typet byte_type{8};
+  exprt acc = from_integer(0, cobol_value_type());
+  for(std::size_t i = 0; i < n; ++i)
+  {
+    const exprt off = plus_exprt{r.offset, from_integer(i, r.offset.type())};
+    const exprt byte = make_byte_extract(r.record, off, byte_type);
+    const exprt digit = minus_exprt{
+      typecast_exprt{byte, cobol_value_type()},
+      from_integer('0', cobol_value_type())};
+    const exprt place = from_integer(power10(n - 1 - i), cobol_value_type());
+    acc = plus_exprt{acc, mult_exprt{digit, place}};
+  }
+  return valuet{acc, item.scale};
+}
+
+exprt cobol_typecheckt::encode_zoned(
+  const exprt &scaled_value,
+  const item_infot &item) const
+{
+  // Build the little-endian integer whose byte i ('0'+digit) is the field's
+  // zoned byte at offset+i. Unsigned: store the magnitude (IBM LR "MOVE
+  // statement": moving a signed value to an unsigned item drops the sign).
+  const std::size_t n = item.byte_size;
+  const exprt zero = from_integer(0, cobol_value_type());
+  const exprt mag = if_exprt{
+    binary_relation_exprt{scaled_value, ID_ge, zero},
+    scaled_value,
+    unary_minus_exprt{scaled_value}};
+  exprt acc = from_integer(0, phys_type(item));
+  for(std::size_t i = 0; i < n; ++i)
+  {
+    const exprt place = from_integer(power10(n - 1 - i), cobol_value_type());
+    const exprt digit =
+      mod_exprt{div_exprt{mag, place}, from_integer(10, cobol_value_type())};
+    const exprt byte = plus_exprt{from_integer('0', cobol_value_type()), digit};
+    const exprt shifted = mult_exprt{
+      typecast_exprt{byte, phys_type(item)},
+      from_integer(power(mp_integer{256}, i), phys_type(item))};
+    acc = plus_exprt{acc, shifted};
+  }
+  return acc;
+}
+
 valuet cobol_typecheckt::read_field(const reft &r) const
 {
   const item_infot &item = *r.info;
-  // Uniform little-endian binary storage (documented deviation from real
-  // zoned/packed/EBCDIC encodings; the byte SIZES follow IBM LR so that
+  // A field whose bytes are observed at a different category keeps its
+  // USAGE-faithful encoding (IBM LR "USAGE clause"); decode it accordingly.
+  if(item.faithful_bytes && item.usage == usaget::DISPLAY)
+    return decode_zoned(r);
+  // Otherwise: uniform little-endian binary storage (documented deviation from
+  // real zoned/packed/EBCDIC encodings; the byte SIZES follow IBM LR so that
   // REDEFINES overlap and group MOVE line up).
   const exprt phys = make_byte_extract(r.record, r.offset, phys_type(item));
   return valuet{typecast_exprt{phys, cobol_value_type()}, item.scale};
@@ -996,9 +1093,56 @@ exprt cobol_typecheckt::encode_numeric(
   }
   else
     e = rescale(v.expr, v.scale, item.scale);
+  // Faithful zoned fields store the value as ASCII digit bytes; e is already
+  // at item.scale (its digits, point removed).
+  if(item.faithful_bytes && item.usage == usaget::DISPLAY)
+    return encode_zoned(e, item);
   if(item.digits > 0 && item.digits <= 18)
     e = mod_exprt{e, from_integer(power10(item.digits), cobol_value_type())};
   return typecast_exprt{e, phys_type(item)};
+}
+
+void cobol_typecheckt::classify_record_aliases()
+{
+  // A numeric field whose bytes overlap an item of a different category (a
+  // REDEFINES alias, group MOVE target, ...) must hold its USAGE-faithful
+  // bytes so the other view sees IBM-faithful content. We currently support
+  // the unsigned DISPLAY (zoned) encoding, so only those fields are marked;
+  // others keep the binary value model (imprecise but unchanged). The byte
+  // ranges are the elementary items' base ranges in the current record.
+  std::vector<std::size_t> elem;
+  for(std::size_t i = 0; i < all_items.size(); ++i)
+    if(all_items[i].info.record_symbol == cur_record)
+      elem.push_back(i);
+
+  for(std::size_t a : elem)
+  {
+    item_infot &ia = all_items[a].info;
+    if(
+      ia.is_group || !ia.is_numeric || ia.is_table || ia.is_signed ||
+      ia.usage != usaget::DISPLAY || ia.faithful_bytes)
+      continue;
+    const std::size_t a0 = ia.offset, a1 = ia.offset + ia.byte_size;
+    for(std::size_t b : elem)
+    {
+      if(a == b)
+        continue;
+      const item_infot &ib = all_items[b].info;
+      // A different-category observer: an alphanumeric/group item (or a
+      // numeric of a different physical encoding) overlapping this field.
+      const bool different_category =
+        ib.is_group || !ib.is_numeric || ib.usage != ia.usage;
+      const std::size_t b0 = ib.offset, b1 = ib.offset + ib.byte_size;
+      if(different_category && a0 < b1 && b0 < a1)
+      {
+        ia.faithful_bytes = true;
+        auto it = items.find(all_items[a].name);
+        if(it != items.end() && it->second.offset == ia.offset)
+          it->second.faithful_bytes = true;
+        break;
+      }
+    }
+  }
 }
 
 void cobol_typecheckt::finalize_record()
@@ -1027,6 +1171,38 @@ void cobol_typecheckt::finalize_record()
   const std::size_t size = std::max<std::size_t>(record_max, 1);
   record_sizes[cur_record] = size;
 
+  // Decide which numeric fields keep their faithful (zoned) encoding before
+  // any constant VALUE bytes are laid down, so a VALUE and the runtime
+  // read/write of the same field agree.
+  classify_record_aliases();
+
+  // Encode the deferred numeric VALUEs now that faithfulness is known: a
+  // faithful unsigned DISPLAY field is initialised with zoned ASCII bytes, an
+  // ordinary field with little-endian binary.
+  for(const auto &pv : pending_num_values)
+  {
+    const std::size_t off = std::get<0>(pv);
+    const mp_integer val = std::get<1>(pv);
+    const item_infot &info = all_items[std::get<2>(pv)].info;
+    std::vector<unsigned char> b;
+    if(info.faithful_bytes && info.usage == usaget::DISPLAY)
+      b = zoned_bytes(val, info);
+    else
+    {
+      const mp_integer modulus = power(mp_integer{2}, info.byte_size * 8);
+      mp_integer u = val % modulus;
+      if(u < 0)
+        u += modulus;
+      b.resize(info.byte_size);
+      for(std::size_t k = 0; k < info.byte_size; ++k)
+      {
+        b[k] = static_cast<unsigned char>((u % 256).to_long());
+        u /= 256;
+      }
+    }
+    record_inits.emplace_back(off, std::move(b));
+  }
+
   symbolt symbol{cur_record, record_type(cur_record), COBOL_MODE};
   symbol.base_name = cur_record_base;
   symbol.is_static_lifetime = true;
@@ -1052,6 +1228,7 @@ void cobol_typecheckt::finalize_record()
 
   symbol_table.add(symbol);
   cur_record.clear();
+  pending_num_values.clear();
 }
 
 exprt cobol_typecheckt::build_relation(
@@ -1320,6 +1497,7 @@ void cobol_typecheckt::parse_data_division()
         record_max = 0;
         record_inits.clear();
         record_has_value = false;
+        pending_num_values.clear();
       }
       parse_data_item();
     }
@@ -1857,17 +2035,10 @@ void cobol_typecheckt::place_field(
     {
       if(auto v = spec_to_numeric(value_spec, scale))
       {
-        mp_integer modulus = power(mp_integer{2}, info.byte_size * 8);
-        mp_integer u = *v % modulus;
-        if(u < 0)
-          u += modulus;
-        std::vector<unsigned char> bytes(info.byte_size);
-        for(std::size_t b = 0; b < info.byte_size; ++b)
-        {
-          bytes[b] = static_cast<unsigned char>((u % 256).to_long());
-          u /= 256;
-        }
-        record_inits.emplace_back(base_offset, std::move(bytes));
+        // Defer to finalize_record: the byte encoding (zoned vs binary)
+        // depends on whether the alias classifier marks this field faithful,
+        // which is only known once the whole record has been seen.
+        pending_num_values.emplace_back(base_offset, *v, all_items.size() - 1);
       }
     }
     else
