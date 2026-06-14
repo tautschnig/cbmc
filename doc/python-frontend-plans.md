@@ -45,6 +45,32 @@ path — the refined-precision items below are goals to pursue, **not** "use
 `--python-smt-strings` instead". Items are sequenced by soundness-first, then
 robustness, then capability; difficulty is noted where high.
 
+> **Refreshed status (2026-06-14).** **P0 (soundness) is empty** — all known
+> false proofs are closed (return-type `None`-erasure; the whole Any-typed
+> container by-reference mutation family incl. methods/sets/`__tag`-dispatch;
+> dict-changed-size-during-iteration). **P1 (native robustness) is effectively
+> done** — the dict-by-ref-mutation crash is gone; only a latent
+> `smt_string`-in-byte-op gap with no corpus instance remains. So the live
+> frontier is P2+. **Recommended next order:**
+> 1. **P2 SMT-track native method reach** — wire the remaining native `str.*`
+>    ops (`upper`/`lower`/`casefold`/`title`, `split`, `count`/`rfind`/`rindex`,
+>    `str(float)`, `repeat`, `strip(chars)`). Incremental, contained, low-risk,
+>    each a small lowering; closes real precision gaps now nondet under native.
+>    Best ROI.
+> 2. **String-refinement performance cliff** (§8) — the refined default times
+>    out on string-keyed dict scans / value-updates and `str.in_re`+`len()` on a
+>    shared symbolic subject. Now the dominant refined-backend limitation (it is
+>    what keeps string-keyed dict code "correct but slow" on the default path,
+>    e.g. the residual on `github_3647_9` string keys). High impact, but
+>    hard/research-grade (refinement-solver internals).
+> 3. **P3 regex reach** (literal-symbolic patterns, `re.sub`, groups,
+>    `re.split`, flags) — builds on the native regex path; medium effort.
+> 4. **P2 refined-track parity** (membership convergence, ordering,
+>    producing-op precision) — deep existential-witness/solver work; native
+>    already covers these, so lower urgency.
+> 5. **P4 JBMC native-SMT-string spike** and **P5 maintenance/re-checks**.
+
+
 **P0 — Soundness (always first).**
 - ~~**Return-type inference erases `None` from `X`-or-`None` returns**~~
   ([§0](#false-proofs)): **RESOLVED (2026-06-14)** — imported-module,
