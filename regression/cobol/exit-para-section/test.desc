@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+EXIT PARAGRAPH and EXIT SECTION transfer to the end of the current
+paragraph / section. See IBM LR "EXIT statement".

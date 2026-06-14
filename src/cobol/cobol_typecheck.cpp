@@ -255,6 +255,11 @@ struct stmtt
     SEARCH,
     GOTO,
     STOP,
+    // COBOL-2002 explicit scope-exit statements (IBM LR "EXIT statement"):
+    EXIT_PERFORM,   ///< EXIT PERFORM: leave the innermost inline PERFORM
+    EXIT_CYCLE,     ///< EXIT PERFORM CYCLE: next iteration of inline PERFORM
+    EXIT_PARAGRAPH, ///< EXIT PARAGRAPH: to the end of the current paragraph
+    EXIT_SECTION,   ///< EXIT SECTION: to the end of the current section
     SKIP
   } kind = kindt::SKIP;
 
@@ -519,6 +524,14 @@ protected:
   std::string pending_file;
   std::vector<paragrapht> paragraphs;
   std::size_t unique = 0;
+  /// Scope context for the COBOL-2002 EXIT statements (IBM LR "EXIT
+  /// statement"). Inline PERFORMs nest, so their (cycle, done) labels form a
+  /// stack; a paragraph/section does not nest within another, so the current
+  /// paragraph- and section-end labels are single values set while that
+  /// paragraph is generated.
+  std::vector<std::pair<std::string, std::string>> perform_loop_stack;
+  std::string cur_para_end_label;
+  std::string cur_section_end_label;
 
   // ---- DATA DIVISION layout state ----
   /// byte size of each record (its byte-array symbol)
@@ -3192,10 +3205,25 @@ std::vector<stmtt> cobol_typecheckt::parse_statement()
   }
   if(verb == "EXIT")
   {
+    // IBM LR "EXIT statement": plain EXIT (a common end point for a range of
+    // paragraphs) is a no-op; the explicit forms transfer control. EXIT
+    // PROGRAM returns to the caller (modelled as a program halt for a single
+    // program, like GOBACK).
+    const source_locationt loc = cur().location;
     advance();
-    eat_word("PROGRAM");
     stmtt s;
-    s.kind = stmtt::kindt::STOP;
+    s.location = loc;
+    if(eat_word("PROGRAM"))
+      s.kind = stmtt::kindt::STOP;
+    else if(eat_word("PERFORM"))
+      s.kind = eat_word("CYCLE") ? stmtt::kindt::EXIT_CYCLE
+                                 : stmtt::kindt::EXIT_PERFORM;
+    else if(eat_word("PARAGRAPH"))
+      s.kind = stmtt::kindt::EXIT_PARAGRAPH;
+    else if(eat_word("SECTION"))
+      s.kind = stmtt::kindt::EXIT_SECTION;
+    else
+      return {}; // plain EXIT: no-op
     return {s};
   }
   if(verb == "CONTINUE" || verb == "NEXT")
@@ -5051,24 +5079,59 @@ void cobol_typecheckt::gen_statement(
     out.add(code_frontend_assignt{stopped_expr(), true_exprt{}});
     out.add(code_gotot{proc_ret_label()});
     break;
+  case stmtt::kindt::EXIT_PERFORM:
+    // Leave the innermost inline PERFORM (IBM LR "EXIT statement").
+    if(!perform_loop_stack.empty())
+      out.add(code_gotot{perform_loop_stack.back().second});
+    break;
+  case stmtt::kindt::EXIT_CYCLE:
+    // Begin the next iteration of the innermost inline PERFORM.
+    if(!perform_loop_stack.empty())
+      out.add(code_gotot{perform_loop_stack.back().first});
+    break;
+  case stmtt::kindt::EXIT_PARAGRAPH:
+    // Transfer to the end of the current paragraph (IBM LR "EXIT statement").
+    if(!cur_para_end_label.empty())
+      out.add(code_gotot{cur_para_end_label});
+    break;
+  case stmtt::kindt::EXIT_SECTION:
+    // Transfer to the end of the current section (IBM LR "EXIT statement").
+    if(!cur_section_end_label.empty())
+      out.add(code_gotot{cur_section_end_label});
+    break;
   case stmtt::kindt::PERFORM:
   {
     switch(s.pkind)
     {
     case stmtt::perform_kindt::ONCE:
-      gen_perform_invocation(s, out, inlining);
+      if(s.inline_body)
+      {
+        // An inline PERFORM (one execution) is still a loop scope for EXIT
+        // PERFORM / EXIT PERFORM CYCLE, which both fall to its single end.
+        const std::string done = fresh_label("pdone");
+        perform_loop_stack.emplace_back(done, done);
+        gen_perform_invocation(s, out, inlining);
+        perform_loop_stack.pop_back();
+        out.add(code_labelt{done, code_skipt{}});
+      }
+      else
+        gen_perform_invocation(s, out, inlining);
       break;
     case stmtt::perform_kindt::TIMES:
     {
       const symbol_exprt ctr = make_counter();
       const std::string test = fresh_label("ptest");
       const std::string done = fresh_label("pdone");
+      const std::string cycle = fresh_label("pcycle");
       out.add(code_frontend_assignt{ctr, from_integer(0, cobol_value_type())});
       out.add(code_labelt{test, code_skipt{}});
       out.add(code_ifthenelset{
         not_exprt{binary_relation_exprt{ctr, ID_lt, s.times}},
         code_gotot{done}});
+      perform_loop_stack.emplace_back(cycle, done);
       gen_perform_invocation(s, out, inlining);
+      perform_loop_stack.pop_back();
+      out.add(code_labelt{cycle, code_skipt{}});
       out.add(code_frontend_assignt{
         ctr, plus_exprt{ctr, from_integer(1, cobol_value_type())}});
       out.add(code_gotot{test});
@@ -5079,17 +5142,25 @@ void cobol_typecheckt::gen_statement(
     {
       const std::string test = fresh_label("ptest");
       const std::string done = fresh_label("pdone");
+      const std::string cycle = fresh_label("pcycle");
       if(s.test_after)
       {
         out.add(code_labelt{test, code_skipt{}});
+        perform_loop_stack.emplace_back(cycle, done);
         gen_perform_invocation(s, out, inlining);
+        perform_loop_stack.pop_back();
+        out.add(code_labelt{cycle, code_skipt{}});
         out.add(code_ifthenelset{not_exprt{s.cond}, code_gotot{test}});
+        out.add(code_labelt{done, code_skipt{}});
       }
       else
       {
         out.add(code_labelt{test, code_skipt{}});
         out.add(code_ifthenelset{s.cond, code_gotot{done}});
+        perform_loop_stack.emplace_back(cycle, done);
         gen_perform_invocation(s, out, inlining);
+        perform_loop_stack.pop_back();
+        out.add(code_labelt{cycle, code_skipt{}});
         out.add(code_gotot{test});
         out.add(code_labelt{done, code_skipt{}});
       }
@@ -5099,10 +5170,14 @@ void cobol_typecheckt::gen_statement(
     {
       const std::string test = fresh_label("ptest");
       const std::string done = fresh_label("pdone");
+      const std::string cycle = fresh_label("pcycle");
       gen_statements(s.var_init, out, inlining);
       out.add(code_labelt{test, code_skipt{}});
       out.add(code_ifthenelset{s.cond, code_gotot{done}});
+      perform_loop_stack.emplace_back(cycle, done);
       gen_perform_invocation(s, out, inlining);
+      perform_loop_stack.pop_back();
+      out.add(code_labelt{cycle, code_skipt{}});
       gen_statements(s.var_step, out, inlining);
       out.add(code_gotot{test});
       out.add(code_labelt{done, code_skipt{}});
@@ -5236,10 +5311,46 @@ void cobol_typecheckt::build_function()
       equal_exprt{entry_arg, from_integer(i, idx_type)},
       code_gotot{para_label(paragraphs[i].name)}});
 
+  // One section-end label per section (keyed by the section's last paragraph),
+  // the target of EXIT SECTION; the last paragraph index of the section
+  // containing paragraph i is found by scanning back to its SECTION header and
+  // forward to the next one (IBM LR "EXIT statement").
+  std::map<std::size_t, std::string> section_end_labels;
+  const auto section_last_of = [&](std::size_t i, bool &in_sec) -> std::size_t
+  {
+    std::size_t h = i;
+    while(h > 0 && !paragraphs[h].is_section)
+      --h;
+    in_sec = paragraphs[h].is_section;
+    for(std::size_t j = h + 1; j < n; ++j)
+      if(paragraphs[j].is_section)
+        return j - 1;
+    return n == 0 ? 0 : n - 1;
+  };
+
   for(std::size_t i = 0; i < n; ++i)
   {
     proc_body.add(code_labelt{para_label(paragraphs[i].name), code_skipt{}});
+    cur_para_end_label = fresh_label("paraend");
+    bool in_sec = false;
+    const std::size_t sl = section_last_of(i, in_sec);
+    if(in_sec)
+    {
+      auto it = section_end_labels.find(sl);
+      if(it == section_end_labels.end())
+        it = section_end_labels.emplace(sl, fresh_label("sectend")).first;
+      cur_section_end_label = it->second;
+    }
+    else
+      cur_section_end_label.clear();
+
     gen_statements(paragraphs[i].statements, proc_body, inlining);
+
+    // EXIT PARAGRAPH lands here, then normal end-of-paragraph flow applies.
+    proc_body.add(code_labelt{cur_para_end_label, code_skipt{}});
+    // EXIT SECTION lands here: emitted after the section's last paragraph.
+    if(in_sec && i == sl)
+      proc_body.add(code_labelt{section_end_labels[sl], code_skipt{}});
     // Return to the activating PERFORM when control reaches the end of the
     // range-exit paragraph (IBM LR "PERFORM statement").
     if(exit_targets.count(i) != 0)

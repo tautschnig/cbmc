@@ -316,7 +316,10 @@ Risks and mitigations:
   per-paragraph end checks are emitted only for the indices that are
   actually PERFORM range starts / ends (`collect_perform_targets`), so a
   program with few PERFORM targets pays almost no dispatch overhead.
-- **Remaining**: `EXIT PERFORM` / `EXIT PERFORM CYCLE` (inline-PERFORM
-  early exit, COBOL 2002+) and `EXIT SECTION` / `EXIT PARAGRAPH` are not
-  yet modelled (currently `EXIT` is a no-op); absent from the CardDemo
-  corpus, tracked for later.
+- **EXIT forms**: *implemented*. Plain `EXIT` is a no-op (it was
+  previously mis-compiled as a program halt); `EXIT PROGRAM`/`GOBACK`
+  halt via the `$stopped` flag; `EXIT PERFORM` / `EXIT PERFORM CYCLE`
+  branch to the innermost inline-PERFORM's done/cycle label (a
+  `perform_loop_stack`); `EXIT PARAGRAPH` / `EXIT SECTION` branch to the
+  current paragraph- / section-end label emitted in `build_function`
+  (IBM LR "EXIT statement").

@@ -381,17 +381,27 @@ CardDemo blockers, in order, are:
    numeric/alphanumeric comparisons).
 
 As of this milestone, **all 44 CardDemo programs parse and lower to GOTO
-with no conversion errors**: **32 reach `VERIFICATION SUCCESSFUL`** under
-default settings, and the other 12 lower fully but contain unbounded
-`PERFORM UNTIL` file-read loops (11) or a recursive `PERFORM` cycle (1,
-`COACCT01`), so they need an explicit unwind bound. With `cbmc --unwind 3
---no-unwinding-assertions`, **all 44 programs reach `VERIFICATION
-SUCCESSFUL`**. (The default count was 33 until `PERFORM` became a
-call rather than inlining: `COACCT01`'s recursive error-handler cycle
-previously "verified" only because the re-entrant path was pruned with
-`assume(false)`, which was unsound; it now needs `--unwind`, soundly.)
-There is no remaining front-end coverage gap on this corpus; further work
-is verification-driver tuning (loop bounds, file modelling), not new
+with no conversion errors**, and with `cbmc --unwind 3
+--no-unwinding-assertions` **all 44 reach `VERIFICATION SUCCESSFUL`**
+with no `VERIFICATION FAILED`. Under *default* settings (no unwind
+bound) only **15** verify; the rest lower fully but reach unbounded
+`PERFORM UNTIL` file-read loops (and one recursive `PERFORM` cycle,
+`COACCT01`) that need an explicit bound.
+
+The default count is much lower than earlier (it was 33, then 32) for a
+*soundness* reason, not a regression: until `PERFORM` became a call the
+recursive cycle was pruned with `assume(false)` (vacuous), and until the
+plain `EXIT` statement was made a no-op (IBM LR "EXIT statement",
+format 1) it was mis-compiled as a program halt — so a `PERFORM … THRU
+…-EXIT` *halted the whole program* at the range terminator instead of
+returning. That short-circuited execution before the file-read loops, so
+many programs "verified" by default only because the code after the
+performed range (including the loops and the assertions past them) was
+never reached. With `EXIT` correctly a no-op, those programs now execute
+their full logic and need the unwind bound, which they pass. The
+meaningful, sound baseline is **44/44 with `--unwind 3`**. There is no
+remaining front-end coverage gap on this corpus; further work is
+verification-driver tuning (loop bounds, file modelling), not new
 language support.
 
 Recent increments cleared the long tail: `OCCURS ... INDEXED BY`

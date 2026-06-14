@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+EXIT PERFORM and EXIT PERFORM CYCLE on an inline PERFORM. See IBM LR
+"EXIT statement".
