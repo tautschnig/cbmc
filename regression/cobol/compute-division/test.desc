@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Division within COMPUTE develops fractional digits, truncating or
+rounding to the receiver. See IBM LR "DIVIDE statement".

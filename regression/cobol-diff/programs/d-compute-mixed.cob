@@ -1,0 +1,12 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-COMPUTE-MIXED.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-X       PIC 9(4)V99.
+       01  WS-RESULT  PIC ZZZ9.99.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           COMPUTE WS-X = (100 + 50) * 2 - 25.
+           MOVE WS-X TO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.

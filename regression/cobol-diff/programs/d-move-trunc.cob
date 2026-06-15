@@ -1,0 +1,13 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-MOVE-TRUNC.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-A       PIC 9(2)V999 VALUE 12.345.
+       01  WS-X       PIC 9(2)V99.
+       01  WS-RESULT  PIC Z9.99.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           MOVE WS-A TO WS-X.
+           MOVE WS-X TO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.

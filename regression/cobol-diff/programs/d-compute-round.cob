@@ -1,0 +1,12 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-COMPUTE-ROUND.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-X       PIC 9V99.
+       01  WS-RESULT  PIC 9.99.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           COMPUTE WS-X ROUNDED = 2 / 3.
+           MOVE WS-X TO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.

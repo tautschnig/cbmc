@@ -1,0 +1,10 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-STAR.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-RESULT  PIC **9.99.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           MOVE 7.5 TO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.

@@ -764,6 +764,9 @@ protected:
 
   exprt rescale(const exprt &e, std::size_t from, std::size_t to) const;
   std::size_t align(valuet &a, valuet &b);
+  /// Quotient a/b developed with guard fractional digits (the single place
+  /// division scaling is implemented, used by COMPUTE and DIVIDE).
+  valuet divide_values(valuet a, valuet b);
   exprt build_relation(valuet a, const std::string &op, valuet b);
 
   const item_infot &lookup_item(const std::string &name);
@@ -1010,6 +1013,25 @@ std::size_t cobol_typecheckt::align(valuet &a, valuet &b)
   a.scale = s;
   b.scale = s;
   return s;
+}
+
+valuet cobol_typecheckt::divide_values(valuet a, valuet b)
+{
+  // Division must develop fractional digits: plain integer division at scale 0
+  // would discard the fraction (e.g. 2/3 -> 0). After aligning the operands to
+  // a common scale, a/b is an integer ratio, so scaling the dividend up by
+  // 10^DIV_GUARD before the division yields a quotient at scale DIV_GUARD; the
+  // store to the receiver then rescales (and, with ROUNDED, rounds) to its
+  // own scale (IBM LR "DIVIDE statement" / arithmetic intermediate results).
+  // DIV_GUARD digits cover the common receiver scales within the 64-bit value
+  // domain; deeper precision / multi-division chains are bounded by it.
+  static const std::size_t DIV_GUARD = 6;
+  align(a, b);
+  return valuet{
+    div_exprt{
+      mult_exprt{a.expr, from_integer(power10(DIV_GUARD), cobol_value_type())},
+      b.expr},
+    DIV_GUARD};
 }
 
 reft cobol_typecheckt::ref_of(const item_infot &info) const
@@ -2618,9 +2640,7 @@ valuet cobol_typecheckt::parse_term_from(valuet a)
     }
     else
     {
-      const std::size_t s = align(a, b);
-      (void)s;
-      a = valuet{div_exprt{a.expr, b.expr}, 0};
+      a = divide_values(a, b);
     }
   }
   return a;
@@ -5188,20 +5208,7 @@ std::vector<stmtt> cobol_typecheckt::parse_divide()
     const bool dividend_rounded = eat_word("ROUNDED");
     valuet divisor = first;
     align(dividend, divisor);
-    // The quotient is developed with fractional precision (IBM LR "DIVIDE
-    // statement": the quotient is computed to the receivers' decimal places,
-    // plus a guard digit for ROUNDED). After align both operands share a
-    // scale, so scaling the dividend up by 10^DIV_GUARD before the integer
-    // division yields a quotient at scale DIV_GUARD; assign_giving then
-    // rescales (and rounds) it to each receiver. DIV_GUARD digits cover the
-    // common receiver scales while staying within the 64-bit value domain.
-    static const std::size_t DIV_GUARD = 6;
-    valuet quotient{
-      div_exprt{
-        mult_exprt{
-          dividend.expr, from_integer(power10(DIV_GUARD), cobol_value_type())},
-        divisor.expr},
-      DIV_GUARD};
+    valuet quotient = divide_values(dividend, divisor);
     if(eat_word("GIVING"))
     {
       assign_giving(quotient, result, overflow, loc);
@@ -5221,20 +5228,7 @@ std::vector<stmtt> cobol_typecheckt::parse_divide()
     valuet divisor = parse_operand();
     valuet dividend = first;
     align(dividend, divisor);
-    // The quotient is developed with fractional precision (IBM LR "DIVIDE
-    // statement": the quotient is computed to the receivers' decimal places,
-    // plus a guard digit for ROUNDED). After align both operands share a
-    // scale, so scaling the dividend up by 10^DIV_GUARD before the integer
-    // division yields a quotient at scale DIV_GUARD; assign_giving then
-    // rescales (and rounds) it to each receiver. DIV_GUARD digits cover the
-    // common receiver scales while staying within the 64-bit value domain.
-    static const std::size_t DIV_GUARD = 6;
-    valuet quotient{
-      div_exprt{
-        mult_exprt{
-          dividend.expr, from_integer(power10(DIV_GUARD), cobol_value_type())},
-        divisor.expr},
-      DIV_GUARD};
+    valuet quotient = divide_values(dividend, divisor);
     expect_word("GIVING");
     assign_giving(quotient, result, overflow, loc);
     do_remainder(dividend, divisor);

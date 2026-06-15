@@ -1,0 +1,12 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-MULT-SCALE.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-X       PIC 9(3)V999.
+       01  WS-RESULT  PIC ZZ9.999.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           COMPUTE WS-X = 1.25 * 4.2.
+           MOVE WS-X TO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.
