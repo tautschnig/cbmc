@@ -156,8 +156,15 @@ CardDemo 44/44 at --unwind 3, promote the relevant KNOWNBUG test)
    byte array (no classifier extension was needed). Remaining: signed /
    scaled / COMP numeric operands.
 6. **Reference modification non-constant length** (I8).
-   Also remaining within the done items: STRING/UNSTRING with a
-   delimiter, INSPECT REPLACING/CONVERTING and BEFORE/AFTER.
+
+The character verbs themselves are now complete for the common cases
+(I10 RESOLVED): STRING/UNSTRING DELIMITED BY a delimiter (UNSTRING also
+with OR / ALL), INSPECT REPLACING, and INSPECT BEFORE/AFTER INITIAL are
+all modelled exactly; INSPECT CONVERTING (a translate table) and
+multi-byte delimiters in an OR/ALL set remain on the sound havoc
+fallback. The remaining open items are the numeric-operand cases of step
+5 (signed / scaled / COMP) and reference modification with a non-constant
+length (I8, step 6).
 
 Risks: term-size blow-up on large items (mitigation §4); INSPECT's
 BEFORE/AFTER/LEADING state machine is fiddly (test thoroughly); the
