@@ -201,29 +201,33 @@ splitting `subject[start:end]`. Whenever the intrinsic is gated out it returns
     §[method-default-optional](python-frontend-plans.md).
   - **Open:** `span()==tuple` uses pre-existing tuple equality (elementwise is
     precise). `re.match` positions are not yet wired (only search/fullmatch).
-- **Phase 2 — precise `re.findall` / `re.split`. ATTEMPTED 2026-06-15, BLOCKED
-  on two substrate gaps; reverted to the sound nondet-list floor.** The design
-  (a bounded re-stub loop using `__cbmc_re_search_start(..., from)` with
-  `from = end`, `start+1` for empty matches) is correct and validated *in
-  isolation* (a loop appending the matched substrings to a list **seeded with a
-  string** verifies precisely). Two blockers stop it from landing:
+- **Phase 2 — precise `re.findall` / `re.split`. Blockers #1 and #2 RESOLVED;
+  now blocked on #3 (library-stub constant-prop); stays at the sound nondet-
+  list floor.** The design (a bounded re-stub loop using
+  `__cbmc_re_search_start(..., from)` with `from = end`, `start+1` for empty
+  matches) is validated end-to-end **in user code** (precise count/elements,
+  0 s) — the exact same loop shape, with the subject as a parameter, verifies
+  precisely. The blocker chain:
   1. **Empty-list element typing — RESOLVED (front-end, `9173fea6ce`).**
-     `result: list[str] = []` now pins the element type from the annotation, so
-     the position loop no longer aborts (verified: the findall-shaped loop with
-     an annotated `result` runs to a sound result). (A non-annotated `[]` with a
-     call-indexed slice append still aborts — that needs the back-end defensive
-     net, plans §[empty-container-elem-type](python-frontend-plans.md) — but the
-     findall stub will use the annotation.)
-  2. **Symbolic-`from` lowering + perf.** After the first match the loop's
-     `from` is an SSA value, so the position lowering must accept a symbolic
-     `from` (guard each scan branch with `i >= from`, `let`-binding `from`).
-     That generalisation is correct, but emitting the fully-guarded chain for
-     *every* call (including `from = 0` search/fullmatch) regressed re-heavy
-     tests to timeout; it needs a constant-`from` fast path retained alongside
-     the symbolic-`from` chain. Reverted for now.
-
-  Net: Phase 2 lands once (1) is fixed; (2) is then a localised lowering
-  addition (keep both paths).
+     `result: list[str] = []` pins the element type from the annotation, so the
+     loop no longer aborts. The non-annotated `[]` + call-indexed slice append
+     is additionally made non-aborting by the back-end defensive net
+     (`1c62587a8e`, sound nondet for `smt_string`↔scalar casts), plans
+     §[empty-container-elem-type](python-frontend-plans.md).
+  2. **Symbolic-`from` lowering — RESOLVED (`bbcb5a3292`).** The lowering now
+     accepts a symbolic `from` (guard each scan branch with `i >= from`,
+     `let`-binding `from`) while keeping a constant-`from` fast path for
+     `from = 0` (search/fullmatch), so there is no perf regression (re-heavy
+     tests back at 0 s). Validated on the findall-shaped loop in user code.
+  3. **NEW — library-stub subject not constant-folded.** Through the `re`
+     module stub, `findall`'s literal subject does **not** fold into the
+     intrinsics, so it stays nondet (and slow on the symbolic-`from` path) —
+     even though (a) an identical loop in a *user* function folds and is
+     precise, and (b) `re.search` in the *same* module folds (its `group(0)`
+     is precise). The discriminator is unclear (search passes `from = 0`,
+     findall passes a loop variable); root-causing why an imported-module
+     function with a loop loses the constant-subject propagation is the
+     remaining work. Until then `re.findall`/`re.split` keep the sound floor.
 - **Phase 3 — `Match.group(n)`.** Span + uniqueness-gated `str.++`
   decomposition (plans section 4 group-extraction item).
 - **Phase 4 — variable-length/greedy.** Deferred (section 7); stays nondet.
