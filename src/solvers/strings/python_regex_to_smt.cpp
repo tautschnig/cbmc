@@ -20,7 +20,8 @@ namespace
 class translator
 {
 public:
-  translator(const std::string &p) : pattern(p)
+  translator(const std::string &p, bool ic = false, bool da = false)
+    : pattern(p), ignorecase(ic), dotall(da)
   {
   }
 
@@ -40,6 +41,8 @@ public:
 
 private:
   const std::string &pattern;
+  const bool ignorecase = false;
+  const bool dotall = false;
   std::size_t pos = 0;
 
   // -- low-level helpers --
@@ -124,6 +127,20 @@ private:
       out << std::hex << static_cast<unsigned>(c) << "))";
     }
     return out.str();
+  }
+
+  /// Regex matching the single character ``c``, honouring IGNORECASE: an
+  /// ASCII letter matches either case (CPython ASCII case folding).
+  std::string re_char(unsigned char c) const
+  {
+    if(ignorecase && std::isalpha(c))
+    {
+      const unsigned char lo = static_cast<unsigned char>(std::tolower(c));
+      const unsigned char up = static_cast<unsigned char>(std::toupper(c));
+      return "(re.union " + smt_str_to_re_char(lo) + " " +
+             smt_str_to_re_char(up) + ")";
+    }
+    return smt_str_to_re_char(c);
   }
 
   // -- grammar --
@@ -312,11 +329,12 @@ private:
     if(c == '.')
     {
       ++pos;
-      // Python '.' (without re.DOTALL) matches any character EXCEPT a
-      // newline. SMT 're.allchar' includes '\n', so subtract it; using
-      // 're.allchar' here would be unsound (over-matching across lines).
-      // SMT-LIB encodes the newline code point as \u{a} ("\n" would be a
-      // literal backslash-n).
+      // Python '.' (without re.DOTALL / inline (?s)) matches any character
+      // EXCEPT a newline. SMT 're.allchar' includes '\n', so subtract it;
+      // using 're.allchar' here would be unsound (over-matching across
+      // lines). SMT-LIB encodes the newline code point as \u{a}.
+      if(dotall)
+        return std::string{"re.allchar"};
       return std::string{"(re.diff re.allchar (str.to_re \"\\u{a}\"))"};
     }
 
@@ -338,7 +356,7 @@ private:
 
     // Literal single character.
     ++pos;
-    return smt_str_to_re_char(static_cast<unsigned char>(c));
+    return re_char(static_cast<unsigned char>(c));
   }
 
   /// \X escape — character classes and literal escapes.
@@ -400,7 +418,7 @@ private:
       if(std::isdigit(static_cast<unsigned char>(c)))
         return std::nullopt;
       // Literal escape (e.g. \. \* \+): just the character itself.
-      return smt_str_to_re_char(static_cast<unsigned char>(c));
+      return re_char(static_cast<unsigned char>(c));
     }
   }
 
@@ -428,7 +446,7 @@ private:
       }
       else
       {
-        lhs = smt_str_to_re_char(static_cast<unsigned char>(c));
+        lhs = re_char(static_cast<unsigned char>(c));
       }
       // Range a-b?
       if(
@@ -442,19 +460,47 @@ private:
           // Range with escaped RHS (\t, \n...): not supported for
           // simplicity.
           return std::nullopt;
-        std::ostringstream out;
-        out << "(re.range ";
-        if(c >= 0x20 && c <= 0x7e && c != '"' && c != '\\')
-          out << "\"" << c << "\"";
-        else
+        if(
+          !(c >= 0x20 && c <= 0x7e && c != '"' && c != '\\') ||
+          !(d >= 0x20 && d <= 0x7e && d != '"' && d != '\\'))
           return std::nullopt;
-        out << " ";
-        if(d >= 0x20 && d <= 0x7e && d != '"' && d != '\\')
-          out << "\"" << d << "\"";
-        else
-          return std::nullopt;
-        out << ")";
-        parts.push_back(out.str());
+        auto emit_range = [](char lo, char hi)
+        {
+          std::ostringstream r;
+          r << "(re.range \"" << lo << "\" \"" << hi << "\")";
+          return r.str();
+        };
+        std::string range_re = emit_range(c, d);
+        if(ignorecase)
+        {
+          const bool c_lower = c >= 'a' && c <= 'z';
+          const bool d_lower = d >= 'a' && d <= 'z';
+          const bool c_upper = c >= 'A' && c <= 'Z';
+          const bool d_upper = d >= 'A' && d <= 'Z';
+          // Letters occupy [A-Z] (65..90) and [a-z] (97..122).
+          const bool hits_letters =
+            !((static_cast<unsigned char>(d) < 'A') ||
+              (static_cast<unsigned char>(c) > 'z') ||
+              (static_cast<unsigned char>(c) > 'Z' &&
+               static_cast<unsigned char>(d) < 'a'));
+          if(c_lower && d_lower)
+            range_re = "(re.union " + range_re + " " +
+                       emit_range(
+                         static_cast<char>(std::toupper(c)),
+                         static_cast<char>(std::toupper(d))) +
+                       ")";
+          else if(c_upper && d_upper)
+            range_re = "(re.union " + range_re + " " +
+                       emit_range(
+                         static_cast<char>(std::tolower(c)),
+                         static_cast<char>(std::tolower(d))) +
+                       ")";
+          else if(hits_letters)
+            // A range overlapping the letters but not a clean single-case
+            // letter range (e.g. [A-z], [0-z]) can't be folded simply; bail.
+            return std::nullopt;
+        }
+        parts.push_back(range_re);
       }
       else
       {
@@ -795,16 +841,66 @@ void strip_anchors(
   }
 }
 
+/// Strip a leading global inline-flag group — e.g. ``(?i)``, ``(?s)``,
+/// ``(?is)`` — setting ``ignorecase`` / ``dotall`` and returning the rest of
+/// the pattern. Returns ``std::nullopt`` if the group contains a flag letter
+/// we don't model (a/L/m/u/x), so the caller falls back to a sound nondet
+/// model. A pattern with no leading flag group (including ``(?:`` / ``(?=``
+/// / ``(?P<`` forms, which parse_atom handles or rejects) is returned
+/// unchanged.
+std::optional<std::string>
+strip_inline_flags(const std::string &p, bool &ignorecase, bool &dotall)
+{
+  ignorecase = false;
+  dotall = false;
+  if(p.size() < 3 || p[0] != '(' || p[1] != '?')
+    return p;
+  bool ic = false, da = false;
+  std::size_t i = 2;
+  for(; i < p.size() && p[i] != ')' && p[i] != ':'; ++i)
+  {
+    switch(p[i])
+    {
+    case 'i':
+      ic = true;
+      break;
+    case 's':
+      da = true;
+      break;
+    case 'a':
+    case 'L':
+    case 'm':
+    case 'u':
+    case 'x':
+      return std::nullopt; // recognised but unmodelled flag → nondet
+    default:
+      return p; // not a flag group (e.g. (?P<name>, (?=, (?<=) → leave to parser
+    }
+  }
+  if(i > 2 && i < p.size() && p[i] == ')')
+  {
+    ignorecase = ic;
+    dotall = da;
+    return p.substr(i + 1);
+  }
+  return p; // (?:...), (?...) without a closing flag list, etc.
+}
+
 /// Translate a pattern to the SMT regex for the whole subject string
 /// under the given match semantics. Returns nullopt for unsupported
 /// patterns (caller falls back to a sound nondet model).
 std::optional<std::string>
 translate(const std::string &pattern, match_kind kind)
 {
+  bool ignorecase = false, dotall = false;
+  auto core_in = strip_inline_flags(pattern, ignorecase, dotall);
+  if(!core_in.has_value())
+    return std::nullopt; // unsupported leading inline flag
+
   bool had_start, had_end;
   std::string core;
-  strip_anchors(pattern, had_start, had_end, core);
-  translator t{core};
+  strip_anchors(*core_in, had_start, had_end, core);
+  translator t{core, ignorecase, dotall};
   auto body = t.parse_top();
   if(!body.has_value())
     return std::nullopt;
@@ -865,8 +961,13 @@ std::optional<std::string> python_regex_to_smt_body(const std::string &pattern)
 {
   // No anchor stripping and no wrapping: parse_top translates the pattern's
   // language directly and rejects any embedded ^/$ (parse_atom returns
-  // nullopt), which is what a positional-context-free caller needs.
-  translator t{pattern};
+  // nullopt), which is what a positional-context-free caller needs. A leading
+  // inline-flag group (?i)/(?s) is honoured (and unmodelled flags bail).
+  bool ignorecase = false, dotall = false;
+  auto core = strip_inline_flags(pattern, ignorecase, dotall);
+  if(!core.has_value())
+    return std::nullopt;
+  translator t{*core, ignorecase, dotall};
   return t.parse_top();
 }
 

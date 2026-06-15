@@ -3107,15 +3107,39 @@ void smt2_convt::convert_expr(const exprt &expr)
         if(width == 0)
           width = 8;
 
-        // Helper: extract a constant-string payload from a
-        // refined-string struct_exprt of the form
-        //   { length_const, address_of(index(array_literal, 0)) }.
-        auto extract_literal = [](const exprt &e) -> std::optional<std::string>
+        // Helper: extract a constant-string payload from an smt_string
+        // constant, a refined-string struct_exprt of the form
+        //   { length_const, address_of(index(array_literal, 0)) },
+        // or a str.++ (cprover_string_smt_strcat_func) of such operands. The
+        // last case lets the front-end build a pattern by concatenation (e.g.
+        // prepending an inline-flag group "(?i)") while the back-end still
+        // recovers the constant text -- it remains pure string handling, with
+        // no language-specific knowledge.
+        std::function<std::optional<std::string>(const exprt &)>
+          extract_literal =
+            [&extract_literal](const exprt &e) -> std::optional<std::string>
         {
           // Native SMT-String back-end: the pattern/subject is a constant of
           // smt_string type, carrying its text directly as the constant value.
           if(e.id() == ID_constant && e.type().id() == ID_smt_string)
             return id2string(to_constant_expr(e).get_value());
+          if(e.id() == ID_function_application)
+          {
+            const auto &fa = to_function_application_expr(e);
+            if(
+              fa.function().id() == ID_symbol &&
+              to_symbol_expr(fa.function()).get_identifier() ==
+                ID_cprover_string_smt_strcat_func &&
+              fa.arguments().size() == 2)
+            {
+              auto a = extract_literal(fa.arguments()[0]);
+              auto b = extract_literal(fa.arguments()[1]);
+              if(a.has_value() && b.has_value())
+                return *a + *b;
+              return std::nullopt;
+            }
+            return std::nullopt;
+          }
           if(
             e.id() != ID_struct || e.operands().size() != 2 ||
             !e.operands()[0].is_constant())
