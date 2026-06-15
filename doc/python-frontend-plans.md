@@ -160,18 +160,21 @@ robustness, then capability; difficulty is noted where high.
     objects for finditer), closing the missed-bug class on both backends.
     Length is bounded (8) — a BMC limit like loop unwinding.
 
-    **Precise enumeration is BLOCKED on match-position extraction** — now
-    fully scoped in
-    [python-frontend-regex-position-plan.md](python-frontend-regex-position-plan.md)
-    (sound bounded leftmost-start scan, spike-confirmed correct + leftmost-sound;
-    the dominant constraint is a perf cliff — symbolic subjects feasible only to
-    ~16 chars, 64 infeasible — so the precise path is gated to fixed-length
-    patterns on constant/short subjects, nondet floor otherwise). The clean
-    `bounded list-return` mechanism — a loop `i in [0, N)` using
+    **Match positions — Phase 1 LANDED (2026-06-15, `1e52da2ca5`).** The
+    match-position intrinsic (`__cbmc_re_search_start/_end`) is implemented per
+    [python-frontend-regex-position-plan.md](python-frontend-regex-position-plan.md):
+    `Match.start()/end()` and `group(0)` are precise for fixed-length patterns
+    on constant subjects under the native backend (bounded leftmost-start scan,
+    spike-confirmed leftmost-sound), with a sound nondet floor for
+    variable-length / symbolic / refined-backend (the perf cliff — symbolic
+    feasible only to ~16 chars — keeps the precise path gated to constant
+    subjects). **Phase 2** (precise `re.findall`/`re.split` via a `from`-driven
+    bounded loop) and **Phase 3** (`group(n)` decomposition) build on it. The
+    clean `bounded list-return` mechanism — a loop `i in [0, N)` using
     `str.indexof(subject, sep, pos)` for the next separator/match position and
     `str.substr` to extract each segment, accumulating a `list[smt_string]` of
-    up to `N` elements (`N` = unwind bound; exact for constant subjects) — needs
-    the match **start/end positions**, which the current `__cbmc_re_*`
+    up to `N` elements (`N` = unwind bound; exact for constant subjects) — uses
+    the match **start/end positions** now provided, or the current `__cbmc_re_*`
     intrinsics do not return (bool-only). `str.split` with a *literal* separator
     can use `str.indexof` directly (no regex positions) and is the tractable
     **Phase 1**; `re.findall`/`re.split` Phase 2 requires either adding a
@@ -976,6 +979,22 @@ on `(path, mtime)`; a multi-process pool for parallel parse requests.
 All items here are **sound** (misses / over-approximations, never false
 alarms). Verified against the 2026-06-08 sweep baseline.
 
+- **Method default-args not filled on optional/union-typed receivers
+  {#method-default-optional} (PLANNED).** When a method is called on a value
+  whose static type is optional/union (e.g. the `Match | None` returned by
+  `re.search`), missing trailing arguments are **not** bound to the method's
+  defaults — the GOTO layer fills them with nondet ("not enough arguments,
+  inserting non-deterministic value"). Sound, but it makes any default-driven
+  branch nondet. Concretely it blocks `re.search(...).group()` (no-arg) from
+  being precise even though `group(0)` is (see
+  [regex-position-plan](python-frontend-regex-position-plan.md) §9), and it
+  affects the whole class of stub methods with optional trailing parameters
+  (`m.start()/end()/span()` happen to be immune only because they ignore the
+  argument). The fix is in the method-call dispatch: when the receiver is
+  optional/union, still resolve the concrete class method and run the normal
+  default-argument binding (the same path `resolve_user_call` uses for
+  concretely-typed receivers) before emitting the call. Architectural (one fix,
+  many stub methods), but touches core dispatch — own focused change + sweep.
 - **String operations:** the `string-concat` loop cluster
   (`string-concat4/5/6/13`) and `string.digits` / `string.ascii_uppercase`
   population are **all PASS now** — closed. No open items in this group.
