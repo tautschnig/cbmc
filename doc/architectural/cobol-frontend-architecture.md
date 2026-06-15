@@ -231,7 +231,7 @@ false assertion pass, but may prevent proving a true one). "KB" names the
 | I7 | `OCCURS … DEPENDING ON` fixed at maximum (over-approx) | "OCCURS clause" (format 2) | — | precision-and-gaps §2 |
 | I8 | reference modification with a non-constant length over-approximated to the remaining size | "Reference modification" | — | precision-and-gaps §2 |
 | I9 | ambiguous qualified reference takes the first match (with a warning) | "Qualification" | — | precision-and-gaps §2 |
-| I10 | **PARTIAL** — INSPECT TALLYING (`inspect-tallying`), INSPECT REPLACING (`inspect-replacing`), and STRING DELIMITED BY SIZE (`string-concat`) now exact; UNSTRING and STRING/INSPECT with a delimiter or BEFORE/AFTER still havoc | "STRING"/"UNSTRING"/"INSPECT statement" | — | character-semantics §3 |
+| I10 | **PARTIAL** — INSPECT TALLYING/REPLACING (`inspect-tallying`, `inspect-replacing`), STRING (SIZE and single-delimiter; `string-concat`, `string-delimited`) and UNSTRING (single-delimiter split; `unstring-split`) now exact; INSPECT BEFORE/AFTER and STRING/UNSTRING with ALL or multiple (OR) delimiters still havoc | "STRING"/"UNSTRING"/"INSPECT statement" | — | character-semantics §3 |
 | I11 | file I/O external: OPEN/CLOSE no-op, READ havocs the record + nondet AT END, output verbs nondet INVALID KEY | "READ"/"WRITE"/… statements | — | precision-and-gaps §3 |
 | I12 | SORT/MERGE abstracted (procedures performed; RETURN havocs) | "SORT"/"MERGE statement" | — | precision-and-gaps §3 |
 | I13 | ACCEPT havocs its receiver (run-time input unknown) — **by design** | "ACCEPT statement" | — | precision-and-gaps §3 |

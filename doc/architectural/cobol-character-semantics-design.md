@@ -142,7 +142,10 @@ CardDemo 44/44 at --unwind 3, promote the relevant KNOWNBUG test)
    ALL/LEADING/CHARACTERS** exact (CORE `inspect-tallying`).
 2. **DONE** — **STRING** with exact concatenation (DELIMITED BY SIZE),
    pointer, and exact ON OVERFLOW (CORE `string-concat`).
-3. **UNSTRING** split with COUNT/DELIMITER/TALLYING.
+3. **DONE** — **UNSTRING** split (single delimiter) with COUNT IN /
+   DELIMITER IN / WITH POINTER / TALLYING IN (CORE `unstring-split`),
+   reusing the first-occurrence delimiter scan parameterised by a runtime
+   start position.
 4. **DONE** — **String intrinsics on items**
    (`UPPER-CASE`/`LOWER-CASE`/`REVERSE`; CORE `string-intrinsics-item`),
    via the "character value as an array expression" representation.
