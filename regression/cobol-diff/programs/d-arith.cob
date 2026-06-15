@@ -1,0 +1,13 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-ARITH.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-A       PIC 9(3)V99 VALUE 100.50.
+       01  WS-B       PIC 9(3)V99 VALUE 025.75.
+       01  WS-RESULT  PIC ZZ9.99.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           COMPUTE WS-A = WS-A + WS-B.
+           MOVE WS-A TO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.

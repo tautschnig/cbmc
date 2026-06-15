@@ -23,6 +23,9 @@ Companion documents:
   numeric↔alphanumeric); the Tier-2 design for I2/I3/I8/I10/I14.
 - `cobol-precision-and-gaps-plan.md` — roadmap for the non-numeric
   gaps/imprecisions catalogued here.
+- `cobol-differential-testing.md` — the GnuCOBOL differential-validation
+  harness (`regression/cobol-diff/`) that hunts for *unknown* semantic
+  divergences.
 
 The reference throughout is the **IBM Enterprise COBOL for z/OS 6.4
 Language Reference** (*LR*); supplementary references are the IBM CICS

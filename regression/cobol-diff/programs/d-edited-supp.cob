@@ -1,0 +1,11 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-EDITED-SUPP.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-N       PIC 9(3) VALUE 5.
+       01  WS-RESULT  PIC ZZ9.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           MOVE WS-N TO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.

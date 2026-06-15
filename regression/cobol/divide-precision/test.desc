@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+DIVIDE develops the quotient with the receiver's decimal places, and
+REMAINDER uses the integer quotient. See IBM LR "DIVIDE statement".

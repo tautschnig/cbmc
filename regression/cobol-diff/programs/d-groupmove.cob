@@ -1,0 +1,12 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-GROUPMOVE.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-SRC.
+           05 FILLER PIC X(2) VALUE 'AB'.
+       01  WS-RESULT PIC X(4) VALUE 'ZZZZ'.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           MOVE WS-SRC TO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.

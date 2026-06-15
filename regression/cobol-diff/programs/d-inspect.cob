@@ -1,0 +1,13 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-INSPECT.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-S       PIC X(5) VALUE 'AABAA'.
+       01  WS-CNT     PIC 9(2) VALUE 0.
+       01  WS-RESULT  PIC ZZ9.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           INSPECT WS-S TALLYING WS-CNT FOR ALL 'A'.
+           MOVE WS-CNT TO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.

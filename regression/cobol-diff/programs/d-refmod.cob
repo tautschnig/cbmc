@@ -1,0 +1,11 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-REFMOD.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-S       PIC X(6) VALUE 'ABCDEF'.
+       01  WS-RESULT  PIC X(3) VALUE SPACES.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           MOVE WS-S(2:3) TO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.

@@ -1,0 +1,12 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-DIVIDE.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-A       PIC 9(5)V99.
+       01  WS-RESULT  PIC Z,ZZ9.99.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           DIVIDE 1000 BY 3 GIVING WS-A ROUNDED.
+           MOVE WS-A TO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.
