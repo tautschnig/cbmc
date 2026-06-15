@@ -802,6 +802,14 @@ protected:
   /// The shared building block for character-content semantics (INSPECT,
   /// STRING, class conditions, ...): item bytes are the record byte array.
   exprt byte_of(const reft &r, std::size_t i) const;
+  /// Index of the first position >= `from` at which `delim` matches in
+  /// `bytes`, or bytes.size() if not found (the shared delimiter scan used by
+  /// STRING/UNSTRING DELIMITED BY and INSPECT BEFORE/AFTER). Unrolled over the
+  /// compile-time sizes.
+  exprt first_occurrence(
+    const std::vector<exprt> &bytes,
+    const std::vector<exprt> &delim,
+    const exprt &from) const;
   /// Apply numeric editing of \p value (at \p value_scale) to the PICTURE edit
   /// \p mask, returning the edited byte array (IBM LR "PICTURE clause"
   /// editing). \p ok is set false for an unsupported mask (floating sign /
@@ -1087,6 +1095,30 @@ exprt cobol_typecheckt::byte_of(const reft &r, std::size_t i) const
   const exprt off = plus_exprt{r.offset, from_integer(i, r.offset.type())};
   return typecast_exprt{
     make_byte_extract(r.record, off, unsignedbv_typet{8}), cobol_value_type()};
+}
+
+exprt cobol_typecheckt::first_occurrence(
+  const std::vector<exprt> &bytes,
+  const std::vector<exprt> &delim,
+  const exprt &from) const
+{
+  const typet vt = cobol_value_type();
+  const std::size_t n = bytes.size();
+  const std::size_t d = delim.size();
+  exprt found = from_integer(n, vt); // not found -> end
+  // Scan descending so the earliest match wins as the final assignment.
+  if(d > 0 && d <= n)
+    for(std::size_t k = n - d + 1; k-- > 0;)
+    {
+      exprt match = true_exprt{};
+      for(std::size_t j = 0; j < d; ++j)
+        match = and_exprt{match, equal_exprt{bytes[k + j], delim[j]}};
+      const exprt at_or_after =
+        binary_relation_exprt{from_integer(k, vt), ID_ge, from};
+      found =
+        if_exprt{and_exprt{at_or_after, match}, from_integer(k, vt), found};
+    }
+  return found;
 }
 
 exprt cobol_typecheckt::make_numeric_edited(
@@ -4347,15 +4379,7 @@ std::vector<stmtt> cobol_typecheckt::parse_string()
     // cut = index of the first delimiter occurrence in the sender, else its
     // full length (IBM LR "STRING statement": transfer up to the delimiter).
     // For DELIMITED BY SIZE (no delimiter) the whole sender is transferred.
-    exprt cut = from_integer(cap, vt);
-    if(dlen > 0 && dlen <= cap)
-      for(std::size_t k = cap - dlen + 1; k-- > 0;)
-      {
-        exprt match = true_exprt{};
-        for(std::size_t j = 0; j < dlen; ++j)
-          match = and_exprt{match, equal_exprt{snd.bytes[k + j], snd.delim[j]}};
-        cut = if_exprt{match, from_integer(k, vt), cut};
-      }
+    const exprt cut = first_occurrence(snd.bytes, snd.delim, zero);
     for(std::size_t k = 0; k < cap; ++k)
     {
       // The k-th character is part of the transferred field only if it is
@@ -4969,24 +4993,18 @@ std::vector<stmtt> cobol_typecheckt::parse_unstring()
   else
     assign(pos, zero);
 
+  // The source's character bytes (for the delimiter scan).
+  std::vector<exprt> src_bytes;
+  src_bytes.reserve(ssz);
+  for(std::size_t i = 0; i < ssz; ++i)
+    src_bytes.push_back(byte_of(src, i));
+
   for(const recvt &r : recvs)
   {
     // fp = index of the first delimiter at or after pos, else ssz (end of
     // source); flen = field length; the field is source[pos .. fp).
     const symbol_exprt fp = make_counter();
-    exprt scan = s_expr;
-    if(dlen <= ssz)
-      for(std::size_t m = ssz - dlen + 1; m-- > 0;)
-      {
-        exprt match = true_exprt{};
-        for(std::size_t j = 0; j < dlen; ++j)
-          match = and_exprt{match, equal_exprt{byte_of(src, m + j), delim[j]}};
-        const exprt at_or_after =
-          binary_relation_exprt{from_integer(m, vt), ID_ge, pos};
-        scan =
-          if_exprt{and_exprt{at_or_after, match}, from_integer(m, vt), scan};
-      }
-    assign(fp, scan);
+    assign(fp, first_occurrence(src_bytes, delim, pos));
     const symbol_exprt flen = make_counter();
     assign(flen, minus_exprt{fp, pos});
     const exprt delim_found = binary_relation_exprt{fp, ID_lt, s_expr};
