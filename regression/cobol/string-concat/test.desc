@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+STRING concatenation (DELIMITED BY SIZE) into a receiver is exact. See
+IBM LR "STRING statement".

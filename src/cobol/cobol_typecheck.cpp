@@ -889,7 +889,8 @@ protected:
   void parse_overflow_phrase(
     std::vector<stmtt> &result,
     const char *end_kw,
-    source_locationt loc);
+    source_locationt loc,
+    exprt guard = nil_exprt{});
   std::vector<stmtt> parse_search();
   std::vector<stmtt> parse_initialize();
   std::vector<stmtt> parse_add();
@@ -3846,13 +3847,14 @@ std::vector<stmtt> cobol_typecheckt::parse_move()
 void cobol_typecheckt::parse_overflow_phrase(
   std::vector<stmtt> &result,
   const char *end_kw,
-  source_locationt loc)
+  source_locationt loc,
+  exprt guard)
 {
   // [ON OVERFLOW imperative-1] [NOT ON OVERFLOW imperative-2] [END-verb]
-  // (IBM LR "STRING"/"UNSTRING statement", ON OVERFLOW phrase). Whether the
-  // operation overflows depends on character content the value model does not
-  // represent, so the two phrases are guarded by a nondeterministic choice
-  // rather than ignored.
+  // (IBM LR "STRING"/"UNSTRING statement", ON OVERFLOW phrase). When the caller
+  // can compute the overflow condition exactly (\p guard), that guard is used;
+  // otherwise (guard is nil) the choice is nondeterministic, since whether the
+  // operation overflows depends on character content the caller did not model.
   std::vector<stmtt> on_overflow;
   std::vector<stmtt> not_overflow;
   bool has_phrase = false;
@@ -3875,7 +3877,8 @@ void cobol_typecheckt::parse_overflow_phrase(
   stmtt s;
   s.kind = stmtt::kindt::IFTE;
   s.location = loc;
-  s.cond = side_effect_expr_nondett{bool_typet{}, loc};
+  s.cond =
+    guard.is_nil() ? exprt{side_effect_expr_nondett{bool_typet{}, loc}} : guard;
   s.then_stmts = std::move(on_overflow);
   s.else_stmts = std::move(not_overflow);
   result.push_back(std::move(s));
@@ -3883,40 +3886,161 @@ void cobol_typecheckt::parse_overflow_phrase(
 
 std::vector<stmtt> cobol_typecheckt::parse_string()
 {
-  // STRING concatenates the sending operands (each governed by a DELIMITED BY
-  // phrase) into a single receiver (IBM LR "STRING statement"). The exact
-  // concatenation depends on the character content the value-domain model does
-  // not represent, so the receiver is assigned a nondeterministic value (a
-  // sound over-approximation). The optional WITH POINTER and ON OVERFLOW
-  // phrases are parsed but, lacking a content model, not given precise
-  // semantics.
+  // STRING {source DELIMITED BY {SIZE | delimiter}}... INTO receiver
+  //   [WITH POINTER ptr] [ON OVERFLOW ...] [END-STRING] (IBM LR "STRING
+  //   statement"). The senders are concatenated into the receiver starting at
+  //   the 1-based pointer position; receiver bytes past the written prefix are
+  //   left unchanged, and ON OVERFLOW fires when the pointer runs past the
+  //   receiver while characters remain. We model this exactly for DELIMITED BY
+  //   SIZE with literal / alphanumeric-item senders and an alphanumeric
+  //   receiver, unrolling over the (compile-time) sender and receiver sizes
+  //   with a runtime pointer; any other form (a delimiter, a numeric operand)
+  //   falls back to havocking the receiver with a nondeterministic overflow.
   const source_locationt loc = cur().location;
   expect_word("STRING");
 
-  // Skip the sending operands and their DELIMITED BY phrases up to INTO.
+  bool exact = true;
+  std::vector<std::vector<exprt>> senders; // each sender's bytes (value domain)
   while(!at_eof() && !is_word("INTO") && !is_kind(cobol_token_kindt::PERIOD))
-    advance();
+  {
+    std::vector<exprt> bytes;
+    if(cur().kind == cobol_token_kindt::STRING)
+    {
+      for(char ch : cur().text)
+        bytes.push_back(
+          from_integer(static_cast<unsigned char>(ch), cobol_value_type()));
+      advance();
+    }
+    else if(is_item_word())
+    {
+      const reft r = parse_ref();
+      if(r.info->is_numeric)
+        exact = false; // a numeric sender needs its display bytes (deferred)
+      else
+        for(std::size_t k = 0; k < r.info->byte_size; ++k)
+          bytes.push_back(byte_of(r, k));
+    }
+    else
+    {
+      exact = false;
+      advance();
+      continue;
+    }
+    if(eat_word("DELIMITED"))
+    {
+      eat_word("BY");
+      if(!eat_word("SIZE"))
+      {
+        // DELIMITED BY a delimiter is not modelled exactly yet.
+        exact = false;
+        if(cur().kind == cobol_token_kindt::STRING)
+          advance();
+        else if(is_item_word())
+          (void)parse_ref();
+      }
+    }
+    senders.push_back(std::move(bytes));
+  }
   expect_word("INTO");
-  const reft t = parse_ref();
+  const reft recv = parse_ref();
+  const std::size_t n = recv.info->byte_size;
+  if(recv.info->is_numeric)
+    exact = false;
 
-  // Optional WITH POINTER phrase.
+  std::optional<reft> ptr_ref;
   eat_word("WITH");
   if(eat_word("POINTER"))
-    (void)parse_ref();
+    ptr_ref = parse_ref();
 
-  // The receiver content is over-approximated.
-  const array_typet bytes_type{
-    unsignedbv_typet{8}, from_integer(t.info->byte_size, size_type())};
-  stmtt s;
-  s.kind = stmtt::kindt::ASSIGN;
-  s.location = loc;
-  s.lhs = t.record;
-  s.rhs = make_byte_update(
-    t.record, t.offset, side_effect_expr_nondett{bytes_type, loc});
+  std::vector<stmtt> result;
 
-  std::vector<stmtt> result{s};
-  // Optional ON OVERFLOW / NOT ON OVERFLOW phrases and END-STRING.
-  parse_overflow_phrase(result, "END-STRING", loc);
+  if(!exact)
+  {
+    // Fall back: havoc the receiver (and pointer), nondet overflow.
+    const array_typet bytes_type{
+      unsignedbv_typet{8}, from_integer(n, size_type())};
+    stmtt s;
+    s.kind = stmtt::kindt::ASSIGN;
+    s.location = loc;
+    s.lhs = recv.record;
+    s.rhs = make_byte_update(
+      recv.record, recv.offset, side_effect_expr_nondett{bytes_type, loc});
+    result.push_back(std::move(s));
+    if(ptr_ref.has_value())
+      result.push_back(havoc_field(*ptr_ref, loc));
+    parse_overflow_phrase(result, "END-STRING", loc);
+    return result;
+  }
+
+  // Exact: a working pointer `pc` (1-based) and an overflow flag `ovf`.
+  const symbol_exprt pc = make_counter();
+  const symbol_exprt ovf = make_counter();
+  const typet vt = cobol_value_type();
+  if(ptr_ref.has_value())
+  {
+    const valuet pv = read_field(*ptr_ref);
+    result.push_back(stmtt{});
+    result.back().kind = stmtt::kindt::ASSIGN;
+    result.back().location = loc;
+    result.back().lhs = pc;
+    result.back().rhs = rescale(pv.expr, pv.scale, 0);
+  }
+  else
+  {
+    result.push_back(stmtt{});
+    result.back().kind = stmtt::kindt::ASSIGN;
+    result.back().location = loc;
+    result.back().lhs = pc;
+    result.back().rhs = from_integer(1, vt);
+  }
+  result.push_back(stmtt{});
+  result.back().kind = stmtt::kindt::ASSIGN;
+  result.back().location = loc;
+  result.back().lhs = ovf;
+  result.back().rhs = from_integer(0, vt);
+
+  const exprt nexpr = from_integer(n, vt);
+  const exprt one = from_integer(1, vt);
+  for(const std::vector<exprt> &bytes : senders)
+    for(const exprt &b : bytes)
+    {
+      // Can the next character be placed? pc in 1..n means offset pc-1 < n.
+      const exprt can = binary_relation_exprt{pc, ID_le, nexpr};
+      // Safe receiver offset (0 when not writing, so the unselected
+      // byte_update is always in bounds).
+      const exprt idx =
+        if_exprt{can, minus_exprt{pc, one}, from_integer(0, vt)};
+      const exprt off =
+        plus_exprt{recv.offset, typecast_exprt{idx, size_type()}};
+      const exprt updated = make_byte_update(
+        recv.record, off, typecast_exprt{b, unsignedbv_typet{8}});
+      stmtt sw;
+      sw.kind = stmtt::kindt::ASSIGN;
+      sw.location = loc;
+      sw.lhs = recv.record;
+      sw.rhs = if_exprt{can, updated, recv.record};
+      result.push_back(std::move(sw));
+      // Overflow once a character cannot be placed.
+      stmtt so;
+      so.kind = stmtt::kindt::ASSIGN;
+      so.location = loc;
+      so.lhs = ovf;
+      so.rhs = if_exprt{can, ovf, one};
+      result.push_back(std::move(so));
+      // Advance the pointer past the placed character.
+      stmtt sp;
+      sp.kind = stmtt::kindt::ASSIGN;
+      sp.location = loc;
+      sp.lhs = pc;
+      sp.rhs = if_exprt{can, plus_exprt{pc, one}, pc};
+      result.push_back(std::move(sp));
+    }
+
+  if(ptr_ref.has_value())
+    result.push_back(make_assign_ref(*ptr_ref, valuet{pc, 0}, loc));
+
+  parse_overflow_phrase(
+    result, "END-STRING", loc, notequal_exprt{ovf, from_integer(0, vt)});
   return result;
 }
 

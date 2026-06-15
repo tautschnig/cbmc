@@ -1,8 +1,0 @@
-KNOWNBUG
-main.cob
-
-^VERIFICATION SUCCESSFUL$
---
-Imprecision I10: STRING/UNSTRING/INSPECT havoc their receivers; the
-character content they manipulate is not modelled. IBM LR "STRING
-statement". See cobol-precision-and-gaps-plan.md.
