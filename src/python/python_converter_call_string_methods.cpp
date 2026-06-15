@@ -379,6 +379,70 @@ std::optional<exprt> python_convertert::try_string_method(
     return result;
   }
 
+  // Native SMT-String back-end: capitalize / title. Like the case maps above
+  // but the direction is position-dependent: capitalize upper-cases index 0
+  // and lower-cases the rest; title upper-cases the first letter of each word
+  // (a position whose predecessor is not an ASCII letter) and lower-cases the
+  // rest. ASCII only; non-letters pass through.
+  if(
+    obj.type().id() == ID_smt_string &&
+    (method_name == "capitalize" || method_name == "title"))
+  {
+    const bool is_title = (method_name == "title");
+    const signedbv_typet i32{32};
+    const signedbv_typet i64{64};
+    auto in_range = [&](const exprt &c, int lo, int hi) -> exprt
+    {
+      return and_exprt{
+        binary_relation_exprt{c, ID_ge, from_integer(lo, i32)},
+        binary_relation_exprt{c, ID_le, from_integer(hi, i32)}};
+    };
+    auto upper_map = [&](const exprt &c) -> exprt
+    {
+      return if_exprt{
+        in_range(c, 'a', 'z'), minus_exprt{c, from_integer(32, i32)}, c};
+    };
+    auto lower_map = [&](const exprt &c) -> exprt
+    {
+      return if_exprt{
+        in_range(c, 'A', 'Z'), plus_exprt{c, from_integer(32, i32)}, c};
+    };
+    exprt result = constant_exprt{irep_idt{""}, smt_string_typet{}};
+    for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
+    {
+      exprt ch = string_substr(obj, from_integer(i, i64), from_integer(1, i64));
+      exprt code = native_string_app(
+        ID_cprover_string_smt_to_code_func, {smt_string_typet{}}, {ch}, i32);
+      exprt mapped;
+      if(i == 0)
+        mapped = upper_map(code); // start of string is always a word start
+      else if(!is_title)
+        mapped = lower_map(code); // capitalize: everything after index 0
+      else
+      {
+        // title: word start iff the previous character is not an ASCII letter.
+        exprt prev =
+          string_substr(obj, from_integer(i - 1, i64), from_integer(1, i64));
+        exprt prev_code = native_string_app(
+          ID_cprover_string_smt_to_code_func,
+          {smt_string_typet{}},
+          {prev},
+          i32);
+        exprt prev_is_alpha = or_exprt{
+          in_range(prev_code, 'a', 'z'), in_range(prev_code, 'A', 'Z')};
+        mapped =
+          if_exprt{not_exprt{prev_is_alpha}, upper_map(code), lower_map(code)};
+      }
+      exprt newch = native_string_app(
+        ID_cprover_string_smt_from_code_func,
+        {integer_typet{}},
+        {typecast_exprt{mapped, integer_typet{}}},
+        smt_string_typet{});
+      result = string_concat(result, newch);
+    }
+    return result;
+  }
+
   // PLib stdtypes: upper/lower — exact byte transformation
   if(method_name == "upper" || method_name == "lower")
   {
