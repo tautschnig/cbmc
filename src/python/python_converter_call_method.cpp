@@ -2301,7 +2301,8 @@ std::optional<exprt> python_convertert::try_method_call(
         "replace",
         "strip",
         "lstrip",
-        "rstrip"};
+        "rstrip",
+        "split"};
       if(native_supported.count(method_name))
       {
         if(
