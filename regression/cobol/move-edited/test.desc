@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+MOVE to a numeric-edited PICTURE applies the editing. See IBM LR
+"PICTURE clause" editing.

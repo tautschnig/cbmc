@@ -113,6 +113,10 @@ struct item_infot
   std::size_t occurs = 0;         ///< number of elements when is_table
   usaget usage = usaget::DISPLAY; ///< physical encoding (USAGE clause)
   signt sign = signt::UNSIGNED;   ///< sign representation (SIGN clause)
+  /// For a numeric-edited item, the expanded PICTURE edit mask (one symbol per
+  /// character position; IBM LR "PICTURE clause" editing); empty otherwise.
+  /// MOVE to such an item applies the editing using this mask.
+  std::string edit_mask;
   /// When set, this numeric field's bytes are kept in its USAGE-faithful
   /// encoding (zoned/packed/...) rather than the uniform binary value model,
   /// because its bytes are observed at a different category (e.g. a REDEFINES
@@ -406,16 +410,21 @@ bool is_clause_keyword(const std::string &w)
 /// and "PICTURE character-strings" (pp. 44-62). A picture with editing symbols
 /// (Z * . , + - $ B 0 / CR DB) denotes a numeric-edited or alphanumeric-edited
 /// item; such items are display-only formatting fields, so we model them as
-/// alphanumeric storage whose size is the number of character positions.
+/// alphanumeric storage whose size is the number of character positions. \p
+/// mask receives the expanded per-character-position symbol string (repeats
+/// resolved; CR/DB as two positions), which the editing of a MOVE to a
+/// numeric-edited item uses.
 void parse_picture(
   const std::string &pic,
   bool &is_numeric,
   std::size_t &digits,
   std::size_t &scale,
   bool &is_signed,
-  std::size_t &char_count)
+  std::size_t &char_count,
+  std::string &mask)
 {
   is_numeric = true;
+  mask.clear();
   digits = 0;
   scale = 0;
   is_signed = false;
@@ -441,6 +450,7 @@ void parse_picture(
     {
       char_count += 2;
       has_edit = true;
+      mask += (sym == 'C') ? "CR" : "DB";
       i += 2;
       continue;
     }
@@ -471,6 +481,7 @@ void parse_picture(
     case '9':
       digits += rep;
       char_count += rep;
+      mask.append(rep, '9');
       if(after_v)
         scale += rep;
       break;
@@ -478,6 +489,7 @@ void parse_picture(
     case '*': // asterisk (check protection) suppression (editing)
       digits += rep;
       char_count += rep;
+      mask.append(rep, sym);
       has_edit = true;
       if(after_v)
         scale += rep;
@@ -485,13 +497,16 @@ void parse_picture(
     case 'X':
       has_alpha = true;
       char_count += rep;
+      mask.append(rep, 'X');
       break;
     case 'A':
       has_alpha = true;
       char_count += rep;
+      mask.append(rep, 'A');
       break;
     case '.': // actual decimal point insertion (editing); also marks scale
       char_count += rep;
+      mask.append(rep, '.');
       has_edit = true;
       after_v = true;
       break;
@@ -503,10 +518,12 @@ void parse_picture(
     case '0':
     case '/':
       char_count += rep;
+      mask.append(rep, sym);
       has_edit = true;
       break;
     default:
       char_count += rep;
+      mask.append(rep, sym);
       break;
     }
   }
@@ -782,6 +799,15 @@ protected:
   /// The shared building block for character-content semantics (INSPECT,
   /// STRING, class conditions, ...): item bytes are the record byte array.
   exprt byte_of(const reft &r, std::size_t i) const;
+  /// Apply numeric editing of \p value (at \p value_scale) to the PICTURE edit
+  /// \p mask, returning the edited byte array (IBM LR "PICTURE clause"
+  /// editing). \p ok is set false for an unsupported mask (floating sign /
+  /// currency / CR / DB), in which case the caller falls back.
+  exprt make_numeric_edited(
+    const exprt &value,
+    std::size_t value_scale,
+    const std::string &mask,
+    bool &ok) const;
   /// Decode a faithfully-encoded zoned DISPLAY field's bytes to its value
   /// (IBM LR "USAGE DISPLAY" external decimal).
   valuet decode_zoned(const reft &r) const;
@@ -1039,6 +1065,95 @@ exprt cobol_typecheckt::byte_of(const reft &r, std::size_t i) const
   const exprt off = plus_exprt{r.offset, from_integer(i, r.offset.type())};
   return typecast_exprt{
     make_byte_extract(r.record, off, unsignedbv_typet{8}), cobol_value_type()};
+}
+
+exprt cobol_typecheckt::make_numeric_edited(
+  const exprt &value,
+  std::size_t value_scale,
+  const std::string &mask,
+  bool &ok) const
+{
+  // Numeric editing (IBM LR "PICTURE clause" editing). Supported mask symbols:
+  // 9 (digit), Z (leading-zero suppression to space), * (to asterisk),
+  // . (decimal point), , (grouping, suppressed in the leading zero zone),
+  // B/0// (simple insertion). Floating/fixed sign and currency (+ - $ CR DB)
+  // are not modelled here -> ok=false (caller falls back).
+  ok = true;
+  const typet vt = cobol_value_type();
+  const unsignedbv_typet u8{8};
+  std::size_t total_digits = 0, frac_digits = 0;
+  bool past_point = false;
+  for(char ch : mask)
+  {
+    if(ch == '9' || ch == 'Z' || ch == '*')
+    {
+      ++total_digits;
+      if(past_point)
+        ++frac_digits;
+    }
+    else if(ch == '.')
+      past_point = true;
+    else if(ch != ',' && ch != 'B' && ch != '0' && ch != '/')
+    {
+      ok = false;
+      return nil_exprt{};
+    }
+  }
+
+  // Magnitude aligned so its least-significant digit sits at the last digit
+  // position (scale = number of fractional digit positions).
+  const exprt zero = from_integer(0, vt);
+  const exprt mag = if_exprt{
+    binary_relation_exprt{value, ID_ge, zero}, value, unary_minus_exprt{value}};
+  const exprt aligned = rescale(mag, value_scale, frac_digits);
+  const exprt ten = from_integer(10, vt);
+
+  array_exprt::operandst elems;
+  elems.reserve(mask.size());
+  exprt suppressing = true_exprt{}; // still in the leading zero zone
+  bool seen_point = false;
+  std::size_t p = 0; // digit-position index, left to right
+  for(char ch : mask)
+  {
+    exprt outb;
+    if(ch == '9' || ch == 'Z' || ch == '*')
+    {
+      const exprt place = from_integer(power10(total_digits - 1 - p), vt);
+      const exprt digit = mod_exprt{div_exprt{aligned, place}, ten};
+      const exprt digch = plus_exprt{from_integer('0', vt), digit};
+      if(ch == '9' || seen_point)
+      {
+        outb = digch;
+        suppressing = false_exprt{};
+      }
+      else
+      {
+        const exprt sup = from_integer(ch == '*' ? '*' : ' ', vt);
+        const exprt is_zero = equal_exprt{digit, zero};
+        outb = if_exprt{and_exprt{suppressing, is_zero}, sup, digch};
+        suppressing = and_exprt{suppressing, is_zero};
+      }
+      ++p;
+    }
+    else if(ch == '.')
+    {
+      outb = from_integer('.', vt);
+      seen_point = true;
+      suppressing = false_exprt{};
+    }
+    else if(ch == ',')
+      outb =
+        if_exprt{suppressing, from_integer(' ', vt), from_integer(',', vt)};
+    else if(ch == 'B')
+      outb = from_integer(' ', vt);
+    else if(ch == '0')
+      outb = from_integer('0', vt);
+    else // '/'
+      outb = from_integer('/', vt);
+    elems.push_back(typecast_exprt{outb, u8});
+  }
+  return array_exprt{
+    std::move(elems), array_typet{u8, from_integer(mask.size(), size_type())}};
 }
 
 valuet cobol_typecheckt::decode_zoned(const reft &r) const
@@ -2204,7 +2319,8 @@ void cobol_typecheckt::place_field(
   bool is_numeric;
   std::size_t digits, scale, char_count;
   bool is_signed;
-  parse_picture(pic, is_numeric, digits, scale, is_signed, char_count);
+  std::string mask;
+  parse_picture(pic, is_numeric, digits, scale, is_signed, char_count, mask);
   info.is_group = false;
   info.is_numeric = is_numeric;
   info.digits = digits;
@@ -2212,6 +2328,14 @@ void cobol_typecheckt::place_field(
   info.is_signed = is_signed;
   info.char_count = char_count;
   info.byte_size = phys_size_of(usage, is_numeric, digits, char_count);
+  // A numeric-edited item (edited, with digit positions, no alphabetic
+  // positions) keeps its edit mask so a MOVE to it can apply the editing
+  // (IBM LR "PICTURE clause" editing). is_numeric is already false for an
+  // edited item (it is stored as alphanumeric).
+  if(
+    !is_numeric && mask.find_first_of("9Z*") != std::string::npos &&
+    mask.find_first_of("XA") == std::string::npos)
+    info.edit_mask = mask;
   // Record the physical encoding and sign representation (IBM LR "USAGE
   // clause" / "SIGN clause") so byte-level observation can be faithful.
   info.usage = usage_of(usage);
@@ -3983,16 +4107,35 @@ std::vector<stmtt> cobol_typecheckt::parse_move()
     }
     else
     {
-      // Numeric source to an alphanumeric (edited) receiver: a formatting move
-      // not modelled exactly -> nondeterministic bytes.
-      const array_typet bytes_type{
-        unsignedbv_typet{8}, from_integer(t.info->byte_size, size_type())};
+      // Numeric source to an alphanumeric receiver. When the receiver is a
+      // numeric-edited item (it has an edit mask) and the source is a numeric
+      // value, apply the editing (IBM LR "PICTURE clause" editing); otherwise
+      // (no mask, or an unsupported mask such as floating sign/currency) the
+      // formatting is not modelled and the bytes are nondeterministic.
+      exprt rhs_bytes;
+      bool edited = false;
+      if(!t.info->edit_mask.empty() && src.numeric)
+      {
+        bool ok = false;
+        const exprt e = make_numeric_edited(
+          src.num.expr, src.num.scale, t.info->edit_mask, ok);
+        if(ok)
+        {
+          rhs_bytes = e;
+          edited = true;
+        }
+      }
+      if(!edited)
+      {
+        const array_typet bytes_type{
+          unsignedbv_typet{8}, from_integer(t.info->byte_size, size_type())};
+        rhs_bytes = side_effect_expr_nondett{bytes_type, loc};
+      }
       stmtt s;
       s.kind = stmtt::kindt::ASSIGN;
       s.location = loc;
       s.lhs = t.record;
-      s.rhs = make_byte_update(
-        t.record, t.offset, side_effect_expr_nondett{bytes_type, loc});
+      s.rhs = make_byte_update(t.record, t.offset, rhs_bytes);
       result.push_back(s);
     }
   }
