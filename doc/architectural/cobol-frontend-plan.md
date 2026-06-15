@@ -281,6 +281,13 @@ clean and use curly-brace constructor syntax.
 
 ## 10. Known limitations (tracked, to be kept current)
 
+> **Authoritative source:** the complete, current catalogue of gaps,
+> soundness issues, and imprecisions — each with its IBM LR clause, a
+> KNOWNBUG test, and a plan-doc reference — is in
+> `cobol-frontend-architecture.md` §5. The list below is retained for
+> history and may lag; where they disagree, the architecture document
+> wins.
+
 - **Storage is byte-addressed** (records are byte arrays; fields are
   `byte_extract`/`byte_update` views), so `REDEFINES`, group items, and
   fixed `OCCURS` are modelled soundly. However the *physical encoding*
@@ -299,8 +306,10 @@ clean and use curly-brace constructor syntax.
 - Qualified references (`FIELD OF GROUP` / `IN`) are resolved by the
   field's containing-group chain (IBM LR "Qualification", pp. 67-68);
   a still-ambiguous reference takes the first match with a warning.
-- Numeric-to-alphanumeric relational comparisons are rejected (only
-  numeric/numeric and alphanumeric/alphanumeric are supported).
+- Numeric-to-alphanumeric relational comparisons are modelled
+  nondeterministically (imprecision I2 in `cobol-frontend-architecture.md`),
+  not rejected; the value model has no display representation for the
+  numeric operand (IBM LR "Comparison of numeric and nonnumeric operands").
 - Relation conditions accept symbol and word operators with optional
   `IS`/`NOT` (IBM LR "Relation condition"). Sign conditions
   (`IS [NOT] POSITIVE/NEGATIVE/ZERO`) are modelled exactly on the value;
