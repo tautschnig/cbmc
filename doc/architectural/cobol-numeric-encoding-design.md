@@ -21,11 +21,10 @@ Status: **partly implemented** (stages 1–2; see note). Author: Kiro.
 > field differs, and faithful storage would need a byte-swap on the write
 > path — low value, deferred); signed zoned overpunch and `SIGN …
 > SEPARATE` sizing (charset-dependent / changes layout); exact class
-> conditions on faithful *numeric* fields; edited `MOVE` (§6 step 6); and
-> **01-level REDEFINES** aliasing — the redefined `01` is finalised into
-> its own record symbol before the redefining `01` is seen, so making
-> them share storage is a record-model rework (the largest remaining
-> structural item). The migration-plan steps below track these.
+> conditions on faithful *numeric* fields; and edited `MOVE` (§6 step 6).
+> (**01-level REDEFINES** aliasing and unsigned sign-on-store are now
+> implemented — soundness items S3 and S1 in the architecture doc.) The
+> migration-plan steps below track the remaining items.
 
 This document designs replacing the frontend's uniform binary numeric
 storage with **USAGE-faithful byte encodings** — zoned decimal

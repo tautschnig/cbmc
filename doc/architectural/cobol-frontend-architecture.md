@@ -203,9 +203,9 @@ false assertion pass, but may prevent proving a true one). "KB" names the
 
 | id | issue | LR clause | KB | plan |
 |---|---|---|---|---|
-| S1 | unsigned `PIC 9` modelled in a signed value domain → MOVE of a negative keeps the sign (should store magnitude) | "MOVE statement"; "PICTURE clause" (9) | unsigned-sign | numeric-encoding §1.2 |
+| S1 | **RESOLVED** — unsigned `PIC 9` now stores the absolute value (sign dropped on store); was modelled in a signed domain | "MOVE statement"; "PICTURE clause" (9) | CORE `unsigned-sign` | — |
 | S2 | `COMP`/`BINARY` stored little-endian, not big-endian (z/Arch) → byte view of a COMP field is reversed | "USAGE clause" (BINARY); z/Arch PoO | comp-endian | numeric-encoding §3.2, §5 |
-| S3 | a **01-level** `REDEFINES` is a separate record symbol, so it does not alias the redefined storage | "REDEFINES clause" | redefines-01 | numeric-encoding (01-level redefines) |
+| S3 | **RESOLVED** — a 01-level `REDEFINES` now shares the redefined record's storage (aliases it) | "REDEFINES clause" | CORE `redefines-01-alias` | — |
 | S4 | EBCDIC not implemented (ASCII host): collating sequence and zoned/sign codecs differ from z/OS | "USAGE DISPLAY"; collating sequence | — | numeric-encoding §5 (charset) |
 
 ### Gaps
@@ -224,7 +224,7 @@ false assertion pass, but may prevent proving a true one). "KB" names the
 | I3 | MOVE alphanumeric → numeric (de-editing) is nondet | "MOVE statement" | move-alnum-num | numeric-encoding |
 | I4 | MOVE to an edited PICTURE does not apply editing | "MOVE statement"; "PICTURE clause" editing | move-edited | numeric-encoding |
 | I5 | class condition on a **numeric** operand is nondet (alphanumeric is exact) | "Class condition" | class-numeric | numeric-encoding |
-| I6 | group MOVE copies min(sizes); no space/zero padding of a longer receiver | "MOVE statement" (group) | group-move-pad | precision-and-gaps §2 |
+| I6 | **RESOLVED** — group MOVE now space-pads a longer receiver on the right | "MOVE statement" (group) | CORE `group-move-pad` | — |
 | I7 | `OCCURS … DEPENDING ON` fixed at maximum (over-approx) | "OCCURS clause" (format 2) | — | precision-and-gaps §2 |
 | I8 | reference modification with a non-constant length over-approximated to the remaining size | "Reference modification" | — | precision-and-gaps §2 |
 | I9 | ambiguous qualified reference takes the first match (with a warning) | "Qualification" | — | precision-and-gaps §2 |
