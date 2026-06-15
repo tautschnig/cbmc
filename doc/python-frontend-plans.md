@@ -122,13 +122,11 @@ robustness, then capability; difficulty is noted where high.
     - `title` / `capitalize` — **LANDED (2026-06-15, `9b5d3cc174`)** as
       position/word-boundary case maps (title upper-cases the first letter of
       each word, i.e. an index whose predecessor is not an ASCII letter).
-    - `strip(chars)` — explicit fill-set: strip leading/trailing chars that are
-      members of the constant `chars` set; bounded leading/trailing scan with
-      `str.substr` (the no-arg whitespace `strip` already has a native axiom).
-    - `str(float)` — **no SMT float→string primitive**; recommend a documented
-      permanent **nondet** result (sound) plus a **constant-fold for literal
-      floats** (`str(3.5)` → `"3.5"` at conversion). A bounded digit model is
-      possible but high-effort/low-value.
+    - `strip(chars)` — **LANDED (2026-06-15, `b477ced78d`)**: symbolic
+      strip/lstrip/rstrip with a constant char-set, via the whitespace-strip
+      maximal decomposition parameterised by a `[chars]` regex class (reusing
+      the match/fullmatch intrinsics). `str(float)` — **already sound** (no
+      work): literal floats fold; symbolic floats are a sound nondet string.
     - symbolic `count` / backward `rfind`/`rindex` — bounded `str.indexof`
       loops; same shape as the list-valued split loop ([§4](#regex)), but
       perf-heavy on fully-symbolic subjects, so gate/measure before enabling.
