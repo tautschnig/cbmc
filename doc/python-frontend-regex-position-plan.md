@@ -207,15 +207,13 @@ splitting `subject[start:end]`. Whenever the intrinsic is gated out it returns
   `from = end`, `start+1` for empty matches) is correct and validated *in
   isolation* (a loop appending the matched substrings to a list **seeded with a
   string** verifies precisely). Two blockers stop it from landing:
-  1. **Empty-list element typing.** `result = []` defaults to an `int` element
-     type — and annotating `result: list[str] = []` does **not** change it — so
-     appending the matched substrings emits an `smt_string -> signedbv`
-     typecast that hits `PRECONDITION(false)` in
-     `smt2_convt::convert_typecast` (smt2_conv.cpp ~3858). This is a general
-     robustness gap (any `[]` + loop `append(<string>)` under
-     `--python-smt-strings`), tracked in plans
-     §[empty-container-elem-type](python-frontend-plans.md). A list seeded with
-     a string element avoids it, proving the loop itself is sound.
+  1. **Empty-list element typing — RESOLVED (front-end, `9173fea6ce`).**
+     `result: list[str] = []` now pins the element type from the annotation, so
+     the position loop no longer aborts (verified: the findall-shaped loop with
+     an annotated `result` runs to a sound result). (A non-annotated `[]` with a
+     call-indexed slice append still aborts — that needs the back-end defensive
+     net, plans §[empty-container-elem-type](python-frontend-plans.md) — but the
+     findall stub will use the annotation.)
   2. **Symbolic-`from` lowering + perf.** After the first match the loop's
      `from` is an SSA value, so the position lowering must accept a symbolic
      `from` (guard each scan branch with `i >= from`, `let`-binding `from`).
