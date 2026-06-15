@@ -122,13 +122,20 @@ class Pattern:
         return None
 
     def findall(self, string, pos: int = 0, endpos: int = 0):
-        return []
+        # Sound over-approximation: a nondet (bounded) list of nondet strings.
+        # Returning [] would be UNSOUND -- code that iterates the matches would
+        # silently check nothing (missed bugs). Precise enumeration needs match
+        # position extraction, which the SMT regex intrinsics do not provide.
+        return nondet_list(8, nondet_str())
 
     def finditer(self, string, pos: int = 0, endpos: int = 0):
-        return []
+        # Sound over-approximation: a nondet (bounded) list of nondet Match
+        # objects (finditer yields Match, not str).
+        return nondet_list(8, Match())
 
     def split(self, string, maxsplit: int = 0):
-        return []
+        # Sound over-approximation: a nondet (bounded) list of nondet strings.
+        return nondet_list(8, nondet_str())
 
     def sub(self, repl: str, string: str, count: int = 0) -> str:
         # Precise for the sound subset (constant fixed-length pattern,
@@ -178,15 +185,18 @@ def search(pattern: str, string: str, flags: int = 0) -> "Match | None":
 
 
 def findall(pattern, string, flags: int = 0):
-    return []
+    # Sound over-approximation: a nondet (bounded) list of nondet strings.
+    return nondet_list(8, nondet_str())
 
 
 def finditer(pattern, string, flags: int = 0):
-    return []
+    # Sound over-approximation: a nondet (bounded) list of nondet Match objects.
+    return nondet_list(8, Match())
 
 
 def split(pattern, string, maxsplit: int = 0, flags: int = 0):
-    return []
+    # Sound over-approximation: a nondet (bounded) list of nondet strings.
+    return nondet_list(8, nondet_str())
 
 
 def sub(pattern: str, repl: str, string: str, count: int = 0, flags: int = 0) -> str:
