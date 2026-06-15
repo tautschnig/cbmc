@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+UNSTRING splits a source at a delimiter into receivers, with COUNT IN /
+DELIMITER IN / WITH POINTER / TALLYING IN. See IBM LR "UNSTRING statement".

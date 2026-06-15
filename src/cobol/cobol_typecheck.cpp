@@ -4834,46 +4834,228 @@ std::vector<stmtt> cobol_typecheckt::parse_inspect()
 
 std::vector<stmtt> cobol_typecheckt::parse_unstring()
 {
-  // UNSTRING source [DELIMITED BY ...] INTO r-1 [DELIMITER IN d-1]
-  //   [COUNT IN c-1] ... [WITH POINTER p] [TALLYING IN t]
+  // UNSTRING source DELIMITED BY delim INTO r-1 [DELIMITER IN d-1]
+  //   [COUNT IN c-1] r-2 ... [WITH POINTER p] [TALLYING IN t]
   //   [ON OVERFLOW imp] [END-UNSTRING] (IBM LR "UNSTRING statement"). The
-  // split is not represented exactly, so every receiving item gets a
-  // nondeterministic value (sound over-approximation), as for STRING.
+  // source is split at each delimiter: each receiver gets the field up to the
+  // next delimiter, its COUNT IN the field length, its DELIMITER IN the
+  // delimiter found; the pointer advances past the field and delimiter, and
+  // ON OVERFLOW fires if characters remain. We model this exactly for a single
+  // delimiter (literal or alphanumeric item; no ALL/OR), an alphanumeric
+  // source and alphanumeric receivers, unrolling over the compile-time sizes
+  // with a runtime character pointer; anything else havocs the receivers.
   const source_locationt loc = cur().location;
   expect_word("UNSTRING");
-  (void)parse_ref(); // source
-  // Skip the DELIMITED BY phrase up to INTO.
-  while(!at_eof() && !is_word("INTO") && !is_kind(cobol_token_kindt::PERIOD))
-    advance();
+  const reft src = parse_ref();
+  const typet vt = cobol_value_type();
+  const unsignedbv_typet u8{8};
+  bool exact = !src.info->is_numeric;
+
+  std::vector<exprt> delim; // delimiter bytes
+  if(eat_word("DELIMITED"))
+  {
+    eat_word("BY");
+    if(eat_word("ALL"))
+      exact = false; // ALL (collapse repeats) not modelled
+    if(cur().kind == cobol_token_kindt::STRING)
+    {
+      for(char ch : cur().text)
+        delim.push_back(from_integer(static_cast<unsigned char>(ch), vt));
+      advance();
+    }
+    else if(is_item_word())
+    {
+      const reft r = parse_ref();
+      if(r.info->is_numeric)
+        exact = false;
+      else
+        for(std::size_t k = 0; k < r.info->byte_size; ++k)
+          delim.push_back(byte_of(r, k));
+    }
+    else
+      exact = false;
+    if(is_word("OR"))
+      exact = false; // multiple delimiters not modelled
+  }
+  if(delim.empty())
+    exact = false; // fixed-size split (no DELIMITED BY) not modelled exactly
   expect_word("INTO");
 
-  std::vector<stmtt> result;
-  const auto havoc_next_item = [&]()
+  struct recvt
   {
-    if(is_item_word())
-      result.push_back(havoc_field(parse_ref(), loc));
+    reft into;
+    std::optional<reft> delim_in;
+    std::optional<reft> count_in;
   };
-  // Receiving items and their DELIMITER IN / COUNT IN sub-receivers.
+  std::vector<recvt> recvs;
   while(is_item_word() || is_word("DELIMITER") || is_word("COUNT"))
   {
-    if(eat_word("DELIMITER") || eat_word("COUNT"))
+    if(is_word("DELIMITER") || is_word("COUNT"))
     {
+      const bool is_delim = eat_word("DELIMITER");
+      if(!is_delim)
+        eat_word("COUNT");
       eat_word("IN");
-      havoc_next_item();
+      if(is_item_word() && !recvs.empty())
+      {
+        if(is_delim)
+          recvs.back().delim_in = parse_ref();
+        else
+          recvs.back().count_in = parse_ref();
+      }
       continue;
     }
-    havoc_next_item();
+    const reft r = parse_ref();
+    if(r.info->is_numeric)
+      exact = false; // a numeric receiver needs de-editing (deferred)
+    recvs.push_back(recvt{r, std::nullopt, std::nullopt});
   }
+  std::optional<reft> ptr_ref, tally_ref;
   eat_word("WITH");
   if(eat_word("POINTER"))
-    havoc_next_item();
+    ptr_ref = parse_ref();
   if(eat_word("TALLYING"))
   {
     eat_word("IN");
-    havoc_next_item();
+    if(is_item_word())
+      tally_ref = parse_ref();
   }
-  // Optional ON OVERFLOW / NOT ON OVERFLOW phrases and END-UNSTRING.
-  parse_overflow_phrase(result, "END-UNSTRING", loc);
+  if(recvs.empty())
+    exact = false;
+
+  std::vector<stmtt> result;
+  const auto assign = [&](const exprt &lhs, const exprt &rhs)
+  {
+    stmtt s;
+    s.kind = stmtt::kindt::ASSIGN;
+    s.location = loc;
+    s.lhs = lhs;
+    s.rhs = rhs;
+    result.push_back(std::move(s));
+  };
+
+  if(!exact)
+  {
+    for(const recvt &r : recvs)
+    {
+      result.push_back(havoc_field(r.into, loc));
+      if(r.delim_in.has_value())
+        result.push_back(havoc_field(*r.delim_in, loc));
+      if(r.count_in.has_value())
+        result.push_back(havoc_field(*r.count_in, loc));
+    }
+    if(tally_ref.has_value())
+      result.push_back(havoc_field(*tally_ref, loc));
+    if(ptr_ref.has_value())
+      result.push_back(havoc_field(*ptr_ref, loc));
+    parse_overflow_phrase(result, "END-UNSTRING", loc);
+    return result;
+  }
+
+  const std::size_t ssz = src.info->byte_size;
+  const std::size_t dlen = delim.size();
+  const exprt s_expr = from_integer(ssz, vt);
+  const exprt one = from_integer(1, vt);
+  const exprt zero = from_integer(0, vt);
+  const exprt space = from_integer(' ', vt);
+
+  // 0-based character pointer into the source.
+  const symbol_exprt pos = make_counter();
+  if(ptr_ref.has_value())
+  {
+    const valuet pv = read_field(*ptr_ref);
+    assign(pos, minus_exprt{rescale(pv.expr, pv.scale, 0), one});
+  }
+  else
+    assign(pos, zero);
+
+  for(const recvt &r : recvs)
+  {
+    // fp = index of the first delimiter at or after pos, else ssz (end of
+    // source); flen = field length; the field is source[pos .. fp).
+    const symbol_exprt fp = make_counter();
+    exprt scan = s_expr;
+    if(dlen <= ssz)
+      for(std::size_t m = ssz - dlen + 1; m-- > 0;)
+      {
+        exprt match = true_exprt{};
+        for(std::size_t j = 0; j < dlen; ++j)
+          match = and_exprt{match, equal_exprt{byte_of(src, m + j), delim[j]}};
+        const exprt at_or_after =
+          binary_relation_exprt{from_integer(m, vt), ID_ge, pos};
+        scan =
+          if_exprt{and_exprt{at_or_after, match}, from_integer(m, vt), scan};
+      }
+    assign(fp, scan);
+    const symbol_exprt flen = make_counter();
+    assign(flen, minus_exprt{fp, pos});
+    const exprt delim_found = binary_relation_exprt{fp, ID_lt, s_expr};
+    const exprt has_data = binary_relation_exprt{pos, ID_lt, s_expr};
+
+    // Move the field to the receiver, left-justified and space-padded.
+    const std::size_t rsz = r.into.info->byte_size;
+    for(std::size_t j = 0; j < rsz; ++j)
+    {
+      const exprt within =
+        binary_relation_exprt{from_integer(j, vt), ID_lt, flen};
+      const exprt read_idx =
+        if_exprt{within, plus_exprt{pos, from_integer(j, vt)}, zero};
+      const exprt off =
+        plus_exprt{src.offset, typecast_exprt{read_idx, size_type()}};
+      const exprt srcb =
+        typecast_exprt{make_byte_extract(src.record, off, u8), vt};
+      const exprt outb = if_exprt{within, srcb, space};
+      const exprt doff =
+        plus_exprt{r.into.offset, from_integer(j, size_type())};
+      assign(
+        r.into.record,
+        make_byte_update(r.into.record, doff, typecast_exprt{outb, u8}));
+    }
+
+    if(r.count_in.has_value())
+      result.push_back(make_assign_ref(*r.count_in, valuet{flen, 0}, loc));
+
+    if(r.delim_in.has_value())
+    {
+      const std::size_t dsz = r.delim_in->info->byte_size;
+      for(std::size_t j = 0; j < dsz; ++j)
+      {
+        // The delimiter bytes when a delimiter was found, else spaces.
+        const exprt b =
+          (j < dlen) ? if_exprt{delim_found, delim[j], space} : space;
+        const exprt doff =
+          plus_exprt{r.delim_in->offset, from_integer(j, size_type())};
+        assign(
+          r.delim_in->record,
+          make_byte_update(r.delim_in->record, doff, typecast_exprt{b, u8}));
+      }
+    }
+
+    if(tally_ref.has_value())
+    {
+      const valuet tv = read_field(*tally_ref);
+      result.push_back(make_assign_ref(
+        *tally_ref,
+        valuet{
+          plus_exprt{
+            rescale(tv.expr, tv.scale, 0), if_exprt{has_data, one, zero}},
+          0},
+        loc));
+    }
+
+    // Advance past the field and (if found) the delimiter.
+    assign(
+      pos,
+      if_exprt{delim_found, plus_exprt{fp, from_integer(dlen, vt)}, s_expr});
+  }
+
+  if(ptr_ref.has_value())
+    result.push_back(
+      make_assign_ref(*ptr_ref, valuet{plus_exprt{pos, one}, 0}, loc));
+
+  // ON OVERFLOW: characters remain unexamined in the source.
+  parse_overflow_phrase(
+    result, "END-UNSTRING", loc, binary_relation_exprt{pos, ID_lt, s_expr});
   return result;
 }
 

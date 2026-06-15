@@ -1,0 +1,14 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-UNSTRING-COUNT.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-SRC     PIC X(8) VALUE 'AB,CDE,F'.
+       01  WS-1       PIC X(4) VALUE SPACES.
+       01  WS-C       PIC 9.
+       01  WS-RESULT  PIC ZZ9.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           UNSTRING WS-SRC DELIMITED BY ',' INTO WS-1 COUNT IN WS-C.
+           MOVE WS-C TO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.
