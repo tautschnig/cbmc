@@ -146,9 +146,13 @@ robustness, then capability; difficulty is noted where high.
   an always-`None` false proof — now a fresh nondet (both branches reachable).
   Tests `regex-translator-soundness`, `regex-unsupported-pattern-nondet`.
 - **Still to do (precision)** — plans below (CVC5-validated 2026-06-15 spike):
-  - **List-valued ops — `str.split` / `re.split` / `re.findall` (PLANNED).**
-    Shared mechanism: a **bounded list-return** frontend helper, the same shape
-    as the existing comprehension-loop lowering — a loop `i in [0, N)` that uses
+  - **List-valued ops — `str.split` / `re.split` / `re.findall` (PLANNED;
+    `str.split` constant + sound-symbolic LANDED 2026-06-15, `2b405dfef1`).**
+    `str.split` now folds precisely for constant subjects under the native
+    backend (it was gated out of `native_supported`) and returns a sound
+    length-bounded nondet list for symbolic subjects. Precise *symbolic* split,
+    and `re.split`/`re.findall`, use the shared **bounded list-return**
+    mechanism: a loop `i in [0, N)` that uses
     `str.indexof(subject, sep, pos)` to find the next separator/match position
     and `str.substr` to extract each segment, accumulating a `list[smt_string]`
     of up to `N` elements (`N` = unwind bound; sound bounded semantics, exact
