@@ -1,6 +1,7 @@
 # Match-position-returning regex intrinsic — scope & design
 
-Status: **SCOPED (not implemented).** This is the deep-dive linked from
+Status: **Phase 1 LANDED (2026-06-15, `1e52da2ca5`); Phases 2-4 PLANNED.**
+This is the deep-dive linked from
 [python-frontend-plans.md](python-frontend-plans.md) §4 (regex reach). It
 designs the primitive that unlocks **precise** `re.findall` / `re.finditer` /
 `re.split` enumeration and `Match.start/end/span/group`, and analyses its
@@ -181,10 +182,25 @@ splitting `subject[start:end]`. Whenever the intrinsic is gated out it returns
 
 ## 9. Phasing
 
-- **Phase 1 — positions + `Match` (fixed-length, gated).** The two intrinsics,
-  lowering, length/empty gates, and the `Match` plumbing. Precise
-  `start/end/span/group(0)` for fixed-length patterns on constant/short
-  subjects; sound nondet otherwise.
+- **Phase 1 — positions + `Match` (fixed-length, gated). LANDED
+  (`1e52da2ca5`).** The two intrinsics, the smt2_conv bounded leftmost-start
+  scan (gated to a fixed-length pattern on a constant subject; emission gated on
+  `use_smt_string_native`), and the `Match` plumbing. Precise `start()`,
+  `end()`, and `group(0)` for fixed-length patterns on constant subjects;
+  sound nondet otherwise. Notes vs the original sketch:
+  - `group(0)` slices the **local** subject at search() time and stores the
+    resulting substring (`_group0`); slicing a string held in an instance
+    attribute is imprecise, so the doc's `subject[start:end]`-in-accessor shape
+    was replaced by precompute-then-read.
+  - A latent bug was fixed en route: a constant string sliced with a
+    non-constant (intrinsic-derived) index wrongly returned the whole string;
+    the constant-slice path is now gated on the bounds also being foldable.
+  - **Open:** `group()` *no-arg* is precise only when written `group(0)`. The
+    no-arg default isn't filled because the receiver is optional/union-typed
+    (`Match | None`) — a general method-dispatch gap, see plans
+    §[method-default-optional](python-frontend-plans.md). `span()==tuple` uses
+    pre-existing tuple equality (elementwise is precise). `re.match` positions
+    are not yet wired (only search/fullmatch).
 - **Phase 2 — precise `re.findall` / `re.split`.** Bounded loop in the re stub
   using `__cbmc_re_search_start(..., from)`; `from = end` (or `start+1` for the
   excluded empty-match case). Replaces the nondet-list floor *only* on the
