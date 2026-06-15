@@ -820,6 +820,106 @@ std::optional<exprt> python_convertert::try_string_method(
       if(result.size() <= PYTHON_MAX_STRING_LENGTH)
         return python_string_literal(result);
     }
+    // Native SMT-String back-end: strip/lstrip/rstrip with an explicit
+    // (compile-time-constant) `chars` set. Same decomposition as the
+    // whitespace form below, but membership is "the character is in `chars`",
+    // expressed as a regex character class [chars] reused through the existing
+    // match/fullmatch intrinsics (so it inherits the hardened translator):
+    //   s = p ++ r ++ q, with p,q in [chars]* and r's boundary characters NOT
+    // in [chars] (maximality), which uniquely determines r = the stripped
+    // string. A symbolic / non-constant `chars` falls through to the sound
+    // nondet path below.
+    if(
+      use_smt_string_native &&
+      (method_name == "strip" || method_name == "lstrip" ||
+       method_name == "rstrip") &&
+      args.is_array() && !as_array(args).empty())
+    {
+      auto cv =
+        extract_string_value(convert_expression(*as_array(args).begin()));
+      if(cv.has_value())
+      {
+        const std::string &chars = cv.value();
+        if(chars.empty())
+          return obj; // strip("") strips nothing
+        // Build the [chars] character class, escaping the class
+        // metacharacters so each becomes a literal member.
+        std::string cls = "[";
+        for(char c : chars)
+        {
+          if(c == ']' || c == '\\' || c == '^' || c == '-')
+            cls += '\\';
+          cls += c;
+        }
+        cls += "]";
+        const bool strip_l = method_name != "rstrip";
+        const bool strip_r = method_name != "lstrip";
+        auto mk = [&]() -> symbol_exprt
+        {
+          std::string nm =
+            "__smt_stripc_" + std::to_string(symbol_table.symbols.size());
+          irep_idt id{qualify_name(nm)};
+          symbolt sy{id, smt_string_typet{}, "python"};
+          sy.base_name = nm;
+          sy.is_lvalue = true;
+          sy.is_state_var = true;
+          symbol_table.add(sy);
+          return symbol_table.lookup_ref(id).symbol_expr();
+        };
+        auto pat = [](const std::string &p) -> exprt {
+          return constant_exprt{irep_idt{p}, smt_string_typet{}};
+        };
+        // all_in(x): x is entirely composed of `chars` (fullmatch [chars]*).
+        auto all_in = [&](const exprt &x) -> exprt
+        {
+          return emit_string_bool_function(
+            ID_cprover_string_fullmatch_func,
+            pat(cls + "*"),
+            x,
+            symbol_table,
+            pending_checks);
+        };
+        // starts_in(x): x starts with a `chars` member (match [chars]).
+        auto starts_in = [&](const exprt &x) -> exprt
+        {
+          return emit_string_bool_function(
+            ID_cprover_string_match_func,
+            pat(cls),
+            x,
+            symbol_table,
+            pending_checks);
+        };
+        // ends_in(x): x ends with a `chars` member (fullmatch (?s).*[chars];
+        // (?s) so '.' spans newlines).
+        auto ends_in = [&](const exprt &x) -> exprt
+        {
+          return emit_string_bool_function(
+            ID_cprover_string_fullmatch_func,
+            pat("(?s).*" + cls),
+            x,
+            symbol_table,
+            pending_checks);
+        };
+        symbol_exprt r = mk();
+        exprt recon = r;
+        if(strip_l)
+        {
+          symbol_exprt p = mk();
+          recon = string_concat(p, recon);
+          pending_checks.push_back(code_assumet{all_in(p)});
+          pending_checks.push_back(code_assumet{not_exprt{starts_in(r)}});
+        }
+        if(strip_r)
+        {
+          symbol_exprt q = mk();
+          recon = string_concat(recon, q);
+          pending_checks.push_back(code_assumet{all_in(q)});
+          pending_checks.push_back(code_assumet{not_exprt{ends_in(r)}});
+        }
+        pending_checks.push_back(code_assumet{equal_exprt{obj, recon}});
+        return std::move(r);
+      }
+    }
     // Native SMT-String back-end (Plan A): strip/lstrip/rstrip (whitespace,
     // no `chars` arg) encoded with SMT-LIB regex. Introduce the result r and
     // whitespace prefix p / suffix q with s = p ++ r ++ q, p,q in (re.* WS),
