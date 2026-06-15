@@ -3281,34 +3281,71 @@ void smt2_convt::convert_expr(const exprt &expr)
           }
           if(
             subj.has_value() && body.has_value() && flen.has_value() &&
-            *flen >= 1 && from_val.has_value())
+            *flen >= 1)
           {
             const std::string &s = *subj;
             const long long lpat = *flen;
             const long long n = static_cast<long long>(s.size());
-            long long from = from_val->to_long();
-            if(from < 0)
-              from = 0;
-            std::string chain =
-              "(bvneg (_ bv1 " + std::to_string(width) + "))"; // tail: -1
             bool ok = true;
-            for(long long i = n - lpat; i >= from; --i)
+            if(from_val.has_value())
             {
-              auto piece = smt_escape_printable_ascii(s.substr(i, lpat));
-              if(!piece.has_value())
+              // Constant `from` (search/fullmatch pass from = 0): a plain chain
+              // over [from, n - L], smallest i first. No symbolic guard => no
+              // overhead on the common case.
+              long long from = from_val->to_long();
+              if(from < 0)
+                from = 0;
+              std::string chain =
+                "(bvneg (_ bv1 " + std::to_string(width) + "))"; // tail: -1
+              for(long long i = n - lpat; i >= from; --i)
               {
-                ok = false;
-                break;
+                auto piece = smt_escape_printable_ascii(s.substr(i, lpat));
+                if(!piece.has_value())
+                {
+                  ok = false;
+                  break;
+                }
+                const long long val = is_end ? (i + lpat) : i;
+                chain = "(ite (str.in_re \"" + *piece + "\" " + *body +
+                        ") (_ bv" + std::to_string(val) + " " +
+                        std::to_string(width) + ") " + chain + ")";
               }
-              const long long val = is_end ? (i + lpat) : i;
-              chain = "(ite (str.in_re \"" + *piece + "\" " + *body +
-                      ") (_ bv" + std::to_string(val) + " " +
-                      std::to_string(width) + ") " + chain + ")";
+              if(ok)
+              {
+                out << chain;
+                return;
+              }
             }
-            if(ok)
+            else
             {
-              out << chain;
-              return;
+              // Symbolic `from` (findall/split iteration passes the previous
+              // match end, an SSA value): guard each branch with (i >= from)
+              // and let-bind `from`. m(i) still folds (the subject is a
+              // literal); only the (i >= from) comparisons stay symbolic.
+              std::string chain =
+                "(bvneg (_ bv1 " + std::to_string(width) + "))"; // tail: -1
+              for(long long i = n - lpat; i >= 0; --i)
+              {
+                auto piece = smt_escape_printable_ascii(s.substr(i, lpat));
+                if(!piece.has_value())
+                {
+                  ok = false;
+                  break;
+                }
+                const long long val = is_end ? (i + lpat) : i;
+                chain = "(ite (and (str.in_re \"" + *piece + "\" " + *body +
+                        ") (bvsge (_ bv" + std::to_string(i) + " " +
+                        std::to_string(width) + ") __re_from)) (_ bv" +
+                        std::to_string(val) + " " + std::to_string(width) +
+                        ") " + chain + ")";
+              }
+              if(ok)
+              {
+                out << "(let ((__re_from ";
+                convert_expr(args[2]); // the `from` operand (signedbv 64)
+                out << ")) " << chain << ")";
+                return;
+              }
             }
           }
           auto it = defined_expressions.find(expr);

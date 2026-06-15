@@ -225,14 +225,12 @@ def search(pattern: str, string: str, flags: int = 0) -> "Match | None":
 
 def findall(pattern, string, flags: int = 0):
     # Sound over-approximation: a nondet (bounded) list of nondet strings.
-    # A precise position-driven enumeration (loop over __cbmc_re_search_start/
-    # _end) is designed and validated, but Phase 2 is blocked on two substrate
-    # gaps (see doc/python-frontend-regex-position-plan.md): (1) an empty list
-    # `[]` defaults to an int element type even when annotated `list[str]`, so
-    # appending the matched substrings trips an smt2_conv typecast invariant
-    # (smt_string -> signedbv); (2) the loop's `from` is a symbolic (SSA) value
-    # after the first match, and the symbolic-`from` lowering must keep a
-    # constant-`from` fast path or it regresses re-heavy tests on perf.
+    # The precise position-driven loop (over __cbmc_re_search_start/_end) is
+    # validated for the same shape in *user* code, but the re-module stub does
+    # not constant-fold its literal subject into the intrinsics (unlike a user
+    # function, and unlike re.search in this same module), so through the stub
+    # it degrades to nondet and is slow. See
+    # doc/python-frontend-regex-position-plan.md Phase 2.
     return nondet_list(8, nondet_str())
 
 
