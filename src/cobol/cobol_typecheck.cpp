@@ -33,6 +33,7 @@ Author: Kiro
 #include <algorithm>
 #include <cctype>
 #include <deque>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -4627,6 +4628,90 @@ std::vector<stmtt> cobol_typecheckt::parse_inspect()
   eat_word("BACKWARD");
   const reft item = parse_ref();
   const std::size_t n = item.info->byte_size;
+  const typet ivt = cobol_value_type();
+
+  // The inspected item's character bytes (for BEFORE/AFTER region scans).
+  std::vector<exprt> item_bytes;
+  item_bytes.reserve(n);
+  for(std::size_t i = 0; i < n; ++i)
+    item_bytes.push_back(byte_of(item, i));
+
+  // Parse one value operand (literal, single-character figurative, or
+  // alphanumeric item) into its byte sequence; returns false if not modellable.
+  const auto value_bytes = [&](std::vector<exprt> &out) -> bool
+  {
+    if(cur().kind == cobol_token_kindt::STRING)
+    {
+      for(char ch : cur().text)
+        out.push_back(from_integer(static_cast<unsigned char>(ch), ivt));
+      advance();
+      return true;
+    }
+    if(cur().kind == cobol_token_kindt::WORD)
+    {
+      const std::string &w = cur().text;
+      int c = -1;
+      if(w == "SPACE" || w == "SPACES")
+        c = ' ';
+      else if(w == "ZERO" || w == "ZEROS" || w == "ZEROES")
+        c = '0';
+      else if(w == "QUOTE" || w == "QUOTES")
+        c = '"';
+      else if(w == "LOW-VALUE" || w == "LOW-VALUES")
+        c = 0;
+      else if(w == "HIGH-VALUE" || w == "HIGH-VALUES")
+        c = 0xff;
+      if(c >= 0)
+      {
+        out.push_back(from_integer(c, ivt));
+        advance();
+        return true;
+      }
+      if(is_item_word())
+      {
+        const reft r = parse_ref();
+        if(r.info->is_numeric)
+          return false;
+        for(std::size_t k = 0; k < r.info->byte_size; ++k)
+          out.push_back(byte_of(r, k));
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Parse the optional [BEFORE|AFTER] INITIAL delimiter phrase (IBM LR
+  // "INSPECT statement"). Returns a position -> in-region predicate; with no
+  // phrase the region is the whole item. Sets ok=false if a phrase is present
+  // but its delimiter is not modellable.
+  const auto parse_region = [&](bool &ok) -> std::function<exprt(std::size_t)>
+  {
+    bool after;
+    if(eat_word("BEFORE"))
+      after = false;
+    else if(eat_word("AFTER"))
+      after = true;
+    else
+      return [](std::size_t) -> exprt { return true_exprt{}; };
+    eat_word("INITIAL");
+    std::vector<exprt> d;
+    if(!value_bytes(d))
+    {
+      ok = false;
+      return [](std::size_t) -> exprt { return true_exprt{}; };
+    }
+    const exprt fd = first_occurrence(item_bytes, d, from_integer(0, ivt));
+    const std::size_t dl = d.size();
+    return [this, after, fd, dl, ivt](std::size_t i) -> exprt
+    {
+      // AFTER: positions past the first delimiter occurrence; BEFORE: before
+      // it (whole item if the delimiter is absent, since fd = item length).
+      if(after)
+        return binary_relation_exprt{
+          from_integer(i, ivt), ID_ge, plus_exprt{fd, from_integer(dl, ivt)}};
+      return binary_relation_exprt{from_integer(i, ivt), ID_lt, fd};
+    };
+  };
 
   std::vector<stmtt> result;
   if(eat_word("TALLYING"))
@@ -4650,47 +4735,63 @@ std::vector<stmtt> cobol_typecheckt::parse_inspect()
 
       exprt add; // exact contribution, when modelled
       bool exact = false;
+      bool region_ok = true;
+      const exprt one = from_integer(1, ivt);
+      const exprt zero = from_integer(0, ivt);
       if(eat_word("CHARACTERS"))
       {
-        add = from_integer(n, cobol_value_type());
-        exact = true;
+        auto in_region = parse_region(region_ok);
+        if(region_ok)
+        {
+          add = zero;
+          for(std::size_t i = 0; i < n; ++i)
+            add = plus_exprt{add, if_exprt{in_region(i), one, zero}};
+          exact = true;
+        }
       }
       else if(is_word("ALL") || is_word("LEADING"))
       {
         const bool leading = is_word("LEADING");
         advance();
-        // A one-character literal argument, with the phrase ending right after
-        // it (no BEFORE/AFTER, no further value) is the exact case.
-        if(
-          cur().kind == cobol_token_kindt::STRING && cur().text.size() == 1 &&
-          !(peek(1).kind == cobol_token_kindt::WORD &&
-            (peek(1).text == "BEFORE" || peek(1).text == "AFTER")))
+        // A one-character value (literal or figurative). FOR ALL counts every
+        // matching position; FOR LEADING the leading run; an optional
+        // BEFORE/AFTER INITIAL phrase restricts the region.
+        std::vector<exprt> vb;
+        if(value_bytes(vb) && vb.size() == 1)
         {
-          const exprt c = from_integer(
-            static_cast<unsigned char>(cur().text[0]), cobol_value_type());
-          advance();
-          const exprt one = from_integer(1, cobol_value_type());
-          const exprt zero = from_integer(0, cobol_value_type());
-          add = zero;
-          if(leading)
+          const exprt c = vb[0];
+          auto in_region = parse_region(region_ok);
+          if(region_ok)
           {
-            // Leading run: positions 0..i count while every byte 0..i equals c.
-            exprt still = true_exprt{};
+            add = zero;
+            exprt still = true_exprt{}; // LEADING: still in the leading run
             for(std::size_t i = 0; i < n; ++i)
             {
-              still = and_exprt{still, equal_exprt{byte_of(item, i), c}};
-              add = plus_exprt{add, if_exprt{still, one, zero}};
+              const exprt reg = in_region(i);
+              const exprt match = equal_exprt{byte_of(item, i), c};
+              if(leading)
+              {
+                add = plus_exprt{
+                  add,
+                  if_exprt{and_exprt{reg, and_exprt{still, match}}, one, zero}};
+                still = if_exprt{reg, and_exprt{still, match}, still};
+              }
+              else
+                add =
+                  plus_exprt{add, if_exprt{and_exprt{reg, match}, one, zero}};
             }
+            exact = true;
           }
-          else
-          {
-            for(std::size_t i = 0; i < n; ++i)
-              add = plus_exprt{
-                add, if_exprt{equal_exprt{byte_of(item, i), c}, one, zero}};
-          }
-          exact = true;
         }
       }
+      // Exact only if the FOR phrase ends here (a further value or a
+      // non-modellable form falls back).
+      if(
+        exact && !is_kind(cobol_token_kindt::PERIOD) && !is_word("REPLACING") &&
+        !is_word("CONVERTING") &&
+        !(is_item_word() && peek(1).kind == cobol_token_kindt::WORD &&
+          peek(1).text == "FOR"))
+        exact = false;
 
       if(exact)
       {
@@ -4792,10 +4893,12 @@ std::vector<stmtt> cobol_typecheckt::parse_inspect()
       ok = ok && eat_word("BY");
       yc = single_char();
     }
-    // Exact only for a single clause with no BEFORE/AFTER (the statement must
-    // end here).
-    ok = ok && yc.has_value() && (mode == M_CHARS || xc.has_value()) &&
-         is_kind(cobol_token_kindt::PERIOD);
+    // Exact only for a single clause; an optional BEFORE/AFTER INITIAL phrase
+    // restricts the region, and the statement must then end here.
+    ok = ok && yc.has_value() && (mode == M_CHARS || xc.has_value());
+    bool region_ok = true;
+    auto in_region = parse_region(region_ok);
+    ok = ok && region_ok && is_kind(cobol_token_kindt::PERIOD);
 
     if(ok)
     {
@@ -4809,23 +4912,25 @@ std::vector<stmtt> cobol_typecheckt::parse_inspect()
       for(std::size_t i = 0; i < n; ++i)
       {
         const exprt cur_b = byte_of(item, i);
+        const exprt reg = in_region(i);
         exprt outb;
         if(mode == M_CHARS)
-          outb = yexpr;
+          outb = if_exprt{reg, yexpr, cur_b};
         else
         {
-          const exprt matched = equal_exprt{cur_b, from_integer(*xc, vt)};
+          const exprt eqx = equal_exprt{cur_b, from_integer(*xc, vt)};
+          const exprt matched = and_exprt{reg, eqx};
           if(mode == M_ALL)
             outb = if_exprt{matched, yexpr, cur_b};
           else if(mode == M_LEADING)
           {
             outb = if_exprt{and_exprt{active, matched}, yexpr, cur_b};
-            active = and_exprt{active, matched};
+            active = if_exprt{reg, and_exprt{active, eqx}, active};
           }
           else // M_FIRST
           {
             outb = if_exprt{and_exprt{not_exprt{done}, matched}, yexpr, cur_b};
-            done = or_exprt{done, matched};
+            done = if_exprt{reg, or_exprt{done, eqx}, done};
           }
         }
         elems.push_back(typecast_exprt{outb, u8});
