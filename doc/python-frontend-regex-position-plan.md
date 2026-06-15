@@ -195,12 +195,12 @@ splitting `subject[start:end]`. Whenever the intrinsic is gated out it returns
   - A latent bug was fixed en route: a constant string sliced with a
     non-constant (intrinsic-derived) index wrongly returned the whole string;
     the constant-slice path is now gated on the bounds also being foldable.
-  - **Open:** `group()` *no-arg* is precise only when written `group(0)`. The
-    no-arg default isn't filled because the receiver is optional/union-typed
-    (`Match | None`) — a general method-dispatch gap, see plans
-    §[method-default-optional](python-frontend-plans.md). `span()==tuple` uses
-    pre-existing tuple equality (elementwise is precise). `re.match` positions
-    are not yet wired (only search/fullmatch).
+  - `group()` *no-arg* is now precise too: the general method-dispatch gap that
+    left it nondet (method defaults not filled on optional/union receivers) was
+    fixed in `27d677fc91`, see plans
+    §[method-default-optional](python-frontend-plans.md).
+  - **Open:** `span()==tuple` uses pre-existing tuple equality (elementwise is
+    precise). `re.match` positions are not yet wired (only search/fullmatch).
 - **Phase 2 — precise `re.findall` / `re.split`.** Bounded loop in the re stub
   using `__cbmc_re_search_start(..., from)`; `from = end` (or `start+1` for the
   excluded empty-match case). Replaces the nondet-list floor *only* on the
