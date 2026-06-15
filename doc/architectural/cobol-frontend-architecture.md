@@ -228,11 +228,11 @@ false assertion pass, but may prevent proving a true one). "KB" names the
 | I7 | `OCCURS … DEPENDING ON` fixed at maximum (over-approx) | "OCCURS clause" (format 2) | — | precision-and-gaps §2 |
 | I8 | reference modification with a non-constant length over-approximated to the remaining size | "Reference modification" | — | precision-and-gaps §2 |
 | I9 | ambiguous qualified reference takes the first match (with a warning) | "Qualification" | — | precision-and-gaps §2 |
-| I10 | STRING/UNSTRING/INSPECT havoc their receivers (character content not modelled) | "STRING"/"UNSTRING"/"INSPECT statement" | string-precise, inspect-precise | precision-and-gaps §1 |
+| I10 | **PARTIAL** — INSPECT TALLYING (CORE `inspect-tallying`) and STRING DELIMITED BY SIZE (CORE `string-concat`) now exact; UNSTRING, INSPECT REPLACING, and STRING with a delimiter still havoc | "STRING"/"UNSTRING"/"INSPECT statement" | — | character-semantics §3 |
 | I11 | file I/O external: OPEN/CLOSE no-op, READ havocs the record + nondet AT END, output verbs nondet INVALID KEY | "READ"/"WRITE"/… statements | — | precision-and-gaps §3 |
 | I12 | SORT/MERGE abstracted (procedures performed; RETURN havocs) | "SORT"/"MERGE statement" | — | precision-and-gaps §3 |
 | I13 | ACCEPT havocs its receiver (run-time input unknown) — **by design** | "ACCEPT statement" | — | precision-and-gaps §3 |
-| I14 | most intrinsics nondet on item arguments (exact set listed in §4) | "Intrinsic functions" | intrinsic-item | precision-and-gaps §1 |
+| I14 | **PARTIAL** — `UPPER-CASE`/`LOWER-CASE`/`REVERSE` now exact on item arguments too (CORE `string-intrinsics-item`); other intrinsics still nondet on items | "Intrinsic functions" | — | character-semantics §3.4 |
 | I15 | `EXEC CICS/SQL/DLI` stubbed (outputs + status nondet) | LR + CICS/Db2 refs | — | precision-and-gaps §3 |
 | I16 | `CALL` stubbed (BY REF/RETURNING havoced; BY CONTENT/VALUE ignored; no linkage) | "CALL statement" | — | precision-and-gaps §3 |
 | I17 | `SET` condition-name `TO FALSE` is a no-op (no FALSE clause modelled) | "SET statement" (format 5) | — | precision-and-gaps §4 |

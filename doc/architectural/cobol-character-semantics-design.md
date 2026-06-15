@@ -138,16 +138,20 @@ actually used, and keep the cheap default elsewhere.
 ## 5. Migration plan (each step: build, keep suite green, re-baseline
 CardDemo 44/44 at --unwind 3, promote the relevant KNOWNBUG test)
 
-1. **Byte helpers** + **INSPECT TALLYING FOR ALL/LEADING** exact
-   (promote `knownbug-inspect-precise`). Smallest, countable, no pointer.
-2. **STRING** with exact concatenation, pointer, and exact ON OVERFLOW
-   (promote `knownbug-string-precise`).
+1. **DONE** — **Byte helpers** (`byte_of`) + **INSPECT TALLYING FOR
+   ALL/LEADING/CHARACTERS** exact (CORE `inspect-tallying`).
+2. **DONE** — **STRING** with exact concatenation (DELIMITED BY SIZE),
+   pointer, and exact ON OVERFLOW (CORE `string-concat`).
 3. **UNSTRING** split with COUNT/DELIMITER/TALLYING.
-4. **String intrinsics on items** (promote `knownbug-intrinsic-item`).
+4. **DONE** — **String intrinsics on items**
+   (`UPPER-CASE`/`LOWER-CASE`/`REVERSE`; CORE `string-intrinsics-item`),
+   via the "character value as an array expression" representation.
 5. **Classifier extension** for numeric operands of character verbs /
-   cross-category comparison, enabling **I2/I3** (promote
-   `knownbug-num-alnum-cmp`, `knownbug-move-alnum-num`).
+   cross-category comparison, enabling **I2/I3** (KNOWNBUG
+   `num-alnum-cmp`, `move-alnum-num`).
 6. **Reference modification non-constant length** (I8).
+   Also remaining within the done items: STRING/UNSTRING with a
+   delimiter, INSPECT REPLACING/CONVERTING and BEFORE/AFTER.
 
 Risks: term-size blow-up on large items (mitigation §4); INSPECT's
 BEFORE/AFTER/LEADING state machine is fiddly (test thoroughly); the
