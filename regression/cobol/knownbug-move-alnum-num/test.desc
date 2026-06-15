@@ -1,9 +1,0 @@
-KNOWNBUG
-main.cob
-
-^VERIFICATION SUCCESSFUL$
---
-Imprecision I3: MOVE of an alphanumeric source to a numeric receiver
-yields a nondeterministic value (the de-editing depends on character
-content the value model does not represent). IBM LR "MOVE statement".
-See cobol-numeric-encoding-design.md.

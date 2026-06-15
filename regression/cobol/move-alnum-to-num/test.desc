@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+MOVE of an alphanumeric digit string to a numeric receiver de-edits to
+the integer value. See IBM LR "MOVE statement".

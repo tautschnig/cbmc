@@ -3861,10 +3861,38 @@ std::vector<stmtt> cobol_typecheckt::parse_move()
               *spec_to_numeric(src.spec, t.info->scale), cobol_value_type()),
             t.info->scale},
           loc));
+      else if(src.is_item)
+      {
+        // Alphanumeric item to a numeric receiver: a de-editing conversion in
+        // which the source characters are treated as an unsigned integer
+        // (IBM LR "MOVE statement"). Decode the source's digit bytes (the
+        // inverse of the zoned encoding) and store that value.
+        const reft sref{src.item, src.record, src.offset};
+        const typet vt = cobol_value_type();
+        exprt acc = from_integer(0, vt);
+        for(std::size_t i = 0; i < src.length; ++i)
+        {
+          const exprt digit =
+            minus_exprt{byte_of(sref, i), from_integer('0', vt)};
+          acc = plus_exprt{
+            acc,
+            mult_exprt{digit, from_integer(power10(src.length - 1 - i), vt)}};
+        }
+        result.push_back(make_assign_ref(t, valuet{acc, 0}, loc));
+      }
+      else if(src.is_spec && src.spec.kind == value_spect::kindt::STRING)
+      {
+        // Alphanumeric literal to a numeric receiver: de-edit at compile time.
+        mp_integer v = 0;
+        for(char ch : src.spec.str)
+          if(ch >= '0' && ch <= '9')
+            v = v * 10 + (ch - '0');
+        result.push_back(make_assign_ref(
+          t, valuet{from_integer(v, cobol_value_type()), 0}, loc));
+      }
       else
-        // Alphanumeric source to a numeric receiver: a de-editing conversion
-        // of the source characters that the value model does not represent
-        // (IBM LR "MOVE statement") -> nondeterministic.
+        // A non-string source (e.g. a figurative constant) to a numeric
+        // receiver: not modelled exactly -> nondeterministic.
         result.push_back(make_assign_ref(
           t,
           valuet{side_effect_expr_nondett{cobol_value_type(), loc}, 0},
