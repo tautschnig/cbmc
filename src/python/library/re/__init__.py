@@ -223,15 +223,32 @@ def search(pattern: str, string: str, flags: int = 0) -> "Match | None":
     return None
 
 
-def findall(pattern, string, flags: int = 0):
-    # Sound over-approximation: a nondet (bounded) list of nondet strings.
-    # The precise position-driven loop (over __cbmc_re_search_start/_end) is
-    # validated for the same shape in *user* code, but the re-module stub does
-    # not constant-fold its literal subject into the intrinsics (unlike a user
-    # function, and unlike re.search in this same module), so through the stub
-    # it degrades to nondet and is slow. See
-    # doc/python-frontend-regex-position-plan.md Phase 2.
-    return nondet_list(8, nondet_str())
+def findall(pattern: str, string: str, flags: int = 0):
+    if flags != 0:
+        # Flags change match semantics and are not modelled here.
+        return nondet_list(8, nondet_str())
+    # Enumerate non-overlapping matches left to right via the match-position
+    # intrinsics. Precise for a fixed-length pattern on a constant subject (the
+    # positions fold; `result` is annotated list[str] so the element type is
+    # pinned and the `pattern: str` / `string: str` annotations let the subject
+    # fold into the intrinsics); an unsupported pattern / symbolic subject makes
+    # the intrinsics nondet and this degrades to a sound bounded enumeration.
+    # Bounded by the unwind limit (BMC).
+    result: list[str] = []
+    pos = 0
+    n = len(string)
+    while pos <= n:
+        st = __cbmc_re_search_start(pattern, string, pos)
+        if st < 0:
+            break
+        en = __cbmc_re_search_end(pattern, string, pos)
+        result.append(string[st:en])
+        # Advance past the match; +1 on an empty match to make progress.
+        if en > pos:
+            pos = en
+        else:
+            pos = pos + 1
+    return result
 
 
 def finditer(pattern, string, flags: int = 0):
@@ -239,10 +256,14 @@ def finditer(pattern, string, flags: int = 0):
     return nondet_list(8, Match())
 
 
-def split(pattern, string, maxsplit: int = 0, flags: int = 0):
+def split(pattern: str, string: str, maxsplit: int = 0, flags: int = 0):
     # Sound over-approximation: a nondet (bounded) list of nondet strings.
+    # The position-driven loop (the dual of findall: collect the gaps between
+    # matches) is precise for the per-match gaps, but the trailing piece needs
+    # a SECOND append site, and a list built with two append sites in a loop
+    # comes out nondet-length (distinct from findall, which has one). Tracked
+    # in doc/python-frontend-regex-position-plan.md Phase 2.
     return nondet_list(8, nondet_str())
-
 
 def sub(pattern: str, repl: str, string: str, count: int = 0, flags: int = 0) -> str:
     return __cbmc_re_sub(pattern, repl, string, count)
