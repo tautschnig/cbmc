@@ -1813,6 +1813,19 @@ exprt python_convertert::convert_attribute(const jsont &expr)
       if(it != consts.end())
         return python_string_literal(it->second);
     }
+
+    // General imported-module constant: e.g. re.IGNORECASE / re.DOTALL and
+    // any module-level `NAME = <literal>` in a library stub. When the module
+    // is imported and python::<attr> is a registered symbol holding a
+    // constant value, fold to that value instead of a nondet attribute read.
+    // (Class/function attributes have no constant value and are left to the
+    // normal path.)
+    if(imported_modules.count(obj_name) > 0)
+    {
+      const symbolt *cs = symbol_table.lookup(irep_idt{"python::" + attr});
+      if(cs != nullptr && cs->value.is_not_nil() && cs->value.is_constant())
+        return cs->value;
+    }
   }
 
   exprt value = convert_expression(json_member(expr, "value"));
