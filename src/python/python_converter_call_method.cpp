@@ -2289,6 +2289,8 @@ std::optional<exprt> python_convertert::try_method_call(
         "lower",
         "casefold",
         "swapcase",
+        "capitalize",
+        "title",
         "startswith",
         "endswith",
         "find",
