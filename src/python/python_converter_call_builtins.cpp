@@ -866,9 +866,18 @@ std::optional<exprt> python_convertert::try_builtin_call(
     mp_integer none_val = python_none_sentinel_int();
     return from_integer(none_val, python_int_type());
   }
-  // PLib builtins: input() reads from stdin — model as nondet string
+  // PLib builtins: input() reads from stdin — model as nondet string.
   else if(func_name == "input")
   {
+    // Under the native SMT-String backend the length must be bounded
+    // (bounded_nondet_string constrains it to [0, PYTHON_MAX_STRING_LENGTH]).
+    // An unbounded smt_string lets the solver pick an astronomically long
+    // string (len 2^63), which both wraps len() negative in signed 64-bit
+    // (a false alarm on len()>=0) and forces CVC5 to emit a (witness ...)
+    // model the result parser cannot read (a model-parse error/abort, e.g.
+    // when combined with a regex call).
+    if(use_smt_string_native)
+      return bounded_nondet_string(get_location(expr));
     return side_effect_expr_nondett{python_string_type(), get_location(expr)};
   }
   // PLib builtins: hex/oct/bin — compute for constants, nondet otherwise

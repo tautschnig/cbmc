@@ -741,8 +741,15 @@ smt2_convt::parse_struct(const irept &src, const struct_typet &type)
         {
           // CVC5 returned fewer values than expected (e.g., flat bitvector
           // for a struct that was emitted without datatypes).
-          // Fill remaining components with zero.
-          result.operands()[i] = from_integer(0, c.type());
+          // Fill remaining components with a default. from_integer only
+          // handles bit-vector-like types, so a non-bit-vector component
+          // (notably an SMT-LIB String / smt_string field of a Python
+          // string / Match / tagged-union struct) needs its own default:
+          // the empty string. Without this, parsing such a model crashes.
+          if(c.type().id() == ID_smt_string)
+            result.operands()[i] = constant_exprt{irep_idt{}, c.type()};
+          else
+            result.operands()[i] = from_integer(0, c.type());
         }
         else
         {
