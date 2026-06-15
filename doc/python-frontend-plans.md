@@ -980,21 +980,18 @@ All items here are **sound** (misses / over-approximations, never false
 alarms). Verified against the 2026-06-08 sweep baseline.
 
 - **Method default-args not filled on optional/union-typed receivers
-  {#method-default-optional} (PLANNED).** When a method is called on a value
-  whose static type is optional/union (e.g. the `Match | None` returned by
-  `re.search`), missing trailing arguments are **not** bound to the method's
-  defaults — the GOTO layer fills them with nondet ("not enough arguments,
-  inserting non-deterministic value"). Sound, but it makes any default-driven
-  branch nondet. Concretely it blocks `re.search(...).group()` (no-arg) from
-  being precise even though `group(0)` is (see
-  [regex-position-plan](python-frontend-regex-position-plan.md) §9), and it
-  affects the whole class of stub methods with optional trailing parameters
-  (`m.start()/end()/span()` happen to be immune only because they ignore the
-  argument). The fix is in the method-call dispatch: when the receiver is
-  optional/union, still resolve the concrete class method and run the normal
-  default-argument binding (the same path `resolve_user_call` uses for
-  concretely-typed receivers) before emitting the call. Architectural (one fix,
-  many stub methods), but touches core dispatch — own focused change + sweep.
+  {#method-default-optional} — RESOLVED (2026-06-15, `27d677fc91`).** A method
+  called on a value whose static type is optional/union (e.g. the
+  `Match | None` returned by `re.search`, represented as `python_value`)
+  dispatched through the tagged-union path, which built the call from provided
+  arguments only; omitted defaults were nondet-filled by the GOTO layer,
+  making any default-driven branch nondet. Fixed by filling trailing parameter
+  defaults in the `python_value` method dispatch (single- and multi-owner
+  branches) from the module-independent `default_values` map that
+  `convert_user_call` also uses — one fix for every defaulted method reached
+  through an optional return. It made `re.search(...).group()` (no-arg) as
+  precise as `group(0)`. Sound: required (default-less) args still left to the
+  GOTO layer; provided args override defaults.
 - **String operations:** the `string-concat` loop cluster
   (`string-concat4/5/6/13`) and `string.digits` / `string.ascii_uppercase`
   population are **all PASS now** — closed. No open items in this group.
