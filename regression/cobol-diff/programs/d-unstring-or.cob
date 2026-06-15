@@ -1,0 +1,17 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-UNSTRING-OR.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-SRC     PIC X(8) VALUE 'AB,CD;EF'.
+       01  WS-1       PIC X(3) VALUE SPACES.
+       01  WS-2       PIC X(3) VALUE SPACES.
+       01  WS-3       PIC X(3) VALUE SPACES.
+       01  WS-RESULT  PIC X(11) VALUE SPACES.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           UNSTRING WS-SRC DELIMITED BY ',' OR ';'
+               INTO WS-1 WS-2 WS-3.
+           STRING WS-1 '|' WS-2 '|' WS-3 DELIMITED BY SIZE
+               INTO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.

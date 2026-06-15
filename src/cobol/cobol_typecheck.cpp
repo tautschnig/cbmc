@@ -4969,10 +4969,12 @@ std::vector<stmtt> cobol_typecheckt::parse_unstring()
   // source is split at each delimiter: each receiver gets the field up to the
   // next delimiter, its COUNT IN the field length, its DELIMITER IN the
   // delimiter found; the pointer advances past the field and delimiter, and
-  // ON OVERFLOW fires if characters remain. We model this exactly for a single
-  // delimiter (literal or alphanumeric item; no ALL/OR), an alphanumeric
-  // source and alphanumeric receivers, unrolling over the compile-time sizes
-  // with a runtime character pointer; anything else havocs the receivers.
+  // ON OVERFLOW fires if characters remain. We model this exactly for an
+  // alphanumeric source and alphanumeric receivers: a single delimiter
+  // (literal or item, possibly multi-byte), or -- with OR (alternatives) or
+  // ALL (collapse consecutive) -- a set of single-byte delimiters. Other forms
+  // (multi-byte delimiters in an OR/ALL set, numeric operands) havoc the
+  // receivers.
   const source_locationt loc = cur().location;
   expect_word("UNSTRING");
   const reft src = parse_ref();
@@ -4980,34 +4982,82 @@ std::vector<stmtt> cobol_typecheckt::parse_unstring()
   const unsignedbv_typet u8{8};
   bool exact = !src.info->is_numeric;
 
-  std::vector<exprt> delim; // delimiter bytes
-  if(eat_word("DELIMITED"))
+  std::vector<exprt> delim; // delimiter bytes (single-delimiter path)
+  // A delimiter list: each entry is its bytes plus an ALL flag (which
+  // collapses consecutive occurrences). DELIMITED BY [ALL] d-1 [OR [ALL] d-2]…
+  struct delimt
   {
-    eat_word("BY");
-    if(eat_word("ALL"))
-      exact = false; // ALL (collapse repeats) not modelled
+    std::vector<exprt> bytes;
+    bool all;
+  };
+  std::vector<delimt> delims;
+  const auto delim_operand = [&](std::vector<exprt> &out) -> bool
+  {
     if(cur().kind == cobol_token_kindt::STRING)
     {
       for(char ch : cur().text)
-        delim.push_back(from_integer(static_cast<unsigned char>(ch), vt));
+        out.push_back(from_integer(static_cast<unsigned char>(ch), vt));
       advance();
+      return true;
     }
-    else if(is_item_word())
+    if(cur().kind == cobol_token_kindt::WORD)
     {
-      const reft r = parse_ref();
-      if(r.info->is_numeric)
-        exact = false;
-      else
+      const std::string &w = cur().text;
+      int c = -1;
+      if(w == "SPACE" || w == "SPACES")
+        c = ' ';
+      else if(w == "ZERO" || w == "ZEROS" || w == "ZEROES")
+        c = '0';
+      else if(w == "QUOTE" || w == "QUOTES")
+        c = '"';
+      else if(w == "LOW-VALUE" || w == "LOW-VALUES")
+        c = 0;
+      else if(w == "HIGH-VALUE" || w == "HIGH-VALUES")
+        c = 0xff;
+      if(c >= 0)
+      {
+        out.push_back(from_integer(c, vt));
+        advance();
+        return true;
+      }
+      if(is_item_word())
+      {
+        const reft r = parse_ref();
+        if(r.info->is_numeric)
+          return false;
         for(std::size_t k = 0; k < r.info->byte_size; ++k)
-          delim.push_back(byte_of(r, k));
+          out.push_back(byte_of(r, k));
+        return true;
+      }
     }
-    else
-      exact = false;
-    if(is_word("OR"))
-      exact = false; // multiple delimiters not modelled
+    return false;
+  };
+  if(eat_word("DELIMITED"))
+  {
+    eat_word("BY");
+    do
+    {
+      delimt d;
+      d.all = eat_word("ALL");
+      if(!delim_operand(d.bytes) || d.bytes.empty())
+        exact = false;
+      delims.push_back(std::move(d));
+    } while(eat_word("OR"));
   }
-  if(delim.empty())
+  if(delims.empty())
     exact = false; // fixed-size split (no DELIMITED BY) not modelled exactly
+  // A single delimiter without ALL keeps the multi-character path; multiple
+  // delimiters or any ALL require all delimiters to be a single byte.
+  const bool char_set = !(delims.size() == 1 && !delims[0].all);
+  bool any_all = false;
+  for(const delimt &d : delims)
+    any_all = any_all || d.all;
+  if(char_set)
+    for(const delimt &d : delims)
+      if(d.bytes.size() != 1)
+        exact = false;
+  if(!delims.empty())
+    delim = delims[0].bytes;
   expect_word("INTO");
 
   struct recvt
@@ -5082,11 +5132,13 @@ std::vector<stmtt> cobol_typecheckt::parse_unstring()
   }
 
   const std::size_t ssz = src.info->byte_size;
-  const std::size_t dlen = delim.size();
   const exprt s_expr = from_integer(ssz, vt);
   const exprt one = from_integer(1, vt);
   const exprt zero = from_integer(0, vt);
   const exprt space = from_integer(' ', vt);
+  // Length of a matched delimiter: 1 for the single-byte (char-set) path, the
+  // (possibly multi-byte) delimiter's length for the single-delimiter path.
+  const exprt match_len = from_integer(char_set ? 1 : delim.size(), vt);
 
   // 0-based character pointer into the source.
   const symbol_exprt pos = make_counter();
@@ -5103,13 +5155,37 @@ std::vector<stmtt> cobol_typecheckt::parse_unstring()
   src_bytes.reserve(ssz);
   for(std::size_t i = 0; i < ssz; ++i)
     src_bytes.push_back(byte_of(src, i));
+  // The source byte at a runtime index, with the offset clamped in range so an
+  // unselected read is always valid.
+  const auto src_at = [&](const exprt &idx) -> exprt
+  {
+    const exprt safe = if_exprt{
+      binary_relation_exprt{idx, ID_lt, s_expr},
+      idx,
+      from_integer(ssz == 0 ? 0 : ssz - 1, vt)};
+    return typecast_exprt{
+      make_byte_extract(
+        src.record,
+        plus_exprt{src.offset, typecast_exprt{safe, size_type()}},
+        u8),
+      vt};
+  };
+  const auto vmin = [&](const exprt &a, const exprt &b) -> exprt {
+    return if_exprt{binary_relation_exprt{a, ID_le, b}, a, b};
+  };
 
   for(const recvt &r : recvs)
   {
-    // fp = index of the first delimiter at or after pos, else ssz (end of
-    // source); flen = field length; the field is source[pos .. fp).
+    // fp = index of the first occurrence of any delimiter at or after pos,
+    // else ssz (end of source); flen = field length; the field is
+    // source[pos .. fp).
     const symbol_exprt fp = make_counter();
-    assign(fp, first_occurrence(src_bytes, delim, pos));
+    {
+      exprt scan = s_expr;
+      for(const delimt &d : delims)
+        scan = vmin(scan, first_occurrence(src_bytes, d.bytes, pos));
+      assign(fp, scan);
+    }
     const symbol_exprt flen = make_counter();
     assign(flen, minus_exprt{fp, pos});
     const exprt delim_found = binary_relation_exprt{fp, ID_lt, s_expr};
@@ -5123,10 +5199,7 @@ std::vector<stmtt> cobol_typecheckt::parse_unstring()
         binary_relation_exprt{from_integer(j, vt), ID_lt, flen};
       const exprt read_idx =
         if_exprt{within, plus_exprt{pos, from_integer(j, vt)}, zero};
-      const exprt off =
-        plus_exprt{src.offset, typecast_exprt{read_idx, size_type()}};
-      const exprt srcb =
-        typecast_exprt{make_byte_extract(src.record, off, u8), vt};
+      const exprt srcb = src_at(read_idx);
       const exprt outb = if_exprt{within, srcb, space};
       const exprt doff =
         plus_exprt{r.into.offset, from_integer(j, size_type())};
@@ -5143,9 +5216,15 @@ std::vector<stmtt> cobol_typecheckt::parse_unstring()
       const std::size_t dsz = r.delim_in->info->byte_size;
       for(std::size_t j = 0; j < dsz; ++j)
       {
-        // The delimiter bytes when a delimiter was found, else spaces.
-        const exprt b =
-          (j < dlen) ? if_exprt{delim_found, delim[j], space} : space;
+        // The matched delimiter (when found), else spaces. In the char-set
+        // path the matched delimiter is the single byte at fp; otherwise it is
+        // the (multi-byte) literal delimiter.
+        exprt b;
+        if(char_set)
+          b = (j == 0) ? if_exprt{delim_found, src_at(fp), space} : space;
+        else
+          b =
+            (j < delim.size()) ? if_exprt{delim_found, delim[j], space} : space;
         const exprt doff =
           plus_exprt{r.delim_in->offset, from_integer(j, size_type())};
         assign(
@@ -5166,10 +5245,32 @@ std::vector<stmtt> cobol_typecheckt::parse_unstring()
         loc));
     }
 
-    // Advance past the field and (if found) the delimiter.
-    assign(
-      pos,
-      if_exprt{delim_found, plus_exprt{fp, from_integer(dlen, vt)}, s_expr});
+    // Advance past the field and (if found) the matched delimiter.
+    assign(pos, if_exprt{delim_found, plus_exprt{fp, match_len}, s_expr});
+
+    // ALL: collapse consecutive occurrences of the matched delimiter (IBM LR
+    // "UNSTRING statement"). Only in the single-byte char-set path, when the
+    // matched character belongs to an ALL delimiter.
+    if(char_set && any_all)
+    {
+      const exprt mchar = src_at(fp);
+      exprt all_active = false_exprt{};
+      for(const delimt &d : delims)
+        if(d.all)
+          all_active = or_exprt{all_active, equal_exprt{mchar, d.bytes[0]}};
+      all_active = and_exprt{all_active, delim_found};
+      // Skip while the next character is the matched delimiter (unrolled over
+      // the source size).
+      for(std::size_t step = 0; step < ssz; ++step)
+      {
+        const exprt cond = and_exprt{
+          all_active,
+          and_exprt{
+            binary_relation_exprt{pos, ID_lt, s_expr},
+            equal_exprt{src_at(pos), mchar}}};
+        assign(pos, if_exprt{cond, plus_exprt{pos, one}, pos});
+      }
+    }
   }
 
   if(ptr_ref.has_value())
