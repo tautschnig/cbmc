@@ -219,15 +219,24 @@ splitting `subject[start:end]`. Whenever the intrinsic is gated out it returns
      `let`-binding `from`) while keeping a constant-`from` fast path for
      `from = 0` (search/fullmatch), so there is no perf regression (re-heavy
      tests back at 0 s). Validated on the findall-shaped loop in user code.
-  3. **NEW — library-stub subject not constant-folded.** Through the `re`
-     module stub, `findall`'s literal subject does **not** fold into the
-     intrinsics, so it stays nondet (and slow on the symbolic-`from` path) —
-     even though (a) an identical loop in a *user* function folds and is
-     precise, and (b) `re.search` in the *same* module folds (its `group(0)`
-     is precise). The discriminator is unclear (search passes `from = 0`,
-     findall passes a loop variable); root-causing why an imported-module
-     function with a loop loses the constant-subject propagation is the
-     remaining work. Until then `re.findall`/`re.split` keep the sound floor.
+  3. **Library-stub subject not constant-folded — RESOLVED (`f0e06d3958`).**
+     Root cause: `re.findall` declared `pattern, string` **without** type
+     annotations, so the params were any-typed (`python_value`) and the literal
+     subject did not fold into the intrinsics — unlike `re.search` in the same
+     module (`pattern: str, string: str`) and unlike a user function with the
+     identical loop. Annotating the params alone flips it from nondet to
+     precise. Found by a minimal probe (no-loop findall returning the intrinsic:
+     nondet with bare params, precise with `: str`).
+
+  **`re.findall` is now PRECISE** (`f0e06d3958`) for a fixed-length pattern on a
+  constant subject under `--python-smt-strings` (count/elements/indexing exact,
+  0 s); unsupported pattern / symbolic subject → sound bounded enumeration; the
+  refined backend degrades soundly (slower on a pathological iterate-and-assert,
+  but the sweep is neutral). **`re.split` stays at the sound floor**: its
+  precise dual needs TWO append sites in the loop (per-match gaps + trailing
+  piece), and a list built with two append sites comes out nondet-length where
+  findall's single-append loop folds — a separate frontend list-model
+  limitation (multi-append-site length), not blocker #3.
 - **Phase 3 — `Match.group(n)`.** Span + uniqueness-gated `str.++`
   decomposition (plans section 4 group-extraction item).
 - **Phase 4 — variable-length/greedy.** Deferred (section 7); stays nondet.
