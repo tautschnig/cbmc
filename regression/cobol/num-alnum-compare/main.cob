@@ -1,5 +1,5 @@
        IDENTIFICATION DIVISION.
-       PROGRAM-ID. KB-NUM-ALNUM-CMP.
+       PROGRAM-ID. NUM-ALNUM-COMPARE.
        DATA DIVISION.
        WORKING-STORAGE SECTION.
        01  WS-N  PIC 9(3) VALUE 123.
@@ -8,9 +8,8 @@
        PROCEDURE DIVISION.
        MAIN-PARA.
       *    IBM LR "Comparison of numeric and nonnumeric operands": the numeric
-      *    operand is compared by its (zoned) display representation, so
-      *    123 = '123' is TRUE. The value model has no display bytes for the
-      *    numeric, so the comparison is nondeterministic.
+      *    operand is compared by its zoned display representation, so the
+      *    unsigned integer 123 equals the characters '123'.
            IF WS-N = WS-A
                MOVE 1 TO WS-R
            END-IF.

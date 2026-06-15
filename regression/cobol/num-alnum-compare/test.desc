@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+A numeric vs alphanumeric comparison uses the numeric operand's display
+representation. See IBM LR "Comparison of numeric and nonnumeric operands".

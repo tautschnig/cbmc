@@ -259,6 +259,10 @@ struct cond_operandt
 {
   bool numeric = false;
   valuet num; ///< when numeric
+  /// When the numeric operand is exactly a bare data item (not an arithmetic
+  /// expression), the item descriptor; used to build its display
+  /// representation for a comparison with a nonnumeric operand.
+  const item_infot *num_item = nullptr;
 
   // alphanumeric item bytes:
   bool is_item = false;
@@ -852,6 +856,9 @@ protected:
   bool is_relop_start() const;
   exprt parse_relation();
   cond_operandt parse_cond_operand();
+  /// An alphanumeric operand holding the zoned (display) bytes of an unsigned
+  /// integer DISPLAY value, for numeric-to-nonnumeric comparison.
+  cond_operandt zoned_alnum_of(const exprt &value, const item_infot &item);
   bool at_intrinsic() const;
   cond_operandt parse_intrinsic();
   valuet compute_numeric_intrinsic(
@@ -2839,12 +2846,65 @@ exprt cobol_typecheckt::build_cond_relation(
 
   // Comparison of a numeric operand with a nonnumeric one: the numeric operand
   // is compared by its display representation (IBM LR "Comparison of numeric
-  // and nonnumeric operands"). The value-domain model does not represent that
-  // representation, so the result is nondeterministic (sound).
+  // and nonnumeric operands"). When the numeric operand is a bare unsigned
+  // integer DISPLAY item we build that representation (its zoned digit bytes)
+  // and compare it as alphanumeric; otherwise the value model has no display
+  // representation and the result is nondeterministic (sound).
   if(a.numeric || b.numeric)
+  {
+    cond_operandt &num = a.numeric ? a : b;
+    cond_operandt &aln = a.numeric ? b : a;
+    if(
+      num.num_item != nullptr && num.num_item->is_numeric &&
+      !num.num_item->is_signed && num.num_item->scale == 0 &&
+      num.num_item->usage == usaget::DISPLAY && num.num_item->digits > 0)
+    {
+      cond_operandt z = zoned_alnum_of(num.num.expr, *num.num_item);
+      return a.numeric ? build_alnum_relation(z, op, aln)
+                       : build_alnum_relation(aln, op, z);
+    }
     return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
+  }
 
   return build_alnum_relation(a, op, b);
+}
+
+cond_operandt
+cobol_typecheckt::zoned_alnum_of(const exprt &value, const item_infot &item)
+{
+  // Represent an unsigned integer DISPLAY value as its zoned character bytes
+  // ('0' + digit, most significant first) so it can be compared with an
+  // alphanumeric operand (IBM LR "Comparison of numeric and nonnumeric
+  // operands"). The result is an alphanumeric operand backed by the
+  // constructed byte array.
+  const std::size_t d = item.digits;
+  const typet vt = cobol_value_type();
+  const unsignedbv_typet u8{8};
+  const exprt zero = from_integer(0, vt);
+  const exprt mag = if_exprt{
+    binary_relation_exprt{value, ID_ge, zero}, value, unary_minus_exprt{value}};
+  array_exprt::operandst elems;
+  elems.reserve(d);
+  for(std::size_t i = 0; i < d; ++i)
+  {
+    const exprt place = from_integer(power10(d - 1 - i), vt);
+    const exprt digit = mod_exprt{div_exprt{mag, place}, from_integer(10, vt)};
+    elems.push_back(
+      typecast_exprt{plus_exprt{from_integer('0', vt), digit}, u8});
+  }
+  cond_operandt op;
+  op.is_item = true;
+  op.record = array_exprt{
+    std::move(elems), array_typet{u8, from_integer(d, size_type())}};
+  op.offset = from_integer(0, size_type());
+  op.length = d;
+  item_infot synth;
+  synth.byte_size = d;
+  synth.char_count = d;
+  synth.is_numeric = false;
+  synth_items.push_back(synth);
+  op.item = &synth_items.back();
+  return op;
 }
 
 cond_operandt cobol_typecheckt::parse_cond_operand()
@@ -2881,7 +2941,13 @@ cond_operandt cobol_typecheckt::parse_cond_operand()
       // A numeric operand may begin an arithmetic expression (e.g. A + B in a
       // relation condition), so continue the expression from this value.
       op.numeric = true;
-      op.num = parse_expr_from(read_field(r));
+      const valuet base = read_field(r);
+      op.num = parse_expr_from(base);
+      // Record the item only when the operand is exactly that item (no
+      // operator extended it), so a comparison with a nonnumeric operand can
+      // use its display representation.
+      if(op.num.expr == base.expr)
+        op.num_item = r.info;
       return op;
     }
     op.is_item = true;
