@@ -83,25 +83,15 @@ robustness, then capability; difficulty is noted where high.
   empty.**
 
 **P1 — Native robustness (crash on valid code).**
-- **`re.*` + `len(str)` model-parse crash — NEW, HIGH PRIORITY (2026-06-15,
-  spike).** Any `--cvc5 --python-smt-strings` program that uses **both** a
-  regex call (`re.*` / `__cbmc_re_*`) **and** `len(<string>)` aborts — even on
-  different strings. Minimal repro: `import re; s = input(); m =
-  re.search("abc", s); assert len(s) >= 0`. Root cause (gdb): when the solver
-  returns SAT and CBMC parses the counterexample **model**,
-  `smt2_convt::parse_struct` (`smt2_conv.cpp:745`) fills a missing/zero struct
-  component with `from_integer(0, c.type())`, and for an `smt_string` component
-  that hits `from_integer`'s final `PRECONDITION(false)` (`arith_tools.cpp:192`,
-  which only handles bit-vectors and the python tagged/list/dict structs). The
-  combination materialises a struct with an `smt_string` field in the model
-  (regex makes a property SAT; `len` forces the subject's struct view).
-  **Fix:** teach `parse_struct` / `parse_rec` to handle `smt_string`
-  components — emit `constant_exprt{irep_idt{""}, smt_string_typet{}}` on the
-  fill path, and parse the SMT-LIB `String` model literal on the read path.
-  Small, localised `smt2_conv` change. Only manifests when a model is parsed
-  (SAT / counterexample), which is why the UNSAT-only regex soundness tests
-  missed it. Land with a `regression/python` test combining `re.search` + `len`
-  (expect a clean verdict, not an abort).
+- ~~**`re.*` + `len(str)` model-parse crash**~~ — **RESOLVED (2026-06-15,
+  `abbea1ae6d`).** Root cause was an **unbounded** `input()` smt_string: the
+  solver could pick a length-2^63 string, wrapping `len()` negative (signed
+  64-bit) and forcing a `(witness …)` model CVC5/the parser couldn't read.
+  Fixed by bounding `input()` to `[0, PYTHON_MAX_STRING_LENGTH]` under the
+  native backend (refined unchanged) + a defensive `parse_struct` empty-string
+  fill for `smt_string` components. `re.search(p,s); assert len(s)>=0` now
+  verifies SUCCESSFUL and `len(input())>=0` is sound. Test
+  `regex-len-native-no-crash`.
 - ~~**`smt_string` members in byte-operated structs**~~
   ([#native-byte-ops](#native-byte-ops)): the dict by-reference *mutation* crash
   is **RESOLVED** (the Any-container promote+write-back routes the dict through
