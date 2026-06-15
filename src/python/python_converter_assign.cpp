@@ -166,6 +166,39 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   if(rhs.is_nil())
     return code_skipt{};
 
+  // PLR §3.2: a parameterised annotation (x: list[T] = []) is authoritative
+  // for the empty list's element type. convert_list defaults an empty literal
+  // to an int element type, so re-type the rhs from the annotation. Without
+  // this the symbol is list[T] but the value is list[int]; a later
+  // x.append(<T value>) then emits a T->int element coercion (e.g.
+  // smt_string->signedbv) that aborts in the SMT back-end. This is the
+  // architectural fix for the empty-container element-type gap; the append-
+  // inference block below only covers the bare `list` annotation.
+  if(
+    is_node_type(value, "List") && json_member(value, "elts").is_array() &&
+    as_array(json_member(value, "elts")).empty() &&
+    is_python_list_type(rhs.type()) && is_python_list_type(var_type))
+  {
+    const typet ann_elem =
+      to_array_type(to_struct_type(var_type).components()[1].type())
+        .element_type();
+    const typet rhs_elem =
+      to_array_type(to_struct_type(rhs.type()).components()[1].type())
+        .element_type();
+    if(ann_elem.id() != ID_empty && ann_elem != rhs_elem)
+    {
+      struct_typet new_list_type = python_list_type(ann_elem);
+      const auto &new_data_type =
+        to_array_type(new_list_type.components()[1].type());
+      exprt::operandst zeros;
+      for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+        zeros.push_back(safe_zero(ann_elem));
+      array_exprt new_data{std::move(zeros), new_data_type};
+      rhs = struct_exprt{
+        {from_integer(0, signedbv_typet{64}), new_data}, new_list_type};
+    }
+  }
+
   // PLR §3.2: empty-list element-type inference. Same as in
   // convert_assign, but applies when the user wrote
   // 'name: list = []' (bare 'list' annotation, no parameter).
