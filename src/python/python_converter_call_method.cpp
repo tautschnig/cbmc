@@ -2492,6 +2492,49 @@ std::optional<exprt> python_convertert::try_method_call(
               call_args.push_back(convert_expression(a));
           }
 
+          // Fill trailing parameter defaults for a method called on an
+          // optional/union (python_value) receiver. Without this, a call that
+          // omits defaulted arguments (e.g. re.search(...).group()) emits a
+          // FUNCTION_CALL with too few arguments and the GOTO layer fills the
+          // gap with nondet, defeating the method's default. This mirrors the
+          // AST-based default binding in convert_user_call so both the
+          // concretely-typed and the optional/union receiver paths behave
+          // identically (one architectural fix for every defaulted method
+          // reached through an optional return). `mcall_args` holds
+          // [self, provided_args...]; Python defaults bind to the trailing
+          // parameters.
+          auto append_method_defaults = [&](
+                                          const std::string &owner_cls,
+                                          const code_typet &mty,
+                                          exprt::operandst &mcall_args)
+          {
+            (void)owner_cls;
+            const std::size_t nparams = mty.parameters().size();
+            // default_values is populated for every module (including the
+            // library) at definition time, keyed by {method_name, param
+            // index incl. self}. Python defaults are contiguous at the end,
+            // so stop at the first missing param (a genuinely required arg
+            // is left for the GOTO layer).
+            for(std::size_t i = mcall_args.size(); i < nparams; i++)
+            {
+              auto dit = default_values.find({method_name, i});
+              if(dit == default_values.end())
+                break;
+              exprt dv = dit->second;
+              const typet &pt = mty.parameters()[i].type();
+              // PLR §3.6: a None default for a python_string param binds
+              // as the length-0 empty-string marker, not a nondet int.
+              if(is_python_none_constant(dv) && is_python_string_type(pt))
+                dv = struct_exprt{
+                  {from_integer(0, signedbv_typet{64}),
+                   null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
+                  python_string_type()};
+              else if(dv.type() != pt)
+                dv = safe_typecast(dv, pt);
+              mcall_args.push_back(std::move(dv));
+            }
+          };
+
           // Single owner: simple dispatch (common case).
           if(method_owners.size() == 1)
           {
@@ -2520,6 +2563,7 @@ std::optional<exprt> python_convertert::try_method_call(
                 av = safe_typecast(av, mty.parameters()[pidx].type());
               mcall_args.push_back(std::move(av));
             }
+            append_method_defaults(cls_name, mty, mcall_args);
             return side_effect_expr_function_callt{
               msym->symbol_expr(),
               std::move(mcall_args),
@@ -2584,6 +2628,7 @@ std::optional<exprt> python_convertert::try_method_call(
                 av = safe_typecast(av, mty.parameters()[pidx].type());
               mcall_args.push_back(std::move(av));
             }
+            append_method_defaults(cls_name, mty, mcall_args);
 
             auto tit = class_tag_ids.find(cls_name);
             if(tit == class_tag_ids.end())

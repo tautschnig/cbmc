@@ -10,6 +10,7 @@ assert m is not None
 assert m.start() == 2
 assert m.end() == 4
 assert m.group(0) == "12"
+assert m.group() == "12"   # no-arg form (method default filled)
 
 # fullmatch: the whole string is the match.
 f = re.fullmatch("[a-z][a-z][a-z]", "abc")
