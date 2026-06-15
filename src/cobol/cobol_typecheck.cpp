@@ -4655,9 +4655,136 @@ std::vector<stmtt> cobol_typecheckt::parse_inspect()
         break;
     }
   }
-  if(eat_word("REPLACING") || eat_word("CONVERTING"))
+  if(eat_word("REPLACING"))
   {
-    // The inspected item is rewritten; its new content is not modelled.
+    // INSPECT ... REPLACING {ALL|LEADING|FIRST} x BY y | CHARACTERS BY y
+    // (IBM LR "INSPECT statement", REPLACING phrase). We model exactly a
+    // single clause replacing a one-character value (a literal or a
+    // single-character figurative) with another, with no BEFORE/AFTER
+    // delimiter and an alphanumeric inspected item; anything else havocs the
+    // item (sound).
+    const typet vt = cobol_value_type();
+    const auto single_char = [&]() -> std::optional<int>
+    {
+      if(cur().kind == cobol_token_kindt::STRING && cur().text.size() == 1)
+      {
+        const int c = static_cast<unsigned char>(cur().text[0]);
+        advance();
+        return c;
+      }
+      if(cur().kind == cobol_token_kindt::WORD)
+      {
+        const std::string &w = cur().text;
+        int c = -1;
+        if(w == "SPACE" || w == "SPACES")
+          c = ' ';
+        else if(w == "ZERO" || w == "ZEROS" || w == "ZEROES")
+          c = '0';
+        else if(w == "QUOTE" || w == "QUOTES")
+          c = '"';
+        else if(w == "LOW-VALUE" || w == "LOW-VALUES")
+          c = 0;
+        else if(w == "HIGH-VALUE" || w == "HIGH-VALUES")
+          c = 0xff;
+        if(c >= 0)
+        {
+          advance();
+          return c;
+        }
+      }
+      return std::nullopt;
+    };
+
+    enum
+    {
+      M_ALL,
+      M_LEADING,
+      M_FIRST,
+      M_CHARS
+    } mode;
+    bool ok = !item.info->is_numeric;
+    std::optional<int> xc, yc;
+    if(eat_word("CHARACTERS"))
+    {
+      mode = M_CHARS;
+      ok = ok && eat_word("BY");
+      yc = single_char();
+    }
+    else
+    {
+      if(eat_word("ALL"))
+        mode = M_ALL;
+      else if(eat_word("LEADING"))
+        mode = M_LEADING;
+      else if(eat_word("FIRST"))
+        mode = M_FIRST;
+      else
+      {
+        mode = M_ALL;
+        ok = false;
+      }
+      xc = single_char();
+      ok = ok && eat_word("BY");
+      yc = single_char();
+    }
+    // Exact only for a single clause with no BEFORE/AFTER (the statement must
+    // end here).
+    ok = ok && yc.has_value() && (mode == M_CHARS || xc.has_value()) &&
+         is_kind(cobol_token_kindt::PERIOD);
+
+    if(ok)
+    {
+      const std::size_t n = item.info->byte_size;
+      const unsignedbv_typet u8{8};
+      const exprt yexpr = from_integer(*yc, vt);
+      array_exprt::operandst elems;
+      elems.reserve(n);
+      exprt active = true_exprt{}; // LEADING: still in the leading run
+      exprt done = false_exprt{};  // FIRST: a replacement already made
+      for(std::size_t i = 0; i < n; ++i)
+      {
+        const exprt cur_b = byte_of(item, i);
+        exprt outb;
+        if(mode == M_CHARS)
+          outb = yexpr;
+        else
+        {
+          const exprt matched = equal_exprt{cur_b, from_integer(*xc, vt)};
+          if(mode == M_ALL)
+            outb = if_exprt{matched, yexpr, cur_b};
+          else if(mode == M_LEADING)
+          {
+            outb = if_exprt{and_exprt{active, matched}, yexpr, cur_b};
+            active = and_exprt{active, matched};
+          }
+          else // M_FIRST
+          {
+            outb = if_exprt{and_exprt{not_exprt{done}, matched}, yexpr, cur_b};
+            done = or_exprt{done, matched};
+          }
+        }
+        elems.push_back(typecast_exprt{outb, u8});
+      }
+      stmtt s;
+      s.kind = stmtt::kindt::ASSIGN;
+      s.location = loc;
+      s.lhs = item.record;
+      s.rhs = make_byte_update(
+        item.record,
+        item.offset,
+        array_exprt{
+          std::move(elems), array_typet{u8, from_integer(n, size_type())}});
+      result.push_back(std::move(s));
+    }
+    else
+    {
+      skip_to_sentence_end();
+      result.push_back(havoc_field(item, loc));
+    }
+  }
+  else if(eat_word("CONVERTING"))
+  {
+    // CONVERTING uses a translate table; its new content is not modelled.
     skip_to_sentence_end();
     result.push_back(havoc_field(item, loc));
   }
