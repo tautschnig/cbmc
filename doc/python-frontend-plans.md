@@ -150,19 +150,28 @@ robustness, then capability; difficulty is noted where high.
     `str.split` constant + sound-symbolic LANDED 2026-06-15, `2b405dfef1`).**
     `str.split` now folds precisely for constant subjects under the native
     backend (it was gated out of `native_supported`) and returns a sound
-    length-bounded nondet list for symbolic subjects. Precise *symbolic* split,
-    and `re.split`/`re.findall`, use the shared **bounded list-return**
-    mechanism: a loop `i in [0, N)` that uses
-    `str.indexof(subject, sep, pos)` to find the next separator/match position
-    and `str.substr` to extract each segment, accumulating a `list[smt_string]`
-    of up to `N` elements (`N` = unwind bound; sound bounded semantics, exact
-    for constant subjects). Building blocks confirmed in CVC5 (`indexof`,
-    `substr`). **Phase 1:** literal / fixed string separator
-    (`"x".split(",")`, `re.split("," , s)`) — `str.indexof` takes a string
-    needle directly. **Phase 2:** variable-length **regex** separator — needs a
-    per-position `str.in_re` scan (perf-heavier); gate behind a fixed-length
-    separator check first. `findall` is the dual (collect matched segments
-    rather than the gaps).
+    length-bounded nondet list for symbolic subjects.
+
+    **Sound floor for `re.findall` / `re.finditer` / `re.split` — LANDED
+    (2026-06-15, `72ef692453`).** These previously returned `[]`
+    unconditionally, which was *unsound* (iterating the result silently checked
+    nothing → missed bugs), not merely imprecise. They now return a sound
+    bounded nondet list (`nondet_list`; strings for findall/split, `Match`
+    objects for finditer), closing the missed-bug class on both backends.
+    Length is bounded (8) — a BMC limit like loop unwinding.
+
+    **Precise enumeration is BLOCKED on match-position extraction.** The clean
+    `bounded list-return` mechanism — a loop `i in [0, N)` using
+    `str.indexof(subject, sep, pos)` for the next separator/match position and
+    `str.substr` to extract each segment, accumulating a `list[smt_string]` of
+    up to `N` elements (`N` = unwind bound; exact for constant subjects) — needs
+    the match **start/end positions**, which the current `__cbmc_re_*`
+    intrinsics do not return (bool-only). `str.split` with a *literal* separator
+    can use `str.indexof` directly (no regex positions) and is the tractable
+    **Phase 1**; `re.findall`/`re.split` Phase 2 requires either adding a
+    position-returning regex intrinsic or restricting to fixed-length patterns
+    (lowered to `str.indexof` of the literal). `findall` is the dual of split
+    (collect matched segments rather than the gaps).
   - **Group extraction — `m.group(n)` (PLANNED, soundness-gated).** Model a
     match's groups by **`str.++` decomposition**: introduce a fresh
     `smt_string` per group `gi`, assert `subject ∈ lit0 ++ g1 ++ lit1 ++ … ++
