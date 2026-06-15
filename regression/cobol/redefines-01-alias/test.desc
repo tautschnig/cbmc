@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+A 01-level REDEFINES shares the redefined record's storage, so a write
+through one is visible through the other. See IBM LR "REDEFINES clause".

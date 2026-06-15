@@ -1,8 +1,0 @@
-KNOWNBUG
-main.cob
-
-^VERIFICATION SUCCESSFUL$
---
-Soundness S3: a 01-level REDEFINES is modelled as a separate record
-symbol, so the redefining item does not alias the redefined storage.
-IBM LR "REDEFINES clause". See cobol-numeric-encoding-design.md.

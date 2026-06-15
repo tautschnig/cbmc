@@ -1640,23 +1640,46 @@ void cobol_typecheckt::parse_data_division()
         static_cast<std::size_t>(std::stoul(cur().text));
       if(level == 1 || level == 77)
       {
-        // A new record begins; close the previous one and open this.
-        finalize_record();
-        const std::string rname =
-          peek(1).kind == cobol_token_kindt::WORD ? peek(1).text : "FILLER";
-        cur_record_base = rname;
-        cur_record = "cobol::" + program_id + "::" + rname;
-        // Associate the FD's file-name with this record (its 01 record area).
-        if(!pending_file.empty())
+        // A 01/77-level REDEFINES of the record just built shares that
+        // record's storage (IBM LR "REDEFINES clause"): keep the same record
+        // byte-array symbol and place the redefining entry as a redefinition
+        // at offset 0, instead of starting a new (independent) record. The
+        // REDEFINES clause must immediately follow the data-name, so the
+        // tokens are <level> <name> REDEFINES <current-record-name>.
+        const bool redefines_current =
+          !cur_record.empty() && peek(2).kind == cobol_token_kindt::WORD &&
+          peek(2).text == "REDEFINES" &&
+          peek(3).kind == cobol_token_kindt::WORD &&
+          peek(3).text == cur_record_base;
+        if(redefines_current)
         {
-          file_records[pending_file] = rname;
-          pending_file.clear();
+          // Flush the current record's open group frames (finalising their
+          // sizes and record_max) but keep cur_record / record_max /
+          // record_inits / pending_num_values, so the redefining entry aliases
+          // the same storage. parse_data_item places it via its REDEFINES
+          // target, which resolves to offset 0.
+          close_groups_below(1);
         }
-        layout_stack.clear();
-        record_max = 0;
-        record_inits.clear();
-        record_has_value = false;
-        pending_num_values.clear();
+        else
+        {
+          // A new record begins; close the previous one and open this.
+          finalize_record();
+          const std::string rname =
+            peek(1).kind == cobol_token_kindt::WORD ? peek(1).text : "FILLER";
+          cur_record_base = rname;
+          cur_record = "cobol::" + program_id + "::" + rname;
+          // Associate the FD's file-name with this record (its 01 record area).
+          if(!pending_file.empty())
+          {
+            file_records[pending_file] = rname;
+            pending_file.clear();
+          }
+          layout_stack.clear();
+          record_max = 0;
+          record_inits.clear();
+          record_has_value = false;
+          pending_num_values.clear();
+        }
       }
       parse_data_item();
     }
