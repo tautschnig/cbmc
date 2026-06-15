@@ -1,0 +1,12 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-MULT-GIVING.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-X       PIC 9(4)V99.
+       01  WS-RESULT  PIC Z,ZZ9.99.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           MULTIPLY 12.5 BY 4 GIVING WS-X.
+           MOVE WS-X TO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.

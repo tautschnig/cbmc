@@ -1,0 +1,12 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-ADD-CHAIN.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-X       PIC 9(5)V99.
+       01  WS-RESULT  PIC ZZ,ZZ9.99.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           ADD 10.10 20.20 30.30 GIVING WS-X.
+           MOVE WS-X TO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.
