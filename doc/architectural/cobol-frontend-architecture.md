@@ -220,8 +220,8 @@ false assertion pass, but may prevent proving a true one). "KB" names the
 
 | id | imprecision | LR clause | KB | plan |
 |---|---|---|---|---|
-| I2 | numeric ↔ nonnumeric comparison is nondet (should compare by display representation) | "Comparison of numeric and nonnumeric operands" | num-alnum-cmp | numeric-encoding |
-| I3 | MOVE alphanumeric → numeric (de-editing) is nondet | "MOVE statement" | move-alnum-num | numeric-encoding |
+| I2 | **PARTIAL** — a bare unsigned integer DISPLAY operand is now compared by its zoned display representation (CORE `num-alnum-compare`); signed/scaled/COMP/expression operands still nondet | "Comparison of numeric and nonnumeric operands" | — | character-semantics §3.6 |
+| I3 | **RESOLVED** — MOVE alphanumeric → numeric now de-edits the digit characters (CORE `move-alnum-to-num`) | "MOVE statement" | — | — |
 | I4 | MOVE to an edited PICTURE does not apply editing | "MOVE statement"; "PICTURE clause" editing | move-edited | numeric-encoding |
 | I5 | class condition on a **numeric** operand is nondet (alphanumeric is exact) | "Class condition" | class-numeric | numeric-encoding |
 | I6 | **RESOLVED** — group MOVE now space-pads a longer receiver on the right | "MOVE statement" (group) | CORE `group-move-pad` | — |

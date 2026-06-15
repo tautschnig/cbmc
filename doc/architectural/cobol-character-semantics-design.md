@@ -146,9 +146,12 @@ CardDemo 44/44 at --unwind 3, promote the relevant KNOWNBUG test)
 4. **DONE** — **String intrinsics on items**
    (`UPPER-CASE`/`LOWER-CASE`/`REVERSE`; CORE `string-intrinsics-item`),
    via the "character value as an array expression" representation.
-5. **Classifier extension** for numeric operands of character verbs /
-   cross-category comparison, enabling **I2/I3** (KNOWNBUG
-   `num-alnum-cmp`, `move-alnum-num`).
+5. **PARTIAL** — **numeric↔alphanumeric**: MOVE alphanumeric→numeric
+   de-editing (I3, CORE `move-alnum-to-num`) and the comparison of a bare
+   unsigned integer DISPLAY operand with an alphanumeric one (I2, CORE
+   `num-alnum-compare`) are done, via `byte_of` / a constructed zoned
+   byte array (no classifier extension was needed). Remaining: signed /
+   scaled / COMP numeric operands.
 6. **Reference modification non-constant length** (I8).
    Also remaining within the done items: STRING/UNSTRING with a
    delimiter, INSPECT REPLACING/CONVERTING and BEFORE/AFTER.
