@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+A group MOVE space-pads a longer receiver on the right. See IBM LR
+"MOVE statement".

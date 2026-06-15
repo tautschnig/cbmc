@@ -3495,17 +3495,32 @@ stmtt cobol_typecheckt::make_move_group(
   source_locationt loc)
 {
   // Group / alphanumeric MOVE is a byte copy (IBM LR "MOVE statement": a group
-  // move is an unconverted copy). Copy min(sizes) bytes; padding of a longer
-  // receiver is a documented limitation.
-  const std::size_t n = std::min(target.info->byte_size, src.info->byte_size);
-  const array_typet bytes_type{
-    unsignedbv_typet{8}, from_integer(n, size_type())};
-  const exprt src_bytes = make_byte_extract(src.record, src.offset, bytes_type);
+  // move is an unconverted copy). The receiver is left-justified and, when it
+  // is longer than the source, space-filled on the right (0x20 on the ASCII
+  // host); a shorter receiver truncates on the right.
+  const std::size_t tsize = target.info->byte_size;
+  const std::size_t ssize = src.info->byte_size;
+  const std::size_t n = std::min(tsize, ssize);
+  const unsignedbv_typet u8{8};
+  const array_typet copy_type{u8, from_integer(n, size_type())};
+  const exprt src_bytes = make_byte_extract(src.record, src.offset, copy_type);
+  exprt rhs = make_byte_update(target.record, target.offset, src_bytes);
+  if(tsize > n)
+  {
+    array_exprt::operandst pad;
+    pad.reserve(tsize - n);
+    for(std::size_t i = n; i < tsize; ++i)
+      pad.push_back(from_integer(' ', u8));
+    const array_typet pad_type{u8, from_integer(tsize - n, size_type())};
+    const exprt pad_off =
+      plus_exprt{target.offset, from_integer(n, target.offset.type())};
+    rhs = make_byte_update(rhs, pad_off, array_exprt{std::move(pad), pad_type});
+  }
   stmtt s;
   s.kind = stmtt::kindt::ASSIGN;
   s.location = loc;
   s.lhs = target.record;
-  s.rhs = make_byte_update(target.record, target.offset, src_bytes);
+  s.rhs = rhs;
   return s;
 }
 
