@@ -119,9 +119,9 @@ robustness, then capability; difficulty is noted where high.
     with a `len()` query inherits the CVC5 str perf cost (constant /
     assume-pinned subjects are fine; native corpus 0 crashes).
   - still nondet (sound) under native — **fix shapes (2026-06-15 desk plan):**
-    - `title` — per-char like `upper`/`lower` but with a word-boundary state
-      (capitalise after a non-alphanumeric, lower otherwise); a small extension
-      of the existing case-map loop.
+    - `title` / `capitalize` — **LANDED (2026-06-15, `9b5d3cc174`)** as
+      position/word-boundary case maps (title upper-cases the first letter of
+      each word, i.e. an index whose predecessor is not an ASCII letter).
     - `strip(chars)` — explicit fill-set: strip leading/trailing chars that are
       members of the constant `chars` set; bounded leading/trailing scan with
       `str.substr` (the no-arg whitespace `strip` already has a native axiom).
