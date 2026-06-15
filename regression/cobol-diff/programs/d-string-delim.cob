@@ -1,0 +1,13 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. D-STRING-DELIM.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-NAME    PIC X(8) VALUE 'JOHN    '.
+       01  WS-RESULT  PIC X(10) VALUE SPACES.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           STRING WS-NAME DELIMITED BY ' '
+                  '-X' DELIMITED BY SIZE
+                  INTO WS-RESULT.
+           DISPLAY "[" WS-RESULT "]".
+           STOP RUN.

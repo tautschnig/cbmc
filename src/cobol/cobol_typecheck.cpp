@@ -4216,31 +4216,46 @@ std::vector<stmtt> cobol_typecheckt::parse_string()
   //   receiver, unrolling over the (compile-time) sender and receiver sizes
   //   with a runtime pointer; any other form (a delimiter, a numeric operand)
   //   falls back to havocking the receiver with a nondeterministic overflow.
+  //   DELIMITED BY a single delimiter (literal or alphanumeric item) is
+  //   modelled by transferring each sender up to its first delimiter
+  //   occurrence; ALL and OR (multiple delimiters) fall back.
   const source_locationt loc = cur().location;
   expect_word("STRING");
 
   bool exact = true;
-  std::vector<std::vector<exprt>> senders; // each sender's bytes (value domain)
-  while(!at_eof() && !is_word("INTO") && !is_kind(cobol_token_kindt::PERIOD))
+  // Each sending operand's bytes, plus the bytes of its DELIMITED BY
+  // delimiter (empty = DELIMITED BY SIZE, i.e. the whole operand).
+  struct sendert
   {
     std::vector<exprt> bytes;
+    std::vector<exprt> delim;
+  };
+  std::vector<sendert> senders;
+  const auto operand_bytes = [&](std::vector<exprt> &out)
+  {
     if(cur().kind == cobol_token_kindt::STRING)
     {
       for(char ch : cur().text)
-        bytes.push_back(
+        out.push_back(
           from_integer(static_cast<unsigned char>(ch), cobol_value_type()));
       advance();
+      return true;
     }
-    else if(is_item_word())
+    if(is_item_word())
     {
       const reft r = parse_ref();
       if(r.info->is_numeric)
-        exact = false; // a numeric sender needs its display bytes (deferred)
-      else
-        for(std::size_t k = 0; k < r.info->byte_size; ++k)
-          bytes.push_back(byte_of(r, k));
+        return false; // a numeric operand needs its display bytes (deferred)
+      for(std::size_t k = 0; k < r.info->byte_size; ++k)
+        out.push_back(byte_of(r, k));
+      return true;
     }
-    else
+    return false;
+  };
+  while(!at_eof() && !is_word("INTO") && !is_kind(cobol_token_kindt::PERIOD))
+  {
+    sendert s;
+    if(!operand_bytes(s.bytes))
     {
       exact = false;
       advance();
@@ -4251,15 +4266,18 @@ std::vector<stmtt> cobol_typecheckt::parse_string()
       eat_word("BY");
       if(!eat_word("SIZE"))
       {
-        // DELIMITED BY a delimiter is not modelled exactly yet.
-        exact = false;
-        if(cur().kind == cobol_token_kindt::STRING)
-          advance();
-        else if(is_item_word())
-          (void)parse_ref();
+        // DELIMITED BY a delimiter (IBM LR "STRING statement"): each sender is
+        // transferred up to, but not including, the first delimiter. ALL and
+        // OR (multiple delimiters) are not modelled exactly.
+        if(eat_word("ALL"))
+          exact = false;
+        if(!operand_bytes(s.delim))
+          exact = false;
+        if(is_word("OR"))
+          exact = false;
       }
     }
-    senders.push_back(std::move(bytes));
+    senders.push_back(std::move(s));
   }
   expect_word("INTO");
   const reft recv = parse_ref();
@@ -4321,40 +4339,63 @@ std::vector<stmtt> cobol_typecheckt::parse_string()
 
   const exprt nexpr = from_integer(n, vt);
   const exprt one = from_integer(1, vt);
-  for(const std::vector<exprt> &bytes : senders)
-    for(const exprt &b : bytes)
+  const exprt zero = from_integer(0, vt);
+  for(const sendert &snd : senders)
+  {
+    const std::size_t cap = snd.bytes.size();
+    const std::size_t dlen = snd.delim.size();
+    // cut = index of the first delimiter occurrence in the sender, else its
+    // full length (IBM LR "STRING statement": transfer up to the delimiter).
+    // For DELIMITED BY SIZE (no delimiter) the whole sender is transferred.
+    exprt cut = from_integer(cap, vt);
+    if(dlen > 0 && dlen <= cap)
+      for(std::size_t k = cap - dlen + 1; k-- > 0;)
+      {
+        exprt match = true_exprt{};
+        for(std::size_t j = 0; j < dlen; ++j)
+          match = and_exprt{match, equal_exprt{snd.bytes[k + j], snd.delim[j]}};
+        cut = if_exprt{match, from_integer(k, vt), cut};
+      }
+    for(std::size_t k = 0; k < cap; ++k)
     {
-      // Can the next character be placed? pc in 1..n means offset pc-1 < n.
+      // The k-th character is part of the transferred field only if it is
+      // before the delimiter cut.
+      const exprt within = dlen == 0 ? static_cast<exprt>(true_exprt{})
+                                     : static_cast<exprt>(binary_relation_exprt{
+                                         from_integer(k, vt), ID_lt, cut});
+      // ... and can be placed only if the pointer is within the receiver
+      // (pc in 1..n means offset pc-1 < n).
       const exprt can = binary_relation_exprt{pc, ID_le, nexpr};
+      const exprt do_write = and_exprt{within, can};
       // Safe receiver offset (0 when not writing, so the unselected
       // byte_update is always in bounds).
-      const exprt idx =
-        if_exprt{can, minus_exprt{pc, one}, from_integer(0, vt)};
+      const exprt idx = if_exprt{do_write, minus_exprt{pc, one}, zero};
       const exprt off =
         plus_exprt{recv.offset, typecast_exprt{idx, size_type()}};
       const exprt updated = make_byte_update(
-        recv.record, off, typecast_exprt{b, unsignedbv_typet{8}});
+        recv.record, off, typecast_exprt{snd.bytes[k], unsignedbv_typet{8}});
       stmtt sw;
       sw.kind = stmtt::kindt::ASSIGN;
       sw.location = loc;
       sw.lhs = recv.record;
-      sw.rhs = if_exprt{can, updated, recv.record};
+      sw.rhs = if_exprt{do_write, updated, recv.record};
       result.push_back(std::move(sw));
-      // Overflow once a character cannot be placed.
+      // Overflow once a character that should be placed cannot be.
       stmtt so;
       so.kind = stmtt::kindt::ASSIGN;
       so.location = loc;
       so.lhs = ovf;
-      so.rhs = if_exprt{can, ovf, one};
+      so.rhs = if_exprt{and_exprt{within, not_exprt{can}}, one, ovf};
       result.push_back(std::move(so));
       // Advance the pointer past the placed character.
       stmtt sp;
       sp.kind = stmtt::kindt::ASSIGN;
       sp.location = loc;
       sp.lhs = pc;
-      sp.rhs = if_exprt{can, plus_exprt{pc, one}, pc};
+      sp.rhs = if_exprt{do_write, plus_exprt{pc, one}, pc};
       result.push_back(std::move(sp));
     }
+  }
 
   if(ptr_ref.has_value())
     result.push_back(make_assign_ref(*ptr_ref, valuet{pc, 0}, loc));

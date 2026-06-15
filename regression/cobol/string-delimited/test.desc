@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+STRING DELIMITED BY a delimiter transfers each sender up to the
+delimiter. See IBM LR "STRING statement".
