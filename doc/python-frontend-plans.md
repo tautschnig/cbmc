@@ -992,6 +992,23 @@ alarms). Verified against the 2026-06-08 sweep baseline.
   through an optional return. It made `re.search(...).group()` (no-arg) as
   precise as `group(0)`. Sound: required (default-less) args still left to the
   GOTO layer; provided args override defaults.
+- **Empty-container element type defaults to `int`, ignoring annotations
+  {#empty-container-elem-type} (PLANNED; robustness — can CRASH).** An empty
+  list literal `result = []` is given a `python_int` element type, and a
+  `result: list[str] = []` annotation does **not** override it. Appending a
+  non-int (e.g. a string) then emits an element-type coercion; under
+  `--python-smt-strings` a string element produces an `smt_string -> signedbv`
+  typecast that hits `PRECONDITION(false)` in `smt2_convt::convert_typecast`
+  (smt2_conv.cpp ~3858) — i.e. a hard abort on otherwise-valid code such as
+  `parts = []; for x in xs: parts.append(s[i:j])`. Two fronts: (a) front-end —
+  honour the `list[str]` annotation / infer the element type from the appends
+  for an empty literal; (b) back-end (defensive) — `convert_typecast` should
+  emit the pre-registered nondet fallback for an unconvertible
+  `smt_string`↔bitvector cast (as it already does for `use_datatypes`
+  struct→struct casts) instead of `PRECONDITION(false)`. This is the blocker
+  for precise `re.findall`/`re.split`
+  ([regex-position-plan](python-frontend-regex-position-plan.md) Phase 2) and
+  for any list-of-strings built by appending in a loop.
 - **String operations:** the `string-concat` loop cluster
   (`string-concat4/5/6/13`) and `string.digits` / `string.ascii_uppercase`
   population are **all PASS now** — closed. No open items in this group.
