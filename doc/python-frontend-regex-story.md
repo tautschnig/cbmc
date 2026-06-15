@@ -154,16 +154,19 @@ are precision features, not soundness gaps.
   replacement fall back to a sound nondet string.
 - **Symbolic patterns.** `re.match(some_var, s)` is always nondet
   (we don't have an SMT regex of the symbolic pattern).
-- **Compilation flags.** *Sound but imprecise (2026-06-14).* The module-level
-  `re.search`/`match`/`fullmatch(pattern, string, flags)` now fall back to a
-  nondet `Match`-or-`None` whenever `flags != 0` (previously the flag was
-  dropped and the flag-free, e.g. case-sensitive, decision was used — an
-  unsound false proof). The flag semantics themselves (IGNORECASE/MULTILINE/
-  DOTALL) are still not modelled, and flags on **compiled** patterns
-  (`re.compile(p, flags)`) are not yet handled: a compiled Pattern's `self.flags`
-  int field reads as nondet (unlike its string `pattern` field), so threading it
-  is blocked on that default-propagation gap. Precise IGNORECASE/DOTALL is a
-  follow-up.
+- **Compilation flags.** *Inline flags precise; `flags=` argument sound but
+  imprecise (2026-06-15).* Following review, flag handling is kept out of the
+  SMT back-end: the translator understands the **regex inline-flag syntax**
+  `(?i)` / `(?s)` (language-neutral), so `re.search("(?i)abc", s)`,
+  `re.compile("(?i)abc")` and DOTALL via `(?s)` are precise (IGNORECASE = ASCII
+  case folding; an unmodelled inline flag a/L/m/u/x bails to nondet). The
+  `flags=` *argument* of the module-level functions still routes through a
+  sound nondet floor (was previously dropped — an unsound flag-free decision).
+  Folding the `flags=` argument into an inline group precisely is a front-end
+  follow-up, blocked by constant-propagation of the stub's `flags` parameter
+  (the building blocks fold for literals but not through the stub indirection),
+  not by the back-end. The clean design is: front-end maps the Python flag bits
+  to an inline-flag prefix, back-end only ever sees regex.
 
 ## Test coverage
 

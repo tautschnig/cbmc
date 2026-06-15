@@ -131,19 +131,26 @@ robustness, then capability; difficulty is noted where high.
   bail is the remaining caveat); group extraction (no SMT capture-group support —
   needs a bespoke bounded encoding); `re.split`/`findall` (list-valued);
   precise compilation flags.
-- **Compilation flags — sound floor LANDED (2026-06-14); precision TODO.**
-  Module-level `re.search`/`match`/`fullmatch` now bail to nondet when
-  `flags != 0` (was unsound: the flag was dropped and the flag-free decision
-  used — e.g. `re.search("abc","ABC",re.IGNORECASE)` proved no-match). Remaining:
-  precise IGNORECASE (ASCII case-fold the pattern) / DOTALL (`.`→allchar) via a
-  translator flags mode, and flags on **compiled** patterns. The compiled case
-  is blocked on a propagation gap — a `re.compile(p, flags)` Pattern's `self.flags`
-  int field reads as nondet (its string `pattern` field propagates fine), so
-  threading `self.flags` either drops it (unsound) or makes every compiled match
-  nondet (regresses no-flag precision). A full precise-flags attempt (translator
-  flags param + intrinsic flags operand + module-constant folding) was
-  prototyped and reverted pending that fix and an intrinsic-arity-consistency
-  cleanup.
+- **Compilation flags — inline-flag precision LANDED (2026-06-15);
+  `flags=` argument precision TODO.** Architecture (per review): flag handling
+  stays out of the SMT back-end — the back-end understands the *regex*
+  inline-flag syntax `(?i)`/`(?s)` (language-neutral), not a CPython flags
+  bitmask. The translator parses a leading inline-flag group and applies
+  IGNORECASE (ASCII case folding) / DOTALL (`.`→allchar), bailing to nondet on
+  a/L/m/u/x; `extract_literal` folds `str.++` of constants so concatenation-
+  built patterns are still recovered; imported-module constant attributes fold
+  (re.IGNORECASE → 2). So `re.search("(?i)abc", s)` / `re.compile("(?i)abc")`
+  and `(?s)` are precise. The `flags=` *argument* still routes through the
+  stub's sound nondet floor (was unsound before — the flag was dropped). The
+  clean precise design is: front-end folds the Python flag bits into an
+  inline-flag prefix on the pattern. It is blocked by front-end constant-
+  propagation: the prefix-building folds for literals but not through the stub's
+  `flags` parameter (a param `flags & bit` conditional becomes a symex branch
+  whose string merge is not a constant, so `extract_literal` can't recover it),
+  and the C++ front-end only sees a conversion-time constant at the direct call
+  site, not through the stub. Closing it needs either call-site folding of
+  `re.<method>(p, s, re.X)` (where `re.X` already folds) or a constant-fold of
+  the stub's prefix construction.
 - **`re.sub`/`subn` — LANDED (2026-06-14).** Precise via `str.replace_re_all`
   on the sound subset only: CVC5's `str.replace_re_all` is leftmost-*shortest*
   whereas CPython `re.sub` is greedy (leftmost-longest), so they coincide iff
