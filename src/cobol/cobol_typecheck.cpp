@@ -1382,6 +1382,10 @@ exprt cobol_typecheckt::build_relation(
   const std::string &op,
   valuet b)
 {
+  // Numeric comparison (IBM LR "Relation condition" / "Comparison of numeric
+  // operands", pp. 268-): the operands are compared by algebraic value
+  // regardless of their pictures or usages, so align the scales and emit the
+  // bitvector relation.
   align(a, b);
   if(op == "=")
     return equal_exprt{a.expr, b.expr};
@@ -1679,6 +1683,9 @@ std::string cobol_typecheckt::read_picture_string()
 
 value_spect cobol_typecheckt::read_value_spec()
 {
+  // A VALUE / 88-level literal: a numeric or alphanumeric literal (optionally
+  // ALL), or a figurative constant (IBM LR "VALUE clause" and "Figurative
+  // constants", pp. 23-26: ZERO/SPACE/HIGH-VALUE/LOW-VALUE/QUOTE/NULL).
   value_spect spec;
   spec.all = eat_word("ALL");
 
@@ -1758,6 +1765,10 @@ exprt cobol_typecheckt::make_alnum_constant(
   const value_spect &spec,
   std::size_t n)
 {
+  // Build the n-byte alphanumeric constant for a literal or figurative
+  // constant (IBM LR "Figurative constants" / "VALUE clause"): SPACE=0x20,
+  // ZERO='0', QUOTE='"', HIGH-VALUE=0xFF, LOW-VALUE=0x00 (ASCII host); a
+  // shorter literal is left-justified and space-padded on the right.
   const unsignedbv_typet byte_type{8};
   const array_typet array_type{byte_type, from_integer(n, size_type())};
 
@@ -3463,7 +3474,10 @@ stmtt cobol_typecheckt::make_assign_ref(
   source_locationt loc,
   bool rounded)
 {
-  // record := byte_update(record, offset, encode(value))
+  // Store a numeric value into a field: record := byte_update(record, offset,
+  // encode(value)). encode_numeric applies the receiver's PICTURE on store
+  // (scale alignment and truncation mod 10^digits, the IBM LR "MOVE
+  // statement" / arithmetic store semantics; optional ROUNDED).
   stmtt s;
   s.kind = stmtt::kindt::ASSIGN;
   s.location = loc;
