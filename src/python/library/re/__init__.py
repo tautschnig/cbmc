@@ -66,9 +66,24 @@ class Match:
         self.lastindex = 0
         self.lastgroup = ""
         self.string = ""
+        # Match span + matched text carried from the position intrinsics (set
+        # by search()/fullmatch()). The group-0 text is sliced from the LOCAL
+        # subject at construction time and stored here, because slicing a
+        # string held in an instance attribute is imprecise (see the
+        # instance-__dict__ substrate gap); reading a stored string back is
+        # precise. Defaults give the previous flat behaviour.
+        self._start = 0
+        self._end = 0
+        self._group0 = ""
 
-    def group(self, *args) -> str:
-        return ""
+    def group(self, n: int = 0) -> str:
+        # group(0) / no-arg: the whole match. Precise when the position
+        # intrinsics resolved (fixed-length pattern, constant subject); a
+        # nondet span yields a sound nondet string. Sub-groups (n>=1) are not
+        # modelled -> a sound nondet string (never a concrete wrong value).
+        if n == 0:
+            return self._group0
+        return nondet_str()
 
     def groups(self, default=None):
         return ()
@@ -77,13 +92,13 @@ class Match:
         return {}
 
     def start(self, group: int = 0) -> int:
-        return 0
+        return self._start
 
     def end(self, group: int = 0) -> int:
-        return 0
+        return self._end
 
     def span(self, group: int = 0):
-        return (0, 0)
+        return (self._start, self._end)
 
     def expand(self, template: str) -> str:
         return ""
@@ -113,12 +128,24 @@ class Pattern:
 
     def fullmatch(self, string: str, pos: int = 0, endpos: int = 0) -> "Match | None":
         if __cbmc_re_fullmatch(self.pattern, string):
-            return Match()
+            m = Match()
+            m.string = string
+            m._start = 0
+            m._end = len(string)
+            m._group0 = string
+            return m
         return None
 
     def search(self, string: str, pos: int = 0, endpos: int = 0) -> "Match | None":
         if __cbmc_re_search(self.pattern, string):
-            return Match()
+            m = Match()
+            m.string = string
+            st = __cbmc_re_search_start(self.pattern, string, 0)
+            en = __cbmc_re_search_end(self.pattern, string, 0)
+            m._start = st
+            m._end = en
+            m._group0 = string[st:en]
+            return m
         return None
 
     def findall(self, string, pos: int = 0, endpos: int = 0):
@@ -172,7 +199,12 @@ def fullmatch(pattern: str, string: str, flags: int = 0) -> "Match | None":
     if flags != 0:
         return Match() if nondet_bool() else None
     if __cbmc_re_fullmatch(pattern, string):
-        return Match()
+        m = Match()
+        m.string = string
+        m._start = 0
+        m._end = len(string)
+        m._group0 = string
+        return m
     return None
 
 
@@ -180,7 +212,14 @@ def search(pattern: str, string: str, flags: int = 0) -> "Match | None":
     if flags != 0:
         return Match() if nondet_bool() else None
     if __cbmc_re_search(pattern, string):
-        return Match()
+        m = Match()
+        m.string = string
+        st = __cbmc_re_search_start(pattern, string, 0)
+        en = __cbmc_re_search_end(pattern, string, 0)
+        m._start = st
+        m._end = en
+        m._group0 = string[st:en]
+        return m
     return None
 
 

@@ -86,6 +86,49 @@ std::optional<exprt> python_convertert::try_nondet_call(
     // Fallback: nondet bool.
     return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
   }
+  else if(
+    func_name == "__cbmc_re_search_start" ||
+    func_name == "__cbmc_re_search_end")
+  {
+    // ``__cbmc_re_search_{start,end}(pattern, subject, from)`` -> int. The
+    // leftmost match offset of `pattern` in `subject` at or after `from`
+    // (start, resp. end = start + L), or -1 when there is no such match. The
+    // SMT backend lowers it to a bounded leftmost-start scan, but ONLY for a
+    // fixed-length translatable pattern on a constant subject (see
+    // doc/python-frontend-regex-position-plan.md): otherwise it degrades to a
+    // sound nondet int (the front-end here always emits the intrinsic; the
+    // gating lives in smt2_conv, which falls back to the fresh nondet declared
+    // in find_symbols). Match-or-None is decided separately by the bool
+    // __cbmc_re_search, so an out-of-subset pattern keeps its precise
+    // match decision and only loses position precision.
+    //
+    // The intrinsic is lowered only by the SMT-String backend (smt2_conv).
+    // The refined-string solver has no axioms for it, so emitting the
+    // function application there aborts in add_axioms_for_function_application.
+    // On any non-native backend, return a sound nondet int directly.
+    if(use_smt_string_native && args.is_array() && as_array(args).size() == 3)
+    {
+      auto it = as_array(args).begin();
+      exprt pattern = convert_expression(*it++);
+      exprt subject = convert_expression(*it++);
+      exprt from = convert_expression(*it);
+      if(
+        is_python_string_type(pattern.type()) &&
+        is_python_string_type(subject.type()))
+      {
+        const irep_idt fn = func_name == "__cbmc_re_search_start"
+                              ? ID_cprover_string_re_pos_start_func
+                              : ID_cprover_string_re_pos_end_func;
+        return native_string_app(
+          fn,
+          {pattern.type(), subject.type(), signedbv_typet{64}},
+          {pattern, subject, safe_typecast(from, signedbv_typet{64})},
+          signedbv_typet{64});
+      }
+    }
+    // Fallback: nondet int (non-native backend, or unrecognised operands).
+    return side_effect_expr_nondett{signedbv_typet{64}, get_location(expr)};
+  }
   else if(func_name == "__cbmc_re_sub")
   {
     // ``__cbmc_re_sub(pattern, repl, subject[, count])`` -> substituted

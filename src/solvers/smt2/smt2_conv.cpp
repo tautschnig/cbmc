@@ -3107,7 +3107,9 @@ void smt2_convt::convert_expr(const exprt &expr)
         (fn_id == ID_cprover_string_match_func ||
          fn_id == ID_cprover_string_search_func ||
          fn_id == ID_cprover_string_fullmatch_func ||
-         fn_id == ID_cprover_string_re_sub_func) &&
+         fn_id == ID_cprover_string_re_sub_func ||
+         fn_id == ID_cprover_string_re_pos_start_func ||
+         fn_id == ID_cprover_string_re_pos_end_func) &&
         (args.size() == 2 || args.size() == 3))
       {
         std::size_t width = boolbv_width(expr.type());
@@ -3231,6 +3233,83 @@ void smt2_convt::convert_expr(const exprt &expr)
             emit_smt_string(args[2]);
             out << " " << *body << " \"" << *repl_smt << "\")";
             return;
+          }
+          auto it = defined_expressions.find(expr);
+          CHECK_RETURN(it != defined_expressions.end());
+          out << it->second;
+          return;
+        }
+
+        // Python re match-position intrinsics. Lower to a bounded leftmost-
+        // start scan ONLY for a fixed-length translatable pattern on a
+        // constant subject (Phase 1; see
+        // doc/python-frontend-regex-position-plan.md):
+        //   (ite (str.in_re <subj[i..i+L]> body) i (ite ... (- 1)))
+        // testing the smallest i first, so the result is the leftmost match
+        // start (or start+L for the _end intrinsic), -1 when there is none.
+        // Each str.in_re is over a constant substring and folds at
+        // preprocessing. Anything outside the subset (variable-length pattern,
+        // anchor-bearing pattern rejected by the body translator, non-constant
+        // subject/from) emits the fresh nondet declared in find_symbols, so
+        // the offset stays sound. Match-or-None is decided independently by
+        // the bool intrinsic, so only position precision is affected.
+        if(
+          fn_id == ID_cprover_string_re_pos_start_func ||
+          fn_id == ID_cprover_string_re_pos_end_func)
+        {
+          const bool is_end = fn_id == ID_cprover_string_re_pos_end_func;
+          auto pat = extract_literal(args[0]);
+          auto subj = extract_literal(args[1]);
+          std::optional<std::string> body;
+          std::optional<int> flen;
+          if(pat.has_value())
+          {
+            body = python_regex_to_smt_body(*pat);
+            flen = python_regex_fixed_length(*pat);
+          }
+          std::optional<mp_integer> from_val;
+          {
+            exprt fe = args[2];
+            while(fe.id() == ID_typecast && fe.operands().size() == 1)
+              fe = fe.operands()[0];
+            if(fe.is_constant())
+            {
+              mp_integer v;
+              if(!to_integer(to_constant_expr(fe), v))
+                from_val = v;
+            }
+          }
+          if(
+            subj.has_value() && body.has_value() && flen.has_value() &&
+            *flen >= 1 && from_val.has_value())
+          {
+            const std::string &s = *subj;
+            const long long lpat = *flen;
+            const long long n = static_cast<long long>(s.size());
+            long long from = from_val->to_long();
+            if(from < 0)
+              from = 0;
+            std::string chain =
+              "(bvneg (_ bv1 " + std::to_string(width) + "))"; // tail: -1
+            bool ok = true;
+            for(long long i = n - lpat; i >= from; --i)
+            {
+              auto piece = smt_escape_printable_ascii(s.substr(i, lpat));
+              if(!piece.has_value())
+              {
+                ok = false;
+                break;
+              }
+              const long long val = is_end ? (i + lpat) : i;
+              chain = "(ite (str.in_re \"" + *piece + "\" " + *body +
+                      ") (_ bv" + std::to_string(val) + " " +
+                      std::to_string(width) + ") " + chain + ")";
+            }
+            if(ok)
+            {
+              out << chain;
+              return;
+            }
           }
           auto it = defined_expressions.find(expr);
           CHECK_RETURN(it != defined_expressions.end());
@@ -6646,6 +6725,21 @@ void smt2_convt::find_symbols(const exprt &expr)
       const irep_idt id =
         "re_nondet." + std::to_string(defined_expressions.size());
       out << "(declare-fun " << id << " () (_ BitVec " << width << "))\n";
+      defined_expressions[expr] = id;
+    }
+    else if(
+      (fid == ID_cprover_string_re_pos_start_func ||
+       fid == ID_cprover_string_re_pos_end_func) &&
+      defined_expressions.find(expr) == defined_expressions.end())
+    {
+      // Match-position intrinsics return an int offset (-1 = no match).
+      // Declare a fresh nondet of the result's bit-vector sort for the
+      // fallback path (variable-length pattern or non-foldable subject).
+      const irep_idt id =
+        "re_pos_nondet." + std::to_string(defined_expressions.size());
+      out << "(declare-fun " << id << " () ";
+      convert_type(expr.type());
+      out << ")\n";
       defined_expressions[expr] = id;
     }
   }
