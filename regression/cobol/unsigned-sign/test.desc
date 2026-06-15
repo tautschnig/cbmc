@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+An unsigned PIC 9 receiver stores the absolute value, dropping the sign.
+See IBM LR "MOVE statement" / "PICTURE clause".

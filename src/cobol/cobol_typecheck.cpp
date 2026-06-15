@@ -1224,6 +1224,15 @@ exprt cobol_typecheckt::encode_numeric(
   }
   else
     e = rescale(v.expr, v.scale, item.scale);
+  // An unsigned receiver stores the absolute value; the sign is dropped
+  // (IBM LR "MOVE statement" and the arithmetic statements: when the receiving
+  // item is unsigned, the absolute value is stored). Applied before the
+  // encoding so both the faithful codecs and the binary path see a magnitude.
+  if(!item.is_signed)
+    e = if_exprt{
+      binary_relation_exprt{e, ID_ge, from_integer(0, cobol_value_type())},
+      e,
+      unary_minus_exprt{e}};
   // Faithful fields store the value in their USAGE encoding; e is already at
   // item.scale (its digits, decimal point removed).
   if(item.faithful_bytes)
