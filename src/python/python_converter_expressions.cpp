@@ -635,7 +635,20 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         if(it != string_constants.end())
           sv = it->second;
       }
-      if(sv.has_value())
+      // Whether the present bounds fold to compile-time constants. A constant
+      // subject with a NON-constant bound (e.g. a slice index derived from an
+      // intrinsic such as the regex match-position) must NOT take the
+      // character-level constant path below: that path defaults a non-foldable
+      // bound to 0/len (value_or), which would silently return the wrong
+      // (whole) slice. Such a case falls through to the str.substr path, which
+      // folds the bound at SMT time.
+      const bool lo_const =
+        lower_json.is_null() ||
+        try_eval_double(convert_expression(lower_json)).has_value();
+      const bool hi_const =
+        upper_json.is_null() ||
+        try_eval_double(convert_expression(upper_json)).has_value();
+      if(sv.has_value() && (is_reverse || (lo_const && hi_const)))
       {
         std::string s = sv.value();
         int len = static_cast<int>(s.size());
