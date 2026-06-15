@@ -29,7 +29,10 @@ Classification:
 The storage is byte-addressed but values are kept in a numeric value
 domain, so the *character content* that some verbs manipulate is not
 tracked. The shared treatment is to **havoc the receivers** (a sound
-over-approximation), which is why the following are imprecise.
+over-approximation), which is why the following are imprecise. The
+precise design for all of these — and why no new representation is needed
+(the bytes are already there) — is
+`cobol-character-semantics-design.md`; the notes below summarise.
 
 ### I10 — STRING / UNSTRING / INSPECT (KNOWNBUG: string-precise, inspect-precise)
 LR "STRING statement", "UNSTRING statement", "INSPECT statement".

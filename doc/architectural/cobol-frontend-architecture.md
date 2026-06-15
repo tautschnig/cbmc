@@ -18,6 +18,9 @@ Companion documents:
   flow (implemented).
 - `cobol-numeric-encoding-design.md` — USAGE-faithful numeric byte
   encoding (partly implemented).
+- `cobol-character-semantics-design.md` — precise character-content
+  modelling (STRING/UNSTRING/INSPECT, string intrinsics, refmod,
+  numeric↔alphanumeric); the Tier-2 design for I2/I3/I8/I10/I14.
 - `cobol-precision-and-gaps-plan.md` — roadmap for the non-numeric
   gaps/imprecisions catalogued here.
 
