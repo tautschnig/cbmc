@@ -3503,6 +3503,25 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
   if(src_type.id()==ID_c_enum_tag)
     src_type=ns.follow_tag(to_c_enum_tag_type(src_type));
 
+  // An SMT String on exactly one side of a typecast (the other side a
+  // different sort) has no meaningful bit-level lowering. Such a cast arises
+  // from a wrong-typed coercion (e.g. appending a string to an int-typed list,
+  // or an empty list whose element type was not pinned). Emit the
+  // pre-registered nondet of the destination sort (allocated in find_symbols)
+  // as a sound over-approximation instead of reaching PRECONDITION(false)
+  // below. (Identity smt_string->smt_string was handled above.)
+  if(
+    src_type.id() != dest_type.id() &&
+    (src_type.id() == ID_smt_string || dest_type.id() == ID_smt_string))
+  {
+    auto it = defined_expressions.find(expr);
+    if(it != defined_expressions.end())
+    {
+      out << it->second;
+      return;
+    }
+  }
+
   if(dest_type.id()==ID_bool)
   {
     // this is comparison with zero
@@ -6680,6 +6699,29 @@ void smt2_convt::find_symbols(const exprt &expr)
     {
       const irep_idt id =
         "struct_cast." + std::to_string(defined_expressions.size());
+      out << "(declare-fun " << id << " () ";
+      convert_type(expr.type());
+      out << ")\n";
+      defined_expressions[expr] = id;
+    }
+  }
+  else if(
+    expr.id() == ID_typecast &&
+    to_typecast_expr(expr).op().type().id() !=
+      to_typecast_expr(expr).type().id() &&
+    (to_typecast_expr(expr).op().type().id() == ID_smt_string ||
+     to_typecast_expr(expr).type().id() == ID_smt_string))
+  {
+    // A typecast with an SMT String on exactly one side (the other a
+    // different sort) has no bit-level lowering -- convert_typecast would hit
+    // PRECONDITION(false). This comes from wrong-typed coercions (e.g.
+    // appending a string to an int-typed list). Allocate a fresh nondet of the
+    // destination sort as a sound over-approximation; convert_typecast emits
+    // it via defined_expressions.
+    if(defined_expressions.find(expr) == defined_expressions.end())
+    {
+      const irep_idt id =
+        "string_cast." + std::to_string(defined_expressions.size());
       out << "(declare-fun " << id << " () ";
       convert_type(expr.type());
       out << ")\n";
