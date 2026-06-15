@@ -45,30 +45,31 @@ path — the refined-precision items below are goals to pursue, **not** "use
 `--python-smt-strings` instead". Items are sequenced by soundness-first, then
 robustness, then capability; difficulty is noted where high.
 
-> **Refreshed status (2026-06-14).** **P0 (soundness) is empty** — all known
-> false proofs are closed (return-type `None`-erasure; the whole Any-typed
-> container by-reference mutation family incl. methods/sets/`__tag`-dispatch;
-> dict-changed-size-during-iteration). **P1 (native robustness) is effectively
-> done** — the dict-by-ref-mutation crash is gone; only a latent
-> `smt_string`-in-byte-op gap with no corpus instance remains. So the live
-> frontier is P2+. **Recommended next order:**
-> 1. **P2 SMT-track native method reach** — wire the remaining native `str.*`
->    ops (`upper`/`lower`/`casefold`/`title`, `split`, `count`/`rfind`/`rindex`,
->    `str(float)`, `repeat`, `strip(chars)`). Incremental, contained, low-risk,
->    each a small lowering; closes real precision gaps now nondet under native.
->    Best ROI.
-> 2. **String-refinement performance cliff** (§8) — the refined default times
->    out on string-keyed dict scans / value-updates and `str.in_re`+`len()` on a
->    shared symbolic subject. Now the dominant refined-backend limitation (it is
->    what keeps string-keyed dict code "correct but slow" on the default path,
->    e.g. the residual on `github_3647_9` string keys). High impact, but
->    hard/research-grade (refinement-solver internals).
-> 3. **P3 regex reach** (literal-symbolic patterns, `re.sub`, groups,
->    `re.split`, flags) — builds on the native regex path; medium effort.
-> 4. **P2 refined-track parity** (membership convergence, ordering,
->    producing-op precision) — deep existential-witness/solver work; native
->    already covers these, so lower urgency.
-> 5. **P4 JBMC native-SMT-string spike** and **P5 maintenance/re-checks**.
+> **Refreshed status (2026-06-15, after planning spikes).** **P0 (soundness)
+> is empty.** **P1 (native robustness):** one **newly-discovered crash** — the
+> `re.*` + `len(str)` model-parse abort (below) — is now the single live P1 and
+> should be fixed first (small, localised). **Spike outcomes that reshaped the
+> backlog:**
+> - The **string-refinement performance cliff (§8)** for string-keyed dict
+>   scans/value-updates is effectively **resolved** by the §5 Option-A inlining
+>   (8-key string-dict scan at unwind 10 = ~2.5 s on *both* back-ends). The old
+>   "`str.in_re` + `len()`" entry was **not** a perf cliff — it is the P1 crash
+>   above.
+> - **async/await (§13)** is **PARTIAL**, not "no plan": `await`-as-identity,
+>   async-def-as-function, and a concurrency-collapsing `asyncio` stub already
+>   exist; the live gap is binding an `await`/async-call result to a variable.
+> - The **§9 TIMEOUT cluster** splits cleanly: three tests are **stale**
+>   (now < 0.2 s), the rest are either **frontend/`python_value`-SSA-bound**
+>   (driven by the §8 SSA target) or **solver-bound** (separate).
+> - **list-valued regex/string ops** (`split`/`findall`/`re.split`) and
+>   **group extraction** now have CVC5-validated, soundness-bounded plans (§4).
+>
+> **Recommended order:** (1) the P1 `re.*`+`len` crash; (2) §3 native method
+> reach + §4 list-valued/group/`flags=` regex (contained, high-ROI); (3) the
+> §8 `python_value`-SSA optimisation (unblocks most §9 frontend timeouts);
+> (4) §2 closures / §10 instance-`__dict__` substrate (precision substrates);
+> (5) §13 async result-binding; (6) §6 module breadth, §7 (BLOCKED on core),
+> P4 JBMC, P5 maintenance.
 
 
 **P0 — Soundness (always first).**
@@ -82,6 +83,25 @@ robustness, then capability; difficulty is noted where high.
   empty.**
 
 **P1 — Native robustness (crash on valid code).**
+- **`re.*` + `len(str)` model-parse crash — NEW, HIGH PRIORITY (2026-06-15,
+  spike).** Any `--cvc5 --python-smt-strings` program that uses **both** a
+  regex call (`re.*` / `__cbmc_re_*`) **and** `len(<string>)` aborts — even on
+  different strings. Minimal repro: `import re; s = input(); m =
+  re.search("abc", s); assert len(s) >= 0`. Root cause (gdb): when the solver
+  returns SAT and CBMC parses the counterexample **model**,
+  `smt2_convt::parse_struct` (`smt2_conv.cpp:745`) fills a missing/zero struct
+  component with `from_integer(0, c.type())`, and for an `smt_string` component
+  that hits `from_integer`'s final `PRECONDITION(false)` (`arith_tools.cpp:192`,
+  which only handles bit-vectors and the python tagged/list/dict structs). The
+  combination materialises a struct with an `smt_string` field in the model
+  (regex makes a property SAT; `len` forces the subject's struct view).
+  **Fix:** teach `parse_struct` / `parse_rec` to handle `smt_string`
+  components — emit `constant_exprt{irep_idt{""}, smt_string_typet{}}` on the
+  fill path, and parse the SMT-LIB `String` model literal on the read path.
+  Small, localised `smt2_conv` change. Only manifests when a model is parsed
+  (SAT / counterexample), which is why the UNSAT-only regex soundness tests
+  missed it. Land with a `regression/python` test combining `re.search` + `len`
+  (expect a clean verdict, not an abort).
 - ~~**`smt_string` members in byte-operated structs**~~
   ([#native-byte-ops](#native-byte-ops)): the dict by-reference *mutation* crash
   is **RESOLVED** (the Any-container promote+write-back routes the dict through
@@ -108,11 +128,22 @@ robustness, then capability; difficulty is noted where high.
     per-char / concat shapes are precise but a *fully-symbolic* subject combined
     with a `len()` query inherits the CVC5 str perf cost (constant /
     assume-pinned subjects are fine; native corpus 0 crashes).
-  - still nondet (sound) under native: symbolic `count` and backward
-    `rfind`/`rindex` (no SMT `str.last_indexof`, no count primitive — bounded
-    `str.indexof` loops possible but perf-heavy); `title`; `split` (list-valued);
-    `str(float)` (no SMT float→string); `repeat` with symbolic `n` (nonlinear);
-    `strip(chars)` (explicit fill-set).
+  - still nondet (sound) under native — **fix shapes (2026-06-15 desk plan):**
+    - `title` — per-char like `upper`/`lower` but with a word-boundary state
+      (capitalise after a non-alphanumeric, lower otherwise); a small extension
+      of the existing case-map loop.
+    - `strip(chars)` — explicit fill-set: strip leading/trailing chars that are
+      members of the constant `chars` set; bounded leading/trailing scan with
+      `str.substr` (the no-arg whitespace `strip` already has a native axiom).
+    - `str(float)` — **no SMT float→string primitive**; recommend a documented
+      permanent **nondet** result (sound) plus a **constant-fold for literal
+      floats** (`str(3.5)` → `"3.5"` at conversion). A bounded digit model is
+      possible but high-effort/low-value.
+    - symbolic `count` / backward `rfind`/`rindex` — bounded `str.indexof`
+      loops; same shape as the list-valued split loop ([§4](#regex)), but
+      perf-heavy on fully-symbolic subjects, so gate/measure before enabling.
+    - `split` (list-valued) and `repeat` with symbolic `n` (nonlinear) — see
+      the list-valued plan ([§4](#regex)) and keep `repeat`-symbolic nondet.
 
 **P3 — Regex reach (SMT path; [§4](#regex)).**
 - **Soundness hardening — LANDED (2026-06-14).** The shared
@@ -126,11 +157,35 @@ robustness, then capability; difficulty is noted where high.
   emitted a definite `bv0` ("no match"), which the post-a-prime stub turned into
   an always-`None` false proof — now a fresh nondet (both branches reachable).
   Tests `regex-translator-soundness`, `regex-unsupported-pattern-nondet`.
-- **Still to do (precision):** literal-symbolic patterns (segment list +
-  `str.to_re` holes; the anchors are now soundly modelled so the embedded-anchor
-  bail is the remaining caveat); group extraction (no SMT capture-group support —
-  needs a bespoke bounded encoding); `re.split`/`findall` (list-valued);
-  precise compilation flags.
+- **Still to do (precision)** — plans below (CVC5-validated 2026-06-15 spike):
+  - **List-valued ops — `str.split` / `re.split` / `re.findall` (PLANNED).**
+    Shared mechanism: a **bounded list-return** frontend helper, the same shape
+    as the existing comprehension-loop lowering — a loop `i in [0, N)` that uses
+    `str.indexof(subject, sep, pos)` to find the next separator/match position
+    and `str.substr` to extract each segment, accumulating a `list[smt_string]`
+    of up to `N` elements (`N` = unwind bound; sound bounded semantics, exact
+    for constant subjects). Building blocks confirmed in CVC5 (`indexof`,
+    `substr`). **Phase 1:** literal / fixed string separator
+    (`"x".split(",")`, `re.split("," , s)`) — `str.indexof` takes a string
+    needle directly. **Phase 2:** variable-length **regex** separator — needs a
+    per-position `str.in_re` scan (perf-heavier); gate behind a fixed-length
+    separator check first. `findall` is the dual (collect matched segments
+    rather than the gaps).
+  - **Group extraction — `m.group(n)` (PLANNED, soundness-gated).** Model a
+    match's groups by **`str.++` decomposition**: introduce a fresh
+    `smt_string` per group `gi`, assert `subject ∈ lit0 ++ g1 ++ lit1 ++ … ++
+    litN` with each `gi` constrained by `str.in_re` of its sub-pattern, and
+    return `gi` from `group(i)`. **Soundness gate (critical):** SMT returns
+    *some* satisfying witness, **not** Python's leftmost-longest match, so this
+    is sound **only when the decomposition is uniquely determined** by the
+    surrounding literal/fixed separators (verified: `(\d+)-(\d+)` on `"12-34"`
+    is forced to `("12","34")`; but `a(.*)b` on `"axxbyyb"` has multiple framings
+    and the witness is arbitrary). Plan: a uniqueness check on the pattern
+    (no greedy/variable atom adjacent to a group boundary without a pinning
+    literal); precise when it holds, **nondet otherwise** (sound). PLR: `re`
+    groups are leftmost-longest.
+  - **Literal-symbolic patterns** (segment list + `str.to_re` holes; anchors
+    now soundly modelled, so the embedded-anchor bail is the only caveat).
 - **Compilation flags — inline-flag precision LANDED (2026-06-15);
   `flags=` argument precision TODO.** Architecture (per review): flag handling
   stays out of the SMT back-end — the back-end understands the *regex*
@@ -843,6 +898,10 @@ code.
 
 *Fix shape:* each is a stub-authoring task (pure-Python model + optional
 `@c_intrinsic` for C-backed primitives), low architectural risk.
+*Prioritisation:* order new stubs by **import frequency in the ESBMC
+benchmark corpus** (`~/esbmc.git/regression/python`) — count `import`/`from`
+occurrences and model the most-imported unmodelled modules first; this turns
+an open-ended breadth task into a ranked queue.
 
 ---
 
@@ -854,7 +913,12 @@ The annotation checker itself is implemented and correct when it runs.
 - **Issue 1 — `boolbv_map` width mismatch** (`boolbv_map.cpp:68`
   invariant). A symbol re-created with a different width trips the map's
   consistency invariant. *Fix direction:* either type-check on lookup, or
-  force consistent width at symbol creation in the frontend.
+  force consistent width at symbol creation in the frontend. *Feasibility
+  (2026-06-15):* confirmed — the invariant is exactly `literal_map.size() ==
+  width` (bit-vector width consistency), so the frontend-side fix (a symbol
+  must keep one width across its re-creations) is the sound lever; still
+  **BLOCKED** in that the change lands in flattening or in frontend symbol
+  creation, not in the annotation checker.
 - **Issue 2 — solver ERROR per annotation property** (seen on
   `websocket_url_validator`). *Frontend-side mitigation:* short-circuit the
   annotation-mismatch check when the declared element type is
@@ -875,9 +939,19 @@ doc.
 
 **Open optimization targets** (from the analysis):
 
-- **`python_value` SSA expansion.** Field-by-field SSA on tagged-union
-  structs dominates some benchmarks. *Fix shape:* cap `field_sensitivity`
-  recursion depth or emit struct-level SSA for tagged-union assignments.
+- **String-refinement cliff — effectively RESOLVED (verified 2026-06-15).** The
+  string-keyed dict scan / value-update blow-up that was the dominant
+  refined-backend limitation is gone after the §5 Option-A inlining of the
+  refined string into `python_value`: an 8-key string-keyed dict scan at unwind
+  10 runs in ~2.5 s on *both* back-ends. (The separate "`str.in_re` + `len()`"
+  item was misfiled here — it is the P1 model-parse crash, see the worklist.)
+- **`python_value` SSA expansion — now the top target (spike-confirmed).**
+  Field-by-field SSA on tagged-union structs dominates, and the 2026-06-15
+  TIMEOUT re-profile ([§9](#precision)) pins it as the cause of the
+  frontend-bound timeouts (`dict65`, `shedskin`, `github_3684` time out in
+  `--program-only` conversion alone). *Fix shape:* cap `field_sensitivity`
+  recursion depth, or emit struct-level (not per-field) SSA for tagged-union
+  assignments. Highest-leverage perf item.
 - **`--python-required-kwarg-checks` axiom volume.** *Fix shape:* an O(K)
   hash-based formulation replacing the current O(K²).
 - **`irept::operator==` in `merge_irept::merged`.** *Fix shape:* pre-cache
@@ -903,15 +977,26 @@ alarms). Verified against the 2026-06-08 sweep baseline.
   Still open (DIFF): `nondet_list4` (a typed-int nondet element can take
   the None sentinel; excluding it would be an under-approximation) and
   `nondet_list5` (loop-unwinding sensitivity).
-- **TIMEOUT tests (PLANNED per-test, 12 open):** as of the
-  2026-06-08 baseline (`PASS 2905`): `dict65`, `github_3560_1`,
-  `github_3560_3`, `github_3560_4`, `github_3626-nondet`,
-  `github_3667_2-nondet`, `github_3684`, `list31`, `nondet_dict13_fail`,
-  `nondet_list6`, `redundancy`, `shedskin`. (The inline-string change did
-  not move these — they are not string-refinement bound.) No shared root
-  cause — each needs a profile to find the hot path (dict `.items()`
-  schema-walking, type-promotion multiplication, symbolic-size ×
-  bounded-unroll interactions).
+- **TIMEOUT tests — re-profiled 2026-06-15 (frontend `--program-only` vs full,
+  unwind 10); no single root, now grouped by cause:**
+  - **Stale (close):** `github_3560_1/3/4` now verify FAILED in < 0.2 s — no
+    longer timeouts; drop from the list.
+  - **Frontend/`python_value`-SSA-bound** (the `--program-only` conversion
+    itself times out): `dict65` (heavy dict `.items()/.keys()/.values()` +
+    `sorted`-of-tuples + tagged-union compares), `shedskin` (breadth of
+    list/dict ops; frontend ~9 s), `github_3684` (frontend ~19 s). These are
+    driven by the **§8 `python_value` SSA expansion** target (cap
+    `field_sensitivity` depth / struct-level SSA for tagged unions) — fixing
+    that should clear them.
+  - **Frontend, structural** (own root): `list31` (deeply nested list literals
+    `[[[]]]`, lists of dicts/sets — nested-literal construction / element-type
+    prescan recursion) and `github_3626-nondet`
+    (`[[nondet_int()] for _ in range(2)]` then `nested[i].pop()`/`len` with a
+    symbolic index — symbolic-index-into-nested × bounded-unroll). Each needs a
+    targeted profile (`scripts/profile_cbmc.py`) to pin the hot function.
+  - **Solver-bound** (frontend < 0.1 s, full times out): `nondet_list6`,
+    `redundancy` — formula structure / SAT-SMT, a separate (smaller) group from
+    the frontend timeouts; needs formula-size / solver-tuning analysis.
 - **`complex` precision (PARTIAL — numeric core fixed 2026-06-08).** A
   fresh triage of the 10 `complex_*` DIFFs found the cluster is *not* one
   root but six sub-groups. The two genuine **numeric-precision** roots are
@@ -1092,8 +1177,38 @@ are landed.
   need an instance-`__dict__`-as-storage model (class-object construction),
   which is a larger substrate than the current per-field struct.
 
-**NO PLAN YET** for the instance-`__dict__` substrate; it would also
-subsume dynamic attribute assignment.
+**Instance-`__dict__` substrate — PLANNED (2026-06-15 spike).** Today an
+instance is a fixed CBMC struct whose fields are the attributes discovered by
+scanning `__init__`/the class body (`member_exprt{obj, attr,
+st.get_component(attr).type()}` throughout `python_converter_assign.cpp`), so
+there is nowhere to store a *dynamic* attribute, a shadowing instance entry, or
+a stateful descriptor's per-instance state. The fix is a per-instance
+**`__dict__`** (a string-keyed `python` dict `[str, value]`, now efficient
+after the §5 inlining) plus routing attribute access through the CPython
+lookup order (PLR §3.3.2 descriptor protocol + §3.2):
+
+1. data descriptor (defines `__set__`/`__delete__`) found on `type(obj).__mro__`
+   → `descr.__get__` / `descr.__set__`;
+2. `obj.__dict__[attr]` if present;
+3. non-data descriptor (`__get__` only) or plain class attribute on the MRO;
+4. `__getattr__` fallback, else `AttributeError`.
+
+**Hybrid (perf):** keep the fixed struct fields for *declared/annotated*
+attributes (the current fast path) and add the `__dict__` only for the dynamic
+remainder, so common code is unaffected. **Phases:**
+
+1. **Instance `__dict__` for dynamic attributes** — a write to an attribute not
+   in the struct stores into `__dict__`; a read of one reads from `__dict__`
+   then `__getattr__`. Fixes dynamic attribute assignment.
+2. **Shadowing** — route reads through step (2) before the class lookup, so an
+   instance `__dict__` entry shadows a class non-data attribute (method). Fixes
+   `method-shadow-knownbug`.
+3. **Custom data descriptors** — `__set__`/stateful `__get__` via class-object
+   descriptor instances whose storage is the instance `__dict__`. Largest step
+   (needs class objects carrying descriptor instances).
+
+**Risk:** the attribute-access reroute is pervasive; mitigated by the hybrid
+fast path. This substrate also subsumes `setattr`/`getattr` with dynamic names.
 
 ---
 
@@ -1206,11 +1321,42 @@ called as `h()`), not only positionally-passed callables. Gained
 
 ## 13. Async / await  {#async}
 
-**Status: NO PLAN YET.** `async def` / `await` / async generators are not
-modelled. A plausible shape is to reuse the generator list-with-cursor
-lowering for async generators and treat `await` as a synchronous call for
-verification purposes, but this has not been designed or validated against
-PLR §8.8.x semantics.
+**Status: PARTIAL** (reclassified 2026-06-15 after a spike — the prior "no
+plan yet" was stale). The **sound concurrency-collapsing design is already
+chosen and partly implemented**: `await EXPR` is lowered to `EXPR`
+(`python_converter.cpp:4725`, sequential / no concurrency), `async def` is
+registered and called like a regular function (`defs.cpp:1284/2212`), and a
+real `asyncio` stub (`src/python/library/asyncio/__init__.py`) collapses the
+event loop (`run`/`run_until_complete` pass the eagerly-evaluated coroutine
+value through, the loop is a no-op). Verified working: `assert (await f(4))
+== 5` *inline* is SUCCESSFUL — `await` evaluates the coroutine to its return
+value.
+
+**Live gap (specific):** binding an `await` / async-call result to a variable
+leaves the target **unbound** — `v = await f(4); assert v == 5` raises
+`UnboundLocalError` (and so does `v = f(4)` for an `async def f`). The inline
+form works, the assignment form does not, so the async-call result isn't
+captured at the assignment chokepoint (likely a `side_effect_expr_function_callt`
+handled in expression context but not in the statement-level assign, or an
+async call returning a coroutine placeholder at statement level).
+
+**Plan.**
+
+1. **Fix `await`/async-call result binding** (the live bug) — make `v = await
+   coro(...)` and `v = coro(...)` bind the coroutine's return value at the
+   assignment path, mirroring a regular call. Then drive `asyncio.run` /
+   `run_until_complete` to actually call the coroutine. Single-task `await`
+   chains are then **sound and exact**.
+2. **Async generators** — reuse the existing generator **list-with-cursor**
+   lowering ([§1](#generators)); `async for` / `async with` desugar to the
+   sync `for` / `with` over the collapsed awaitable.
+3. **Soundness boundary (documented).** Concurrent tasks
+   (`asyncio.gather` / `create_task`) with *shared mutable state* execute as
+   **one sequential schedule**, so inter-task interleavings at `await` points
+   are **not** explored — a concurrency-bug unsoundness. This is **out of
+   scope** (faithful interleaving = a full concurrency model) **unless** the
+   tasks share no mutable state (then any schedule is equivalent and the
+   sequential model is sound). PLR §8.8.x.
 
 ---
 
