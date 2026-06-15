@@ -1,0 +1,11 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^\[cobol:subscript-range\.\d+\].*: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+The implicit subscript-range check (gated on bounds-check, default on) proves
+an in-range OCCURS subscript. See doc/architectural/cobol-runtime-checks.md and
+IBM LR "Subscripting".

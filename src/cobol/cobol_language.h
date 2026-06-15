@@ -33,6 +33,8 @@ public:
     const std::string &path,
     message_handlert &message_handler) override;
 
+  void set_language_options(const optionst &, message_handlert &) override;
+
   bool typecheck(
     symbol_table_baset &symbol_table,
     const std::string &module,
@@ -80,6 +82,10 @@ public:
 private:
   std::vector<cobol_tokent> tokens;
   std::string parse_path;
+  /// Emit implicit runtime-property checks (subscript / reference-modification
+  /// range). Mirrors CBMC's "bounds-check" option (on by default in v6+, off
+  /// under --no-standard-checks). See doc/architectural/cobol-runtime-checks.md.
+  bool runtime_checks = true;
 };
 
 std::unique_ptr<languaget> new_cobol_language();

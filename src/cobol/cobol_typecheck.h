@@ -28,11 +28,14 @@ class message_handlert;
 /// \param symbol_table: destination symbol table
 /// \param module: module name (source file)
 /// \param message_handler: for diagnostics
+/// \param runtime_checks: emit implicit runtime-property checks (subscript /
+///   reference-modification range); gated on CBMC's "bounds-check" option
 /// \return true on error
 bool cobol_typecheck(
   const std::vector<cobol_tokent> &tokens,
   symbol_table_baset &symbol_table,
   const std::string &module,
-  message_handlert &message_handler);
+  message_handlert &message_handler,
+  bool runtime_checks);
 
 #endif // CPROVER_COBOL_COBOL_TYPECHECK_H

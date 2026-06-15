@@ -1,0 +1,11 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^\[cobol:refmod-range\.\d+\].*: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+In-range reference modification is proved by the implicit refmod-range check.
+See doc/architectural/cobol-runtime-checks.md and IBM LR "Reference
+modification".

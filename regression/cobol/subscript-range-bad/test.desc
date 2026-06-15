@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=10$
+^SIGNAL=0$
+^\[cobol:subscript-range\.\d+\].*: FAILURE$
+^VERIFICATION FAILED$
+--
+An out-of-range OCCURS subscript is flagged by the implicit subscript-range
+check. See doc/architectural/cobol-runtime-checks.md and IBM LR "Subscripting".

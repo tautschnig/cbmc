@@ -1,0 +1,11 @@
+CORE
+main.cob
+
+^EXIT=10$
+^SIGNAL=0$
+^\[cobol:refmod-range\.\d+\].*: FAILURE$
+^VERIFICATION FAILED$
+--
+An out-of-range reference modification is flagged by the implicit refmod-range
+check. See doc/architectural/cobol-runtime-checks.md and IBM LR "Reference
+modification".

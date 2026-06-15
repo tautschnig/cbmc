@@ -12,6 +12,7 @@ Author: Kiro
 #include "cobol_language.h"
 
 #include <util/get_base_name.h>
+#include <util/options.h>
 #include <util/symbol_table.h>
 
 #include <linking/linking.h>
@@ -81,6 +82,17 @@ bool cobol_languaget::parse(
   return false;
 }
 
+void cobol_languaget::set_language_options(
+  const optionst &options,
+  message_handlert &)
+{
+  // Tie the COBOL implicit runtime checks to the standard "bounds-check"
+  // option (subscript and reference-modification range are bounds checks);
+  // this makes --no-standard-checks disable them along with the C checks.
+  if(options.is_set("bounds-check"))
+    runtime_checks = options.get_bool_option("bounds-check");
+}
+
 bool cobol_languaget::typecheck(
   symbol_table_baset &symbol_table,
   const std::string &module,
@@ -88,7 +100,8 @@ bool cobol_languaget::typecheck(
 {
   symbol_tablet new_symbol_table;
 
-  if(cobol_typecheck(tokens, new_symbol_table, module, message_handler))
+  if(cobol_typecheck(
+       tokens, new_symbol_table, module, message_handler, runtime_checks))
     return true;
 
   remove_internal_symbols(new_symbol_table, message_handler, true);

@@ -202,6 +202,27 @@ be wrong), **I** imprecision (sound over-approximation; cannot make a
 false assertion pass, but may prevent proving a true one). "KB" names the
 `regression/cobol/knownbug-*` test (run with `test.pl -K`).
 
+### Implicit runtime-property checks (verification-tool contract)
+
+Beyond user assertions, the frontend instruments COBOL's own runtime-fault
+conditions — the analogue of CBMC's built-in C checks. CBMC's C-level
+`--bounds-check`/`--div-by-zero-check` do **not** catch these on the
+byte-array / value-domain lowering (confirmed by experiment), so they are
+emitted by the frontend. See doc/architectural/cobol-runtime-checks.md.
+
+| class | checks | status | LR clause |
+|---|---|---|---|
+| `cobol:subscript-range` | `1 <= subscript <= occurs` per dimension | **DONE** (CORE `subscript-range-ok`/`-bad`) | "Subscripting"; SSRANGE |
+| `cobol:refmod-range` | `start >= 1` and `start+length-1 <= size` | **DONE** (CORE `refmod-range-ok`/`-bad`, `refmod-loop-var`) | "Reference modification"; SSRANGE |
+| `cobol:division-by-zero` | divisor non-zero (absent `ON SIZE ERROR`) | TODO | "DIVIDE"/"COMPUTE"; SIZE ERROR |
+| `cobol:numeric` (S0C7) | numeric operand holds valid digits | TODO (needs faithful content) | "Class condition"; data exception |
+
+Gated on the `bounds-check` option (on by default in CBMC v6+; off under
+`--no-standard-checks`). On CardDemo (`--unwind 3`) they flag four genuine
+potential overruns (unvalidated external/DB2 lengths and a commarea page
+index); `--no-standard-checks` reproduces the clean 44/44 user-assertion
+baseline.
+
 ### Soundness
 
 | id | issue | LR clause | KB | plan |

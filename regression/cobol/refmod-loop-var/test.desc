@@ -1,0 +1,11 @@
+CORE
+main.cob
+--unwind 7
+^EXIT=0$
+^SIGNAL=0$
+^\[cobol:refmod-range\.\d+\].*: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+A reference modification whose position is a PERFORM VARYING loop variable is
+checked per iteration (inside the loop), so a value provably in range over the
+loop does not raise a false alarm.

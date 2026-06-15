@@ -329,6 +329,14 @@ struct stmtt
   exprt lhs;
   exprt rhs;
   exprt cond;
+  /// For an ASSERT: the property class (e.g. "cobol:subscript-range"); empty
+  /// means a user assertion.
+  std::string assert_class;
+  /// Runtime checks for a loop's condition (PERFORM UNTIL/VARYING, SEARCH):
+  /// emitted before each evaluation of the condition (inside the loop), so a
+  /// subscript/refmod that depends on the loop variable is checked with its
+  /// per-iteration value rather than its pre-loop (nondet) value.
+  std::vector<stmtt> cond_checks;
 
   std::vector<stmtt> then_stmts;
   std::vector<stmtt> else_stmts;
@@ -564,11 +572,13 @@ public:
     const std::vector<cobol_tokent> &_tokens,
     symbol_table_baset &_symbol_table,
     const std::string &_module,
-    message_handlert &_message_handler)
+    message_handlert &_message_handler,
+    bool _runtime_checks)
     : tokens(_tokens),
       symbol_table(_symbol_table),
       module(_module),
-      log(_message_handler)
+      log(_message_handler),
+      runtime_checks(_runtime_checks)
   {
   }
 
@@ -579,6 +589,10 @@ protected:
   symbol_table_baset &symbol_table;
   const std::string module;
   messaget log;
+  /// When true, emit the implicit runtime-property checks (subscript /
+  /// reference-modification range). Gated on CBMC's "bounds-check" option so
+  /// they share the standard-checks on/off switch (--no-standard-checks).
+  const bool runtime_checks;
 
   std::size_t pos = 0;
 
@@ -606,6 +620,32 @@ protected:
   std::vector<std::pair<std::string, std::string>> perform_loop_stack;
   std::string cur_para_end_label;
   std::string cur_section_end_label;
+  /// Buffered implicit runtime-check assertions (subscript range, reference-
+  /// modification range, ...) accumulated while parsing an expression and
+  /// drained before the enclosing statement by parse_statement (see
+  /// doc/architectural/cobol-runtime-checks.md).
+  std::vector<stmtt> pending_checks;
+  void add_check(exprt cond, const char *cls, source_locationt loc)
+  {
+    if(!runtime_checks)
+      return;
+    stmtt s;
+    s.kind = stmtt::kindt::ASSERT;
+    s.cond = std::move(cond);
+    s.assert_class = cls;
+    s.location = loc;
+    pending_checks.push_back(std::move(s));
+  }
+  /// Remove and return the checks buffered since \p mark (used to move a loop
+  /// condition's checks into the loop body rather than before the statement).
+  std::vector<stmtt> drain_checks(std::size_t mark)
+  {
+    std::vector<stmtt> out(
+      std::make_move_iterator(pending_checks.begin() + mark),
+      std::make_move_iterator(pending_checks.end()));
+    pending_checks.resize(mark);
+    return out;
+  }
 
   // ---- DATA DIVISION layout state ----
   /// byte size of each record (its byte-array symbol)
@@ -916,6 +956,7 @@ protected:
 
   std::vector<stmtt> parse_statements();
   std::vector<stmtt> parse_statement();
+  std::vector<stmtt> dispatch_statement();
   stmtt parse_if();
   stmtt parse_evaluate();
   stmtt parse_perform();
@@ -2448,6 +2489,7 @@ void cobol_typecheckt::place_field(
 
 reft cobol_typecheckt::parse_ref()
 {
+  const source_locationt ref_loc = cur().location;
   const std::string name = cur().text;
   advance();
   // Optional qualification: name OF/IN qualifier OF/IN qualifier ...
@@ -2474,6 +2516,25 @@ reft cobol_typecheckt::parse_ref()
   const auto apply_refmod =
     [&](const valuet &start, const std::optional<valuet> &len)
   {
+    // Reference-modification range check (IBM LR "Reference modification" /
+    // SSRANGE): 1 <= start and start + length - 1 <= size of the item being
+    // reference-modified.
+    const typet vt = cobol_value_type();
+    const exprt start0 = rescale(start.expr, start.scale, 0);
+    const exprt size_e = from_integer(info->byte_size, vt);
+    const exprt len_e =
+      len.has_value()
+        ? rescale(len->expr, len->scale, 0)
+        : minus_exprt{plus_exprt{size_e, from_integer(1, vt)}, start0};
+    add_check(
+      and_exprt{
+        binary_relation_exprt{start0, ID_ge, from_integer(1, vt)},
+        binary_relation_exprt{
+          minus_exprt{plus_exprt{start0, len_e}, from_integer(1, vt)},
+          ID_le,
+          size_e}},
+      "cobol:refmod-range",
+      ref_loc);
     offset = plus_exprt{
       offset,
       typecast_exprt{
@@ -2538,11 +2599,18 @@ reft cobol_typecheckt::parse_ref()
       // this item's own OCCURS dimension (IBM LR "Subscripting": one subscript
       // per OCCURS, in order of successively less inclusive dimensions).
       std::vector<std::size_t> strides;
+      std::vector<std::size_t> counts; // occurrences per dimension
       for(std::size_t dim : item.occurs_dims)
         if(dim < all_items.size())
+        {
           strides.push_back(all_items[dim].info.byte_size);
+          counts.push_back(all_items[dim].info.occurs);
+        }
       if(item.is_table)
+      {
         strides.push_back(item.byte_size);
+        counts.push_back(item.occurs);
+      }
       if(strides.empty())
         error("subscript on a non-table item");
 
@@ -2562,9 +2630,20 @@ reft cobol_typecheckt::parse_ref()
       // COBOL subscripts are 1-based; offset += sum_k (subscript_k - 1)*stride.
       for(std::size_t k = 0; k < subs.size(); ++k)
       {
+        // Subscript-range check (IBM LR "Subscripting" / SSRANGE): each
+        // subscript must be in 1..occurs for its dimension.
+        const exprt sub0 = rescale(subs[k].expr, subs[k].scale, 0);
+        if(counts[k] > 0)
+          add_check(
+            and_exprt{
+              binary_relation_exprt{
+                sub0, ID_ge, from_integer(1, cobol_value_type())},
+              binary_relation_exprt{
+                sub0, ID_le, from_integer(counts[k], cobol_value_type())}},
+            "cobol:subscript-range",
+            ref_loc);
         const exprt idx0 = minus_exprt{
-          typecast_exprt{rescale(subs[k].expr, subs[k].scale, 0), size_type()},
-          from_integer(1, size_type())};
+          typecast_exprt{sub0, size_type()}, from_integer(1, size_type())};
         offset = plus_exprt{
           offset, mult_exprt{idx0, from_integer(strides[k], size_type())}};
       }
@@ -3900,6 +3979,26 @@ std::vector<stmtt> cobol_typecheckt::parse_statements()
 
 std::vector<stmtt> cobol_typecheckt::parse_statement()
 {
+  // Emit the implicit runtime checks (subscript/reference-modification range,
+  // ...) accumulated while parsing this statement's operands immediately
+  // before the statement itself. Draining is stack-disciplined: nested
+  // statements (parsed within the dispatch) drain their own ranges, so only
+  // this statement's direct-operand checks remain in [mark, end).
+  const std::size_t mark = pending_checks.size();
+  std::vector<stmtt> body = dispatch_statement();
+  if(pending_checks.size() == mark)
+    return body;
+  std::vector<stmtt> out(
+    std::make_move_iterator(pending_checks.begin() + mark),
+    std::make_move_iterator(pending_checks.end()));
+  pending_checks.resize(mark);
+  for(auto &b : body)
+    out.push_back(std::move(b));
+  return out;
+}
+
+std::vector<stmtt> cobol_typecheckt::dispatch_statement()
+{
   const std::string verb = cur().text;
   if(verb == "MOVE")
     return parse_move();
@@ -4606,12 +4705,17 @@ std::vector<stmtt> cobol_typecheckt::parse_search()
     expect_word("END");
     s.other_stmts = parse_statements();
   }
+  // The WHEN (and AT END) conditions are re-evaluated each scan step with the
+  // current index, so any subscript/refmod in them must be checked inside the
+  // loop (see cond_checks) rather than before the SEARCH.
+  const std::size_t mark = pending_checks.size();
   while(eat_word("WHEN"))
   {
     exprt cond = parse_condition();
     std::vector<stmtt> imp = parse_statements();
     s.when_clauses.emplace_back(std::move(cond), std::move(imp));
   }
+  s.cond_checks = drain_checks(mark);
   eat_word("END-SEARCH");
   return {s};
 }
@@ -6454,6 +6558,7 @@ stmtt cobol_typecheckt::parse_perform()
       std::vector<stmtt> init;
       std::vector<stmtt> step;
       exprt cond;
+      std::vector<stmtt> cond_checks;
     };
     const auto parse_dim = [&]()
     {
@@ -6473,7 +6578,9 @@ stmtt cobol_typecheckt::parse_perform()
         valuet{plus_exprt{cur_v.expr, by.expr}, cur_v.scale},
         s.location));
       expect_word("UNTIL");
+      const std::size_t mark = pending_checks.size();
       d.cond = parse_condition();
+      d.cond_checks = drain_checks(mark);
       return d;
     };
 
@@ -6498,6 +6605,7 @@ stmtt cobol_typecheckt::parse_perform()
     inner.var_init = dims.back().init;
     inner.var_step = dims.back().step;
     inner.cond = dims.back().cond;
+    inner.cond_checks = dims.back().cond_checks;
     inner.inline_body = s.inline_body;
     inner.body = std::move(body);
     inner.target = s.target;
@@ -6511,6 +6619,7 @@ stmtt cobol_typecheckt::parse_perform()
       wrapper.var_init = dims[k].init;
       wrapper.var_step = dims[k].step;
       wrapper.cond = dims[k].cond;
+      wrapper.cond_checks = dims[k].cond_checks;
       wrapper.inline_body = true;
       wrapper.body = {std::move(inner)};
       inner = std::move(wrapper);
@@ -6521,7 +6630,9 @@ stmtt cobol_typecheckt::parse_perform()
   {
     s.pkind = stmtt::perform_kindt::UNTIL;
     s.test_after = test_after;
+    const std::size_t mark = pending_checks.size();
     s.cond = parse_condition();
+    s.cond_checks = drain_checks(mark);
   }
   else if(
     cur().kind == cobol_token_kindt::NUMBER ||
@@ -6629,8 +6740,12 @@ void cobol_typecheckt::gen_statement(
   {
     code_assertt a{s.cond};
     a.add_source_location() = s.location;
-    a.add_source_location().set_comment("assertion");
-    a.add_source_location().set_property_class("assertion");
+    // A runtime check carries its own property class (e.g.
+    // "cobol:subscript-range"); a user assertion uses "assertion".
+    const std::string cls =
+      s.assert_class.empty() ? std::string{"assertion"} : s.assert_class;
+    a.add_source_location().set_comment(cls);
+    a.add_source_location().set_property_class(cls);
     out.add(std::move(a));
     break;
   }
@@ -6753,12 +6868,14 @@ void cobol_typecheckt::gen_statement(
         gen_perform_invocation(s, out, inlining);
         perform_loop_stack.pop_back();
         out.add(code_labelt{cycle, code_skipt{}});
+        gen_statements(s.cond_checks, out, inlining);
         out.add(code_ifthenelset{not_exprt{s.cond}, code_gotot{test}});
         out.add(code_labelt{done, code_skipt{}});
       }
       else
       {
         out.add(code_labelt{test, code_skipt{}});
+        gen_statements(s.cond_checks, out, inlining);
         out.add(code_ifthenelset{s.cond, code_gotot{done}});
         perform_loop_stack.emplace_back(cycle, done);
         gen_perform_invocation(s, out, inlining);
@@ -6776,6 +6893,7 @@ void cobol_typecheckt::gen_statement(
       const std::string cycle = fresh_label("pcycle");
       gen_statements(s.var_init, out, inlining);
       out.add(code_labelt{test, code_skipt{}});
+      gen_statements(s.cond_checks, out, inlining);
       out.add(code_ifthenelset{s.cond, code_gotot{done}});
       perform_loop_stack.emplace_back(cycle, done);
       gen_perform_invocation(s, out, inlining);
@@ -6797,6 +6915,7 @@ void cobol_typecheckt::gen_statement(
     const std::string done = fresh_label("sdone");
     gen_statements(s.var_init, out, inlining);
     out.add(code_labelt{test, code_skipt{}});
+    gen_statements(s.cond_checks, out, inlining);
     {
       code_blockt at_end;
       gen_statements(s.other_stmts, at_end, inlining);
@@ -6990,9 +7109,10 @@ bool cobol_typecheck(
   const std::vector<cobol_tokent> &tokens,
   symbol_table_baset &symbol_table,
   const std::string &module,
-  message_handlert &message_handler)
+  message_handlert &message_handler,
+  bool runtime_checks)
 {
   cobol_typecheckt cobol_typecheck{
-    tokens, symbol_table, module, message_handler};
+    tokens, symbol_table, module, message_handler, runtime_checks};
   return cobol_typecheck.typecheck();
 }
