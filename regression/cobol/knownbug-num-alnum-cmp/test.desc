@@ -1,0 +1,9 @@
+KNOWNBUG
+main.cob
+
+^VERIFICATION SUCCESSFUL$
+--
+Imprecision I2: a numeric vs nonnumeric comparison is nondeterministic
+(the value model has no display representation for the numeric operand).
+IBM LR "Comparison of numeric and nonnumeric operands". See
+cobol-numeric-encoding-design.md.

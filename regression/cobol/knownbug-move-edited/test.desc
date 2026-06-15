@@ -1,0 +1,8 @@
+KNOWNBUG
+main.cob
+
+^VERIFICATION SUCCESSFUL$
+--
+Imprecision I4: MOVE to an edited PICTURE does not apply the editing
+(insertion/suppression) semantics. IBM LR "MOVE statement" / "PICTURE
+clause" editing. See cobol-numeric-encoding-design.md.

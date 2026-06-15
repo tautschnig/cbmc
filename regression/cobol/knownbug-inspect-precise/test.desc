@@ -1,0 +1,8 @@
+KNOWNBUG
+main.cob
+
+^VERIFICATION SUCCESSFUL$
+--
+Imprecision I10: INSPECT ... TALLYING havocs its counter; character
+content is not modelled. IBM LR "INSPECT statement". See
+cobol-precision-and-gaps-plan.md.

@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+INITIALIZE clears every occurrence of a table. See IBM LR "INITIALIZE
+statement".

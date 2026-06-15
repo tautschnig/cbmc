@@ -1,0 +1,8 @@
+KNOWNBUG
+main.cob
+
+^VERIFICATION SUCCESSFUL$
+--
+Soundness S1: an unsigned PIC 9 item is modelled in a signed value domain,
+so MOVE of a negative value does not drop the sign. IBM LR "MOVE
+statement" / "PICTURE clause". See cobol-numeric-encoding-design.md.

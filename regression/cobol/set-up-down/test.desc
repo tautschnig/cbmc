@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+SET index UP/DOWN BY adjusts an index-name. See IBM LR "SET statement"
+(format 4).

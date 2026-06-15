@@ -1,0 +1,8 @@
+KNOWNBUG
+main.cob
+
+^VERIFICATION SUCCESSFUL$
+--
+Imprecision I6: a group MOVE copies min(source,receiver) bytes and does
+not space-pad a longer receiver. IBM LR "MOVE statement". See
+cobol-precision-and-gaps-plan.md.
