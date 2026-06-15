@@ -323,9 +323,35 @@ std::optional<exprt> python_convertert::try_string_method(
         }
       }
     }
-    // Fallback: nondet list of strings
-    return side_effect_expr_nondett{
-      python_list_type(python_string_type()), get_location(expr)};
+    // Fallback (symbolic / non-constant subject): a nondet list of strings,
+    // with its length constrained to [0, PYTHON_MAX_LIST_LENGTH]. Without the
+    // bound the nondet length field (a signed int) could be negative, which
+    // would be a false alarm on the always-true len(split(...)) >= 0.
+    {
+      const typet list_type = python_list_type(python_string_type());
+      static unsigned split_ctr = 0;
+      const std::string nm = "__split_nondet_" + std::to_string(split_ctr++);
+      const irep_idt id{qualify_name(nm)};
+      if(symbol_table.lookup(id) == nullptr)
+      {
+        symbolt sy{id, list_type, "python"};
+        sy.base_name = nm;
+        sy.is_lvalue = true;
+        sy.is_state_var = true;
+        symbol_table.add(sy);
+      }
+      const symbol_exprt sym = symbol_table.lookup_ref(id).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{
+        sym, side_effect_expr_nondett{list_type, get_location(expr)}});
+      const member_exprt len{sym, "length", python_int_type()};
+      pending_checks.push_back(code_assumet{and_exprt{
+        binary_relation_exprt{len, ID_ge, from_integer(0, python_int_type())},
+        binary_relation_exprt{
+          len,
+          ID_le,
+          from_integer(PYTHON_MAX_LIST_LENGTH, python_int_type())}}});
+      return std::move(sym);
+    }
   }
   // Native SMT-String back-end: ASCII case mapping for
   // upper/lower/casefold/swapcase. SMT-LIB String has no case operation, so
