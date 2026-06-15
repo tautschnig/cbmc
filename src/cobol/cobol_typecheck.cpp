@@ -3223,6 +3223,69 @@ cond_operandt cobol_typecheckt::parse_intrinsic()
     return op;
   }
 
+  // UPPER-CASE / LOWER-CASE / REVERSE of an alphanumeric *item*: compute the
+  // result bytes from the source bytes (IBM LR "Intrinsic functions"). The
+  // result is an alphanumeric operand whose "storage" is the constructed byte
+  // array (read by the consuming comparison / MOVE), so no scratch record or
+  // statement is needed.
+  if(
+    (fname == "UPPER-CASE" || fname == "LOWER-CASE" || fname == "REVERSE") &&
+    is_kind(cobol_token_kindt::LPAREN) &&
+    peek(1).kind == cobol_token_kindt::WORD && items.count(peek(1).text) != 0 &&
+    !items.at(peek(1).text).is_numeric)
+  {
+    advance(); // (
+    const reft r = parse_ref();
+    int depth = 1;
+    while(!at_eof() && depth > 0)
+    {
+      if(is_kind(cobol_token_kindt::LPAREN))
+        ++depth;
+      else if(is_kind(cobol_token_kindt::RPAREN))
+        --depth;
+      advance();
+    }
+    const std::size_t len = r.info->byte_size;
+    const typet vt = cobol_value_type();
+    const unsignedbv_typet u8{8};
+    array_exprt::operandst elems;
+    elems.reserve(len);
+    for(std::size_t i = 0; i < len; ++i)
+    {
+      const exprt c = byte_of(r, fname == "REVERSE" ? len - 1 - i : i);
+      exprt t = c;
+      if(fname == "UPPER-CASE")
+        t = if_exprt{
+          and_exprt{
+            binary_relation_exprt{c, ID_ge, from_integer('a', vt)},
+            binary_relation_exprt{c, ID_le, from_integer('z', vt)}},
+          minus_exprt{c, from_integer(32, vt)},
+          c};
+      else if(fname == "LOWER-CASE")
+        t = if_exprt{
+          and_exprt{
+            binary_relation_exprt{c, ID_ge, from_integer('A', vt)},
+            binary_relation_exprt{c, ID_le, from_integer('Z', vt)}},
+          plus_exprt{c, from_integer(32, vt)},
+          c};
+      elems.push_back(typecast_exprt{t, u8});
+    }
+    op.is_item = true;
+    op.record = array_exprt{
+      std::move(elems), array_typet{u8, from_integer(len, size_type())}};
+    op.offset = from_integer(0, size_type());
+    op.length = len;
+    // A synthesised descriptor so consumers (MOVE / comparison) have a
+    // byte_size; the byte source is the constructed array above, not a record.
+    item_infot synth;
+    synth.byte_size = len;
+    synth.char_count = len;
+    synth.is_numeric = false;
+    synth_items.push_back(synth);
+    op.item = &synth_items.back();
+    return op;
+  }
+
   std::size_t first_item_len = 0;
   bool first_item_len_set = false;
   if(is_kind(cobol_token_kindt::LPAREN))

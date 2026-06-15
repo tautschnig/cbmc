@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+UPPER-CASE/LOWER-CASE/REVERSE on an alphanumeric item argument are exact.
+See IBM LR "Intrinsic functions".

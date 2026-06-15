@@ -1,9 +1,0 @@
-KNOWNBUG
-main.cob
-
-^VERIFICATION SUCCESSFUL$
---
-Imprecision I14: most intrinsic functions are exact only on literal
-arguments (or the numeric_exact set); on an item argument they return a
-nondeterministic value. IBM LR "Intrinsic functions". See
-cobol-precision-and-gaps-plan.md.
