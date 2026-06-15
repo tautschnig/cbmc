@@ -160,7 +160,13 @@ robustness, then capability; difficulty is noted where high.
     objects for finditer), closing the missed-bug class on both backends.
     Length is bounded (8) — a BMC limit like loop unwinding.
 
-    **Precise enumeration is BLOCKED on match-position extraction.** The clean
+    **Precise enumeration is BLOCKED on match-position extraction** — now
+    fully scoped in
+    [python-frontend-regex-position-plan.md](python-frontend-regex-position-plan.md)
+    (sound bounded leftmost-start scan, spike-confirmed correct + leftmost-sound;
+    the dominant constraint is a perf cliff — symbolic subjects feasible only to
+    ~16 chars, 64 infeasible — so the precise path is gated to fixed-length
+    patterns on constant/short subjects, nondet floor otherwise). The clean
     `bounded list-return` mechanism — a loop `i in [0, N)` using
     `str.indexof(subject, sep, pos)` for the next separator/match position and
     `str.substr` to extract each segment, accumulating a `list[smt_string]` of
