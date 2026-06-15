@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+INSPECT TALLYING FOR ALL / LEADING / CHARACTERS counts exactly over the
+inspected item's bytes. See IBM LR "INSPECT statement".

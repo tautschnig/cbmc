@@ -774,6 +774,10 @@ protected:
   /// encode a value-domain number into the field's physical storage type.
   exprt
   encode_numeric(const item_infot &item, valuet v, bool rounded = false) const;
+  /// The i-th character byte of an item as a value-domain integer (0..255).
+  /// The shared building block for character-content semantics (INSPECT,
+  /// STRING, class conditions, ...): item bytes are the record byte array.
+  exprt byte_of(const reft &r, std::size_t i) const;
   /// Decode a faithfully-encoded zoned DISPLAY field's bytes to its value
   /// (IBM LR "USAGE DISPLAY" external decimal).
   valuet decode_zoned(const reft &r) const;
@@ -1020,21 +1024,26 @@ std::vector<unsigned char> cobol_typecheckt::zoned_bytes(
   return bytes;
 }
 
+exprt cobol_typecheckt::byte_of(const reft &r, std::size_t i) const
+{
+  // A single character byte at offset+i (endianness-independent), widened to
+  // the value domain so it can be compared/arithmetised.
+  const exprt off = plus_exprt{r.offset, from_integer(i, r.offset.type())};
+  return typecast_exprt{
+    make_byte_extract(r.record, off, unsignedbv_typet{8}), cobol_value_type()};
+}
+
 valuet cobol_typecheckt::decode_zoned(const reft &r) const
 {
   // Sum the ASCII digit bytes with decreasing place value (byte at offset+i is
   // the digit at position i, position 0 most significant).
   const item_infot &item = *r.info;
   const std::size_t n = item.byte_size;
-  const unsignedbv_typet byte_type{8};
   exprt acc = from_integer(0, cobol_value_type());
   for(std::size_t i = 0; i < n; ++i)
   {
-    const exprt off = plus_exprt{r.offset, from_integer(i, r.offset.type())};
-    const exprt byte = make_byte_extract(r.record, off, byte_type);
-    const exprt digit = minus_exprt{
-      typecast_exprt{byte, cobol_value_type()},
-      from_integer('0', cobol_value_type())};
+    const exprt digit =
+      minus_exprt{byte_of(r, i), from_integer('0', cobol_value_type())};
     const exprt place = from_integer(power10(n - 1 - i), cobol_value_type());
     acc = plus_exprt{acc, mult_exprt{digit, place}};
   }
@@ -4100,32 +4109,104 @@ std::vector<stmtt> cobol_typecheckt::parse_search()
 std::vector<stmtt> cobol_typecheckt::parse_inspect()
 {
   // INSPECT identifier {TALLYING ... | REPLACING ... | CONVERTING ...}
-  // (IBM LR "INSPECT statement"). The character-level counting/replacement is
-  // not represented by the value-domain model, so TALLYING counters and a
-  // REPLACING/CONVERTING target are given nondeterministic values (a sound
-  // over-approximation). This follows the same approach as STRING: a
-  // string-manipulation verb is modelled by havocking the items it writes.
+  // (IBM LR "INSPECT statement"). TALLYING counting over the inspected item's
+  // bytes is modelled exactly for the common forms below; REPLACING/CONVERTING
+  // (which rewrite the item's content) and the forms not handled here fall
+  // back to havocking the affected item (a sound over-approximation).
   const source_locationt loc = cur().location;
   expect_word("INSPECT");
   eat_word("BACKWARD");
   const reft item = parse_ref();
+  const std::size_t n = item.info->byte_size;
 
   std::vector<stmtt> result;
   if(eat_word("TALLYING"))
   {
-    // {counter FOR {ALL|LEADING|CHARACTERS} ...}...: the counter is the item
-    // immediately before FOR. Havoc each counter and skip its FOR phrase.
+    // {counter FOR {ALL|LEADING|CHARACTERS} value}...: the counter is the item
+    // before FOR. We model exactly a single FOR phrase whose argument is a
+    // one-character literal and that has no BEFORE/AFTER delimiter:
+    //   FOR ALL c       -> count of positions equal to c,
+    //   FOR LEADING c   -> length of the leading run of c,
+    //   FOR CHARACTERS  -> the number of character positions (n).
+    // Anything else (multi-char value, item value, BEFORE/AFTER, extra
+    // phrases) havocs the counter.
     while(is_item_word())
     {
       reft counter = parse_ref();
-      result.push_back(havoc_field(counter, loc));
       if(!eat_word("FOR"))
+      {
+        result.push_back(havoc_field(counter, loc));
         break;
-      while(!is_kind(cobol_token_kindt::PERIOD) && !at_eof() &&
-            !is_word("REPLACING") && !is_word("CONVERTING") &&
-            !(is_item_word() && peek(1).kind == cobol_token_kindt::WORD &&
-              peek(1).text == "FOR"))
+      }
+
+      exprt add; // exact contribution, when modelled
+      bool exact = false;
+      if(eat_word("CHARACTERS"))
+      {
+        add = from_integer(n, cobol_value_type());
+        exact = true;
+      }
+      else if(is_word("ALL") || is_word("LEADING"))
+      {
+        const bool leading = is_word("LEADING");
         advance();
+        // A one-character literal argument, with the phrase ending right after
+        // it (no BEFORE/AFTER, no further value) is the exact case.
+        if(
+          cur().kind == cobol_token_kindt::STRING && cur().text.size() == 1 &&
+          !(peek(1).kind == cobol_token_kindt::WORD &&
+            (peek(1).text == "BEFORE" || peek(1).text == "AFTER")))
+        {
+          const exprt c = from_integer(
+            static_cast<unsigned char>(cur().text[0]), cobol_value_type());
+          advance();
+          const exprt one = from_integer(1, cobol_value_type());
+          const exprt zero = from_integer(0, cobol_value_type());
+          add = zero;
+          if(leading)
+          {
+            // Leading run: positions 0..i count while every byte 0..i equals c.
+            exprt still = true_exprt{};
+            for(std::size_t i = 0; i < n; ++i)
+            {
+              still = and_exprt{still, equal_exprt{byte_of(item, i), c}};
+              add = plus_exprt{add, if_exprt{still, one, zero}};
+            }
+          }
+          else
+          {
+            for(std::size_t i = 0; i < n; ++i)
+              add = plus_exprt{
+                add, if_exprt{equal_exprt{byte_of(item, i), c}, one, zero}};
+          }
+          exact = true;
+        }
+      }
+
+      if(exact)
+      {
+        // The clean phrase has been fully consumed. Apply it exactly for an
+        // alphanumeric inspected item; for a numeric item the record bytes are
+        // not necessarily its character content, so havoc the counter (sound).
+        if(!item.info->is_numeric)
+        {
+          const valuet cur_v = read_field(counter);
+          valuet nv{plus_exprt{cur_v.expr, add}, cur_v.scale};
+          result.push_back(make_assign_ref(counter, nv, loc));
+        }
+        else
+          result.push_back(havoc_field(counter, loc));
+      }
+      else
+      {
+        // Unmodelled FOR form: havoc the counter and skip its phrase tokens.
+        result.push_back(havoc_field(counter, loc));
+        while(!is_kind(cobol_token_kindt::PERIOD) && !at_eof() &&
+              !is_word("REPLACING") && !is_word("CONVERTING") &&
+              !(is_item_word() && peek(1).kind == cobol_token_kindt::WORD &&
+                peek(1).text == "FOR"))
+          advance();
+      }
       if(is_word("REPLACING") || is_word("CONVERTING"))
         break;
     }
