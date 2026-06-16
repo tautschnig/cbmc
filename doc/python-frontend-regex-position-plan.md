@@ -239,18 +239,30 @@ splitting `subject[start:end]`. Whenever the intrinsic is gated out it returns
     separators work, 0 s. (The earlier "multi-append list-length limitation"
     was a FALSE conclusion from a stale/messy session state — int-list and
     inline string-list multi-append both fold fine.)
-  - The real blocker: `re.split`'s `flags` parameter — the **last** of two
-    trailing defaults (`maxsplit=0, flags=0`) — does **not** fold to its default
-    when split is called with fewer args (it folds when passed explicitly;
-    `maxsplit`, the other default, folds). So the soundness guard
-    `if flags != 0: return <nondet>` goes nondet and pollutes the result. This
-    is a re-module default-fill quirk (a 4-param *user* function folds its last
-    default; `re.findall` with a single trailing `flags` default folds), in the
-    same family as blocker #3 and the optional-receiver method-default fix.
-    Root cause not yet pinned (module.cpp freezes both defaults identically, yet
-    only `flags` comes out nondet — something downstream un-folds it, possibly
-    the regex-flags machinery). Fixing it lands precise split with no loop
-    change.
+  - The real blocker, now **precisely root-caused via the GOTO** (2026-06-16):
+    `re.split(",","abc")` is emitted as `CALL split(",", "abc", 0)` — only **3**
+    arguments. `split` has 4 params (`pattern, string, maxsplit=0, flags=0`);
+    `maxsplit` (index 2) gets its default `0` but `flags` (index 3) gets **no**
+    argument, so the GOTO layer fills it with nondet. Hence the soundness guard
+    `if flags != 0: return <nondet>` goes nondet and pollutes the result.
+  - Mechanism: the module-call default-fill loop in
+    `python_converter_call_method.cpp` (~1474) fills trailing params from the
+    `default_values` map and **breaks on the first missing entry**.
+    `default_values` contains `{"split",2}` (maxsplit) but **not** `{"split",3}`
+    (flags) — i.e. for an **imported** module function only the *first* trailing
+    default is populated. (`re.findall`, with a single trailing `flags` default,
+    folds; a 4-param *user* function folds all its defaults — so it is specific
+    to imported-module default population.) An AST fallback in the call loop
+    does **not** help: the imported `re` functions' FunctionDefs are not in
+    `parse_tree.ast_json` (the main program AST), so the fallback can't reach
+    their defaults.
+  - **Fix (future, focused):** populate `default_values` for *all* trailing
+    defaults of imported-module functions (find the imported-module default-
+    population path; it currently covers only the first), or give the call loop
+    access to the imported module's AST for the fallback. Either lands precise
+    `re.split` with no loop change. This is a genuine whole-group fix — it
+    affects any imported-module function called with >1 defaulted trailing
+    parameter omitted.
 - **Phase 3 — `Match.group(n)`.** Span + uniqueness-gated `str.++`
   decomposition (plans section 4 group-extraction item).
 - **Phase 4 — variable-length/greedy.** Deferred (section 7); stays nondet.
