@@ -198,24 +198,25 @@ a length-bounded copy/compare (a loop bounded by `len`, or a masked
 storage. This is the same "dynamic-extent operand" capability OCCURS
 DEPENDING ON (I7) needs, so the two should share one mechanism.
 
-**Status (partial).** `reft` (and `cond_operandt`) now carry an optional
+**Status (resolved).** `reft` (and `cond_operandt`) carry an optional
 `dyn_size` expr, set by `apply_refmod` for a non-constant length (the
 static `byte_size` becomes an upper bound = bytes from `start` to the item
-end). Two consumers honour it with the same per-byte-guard pattern (unfold
-over the static upper bound, guard position `i` by `i < dyn_size`, else a
-space pad): the **group/alphanumeric MOVE sender** (`make_move_group`,
-copies `len` characters then space-fills), the **alphanumeric
-comparison** (`build_alnum_relation`, contributes `len` characters then
-space padding; IBM LR "Comparison of two alphanumeric operands"), and
-**STRING/UNSTRING** (a STRING sender contributes `len` characters; UNSTRING
-bounds its source scan by `len` — the source length was already a single
-`s_expr`, so this was a one-line change). The one remaining consumer is a
-refmod **receiver** (`MOVE X TO Y(s:n)` with dynamic `n`); it still uses
-the static upper bound (sound, and `cobol:refmod-range` flags the unsafe
-cases) and can adopt the same per-byte-guard pattern. A default-constructed
-`exprt` has an empty id (not `nil`), so `dyn_size` must be initialised to
-`nil_exprt{}` and tested with `is_not_nil()` — otherwise every static view
-wrongly takes the dynamic path.
+end). Every byte-string consumer honours it with the same per-byte-guard
+pattern (unfold over the static upper bound, guard position `i` by
+`i < dyn_size`, else a space pad / the receiver's current byte): the
+**MOVE sender** and **receiver** (`make_move_group` / the literal-receiver
+path — a `Y(s:n)` receiver writes only its `n`-byte window, leaving the
+rest of `Y` unchanged), the **alphanumeric comparison**
+(`build_alnum_relation`), and **STRING/UNSTRING** (a STRING sender
+contributes `len` characters; UNSTRING bounds its source scan by `len`,
+which was a one-line change because the source length was already a single
+`s_expr`). IBM LR "Reference modification", "MOVE statement", "Comparison
+of two alphanumeric operands", "STRING statement", "UNSTRING statement".
+
+Pitfall: a default-constructed `exprt` has an empty id (not `nil`), so
+`dyn_size` must be initialised to `nil_exprt{}` and tested with
+`is_not_nil()` — otherwise every static view wrongly takes the dynamic
+path.
 
 ### I16 / CALL — inter-program linkage for whole-program verification
 

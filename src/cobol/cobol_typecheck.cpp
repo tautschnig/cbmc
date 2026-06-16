@@ -4222,31 +4222,55 @@ stmtt cobol_typecheckt::make_move_group(
   const std::size_t tsize = target.info->byte_size;
   const std::size_t ssize = src.info->byte_size;
   const unsignedbv_typet u8{8};
-  // Dynamic source extent (I8): the sender is a reference modification with a
-  // non-constant length n (= src.dyn_size). A group move copies n characters
-  // then space-fills the receiver (IBM LR "MOVE statement"; "Reference
-  // modification"). Unfold over the receiver's static size with a per-byte
-  // runtime guard `i < n` (n is bounded by ssize via the refmod-range check),
-  // so no dynamic-size storage is needed.
-  if(src.dyn_size.is_not_nil())
+  // Dynamic extent (I8): the sender and/or the receiver is a reference
+  // modification with a non-constant length. A group move copies the sender's
+  // characters left-justified and space-fills the receiver (IBM LR "MOVE
+  // statement"); a reference-modified receiver Y(s:n) only writes its n-byte
+  // window, leaving the rest of Y unchanged ("Reference modification"). Unfold
+  // over the receiver's static upper bound with per-byte runtime guards
+  // (`i < src.dyn_size` for the sender extent, `i < target.dyn_size` for the
+  // receiver window); the lengths are bounded by the static sizes via the
+  // refmod-range check, so no dynamic-size storage is needed.
+  if(src.dyn_size.is_not_nil() || target.dyn_size.is_not_nil())
   {
     const typet vt = cobol_value_type();
-    const exprt n = src.dyn_size;
+    const exprt space = from_integer(' ', u8);
     array_exprt::operandst bytes;
     bytes.reserve(tsize);
     for(std::size_t i = 0; i < tsize; ++i)
     {
-      const exprt space = from_integer(' ', u8);
+      // The character to place at receiver position i: the sender's byte when
+      // within its (possibly dynamic) length, else a space pad.
+      exprt cand;
       if(i < ssize)
       {
         const exprt off =
           plus_exprt{src.offset, from_integer(i, src.offset.type())};
         const exprt sb = make_byte_extract(src.record, off, u8);
-        bytes.push_back(if_exprt{
-          binary_relation_exprt{from_integer(i, vt), ID_lt, n}, sb, space});
+        cand =
+          src.dyn_size.is_not_nil()
+            ? static_cast<exprt>(if_exprt{
+                binary_relation_exprt{from_integer(i, vt), ID_lt, src.dyn_size},
+                sb,
+                space})
+            : sb;
       }
       else
-        bytes.push_back(space);
+        cand = space;
+      // For a reference-modified receiver, positions at or beyond the runtime
+      // window length keep their current byte (the window does not extend).
+      if(target.dyn_size.is_not_nil())
+      {
+        const exprt toff =
+          plus_exprt{target.offset, from_integer(i, target.offset.type())};
+        const exprt cur = make_byte_extract(target.record, toff, u8);
+        bytes.push_back(if_exprt{
+          binary_relation_exprt{from_integer(i, vt), ID_lt, target.dyn_size},
+          cand,
+          cur});
+      }
+      else
+        bytes.push_back(cand);
     }
     const array_typet at{u8, from_integer(tsize, size_type())};
     stmtt s;
@@ -4583,7 +4607,32 @@ std::vector<stmtt> cobol_typecheckt::parse_move()
       s.kind = stmtt::kindt::ASSIGN;
       s.location = loc;
       s.lhs = t.record;
-      s.rhs = make_byte_update(t.record, t.offset, c);
+      if(t.dyn_size.is_not_nil())
+      {
+        // Reference-modified receiver Y(s:n) with a non-constant length:
+        // write only the n-byte window, leaving the rest of Y unchanged
+        // (IBM LR "Reference modification") (I8).
+        const unsignedbv_typet u8{8};
+        const typet vt = cobol_value_type();
+        array_exprt::operandst bytes;
+        bytes.reserve(t.info->byte_size);
+        for(std::size_t i = 0; i < t.info->byte_size; ++i)
+        {
+          const exprt lit = index_exprt{c, from_integer(i, size_type())};
+          const exprt toff =
+            plus_exprt{t.offset, from_integer(i, t.offset.type())};
+          const exprt cur = make_byte_extract(t.record, toff, u8);
+          bytes.push_back(if_exprt{
+            binary_relation_exprt{from_integer(i, vt), ID_lt, t.dyn_size},
+            lit,
+            cur});
+        }
+        const array_typet at{u8, from_integer(t.info->byte_size, size_type())};
+        s.rhs = make_byte_update(
+          t.record, t.offset, array_exprt{std::move(bytes), at});
+      }
+      else
+        s.rhs = make_byte_update(t.record, t.offset, c);
       result.push_back(s);
     }
     else

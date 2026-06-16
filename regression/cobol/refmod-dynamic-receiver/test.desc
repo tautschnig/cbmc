@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+I8: a MOVE into a reference-modified receiver Y(start:len) with a non-constant
+length writes only the len-byte window, leaving the rest of Y unchanged. IBM
+LR "Reference modification".
