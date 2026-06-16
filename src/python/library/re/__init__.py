@@ -257,13 +257,33 @@ def finditer(pattern, string, flags: int = 0):
 
 
 def split(pattern: str, string: str, maxsplit: int = 0, flags: int = 0):
-    # Sound over-approximation: a nondet (bounded) list of nondet strings.
-    # The position-driven loop (the dual of findall: collect the gaps between
-    # matches) is precise for the per-match gaps, but the trailing piece needs
-    # a SECOND append site, and a list built with two append sites in a loop
-    # comes out nondet-length (distinct from findall, which has one). Tracked
-    # in doc/python-frontend-regex-position-plan.md Phase 2.
-    return nondet_list(8, nondet_str())
+    if flags != 0:
+        return nondet_list(8, nondet_str())
+    # Split on the non-overlapping matches of `pattern`: the gaps between
+    # matches plus the trailing piece. `maxsplit > 0` caps the number of
+    # splits. Precise for a fixed-length pattern on a constant subject;
+    # otherwise a sound bounded enumeration.
+    result: list[str] = []
+    pos = 0
+    last = 0
+    splits = 0
+    n = len(string)
+    while pos <= n:
+        if maxsplit > 0 and splits >= maxsplit:
+            break
+        st = __cbmc_re_search_start(pattern, string, pos)
+        if st < 0:
+            break
+        en = __cbmc_re_search_end(pattern, string, pos)
+        result.append(string[last:st])
+        last = en
+        splits = splits + 1
+        if en > pos:
+            pos = en
+        else:
+            pos = pos + 1
+    result.append(string[last:n])
+    return result
 
 def sub(pattern: str, repl: str, string: str, count: int = 0, flags: int = 0) -> str:
     return __cbmc_re_sub(pattern, repl, string, count)

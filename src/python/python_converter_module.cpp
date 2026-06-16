@@ -319,6 +319,53 @@ void python_convertert::process_imported_module(
           }
         }
       }
+      // PLR §8.7: record this module-level function's trailing parameter
+      // defaults. process_imported_module otherwise registers the function
+      // symbol WITHOUT its defaults, so a call that omits them (e.g.
+      // re.split(p, s) leaving maxsplit/flags, re.sub(p, r, s) leaving
+      // count/flags) saw the missing params as unconstrained nondet -- the
+      // module-call dispatch fills trailing params from default_values and
+      // stops at the first gap. Only class methods were populated before
+      // (defs.cpp), so a module function whose defaults did not collide with a
+      // same-named method's defaults (e.g. re.split's `flags`, index 3, vs
+      // Pattern.split which has no index 3) was left nondet. Mirrors the
+      // main-module pre-pass in convert_module_body; keyed by bare name to
+      // match the call-site lookup. (Whole-group fix: every imported
+      // module-level function with defaulted trailing params.)
+      {
+        const jsont &fa = json_member(stmt, "args");
+        const jsont &fparams = json_member(fa, "args");
+        const jsont &fdefaults = json_member(fa, "defaults");
+        if(fparams.is_array() && fdefaults.is_array())
+        {
+          const std::size_t np = as_array(fparams).size();
+          const std::size_t nd = as_array(fdefaults).size();
+          if(nd <= np)
+          {
+            const std::size_t first_default = np - nd;
+            auto dit = as_array(fdefaults).begin();
+            for(std::size_t i = first_default; i < np; i++, ++dit)
+            {
+              exprt val = convert_expression(*dit);
+              if(val.is_nil() || val.type().id() == ID_pointer)
+                continue;
+              // Built-in container struct_tags are safe to snapshot; raw
+              // class-instance structs are not (call-time evaluation).
+              if(val.type().id() == ID_struct)
+              {
+                const std::string tag =
+                  id2string(to_struct_type(val.type()).get_tag());
+                if(
+                  tag != "python_string" && tag != "python_tuple" &&
+                  tag != "python_value" && tag != "python_set" &&
+                  tag != "python_complex" && tag != "python_list")
+                  continue;
+              }
+              default_values[{fname, i}] = val;
+            }
+          }
+        }
+      }
       // Register as a module-level function
       // The function will be callable as module.func()
       irep_idt sym_id{"python::" + fname};
