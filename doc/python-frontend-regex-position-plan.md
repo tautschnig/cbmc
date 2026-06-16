@@ -253,8 +253,40 @@ splitting `subject[start:end]`. Whenever the intrinsic is gated out it returns
   - (The earlier "multi-append list-length limitation" was a FALSE conclusion
     from a stale/messy session state — int-list and inline string-list
     multi-append both fold fine.)
-- **Phase 3 — `Match.group(n)`.** Span + uniqueness-gated `str.++`
-  decomposition (plans section 4 group-extraction item).
+- **Phase 3 — `Match.group(n)` for n>=1. SCOPED + spike-validated (2026-06-16);
+  not yet implemented.** Extract capture-group text by a `str.++` decomposition
+  of the matched span.
+
+  *Encoding (CVC5-spiked, definitive):* segment the pattern into a top-level
+  sequence of literal runs and capture groups, e.g. `(\d+)-(\d+)` ->
+  `[grp(\d+), lit("-"), grp(\d+)]`. Introduce a fresh `smt_string` `gi` per
+  group; assume `matched == seg0 ++ seg1 ++ ...` (literals are constants,
+  groups are the `gi`) and `gi ∈ body(sub_pattern_i)` via the existing
+  `fullmatch` intrinsic / `str.in_re`; `group(i)` returns `gi`. No greedy
+  maximality is asserted.
+
+  *Soundness (verified by spike):* the decomposition **over-approximates** —
+  `gi` ranges over every valid split — so it is **sound for all patterns**
+  (e.g. `for c in m.group(1): assert P(c)` checks `P` over a superset of
+  Python's group). It is **precise exactly when the split is uniquely
+  determined**: for `(\d+)-(\d+)` on `"12-34"` the literal `-` pins it and `g1`
+  is forced to `"12"` (spike: asserting `g1 != "12"` is UNSAT); for `(\d+)(\d+)`
+  on `"1234"` (adjacent variable groups, no separator) `g1` is **not** forced
+  (multiple splits) so `group(1)` is a sound nondet-among-valid-splits. No
+  uniqueness *gate* is needed for soundness — only for the precision claim.
+
+  *Implementation (the work):* (1) a **top-level pattern segmenter** in
+  `python_regex_to_smt` (the translator parses `(...)` but exposes no
+  capture-segment list); bail to the sound floor on alternation at top level,
+  quantified/nested capture groups, anchors mid-pattern, back-refs. (2) A
+  front-end decomposition for `m.group(n)` mirroring the landed `strip(chars)`
+  decomposition (introduce `gi`, push `code_assumet`s for the concat + each
+  `fullmatch(gi, sub_i)`, return `g_n`); needs the **constant pattern** stored
+  on the `Match` (add `_pattern`) and the matched text (`_group0`, already
+  stored). (3) `group(n>=1)` currently returns a sound `nondet_str()`
+  (`f0e06d3958`) — that stays the floor when the pattern isn't a constant /
+  isn't segmentable / `n` is out of range. PLR: groups are leftmost-longest;
+  the precise subset (literal-pinned) coincides, the rest stays sound nondet.
 - **Phase 4 — variable-length/greedy.** Deferred (section 7); stays nondet.
 
 ## 10. Risks / open questions
