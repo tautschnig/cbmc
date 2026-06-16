@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+I8: a group MOVE whose sender is a reference modification with a non-constant
+length copies that many characters (tracked at run time) and space-fills the
+receiver. IBM LR "Reference modification" / "MOVE statement".

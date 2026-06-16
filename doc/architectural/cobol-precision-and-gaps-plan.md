@@ -196,9 +196,23 @@ Architectural change: give a reference-modified view an optional
 a length-bounded copy/compare (a loop bounded by `len`, or a masked
 `byte_update`), with the static `byte_size` kept only as an upper bound for
 storage. This is the same "dynamic-extent operand" capability OCCURS
-DEPENDING ON (I7) needs, so the two should share one mechanism. Until then
-the refmod-range check (cobol:refmod-range) already flags the unsafe cases
-soundly.
+DEPENDING ON (I7) needs, so the two should share one mechanism.
+
+**Status (partial).** `reft` (and `cond_operandt`) now carry an optional
+`dyn_size` expr, set by `apply_refmod` for a non-constant length (the
+static `byte_size` becomes an upper bound = bytes from `start` to the item
+end). The dominant consumer, a **group/alphanumeric MOVE sender**
+(`make_move_group`), honours it: it unfolds over the receiver's static
+size with a per-byte runtime guard `i < len` (so it copies `len`
+characters then space-fills, with no dynamic-size storage), exact and
+bounded. Remaining consumers — alphanumeric **comparison**
+(`build_alnum_relation`), `STRING`/`UNSTRING`, and a refmod **receiver** —
+still use the static upper bound (sound, and the `cobol:refmod-range`
+check flags the unsafe cases); they can adopt the same per-byte-guard
+pattern incrementally. A default-constructed `exprt` has an empty id (not
+`nil`), so `dyn_size` must be initialised to `nil_exprt{}` and tested with
+`is_not_nil()` — otherwise every static view wrongly takes the dynamic
+path.
 
 ### I16 / CALL — inter-program linkage for whole-program verification
 

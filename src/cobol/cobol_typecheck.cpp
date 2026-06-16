@@ -232,6 +232,12 @@ struct reft
   const item_infot *info = nullptr;
   exprt record; ///< symbol_exprt of the record byte array
   exprt offset; ///< byte offset within the record (size_type)
+  /// Runtime byte count for a reference modification with a non-constant
+  /// length (IBM LR "Reference modification"). Nil when the extent is static
+  /// (then it is info->byte_size). Consumers that honour it treat info->
+  /// byte_size only as an upper bound. See doc/architectural/
+  /// cobol-precision-and-gaps-plan.md section 6 (I8).
+  exprt dyn_size = nil_exprt{};
 };
 
 /// A parsed VALUE / 88-level literal, before interpretation against the
@@ -275,6 +281,9 @@ struct cond_operandt
   exprt offset;
   std::size_t length = 0;
   const item_infot *item = nullptr; ///< the field, when is_item
+  /// Runtime byte count for a reference-modified item with a non-constant
+  /// length (I8); nil when the extent is static. Mirrors reft::dyn_size.
+  exprt dyn_size = nil_exprt{};
 
   // alphanumeric literal / figurative:
   bool is_spec = false;
@@ -2716,6 +2725,9 @@ reft cobol_typecheckt::parse_ref()
   const item_infot &item = resolve_item(name, quals);
   const item_infot *info = &item;
   exprt offset = from_integer(item.offset, size_type());
+  // Set by apply_refmod for a non-constant reference-modification length: the
+  // runtime byte count carried on the returned reft (I8). Nil when static.
+  exprt refmod_dyn_size = nil_exprt{};
 
   const auto is_colon = [&]()
   { return cur().kind == cobol_token_kindt::PUNCT && cur().text == ":"; };
@@ -2757,8 +2769,21 @@ reft cobol_typecheckt::parse_ref()
     if(len.has_value())
     {
       const auto c = numeric_cast<mp_integer>(len->expr);
-      length =
-        c.has_value() ? numeric_cast_v<std::size_t>(*c) : info->byte_size;
+      if(c.has_value())
+        length = numeric_cast_v<std::size_t>(*c);
+      else
+      {
+        // Non-constant length (I8): carry the runtime byte count on the reft
+        // and keep a static upper bound = bytes from `start` to the item end
+        // (IBM LR "Reference modification"). The cobol:refmod-range check
+        // guards the actual extent.
+        refmod_dyn_size = rescale(len->expr, len->scale, 0);
+        const std::size_t from = start_const.has_value()
+                                   ? numeric_cast_v<std::size_t>(*start_const)
+                                   : 1;
+        length = (info->byte_size >= from) ? info->byte_size - (from - 1)
+                                           : info->byte_size;
+      }
     }
     else if(
       start_const.has_value() &&
@@ -2876,7 +2901,7 @@ reft cobol_typecheckt::parse_ref()
       }
     }
   }
-  return reft{info, record_expr(item.record_symbol), offset};
+  return reft{info, record_expr(item.record_symbol), offset, refmod_dyn_size};
 }
 
 valuet cobol_typecheckt::parse_primary()
@@ -3464,6 +3489,7 @@ cond_operandt cobol_typecheckt::parse_cond_operand()
     op.offset = r.offset;
     op.length = r.info->byte_size;
     op.item = r.info;
+    op.dyn_size = r.dyn_size;
     return op;
   }
   op.numeric = true;
@@ -4180,8 +4206,43 @@ stmtt cobol_typecheckt::make_move_group(
   // host); a shorter receiver truncates on the right.
   const std::size_t tsize = target.info->byte_size;
   const std::size_t ssize = src.info->byte_size;
-  const std::size_t n = std::min(tsize, ssize);
   const unsignedbv_typet u8{8};
+  // Dynamic source extent (I8): the sender is a reference modification with a
+  // non-constant length n (= src.dyn_size). A group move copies n characters
+  // then space-fills the receiver (IBM LR "MOVE statement"; "Reference
+  // modification"). Unfold over the receiver's static size with a per-byte
+  // runtime guard `i < n` (n is bounded by ssize via the refmod-range check),
+  // so no dynamic-size storage is needed.
+  if(src.dyn_size.is_not_nil())
+  {
+    const typet vt = cobol_value_type();
+    const exprt n = src.dyn_size;
+    array_exprt::operandst bytes;
+    bytes.reserve(tsize);
+    for(std::size_t i = 0; i < tsize; ++i)
+    {
+      const exprt space = from_integer(' ', u8);
+      if(i < ssize)
+      {
+        const exprt off =
+          plus_exprt{src.offset, from_integer(i, src.offset.type())};
+        const exprt sb = make_byte_extract(src.record, off, u8);
+        bytes.push_back(if_exprt{
+          binary_relation_exprt{from_integer(i, vt), ID_lt, n}, sb, space});
+      }
+      else
+        bytes.push_back(space);
+    }
+    const array_typet at{u8, from_integer(tsize, size_type())};
+    stmtt s;
+    s.kind = stmtt::kindt::ASSIGN;
+    s.location = loc;
+    s.lhs = target.record;
+    s.rhs = make_byte_update(
+      target.record, target.offset, array_exprt{std::move(bytes), at});
+    return s;
+  }
+  const std::size_t n = std::min(tsize, ssize);
   const array_typet copy_type{u8, from_integer(n, size_type())};
   const exprt src_bytes = make_byte_extract(src.record, src.offset, copy_type);
   exprt rhs = make_byte_update(target.record, target.offset, src_bytes);
@@ -4496,8 +4557,8 @@ std::vector<stmtt> cobol_typecheckt::parse_move()
     else if(src.is_item)
     {
       // Group / alphanumeric copy.
-      result.push_back(
-        make_move_group(t, reft{src.item, src.record, src.offset}, loc));
+      result.push_back(make_move_group(
+        t, reft{src.item, src.record, src.offset, src.dyn_size}, loc));
     }
     else if(src.is_spec)
     {
