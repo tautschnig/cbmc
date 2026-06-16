@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+I8: UNSTRING bounds its source scan by a reference modification's non-constant
+length, so content beyond it is excluded. IBM LR "UNSTRING statement".

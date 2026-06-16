@@ -204,16 +204,18 @@ static `byte_size` becomes an upper bound = bytes from `start` to the item
 end). Two consumers honour it with the same per-byte-guard pattern (unfold
 over the static upper bound, guard position `i` by `i < dyn_size`, else a
 space pad): the **group/alphanumeric MOVE sender** (`make_move_group`,
-copies `len` characters then space-fills) and the **alphanumeric
+copies `len` characters then space-fills), the **alphanumeric
 comparison** (`build_alnum_relation`, contributes `len` characters then
-space padding; IBM LR "Comparison of two alphanumeric operands").
-Remaining consumers — `STRING`/`UNSTRING` and a refmod **receiver** —
-still use the static upper bound (sound, and the `cobol:refmod-range`
-check flags the unsafe cases); they can adopt the same per-byte-guard
-pattern incrementally. A default-constructed `exprt` has an empty id (not
-`nil`), so `dyn_size` must be initialised to `nil_exprt{}` and tested with
-`is_not_nil()` — otherwise every static view wrongly takes the dynamic
-path.
+space padding; IBM LR "Comparison of two alphanumeric operands"), and
+**STRING/UNSTRING** (a STRING sender contributes `len` characters; UNSTRING
+bounds its source scan by `len` — the source length was already a single
+`s_expr`, so this was a one-line change). The one remaining consumer is a
+refmod **receiver** (`MOVE X TO Y(s:n)` with dynamic `n`); it still uses
+the static upper bound (sound, and `cobol:refmod-range` flags the unsafe
+cases) and can adopt the same per-byte-guard pattern. A default-constructed
+`exprt` has an empty id (not `nil`), so `dyn_size` must be initialised to
+`nil_exprt{}` and tested with `is_not_nil()` — otherwise every static view
+wrongly takes the dynamic path.
 
 ### I16 / CALL — inter-program linkage for whole-program verification
 

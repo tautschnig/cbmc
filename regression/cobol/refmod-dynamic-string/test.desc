@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+I8: a STRING sender that is a reference modification with a non-constant
+length contributes exactly that many characters. IBM LR "STRING statement".

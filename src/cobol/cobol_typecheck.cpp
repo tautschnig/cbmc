@@ -4690,9 +4690,14 @@ std::vector<stmtt> cobol_typecheckt::parse_string()
   {
     std::vector<exprt> bytes;
     std::vector<exprt> delim;
+    /// Run-time character count when the sender is a reference modification
+    /// with a non-constant length (I8); nil when the extent is static (then
+    /// bytes.size() is exact). bytes still holds the static upper bound.
+    exprt dyn_count = nil_exprt{};
   };
   std::vector<sendert> senders;
-  const auto operand_bytes = [&](std::vector<exprt> &out)
+  const auto operand_bytes =
+    [&](std::vector<exprt> &out, exprt *dyn_out = nullptr)
   {
     if(cur().kind == cobol_token_kindt::STRING)
     {
@@ -4709,6 +4714,8 @@ std::vector<stmtt> cobol_typecheckt::parse_string()
         return false; // a numeric operand needs its display bytes (deferred)
       for(std::size_t k = 0; k < r.info->byte_size; ++k)
         out.push_back(byte_of(r, k));
+      if(dyn_out != nullptr && r.dyn_size.is_not_nil())
+        *dyn_out = r.dyn_size;
       return true;
     }
     return false;
@@ -4716,7 +4723,7 @@ std::vector<stmtt> cobol_typecheckt::parse_string()
   while(!at_eof() && !is_word("INTO") && !is_kind(cobol_token_kindt::PERIOD))
   {
     sendert s;
-    if(!operand_bytes(s.bytes))
+    if(!operand_bytes(s.bytes, &s.dyn_count))
     {
       exact = false;
       advance();
@@ -4812,10 +4819,16 @@ std::vector<stmtt> cobol_typecheckt::parse_string()
     for(std::size_t k = 0; k < cap; ++k)
     {
       // The k-th character is part of the transferred field only if it is
-      // before the delimiter cut.
-      const exprt within = dlen == 0 ? static_cast<exprt>(true_exprt{})
-                                     : static_cast<exprt>(binary_relation_exprt{
-                                         from_integer(k, vt), ID_lt, cut});
+      // before the delimiter cut and, for a reference modification with a
+      // non-constant length, within that run-time length (I8): the sender
+      // contributes only its first dyn_count characters.
+      exprt within = dlen == 0 ? static_cast<exprt>(true_exprt{})
+                               : static_cast<exprt>(binary_relation_exprt{
+                                   from_integer(k, vt), ID_lt, cut});
+      if(snd.dyn_count.is_not_nil())
+        within = and_exprt{
+          within,
+          binary_relation_exprt{from_integer(k, vt), ID_lt, snd.dyn_count}};
       // ... and can be placed only if the pointer is within the receiver
       // (pc in 1..n means offset pc-1 < n).
       const exprt can = binary_relation_exprt{pc, ID_le, nexpr};
@@ -5565,7 +5578,12 @@ std::vector<stmtt> cobol_typecheckt::parse_unstring()
   }
 
   const std::size_t ssz = src.info->byte_size;
-  const exprt s_expr = from_integer(ssz, vt);
+  // The source length drives the whole scan. When the source is a reference
+  // modification with a non-constant length (I8), use that run-time length;
+  // ssz remains the static upper bound for the byte vector below. IBM LR
+  // "UNSTRING statement" (the source is examined left to right to its end).
+  const exprt s_expr =
+    src.dyn_size.is_not_nil() ? src.dyn_size : from_integer(ssz, vt);
   const exprt one = from_integer(1, vt);
   const exprt zero = from_integer(0, vt);
   const exprt space = from_integer(' ', vt);
