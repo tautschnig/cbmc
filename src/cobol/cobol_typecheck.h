@@ -32,6 +32,8 @@ class message_handlert;
 ///   reference-modification range); gated on CBMC's "bounds-check" option
 /// \param div_checks: emit the division-by-zero check; gated on CBMC's
 ///   "div-by-zero-check" option
+/// \param data_exception_checks: emit the data-exception (S0C7) check on
+///   numeric use of a faithful zoned/packed item (opt-in)
 /// \return true on error
 bool cobol_typecheck(
   const std::vector<cobol_tokent> &tokens,
@@ -39,6 +41,7 @@ bool cobol_typecheck(
   const std::string &module,
   message_handlert &message_handler,
   bool runtime_checks,
-  bool div_checks);
+  bool div_checks,
+  bool data_exception_checks);
 
 #endif // CPROVER_COBOL_COBOL_TYPECHECK_H

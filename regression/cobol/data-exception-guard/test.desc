@@ -1,0 +1,9 @@
+CORE
+main.cob
+--cobol-data-exception-check
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+An IS NUMERIC guard discharges the data-exception check, and the class
+condition's own operand is not checked. IBM LR "Class condition".

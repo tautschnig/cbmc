@@ -93,6 +93,9 @@ void cobol_languaget::set_language_options(
     runtime_checks = options.get_bool_option("bounds-check");
   if(options.is_set("div-by-zero-check"))
     div_checks = options.get_bool_option("div-by-zero-check");
+  if(options.is_set("cobol-data-exception-check"))
+    data_exception_checks =
+      options.get_bool_option("cobol-data-exception-check");
 }
 
 bool cobol_languaget::typecheck(
@@ -108,7 +111,8 @@ bool cobol_languaget::typecheck(
        module,
        message_handler,
        runtime_checks,
-       div_checks))
+       div_checks,
+       data_exception_checks))
     return true;
 
   remove_internal_symbols(new_symbol_table, message_handler, true);

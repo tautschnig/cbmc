@@ -58,6 +58,7 @@ class optionst;
   "(property):(stop-on-fail)(trace)" \
   "(verbosity):(no-library)" \
   "(nondet-static)" \
+  "(cobol-data-exception-check)" \
   "(version)" \
   "(export-symex-ready-goto):" \
   OPT_COVER \

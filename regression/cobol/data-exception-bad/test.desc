@@ -1,0 +1,11 @@
+CORE
+main.cob
+--cobol-data-exception-check
+^EXIT=10$
+^SIGNAL=0$
+^\[cobol:numeric\.\d+\].*: FAILURE$
+^VERIFICATION FAILED$
+--
+Opt-in data-exception (S0C7) check: a zoned item with non-digit content used
+arithmetically is flagged. IBM LR "Class condition". See
+doc/architectural/cobol-runtime-checks.md.

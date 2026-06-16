@@ -32,9 +32,27 @@ known.
 | `cobol:subscript-range` | each subscript `s` satisfies `1 <= s <= occurs` | "Subscripting"; SSRANGE |
 | `cobol:refmod-range` | `start >= 1` and `start + length - 1 <= size` | "Reference modification"; SSRANGE |
 | `cobol:division-by-zero` | the divisor is non-zero (when no `ON SIZE ERROR` phrase applies) | "DIVIDE"/"COMPUTE"; the SIZE ERROR condition |
+| `cobol:numeric` (S0C7) | a faithful zoned/packed item used numerically holds valid digits/sign | "Class condition"; the data exception |
 
-(Future: `cobol:uninitialized` read-before-write, and `cobol:numeric`
-data exception — S0C7 — once faithful numeric content is broad.)
+(Future: `cobol:uninitialized` read-before-write, once tracked.)
+
+### Data exception (S0C7)
+
+`numeric_content_valid(reft)` is the shared "valid numeric content"
+predicate (digit/sign validity for faithful zoned/packed; trivially true
+for the value model and BINARY). The same predicate drives the exact
+`IS NUMERIC` class condition. For the check, a numeric *use* of a faithful
+zoned/packed item asserts the predicate (a violation is z/OS S0C7). It is
+emitted at genuine use sites — arithmetic operands (`parse_primary`) and
+relation operands (`build_cond_relation`) — but **not** at the operand of
+an `IS NUMERIC` class condition, which is precisely the validity test and
+must not require valid content; an `IS NUMERIC` guard therefore discharges
+the check in its THEN branch. (Arithmetic embedded inside a condition,
+e.g. `IF A + 1 > 5`, is a documented gap: the leading operand read by the
+condition parser is not yet checked.) Unlike the range and division
+checks, this is **opt-in** via `--cobol-data-exception-check`, because on
+real programs every packed/zoned field sourced from a file READ or LINKAGE
+is a potential data exception, which would be too noisy on by default.
 
 ### Division by zero and the SIZE ERROR phrase
 

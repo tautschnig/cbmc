@@ -574,13 +574,15 @@ public:
     const std::string &_module,
     message_handlert &_message_handler,
     bool _runtime_checks,
-    bool _div_checks)
+    bool _div_checks,
+    bool _data_exception_checks)
     : tokens(_tokens),
       symbol_table(_symbol_table),
       module(_module),
       log(_message_handler),
       runtime_checks(_runtime_checks),
-      div_checks(_div_checks)
+      div_checks(_div_checks),
+      data_exception_checks(_data_exception_checks)
   {
   }
 
@@ -598,6 +600,10 @@ protected:
   /// When true, emit the division-by-zero check; gated on CBMC's
   /// "div-by-zero-check" option (IBM LR "SIZE ERROR phrases").
   const bool div_checks;
+  /// When true, emit the data-exception (S0C7) check on numeric use of a
+  /// faithful zoned/packed item; opt-in via --cobol-data-exception-check
+  /// (IBM LR "Class condition"; the data exception is invalid digits/sign).
+  const bool data_exception_checks;
 
   std::size_t pos = 0;
 
@@ -632,11 +638,13 @@ protected:
   std::vector<stmtt> pending_checks;
   void add_check(exprt cond, const char *cls, source_locationt loc)
   {
-    // Division-by-zero follows CBMC's div-by-zero-check option; the range
-    // checks follow bounds-check (both off under --no-standard-checks).
-    const bool on = std::string{cls} == "cobol:division-by-zero"
-                      ? div_checks
-                      : runtime_checks;
+    // Division-by-zero follows CBMC's div-by-zero-check option; data exception
+    // (S0C7) follows the opt-in cobol-data-exception-check; the range checks
+    // follow bounds-check (both off under --no-standard-checks).
+    const std::string c{cls};
+    const bool on = c == "cobol:division-by-zero" ? div_checks
+                    : c == "cobol:numeric"        ? data_exception_checks
+                                                  : runtime_checks;
     if(!on)
       return;
     stmtt s;
@@ -846,6 +854,11 @@ protected:
   signedbv_typet phys_type(const item_infot &item) const;
   /// rvalue of a field: byte_extract + decode to the value domain.
   valuet read_field(const reft &r) const;
+  /// Read a numeric item that is about to be *used* as a number, emitting the
+  /// data-exception (S0C7) check when enabled: a faithful zoned/packed item
+  /// whose bytes are not valid numeric content abends on z/OS (IBM LR "Class
+  /// condition"; data exception). Non-const because it may buffer a check.
+  valuet read_numeric_use(const reft &r);
   /// encode a value-domain number into the field's physical storage type.
   exprt
   encode_numeric(const item_infot &item, valuet v, bool rounded = false) const;
@@ -1597,6 +1610,19 @@ valuet cobol_typecheckt::read_field(const reft &r) const
   // REDEFINES overlap and group MOVE line up).
   const exprt phys = make_byte_extract(r.record, r.offset, phys_type(item));
   return valuet{typecast_exprt{phys, cobol_value_type()}, item.scale};
+}
+
+valuet cobol_typecheckt::read_numeric_use(const reft &r)
+{
+  // A numeric value about to be used: if the source is a faithful zoned/packed
+  // item, its bytes may be non-numeric (e.g. from a file READ, LINKAGE, or an
+  // alphanumeric alias), which abends on z/OS with a data exception (S0C7).
+  // Emit the check (opt-in); BINARY and the value model always hold a number.
+  if(
+    r.info->is_numeric && r.info->faithful_bytes &&
+    (r.info->usage == usaget::DISPLAY || r.info->usage == usaget::PACKED))
+    add_check(numeric_content_valid(r), "cobol:numeric", cur().location);
+  return read_field(r);
 }
 
 exprt cobol_typecheckt::encode_numeric(
@@ -2896,7 +2922,7 @@ valuet cobol_typecheckt::parse_primary()
     if(!r.info->is_numeric)
       error("non-numeric item '" + nm + "' used in expression");
     last_ref = r;
-    return read_field(r);
+    return read_numeric_use(r);
   }
   error("expected an operand but got '" + cur().text + "'");
 }
@@ -3290,9 +3316,28 @@ exprt cobol_typecheckt::build_cond_relation(
   const auto to_numeric = [](const cond_operandt &o) {
     return o.numeric ? o.num : valuet{from_integer(0, cobol_value_type()), 0};
   };
+  // A numeric comparison uses each operand's numeric value, so a faithful
+  // zoned/packed bare-item operand must hold valid content (else a z/OS data
+  // exception, S0C7). Checked here rather than at the operand read, so a class
+  // condition (IS NUMERIC) operand is not subjected to its own validity test.
+  const auto check_num_use = [&](const cond_operandt &o)
+  {
+    if(
+      o.numeric && o.num_item != nullptr && o.num_item->faithful_bytes &&
+      (o.num_item->usage == usaget::DISPLAY ||
+       o.num_item->usage == usaget::PACKED))
+      add_check(
+        numeric_content_valid(reft{o.num_item, o.record, o.offset}),
+        "cobol:numeric",
+        cur().location);
+  };
 
   if((a.numeric || b.numeric) && numeric_like(a) && numeric_like(b))
+  {
+    check_num_use(a);
+    check_num_use(b);
     return build_relation(to_numeric(a), op, to_numeric(b));
+  }
 
   // Comparison of a numeric operand with a nonnumeric one: the numeric operand
   // is compared by its display representation (IBM LR "Comparison of numeric
@@ -3391,6 +3436,10 @@ cond_operandt cobol_typecheckt::parse_cond_operand()
       // A numeric operand may begin an arithmetic expression (e.g. A + B in a
       // relation condition), so continue the expression from this value.
       op.numeric = true;
+      // Read without a data-exception check here: this operand may feed a
+      // class condition (IS NUMERIC), which is precisely the validity test and
+      // must not itself require valid content. Numeric *use* is checked at the
+      // arithmetic (parse_primary) and relation (build_cond_relation) sites.
       const valuet base = read_field(r);
       op.num = parse_expr_from(base);
       // Record the item only when the operand is exactly that item (no
@@ -7336,9 +7385,16 @@ bool cobol_typecheck(
   const std::string &module,
   message_handlert &message_handler,
   bool runtime_checks,
-  bool div_checks)
+  bool div_checks,
+  bool data_exception_checks)
 {
   cobol_typecheckt cobol_typecheck{
-    tokens, symbol_table, module, message_handler, runtime_checks, div_checks};
+    tokens,
+    symbol_table,
+    module,
+    message_handler,
+    runtime_checks,
+    div_checks,
+    data_exception_checks};
   return cobol_typecheck.typecheck();
 }

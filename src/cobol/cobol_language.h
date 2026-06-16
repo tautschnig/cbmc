@@ -89,6 +89,11 @@ private:
   /// Emit the division-by-zero check. Mirrors CBMC's "div-by-zero-check"
   /// option (on by default in v6+, off under --no-standard-checks).
   bool div_checks = true;
+  /// Emit the data-exception (S0C7) check on numeric use of a faithful
+  /// zoned/packed item. Opt-in via --cobol-data-exception-check (off by
+  /// default: on real programs every file/LINKAGE numeric field is a
+  /// potential data exception).
+  bool data_exception_checks = false;
 };
 
 std::unique_ptr<languaget> new_cobol_language();
