@@ -244,7 +244,7 @@ baseline.
 
 | id | imprecision | LR clause | KB | plan |
 |---|---|---|---|---|
-| I2 | **PARTIAL** — a bare unsigned integer DISPLAY operand is now compared by its zoned display representation (CORE `num-alnum-compare`); signed/scaled/COMP/expression operands still nondet | "Comparison of numeric and nonnumeric operands" | — | character-semantics §3.6 |
+| I2 | **RESOLVED for items** — a bare numeric item operand (any USAGE, scale, sign) is compared by its magnitude digit-string display representation (CORE `num-alnum-compare`, `num-alnum-compare-ext`); only an arithmetic-*expression* operand stays nondet | "Comparison of numeric and nonnumeric operands" | — | character-semantics §3.6 |
 | I3 | **RESOLVED** — MOVE alphanumeric → numeric now de-edits the digit characters (CORE `move-alnum-to-num`) | "MOVE statement" | — | — |
 | I4 | **PARTIAL** — MOVE to a numeric-edited PICTURE now applies editing (Z/`*` suppression, `.`, `,`, B/0//; CORE `move-edited`); floating/fixed sign and currency (+ - $ CR DB) still nondet | "MOVE statement"; "PICTURE clause" editing | — | numeric-encoding |
 | I5 | **RESOLVED** — IS NUMERIC on a numeric operand now evaluates `numeric_content_valid` over the item's faithful bytes (digit/sign validity for zoned/packed; trivially true for the value model / BINARY) | "Class condition" | CORE `class-numeric`, `class-numeric-redefine` | numeric-encoding |

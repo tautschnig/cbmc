@@ -3349,10 +3349,15 @@ exprt cobol_typecheckt::build_cond_relation(
   {
     cond_operandt &num = a.numeric ? a : b;
     cond_operandt &aln = a.numeric ? b : a;
+    // The numeric operand is treated as though moved to an alphanumeric item:
+    // its magnitude digit string (no decimal point, sign dropped), digits long
+    // (IBM LR "Comparison of numeric and nonnumeric operands"; numeric->alnum
+    // MOVE moves the absolute value). zoned_alnum_of formats the *value*, so it
+    // is independent of USAGE (DISPLAY/COMP/packed) and scale; only an
+    // arithmetic-expression operand (no num_item) stays nondeterministic.
     if(
       num.num_item != nullptr && num.num_item->is_numeric &&
-      !num.num_item->is_signed && num.num_item->scale == 0 &&
-      num.num_item->usage == usaget::DISPLAY && num.num_item->digits > 0)
+      num.num_item->digits > 0)
     {
       cond_operandt z = zoned_alnum_of(num.num.expr, *num.num_item);
       return a.numeric ? build_alnum_relation(z, op, aln)

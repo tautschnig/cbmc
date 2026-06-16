@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+I2: numeric<->alphanumeric comparison is now exact for COMP, scaled, and
+signed operands (magnitude digit string, no decimal point). IBM LR
+"Comparison of numeric and nonnumeric operands".
