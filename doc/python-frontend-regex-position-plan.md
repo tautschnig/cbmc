@@ -253,40 +253,42 @@ splitting `subject[start:end]`. Whenever the intrinsic is gated out it returns
   - (The earlier "multi-append list-length limitation" was a FALSE conclusion
     from a stale/messy session state — int-list and inline string-list
     multi-append both fold fine.)
-- **Phase 3 — `Match.group(n)` for n>=1. SCOPED + spike-validated (2026-06-16);
-  not yet implemented.** Extract capture-group text by a `str.++` decomposition
-  of the matched span.
+- **Phase 3 — `Match.group(n)` for n>=1. LANDED (`fcd2001deb`).** Extract
+  capture-group text by a `str.++` decomposition of the matched span.
 
-  *Encoding (CVC5-spiked, definitive):* segment the pattern into a top-level
-  sequence of literal runs and capture groups, e.g. `(\d+)-(\d+)` ->
-  `[grp(\d+), lit("-"), grp(\d+)]`. Introduce a fresh `smt_string` `gi` per
-  group; assume `matched == seg0 ++ seg1 ++ ...` (literals are constants,
-  groups are the `gi`) and `gi ∈ body(sub_pattern_i)` via the existing
-  `fullmatch` intrinsic / `str.in_re`; `group(i)` returns `gi`. No greedy
-  maximality is asserted.
+  *Encoding:* segment the pattern into a top-level sequence of literal runs and
+  capture groups, e.g. `(\d+)-(\d+)` -> `[grp(\d+), lit("-"), grp(\d+)]`. A
+  fresh `String` `gi` per non-literal fragment; assert
+  `matched == frag0 ++ frag1 ++ ...` (literals are SMT string constants) and
+  `gi ∈ str.in_re(body(sub_pattern_i))`; `group(i)` is the i-th group's `gi`.
+  No greedy maximality is asserted.
 
-  *Soundness (verified by spike):* the decomposition **over-approximates** —
-  `gi` ranges over every valid split — so it is **sound for all patterns**
-  (e.g. `for c in m.group(1): assert P(c)` checks `P` over a superset of
-  Python's group). It is **precise exactly when the split is uniquely
-  determined**: for `(\d+)-(\d+)` on `"12-34"` the literal `-` pins it and `g1`
-  is forced to `"12"` (spike: asserting `g1 != "12"` is UNSAT); for `(\d+)(\d+)`
-  on `"1234"` (adjacent variable groups, no separator) `g1` is **not** forced
-  (multiple splits) so `group(1)` is a sound nondet-among-valid-splits. No
-  uniqueness *gate* is needed for soundness — only for the precision claim.
+  *Where:* the decomposition is in `smt2_conv` (`find_symbols` declares the
+  fragment Strings and emits the `str.in_re` + `str.++` assertions at top-level
+  scope; `convert_expr` emits the n-th group fragment for the
+  `cprover_string_re_group_func` intrinsic). It is **not** in the front-end:
+  the constant pattern is only recoverable after constant propagation, which
+  the front-end cannot see for an imported-module stub parameter (`re`'s
+  `pattern` is not in `string_constants`). The segmenter
+  `python_regex_segment_groups` lives in `python_regex_to_smt` (59 unit
+  assertions). The `re` stub carries `_group1.._group4` slots filled at match
+  time via `__cbmc_re_group(pattern, matched_text, i)`; `group(n)` reads a slot
+  (groups beyond 4, or an un-segmentable pattern, stay a sound nondet string).
 
-  *Implementation (the work):* (1) a **top-level pattern segmenter** in
-  `python_regex_to_smt` (the translator parses `(...)` but exposes no
-  capture-segment list); bail to the sound floor on alternation at top level,
-  quantified/nested capture groups, anchors mid-pattern, back-refs. (2) A
-  front-end decomposition for `m.group(n)` mirroring the landed `strip(chars)`
-  decomposition (introduce `gi`, push `code_assumet`s for the concat + each
-  `fullmatch(gi, sub_i)`, return `g_n`); needs the **constant pattern** stored
-  on the `Match` (add `_pattern`) and the matched text (`_group0`, already
-  stored). (3) `group(n>=1)` currently returns a sound `nondet_str()`
-  (`f0e06d3958`) — that stays the floor when the pattern isn't a constant /
-  isn't segmentable / `n` is out of range. PLR: groups are leftmost-longest;
-  the precise subset (literal-pinned) coincides, the rest stays sound nondet.
+  *Soundness:* the decomposition **over-approximates** — `gi` ranges over every
+  valid split — so it is **sound for all patterns** (`len(m.group(1)) >= 1`
+  holds for `(\d+)…` via `in_re` even when the split is ambiguous). Precise
+  exactly when the split is uniquely determined: `re.fullmatch("(\d+)-(\d+)",
+  "12-34").group(1) == "12"` is proven and `== "99"` fails; `(\d+)(\d+)` on
+  `"1234"` leaves `group(1)` nondet-among-valid (neither `"123"` nor `"1"`
+  provable). The matched text must be pinned for precision: `fullmatch` uses
+  the whole (constant) subject so it is always precise; `search`/`match` are
+  precise for fixed-length patterns (the span folds) and sound nondet
+  otherwise, inheriting the position-intrinsic subset. The refined backend gets
+  a sound nondet group (the `__cbmc_re_group` fallback delegates to
+  `nondet_str`, yielding a `{length,data}` struct rather than an `smt_string`
+  the refined string solver can't handle). PLR: groups are leftmost-longest;
+  the precise (literal-pinned) subset coincides.
 - **Phase 4 — variable-length/greedy.** Deferred (section 7); stays nondet.
 
 ## 10. Risks / open questions
