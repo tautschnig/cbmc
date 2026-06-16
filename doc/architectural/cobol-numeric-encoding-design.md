@@ -16,10 +16,12 @@ Status: **partly implemented** (stages 1–2; see note). Author: Kiro.
 > are always its content. Packed-decimal (**COMP-3**, signed and
 > unsigned) is now faithful too, and read/write/VALUE dispatch on USAGE
 > through one codec point (`has_faithful_codec` gates which encodings the
-> classifier may mark). Still to do: big-endian **COMP** (the binary
-> value model is correct for arithmetic; only byte observation of a COMP
-> field differs, and faithful storage would need a byte-swap on the write
-> path — low value, deferred); signed zoned overpunch and `SIGN …
+> classifier may mark). Big-endian **COMP/BINARY** is now faithful too:
+> byte order is owned by the codec (`encode_binary` lays out the
+> big-endian bytes so the uniform little-endian store writes them
+> correctly; `decode_binary` reassembles big-endian, sign-extending two's
+> complement), so every store path is consistent (S2 resolved). Still to
+> do: signed zoned overpunch and `SIGN …
 > SEPARATE` sizing (charset-dependent / changes layout); exact class
 > conditions on faithful *numeric* fields; and edited `MOVE` (§6 step 6).
 > (**01-level REDEFINES** aliasing and unsigned sign-on-store are now
@@ -86,8 +88,9 @@ Real IBM COBOL stores `WS-NUM` as zoned decimal — the characters
   edited PICs).
 - **Sign handling**: zoned overpunch / packed sign-nibble / `SIGN
   SEPARATE` are not represented.
-- **Endianness**: `COMP`/`BINARY` on z/Architecture is **big-endian**;
-  the model is little-endian.
+- **Endianness**: `COMP`/`BINARY` on z/Architecture is **big-endian** and
+  is now modelled faithfully for byte-aliased fields (S2 resolved);
+  `COMP-5` (NATIVE_BINARY) endianness is not yet routed through the codec.
 
 The value-domain model is *exactly right* for arithmetic (decimal scale
 is exact — the whole point), and for any program that only computes with

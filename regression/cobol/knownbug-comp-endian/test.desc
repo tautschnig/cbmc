@@ -1,8 +1,0 @@
-KNOWNBUG
-main.cob
-
-^VERIFICATION SUCCESSFUL$
---
-Soundness S2: COMP/BINARY is stored little-endian, not big-endian as on
-z/Architecture, so a byte-level view of a COMP field has the bytes
-reversed. IBM LR "USAGE clause" (BINARY). See cobol-numeric-encoding-design.md.

@@ -228,7 +228,7 @@ baseline.
 | id | issue | LR clause | KB | plan |
 |---|---|---|---|---|
 | S1 | **RESOLVED** — unsigned `PIC 9` now stores the absolute value (sign dropped on store); was modelled in a signed domain | "MOVE statement"; "PICTURE clause" (9) | CORE `unsigned-sign` | — |
-| S2 | `COMP`/`BINARY` stored little-endian, not big-endian (z/Arch) → byte view of a COMP field is reversed | "USAGE clause" (BINARY); z/Arch PoO | comp-endian | numeric-encoding §3.2, §5 |
+| S2 | **RESOLVED** — `COMP`/`BINARY` byte-aliased fields are now stored and read big-endian two's complement (z/Architecture), via `encode_binary`/`decode_binary` (the codec owns byte order; all store paths consistent) | "USAGE clause" (BINARY); z/Arch PoO | CORE `comp-endian-binary` | numeric-encoding §3.2, §5 |
 | S3 | **RESOLVED** — a 01-level `REDEFINES` now shares the redefined record's storage (aliases it) | "REDEFINES clause" | CORE `redefines-01-alias` | — |
 | S4 | EBCDIC not implemented (ASCII host): collating sequence and zoned/sign codecs differ from z/OS | "USAGE DISPLAY"; collating sequence | — | numeric-encoding §5 (charset) |
 

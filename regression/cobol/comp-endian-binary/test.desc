@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^VERIFICATION SUCCESSFUL$
+--
+S2 RESOLVED: COMP/BINARY is now stored big-endian (z/Architecture), so a
+byte-level view of a COMP field (here a REDEFINES alias) sees the bytes
+most-significant-first. IBM LR "USAGE clause" (BINARY). See
+cobol-numeric-encoding-design.md and cobol-runtime-checks.md.

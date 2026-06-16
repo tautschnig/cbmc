@@ -883,6 +883,14 @@ protected:
   /// (IBM LR "USAGE PACKED-DECIMAL"): two digits per byte, sign in the last
   /// nibble.
   valuet decode_packed(const reft &r) const;
+  /// Decode a faithfully-encoded BINARY/COMP field: big-endian two's
+  /// complement (IBM LR "USAGE clause" BINARY; z/Architecture is big-endian).
+  valuet decode_binary(const reft &r) const;
+  /// Encode a value (at item.scale) into the integer whose little-endian byte
+  /// layout is the field's big-endian two's complement representation, so the
+  /// uniform little-endian store writes big-endian bytes (IBM LR "USAGE
+  /// clause" BINARY; z/Architecture).
+  exprt encode_binary(const exprt &scaled_value, const item_infot &item) const;
   /// Encode a value (at item.scale) into the little-endian integer whose bytes
   /// are the field's packed-decimal representation.
   exprt encode_packed(const exprt &scaled_value, const item_infot &item) const;
@@ -1378,6 +1386,67 @@ valuet cobol_typecheckt::decode_packed(const reft &r) const
   return valuet{if_exprt{negative, unary_minus_exprt{acc}, acc}, item.scale};
 }
 
+valuet cobol_typecheckt::decode_binary(const reft &r) const
+{
+  // Big-endian two's complement (IBM LR "USAGE clause" BINARY; z/Architecture
+  // is big-endian): assemble the n bytes most-significant-first into an
+  // n*8-bit unsigned value, then reinterpret as signed two's complement (for a
+  // signed item) before widening to the value domain. Built from per-byte
+  // little-endian extracts so it is independent of the host byte order and
+  // symmetric with the packed codec.
+  const item_infot &item = *r.info;
+  const std::size_t n = item.byte_size;
+  const unsignedbv_typet u8{8};
+  const unsignedbv_typet un{n * 8};
+  exprt acc = from_integer(0, un);
+  for(std::size_t p = 0; p < n; ++p)
+  {
+    const exprt off = plus_exprt{r.offset, from_integer(p, r.offset.type())};
+    const exprt byte = typecast_exprt{make_byte_extract(r.record, off, u8), un};
+    acc = plus_exprt{
+      acc,
+      mult_exprt{byte, from_integer(power(mp_integer{256}, n - 1 - p), un)}};
+  }
+  const typet vt = cobol_value_type();
+  const exprt value =
+    item.is_signed
+      ? typecast_exprt{typecast_exprt{acc, signedbv_typet{n * 8}}, vt}
+      : typecast_exprt{acc, vt};
+  return valuet{value, item.scale};
+}
+
+exprt cobol_typecheckt::encode_binary(
+  const exprt &scaled_value,
+  const item_infot &item) const
+{
+  // Produce the phys integer whose *little-endian* byte layout equals the
+  // field's *big-endian* two's complement bytes, so the uniform little-endian
+  // store (make_byte_update) writes big-endian (IBM LR "USAGE clause" BINARY;
+  // z/Architecture). Byte order is owned by the codec, not the store site, so
+  // every store path (MOVE, arithmetic, ...) is consistent with decode_binary.
+  const std::size_t n = item.byte_size;
+  const typet vt = cobol_value_type();
+  // Picture-bound the value to the field's digit capacity (IBM LR "USAGE
+  // clause": a BINARY item holds its PICTURE's number of digits), matching the
+  // little-endian binary path.
+  exprt e = scaled_value;
+  if(item.digits > 0 && item.digits <= 18)
+    e = mod_exprt{e, from_integer(power10(item.digits), vt)};
+  const unsignedbv_typet un{n * 8};
+  const exprt vu = typecast_exprt{e, un}; // two's complement n*8-bit
+  // acc little-endian byte k = value big-endian byte k = vu byte (n-1-k).
+  exprt acc = from_integer(0, un);
+  for(std::size_t k = 0; k < n; ++k)
+  {
+    const exprt be_byte = mod_exprt{
+      div_exprt{vu, from_integer(power(mp_integer{256}, n - 1 - k), un)},
+      from_integer(256, un)};
+    acc = plus_exprt{
+      acc, mult_exprt{be_byte, from_integer(power(mp_integer{256}, k), un)}};
+  }
+  return typecast_exprt{acc, phys_type(item)};
+}
+
 exprt cobol_typecheckt::encode_packed(
   const exprt &scaled_value,
   const item_infot &item) const
@@ -1421,10 +1490,13 @@ bool cobol_typecheckt::has_faithful_codec(const item_infot &item) const
 {
   // Encodings with an implemented codec. DISPLAY is only faithful when
   // unsigned (signed zoned overpunch is charset-dependent and deferred);
-  // PACKED handles both signs via its sign nibble.
+  // PACKED handles both signs via its sign nibble. BINARY/COMP/COMP-4 is
+  // faithful as big-endian two's complement (IBM LR "USAGE clause" BINARY;
+  // z/Architecture is big-endian), implemented with CBMC's big-endian byte
+  // operators (see read_field / make_assign_ref).
   if(item.usage == usaget::DISPLAY)
     return !item.is_signed;
-  return item.usage == usaget::PACKED;
+  return item.usage == usaget::PACKED || item.usage == usaget::BINARY;
 }
 
 valuet cobol_typecheckt::read_field(const reft &r) const
@@ -1441,6 +1513,7 @@ valuet cobol_typecheckt::read_field(const reft &r) const
     case usaget::PACKED:
       return decode_packed(r);
     case usaget::BINARY:
+      return decode_binary(r);
     case usaget::NATIVE_BINARY:
     case usaget::FLOAT_SHORT:
     case usaget::FLOAT_LONG:
@@ -1497,6 +1570,7 @@ exprt cobol_typecheckt::encode_numeric(
     case usaget::PACKED:
       return encode_packed(e, item);
     case usaget::BINARY:
+      return encode_binary(e, item);
     case usaget::NATIVE_BINARY:
     case usaget::FLOAT_SHORT:
     case usaget::FLOAT_LONG:
@@ -1595,6 +1669,19 @@ void cobol_typecheckt::finalize_record()
       b = zoned_bytes(val, info);
     else if(info.faithful_bytes && info.usage == usaget::PACKED)
       b = packed_bytes(val, info);
+    else if(info.faithful_bytes && info.usage == usaget::BINARY)
+    {
+      // Big-endian two's complement VALUE bytes (IBM LR "USAGE clause"
+      // BINARY; z/Architecture): most significant byte first.
+      const mp_integer modulus = power(mp_integer{2}, info.byte_size * 8);
+      mp_integer u = val % modulus;
+      if(u < 0)
+        u += modulus;
+      b.resize(info.byte_size);
+      for(std::size_t k = 0; k < info.byte_size; ++k)
+        b[info.byte_size - 1 - k] = static_cast<unsigned char>(
+          ((u / power(mp_integer{256}, k)) % 256).to_long());
+    }
     else
     {
       const mp_integer modulus = power(mp_integer{2}, info.byte_size * 8);
