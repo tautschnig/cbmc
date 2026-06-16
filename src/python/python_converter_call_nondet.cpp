@@ -16,6 +16,8 @@
 #include <util/std_expr.h>
 #include <util/std_types.h>
 
+#include <solvers/strings/python_regex_to_smt.h>
+
 #include "python_converter.h"
 #include "python_converter_helpers.h"
 #include "python_types.h"
@@ -174,6 +176,44 @@ std::optional<exprt> python_convertert::try_nondet_call(
     }
     // Fallback: nondet string.
     return bounded_nondet_string(get_location(expr));
+  }
+  else if(func_name == "__cbmc_re_group")
+  {
+    // ``__cbmc_re_group(pattern, text, n)`` -> the text matched by the n-th
+    // capture group of `pattern` within the whole-match text `text`. The
+    // library stub calls this at match time to fill Match group slots;
+    // Match.group(n) reads a slot. The native SMT-String backend lowers it to
+    // a str.++ decomposition (smt2_conv); see
+    // doc/python-frontend-regex-position-plan.md, Phase 3. The pattern is
+    // recovered at conversion time in smt2_conv (constant propagation has run
+    // by then), which the front-end cannot do for an imported-module stub
+    // parameter -- hence the work happens in the backend, like the
+    // match-position intrinsics. On any non-native backend, or when the
+    // pattern/text are not usable, the result degrades to a sound nondet
+    // string.
+    if(use_smt_string_native && args.is_array() && as_array(args).size() == 3)
+    {
+      auto it = as_array(args).begin();
+      exprt pattern = convert_expression(*it++);
+      exprt text = convert_expression(*it++);
+      exprt n = convert_expression(*it);
+      if(
+        is_python_string_type(pattern.type()) &&
+        is_python_string_type(text.type()))
+      {
+        return native_string_app(
+          ID_cprover_string_re_group_func,
+          {pattern.type(), text.type(), signedbv_typet{64}},
+          {pattern, text, safe_typecast(n, signedbv_typet{64})},
+          smt_string_typet{});
+      }
+    }
+    // Fallback: a sound nondet string in the ACTIVE representation. Delegating
+    // to nondet_str keeps this backend-aware -- crucially, on the refined
+    // backend it yields a {length,data} struct, not an smt_string (which the
+    // refined string solver cannot handle), so re.match/search/fullmatch stay
+    // sound there rather than crashing.
+    return try_nondet_call(expr, "nondet_str", json_arrayt{});
   }
   else if(func_name == "nondet_float" || func_name == "__VERIFIER_nondet_float")
   {

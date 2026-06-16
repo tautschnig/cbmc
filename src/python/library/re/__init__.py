@@ -75,14 +75,33 @@ class Match:
         self._start = 0
         self._end = 0
         self._group0 = ""
+        # Capture-group slots (1..4), filled at match time by the
+        # __cbmc_re_group decomposition intrinsic (see group()). Groups beyond
+        # the 4th read back as a sound nondet string. A default of "" is only
+        # seen by a bare Match() that no match path produced.
+        self._group1 = ""
+        self._group2 = ""
+        self._group3 = ""
+        self._group4 = ""
 
     def group(self, n: int = 0) -> str:
         # group(0) / no-arg: the whole match. Precise when the position
-        # intrinsics resolved (fixed-length pattern, constant subject); a
-        # nondet span yields a sound nondet string. Sub-groups (n>=1) are not
-        # modelled -> a sound nondet string (never a concrete wrong value).
+        # intrinsics resolved (fixed-length pattern, constant subject), or for
+        # fullmatch (the whole subject); a nondet span yields a sound nondet
+        # string. Sub-groups (n>=1) are extracted at match time by the
+        # __cbmc_re_group decomposition (precise for literal-pinned groups,
+        # sound nondet otherwise); groups beyond the 4 tracked slots are a
+        # sound nondet string (never a concrete wrong value).
         if n == 0:
             return self._group0
+        if n == 1:
+            return self._group1
+        if n == 2:
+            return self._group2
+        if n == 3:
+            return self._group3
+        if n == 4:
+            return self._group4
         return nondet_str()
 
     def groups(self, default=None):
@@ -191,7 +210,20 @@ def match(pattern: str, string: str, flags: int = 0) -> "Match | None":
     if flags != 0:
         return Match() if nondet_bool() else None
     if __cbmc_re_match(pattern, string):
-        return Match()
+        m = Match()
+        m.string = string
+        m._start = 0
+        # Match is start-anchored; the match end is the leftmost match's end
+        # (precise for a fixed-length pattern, sound nondet otherwise).
+        en = __cbmc_re_search_end(pattern, string, 0)
+        m._end = en
+        g0 = string[0:en]
+        m._group0 = g0
+        m._group1 = __cbmc_re_group(pattern, g0, 1)
+        m._group2 = __cbmc_re_group(pattern, g0, 2)
+        m._group3 = __cbmc_re_group(pattern, g0, 3)
+        m._group4 = __cbmc_re_group(pattern, g0, 4)
+        return m
     return None
 
 
@@ -204,6 +236,12 @@ def fullmatch(pattern: str, string: str, flags: int = 0) -> "Match | None":
         m._start = 0
         m._end = len(string)
         m._group0 = string
+        # Whole subject is the match text -> precise group decomposition when
+        # the pattern is a constant, segmentable, literal-pinned capture.
+        m._group1 = __cbmc_re_group(pattern, string, 1)
+        m._group2 = __cbmc_re_group(pattern, string, 2)
+        m._group3 = __cbmc_re_group(pattern, string, 3)
+        m._group4 = __cbmc_re_group(pattern, string, 4)
         return m
     return None
 
@@ -218,7 +256,12 @@ def search(pattern: str, string: str, flags: int = 0) -> "Match | None":
         en = __cbmc_re_search_end(pattern, string, 0)
         m._start = st
         m._end = en
-        m._group0 = string[st:en]
+        g0 = string[st:en]
+        m._group0 = g0
+        m._group1 = __cbmc_re_group(pattern, g0, 1)
+        m._group2 = __cbmc_re_group(pattern, g0, 2)
+        m._group3 = __cbmc_re_group(pattern, g0, 3)
+        m._group4 = __cbmc_re_group(pattern, g0, 4)
         return m
     return None
 
