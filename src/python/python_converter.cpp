@@ -3372,6 +3372,27 @@ void python_convertert::emit_capacity_guard(
   block.add(std::move(cap_assume));
 }
 
+void python_convertert::emit_count_capacity_guard(
+  std::vector<codet> &checks,
+  const exprt &count,
+  long cap,
+  const source_locationt &loc)
+{
+  // count <= cap: a resulting length of exactly `cap` fills indices
+  // 0..cap-1 (valid); cap+1 would overflow the modelled data array.
+  binary_relation_exprt in_bounds{
+    count, ID_le, from_integer(cap, count.type())};
+  source_locationt aloc = loc;
+  aloc.set_property_class("python-model-bound");
+  aloc.set_comment("container capacity exceeded (verifier model bound)");
+  code_assertt cap_assert{in_bounds};
+  cap_assert.add_source_location() = aloc;
+  checks.push_back(std::move(cap_assert));
+  code_assumet cap_assume{in_bounds};
+  cap_assume.add_source_location() = loc;
+  checks.push_back(std::move(cap_assume));
+}
+
 void python_convertert::coerce_call_arguments(
   exprt::operandst &args,
   const code_typet::parameterst &params)

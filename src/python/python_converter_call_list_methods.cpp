@@ -414,6 +414,14 @@ std::optional<exprt> python_convertert::try_list_method(
         const auto &arg_data_type =
           to_array_type(to_struct_type(arg.type()).components()[1].type());
         member_exprt arg_data{arg, "data", arg_data_type};
+        // Report (python-model-bound) + cut before the copy loop if the
+        // extended length would exceed capacity: otherwise the data[length+i]
+        // stores run past the modelled array silently.
+        emit_count_capacity_guard(
+          pending_checks,
+          plus_exprt{length, arg_len},
+          PYTHON_MAX_LIST_LENGTH,
+          get_location(expr));
         // Copy elements: obj.data[obj.length + i] = arg.data[i]
         for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
         {
@@ -440,6 +448,14 @@ std::optional<exprt> python_convertert::try_list_method(
         }
         if(sv.has_value())
         {
+          emit_count_capacity_guard(
+            pending_checks,
+            plus_exprt{
+              length,
+              from_integer(
+                static_cast<long long>(sv.value().size()), signedbv_typet{64})},
+            PYTHON_MAX_LIST_LENGTH,
+            get_location(expr));
           // Constant string: add each char as a single-char string
           for(std::size_t i = 0; i < sv.value().size(); i++)
           {

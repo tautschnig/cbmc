@@ -1092,6 +1092,11 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     member_exprt right_data{right, "data", data_type};
 
     exprt new_len = plus_exprt{left_len, right_len};
+    // The result holds at most PYTHON_MAX_LIST_LENGTH elements; a longer
+    // concatenation is reported (python-model-bound) and cut, not silently
+    // truncated (which would leave length > modelled data).
+    emit_count_capacity_guard(
+      pending_checks, new_len, PYTHON_MAX_LIST_LENGTH, get_location(expr));
     exprt::operandst elems;
     for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
     {
@@ -1150,6 +1155,11 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     // Copy data: tmp.data[i] = i < new_len ? old.data[i % old.length] : 0
     member_exprt tmp_data{tmp, "data", data_type};
     exprt new_len = mult_exprt{old_len, n};
+    // Report (python-model-bound) + cut a repetition whose result exceeds
+    // PYTHON_MAX_LIST_LENGTH, rather than silently filling only `cap` slots
+    // while the length field claims more.
+    emit_count_capacity_guard(
+      pending_checks, new_len, PYTHON_MAX_LIST_LENGTH, get_location(expr));
     for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
     {
       exprt idx = from_integer(i, signedbv_typet{64});

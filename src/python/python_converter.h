@@ -1671,6 +1671,23 @@ private:
     long cap,
     const source_locationt &loc = source_locationt{});
 
+  /// Container-PRODUCER capacity guard. Push assert(count <= cap) +
+  /// assume(count <= cap) into `checks` where `count` is the element COUNT
+  /// (final length) of a freshly built or grown container — list repetition
+  /// `l * n`, concatenation `a + b`, `extend`, slice-assignment, an
+  /// over-long literal. Unlike \ref emit_capacity_guard (which guards the
+  /// pre-write index `length < cap` at an append/insert), this guards the
+  /// resulting count, so a container of exactly `cap` elements (filling
+  /// indices 0..cap-1) is allowed. Same python-model-bound property: a
+  /// beyond-capacity construction is reported, then the path is cut, never
+  /// silently truncated. Pushes into the `pending_checks`-style side-effect
+  /// list used by expression-context producers.
+  void emit_count_capacity_guard(
+    std::vector<codet> &checks,
+    const exprt &count,
+    long cap,
+    const source_locationt &loc = source_locationt{});
+
   /// Coerce all arguments in `args` to the parameter types
   /// declared in `params`. Out-of-range entries on either side
   /// are left untouched (callers are responsible for padding
