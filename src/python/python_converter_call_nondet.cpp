@@ -142,7 +142,11 @@ std::optional<exprt> python_convertert::try_nondet_call(
     // non-constant or non-zero count degrades here to a sound nondet string.
     const std::size_t n =
       args.is_array() ? as_array(args).size() : std::size_t{0};
-    if(n == 3 || n == 4)
+    // The precise lowering is native-only: it builds an smt_string intrinsic
+    // application, which is the wrong representation on the refined back-end
+    // (and its string solver has no re_sub axioms). On refined, fall through
+    // to the backend-aware bounded_nondet_string below.
+    if(use_smt_string_native && (n == 3 || n == 4))
     {
       auto it = as_array(args).begin();
       exprt pattern = convert_expression(*it++);

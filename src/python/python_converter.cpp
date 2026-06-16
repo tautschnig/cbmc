@@ -2203,6 +2203,47 @@ exprt python_convertert::native_or_member_string_length(const exprt &s)
 
 exprt python_convertert::bounded_nondet_string(const source_locationt &loc)
 {
+  // Refined (default) back-end: a string is a {length, data} struct, not an
+  // smt_string. Building an smt_string here and then taking its length routes
+  // a cprover_string_length_func over an smt_string into the refinement string
+  // solver, which has no axioms for it and aborts in add_axioms_for_length.
+  // So produce a nondet python_string struct with its length bound, mirroring
+  // nondet_str's refined path -- this keeps EVERY nondet-string fallback site
+  // (re.sub, the str-builtin / call-method / call-user fallbacks) sound on the
+  // refined back-end rather than crashing.
+  if(!use_smt_string_native)
+  {
+    static unsigned rctr = 0;
+    const std::string rnm = "__bnd_str_" + std::to_string(rctr++);
+    const irep_idt rid{qualify_name(rnm)};
+    if(symbol_table.lookup(rid) == nullptr)
+    {
+      symbolt s{rid, python_string_type(), "python"};
+      s.base_name = rnm;
+      s.is_lvalue = true;
+      s.is_state_var = true;
+      symbol_table.add(s);
+    }
+    const symbol_exprt tmp = symbol_table.lookup_ref(rid).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{
+      tmp, side_effect_expr_nondett{python_string_type(), loc}});
+    // Bind the struct's length field to the solver-visible length so a
+    // downstream len() (which routes through cprover_string_length_func) and a
+    // direct .length read agree, then bound it to [0, PYTHON_MAX_STRING_LENGTH].
+    exprt len_intr = emit_string_int_function(
+      ID_cprover_string_length_func, tmp, symbol_table, pending_checks);
+    pending_checks.push_back(code_assumet{
+      equal_exprt{member_exprt{tmp, "length", signedbv_typet{64}}, len_intr}});
+    pending_checks.push_back(code_assumet{and_exprt{
+      binary_relation_exprt{
+        len_intr, ID_ge, from_integer(0, signedbv_typet{64})},
+      binary_relation_exprt{
+        len_intr,
+        ID_le,
+        from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64})}}});
+    return std::move(tmp);
+  }
+
   static unsigned ctr = 0;
   const std::string nm = "__bnd_smtstr_" + std::to_string(ctr++);
   const irep_idt id{qualify_name(nm)};
