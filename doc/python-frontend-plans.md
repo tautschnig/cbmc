@@ -61,8 +61,9 @@ robustness, then capability; difficulty is noted where high.
 > - The **§9 TIMEOUT cluster** splits cleanly: three tests are **stale**
 >   (now < 0.2 s), the rest are either **frontend/`python_value`-SSA-bound**
 >   (driven by the §8 SSA target) or **solver-bound** (separate).
-> - **list-valued regex/string ops** (`split`/`findall`/`re.split`) and
->   **group extraction** now have CVC5-validated, soundness-bounded plans (§4).
+> - **list-valued regex/string ops** (`split`/`findall`/`re.split`, LANDED) and
+>   **group extraction** (`m.group(n)`, LANDED) are precise on the native
+>   backend (§4), sound nondet elsewhere.
 >
 > **Recommended order:** (1) the P1 `re.*`+`len` crash; (2) §3 native method
 > reach + §4 list-valued/group/`flags=` regex (contained, high-ROI); (3) the
@@ -181,19 +182,27 @@ robustness, then capability; difficulty is noted where high.
     position-returning regex intrinsic or restricting to fixed-length patterns
     (lowered to `str.indexof` of the literal). `findall` is the dual of split
     (collect matched segments rather than the gaps).
-  - **Group extraction — `m.group(n)` (PLANNED, soundness-gated).** Model a
-    match's groups by **`str.++` decomposition**: introduce a fresh
-    `smt_string` per group `gi`, assert `subject ∈ lit0 ++ g1 ++ lit1 ++ … ++
-    litN` with each `gi` constrained by `str.in_re` of its sub-pattern, and
-    return `gi` from `group(i)`. **Soundness gate (critical):** SMT returns
-    *some* satisfying witness, **not** Python's leftmost-longest match, so this
-    is sound **only when the decomposition is uniquely determined** by the
-    surrounding literal/fixed separators (verified: `(\d+)-(\d+)` on `"12-34"`
-    is forced to `("12","34")`; but `a(.*)b` on `"axxbyyb"` has multiple framings
-    and the witness is arbitrary). Plan: a uniqueness check on the pattern
-    (no greedy/variable atom adjacent to a group boundary without a pinning
-    literal); precise when it holds, **nondet otherwise** (sound). PLR: `re`
-    groups are leftmost-longest.
+  - **Group extraction — `m.group(n)` (LANDED, `fcd2001deb`).** Models a
+    match's groups by **`str.++` decomposition**: a fresh `String` per
+    non-literal fragment `gi`, asserting `matched == frag0 ++ frag1 ++ …` with
+    each `gi` constrained by `str.in_re` of its sub-pattern, and `group(i)` the
+    i-th group's `gi`. **Soundness:** the decomposition *over-approximates* —
+    `gi` ranges over every valid split, so reading it explores all framings.
+    No uniqueness *gate* is needed for soundness (an earlier plan thought one
+    was): a specific-value property like `group(1) == "12"` is provable only
+    when the split is uniquely pinned (e.g. `(\d+)-(\d+)` on `"12-34"` — the
+    `-` forces `("12","34")`), and stays *unprovable* (sound) when ambiguous
+    (`a(.*)b` on `"axxbyyb"`, or `(\d+)(\d+)`), while invariants that hold for
+    all framings (`len(group(1)) >= 1` via `in_re`) still prove. The work lives
+    in `smt2_conv` (the constant pattern is recoverable only post-constant-
+    propagation, not in the front-end for an imported-module stub param); the
+    segmenter `python_regex_segment_groups` bails to the nondet floor on
+    alternation / quantified / nested / named / non-capturing groups, anchors
+    and back-references. Matched text must be pinned: `fullmatch` (whole
+    subject) always precise; `search`/`match` precise for fixed-length
+    patterns, sound nondet otherwise. See doc/python-frontend-regex-position-
+    plan.md Phase 3. PLR: `re` groups are leftmost-longest (the precise subset
+    coincides).
   - **Literal-symbolic patterns** (segment list + `str.to_re` holes; anchors
     now soundly modelled, so the embedded-anchor bail is the only caveat).
 - **Compilation flags — inline-flag precision LANDED (2026-06-15);
