@@ -3987,13 +3987,28 @@ exprt cobol_typecheckt::build_alnum_relation(
     v.reserve(n);
     if(o.is_item)
     {
+      // A reference modification with a non-constant length contributes its
+      // first dyn_size characters; positions at or beyond the run-time length
+      // are space padding (IBM LR "Comparison of two alphanumeric operands":
+      // the shorter operand is padded on the right with spaces). o.length is
+      // the static upper bound and the loop limit (I8).
       for(std::size_t i = 0; i < n; ++i)
       {
         if(i < o.length)
-          v.push_back(make_byte_extract(
+        {
+          const exprt fb = make_byte_extract(
             o.record,
             plus_exprt{o.offset, from_integer(i, size_type())},
-            byte_type));
+            byte_type);
+          if(o.dyn_size.is_not_nil())
+            v.push_back(if_exprt{
+              binary_relation_exprt{
+                from_integer(i, cobol_value_type()), ID_lt, o.dyn_size},
+              fb,
+              space});
+          else
+            v.push_back(fb);
+        }
         else
           v.push_back(space); // right-padding with spaces (LR p. 277)
       }

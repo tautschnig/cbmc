@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+I8: alphanumeric comparison honours a reference modification's non-constant
+length (first `len` characters, then space padding). IBM LR "Comparison of
+two alphanumeric operands".

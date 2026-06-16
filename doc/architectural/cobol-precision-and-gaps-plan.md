@@ -201,12 +201,13 @@ DEPENDING ON (I7) needs, so the two should share one mechanism.
 **Status (partial).** `reft` (and `cond_operandt`) now carry an optional
 `dyn_size` expr, set by `apply_refmod` for a non-constant length (the
 static `byte_size` becomes an upper bound = bytes from `start` to the item
-end). The dominant consumer, a **group/alphanumeric MOVE sender**
-(`make_move_group`), honours it: it unfolds over the receiver's static
-size with a per-byte runtime guard `i < len` (so it copies `len`
-characters then space-fills, with no dynamic-size storage), exact and
-bounded. Remaining consumers — alphanumeric **comparison**
-(`build_alnum_relation`), `STRING`/`UNSTRING`, and a refmod **receiver** —
+end). Two consumers honour it with the same per-byte-guard pattern (unfold
+over the static upper bound, guard position `i` by `i < dyn_size`, else a
+space pad): the **group/alphanumeric MOVE sender** (`make_move_group`,
+copies `len` characters then space-fills) and the **alphanumeric
+comparison** (`build_alnum_relation`, contributes `len` characters then
+space padding; IBM LR "Comparison of two alphanumeric operands").
+Remaining consumers — `STRING`/`UNSTRING` and a refmod **receiver** —
 still use the static upper bound (sound, and the `cobol:refmod-range`
 check flags the unsafe cases); they can adopt the same per-byte-guard
 pattern incrementally. A default-constructed `exprt` has an empty id (not
