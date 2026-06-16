@@ -45,32 +45,57 @@ path — the refined-precision items below are goals to pursue, **not** "use
 `--python-smt-strings` instead". Items are sequenced by soundness-first, then
 robustness, then capability; difficulty is noted where high.
 
-> **Refreshed status (2026-06-15, after planning spikes).** **P0 (soundness)
-> is empty.** **P1 (native robustness):** one **newly-discovered crash** — the
-> `re.*` + `len(str)` model-parse abort (below) — is now the single live P1 and
-> should be fixed first (small, localised). **Spike outcomes that reshaped the
-> backlog:**
-> - The **string-refinement performance cliff (§8)** for string-keyed dict
->   scans/value-updates is effectively **resolved** by the §5 Option-A inlining
->   (8-key string-dict scan at unwind 10 = ~2.5 s on *both* back-ends). The old
->   "`str.in_re` + `len()`" entry was **not** a perf cliff — it is the P1 crash
->   above.
-> - **async/await (§13)** is **PARTIAL**, not "no plan": `await`-as-identity,
->   async-def-as-function, and a concurrency-collapsing `asyncio` stub already
->   exist; the live gap is binding an `await`/async-call result to a variable.
-> - The **§9 TIMEOUT cluster** splits cleanly: three tests are **stale**
->   (now < 0.2 s), the rest are either **frontend/`python_value`-SSA-bound**
->   (driven by the §8 SSA target) or **solver-bound** (separate).
-> - **list-valued regex/string ops** (`split`/`findall`/`re.split`, LANDED) and
->   **group extraction** (`m.group(n)`, LANDED) are precise on the native
->   backend (§4), sound nondet elsewhere.
+> **Refreshed status (2026-06-16).** **P0 (soundness) is empty.** The
+> **regex/string precision track is now largely complete on the native
+> backend**: precise `re.findall`/`re.split` (incl. `maxsplit`), the
+> match-position intrinsics, and `Match.group(n)` capture-group extraction
+> (§4 Phase 3, `fcd2001deb`) have all landed, along with the imported-module
+> default-population fix (`dda00127e2`, which also benefits `re.sub` and any
+> defaulted stub), empty-list annotation typing + the `smt_string`↔scalar
+> typecast defensive net (`1c62587a8e`, so §9(b) is resolved), and method
+> defaults on optional/union receivers. **One new robustness finding** (while
+> wiring `group(n)`): `bounded_nondet_string` always returns an `smt_string`,
+> which crashes the refined string solver — `re.sub` on the *default* backend
+> cores today. This is the new **Tier 0** item.
 >
-> **Recommended order:** (1) the P1 `re.*`+`len` crash; (2) §3 native method
-> reach + §4 list-valued/group/`flags=` regex (contained, high-ROI); (3) the
-> §8 `python_value`-SSA optimisation (unblocks most §9 frontend timeouts);
-> (4) §2 closures / §10 instance-`__dict__` substrate (precision substrates);
-> (5) §13 async result-binding; (6) §6 module breadth, §7 (BLOCKED on core),
-> P4 JBMC, P5 maintenance.
+> **Tiered priority (supersedes the earlier P0–P6 ordering; the detailed
+> sections below remain the reference):**
+> - **Tier 0 — default-backend robustness.** Make `bounded_nondet_string`
+>   **back-end-aware** (refined → `{length,data}` struct, not `smt_string`).
+>   Whole-group fix: closes the `re.sub`-on-refined core and every future
+>   nondet-string fallback that reaches the refined solver. Small, localized.
+>   (Latent, native-only, no corpus instance: `smt_string` members in
+>   byte-operated structs — [#native-byte-ops](#native-byte-ops); lower.)
+> - **Tier 1 — highest-leverage architectural lever.** `python_value` **SSA
+>   expansion** ([§8](#performance)): field-by-field SSA on tagged-union
+>   structs is the confirmed cause of the frontend-bound timeouts (`dict65`,
+>   `shedskin`, `github_3684` time out in `--program-only` alone). One fix
+>   clears a whole timeout cluster.
+> - **Tier 2 — precision substrates (each unblocks a whole group; sound
+>   today).** Instance **`__dict__` substrate** ([§10](#descriptors): dynamic
+>   attrs / shadowing / stateful descriptors / `setattr`); **cell substrate**
+>   for escaping closures ([§2](#closures)); **nested-container by-reference**
+>   ([§9](#precision) `github_3667` shallow `list.copy`, anonymous nested
+>   mutables).
+> - **Tier 3 — regex/string finish (native track; cheap wins).** `flags=`
+>   argument precision (bitmask → inline-flag prefix; blocked on stub
+>   constant-prop), `--python-strict-re-result` (real `Match`/`None`),
+>   literal-symbolic patterns ([§4](#regex)). **Deferred/research-grade:** regex
+>   Phase 4 (greedy/variable-length group framing), refined-backend regex
+>   axioms (Wave 3), symbolic `count`/`rfind` bounded loops (perf-gated).
+> - **Tier 4 — capability & breadth.** Async result-binding ([§13](#async),
+>   small live bug); module breadth ([§6](#modules), ranked by corpus import
+>   frequency); higher-order residual ([§12](#higher-order): named-container
+>   callables); icontract multi-level Liskov + C3 MRO ([§11](#icontract)).
+> - **Tier 5 — blocked / point precision / maintenance.**
+>   `--python-check-annotations` default-on ([§7](#check-annotations), BLOCKED
+>   on core); JBMC native `smt_string` (P4); point precision (`complex` C/D,
+>   `math` domains, `nondet_list4/5`); P5 re-checks.
+>
+> **Recommended sequence:** (1) Tier 0 `bounded_nondet_string`; (2) Tier 1
+> `python_value` SSA; (3) Tier 2 instance-`__dict__`; (4) the Tier 3 regex
+> finishers + Tier 4 async binding (contained, high-visibility); (5) the
+> remaining Tier 2 substrates, then breadth.
 
 
 **P0 — Soundness (always first).**
@@ -84,6 +109,20 @@ robustness, then capability; difficulty is noted where high.
   empty.**
 
 **P1 — Native robustness (crash on valid code).**
+- **`bounded_nondet_string` returns `smt_string` on every back-end → refined
+  string-solver crash (Tier 0, LIVE).** The helper unconditionally builds an
+  `smt_string` nondet symbol and constrains its length, but on the refined
+  (default) back-end an `smt_string` has no string-solver axioms, so a length
+  builtin on it aborts in `string_constraint_generatort::add_axioms_for_length`
+  (`get_string_expr`). `re.sub` on the default backend cores today (the
+  fallback path returns `bounded_nondet_string`); `re.match/search/fullmatch`
+  were saved only because `__cbmc_re_group`'s fallback was routed through
+  `nondet_str` instead. *Fix (whole-group):* make `bounded_nondet_string`
+  back-end-aware — native → `smt_string` (unchanged); refined → a
+  `python_string_type()` `{length,data}` struct nondet with the same length
+  bound (the representation `nondet_str` already uses on refined). One fix
+  covers every nondet-string fallback site (`re.sub`, `str` builtins,
+  `call_method`/`call_user` fallbacks).
 - ~~**`re.*` + `len(str)` model-parse crash**~~ — **RESOLVED (2026-06-15,
   `abbea1ae6d`).** Root cause was an **unbounded** `input()` smt_string: the
   solver could pick a length-2^63 string, wrapping `len()` negative (signed
@@ -1002,24 +1041,23 @@ alarms). Verified against the 2026-06-08 sweep baseline.
   precise as `group(0)`. Sound: required (default-less) args still left to the
   GOTO layer; provided args override defaults.
 - **Empty-container element type defaults to `int` {#empty-container-elem-type}
-  (front-end annotation half RESOLVED 2026-06-15, `9173fea6ce`; back-end
-  defensive net PLANNED).** An empty list literal `result = []` is given a
-  `python_int` element type. Appending a non-int (e.g. a string) then emits an
-  element-type coercion; under `--python-smt-strings` a string element produces
-  an `smt_string -> signedbv` typecast that hits `PRECONDITION(false)` in
-  `smt2_convt::convert_typecast` (smt2_conv.cpp ~3858) — a hard abort.
+  — RESOLVED (front-end annotation half 2026-06-15 `9173fea6ce`; back-end
+  defensive net 2026-06-15 `1c62587a8e`).** An empty list literal `result = []`
+  is given a `python_int` element type. Appending a non-int (e.g. a string)
+  then emits an element-type coercion; under `--python-smt-strings` a string
+  element produces an `smt_string -> signedbv` typecast that hit
+  `PRECONDITION(false)` in `smt2_convt::convert_typecast` — a hard abort.
   - **(a) front-end — DONE.** `x: list[T] = []` now re-types the empty literal
     from the (authoritative) annotation in `convert_ann_assign`, so
     `parts: list[str] = []; parts.append(s)` is precise (and `dict[K,V] = {}`
-    already pinned its types). The bare-`list` annotation + append-inference
-    path was already in place.
-  - **(b) back-end (defensive) — STILL OPEN.** The non-annotated `result = []`
-    plus a **call-indexed** slice append in a loop (e.g.
-    `result.append(s[f():g()])`) is missed by append-inference and still
-    aborts. `convert_typecast` should emit the pre-registered nondet fallback
-    for an unconvertible `smt_string`↔bitvector cast (as it already does for
-    `use_datatypes` struct→struct casts) instead of `PRECONDITION(false)`.
-    This is the remaining residual; it also fully removes the crash class.
+    already pinned its types).
+  - **(b) back-end (defensive) — DONE (`1c62587a8e`).** `find_symbols`
+    pre-declares a fresh nondet (`string_cast.N`) of the destination sort and
+    `convert_typecast` emits it for an otherwise-unconvertible
+    `smt_string`↔scalar cast, instead of `PRECONDITION(false)`. The
+    non-annotated `result = []` + call-indexed slice append in a loop no longer
+    aborts — the crash class is fully removed (sound nondet on the unconvertible
+    cast).
   Resolving (a) cleared blocker #1 for precise `re.findall`/`re.split`
   ([regex-position-plan](python-frontend-regex-position-plan.md) Phase 2).
 - **String operations:** the `string-concat` loop cluster
