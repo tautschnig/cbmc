@@ -54,16 +54,17 @@ robustness, then capability; difficulty is noted where high.
 > defaulted stub), empty-list annotation typing + the `smt_string`↔scalar
 > typecast defensive net (`1c62587a8e`, so §9(b) is resolved), and method
 > defaults on optional/union receivers. **One new robustness finding** (while
-> wiring `group(n)`): `bounded_nondet_string` always returns an `smt_string`,
-> which crashes the refined string solver — `re.sub` on the *default* backend
-> cores today. This is the new **Tier 0** item.
+> wiring `group(n)`): `bounded_nondet_string` always returned an `smt_string`,
+> which crashed the refined string solver — `re.sub` on the *default* backend
+> cored. **Fixed (2026-06-16, `4e55f1d3a5`); Tier 0 is done.**
 >
 > **Tiered priority (supersedes the earlier P0–P6 ordering; the detailed
 > sections below remain the reference):**
-> - **Tier 0 — default-backend robustness.** Make `bounded_nondet_string`
->   **back-end-aware** (refined → `{length,data}` struct, not `smt_string`).
->   Whole-group fix: closes the `re.sub`-on-refined core and every future
->   nondet-string fallback that reaches the refined solver. Small, localized.
+> - **Tier 0 — default-backend robustness. ✅ DONE (`4e55f1d3a5`).**
+>   `bounded_nondet_string` is now back-end-aware (refined → `{length,data}`
+>   struct, not `smt_string`) and `re.sub`'s precise lowering is gated on
+>   native. Closed the `re.sub`-on-refined core and every nondet-string
+>   fallback that reached the refined solver.
 >   (Latent, native-only, no corpus instance: `smt_string` members in
 >   byte-operated structs — [#native-byte-ops](#native-byte-ops); lower.)
 > - **Tier 1 — highest-leverage architectural lever.** `python_value` **SSA
@@ -109,20 +110,17 @@ robustness, then capability; difficulty is noted where high.
   empty.**
 
 **P1 — Native robustness (crash on valid code).**
-- **`bounded_nondet_string` returns `smt_string` on every back-end → refined
-  string-solver crash (Tier 0, LIVE).** The helper unconditionally builds an
-  `smt_string` nondet symbol and constrains its length, but on the refined
-  (default) back-end an `smt_string` has no string-solver axioms, so a length
-  builtin on it aborts in `string_constraint_generatort::add_axioms_for_length`
-  (`get_string_expr`). `re.sub` on the default backend cores today (the
-  fallback path returns `bounded_nondet_string`); `re.match/search/fullmatch`
-  were saved only because `__cbmc_re_group`'s fallback was routed through
-  `nondet_str` instead. *Fix (whole-group):* make `bounded_nondet_string`
-  back-end-aware — native → `smt_string` (unchanged); refined → a
-  `python_string_type()` `{length,data}` struct nondet with the same length
-  bound (the representation `nondet_str` already uses on refined). One fix
-  covers every nondet-string fallback site (`re.sub`, `str` builtins,
-  `call_method`/`call_user` fallbacks).
+- ~~**`bounded_nondet_string` returns `smt_string` on every back-end → refined
+  string-solver crash**~~ — **RESOLVED (2026-06-16, `4e55f1d3a5`).** The helper
+  is now back-end-aware: native → `smt_string` (unchanged); refined → a
+  `python_string` `{length,data}` struct nondet with its length pinned to the
+  solver-visible length and bound to `[0, PYTHON_MAX_STRING_LENGTH]` (mirrors
+  `nondet_str`'s refined path). One fix covers every nondet-string fallback
+  site (`re.sub`, the `str`-builtin / `call_method` / `call_user` fallbacks).
+  `re.sub`'s precise lowering is also gated on native (it builds an `smt_string`
+  intrinsic, the wrong representation on refined). `re.sub` on the default
+  backend was coring in `add_axioms_for_length`; it now verifies soundly. Test
+  `regex-sub-refined-no-crash` (default backend).
 - ~~**`re.*` + `len(str)` model-parse crash**~~ — **RESOLVED (2026-06-15,
   `abbea1ae6d`).** Root cause was an **unbounded** `input()` smt_string: the
   solver could pick a length-2^63 string, wrapping `len()` negative (signed
