@@ -1,0 +1,9 @@
+CORE
+main.cob
+--function MP
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+BY CONTENT passes a copy: the linked callee's update to its formal is not
+copied back, so the caller's argument is unchanged. IBM LR "CALL statement".

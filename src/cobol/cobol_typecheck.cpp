@@ -242,6 +242,26 @@ struct reft
 
 /// A parsed VALUE / 88-level literal, before interpretation against the
 /// receiving item's picture. Captures numeric literals, quoted strings, and
+/// A formal parameter of a program's PROCEDURE DIVISION USING list: the
+/// LINKAGE item it names, located by its record byte-array symbol, offset and
+/// size, plus the full record size (for the symbol's array type). Used to pass
+/// arguments at a linked CALL (IBM LR "CALL statement" / "Linkage").
+struct program_formalt
+{
+  irep_idt record;
+  std::size_t rec_size = 0;
+  std::size_t offset = 0;
+  std::size_t size = 0;
+};
+
+/// A called program's signature: its goto-function symbol and the LINKAGE
+/// formals bound to the USING arguments.
+struct program_sigt
+{
+  irep_idt function;
+  std::vector<program_formalt> formals;
+};
+
 /// COBOL figurative constants.
 struct value_spect
 {
@@ -325,6 +345,10 @@ struct stmtt
     SEARCH,
     GOTO,
     STOP,
+    /// Call a linked COBOL program's function (whole-program CALL; the
+    /// argument copy-in/out are separate ASSIGN statements). IBM LR "CALL
+    /// statement".
+    CALL_PROGRAM,
     // COBOL-2002 explicit scope-exit statements (IBM LR "EXIT statement"):
     EXIT_PERFORM,   ///< EXIT PERFORM: leave the innermost inline PERFORM
     EXIT_CYCLE,     ///< EXIT PERFORM CYCLE: next iteration of inline PERFORM
@@ -341,6 +365,8 @@ struct stmtt
   /// For an ASSERT: the property class (e.g. "cobol:subscript-range"); empty
   /// means a user assertion.
   std::string assert_class;
+  /// For CALL_PROGRAM: the callee's goto-function symbol name.
+  irep_idt call_target;
   /// Runtime checks for a loop's condition (PERFORM UNTIL/VARYING, SEARCH):
   /// emitted before each evaluation of the condition (inside the loop), so a
   /// subscript/refmod that depends on the loop variable is checked with its
@@ -640,6 +666,14 @@ protected:
   std::vector<std::pair<std::string, std::string>> perform_loop_stack;
   std::string cur_para_end_label;
   std::string cur_section_end_label;
+  /// Signatures of programs parsed so far in this translation unit, by
+  /// PROGRAM-ID (upper-cased), for linking CALL to a program defined earlier
+  /// in the file. Persists across programs (not cleared per program). A
+  /// forward reference (callee defined later) is not yet linked and falls back
+  /// to the sound havoc model. See doc/architectural/cobol-call-linkage.md.
+  std::map<std::string, program_sigt> program_sigs;
+  /// The current program's PROCEDURE DIVISION USING formals (LINKAGE items).
+  std::vector<program_formalt> current_formals;
   /// Buffered implicit runtime-check assertions (subscript range, reference-
   /// modification range, ...) accumulated while parsing an expression and
   /// drained before the enclosing statement by parse_statement (see
@@ -6391,18 +6425,34 @@ std::vector<stmtt> cobol_typecheckt::parse_call()
     return {s};
   }
 
-  // Any other CALL is to a separately-compiled program that the frontend does
-  // not link. We stub it (approach.md "day-one feature scope"): a called
-  // program may modify its BY REFERENCE arguments and its RETURNING value, so
-  // those receivers are havoced; BY CONTENT / BY VALUE arguments are not
-  // modified at the caller. The program-name operand (a literal or, for a
-  // dynamic call, a data item) is consumed.
-  if(
-    cur().kind == cobol_token_kindt::STRING ||
-    cur().kind == cobol_token_kindt::WORD)
+  // A CALL to another program. When the program-name is a literal and that
+  // program was defined earlier in this file (its signature is known), link
+  // it: copy each USING argument into the callee's LINKAGE formal, invoke the
+  // callee's function, and for BY REFERENCE arguments copy the formal back
+  // (IBM LR "CALL statement"; the BY REFERENCE callee operates on the caller's
+  // data, modelled here as copy-in/copy-out, which matches the standard when
+  // the arguments do not overlap). Otherwise -- a dynamic call, an external or
+  // forward-referenced program -- fall back to the sound stub: BY REFERENCE
+  // arguments and the RETURNING value are havoced; BY CONTENT / BY VALUE are
+  // not modified at the caller. See doc/architectural/cobol-call-linkage.md.
+  std::string callee_name;
+  bool name_is_literal = false;
+  if(cur().kind == cobol_token_kindt::STRING)
+  {
+    callee_name = cur().text;
+    name_is_literal = true;
     advance();
+  }
+  else if(cur().kind == cobol_token_kindt::WORD)
+    advance(); // dynamic call: the program name is held in a data item
 
-  std::vector<stmtt> result;
+  struct callargt
+  {
+    reft r;
+    bool by_ref;
+  };
+  std::vector<callargt> args;
+  std::optional<reft> ret_ref;
   if(eat_word("USING"))
   {
     bool by_reference = true; // BY REFERENCE is the default
@@ -6419,8 +6469,7 @@ std::vector<stmtt> cobol_typecheckt::parse_call()
       if(is_item_word())
       {
         reft r = parse_ref();
-        if(by_reference)
-          result.push_back(havoc_field(r, loc));
+        args.push_back(callargt{r, by_reference});
         continue;
       }
       break;
@@ -6429,11 +6478,96 @@ std::vector<stmtt> cobol_typecheckt::parse_call()
   if(eat_word("RETURNING") || eat_word("GIVING"))
   {
     if(is_item_word())
-    {
-      reft r = parse_ref();
-      result.push_back(havoc_field(r, loc));
-    }
+      ret_ref = parse_ref();
   }
+
+  std::vector<stmtt> result;
+
+  const program_sigt *sig = nullptr;
+  if(name_is_literal)
+  {
+    std::string key = callee_name;
+    for(char &c : key)
+      c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    auto it = program_sigs.find(key);
+    if(it != program_sigs.end())
+      sig = &it->second;
+  }
+
+  // Byte copy of n bytes between two record byte-arrays (IBM LR "CALL
+  // statement": the argument and the formal correspond positionally).
+  const auto copy_bytes = [&](
+                            const exprt &dst_rec,
+                            const exprt &dst_off,
+                            const exprt &src_rec,
+                            const exprt &src_off,
+                            std::size_t n) -> stmtt
+  {
+    const array_typet at{unsignedbv_typet{8}, from_integer(n, size_type())};
+    stmtt s;
+    s.kind = stmtt::kindt::ASSIGN;
+    s.location = loc;
+    s.lhs = dst_rec;
+    s.rhs = make_byte_update(
+      dst_rec, dst_off, make_byte_extract(src_rec, src_off, at));
+    return s;
+  };
+
+  if(sig != nullptr && sig->formals.size() == args.size())
+  {
+    // Copy-in: each argument's bytes into the corresponding LINKAGE formal.
+    for(std::size_t i = 0; i < args.size(); ++i)
+    {
+      const program_formalt &f = sig->formals[i];
+      const symbol_exprt frec{
+        f.record,
+        array_typet{
+          unsignedbv_typet{8}, from_integer(f.rec_size, size_type())}};
+      const std::size_t n = std::min(args[i].r.info->byte_size, f.size);
+      result.push_back(copy_bytes(
+        frec,
+        from_integer(f.offset, size_type()),
+        args[i].r.record,
+        args[i].r.offset,
+        n));
+    }
+    // Invoke the callee.
+    stmtt call;
+    call.kind = stmtt::kindt::CALL_PROGRAM;
+    call.location = loc;
+    call.call_target = sig->function;
+    result.push_back(std::move(call));
+    // Copy-out: BY REFERENCE formals back into their arguments.
+    for(std::size_t i = 0; i < args.size(); ++i)
+    {
+      if(!args[i].by_ref)
+        continue;
+      const program_formalt &f = sig->formals[i];
+      const symbol_exprt frec{
+        f.record,
+        array_typet{
+          unsignedbv_typet{8}, from_integer(f.rec_size, size_type())}};
+      const std::size_t n = std::min(args[i].r.info->byte_size, f.size);
+      result.push_back(copy_bytes(
+        args[i].r.record,
+        args[i].r.offset,
+        frec,
+        from_integer(f.offset, size_type()),
+        n));
+    }
+    // RETURNING is not yet linked (the callee's RETURNING item is not bound):
+    // havoc the receiver, as for an unlinked call.
+    if(ret_ref.has_value())
+      result.push_back(havoc_field(*ret_ref, loc));
+    return result;
+  }
+
+  // Unlinked: sound stub.
+  for(const callargt &a : args)
+    if(a.by_ref)
+      result.push_back(havoc_field(a.r, loc));
+  if(ret_ref.has_value())
+    result.push_back(havoc_field(*ret_ref, loc));
   return result;
 }
 
@@ -7090,7 +7224,39 @@ void cobol_typecheckt::parse_procedure_division()
 {
   expect_word("PROCEDURE");
   expect_word("DIVISION");
-  // skip USING ... etc. until the period
+  // Capture the USING formals (LINKAGE items bound to CALL arguments; IBM LR
+  // "The PROCEDURE DIVISION header"): each named item's record byte-array,
+  // offset and size form the program's signature for linked calls. BY
+  // REFERENCE / BY VALUE markers are skipped (BY VALUE affects copy semantics
+  // at the caller, handled there). RETURNING is consumed but not yet linked.
+  current_formals.clear();
+  if(eat_word("USING"))
+  {
+    while(!at_eof() && !is_kind(cobol_token_kindt::PERIOD) &&
+          !is_word("RETURNING"))
+    {
+      if(eat_word("BY") || eat_word("REFERENCE") || eat_word("VALUE"))
+        continue;
+      if(cur().kind == cobol_token_kindt::WORD)
+      {
+        auto it = items.find(cur().text);
+        if(it != items.end())
+        {
+          const item_infot &fi = it->second;
+          auto rs = record_sizes.find(fi.record_symbol);
+          current_formals.push_back(program_formalt{
+            fi.record_symbol,
+            rs == record_sizes.end() ? fi.byte_size : rs->second,
+            fi.offset,
+            fi.byte_size});
+        }
+        advance();
+        continue;
+      }
+      break;
+    }
+  }
+  // skip the remainder of the header (RETURNING ..., etc.) until the period
   while(!at_eof() && !is_kind(cobol_token_kindt::PERIOD))
     advance();
   expect_period();
@@ -7219,6 +7385,17 @@ void cobol_typecheckt::gen_statement(
     out.add(code_frontend_assignt{stopped_expr(), true_exprt{}});
     out.add(code_gotot{proc_ret_label()});
     break;
+  case stmtt::kindt::CALL_PROGRAM:
+  {
+    // Invoke a linked program's goto-function (IBM LR "CALL statement"). The
+    // argument copy-in/out are emitted as separate ASSIGN statements around
+    // this call; the callee operates on its own LINKAGE record symbols.
+    const symbol_exprt fn{s.call_target, code_typet{{}, empty_typet{}}};
+    code_function_callt call{fn, {}};
+    call.add_source_location() = s.location;
+    out.add(std::move(call));
+    break;
+  }
   case stmtt::kindt::EXIT_PERFORM:
     // Leave the innermost inline PERFORM (IBM LR "EXIT statement").
     if(!perform_loop_stack.empty())
@@ -7523,6 +7700,14 @@ void cobol_typecheckt::build_function()
   function.base_name = program_id;
   function.value = std::move(body);
   symbol_table.add(function);
+
+  // Record this program's signature so a later CALL in the same file can link
+  // to it (IBM LR "CALL statement"). Keyed by the upper-cased PROGRAM-ID, as
+  // program-name matching is case-insensitive.
+  std::string key = program_id;
+  for(char &c : key)
+    c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+  program_sigs[key] = program_sigt{fname, current_formals};
 }
 
 } // namespace

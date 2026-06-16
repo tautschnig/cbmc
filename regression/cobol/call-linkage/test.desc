@@ -1,0 +1,11 @@
+CORE
+main.cob
+--function MAINPGM
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Whole-program CALL linkage: a CALL to a same-file program defined earlier is
+linked by copying the USING argument into the callee's LINKAGE formal,
+invoking the callee, and copying a BY REFERENCE formal back. IBM LR "CALL
+statement". See doc/architectural/cobol-call-linkage.md.
