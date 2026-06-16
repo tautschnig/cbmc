@@ -1203,3 +1203,205 @@ std::optional<int> python_regex_fixed_length(const std::string &pattern)
   fixed_length_checker chk{pattern};
   return chk.parse_top();
 }
+
+namespace
+{
+/// If ``frag`` is a pure literal run (only literal characters and escaped
+/// metacharacters, no regex operators), return its decoded literal text;
+/// otherwise ``std::nullopt``. ``\d`` / ``\w`` / ``\s`` etc. are NOT literals.
+std::optional<std::string> regex_literal_text(const std::string &frag)
+{
+  static const std::string metas = "^$.|?*+()[]{}";
+  std::string out;
+  std::size_t i = 0;
+  const std::size_t n = frag.size();
+  while(i < n)
+  {
+    const char c = frag[i];
+    if(c == '\\')
+    {
+      if(i + 1 >= n)
+        return std::nullopt;
+      const char e = frag[i + 1];
+      // An escaped metacharacter denotes that literal character.
+      if(metas.find(e) != std::string::npos || e == '\\' || e == '/')
+      {
+        out += e;
+        i += 2;
+        continue;
+      }
+      // \d \w \s \n ... are not plain literals -> not a pure-literal run.
+      return std::nullopt;
+    }
+    if(metas.find(c) != std::string::npos)
+      return std::nullopt;
+    out += c;
+    ++i;
+  }
+  return out;
+}
+
+/// Scan a ``[...]`` character class starting at ``frag[i]=='['``, returning the
+/// index just past the closing ``]``, or ``std::nullopt`` if unterminated.
+std::optional<std::size_t>
+scan_char_class(const std::string &p, std::size_t i, std::size_t end)
+{
+  std::size_t j = i + 1;
+  if(j < end && p[j] == '^')
+    ++j;
+  if(j < end && p[j] == ']') // a leading ']' is a literal class member
+    ++j;
+  while(j < end && p[j] != ']')
+  {
+    if(p[j] == '\\' && j + 1 < end)
+      j += 2;
+    else
+      ++j;
+  }
+  if(j >= end)
+    return std::nullopt;
+  return j + 1; // past the ']'
+}
+} // namespace
+
+std::optional<std::vector<python_regex_segmentt>>
+python_regex_segment_groups(const std::string &pattern)
+{
+  const std::string &p = pattern;
+  std::size_t start = 0;
+  std::size_t end = p.size();
+
+  // Strip a leading start-anchor and trailing end-anchor: the match wrappers
+  // already account for them and the matched span decomposes identically. An
+  // *unescaped* trailing '$' only.
+  if(start < end && p[start] == '^')
+    ++start;
+  if(end > start && p[end - 1] == '$')
+  {
+    std::size_t bs = 0;
+    std::size_t k = end - 1;
+    while(k > start && p[k - 1] == '\\')
+    {
+      ++bs;
+      --k;
+    }
+    if(bs % 2 == 0)
+      --end;
+  }
+
+  std::vector<python_regex_segmentt> segs;
+  std::string current; // accumulating non-group (literal/regex) run
+
+  auto flush_current = [&]()
+  {
+    if(!current.empty())
+    {
+      python_regex_segmentt seg;
+      seg.is_group = false;
+      seg.sub_pattern = current;
+      seg.literal = regex_literal_text(current);
+      segs.push_back(seg);
+      current.clear();
+    }
+  };
+
+  std::size_t i = start;
+  while(i < end)
+  {
+    const char c = p[i];
+    if(c == '\\')
+    {
+      if(i + 1 >= end)
+        return std::nullopt; // trailing backslash
+      const char e = p[i + 1];
+      if(std::isdigit(static_cast<unsigned char>(e)) || e == 'g')
+        return std::nullopt; // back-reference
+      if(e == 'b' || e == 'B' || e == 'A' || e == 'Z')
+        return std::nullopt; // zero-width assertion breaks the linear model
+      current += c;
+      current += e;
+      i += 2;
+      continue;
+    }
+    if(c == '[')
+    {
+      auto j = scan_char_class(p, i, end);
+      if(!j.has_value())
+        return std::nullopt;
+      current.append(p, i, *j - i);
+      i = *j;
+      continue;
+    }
+    if(c == '|')
+      return std::nullopt; // top-level alternation
+    if(c == '^' || c == '$')
+      return std::nullopt; // mid-pattern anchor
+    if(c == '(')
+    {
+      if(i + 1 < end && p[i + 1] == '?')
+        return std::nullopt; // non-capturing / lookaround / named / flags
+      flush_current();
+      // Capture group: scan to the matching ')', bailing on any nested group.
+      std::size_t j = i + 1;
+      std::string inner;
+      while(j < end && p[j] != ')')
+      {
+        const char d = p[j];
+        if(d == '\\')
+        {
+          if(j + 1 >= end)
+            return std::nullopt;
+          inner += d;
+          inner += p[j + 1];
+          j += 2;
+          continue;
+        }
+        if(d == '[')
+        {
+          auto k = scan_char_class(p, j, end);
+          if(!k.has_value())
+            return std::nullopt;
+          inner.append(p, j, *k - j);
+          j = *k;
+          continue;
+        }
+        if(d == '(')
+          return std::nullopt; // nested group
+        // '|' inside the group is part of the group's own sub-pattern
+        // (handled by the fragment translator), so it is fine here.
+        inner += d;
+        ++j;
+      }
+      if(j >= end)
+        return std::nullopt; // unterminated group
+      // A quantifier applied to the whole group would repeat it; the
+      // single-occurrence concatenation model would then be unsound.
+      if(j + 1 < end)
+      {
+        const char q = p[j + 1];
+        if(q == '*' || q == '+' || q == '?' || q == '{')
+          return std::nullopt;
+      }
+      python_regex_segmentt seg;
+      seg.is_group = true;
+      seg.sub_pattern = inner;
+      seg.literal = std::nullopt;
+      segs.push_back(seg);
+      i = j + 1;
+      continue;
+    }
+    current += c;
+    ++i;
+  }
+  flush_current();
+
+  // Nothing to extract unless there is at least one capture group.
+  bool has_group = false;
+  for(const auto &s : segs)
+    if(s.is_group)
+      has_group = true;
+  if(!has_group)
+    return std::nullopt;
+
+  return segs;
+}

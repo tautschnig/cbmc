@@ -2755,6 +2755,17 @@ void smt2_convt::convert_expr(const exprt &expr)
         to_symbol_expr(function_application_expr.function()).get_identifier();
       const auto &args = function_application_expr.arguments();
 
+      // Python re.group decomposition: the result String is fully defined by
+      // find_symbols (the n-th capture group's fragment, or a nondet
+      // fallback); emit that pre-defined identifier here.
+      if(fn_id == ID_cprover_string_re_group_func)
+      {
+        auto it = defined_expressions.find(expr);
+        CHECK_RETURN(it != defined_expressions.end());
+        out << it->second;
+        return;
+      }
+
       // Bridge a refined-string operand to an SMT-LIB String term, for the
       // SMT-String back-end's precise lowering of the string *query*
       // intrinsics (equal/contains/prefix/suffix/compare_to). Recognised
@@ -6820,6 +6831,161 @@ void smt2_convt::find_symbols(const exprt &expr)
       convert_type(expr.type());
       out << ")\n";
       defined_expressions[expr] = id;
+    }
+    else if(
+      fid == ID_cprover_string_re_group_func &&
+      defined_expressions.find(expr) == defined_expressions.end())
+    {
+      // re.group decomposition (Phase 3; doc/python-frontend-regex-position-
+      // plan.md): the text matched by the n-th capture group of a constant
+      // pattern within the whole-match text. Decompose
+      //   text == frag0 ++ frag1 ++ ...     (one fragment per top-level
+      //                                       segment of the pattern)
+      // with each non-literal fragment a fresh String constrained by
+      // str.in_re of its sub-pattern's regex, and define the result as the
+      // n-th group's fragment. SOUND for every pattern (a group ranges over
+      // all valid splits; an untranslatable fragment is left unconstrained);
+      // precise when the split is uniquely pinned (literal-separated groups on
+      // a constant text). The pattern is recovered here (constant propagation
+      // has run by find_symbols time). A non-constant pattern, an
+      // un-segmentable structure, or an out-of-range n declares a fresh nondet
+      // String instead, keeping the result sound.
+      const auto &args = to_function_application_expr(expr).arguments();
+      // Constant-string extractor for the pattern (native smt_string constant
+      // or a str.++ of such), mirroring convert_expr's extract_literal.
+      std::function<std::optional<std::string>(const exprt &)> lit =
+        [&lit](const exprt &e) -> std::optional<std::string>
+      {
+        if(e.id() == ID_constant && e.type().id() == ID_smt_string)
+          return id2string(to_constant_expr(e).get_value());
+        if(e.id() == ID_function_application)
+        {
+          const auto &fa = to_function_application_expr(e);
+          if(
+            fa.function().id() == ID_symbol &&
+            to_symbol_expr(fa.function()).get_identifier() ==
+              ID_cprover_string_smt_strcat_func &&
+            fa.arguments().size() == 2)
+          {
+            auto a = lit(fa.arguments()[0]);
+            auto b = lit(fa.arguments()[1]);
+            if(a.has_value() && b.has_value())
+              return *a + *b;
+          }
+        }
+        return std::nullopt;
+      };
+      // SMT-LIB 2.6 string-literal escaping (printable ASCII only).
+      auto esc = [](const std::string &s) -> std::optional<std::string>
+      {
+        std::string out_s;
+        for(unsigned char ch : s)
+        {
+          if(ch < 0x20 || ch > 0x7e)
+            return std::nullopt;
+          if(ch == '"')
+            out_s += "\"\"";
+          else
+            out_s += static_cast<char>(ch);
+        }
+        return out_s;
+      };
+
+      std::optional<std::string> pat;
+      std::optional<mp_integer> n_val;
+      if(args.size() == 3)
+      {
+        pat = lit(args[0]);
+        exprt ne = args[2];
+        while(ne.id() == ID_typecast && ne.operands().size() == 1)
+          ne = ne.operands()[0];
+        if(ne.is_constant())
+        {
+          mp_integer v;
+          if(!to_integer(to_constant_expr(ne), v))
+            n_val = v;
+        }
+      }
+
+      bool emitted = false;
+      if(pat.has_value() && n_val.has_value() && *n_val >= 1)
+      {
+        const auto segs = python_regex_segment_groups(*pat);
+        if(segs.has_value())
+        {
+          const long long want = n_val->to_long();
+          long long gseen = 0;
+          std::optional<std::size_t> want_idx;
+          for(std::size_t k = 0; k < segs->size(); ++k)
+            if((*segs)[k].is_group)
+            {
+              ++gseen;
+              if(gseen == want)
+                want_idx = k;
+            }
+          if(want_idx.has_value())
+          {
+            const std::string base =
+              "re_group." + std::to_string(defined_expressions.size());
+            std::vector<std::string> frag_terms;
+            std::string result_term;
+            bool ok = true;
+            for(std::size_t k = 0; k < segs->size() && ok; ++k)
+            {
+              const auto &seg = (*segs)[k];
+              if(!seg.is_group && seg.literal.has_value())
+              {
+                const auto e = esc(*seg.literal);
+                if(!e.has_value())
+                {
+                  ok = false;
+                  break;
+                }
+                frag_terms.push_back("\"" + *e + "\"");
+              }
+              else
+              {
+                const std::string fv = base + "_f" + std::to_string(k);
+                out << "(declare-fun " << fv << " () String)\n";
+                const auto body = python_regex_to_smt_body(seg.sub_pattern);
+                if(body.has_value())
+                  out << "(assert (str.in_re " << fv << " " << *body << "))\n";
+                // else: leave the fragment unconstrained (over-approximation).
+                frag_terms.push_back(fv);
+                if(k == *want_idx)
+                  result_term = fv;
+              }
+            }
+            if(ok)
+            {
+              out << "(assert (= ";
+              convert_expr(args[1]); // matched text (native smt_string)
+              out << ' ';
+              if(frag_terms.size() == 1)
+                out << frag_terms[0];
+              else
+              {
+                out << "(str.++";
+                for(const auto &ft : frag_terms)
+                  out << ' ' << ft;
+                out << ')';
+              }
+              out << "))\n";
+              defined_expressions[expr] = result_term;
+              emitted = true;
+            }
+          }
+        }
+      }
+      if(!emitted)
+      {
+        const irep_idt id =
+          "re_group_nondet." + std::to_string(defined_expressions.size());
+        out << "(declare-fun " << id << " () ";
+        convert_type(expr.type());
+        out << ")\n";
+        defined_expressions[expr] = id;
+      }
     }
   }
   else if(expr.id() == ID_initial_state)

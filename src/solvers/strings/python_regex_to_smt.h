@@ -23,6 +23,49 @@ Author: Wave 2 of Python re support.
 
 #include <optional>
 #include <string>
+#include <vector>
+
+/// One top-level fragment of a pattern, as produced by
+/// \ref python_regex_segment_groups. The fragments concatenate (in order) to
+/// the whole match, so the matched text decomposes as
+/// ``text == frag[0] ++ frag[1] ++ ...``.
+struct python_regex_segmentt
+{
+  /// ``true`` iff this fragment is a numbered capture group ``(...)`` (the
+  /// thing ``Match.group(n)`` returns); ``false`` for the literal/regex runs
+  /// between/around groups.
+  bool is_group;
+  /// The fragment's sub-pattern text (the group's inner pattern, or the
+  /// inter-group run), suitable for an ``re.fullmatch`` constraint on the
+  /// fragment.
+  std::string sub_pattern;
+  /// When the fragment is a pure literal run (no regex metacharacters), its
+  /// decoded literal text; ``std::nullopt`` otherwise. A caller can pin a
+  /// pure-literal fragment to this constant instead of an ``in_re`` constraint.
+  std::optional<std::string> literal;
+};
+
+/// Segment ``pattern`` into the top-level sequence of capture groups and the
+/// literal/regex runs around them, for ``Match.group(n)`` extraction by
+/// ``str.++`` decomposition (see doc/python-frontend-regex-position-plan.md,
+/// Phase 3). The fragments concatenate to the whole match.
+///
+/// Returns ``std::nullopt`` when ``pattern`` is outside the safely-
+/// decomposable subset, so the caller keeps a sound nondet result:
+///   - top-level alternation (``a|b``),
+///   - a quantifier applied to a group (``(...)*`` / ``(...)+`` / ``(...)?`` /
+///     ``(...){m,n}``) — the linear one-occurrence model would be wrong,
+///   - nested groups (``((...))``),
+///   - non-capturing / lookaround / named groups (``(?:...)``, ``(?=...)``,
+///     ``(?P<n>...)``) — conservatively rejected,
+///   - anchors (``^`` / ``$``) and word boundaries,
+///   - back-references (``\1`` .. ``\9``, ``\g<...>``).
+/// The decomposition itself stays sound for any fragment whose sub-pattern the
+/// SMT translator cannot handle (the fragment is left unconstrained, i.e. an
+/// over-approximation); the bail conditions above are only those that would
+/// make the linear concatenation model itself unsound.
+std::optional<std::vector<python_regex_segmentt>>
+python_regex_segment_groups(const std::string &pattern);
 
 /// Translate a Python regex ``pattern`` to an SMT-LIB 2.6 regex
 /// term. Returns ``std::nullopt`` when the pattern contains a
