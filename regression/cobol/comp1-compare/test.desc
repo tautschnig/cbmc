@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+G1: COMP-1 short float and float comparison: 1.0/4 = 0.25, strictly between 0
+and 1. IBM LR "USAGE clause"; "Relation condition".

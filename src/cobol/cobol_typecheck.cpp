@@ -19,6 +19,8 @@ Author: Kiro
 #include <util/bitvector_types.h>
 #include <util/byte_operators.h>
 #include <util/c_types.h>
+#include <util/floatbv_expr.h>
+#include <util/ieee_float.h>
 #include <util/message.h>
 #include <util/mp_arith.h>
 #include <util/std_code.h>
@@ -33,6 +35,7 @@ Author: Kiro
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <deque>
 #include <functional>
 #include <map>
@@ -220,6 +223,11 @@ struct valuet
 {
   exprt expr;
   std::size_t scale = 0;
+  /// When true, this is a floating-point value: `expr` has IEEE double type
+  /// and `scale` is unused (IBM LR "USAGE clause" COMP-1/COMP-2). Fixed-point
+  /// (the default) keeps the scaled-integer model. Float and fixed operands
+  /// are reconciled by promoting to double at arithmetic / comparison sites.
+  bool is_float = false;
 };
 
 // Forward declaration; defined above.
@@ -891,6 +899,62 @@ protected:
   valuet divide_values(valuet a, valuet b);
   exprt build_relation(valuet a, const std::string &op, valuet b);
 
+  /// Round-to-nearest-even, the IEEE default, as a rounding-mode operand for
+  /// the float expressions (IBM LR arithmetic; ROUNDED is a separate phrase).
+  static exprt float_rm()
+  {
+    return from_integer(ieee_floatt::ROUND_TO_EVEN, unsignedbv_typet{32});
+  }
+  /// A double-typed IEEE constant.
+  static exprt double_const(double d)
+  {
+    ieee_floatt f{
+      ieee_float_spect::double_precision(), ieee_floatt::ROUND_TO_EVEN};
+    f.from_double(d);
+    return f.to_expr();
+  }
+  /// Coerce a value to the floating-point (double) domain: a float value is
+  /// returned unchanged; a fixed-point value v at scale s becomes the double
+  /// (double)v / 10^s (IBM LR "USAGE COMP-1/COMP-2"; conversion between
+  /// fixed and floating point). Used to reconcile mixed operands.
+  valuet to_float(const valuet &v) const;
+  /// If either operand is floating point, perform the operation \p fid
+  /// (ID_floatbv_plus / _minus / _mult / _div) in the double domain and return
+  /// the float result; otherwise return nullopt so the caller keeps the exact
+  /// scaled-integer arithmetic. Reconciles mixed fixed/float operands at every
+  /// arithmetic site (the verbs and COMPUTE).
+  std::optional<valuet>
+  try_float_arith(const valuet &a, const irep_idt &fid, const valuet &b) const
+  {
+    if(!a.is_float && !b.is_float)
+      return {};
+    const valuet fa = to_float(a), fb = to_float(b);
+    return valuet{
+      ieee_float_op_exprt{fa.expr, fid, fb.expr, float_rm()}, 0, true};
+  }
+  /// a + b, a - b, a * b honouring float operands (the verbs and expressions
+  /// share these so fixed/float reconciliation is in one place).
+  valuet vadd(valuet a, valuet b)
+  {
+    if(auto f = try_float_arith(a, ID_floatbv_plus, b))
+      return *f;
+    const std::size_t s = align(a, b);
+    return valuet{plus_exprt{a.expr, b.expr}, s};
+  }
+  valuet vsub(valuet a, valuet b)
+  {
+    if(auto f = try_float_arith(a, ID_floatbv_minus, b))
+      return *f;
+    const std::size_t s = align(a, b);
+    return valuet{minus_exprt{a.expr, b.expr}, s};
+  }
+  valuet vmul(valuet a, valuet b)
+  {
+    if(auto f = try_float_arith(a, ID_floatbv_mult, b))
+      return *f;
+    return valuet{mult_exprt{a.expr, b.expr}, a.scale + b.scale};
+  }
+
   const item_infot &lookup_item(const std::string &name);
   const item_infot &
   resolve_item(const std::string &name, const std::vector<std::string> &quals);
@@ -1161,6 +1225,21 @@ exprt cobol_typecheckt::rescale(
   return div_exprt{e, from_integer(power10(from - to), cobol_value_type())};
 }
 
+valuet cobol_typecheckt::to_float(const valuet &v) const
+{
+  if(v.is_float)
+    return v;
+  // (double)integer_value, then divide by 10^scale to recover the real value.
+  exprt d = floatbv_typecast_exprt{v.expr, float_rm(), double_type()};
+  if(v.scale > 0)
+    d = ieee_float_op_exprt{
+      d,
+      ID_floatbv_div,
+      double_const(std::pow(10.0, double(v.scale))),
+      float_rm()};
+  return valuet{d, 0, true};
+}
+
 std::size_t cobol_typecheckt::align(valuet &a, valuet &b)
 {
   const std::size_t s = std::max(a.scale, b.scale);
@@ -1173,6 +1252,10 @@ std::size_t cobol_typecheckt::align(valuet &a, valuet &b)
 
 valuet cobol_typecheckt::divide_values(valuet a, valuet b)
 {
+  // A floating-point operand makes the division floating point (IBM LR
+  // "DIVIDE statement" with COMP-1/COMP-2 operands).
+  if(auto f = try_float_arith(a, ID_floatbv_div, b))
+    return *f;
   // Division must develop fractional digits: plain integer division at scale 0
   // would discard the fraction (e.g. 2/3 -> 0). After aligning the operands to
   // a common scale, a/b is an integer ratio, so scaling the dividend up by
@@ -1650,6 +1733,20 @@ bool cobol_typecheckt::has_faithful_codec(const item_infot &item) const
 valuet cobol_typecheckt::read_field(const reft &r) const
 {
   const item_infot &item = *r.info;
+  // Floating-point items (COMP-1 single / COMP-2 long): the bytes are the IEEE
+  // value; read them at the item's float type and widen to the double value
+  // domain (IBM LR "USAGE clause" COMP-1/COMP-2).
+  if(item.usage == usaget::FLOAT_SHORT || item.usage == usaget::FLOAT_LONG)
+  {
+    const floatbv_typet ft =
+      item.usage == usaget::FLOAT_SHORT ? float_type() : double_type();
+    const exprt raw = make_byte_extract(r.record, r.offset, ft);
+    const exprt d =
+      item.usage == usaget::FLOAT_SHORT
+        ? exprt{floatbv_typecast_exprt{raw, float_rm(), double_type()}}
+        : raw;
+    return valuet{d, 0, true};
+  }
   // A field whose bytes are observed at a different category keeps its
   // USAGE-faithful encoding (IBM LR "USAGE clause"); decode it accordingly.
   if(item.faithful_bytes)
@@ -1693,6 +1790,38 @@ exprt cobol_typecheckt::encode_numeric(
   valuet v,
   bool rounded) const
 {
+  // Floating-point receiver (COMP-1 / COMP-2): store the value as IEEE single
+  // / double (IBM LR "USAGE clause"). The value is taken to the double domain
+  // (converting a fixed-point source) and narrowed to the item's float type;
+  // byte_update then writes its bytes. ROUNDED has no effect on a float store.
+  if(item.usage == usaget::FLOAT_SHORT || item.usage == usaget::FLOAT_LONG)
+  {
+    (void)rounded;
+    const valuet fv = to_float(v);
+    if(item.usage == usaget::FLOAT_SHORT)
+      return floatbv_typecast_exprt{fv.expr, float_rm(), float_type()};
+    return fv.expr; // already double
+  }
+  // A floating-point source moved to a fixed-point receiver: convert to the
+  // receiver's scaled integer, rounding to nearest (IBM LR "MOVE statement";
+  // conversion from floating point). value_int = (long long) round(f * 10^s).
+  if(v.is_float)
+  {
+    exprt scaled = item.scale > 0
+                     ? exprt{ieee_float_op_exprt{
+                         v.expr,
+                         ID_floatbv_mult,
+                         double_const(std::pow(10.0, double(item.scale))),
+                         float_rm()}}
+                     : v.expr;
+    // Truncate toward zero when converting to the fixed-point receiver (IBM LR
+    // "MOVE statement": the absolute value is truncated unless ROUNDED).
+    const exprt trunc_rm =
+      from_integer(ieee_floatt::ROUND_TO_ZERO, unsignedbv_typet{32});
+    v = valuet{
+      floatbv_typecast_exprt{scaled, trunc_rm, cobol_value_type()}, item.scale};
+  }
+
   exprt e;
   if(rounded && v.scale > item.scale)
   {
@@ -1894,8 +2023,26 @@ exprt cobol_typecheckt::build_relation(
 {
   // Numeric comparison (IBM LR "Relation condition" / "Comparison of numeric
   // operands", pp. 268-): the operands are compared by algebraic value
-  // regardless of their pictures or usages, so align the scales and emit the
-  // bitvector relation.
+  // regardless of their pictures or usages. A floating-point operand makes the
+  // comparison floating point (both operands promoted to double); otherwise
+  // align the scales and emit the bitvector relation.
+  if(a.is_float || b.is_float)
+  {
+    const valuet fa = to_float(a), fb = to_float(b);
+    if(op == "=")
+      return ieee_float_equal_exprt{fa.expr, fb.expr};
+    if(op == "<>")
+      return ieee_float_notequal_exprt{fa.expr, fb.expr};
+    if(op == "<")
+      return binary_relation_exprt{fa.expr, ID_lt, fb.expr};
+    if(op == ">")
+      return binary_relation_exprt{fa.expr, ID_gt, fb.expr};
+    if(op == "<=")
+      return binary_relation_exprt{fa.expr, ID_le, fb.expr};
+    if(op == ">=")
+      return binary_relation_exprt{fa.expr, ID_ge, fb.expr};
+    error("unsupported relational operator '" + op + "'");
+  }
   align(a, b);
   if(op == "=")
     return equal_exprt{a.expr, b.expr};
@@ -2667,7 +2814,14 @@ void cobol_typecheckt::place_field(
   info.occurs = occurs;
   info.occurs_dims = occurs_dims;
 
-  if(!has_pic)
+  // A PICTURE-less COMP-1 / COMP-2 is a floating-point numeric item, not a
+  // group (IBM LR "USAGE clause": COMP-1 is short, COMP-2 long floating-point;
+  // neither has a PICTURE).
+  const usaget usage_kind = usage_of(usage);
+  const bool is_float_item = !has_pic && (usage_kind == usaget::FLOAT_SHORT ||
+                                          usage_kind == usaget::FLOAT_LONG);
+
+  if(!has_pic && !is_float_item)
   {
     // Group item: its byte_size is the span of its children, set at close.
     info.is_group = true;
@@ -2691,22 +2845,42 @@ void cobol_typecheckt::place_field(
   std::size_t digits, scale, char_count;
   bool is_signed;
   std::string mask;
-  parse_picture(pic, is_numeric, digits, scale, is_signed, char_count, mask);
-  info.is_group = false;
-  info.is_numeric = is_numeric;
-  info.digits = digits;
-  info.scale = scale;
-  info.is_signed = is_signed;
-  info.char_count = char_count;
-  info.byte_size = phys_size_of(usage, is_numeric, digits, char_count);
-  // A numeric-edited item (edited, with digit positions, no alphabetic
-  // positions) keeps its edit mask so a MOVE to it can apply the editing
-  // (IBM LR "PICTURE clause" editing). is_numeric is already false for an
-  // edited item (it is stored as alphanumeric).
-  if(
-    !is_numeric && mask.find_first_of("9Z*") != std::string::npos &&
-    mask.find_first_of("XA") == std::string::npos)
-    info.edit_mask = mask;
+  if(is_float_item)
+  {
+    // IEEE single (COMP-1, 4 bytes) / double (COMP-2, 8 bytes); the value is
+    // modelled in the value domain as a double (see read_field / valuet).
+    is_numeric = true;
+    digits = 0;
+    scale = 0;
+    is_signed = true;
+    char_count = 0;
+    info.is_group = false;
+    info.is_numeric = true;
+    info.digits = 0;
+    info.scale = 0;
+    info.is_signed = true;
+    info.char_count = 0;
+    info.byte_size = (usage_kind == usaget::FLOAT_SHORT) ? 4 : 8;
+  }
+  else
+  {
+    parse_picture(pic, is_numeric, digits, scale, is_signed, char_count, mask);
+    info.is_group = false;
+    info.is_numeric = is_numeric;
+    info.digits = digits;
+    info.scale = scale;
+    info.is_signed = is_signed;
+    info.char_count = char_count;
+    info.byte_size = phys_size_of(usage, is_numeric, digits, char_count);
+    // A numeric-edited item (edited, with digit positions, no alphabetic
+    // positions) keeps its edit mask so a MOVE to it can apply the editing
+    // (IBM LR "PICTURE clause" editing). is_numeric is already false for an
+    // edited item (it is stored as alphanumeric).
+    if(
+      !is_numeric && mask.find_first_of("9Z*") != std::string::npos &&
+      mask.find_first_of("XA") == std::string::npos)
+      info.edit_mask = mask;
+  }
   // Record the physical encoding and sign representation (IBM LR "USAGE
   // clause" / "SIGN clause") so byte-level observation can be faithful.
   info.usage = usage_of(usage);
@@ -2732,7 +2906,7 @@ void cobol_typecheckt::place_field(
   if(has_value && !is_table)
   {
     record_has_value = true;
-    if(is_numeric)
+    if(is_numeric && !is_float_item)
     {
       if(auto v = spec_to_numeric(value_spec, scale))
       {
@@ -3037,7 +3211,22 @@ valuet cobol_typecheckt::parse_term_from(valuet a)
     const std::string op = cur().text;
     advance();
     valuet b = parse_factor();
-    if(op == "*")
+    // Floating-point operand: the whole operation is in IEEE double (IBM LR
+    // "Arithmetic expressions"; a floating-point operand makes the result
+    // floating point). Otherwise the exact scaled-integer model is kept.
+    if(a.is_float || b.is_float)
+    {
+      const valuet fa = to_float(a), fb = to_float(b);
+      a = valuet{
+        ieee_float_op_exprt{
+          fa.expr,
+          op == "*" ? ID_floatbv_mult : ID_floatbv_div,
+          fb.expr,
+          float_rm()},
+        0,
+        true};
+    }
+    else if(op == "*")
     {
       a = valuet{mult_exprt{a.expr, b.expr}, a.scale + b.scale};
     }
@@ -3063,11 +3252,26 @@ valuet cobol_typecheckt::parse_expr_from(valuet a)
     const std::string op = cur().text;
     advance();
     valuet b = parse_term();
-    const std::size_t s = align(a, b);
-    if(op == "+")
-      a = valuet{plus_exprt{a.expr, b.expr}, s};
+    if(a.is_float || b.is_float)
+    {
+      const valuet fa = to_float(a), fb = to_float(b);
+      a = valuet{
+        ieee_float_op_exprt{
+          fa.expr,
+          op == "+" ? ID_floatbv_plus : ID_floatbv_minus,
+          fb.expr,
+          float_rm()},
+        0,
+        true};
+    }
     else
-      a = valuet{minus_exprt{a.expr, b.expr}, s};
+    {
+      const std::size_t s = align(a, b);
+      if(op == "+")
+        a = valuet{plus_exprt{a.expr, b.expr}, s};
+      else
+        a = valuet{minus_exprt{a.expr, b.expr}, s};
+    }
   }
   return a;
 }
@@ -6167,8 +6371,7 @@ std::vector<stmtt> cobol_typecheckt::parse_add()
   valuet sum = ops[0];
   for(std::size_t i = 1; i < ops.size(); ++i)
   {
-    align(sum, ops[i]);
-    sum = valuet{plus_exprt{sum.expr, ops[i].expr}, sum.scale};
+    sum = vadd(sum, ops[i]);
   }
 
   std::vector<stmtt> result;
@@ -6196,10 +6399,7 @@ std::vector<stmtt> cobol_typecheckt::parse_add()
     {
       // result = sum(pre-TO operands) + sum(post-TO operands)
       for(auto &p : post)
-      {
-        align(sum, p.v);
-        sum = valuet{plus_exprt{sum.expr, p.v.expr}, sum.scale};
-      }
+        sum = vadd(sum, p.v);
       assign_giving(sum, result, overflow, loc);
     }
     else
@@ -6209,10 +6409,7 @@ std::vector<stmtt> cobol_typecheckt::parse_add()
       {
         if(!p.ref.has_value())
           error("ADD ... TO requires a receiving item");
-        valuet cur_val = read_field(*p.ref);
-        valuet s = sum;
-        align(cur_val, s);
-        const valuet nv{plus_exprt{cur_val.expr, s.expr}, s.scale};
+        const valuet nv = vadd(read_field(*p.ref), sum);
         result.push_back(make_assign_ref(*p.ref, nv, loc, p.rounded));
         overflow = or_exprt{overflow, size_error_cond(*p.ref, nv)};
       }
@@ -6242,8 +6439,7 @@ std::vector<stmtt> cobol_typecheckt::parse_subtract()
   valuet sum = ops[0];
   for(std::size_t i = 1; i < ops.size(); ++i)
   {
-    align(sum, ops[i]);
-    sum = valuet{plus_exprt{sum.expr, ops[i].expr}, sum.scale};
+    sum = vadd(sum, ops[i]);
   }
   expect_word("FROM");
 
@@ -6272,9 +6468,7 @@ std::vector<stmtt> cobol_typecheckt::parse_subtract()
   {
     if(minuends.size() != 1)
       error("SUBTRACT ... FROM ... GIVING expects a single minuend");
-    valuet mv = minuends[0].v;
-    align(mv, sum);
-    const valuet diff{minus_exprt{mv.expr, sum.expr}, mv.scale};
+    const valuet diff = vsub(minuends[0].v, sum);
     assign_giving(diff, result, overflow, loc);
   }
   else
@@ -6283,10 +6477,7 @@ std::vector<stmtt> cobol_typecheckt::parse_subtract()
     {
       if(!m.ref.has_value())
         error("SUBTRACT ... FROM requires a receiving item");
-      valuet mv = read_field(*m.ref);
-      valuet s = sum;
-      align(mv, s);
-      const valuet nv{minus_exprt{mv.expr, s.expr}, s.scale};
+      const valuet nv = vsub(read_field(*m.ref), sum);
       result.push_back(make_assign_ref(*m.ref, nv, loc, m.rounded));
       overflow = or_exprt{overflow, size_error_cond(*m.ref, nv)};
     }
@@ -6307,7 +6498,7 @@ std::vector<stmtt> cobol_typecheckt::parse_multiply()
   valuet b = parse_operand();
   const std::optional<reft> b_ref = last_ref;
   const bool b_rounded = eat_word("ROUNDED");
-  valuet product{mult_exprt{a.expr, b.expr}, a.scale + b.scale};
+  valuet product = vmul(a, b);
   std::vector<stmtt> result;
   exprt overflow = false_exprt{};
   if(eat_word("GIVING"))

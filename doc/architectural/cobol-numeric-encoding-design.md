@@ -169,9 +169,10 @@ implied and not stored — LR "PICTURE clause", `V`):
   (full bit-width range) and native endianness (LR "COMP-5").
 
 - **COMP-1 / COMP-2** (short/long float): a **separate value kind**
-  (IEEE `floatbv`), not an integer-at-scale. Deferred — the value domain
-  has no float; absent from the corpus (0 occurrences). Documented as the
-  remaining gap.
+  (IEEE `floatbv`), not an integer-at-scale. Implemented (G1): `valuet`
+  carries an `is_float` flag (double domain); read/store at the item's IEEE
+  type, fixed↔float conversion, and float arithmetic/comparison reconcile
+  mixed operands by promoting to double (see precision-and-gaps §6).
 
 All codecs are pure `exprt` constructions (nibble masks via
 `bitand`/`shl`/`concatenation` over `byte_extract`s), so symbolic

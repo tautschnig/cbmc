@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+G1: COMP-2 fixed/float conversion and float division: 7.0/2=3.5, truncated
+to 3 on the move to a fixed receiver. IBM LR "USAGE clause"; "MOVE statement".

@@ -1,0 +1,8 @@
+CORE
+main.cob
+
+^VERIFICATION SUCCESSFUL$
+--
+G1 RESOLVED: COMP-1/COMP-2 are modelled as IEEE single/double floating point
+in the value domain. 3.0 / 2 = 1.5 exactly. IBM LR "USAGE clause"
+(COMP-1/COMP-2). See cobol-numeric-encoding-design.md.

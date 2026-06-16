@@ -232,13 +232,21 @@ needs the callee body re-expressed against the caller's record exprs, or a
 pointer/based-storage model (shared with I18 SET ADDRESS OF). A large,
 design-first effort; standalone analysis stays the default.
 
-### G1 — COMP-1 / COMP-2 IEEE floating point
+### G1 — COMP-1 / COMP-2 IEEE floating point (resolved)
 
-Current: the value model is a scaled 64-bit **integer** (`valuet =
-{exprt, scale}`); a PICTURE-less COMP-1/2 item is treated as a group.
-IEEE float needs `valuet` to admit a float kind (or a parallel float
-value) and every arithmetic/▸comparison/MOVE path to handle
-integer↔float coercion (LR "USAGE COMP-1/COMP-2" and the intermediate-
-result rules). Pervasive in the value model; merits its own increment and
-is rare in the target corpus, so it is last.
+`valuet` now carries an `is_float` flag: a float value has IEEE `double`
+type and the `scale` is unused, while fixed-point keeps the scaled-integer
+model. COMP-1/COMP-2 are recognised as numeric items (4/8 bytes, not
+groups). The reconciliation of mixed operands is centralised: `to_float`
+converts a fixed value `v` to `(double)v / 10^scale`, and `try_float_arith`
+(used by `vadd`/`vsub`/`vmul`, `divide_values`, and the expression parser)
+promotes both operands to double and emits an `ieee_float_op_exprt` when
+either is float — so the verbs and COMPUTE share one fixed/float decision
+point. `read_field` reads a float item at its IEEE type (widening COMP-1 to
+double); `encode_numeric` narrows on store and converts a float source to a
+fixed receiver by truncation toward zero (IBM LR "MOVE statement"); float
+comparison uses `ieee_float_equal`/`notequal` and ordering relations.
+Rounding mode is round-to-nearest-even for arithmetic, round-to-zero for
+the float→fixed truncation. Remaining: float VALUE clauses (a no-VALUE
+float reads as nondet) and floating-point literals in `E` notation.
 

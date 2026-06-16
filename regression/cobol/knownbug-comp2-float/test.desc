@@ -1,9 +1,0 @@
-KNOWNBUG
-main.cob
-
-^VERIFICATION SUCCESSFUL$
---
-Gap G1: floating-point USAGE (COMP-1/COMP-2) is not modelled as IEEE
-float; such items are handled in the integer value domain (and a
-PICTURE-less item is treated as a group). IBM LR "USAGE clause"
-(COMP-1/COMP-2). See cobol-numeric-encoding-design.md.

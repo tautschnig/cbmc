@@ -236,7 +236,7 @@ baseline.
 
 | id | gap | LR clause | KB | plan |
 |---|---|---|---|---|
-| G1 | floating-point `COMP-1`/`COMP-2` not modelled as IEEE float (needs a float kind in the value model) | "USAGE clause" (COMP-1/2) | comp2-float | precision-and-gaps §6 |
+| G1 | **RESOLVED** — `COMP-1`/`COMP-2` are numeric IEEE single/double items; `valuet` carries an `is_float` flag (double domain), with read/store, fixed↔float MOVE conversion, float arithmetic (verbs + COMPUTE) and comparison (CORE `comp2-float`, `comp2-arith`, `comp1-compare`) | "USAGE clause" (COMP-1/2) | — | precision-and-gaps §6 |
 | G2 | EBCDIC charset (see S4) | "USAGE DISPLAY" | — | numeric-encoding §5 |
 | G3 | `ALTER` unsupported | "ALTER statement" (obsolete) | — | precision-and-gaps §4 |
 
