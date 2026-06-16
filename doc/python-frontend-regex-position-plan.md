@@ -232,37 +232,27 @@ splitting `subject[start:end]`. Whenever the intrinsic is gated out it returns
   constant subject under `--python-smt-strings` (count/elements/indexing exact,
   0 s); unsupported pattern / symbolic subject → sound bounded enumeration; the
   refined backend degrades soundly (slower on a pathological iterate-and-assert,
-  but the sweep is neutral). **`re.split` stays at the sound floor** for one
-  narrow reason (investigated 2026-06-16):
-  - The precise split LOOP itself is correct and folds — `re.split(",","a,b,c")`
-    gives exactly `["a","b","c"]`, `split("abc")` gives `["abc"]`, two-char
-    separators work, 0 s. (The earlier "multi-append list-length limitation"
-    was a FALSE conclusion from a stale/messy session state — int-list and
-    inline string-list multi-append both fold fine.)
-  - The real blocker, now **precisely root-caused via the GOTO** (2026-06-16):
-    `re.split(",","abc")` is emitted as `CALL split(",", "abc", 0)` — only **3**
-    arguments. `split` has 4 params (`pattern, string, maxsplit=0, flags=0`);
-    `maxsplit` (index 2) gets its default `0` but `flags` (index 3) gets **no**
-    argument, so the GOTO layer fills it with nondet. Hence the soundness guard
-    `if flags != 0: return <nondet>` goes nondet and pollutes the result.
-  - Mechanism: the module-call default-fill loop in
-    `python_converter_call_method.cpp` (~1474) fills trailing params from the
-    `default_values` map and **breaks on the first missing entry**.
-    `default_values` contains `{"split",2}` (maxsplit) but **not** `{"split",3}`
-    (flags) — i.e. for an **imported** module function only the *first* trailing
-    default is populated. (`re.findall`, with a single trailing `flags` default,
-    folds; a 4-param *user* function folds all its defaults — so it is specific
-    to imported-module default population.) An AST fallback in the call loop
-    does **not** help: the imported `re` functions' FunctionDefs are not in
-    `parse_tree.ast_json` (the main program AST), so the fallback can't reach
-    their defaults.
-  - **Fix (future, focused):** populate `default_values` for *all* trailing
-    defaults of imported-module functions (find the imported-module default-
-    population path; it currently covers only the first), or give the call loop
-    access to the imported module's AST for the fallback. Either lands precise
-    `re.split` with no loop change. This is a genuine whole-group fix — it
-    affects any imported-module function called with >1 defaulted trailing
-    parameter omitted.
+  but the sweep is neutral). **`re.split` is now PRECISE too** (`dda00127e2`):
+  `re.split(",","a,b,c") == ["a","b","c"]`, `split("abc") == ["abc"]`, two-char
+  separators, and `maxsplit` all exact for a fixed-length pattern on a constant
+  subject; sound nondet otherwise.
+  - It was blocked on an imported-module default-fill gap, root-caused via
+    `--show-goto-functions`: `re.split(",","abc")` was emitted as
+    `CALL split(",", "abc", 0)` — only **3** args, `flags` (index 3) omitted →
+    GOTO-nondet, so the `if flags != 0` guard polluted the result. The
+    module-call default-fill loop fills trailing params from `default_values`
+    and stops at the first gap, and `process_imported_module` populated **no**
+    defaults for module-level functions (only class methods got them, via
+    defs.cpp). So `re.findall` survived by collision (`Pattern.findall` set
+    `{findall,2}={findall,3}=0`, coincidentally matching) but `re.split` did not
+    (`Pattern.split` has no index-3). Fixed by populating `default_values` for
+    imported module-level FunctionDefs in `process_imported_module` — a
+    whole-group fix for every imported module-level function with defaulted
+    trailing params (e.g. also `re.sub`'s `count`/`flags`). It was a
+    default-fill/dispatch issue, **not** constant propagation.
+  - (The earlier "multi-append list-length limitation" was a FALSE conclusion
+    from a stale/messy session state — int-list and inline string-list
+    multi-append both fold fine.)
 - **Phase 3 — `Match.group(n)`.** Span + uniqueness-gated `str.++`
   decomposition (plans section 4 group-extraction item).
 - **Phase 4 — variable-length/greedy.** Deferred (section 7); stays nondet.
