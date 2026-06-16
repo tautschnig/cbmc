@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^VERIFICATION SUCCESSFUL$
+--
+I5 RESOLVED: a class condition (IS NUMERIC) on a numeric operand is now
+evaluated over the item's faithful content. A value-model numeric item
+always holds a representable number, so IS NUMERIC is true. IBM LR "Class
+condition". See cobol-numeric-encoding-design.md.

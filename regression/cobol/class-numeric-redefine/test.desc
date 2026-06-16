@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+I5: IS NUMERIC on a zoned DISPLAY item with aliased non-digit content is
+exactly false (the byte 'A' is not 0x30..0x39). IBM LR "Class condition".

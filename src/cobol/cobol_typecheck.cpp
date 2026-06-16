@@ -897,6 +897,13 @@ protected:
   /// Compile-time packed-decimal bytes for a constant value.
   std::vector<unsigned char>
   packed_bytes(const mp_integer &value, const item_infot &item) const;
+  /// Whether the bytes of a numeric item form valid numeric content (IBM LR
+  /// "Class condition" NUMERIC; the data-exception / S0C7 condition is its
+  /// negation). For a faithful unsigned zoned DISPLAY item every byte must be
+  /// an ASCII digit; for faithful packed every digit nibble must be 0-9 with a
+  /// valid sign nibble. A non-faithful (value-model) or BINARY item always
+  /// holds a representable number, so the predicate is true.
+  exprt numeric_content_valid(const reft &r) const;
   /// Whether item's faithful encoding is implemented (so the classifier may
   /// mark it and read/write/VALUE go through the codec).
   bool has_faithful_codec(const item_infot &item) const;
@@ -1445,6 +1452,71 @@ exprt cobol_typecheckt::encode_binary(
       acc, mult_exprt{be_byte, from_integer(power(mp_integer{256}, k), un)}};
   }
   return typecast_exprt{acc, phys_type(item)};
+}
+
+exprt cobol_typecheckt::numeric_content_valid(const reft &r) const
+{
+  const item_infot &item = *r.info;
+  const unsignedbv_typet u8{8};
+  const typet vt = cobol_value_type();
+  const auto byte_at = [&](std::size_t i) -> exprt
+  {
+    const exprt off = plus_exprt{r.offset, from_integer(i, r.offset.type())};
+    return typecast_exprt{make_byte_extract(r.record, off, u8), vt};
+  };
+  // Only faithfully-encoded zoned/packed items can hold invalid digits; the
+  // value model and BINARY always represent a number (IBM LR "Class
+  // condition": NUMERIC).
+  if(!item.faithful_bytes)
+    return true_exprt{};
+  if(item.usage == usaget::DISPLAY)
+  {
+    // Unsigned zoned DISPLAY: every byte is an ASCII digit 0x30..0x39.
+    exprt acc = true_exprt{};
+    for(std::size_t i = 0; i < item.byte_size; ++i)
+    {
+      const exprt b = byte_at(i);
+      acc = and_exprt{
+        acc,
+        and_exprt{
+          binary_relation_exprt{b, ID_ge, from_integer('0', vt)},
+          binary_relation_exprt{b, ID_le, from_integer('9', vt)}}};
+    }
+    return acc;
+  }
+  if(item.usage == usaget::PACKED)
+  {
+    // Packed decimal: each digit nibble is 0..9 and the final (sign) nibble is
+    // a valid sign code (IBM LR "Class condition"; PACKED-DECIMAL): C/F (and,
+    // accepted on input, A/E) positive, D/B negative.
+    const std::size_t n = item.byte_size;
+    const exprt sixteen = from_integer(16, vt);
+    const auto nibble = [&](std::size_t p) -> exprt
+    {
+      const exprt b = byte_at(p / 2);
+      return (p % 2 == 0) ? static_cast<exprt>(div_exprt{b, sixteen})
+                          : static_cast<exprt>(mod_exprt{b, sixteen});
+    };
+    const std::size_t digit_nibbles = 2 * n - 1;
+    exprt acc = true_exprt{};
+    for(std::size_t p = 0; p < digit_nibbles; ++p)
+      acc = and_exprt{
+        acc, binary_relation_exprt{nibble(p), ID_le, from_integer(9, vt)}};
+    const exprt s = nibble(digit_nibbles);
+    const exprt sign_ok = or_exprt{
+      or_exprt{
+        equal_exprt{s, from_integer(0xC, vt)},
+        equal_exprt{s, from_integer(0xD, vt)}},
+      or_exprt{
+        equal_exprt{s, from_integer(0xF, vt)},
+        or_exprt{
+          equal_exprt{s, from_integer(0xA, vt)},
+          or_exprt{
+            equal_exprt{s, from_integer(0xB, vt)},
+            equal_exprt{s, from_integer(0xE, vt)}}}}};
+    return and_exprt{acc, sign_ok};
+  }
+  return true_exprt{};
 }
 
 exprt cobol_typecheckt::encode_packed(
@@ -3152,6 +3224,16 @@ exprt cobol_typecheckt::parse_relation()
       }
       return neg ? static_cast<exprt>(not_exprt{acc}) : acc;
     }
+    // A numeric operand that is exactly a data item: NUMERIC tests whether its
+    // bytes form valid numeric content (IBM LR "Class condition"). This is
+    // exact for faithful zoned/packed items and trivially true for the value
+    // model / BINARY (which always hold a representable number).
+    if(a.numeric && a.num_item != nullptr && cls == "NUMERIC")
+    {
+      const reft r{a.num_item, a.record, a.offset};
+      const exprt ok = numeric_content_valid(r);
+      return neg ? static_cast<exprt>(not_exprt{ok}) : ok;
+    }
     // Numeric operand, the user-class ALPHANUMERIC, or a non-item: the value
     // model has no faithful bytes, so the result is nondeterministic.
     (void)neg;
@@ -3313,9 +3395,14 @@ cond_operandt cobol_typecheckt::parse_cond_operand()
       op.num = parse_expr_from(base);
       // Record the item only when the operand is exactly that item (no
       // operator extended it), so a comparison with a nonnumeric operand can
-      // use its display representation.
+      // use its display representation, and a class condition can inspect its
+      // faithful bytes.
       if(op.num.expr == base.expr)
+      {
         op.num_item = r.info;
+        op.record = r.record;
+        op.offset = r.offset;
+      }
       return op;
     }
     op.is_item = true;

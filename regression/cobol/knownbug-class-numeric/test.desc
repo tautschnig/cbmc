@@ -1,8 +1,0 @@
-KNOWNBUG
-main.cob
-
-^VERIFICATION SUCCESSFUL$
---
-Imprecision I5: a class condition (IS NUMERIC etc.) on a numeric operand
-is nondeterministic; only alphanumeric operands are tested exactly over
-their bytes. IBM LR "Class condition". See cobol-numeric-encoding-design.md.

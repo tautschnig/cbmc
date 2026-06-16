@@ -247,7 +247,7 @@ baseline.
 | I2 | **PARTIAL** — a bare unsigned integer DISPLAY operand is now compared by its zoned display representation (CORE `num-alnum-compare`); signed/scaled/COMP/expression operands still nondet | "Comparison of numeric and nonnumeric operands" | — | character-semantics §3.6 |
 | I3 | **RESOLVED** — MOVE alphanumeric → numeric now de-edits the digit characters (CORE `move-alnum-to-num`) | "MOVE statement" | — | — |
 | I4 | **PARTIAL** — MOVE to a numeric-edited PICTURE now applies editing (Z/`*` suppression, `.`, `,`, B/0//; CORE `move-edited`); floating/fixed sign and currency (+ - $ CR DB) still nondet | "MOVE statement"; "PICTURE clause" editing | — | numeric-encoding |
-| I5 | class condition on a **numeric** operand is nondet (alphanumeric is exact) | "Class condition" | class-numeric | numeric-encoding |
+| I5 | **RESOLVED** — IS NUMERIC on a numeric operand now evaluates `numeric_content_valid` over the item's faithful bytes (digit/sign validity for zoned/packed; trivially true for the value model / BINARY) | "Class condition" | CORE `class-numeric`, `class-numeric-redefine` | numeric-encoding |
 | I6 | **RESOLVED** — group MOVE now space-pads a longer receiver on the right | "MOVE statement" (group) | CORE `group-move-pad` | — |
 | I7 | `OCCURS … DEPENDING ON` fixed at maximum (over-approx) | "OCCURS clause" (format 2) | — | precision-and-gaps §2 |
 | I8 | reference modification with a non-constant length over-approximated to the remaining size | "Reference modification" | — | precision-and-gaps §2 |
