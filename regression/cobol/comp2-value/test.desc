@@ -1,0 +1,8 @@
+CORE
+main.cob
+
+^EXIT=0$
+^VERIFICATION SUCCESSFUL$
+--
+COMP-2 VALUE initialises to the literal's IEEE double value. IBM LR "VALUE
+clause".

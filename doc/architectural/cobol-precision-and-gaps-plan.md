@@ -247,6 +247,7 @@ double); `encode_numeric` narrows on store and converts a float source to a
 fixed receiver by truncation toward zero (IBM LR "MOVE statement"); float
 comparison uses `ieee_float_equal`/`notequal` and ordering relations.
 Rounding mode is round-to-nearest-even for arithmetic, round-to-zero for
-the float→fixed truncation. Remaining: float VALUE clauses (a no-VALUE
-float reads as nondet) and floating-point literals in `E` notation.
+the float→fixed truncation. A COMP-1/COMP-2 `VALUE` initialises the item to
+the literal's IEEE bytes (`float_value_bytes`). Remaining: floating-point
+literals in `E` notation.
 

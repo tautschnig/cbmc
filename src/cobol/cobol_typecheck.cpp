@@ -1037,6 +1037,9 @@ protected:
   /// Compile-time packed-decimal bytes for a constant value.
   std::vector<unsigned char>
   packed_bytes(const mp_integer &value, const item_infot &item) const;
+  /// Compile-time IEEE float bytes (single n==4 / double n==8) of a numeric
+  /// VALUE for a COMP-1 / COMP-2 item.
+  std::vector<unsigned char> float_value_bytes(double d, std::size_t n) const;
   /// Whether the bytes of a numeric item form valid numeric content (IBM LR
   /// "Class condition" NUMERIC; the data-exception / S0C7 condition is its
   /// negation). For a faithful unsigned zoned DISPLAY item every byte must be
@@ -1523,6 +1526,28 @@ std::vector<unsigned char> cobol_typecheckt::packed_bytes(
   return bytes;
 }
 
+std::vector<unsigned char>
+cobol_typecheckt::float_value_bytes(double d, std::size_t n) const
+{
+  // IEEE single (n==4) / double (n==8) bit pattern of a VALUE, little-endian
+  // to match the (host-order) float read/write (IBM LR "USAGE clause"
+  // COMP-1/COMP-2; "VALUE clause"). z/Architecture floats are big-endian, but
+  // the model is internally consistent (read and store both little-endian).
+  ieee_floatt f{
+    n == 4 ? ieee_float_spect::single_precision()
+           : ieee_float_spect::double_precision(),
+    ieee_floatt::ROUND_TO_EVEN};
+  f.from_double(d);
+  mp_integer bits = f.pack();
+  std::vector<unsigned char> bytes(n, 0);
+  for(std::size_t k = 0; k < n; ++k)
+  {
+    bytes[k] = static_cast<unsigned char>((bits % 256).to_long());
+    bits /= 256;
+  }
+  return bytes;
+}
+
 valuet cobol_typecheckt::decode_packed(const reft &r) const
 {
   const item_infot &item = *r.info;
@@ -1594,9 +1619,12 @@ exprt cobol_typecheckt::encode_binary(
   const typet vt = cobol_value_type();
   // Picture-bound the value to the field's digit capacity (IBM LR "USAGE
   // clause": a BINARY item holds its PICTURE's number of digits), matching the
-  // little-endian binary path.
+  // little-endian binary path. COMP-5 (NATIVE_BINARY) is NOT decimal-limited:
+  // it uses the full binary range of its storage (IBM LR "USAGE clause"
+  // COMP-5), so the n*8-bit two's-complement wrap below is its only bound.
   exprt e = scaled_value;
-  if(item.digits > 0 && item.digits <= 18)
+  if(
+    item.usage != usaget::NATIVE_BINARY && item.digits > 0 && item.digits <= 18)
     e = mod_exprt{e, from_integer(power10(item.digits), vt)};
   const unsignedbv_typet un{n * 8};
   const exprt vu = typecast_exprt{e, un}; // two's complement n*8-bit
@@ -1727,7 +1755,8 @@ bool cobol_typecheckt::has_faithful_codec(const item_infot &item) const
   // operators (see read_field / make_assign_ref).
   if(item.usage == usaget::DISPLAY)
     return !item.is_signed;
-  return item.usage == usaget::PACKED || item.usage == usaget::BINARY;
+  return item.usage == usaget::PACKED || item.usage == usaget::BINARY ||
+         item.usage == usaget::NATIVE_BINARY;
 }
 
 valuet cobol_typecheckt::read_field(const reft &r) const
@@ -1758,8 +1787,10 @@ valuet cobol_typecheckt::read_field(const reft &r) const
     case usaget::PACKED:
       return decode_packed(r);
     case usaget::BINARY:
-      return decode_binary(r);
     case usaget::NATIVE_BINARY:
+      // COMP-5 shares the big-endian two's-complement layout (z/Architecture);
+      // it differs only in not being decimal-limited (handled in encode).
+      return decode_binary(r);
     case usaget::FLOAT_SHORT:
     case usaget::FLOAT_LONG:
       break; // no faithful codec yet; fall through to the binary model
@@ -1860,14 +1891,15 @@ exprt cobol_typecheckt::encode_numeric(
     case usaget::PACKED:
       return encode_packed(e, item);
     case usaget::BINARY:
-      return encode_binary(e, item);
     case usaget::NATIVE_BINARY:
+      return encode_binary(e, item);
     case usaget::FLOAT_SHORT:
     case usaget::FLOAT_LONG:
       break;
     }
   }
-  if(item.digits > 0 && item.digits <= 18)
+  if(
+    item.usage != usaget::NATIVE_BINARY && item.digits > 0 && item.digits <= 18)
     e = mod_exprt{e, from_integer(power10(item.digits), cobol_value_type())};
   return typecast_exprt{e, phys_type(item)};
 }
@@ -1959,7 +1991,9 @@ void cobol_typecheckt::finalize_record()
       b = zoned_bytes(val, info);
     else if(info.faithful_bytes && info.usage == usaget::PACKED)
       b = packed_bytes(val, info);
-    else if(info.faithful_bytes && info.usage == usaget::BINARY)
+    else if(
+      info.faithful_bytes &&
+      (info.usage == usaget::BINARY || info.usage == usaget::NATIVE_BINARY))
     {
       // Big-endian two's complement VALUE bytes (IBM LR "USAGE clause"
       // BINARY; z/Architecture): most significant byte first.
@@ -2906,7 +2940,20 @@ void cobol_typecheckt::place_field(
   if(has_value && !is_table)
   {
     record_has_value = true;
-    if(is_numeric && !is_float_item)
+    if(is_float_item)
+    {
+      // COMP-1 / COMP-2 VALUE: store the literal's IEEE bytes directly (the
+      // encoding does not depend on alias classification, so it is not
+      // deferred). IBM LR "VALUE clause" with COMP-1/COMP-2.
+      if(value_spec.kind == value_spect::kindt::NUMERIC)
+      {
+        const double dv = std::stod(integer2string(value_spec.num)) /
+                          std::pow(10.0, double(value_spec.scale));
+        record_inits.emplace_back(
+          base_offset, float_value_bytes(dv, info.byte_size));
+      }
+    }
+    else if(is_numeric)
     {
       if(auto v = spec_to_numeric(value_spec, scale))
       {

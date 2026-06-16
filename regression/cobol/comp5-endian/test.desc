@@ -1,0 +1,8 @@
+CORE
+main.cob
+
+^EXIT=0$
+^VERIFICATION SUCCESSFUL$
+--
+COMP-5 byte-aliased view is big-endian two's complement, like COMP. IBM LR
+"USAGE clause".

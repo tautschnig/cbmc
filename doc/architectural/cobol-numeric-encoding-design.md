@@ -90,7 +90,8 @@ Real IBM COBOL stores `WS-NUM` as zoned decimal — the characters
   SEPARATE` are not represented.
 - **Endianness**: `COMP`/`BINARY` on z/Architecture is **big-endian** and
   is now modelled faithfully for byte-aliased fields (S2 resolved);
-  `COMP-5` (NATIVE_BINARY) endianness is not yet routed through the codec.
+  `COMP-5` (NATIVE_BINARY) shares the same big-endian two's-complement
+  codec, differing only in not being decimal-limited (full binary range).
 
 The value-domain model is *exactly right* for arithmetic (decimal scale
 is exact — the whole point), and for any program that only computes with
