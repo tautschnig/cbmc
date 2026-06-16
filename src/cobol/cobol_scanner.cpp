@@ -232,6 +232,35 @@ cobol_scan(std::istream &in, const std::string &file_name)
           else
             break;
         }
+        // Optional floating-point exponent (IBM LR "Floating-point literal":
+        // mantissa E [+|-] exponent). Only recognised when the mantissa has a
+        // decimal point (the only form that reaches this branch; a digit-only
+        // mantissa with 'E' is scanned as a word, avoiding ambiguity with a
+        // digit-led data/paragraph name). Requires E [sign] digit to follow.
+        if(
+          i < n && (code[i] == 'E' || code[i] == 'e') &&
+          text.find('.') != std::string::npos)
+        {
+          std::size_t k = i + 1;
+          if(k < n && (code[k] == '+' || code[k] == '-'))
+            ++k;
+          if(k < n && std::isdigit(static_cast<unsigned char>(code[k])) != 0)
+          {
+            text.push_back('E');
+            ++i;
+            if(code[i] == '+' || code[i] == '-')
+            {
+              text.push_back(code[i]);
+              ++i;
+            }
+            while(i < n &&
+                  std::isdigit(static_cast<unsigned char>(code[i])) != 0)
+            {
+              text.push_back(code[i]);
+              ++i;
+            }
+          }
+        }
         token.kind = cobol_token_kindt::NUMBER;
         token.text = text;
         tokens.push_back(token);

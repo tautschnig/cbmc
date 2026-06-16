@@ -248,6 +248,8 @@ fixed receiver by truncation toward zero (IBM LR "MOVE statement"); float
 comparison uses `ieee_float_equal`/`notequal` and ordering relations.
 Rounding mode is round-to-nearest-even for arithmetic, round-to-zero for
 the float→fixed truncation. A COMP-1/COMP-2 `VALUE` initialises the item to
-the literal's IEEE bytes (`float_value_bytes`). Remaining: floating-point
-literals in `E` notation.
+the literal's IEEE bytes (`float_value_bytes`). Floating-point literals in
+`E` notation are supported when the mantissa has a decimal point
+(`1.5E3`); a digit-only mantissa (`1E3`) is intentionally not, to avoid
+ambiguity with a digit-led data/paragraph name in the context-free scanner.
 

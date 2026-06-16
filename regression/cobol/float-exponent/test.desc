@@ -1,0 +1,8 @@
+CORE
+main.cob
+
+^EXIT=0$
+^VERIFICATION SUCCESSFUL$
+--
+A floating-point literal in E notation, 1.5E3 = 1500.0. IBM LR
+"Floating-point literal".

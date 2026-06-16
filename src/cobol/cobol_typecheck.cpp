@@ -3203,7 +3203,15 @@ valuet cobol_typecheckt::parse_primary()
   if(cur().kind == cobol_token_kindt::NUMBER)
   {
     last_ref.reset();
-    auto r = parse_decimal(cur().text);
+    const std::string t = cur().text;
+    // A floating-point literal (mantissa E exponent; IBM LR "Floating-point
+    // literal") is a double value, not a scaled integer.
+    if(t.find('E') != std::string::npos || t.find('e') != std::string::npos)
+    {
+      advance();
+      return valuet{double_const(std::stod(t)), 0, true};
+    }
+    auto r = parse_decimal(t);
     advance();
     return valuet{from_integer(r.first, cobol_value_type()), r.second};
   }
