@@ -236,7 +236,7 @@ baseline.
 
 | id | gap | LR clause | KB | plan |
 |---|---|---|---|---|
-| G1 | floating-point `COMP-1`/`COMP-2` not modelled as IEEE float (integer value domain; a PICTURE-less item is treated as a group) | "USAGE clause" (COMP-1/2) | comp2-float | numeric-encoding §3.2 (float) |
+| G1 | floating-point `COMP-1`/`COMP-2` not modelled as IEEE float (needs a float kind in the value model) | "USAGE clause" (COMP-1/2) | comp2-float | precision-and-gaps §6 |
 | G2 | EBCDIC charset (see S4) | "USAGE DISPLAY" | — | numeric-encoding §5 |
 | G3 | `ALTER` unsupported | "ALTER statement" (obsolete) | — | precision-and-gaps §4 |
 
@@ -250,7 +250,7 @@ baseline.
 | I5 | **RESOLVED** — IS NUMERIC on a numeric operand now evaluates `numeric_content_valid` over the item's faithful bytes (digit/sign validity for zoned/packed; trivially true for the value model / BINARY) | "Class condition" | CORE `class-numeric`, `class-numeric-redefine` | numeric-encoding |
 | I6 | **RESOLVED** — group MOVE now space-pads a longer receiver on the right | "MOVE statement" (group) | CORE `group-move-pad` | — |
 | I7 | `OCCURS … DEPENDING ON` fixed at maximum (over-approx) | "OCCURS clause" (format 2) | — | precision-and-gaps §2 |
-| I8 | reference modification with a non-constant length over-approximated to the remaining size | "Reference modification" | — | precision-and-gaps §2 |
+| I8 | reference modification with a non-constant length over-approximated to the item size (needs dynamic-extent operand views; the `cobol:refmod-range` check flags the unsafe cases soundly) | "Reference modification" | — | precision-and-gaps §6 |
 | I9 | ambiguous qualified reference takes the first match (with a warning) | "Qualification" | — | precision-and-gaps §2 |
 | I10 | **RESOLVED** — INSPECT TALLYING/REPLACING (incl. BEFORE/AFTER INITIAL), STRING (SIZE and delimiter) and UNSTRING (split with OR/ALL) are modelled exactly for the common cases over the item bytes; a non-modellable form (e.g. a multi-byte delimiter in an OR/ALL set) still havocs, soundly | "STRING"/"UNSTRING"/"INSPECT statement" | — | character-semantics |
 | I11 | file I/O external: OPEN/CLOSE no-op, READ havocs the record + nondet AT END, output verbs nondet INVALID KEY | "READ"/"WRITE"/… statements | — | precision-and-gaps §3 |
@@ -258,7 +258,7 @@ baseline.
 | I13 | ACCEPT havocs its receiver (run-time input unknown) — **by design** | "ACCEPT statement" | — | precision-and-gaps §3 |
 | I14 | **PARTIAL** — `UPPER-CASE`/`LOWER-CASE`/`REVERSE` now exact on item arguments too (CORE `string-intrinsics-item`); other intrinsics still nondet on items | "Intrinsic functions" | — | character-semantics §3.4 |
 | I15 | `EXEC CICS/SQL/DLI` stubbed (outputs + status nondet) | LR + CICS/Db2 refs | — | precision-and-gaps §3 |
-| I16 | `CALL` stubbed (BY REF/RETURNING havoced; BY CONTENT/VALUE ignored; no linkage) | "CALL statement" | — | precision-and-gaps §3 |
+| I16 | `CALL` stubbed (BY REF/RETURNING havoced; BY CONTENT/VALUE ignored; no linkage) — whole-program linkage is a design-first effort | "CALL statement" | — | precision-and-gaps §6 |
 | I17 | `SET` condition-name `TO FALSE` is a no-op (no FALSE clause modelled) | "SET statement" (format 5) | — | precision-and-gaps §4 |
 | I18 | `SET ADDRESS OF` / pointer forms are no-ops (no pointer model) | "SET statement" (pointer) | — | precision-and-gaps §4 |
 | I20 | uninitialised (no-VALUE) reads are not flagged (nondet, sound) | — | — | precision-and-gaps §2 |

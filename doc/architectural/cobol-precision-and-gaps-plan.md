@@ -173,3 +173,54 @@ absent from the corpus).
 3. **I7 OCCURS DEPENDING ON** — medium; improves table-bound precision.
 4. The external-interface items (I11/I12/I15/I16) are harness-dependent
    and lower priority for pure front-end precision.
+
+---
+
+## 6. Remaining architectural items (warrant a design, not a local fix)
+
+These three are not local fixes: each needs a new capability in a core
+abstraction, so they are scoped here as dedicated increments.
+
+### I8 — reference modification with a non-constant length
+
+Root cause (verified): an item view carries a **static** `byte_size`, and
+every consumer (`make_move_group`'s fixed-size byte copy, STRING/UNSTRING,
+the alphanumeric comparison's per-byte unfolding) reads that many bytes at
+compile time. A non-constant `X(start:len)` has a runtime byte count, so
+`apply_refmod` over-approximates `length` to the item size — which is both
+imprecise and, because the advanced offset plus the full size can exceed
+the item, a latent over-read.
+
+Architectural change: give a reference-modified view an optional
+**dynamic length** `exprt` and make the byte-string consumers honour it:
+a length-bounded copy/compare (a loop bounded by `len`, or a masked
+`byte_update`), with the static `byte_size` kept only as an upper bound for
+storage. This is the same "dynamic-extent operand" capability OCCURS
+DEPENDING ON (I7) needs, so the two should share one mechanism. Until then
+the refmod-range check (cobol:refmod-range) already flags the unsafe cases
+soundly.
+
+### I16 / CALL — inter-program linkage for whole-program verification
+
+Current: each `PROGRAM-ID` is verified standalone; `CALL` havocs its
+`BY REFERENCE`/`RETURNING` arguments (sound). Whole-program verification
+needs: link multiple programs into one symbol table; bind the caller's
+`USING` arguments to the callee's `LINKAGE SECTION` items as **aliases**
+(BY REFERENCE) or copies (BY CONTENT/VALUE) — IBM LR "CALL statement" /
+"Linkage"; and lower a `CALL` to an actual call of the callee's
+function. The hard part is aliasing a callee LINKAGE record onto the
+caller's storage (our records are distinct byte-array symbols); it likely
+needs the callee body re-expressed against the caller's record exprs, or a
+pointer/based-storage model (shared with I18 SET ADDRESS OF). A large,
+design-first effort; standalone analysis stays the default.
+
+### G1 — COMP-1 / COMP-2 IEEE floating point
+
+Current: the value model is a scaled 64-bit **integer** (`valuet =
+{exprt, scale}`); a PICTURE-less COMP-1/2 item is treated as a group.
+IEEE float needs `valuet` to admit a float kind (or a parallel float
+value) and every arithmetic/▸comparison/MOVE path to handle
+integer↔float coercion (LR "USAGE COMP-1/COMP-2" and the intermediate-
+result rules). Pervasive in the value model; merits its own increment and
+is rare in the target corpus, so it is last.
+
