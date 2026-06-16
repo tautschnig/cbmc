@@ -232,11 +232,25 @@ splitting `subject[start:end]`. Whenever the intrinsic is gated out it returns
   constant subject under `--python-smt-strings` (count/elements/indexing exact,
   0 s); unsupported pattern / symbolic subject → sound bounded enumeration; the
   refined backend degrades soundly (slower on a pathological iterate-and-assert,
-  but the sweep is neutral). **`re.split` stays at the sound floor**: its
-  precise dual needs TWO append sites in the loop (per-match gaps + trailing
-  piece), and a list built with two append sites comes out nondet-length where
-  findall's single-append loop folds — a separate frontend list-model
-  limitation (multi-append-site length), not blocker #3.
+  but the sweep is neutral). **`re.split` stays at the sound floor** for one
+  narrow reason (investigated 2026-06-16):
+  - The precise split LOOP itself is correct and folds — `re.split(",","a,b,c")`
+    gives exactly `["a","b","c"]`, `split("abc")` gives `["abc"]`, two-char
+    separators work, 0 s. (The earlier "multi-append list-length limitation"
+    was a FALSE conclusion from a stale/messy session state — int-list and
+    inline string-list multi-append both fold fine.)
+  - The real blocker: `re.split`'s `flags` parameter — the **last** of two
+    trailing defaults (`maxsplit=0, flags=0`) — does **not** fold to its default
+    when split is called with fewer args (it folds when passed explicitly;
+    `maxsplit`, the other default, folds). So the soundness guard
+    `if flags != 0: return <nondet>` goes nondet and pollutes the result. This
+    is a re-module default-fill quirk (a 4-param *user* function folds its last
+    default; `re.findall` with a single trailing `flags` default folds), in the
+    same family as blocker #3 and the optional-receiver method-default fix.
+    Root cause not yet pinned (module.cpp freezes both defaults identically, yet
+    only `flags` comes out nondet — something downstream un-folds it, possibly
+    the regex-flags machinery). Fixing it lands precise split with no loop
+    change.
 - **Phase 3 — `Match.group(n)`.** Span + uniqueness-gated `str.++`
   decomposition (plans section 4 group-extraction item).
 - **Phase 4 — variable-length/greedy.** Deferred (section 7); stays nondet.
