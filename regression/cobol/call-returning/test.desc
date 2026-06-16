@@ -1,0 +1,9 @@
+CORE
+main.cob
+--function MP
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Linked CALL RETURNING: the callee's RETURNING item is copied back to the
+caller's receiver. IBM LR "The PROCEDURE DIVISION header" / "CALL statement".

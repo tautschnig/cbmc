@@ -1,0 +1,10 @@
+CORE
+main.cob
+--function MAINPGM
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Forward-reference CALL linkage: a two-pass signature collection lets a CALL to
+a program defined later in the file be linked. IBM LR "CALL statement". See
+doc/architectural/cobol-call-linkage.md.

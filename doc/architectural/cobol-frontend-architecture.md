@@ -258,7 +258,7 @@ baseline.
 | I13 | ACCEPT havocs its receiver (run-time input unknown) — **by design** | "ACCEPT statement" | — | precision-and-gaps §3 |
 | I14 | **PARTIAL** — `UPPER-CASE`/`LOWER-CASE`/`REVERSE` now exact on item arguments too (CORE `string-intrinsics-item`); other intrinsics still nondet on items | "Intrinsic functions" | — | character-semantics §3.4 |
 | I15 | `EXEC CICS/SQL/DLI` stubbed (outputs + status nondet) | LR + CICS/Db2 refs | — | precision-and-gaps §3 |
-| I16 | **PARTIAL** — a `CALL "literal"` to a program defined earlier in the same file is linked (copy-in / call / copy-out of USING args; CORE `call-linkage`, `call-by-content`). Dynamic calls, external/forward-referenced programs, RETURNING, and argument aliasing still use the sound havoc stub | "CALL statement" | — | cobol-call-linkage.md |
+| I16 | **PARTIAL** — a `CALL "literal"` to any program in the same file (forward or backward) is linked via a two-pass signature collection: copy-in / call / copy-out of USING args and RETURNING (CORE `call-linkage`, `call-by-content`, `call-forward`, `call-returning`). Dynamic/external calls and argument aliasing still use the sound havoc stub | "CALL statement" | — | cobol-call-linkage.md |
 | I17 | `SET` condition-name `TO FALSE` is a no-op (no FALSE clause modelled) | "SET statement" (format 5) | — | precision-and-gaps §4 |
 | I18 | `SET ADDRESS OF` / pointer forms are no-ops (no pointer model) | "SET statement" (pointer) | — | precision-and-gaps §4 |
 | I20 | uninitialised (no-VALUE) reads are not flagged (nondet, sound) | — | — | precision-and-gaps §2 |

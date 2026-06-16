@@ -24,6 +24,7 @@ Author: Kiro
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
+#include <util/symbol_table.h>
 #include <util/symbol_table_base.h>
 
 #include <goto-programs/goto_instruction_code.h>
@@ -260,6 +261,10 @@ struct program_sigt
 {
   irep_idt function;
   std::vector<program_formalt> formals;
+  /// The PROCEDURE DIVISION RETURNING item, if any (IBM LR "The PROCEDURE
+  /// DIVISION header"): its value is copied to the caller's RETURNING receiver.
+  bool has_returning = false;
+  program_formalt returning;
 };
 
 /// COBOL figurative constants.
@@ -623,6 +628,18 @@ public:
 
   bool typecheck();
 
+  /// Whole-program CALL linkage uses two passes: a first pass collects every
+  /// program's signature (so a forward CALL can be linked), the second pass
+  /// is seeded with them. See doc/architectural/cobol-call-linkage.md.
+  std::map<std::string, program_sigt> take_signatures()
+  {
+    return std::move(program_sigs);
+  }
+  void seed_signatures(std::map<std::string, program_sigt> s)
+  {
+    program_sigs = std::move(s);
+  }
+
 protected:
   const std::vector<cobol_tokent> &tokens;
   symbol_table_baset &symbol_table;
@@ -674,6 +691,9 @@ protected:
   std::map<std::string, program_sigt> program_sigs;
   /// The current program's PROCEDURE DIVISION USING formals (LINKAGE items).
   std::vector<program_formalt> current_formals;
+  /// The current program's PROCEDURE DIVISION RETURNING item, if any.
+  bool current_has_returning = false;
+  program_formalt current_returning;
   /// Buffered implicit runtime-check assertions (subscript range, reference-
   /// modification range, ...) accumulated while parsing an expression and
   /// drained before the enclosing statement by parse_statement (see
@@ -2034,6 +2054,8 @@ void cobol_typecheckt::parse_program()
   pending_file.clear();
   paragraphs.clear();
   last_field.clear();
+  current_formals.clear();
+  current_has_returning = false;
 
   expect_word("IDENTIFICATION");
   expect_word("DIVISION");
@@ -6555,10 +6577,29 @@ std::vector<stmtt> cobol_typecheckt::parse_call()
         from_integer(f.offset, size_type()),
         n));
     }
-    // RETURNING is not yet linked (the callee's RETURNING item is not bound):
-    // havoc the receiver, as for an unlinked call.
+    // RETURNING: copy the callee's RETURNING item into the caller's receiver
+    // (IBM LR "The PROCEDURE DIVISION header"; "CALL statement" RETURNING).
+    // If the callee declares no RETURNING item, havoc the receiver.
     if(ret_ref.has_value())
-      result.push_back(havoc_field(*ret_ref, loc));
+    {
+      if(sig->has_returning)
+      {
+        const program_formalt &f = sig->returning;
+        const symbol_exprt frec{
+          f.record,
+          array_typet{
+            unsignedbv_typet{8}, from_integer(f.rec_size, size_type())}};
+        const std::size_t n = std::min(ret_ref->info->byte_size, f.size);
+        result.push_back(copy_bytes(
+          ret_ref->record,
+          ret_ref->offset,
+          frec,
+          from_integer(f.offset, size_type()),
+          n));
+      }
+      else
+        result.push_back(havoc_field(*ret_ref, loc));
+    }
     return result;
   }
 
@@ -7256,6 +7297,25 @@ void cobol_typecheckt::parse_procedure_division()
       break;
     }
   }
+  // RETURNING item (IBM LR "The PROCEDURE DIVISION header"): its value is
+  // returned to the caller's RETURNING receiver at a linked CALL.
+  current_has_returning = false;
+  if(eat_word("RETURNING") && cur().kind == cobol_token_kindt::WORD)
+  {
+    auto it = items.find(cur().text);
+    if(it != items.end())
+    {
+      const item_infot &fi = it->second;
+      auto rs = record_sizes.find(fi.record_symbol);
+      current_returning = program_formalt{
+        fi.record_symbol,
+        rs == record_sizes.end() ? fi.byte_size : rs->second,
+        fi.offset,
+        fi.byte_size};
+      current_has_returning = true;
+    }
+    advance();
+  }
   // skip the remainder of the header (RETURNING ..., etc.) until the period
   while(!at_eof() && !is_kind(cobol_token_kindt::PERIOD))
     advance();
@@ -7707,7 +7767,10 @@ void cobol_typecheckt::build_function()
   std::string key = program_id;
   for(char &c : key)
     c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-  program_sigs[key] = program_sigt{fname, current_formals};
+  program_sigt psig{fname, current_formals};
+  psig.has_returning = current_has_returning;
+  psig.returning = current_returning;
+  program_sigs[key] = std::move(psig);
 }
 
 } // namespace
@@ -7721,6 +7784,21 @@ bool cobol_typecheck(
   bool div_checks,
   bool data_exception_checks)
 {
+  // Pass 1 (signature collection for whole-program CALL linkage): parse into a
+  // throwaway symbol table just to collect every program's signature, so that
+  // a CALL to a program defined later in the file (a forward reference) can be
+  // linked in pass 2. Errors are suppressed here; pass 2 reports them. See
+  // doc/architectural/cobol-call-linkage.md.
+  std::map<std::string, program_sigt> signatures;
+  {
+    symbol_tablet sig_table;
+    null_message_handlert null_handler;
+    cobol_typecheckt sig_pass{
+      tokens, sig_table, module, null_handler, false, false, false};
+    sig_pass.typecheck();
+    signatures = sig_pass.take_signatures();
+  }
+
   cobol_typecheckt cobol_typecheck{
     tokens,
     symbol_table,
@@ -7729,5 +7807,6 @@ bool cobol_typecheck(
     runtime_checks,
     div_checks,
     data_exception_checks};
+  cobol_typecheck.seed_signatures(std::move(signatures));
   return cobol_typecheck.typecheck();
 }

@@ -40,14 +40,16 @@ RETURNING receivers were havoced, BY CONTENT / BY VALUE left unchanged.
    - a **CALL_PROGRAM** statement, lowered to a `code_function_callt` of the
      callee's function (which operates on its own LINKAGE record symbols);
    - **copy-out**: for each BY REFERENCE argument, a byte copy of the formal
-     back into the argument (BY CONTENT / BY VALUE get no copy-out).
+     back into the argument (BY CONTENT / BY VALUE get no copy-out); and, if
+     the callee declares a RETURNING item, a copy of that item into the
+     caller's RETURNING receiver.
    The callee's WORKING-STORAGE records are static symbols initialised once,
    matching the COBOL default that a non-`INITIAL` program retains its
    working storage between calls.
 
-3. **Fallback.** A dynamic call (program-name in a data item), an external
-   program, or a forward reference (callee defined later in the file) is not
-   linked and keeps the sound havoc stub.
+3. **Fallback.** A dynamic call (program-name in a data item) or an external
+   program (not defined in this file) is not linked and keeps the sound havoc
+   stub.
 
 ## Why copy-in / copy-out (and its limits)
 
@@ -63,19 +65,33 @@ The byte copy assumes the argument and formal share a representation, which
 holds when their PICTURE / USAGE match — exactly the condition under which
 BY REFERENCE is well defined.
 
+## Forward references (two-pass)
+
+Linking a CALL needs the callee's signature, but the callee may be defined
+later in the file (the common caller-before-callee layout). So the
+front-end runs **two passes**: pass 1 parses every program into a throwaway
+symbol table purely to collect signatures (`program_sigs`), and pass 2 (the
+real one) is seeded with them, so a forward CALL links like a backward one.
+Using a discarded symbol table for pass 1 avoids any gating of the existing
+symbol-creation code; record/function symbol names are deterministic
+(`cobol::<program-id>::<record>`), so the names collected in pass 1 match
+the symbols pass 2 creates — a forward CALL may reference a symbol that pass
+2 has not created yet, which is fine because all symbols exist by the end of
+the run. Pass 1's diagnostics are suppressed (pass 2 reports them).
+
 ## Known limitations (follow-up increments)
 
-- **Forward references** (caller before callee) are not linked: linking needs
-  the callee's signature, which is only known after it is parsed. A two-pass
-  scheme (collect all signatures, then lower bodies) would remove this. A
-  multi-program file currently also needs `--function <main>` because the
-  entry-point picker treats several candidate programs as ambiguous.
-- **RETURNING** is consumed but the callee's RETURNING item is not yet bound;
-  the receiver is havoced.
-- **Aliasing** between arguments (or via based LINKAGE) is not modelled.
+- **Aliasing** between arguments (overlapping USING operands) or via
+  `SET ADDRESS OF` based LINKAGE (I18) is not modelled: copy-in / copy-out
+  differs from true aliasing only in those cases, which need a pointer /
+  based-storage model.
+- A multi-program file needs `--function <main>` because the entry-point
+  picker treats several candidate programs as ambiguous.
 
 ## Testing
 
-CORE `call-linkage` (a BY REFERENCE update is visible to the caller) and
-`call-by-content` (a BY CONTENT update is not). Both select the caller with
+CORE `call-linkage` (a BY REFERENCE update is visible to the caller),
+`call-by-content` (a BY CONTENT update is not), `call-forward` (a CALL to a
+program defined later in the file), and `call-returning` (the callee's
+RETURNING item flows to the caller's receiver). Each selects the caller with
 `--function`.
