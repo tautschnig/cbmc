@@ -86,6 +86,9 @@ private:
   /// range). Mirrors CBMC's "bounds-check" option (on by default in v6+, off
   /// under --no-standard-checks). See doc/architectural/cobol-runtime-checks.md.
   bool runtime_checks = true;
+  /// Emit the division-by-zero check. Mirrors CBMC's "div-by-zero-check"
+  /// option (on by default in v6+, off under --no-standard-checks).
+  bool div_checks = true;
 };
 
 std::unique_ptr<languaget> new_cobol_language();

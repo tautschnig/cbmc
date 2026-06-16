@@ -214,7 +214,7 @@ emitted by the frontend. See doc/architectural/cobol-runtime-checks.md.
 |---|---|---|---|
 | `cobol:subscript-range` | `1 <= subscript <= occurs` per dimension | **DONE** (CORE `subscript-range-ok`/`-bad`) | "Subscripting"; SSRANGE |
 | `cobol:refmod-range` | `start >= 1` and `start+length-1 <= size` | **DONE** (CORE `refmod-range-ok`/`-bad`, `refmod-loop-var`) | "Reference modification"; SSRANGE |
-| `cobol:division-by-zero` | divisor non-zero (absent `ON SIZE ERROR`) | TODO | "DIVIDE"/"COMPUTE"; SIZE ERROR |
+| `cobol:division-by-zero` | divisor non-zero (absent `ON SIZE ERROR`) | **DONE** (CORE `division-by-zero-bad`, `division-size-error`) | "DIVIDE"/"COMPUTE"; SIZE ERROR |
 | `cobol:numeric` (S0C7) | numeric operand holds valid digits | TODO (needs faithful content) | "Class condition"; data exception |
 
 Gated on the `bounds-check` option (on by default in CBMC v6+; off under

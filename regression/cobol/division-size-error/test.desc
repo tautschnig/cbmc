@@ -1,0 +1,12 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+cobol:division-by-zero
+A zero divisor handled by an ON SIZE ERROR phrase is well defined: the
+division-by-zero condition is folded into the size-error test, so no
+division-by-zero check is emitted and verification succeeds. IBM LR "SIZE
+ERROR phrases".

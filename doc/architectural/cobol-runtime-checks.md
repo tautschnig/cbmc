@@ -31,10 +31,26 @@ known.
 |---|---|---|
 | `cobol:subscript-range` | each subscript `s` satisfies `1 <= s <= occurs` | "Subscripting"; SSRANGE |
 | `cobol:refmod-range` | `start >= 1` and `start + length - 1 <= size` | "Reference modification"; SSRANGE |
-| `cobol:division-by-zero` | the divisor is non-zero | "DIVIDE"/"COMPUTE"; the SIZE ERROR condition |
+| `cobol:division-by-zero` | the divisor is non-zero (when no `ON SIZE ERROR` phrase applies) | "DIVIDE"/"COMPUTE"; the SIZE ERROR condition |
 
 (Future: `cobol:uninitialized` read-before-write, and `cobol:numeric`
 data exception — S0C7 — once faithful numeric content is broad.)
+
+### Division by zero and the SIZE ERROR phrase
+
+`divide_values` emits a `cobol:division-by-zero` check for every division,
+so it covers all contexts uniformly (arithmetic verbs, `COMPUTE`
+expressions, conditions, subscripts — and loop conditions via the
+`cond_checks` machinery below). But IBM LR "SIZE ERROR phrases" defines a
+zero divisor as raising the **size-error condition**: with an `ON SIZE
+ERROR` phrase the quotient is not stored and the imperative runs (no
+fault). So `finish_arith`, when a phrase is present, folds each
+division-by-zero condition added by the statement's operands (identified
+by a `check_mark` taken before the operands were parsed) into the
+size-error condition and drops the standalone assert. Without a phrase the
+assert stands (a zero divisor is an undefined fault, z/OS S0CB).
+Division-by-zero is gated on the `div-by-zero-check` option; the range
+checks on `bounds-check` (both off under `--no-standard-checks`).
 
 ## The "pending checks" mechanism (architectural)
 

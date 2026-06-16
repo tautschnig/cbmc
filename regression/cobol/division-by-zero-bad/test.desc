@@ -1,0 +1,11 @@
+CORE
+main.cob
+
+^EXIT=10$
+^SIGNAL=0$
+^\[cobol:division-by-zero\.\d+\].*: FAILURE$
+^VERIFICATION FAILED$
+--
+A zero divisor without an ON SIZE ERROR phrase is flagged by the implicit
+division-by-zero check. See doc/architectural/cobol-runtime-checks.md and IBM
+LR "SIZE ERROR phrases".

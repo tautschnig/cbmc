@@ -30,12 +30,15 @@ class message_handlert;
 /// \param message_handler: for diagnostics
 /// \param runtime_checks: emit implicit runtime-property checks (subscript /
 ///   reference-modification range); gated on CBMC's "bounds-check" option
+/// \param div_checks: emit the division-by-zero check; gated on CBMC's
+///   "div-by-zero-check" option
 /// \return true on error
 bool cobol_typecheck(
   const std::vector<cobol_tokent> &tokens,
   symbol_table_baset &symbol_table,
   const std::string &module,
   message_handlert &message_handler,
-  bool runtime_checks);
+  bool runtime_checks,
+  bool div_checks);
 
 #endif // CPROVER_COBOL_COBOL_TYPECHECK_H

@@ -573,12 +573,14 @@ public:
     symbol_table_baset &_symbol_table,
     const std::string &_module,
     message_handlert &_message_handler,
-    bool _runtime_checks)
+    bool _runtime_checks,
+    bool _div_checks)
     : tokens(_tokens),
       symbol_table(_symbol_table),
       module(_module),
       log(_message_handler),
-      runtime_checks(_runtime_checks)
+      runtime_checks(_runtime_checks),
+      div_checks(_div_checks)
   {
   }
 
@@ -593,6 +595,9 @@ protected:
   /// reference-modification range). Gated on CBMC's "bounds-check" option so
   /// they share the standard-checks on/off switch (--no-standard-checks).
   const bool runtime_checks;
+  /// When true, emit the division-by-zero check; gated on CBMC's
+  /// "div-by-zero-check" option (IBM LR "SIZE ERROR phrases").
+  const bool div_checks;
 
   std::size_t pos = 0;
 
@@ -627,7 +632,12 @@ protected:
   std::vector<stmtt> pending_checks;
   void add_check(exprt cond, const char *cls, source_locationt loc)
   {
-    if(!runtime_checks)
+    // Division-by-zero follows CBMC's div-by-zero-check option; the range
+    // checks follow bounds-check (both off under --no-standard-checks).
+    const bool on = std::string{cls} == "cobol:division-by-zero"
+                      ? div_checks
+                      : runtime_checks;
+    if(!on)
       return;
     stmtt s;
     s.kind = stmtt::kindt::ASSERT;
@@ -997,12 +1007,17 @@ protected:
     exprt &overflow,
     source_locationt loc);
   /// Parse the optional [ON SIZE ERROR ...] [NOT ON SIZE ERROR ...] [END-verb]
-  /// tail and combine it with the receiver assignments.
+  /// tail and combine it with the receiver assignments. \p check_mark is the
+  /// pending_checks size captured before the operands were parsed; any
+  /// division-by-zero checks added since then are folded into the size-error
+  /// condition when an ON SIZE ERROR phrase is present (IBM LR "SIZE ERROR
+  /// phrases": a zero divisor raises the size-error condition).
   std::vector<stmtt> finish_arith(
     std::vector<stmtt> assigns,
     exprt overflow,
     const char *end_kw,
-    source_locationt loc);
+    source_locationt loc,
+    std::size_t check_mark);
   std::vector<stmtt> parse_call();
   std::vector<stmtt> parse_set();
   std::vector<stmtt> parse_exec();
@@ -1077,6 +1092,16 @@ valuet cobol_typecheckt::divide_values(valuet a, valuet b)
   // domain; deeper precision / multi-division chains are bounded by it.
   static const std::size_t DIV_GUARD = 6;
   align(a, b);
+  // Division-by-zero check (IBM LR "DIVIDE statement"; a zero divisor raises
+  // the SIZE ERROR condition). Scaling preserves zero-ness, so testing the
+  // (aligned) divisor is exact. For DIVIDE/COMPUTE with an ON SIZE ERROR
+  // phrase this assert is later folded into the size-error condition by
+  // finish_arith; elsewhere (expressions, conditions, subscripts) it stands
+  // as a runtime check.
+  add_check(
+    notequal_exprt{b.expr, from_integer(0, cobol_value_type())},
+    "cobol:division-by-zero",
+    cur().location);
   return valuet{
     div_exprt{
       mult_exprt{a.expr, from_integer(power10(DIV_GUARD), cobol_value_type())},
@@ -5641,7 +5666,8 @@ std::vector<stmtt> cobol_typecheckt::finish_arith(
   std::vector<stmtt> assigns,
   exprt overflow,
   const char *end_kw,
-  source_locationt loc)
+  source_locationt loc,
+  std::size_t check_mark)
 {
   // [ON SIZE ERROR imperative-1] [NOT ON SIZE ERROR imperative-2] [END-verb].
   std::vector<stmtt> on_size;
@@ -5663,6 +5689,25 @@ std::vector<stmtt> cobol_typecheckt::finish_arith(
     has_phrase = true;
   }
   eat_word(end_kw);
+
+  // A zero divisor is a SIZE ERROR condition (IBM LR "SIZE ERROR phrases").
+  // When an ON SIZE ERROR phrase is present, fold each division-by-zero check
+  // added by this statement's operands into the overflow condition (so the
+  // imperative runs and the result is not stored) and drop the standalone
+  // assert. Without a phrase the asserts remain (a zero divisor is a fault).
+  if(has_phrase && check_mark <= pending_checks.size())
+  {
+    for(std::size_t i = check_mark; i < pending_checks.size();)
+    {
+      if(pending_checks[i].assert_class == "cobol:division-by-zero")
+      {
+        overflow = or_exprt{overflow, not_exprt{pending_checks[i].cond}};
+        pending_checks.erase(pending_checks.begin() + i);
+      }
+      else
+        ++i;
+    }
+  }
 
   if(!has_phrase)
     return assigns;
@@ -5688,6 +5733,7 @@ std::vector<stmtt> cobol_typecheckt::parse_add()
 {
   const source_locationt loc = cur().location;
   expect_word("ADD");
+  const std::size_t check_mark = pending_checks.size();
   std::vector<valuet> ops = parse_operand_list();
   if(ops.empty())
     error("ADD without operands");
@@ -5754,13 +5800,15 @@ std::vector<stmtt> cobol_typecheckt::parse_add()
 
   if(result.empty())
     error("ADD without a target");
-  return finish_arith(std::move(result), std::move(overflow), "END-ADD", loc);
+  return finish_arith(
+    std::move(result), std::move(overflow), "END-ADD", loc, check_mark);
 }
 
 std::vector<stmtt> cobol_typecheckt::parse_subtract()
 {
   const source_locationt loc = cur().location;
   expect_word("SUBTRACT");
+  const std::size_t check_mark = pending_checks.size();
   std::vector<valuet> ops = parse_operand_list();
   if(ops.empty())
     error("SUBTRACT without operands");
@@ -5819,13 +5867,14 @@ std::vector<stmtt> cobol_typecheckt::parse_subtract()
   if(result.empty())
     error("SUBTRACT without a target");
   return finish_arith(
-    std::move(result), std::move(overflow), "END-SUBTRACT", loc);
+    std::move(result), std::move(overflow), "END-SUBTRACT", loc, check_mark);
 }
 
 std::vector<stmtt> cobol_typecheckt::parse_multiply()
 {
   const source_locationt loc = cur().location;
   expect_word("MULTIPLY");
+  const std::size_t check_mark = pending_checks.size();
   valuet a = parse_operand();
   expect_word("BY");
   valuet b = parse_operand();
@@ -5849,13 +5898,14 @@ std::vector<stmtt> cobol_typecheckt::parse_multiply()
   if(result.empty())
     error("MULTIPLY without a target");
   return finish_arith(
-    std::move(result), std::move(overflow), "END-MULTIPLY", loc);
+    std::move(result), std::move(overflow), "END-MULTIPLY", loc, check_mark);
 }
 
 std::vector<stmtt> cobol_typecheckt::parse_divide()
 {
   const source_locationt loc = cur().location;
   expect_word("DIVIDE");
+  const std::size_t check_mark = pending_checks.size();
   valuet first = parse_operand();
   std::vector<stmtt> result;
   exprt overflow = false_exprt{};
@@ -5917,13 +5967,14 @@ std::vector<stmtt> cobol_typecheckt::parse_divide()
   if(result.empty())
     error("DIVIDE without a target");
   return finish_arith(
-    std::move(result), std::move(overflow), "END-DIVIDE", loc);
+    std::move(result), std::move(overflow), "END-DIVIDE", loc, check_mark);
 }
 
 std::vector<stmtt> cobol_typecheckt::parse_compute()
 {
   const source_locationt loc = cur().location;
   expect_word("COMPUTE");
+  const std::size_t check_mark = pending_checks.size();
   std::vector<std::pair<reft, bool>> targets;
   while(is_item_word())
   {
@@ -5944,7 +5995,7 @@ std::vector<stmtt> cobol_typecheckt::parse_compute()
   if(result.empty())
     error("COMPUTE without a target");
   return finish_arith(
-    std::move(result), std::move(overflow), "END-COMPUTE", loc);
+    std::move(result), std::move(overflow), "END-COMPUTE", loc, check_mark);
 }
 
 std::vector<stmtt> cobol_typecheckt::parse_call()
@@ -7110,9 +7161,10 @@ bool cobol_typecheck(
   symbol_table_baset &symbol_table,
   const std::string &module,
   message_handlert &message_handler,
-  bool runtime_checks)
+  bool runtime_checks,
+  bool div_checks)
 {
   cobol_typecheckt cobol_typecheck{
-    tokens, symbol_table, module, message_handler, runtime_checks};
+    tokens, symbol_table, module, message_handler, runtime_checks, div_checks};
   return cobol_typecheck.typecheck();
 }

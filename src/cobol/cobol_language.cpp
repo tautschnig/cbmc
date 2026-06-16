@@ -91,6 +91,8 @@ void cobol_languaget::set_language_options(
   // this makes --no-standard-checks disable them along with the C checks.
   if(options.is_set("bounds-check"))
     runtime_checks = options.get_bool_option("bounds-check");
+  if(options.is_set("div-by-zero-check"))
+    div_checks = options.get_bool_option("div-by-zero-check");
 }
 
 bool cobol_languaget::typecheck(
@@ -101,7 +103,12 @@ bool cobol_languaget::typecheck(
   symbol_tablet new_symbol_table;
 
   if(cobol_typecheck(
-       tokens, new_symbol_table, module, message_handler, runtime_checks))
+       tokens,
+       new_symbol_table,
+       module,
+       message_handler,
+       runtime_checks,
+       div_checks))
     return true;
 
   remove_internal_symbols(new_symbol_table, message_handler, true);
