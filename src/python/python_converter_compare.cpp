@@ -11,6 +11,7 @@
 #include <util/floatbv_expr.h>
 #include <util/json.h>
 #include <util/pointer_expr.h>
+#include <util/simplify_expr.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/symbol.h>
@@ -19,6 +20,156 @@
 #include "python_converter_helpers.h"
 #include "python_types.h"
 #include "python_value_type.h"
+
+exprt python_convertert::python_value_structural_eq(
+  const exprt &l,
+  const exprt &r,
+  int depth)
+{
+  const namespacet ns{symbol_table};
+
+  auto fresh_nondet_bool = [&]() -> exprt
+  {
+    static unsigned ctr = 0;
+    const std::string nm = "__pv_eq_nd_" + std::to_string(ctr++);
+    const irep_idt id{qualify_name(nm)};
+    if(symbol_table.lookup(id) == nullptr)
+    {
+      symbolt s{id, bool_typet{}, "python"};
+      s.base_name = nm;
+      s.is_lvalue = true;
+      s.is_state_var = true;
+      symbol_table.add(s);
+    }
+    symbol_exprt se = symbol_table.lookup_ref(id).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{
+      se, side_effect_expr_nondett{bool_typet{}, source_locationt{}}});
+    return std::move(se);
+  };
+
+  const exprt same_tag = equal_exprt{python_value_tag(l), python_value_tag(r)};
+
+  // Build the value-equality for ONE specific tag. Only this branch's
+  // (possibly expensive) operations are emitted.
+  auto eq_for_tag = [&](python_type_tagt tag) -> exprt
+  {
+    switch(tag)
+    {
+    case python_type_tagt::NONE:
+      return true_exprt{};
+    case python_type_tagt::INT:
+      return equal_exprt{python_value_int(l), python_value_int(r)};
+    case python_type_tagt::BOOL:
+      return equal_exprt{python_value_bool(l), python_value_bool(r)};
+    case python_type_tagt::FLOAT:
+      return ieee_float_equal_exprt{
+        python_value_float(l), python_value_float(r)};
+    case python_type_tagt::STR:
+    {
+      exprt s = emit_string_bool_function(
+        ID_cprover_string_equal_func,
+        python_value_str(l),
+        python_value_str(r),
+        symbol_table,
+        pending_checks);
+      if(s.type() != bool_typet{})
+        s = typecast_exprt{std::move(s), bool_typet{}};
+      return s;
+    }
+    case python_type_tagt::LIST:
+    {
+      if(depth <= 0)
+        return fresh_nondet_bool();
+      const dereference_exprt ll = python_value_list(l);
+      const dereference_exprt rl = python_value_list(r);
+      const auto &lst = to_struct_type(ll.type());
+      const auto &ld = to_array_type(lst.components()[1].type());
+      const member_exprt llen{ll, "length", signedbv_typet{64}};
+      const member_exprt rlen{rl, "length", signedbv_typet{64}};
+      const member_exprt lda{ll, "data", ld};
+      const member_exprt rda{rl, "data", ld};
+      exprt all = equal_exprt{llen, rlen};
+      for(int i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+      {
+        const exprt idx = from_integer(i, signedbv_typet{64});
+        const exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
+        const exprt le = index_exprt{lda, idx};
+        const exprt re = index_exprt{rda, idx};
+        const exprt eeq = python_value_structural_eq(le, re, depth - 1);
+        all = and_exprt{std::move(all), or_exprt{not_exprt{in_range}, eeq}};
+      }
+      return all;
+    }
+    case python_type_tagt::CLASS:
+    case python_type_tagt::DICT:
+    case python_type_tagt::COMPLEX:
+    case python_type_tagt::SET:
+      return fresh_nondet_bool(); // not yet structurally compared here (sound)
+    }
+    UNREACHABLE;
+    return fresh_nondet_bool();
+  };
+  // STATIC DISPATCH: if either operand has a compile-time-constant tag, only
+  // build that branch (same_tag pins both to it). This prunes the expensive
+  // string-solver / list-recursion fan-out for literal / known-structure
+  // elements -- the dominant case.
+  auto static_tag = [&](const exprt &e) -> std::optional<python_type_tagt>
+  {
+    const exprt s = simplify_expr(e, ns);
+    if(
+      s.id() == ID_struct && !s.operands().empty() &&
+      s.operands()[0].is_constant())
+    {
+      mp_integer v;
+      if(!to_integer(to_constant_expr(s.operands()[0]), v))
+        return static_cast<python_type_tagt>(v.to_long());
+    }
+    return std::nullopt;
+  };
+  std::optional<python_type_tagt> st = static_tag(l);
+  if(!st)
+    st = static_tag(r);
+  if(st)
+    return and_exprt{same_tag, eq_for_tag(*st)};
+
+  // Symbolic tag: bounded full dispatch. For STR/LIST elements whose tag is
+  // only known at runtime, comparing CONTENT would need the string solver /
+  // pointer dereference at every element and recursion level (O(width^depth)
+  // blow-up). Instead compare IDENTITY (same pointer ⟹ structurally equal,
+  // which is sound) OR a nondet (different pointers ⟹ unknown). This recovers
+  // the common aliased case (`a=[x]; b=[x]; a==b`) cheaply and stays sound for
+  // the distinct-but-equal case (nondet). Literal/known-structure elements are
+  // still compared precisely via the static-dispatch path above.
+  if(depth <= 0)
+    return fresh_nondet_bool();
+  auto list_ptr = [](const exprt &v) -> member_exprt {
+    return member_exprt{v, "__list_ptr", pointer_typet{empty_typet{}, 64}};
+  };
+  const exprt str_identity = or_exprt{
+    equal_exprt{python_value_str(l), python_value_str(r)}, fresh_nondet_bool()};
+  const exprt list_identity =
+    or_exprt{equal_exprt{list_ptr(l), list_ptr(r)}, fresh_nondet_bool()};
+  exprt val_eq = if_exprt{
+    python_value_is(l, python_type_tagt::INT),
+    eq_for_tag(python_type_tagt::INT),
+    if_exprt{
+      python_value_is(l, python_type_tagt::BOOL),
+      eq_for_tag(python_type_tagt::BOOL),
+      if_exprt{
+        python_value_is(l, python_type_tagt::FLOAT),
+        eq_for_tag(python_type_tagt::FLOAT),
+        if_exprt{
+          python_value_is(l, python_type_tagt::STR),
+          str_identity,
+          if_exprt{
+            python_value_is(l, python_type_tagt::LIST),
+            list_identity,
+            if_exprt{
+              python_value_is(l, python_type_tagt::NONE),
+              true_exprt{},
+              fresh_nondet_bool()}}}}}};
+  return and_exprt{same_tag, std::move(val_eq)};
+}
 
 exprt python_convertert::convert_compare(const jsont &expr)
 {
@@ -995,6 +1146,41 @@ exprt python_convertert::convert_compare(const jsont &expr)
         }
         cmp = all_match;
         goto done_cmp;
+      }
+      // PLR §6.10.1: list == list whose elements are tagged unions
+      // (python_value). Compare element-wise via static-dispatch structural
+      // equality instead of a field-wise equal_exprt (which would compare the
+      // LIST/DICT pointer = identity, not value).
+      if(
+        is_python_list_type(current_left.type()) &&
+        is_python_list_type(right.type()))
+      {
+        const auto &lt = to_struct_type(current_left.type());
+        const auto &rt = to_struct_type(right.type());
+        const auto &ldata = to_array_type(lt.components()[1].type());
+        const auto &rdata = to_array_type(rt.components()[1].type());
+        if(
+          is_python_value_type(ldata.element_type()) &&
+          is_python_value_type(rdata.element_type()))
+        {
+          member_exprt llen{current_left, "length", signedbv_typet{64}};
+          member_exprt rlen{right, "length", signedbv_typet{64}};
+          member_exprt lda{current_left, "data", ldata};
+          member_exprt rda{right, "data", rdata};
+          exprt all_equal = equal_exprt{llen, rlen};
+          for(int i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
+            exprt l_el = index_exprt{lda, idx, ldata.element_type()};
+            exprt r_el = index_exprt{rda, idx, rdata.element_type()};
+            exprt el_eq = python_value_structural_eq(l_el, r_el, 2);
+            all_equal =
+              and_exprt{all_equal, or_exprt{not_exprt{in_range}, el_eq}};
+          }
+          cmp = all_equal;
+          goto done_cmp;
+        }
       }
       // PLR §6.10.1 + §3.2: x == None reduces to identity check
       // for None: equal to itself, never equal to any non-None

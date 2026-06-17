@@ -1484,6 +1484,13 @@ private:
   /// if it's already a concrete type.
   exprt unwrap_value(const exprt &e, const typet &target_type);
 
+  /// Structural (by-value) equality of two `python_value` operands with
+  /// STATIC TAG DISPATCH -- when an operand's tag is a compile-time constant,
+  /// only the matching branch is built (no eager string-solver/deref emission
+  /// for dead branches). Symbolic tags fall back to a bounded full dispatch;
+  /// at depth 0 a sound nondet bool is used. PLR §6.10.1.
+  exprt python_value_structural_eq(const exprt &l, const exprt &r, int depth);
+
   /// Wrap a concrete typed value into a tagged-union value.
   exprt wrap_value(const exprt &e);
 
