@@ -17,11 +17,6 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 ///   Li and Indradeep Ghosh, which gives examples of constraints for several
 ///   functions.
 
-#include "string_constraint_generator.h"
-#include "string_refinement_invariant.h"
-
-#include <iterator>
-
 #include <util/arith_tools.h>
 #include <util/deprecate.h>
 #include <util/interval_constraint.h>
@@ -29,6 +24,12 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 #include <util/simplify_expr.h>
 #include <util/ssa_expr.h>
 #include <util/string_constant.h>
+
+#include "python_regex_to_smt.h"
+#include "string_constraint_generator.h"
+#include "string_refinement_invariant.h"
+
+#include <iterator>
 
 string_constraint_generatort::string_constraint_generatort(
   const namespacet &ns,
@@ -243,12 +244,63 @@ string_constraint_generatort::add_axioms_for_function_application(
     id == ID_cprover_string_match_func || id == ID_cprover_string_search_func ||
     id == ID_cprover_string_fullmatch_func)
   {
-    // Python-re Wave 2 intrinsics. The native (refine-strings)
-    // backend doesn't have regex axioms, so we return a nondet
-    // result with no axioms — a sound over-approximation. The
-    // SMT2 backend (in particular --cvc5) intercepts these
-    // intrinsics in smt2_conv.cpp and emits str.in_re with the
-    // translated regex.
+    // Python-re Wave 2 intrinsics. The refine-strings backend has no regex
+    // axioms (the SMT2 --cvc5 path intercepts these in smt2_conv.cpp and emits
+    // str.in_re). BUT a CONSTANT pattern + CONSTANT subject is decidable
+    // outright -- no solver needed -- so the default backend can return the
+    // exact match/no-match here (making re.match/search/fullmatch yield
+    // Match()/None consistently, not nondet). A non-constant argument or an
+    // unsupported pattern falls through to the sound nondet over-approximation
+    // (unconstrained result, no axioms).
+    auto extract_const = [this](const exprt &arg) -> std::optional<std::string>
+    {
+      const array_string_exprt s = get_string_expr(array_pool, arg);
+      const exprt lenx = array_pool.get_or_create_length(s);
+      if(!lenx.is_constant() || s.content().id() != ID_array)
+        return std::nullopt;
+      const mp_integer lenv =
+        numeric_cast_v<mp_integer>(to_constant_expr(lenx));
+      if(lenv < 0)
+        return std::nullopt;
+      const std::size_t len =
+        numeric_cast_v<std::size_t>(to_constant_expr(lenx));
+      const array_exprt &arr = to_array_expr(s.content());
+      if(arr.operands().size() < len)
+        return std::nullopt;
+      std::string out;
+      for(std::size_t i = 0; i < len; ++i)
+      {
+        if(!arr.operands()[i].is_constant())
+          return std::nullopt;
+        const mp_integer v =
+          numeric_cast_v<mp_integer>(to_constant_expr(arr.operands()[i]));
+        // ASCII only: a non-ASCII byte may be part of a multi-byte encoding
+        // the byte-level matcher would model wrongly -- bail (sound nondet).
+        if(v < 0 || v > 127)
+          return std::nullopt;
+        out.push_back(static_cast<char>(v.to_long()));
+      }
+      return out;
+    };
+
+    if(expr.arguments().size() == 2)
+    {
+      const std::optional<std::string> pat = extract_const(expr.arguments()[0]);
+      const std::optional<std::string> subj =
+        extract_const(expr.arguments()[1]);
+      if(pat.has_value() && subj.has_value())
+      {
+        python_regex_match_kindt kind = python_regex_match_kindt::MATCH;
+        if(id == ID_cprover_string_search_func)
+          kind = python_regex_match_kindt::SEARCH;
+        else if(id == ID_cprover_string_fullmatch_func)
+          kind = python_regex_match_kindt::FULLMATCH;
+        const std::optional<bool> decided =
+          python_regex_match(*pat, *subj, kind);
+        if(decided.has_value())
+          return {from_integer(*decided ? 1 : 0, expr.type()), {}};
+      }
+    }
     return {expr, {}};
   }
   else if(
