@@ -1271,6 +1271,157 @@ bool python_convertert::convert()
     }
   }
 
+  // Pass 0.27b (PLR §6.3.1): extend dynamic instance-attribute discovery to
+  // LOCAL variables bound to a class instance (`c = C(); c.y = 42` /
+  // `c: C = ...`), not only typed parameters (handled above). The struct type
+  // is fixed at class-definition time, so an attribute assigned to such a
+  // local must be declared as a field up front, else `c.y = 42` is lost and
+  // `c.y == 42` fails. Whole-program scan (recurses into all nested bodies);
+  // var->class is a SET (over-approximation across same-named locals is sound
+  // -- it only adds spare fields). Method-named attributes are skipped:
+  // shadowing a method with an instance attribute is a separate substrate
+  // (method-shadow-knownbug). Sound: a discovered attr becomes a struct field,
+  // consistent with the existing model (which does not flow-sensitively raise
+  // AttributeError on attribute reads).
+  if(body.is_array())
+  {
+    // class -> declared method names (to skip method shadowing).
+    std::map<std::string, std::set<std::string>> class_method_names;
+    std::function<void(const jsont &)> collect_methods = [&](const jsont &b)
+    {
+      if(!b.is_array())
+        return;
+      for(const auto &s : as_array(b))
+      {
+        if(is_node_type(s, "ClassDef"))
+        {
+          const std::string cn = json_string(json_member(s, "name"));
+          const jsont &cb = json_member(s, "body");
+          if(cb.is_array())
+            for(const auto &m : as_array(cb))
+              if(
+                is_node_type(m, "FunctionDef") ||
+                is_node_type(m, "AsyncFunctionDef"))
+                class_method_names[cn].insert(
+                  json_string(json_member(m, "name")));
+        }
+        for(const char *k : {"body", "orelse", "finalbody"})
+        {
+          const jsont &sub = json_member(s, k);
+          if(sub.is_array())
+            collect_methods(sub);
+        }
+      }
+    };
+    collect_methods(body);
+
+    // var name -> set of classes it is bound to (c = C() / c: C = ...).
+    std::map<std::string, std::set<std::string>> var_classes;
+    std::function<void(const jsont &)> collect_vars = [&](const jsont &b)
+    {
+      if(!b.is_array())
+        return;
+      for(const auto &s : as_array(b))
+      {
+        if(is_node_type(s, "Assign"))
+        {
+          const jsont &val = json_member(s, "value");
+          if(is_node_type(val, "Call"))
+          {
+            const jsont &f = json_member(val, "func");
+            if(is_node_type(f, "Name"))
+            {
+              const std::string cn = json_string(json_member(f, "id"));
+              if(class_types.count(cn))
+              {
+                const jsont &tgts = json_member(s, "targets");
+                if(tgts.is_array())
+                  for(const auto &t : as_array(tgts))
+                    if(is_node_type(t, "Name"))
+                      var_classes[json_string(json_member(t, "id"))].insert(cn);
+              }
+            }
+          }
+        }
+        else if(is_node_type(s, "AnnAssign"))
+        {
+          const jsont &tgt = json_member(s, "target");
+          const jsont &ann = json_member(s, "annotation");
+          if(is_node_type(tgt, "Name") && is_node_type(ann, "Name"))
+          {
+            const std::string cn = json_string(json_member(ann, "id"));
+            if(class_types.count(cn))
+              var_classes[json_string(json_member(tgt, "id"))].insert(cn);
+          }
+        }
+        for(const char *k : {"body", "orelse", "finalbody"})
+        {
+          const jsont &sub = json_member(s, k);
+          if(sub.is_array())
+            collect_vars(sub);
+        }
+        const jsont &handlers = json_member(s, "handlers");
+        if(handlers.is_array())
+          for(const auto &h : as_array(handlers))
+            collect_vars(json_member(h, "body"));
+      }
+    };
+    collect_vars(body);
+
+    // Record `<var>.attr = ...` for every class `var` may hold (skip methods,
+    // skip `self` which the per-class method scan already handles).
+    std::function<void(const jsont &)> scan_attr_targets = [&](const jsont &b)
+    {
+      if(!b.is_array())
+        return;
+      auto record = [&](const jsont &target)
+      {
+        if(!is_node_type(target, "Attribute"))
+          return;
+        const jsont &tv = json_member(target, "value");
+        if(!is_node_type(tv, "Name"))
+          return;
+        const std::string base = json_string(json_member(tv, "id"));
+        if(base == "self")
+          return;
+        auto vit = var_classes.find(base);
+        if(vit == var_classes.end())
+          return;
+        const std::string attr = json_string(json_member(target, "attr"));
+        for(const std::string &cn : vit->second)
+        {
+          auto mit = class_method_names.find(cn);
+          if(mit != class_method_names.end() && mit->second.count(attr))
+            continue; // method shadowing -- deferred
+          dynamic_class_attrs[cn].insert(attr);
+        }
+      };
+      for(const auto &s : as_array(b))
+      {
+        if(is_node_type(s, "Assign"))
+        {
+          const jsont &tgts = json_member(s, "targets");
+          if(tgts.is_array())
+            for(const auto &t : as_array(tgts))
+              record(t);
+        }
+        else if(is_node_type(s, "AnnAssign"))
+          record(json_member(s, "target"));
+        for(const char *k : {"body", "orelse", "finalbody"})
+        {
+          const jsont &sub = json_member(s, k);
+          if(sub.is_array())
+            scan_attr_targets(sub);
+        }
+        const jsont &handlers = json_member(s, "handlers");
+        if(handlers.is_array())
+          for(const auto &h : as_array(handlers))
+            scan_attr_targets(json_member(h, "body"));
+      }
+    };
+    scan_attr_targets(body);
+  }
+
   // Pass 0.28: PLR §3.1 type inference for unannotated parameters
   // from concrete call-site argument types.
   //
