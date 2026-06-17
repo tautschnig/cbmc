@@ -1455,9 +1455,41 @@ exprt cobol_typecheckt::make_numeric_edited(
   ok = true;
   const typet vt = cobol_value_type();
   const unsignedbv_typet u8{8};
+  const exprt zero = from_integer(0, vt);
+  const exprt negative = binary_relation_exprt{value, ID_lt, zero};
+
+  // Fixed sign / currency editing (IBM LR "PICTURE clause" editing): a single
+  // leading '+', '-' or '$', or a trailing 'CR'/'DB'. The '+' outputs '+'/'-'
+  // by sign; '-' outputs ' '/'-' (blank when non-negative); 'CR'/'DB' show
+  // when negative, else two spaces; '$' is currency, sign-independent.
+  // Floating sign/currency (repeated '+'/'-'/'$') and trailing single signs
+  // are not modelled here -> ok=false.
+  std::string core = mask;
+  std::string trail; // "CR" / "DB" / ""
+  if(
+    core.size() >= 2 && (core.substr(core.size() - 2) == "CR" ||
+                         core.substr(core.size() - 2) == "DB"))
+  {
+    trail = core.substr(core.size() - 2);
+    core.erase(core.size() - 2);
+  }
+  char lead = 0; // leading '+', '-' or '$'
+  if(!core.empty() && (core[0] == '+' || core[0] == '-' || core[0] == '$'))
+  {
+    lead = core[0];
+    core.erase(0, 1);
+  }
+  // Any remaining sign/currency symbol is a form we do not model.
+  for(char ch : core)
+    if(ch == '+' || ch == '-' || ch == '$')
+    {
+      ok = false;
+      return nil_exprt{};
+    }
+
   std::size_t total_digits = 0, frac_digits = 0;
   bool past_point = false;
-  for(char ch : mask)
+  for(char ch : core)
   {
     if(ch == '9' || ch == 'Z' || ch == '*')
     {
@@ -1476,7 +1508,6 @@ exprt cobol_typecheckt::make_numeric_edited(
 
   // Magnitude aligned so its least-significant digit sits at the last digit
   // position (scale = number of fractional digit positions).
-  const exprt zero = from_integer(0, vt);
   const exprt mag = if_exprt{
     binary_relation_exprt{value, ID_ge, zero}, value, unary_minus_exprt{value}};
   const exprt aligned = rescale(mag, value_scale, frac_digits);
@@ -1484,10 +1515,28 @@ exprt cobol_typecheckt::make_numeric_edited(
 
   array_exprt::operandst elems;
   elems.reserve(mask.size());
+  // Leading fixed sign / currency byte.
+  if(lead == '+')
+    elems.push_back(typecast_exprt{
+      if_exprt{
+        negative,
+        from_integer(host_byte('-'), vt),
+        from_integer(host_byte('+'), vt)},
+      u8});
+  else if(lead == '-')
+    elems.push_back(typecast_exprt{
+      if_exprt{
+        negative,
+        from_integer(host_byte('-'), vt),
+        from_integer(host_byte(' '), vt)},
+      u8});
+  else if(lead == '$')
+    elems.push_back(typecast_exprt{from_integer(host_byte('$'), vt), u8});
+
   exprt suppressing = true_exprt{}; // still in the leading zero zone
   bool seen_point = false;
   std::size_t p = 0; // digit-position index, left to right
-  for(char ch : mask)
+  for(char ch : core)
   {
     exprt outb;
     if(ch == '9' || ch == 'Z' || ch == '*')
@@ -1527,6 +1576,20 @@ exprt cobol_typecheckt::make_numeric_edited(
     else // '/'
       outb = from_integer(host_byte('/'), vt);
     elems.push_back(typecast_exprt{outb, u8});
+  }
+  // Trailing CR / DB: the two-character symbol shows only when negative.
+  if(!trail.empty())
+  {
+    const exprt c0 = if_exprt{
+      negative,
+      from_integer(host_byte(trail[0]), vt),
+      from_integer(host_byte(' '), vt)};
+    const exprt c1 = if_exprt{
+      negative,
+      from_integer(host_byte(trail[1]), vt),
+      from_integer(host_byte(' '), vt)};
+    elems.push_back(typecast_exprt{c0, u8});
+    elems.push_back(typecast_exprt{c1, u8});
   }
   return array_exprt{
     std::move(elems), array_typet{u8, from_integer(mask.size(), size_type())}};

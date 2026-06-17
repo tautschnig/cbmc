@@ -1,0 +1,10 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+I4: fixed leading sign and trailing CR editing: -12.34 with +9999.99 ->
+'-0012.34' and with 9999.99CR -> '0012.34CR'; +12.34 -> '0012.34  '. IBM LR
+"PICTURE clause" editing.
