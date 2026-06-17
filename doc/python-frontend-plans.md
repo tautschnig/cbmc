@@ -67,11 +67,22 @@ robustness, then capability; difficulty is noted where high.
 >   fallback that reached the refined solver.
 >   (Latent, native-only, no corpus instance: `smt_string` members in
 >   byte-operated structs — [#native-byte-ops](#native-byte-ops); lower.)
-> - **Tier 1 — highest-leverage architectural lever.** `python_value` **SSA
->   expansion** ([§8](#performance)): field-by-field SSA on tagged-union
->   structs is the confirmed cause of the frontend-bound timeouts (`dict65`,
->   `shedskin`, `github_3684` time out in `--program-only` alone). One fix
->   clears a whole timeout cluster.
+> - **Tier 1 — symex-bound timeout cluster. PARTIAL: default list capacity
+>   lowered 64->16 (2026-06-17, `0bea6f8e75`).** The cluster (`dict65`,
+>   `github_3684`, `list31`, `github_3626`, `github_3667_2`) is dominated by
+>   **array field-sensitivity** expanding the fixed list `data` array on every
+>   assignment/copy (cost linear in `PYTHON_MAX_LIST_LENGTH`) -- a probe showed
+>   the `python_value` tagged-union SSA is only a *secondary* contributor.
+>   Lowering the default is sound (the bound is now a *reported* model bound,
+>   not silent -- see the capacity note above) and build-tunable
+>   (`-DPYTHON_MAX_LIST_LENGTH=N`); it cleared the cluster (sweep 2930->2933,
+>   +3, 0 regressions). **Open (principled, keep 64):** lazy/accessed-only
+>   array field-sensitivity (the "only expand what we need" answer; a deep
+>   goto-symex change -- `field_sensitive_ssa_exprt` needs its fields to cover
+>   the whole object) or logical-length array sizing (frontend; array size is
+>   part of the list type). Separately, **`python_value` field-by-field SSA**
+>   ([§8](#performance)) remains a real cost for *symex-bound* benchmarks that
+>   run to completion (e.g. aws_untagged), distinct from this timeout cluster.
 > - **Tier 2 — precision substrates (each unblocks a whole group; sound
 >   today).** Instance **`__dict__` substrate** ([§10](#descriptors): dynamic
 >   attrs / shadowing / stateful descriptors / `setattr`); **cell substrate**
@@ -116,7 +127,11 @@ robustness, then capability; difficulty is noted where high.
 > misreported); a grown literal array uses its actual size. So lowering/tuning
 > the capacity (or logical-length sizing / lazy array field-sensitivity — the
 > Tier 1 perf levers) is now sound: hitting the bound is *reported*, like an
-> unwinding assertion, and raising `--max-list-length` clears it.
+> unwinding assertion, and raising the bound clears it. The default
+> `PYTHON_MAX_LIST_LENGTH` was lowered 64->16 (Tier 1, `0bea6f8e75`); it is
+> `#ifndef`-guarded, so `-DPYTHON_MAX_LIST_LENGTH=N` at build time raises it
+> (the array capacity is a compile-time type size, so it cannot be a runtime
+> flag — a runtime flag could only ever *lower* the effective bound).
 > **Dict/set extended (2026-06-17, `2f31b89204`).** Set was a genuine FALSE
 > PROOF (a 64-bit bitmap over `[offset, offset+64)`; an out-of-range element was
 > silently dropped, so `100 not in {0, 100}` held): every set element-ADD
