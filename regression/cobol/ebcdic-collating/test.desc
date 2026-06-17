@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+S4: alphanumeric ordering uses the native EBCDIC collating sequence, so "A" <
+"9" and "a" < "A". IBM LR "Comparison of two alphanumeric operands".
