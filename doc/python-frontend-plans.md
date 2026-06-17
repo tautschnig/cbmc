@@ -1082,21 +1082,23 @@ on `(path, mtime)`; a multi-process pool for parallel parse requests.
 ## 9. Precision clusters (sound today; precision misses)  {#precision}
 
 All items here are **sound** (misses / over-approximations, never false
-alarms) **except the nested-mutable-aliasing item below, which is a
-FALSE-PROOF (unsoundness) — see it first.** Verified against the 2026-06-08
+alarms). The nested-mutable-aliasing item below WAS a false proof; it is now
+**guarded for the common cases** (2026-06-17) with a documented residual — see
+it for the details. Verified against the 2026-06-08
 sweep baseline.
 
-### Nested mutable element aliasing is UNSOUND (false proofs) — HIGH PRIORITY (2026-06-17) {#nested-aliasing}
+### Nested mutable element aliasing — false proof, now GUARDED (proportionate sound fix landed 2026-06-17) {#nested-aliasing}
 
-**This is a soundness bug, not a precision miss** (corrects the earlier
+**This was a soundness bug, not a precision miss** (corrects the earlier
 classification of `github_3667` as a sound precision miss). PLR object
 identity: a Python list element that is itself a mutable container is held by
 *reference*; replicating or sharing it aliases the SAME object. The frontend
 stores anonymous (un-named) nested mutable literals **by value**, so every
 operation that replicates or shares such an element produces independent
-copies and **wrongly proves** programs that rely on (or are bitten by) the
-aliasing. Confirmed false proofs (2026-06-17, all `VERIFICATION SUCCESSFUL`
-where CPython raises `AssertionError`):
+copies and **wrongly proved** programs that rely on (or are bitten by) the
+aliasing. Confirmed false proofs (2026-06-17, were all `VERIFICATION
+SUCCESSFUL` where CPython raises `AssertionError`; now reported via
+`python-model-bound`, see the landed fix below):
 
 ```
 g = [[0,0]]*3 ; g[0][0]=1 ; assert g[1][0]==0        # repetition
@@ -1192,22 +1194,37 @@ for the symbolic case. (A whole-program heap model — [§5](#dict-byref) — wo
 and regress the cheap flat-scalar path, so it remains off the table.)
 
 
-**Proportionate sound alternative (still valid if byref is not completed).**
-Keep by-value (preserving
-cheap structural ops) and close the false proofs with a targeted SOUND
-mechanism, not a representation change. Options, cheapest-precision-cost first:
-(a) **taint + mutation guard** — mark a list symbol when it is assigned the
-result of a replicating op (`l*n`, `a+b`, `a[:]`, `list(a)`, `append(a[i])`)
-whose elements are by-value mutables, and emit a `python-model-bound`
-report+cut when an *element* of a tainted list is mutated in place
-(`x[i][j]=…`, `x[i].append(…)`); read-only and whole-slot reassignment
-(`x[i]=…`) stay precise; (b) a coarser construction-time `python-model-bound`
-report (cuts read-only uses too). Both are sound and keep equality cheap; (a)
-is more surgical but touches the producer sites + the nested-mutation
-chokepoint. Given the bug's low corpus frequency (the byref sweep showed only
-the `github_3667` *precision* family benefited, not a false-proof cluster),
-this is also a reasonable **defer-and-document** candidate. **Do NOT pursue the
-byref substrate.**
+**Proportionate sound fix — LANDED 2026-06-17.** Option (a), the taint +
+element-mutation guard, keeping the by-value representation (so the cheap
+structural ops are untouched). A list symbol is tainted when it is assigned the
+result of a replicating/sharing op (`l*n` / `n*l`, `a+b`, `a[:]`, `a.copy()`,
+`list(a)`) whose result element type is a by-value mutable container; BOTH the
+target and any Name operand are tainted (a shallow copy shares elements with
+its source), and the taint propagates on a whole-list alias `h = g`. A
+`python-model-bound` report+cut (`assert false` + `assume false`) is emitted
+when an *element* of a tainted list is mutated in place — subscript-assign
+`g[i][j] = v` (in `convert_assign`) or a mutating method `g[i].append(..)`
+(`{append,extend,insert,remove,pop,clear,sort,reverse}`, guarded in
+`convert_expr_stmt`, since nested-element method calls bypass `convert_call` /
+`try_method_call`). Read-only access, whole-slot reassignment (`g[i] = v`), and
+`g.method(..)` on the outer list stay precise; distinct nested literals and
+comprehension rows are never tainted. Helper `is_aliased_list_element` +
+`emit_aliased_mutation_guard`; taint set `aliased_mutable_lists`. Validated: the
+five confirmed false proofs (repetition / concat / slice / `list()` / method)
+now report; read-only / nested-method-write-back / distinct / outer-append /
+flat-scalar stay SUCCESSFUL; native crash-scan 0/589; `regression/python` green
+(+`nested-list-alias-modelbound`, +`nested-list-alias-readonly`); ESBMC sweep
+PASS 2933, **0 regressions**.
+
+**Documented residual (sound-but-incomplete, accepted tradeoff).** The guard
+covers direct element mutation of a tainted list and its whole-list aliases. It
+does NOT cover: element-extraction aliases (`row = g[i]; row.append(..)`),
+the append-of-element producer (`a.append(a[0])`), and function-parameter /
+container-stored aliases — these can still false-prove via the same aliasing.
+Closing them fully needs the by-reference substrate (above), which is
+empirically untenable / disproportionate. (Option (b), a coarser
+construction-time report, was rejected: it cuts common read-only slice/copy.)
+**Do NOT pursue the byref substrate.**
 
 
 
