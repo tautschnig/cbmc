@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Signed zoned trailing overpunch: -123 = X'F1F2D3', +123 = X'F1F2C3', decoded
+back with sign. IBM LR "USAGE DISPLAY"; "SIGN clause".

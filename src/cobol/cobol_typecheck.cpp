@@ -1111,6 +1111,10 @@ protected:
   /// Whether item's faithful encoding is implemented (so the classifier may
   /// mark it and read/write/VALUE go through the codec).
   bool has_faithful_codec(const item_infot &item) const;
+  /// Index of the overpunch sign byte for a signed zoned DISPLAY item (the
+  /// last digit byte for SIGN TRAILING, the first for LEADING); empty when
+  /// unsigned or SIGN SEPARATE (IBM LR "SIGN clause").
+  std::optional<std::size_t> overpunch_index(const item_infot &item) const;
   /// Mark numeric fields whose bytes are observed at a different category
   /// (e.g. a REDEFINES alias) as needing their faithful encoding.
   void classify_record_aliases();
@@ -1381,8 +1385,11 @@ std::vector<unsigned char> cobol_typecheckt::zoned_bytes(
   // ASCII digit per byte, most significant first; the implied decimal point
   // is not stored. (Signed/EBCDIC zoned and packed are tracked follow-ups, so
   // the classifier only marks unsigned DISPLAY fields faithful for now.)
+  // Zoned DISPLAY (IBM LR "USAGE DISPLAY", external decimal): one EBCDIC digit
+  // per byte (zone 0xF, 0xF0..0xF9), most significant first; the implied
+  // decimal point is not stored. A signed item carries the overpunch sign in
+  // the zone nibble of the sign byte (0xC positive, 0xD negative).
   const std::size_t n = item.byte_size;
-  // Zoned DISPLAY digits are EBCDIC 0xF0..0xF9 (IBM LR "USAGE DISPLAY").
   std::vector<unsigned char> bytes(n, host_byte('0'));
   mp_integer v = value < 0 ? -value : value;
   if(n > 0)
@@ -1392,6 +1399,11 @@ std::vector<unsigned char> cobol_typecheckt::zoned_bytes(
     bytes[n - 1 - i] =
       static_cast<unsigned char>(host_byte('0') + (v % 10).to_long());
     v /= 10;
+  }
+  if(const auto si = overpunch_index(item))
+  {
+    const unsigned char zone = value < 0 ? 0xD0 : 0xC0;
+    bytes[*si] = static_cast<unsigned char>(zone | (bytes[*si] & 0x0F));
   }
   return bytes;
 }
@@ -1522,17 +1534,29 @@ exprt cobol_typecheckt::make_numeric_edited(
 
 valuet cobol_typecheckt::decode_zoned(const reft &r) const
 {
-  // Sum the ASCII digit bytes with decreasing place value (byte at offset+i is
-  // the digit at position i, position 0 most significant).
+  // Sum the digit (low) nibble of each byte with decreasing place value (byte
+  // at offset+i is the digit at position i, position 0 most significant). For
+  // a signed item the overpunch sign rides in the zone (high) nibble of the
+  // sign byte: 0xD/0xB negative, otherwise positive (IBM LR "USAGE DISPLAY";
+  // "SIGN clause").
   const item_infot &item = *r.info;
   const std::size_t n = item.byte_size;
-  exprt acc = from_integer(0, cobol_value_type());
+  const typet vt = cobol_value_type();
+  const exprt sixteen = from_integer(16, vt);
+  exprt acc = from_integer(0, vt);
   for(std::size_t i = 0; i < n; ++i)
   {
-    const exprt digit = minus_exprt{
-      byte_of(r, i), from_integer(host_byte('0'), cobol_value_type())};
-    const exprt place = from_integer(power10(n - 1 - i), cobol_value_type());
+    const exprt digit = mod_exprt{byte_of(r, i), sixteen};
+    const exprt place = from_integer(power10(n - 1 - i), vt);
     acc = plus_exprt{acc, mult_exprt{digit, place}};
+  }
+  if(const auto si = overpunch_index(item))
+  {
+    const exprt zone = div_exprt{byte_of(r, *si), sixteen};
+    const exprt negative = or_exprt{
+      equal_exprt{zone, from_integer(0xD, vt)},
+      equal_exprt{zone, from_integer(0xB, vt)}};
+    acc = if_exprt{negative, unary_minus_exprt{acc}, acc};
   }
   return valuet{acc, item.scale};
 }
@@ -1541,23 +1565,34 @@ exprt cobol_typecheckt::encode_zoned(
   const exprt &scaled_value,
   const item_infot &item) const
 {
-  // Build the little-endian integer whose byte i ('0'+digit) is the field's
-  // zoned byte at offset+i. Unsigned: store the magnitude (IBM LR "MOVE
-  // statement": moving a signed value to an unsigned item drops the sign).
+  // Build the little-endian integer whose byte i (zone 0xF + digit) is the
+  // field's zoned byte at offset+i. For a signed item the sign byte's zone
+  // nibble becomes 0xC (non-negative) or 0xD (negative); an unsigned receiver
+  // stores the magnitude with zone 0xF (IBM LR "USAGE DISPLAY"; "SIGN clause";
+  // "MOVE statement").
   const std::size_t n = item.byte_size;
   const exprt zero = from_integer(0, cobol_value_type());
   const exprt mag = if_exprt{
     binary_relation_exprt{scaled_value, ID_ge, zero},
     scaled_value,
     unary_minus_exprt{scaled_value}};
+  const std::optional<std::size_t> si = overpunch_index(item);
+  // Zone nibble for the sign byte: 0xC positive, 0xD negative.
+  const exprt sign_zone = if_exprt{
+    binary_relation_exprt{scaled_value, ID_lt, zero},
+    from_integer(0xD0, cobol_value_type()),
+    from_integer(0xC0, cobol_value_type())};
   exprt acc = from_integer(0, phys_type(item));
   for(std::size_t i = 0; i < n; ++i)
   {
     const exprt place = from_integer(power10(n - 1 - i), cobol_value_type());
     const exprt digit =
       mod_exprt{div_exprt{mag, place}, from_integer(10, cobol_value_type())};
-    const exprt byte =
-      plus_exprt{from_integer(host_byte('0'), cobol_value_type()), digit};
+    // Zone nibble: the overpunch sign on the sign byte, else 0xF0.
+    const exprt zone = (si.has_value() && *si == i)
+                         ? sign_zone
+                         : from_integer(0xF0, cobol_value_type());
+    const exprt byte = plus_exprt{zone, digit};
     const exprt shifted = mult_exprt{
       typecast_exprt{byte, phys_type(item)},
       from_integer(power(mp_integer{256}, i), phys_type(item))};
@@ -1725,16 +1760,37 @@ exprt cobol_typecheckt::numeric_content_valid(const reft &r) const
     return true_exprt{};
   if(item.usage == usaget::DISPLAY)
   {
-    // Unsigned zoned DISPLAY: every byte is an ASCII digit 0x30..0x39.
+    // Zoned DISPLAY: each byte's digit (low) nibble is 0..9; the zone (high)
+    // nibble is 0xF, except the overpunch sign byte whose zone is a valid sign
+    // code (C/F/A/E positive, D/B negative) (IBM LR "Class condition"; "USAGE
+    // DISPLAY"; "SIGN clause").
+    const exprt sixteen = from_integer(16, vt);
+    const std::optional<std::size_t> si = overpunch_index(item);
     exprt acc = true_exprt{};
     for(std::size_t i = 0; i < item.byte_size; ++i)
     {
       const exprt b = byte_at(i);
-      acc = and_exprt{
-        acc,
-        and_exprt{
-          binary_relation_exprt{b, ID_ge, from_integer(host_byte('0'), vt)},
-          binary_relation_exprt{b, ID_le, from_integer(host_byte('9'), vt)}}};
+      const exprt digit = mod_exprt{b, sixteen};
+      const exprt zone = div_exprt{b, sixteen};
+      const exprt digit_ok = and_exprt{
+        binary_relation_exprt{digit, ID_ge, from_integer(0, vt)},
+        binary_relation_exprt{digit, ID_le, from_integer(9, vt)}};
+      exprt zone_ok;
+      if(si.has_value() && *si == i)
+        zone_ok = or_exprt{
+          or_exprt{
+            equal_exprt{zone, from_integer(0xC, vt)},
+            equal_exprt{zone, from_integer(0xD, vt)}},
+          or_exprt{
+            equal_exprt{zone, from_integer(0xF, vt)},
+            or_exprt{
+              equal_exprt{zone, from_integer(0xA, vt)},
+              or_exprt{
+                equal_exprt{zone, from_integer(0xB, vt)},
+                equal_exprt{zone, from_integer(0xE, vt)}}}}};
+      else
+        zone_ok = equal_exprt{zone, from_integer(0xF, vt)};
+      acc = and_exprt{acc, and_exprt{digit_ok, zone_ok}};
     }
     return acc;
   }
@@ -1814,16 +1870,32 @@ exprt cobol_typecheckt::encode_packed(
 
 bool cobol_typecheckt::has_faithful_codec(const item_infot &item) const
 {
-  // Encodings with an implemented codec. DISPLAY is only faithful when
-  // unsigned (signed zoned overpunch is charset-dependent and deferred);
-  // PACKED handles both signs via its sign nibble. BINARY/COMP/COMP-4 is
-  // faithful as big-endian two's complement (IBM LR "USAGE clause" BINARY;
-  // z/Architecture is big-endian), implemented with CBMC's big-endian byte
-  // operators (see read_field / make_assign_ref).
+  // Encodings with an implemented codec. DISPLAY is faithful when unsigned or
+  // signed with an overpunch sign (the sign rides in the zone nibble of the
+  // first/last digit byte); SIGN IS SEPARATE (a distinct +/- byte) is not yet
+  // modelled. PACKED handles both signs via its sign nibble. BINARY/COMP/
+  // COMP-4/COMP-5 is faithful as big-endian two's complement (IBM LR "USAGE
+  // clause"; z/Architecture).
   if(item.usage == usaget::DISPLAY)
-    return !item.is_signed;
+    return item.sign != signt::SEPARATE_LEADING &&
+           item.sign != signt::SEPARATE_TRAILING;
   return item.usage == usaget::PACKED || item.usage == usaget::BINARY ||
          item.usage == usaget::NATIVE_BINARY;
+}
+
+std::optional<std::size_t>
+cobol_typecheckt::overpunch_index(const item_infot &item) const
+{
+  // Index of the zoned DISPLAY byte that carries the overpunch sign (IBM LR
+  // "SIGN clause": TRAILING is the default, so the last digit byte; LEADING
+  // puts it on the first). Empty when the item is unsigned or SIGN SEPARATE.
+  if(item.usage != usaget::DISPLAY || !item.is_signed)
+    return {};
+  if(item.sign == signt::OVERPUNCH_LEADING)
+    return std::size_t{0};
+  if(item.sign == signt::OVERPUNCH_TRAILING)
+    return item.byte_size == 0 ? std::size_t{0} : item.byte_size - 1;
+  return {};
 }
 
 valuet cobol_typecheckt::read_field(const reft &r) const
