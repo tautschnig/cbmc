@@ -99,10 +99,12 @@ robustness, then capability; difficulty is noted where high.
 >   (cheap structural ops) and fires only on the actual unsound pattern (so it
 >   is sweep-neutral — the false proof is corpus-invisible today). Do NOT
 >   pursue the byref substrate.
-> - **Tier 3 — regex/string finish (native track; cheap wins).** `flags=`
->   argument precision (bitmask → inline-flag prefix; blocked on stub
->   constant-prop), `--python-strict-re-result` (real `Match`/`None`),
->   literal-symbolic patterns ([§4](#regex)). **Deferred/research-grade:** regex
+> - **Tier 3 — regex/string finish.** **Default-backend Match()/None for a
+>   constant pattern+subject — LANDED (`aa71a43868`, no flag; +12 sweep).**
+>   Remaining: `flags=` argument precision (bitmask → inline-flag prefix;
+>   blocked on stub constant-prop), literal-symbolic patterns ([§4](#regex)),
+>   and the deep refined-solver gap (SYMBOLIC subjects on the default backend
+>   stay sound nondet; precise on native). **Deferred/research-grade:** regex
 >   Phase 4 (greedy/variable-length group framing), refined-backend regex
 >   axioms (Wave 3), symbolic `count`/`rfind` bounded loops (perf-gated).
 > - **Tier 4 — capability & breadth.** Async result-binding ([§13](#async),
@@ -844,14 +846,23 @@ arguments; the backend bridges them to SMT `String`**.
    SMT-LIB String theory — deep CBMC-core work (shared with JBMC code
    paths; the spec mandates a JBMC regression run per PR). Constant-subject
    matching already works precisely under `--cvc5` (`re-wave2-cvc5`).
-2. **Library `Match`/`None` result not tied to the intrinsic.** The `re`
-   stub calls `__cbmc_re_{match,search,fullmatch}` but always returns
-   `Match()` (a deliberate choice so `re.match(...) is not None` stays
-   provable under the nondet default). Even with gap 1 fixed, a flag-gated
-   `--python-strict-re-result` is needed so a matched call returns `Match()`
-   and a proven no-match returns `None`, without regressing the existing
-   `re*` tests that rely on always-`Match()`. Smaller than gap 1, and only
-   meaningful once gap 1 lands.
+2. **Library `Match`/`None` result not tied to the intrinsic — RESOLVED
+   (2026-06-17, `aa71a43868`); no flag.** The `re` stub now branches on the
+   intrinsic (`if __cbmc_re_match(p,s): return Match() else: return None`), and
+   the **default (refined-string) backend decides a CONSTANT pattern + CONSTANT
+   subject precisely** so the branch is exact (matched → `Match()`, proven
+   no-match → `None`) without `--cvc5`. This needed neither a flag nor the deep
+   array_pool work feared here: a conversion-time backtracking matcher
+   (`python_regex_match`, supported subset; conservative `std::nullopt` →
+   sound nondet) is invoked at SOLVE time inside the refined solver's
+   `match/search/fullmatch_func` handler (the re stub body is converted once
+   with symbolic params, so the literals are only available post-symex, where
+   `get_string_expr(array_pool,·).content()` yields the constant bytes). A
+   SYMBOLIC subject on the default backend stays a sound nondet Match-or-None
+   (precise on native via `str.in_re`). Sweep PASS 2930→2945, 0 regressions, 12
+   regex tests (`re1/3/4/5/6/8/9/10/11/12`, `github_3013/_2`) DIFF → PASS.
+   (The old `--python-strict-re-result` flag idea is dropped — the default is
+   now both sound and precise for the decidable case.)
 
 **Update (2026-06-12) — native SMT-String backend.** With `--python-smt-strings`
 now selecting the native `smt_string` representation (the byte-array hybrid is
