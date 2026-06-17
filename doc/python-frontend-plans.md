@@ -116,12 +116,21 @@ robustness, then capability; difficulty is noted where high.
 > misreported); a grown literal array uses its actual size. So lowering/tuning
 > the capacity (or logical-length sizing / lazy array field-sensitivity — the
 > Tier 1 perf levers) is now sound: hitting the bound is *reported*, like an
-> unwinding assertion, and raising `--max-list-length` clears it. **Follow-ups
-> (residual, not soundness gaps — the read backstop covers them):** an *eager*
-> write-side report (the subscript-WRITE paths are scattered: nested/`__setitem__`
-> /dict/list — a silent over-cap write is only observable via a guarded read);
-> dict/set capacity (`PYTHON_MAX_DICT_SIZE`) producers beyond the
-> already-guarded dict comprehension.
+> unwinding assertion, and raising `--max-list-length` clears it.
+> **Dict/set extended (2026-06-17, `2f31b89204`).** Set was a genuine FALSE
+> PROOF (a 64-bit bitmap over `[offset, offset+64)`; an out-of-range element was
+> silently dropped, so `100 not in {0, 100}` held): every set element-ADD
+> producer (literal, `set(iterable)`, `set.add`) now guards `0 <= elem < 64`
+> (`emit_set_range_guard`) — sets cannot use a read backstop since the element
+> is lost at construction. Over-capacity dict *literals* are guarded at
+> CONSTRUCTION (report + cut + cap), covering downstream reads and iteration in
+> one check (chosen over a per-`d[k]` read catch-all, which timed out heavy
+> nondet-dict tests); dict insert/comprehension were already guarded.
+> **Residual (not soundness gaps):** an *eager* list write-side report (the
+> subscript-WRITE paths are scattered; a silent over-cap write is only
+> observable via the guarded read — verified); dict `update`-past-cap and set
+> comprehension / set binary-ops (`|` of two sets) as lower-frequency producers
+> on the same `emit_count_capacity_guard` / `emit_set_range_guard` mechanisms.
 
 
 **P0 — Soundness (always first).**
