@@ -87,14 +87,18 @@ robustness, then capability; difficulty is noted where high.
 >   **`__dict__` substrate** ([§10](#descriptors): dynamic attrs / shadowing /
 >   stateful descriptors / `setattr`; local-variable dynamic-attr discovery
 >   landed `9f52de49ee`); **cell substrate** for escaping closures
->   ([§2](#closures)); **nested-container by-reference**
+>   ([§2](#closures)); **nested-container aliasing**
 >   ([§9](#nested-aliasing)). **NB the nested-container item is UNSOUND
 >   (false proofs), not a precision miss** — anonymous nested mutable literals
 >   are stored by value, so repetition/concat/slice/copy/append-element lose
->   CPython aliasing. The whole-group fix (by-reference at literal construction)
->   is validated but needs the full substrate to land net-positive (structural
->   equality / extend / depth through the pointer representation). Prioritise
->   it as soundness.
+>   CPython aliasing. **The by-reference-at-construction fix was prototyped and
+>   found EMPIRICALLY UNTENABLE** (structural `==` of wrapped elements is
+>   O(width^depth)×string-solver → 60 s timeout on a 3-element list; see
+>   [§9](#nested-aliasing)). Use the proportionate SOUND alternative instead: a
+>   taint + element-mutation `python-model-bound` guard that keeps by-value
+>   (cheap structural ops) and fires only on the actual unsound pattern (so it
+>   is sweep-neutral — the false proof is corpus-invisible today). Do NOT
+>   pursue the byref substrate.
 > - **Tier 3 — regex/string finish (native track; cheap wins).** `flags=`
 >   argument precision (bitmask → inline-flag prefix; blocked on stub
 >   constant-prop), `--python-strict-re-result` (real `Match`/`None`),
@@ -1127,17 +1131,42 @@ element semantics but *structural* `==`. By-reference storage breaks the
 value-semantics operations that assumed inline structs: the byref sweep showed
 **9 regressions** — structural equality `[[1]]==[[1]]` (`list-eq1/2/6/9`),
 `list_extend13/14/16`, `list_depth_test`, `github_3238` — **plus a new crash**,
-net PASS 2930→2925. Completing the fix therefore requires the nested-element
-*pointer* representation to be handled by every value-semantics operation:
-structural (deref) equality, `extend`, depth/`repr`, and the
-`python_value`-DICT/SET string-key subscript read (so dict/set elements can be
-wrapped too — wrapping them today regresses precise list-of-dict reads to a
-sound nondet). That is the full **nested-container by-reference substrate** —
-correct and architecturally clean, but a chain of dependent changes that must
-land together to stay net-positive. Sequencing: (1) structural deref-equality
-through wrapped elements; (2) `extend`/depth; (3) the byref `convert_list`
-change; (4) `python_value`-DICT subscript read → wrap dict/set elements; each
-gated on the sweep staying ≥ neutral.
+net PASS 2930→2925.
+
+**Step 1 (structural deref-equality) was prototyped and is EMPIRICALLY
+UNTENABLE (2026-06-17).** A recursive `python_value_structural_eq` (tag
+dispatch; deref LIST elements and compare element-wise to a bounded depth;
+sound nondet beyond) was wired into the list-equality path. It is *correct*
+(`[[1],2]==[[1],2]` and distinct-but-equal `x=[a];y=[b]` both pass) but
+**times out at 60 s on a 3-element list** (`[1,'a',3.0]==[1,'a',3.0]`). Root
+cause is intrinsic, not a coding slip: because the element tag is only known at
+runtime, every element comparison must emit ALL tag branches unconditionally —
+in particular a string-solver `str_eq` and a LIST-pointer dereference — at
+every element and every recursion level, i.e. O(width^depth) × (string-solver
+cost). By-value nested lists get deep structural `==` for free from a single
+`equal_exprt` on the inline structs; by-reference cannot. The same explosion
+would recur for `extend`/depth/`repr`/`in`/hash. **Conclusion: the
+by-reference-at-construction substrate is the WRONG architecture for this
+representation** — it trades a relatively rare aliasing false-proof for a
+prohibitive tax on the common structural operations. (A whole-program heap
+model would solve it uniformly but was already rejected for perf in
+[§5](#dict-byref).)
+
+**Proportionate sound alternative (recommended).** Keep by-value (preserving
+cheap structural ops) and close the false proofs with a targeted SOUND
+mechanism, not a representation change. Options, cheapest-precision-cost first:
+(a) **taint + mutation guard** — mark a list symbol when it is assigned the
+result of a replicating op (`l*n`, `a+b`, `a[:]`, `list(a)`, `append(a[i])`)
+whose elements are by-value mutables, and emit a `python-model-bound`
+report+cut when an *element* of a tainted list is mutated in place
+(`x[i][j]=…`, `x[i].append(…)`); read-only and whole-slot reassignment
+(`x[i]=…`) stay precise; (b) a coarser construction-time `python-model-bound`
+report (cuts read-only uses too). Both are sound and keep equality cheap; (a)
+is more surgical but touches the producer sites + the nested-mutation
+chokepoint. Given the bug's low corpus frequency (the byref sweep showed only
+the `github_3667` *precision* family benefited, not a false-proof cluster),
+this is also a reasonable **defer-and-document** candidate. **Do NOT pursue the
+byref substrate.**
 
 
 
