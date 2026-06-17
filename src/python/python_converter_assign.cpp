@@ -1327,6 +1327,100 @@ codet python_convertert::convert_assign(const jsont &stmt)
   if(rhs.is_nil())
     return code_skipt{};
 
+  // PLR object identity (§9 #nested-aliasing): taint lists whose BY-VALUE
+  // mutable elements get aliased by a replicating/sharing op, so a later
+  // in-place element mutation is reported (not silently false-proved). The
+  // sharing ops alias the operand's elements into the result (and, for
+  // shallow copies, vice-versa), so we taint BOTH the target name(s) AND any
+  // Name operand. Only applies when the result element type is a by-value
+  // mutable container; python_value (pointer) elements are already aliased
+  // soundly (escaped_mutables) and need no guard.
+  {
+    auto rhs_byval_mutable_list = [&]() -> bool
+    {
+      if(!is_python_list_type(rhs.type()))
+        return false;
+      const auto &st = to_struct_type(rhs.type());
+      const typet &el = to_array_type(st.components()[1].type()).element_type();
+      return is_python_list_type(el) || is_python_dict_type(el) ||
+             is_python_set_type(el);
+    };
+    std::vector<const jsont *> share_operands;
+    bool is_share = false;
+    if(is_node_type(value, "BinOp"))
+    {
+      const std::string op =
+        json_string(json_member(json_member(value, "op"), "_type"));
+      if(op == "Mult" || op == "Add")
+      {
+        is_share = true;
+        share_operands.push_back(&json_member(value, "left"));
+        share_operands.push_back(&json_member(value, "right"));
+      }
+    }
+    else if(
+      is_node_type(value, "Subscript") &&
+      is_node_type(json_member(value, "slice"), "Slice"))
+    {
+      is_share = true;
+      share_operands.push_back(&json_member(value, "value"));
+    }
+    else if(is_node_type(value, "Call"))
+    {
+      const jsont &fn = json_member(value, "func");
+      if(
+        is_node_type(fn, "Attribute") &&
+        json_string(json_member(fn, "attr")) == "copy")
+      {
+        is_share = true;
+        share_operands.push_back(&json_member(fn, "value"));
+      }
+      else if(
+        is_node_type(fn, "Name") &&
+        json_string(json_member(fn, "id")) == "list")
+      {
+        const jsont &cargs = json_member(value, "args");
+        if(cargs.is_array() && !as_array(cargs).empty())
+        {
+          is_share = true;
+          share_operands.push_back(&(*as_array(cargs).begin()));
+        }
+      }
+    }
+    auto taint_if_name = [&](const jsont &n)
+    {
+      if(is_node_type(n, "Name"))
+        aliased_mutable_lists.insert(
+          irep_idt{qualify_name(json_string(json_member(n, "id")))});
+    };
+    if(is_share && rhs_byval_mutable_list())
+    {
+      for(const auto &tgt : as_array(targets))
+        taint_if_name(tgt);
+      for(const jsont *opnd : share_operands)
+        taint_if_name(*opnd);
+    }
+    else
+    {
+      // Propagate a whole-list alias `h = g`; otherwise the target is bound to
+      // something non-aliased -> clear any stale taint.
+      const bool rhs_tainted_name =
+        is_node_type(value, "Name") &&
+        aliased_mutable_lists.count(
+          irep_idt{qualify_name(json_string(json_member(value, "id")))}) > 0;
+      for(const auto &tgt : as_array(targets))
+      {
+        if(!is_node_type(tgt, "Name"))
+          continue;
+        const irep_idt lid{qualify_name(json_string(json_member(tgt, "id")))};
+        if(rhs_tainted_name)
+          aliased_mutable_lists.insert(lid);
+        else
+          aliased_mutable_lists.erase(lid);
+      }
+    }
+  }
+
   // PLR §3.2: if the RHS is an empty list literal AND the
   // single Name target is in empty_list_inferred_types
   // (populated by collect_empty_list_inferred_types from a
@@ -1939,6 +2033,12 @@ codet python_convertert::convert_assign(const jsont &stmt)
     // PLR §3.2: "Tuples are immutable sequences"
     if(is_node_type(target, "Subscript"))
     {
+      // PLR object identity (§9): `g[i][j] = v` mutates the element `g[i]` of a
+      // list `g` whose by-value mutable elements are aliased -- not modelled,
+      // so report + cut. (`g[i] = v`, whole-slot reassignment, has
+      // target.value == Name g, not a subscript, so it is NOT guarded.)
+      if(is_aliased_list_element(json_member(target, "value")))
+        emit_aliased_mutation_guard(loc);
       // PLR §3.3.1: custom __setitem__ dunder — if the
       // subscripted value is a user-defined class instance
       // with a __setitem__ method, dispatch to it.

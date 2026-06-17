@@ -3393,6 +3393,38 @@ void python_convertert::emit_count_capacity_guard(
   checks.push_back(std::move(cap_assume));
 }
 
+bool python_convertert::is_aliased_list_element(const jsont &node)
+{
+  // `<base>[idx]` where base is a Name in aliased_mutable_lists.
+  if(!is_node_type(node, "Subscript"))
+    return false;
+  const jsont &base = json_member(node, "value");
+  if(!is_node_type(base, "Name"))
+    return false;
+  return aliased_mutable_lists.count(
+           irep_idt{qualify_name(json_string(json_member(base, "id")))}) > 0;
+}
+
+void python_convertert::emit_aliased_mutation_guard(const source_locationt &loc)
+{
+  // PLR object identity: mutating an element of a list whose by-value mutable
+  // elements are aliased (shared via a replicating/sharing op) is not modelled
+  // -- the value representation cannot propagate the mutation to the aliases.
+  // Report it as a model bound (assert false) and cut the path (assume false)
+  // so no downstream observation can produce a false proof.
+  source_locationt aloc = loc;
+  aloc.set_property_class("python-model-bound");
+  aloc.set_comment(
+    "in-place mutation through an unmodelled mutable-element alias "
+    "(verifier model bound)");
+  code_assertt a{false_exprt{}};
+  a.add_source_location() = aloc;
+  pending_checks.push_back(std::move(a));
+  code_assumet as{false_exprt{}};
+  as.add_source_location() = loc;
+  pending_checks.push_back(std::move(as));
+}
+
 void python_convertert::emit_set_range_guard(
   std::vector<codet> &checks,
   const exprt &elem,
