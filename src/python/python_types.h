@@ -40,7 +40,7 @@
 /// Maximum length for Python lists in verification.
 /// Can be overridden with --python-max-list-length.
 #ifndef PYTHON_MAX_LIST_LENGTH
-#  define PYTHON_MAX_LIST_LENGTH 64
+#  define PYTHON_MAX_LIST_LENGTH 16
 #endif
 
 /// Process-wide flag: when true (set by the Python converter under
