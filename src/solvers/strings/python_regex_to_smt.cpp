@@ -10,6 +10,8 @@ Author: Wave 2 of Python re support.
 #include "python_regex_to_smt.h"
 
 #include <cctype>
+#include <functional>
+#include <memory>
 #include <sstream>
 #include <vector>
 
@@ -1404,4 +1406,571 @@ python_regex_segment_groups(const std::string &pattern)
     return std::nullopt;
 
   return segs;
+}
+
+// ---------------------------------------------------------------------------
+// Conversion-time matcher (constant pattern + constant subject).
+//
+// A small recursive-descent parser builds an AST over the supported subset,
+// and a continuation-passing backtracking matcher evaluates membership. The
+// matcher decides only WHETHER a match exists (not which / how long), so
+// greedy vs lazy quantifiers and capturing vs non-capturing groups are
+// equivalent here. Any unsupported construct makes the parser fail, and the
+// public entry then returns std::nullopt (the caller falls back to nondet --
+// never a guessed boolean), keeping the fold sound.
+// ---------------------------------------------------------------------------
+namespace
+{
+struct mnode;
+using mnodep = std::shared_ptr<mnode>;
+struct mnode
+{
+  enum kindt
+  {
+    LIT,    ///< a single literal byte (`lit`)
+    ANY,    ///< `.` (any byte except '\n')
+    CLASS,  ///< `[...]` / `\d \w \s` (and negated)
+    CONCAT, ///< sequence (`kids` in order)
+    ALT,    ///< alternation (`kids`)
+    REPEAT, ///< `child` repeated [`rmin`, `rmax`] (`rmax` < 0 = unbounded)
+    BOL,    ///< `^` (zero-width: position 0)
+    EOL,    ///< `$` (zero-width: end of subject)
+  } kind;
+  unsigned char lit = 0;
+  std::vector<std::pair<unsigned char, unsigned char>> ranges; // CLASS
+  bool negated = false;                                        // CLASS
+  std::vector<mnodep> kids;                                    // CONCAT / ALT
+  mnodep child;                                                // REPEAT
+  int rmin = 0;
+  int rmax = -1;
+};
+
+class re_match_parser
+{
+public:
+  explicit re_match_parser(const std::string &p) : pat(p)
+  {
+  }
+
+  // Parse the whole pattern; nullptr on any unsupported feature / syntax.
+  mnodep parse()
+  {
+    mnodep n = parse_alt();
+    if(failed || pos != pat.size())
+      return nullptr;
+    return n;
+  }
+
+private:
+  const std::string &pat;
+  std::size_t pos = 0;
+  bool failed = false;
+
+  bool eof() const
+  {
+    return pos >= pat.size();
+  }
+  char peek() const
+  {
+    return pat[pos];
+  }
+  void fail()
+  {
+    failed = true;
+  }
+
+  mnodep make(mnode::kindt k)
+  {
+    auto n = std::make_shared<mnode>();
+    n->kind = k;
+    return n;
+  }
+
+  mnodep parse_alt()
+  {
+    std::vector<mnodep> alts;
+    mnodep first = parse_concat();
+    if(failed)
+      return nullptr;
+    alts.push_back(first);
+    while(!eof() && peek() == '|')
+    {
+      ++pos;
+      mnodep c = parse_concat();
+      if(failed)
+        return nullptr;
+      alts.push_back(c);
+    }
+    if(alts.size() == 1)
+      return alts[0];
+    mnodep n = make(mnode::ALT);
+    n->kids = std::move(alts);
+    return n;
+  }
+
+  mnodep parse_concat()
+  {
+    mnodep n = make(mnode::CONCAT);
+    while(!eof() && peek() != '|' && peek() != ')')
+    {
+      mnodep a = parse_quant();
+      if(failed)
+        return nullptr;
+      if(a)
+        n->kids.push_back(a);
+    }
+    return n;
+  }
+
+  mnodep parse_quant()
+  {
+    mnodep atom = parse_atom();
+    if(failed || !atom)
+      return atom;
+    if(eof())
+      return atom;
+    int rmin, rmax;
+    const char c = peek();
+    if(c == '*')
+    {
+      ++pos;
+      rmin = 0;
+      rmax = -1;
+    }
+    else if(c == '+')
+    {
+      ++pos;
+      rmin = 1;
+      rmax = -1;
+    }
+    else if(c == '?')
+    {
+      ++pos;
+      rmin = 0;
+      rmax = 1;
+    }
+    else if(c == '{')
+    {
+      // {m} / {m,} / {m,n}; anything malformed -> bail (conservative).
+      std::size_t save = pos;
+      ++pos;
+      std::string lo, hi;
+      while(!eof() && std::isdigit((unsigned char)peek()))
+        lo.push_back(pat[pos++]);
+      bool has_comma = false;
+      if(!eof() && peek() == ',')
+      {
+        has_comma = true;
+        ++pos;
+        while(!eof() && std::isdigit((unsigned char)peek()))
+          hi.push_back(pat[pos++]);
+      }
+      if(eof() || peek() != '}' || lo.empty())
+      {
+        (void)save;
+        fail();
+        return nullptr;
+      }
+      ++pos;
+      rmin = std::stoi(lo);
+      rmax = has_comma ? (hi.empty() ? -1 : std::stoi(hi)) : rmin;
+    }
+    else
+      return atom;
+    // A trailing '?' (lazy) or '+' (possessive) changes which match is chosen,
+    // not whether one exists -- accept lazy, bail on possessive.
+    if(!eof() && peek() == '?')
+      ++pos;
+    else if(!eof() && peek() == '+')
+    {
+      fail();
+      return nullptr;
+    }
+    mnodep n = make(mnode::REPEAT);
+    n->child = atom;
+    n->rmin = rmin;
+    n->rmax = rmax;
+    return n;
+  }
+
+  mnodep parse_atom()
+  {
+    if(eof())
+      return nullptr;
+    const char c = peek();
+    if(c == '^')
+    {
+      ++pos;
+      return make(mnode::BOL);
+    }
+    if(c == '$')
+    {
+      ++pos;
+      return make(mnode::EOL);
+    }
+    if(c == '.')
+    {
+      ++pos;
+      return make(mnode::ANY);
+    }
+    if(c == '(')
+    {
+      ++pos;
+      if(!eof() && peek() == '?')
+      {
+        // Only the non-capturing group (?:...) is safe for a match decision;
+        // lookaround / named / inline-flag groups are out of scope.
+        ++pos;
+        if(!eof() && peek() == ':')
+          ++pos;
+        else
+        {
+          fail();
+          return nullptr;
+        }
+      }
+      mnodep inner = parse_alt();
+      if(failed)
+        return nullptr;
+      if(eof() || peek() != ')')
+      {
+        fail();
+        return nullptr;
+      }
+      ++pos;
+      // Capturing vs non-capturing is irrelevant to the match decision.
+      return inner;
+    }
+    if(c == '[')
+      return parse_class();
+    if(c == '\\')
+      return parse_escape();
+    // A dangling metacharacter here is a malformed pattern for us.
+    if(c == '*' || c == '+' || c == '?' || c == '{' || c == ')')
+    {
+      fail();
+      return nullptr;
+    }
+    ++pos;
+    mnodep n = make(mnode::LIT);
+    n->lit = (unsigned char)c;
+    return n;
+  }
+
+  // Append the ranges for a `\d \w \s` (or upper = negated complement base)
+  // class to `out`. Returns false for an unknown class letter.
+  static bool class_ranges_for(
+    char letter,
+    std::vector<std::pair<unsigned char, unsigned char>> &out)
+  {
+    switch(letter)
+    {
+    case 'd':
+    case 'D':
+      out.emplace_back('0', '9');
+      return true;
+    case 'w':
+    case 'W':
+      out.emplace_back('0', '9');
+      out.emplace_back('A', 'Z');
+      out.emplace_back('a', 'z');
+      out.emplace_back('_', '_');
+      return true;
+    case 's':
+    case 'S':
+      out.emplace_back(' ', ' ');
+      out.emplace_back('\t', '\t');
+      out.emplace_back('\n', '\n');
+      out.emplace_back('\r', '\r');
+      out.emplace_back('\f', '\f');
+      out.emplace_back('\v', '\v');
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  // Decode a backslash escape to a literal byte, or return false (unsupported).
+  static bool escape_literal(char e, unsigned char &out)
+  {
+    switch(e)
+    {
+    case 'n':
+      out = '\n';
+      return true;
+    case 't':
+      out = '\t';
+      return true;
+    case 'r':
+      out = '\r';
+      return true;
+    case 'f':
+      out = '\f';
+      return true;
+    case 'v':
+      out = '\v';
+      return true;
+    // Escaped metacharacters / punctuation are literals.
+    case '.':
+    case '\\':
+    case '(':
+    case ')':
+    case '[':
+    case ']':
+    case '{':
+    case '}':
+    case '*':
+    case '+':
+    case '?':
+    case '|':
+    case '^':
+    case '$':
+    case '-':
+    case '/':
+      out = (unsigned char)e;
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  mnodep parse_escape()
+  {
+    ++pos; // consume '\\'
+    if(eof())
+    {
+      fail();
+      return nullptr;
+    }
+    const char e = pat[pos++];
+    std::vector<std::pair<unsigned char, unsigned char>> r;
+    if(class_ranges_for(e, r))
+    {
+      mnodep n = make(mnode::CLASS);
+      n->ranges = std::move(r);
+      n->negated = std::isupper((unsigned char)e); // \D \W \S
+      return n;
+    }
+    unsigned char lit;
+    if(escape_literal(e, lit))
+    {
+      mnodep n = make(mnode::LIT);
+      n->lit = lit;
+      return n;
+    }
+    // Back-references (\1..\9), \b \B \A \Z \G, \x.. etc.: out of scope.
+    fail();
+    return nullptr;
+  }
+
+  mnodep parse_class()
+  {
+    ++pos; // consume '['
+    mnodep n = make(mnode::CLASS);
+    if(!eof() && peek() == '^')
+    {
+      n->negated = true;
+      ++pos;
+    }
+    bool first = true;
+    while(!eof() && (peek() != ']' || first))
+    {
+      first = false;
+      unsigned char lo;
+      if(peek() == '\\')
+      {
+        ++pos;
+        if(eof())
+        {
+          fail();
+          return nullptr;
+        }
+        const char e = pat[pos++];
+        std::vector<std::pair<unsigned char, unsigned char>> sub;
+        if(class_ranges_for(e, sub))
+        {
+          // A class shorthand inside [...] (e.g. [\d.]). Negated shorthands
+          // inside a class are not handled precisely -> bail.
+          if(std::isupper((unsigned char)e))
+          {
+            fail();
+            return nullptr;
+          }
+          for(const auto &s : sub)
+            n->ranges.push_back(s);
+          continue;
+        }
+        if(!escape_literal(e, lo))
+        {
+          fail();
+          return nullptr;
+        }
+      }
+      else
+        lo = (unsigned char)pat[pos++];
+      // Range lo-hi?
+      if(!eof() && peek() == '-' && pos + 1 < pat.size() && pat[pos + 1] != ']')
+      {
+        ++pos; // consume '-'
+        unsigned char hi;
+        if(peek() == '\\')
+        {
+          ++pos;
+          if(eof() || !escape_literal(pat[pos], hi))
+          {
+            fail();
+            return nullptr;
+          }
+          ++pos;
+        }
+        else
+          hi = (unsigned char)pat[pos++];
+        if(hi < lo)
+        {
+          fail();
+          return nullptr;
+        }
+        n->ranges.emplace_back(lo, hi);
+      }
+      else
+        n->ranges.emplace_back(lo, lo);
+    }
+    if(eof() || peek() != ']')
+    {
+      fail();
+      return nullptr;
+    }
+    ++pos;
+    return n;
+  }
+};
+
+// Continuation-passing backtracking matcher. `k(end)` is the rest of the
+// match; returns true if some match of `n` from `at` lets `k` succeed.
+static bool re_seq(
+  const std::vector<mnodep> &seq,
+  std::size_t i,
+  const std::string &s,
+  std::size_t at,
+  const std::function<bool(std::size_t)> &k);
+
+static bool re_do(
+  const mnodep &n,
+  const std::string &s,
+  std::size_t at,
+  const std::function<bool(std::size_t)> &k);
+
+static bool re_rep(
+  const mnodep &n,
+  int cnt,
+  const std::string &s,
+  std::size_t at,
+  const std::function<bool(std::size_t)> &k)
+{
+  const bool can_more = (n->rmax < 0 || cnt < n->rmax);
+  if(
+    can_more &&
+    re_do(
+      n->child,
+      s,
+      at,
+      [&, cnt, at](std::size_t np)
+      {
+        if(np == at)
+          return false; // empty match: stop expanding (would not terminate)
+        return re_rep(n, cnt + 1, s, np, k);
+      }))
+    return true;
+  if(cnt >= n->rmin)
+    return k(at);
+  return false;
+}
+
+static bool re_do(
+  const mnodep &n,
+  const std::string &s,
+  std::size_t at,
+  const std::function<bool(std::size_t)> &k)
+{
+  switch(n->kind)
+  {
+  case mnode::BOL:
+    return at == 0 && k(at);
+  case mnode::EOL:
+    return at == s.size() && k(at);
+  case mnode::LIT:
+    return at < s.size() && (unsigned char)s[at] == n->lit && k(at + 1);
+  case mnode::ANY:
+    return at < s.size() && s[at] != '\n' && k(at + 1);
+  case mnode::CLASS:
+  {
+    if(at >= s.size())
+      return false;
+    const unsigned char ch = (unsigned char)s[at];
+    bool in = false;
+    for(const auto &r : n->ranges)
+      if(ch >= r.first && ch <= r.second)
+      {
+        in = true;
+        break;
+      }
+    if(n->negated)
+      in = !in;
+    return in && k(at + 1);
+  }
+  case mnode::CONCAT:
+    return re_seq(n->kids, 0, s, at, k);
+  case mnode::ALT:
+    for(const auto &c : n->kids)
+      if(re_do(c, s, at, k))
+        return true;
+    return false;
+  case mnode::REPEAT:
+    return re_rep(n, 0, s, at, k);
+  }
+  return false;
+}
+
+static bool re_seq(
+  const std::vector<mnodep> &seq,
+  std::size_t i,
+  const std::string &s,
+  std::size_t at,
+  const std::function<bool(std::size_t)> &k)
+{
+  if(i == seq.size())
+    return k(at);
+  return re_do(
+    seq[i],
+    s,
+    at,
+    [&, i](std::size_t np) { return re_seq(seq, i + 1, s, np, k); });
+}
+} // namespace
+
+std::optional<bool> python_regex_match(
+  const std::string &pattern,
+  const std::string &subject,
+  python_regex_match_kindt kind)
+{
+  // Multiline `^`/`$`/`.` edge cases are not modelled: bail on a newline in
+  // the subject so the matcher's single-line anchoring stays exact.
+  if(subject.find('\n') != std::string::npos)
+    return std::nullopt;
+
+  re_match_parser parser{pattern};
+  const mnodep ast = parser.parse();
+  if(!ast)
+    return std::nullopt;
+
+  if(kind == python_regex_match_kindt::FULLMATCH)
+    return re_do(
+      ast, subject, 0, [&](std::size_t e) { return e == subject.size(); });
+  if(kind == python_regex_match_kindt::MATCH)
+    return re_do(ast, subject, 0, [](std::size_t) { return true; });
+  // SEARCH: unanchored -- try every start offset.
+  for(std::size_t i = 0; i <= subject.size(); ++i)
+    if(re_do(ast, subject, i, [](std::size_t) { return true; }))
+      return true;
+  return false;
 }

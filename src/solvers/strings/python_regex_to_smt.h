@@ -132,4 +132,29 @@ std::optional<std::string> python_regex_to_smt_body(const std::string &pattern);
 /// are no empty matches.
 std::optional<int> python_regex_fixed_length(const std::string &pattern);
 
+/// Which anchoring semantics to evaluate, mirroring the `re` functions.
+enum class python_regex_match_kindt
+{
+  FULLMATCH, ///< `re.fullmatch`: the whole subject must match.
+  MATCH,     ///< `re.match`: anchored at the start, end unanchored.
+  SEARCH,    ///< `re.search`: unanchored on both ends.
+};
+
+/// Decide, at conversion time, whether `subject` matches `pattern` under the
+/// given anchoring -- i.e. evaluate `re.{fullmatch,match,search}(pattern,
+/// subject)` for CONSTANT pattern and subject. Returns the precise boolean
+/// result, or `std::nullopt` when the pattern uses a feature this matcher does
+/// not support (back-references, lookaround, named/inline-flag groups, word
+/// boundaries, unknown escapes) or the subject contains a newline (the matcher
+/// does not model multiline `^`/`$`/`.` edge cases). A `std::nullopt` result
+/// means "undecided" -- the caller must fall back to a sound nondet, never to a
+/// guessed boolean. Greedy/lazy quantifiers collapse here (they change WHICH
+/// match is chosen, not WHETHER one exists). Used to make the default backend
+/// return `Match()`/`None` precisely for literal/known-structure regexes
+/// without an SMT String solver.
+std::optional<bool> python_regex_match(
+  const std::string &pattern,
+  const std::string &subject,
+  python_regex_match_kindt kind);
+
 #endif // CPROVER_SOLVERS_STRINGS_PYTHON_REGEX_TO_SMT_H
