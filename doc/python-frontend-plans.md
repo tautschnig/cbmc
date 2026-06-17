@@ -97,6 +97,31 @@ robustness, then capability; difficulty is noted where high.
 > `python_value` SSA; (3) Tier 2 instance-`__dict__`; (4) the Tier 3 regex
 > finishers + Tier 4 async binding (contained, high-visibility); (5) the
 > remaining Tier 2 substrates, then breadth.
+>
+> **Container capacity is now a CHECKED BMC bound (soundness; landed
+> 2026-06-17, prerequisite to Tier 1).** `PYTHON_MAX_LIST_LENGTH` (64) was an
+> *unchecked* truncation point: append/insert/comprehension reported it
+> (`python-model-bound` assert + path cut), but list repetition `l*n`,
+> concatenation `a+b`, `extend`, augmented `+=`/`*=`, and `list(iterable)` set
+> `length` past capacity and silently filled only 64 data slots, so a valid
+> in-length read past slot 63 returned unmodelled nondet (a potential false
+> proof). Closed in two layers: producer-side guards (`emit_count_capacity_guard`
+> at repetition/concat/extend, `971fc5d860`) report+cut at the growth point;
+> and an **access-level catch-all** (`emit_index_capacity_guard` at the
+> list-subscript read chokepoint, `26efa370d9`) reports+cuts whenever a valid
+> index (`idx < length`) reads past the modelled array, covering EVERY producer
+> incl. `+=`/`*=`/`list()` and the read side — and since every *observation* of
+> over-capacity data is a read, this is the soundness backstop. A normal
+> out-of-range access (`idx >= length`) stays a plain IndexError (not
+> misreported); a grown literal array uses its actual size. So lowering/tuning
+> the capacity (or logical-length sizing / lazy array field-sensitivity — the
+> Tier 1 perf levers) is now sound: hitting the bound is *reported*, like an
+> unwinding assertion, and raising `--max-list-length` clears it. **Follow-ups
+> (residual, not soundness gaps — the read backstop covers them):** an *eager*
+> write-side report (the subscript-WRITE paths are scattered: nested/`__setitem__`
+> /dict/list — a silent over-cap write is only observable via a guarded read);
+> dict/set capacity (`PYTHON_MAX_DICT_SIZE`) producers beyond the
+> already-guarded dict comprehension.
 
 
 **P0 — Soundness (always first).**
