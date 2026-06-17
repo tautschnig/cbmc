@@ -83,12 +83,18 @@ robustness, then capability; difficulty is noted where high.
 >   part of the list type). Separately, **`python_value` field-by-field SSA**
 >   ([§8](#performance)) remains a real cost for *symex-bound* benchmarks that
 >   run to completion (e.g. aws_untagged), distinct from this timeout cluster.
-> - **Tier 2 — precision substrates (each unblocks a whole group; sound
->   today).** Instance **`__dict__` substrate** ([§10](#descriptors): dynamic
->   attrs / shadowing / stateful descriptors / `setattr`); **cell substrate**
->   for escaping closures ([§2](#closures)); **nested-container by-reference**
->   ([§9](#precision) `github_3667` shallow `list.copy`, anonymous nested
->   mutables).
+> - **Tier 2 — precision substrates (each unblocks a whole group).** Instance
+>   **`__dict__` substrate** ([§10](#descriptors): dynamic attrs / shadowing /
+>   stateful descriptors / `setattr`; local-variable dynamic-attr discovery
+>   landed `9f52de49ee`); **cell substrate** for escaping closures
+>   ([§2](#closures)); **nested-container by-reference**
+>   ([§9](#nested-aliasing)). **NB the nested-container item is UNSOUND
+>   (false proofs), not a precision miss** — anonymous nested mutable literals
+>   are stored by value, so repetition/concat/slice/copy/append-element lose
+>   CPython aliasing. The whole-group fix (by-reference at literal construction)
+>   is validated but needs the full substrate to land net-positive (structural
+>   equality / extend / depth through the pointer representation). Prioritise
+>   it as soundness.
 > - **Tier 3 — regex/string finish (native track; cheap wins).** `flags=`
 >   argument precision (bitmask → inline-flag prefix; blocked on stub
 >   constant-prop), `--python-strict-re-result` (real `Match`/`None`),
@@ -1072,7 +1078,68 @@ on `(path, mtime)`; a multi-process pool for parallel parse requests.
 ## 9. Precision clusters (sound today; precision misses)  {#precision}
 
 All items here are **sound** (misses / over-approximations, never false
-alarms). Verified against the 2026-06-08 sweep baseline.
+alarms) **except the nested-mutable-aliasing item below, which is a
+FALSE-PROOF (unsoundness) — see it first.** Verified against the 2026-06-08
+sweep baseline.
+
+### Nested mutable element aliasing is UNSOUND (false proofs) — HIGH PRIORITY (2026-06-17) {#nested-aliasing}
+
+**This is a soundness bug, not a precision miss** (corrects the earlier
+classification of `github_3667` as a sound precision miss). PLR object
+identity: a Python list element that is itself a mutable container is held by
+*reference*; replicating or sharing it aliases the SAME object. The frontend
+stores anonymous (un-named) nested mutable literals **by value**, so every
+operation that replicates or shares such an element produces independent
+copies and **wrongly proves** programs that rely on (or are bitten by) the
+aliasing. Confirmed false proofs (2026-06-17, all `VERIFICATION SUCCESSFUL`
+where CPython raises `AssertionError`):
+
+```
+g = [[0,0]]*3 ; g[0][0]=1 ; assert g[1][0]==0        # repetition
+a=[[0,0]] ; b=a+a ; b[0][0]=1 ; assert b[1][0]==0    # concatenation
+a=[[0,0]] ; a.append(a[0]) ; a[0][0]=1 ; assert a[1][0]==0   # append-element
+a=[[1],[2]] ; b=a[:] ; a[0].append(9) ; assert b[0]==[1]     # slice copy
+a=[[1],[2]] ; b=list(a) ; a[0].append(9) ; assert b[0]==[1]  # list() copy
+g=[{}]*3 ; g[0]['k']=1 ; assert 'k' not in g[1]      # dict-element variant
+```
+
+The **named** variants are already correct (`row=[0,0]; g=[row]*3; …` →
+`VERIFICATION FAILED`): `collect_escaped_mutables` marks a name that appears as
+a list/dict element as escaped and promotes its storage to a pointer
+(`make_python_value(LIST, &symbol)`), which replicates correctly. Distinct
+literals, comprehensions, scalar repetition, and flat lists are all correct.
+So the gap is precisely **anonymous mutable literals stored by value**.
+
+**Architectural fix (validated, then reverted — needs completion).** The
+whole-group fix is representational, at the single chokepoint of *literal
+construction*: route anonymous mutable-container elements through the same
+by-reference path the heterogeneous-list branch already uses (`wrap_value` →
+`make_python_value(TAG, &symbol)`), so all downstream copy/replicate
+operations duplicate the pointer (correct aliasing) for free — one change
+fixes the entire group. A one-line spike in `convert_list`
+(`python_converter_expressions.cpp`: force the `is_heterogeneous` wrap path
+when `is_python_list_type(elem_type)`) **closed every false proof above AND
+turned `github_3667` precise** (shallow copy now shares inner lists), with the
+read path (`g[i][j]`) still precise.
+
+**Why it is not yet landed (measured fallout).** Python lists have *reference*
+element semantics but *structural* `==`. By-reference storage breaks the
+value-semantics operations that assumed inline structs: the byref sweep showed
+**9 regressions** — structural equality `[[1]]==[[1]]` (`list-eq1/2/6/9`),
+`list_extend13/14/16`, `list_depth_test`, `github_3238` — **plus a new crash**,
+net PASS 2930→2925. Completing the fix therefore requires the nested-element
+*pointer* representation to be handled by every value-semantics operation:
+structural (deref) equality, `extend`, depth/`repr`, and the
+`python_value`-DICT/SET string-key subscript read (so dict/set elements can be
+wrapped too — wrapping them today regresses precise list-of-dict reads to a
+sound nondet). That is the full **nested-container by-reference substrate** —
+correct and architecturally clean, but a chain of dependent changes that must
+land together to stay net-positive. Sequencing: (1) structural deref-equality
+through wrapped elements; (2) `extend`/depth; (3) the byref `convert_list`
+change; (4) `python_value`-DICT subscript read → wrap dict/set elements; each
+gated on the sweep staying ≥ neutral.
+
+
 
 - **Method default-args not filled on optional/union-typed receivers
   {#method-default-optional} — RESOLVED (2026-06-15, `27d677fc91`).** A method
