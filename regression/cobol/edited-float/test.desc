@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+I4: floating insertion editing: $$$$.99 of 12.34 -> ' $12.34' and of 1.00 ->
+'  $1.00'; ----9 of -12 -> '  -12'. IBM LR "PICTURE clause" editing.

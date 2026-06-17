@@ -1473,6 +1473,113 @@ exprt cobol_typecheckt::make_numeric_edited(
     trail = core.substr(core.size() - 2);
     core.erase(core.size() - 2);
   }
+
+  // Floating insertion editing (IBM LR "PICTURE clause", floating insertion
+  // characters + - $): a run of two or more identical sign/currency
+  // characters. The run of length L provides L-1 digit positions; the symbol
+  // "floats" to the position immediately left of the first significant digit
+  // (the leftmost position is symbol-only). A floating '-' shows a space when
+  // the value is non-negative. Handled for a leading float run followed by
+  // forced 9s / a fraction; other arrangements fall back (ok=false).
+  if(
+    core.size() >= 2 && (core[0] == '+' || core[0] == '-' || core[0] == '$') &&
+    core[1] == core[0])
+  {
+    const char fc = core[0];
+    std::size_t L = 0;
+    while(L < core.size() && core[L] == fc)
+      ++L;
+    const std::string rest = core.substr(L);
+    std::size_t tot = 0, frac = 0;
+    bool pp = false;
+    for(char ch : rest)
+    {
+      if(ch == '+' || ch == '-' || ch == '$')
+      {
+        ok = false;
+        return nil_exprt{};
+      }
+      if(ch == '9' || ch == 'Z' || ch == '*')
+      {
+        ++tot;
+        if(pp)
+          ++frac;
+      }
+      else if(ch == '.')
+        pp = true;
+      else if(ch != ',' && ch != 'B' && ch != '0' && ch != '/')
+      {
+        ok = false;
+        return nil_exprt{};
+      }
+    }
+    const std::size_t total_digits = (L - 1) + tot;
+    const std::size_t frac_digits = frac;
+    const exprt mag = if_exprt{
+      binary_relation_exprt{value, ID_ge, zero},
+      value,
+      unary_minus_exprt{value}};
+    const exprt aligned = rescale(mag, value_scale, frac_digits);
+    const exprt ten = from_integer(10, vt);
+    const auto dig = [&](std::size_t j) -> exprt
+    {
+      return mod_exprt{
+        div_exprt{aligned, from_integer(power10(total_digits - 1 - j), vt)},
+        ten};
+    };
+    const exprt symch =
+      fc == '+'
+        ? if_exprt{negative, from_integer(host_byte('-'), vt), from_integer(host_byte('+'), vt)}
+        : (fc == '-' ? exprt{if_exprt{
+                         negative,
+                         from_integer(host_byte('-'), vt),
+                         from_integer(host_byte(' '), vt)}}
+                     : from_integer(host_byte('$'), vt));
+    const exprt space = from_integer(host_byte(' '), vt);
+    array_exprt::operandst elems;
+    elems.reserve(mask.size());
+    // Symbol-only leftmost position: the symbol shows when the most
+    // significant float digit is significant (the value fills the run).
+    elems.push_back(
+      typecast_exprt{if_exprt{notequal_exprt{dig(0), zero}, symch, space}, u8});
+    exprt supk = true_exprt{}; // suppressing before the current float digit
+    for(std::size_t k = 1; k < L; ++k)
+    {
+      const std::size_t j = k - 1; // global digit index of this slot
+      const exprt gj = dig(j);
+      const exprt digch = plus_exprt{from_integer(host_byte('0'), vt), gj};
+      const exprt ls = and_exprt{supk, equal_exprt{gj, zero}};
+      const exprt next_sig = (j == L - 2) ? static_cast<exprt>(true_exprt{})
+                                          : notequal_exprt{dig(j + 1), zero};
+      const exprt sym = and_exprt{ls, next_sig};
+      elems.push_back(
+        typecast_exprt{if_exprt{sym, symch, if_exprt{ls, space, digch}}, u8});
+      supk = and_exprt{supk, equal_exprt{gj, zero}};
+    }
+    // Remaining (forced) positions after the float run.
+    std::size_t pj = L - 1;
+    for(char ch : rest)
+    {
+      exprt outb;
+      if(ch == '9' || ch == 'Z' || ch == '*')
+        outb = plus_exprt{from_integer(host_byte('0'), vt), dig(pj++)};
+      else if(ch == '.')
+        outb = from_integer(host_byte('.'), vt);
+      else if(ch == ',')
+        outb = from_integer(host_byte(','), vt);
+      else if(ch == 'B')
+        outb = from_integer(host_byte(' '), vt);
+      else if(ch == '0')
+        outb = from_integer(host_byte('0'), vt);
+      else // '/'
+        outb = from_integer(host_byte('/'), vt);
+      elems.push_back(typecast_exprt{outb, u8});
+    }
+    return array_exprt{
+      std::move(elems),
+      array_typet{u8, from_integer(mask.size(), size_type())}};
+  }
+
   char lead = 0; // leading '+', '-' or '$'
   if(!core.empty() && (core[0] == '+' || core[0] == '-' || core[0] == '$'))
   {
