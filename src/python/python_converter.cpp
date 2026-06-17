@@ -3393,6 +3393,34 @@ void python_convertert::emit_count_capacity_guard(
   checks.push_back(std::move(cap_assume));
 }
 
+void python_convertert::emit_index_capacity_guard(
+  std::vector<codet> &checks,
+  const exprt &idx,
+  const exprt &length,
+  long cap,
+  const source_locationt &loc)
+{
+  // Fire ONLY for a valid Python index that exceeds the modelled array:
+  //   (idx < length) ==> (idx < cap)
+  // An idx >= length is a normal IndexError (handled separately, the access is
+  // never taken), so it must NOT be reported as a model-bound violation. An
+  // idx < length but >= cap means the list's length outran the modelled data
+  // (a silently over-capacity producer) -- that is the case we report + cut.
+  exprt idx_lt_len{binary_relation_exprt{idx, ID_lt, length}};
+  exprt idx_lt_cap{
+    binary_relation_exprt{idx, ID_lt, from_integer(cap, idx.type())}};
+  exprt in_bounds{or_exprt{not_exprt{idx_lt_len}, idx_lt_cap}};
+  source_locationt aloc = loc;
+  aloc.set_property_class("python-model-bound");
+  aloc.set_comment("container capacity exceeded (verifier model bound)");
+  code_assertt cap_assert{in_bounds};
+  cap_assert.add_source_location() = aloc;
+  checks.push_back(std::move(cap_assert));
+  code_assumet cap_assume{in_bounds};
+  cap_assume.add_source_location() = loc;
+  checks.push_back(std::move(cap_assume));
+}
+
 void python_convertert::coerce_call_arguments(
   exprt::operandst &args,
   const code_typet::parameterst &params)

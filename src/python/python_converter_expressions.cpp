@@ -1231,6 +1231,22 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     const auto &st = to_struct_type(value.type());
     const auto &data_type = to_array_type(st.components()[1].type());
     member_exprt data{value, "data", data_type};
+    // Access-level capacity catch-all: the (normalized) index must lie within
+    // the modelled data array, whatever path produced this list. Without it,
+    // an over-capacity list (e.g. from `+=`/`*=`/`list(iterable)`) reads
+    // unmodelled nondet data silently. data_type.size() is the *actual* array
+    // size, so a grown literal array is allowed.
+    if(data_type.size().is_constant())
+    {
+      mp_integer cap;
+      if(!to_integer(to_constant_expr(data_type.size()), cap))
+        emit_index_capacity_guard(
+          pending_checks,
+          effective_idx,
+          length,
+          cap.to_long(),
+          get_location(expr));
+    }
     return index_exprt{data, effective_idx};
   }
 

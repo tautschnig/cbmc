@@ -1688,6 +1688,25 @@ private:
     long cap,
     const source_locationt &loc = source_locationt{});
 
+  /// Access-level container capacity guard. Push assert(idx < cap) +
+  /// assume(idx < cap) into `checks`, where `idx` is a (normalized,
+  /// non-negative) element index about to read/write the modelled data array
+  /// of `cap` slots. This is the whole-group catch-all: it fires for an
+  /// over-capacity list produced by ANY path (including augmented `+=`/`*=`,
+  /// `list(iterable)`, or a future producer with no construction-time guard)
+  /// and for the read side (which the producer guards do not cover), rather
+  /// than silently returning unmodelled (nondet) data. The IndexError check
+  /// (idx < length, Python semantics) is separate; this is the model bound
+  /// (idx < capacity). Same python-model-bound property: reported, then cut.
+  /// Fires only for a *valid* index (idx < length) that exceeds capacity, so a
+  /// normal out-of-range IndexError is not misreported as a model bound.
+  void emit_index_capacity_guard(
+    std::vector<codet> &checks,
+    const exprt &idx,
+    const exprt &length,
+    long cap,
+    const source_locationt &loc = source_locationt{});
+
   /// Coerce all arguments in `args` to the parameter types
   /// declared in `params`. Out-of-range entries on either side
   /// are left untouched (callers are responsible for padding
