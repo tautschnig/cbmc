@@ -4081,6 +4081,33 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
   // Expression statement (e.g., function call as statement)
   const jsont &value = json_member(stmt, "value");
 
+  // PLR object identity (§9 #nested-aliasing): a mutating method on an element
+  // of a list whose by-value mutable elements are aliased (`g[i].append(..)`
+  // after `g=[[..]]*n` / `g=a[:]` / ...) is not modelled by the value
+  // representation -- report + cut rather than silently false-prove. The
+  // receiver `g[i]` is func.value. (`g.method(..)` mutates the OUTER list, not
+  // an aliased element, so its receiver is a Name and is NOT guarded.)
+  if(is_node_type(value, "Call"))
+  {
+    const jsont &cf = json_member(value, "func");
+    if(is_node_type(cf, "Attribute"))
+    {
+      static const std::set<std::string> mutating_methods{
+        "append",
+        "extend",
+        "insert",
+        "remove",
+        "pop",
+        "clear",
+        "sort",
+        "reverse"};
+      if(
+        mutating_methods.count(json_string(json_member(cf, "attr"))) &&
+        is_aliased_list_element(json_member(cf, "value")))
+        emit_aliased_mutation_guard(get_location(stmt));
+    }
+  }
+
   // PLR §6.2.9: yield X → __gen_result.append(X) (eager evaluation)
   if(
     is_node_type(value, "Yield") && !current_function.empty() &&

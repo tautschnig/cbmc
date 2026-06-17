@@ -779,6 +779,23 @@ private:
   /// module body / function body before convert_module_body runs).
   std::set<irep_idt> escaped_mutables;
   void collect_escaped_mutables(const jsont &body);
+  /// PLR object identity (§9 #nested-aliasing): symbols bound to a list whose
+  /// BY-VALUE mutable elements are aliased (shared) by a replicating/sharing
+  /// op -- repetition `a*n`, concat `a+b`, slice `a[:]`, `a.copy()`,
+  /// `list(a)`. The value-based representation does not model this aliasing, so
+  /// an in-place mutation of such an element is reported as a
+  /// `python-model-bound` (assert + cut) instead of silently producing a false
+  /// proof (e.g. `g=[[0,0]]*3; g[0][0]=1; assert g[1][0]==0`). Read-only access
+  /// and whole-slot reassignment (`g[i]=v`) stay precise. Residual (documented):
+  /// element-extraction (`r=g[i]; r.append(..)`), function-parameter, and
+  /// container-stored aliases are not tracked.
+  std::set<irep_idt> aliased_mutable_lists;
+  /// True if `node` is `<tainted>[idx]` -- a subscript whose base Name is in
+  /// aliased_mutable_lists (an aliased by-value mutable element).
+  bool is_aliased_list_element(const jsont &node);
+  /// Push (to pending_checks) a python-model-bound report + path cut for an
+  /// unmodelled in-place mutation of an aliased mutable element.
+  void emit_aliased_mutation_guard(const source_locationt &loc);
   /// PLR §3.2: pre-scan a body for the empty-list element-type
   /// pattern. For each 'name = []' followed in the same body by
   /// 'name.append(X)' / 'name.extend(X)' where X is constant /
