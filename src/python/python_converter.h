@@ -1707,6 +1707,23 @@ private:
     long cap,
     const source_locationt &loc = source_locationt{});
 
+  /// Set bitmap range guard. A Python set is modelled as a 64-bit bitmap over
+  /// elements [offset, offset+64) (offset is 0 in all current constructors),
+  /// so an element outside that range cannot be represented and would be
+  /// SILENTLY DROPPED by the `1 << (elem - offset)` shift -- an unsound false
+  /// proof (e.g. `100 not in {0, 100}` would hold). Push assert + assume that
+  /// `0 <= elem < 64` (python-model-bound), so an out-of-range element is
+  /// reported then cut rather than lost. Used at every set element ADD site
+  /// (literal with a runtime element, `set(iterable)`, `set.add`). When
+  /// `included` is non-nil, the guard is gated on it (`included ==> in-range`),
+  /// for producers that only add the element on a condition (e.g. a
+  /// `set(list)` loop where `idx < length`).
+  void emit_set_range_guard(
+    std::vector<codet> &checks,
+    const exprt &elem,
+    const source_locationt &loc = source_locationt{},
+    const exprt &included = nil_exprt{});
+
   /// Coerce all arguments in `args` to the parameter types
   /// declared in `params`. Out-of-range entries on either side
   /// are left untouched (callers are responsible for padding

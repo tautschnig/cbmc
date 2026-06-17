@@ -1744,6 +1744,13 @@ std::optional<exprt> python_convertert::try_builtin_call(
         {
           exprt idx = from_integer(i, signedbv_typet{64});
           exprt elem = index_exprt{src_data, idx};
+          // An element that is actually included (idx < src_len) must lie in
+          // the bitmap range, else `1 << elem` drops it silently (unsound).
+          emit_set_range_guard(
+            pending_checks,
+            elem,
+            get_location(expr),
+            binary_relation_exprt{idx, ID_lt, src_len});
           // shift = 1 << elem (as unsigned 64).
           exprt shift_amt = typecast_exprt{elem, unsignedbv_typet{64}};
           exprt one_shifted =
