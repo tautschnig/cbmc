@@ -1151,14 +1151,38 @@ nested-equality precision bug as a bonus. **So the equality blocker is removed**
 — the earlier "by-reference is intrinsically untenable" conclusion was wrong; it
 was the naive all-branches encoding, not by-reference per se.
 
-**Remaining byref blockers (the other ~5 of the 9 regressions).** Equality is no
-longer one of them. Still to handle through the wrapped-element representation
-before re-landing the `convert_list` byref change net-positive: `list_extend`
-(13/14/16), `list_depth_test`/`repr`, `github_3238`, and the **crash** the byref
-sweep surfaced. Each should get the same "static-dispatch where the tag is
-known, sound bounded fallback otherwise" treatment as equality. Then re-apply
-the one-line `convert_list` wrap and re-sweep. The dict/set-element subscript
-read (so dict/set elements can also be wrapped) remains the last piece.
+**Remaining byref blockers — re-measured under byref + cheap-equality
+(2026-06-17).** With the static-dispatch equality in, re-applying the
+`convert_list` wrap and running the previously-regressing tests shows the
+remaining work is NOT "apply the equality pattern to extend/depth" but a
+**chain of distinct consumer-side breakages**, each because a nested element is
+now a pointer that the consumer must normalize:
+- `github_3238` (`pascal(1)==[[1]]`): **now PASSES** — the `[[1]]` literal
+  operand anchors static dispatch. Cheap-equality fixed it.
+- `list_depth_test` (`a==b`, both `[[[1]]]`, depth 3): **fails** — both operands
+  are *symbols* (no literal to anchor static dispatch) and the level-3 element
+  is a LIST behind a materialised symbol → identity-or-nondet → nondet. Needs
+  either symbol→literal resolution (via `list_literals`) or precise symbolic
+  deref (the expensive path).
+- `list_extend13/14/16` (`x.extend([1] + r for r in [[]])`): **fail with a
+  spurious uncaught exception** at the concat/extend itself — a wrapped `[[]]`
+  element flowing through `[1] + r` and the generator-extend, NOT an
+  equality-cost issue. A separate consumer fix (concat/iteration must
+  deref/normalise the wrapped element).
+- the **crash** the original byref sweep surfaced — not yet re-triaged.
+
+**Architectural assessment.** byref-everywhere requires EVERY consumer of a
+nested element (concat, extend, iteration, equality, depth/`repr`, `in`,
+dict/set subscript, …) to normalise the wrapped pointer. There is an inherent
+conflict: *aliasing* needs the pointer preserved through reads/copies, while
+*structural ops* need it dereferenced to a value — you cannot have both
+transparently, so each consumer needs explicit handling. That is a large,
+pervasive substrate, and the false proof it fixes is **corpus-invisible**.
+Recommendation stands: keep the cheap-equality win (it is sound + standalone),
+and for the actual soundness bug prefer the proportionate targeted guard below;
+only pursue full byref as a deliberate, large, separately-scoped project. The
+"static-dispatch where the tag is known, sound bounded fallback otherwise"
+pattern is the right tool for each consumer *if* that project is undertaken.
 
 **(Earlier note, now superseded for equality.)** By-value nested lists get deep
 structural `==` for free from a single `equal_exprt`; the static-dispatch helper
@@ -1166,6 +1190,7 @@ matches that cost for the literal case and degrades gracefully (sound nondet)
 for the symbolic case. (A whole-program heap model — [§5](#dict-byref) — would
 *not* avoid this cost; it would universalize per-element dynamic-tag dispatch
 and regress the cheap flat-scalar path, so it remains off the table.)
+
 
 **Proportionate sound alternative (still valid if byref is not completed).**
 Keep by-value (preserving
