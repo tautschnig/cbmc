@@ -153,8 +153,8 @@ keep the no-op. Small.
 ### I18 — SET ADDRESS OF / pointer forms are no-ops
 LR "SET statement" (formats 1/6, pointer data). Current: pointer/ADDRESS
 forms are no-ops (the frontend has no pointer/based-storage model). Plan:
-model `LINKAGE` based addressing only if a real program needs it; low
-priority.
+implement the pointer/based-storage model (see cobol-pointer-model.md),
+which is shared with CALL argument aliasing.
 
 ### G3 — ALTER is unsupported
 LR "ALTER statement" (an obsolete element). Current: not recognised.
@@ -227,10 +227,11 @@ needs: link multiple programs into one symbol table; bind the caller's
 (BY REFERENCE) or copies (BY CONTENT/VALUE) — IBM LR "CALL statement" /
 "Linkage"; and lower a `CALL` to an actual call of the callee's
 function. The hard part is aliasing a callee LINKAGE record onto the
-caller's storage (our records are distinct byte-array symbols); it likely
-needs the callee body re-expressed against the caller's record exprs, or a
-pointer/based-storage model (shared with I18 SET ADDRESS OF). A large,
-design-first effort; standalone analysis stays the default.
+caller's storage (our records are distinct byte-array symbols); it needs
+the pointer/based-storage model (shared with I18 SET ADDRESS OF), now
+scoped in cobol-pointer-model.md. The first CALL increment uses copy-in/
+copy-out (exact for non-overlapping arguments); the pointer model makes
+aliasing exact.
 
 ### G1 — COMP-1 / COMP-2 IEEE floating point (resolved)
 
