@@ -2284,6 +2284,20 @@ exprt python_convertert::convert_dict(const jsont &expr)
   exprt length =
     from_integer(static_cast<long long>(pairs.size()), signedbv_typet{64});
 
+  // Over-capacity dict literal: the key scan elsewhere is bounded by the
+  // constant PYTHON_MAX_DICT_SIZE, so a longer dict would silently miss
+  // entries at indices >= cap. Report python-model-bound + cut at
+  // construction (covers every downstream read AND iteration), and cap the
+  // arrays/length so the emitted struct stays well-formed on the cut path.
+  if(pairs.size() > static_cast<std::size_t>(PYTHON_MAX_DICT_SIZE))
+  {
+    emit_count_capacity_guard(
+      pending_checks, length, PYTHON_MAX_DICT_SIZE, get_location(expr));
+    key_elems.resize(PYTHON_MAX_DICT_SIZE);
+    val_elems.resize(PYTHON_MAX_DICT_SIZE);
+    length = from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64});
+  }
+
   return struct_exprt{
     {length,
      array_exprt{std::move(key_elems), keys_arr_type},

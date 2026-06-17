@@ -3393,6 +3393,37 @@ void python_convertert::emit_count_capacity_guard(
   checks.push_back(std::move(cap_assume));
 }
 
+void python_convertert::emit_set_range_guard(
+  std::vector<codet> &checks,
+  const exprt &elem,
+  const source_locationt &loc,
+  const exprt &included)
+{
+  // 0 <= elem < 64: the element must lie in the 64-bit bitmap's representable
+  // range (offset 0). Outside it, `1 << elem` overflows and silently drops the
+  // element -- an unsound omission. Report + cut instead. When `included` is
+  // given, only require the range on the path where the element is actually
+  // added (`included ==> in-range`).
+  const exprt e64 = elem.type().id() == ID_signedbv
+                      ? elem
+                      : typecast_exprt{elem, signedbv_typet{64}};
+  exprt in_range{and_exprt{
+    binary_relation_exprt{e64, ID_ge, from_integer(0, e64.type())},
+    binary_relation_exprt{e64, ID_lt, from_integer(64, e64.type())}}};
+  exprt in_bounds = included.is_nil()
+                      ? in_range
+                      : exprt{or_exprt{not_exprt{included}, in_range}};
+  source_locationt aloc = loc;
+  aloc.set_property_class("python-model-bound");
+  aloc.set_comment("set element outside modelled bitmap range (model bound)");
+  code_assertt cap_assert{in_bounds};
+  cap_assert.add_source_location() = aloc;
+  checks.push_back(std::move(cap_assert));
+  code_assumet cap_assume{in_bounds};
+  cap_assume.add_source_location() = loc;
+  checks.push_back(std::move(cap_assume));
+}
+
 void python_convertert::emit_index_capacity_guard(
   std::vector<codet> &checks,
   const exprt &idx,
@@ -4262,6 +4293,16 @@ exprt python_convertert::convert_expression(const jsont &expr)
             unsigned long long b_l = bit_v.to_ulong();
             unsigned long long bm_l = bitmap.to_ulong();
             bitmap = mp_integer{(long long)(bm_l | b_l)};
+          }
+          else
+          {
+            // Element outside the modelled bitmap range [0, 64): it would be
+            // silently dropped (an unsound omission, e.g. `100 not in {0,100}`
+            // would hold). Report python-model-bound + cut.
+            emit_set_range_guard(
+              pending_checks,
+              from_integer(v, signedbv_typet{64}),
+              get_location(expr));
           }
         }
         result = struct_exprt{

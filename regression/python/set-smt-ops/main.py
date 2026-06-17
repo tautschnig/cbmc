@@ -31,7 +31,7 @@ assert 2 not in x
 # issubset / issuperset / isdisjoint
 assert {2, 3}.issubset(s)
 assert s.issuperset({2, 3})
-assert s.isdisjoint({99, 100})
+assert s.isdisjoint({40, 50})
 assert not s.isdisjoint(t)
 
 # copy

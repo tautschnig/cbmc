@@ -55,10 +55,19 @@ std::optional<exprt> python_convertert::try_set_method(
 
   if(method_name == "add" || method_name == "discard")
   {
-    auto shamt = single_arg_bit_shift();
-    if(!shamt.has_value())
+    if(!args.is_array() || as_array(args).empty())
       return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
-    exprt bit = shl_exprt{from_integer(1, unsignedbv_typet{64}), *shamt};
+    exprt val = convert_expression(*as_array(args).begin());
+    if(val.type() != signedbv_typet{64})
+      val = safe_typecast(val, signedbv_typet{64});
+    // `add` introduces an element: guard it lies in the modelled bitmap range,
+    // else `1 << val` overflows and the element is silently dropped (unsound).
+    // `discard` of an out-of-range element is a harmless no-op (it cannot be
+    // present), so it needs no guard.
+    if(method_name == "add")
+      emit_set_range_guard(pending_checks, val, get_location(expr));
+    exprt shamt = typecast_exprt{val, unsignedbv_typet{64}};
+    exprt bit = shl_exprt{from_integer(1, unsignedbv_typet{64}), shamt};
     exprt new_bm = method_name == "add"
                      ? exprt{bitor_exprt{bm, bit}}
                      : exprt{bitand_exprt{bm, bitnot_exprt{bit}}};
