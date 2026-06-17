@@ -5,5 +5,6 @@ main.cob
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
-A hexadecimal-alphanumeric literal X'hh...' decodes to its bytes. See
-IBM LR "Hexadecimal-alphanumeric literals".
+A hex literal is raw bytes and a character literal is EBCDIC, so "AB" = X'C1C2'
+and the ASCII bytes X'4142' are not "AB". IBM LR "Hexadecimal-alphanumeric
+literals".

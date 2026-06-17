@@ -172,6 +172,7 @@ cobol_scan(std::istream &in, const std::string &file_name)
             static_cast<char>((hex_val(hex[k]) << 4) | hex_val(hex[k + 1])));
         token.kind = cobol_token_kindt::STRING;
         token.text = bytes;
+        token.is_hex = true;
         tokens.push_back(token);
         continue;
       }

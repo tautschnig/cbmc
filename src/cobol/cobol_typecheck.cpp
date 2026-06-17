@@ -99,6 +99,28 @@ static const unsigned char ascii_to_ebcdic_cp037[256] = {
   0x52, 0x53, 0x58, 0x55, 0x56, 0x57, 0x8c, 0x49, 0xcd, 0xce, 0xcb, 0xcf, 0xcc,
   0xe1, 0x70, 0xdd, 0xde, 0xdb, 0xdc, 0x8d, 0x8e, 0xdf};
 
+/// Translate a source (ASCII) character to its host byte. The front-end models
+/// the z/OS host character set, EBCDIC (code page 037), so character data is
+/// stored in EBCDIC and compared by raw byte value (IBM LR "USAGE DISPLAY";
+/// the native collating sequence). Applied wherever a *character* literal
+/// becomes data; hexadecimal-alphanumeric literals (raw bytes) and the
+/// non-character figuratives LOW-VALUE (0x00) / HIGH-VALUE (0xFF) are not
+/// translated.
+inline unsigned char host_byte(char c)
+{
+  return ascii_to_ebcdic_cp037[static_cast<unsigned char>(c)];
+}
+
+/// Translate a string of source characters to host (EBCDIC) bytes.
+inline std::string host_bytes(const std::string &s)
+{
+  std::string r;
+  r.reserve(s.size());
+  for(char c : s)
+    r.push_back(static_cast<char>(host_byte(c)));
+  return r;
+}
+
 mp_integer rescale_int(const mp_integer &v, std::size_t from, std::size_t to)
 {
   if(from == to)
@@ -329,6 +351,9 @@ struct value_spect
   std::size_t scale = 0;
   std::string str;
   bool all = false; ///< ALL <literal> repetition
+  /// True when a STRING value came from a hexadecimal-alphanumeric literal
+  /// (raw bytes); such a value is not translated to the host character set.
+  bool is_hex = false;
 };
 
 /// An operand of a relation condition: either a numeric value or an
@@ -1357,13 +1382,15 @@ std::vector<unsigned char> cobol_typecheckt::zoned_bytes(
   // is not stored. (Signed/EBCDIC zoned and packed are tracked follow-ups, so
   // the classifier only marks unsigned DISPLAY fields faithful for now.)
   const std::size_t n = item.byte_size;
-  std::vector<unsigned char> bytes(n, '0');
+  // Zoned DISPLAY digits are EBCDIC 0xF0..0xF9 (IBM LR "USAGE DISPLAY").
+  std::vector<unsigned char> bytes(n, host_byte('0'));
   mp_integer v = value < 0 ? -value : value;
   if(n > 0)
     v = v % power10(n);
   for(std::size_t i = 0; i < n; ++i)
   {
-    bytes[n - 1 - i] = static_cast<unsigned char>('0' + (v % 10).to_long());
+    bytes[n - 1 - i] =
+      static_cast<unsigned char>(host_byte('0') + (v % 10).to_long());
     v /= 10;
   }
   return bytes;
@@ -1455,7 +1482,7 @@ exprt cobol_typecheckt::make_numeric_edited(
     {
       const exprt place = from_integer(power10(total_digits - 1 - p), vt);
       const exprt digit = mod_exprt{div_exprt{aligned, place}, ten};
-      const exprt digch = plus_exprt{from_integer('0', vt), digit};
+      const exprt digch = plus_exprt{from_integer(host_byte('0'), vt), digit};
       if(ch == '9' || seen_point)
       {
         outb = digch;
@@ -1463,7 +1490,7 @@ exprt cobol_typecheckt::make_numeric_edited(
       }
       else
       {
-        const exprt sup = from_integer(ch == '*' ? '*' : ' ', vt);
+        const exprt sup = from_integer(host_byte(ch == '*' ? '*' : ' '), vt);
         const exprt is_zero = equal_exprt{digit, zero};
         outb = if_exprt{and_exprt{suppressing, is_zero}, sup, digch};
         suppressing = and_exprt{suppressing, is_zero};
@@ -1472,19 +1499,21 @@ exprt cobol_typecheckt::make_numeric_edited(
     }
     else if(ch == '.')
     {
-      outb = from_integer('.', vt);
+      outb = from_integer(host_byte('.'), vt);
       seen_point = true;
       suppressing = false_exprt{};
     }
     else if(ch == ',')
-      outb =
-        if_exprt{suppressing, from_integer(' ', vt), from_integer(',', vt)};
+      outb = if_exprt{
+        suppressing,
+        from_integer(host_byte(' '), vt),
+        from_integer(host_byte(','), vt)};
     else if(ch == 'B')
-      outb = from_integer(' ', vt);
+      outb = from_integer(host_byte(' '), vt);
     else if(ch == '0')
-      outb = from_integer('0', vt);
+      outb = from_integer(host_byte('0'), vt);
     else // '/'
-      outb = from_integer('/', vt);
+      outb = from_integer(host_byte('/'), vt);
     elems.push_back(typecast_exprt{outb, u8});
   }
   return array_exprt{
@@ -1500,8 +1529,8 @@ valuet cobol_typecheckt::decode_zoned(const reft &r) const
   exprt acc = from_integer(0, cobol_value_type());
   for(std::size_t i = 0; i < n; ++i)
   {
-    const exprt digit =
-      minus_exprt{byte_of(r, i), from_integer('0', cobol_value_type())};
+    const exprt digit = minus_exprt{
+      byte_of(r, i), from_integer(host_byte('0'), cobol_value_type())};
     const exprt place = from_integer(power10(n - 1 - i), cobol_value_type());
     acc = plus_exprt{acc, mult_exprt{digit, place}};
   }
@@ -1527,7 +1556,8 @@ exprt cobol_typecheckt::encode_zoned(
     const exprt place = from_integer(power10(n - 1 - i), cobol_value_type());
     const exprt digit =
       mod_exprt{div_exprt{mag, place}, from_integer(10, cobol_value_type())};
-    const exprt byte = plus_exprt{from_integer('0', cobol_value_type()), digit};
+    const exprt byte =
+      plus_exprt{from_integer(host_byte('0'), cobol_value_type()), digit};
     const exprt shifted = mult_exprt{
       typecast_exprt{byte, phys_type(item)},
       from_integer(power(mp_integer{256}, i), phys_type(item))};
@@ -1703,8 +1733,8 @@ exprt cobol_typecheckt::numeric_content_valid(const reft &r) const
       acc = and_exprt{
         acc,
         and_exprt{
-          binary_relation_exprt{b, ID_ge, from_integer('0', vt)},
-          binary_relation_exprt{b, ID_le, from_integer('9', vt)}}};
+          binary_relation_exprt{b, ID_ge, from_integer(host_byte('0'), vt)},
+          binary_relation_exprt{b, ID_le, from_integer(host_byte('9'), vt)}}};
     }
     return acc;
   }
@@ -2463,6 +2493,7 @@ value_spect cobol_typecheckt::read_value_spec()
   {
     spec.kind = value_spect::kindt::STRING;
     spec.str = cur().text;
+    spec.is_hex = cur().is_hex;
     advance();
     return spec;
   }
@@ -2519,9 +2550,12 @@ exprt cobol_typecheckt::make_alnum_constant(
   std::size_t n)
 {
   // Build the n-byte alphanumeric constant for a literal or figurative
-  // constant (IBM LR "Figurative constants" / "VALUE clause"): SPACE=0x20,
-  // ZERO='0', QUOTE='"', HIGH-VALUE=0xFF, LOW-VALUE=0x00 (ASCII host); a
-  // shorter literal is left-justified and space-padded on the right.
+  // constant (IBM LR "Figurative constants" / "VALUE clause"). Character data
+  // is stored in the host (EBCDIC) character set: SPACE=0x40, ZERO=0xF0,
+  // QUOTE=0x7F; HIGH-VALUE=0xFF and LOW-VALUE=0x00 are non-character bytes
+  // (highest/lowest in the collating sequence) and a hexadecimal literal is
+  // raw bytes, so none of those three are translated. A shorter literal is
+  // left-justified and space-padded on the right.
   const unsignedbv_typet byte_type{8};
   const array_typet array_type{byte_type, from_integer(n, size_type())};
 
@@ -2530,18 +2564,18 @@ exprt cobol_typecheckt::make_alnum_constant(
   switch(spec.kind)
   {
   case value_spect::kindt::STRING:
-    pattern = spec.str;
+    pattern = spec.is_hex ? spec.str : host_bytes(spec.str);
     break;
   case value_spect::kindt::SPACES:
-    pattern = " ";
+    pattern = std::string(1, static_cast<char>(host_byte(' ')));
     repeat = true;
     break;
   case value_spect::kindt::ZEROS:
-    pattern = "0";
+    pattern = std::string(1, static_cast<char>(host_byte('0')));
     repeat = true;
     break;
   case value_spect::kindt::QUOTES:
-    pattern = "\"";
+    pattern = std::string(1, static_cast<char>(host_byte('"')));
     repeat = true;
     break;
   case value_spect::kindt::HIGH_VALUES:
@@ -2553,13 +2587,13 @@ exprt cobol_typecheckt::make_alnum_constant(
     repeat = true;
     break;
   case value_spect::kindt::NUMERIC:
-    pattern = integer2string(spec.num);
+    pattern = host_bytes(integer2string(spec.num));
     break;
   case value_spect::kindt::NONE:
     break;
   }
   if(pattern.empty())
-    pattern = " ";
+    pattern = std::string(1, static_cast<char>(host_byte(' ')));
 
   array_exprt::operandst ops;
   ops.reserve(n);
@@ -2570,7 +2604,7 @@ exprt cobol_typecheckt::make_alnum_constant(
       ch = static_cast<unsigned char>(pattern[i % pattern.size()]);
     else
       ch = i < pattern.size() ? static_cast<unsigned char>(pattern[i])
-                              : static_cast<unsigned char>(' ');
+                              : host_byte(' ');
     ops.push_back(from_integer(ch, byte_type));
   }
   return array_exprt{std::move(ops), array_type};
@@ -3618,12 +3652,29 @@ exprt cobol_typecheckt::parse_relation()
     const source_locationt loc = cur().location;
     advance();
     const signedbv_typet ct{32};
-    const auto code = [&](char ch) { return from_integer(ch, ct); };
+    // Character data is EBCDIC, so the class ranges use host bytes. EBCDIC
+    // letters are non-contiguous (gaps I→J at 0xC9→0xD1 and R→S at 0xD9→0xE2,
+    // likewise lowercase), so ALPHABETIC tests three sub-ranges per case
+    // (IBM LR "Class condition"; EBCDIC collating). Digits 0xF0-0xF9 and the
+    // space 0x40 are single points/ranges.
+    const auto code = [&](char ch) { return from_integer(host_byte(ch), ct); };
     const auto in_range = [&](const exprt &b, char lo, char hi) -> exprt
     {
       return and_exprt{
         binary_relation_exprt{b, ID_ge, code(lo)},
         binary_relation_exprt{b, ID_le, code(hi)}};
+    };
+    const auto upper = [&](const exprt &b) -> exprt
+    {
+      return or_exprt{
+        or_exprt{in_range(b, 'A', 'I'), in_range(b, 'J', 'R')},
+        in_range(b, 'S', 'Z')};
+    };
+    const auto lower = [&](const exprt &b) -> exprt
+    {
+      return or_exprt{
+        or_exprt{in_range(b, 'a', 'i'), in_range(b, 'j', 'r')},
+        in_range(b, 's', 'z')};
     };
     if(
       a.is_item && (cls == "NUMERIC" || cls == "ALPHABETIC" ||
@@ -3640,13 +3691,12 @@ exprt cobol_typecheckt::parse_relation()
         if(cls == "NUMERIC")
           ok = in_range(b, '0', '9');
         else if(cls == "ALPHABETIC")
-          ok = or_exprt{
-            or_exprt{in_range(b, 'A', 'Z'), in_range(b, 'a', 'z')},
-            equal_exprt{b, code(' ')}};
+          ok =
+            or_exprt{or_exprt{upper(b), lower(b)}, equal_exprt{b, code(' ')}};
         else if(cls == "ALPHABETIC-UPPER")
-          ok = or_exprt{in_range(b, 'A', 'Z'), equal_exprt{b, code(' ')}};
+          ok = or_exprt{upper(b), equal_exprt{b, code(' ')}};
         else // ALPHABETIC-LOWER
-          ok = or_exprt{in_range(b, 'a', 'z'), equal_exprt{b, code(' ')}};
+          ok = or_exprt{lower(b), equal_exprt{b, code(' ')}};
         acc = and_exprt{acc, ok};
       }
       return neg ? static_cast<exprt>(not_exprt{acc}) : acc;
@@ -3791,7 +3841,7 @@ cobol_typecheckt::zoned_alnum_of(const exprt &value, const item_infot &item)
     const exprt place = from_integer(power10(d - 1 - i), vt);
     const exprt digit = mod_exprt{div_exprt{mag, place}, from_integer(10, vt)};
     elems.push_back(
-      typecast_exprt{plus_exprt{from_integer('0', vt), digit}, u8});
+      typecast_exprt{plus_exprt{from_integer(host_byte('0'), vt), digit}, u8});
   }
   cond_operandt op;
   op.is_item = true;
@@ -4231,20 +4281,24 @@ cond_operandt cobol_typecheckt::parse_intrinsic()
     {
       const exprt c = byte_of(r, fname == "REVERSE" ? len - 1 - i : i);
       exprt t = c;
+      // EBCDIC case folding (IBM LR "Intrinsic functions"): letters are
+      // non-contiguous, so test the three sub-ranges per case; lowercase and
+      // uppercase differ by 0x40 (e.g. 'a'=0x81, 'A'=0xC1) throughout.
+      const auto in_r = [&](char lo, char hi) -> exprt
+      {
+        return and_exprt{
+          binary_relation_exprt{c, ID_ge, from_integer(host_byte(lo), vt)},
+          binary_relation_exprt{c, ID_le, from_integer(host_byte(hi), vt)}};
+      };
+      const exprt is_lower =
+        or_exprt{or_exprt{in_r('a', 'i'), in_r('j', 'r')}, in_r('s', 'z')};
+      const exprt is_upper =
+        or_exprt{or_exprt{in_r('A', 'I'), in_r('J', 'R')}, in_r('S', 'Z')};
+      const exprt shift = from_integer(host_byte('A') - host_byte('a'), vt);
       if(fname == "UPPER-CASE")
-        t = if_exprt{
-          and_exprt{
-            binary_relation_exprt{c, ID_ge, from_integer('a', vt)},
-            binary_relation_exprt{c, ID_le, from_integer('z', vt)}},
-          minus_exprt{c, from_integer(32, vt)},
-          c};
+        t = if_exprt{is_lower, plus_exprt{c, shift}, c};
       else if(fname == "LOWER-CASE")
-        t = if_exprt{
-          and_exprt{
-            binary_relation_exprt{c, ID_ge, from_integer('A', vt)},
-            binary_relation_exprt{c, ID_le, from_integer('Z', vt)}},
-          plus_exprt{c, from_integer(32, vt)},
-          c};
+        t = if_exprt{is_upper, minus_exprt{c, shift}, c};
       elems.push_back(typecast_exprt{t, u8});
     }
     op.is_item = true;
@@ -4356,7 +4410,7 @@ exprt cobol_typecheckt::build_alnum_relation(
   if(n == 0)
     n = 1;
 
-  const exprt space = from_integer(' ', byte_type);
+  const exprt space = from_integer(host_byte(' '), byte_type);
   const auto bytes_of = [&](const cond_operandt &o)
   {
     std::vector<exprt> v;
@@ -4413,30 +4467,18 @@ exprt cobol_typecheckt::build_alnum_relation(
     return not_exprt{eq};
 
   // Lexicographic ordering: at the first differing position the operand whose
-  // character is higher in the native (EBCDIC) collating sequence is greater
-  // (IBM LR "Comparison of two alphanumeric operands"; the native collating
-  // sequence). Each byte is mapped through the ASCII→EBCDIC table so the order
-  // matches z/OS; equality (the tie condition) is collating-independent and
-  // uses the raw bytes (S4).
-  const unsignedbv_typet byte_t{8};
-  array_exprt::operandst coll;
-  coll.reserve(256);
-  for(std::size_t i = 0; i < 256; ++i)
-    coll.push_back(from_integer(ascii_to_ebcdic_cp037[i], byte_t));
-  const array_exprt coll_table{
-    std::move(coll), array_typet{byte_t, from_integer(256, size_type())}};
-  const auto weight = [&](const exprt &byte) -> exprt {
-    return index_exprt{coll_table, byte};
-  };
+  // byte is higher is greater. Character data is stored in EBCDIC, so a raw
+  // byte comparison is already the native (EBCDIC) collating sequence (IBM LR
+  // "Comparison of two alphanumeric operands"; the native collating sequence).
   exprt lt = false_exprt{};
   exprt gt = false_exprt{};
   for(std::size_t k = n; k-- > 0;)
   {
     lt = or_exprt{
-      binary_relation_exprt{weight(a[k]), ID_lt, weight(b[k])},
+      binary_relation_exprt{a[k], ID_lt, b[k]},
       and_exprt{equal_exprt{a[k], b[k]}, lt}};
     gt = or_exprt{
-      binary_relation_exprt{weight(a[k]), ID_gt, weight(b[k])},
+      binary_relation_exprt{a[k], ID_gt, b[k]},
       and_exprt{equal_exprt{a[k], b[k]}, gt}};
   }
   if(op == "<")
@@ -4624,7 +4666,7 @@ stmtt cobol_typecheckt::make_move_group(
   if(src.dyn_size.is_not_nil() || target.dyn_size.is_not_nil())
   {
     const typet vt = cobol_value_type();
-    const exprt space = from_integer(' ', u8);
+    const exprt space = from_integer(host_byte(' '), u8);
     array_exprt::operandst bytes;
     bytes.reserve(tsize);
     for(std::size_t i = 0; i < tsize; ++i)
@@ -4680,7 +4722,7 @@ stmtt cobol_typecheckt::make_move_group(
     array_exprt::operandst pad;
     pad.reserve(tsize - n);
     for(std::size_t i = n; i < tsize; ++i)
-      pad.push_back(from_integer(' ', u8));
+      pad.push_back(from_integer(host_byte(' '), u8));
     const array_typet pad_type{u8, from_integer(tsize - n, size_type())};
     const exprt pad_off =
       plus_exprt{target.offset, from_integer(n, target.offset.type())};
@@ -4958,7 +5000,7 @@ std::vector<stmtt> cobol_typecheckt::parse_move()
         for(std::size_t i = 0; i < src.length; ++i)
         {
           const exprt digit =
-            minus_exprt{byte_of(sref, i), from_integer('0', vt)};
+            minus_exprt{byte_of(sref, i), from_integer(host_byte('0'), vt)};
           acc = plus_exprt{
             acc,
             mult_exprt{digit, from_integer(power10(src.length - 1 - i), vt)}};
@@ -5140,9 +5182,11 @@ std::vector<stmtt> cobol_typecheckt::parse_string()
   {
     if(cur().kind == cobol_token_kindt::STRING)
     {
+      const bool raw = cur().is_hex;
       for(char ch : cur().text)
-        out.push_back(
-          from_integer(static_cast<unsigned char>(ch), cobol_value_type()));
+        out.push_back(from_integer(
+          raw ? static_cast<unsigned char>(ch) : host_byte(ch),
+          cobol_value_type()));
       advance();
       return true;
     }
@@ -5527,8 +5571,10 @@ std::vector<stmtt> cobol_typecheckt::parse_inspect()
   {
     if(cur().kind == cobol_token_kindt::STRING)
     {
+      const bool raw = cur().is_hex;
       for(char ch : cur().text)
-        out.push_back(from_integer(static_cast<unsigned char>(ch), ivt));
+        out.push_back(from_integer(
+          raw ? static_cast<unsigned char>(ch) : host_byte(ch), ivt));
       advance();
       return true;
     }
@@ -5537,11 +5583,11 @@ std::vector<stmtt> cobol_typecheckt::parse_inspect()
       const std::string &w = cur().text;
       int c = -1;
       if(w == "SPACE" || w == "SPACES")
-        c = ' ';
+        c = host_byte(' ');
       else if(w == "ZERO" || w == "ZEROS" || w == "ZEROES")
-        c = '0';
+        c = host_byte('0');
       else if(w == "QUOTE" || w == "QUOTES")
-        c = '"';
+        c = host_byte('"');
       else if(w == "LOW-VALUE" || w == "LOW-VALUES")
         c = 0;
       else if(w == "HIGH-VALUE" || w == "HIGH-VALUES")
@@ -5719,7 +5765,10 @@ std::vector<stmtt> cobol_typecheckt::parse_inspect()
     {
       if(cur().kind == cobol_token_kindt::STRING && cur().text.size() == 1)
       {
-        const int c = static_cast<unsigned char>(cur().text[0]);
+        // A character literal is translated to its host (EBCDIC) byte; a
+        // hexadecimal literal is a raw byte.
+        const unsigned char raw = static_cast<unsigned char>(cur().text[0]);
+        const int c = cur().is_hex ? raw : host_byte(static_cast<char>(raw));
         advance();
         return c;
       }
@@ -5728,11 +5777,11 @@ std::vector<stmtt> cobol_typecheckt::parse_inspect()
         const std::string &w = cur().text;
         int c = -1;
         if(w == "SPACE" || w == "SPACES")
-          c = ' ';
+          c = host_byte(' ');
         else if(w == "ZERO" || w == "ZEROS" || w == "ZEROES")
-          c = '0';
+          c = host_byte('0');
         else if(w == "QUOTE" || w == "QUOTES")
-          c = '"';
+          c = host_byte('"');
         else if(w == "LOW-VALUE" || w == "LOW-VALUES")
           c = 0;
         else if(w == "HIGH-VALUE" || w == "HIGH-VALUES")
@@ -5880,8 +5929,10 @@ std::vector<stmtt> cobol_typecheckt::parse_unstring()
   {
     if(cur().kind == cobol_token_kindt::STRING)
     {
+      const bool raw = cur().is_hex;
       for(char ch : cur().text)
-        out.push_back(from_integer(static_cast<unsigned char>(ch), vt));
+        out.push_back(from_integer(
+          raw ? static_cast<unsigned char>(ch) : host_byte(ch), vt));
       advance();
       return true;
     }
@@ -5890,11 +5941,11 @@ std::vector<stmtt> cobol_typecheckt::parse_unstring()
       const std::string &w = cur().text;
       int c = -1;
       if(w == "SPACE" || w == "SPACES")
-        c = ' ';
+        c = host_byte(' ');
       else if(w == "ZERO" || w == "ZEROS" || w == "ZEROES")
-        c = '0';
+        c = host_byte('0');
       else if(w == "QUOTE" || w == "QUOTES")
-        c = '"';
+        c = host_byte('"');
       else if(w == "LOW-VALUE" || w == "LOW-VALUES")
         c = 0;
       else if(w == "HIGH-VALUE" || w == "HIGH-VALUES")
@@ -6025,7 +6076,7 @@ std::vector<stmtt> cobol_typecheckt::parse_unstring()
     src.dyn_size.is_not_nil() ? src.dyn_size : from_integer(ssz, vt);
   const exprt one = from_integer(1, vt);
   const exprt zero = from_integer(0, vt);
-  const exprt space = from_integer(' ', vt);
+  const exprt space = from_integer(host_byte(' '), vt);
   // Length of a matched delimiter: 1 for the single-byte (char-set) path, the
   // (possibly multi-byte) delimiter's length for the single-delimiter path.
   const exprt match_len = from_integer(char_set ? 1 : delim.size(), vt);

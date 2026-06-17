@@ -233,16 +233,19 @@ or buggy in practice.
 
 ## 5. Charset and endianness
 
-- **Charset**: zoned digits and class tests depend on ASCII vs EBCDIC
-  zone nibbles and collating order. The plan pins ASCII host; add a
-  `--charset ebcdic` switch that selects zone `0xF`, EBCDIC sign
-  overpunch, and the EBCDIC collating sequence for alphanumeric compares.
-  Default stays ASCII so existing tests are unaffected.
-- **Endianness**: switching `COMP` to big-endian is IBM-faithful but
-  changes the bytes seen by existing `COMP` `REDEFINES` tests. Gate
-  behind the same dialect/target notion; default can stay little-endian
-  (host) until a test needs z/Arch byte order, with the deviation
-  documented.
+- **Charset (implemented, S4)**: character data is modelled in EBCDIC
+  (code page 037). A single `host_byte` translation is applied wherever a
+  *character* literal or figurative becomes data (string/figurative
+  literals, the zoned digit base 0xF0, the edited-picture insertion
+  characters, the numeric→alphanumeric digit string). Class conditions use
+  the EBCDIC ranges (digits 0xF0-0xF9; the non-contiguous letter
+  sub-ranges; space 0x40), and alphanumeric ordering is a raw byte compare,
+  which *is* the EBCDIC collating sequence. Hexadecimal-alphanumeric
+  literals are raw bytes (not translated), tracked by an `is_hex` token
+  flag; LOW-VALUE/HIGH-VALUE are 0x00/0xFF. Signed zoned overpunch is the
+  remaining sign-codec item.
+- **Endianness (implemented, S2)**: `COMP`/`BINARY`/`COMP-5` are stored
+  big-endian (z/Architecture) for byte-aliased fields; see §3.2.
 
 ---
 

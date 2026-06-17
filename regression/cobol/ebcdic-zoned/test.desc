@@ -1,0 +1,9 @@
+CORE
+main.cob
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+S4: zoned DISPLAY digits are stored in EBCDIC, so 123 viewed as bytes is
+X'F1F2F3'. IBM LR "USAGE DISPLAY".

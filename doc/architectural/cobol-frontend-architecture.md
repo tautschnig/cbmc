@@ -230,14 +230,14 @@ baseline.
 | S1 | **RESOLVED** — unsigned `PIC 9` now stores the absolute value (sign dropped on store); was modelled in a signed domain | "MOVE statement"; "PICTURE clause" (9) | CORE `unsigned-sign` | — |
 | S2 | **RESOLVED** — `COMP`/`BINARY` byte-aliased fields are now stored and read big-endian two's complement (z/Architecture), via `encode_binary`/`decode_binary` (the codec owns byte order; all store paths consistent) | "USAGE clause" (BINARY); z/Arch PoO | CORE `comp-endian-binary` | numeric-encoding §3.2, §5 |
 | S3 | **RESOLVED** — a 01-level `REDEFINES` now shares the redefined record's storage (aliases it) | "REDEFINES clause" | CORE `redefines-01-alias` | — |
-| S4 | **PARTIAL** — alphanumeric *ordering* now uses the native EBCDIC collating sequence (ASCII→CP037 weights at comparison time; CORE `ebcdic-collating`), closing the comparison-verdict soundness hole. The zoned/sign byte *codec* is still ASCII (a byte-aliased zoned field shows ASCII digit bytes 0x3n, not EBCDIC 0xFn) — a faithful-representation gap, not a verdict-flipping one | "USAGE DISPLAY"; collating sequence | — | numeric-encoding §5 (charset) |
+| S4 | **RESOLVED** — character data is modelled in EBCDIC (code page 037): `host_byte` translates every character literal/figurative at materialisation, the zoned/edited codecs and class conditions use EBCDIC bytes, and ordering is a raw byte compare (= EBCDIC collating). Hex literals stay raw; LOW/HIGH-VALUE = 0x00/0xFF (CORE `ebcdic-collating`, `ebcdic-zoned`, `hex-literal`) | "USAGE DISPLAY"; collating sequence | — | numeric-encoding §5 (charset) |
 
 ### Gaps
 
 | id | gap | LR clause | KB | plan |
 |---|---|---|---|---|
 | G1 | **RESOLVED** — `COMP-1`/`COMP-2` are numeric IEEE single/double items; `valuet` carries an `is_float` flag (double domain), with read/store, fixed↔float MOVE conversion, float arithmetic (verbs + COMPUTE) and comparison (CORE `comp2-float`, `comp2-arith`, `comp1-compare`) | "USAGE clause" (COMP-1/2) | — | precision-and-gaps §6 |
-| G2 | EBCDIC charset: collating sequence done (see S4); zoned/sign byte codec still ASCII | "USAGE DISPLAY" | — | numeric-encoding §5 |
+| G2 | **RESOLVED** — EBCDIC (CP037) character model (see S4); signed zoned overpunch is the remaining sign-codec item | "USAGE DISPLAY" | — | numeric-encoding §5 |
 | G3 | `ALTER` unsupported | "ALTER statement" (obsolete) | — | precision-and-gaps §4 |
 
 ### Imprecision (sound; nondeterministic / over-approximate)

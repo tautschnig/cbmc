@@ -52,6 +52,11 @@ struct cobol_tokent
   /// True if this token was spliced in by a COPY REPLACING substitution. Used
   /// transiently to re-join word fragments only across replacement seams.
   bool from_replacement = false;
+  /// True for a STRING token from a hexadecimal-alphanumeric literal (X'…'):
+  /// its text is raw bytes, not source characters, so it is NOT translated to
+  /// the host (EBCDIC) character set (IBM LR "Hexadecimal-alphanumeric
+  /// literals").
+  bool is_hex = false;
 };
 
 /// Tokenise a COBOL source stream.
