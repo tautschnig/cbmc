@@ -114,8 +114,13 @@ struct item_infot
   std::size_t scale = 0;
   bool is_signed = false;
   std::size_t char_count = 0;
-  bool is_table = false;          ///< has a fixed OCCURS clause
-  std::size_t occurs = 0;         ///< number of elements when is_table
+  bool is_table = false;  ///< has a fixed OCCURS clause
+  std::size_t occurs = 0; ///< number of elements when is_table
+  /// For OCCURS … DEPENDING ON (IBM LR "OCCURS clause" format 2): the name of
+  /// the depending item that holds the table's current length; empty for a
+  /// fixed table. `occurs` is the maximum (used for storage layout); the
+  /// current length is the run-time value of this item.
+  std::string odo_depending;
   usaget usage = usaget::DISPLAY; ///< physical encoding (USAGE clause)
   signt sign = signt::UNSIGNED;   ///< sign representation (SIGN clause)
   /// For a numeric-edited item, the expanded PICTURE edit mask (one symbol per
@@ -1070,6 +1075,7 @@ protected:
     bool sign_separate,
     bool is_table,
     std::size_t occurs,
+    const std::string &odo_depending,
     const std::string &redefines_target,
     bool has_value,
     const value_spect &value_spec,
@@ -2632,6 +2638,7 @@ void cobol_typecheckt::parse_data_item()
   bool has_value = false;
   bool is_table = false;
   std::size_t occurs = 0;
+  std::string odo_depending;
   std::string usage = "DISPLAY";
   bool sign_leading = false;  ///< SIGN IS LEADING (default TRAILING)
   bool sign_separate = false; ///< SIGN ... SEPARATE [CHARACTER]
@@ -2675,7 +2682,10 @@ void cobol_typecheckt::parse_data_item()
       {
         eat_word("ON");
         if(cur().kind == cobol_token_kindt::WORD)
-          advance(); // the DEPENDING ON data-name
+        {
+          odo_depending = cur().text; // the DEPENDING ON data-name
+          advance();
+        }
       }
       is_table = true;
     }
@@ -2766,6 +2776,7 @@ void cobol_typecheckt::parse_data_item()
     sign_separate,
     is_table,
     occurs,
+    odo_depending,
     redefines_target,
     has_value,
     value_spec,
@@ -2806,6 +2817,7 @@ void cobol_typecheckt::place_field(
   bool sign_separate,
   bool is_table,
   std::size_t occurs,
+  const std::string &odo_depending,
   const std::string &redefines_target,
   bool has_value,
   const value_spect &value_spec,
@@ -2846,6 +2858,7 @@ void cobol_typecheckt::place_field(
   info.offset = base_offset;
   info.is_table = is_table;
   info.occurs = occurs;
+  info.odo_depending = odo_depending;
   info.occurs_dims = occurs_dims;
 
   // A PICTURE-less COMP-1 / COMP-2 is a floating-point numeric item, not a
@@ -3110,18 +3123,36 @@ reft cobol_typecheckt::parse_ref()
       // Subscript strides, outermost first: the enclosing OCCURS groups then
       // this item's own OCCURS dimension (IBM LR "Subscripting": one subscript
       // per OCCURS, in order of successively less inclusive dimensions).
+      // The per-dimension upper bound is the table's occurrence count: the
+      // static maximum for a fixed table, or the run-time value of the
+      // DEPENDING ON item for OCCURS DEPENDING ON (IBM LR "OCCURS clause"
+      // format 2: a subscript must not exceed the current number of
+      // occurrences) (I7).
+      const auto dim_bound = [&](const item_infot &tbl) -> exprt
+      {
+        if(!tbl.odo_depending.empty())
+        {
+          auto it = items.find(tbl.odo_depending);
+          if(it != items.end() && it->second.is_numeric)
+          {
+            const valuet dv = read_field(ref_of(it->second));
+            return rescale(dv.expr, dv.scale, 0);
+          }
+        }
+        return from_integer(tbl.occurs, cobol_value_type());
+      };
       std::vector<std::size_t> strides;
-      std::vector<std::size_t> counts; // occurrences per dimension
+      std::vector<exprt> counts; // upper bound per dimension (value domain)
       for(std::size_t dim : item.occurs_dims)
         if(dim < all_items.size())
         {
           strides.push_back(all_items[dim].info.byte_size);
-          counts.push_back(all_items[dim].info.occurs);
+          counts.push_back(dim_bound(all_items[dim].info));
         }
       if(item.is_table)
       {
         strides.push_back(item.byte_size);
-        counts.push_back(item.occurs);
+        counts.push_back(dim_bound(item));
       }
       if(strides.empty())
         error("subscript on a non-table item");
@@ -3143,17 +3174,16 @@ reft cobol_typecheckt::parse_ref()
       for(std::size_t k = 0; k < subs.size(); ++k)
       {
         // Subscript-range check (IBM LR "Subscripting" / SSRANGE): each
-        // subscript must be in 1..occurs for its dimension.
+        // subscript must be in 1..bound for its dimension (bound is the
+        // current occurrence count: static max, or the DEPENDING value).
         const exprt sub0 = rescale(subs[k].expr, subs[k].scale, 0);
-        if(counts[k] > 0)
-          add_check(
-            and_exprt{
-              binary_relation_exprt{
-                sub0, ID_ge, from_integer(1, cobol_value_type())},
-              binary_relation_exprt{
-                sub0, ID_le, from_integer(counts[k], cobol_value_type())}},
-            "cobol:subscript-range",
-            ref_loc);
+        add_check(
+          and_exprt{
+            binary_relation_exprt{
+              sub0, ID_ge, from_integer(1, cobol_value_type())},
+            binary_relation_exprt{sub0, ID_le, counts[k]}},
+          "cobol:subscript-range",
+          ref_loc);
         const exprt idx0 = minus_exprt{
           typecast_exprt{sub0, size_type()}, from_integer(1, size_type())};
         offset = plus_exprt{

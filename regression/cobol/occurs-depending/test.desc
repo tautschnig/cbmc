@@ -1,9 +1,10 @@
 CORE
 main.cob
 
-^EXIT=0$
-^SIGNAL=0$
-^VERIFICATION SUCCESSFUL$
+^EXIT=10$
+^\[cobol:subscript-range\.\d+\].*: FAILURE$
+^VERIFICATION FAILED$
 --
-OCCURS ... TO max ... DEPENDING ON is accepted and modelled as a fixed
-table of its maximum size. See IBM LR "OCCURS clause".
+I7: a subscript into an OCCURS DEPENDING ON table is bounded by the run-time
+DEPENDING value, so 4 is out of range when the current length is 3 even though
+4 <= the maximum of 5. IBM LR "OCCURS clause" format 2.
