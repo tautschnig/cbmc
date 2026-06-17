@@ -1133,26 +1133,42 @@ value-semantics operations that assumed inline structs: the byref sweep showed
 `list_extend13/14/16`, `list_depth_test`, `github_3238` — **plus a new crash**,
 net PASS 2930→2925.
 
-**Step 1 (structural deref-equality) was prototyped and is EMPIRICALLY
-UNTENABLE (2026-06-17).** A recursive `python_value_structural_eq` (tag
-dispatch; deref LIST elements and compare element-wise to a bounded depth;
-sound nondet beyond) was wired into the list-equality path. It is *correct*
-(`[[1],2]==[[1],2]` and distinct-but-equal `x=[a];y=[b]` both pass) but
-**times out at 60 s on a 3-element list** (`[1,'a',3.0]==[1,'a',3.0]`). Root
-cause is intrinsic, not a coding slip: because the element tag is only known at
-runtime, every element comparison must emit ALL tag branches unconditionally —
-in particular a string-solver `str_eq` and a LIST-pointer dereference — at
-every element and every recursion level, i.e. O(width^depth) × (string-solver
-cost). By-value nested lists get deep structural `==` for free from a single
-`equal_exprt` on the inline structs; by-reference cannot. The same explosion
-would recur for `extend`/depth/`repr`/`in`/hash. **Conclusion: the
-by-reference-at-construction substrate is the WRONG architecture for this
-representation** — it trades a relatively rare aliasing false-proof for a
-prohibitive tax on the common structural operations. (A whole-program heap
-model would solve it uniformly but was already rejected for perf in
-[§5](#dict-byref).)
+**Step 1 (structural equality) — SOLVED via static tag dispatch, LANDED
+2026-06-17 (`be4131cde6`).** A first prototype of `python_value_structural_eq`
+that emitted ALL tag branches per element (string-solver `str_eq` + LIST-deref)
+at every recursion level was O(width^depth) × string-solver cost and **timed
+out at 60 s on a 3-element list** — which initially looked intrinsic. The fix
+is **static tag dispatch**: when an element's tag is a compile-time constant
+(the dominant literal / known-structure case) build ONLY that branch, with no
+eager string-solver/deref emission for the dead branches. That collapses the
+same case to **0.05 s**, and nested literals (`[[1],2]==[[1],2]`) are precise
+at <0.2 s. Symbolic-tag elements use a sound bounded fallback (scalars exact;
+STR/LIST by **identity-or-nondet** — same pointer ⟹ equal, else nondet;
+DICT/SET/deeper ⟹ nondet), which is strictly MORE sound than the old field-wise
+`equal_exprt` (that treated distinct pointers as not-equal, unsound for `!=`).
+Sweep-neutral (PASS 2933, 0 regressions); fixes the latent heterogeneous
+nested-equality precision bug as a bonus. **So the equality blocker is removed**
+— the earlier "by-reference is intrinsically untenable" conclusion was wrong; it
+was the naive all-branches encoding, not by-reference per se.
 
-**Proportionate sound alternative (recommended).** Keep by-value (preserving
+**Remaining byref blockers (the other ~5 of the 9 regressions).** Equality is no
+longer one of them. Still to handle through the wrapped-element representation
+before re-landing the `convert_list` byref change net-positive: `list_extend`
+(13/14/16), `list_depth_test`/`repr`, `github_3238`, and the **crash** the byref
+sweep surfaced. Each should get the same "static-dispatch where the tag is
+known, sound bounded fallback otherwise" treatment as equality. Then re-apply
+the one-line `convert_list` wrap and re-sweep. The dict/set-element subscript
+read (so dict/set elements can also be wrapped) remains the last piece.
+
+**(Earlier note, now superseded for equality.)** By-value nested lists get deep
+structural `==` for free from a single `equal_exprt`; the static-dispatch helper
+matches that cost for the literal case and degrades gracefully (sound nondet)
+for the symbolic case. (A whole-program heap model — [§5](#dict-byref) — would
+*not* avoid this cost; it would universalize per-element dynamic-tag dispatch
+and regress the cheap flat-scalar path, so it remains off the table.)
+
+**Proportionate sound alternative (still valid if byref is not completed).**
+Keep by-value (preserving
 cheap structural ops) and close the false proofs with a targeted SOUND
 mechanism, not a representation change. Options, cheapest-precision-cost first:
 (a) **taint + mutation guard** — mark a list symbol when it is assigned the
