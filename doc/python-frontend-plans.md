@@ -1337,10 +1337,19 @@ remainder, so common code is unaffected. **Phases:**
 
 1. **Instance `__dict__` for dynamic attributes** — a write to an attribute not
    in the struct stores into `__dict__`; a read of one reads from `__dict__`
-   then `__getattr__`. Fixes dynamic attribute assignment.
+   then `__getattr__`. Fixes dynamic attribute assignment. **PARTIAL via static
+   discovery (2026-06-17, `9f52de49ee`):** instead of a runtime `__dict__`, a
+   whole-program pre-pass discovers `<x>.attr = ...` for `x` a typed parameter
+   (pre-existing) OR a local bound to an instance (`c = C()` / `c: C`, new) and
+   declares `attr` as a struct field up front. Covers the common literal-name
+   case with no per-instance storage cost; the **runtime `__dict__` is still
+   needed** for truly-dynamic names (`setattr(o, computed, v)`), instances
+   returned from functions / aliased through containers, and method shadowing
+   (next).
 2. **Shadowing** — route reads through step (2) before the class lookup, so an
    instance `__dict__` entry shadows a class non-data attribute (method). Fixes
-   `method-shadow-knownbug`.
+   `method-shadow-knownbug`. (The static-discovery phase deliberately *skips*
+   method-named attrs, so it does not regress dispatch.)
 3. **Custom data descriptors** — `__set__`/stateful `__get__` via class-object
    descriptor instances whose storage is the instance `__dict__`. Largest step
    (needs class objects carrying descriptor instances).
