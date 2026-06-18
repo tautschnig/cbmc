@@ -175,6 +175,23 @@ unknown/empty registry to sound nondet.
 
 ## 7. Phased plan (each phase is a commit, validation-gated)
 
+**Progress (landed):** Phase 1 (`d668f71438`), Phases 2+3
+(`3b0077be2e`). The CLOSURE `python_value` variant, the registry,
+`box_closure`/`dispatch_closure_value`, parameter-boundary boxing, and
+the runtime dispatch are in. Capture-through-param works for read-only
+and n-ary closures with **multi-call soundness** (`apply(make(7))` vs
+`apply(make(8))` give 7 and 8; the unsound-if-shared `b==7` FAILS).
+KEY SOUNDNESS LESSON: param captures are bound from the factory's call
+**arguments**, because reading the param symbol after repeated calls to
+the same factory is unreliable in symex (it returned the first call's
+value → a false proof, now avoided). ORDERING LIMIT (sound nondet): the
+HOF dispatch enumerates closures registered before its body is
+converted, so a factory defined *after* the HOF degrades to nondet
+until the function-pointer convention. REMAINING: Phase 4
+(container/attribute boxing — append-built lists, instance attributes;
+currently sound nondet), Phase 5 (compose / closure-capturing-closure;
+currently sound nondet), Phase 6 (optional unification).
+
 **Validation gate (every phase):** `regression/python` green; native
 scan 0 crashes; ESBMC sweep 0 regressions vs PASS 2945; **plus** the
 phase's soundness tests below. Revert the phase on any regression.
