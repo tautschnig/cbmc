@@ -586,6 +586,13 @@ private:
   /// `function_has_kwargs` means the function accepts **kwargs.
   std::set<irep_idt> function_signature_checkable;
   std::map<irep_idt, std::size_t> function_max_positional;
+  /// Count of REQUIRED positional-or-keyword params (those without a
+  /// default), including self. A call binding fewer of them (by
+  /// position or keyword) raises TypeError "missing required positional
+  /// argument"; a param bound both by position and by keyword raises
+  /// "multiple values for argument". Populated alongside
+  /// function_max_positional.
+  std::map<irep_idt, std::size_t> function_required_positional;
   std::set<irep_idt> function_has_kwargs;
   // Default parameter values evaluated at definition time
   // Maps (function_name, param_index) → default value expression
