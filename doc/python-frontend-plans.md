@@ -741,6 +741,15 @@ snapshotted (avoids a symex abort; degrades to sound nondet).
   is sound and required. (`fns[k]()` with symbolic `k` over a *known*
   list IS decidable and handled.)
 
+**The whole-group fix** for the decidable-but-unhandled cases is a
+*fat-closure* representation (the closure value carries its captures
+per-instance, so they travel through any channel). Two per-site attempts
+at capture-through-param produced false proofs (shared-symbol read; then
+cached-clone staleness), establishing that the captures must travel with
+the value. The full design and a phased, validation-gated implementation
+plan are in
+[doc/python-frontend-fat-closure-plan.md](python-frontend-fat-closure-plan.md).
+
 ---
 
 ## 3. Strings: native SMT-LIB String backend  {#strings}
