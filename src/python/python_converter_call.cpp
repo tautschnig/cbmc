@@ -434,6 +434,253 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
   }
 
+  // Higher-order through containers (whole-group, PLR §6.13 / §4.2.2):
+  // call a callable obtained by subscripting a statically-known
+  // container — an inline list, a named list (list_literals), or a
+  // named dict (dict_literals) whose elements are callables (functions,
+  // lambdas, or comprehension closures). This covers fns[i](), d[k](),
+  // and the late-binding comprehension `[lambda: i for i in range(n)]`.
+  //
+  // Each candidate is dispatched with its closure captures appended
+  // (bound from closure_captures), so an escaping comprehension closure
+  // observes the correct shared/final free-variable value. A constant
+  // selector folds to a single candidate at solve time; a symbolic
+  // selector becomes a guarded dispatch over the finite, statically
+  // known element set (still decidable). When the container's elements
+  // are not statically known the block does nothing and the callee
+  // falls through to the sound nondet path.
+  if(is_node_type(func, "Subscript"))
+  {
+    const jsont &cnode = json_member(func, "value");
+    const jsont &slice = json_member(func, "slice");
+    std::vector<std::pair<exprt, irep_idt>> cands;
+    bool is_dict = false;
+    bool ok = true;
+
+    auto cid_from_expr = [&](const exprt &e) -> irep_idt
+    {
+      if(e.id() == ID_symbol && e.type().id() == ID_code)
+        return to_symbol_expr(e).get_identifier();
+      return irep_idt{};
+    };
+    auto cid_from_ast = [&](const jsont &v) -> irep_idt
+    {
+      if(is_node_type(v, "Lambda"))
+      {
+        exprt l = convert_lambda(v);
+        if(l.id() == ID_symbol && l.type().id() == ID_code)
+          return to_symbol_expr(l).get_identifier();
+      }
+      else if(is_node_type(v, "Name"))
+      {
+        std::string nm = json_string(json_member(v, "id"));
+        auto ai = function_aliases.find(qualify_name(nm));
+        if(ai != function_aliases.end())
+          return ai->second;
+        const symbolt *bs = symbol_table.lookup(irep_idt{"python::" + nm});
+        if(bs != nullptr && bs->type.id() == ID_code)
+          return bs->name;
+      }
+      return irep_idt{};
+    };
+
+    if(is_node_type(cnode, "List"))
+    {
+      const jsont &elts = json_member(cnode, "elts");
+      if(elts.is_array() && !as_array(elts).empty())
+      {
+        std::size_t k = 0;
+        for(const auto &el : as_array(elts))
+        {
+          irep_idt cid = cid_from_ast(el);
+          if(cid.empty())
+          {
+            ok = false;
+            break;
+          }
+          cands.push_back({from_integer(k++, python_int_type()), cid});
+        }
+      }
+      else
+        ok = false;
+    }
+    else if(is_node_type(cnode, "Name"))
+    {
+      irep_idt sid{qualify_name(json_string(json_member(cnode, "id")))};
+      auto lit = list_literals.find(sid);
+      auto dit = dict_literals.find(sid);
+      if(
+        lit != list_literals.end() && lit->second.id() == ID_struct &&
+        lit->second.operands().size() >= 2)
+      {
+        const exprt &len_e = lit->second.operands()[0];
+        const exprt &data = lit->second.operands()[1];
+        mp_integer len_v;
+        if(
+          len_e.is_constant() && data.id() == ID_array &&
+          !to_integer(to_constant_expr(len_e), len_v))
+        {
+          auto n = static_cast<std::size_t>(len_v.to_long());
+          for(std::size_t k = 0; ok && k < n && k < data.operands().size(); ++k)
+          {
+            irep_idt cid = cid_from_expr(data.operands()[k]);
+            if(cid.empty())
+              ok = false;
+            else
+              cands.push_back({from_integer(k, python_int_type()), cid});
+          }
+        }
+        else
+          ok = false;
+      }
+      else if(
+        dit != dict_literals.end() && dit->second.id() == ID_struct &&
+        dit->second.operands().size() >= 3)
+      {
+        is_dict = true;
+        const exprt &len_e = dit->second.operands()[0];
+        const exprt &keys = dit->second.operands()[1];
+        const exprt &vals = dit->second.operands()[2];
+        mp_integer len_v;
+        if(
+          len_e.is_constant() && keys.id() == ID_array &&
+          vals.id() == ID_array && !to_integer(to_constant_expr(len_e), len_v))
+        {
+          auto n = static_cast<std::size_t>(len_v.to_long());
+          for(std::size_t k = 0; ok && k < n && k < keys.operands().size() &&
+                                 k < vals.operands().size();
+              ++k)
+          {
+            irep_idt cid = cid_from_expr(vals.operands()[k]);
+            if(cid.empty())
+              ok = false;
+            else
+              cands.push_back({keys.operands()[k], cid});
+          }
+        }
+        else
+          ok = false;
+      }
+      else
+        ok = false;
+    }
+    else
+      ok = false;
+
+    if(ok && !cands.empty())
+    {
+      exprt::operandst call_args;
+      bool args_ok = true;
+      if(args.is_array())
+        for(const auto &a : as_array(args))
+        {
+          exprt ae = convert_expression(a);
+          if(ae.is_nil())
+          {
+            args_ok = false;
+            break;
+          }
+          call_args.push_back(ae);
+        }
+      exprt sel = args_ok ? convert_expression(slice) : nil_exprt{};
+      // All selectors must share the subscript's type to compare soundly.
+      if(args_ok && sel.is_not_nil())
+        for(const auto &c : cands)
+          if(c.first.type() != sel.type())
+          {
+            args_ok = false;
+            break;
+          }
+      if(args_ok && sel.is_not_nil())
+      {
+        // Build a call to `cid` with its closure captures appended.
+        // Arguments are coerced to the callee's parameter types (an
+        // unannotated parameter is a python_value, so a raw int must be
+        // wrapped) — mirroring the normal call path, otherwise the
+        // callee's dynamic-type checks fire spuriously.
+        auto build_call = [&](const irep_idt &cid) -> exprt
+        {
+          const symbolt &cs = symbol_table.lookup_ref(cid);
+          const auto &cparams = to_code_type(cs.type).parameters();
+          exprt::operandst a2;
+          for(std::size_t i = 0; i < call_args.size(); ++i)
+          {
+            exprt av = call_args[i];
+            if(i < cparams.size())
+            {
+              const typet &pt = cparams[i].type();
+              if(is_python_value_type(pt) && !is_python_value_type(av.type()))
+                av = wrap_value(av);
+              else if(av.type() != pt)
+                av = safe_typecast(av, pt);
+            }
+            a2.push_back(av);
+          }
+          auto capi = closure_captures.find(id2string(cid));
+          if(capi != closure_captures.end())
+            for(const auto &[outer_id, name, type] : capi->second)
+            {
+              const symbolt *os = symbol_table.lookup(irep_idt{outer_id});
+              if(os != nullptr)
+                a2.push_back(os->symbol_expr());
+              else
+                a2.push_back(
+                  side_effect_expr_nondett{type, get_location(expr)});
+            }
+          return side_effect_expr_function_callt{
+            cs.symbol_expr(),
+            a2,
+            to_code_type(cs.type).return_type(),
+            get_location(expr)};
+        };
+
+        typet ret_t =
+          to_code_type(symbol_table.lookup_ref(cands[0].second).type)
+            .return_type();
+        if(ret_t.id() == ID_empty)
+          ret_t = python_value_type();
+        static unsigned cdisp_ctr = 0;
+        std::string rn = "__cont_dispatch_" + std::to_string(cdisp_ctr++);
+        irep_idt rid{qualify_name(rn)};
+        if(symbol_table.lookup(rid) == nullptr)
+        {
+          symbolt rs{rid, ret_t, "python"};
+          rs.base_name = rn;
+          rs.is_lvalue = true;
+          rs.is_state_var = true;
+          rs.is_static_lifetime = current_function.empty();
+          symbol_table.add(rs);
+        }
+        symbol_exprt result = symbol_table.lookup_ref(rid).symbol_expr();
+
+        std::vector<codet> disp;
+        disp.push_back(code_frontend_assignt{
+          result, side_effect_expr_nondett{ret_t, get_location(expr)}});
+        exprt any_match = false_exprt{};
+        for(const auto &[selv, cid] : cands)
+        {
+          equal_exprt eq{sel, selv};
+          exprt cv = build_call(cid);
+          if(cv.type() != ret_t)
+            cv = typecast_exprt{std::move(cv), ret_t};
+          code_blockt body;
+          body.add(code_frontend_assignt{result, std::move(cv)});
+          disp.push_back(code_ifthenelset{eq, std::move(body)});
+          any_match = (any_match.id() == ID_false)
+                        ? static_cast<exprt>(eq)
+                        : static_cast<exprt>(or_exprt{any_match, eq});
+        }
+        for(auto &c : disp)
+          pending_checks.push_back(std::move(c));
+        // PLR §6.10: an index/key matching no element raises
+        // IndexError (list) / KeyError (dict).
+        emit_conditional_exception(
+          not_exprt{any_match}, is_dict ? "KeyError" : "IndexError");
+        return std::move(result);
+      }
+    }
+  }
+
   std::string func_name;
   if(is_node_type(func, "Name"))
   {
