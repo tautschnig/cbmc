@@ -754,6 +754,14 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     irep_idt fkey{"python::" + qualified_func_name};
     function_signature_checkable.insert(fkey);
     function_max_positional[fkey] = parameters.size();
+    // Required positional-or-keyword params = all of them minus the
+    // trailing ones that have a default value. `defaults` lists the
+    // default expressions for the last N positional params.
+    const jsont &sig_defaults = json_member(args_node, "defaults");
+    std::size_t n_def =
+      sig_defaults.is_array() ? as_array(sig_defaults).size() : 0;
+    function_required_positional[fkey] =
+      parameters.size() > n_def ? parameters.size() - n_def : 0;
   }
 
   // PLR §8.7: keyword-only arguments are appended later (after *args),
@@ -3161,6 +3169,15 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         {
           function_signature_checkable.insert(method_key);
           function_max_positional[method_key] = parameters.size();
+          // Required positional-or-keyword params (incl. self) = all
+          // minus the trailing defaulted ones (mirrors the
+          // free-function path) — enables the missing-required /
+          // multiple-values checks for method calls.
+          const jsont &m_defaults = json_member(args_node, "defaults");
+          std::size_t m_ndef =
+            m_defaults.is_array() ? as_array(m_defaults).size() : 0;
+          function_required_positional[method_key] =
+            parameters.size() > m_ndef ? parameters.size() - m_ndef : 0;
         }
 
         // *args for class methods

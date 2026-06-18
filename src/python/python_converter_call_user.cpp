@@ -888,30 +888,20 @@ exprt python_convertert::convert_user_call(
     }
   }
 
-  // PLR §8.7: too many positional arguments raises TypeError, unless
-  // the function accepts *args. Only for an exact (undecorated)
-  // signature and a call without *-unpacking (which we cannot count
-  // statically). `function_max_positional` counts self for methods,
-  // matching how the receiver is supplied, so this never false-flags.
-  if(
-    function_signature_checkable.count(sym->name) &&
-    !function_vararg_index.count(sym->name) && args.is_array())
+  // PLR §8.7: full call-signature validation (too many positional,
+  // unknown keyword, missing required positional, multiple values).
+  // Routes through the SAME validate_call_signature used for
+  // constructors and methods, so all call forms validate uniformly
+  // (previously free functions had only a partial inline
+  // too-many-positional check). A bound-method value reaches here too
+  // (`m = obj.meth; m()`); its receiver supplies `self`, so treat a
+  // leading `self` parameter as implicitly provided to avoid a spurious
+  // "missing self".
   {
-    bool has_starred = false;
-    std::size_t n_pos = 0;
-    for(const auto &a : as_array(args))
-    {
-      if(is_node_type(a, "Starred"))
-      {
-        has_starred = true;
-        break;
-      }
-      ++n_pos;
-    }
-    auto mp = function_max_positional.find(sym->name);
-    if(
-      !has_starred && mp != function_max_positional.end() && n_pos > mp->second)
-      emit_conditional_exception(true_exprt{}, "TypeError");
+    std::size_t implicit_self =
+      (!params.empty() && id2string(params[0].get_base_name()) == "self") ? 1
+                                                                          : 0;
+    validate_call_signature(sym->name, expr, args, implicit_self);
   }
 
   // PLR §8.7: pack *args BEFORE keyword handling. The keyword loop

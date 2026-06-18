@@ -139,6 +139,73 @@ void python_convertert::validate_call_signature(
         }
       }
   }
+
+  // PLR §8.7: missing required positional argument, and "multiple
+  // values for argument" (a param bound both by position and by
+  // keyword). Bail on *args-spread / **kwargs-spread (cannot count
+  // statically) and on a vararg callee.
+  if(!function_vararg_index.count(func_key))
+  {
+    auto rp = function_required_positional.find(func_key);
+    const symbolt *fs = symbol_table.lookup(func_key);
+    if(
+      rp != function_required_positional.end() && fs != nullptr &&
+      fs->type.id() == ID_code)
+    {
+      const auto &params = to_code_type(fs->type).parameters();
+      const std::size_t max_pos = function_max_positional[func_key];
+      std::size_t n_pos = implicit_self;
+      bool starred = false;
+      if(args.is_array())
+        for(const auto &a : as_array(args))
+        {
+          if(is_node_type(a, "Starred"))
+          {
+            starred = true;
+            break;
+          }
+          ++n_pos;
+        }
+      std::set<std::string> kw_names;
+      bool kw_spread = false;
+      const jsont &kws = json_member(expr, "keywords");
+      if(kws.is_array())
+        for(const auto &kw : as_array(kws))
+        {
+          const jsont &an = json_member(kw, "arg");
+          if(an.is_null())
+          {
+            kw_spread = true;
+            break;
+          }
+          kw_names.insert(json_string(an));
+        }
+      if(!starred && !kw_spread)
+      {
+        auto pname = [&](std::size_t i) -> std::string
+        {
+          return i < params.size() ? id2string(params[i].get_base_name())
+                                   : std::string{};
+        };
+        // Multiple values: a param bound by position is also named by
+        // a keyword.
+        for(std::size_t i = 0; i < n_pos && i < max_pos; ++i)
+          if(kw_names.count(pname(i)))
+          {
+            emit_conditional_exception(true_exprt{}, "TypeError");
+            return;
+          }
+        // Missing required: a required positional-or-keyword param is
+        // bound neither by position nor by keyword.
+        for(std::size_t i = 0; i < rp->second && i < max_pos; ++i)
+          if(i >= n_pos && kw_names.count(pname(i)) == 0)
+          {
+            emit_conditional_exception(true_exprt{}, "TypeError");
+            return;
+          }
+      }
+    }
+  }
 }
 
 // PLR §6.13: Conditional expressions
