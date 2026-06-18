@@ -4255,6 +4255,38 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
         mutating_methods.count(json_string(json_member(cf, "attr"))) &&
         is_aliased_list_element(json_member(cf, "value")))
         emit_aliased_mutation_guard(get_location(stmt));
+
+      // Nested-aliasing soundness (PLR §9): `a.append(a[i])` /
+      // `a.insert(_, g[i])` inserts a MUTABLE INNER element (a subscript
+      // of a list, or a name already tracked as a shared inner) into
+      // `a`, so `a` now holds an aliased inner object — mutating it later
+      // through any position is the same unmodelled aliasing that
+      // repetition/concat taint. Taint `a` so the element-mutation guard
+      // fires (sound over-approximation; the appended subscript case is
+      // harmless for scalars since no `a[j][k]` mutation follows).
+      {
+        const std::string m = json_string(json_member(cf, "attr"));
+        const jsont &recv = json_member(cf, "value");
+        if((m == "append" || m == "insert") && is_node_type(recv, "Name"))
+        {
+          const jsont &cargs = json_member(value, "args");
+          bool shares_inner = false;
+          if(cargs.is_array())
+            for(const auto &a : as_array(cargs))
+            {
+              if(is_node_type(a, "Subscript"))
+                shares_inner = true;
+              else if(
+                is_node_type(a, "Name") &&
+                shared_inner_mutables.count(irep_idt{
+                  qualify_name(json_string(json_member(a, "id")))}) > 0)
+                shares_inner = true;
+            }
+          if(shares_inner)
+            aliased_mutable_lists.insert(
+              irep_idt{qualify_name(json_string(json_member(recv, "id")))});
+        }
+      }
     }
   }
 
