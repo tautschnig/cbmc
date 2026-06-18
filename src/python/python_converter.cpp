@@ -3395,14 +3395,22 @@ void python_convertert::emit_count_capacity_guard(
 
 bool python_convertert::is_aliased_list_element(const jsont &node)
 {
-  // `<base>[idx]` where base is a Name in aliased_mutable_lists.
-  if(!is_node_type(node, "Subscript"))
-    return false;
-  const jsont &base = json_member(node, "value");
-  if(!is_node_type(base, "Name"))
-    return false;
-  return aliased_mutable_lists.count(
-           irep_idt{qualify_name(json_string(json_member(base, "id")))}) > 0;
+  // `<base>[idx]` where base is a Name in aliased_mutable_lists (mutating an
+  // element of a list with aliased by-value mutable elements).
+  if(is_node_type(node, "Subscript"))
+  {
+    const jsont &base = json_member(node, "value");
+    if(!is_node_type(base, "Name"))
+      return false;
+    return aliased_mutable_lists.count(
+             irep_idt{qualify_name(json_string(json_member(base, "id")))}) > 0;
+  }
+  // A Name bound to a shared inner element (`row = g[i]`): mutating it in place
+  // mutates the shared object.
+  if(is_node_type(node, "Name"))
+    return shared_inner_mutables.count(
+             irep_idt{qualify_name(json_string(json_member(node, "id")))}) > 0;
+  return false;
 }
 
 void python_convertert::emit_aliased_mutation_guard(const source_locationt &loc)

@@ -1419,6 +1419,38 @@ codet python_convertert::convert_assign(const jsont &stmt)
           aliased_mutable_lists.erase(lid);
       }
     }
+
+    // Shared-inner tracking (PLR §9): a name bound to an ELEMENT of an
+    // aliased-mutable list (`row = g[i]`) holds a shared inner object;
+    // mutating it in place is the same unmodelled aliasing. Also propagate
+    // through a plain alias (`s = row`). Cleared on any other binding.
+    {
+      bool inner = false;
+      if(is_node_type(value, "Subscript"))
+      {
+        const jsont &b = json_member(value, "value");
+        if(
+          is_node_type(b, "Name") &&
+          aliased_mutable_lists.count(
+            irep_idt{qualify_name(json_string(json_member(b, "id")))}) > 0)
+          inner = true;
+      }
+      else if(
+        is_node_type(value, "Name") &&
+        shared_inner_mutables.count(
+          irep_idt{qualify_name(json_string(json_member(value, "id")))}) > 0)
+        inner = true;
+      for(const auto &tgt : as_array(targets))
+      {
+        if(!is_node_type(tgt, "Name"))
+          continue;
+        const irep_idt lid{qualify_name(json_string(json_member(tgt, "id")))};
+        if(inner)
+          shared_inner_mutables.insert(lid);
+        else
+          shared_inner_mutables.erase(lid);
+      }
+    }
   }
 
   // PLR §3.2: if the RHS is an empty list literal AND the
