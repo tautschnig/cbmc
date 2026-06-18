@@ -1443,12 +1443,15 @@ struct mnode
   mnodep child;                                                // REPEAT
   int rmin = 0;
   int rmax = -1;
+  bool ci = false;     ///< IGNORECASE for this LIT / CLASS
+  bool dot_nl = false; ///< DOTALL: this ANY also matches '\n'
 };
 
 class re_match_parser
 {
 public:
-  explicit re_match_parser(const std::string &p) : pat(p)
+  re_match_parser(const std::string &p, bool ic = false, bool da = false)
+    : pat(p), ignorecase(ic), dotall(da)
   {
   }
 
@@ -1465,6 +1468,8 @@ private:
   const std::string &pat;
   std::size_t pos = 0;
   bool failed = false;
+  const bool ignorecase = false;
+  const bool dotall = false;
 
   bool eof() const
   {
@@ -1483,6 +1488,11 @@ private:
   {
     auto n = std::make_shared<mnode>();
     n->kind = k;
+    // Carry the active flags onto the leaf nodes that honour them.
+    if(k == mnode::LIT || k == mnode::CLASS)
+      n->ci = ignorecase;
+    else if(k == mnode::ANY)
+      n->dot_nl = dotall;
     return n;
   }
 
@@ -1899,21 +1909,33 @@ static bool re_do(
   case mnode::EOL:
     return at == s.size() && k(at);
   case mnode::LIT:
-    return at < s.size() && (unsigned char)s[at] == n->lit && k(at + 1);
+  {
+    if(at >= s.size())
+      return false;
+    const unsigned char c = (unsigned char)s[at];
+    const bool eq =
+      c == n->lit || (n->ci && std::tolower(c) == std::tolower(n->lit));
+    return eq && k(at + 1);
+  }
   case mnode::ANY:
-    return at < s.size() && s[at] != '\n' && k(at + 1);
+    return at < s.size() && (n->dot_nl || s[at] != '\n') && k(at + 1);
   case mnode::CLASS:
   {
     if(at >= s.size())
       return false;
     const unsigned char ch = (unsigned char)s[at];
-    bool in = false;
-    for(const auto &r : n->ranges)
-      if(ch >= r.first && ch <= r.second)
-      {
-        in = true;
-        break;
-      }
+    auto in_ranges = [&](unsigned char x)
+    {
+      for(const auto &r : n->ranges)
+        if(x >= r.first && x <= r.second)
+          return true;
+      return false;
+    };
+    bool in = in_ranges(ch);
+    // IGNORECASE: an alphabetic char also matches via its other case.
+    if(!in && n->ci && std::isalpha(ch))
+      in = in_ranges((
+        unsigned char)(std::isupper(ch) ? std::tolower(ch) : std::toupper(ch)));
     if(n->negated)
       in = !in;
     return in && k(at + 1);
@@ -1958,7 +1980,17 @@ std::optional<bool> python_regex_match(
   if(subject.find('\n') != std::string::npos)
     return std::nullopt;
 
-  re_match_parser parser{pattern};
+  // Honour a leading inline-flag group `(?i)` / `(?s)` / `(?is)` (the re stub
+  // maps the `flags=` argument to this prefix). An unmodelled flag letter
+  // (a/L/u/x) makes strip_inline_flags return nullopt -> sound nondet. (`m`
+  // / MULTILINE is a no-op here since we already bail on newline subjects.)
+  bool ignorecase = false, dotall = false;
+  const std::optional<std::string> core =
+    strip_inline_flags(pattern, ignorecase, dotall);
+  if(!core.has_value())
+    return std::nullopt;
+
+  re_match_parser parser{*core, ignorecase, dotall};
   const mnodep ast = parser.parse();
   if(!ast)
     return std::nullopt;

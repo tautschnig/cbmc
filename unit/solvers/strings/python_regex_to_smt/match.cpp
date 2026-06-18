@@ -103,6 +103,27 @@ TEST_CASE(
 }
 
 TEST_CASE(
+  "python_regex_match inline flags",
+  "[core][solvers][strings][python_regex]")
+{
+  // IGNORECASE via (?i).
+  req("(?i)abc", "ABC", k::FULLMATCH, true);
+  req("(?i)abc", "AbC", k::FULLMATCH, true);
+  req("(?i)abc", "abc", k::FULLMATCH, true);
+  req("(?i)abc", "abd", k::FULLMATCH, false);
+  req("(?i)[a-z]+", "HELLO", k::FULLMATCH, true);
+  req("(?i)[a-z]+", "Hello", k::FULLMATCH, true);
+  req("abc", "ABC", k::FULLMATCH, false); // no flag -> case-sensitive
+  // DOTALL via (?s) parses and is honoured (no-op for `.` on newline-free).
+  req("(?s)a.c", "axc", k::FULLMATCH, true);
+  // (?is) combined.
+  req("(?is)a.C", "AXc", k::FULLMATCH, true);
+  // Unmodelled flag letter -> bail (sound nondet).
+  req_bail("(?x)abc", "abc");
+  req_bail("(?a)\\d", "1");
+}
+
+TEST_CASE(
   "python_regex_match unsupported patterns bail",
   "[core][solvers][strings][python_regex]")
 {

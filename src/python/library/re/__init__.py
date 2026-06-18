@@ -36,6 +36,27 @@ TEMPLATE = 1
 NOFLAG = 0
 
 
+def _re_flag_prefix(flags: int) -> str:
+    # Map the `flags=` bitmask to a regex inline-flag prefix (e.g. re.IGNORECASE
+    # -> "(?i)"), so the SMT/constant-fold regex engine receives the flags IN
+    # the pattern (no separate flags channel). IGNORECASE and DOTALL are
+    # modelled; any other flag bit (MULTILINE/VERBOSE/ASCII/...) is NOT, so we
+    # return the sentinel "\x00" telling the caller to fall back to a sound
+    # nondet Match-or-None rather than commit to a flag-free decision.
+    # (Defined before the Match/Pattern classes so their methods resolve it.)
+    if flags == 0:
+        return ""
+    supported = IGNORECASE | DOTALL
+    if flags & ~supported:
+        return "\x00"
+    letters = ""
+    if flags & IGNORECASE:
+        letters = letters + "i"
+    if flags & DOTALL:
+        letters = letters + "s"
+    return "(?" + letters + ")"
+
+
 class error(Exception):
     """re.error — raised on malformed patterns."""
 
@@ -141,12 +162,24 @@ class Pattern:
         # __cbmc_re_match hook is precise, so Match()/None is exact; under the
         # default backend the hook is nondet, so the result is a nondet
         # Match-or-None and both `is not None` branches are explored (sound).
-        if __cbmc_re_match(self.pattern, string):
+        pat = self.pattern
+        if self.flags != 0:
+            pfx = _re_flag_prefix(self.flags)
+            if pfx == "\x00":
+                return Match() if nondet_bool() else None
+            pat = pfx + self.pattern
+        if __cbmc_re_match(pat, string):
             return Match()
         return None
 
     def fullmatch(self, string: str, pos: int = 0, endpos: int = 0) -> "Match | None":
-        if __cbmc_re_fullmatch(self.pattern, string):
+        pat = self.pattern
+        if self.flags != 0:
+            pfx = _re_flag_prefix(self.flags)
+            if pfx == "\x00":
+                return Match() if nondet_bool() else None
+            pat = pfx + self.pattern
+        if __cbmc_re_fullmatch(pat, string):
             m = Match()
             m.string = string
             m._start = 0
@@ -156,11 +189,17 @@ class Pattern:
         return None
 
     def search(self, string: str, pos: int = 0, endpos: int = 0) -> "Match | None":
-        if __cbmc_re_search(self.pattern, string):
+        pat = self.pattern
+        if self.flags != 0:
+            pfx = _re_flag_prefix(self.flags)
+            if pfx == "\x00":
+                return Match() if nondet_bool() else None
+            pat = pfx + self.pattern
+        if __cbmc_re_search(pat, string):
             m = Match()
             m.string = string
-            st = __cbmc_re_search_start(self.pattern, string, 0)
-            en = __cbmc_re_search_end(self.pattern, string, 0)
+            st = __cbmc_re_search_start(pat, string, 0)
+            en = __cbmc_re_search_end(pat, string, 0)
             m._start = st
             m._end = en
             m._group0 = string[st:en]
@@ -203,12 +242,16 @@ def compile(pattern, flags: int = 0) -> Pattern:
 
 def match(pattern: str, string: str, flags: int = 0) -> "Match | None":
     # Real Match-or-None from the SMT regex decision; see Pattern.match.
-    # Compilation flags (IGNORECASE/MULTILINE/DOTALL/...) change the match
-    # semantics and are not modelled by the SMT regex translation, so a
-    # non-zero flag must NOT commit to the flag-free (e.g. case-sensitive)
-    # decision -- that would be unsound. Fall back to a nondet Match-or-None.
+    # Compilation flags are carried into the pattern as an inline-flag prefix
+    # (re.IGNORECASE/DOTALL -> "(?i)"/"(?s)"); an unmodelled flag falls back to
+    # a sound nondet Match-or-None rather than a flag-free decision. The prefix
+    # is only prepended when flags are present, so the common flag-free case
+    # keeps a constant (foldable) pattern.
     if flags != 0:
-        return Match() if nondet_bool() else None
+        pfx = _re_flag_prefix(flags)
+        if pfx == "\x00":
+            return Match() if nondet_bool() else None
+        pattern = pfx + pattern
     if __cbmc_re_match(pattern, string):
         m = Match()
         m.string = string
@@ -229,7 +272,10 @@ def match(pattern: str, string: str, flags: int = 0) -> "Match | None":
 
 def fullmatch(pattern: str, string: str, flags: int = 0) -> "Match | None":
     if flags != 0:
-        return Match() if nondet_bool() else None
+        pfx = _re_flag_prefix(flags)
+        if pfx == "\x00":
+            return Match() if nondet_bool() else None
+        pattern = pfx + pattern
     if __cbmc_re_fullmatch(pattern, string):
         m = Match()
         m.string = string
@@ -248,7 +294,10 @@ def fullmatch(pattern: str, string: str, flags: int = 0) -> "Match | None":
 
 def search(pattern: str, string: str, flags: int = 0) -> "Match | None":
     if flags != 0:
-        return Match() if nondet_bool() else None
+        pfx = _re_flag_prefix(flags)
+        if pfx == "\x00":
+            return Match() if nondet_bool() else None
+        pattern = pfx + pattern
     if __cbmc_re_search(pattern, string):
         m = Match()
         m.string = string
