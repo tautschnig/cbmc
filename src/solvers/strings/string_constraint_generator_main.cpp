@@ -218,6 +218,37 @@ string_constraint_generatort::add_axioms_for_function_application(
 {
   const irep_idt &id = get_function_name(expr);
 
+  // Shared helper: extract a CONSTANT ASCII string from a refined-string
+  // argument, or std::nullopt if it is not a compile-time constant / not pure
+  // ASCII. Used by the Python-re constant-folds (match/search/fullmatch/
+  // position/sub) below. A std::nullopt means "undecided" -> sound nondet.
+  auto extract_const = [this](const exprt &arg) -> std::optional<std::string>
+  {
+    const array_string_exprt s = get_string_expr(array_pool, arg);
+    const exprt lenx = array_pool.get_or_create_length(s);
+    if(!lenx.is_constant() || s.content().id() != ID_array)
+      return std::nullopt;
+    const mp_integer lenv = numeric_cast_v<mp_integer>(to_constant_expr(lenx));
+    if(lenv < 0)
+      return std::nullopt;
+    const std::size_t len = numeric_cast_v<std::size_t>(to_constant_expr(lenx));
+    const array_exprt &arr = to_array_expr(s.content());
+    if(arr.operands().size() < len)
+      return std::nullopt;
+    std::string out;
+    for(std::size_t i = 0; i < len; ++i)
+    {
+      if(!arr.operands()[i].is_constant())
+        return std::nullopt;
+      const mp_integer v =
+        numeric_cast_v<mp_integer>(to_constant_expr(arr.operands()[i]));
+      if(v < 0 || v > 127)
+        return std::nullopt; // non-ASCII: byte-matcher would model wrongly
+      out.push_back(static_cast<char>(v.to_long()));
+    }
+    return out;
+  };
+
   if(id == ID_cprover_char_literal_func)
     return add_axioms_for_char_literal(expr);
   else if(id == ID_cprover_string_length_func)
@@ -252,37 +283,6 @@ string_constraint_generatort::add_axioms_for_function_application(
     // Match()/None consistently, not nondet). A non-constant argument or an
     // unsupported pattern falls through to the sound nondet over-approximation
     // (unconstrained result, no axioms).
-    auto extract_const = [this](const exprt &arg) -> std::optional<std::string>
-    {
-      const array_string_exprt s = get_string_expr(array_pool, arg);
-      const exprt lenx = array_pool.get_or_create_length(s);
-      if(!lenx.is_constant() || s.content().id() != ID_array)
-        return std::nullopt;
-      const mp_integer lenv =
-        numeric_cast_v<mp_integer>(to_constant_expr(lenx));
-      if(lenv < 0)
-        return std::nullopt;
-      const std::size_t len =
-        numeric_cast_v<std::size_t>(to_constant_expr(lenx));
-      const array_exprt &arr = to_array_expr(s.content());
-      if(arr.operands().size() < len)
-        return std::nullopt;
-      std::string out;
-      for(std::size_t i = 0; i < len; ++i)
-      {
-        if(!arr.operands()[i].is_constant())
-          return std::nullopt;
-        const mp_integer v =
-          numeric_cast_v<mp_integer>(to_constant_expr(arr.operands()[i]));
-        // ASCII only: a non-ASCII byte may be part of a multi-byte encoding
-        // the byte-level matcher would model wrongly -- bail (sound nondet).
-        if(v < 0 || v > 127)
-          return std::nullopt;
-        out.push_back(static_cast<char>(v.to_long()));
-      }
-      return out;
-    };
-
     if(expr.arguments().size() == 2)
     {
       const std::optional<std::string> pat = extract_const(expr.arguments()[0]);
@@ -302,6 +302,65 @@ string_constraint_generatort::add_axioms_for_function_application(
       }
     }
     return {expr, {}};
+  }
+  else if(
+    id == ID_cprover_string_re_pos_start_func ||
+    id == ID_cprover_string_re_pos_end_func)
+  {
+    // re.findall / re.split position scan: the leftmost match start/end of a
+    // CONSTANT pattern in a CONSTANT subject at/after `from` (-1 = no match).
+    // Native --cvc5 intercepts these in smt2_conv; this folds them on the
+    // default backend (the stub's findall/split loop then computes precisely).
+    // A non-constant argument falls through to the sound nondet (no axioms).
+    if(expr.arguments().size() == 3)
+    {
+      const std::optional<std::string> pat = extract_const(expr.arguments()[0]);
+      const std::optional<std::string> subj =
+        extract_const(expr.arguments()[1]);
+      const exprt &fromx = expr.arguments()[2];
+      if(pat.has_value() && subj.has_value() && fromx.is_constant())
+      {
+        const mp_integer fv =
+          numeric_cast_v<mp_integer>(to_constant_expr(fromx));
+        const std::optional<std::pair<int, int>> m =
+          python_regex_search_pos(*pat, *subj, (int)fv.to_long());
+        if(m.has_value())
+        {
+          const int v =
+            (id == ID_cprover_string_re_pos_start_func) ? m->first : m->second;
+          return {from_integer(v, expr.type()), {}};
+        }
+      }
+    }
+    return {expr, {}};
+  }
+  else if(id == ID_cprover_string_re_sub_func)
+  {
+    // re.sub(pattern, repl, subject) replace-ALL (count==0) for CONSTANT
+    // arguments. Emitted via emit_string_function, so args[0],[1] are the
+    // result string's (length, ptr) and args[2],[3],[4] are pattern, repl,
+    // subject. Native --cvc5 intercepts this in smt2_conv; here we fold the
+    // default backend, constraining the result to the constant substitution.
+    // Non-constant / unsupported -> the result string stays nondet.
+    if(expr.arguments().size() == 5)
+    {
+      const array_string_exprt res =
+        array_pool.find(expr.arguments()[1], expr.arguments()[0]);
+      const std::optional<std::string> pat = extract_const(expr.arguments()[2]);
+      const std::optional<std::string> repl =
+        extract_const(expr.arguments()[3]);
+      const std::optional<std::string> subj =
+        extract_const(expr.arguments()[4]);
+      if(pat.has_value() && repl.has_value() && subj.has_value())
+      {
+        const std::optional<std::string> out =
+          python_regex_sub(*pat, *repl, *subj, 0);
+        if(out.has_value())
+          return add_axioms_for_constant(res, *out);
+      }
+    }
+    // Sound nondet: the result string is left unconstrained.
+    return {from_integer(0, expr.type()), {}};
   }
   else if(
     id == ID_cprover_string_repeat_func ||

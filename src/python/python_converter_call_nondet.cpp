@@ -108,7 +108,7 @@ std::optional<exprt> python_convertert::try_nondet_call(
     // The refined-string solver has no axioms for it, so emitting the
     // function application there aborts in add_axioms_for_function_application.
     // On any non-native backend, return a sound nondet int directly.
-    if(use_smt_string_native && args.is_array() && as_array(args).size() == 3)
+    if(args.is_array() && as_array(args).size() == 3)
     {
       auto it = as_array(args).begin();
       exprt pattern = convert_expression(*it++);
@@ -121,14 +121,63 @@ std::optional<exprt> python_convertert::try_nondet_call(
         const irep_idt fn = func_name == "__cbmc_re_search_start"
                               ? ID_cprover_string_re_pos_start_func
                               : ID_cprover_string_re_pos_end_func;
-        return native_string_app(
-          fn,
-          {pattern.type(), subject.type(), signedbv_typet{64}},
-          {pattern, subject, safe_typecast(from, signedbv_typet{64})},
-          signedbv_typet{64});
+        const exprt from64 = safe_typecast(from, signedbv_typet{64});
+        if(use_smt_string_native)
+          return native_string_app(
+            fn,
+            {pattern.type(), subject.type(), signedbv_typet{64}},
+            {pattern, subject, from64},
+            signedbv_typet{64});
+        // Default (refined-string) backend: emit the intrinsic with the
+        // {length,data} struct operands so the refined solver can constant-
+        // fold it for a constant pattern+subject (otherwise it returns a sound
+        // nondet int, no axioms). This is what makes re.findall / re.split
+        // precise on the default backend without --python-smt-strings.
+        auto to_str = [](const exprt &s) -> exprt
+        {
+          if(s.type().id() == ID_smt_string)
+            return s;
+          if(s.id() == ID_struct && s.operands().size() == 2)
+            return s;
+          return struct_exprt{
+            {member_exprt{s, "length", signedbv_typet{64}},
+             member_exprt{s, "data", pointer_typet{unsignedbv_typet{8}, 64}}},
+            s.type()};
+        };
+        const exprt ps = to_str(pattern);
+        const exprt ss = to_str(subject);
+        const irep_idt sym{fn};
+        if(symbol_table.lookup(sym) == nullptr)
+        {
+          symbolt fs{
+            sym,
+            mathematical_function_typet(
+              {ps.type(), ss.type(), signedbv_typet{64}}, signedbv_typet{64}),
+            "python"};
+          fs.base_name = id2string(fn);
+          symbol_table.add(fs);
+        }
+        function_application_exprt app{
+          symbol_table.lookup_ref(sym).symbol_expr(), {ps, ss, from64}};
+        app.type() = signedbv_typet{64};
+        const std::string rc = "__re_pos_" +
+                               std::to_string(pending_checks.size()) + "_" +
+                               std::to_string(symbol_table.symbols.size());
+        const irep_idt rcid{"python::" + rc};
+        if(symbol_table.lookup(rcid) == nullptr)
+        {
+          symbolt rs{rcid, signedbv_typet{64}, "python"};
+          rs.base_name = rc;
+          rs.is_lvalue = true;
+          rs.is_state_var = true;
+          symbol_table.add(rs);
+        }
+        pending_checks.push_back(code_frontend_assignt{
+          symbol_table.lookup_ref(rcid).symbol_expr(), app});
+        return symbol_table.lookup_ref(rcid).symbol_expr();
       }
     }
-    // Fallback: nondet int (non-native backend, or unrecognised operands).
+    // Fallback: nondet int (unrecognised operands).
     return side_effect_expr_nondett{signedbv_typet{64}, get_location(expr)};
   }
   else if(func_name == "__cbmc_re_sub")
@@ -172,6 +221,45 @@ std::optional<exprt> python_convertert::try_nondet_call(
         // result only when count == 0, otherwise a sound nondet string. The
         // count is typically a parameter (not a literal), so decide at
         // runtime rather than requiring a compile-time constant.
+        exprt count = convert_expression(*it);
+        exprt nondet = bounded_nondet_string(get_location(expr));
+        exprt cnt_zero = equal_exprt{count, from_integer(0, count.type())};
+        return if_exprt{std::move(cnt_zero), std::move(precise), nondet};
+      }
+    }
+    // Default (refined-string) backend: emit re_sub so the refined solver can
+    // constant-fold a replace-all (count==0) for a constant pattern/repl/
+    // subject (otherwise a sound nondet string). count!=0 is outside the
+    // precise (replace-all) model, so select it via the same count==0 guard.
+    if(n == 3 || n == 4)
+    {
+      auto it = as_array(args).begin();
+      exprt pattern = convert_expression(*it++);
+      exprt repl = convert_expression(*it++);
+      exprt subject = convert_expression(*it++);
+      if(
+        is_python_string_type(pattern.type()) &&
+        is_python_string_type(repl.type()) &&
+        is_python_string_type(subject.type()))
+      {
+        auto to_str = [](const exprt &s) -> exprt
+        {
+          if(s.type().id() == ID_smt_string)
+            return s;
+          if(s.id() == ID_struct && s.operands().size() == 2)
+            return s;
+          return struct_exprt{
+            {member_exprt{s, "length", signedbv_typet{64}},
+             member_exprt{s, "data", pointer_typet{unsignedbv_typet{8}, 64}}},
+            s.type()};
+        };
+        exprt precise = emit_string_function(
+          ID_cprover_string_re_sub_func,
+          {to_str(pattern), to_str(repl), to_str(subject)},
+          symbol_table,
+          pending_checks);
+        if(n == 3)
+          return precise;
         exprt count = convert_expression(*it);
         exprt nondet = bounded_nondet_string(get_location(expr));
         exprt cnt_zero = equal_exprt{count, from_integer(0, count.type())};
