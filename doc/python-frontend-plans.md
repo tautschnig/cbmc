@@ -135,10 +135,28 @@ robustness, then capability; difficulty is noted where high.
 >       truthiness (or null-guarding `python_truthiness`'s speculative
 >       `__class_ptr` derefs) to recover `re4`/`re11` without the membership
 >       refinement. Sweep 2947→2946 (+`re10_fail`, −`re4`/`re11` timeout).
->     - **`neural-net_fail`** — `f >= 2.745` where `f` is built from
->       float-literal arithmetic; our constant-folding of `2*0.749 - 3*0.498 …`
->       does not reproduce CPython's IEEE-754 rounding at the boundary.
->       Genuinely hard (exact double-rounding parity in constant folding).
+>     - **`neural-net_fail` — NOT a false proof (CPython-divergence; corrected
+       2026-06-18).** `f = relu(2*0.749 − 3*0.498) + relu(0.749 + 4*0.498)`
+       then `assert f >= 2.745`. CPython computes `f == 2.745` exactly, so
+       `f >= 2.745` is **`True`** — our `SUCCESSFUL` is correct; the test's
+       expected `FAILED` is an ESBMC divergence. (Earlier notes wrongly
+       assumed `f < 2.745`.) Confirmed: the GOTO already emits *symbolic*
+       `floatbv` ops (`floatbv_minus(floatbv_mult(...))`) — the frontend does
+       **not** bake folded float constants into the GOTO; symex does the
+       arithmetic and matches CPython.
+> - **Category-4 float-folding excision — attempted, reverted (2026-06-18).**
+>   Hypothesis: the frontend redundantly host-folds float arithmetic that
+>   symex should own. **Empirically false for floats:** the GOTO already
+>   carries symbolic `floatbv` (symex owns the arithmetic). The
+>   `try_eval_double`/`float_constants` machinery is a conversion-time
+>   **category-2** side-channel that supplies *constant* float values to
+>   Python-semantic ops symex cannot do — `str(complex)`/`repr` formatting,
+>   `cmath.log`/`pow`, `math` intrinsics, `**`. Skipping float folding in
+>   `try_eval_double` regressed **17 tests** (`complex_*`, `math4/13/23`,
+>   `power16/20`) with zero soundness benefit (no float false proof exists).
+>   Reverted. **Lesson:** machine-arithmetic-→-symex already holds for floats;
+>   the residual float-value tracking is necessary category-2, not removable
+>   category-4.
 > - **Separately found precision bug (false *positive*, not a false proof):** a
 >   global **string** written inside a function and read at *module* level
 >   gives a spurious failure (stale module-level `string_constants` not
