@@ -58,6 +58,22 @@ void python_convertert::emit_conditional_exception(
   pending_checks.push_back(code_ifthenelset{cond, std::move(body)});
 }
 
+// Opt-in (--python-raising-ops-check) modeling of an operation that
+// CAN raise `exc_type` at runtime but whose success the frontend
+// cannot prove (int()/float() of a non-constant string, os.* file
+// ops, re with a non-str pattern, ...). Emits a nondet-guarded
+// exception so the uncaught-exception / except path is explored.
+// No-op unless the flag is set — the default models the op as
+// silently succeeding (precision-favoring), so the ESBMC sweep is
+// unaffected by default.
+void python_convertert::emit_may_raise(const char *exc_type)
+{
+  if(!python_raising_ops_check)
+    return;
+  emit_conditional_exception(
+    side_effect_expr_nondett{bool_typet{}, source_locationt{}}, exc_type);
+}
+
 // Shared call-site signature validation (PLR §8.7).
 void python_convertert::validate_call_signature(
   const irep_idt &func_key,

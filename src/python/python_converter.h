@@ -221,6 +221,18 @@ private:
   bool processing_import = false;
   bool no_body_check = false; // suppress no-body-for-callee properties
 
+  /// When true (opt-in via --python-raising-ops-check), operations
+  /// that can raise an exception at runtime but whose preconditions
+  /// the frontend cannot prove (int()/float() of a non-constant
+  /// string -> ValueError, os.remove/rmdir/mkdir -> OSError, re with
+  /// a non-str pattern -> TypeError, ...) are modeled as
+  /// may-raise (a nondet-guarded __exception_active) so the
+  /// uncaught-exception / except path is explored. Default OFF: the
+  /// default models these as silently succeeding (precision-favoring,
+  /// per the historical false-positive concern), so the ESBMC sweep
+  /// is unaffected unless the flag is set.
+  bool python_raising_ops_check = false;
+
   /// When true, promote front-end quiet-by-default diagnostics
   /// (Slice / Yield / YieldFrom, unresolved method / function /
   /// attribute access, subscript/for-in/'in' fallbacks) back to
@@ -233,6 +245,11 @@ public:
   void set_no_body_check(bool v)
   {
     no_body_check = v;
+  }
+
+  void set_python_raising_ops_check(bool v)
+  {
+    python_raising_ops_check = v;
   }
 
   void set_python_strict_warnings(bool v)
@@ -1464,6 +1481,12 @@ private:
   /// tag for `exc_type`. For data-conditional raises (e.g.
   /// ValueError when a search finds nothing).
   void emit_conditional_exception(const exprt &cond, const char *exc_type);
+
+  /// Opt-in (--python-raising-ops-check): model an operation that CAN
+  /// raise `exc_type` but whose success the frontend cannot prove as
+  /// may-raise (a nondet-guarded __exception_active). No-op unless the
+  /// flag is set. See `python_raising_ops_check`.
+  void emit_may_raise(const char *exc_type);
 
   /// Validate a call against the callee's recorded exact signature
   /// (PLR §8.7): emit TypeError for too-many positional arguments or
