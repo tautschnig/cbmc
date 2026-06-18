@@ -1931,9 +1931,57 @@ bool python_convertert::convert()
                   else
                     continue;
                 }
+                else if(is_node_type(val, "Dict"))
+                {
+                  // PLR §3.1: a module-global bound to a dict literal
+                  // (`d = {"a": 1}`) must be pre-registered with its
+                  // DICT type so a function body converted in sub-pass
+                  // 1c that mutates the global (`d[k] = v`) sees a
+                  // dict-typed symbol — otherwise the subscript-assign,
+                  // which requires is_python_dict_type, is silently
+                  // dropped (a false proof: the mutation vanishes).
+                  // Infer key/value types from the first constant
+                  // entry; fall back to the universal python_value for
+                  // empty/mixed/non-constant dicts (pass 2 replaces the
+                  // type from the concrete RHS, tracked via
+                  // unannotated_globals).
+                  typet kt = python_string_type();
+                  typet vt = python_value_type();
+                  const jsont &keys = json_member(val, "keys");
+                  const jsont &vals = json_member(val, "values");
+                  auto const_type =
+                    [this](const jsont &node, const typet &fallback) -> typet
+                  {
+                    if(!is_node_type(node, "Constant"))
+                      return fallback;
+                    const jsont &cv = json_member(node, "value");
+                    if(cv.is_true() || cv.is_false())
+                      return bool_typet{};
+                    if(cv.is_string())
+                      return python_string_type();
+                    if(cv.is_number())
+                    {
+                      const std::string &vs = cv.value;
+                      if(
+                        vs.find('.') != std::string::npos ||
+                        vs.find('e') != std::string::npos ||
+                        vs.find('E') != std::string::npos)
+                        return double_type();
+                      return python_int_type();
+                    }
+                    return fallback;
+                  };
+                  if(
+                    keys.is_array() && !as_array(keys).empty() &&
+                    vals.is_array() && !as_array(vals).empty())
+                  {
+                    kt = const_type(*as_array(keys).begin(), kt);
+                    vt = const_type(*as_array(vals).begin(), vt);
+                  }
+                  var_type = python_dict_type(kt, vt);
+                }
                 else if(
-                  is_node_type(val, "Dict") || is_node_type(val, "Call") ||
-                  is_node_type(val, "ListComp") ||
+                  is_node_type(val, "Call") || is_node_type(val, "ListComp") ||
                   is_node_type(val, "Lambda") || is_node_type(val, "Set") ||
                   is_node_type(val, "Subscript") ||
                   is_node_type(val, "BinOp") || is_node_type(val, "UnaryOp") ||
