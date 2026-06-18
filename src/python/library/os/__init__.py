@@ -12,6 +12,8 @@ rather than on a genuine heap object; routing them will need a
 dedicated str→heap materialisation step.
 """
 
+from __cbmc__ import may_raise
+
 
 # Path separator / line separator constants (Linux defaults).
 sep: str = "/"
@@ -74,22 +76,27 @@ def chdir(path: str) -> None:
     return None
 
 
+@may_raise("OSError")
 def mkdir(path: str, mode: int = 0) -> None:
     return None
 
 
+@may_raise("OSError")
 def makedirs(path: str, mode: int = 0, exist_ok: bool = False) -> None:
     return None
 
 
+@may_raise("OSError")
 def rmdir(path: str) -> None:
     return None
 
 
+@may_raise("OSError")
 def remove(path: str) -> None:
     return None
 
 
+@may_raise("OSError")
 def rename(src: str, dst: str) -> None:
     return None
 

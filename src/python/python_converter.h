@@ -130,6 +130,15 @@ private:
   /// match the C function's argument and return types.
   std::map<irep_idt, std::string> c_intrinsic_map;
 
+  /// Functions decorated with ``@may_raise('ExcType')`` (e.g. the
+  /// os.* file-operation stubs -> 'OSError'). Maps the function's
+  /// qualified id to the exception type name. Under the opt-in
+  /// --python-raising-ops-check, a call to such a function emits a
+  /// nondet-guarded may-raise (see emit_may_raise); otherwise it is
+  /// ignored. Populated by the decorator scan alongside
+  /// ``c_intrinsic_map``.
+  std::map<irep_idt, std::string> may_raise_map;
+
   /// Optional constant-folder name, as specified by the
   /// ``@c_intrinsic('name', fold='op')`` decorator's ``fold``
   /// keyword. Populated alongside ``c_intrinsic_map``. When a
