@@ -659,9 +659,13 @@ inter-yield side effects.
 
 ## 2. Closures & late binding (PLR §4.2.2)  {#closures}
 
-**Status: PARTIAL — cell substrate landed for NAMED escaping closures
-(read-only and `nonlocal`-mutating), with full multi-call PLR fidelity;
-comprehension / container-stored closures remain a sound nondet gap.**
+**Status: LANDED for the closure cell substrate and container dispatch
+— named escaping closures (read-only and `nonlocal`-mutating, full
+multi-call PLR fidelity), higher-order dispatch through container
+subscripts, and comprehension late-binding. The remaining higher-order
+cases are characterised below: most are decidable-but-unhandled (future
+work, currently sound nondet); a residual core is genuinely undecidable
+(sound nondet is the only correct answer).**
 This was always a **sound precision gap, not an unsoundness**:
 *non-escaping* closures were already correct (late binding within the
 defining scope `x = 10; g = lambda: x; x = 20; g()` → 20, and `nonlocal`
@@ -698,17 +702,44 @@ before the nested def and not reassigned at/after it (so the def-site
 init equals the late-binding value); anything outside that window falls
 back to the existing nondet path.
 
-**Remaining (sound nondet gap).** Comprehension late-binding
-(`fns = [lambda: i for i in range(3)]; fns[0]()`) is NOT a cell gap — it
-requires **higher-order-through-container dispatch** (calling a closure
-retrieved from a list/dict element), which does not exist yet: `fns[0]()`
-is currently entirely nondet. The general case (symbolic index, arbitrary
-container) is undecidable and must stay sound-nondet; a constant-folded
-subscript could be dispatched precisely. Sequenced after
-[§12 higher-order functions](#higher-order); when built, route the
-comprehension through `emit_listcomp_loop` with one shared cell for the
-loop variable (Python-3 late binding → all elements observe the final
-value).
+**Container dispatch + comprehension late-binding (`4adb3bddbf`,
+`ce5dfb6284`).** Calling a callable obtained by subscripting a
+statically-known container — an inline/named list (`fns[i]()`), a named
+dict (`d[k]()`), and the comprehension `[lambda: i for i in range(3)]` —
+now dispatches: `convert_call` resolves the container's element
+callables and a constant selector folds to one, while a symbolic
+selector over a finite known element set becomes a guarded dispatch
+(IndexError/KeyError on no match). Arguments are coerced to the callee's
+parameter types and closure captures are appended. Comprehension element
+closures observe the loop variable's FINAL value (Python-3 late binding)
+via a unique per-comprehension symbol that does not clobber an enclosing
+same-named variable. A code-typed capture (a closure capturing another
+closure/function value) is left bound from its source rather than
+snapshotted (avoids a symex abort; degrades to sound nondet).
+
+**Remaining higher-order closure cases.** Characterised by measurement:
+
+- **Decidable but unhandled** (sound nondet today; future work, not
+  inherent limits):
+  - *Capture-through-param*: `apply(make())` where `apply(f): return f()`
+    and `make()` returns a capturing closure. A direct `apply(lambda: 5)`
+    already works (the [§12](#higher-order) param-callable binding); the
+    call-returning-closure argument is not resolved and the capture is
+    not carried into the specialised callee.
+  - *Append-built containers*: `fns = []; fns.append(lambda: 5);
+    fns[0]()` — `list_literals` does not track appended callables, so the
+    dispatch cannot enumerate the element set.
+  - *Instance-attribute closures*: `self.f = lambda: 42; c.f()` — the
+    closure stored in an instance field is not resolved at the call.
+  - *Closure capturing a closure* (`compose`/`twice`): graceful (no
+    abort) but nondet; the code-typed capture is not carried.
+- **Genuinely undecidable** (sound nondet is the only correct answer):
+  the closure's *identity* is not statically determinable — chosen by
+  `random`/nondet from an unbounded set, read from external input, or a
+  container whose contents are not tracked. Guarded dispatch is possible
+  only over a finite, statically-known candidate set; beyond that, nondet
+  is sound and required. (`fns[k]()` with symbolic `k` over a *known*
+  list IS decidable and handled.)
 
 ---
 
