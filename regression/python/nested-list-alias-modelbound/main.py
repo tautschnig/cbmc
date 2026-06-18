@@ -12,3 +12,11 @@ grid = [[0, 0]] * 3
 grid[0][0] = 1
 # Unreachable after the cut; present to show no false proof is produced.
 assert grid[1][0] == 0
+
+# Element-extraction alias: a name bound to an element of an aliased-mutable
+# list (`row = grid2[i]`) is a shared inner object; mutating it in place is the
+# same unmodelled aliasing and is reported (not silently proved).
+grid2 = [[0]] * 3
+row = grid2[0]
+row.append(9)
+assert grid2[1] == [0]

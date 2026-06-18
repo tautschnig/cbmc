@@ -787,11 +787,17 @@ private:
   /// `python-model-bound` (assert + cut) instead of silently producing a false
   /// proof (e.g. `g=[[0,0]]*3; g[0][0]=1; assert g[1][0]==0`). Read-only access
   /// and whole-slot reassignment (`g[i]=v`) stay precise. Residual (documented):
-  /// element-extraction (`r=g[i]; r.append(..)`), function-parameter, and
-  /// container-stored aliases are not tracked.
+  /// function-parameter and container-stored aliases are not tracked.
   std::set<irep_idt> aliased_mutable_lists;
-  /// True if `node` is `<tainted>[idx]` -- a subscript whose base Name is in
-  /// aliased_mutable_lists (an aliased by-value mutable element).
+  /// Names bound to an ELEMENT of an aliased-mutable list (`row = g[i]` where
+  /// `g` is in aliased_mutable_lists) -- a shared inner object. Mutating it in
+  /// place (`row.append(..)`, `row[j]=..`) is the same unmodelled aliasing, so
+  /// it is reported as a `python-model-bound` too. Propagated through a plain
+  /// alias (`s = row`).
+  std::set<irep_idt> shared_inner_mutables;
+  /// True if `node` is `<aliased-list>[idx]` (a subscript whose base Name is in
+  /// aliased_mutable_lists) OR a Name in shared_inner_mutables -- i.e. an
+  /// in-place mutation of `node` is an unmodelled aliased-element mutation.
   bool is_aliased_list_element(const jsont &node);
   /// Push (to pending_checks) a python-model-bound report + path cut for an
   /// unmodelled in-place mutation of an aliased mutable element.
