@@ -939,6 +939,27 @@ private:
 
   /// Known imported module names (for `import math` style)
   std::set<std::string> imported_modules;
+
+  /// Root B (import scoping). Top-level function/class names defined
+  /// in IMPORTED modules (populated by process_imported_module). A
+  /// name here exists in the flat `python::` table only because a
+  /// module was processed -- it is NOT a main-module definition (those
+  /// are registered by convert_module_body, not here).
+  std::set<std::string> imported_module_defs;
+  /// Names explicitly brought into the main module's scope by an
+  /// `import`/`from X import` statement (incl. asname). A name in
+  /// imported_module_defs but NOT here leaked from a module that was
+  /// processed without that name being imported -> a bare reference
+  /// to it is a NameError (PLR §4.2). Disabled (conservative, no
+  /// check) if a `from X import *` is seen, since we cannot enumerate
+  /// the names it brings in.
+  std::set<std::string> explicitly_imported_names;
+  bool saw_import_star = false;
+  /// Top-level function/class names defined in the MAIN module
+  /// (populated by convert_module_body). Such names are always in
+  /// scope, so they are excluded from the leaked-name NameError check
+  /// even if an imported module also defines the same name.
+  std::set<std::string> main_module_defs;
   /// Modules already handed to process_imported_module, to make
   /// transitive import resolution idempotent and break import cycles.
   std::set<std::string> processed_import_modules;

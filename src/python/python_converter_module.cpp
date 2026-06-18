@@ -42,6 +42,7 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
       // Evaluate default parameter values NOW (pass 2) when variables
       // have their definition-time values (PLR §8.7)
       std::string fname = json_string(json_member(stmt, "name"));
+      main_module_defs.insert(fname); // Root B: in-scope main def
       const jsont &func_args = json_member(stmt, "args");
       const jsont &defaults = json_member(func_args, "defaults");
       const jsont &params_json = json_member(func_args, "args");
@@ -96,6 +97,7 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
     {
       // Add class object initialization
       std::string cls_name = json_string(json_member(stmt, "name"));
+      main_module_defs.insert(cls_name); // Root B: in-scope main def
       irep_idt cls_id{"python::" + cls_name};
       const symbolt *cls_sym = symbol_table.lookup(cls_id);
       if(cls_sym != nullptr && !cls_sym->value.is_nil())
@@ -233,6 +235,10 @@ void python_convertert::process_imported_module(
       is_node_type(stmt, "AsyncFunctionDef"))
     {
       std::string fname = json_string(json_member(stmt, "name"));
+      // Root B: record that this name is defined in an imported
+      // module (so a bare reference is in-scope only if it was
+      // actually imported).
+      imported_module_defs.insert(fname);
       // PLR §8.7 / typing.overload: @overload-decorated defs are
       // type-only stubs (empty `...` bodies). Skip them so the real
       // implementation (same name, no @overload) is the one registered;
