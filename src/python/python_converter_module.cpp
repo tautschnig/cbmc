@@ -702,7 +702,8 @@ void python_convertert::process_imported_module(
         const jsont &value = json_member(stmt, "value");
         if(
           target != nullptr && is_node_type(*target, "Name") &&
-          is_node_type(value, "Constant"))
+          (is_node_type(value, "Constant") || is_node_type(value, "Dict") ||
+           is_node_type(value, "List")))
         {
           std::string vname = json_string(json_member(*target, "id"));
           irep_idt vid{"python::" + vname};
