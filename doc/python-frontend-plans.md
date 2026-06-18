@@ -1228,14 +1228,17 @@ flat-scalar stay SUCCESSFUL; native crash-scan 0/589; `regression/python` green
 PASS 2933, **0 regressions**.
 
 **Documented residual (sound-but-incomplete, accepted tradeoff).** The guard
-covers direct element mutation of a tainted list and its whole-list aliases. It
-does NOT cover: element-extraction aliases (`row = g[i]; row.append(..)`),
-the append-of-element producer (`a.append(a[0])`), and function-parameter /
-container-stored aliases — these can still false-prove via the same aliasing.
-Closing them fully needs the by-reference substrate (above), which is
-empirically untenable / disproportionate. (Option (b), a coarser
-construction-time report, was rejected: it cuts common read-only slice/copy.)
-**Do NOT pursue the byref substrate.**
+covers direct element mutation of a tainted list, its whole-list aliases, AND
+direct element-extraction (`row = g[i]; row.append(..)` / `row[j]=..` — the
+extracted name is tracked as a shared inner, `8795ef2408`). It does NOT cover:
+an alias of an extracted inner that takes the escaped_mutables early-return path
+(`row=g[i]; s=row; s.append(..)`), the append-of-element producer
+(`a.append(a[0])`), and function-parameter / container-stored aliases — these
+can still false-prove via the same aliasing. Closing them fully needs the
+by-reference substrate (above), which is empirically untenable /
+disproportionate. (Option (b), a coarser construction-time report, was
+rejected: it cuts common read-only slice/copy.) **Do NOT pursue the byref
+substrate.**
 
 
 
