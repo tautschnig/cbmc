@@ -175,27 +175,32 @@ robustness, then capability; difficulty is noted where high.
 >   post-call value from the symbol (sound — only drops a now-unsound fold).
 >   Locals are kept. (Scalar invalidation only; container-literal maps are
 >   read structurally by argument unpacking `f(*c)` and are not touched here.)
-> - **P0 SOUNDNESS (FALSE PROOF) — global-dict mutation in a function is
->   dropped (found 2026-06-18, NOT yet fixed).** Investigating the supposed
->   "global container across call" *folding* residual revealed it is **not a
->   constant-folding issue at all**, and is a genuine **false proof**: a
->   function that mutates a module-global **dict** via subscript-assign
->   (`def f(): d["b"]=2`) has the **entire statement dropped** — `f`'s GOTO
->   body is empty — so the mutation vanishes and `assert "b" not in d` /
->   `assert d["a"]==1` *verify* after `f()` sets them. Confirmed scope:
->   module-level `d[k]=v` works, a *local* dict works, and a by-reference dict
->   **argument** works (`def f(x): x["b"]=2; f(d)` correctly FAILS) — only the
->   **global-dict subscript-assign inside a function** is dropped, even with an
->   explicit `global d`. (Lists are sound throughout: `g.append(x)` propagates.)
->   Root is the function-scope resolution of a global dict for a subscript
->   *target* (the assign emits nothing), distinct from constant folding and
->   from the resolved dict-byref-*arg* work. **A naive attempt to fix this by
->   invalidating global container-literal tracking at call sites was reverted**
->   (it neither fixes the propagation — the GOTO `len(d)` is already symbolic —
->   nor is safe: it erased `c`'s literal between the repeated unpacks in
->   `pep-448-call-unpack`). The real fix is in the global-dict subscript-assign
->   lowering (emit the write against the resolved global symbol), a focused
->   dict-machinery change. Tracked as a P0 soundness follow-up.
+> - **global-dict mutation in a function — FIXED (2026-06-18,
+>   `170fbe452d` + `849fe1dcda`).** Was a genuine **false proof**: a function
+>   mutating a module-global **dict** via subscript-assign (`def f():
+>   d["b"]=2`) had the **entire statement dropped** (empty GOTO body), so
+>   `assert "b" not in d` / `assert d["a"]==1` *verified* after `f()` set them.
+>   (Module-level, local, and by-reference dict **arg** mutation all worked;
+>   lists were sound throughout — `g.append(x)` propagates. Not a
+>   constant-folding issue.) **Two-layer root + fix:**
+>   1. *Type resolution:* function bodies convert in sub-pass 1c *before* the
+>      module-level `d={...}` types the global, and Pass 0's global
+>      pre-registration lumped Dict literals into the Call-shape branch (typed
+>      only calls), so the global was never dict-typed → the
+>      `is_python_dict_type` subscript-assign branch was skipped → statement
+>      dropped. Fixed by a dedicated Dict-literal case in Pass 0
+>      (`python_dict_type(k,v)` from the first constant entry).
+>   2. *Stale literal:* with the global dict-typed, `len(d)` reflected the
+>      mutation but membership/lookup still folded the stale module-level
+>      `dict_literals[d]`. Fixed by invalidating global-keyed `dict_literals`
+>      at the POST-argument call site (`convert_call`), so `f(**d)` of the
+>      current call still reads it; only `dict_literals` is touched
+>      (`f(*c)`/list reads and `**d` unpack all preserved — `pep-448-call-unpack`
+>      green). symex recovers the real post-call contents.
+>   A naive single-step attempt (pre-argument all-container invalidation) was
+>   reverted first — it broke `c`'s repeated `*c` unpacks in `pep-448`. Both
+>   commits sweep-neutral (PASS 2946, 0 regressions); regression
+>   `global-dict-mutation-via-call`.
 
 > **Refreshed status (2026-06-16).** **P0 (soundness) is empty.** The
 > **regex/string precision track is now largely complete on the native
