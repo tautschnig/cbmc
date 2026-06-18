@@ -45,6 +45,38 @@ path — the refined-precision items below are goals to pursue, **not** "use
 `--python-smt-strings` instead". Items are sequenced by soundness-first, then
 robustness, then capability; difficulty is noted where high.
 
+> **Refreshed priorities (2026-06-18) — supersedes the ordering below.**
+> Since the 2026-06-16 block, **closures (§2) are largely closed**: the cell
+> substrate (read-only escaping capture; `nonlocal`-mutating per-invocation
+> heap cells, multi-call sound; per-closure-variable binding), higher-order
+> dispatch through container subscripts (`fns[i]()`, `d[k]()`), comprehension
+> late-binding, and the **fat-closure** for capture-through-param + n-ary
+> (multi-call sound) all landed. Remaining closure channels (container/
+> attribute-stored, compose) are ~0 corpus value, sound-nondet, documented in
+> [doc/python-frontend-fat-closure-plan.md](python-frontend-fat-closure-plan.md).
+> A **P0 soundness audit (2026-06-18, `120fd5f4a2`)** of the nested-aliasing
+> guard found and fixed two more false-proof channels (self-append,
+> new-container literal); one residual (extraction from an untainted literal /
+> matrix-row pattern) is documented as byref-blocked + over-report-risky.
+>
+> **Updated order (perf-only work deferred per direction):**
+> 1. **P0 soundness** — nested-aliasing audit ✅ DONE. (P0 otherwise empty.)
+> 2. **Instance-`__dict__` substrate phase 2+** ([§10](#descriptors)) — method
+>    shadowing, stateful descriptors, `setattr` (phase 1 / dynamic-attr
+>    discovery landed `9f52de49ee`). Contained precision substrate.
+> 3. **Native SMT-LIB String backend** ([§3](#strings)) — the strategic
+>    precision target; the refined-string frontier is measured as largely
+>    tapped, so this is the comprehensive answer (also unblocks the
+>    `github_3090` per-execution-content spike + JBMC native `smt_string`).
+>    Sustained, phased effort; refined parity is the constraint.
+> 4. **Breadth / capability** — module breadth ([§6](#modules), by corpus
+>    import frequency); async result-binding ([§13](#async), small live bug);
+>    icontract multi-level Liskov + C3 MRO ([§11](#icontract)).
+> 5. **Deferred** — `python_value` field-by-field SSA (perf-only, [§8](#performance));
+>    closure Phases 4–6 (~0 corpus); regex finishers ([§4](#regex), fold into
+>    the native backend); `--python-check-annotations` default-on (BLOCKED on
+>    core); point precision (`complex` C/D, `math` domains, `nondet_list4/5`).
+
 > **Refreshed status (2026-06-16).** **P0 (soundness) is empty.** The
 > **regex/string precision track is now largely complete on the native
 > backend**: precise `re.findall`/`re.split` (incl. `maxsplit`), the
