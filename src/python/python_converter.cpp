@@ -1759,7 +1759,8 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
   walk(body);
 }
 
-void python_convertert::invalidate_global_value_tracking()
+void python_convertert::invalidate_global_value_tracking(
+  bool include_dict_literals)
 {
   // A module-level global key is "python::<name>" with no further
   // "::" (function-scoped locals are "python::<func>::<name>").
@@ -1775,17 +1776,21 @@ void python_convertert::invalidate_global_value_tracking()
     for(auto it = m.begin(); it != m.end();)
       it = is_global_key(it->first) ? m.erase(it) : std::next(it);
   };
-  // Only the SCALAR value maps are invalidated here. They are safe to
-  // erase before the call's arguments are converted (an argument that
-  // referenced the global simply falls back to the symbol value). The
-  // container-literal maps (list/dict/tuple_literals) are NOT
-  // invalidated: they are read structurally by argument unpacking
-  // (`f(*c)`), converted after this point, and erasing them would
-  // break the unpack. A global container mutated by a callee and read
-  // afterwards is a separate, rarer residual (needs post-argument
-  // invalidation or by-reference handling).
+  // The SCALAR value maps are always invalidated. At the PRE-argument
+  // site they are safe to erase (an argument referencing the global
+  // falls back to the symbol value).
   prune(string_constants);
   prune(float_constants);
+  // dict_literals is invalidated only at the POST-argument site
+  // (include_dict_literals): a callee may have mutated a global dict in
+  // place (`d[k]=v`), leaving a stale literal that folds a later
+  // len/membership/subscript against the pre-call contents. It must NOT
+  // be erased pre-argument (a `f(**d)` unpack reads it). list_literals
+  // and tuple_literals are intentionally left intact (list reads are
+  // already runtime, tuples are immutable, and `f(*c)` reads
+  // list_literals structurally).
+  if(include_dict_literals)
+    prune(dict_literals);
 }
 
 void python_convertert::invalidate_loop_writes(const jsont &body)
