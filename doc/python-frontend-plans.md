@@ -173,11 +173,29 @@ robustness, then capability; difficulty is noted where high.
 >   *positive*). Fix (mirrors `invalidate_loop_writes`): a user-function call
 >   invalidates the global-keyed scalar value-tracking; symex recovers the real
 >   post-call value from the symbol (sound — only drops a now-unsound fold).
->   Locals are kept. **Residual (documented):** container-literal maps
->   (`list/dict/tuple_literals`) are NOT invalidated there (argument unpacking
->   `f(*c)` reads them structurally after the call site), so a global
->   *container* mutated by a callee and read afterwards is a separate, rarer
->   residual needing post-argument invalidation.
+>   Locals are kept. (Scalar invalidation only; container-literal maps are
+>   read structurally by argument unpacking `f(*c)` and are not touched here.)
+> - **P0 SOUNDNESS (FALSE PROOF) — global-dict mutation in a function is
+>   dropped (found 2026-06-18, NOT yet fixed).** Investigating the supposed
+>   "global container across call" *folding* residual revealed it is **not a
+>   constant-folding issue at all**, and is a genuine **false proof**: a
+>   function that mutates a module-global **dict** via subscript-assign
+>   (`def f(): d["b"]=2`) has the **entire statement dropped** — `f`'s GOTO
+>   body is empty — so the mutation vanishes and `assert "b" not in d` /
+>   `assert d["a"]==1` *verify* after `f()` sets them. Confirmed scope:
+>   module-level `d[k]=v` works, a *local* dict works, and a by-reference dict
+>   **argument** works (`def f(x): x["b"]=2; f(d)` correctly FAILS) — only the
+>   **global-dict subscript-assign inside a function** is dropped, even with an
+>   explicit `global d`. (Lists are sound throughout: `g.append(x)` propagates.)
+>   Root is the function-scope resolution of a global dict for a subscript
+>   *target* (the assign emits nothing), distinct from constant folding and
+>   from the resolved dict-byref-*arg* work. **A naive attempt to fix this by
+>   invalidating global container-literal tracking at call sites was reverted**
+>   (it neither fixes the propagation — the GOTO `len(d)` is already symbolic —
+>   nor is safe: it erased `c`'s literal between the repeated unpacks in
+>   `pep-448-call-unpack`). The real fix is in the global-dict subscript-assign
+>   lowering (emit the write against the resolved global symbol), a focused
+>   dict-machinery change. Tracked as a P0 soundness follow-up.
 
 > **Refreshed status (2026-06-16).** **P0 (soundness) is empty.** The
 > **regex/string precision track is now largely complete on the native
