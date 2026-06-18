@@ -741,6 +741,110 @@ exprt python_convertert::convert_user_call(
           side_effect_expr_nondett{python_int_type(), source_locationt{}});
         continue;
       }
+      // Fat-closure boxing at the param boundary
+      // (doc/python-frontend-fat-closure-plan.md): a capturing closure
+      // passed as a value argument — here a factory CALL returning a
+      // closure, `apply(make())` — is boxed into a CLOSURE python_value
+      // carrying a per-instance snapshot of its captures. The factory
+      // body is run so the captures are computed, then snapshotted; the
+      // callee dispatches the CLOSURE value soundly across calls.
+      if(is_node_type(arg, "Call"))
+      {
+        const jsont &cf = json_member(arg, "func");
+        if(is_node_type(cf, "Name"))
+        {
+          std::string cn = json_string(json_member(cf, "id"));
+          auto lr = lambda_returning_functions.find(cn);
+          auto ci = (lr != lambda_returning_functions.end())
+                      ? closure_captures.find(id2string(lr->second))
+                      : closure_captures.end();
+          const symbolt *fsym =
+            (lr != lambda_returning_functions.end())
+              ? symbol_table.lookup(irep_idt{"python::" + cn})
+              : nullptr;
+          if(
+            ci != closure_captures.end() && !ci->second.empty() &&
+            fsym != nullptr && fsym->type.id() == ID_code)
+          {
+            const auto &fp = to_code_type(fsym->type).parameters();
+            // Map factory parameter id -> the call's converted argument.
+            std::map<std::string, exprt> param_arg;
+            const jsont &fa = json_member(arg, "args");
+            if(fa.is_array())
+            {
+              auto ai = as_array(fa).begin();
+              for(std::size_t i = 0; i < fp.size() && ai != as_array(fa).end();
+                  ++i, ++ai)
+                param_arg[id2string(fp[i].get_identifier())] =
+                  convert_expression(*ai);
+            }
+            // A capture whose source is NOT a factory parameter is a
+            // factory LOCAL; computing it requires running the factory
+            // body. Param captures are taken from the args directly
+            // (reading the param symbol after the call is unreliable
+            // across repeated calls to the same factory).
+            bool has_local = false;
+            for(const auto &cap : ci->second)
+              if(!param_arg.count(std::get<0>(cap)))
+                has_local = true;
+            if(has_local)
+            {
+              exprt::operandst fargs;
+              if(fa.is_array())
+                for(const auto &a2 : as_array(fa))
+                  fargs.push_back(convert_expression(a2));
+              side_effect_expr_function_callt fcall{
+                fsym->symbol_expr(),
+                std::move(fargs),
+                to_code_type(fsym->type).return_type(),
+                get_location(arg)};
+              pending_checks.push_back(code_expressiont{std::move(fcall)});
+            }
+            exprt::operandst caps;
+            static unsigned capsnap = 0;
+            for(const auto &cap : ci->second)
+            {
+              auto pa = param_arg.find(std::get<0>(cap));
+              if(pa != param_arg.end())
+              {
+                caps.push_back(pa->second); // param capture -> the arg
+                continue;
+              }
+              const symbolt *os =
+                symbol_table.lookup(irep_idt{std::get<0>(cap)});
+              if(os == nullptr)
+              {
+                caps.push_back(side_effect_expr_nondett{
+                  std::get<2>(cap), get_location(arg)});
+                continue;
+              }
+              // Local capture: snapshot after the factory ran.
+              std::string sn = "__capsnap_" + std::to_string(capsnap++);
+              irep_idt sid{qualify_name(sn)};
+              if(symbol_table.lookup(sid) == nullptr)
+              {
+                symbolt ss{sid, os->type, "python"};
+                ss.base_name = sn;
+                ss.is_lvalue = true;
+                ss.is_state_var = true;
+                ss.is_static_lifetime = current_function.empty();
+                symbol_table.add(ss);
+              }
+              symbol_exprt snap = symbol_table.lookup_ref(sid).symbol_expr();
+              pending_checks.push_back(
+                code_frontend_assignt{snap, os->symbol_expr()});
+              caps.push_back(snap);
+            }
+            std::vector<codet> box_stmts;
+            exprt closure_val =
+              box_closure(lr->second, caps, box_stmts, get_location(arg));
+            for(auto &s : box_stmts)
+              pending_checks.push_back(std::move(s));
+            arguments.push_back(closure_val);
+            continue;
+          }
+        }
+      }
       arguments.push_back(convert_expression(arg));
     }
   }

@@ -20,6 +20,7 @@
 #include <util/mathematical_expr.h>
 #include <util/mathematical_types.h>
 #include <util/pointer_expr.h>
+#include <util/pointer_offset_size.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
@@ -110,6 +111,149 @@ parse_decimal_literal(const std::string &in)
   const long long coeff = std::stoll(digits);
   const long exp = -fracdigits + exp_explicit;
   return std::make_tuple(sign, coeff, exp, 0L, 0L);
+}
+
+// ---- Fat-closure runtime (doc/python-frontend-fat-closure-plan.md) ----
+
+std::size_t python_convertert::register_closure(const irep_idt &lambda_id)
+{
+  for(std::size_t i = 0; i < closure_registry.size(); ++i)
+    if(closure_registry[i] == lambda_id)
+      return i;
+  closure_registry.push_back(lambda_id);
+  return closure_registry.size() - 1;
+}
+
+struct_typet python_convertert::closure_record_type(const irep_idt &lambda_id)
+{
+  struct_typet::componentst comps;
+  auto it = closure_captures.find(id2string(lambda_id));
+  if(it != closure_captures.end())
+    for(const auto &cap : it->second)
+      comps.push_back(
+        struct_typet::componentt{std::get<1>(cap), std::get<2>(cap)});
+  struct_typet st{comps};
+  st.set_tag("closure_rec_" + id2string(lambda_id));
+  return st;
+}
+
+exprt python_convertert::box_closure(
+  const irep_idt &lambda_id,
+  const exprt::operandst &capture_values,
+  std::vector<codet> &out,
+  const source_locationt &loc)
+{
+  struct_typet rec_type = closure_record_type(lambda_id);
+  pointer_typet ptr_type{rec_type, 64};
+  static unsigned ctr = 0;
+  std::string pn = "__closure_rec_" + std::to_string(ctr++);
+  irep_idt pid{qualify_name(pn)};
+  if(symbol_table.lookup(pid) == nullptr)
+  {
+    symbolt ps{pid, ptr_type, "python"};
+    ps.base_name = pn;
+    ps.is_lvalue = true;
+    ps.is_state_var = true;
+    ps.is_static_lifetime = current_function.empty();
+    symbol_table.add(ps);
+  }
+  symbol_exprt rec_ptr = symbol_table.lookup_ref(pid).symbol_expr();
+  namespacet ns{symbol_table};
+  exprt size =
+    from_integer(pointer_offset_size(rec_type, ns).value_or(8), size_type());
+  side_effect_exprt alloc{ID_allocate, {size, false_exprt{}}, ptr_type, loc};
+  out.push_back(code_frontend_assignt{rec_ptr, alloc});
+  const auto &comps = rec_type.components();
+  for(std::size_t i = 0; i < comps.size() && i < capture_values.size(); ++i)
+  {
+    member_exprt field{
+      dereference_exprt{rec_ptr}, comps[i].get_name(), comps[i].type()};
+    exprt val = capture_values[i];
+    if(val.type() != comps[i].type())
+      val = safe_typecast(val, comps[i].type());
+    out.push_back(code_frontend_assignt{field, val});
+  }
+  return make_python_closure(
+    static_cast<int>(register_closure(lambda_id)), rec_ptr);
+}
+
+exprt python_convertert::dispatch_closure_value(
+  const exprt &closure_val,
+  const exprt::operandst &args,
+  const source_locationt &loc)
+{
+  const typet ret_t = python_value_type();
+  static unsigned dctr = 0;
+  std::string rn = "__closure_call_" + std::to_string(dctr++);
+  irep_idt rid{qualify_name(rn)};
+  if(symbol_table.lookup(rid) == nullptr)
+  {
+    symbolt rs{rid, ret_t, "python"};
+    rs.base_name = rn;
+    rs.is_lvalue = true;
+    rs.is_state_var = true;
+    rs.is_static_lifetime = current_function.empty();
+    symbol_table.add(rs);
+  }
+  symbol_exprt result = symbol_table.lookup_ref(rid).symbol_expr();
+  std::vector<codet> disp;
+  disp.push_back(
+    code_frontend_assignt{result, side_effect_expr_nondett{ret_t, loc}});
+  const exprt fn = python_value_closure_fn(closure_val);
+  bool any = false;
+  for(std::size_t k = 0; k < closure_registry.size(); ++k)
+  {
+    const irep_idt &lid = closure_registry[k];
+    const symbolt *ls = symbol_table.lookup(lid);
+    if(ls == nullptr || ls->type.id() != ID_code)
+      continue;
+    const auto &lparams = to_code_type(ls->type).parameters();
+    auto ci = closure_captures.find(id2string(lid));
+    std::size_t ncap = (ci != closure_captures.end()) ? ci->second.size() : 0;
+    std::size_t nuser = lparams.size() >= ncap ? lparams.size() - ncap : 0;
+    if(nuser != args.size())
+      continue; // positional arity mismatch -> not this candidate
+    any = true;
+    exprt::operandst call_args;
+    for(std::size_t i = 0; i < args.size(); ++i)
+    {
+      exprt a = args[i];
+      if(i < lparams.size() && a.type() != lparams[i].type())
+      {
+        if(
+          is_python_value_type(lparams[i].type()) &&
+          !is_python_value_type(a.type()))
+          a = wrap_value(a);
+        else
+          a = safe_typecast(a, lparams[i].type());
+      }
+      call_args.push_back(a);
+    }
+    struct_typet rec_type = closure_record_type(lid);
+    pointer_typet rec_ptr_t{rec_type, 64};
+    exprt rec_ptr =
+      typecast_exprt{python_value_closure_rec(closure_val), rec_ptr_t};
+    for(const auto &c : rec_type.components())
+      call_args.push_back(
+        member_exprt{dereference_exprt{rec_ptr}, c.get_name(), c.type()});
+    side_effect_expr_function_callt call{
+      ls->symbol_expr(), call_args, to_code_type(ls->type).return_type(), loc};
+    exprt cv = call;
+    if(cv.type() != ret_t)
+      cv = is_python_value_type(cv.type()) ? cv : wrap_value(cv);
+    code_blockt body;
+    body.add(code_frontend_assignt{result, cv});
+    disp.push_back(code_ifthenelset{
+      and_exprt{
+        python_value_is(closure_val, python_type_tagt::CLOSURE),
+        equal_exprt{fn, from_integer(static_cast<int>(k), signedbv_typet{64})}},
+      std::move(body)});
+  }
+  if(!any)
+    return nil_exprt{};
+  for(auto &c : disp)
+    pending_checks.push_back(std::move(c));
+  return std::move(result);
 }
 
 // PLR §6.3.4: Calls
@@ -1025,6 +1169,54 @@ exprt python_convertert::convert_call(const jsont &expr)
 
     return tmp_sym.symbol_expr();
   }
+  // Fat-closure dispatch (doc/python-frontend-fat-closure-plan.md):
+  // calling a Name that resolves to a python_value which may hold a
+  // boxed closure. The dispatch is guarded on the CLOSURE tag, so a
+  // non-closure value falls through to a sound nondet. Only attempted
+  // when closures have actually been boxed (registry non-empty), and
+  // only for a Name that resolves to a python_value variable/parameter
+  // and is NOT a known function alias — otherwise converting the Name
+  // here would be wrong (and could emit spurious checks).
+  if(is_node_type(func, "Name") && !closure_registry.empty())
+  {
+    const std::string nm = json_string(json_member(func, "id"));
+    const bool is_alias = function_aliases.count(qualify_name(nm)) > 0;
+    const symbolt *vsym = nullptr;
+    if(!is_alias)
+    {
+      if(!current_function.empty())
+        vsym = symbol_table.lookup(
+          irep_idt{"python::" + current_function + "::" + nm});
+      if(vsym == nullptr)
+        vsym = symbol_table.lookup(irep_idt{"python::" + nm});
+    }
+    if(
+      vsym != nullptr && vsym->type.id() != ID_code &&
+      is_python_value_type(vsym->type))
+    {
+      exprt callee = vsym->symbol_expr();
+      exprt::operandst cargs;
+      bool ok = true;
+      if(args.is_array())
+        for(const auto &a : as_array(args))
+        {
+          exprt ae = convert_expression(a);
+          if(ae.is_nil())
+          {
+            ok = false;
+            break;
+          }
+          cargs.push_back(ae);
+        }
+      if(ok)
+      {
+        exprt d = dispatch_closure_value(callee, cargs, get_location(expr));
+        if(d.is_not_nil())
+          return d;
+      }
+    }
+  }
+
   // User-function-call fallback. Extracted to
   // python_converter_call_user.cpp for clarity.
   return convert_user_call(expr, func_name, args);

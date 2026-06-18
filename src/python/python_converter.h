@@ -611,6 +611,37 @@ private:
   /// observe the final value) without clobbering an enclosing variable
   /// of the same name (which would be unsound).
   std::map<std::string, irep_idt> comprehension_var_redirect;
+  /// Fat-closure registry (doc/python-frontend-fat-closure-plan.md):
+  /// index -> the closure's underlying function symbol id. The index is
+  /// stored in a CLOSURE python_value's __int_val; the runtime dispatch
+  /// guards over registered closures of the matching arity.
+  std::vector<irep_idt> closure_registry;
+  /// Register `lambda_id` in the closure registry (dedup), returning its
+  /// index.
+  std::size_t register_closure(const irep_idt &lambda_id);
+  /// The per-instance capture-record struct type for `lambda_id`, built
+  /// from its closure_captures (one field per captured free variable).
+  struct_typet closure_record_type(const irep_idt &lambda_id);
+  /// Box a closure: allocate a heap capture record, fill it from
+  /// `capture_values` (aligned with closure_captures[lambda_id]), and
+  /// return a CLOSURE python_value referencing it. Allocation/fill
+  /// statements are appended to `out`.
+  exprt box_closure(
+    const irep_idt &lambda_id,
+    const exprt::operandst &capture_values,
+    std::vector<codet> &out,
+    const source_locationt &loc);
+  /// Emit a runtime dispatch of a CLOSURE python_value `closure_val`
+  /// called with `args`: a guarded choice over registered closures of
+  /// matching positional arity, binding each candidate's captures from
+  /// the record and calling it. Result is assigned to a fresh temp which
+  /// is returned; dispatch statements are appended to pending_checks.
+  /// Returns nil if no candidate matches the call arity (caller falls
+  /// back to the sound nondet path).
+  exprt dispatch_closure_value(
+    const exprt &closure_val,
+    const exprt::operandst &args,
+    const source_locationt &loc);
   // Track constant string values for string method evaluation
   std::map<irep_idt, std::string> string_constants;
   std::map<irep_idt, exprt> dict_literals; // track dict literal values

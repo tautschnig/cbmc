@@ -406,5 +406,11 @@ exprt python_convertert::convert_lambda(const jsont &expr)
   }
 
   symbol_table.add(func_sym);
+  // Fat-closure: eagerly register a capturing lambda so that any
+  // higher-order callee converted later (e.g. `def apply(f): return
+  // f()`) emits a runtime dispatch branch for it. Registration is by
+  // function id (deduped); boxing reuses the same index.
+  if(closure_captures.count("python::" + lambda_name))
+    register_closure(func_id);
   return func_sym.symbol_expr();
 }
