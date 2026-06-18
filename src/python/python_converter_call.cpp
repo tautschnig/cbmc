@@ -1218,16 +1218,8 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
 
   // User-function-call fallback. Extracted to
-  // python_converter_call_user.cpp for clarity.
-  exprt user_call = convert_user_call(expr, func_name, args);
-  // POST-argument global invalidation (PLR §7.12): the call's arguments
-  // (incl. `f(**d)` unpacking, which reads dict_literals) have now been
-  // converted, so it is safe to also invalidate the global
-  // dict_literals tracking — a callee may have mutated a global dict in
-  // place (`d[k]=v`), which would otherwise fold a later
-  // len/membership/subscript against the stale pre-call contents.
-  // (convert_user_call already invalidated the global SCALAR tracking
-  // pre-arguments; list_literals are left intact — see the helper.)
-  invalidate_global_value_tracking(/*include_dict_literals=*/true);
-  return user_call;
+  // python_converter_call_user.cpp for clarity. (Global value-tracking
+  // invalidation for the post-call effect is done uniformly for ALL
+  // call forms at the single Call chokepoint in convert_expression.)
+  return convert_user_call(expr, func_name, args);
 }
