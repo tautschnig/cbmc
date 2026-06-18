@@ -138,6 +138,18 @@ codet python_convertert::convert_statement(const jsont &stmt)
           if(asname.empty())
             asname = name;
 
+          // Root B (import scoping): record the bound name as
+          // explicitly in scope. `from X import *` cannot be
+          // enumerated, so it disables the leaked-name NameError
+          // check (conservative).
+          if(name == "*")
+            saw_import_star = true;
+          else
+          {
+            explicitly_imported_names.insert(name);
+            explicitly_imported_names.insert(asname);
+          }
+
           // Register known math functions
           if(module == "math")
           {

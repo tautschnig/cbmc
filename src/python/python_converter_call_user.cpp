@@ -641,6 +641,35 @@ exprt python_convertert::convert_user_call(
   const code_typet &func_type = to_code_type(sym->type);
   const auto &params = func_type.parameters();
 
+  // Root B (import scoping, PLR §4.2): a bare call to a name that
+  // exists in the flat python:: table ONLY because a module was
+  // imported (it is in imported_module_defs) but was NOT itself
+  // imported, and is not a main-module definition, is a NameError in
+  // CPython (`from X import a; b()` where b is defined in X).
+  //
+  // Restricted to code SYNTACTICALLY in the main module: module level
+  // (current_function empty) or inside a function defined in main
+  // (current_function in main_module_defs). Imported-module function
+  // bodies legitimately call their own module's (un-imported-by-main)
+  // names, and are converted lazily so !processing_import does not
+  // exclude them -- the current_function gate does. Disabled if a
+  // `from X import *` was seen (names not enumerable).
+  if(
+    !saw_import_star &&
+    (current_function.empty() ||
+     main_module_defs.count(current_function) > 0))
+  {
+    const std::string bn = id2string(sym->base_name);
+    if(
+      imported_module_defs.count(bn) > 0 &&
+      explicitly_imported_names.count(bn) == 0 &&
+      main_module_defs.count(bn) == 0)
+    {
+      emit_conditional_exception(true_exprt{}, "NameError");
+      return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+    }
+  }
+
   // @may_raise('ExcType'): under --python-raising-ops-check, model the
   // decorated stub (e.g. os.remove -> OSError) as may-raise so the
   // uncaught-exception / except path is explored. No-op otherwise.
