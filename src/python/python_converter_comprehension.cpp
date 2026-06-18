@@ -457,6 +457,51 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
     }
   }
 
+  // Closure cell substrate (PLR §4.2.2), comprehension late-binding.
+  // When the element is a closure (lambda) and no filters are present,
+  // Python-3 semantics make every element closure share the loop
+  // variable's cell, so all observe its FINAL value. Bind a unique
+  // per-comprehension symbol to that final value and redirect the loop
+  // variable to it while the element closures are converted, so they
+  // reference the unique symbol (not the enclosing same-named binding,
+  // which must not be clobbered). Gated to the closure element + no-ifs
+  // case; anything else keeps the existing per-combination substitution.
+  std::vector<std::string> comp_redirect_keys;
+  {
+    bool no_ifs = true;
+    for(const auto &gen : as_array(generators))
+    {
+      const jsont &ifs = json_member(gen, "ifs");
+      if(ifs.is_array() && !as_array(ifs).empty())
+        no_ifs = false;
+    }
+    if(is_node_type(elt, "Lambda") && no_ifs)
+    {
+      static unsigned lcb_ctr = 0;
+      for(auto &gi : gens)
+      {
+        if(gi.const_values.empty())
+          continue; // only compile-time-enumerable iterables
+        const exprt &final_val = gi.const_values.back();
+        std::string un = gi.var_name + "$lc" + std::to_string(lcb_ctr++);
+        irep_idt uid{qualify_name(un)};
+        if(symbol_table.lookup(uid) == nullptr)
+        {
+          symbolt us{uid, final_val.type(), "python"};
+          us.base_name = un;
+          us.is_lvalue = true;
+          us.is_state_var = true;
+          us.is_static_lifetime = current_function.empty();
+          symbol_table.add(us);
+        }
+        pending_checks.push_back(code_frontend_assignt{
+          symbol_table.lookup_ref(uid).symbol_expr(), final_val});
+        comprehension_var_redirect[gi.var_name] = uid;
+        comp_redirect_keys.push_back(gi.var_name);
+      }
+    }
+  }
+
   // Unroll all combinations
   // For single generator: iterate values
   // For nested: iterate cartesian product
@@ -680,6 +725,11 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       elt_expr = std::move(folded);
     elements.push_back(elt_expr);
   }
+
+  // Clear the comprehension late-binding redirect now that all element
+  // closures have been converted (they have baked in the unique symbol).
+  for(const auto &k : comp_redirect_keys)
+    comprehension_var_redirect.erase(k);
 
   if(elements.empty())
   {

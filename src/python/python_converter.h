@@ -602,6 +602,15 @@ private:
   /// value (or per-instance heap cell pointer). Without this the shared
   /// closure_captures rebind would alias them (false proofs).
   std::map<std::string, std::map<std::string, irep_idt>> closure_var_captures;
+  /// Closure cell substrate (PLR §4.2.2), comprehension late-binding.
+  /// While converting a `[lambda ...: ... var ...]`-style comprehension
+  /// whose element is a closure, convert_name resolves the loop
+  /// variable `var` (bare name) to this unique per-comprehension symbol
+  /// (bound to the loop's FINAL value) instead of the enclosing-scope
+  /// binding. This gives Python-3 late binding (all element closures
+  /// observe the final value) without clobbering an enclosing variable
+  /// of the same name (which would be unsound).
+  std::map<std::string, irep_idt> comprehension_var_redirect;
   // Track constant string values for string method evaluation
   std::map<irep_idt, std::string> string_constants;
   std::map<irep_idt, exprt> dict_literals; // track dict literal values
