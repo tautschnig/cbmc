@@ -375,6 +375,10 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
                   continue;
                 src = ls->symbol_expr();
               }
+              // See convert_assign: skip code-typed captures (cannot be
+              // snapshotted into a temp), avoiding a symex abort.
+              if(src.type().id() == ID_code)
+                continue;
               std::string tn = "__ann_lam_bind_" + std::to_string(ann_lb++);
               irep_idt ti{qualify_name(tn)};
               if(symbol_table.lookup(ti) == nullptr)
@@ -1672,6 +1676,13 @@ codet python_convertert::convert_assign(const jsont &stmt)
                   continue;
                 src = ls->symbol_expr();
               }
+              // A code-typed capture (a closure capturing another
+              // closure / function value) cannot be snapshotted into a
+              // temp (`temp := <code>` is not a valid assignment); leave
+              // it bound from its original source via the call-site
+              // fallback rather than aborting symex.
+              if(src.type().id() == ID_code)
+                continue;
               std::string tn = "__lam_bind_" + std::to_string(lb++);
               irep_idt ti{qualify_name(tn)};
               if(symbol_table.lookup(ti) == nullptr)
