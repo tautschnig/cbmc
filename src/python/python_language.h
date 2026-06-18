@@ -80,6 +80,7 @@ protected:
   /// Whether to use mathematical integers instead of int64.
   bool unbounded_ints = false;
   bool no_body_check = false;
+  bool python_raising_ops_check = false;
   bool python_strict_warnings = false;
   /// When true, skip the CBMC Python model library and resolve
   /// imports only via the user's PYTHONPATH / system CPython source.

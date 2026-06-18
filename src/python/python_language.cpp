@@ -47,6 +47,8 @@ void python_languaget::set_language_options(
   function_entry_point = options.get_option("function");
   unbounded_ints = options.get_bool_option("python-unbounded-ints");
   no_body_check = options.get_bool_option("python-no-body-check");
+  python_raising_ops_check =
+    options.get_bool_option("python-raising-ops-check");
   python_strict_warnings = options.get_bool_option("python-strict-warnings");
   python_use_stdlib_source =
     options.get_bool_option("python-use-stdlib-source");
@@ -356,6 +358,7 @@ bool python_languaget::typecheck(
   converter.set_use_smt_string_native(
     python_string_kind == python_string_kindt::smt_string_native);
   converter.set_no_body_check(no_body_check);
+  converter.set_python_raising_ops_check(python_raising_ops_check);
   converter.set_python_strict_warnings(python_strict_warnings);
   converter.set_python_lazy_stubs(python_lazy_stubs);
   converter.set_python_no_exception_checks(python_no_exception_checks);

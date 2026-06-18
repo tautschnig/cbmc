@@ -79,6 +79,7 @@ class optionst;
   "(python-smt-strings)" \
   "(python-lazy-stubs)" \
   "(python-no-exception-checks)" \
+  "(python-raising-ops-check)" \
   "(python-required-kwarg-checks)" \
   "(python-check-typeddict-fields)" \
   "(python-check-annotations)" \

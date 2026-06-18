@@ -712,6 +712,12 @@ std::optional<exprt> python_convertert::try_builtin_call(
           // Symbolic string: emit cprover_string_parse_int_func
           // so the solver knows the int's relationship to the
           // string's characters.
+          //
+          // int(s) raises ValueError when s is not a valid integer
+          // literal; the frontend cannot prove a symbolic string is
+          // valid, so under --python-raising-ops-check model it as
+          // may-raise (default off: silently succeeds).
+          emit_may_raise("ValueError");
           exprt parsed = emit_string_int_function(
             ID_cprover_string_parse_int_func,
             arg,
