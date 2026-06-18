@@ -1804,6 +1804,19 @@ exprt python_convertert::convert_unary_op(const jsont &expr)
     }
   }
 
+  // PLR §6.6: `not x` is truth-value negation. Convert the operand to
+  // bool via the SAME path that `assert`/`if` conditions use
+  // (safe_typecast -> bool), which tag-dispatches a tagged-union
+  // operand correctly — do NOT unwrap to int first, which reads the
+  // __int_val slot and wrongly makes a present CLASS/STR/LIST/DICT
+  // instance (e.g. an Optional[instance] result such as re.match's
+  // Match | None) falsy. Using safe_typecast (rather than the heavier
+  // python_truthiness disjunction) keeps `not` consistent with, and
+  // as cheap as, the positive truth test, avoiding a refinement
+  // blow-up on regex Match results.
+  if(op == "Not")
+    return not_exprt{safe_typecast(operand, bool_typet{})};
+
   // Unwrap tagged-union values
   if(is_python_value_type(operand.type()))
     operand = unwrap_value(operand, python_int_type());
