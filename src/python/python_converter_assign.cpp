@@ -1491,6 +1491,35 @@ codet python_convertert::convert_assign(const jsont &stmt)
     }
   }
 
+  // Nested-aliasing soundness (PLR §9): a list LITERAL containing a
+  // mutable inner element extracted from another list (`h = [g[i]]`) or
+  // a shared-inner name holds an aliased object; mutating it later
+  // (`h[0][j] = ...`) is the same unmodelled aliasing repetition/concat
+  // taint. Taint the target(s) so the element-mutation guard fires
+  // (sound over-approximation; a subscript of scalars is harmless since
+  // no nested mutation follows).
+  if(is_node_type(value, "List"))
+  {
+    const jsont &elts = json_member(value, "elts");
+    bool holds_inner = false;
+    if(elts.is_array())
+      for(const auto &e : as_array(elts))
+      {
+        if(is_node_type(e, "Subscript"))
+          holds_inner = true;
+        else if(
+          is_node_type(e, "Name") &&
+          shared_inner_mutables.count(
+            irep_idt{qualify_name(json_string(json_member(e, "id")))}) > 0)
+          holds_inner = true;
+      }
+    if(holds_inner)
+      for(const auto &tgt : as_array(targets))
+        if(is_node_type(tgt, "Name"))
+          aliased_mutable_lists.insert(
+            irep_idt{qualify_name(json_string(json_member(tgt, "id")))});
+  }
+
   // PLR §3.2: if the RHS is an empty list literal AND the
   // single Name target is in empty_list_inferred_types
   // (populated by collect_empty_list_inferred_types from a

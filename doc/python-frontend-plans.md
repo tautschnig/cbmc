@@ -1530,6 +1530,32 @@ substrate.**
 > scope is smaller than stated; a per-test DIFF triage should precede any
 > push on these clusters.
 
+**Guard-coverage audit + extension (2026-06-18).** A soundness audit of
+the taint guard's *actual* coverage found it had only ever fired on the
+**replication** channels (repetition `*`, concat `+`, slice `[:]`,
+`copy`/`list`); three further channels that also alias an extracted
+mutable inner were **unguarded false proofs** (corpus-invisible; sweep
+neutral). Two are now guarded (sound over-approximation, sweep PASS 2945
+= baseline, 0 regressions):
+- **Self-append / insert** `a.append(a[i])` / `a.insert(_, g[i])` — taint
+  the receiver when the appended value is a subscript or a shared-inner
+  name (a scalar subscript is harmless: no nested mutation follows).
+- **New-container literal** `h = [g[i]]` — taint the target when a list
+  literal holds a subscript / shared-inner element.
+
+**Residual (documented, NOT yet guarded): extraction from an *untainted*
+list** — `r = g[i]` where `g` is a plain nested literal (no prior share
+op), then mutate `r` and observe via `g[i]`. This is the matrix-row
+pattern (`row = m[i]; row[j] = ...`), which is **common and correct** when
+the extracted row is used on its own; tainting every such extraction
+would over-report and regress real numeric code. Distinguishing the
+unsound (aliasing-observed) sub-case from the sound (row-only) sub-case
+needs data-flow, and the precise representational fix is the
+byref-at-construction substrate that is empirically untenable (above).
+So this single channel stays a known, corpus-invisible residual false
+proof. (The doc previously overstated the guard as covering all unsound
+patterns; this audit corrects that.)
+
 ---
 
 ## 10. Attribute / descriptor protocol residuals (PLR §3.3.2)  {#descriptors}
