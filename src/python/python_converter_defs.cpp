@@ -11,6 +11,7 @@
 #include <util/config.h>
 #include <util/json.h>
 #include <util/pointer_expr.h>
+#include <util/pointer_offset_size.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
@@ -1376,6 +1377,121 @@ codet python_convertert::convert_function_def(const jsont &stmt)
             captures.push_back({var_id, ref, var_sym->type});
           }
         }
+        // Closure cell substrate (PLR §4.2.2), mutating slice. A
+        // NONLOCAL variable the nested function mutates, when the nested
+        // function ESCAPES (is returned), cannot use the qualify_name
+        // redirect to the shared enclosing symbol: across multiple
+        // factory invocations that single symbol would alias, falsely
+        // proving independent closures equal. Instead box such a
+        // variable in a per-invocation HEAP CELL — the nested function
+        // captures the cell POINTER, and the cell is allocated and
+        // initialised from the enclosing value at the def site.
+        //
+        // Sound gating: apply only when the cell-var is assigned in the
+        // enclosing body BEFORE the nested def and NOT reassigned at or
+        // after it (so the def-site value equals the late-binding
+        // value). Everything else falls back to the existing sound
+        // nonlocal path (which over-approximates to nondet).
+        if(!nested_nonlocal_global.empty())
+        {
+          std::function<bool(const jsont &)> returns_name =
+            [&](const jsont &n) -> bool
+          {
+            if(n.is_array())
+            {
+              for(const auto &e : as_array(n))
+                if(returns_name(e))
+                  return true;
+              return false;
+            }
+            if(!n.is_object())
+              return false;
+            if(is_node_type(n, "Return"))
+            {
+              const jsont &rv = json_member(n, "value");
+              if(
+                is_node_type(rv, "Name") &&
+                json_string(json_member(rv, "id")) == nested_bare)
+                return true;
+            }
+            static const char *fs[] = {
+              "body", "orelse", "finalbody", "handlers", nullptr};
+            for(const char **f = fs; *f; ++f)
+            {
+              const jsont &c = n[*f];
+              if(!c.is_null() && returns_name(c))
+                return true;
+            }
+            return false;
+          };
+          if(returns_name(body))
+          {
+            const auto &barr = as_array(body);
+            std::size_t def_idx = barr.size();
+            {
+              std::size_t k = 0;
+              for(const auto &bs : barr)
+              {
+                if(
+                  (is_node_type(bs, "FunctionDef") ||
+                   is_node_type(bs, "AsyncFunctionDef")) &&
+                  json_string(json_member(bs, "name")) == nested_bare)
+                {
+                  def_idx = k;
+                  break;
+                }
+                ++k;
+              }
+            }
+            auto assigns_name =
+              [&](const jsont &st, const std::string &nm) -> bool
+            {
+              std::set<std::string> a, ex, np;
+              collect_assigned_locals(st, a, ex, np);
+              return a.count(nm) > 0;
+            };
+            for(const auto &cv : nested_nonlocal_global)
+            {
+              if(our_params.count(cv) == 0)
+                continue;
+              bool before = false, after = false;
+              std::size_t k = 0;
+              for(const auto &bs : barr)
+              {
+                if(assigns_name(bs, cv))
+                {
+                  if(k < def_idx)
+                    before = true;
+                  else
+                    after = true;
+                }
+                ++k;
+              }
+              if(!before || after)
+                continue;
+              typet valtype = python_int_type();
+              const symbolt *cvsym = symbol_table.lookup(
+                irep_idt{"python::" + current_function + "::" + cv});
+              if(cvsym != nullptr && cvsym->type.id() != ID_code)
+                valtype = cvsym->type;
+              pointer_typet cellptr{valtype, 64};
+              std::string cell_src =
+                "python::" + current_function + "::__cell_" + cv;
+              if(symbol_table.lookup(irep_idt{cell_src}) == nullptr)
+              {
+                symbolt cs{irep_idt{cell_src}, cellptr, "python"};
+                cs.base_name = "__cell_" + cv;
+                cs.is_lvalue = true;
+                cs.is_state_var = true;
+                symbol_table.add(cs);
+              }
+              captures.push_back({cell_src, cv, cellptr});
+              function_cell_capture_names["python::" + nested_name].insert(cv);
+              nested_cell_allocs["python::" + nested_name].push_back(
+                {cv, valtype});
+            }
+          }
+        }
         if(!captures.empty())
           closure_captures["python::" + nested_name] = captures;
       }
@@ -1890,6 +2006,40 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       }
       if(!dec_block.statements().empty())
         return std::move(dec_block);
+    }
+  }
+
+  // Closure cell substrate (PLR §4.2.2), mutating slice: if this nested
+  // function captures nonlocal cell-variables by HEAP CELL, emit the
+  // per-invocation cell allocation + initialisation into the ENCLOSING
+  // body at this def's site. current_function has been restored to the
+  // parent scope here, so python::<parent>::<cv> reads the enclosing
+  // value and python::<parent>::__cell_<cv> is the cell pointer the
+  // escaping closure captures (snapshotted at the factory call site).
+  {
+    auto nca = nested_cell_allocs.find("python::" + qualified_func_name);
+    if(nca != nested_cell_allocs.end())
+    {
+      namespacet ns{symbol_table};
+      code_blockt cell_block;
+      for(const auto &[cv, valtype] : nca->second)
+      {
+        const symbolt *cs = symbol_table.lookup(
+          irep_idt{"python::" + current_function + "::__cell_" + cv});
+        const symbolt *cvs = symbol_table.lookup(
+          irep_idt{"python::" + current_function + "::" + cv});
+        if(cs == nullptr || cvs == nullptr)
+          continue;
+        exprt size = from_integer(
+          pointer_offset_size(valtype, ns).value_or(8), size_type());
+        side_effect_exprt alloc{
+          ID_allocate, {size, false_exprt{}}, cs->type, loc};
+        cell_block.add(code_frontend_assignt{cs->symbol_expr(), alloc});
+        cell_block.add(code_frontend_assignt{
+          dereference_exprt{cs->symbol_expr()}, cvs->symbol_expr()});
+      }
+      if(!cell_block.statements().empty())
+        return std::move(cell_block);
     }
   }
 
