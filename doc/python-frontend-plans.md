@@ -99,14 +99,22 @@ robustness, then capability; difficulty is noted where high.
 >   (cheap structural ops) and fires only on the actual unsound pattern (so it
 >   is sweep-neutral — the false proof is corpus-invisible today). Do NOT
 >   pursue the byref substrate.
-> - **Tier 3 — regex/string finish.** **Default-backend Match()/None for a
->   constant pattern+subject — LANDED (`aa71a43868`, no flag; +12 sweep).**
->   Remaining: `flags=` argument precision (bitmask → inline-flag prefix;
->   blocked on stub constant-prop), literal-symbolic patterns ([§4](#regex)),
->   and the deep refined-solver gap (SYMBOLIC subjects on the default backend
->   stay sound nondet; precise on native). **Deferred/research-grade:** regex
->   Phase 4 (greedy/variable-length group framing), refined-backend regex
->   axioms (Wave 3), symbolic `count`/`rfind` bounded loops (perf-gated).
+> - **Tier 3 — regex/string finish.** On the DEFAULT backend (no `--cvc5`), a
+>   constant pattern+subject now decides precisely via a conversion-time matcher
+>   folded in the refined solver: **Match()/None** (`aa71a43868`),
+>   **inline-flag `(?i)`/`(?s)` patterns + `flags=` IGNORECASE/DOTALL routing**
+>   (`31f4cabfa2`), and **Match.start/end/span/group(0) positions + re.sub
+>   replace-all** (`c7733c5739`). All +0-regression sweeps (the corpus regex
+>   wins came from Match()/None, +12). Remaining: literal-symbolic patterns
+>   ([§4](#regex)); **re.findall / re.split stay a sound over-approximation on
+>   the default backend** — they chain positions through a loop whose `from` is
+>   the previous (solver-symbolic) `end`, which cannot constant-fold at solve
+>   time (a single list-returning intrinsic would be needed); the deep
+>   refined-solver gap (SYMBOLIC subjects stay sound nondet; precise on native).
+>   `flags=` ARGUMENT precision for non-inline use is sound nondet (concat
+>   wall; zero corpus value). **Deferred/research-grade:** regex Phase 4
+>   (greedy/variable-length group framing), refined-backend regex axioms
+>   (Wave 3), symbolic `count`/`rfind` bounded loops (perf-gated).
 > - **Tier 4 — capability & breadth.** Async result-binding ([§13](#async),
 >   small live bug); module breadth ([§6](#modules), ranked by corpus import
 >   frequency); higher-order residual ([§12](#higher-order): named-container
