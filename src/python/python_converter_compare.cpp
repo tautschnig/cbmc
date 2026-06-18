@@ -105,6 +105,12 @@ exprt python_convertert::python_value_structural_eq(
     case python_type_tagt::COMPLEX:
     case python_type_tagt::SET:
       return fresh_nondet_bool(); // not yet structurally compared here (sound)
+    case python_type_tagt::CLOSURE:
+      // PLR: closures have no __eq__; equality is identity. Two
+      // fat-closures are equal iff same fn and same capture record.
+      return and_exprt{
+        equal_exprt{python_value_closure_fn(l), python_value_closure_fn(r)},
+        equal_exprt{python_value_closure_rec(l), python_value_closure_rec(r)}};
     }
     UNREACHABLE;
     return fresh_nondet_bool();
