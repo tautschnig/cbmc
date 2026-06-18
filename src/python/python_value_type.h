@@ -62,6 +62,15 @@ enum class python_type_tagt
   /// truthiness, unwrap_value and the Any-receiver method dispatch can
   /// dereference it as a set struct.
   SET = 9,
+  /// Fat-closure (PLR §4.2.2). __int_val holds the fn identity (an
+  /// index into the converter's closure registry); __class_ptr points
+  /// at a per-instance heap capture record (a struct with one field per
+  /// captured free variable, or a cell pointer for nonlocal-mutated
+  /// captures). Lets a closure carry its captures through any value
+  /// channel (parameter, container element, attribute) so a call binds
+  /// captures from the value it actually received — see
+  /// doc/python-frontend-fat-closure-plan.md.
+  CLOSURE = 10,
 };
 
 /// Tag name for the python_value type in the symbol table.
@@ -217,6 +226,10 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
         : typecast_exprt{
             address_of_exprt{value}, pointer_typet{empty_typet{}, 64}};
     break;
+  case python_type_tagt::CLOSURE:
+    // Built via make_python_closure (needs both fn index and record
+    // pointer); not constructible through the single-value path.
+    break;
   }
 
   struct_exprt result{
@@ -282,6 +295,54 @@ inline equal_exprt python_value_is(const exprt &value, python_type_tagt tag)
   return equal_exprt{
     python_value_tag(value),
     from_integer(static_cast<int>(tag), signedbv_typet{32})};
+}
+
+/// Build a fat-closure tagged-union value: `fn_index` identifies the
+/// closure in the converter's registry (stored in __int_val) and
+/// `record_ptr` points at its per-instance heap capture record (stored
+/// in the opaque __class_ptr slot, cast at the dispatch site).
+inline struct_exprt make_python_closure(int fn_index, const exprt &record_ptr)
+{
+  struct_typet vtype = python_value_struct_def();
+  exprt tag_expr = from_integer(
+    static_cast<int>(python_type_tagt::CLOSURE), signedbv_typet{32});
+  exprt fn_val = from_integer(fn_index, signedbv_typet{64});
+  exprt float_val =
+    ieee_floatt{
+      ieee_float_spect::double_precision(),
+      ieee_floatt::rounding_modet::ROUND_TO_EVEN}
+      .to_expr();
+  exprt bool_val = from_integer(0, signedbv_typet{32});
+  exprt str_val =
+    python_smt_string_native_flag()
+      ? exprt{constant_exprt{irep_idt{""}, smt_string_typet{}}}
+      : exprt{struct_exprt{
+          {from_integer(0, signedbv_typet{64}),
+           null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
+          python_string_type()}};
+  exprt list_ptr = null_pointer_exprt{pointer_typet{empty_typet{}, 64}};
+  exprt class_ptr =
+    record_ptr.type().id() == ID_pointer
+      ? typecast_exprt{record_ptr, pointer_typet{empty_typet{}, 64}}
+      : typecast_exprt{
+          address_of_exprt{record_ptr}, pointer_typet{empty_typet{}, 64}};
+  struct_exprt result{
+    {tag_expr, fn_val, float_val, bool_val, str_val, list_ptr, class_ptr},
+    vtype};
+  result.type() = python_value_type();
+  return result;
+}
+
+/// Extract the fn-registry index from a fat-closure value.
+inline member_exprt python_value_closure_fn(const exprt &value)
+{
+  return member_exprt{value, "__int_val", signedbv_typet{64}};
+}
+
+/// Extract the opaque capture-record pointer from a fat-closure value.
+inline member_exprt python_value_closure_rec(const exprt &value)
+{
+  return member_exprt{value, "__class_ptr", pointer_typet{empty_typet{}, 64}};
 }
 
 /// PLR §3.2: the integer sentinel value used to encode None when
