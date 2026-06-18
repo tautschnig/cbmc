@@ -359,6 +359,76 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
               }
             }
           }
+          // Closure cell substrate (PLR §4.2.2), read-only slice:
+          // the inner lambda may close over f's LOCAL variables, not
+          // just its parameters. The argument-binding above only
+          // covers parameters bound from the call site; locals are
+          // computed by f's body, which the alias rewrite would
+          // otherwise skip entirely (leaving the capture nondet). Run
+          // f's body (discarding its code-typed return via
+          // code_expressiont) so the locals are assigned, then
+          // snapshot each captured local into a fresh per-assign-site
+          // temp and rebind the capture to it. Per-site temps keep
+          // distinct factory invocations independent (sound for the
+          // common create-then-use ordering).
+          {
+            irep_idt fid2{"python::" + called};
+            const symbolt *fsym2 = symbol_table.lookup(fid2);
+            auto ci2 = closure_captures.find(id2string(lr_it->second));
+            if(
+              fsym2 != nullptr && fsym2->type.id() == ID_code &&
+              ci2 != closure_captures.end())
+            {
+              std::set<std::string> fparam_ids;
+              for(const auto &p : to_code_type(fsym2->type).parameters())
+                fparam_ids.insert(id2string(p.get_identifier()));
+              bool has_local = false;
+              for(const auto &cap : ci2->second)
+                if(
+                  fparam_ids.count(std::get<0>(cap)) == 0 &&
+                  symbol_table.lookup(irep_idt{std::get<0>(cap)}) != nullptr)
+                  has_local = true;
+              if(has_local)
+              {
+                exprt::operandst fargs;
+                const jsont &call_args2 = json_member(value, "args");
+                if(call_args2.is_array())
+                  for(const auto &a : as_array(call_args2))
+                    fargs.push_back(convert_expression(a));
+                side_effect_expr_function_callt fcall{
+                  fsym2->symbol_expr(),
+                  std::move(fargs),
+                  to_code_type(fsym2->type).return_type(),
+                  loc};
+                lam_block.add(code_expressiont{std::move(fcall)});
+                for(auto &cap : ci2->second)
+                {
+                  if(fparam_ids.count(std::get<0>(cap)))
+                    continue;
+                  const symbolt *ls =
+                    symbol_table.lookup(irep_idt{std::get<0>(cap)});
+                  if(ls == nullptr)
+                    continue;
+                  static unsigned loc_lb = 0;
+                  std::string tn = "__loc_lam_bind_" + std::to_string(loc_lb++);
+                  irep_idt ti{qualify_name(tn)};
+                  if(symbol_table.lookup(ti) == nullptr)
+                  {
+                    symbolt ts{ti, ls->type, "python"};
+                    ts.base_name = tn;
+                    ts.is_lvalue = true;
+                    ts.is_state_var = true;
+                    ts.is_static_lifetime = true;
+                    symbol_table.add(ts);
+                  }
+                  lam_block.add(code_frontend_assignt{
+                    symbol_table.lookup_ref(ti).symbol_expr(),
+                    ls->symbol_expr()});
+                  std::get<0>(cap) = id2string(ti);
+                }
+              }
+            }
+          }
           // Record the alias so subsequent calls 'name(args)'
           // dispatch to the inner lambda symbol.
           function_aliases[qualified_name] = lr_it->second;
@@ -1609,6 +1679,70 @@ codet python_convertert::convert_assign(const jsont &stmt)
                       std::get<0>(cap) = id2string(ti);
                     }
                   }
+                }
+              }
+            }
+          }
+          // Closure cell substrate (PLR §4.2.2), read-only slice:
+          // run f's body so its LOCAL captures are computed, then
+          // snapshot each into a fresh per-assign-site temp and
+          // rebind. See convert_ann_assign for the rationale.
+          {
+            irep_idt fid2{"python::" + called};
+            const symbolt *fsym2 = symbol_table.lookup(fid2);
+            auto ci2 = closure_captures.find(id2string(it->second));
+            if(
+              fsym2 != nullptr && fsym2->type.id() == ID_code &&
+              ci2 != closure_captures.end())
+            {
+              std::set<std::string> fparam_ids;
+              for(const auto &p : to_code_type(fsym2->type).parameters())
+                fparam_ids.insert(id2string(p.get_identifier()));
+              bool has_local = false;
+              for(const auto &cap : ci2->second)
+                if(
+                  fparam_ids.count(std::get<0>(cap)) == 0 &&
+                  symbol_table.lookup(irep_idt{std::get<0>(cap)}) != nullptr)
+                  has_local = true;
+              if(has_local)
+              {
+                exprt::operandst fargs;
+                const jsont &call_args2 =
+                  json_member(json_member(stmt, "value"), "args");
+                if(call_args2.is_array())
+                  for(const auto &a : as_array(call_args2))
+                    fargs.push_back(convert_expression(a));
+                side_effect_expr_function_callt fcall{
+                  fsym2->symbol_expr(),
+                  std::move(fargs),
+                  to_code_type(fsym2->type).return_type(),
+                  get_location(stmt)};
+                lam_block.add(code_expressiont{std::move(fcall)});
+                for(auto &cap : ci2->second)
+                {
+                  if(fparam_ids.count(std::get<0>(cap)))
+                    continue;
+                  const symbolt *ls =
+                    symbol_table.lookup(irep_idt{std::get<0>(cap)});
+                  if(ls == nullptr)
+                    continue;
+                  static unsigned loc_lb2 = 0;
+                  std::string tn =
+                    "__loc_lam_bind_" + std::to_string(loc_lb2++);
+                  irep_idt ti{qualify_name(tn)};
+                  if(symbol_table.lookup(ti) == nullptr)
+                  {
+                    symbolt ts{ti, ls->type, "python"};
+                    ts.base_name = tn;
+                    ts.is_lvalue = true;
+                    ts.is_state_var = true;
+                    ts.is_static_lifetime = true;
+                    symbol_table.add(ts);
+                  }
+                  lam_block.add(code_frontend_assignt{
+                    symbol_table.lookup_ref(ti).symbol_expr(),
+                    ls->symbol_expr()});
+                  std::get<0>(cap) = id2string(ti);
                 }
               }
             }

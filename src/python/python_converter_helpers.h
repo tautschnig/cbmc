@@ -121,6 +121,65 @@ collect_name_refs(const jsont &node, std::set<std::string> &names)
   }
 }
 
+/// Closure cell substrate (PLR §4.2.2): collect the Name references
+/// that occur *inside* nested FunctionDef / AsyncFunctionDef / Lambda
+/// scopes of `node`. These are the candidate free variables of nested
+/// closures; intersected by the caller with the enclosing function's
+/// locals+params they yield the *cell variables* — the ones that must
+/// be boxed in a heap cell so an escaping closure can share/observe
+/// them after the enclosing frame returns.
+///
+/// We harvest every ref within a nested scope (including its own
+/// params/locals). Over-approximation here is sound: a non-captured
+/// var wrongly classified as a cell still holds its value correctly
+/// through the cell; the only cost is an unnecessary box. We do strip
+/// the nested scope's *own* parameter names at the first hop to avoid
+/// the common shadowing false positive.
+[[maybe_unused]] static inline std::set<std::string>
+collect_param_names(const jsont &func_def);
+
+[[maybe_unused]] static inline void
+collect_nested_closure_refs(const jsont &node, std::set<std::string> &names)
+{
+  if(node.is_array())
+  {
+    for(const auto &elem : to_json_array(node))
+      collect_nested_closure_refs(elem, names);
+    return;
+  }
+  if(!node.is_object())
+    return;
+  const jsont &type_node = node["_type"];
+  const std::string t = type_node.is_string() ? type_node.value : "";
+  if(t == "FunctionDef" || t == "AsyncFunctionDef" || t == "Lambda")
+  {
+    std::set<std::string> refs;
+    collect_name_refs(node, refs);
+    // Strip this scope's own parameters (they shadow the enclosing
+    // binding, so a ref to them is not a capture of our variable).
+    std::set<std::string> own_params = collect_param_names(node);
+    for(const auto &r : refs)
+      if(own_params.count(r) == 0)
+        names.insert(r);
+    return;
+  }
+  static const char *fields[] = {
+    "body",
+    "orelse",
+    "handlers",
+    "finalbody",
+    "test",
+    "value",
+    "iter",
+    nullptr};
+  for(const char **f = fields; *f; ++f)
+  {
+    const jsont &child = node[*f];
+    if(!child.is_null())
+      collect_nested_closure_refs(child, names);
+  }
+}
+
 /// §12b: collect names bound by an assignment anywhere in a function
 /// body (Python's "assigned anywhere => local for the whole function"
 /// rule). A read before the first binding is an UnboundLocalError.
