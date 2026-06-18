@@ -118,19 +118,23 @@ robustness, then capability; difficulty is noted where high.
 >   string; `global2_fail` has `range(15)`; `github_3836_fail` recurses).
 >   List-OOB *is* bounds-checked in isolation. These need no frontend change.
 >   - The **two genuine frontend false proofs** that remain at any unwind:
->     - **`re10_fail`** — `re.match`/`search` returns a `Match` instance via a
->       `Match | None` (PEP 604) return type, but in a boolean context the
->       result is truthiness-checked through its `__int_val` int-slot instead
->       of tag-dispatching to the CLASS case, so a *successful* match is
->       wrongly falsy. **Whole-group root:** `X | None` where `X` is a class
->       instance is type-inferred/represented such that the instance is
->       unwrapped to `int` rather than kept as a tag-dispatched `python_value`
->       — affecting *any* `Optional[instance]` used in `if`/`not`/`while`, not
->       just regex. **Recommended fix (scoped follow-up):** infer/keep
->       `Optional[object]` results as `python_value` so truthiness
->       tag-dispatches (regression-risky type-system change; validate on the
->       sweep). Confirmed minimally: `def f() -> "M | None": return M(); r=f();
->       assert not r` wrongly verifies.
+>     - **`re10_fail` — FIXED (`a3976b72df`).** The real root was narrower than
+>       "type inference": `convert_unary_op` unwrapped *every* `not` operand to
+>       `int` via `unwrap_value(_, python_int_type())`, so a tagged-union
+>       (`python_value`) holding a CLASS/STR/LIST/DICT instance was tested on
+>       its `__int_val` slot — making any present object (e.g. a successful
+>       `re.match`'s `Match | None`) falsy. Fix: `not x` now converts via the
+>       same `safe_typecast -> bool` path `assert`/`if` use, which
+>       tag-dispatches correctly. This removes the whole `Optional[instance]`-
+>       in-`not` false-proof class. **Soundness-first tradeoff (landed):** it
+>       regresses `re4`/`re11` to TIMEOUT — correctly evaluating
+>       `not re.match/fullmatch(...)` makes the solver prove the regex does
+>       *not* match (the documented slow negated-membership refinement that the
+>       old unsound int-unwrap sidestepped). These are decidability
+>       regressions, not false proofs. **Follow-up:** a presence-based `Match`
+>       truthiness (or null-guarding `python_truthiness`'s speculative
+>       `__class_ptr` derefs) to recover `re4`/`re11` without the membership
+>       refinement. Sweep 2947→2946 (+`re10_fail`, −`re4`/`re11` timeout).
 >     - **`neural-net_fail`** — `f >= 2.745` where `f` is built from
 >       float-literal arithmetic; our constant-folding of `2*0.749 - 3*0.498 …`
 >       does not reproduce CPython's IEEE-754 rounding at the boundary.
