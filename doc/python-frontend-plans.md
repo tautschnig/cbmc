@@ -201,6 +201,22 @@ robustness, then capability; difficulty is noted where high.
 >   reverted first — it broke `c`'s repeated `*c` unpacks in `pep-448`. Both
 >   commits sweep-neutral (PASS 2946, 0 regressions); regression
 >   `global-dict-mutation-via-call`.
+> - **Generalised to method + transitive call forms — FIXED (`770a47c15a`).**
+>   The per-callee invalidation sites missed `c.m()` (method dispatch is a
+>   different path) — a method mutating a global dict/string was still a false
+>   proof. Moved invalidation to the **single chokepoint every Call node
+>   passes through** (`convert_expression`'s Call dispatch, post-arguments), so
+>   free functions, methods, and transitive chains are covered uniformly. A
+>   naive "invalidate all globals at every call" there over-invalidated
+>   non-mutating calls (`str.upper()`, `len()`) and regressed read-only-global
+>   tests; fixed by a pre-pass (`collect_function_global_mutations`) recording
+>   names mutated inside *any* function/method (dict subscript-assign,
+>   `global X` rebind, dict-mutating method), so only those globals are
+>   invalidated — never-mutated globals keep their folding, transitivity is
+>   covered by construction. **Architectural note:** conversion-time tracking
+>   must be invalidated wherever tracked state can change behind the converter
+>   — loops, by-ref args, and now *any call form* via one chokepoint, scoped by
+>   a cheap "is this global ever mutated in a function" summary.
 
 > **Refreshed status (2026-06-16).** **P0 (soundness) is empty.** The
 > **regex/string precision track is now largely complete on the native
