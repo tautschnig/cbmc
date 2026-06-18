@@ -641,14 +641,6 @@ exprt python_convertert::convert_user_call(
   const code_typet &func_type = to_code_type(sym->type);
   const auto &params = func_type.parameters();
 
-  // PLR §7.12: a user-function call may mutate module globals
-  // (`global X; X = ...`), so conversion-time value tracking for
-  // globals is stale afterwards. Invalidate it (sound: symex recovers
-  // the real post-call value from the symbol) so a later read does not
-  // fold against the pre-call value, e.g. `cfg="production"; f();
-  // assert cfg=="overload"` where f sets the global cfg.
-  invalidate_global_value_tracking();
-
   // Root B (import scoping, PLR §4.2): a bare call to a name that
   // exists in the flat python:: table ONLY because a module was
   // imported (it is in imported_module_defs) but was NOT itself

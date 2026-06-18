@@ -1759,17 +1759,131 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
   walk(body);
 }
 
+void python_convertert::collect_function_global_mutations(
+  const jsont &module_body)
+{
+  static const std::set<std::string> mutating_methods{
+    "append",
+    "extend",
+    "insert",
+    "remove",
+    "pop",
+    "clear",
+    "sort",
+    "reverse",
+    "update",
+    "setdefault",
+    "popitem"};
+  static const char *fields[] = {
+    "body",           "orelse",  "handlers",    "finalbody", "test",  "value",
+    "values",         "targets", "target",      "iter",      "args",  "elts",
+    "keys",           "left",    "right",       "func",      "slice", "elt",
+    "generators",     "ifs",     "comparators", "ops",       "exc",   "returns",
+    "decorator_list", nullptr};
+
+  // Within a function body: collect names mutated such that a later
+  // module/global read could go stale across a call to this function.
+  std::function<void(const jsont &)> scan_fn_body = [&](const jsont &node)
+  {
+    if(node.is_array())
+    {
+      for(const auto &e : to_json_array(node))
+        scan_fn_body(e);
+      return;
+    }
+    if(!node.is_object())
+      return;
+    const std::string nt = node["_type"].value;
+    if(nt == "Global")
+    {
+      const jsont &names = node["names"];
+      if(names.is_array())
+        for(const auto &n : to_json_array(names))
+          globals_mutated_in_functions.insert(n.value);
+    }
+    else if(nt == "Assign" || nt == "AnnAssign" || nt == "AugAssign")
+    {
+      auto note_target = [&](const jsont &t)
+      {
+        if(t.is_object() && t["_type"].value == "Subscript")
+        {
+          const jsont &b = t["value"];
+          if(b.is_object() && b["_type"].value == "Name")
+            globals_mutated_in_functions.insert(b["id"].value);
+        }
+      };
+      if(nt == "Assign")
+      {
+        const jsont &targets = node["targets"];
+        if(targets.is_array())
+          for(const auto &t : to_json_array(targets))
+            note_target(t);
+      }
+      else
+        note_target(node["target"]);
+    }
+    else if(nt == "Expr")
+    {
+      const jsont &val = node["value"];
+      if(val.is_object() && val["_type"].value == "Call")
+      {
+        const jsont &f = val["func"];
+        if(
+          f.is_object() && f["_type"].value == "Attribute" &&
+          mutating_methods.count(f["attr"].value) && f["value"].is_object() &&
+          f["value"]["_type"].value == "Name")
+          globals_mutated_in_functions.insert(f["value"]["id"].value);
+      }
+    }
+    for(const char **fp = fields; *fp; ++fp)
+    {
+      const jsont &child = node[*fp];
+      if(!child.is_null())
+        scan_fn_body(child);
+    }
+  };
+
+  std::function<void(const jsont &)> scan = [&](const jsont &node)
+  {
+    if(node.is_array())
+    {
+      for(const auto &e : to_json_array(node))
+        scan(e);
+      return;
+    }
+    if(!node.is_object())
+      return;
+    const std::string nt = node["_type"].value;
+    if(nt == "FunctionDef" || nt == "AsyncFunctionDef")
+      scan_fn_body(node["body"]);
+    for(const char **fp = fields; *fp; ++fp)
+    {
+      const jsont &child = node[*fp];
+      if(!child.is_null())
+        scan(child);
+    }
+  };
+  scan(module_body);
+}
+
 void python_convertert::invalidate_global_value_tracking(
   bool include_dict_literals)
 {
-  // A module-level global key is "python::<name>" with no further
-  // "::" (function-scoped locals are "python::<func>::<name>").
-  auto is_global_key = [](const irep_idt &k) -> bool
+  // A module-level global key is "python::<name>" with no further "::"
+  // (function-scoped locals are "python::<func>::<name>").
+  auto is_global_key = [&](const irep_idt &k) -> bool
   {
     const std::string &s = id2string(k);
     if(s.compare(0, 8, "python::") != 0)
       return false;
-    return s.find("::", 8) == std::string::npos;
+    if(s.find("::", 8) != std::string::npos)
+      return false; // function-scoped local, not a module global
+    // Only invalidate globals that are actually MUTATED inside some
+    // function — a call can only make a global stale if a function
+    // mutates it. Never-mutated globals keep their conversion-time
+    // folding (so e.g. a read-only global string used after an
+    // unrelated call still folds precisely).
+    return globals_mutated_in_functions.count(s.substr(8)) > 0;
   };
   auto prune = [&](auto &m)
   {
@@ -4299,7 +4413,22 @@ exprt python_convertert::convert_expression(const jsont &expr)
   else if(node_type == "Compare")
     result = convert_compare(expr);
   else if(node_type == "Call")
+  {
     result = convert_call(expr);
+    // PLR §7.12 + object identity: a call of ANY form (free function,
+    // method, transitively) may mutate module globals -- a global
+    // scalar (`global cfg; cfg=...`) or a global dict in place
+    // (`d[k]=v`). After the call's arguments have been converted (incl.
+    // `f(**d)` which reads dict_literals), invalidate the global-keyed
+    // scalar + dict tracking so a later read does not fold against the
+    // stale pre-call value. This is the single chokepoint every Call
+    // node passes through, so it uniformly covers methods (`c.m()`) and
+    // transitive call chains that the per-callee sites missed. symex
+    // recovers the real post-call value/contents from the symbol;
+    // list_literals are left intact (list reads are runtime, `f(*c)`
+    // reads them structurally).
+    invalidate_global_value_tracking(/*include_dict_literals=*/true);
+  }
   else if(node_type == "IfExp")
     result = convert_if_exp(expr);
   else if(node_type == "Subscript")

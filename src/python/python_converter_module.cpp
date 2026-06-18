@@ -895,6 +895,14 @@ bool python_convertert::convert()
 {
   const jsont &body = json_member(parse_tree.ast_json, "body");
 
+  // PLR §7.12: pre-scan all function/method bodies for global mutations
+  // (dict subscript-assign, `global X` rebind, dict-mutating methods) so
+  // the post-call invalidation only invalidates globals that some
+  // function actually mutates (never-mutated globals keep their
+  // conversion-time folding). Must run before any function body /
+  // module statement is converted.
+  collect_function_global_mutations(body);
+
   // PLR §8.13: pre-scan top-level `from enum import <base> as <alias>` so
   // a class deriving from the alias is recognised as an enum during the
   // (earlier) class-definition / signature passes. The standard base

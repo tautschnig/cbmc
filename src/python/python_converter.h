@@ -983,6 +983,18 @@ private:
   /// scope, so they are excluded from the leaked-name NameError check
   /// even if an imported module also defines the same name.
   std::set<std::string> main_module_defs;
+
+  /// Bare names that are MUTATED inside some function/method body —
+  /// a dict subscript-assign target (`d[k]=v`), a `global X` rebind, or
+  /// a known dict-mutating method receiver (update/pop/...). Only these
+  /// globals' conversion-time value tracking is invalidated at a call
+  /// site (a call can only make a global stale if some function mutates
+  /// it); never-mutated globals keep their folding. Populated by
+  /// collect_function_global_mutations before any call is converted.
+  std::set<std::string> globals_mutated_in_functions;
+  /// Scan all function/method bodies in \p module_body and populate
+  /// globals_mutated_in_functions.
+  void collect_function_global_mutations(const jsont &module_body);
   /// Modules already handed to process_imported_module, to make
   /// transitive import resolution idempotent and break import cycles.
   std::set<std::string> processed_import_modules;
