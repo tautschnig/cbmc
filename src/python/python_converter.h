@@ -912,6 +912,20 @@ private:
   /// AugAssign targets that appear anywhere in the body.
   void invalidate_loop_writes(const jsont &body);
 
+  /// PLR §7.12: a called function may mutate module globals (via
+  /// `global X; X = ...`). Conversion-time SCALAR value tracking
+  /// (string_constants / float_constants) keyed on a module-level
+  /// global is therefore stale after any user-function call, so a
+  /// later read must not fold against the pre-call value. Erase the
+  /// global-keyed scalar entries (keys of the form `python::<name>`
+  /// with no function scope); symex recovers the actual post-call
+  /// value from the symbol, so this only drops a now-unsound fold,
+  /// never a correct one. Locals (`python::<func>::<name>`) are kept.
+  /// Container-literal maps are intentionally NOT invalidated (they are
+  /// read structurally by argument unpacking converted after the call
+  /// site); see the definition.
+  void invalidate_global_value_tracking();
+
   /// PLR §6.2.9: when assigning `g = gen()` or `g: T = gen()`
   /// where `gen` is a generator function, allocate the hidden
   /// cursor symbol `__cursor_<g>` and register it in
