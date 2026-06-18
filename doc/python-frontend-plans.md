@@ -659,41 +659,56 @@ inter-yield side effects.
 
 ## 2. Closures & late binding (PLR §4.2.2)  {#closures}
 
-**Status: PLANNED (precision improvement; design only).** This is a
-**sound precision gap, not an unsoundness** (verified 2026-06-08):
-*non-escaping* closures are already correct — late binding within the
-defining scope (`x = 10; g = lambda: x; x = 20; g()` → 20) and `nonlocal`
-mutation both work (the latter via the `qualify_name` nonlocal redirect).
-An *escaping* closure (returned or stored and called later) over-
-approximates its captured free variables to **nondet**, so the
-late-binding idiom `fns = [lambda: i for i in range(3)]` yields nondet
-rather than the PLR-correct final value — a **false positive** (sound
-direction), never a false proof. Tracked by `closure-late-binding-knownbug`.
+**Status: PARTIAL — cell substrate landed for NAMED escaping closures
+(read-only and `nonlocal`-mutating), with full multi-call PLR fidelity;
+comprehension / container-stored closures remain a sound nondet gap.**
+This was always a **sound precision gap, not an unsoundness**:
+*non-escaping* closures were already correct (late binding within the
+defining scope `x = 10; g = lambda: x; x = 20; g()` → 20, and `nonlocal`
+mutation via the `qualify_name` redirect). An *escaping* closure
+(returned/stored, called later) over-approximated its captured free
+variables to **nondet** — a false positive, never a false proof.
 
-The precision fix is a **cell substrate** mirroring CPython's
-cell/free-variable model. Five phases:
+**Landed (`038067bc4e`, `02d1495520`).** The carry mechanism + heap-cell
+substrate for closures bound to a NAMED variable:
 
-1. **Cell-variable identification pre-pass.** Compute, per scope,
-   `cell_vars(S) = assigned(S) ∩ free_vars(nested defs in S)`. Reuse the
-   existing `collect_assigned_locals` + name-reference scanners.
-2. **Cell storage for non-escaping closures.** Box each cell variable as
-   `__cell_<name>` (a 1-field struct / pointer) and auto-dereference at
-   read/write in `convert_name` and the assignment chokepoint. ~50-line
-   refactor.
-3. **Closure value + escaping.** Represent a closure as a record
-   `{ code *fn; cell *captures[] }`; replace the value-argument capture in
-   `python_converter_call_user.cpp`.
-4. **Higher-order through containers.** A callable stored in a list/dict
-   element needs a tagged callable element type (depends on
-   [§12 higher-order functions](#higher-order)).
-5. **Comprehensions with closures.** Do not unroll a comprehension at
-   conversion time when its element is a closure over the iteration
-   variable; route through `emit_listcomp_loop` so each iteration binds a
-   fresh cell.
+- **Read-only escaping capture** (`def f(): x = 5; return lambda: x;
+  g = f(); g() == 5`). The factory-assign rewrite previously bypassed
+  `f`'s body, so captured *locals* stayed nondet. Now `f`'s body is run
+  (its code-typed return discarded) and each captured local is
+  snapshotted at the call site. Lambdas are expressions and cannot
+  reassign a capture, so this is inherently read-only/sound; the
+  snapshot equals the factory's final value = the late-binding value.
+- **`nonlocal`-mutating escaping capture** (counter / accumulator
+  factories). The mutated nonlocal becomes a per-invocation **heap
+  cell** (`side_effect` `ID_allocate`, initialised from the enclosing
+  value at the nested def's site, pointer `python::<parent>::__cell_<v>`);
+  the nested body dereferences a pointer capture-param instead of the
+  `qualify_name` shared-symbol redirect. The cell persists across calls
+  (the counter advances) and each factory invocation gets a fresh cell.
+- **Per-closure-variable binding** (`closure_var_captures`, keyed by the
+  target name) replaced the destructive shared-`closure_captures` rebind,
+  so `g1 = make(); g2 = make()` bind **independent** snapshot temps /
+  cells. This is the soundness-critical fix: an unsound-if-shared
+  assertion (`g2() == 3` when fresh) correctly FAILS, two independent
+  counters verify, and multi-call read-only factories are now precise.
 
-**Scope:** phases 1–2 are the high-value core (fixes the late-binding
-class); 3–5 escalate with each higher-order use. Each phase has a PLR
-correctness checkpoint.
+Sound gating: heap cells are applied only when the cell-var is assigned
+before the nested def and not reassigned at/after it (so the def-site
+init equals the late-binding value); anything outside that window falls
+back to the existing nondet path.
+
+**Remaining (sound nondet gap).** Comprehension late-binding
+(`fns = [lambda: i for i in range(3)]; fns[0]()`) is NOT a cell gap — it
+requires **higher-order-through-container dispatch** (calling a closure
+retrieved from a list/dict element), which does not exist yet: `fns[0]()`
+is currently entirely nondet. The general case (symbolic index, arbitrary
+container) is undecidable and must stay sound-nondet; a constant-folded
+subscript could be dispatched precisely. Sequenced after
+[§12 higher-order functions](#higher-order); when built, route the
+comprehension through `emit_listcomp_loop` with one shared cell for the
+loop variable (Python-3 late binding → all elements observe the final
+value).
 
 ---
 
