@@ -157,11 +157,27 @@ robustness, then capability; difficulty is noted where high.
 >   Reverted. **Lesson:** machine-arithmetic-→-symex already holds for floats;
 >   the residual float-value tracking is necessary category-2, not removable
 >   category-4.
-> - **Separately found precision bug (false *positive*, not a false proof):** a
->   global **string** written inside a function and read at *module* level
->   gives a spurious failure (stale module-level `string_constants` not
->   invalidated across the call; int globals are fine). Sound (over-reports),
->   low priority.
+> - **Integer-path audit (a, 2026-06-18).** Large-int arithmetic and
+>   comparisons are *correct* — symex evaluates them symbolically/exactly (the
+>   GOTO is not baked). The one real leak: `str()` of a CONSTANT integer ran
+>   `try_eval_double` first, whose `< 1e15` guard routed larger ints to the
+>   lossy `double`→`ostringstream` path, so `str(9007199515875289)` became
+>   `"9.0072e+15"`. **Fixed (`a2f63956a8`):** gate that block to non-integer
+>   args; integers use the exact paths (`to_integer` / `cprover_string_of_int`)
+>   that already existed below. (Reinforces the rule: integers must never be
+>   folded through `double`.)
+> - **Global scalar constant-tracking across calls (b) — FIXED (`5cfb036d82`).**
+>   A global **string** (or float) written inside a called function was not
+>   reflected at a later module-level read: scalar value tracking
+>   (`string_constants`/`float_constants`) kept the pre-call value (a false
+>   *positive*). Fix (mirrors `invalidate_loop_writes`): a user-function call
+>   invalidates the global-keyed scalar value-tracking; symex recovers the real
+>   post-call value from the symbol (sound — only drops a now-unsound fold).
+>   Locals are kept. **Residual (documented):** container-literal maps
+>   (`list/dict/tuple_literals`) are NOT invalidated there (argument unpacking
+>   `f(*c)` reads them structurally after the call site), so a global
+>   *container* mutated by a callee and read afterwards is a separate, rarer
+>   residual needing post-argument invalidation.
 
 > **Refreshed status (2026-06-16).** **P0 (soundness) is empty.** The
 > **regex/string precision track is now largely complete on the native
