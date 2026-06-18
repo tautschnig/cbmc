@@ -1759,6 +1759,35 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
   walk(body);
 }
 
+void python_convertert::invalidate_global_value_tracking()
+{
+  // A module-level global key is "python::<name>" with no further
+  // "::" (function-scoped locals are "python::<func>::<name>").
+  auto is_global_key = [](const irep_idt &k) -> bool
+  {
+    const std::string &s = id2string(k);
+    if(s.compare(0, 8, "python::") != 0)
+      return false;
+    return s.find("::", 8) == std::string::npos;
+  };
+  auto prune = [&](auto &m)
+  {
+    for(auto it = m.begin(); it != m.end();)
+      it = is_global_key(it->first) ? m.erase(it) : std::next(it);
+  };
+  // Only the SCALAR value maps are invalidated here. They are safe to
+  // erase before the call's arguments are converted (an argument that
+  // referenced the global simply falls back to the symbol value). The
+  // container-literal maps (list/dict/tuple_literals) are NOT
+  // invalidated: they are read structurally by argument unpacking
+  // (`f(*c)`), converted after this point, and erasing them would
+  // break the unpack. A global container mutated by a callee and read
+  // afterwards is a separate, rarer residual (needs post-argument
+  // invalidation or by-reference handling).
+  prune(string_constants);
+  prune(float_constants);
+}
+
 void python_convertert::invalidate_loop_writes(const jsont &body)
 {
   // Walk the body recursively, collect names assigned via Assign /
