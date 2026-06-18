@@ -949,8 +949,28 @@ plan are in
 
 ## 3. Strings: native SMT-LIB String backend  {#strings}
 
-**Status: PARTIAL.** Python `str` is modelled as CBMC's refined-string
-struct (`python_string`, tag `__CPROVER_refined_string_type`), routed
+**Status: NATIVE SMT-STRING BACKEND COMPLETE (Plan A, 2026-06-12); refined
+is the default.** `--python-smt-strings` (with `--cvc5`/`--z3`) selects a
+*native* SMT-LIB `String` representation end-to-end (the byte-array+`str`
+hybrid was retired); the full SMT-theory string surface is precise and fast
+there — `==`/`!=`, ordering (`<`/`<=`/…, the refined ceiling), `len`,
+`in`/`not in`, `startswith`/`endswith`, `find`/`index`, `+`/concat,
+subscript, slice, `replace`, `strip` family (via SMT-LIB regex), f-strings
+(incl. `str(int)`/`chr`/`ord`), with model extraction. The
+`regression/python` corpus is 540/540 with a verdict under native; refined
+remains the no-external-solver default. **Remaining string gaps are narrow:**
+on the *refined default* — ordering, substring `replace`, `split` stay
+sound-but-imprecise (existential-witness instantiation / list-valued axioms),
+all of which the native backend already answers via opt-in; on *native* —
+`split` (list-valued) and `casefold`/`title` (Unicode case-mapping, no SMT
+primitive) stay sound-nondet. Full detail:
+[python-string-phase2-backend-abstraction.md](architectural/python-string-phase2-backend-abstraction.md).
+The historical narrative below predates Plan A's completion and is kept as
+the design record.
+
+**Status (historical, pre-2026-06-12): PARTIAL.** Python `str` is modelled as
+CBMC's refined-string struct (`python_string`, tag
+`__CPROVER_refined_string_type`), routed
 through the refinement-string solver via `emit_string_function`. The
 backend-selector infrastructure has landed: a `python_string_kindt`-style
 selector and the `--python-smt-strings` flag exist and are threaded through
