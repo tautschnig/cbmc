@@ -110,14 +110,36 @@ robustness, then capability; difficulty is noted where high.
 >     (`import-from-function-fail`, `import-from-multiple-fail`). Gated to
 >     main-module code (`current_function`) so imported-module bodies'
 >     internal calls aren't flagged. Sweep PASS 2945→2947 (+2), 0 regressions.
-> - **Documented residual genuine false proofs (point gaps, ~1 test each,
->   tangled — not yet fixed):** `re10_fail` (`re.match` Match-object
->   truthiness, tangled in the regex machinery), `github_2892_fail` (nested
->   string iteration), `global2_fail` (global string var after reset),
->   `neural-net_fail` (IEEE-754 float rounding at a boundary), and
->   `github_3836_fail` (`a[0]` on a comprehension-produced empty list in a
->   recursive call — list-OOB *is* bounds-checked in isolation; the gap is
->   recursion/comprehension length-tracking, not exception modeling).
+> - **Re-triage of the "remaining" residuals (2026-06-18, deeper root-cause).**
+>   At the sweep's `--unwind 10` three of these reported `SUCCESSFUL`, but at
+>   `--unwind 25` they correctly `FAILED` — so they are **BMC-unwind-bound
+>   artifacts, not frontend false proofs** (like `github_2224-fail`): the bug
+>   lies beyond the configured bound (`github_2892_fail` iterates a 28-char
+>   string; `global2_fail` has `range(15)`; `github_3836_fail` recurses).
+>   List-OOB *is* bounds-checked in isolation. These need no frontend change.
+>   - The **two genuine frontend false proofs** that remain at any unwind:
+>     - **`re10_fail`** — `re.match`/`search` returns a `Match` instance via a
+>       `Match | None` (PEP 604) return type, but in a boolean context the
+>       result is truthiness-checked through its `__int_val` int-slot instead
+>       of tag-dispatching to the CLASS case, so a *successful* match is
+>       wrongly falsy. **Whole-group root:** `X | None` where `X` is a class
+>       instance is type-inferred/represented such that the instance is
+>       unwrapped to `int` rather than kept as a tag-dispatched `python_value`
+>       — affecting *any* `Optional[instance]` used in `if`/`not`/`while`, not
+>       just regex. **Recommended fix (scoped follow-up):** infer/keep
+>       `Optional[object]` results as `python_value` so truthiness
+>       tag-dispatches (regression-risky type-system change; validate on the
+>       sweep). Confirmed minimally: `def f() -> "M | None": return M(); r=f();
+>       assert not r` wrongly verifies.
+>     - **`neural-net_fail`** — `f >= 2.745` where `f` is built from
+>       float-literal arithmetic; our constant-folding of `2*0.749 - 3*0.498 …`
+>       does not reproduce CPython's IEEE-754 rounding at the boundary.
+>       Genuinely hard (exact double-rounding parity in constant folding).
+> - **Separately found precision bug (false *positive*, not a false proof):** a
+>   global **string** written inside a function and read at *module* level
+>   gives a spurious failure (stale module-level `string_constants` not
+>   invalidated across the call; int globals are fine). Sound (over-reports),
+>   low priority.
 
 > **Refreshed status (2026-06-16).** **P0 (soundness) is empty.** The
 > **regex/string precision track is now largely complete on the native
