@@ -579,6 +579,29 @@ private:
   std::
     map<std::string, std::vector<std::tuple<std::string, std::string, typet>>>
       closure_captures;
+  /// Closure cell substrate (PLR §4.2.2), mutating slice. Per nested
+  /// function qualified name, the set of NONLOCAL cell-variable names
+  /// captured by a HEAP CELL pointer rather than by qualify_name's
+  /// nonlocal redirect. In the nested body convert_name dereferences
+  /// the corresponding pointer capture-param for these names (bypassing
+  /// the redirect to the shared enclosing symbol, which would be
+  /// unsound across multiple factory invocations).
+  std::map<std::string, std::set<std::string>> function_cell_capture_names;
+  /// Per nested function qualified name, the (cell-var, value-type)
+  /// pairs whose heap cell is allocated and initialised from the
+  /// enclosing scope's current value at the nested def's site. Consumed
+  /// by convert_function_def to emit the allocation into the enclosing
+  /// body, and the per-cell pointer symbol is python::<parent>::__cell_<v>.
+  std::map<std::string, std::vector<std::pair<std::string, typet>>>
+    nested_cell_allocs;
+  /// Per CLOSURE-VARIABLE (qualified name of `g` in `g = factory(...)`),
+  /// the binding source for each of the inner closure's captures
+  /// (capture-name -> snapshot temp symbol id). This isolates distinct
+  /// factory invocations: `g1 = make(); g2 = make()` get independent
+  /// snapshot temps so calling g1()/g2() binds the right per-instance
+  /// value (or per-instance heap cell pointer). Without this the shared
+  /// closure_captures rebind would alias them (false proofs).
+  std::map<std::string, std::map<std::string, irep_idt>> closure_var_captures;
   // Track constant string values for string method evaluation
   std::map<irep_idt, std::string> string_constants;
   std::map<irep_idt, exprt> dict_literals; // track dict literal values

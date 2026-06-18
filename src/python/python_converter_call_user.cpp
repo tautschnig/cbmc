@@ -965,9 +965,22 @@ exprt python_convertert::convert_user_call(
     auto cap_it2 = closure_captures.find(id2string(sym->name));
     if(cap_it2 != closure_captures.end())
     {
+      // Per-closure-variable binding (PLR §4.2.2): if this call is via a
+      // closure variable `g` recorded at `g = factory(...)`, bind each
+      // capture from g's own snapshot temp so distinct factory
+      // invocations stay independent. Fall back to the original capture
+      // source (outer_id) for the non-escaping / in-scope path.
+      auto cvc = closure_var_captures.find(qualify_name(func_name));
       for(const auto &[outer_id, name, type] : cap_it2->second)
       {
-        const symbolt *outer_sym = symbol_table.lookup(irep_idt{outer_id});
+        irep_idt src{outer_id};
+        if(cvc != closure_var_captures.end())
+        {
+          auto t = cvc->second.find(name);
+          if(t != cvc->second.end())
+            src = t->second;
+        }
+        const symbolt *outer_sym = symbol_table.lookup(src);
         if(outer_sym != nullptr)
           arguments.push_back(outer_sym->symbol_expr());
         else

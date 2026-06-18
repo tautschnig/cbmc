@@ -234,6 +234,24 @@ exprt python_convertert::convert_name(const jsont &expr)
   else if(id == "__name__")
     return python_string_literal("__main__");
 
+  // Closure cell substrate (PLR §4.2.2), mutating slice: a NONLOCAL
+  // cell-variable captured by heap cell resolves to the dereference of
+  // this function's pointer capture-param, bypassing qualify_name's
+  // nonlocal redirect (which points at the single shared enclosing
+  // symbol and would alias across factory invocations). The cell
+  // pointer is bound per-invocation at the factory call site.
+  if(!current_function.empty())
+  {
+    auto fcc = function_cell_capture_names.find("python::" + current_function);
+    if(fcc != function_cell_capture_names.end() && fcc->second.count(id) > 0)
+    {
+      irep_idt pid{"python::" + current_function + "::" + id};
+      const symbolt *ps = symbol_table.lookup(pid);
+      if(ps != nullptr && ps->type.id() == ID_pointer)
+        return dereference_exprt{ps->symbol_expr()};
+    }
+  }
+
   // Look up in symbol table — check versioned names first, then
   // function-scoped, then global
   const symbolt *sym = nullptr;
