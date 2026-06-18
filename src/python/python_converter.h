@@ -924,7 +924,16 @@ private:
   /// Container-literal maps are intentionally NOT invalidated (they are
   /// read structurally by argument unpacking converted after the call
   /// site); see the definition.
-  void invalidate_global_value_tracking();
+  /// When \p include_dict_literals is set (true only at the
+  /// POST-argument call site, false at the pre-argument site), the
+  /// global-keyed `dict_literals` tracking is also invalidated: a
+  /// callee may have mutated a global dict in place (`d[k]=v`), which
+  /// would otherwise leave a stale literal that folds a later
+  /// `len`/membership/subscript against the pre-call contents.
+  /// `list_literals`/`tuple_literals` are NOT invalidated (list
+  /// membership/subscript already reads runtime, tuples are immutable,
+  /// and `*c` argument unpacking reads `list_literals` structurally).
+  void invalidate_global_value_tracking(bool include_dict_literals = false);
 
   /// PLR §6.2.9: when assigning `g = gen()` or `g: T = gen()`
   /// where `gen` is a generator function, allocate the hidden
