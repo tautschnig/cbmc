@@ -77,6 +77,48 @@ robustness, then capability; difficulty is noted where high.
 >    the native backend); `--python-check-annotations` default-on (BLOCKED on
 >    core); point precision (`complex` C/D, `math` domains, `nondet_list4/5`).
 
+> **Sweep soundness audit (2026-06-18).** Scanned the ESBMC sweep for the
+> false-proof direction (we report `SUCCESSFUL` where the expected is
+> `FAILED`): **21 DIFFs**, triaged against **CPython** semantics (the PLR
+> soundness bar) — not ESBMC's stricter expected verdicts:
+> - **10 are NOT soundness bugs** — we correctly match CPython; ESBMC is
+>   stricter: annotation enforcement (`github_3020_5`, `github_3093_1/2`
+>   [`mod.foo` *is* defined, called with the wrong arg type],
+>   `infer-func-no-return_fail`), a list-equality depth limit
+>   (`list-depth-exceed`), missing-return→`None` (`missing-return13_fail`,
+>   needs `--python-missing-return-check`), unsupported-but-unused
+>   `s.encode()` (`github_2993_2_fail`), and an *uncalled* function
+>   (`ethereum_bug-fail`).
+> - **1 BMC-bound** (`github_2224-fail`: the bug is 11 loop iterations deep,
+>   beyond `--unwind 10`; chained `0<=x<=100` is correct in isolation).
+> - **1 vacuously-sound** (`string-nondet-in-embedded-null`, already documented).
+> - **The genuine false proofs** share a single root: ops the frontend
+>   cannot decide (operations that may raise; unresolved/non-imported
+>   references) were modeled as **silently succeeding nondet** — a
+>   deliberate precision-favoring choice (`python_language.cpp` "uncaught
+>   exception check removed — too many false positives"). Fixes landed:
+>   - **Root A — `--python-raising-ops-check` (opt-in, default OFF;
+>     `6cf50c9faf`, `8c5a702eaf`).** Unified `emit_may_raise` mechanism + a
+>     declarative `@may_raise('Exc')` library decorator. Under the flag:
+>     `int(<non-const str>)`→`ValueError` (`input1_fail`, `input5`), `os.*`
+>     file ops→`OSError` (`import-os2_fail`), `re` non-str pattern→`TypeError`
+>     (`re7_fail`) are modeled as may-raise. Default-off so the sweep is
+>     unaffected (neutral by construction); soundness is *available* opt-in.
+>   - **Root B — per-module import scoping (default-on; `e30dd51b44`).** A
+>     bare reference to a name that exists only because a module was imported
+>     but was not itself imported now raises `NameError`
+>     (`import-from-function-fail`, `import-from-multiple-fail`). Gated to
+>     main-module code (`current_function`) so imported-module bodies'
+>     internal calls aren't flagged. Sweep PASS 2945→2947 (+2), 0 regressions.
+> - **Documented residual genuine false proofs (point gaps, ~1 test each,
+>   tangled — not yet fixed):** `re10_fail` (`re.match` Match-object
+>   truthiness, tangled in the regex machinery), `github_2892_fail` (nested
+>   string iteration), `global2_fail` (global string var after reset),
+>   `neural-net_fail` (IEEE-754 float rounding at a boundary), and
+>   `github_3836_fail` (`a[0]` on a comprehension-produced empty list in a
+>   recursive call — list-OOB *is* bounds-checked in isolation; the gap is
+>   recursion/comprehension length-tracking, not exception modeling).
+
 > **Refreshed status (2026-06-16).** **P0 (soundness) is empty.** The
 > **regex/string precision track is now largely complete on the native
 > backend**: precise `re.findall`/`re.split` (incl. `maxsplit`), the

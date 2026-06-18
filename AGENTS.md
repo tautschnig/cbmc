@@ -931,6 +931,7 @@ CLI flags worth knowing about:
 - `--python-missing-return-check` — emit a property at the implicit fall-through of any function with a non-None return-type annotation. Fires only when the path is actually reachable.
 - `--python-required-kwarg-checks` — flag missing `Required[...]` TypedDict keys at call sites.
 - `--python-check-typeddict-fields` — flag unknown keys when constructing a TypedDict.
+- `--python-raising-ops-check` — opt-in (default OFF) soundness mode: operations that can raise an exception but whose success the frontend cannot prove are modeled as *may-raise* (a nondet-guarded uncaught-exception path) instead of silently succeeding. Covers `int()`/`float()` of a non-constant string (`ValueError`), `os.*` file ops (`OSError`, via the declarative `@may_raise('Exc')` library decorator in `__cbmc__`), and `re.search`/`match`/`fullmatch` with a non-provably-string pattern (`TypeError`). The default favors precision (no false positives); the flag favors soundness. See the strings/soundness-audit notes in the plans doc.
 
 ### Architecture Decision Records (ADRs)
 - [doc/ADR/](doc/ADR/) - Design decisions
