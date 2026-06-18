@@ -2692,7 +2692,14 @@ std::optional<exprt> python_convertert::try_builtin_call(
           }
         }
       }
-      // str(int/float) — convert at conversion time using try_eval_double
+      // str(float) — convert at conversion time via try_eval_double.
+      // Integers are EXCLUDED here and handled exactly below
+      // (to_integer for a constant, cprover_string_of_int for a
+      // symbolic int): routing an integer through try_eval_double's
+      // `double` loses precision above 2^53 — e.g. str(9007199515875289)
+      // became "9.0072e+15". Floats legitimately use the double path
+      // (it is their representation).
+      if(arg.type().id() != ID_signedbv && arg.type().id() != ID_integer)
       {
         auto ev = try_eval_double(arg);
         if(ev.has_value())
