@@ -234,6 +234,21 @@ exprt python_convertert::convert_name(const jsont &expr)
   else if(id == "__name__")
     return python_string_literal("__main__");
 
+  // Closure cell substrate (PLR §4.2.2), comprehension late-binding: a
+  // loop variable referenced inside a comprehension's element closure
+  // resolves to the unique per-comprehension symbol (final value),
+  // giving late binding without clobbering an enclosing same-named var.
+  if(!comprehension_var_redirect.empty())
+  {
+    auto rd = comprehension_var_redirect.find(id);
+    if(rd != comprehension_var_redirect.end())
+    {
+      const symbolt *rs = symbol_table.lookup(rd->second);
+      if(rs != nullptr)
+        return rs->symbol_expr();
+    }
+  }
+
   // Closure cell substrate (PLR §4.2.2), mutating slice: a NONLOCAL
   // cell-variable captured by heap cell resolves to the dereference of
   // this function's pointer capture-param, bypassing qualify_name's
