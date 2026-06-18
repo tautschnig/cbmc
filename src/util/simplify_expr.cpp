@@ -2985,6 +2985,20 @@ simplify_exprt::simplify_node_preorder(const exprt &expr)
   {
     result = simplify_unary_pointer_predicate_preorder(to_unary_expr(expr));
   }
+  else if(expr.id() == ID_forall || expr.id() == ID_exists)
+  {
+    // Only simplify the body (operand 1), not the bound variables (operand 0).
+    // Simplifying bound variable symbols would break the quantifier invariant
+    // that requires them to remain symbols.
+    PRECONDITION(expr.operands().size() == 2);
+    auto r_body = simplify_rec(expr.operands()[1]);
+    if(r_body.has_changed())
+    {
+      result.expr = expr;
+      result.expr.operands()[1] = std::move(r_body.expr);
+      result.expr_changed = resultt<>::CHANGED;
+    }
+  }
   else if(expr.has_operands())
   {
     std::optional<exprt::operandst> new_operands;

@@ -251,8 +251,26 @@ goto_symex_statet::rename(exprt expr, const namespacet &ns)
     rename<level>(expr.type(), irep_idt(), ns);
 
     // do this recursively
-    Forall_operands(it, expr)
-      *it = rename<level>(std::move(*it), ns).get();
+    // For quantifiers, skip renaming bound variables (operand 0) to prevent
+    // field sensitivity from decomposing struct-typed symbols into struct
+    // expressions, which violates the quantifier invariant.
+    if(expr.id() == ID_forall || expr.id() == ID_exists)
+    {
+      PRECONDITION(expr.operands().size() == 2);
+      for(auto &bv : expr.operands()[0].operands())
+        rename<level>(bv.type(), irep_idt(), ns);
+      // Rename body without field sensitivity by temporarily disabling it
+      auto saved = field_sensitivity.enabled;
+      field_sensitivity.enabled = false;
+      expr.operands()[1] =
+        rename<level>(std::move(expr.operands()[1]), ns).get();
+      field_sensitivity.enabled = saved;
+    }
+    else
+    {
+      Forall_operands(it, expr)
+        *it = rename<level>(std::move(*it), ns).get();
+    }
 
     const exprt &c_expr = as_const(expr);
 
@@ -290,8 +308,10 @@ goto_symex_statet::rename(exprt expr, const namespacet &ns)
       c_expr.type().pretty(),
       to_if_expr(c_expr).false_case().type().pretty());
 
-    if(level == L2)
+    if(level == L2 && field_sensitivity.enabled)
+    {
       expr = field_sensitivity.apply(ns, *this, std::move(expr), false);
+    }
 
     return renamedt<exprt, level>{std::move(expr)};
   }
