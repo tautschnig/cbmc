@@ -217,6 +217,28 @@ robustness, then capability; difficulty is noted where high.
 >   must be invalidated wherever tracked state can change behind the converter
 >   — loops, by-ref args, and now *any call form* via one chokepoint, scoped by
 >   a cheap "is this global ever mutated in a function" summary.
+> - **Residuals (investigated 2026-06-18).**
+>   - *Mutation-collector whole-program coverage* — `collect_function_global_
+>     mutations` now also scans **imported-module** function bodies (called
+>     from `process_imported_module`), not just main, so the mutated-globals
+>     summary covers the whole program. Sound, sweep-neutral.
+>   - *R1 — cross-module global-dict mutation (deeper, NOT fixed; documented
+>     false proof).* `from modx import state, mutate; mutate(); assert "b" not
+>     in state` still verifies wrongly. Root is NOT the collector (now fixed)
+>     but two deeper cross-module layers: (a) the imported module's global dict
+>     isn't pre-typed for *its own* functions (the same Pass-0 dict-pre-typing
+>     gap, but Pass 0 scans only main), so `mutate`'s `state["b"]=2` is dropped
+>     (empty body); (b) cross-module global *binding* is broken — main shows
+>     "Unknown variable: state" for the imported global. A focused cross-module
+>     effort (imported-module global pre-typing + import-binding) — separate
+>     from the (now-sound) intra-module global-mutation machinery.
+>   - *R2 — `**d` unpack of a mutated global dict (pre-existing precision gap,
+>     false positive).* `f(**d)` reads the conversion-time `dict_literals`
+>     literal; after a real mutation the literal is correctly invalidated, so a
+>     later `f(**d)` can't fold the unpack (it failed before this work too — the
+>     unpack never reflected runtime mutations). Sound (spurious failure, not a
+>     false proof), rare. The real fix is `**d` unpacking from the *runtime*
+>     dict (bounded key scan) rather than the conversion-time literal.
 
 > **Refreshed status (2026-06-16).** **P0 (soundness) is empty.** The
 > **regex/string precision track is now largely complete on the native

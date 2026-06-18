@@ -172,6 +172,13 @@ void python_convertert::process_imported_module(
   if(!body.is_array())
     return;
 
+  // PLR §7.12: an imported module's functions can mutate that module's
+  // globals (`from modx import state, mutate; mutate()` then read
+  // `state`). Scan this module's function bodies too so the post-call
+  // invalidation covers globals mutated in imported modules — the
+  // collector must cover the whole program, not just the main module.
+  collect_function_global_mutations(body);
+
   std::string prefix = module_name + "::";
 
   for(const auto &stmt : as_array(body))
