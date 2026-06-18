@@ -641,6 +641,16 @@ exprt python_convertert::convert_user_call(
   const code_typet &func_type = to_code_type(sym->type);
   const auto &params = func_type.parameters();
 
+  // @may_raise('ExcType'): under --python-raising-ops-check, model the
+  // decorated stub (e.g. os.remove -> OSError) as may-raise so the
+  // uncaught-exception / except path is explored. No-op otherwise.
+  if(python_raising_ops_check)
+  {
+    auto mr = may_raise_map.find(sym->name);
+    if(mr != may_raise_map.end())
+      emit_may_raise(mr->second.c_str());
+  }
+
   // Build argument list: start with positional args
   exprt::operandst arguments;
   if(args.is_array())

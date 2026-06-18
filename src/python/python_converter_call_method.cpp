@@ -110,6 +110,18 @@ std::optional<exprt> python_convertert::try_method_call(
           te_block.add(std::move(te));
           pending_checks.push_back(std::move(te_block));
         }
+        else if(
+          python_raising_ops_check && !subj.is_nil() &&
+          !is_python_string_type(subj.type()))
+        {
+          // The arg is not PROVABLY a concrete string (e.g. an
+          // Any-typed value that actually holds a non-str at
+          // runtime, as in `p: Any = 123; re.search(p, s)`). The
+          // certain-assert above is conservatively skipped for
+          // tagged-union/pointer types; under the opt-in flag,
+          // model the possible TypeError as may-raise.
+          emit_may_raise("TypeError");
+        }
       }
     }
 

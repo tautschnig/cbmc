@@ -57,3 +57,18 @@ def c_intrinsic(name, fold=None):
         return func
 
     return _decorator
+
+
+def may_raise(exc_type):
+    """Decorator factory marking a stub function as one that can raise
+    `exc_type` at runtime (e.g. os.remove -> OSError). No runtime
+    effect; the front-end consumes it by AST pattern. Under the opt-in
+    --python-raising-ops-check, a call to a @may_raise function is
+    modeled as may-raise (a nondet-guarded exception) so the
+    uncaught-exception / except path is explored. Without the flag it
+    is a no-op (the default models the op as silently succeeding).
+    """
+    def _decorator(func):
+        return func
+
+    return _decorator

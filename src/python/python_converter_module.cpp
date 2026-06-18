@@ -319,6 +319,35 @@ void python_convertert::process_imported_module(
           }
         }
       }
+      // Detect @may_raise('ExcType') decorators so imported library
+      // stubs (e.g. os.* file ops) can declare the exception they may
+      // raise; under --python-raising-ops-check a call to such a
+      // function is modeled as may-raise (parallel to @c_intrinsic).
+      {
+        const jsont &decos = json_member(stmt, "decorator_list");
+        if(decos.is_array())
+        {
+          for(const auto &dec : as_array(decos))
+          {
+            if(!is_node_type(dec, "Call"))
+              continue;
+            const jsont &dec_func = json_member(dec, "func");
+            if(
+              !is_node_type(dec_func, "Name") ||
+              json_string(json_member(dec_func, "id")) != "may_raise")
+              continue;
+            const jsont &dec_args = json_member(dec, "args");
+            if(!dec_args.is_array() || as_array(dec_args).empty())
+              continue;
+            const jsont &first = *as_array(dec_args).begin();
+            if(!is_node_type(first, "Constant"))
+              continue;
+            std::string exc = json_string(json_member(first, "value"));
+            if(!exc.empty())
+              may_raise_map[irep_idt{"python::" + fname}] = exc;
+          }
+        }
+      }
       // PLR §8.7: record this module-level function's trailing parameter
       // defaults. process_imported_module otherwise registers the function
       // symbol WITHOUT its defaults, so a call that omits them (e.g.
