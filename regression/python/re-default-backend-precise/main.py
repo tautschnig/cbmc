@@ -16,3 +16,9 @@ assert re.match("xyz", "abcdef") is None
 assert re.fullmatch("[a-z]+", "12") is None
 assert re.search("zzz", "abc") is None
 assert re.fullmatch("abc", "abcd") is None
+
+# Inline-flag patterns (IGNORECASE / DOTALL via "(?i)" / "(?s)") are precise
+# on the default backend too (the constant-fold matcher honours the prefix).
+assert re.match("(?i)abc", "ABC") is not None
+assert re.fullmatch("(?i)[a-z]+", "HELLO") is not None
+assert re.match("(?i)abc", "abd") is None
