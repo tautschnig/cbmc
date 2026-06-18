@@ -157,4 +157,29 @@ std::optional<bool> python_regex_match(
   const std::string &subject,
   python_regex_match_kindt kind);
 
+/// Leftmost match of `pattern` in `subject` at or after offset `from`, for a
+/// CONSTANT pattern and subject. Returns the `{start, end}` byte offsets
+/// (Python's leftmost / greedy match -- the matcher explores greedy- and
+/// alternation-first, so the first complete match equals CPython's), or
+/// `{-1, -1}` when there is no match at/after `from`, or `std::nullopt` when
+/// the pattern is unsupported / the subject has a newline (caller falls back
+/// to a sound nondet). Used to fold `re.findall` / `re.split`'s position
+/// scan on the default backend.
+std::optional<std::pair<int, int>> python_regex_search_pos(
+  const std::string &pattern,
+  const std::string &subject,
+  int from);
+
+/// `re.sub(pattern, repl, subject, count)` for CONSTANT arguments: replace the
+/// leftmost non-overlapping matches of `pattern` (greedy) with the literal
+/// `repl` (no group references), up to `count` (0 = all). Returns the result
+/// string, or `std::nullopt` when the pattern is unsupported, `repl` contains a
+/// backslash group/escape reference, or the subject has a newline (sound
+/// nondet fallback). Empty matches advance by one position, as in CPython.
+std::optional<std::string> python_regex_sub(
+  const std::string &pattern,
+  const std::string &repl,
+  const std::string &subject,
+  int count);
+
 #endif // CPROVER_SOLVERS_STRINGS_PYTHON_REGEX_TO_SMT_H

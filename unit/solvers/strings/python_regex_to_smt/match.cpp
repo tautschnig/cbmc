@@ -124,6 +124,48 @@ TEST_CASE(
 }
 
 TEST_CASE(
+  "python_regex_search_pos leftmost/greedy spans",
+  "[core][solvers][strings][python_regex]")
+{
+  auto sp = [](const std::string &p, const std::string &s, int from)
+  { return python_regex_search_pos(p, s, from); };
+  // Fixed-length class.
+  REQUIRE(sp("[0-9][0-9]", "ab12cd", 0) == std::make_pair(2, 4));
+  REQUIRE(sp("[0-9][0-9]", "abcdef", 0) == std::make_pair(-1, -1));
+  // Greedy +: longest run.
+  REQUIRE(sp("[0-9]+", "a123b", 0) == std::make_pair(1, 4));
+  // Literal, advancing `from`.
+  REQUIRE(sp("a", "banana", 0) == std::make_pair(1, 2));
+  REQUIRE(sp("a", "banana", 2) == std::make_pair(3, 4));
+  REQUIRE(sp("a", "banana", 6) == std::make_pair(-1, -1));
+  // Empty match (each position).
+  REQUIRE(sp("", "ab", 0) == std::make_pair(0, 0));
+  REQUIRE(sp("x*", "ab", 0) == std::make_pair(0, 0)); // empty at 0
+  // Ordered alternation: first branch wins at the leftmost start.
+  REQUIRE(sp("a|ab", "ab", 0) == std::make_pair(0, 1));
+  // Unsupported -> nullopt.
+  REQUIRE_FALSE(sp("(a)\\1", "aa", 0).has_value());
+}
+
+TEST_CASE(
+  "python_regex_sub constant substitution",
+  "[core][solvers][strings][python_regex]")
+{
+  auto sub =
+    [](const std::string &p, const std::string &r, const std::string &s, int c)
+  { return python_regex_sub(p, r, s, c); };
+  REQUIRE(sub("[0-9]", "#", "a1b2", 0) == "a#b#");
+  REQUIRE(sub("a", "X", "banana", 0) == "bXnXnX");
+  REQUIRE(sub("a", "X", "banana", 2) == "bXnXna");     // count cap
+  REQUIRE(sub("[0-9]+", "N", "a12b345", 0) == "aNbN"); // greedy runs
+  REQUIRE(sub("z", "Q", "abc", 0) == "abc");           // no match: unchanged
+  REQUIRE(sub("", "-", "ab", 0) == "-a-b-");           // empty matches
+  // Group-ref repl / unsupported pattern -> nullopt.
+  REQUIRE_FALSE(sub("(a)", "\\1\\1", "a", 0).has_value());
+  REQUIRE_FALSE(sub("(a)\\1", "X", "aa", 0).has_value());
+}
+
+TEST_CASE(
   "python_regex_match unsupported patterns bail",
   "[core][solvers][strings][python_regex]")
 {

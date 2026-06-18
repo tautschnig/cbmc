@@ -2006,3 +2006,89 @@ std::optional<bool> python_regex_match(
       return true;
   return false;
 }
+
+std::optional<std::pair<int, int>> python_regex_search_pos(
+  const std::string &pattern,
+  const std::string &subject,
+  int from)
+{
+  if(subject.find('\n') != std::string::npos)
+    return std::nullopt;
+  bool ic = false, da = false;
+  const std::optional<std::string> core = strip_inline_flags(pattern, ic, da);
+  if(!core.has_value())
+    return std::nullopt;
+  re_match_parser parser{*core, ic, da};
+  const mnodep ast = parser.parse();
+  if(!ast)
+    return std::nullopt;
+
+  const int n = static_cast<int>(subject.size());
+  for(int i = (from < 0 ? 0 : from); i <= n; ++i)
+  {
+    // The continuation records the FIRST reached end. Because the matcher
+    // explores greedy- (more repetitions) and alternation- (first branch)
+    // first, that first end is CPython's leftmost/greedy match end.
+    std::optional<std::size_t> endp;
+    re_do(
+      ast,
+      subject,
+      (std::size_t)i,
+      [&](std::size_t e)
+      {
+        if(!endp.has_value())
+          endp = e;
+        return true;
+      });
+    if(endp.has_value())
+      return std::make_pair(i, (int)*endp);
+  }
+  return std::make_pair(-1, -1);
+}
+
+std::optional<std::string> python_regex_sub(
+  const std::string &pattern,
+  const std::string &repl,
+  const std::string &subject,
+  int count)
+{
+  // A backslash in `repl` is a group/escape reference (\1, \g<..>, \\) -- not
+  // modelled here; bail to a sound nondet.
+  if(repl.find('\\') != std::string::npos)
+    return std::nullopt;
+  if(subject.find('\n') != std::string::npos)
+    return std::nullopt;
+
+  std::string out;
+  int pos = 0;
+  int done = 0;
+  const int n = static_cast<int>(subject.size());
+  while(pos <= n)
+  {
+    if(count > 0 && done >= count)
+      break;
+    const std::optional<std::pair<int, int>> m =
+      python_regex_search_pos(pattern, subject, pos);
+    if(!m.has_value())
+      return std::nullopt; // unsupported pattern -> sound nondet
+    const int st = m->first;
+    const int en = m->second;
+    if(st < 0)
+      break; // no more matches
+    out.append(subject, (std::size_t)pos, (std::size_t)(st - pos));
+    out.append(repl);
+    done += 1;
+    if(en > pos)
+      pos = en;
+    else
+    {
+      // Empty match: emit the current char and advance by one (CPython).
+      if(st < n)
+        out.push_back(subject[(std::size_t)st]);
+      pos = st + 1;
+    }
+  }
+  if(pos < n)
+    out.append(subject, (std::size_t)pos, std::string::npos);
+  return out;
+}
