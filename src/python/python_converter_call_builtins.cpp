@@ -1613,18 +1613,34 @@ std::optional<exprt> python_convertert::try_builtin_call(
         // For complex imag_arg only: result.real -= imag.imag,
         // result.imag += imag.real.
         // For non-complex imag_arg: result.imag += imag.real.
+        //
+        // Signed-zero care: the imag accumulator is seeded to +0.0
+        // (the imag of a real first arg), and IEEE `+0.0 + (-0.0)`
+        // is `+0.0`, which would drop the sign of complex(x, -0.0).
+        // CPython sets imag=b directly for a real first arg, so when
+        // the accumulator is exactly +0.0 take the addend as-is.
+        auto add_keep_sign = [](const exprt &acc, const exprt &addend) -> exprt
+        {
+          if(acc.is_constant() && acc.type().id() == ID_floatbv)
+          {
+            ieee_float_valuet v{to_constant_expr(acc)};
+            if(v.is_zero() && !v.get_sign())
+              return addend;
+          }
+          return plus_exprt{acc, addend};
+        };
         if(imag_is_complex)
         {
           // real -= imag.imag
           real_val = minus_exprt{real_val, parts.second};
           // imag += imag.real
-          imag_val = plus_exprt{imag_val, parts.first};
+          imag_val = add_keep_sign(imag_val, parts.first);
         }
         else
         {
           // imag += imag (which is parts.first, the real part of
           // the second arg's number).
-          imag_val = plus_exprt{imag_val, parts.first};
+          imag_val = add_keep_sign(imag_val, parts.first);
         }
       }
     }
@@ -4331,17 +4347,26 @@ std::optional<exprt> python_convertert::try_builtin_call(
               or_exprt{not_exprt{isinf_exprt{sum}}, isinf_exprt{tmp}}});
             pending_checks.push_back(code_assumet{
               or_exprt{not_exprt{isnan_exprt{sum}}, isnan_exprt{tmp}}});
+            // A magnitude is non-negative: |z| has a clear sign bit, so
+            // abs(complex(-0.0,-0.0)) is +0.0, not -0.0 (the `tmp >= 0`
+            // / `tmp == 0` constraints above both admit -0.0 under IEEE).
+            pending_checks.push_back(
+              code_assumet{not_exprt{ieee_signbit(tmp)}});
             return std::move(tmp);
           }
         }
         // abs(x) = x >= 0 ? x : -x
-        if(arg.type().id() == ID_signedbv || arg.type().id() == ID_floatbv)
+        if(arg.type().id() == ID_signedbv)
         {
           return if_exprt{
             binary_relation_exprt{arg, ID_ge, safe_zero(arg.type())},
             arg,
             unary_minus_exprt{arg}};
         }
+        // abs(float): IEEE magnitude (sign bit cleared), so abs(-0.0)
+        // is +0.0 — a `>= 0 ? x : -x` test would wrongly keep -0.0.
+        if(arg.type().id() == ID_floatbv)
+          return ieee_fabs(arg);
         // PLR §6.10.2: abs() on a tagged-union value dispatches
         // on the runtime tag — return abs(int_val) when tag==INT,
         // abs(float_val) when tag==FLOAT, abs(complex) shape

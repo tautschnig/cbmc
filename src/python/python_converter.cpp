@@ -2592,12 +2592,12 @@ exprt python_convertert::python_truthiness(const exprt &e)
     auto complex_truthy = and_exprt{
       python_value_is(e, python_type_tagt::COMPLEX),
       or_exprt{
-        notequal_exprt{
+        not_exprt{ieee_float_equal_exprt{
           member_exprt{complex_deref, "real", double_type()},
-          safe_zero(double_type())},
-        notequal_exprt{
+          safe_zero(double_type())}},
+        not_exprt{ieee_float_equal_exprt{
           member_exprt{complex_deref, "imag", double_type()},
-          safe_zero(double_type())}}};
+          safe_zero(double_type())}}}};
     // DICT-tagged python_value: __class_ptr points at a dict; deref
     // and read length. Use canonical dict[str, python_value] type.
     typet dict_type =
@@ -2652,14 +2652,16 @@ exprt python_convertert::python_truthiness(const exprt &e)
       tag = id2string(to_struct_type(t).get_tag());
     else
       tag = id2string(to_struct_tag_type(t).get_identifier());
-    // Complex: 0+0j is falsy.
+    // Complex: 0+0j is falsy. Use IEEE float equality so that -0.0
+    // compares equal to 0.0 (a bit-level != would wrongly treat
+    // complex(-0.0, 0.0) as truthy); NaN stays truthy (NaN != 0.0).
     if(tag == "python_complex" && t.id() == ID_struct)
     {
       return or_exprt{
-        notequal_exprt{
-          member_exprt{e, "real", double_type()}, safe_zero(double_type())},
-        notequal_exprt{
-          member_exprt{e, "imag", double_type()}, safe_zero(double_type())}};
+        not_exprt{ieee_float_equal_exprt{
+          member_exprt{e, "real", double_type()}, safe_zero(double_type())}},
+        not_exprt{ieee_float_equal_exprt{
+          member_exprt{e, "imag", double_type()}, safe_zero(double_type())}}};
     }
     if(tag.substr(0, 13) == "python_class_")
     {

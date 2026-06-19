@@ -1634,14 +1634,14 @@ std::optional<exprt> python_convertert::try_method_call(
                 : math_arg;
             if(arg2.type().id() != ID_floatbv)
               arg2 = safe_typecast(arg2, double_type());
-            exprt abs_x = if_exprt{
-              binary_relation_exprt{math_arg, ID_lt, safe_zero(double_type())},
-              unary_minus_exprt{math_arg},
-              math_arg};
-            return if_exprt{
-              binary_relation_exprt{arg2, ID_lt, safe_zero(double_type())},
-              unary_minus_exprt{abs_x},
-              abs_x};
+            exprt mag = math_arg.type().id() == ID_floatbv
+                          ? math_arg
+                          : safe_typecast(math_arg, double_type());
+            // IEEE-754 copysign: magnitude of `mag` with the sign BIT of
+            // `arg2`. Centralised in util/ieee_float so the negative-zero
+            // semantics (copysign(1.0, -0.0) == -1.0) live in one tested
+            // place rather than an ad-hoc `arg2 < 0` test here.
+            return ieee_copysign(mag, arg2);
           }
           if(func_name == "isclose")
           {
