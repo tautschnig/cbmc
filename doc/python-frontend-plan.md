@@ -1793,14 +1793,22 @@ they are **distinct features**, not one root:
   `{}` even infers an `int` value type so storing a list mismatches). A
   correct fix is the dict-value-by-reference representation (mutable values
   behind a pointer, like the list-element `escaped_mutables` mechanism),
-  which §5 analyses as the perf-blocked uniform case — so this belongs with
-  that representation work, not a point fix.
-- **`set_from_param`** = `len(set(s.lower()))` — `set(<str>)` should build a
-  set of the string's characters (so `len` = distinct-char count). *Fix-
-  shape:* `set()` of a string iterates its characters into the set
-  (strings-adjacent; depends on character iteration of a symbolic string,
-  so the symbolic case shares the string-iteration ceiling, but the
-  constant case is directly modellable).
+  see the design+spike in
+  [dict-value-byref](python-frontend-dict-value-byref-plan.md) — feasibility
+  is confirmed (the by-ref mechanism works; perf is fine), the remaining work
+  is per-instance value identity (return the owning dict's values[] lvalue
+  slot). Not a point fix.
+- **`set_from_param` — NOT a set fix; multi-call constant-fold conflation
+  (characterized 2026-06-19).** `set(<str>)` itself works (constant-folds a
+  string to a unique-char bitmap; `len(set("abc"))==3`, and a single
+  `f(s)=len(set(s.lower()))` call folds). The failure is that
+  `set_from_param` calls `f` **twice** with different constant args
+  (`f("aAa")`, `f("abc")`): the body is converted once, so arg-side
+  constant propagation (`string_constants[s]`) can't hold both — both calls
+  read one conflated value. This is a general
+  function-called-with-different-constants constant-fold limitation (the
+  monomorphisation/clone-per-call-site machinery doesn't cover the
+  string-constant-fold case), not a `set` bug. Deeper than a point fix.
 
 *Net:* one (split) folds into the strings plan; `dict.fromkeys` is an
 implementable standalone feature; `setdefault`-returns-mutable is dict-by-ref;
