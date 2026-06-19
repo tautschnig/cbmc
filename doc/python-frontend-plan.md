@@ -662,24 +662,30 @@ fallback ⇒ unbound" is false.** Names bound by tuple/list unpacking
 (`x, y = f()`), `for`-targets, `with ... as`, `except ... as`, and
 comprehension targets are tracked via side-tables (and their values flow),
 but **no findable symbol** is created, so a later read reaches the fallback
-and was wrongly flagged. So the fix's **prerequisite is a complete,
-over-inclusive bound-names set** (every name bound *anywhere* in the
-relevant scope, across *all* binding forms), and the `NameError` must be
-gated on *absence* from that set — never on "fell through to the
-fallback". Two C++ obstacles make a safe scan non-trivial: `collect_assigned_locals`
-only handles simple `Name` targets (not tuple/for/with/except), and
-`jsont`'s object member map is `protected` (no generic recursion to find
-every `ctx=="Store"` Name). **Recommended clean foundation:** compute the
-per-scope bound-name set in the **AST server** (`python_ast_server.py`),
-which has the authoritative `ast` (a `NodeVisitor` collecting `Store`-ctx
-names + `def`/`class`/`arg`/`import`/`global`/`nonlocal` names per scope),
-attach it to each scope node, and gate the C++ `NameError` on it. Niche
-cousins (own fixes, not this root): `global-decl-fail` (`SyntaxError`: name
-used prior to `global` declaration — a parse-time check) and `enumerate()`
-arg-count (`TypeError`, same shape as the landed call-signature validation
-but for a builtin). (`snippet-undefined-var` reads an undefined `x`; its
-current `SUCCESSFUL` expectation encodes the *unsound* nondet behaviour and
-should flip to FAILED once this lands.)
+and was wrongly flagged.
+
+**LANDED 2026-06-19 (the safe foundation).** The fix is now gated on a
+positive, authoritative oracle: the **AST server** (`python_ast_server.py`
+daemon *and* the embedded fallback in `python_language.cpp`) computes
+`_all_bound_names` — an over-inclusive set of every name bound anywhere in
+the module across **all** binding forms (`Store`-context Names cover
+assignment / tuple-or-list unpack / `for` / `with`-as / comprehension /
+walrus uniformly; plus `def`/`class`/`arg`/`import`/`global`/`nonlocal`/
+`except` names). `get_var` emits `NameError` **only** when a referenced
+name is *absent* from this set — never on "reached the fallback".
+Over-inclusion is the safe direction (can only miss a NameError, never
+invent one). Further guards: restricted to main-module code (imported
+modules have their own scopes), skipped under `from X import *`, and a full
+builtin exclusion (functions + constants + `complex`, which `type_tags`
+omits). *Validated:* `assign-fail` / `import-as-fail` now soundly FAIL,
+`snippet-undefined-var` flipped to expect the NameError, new
+`nameerror-bound-forms-ok` locks in that every binding form is not
+misflagged; full `regression/python` + corpus sweep at **0 regressions**.
+Niche cousins still open (own fixes, not this root): `global-decl-fail`
+(`SyntaxError`: name used prior to `global` declaration — a parse-time
+check), `return9-fail` (undefined name in a *return annotation*, evaluated
+at a different site than `get_var`), and `enumerate()` arg-count
+(`TypeError`, builtin variant of the call-signature validation).
 
 **Accepted-by-design (not bugs):** `float(input())` / `int(input())`
 `ValueError` are covered by the opt-in `--python-raising-ops-check`
