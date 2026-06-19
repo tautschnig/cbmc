@@ -389,6 +389,55 @@ exprt python_convertert::convert_name(const jsont &expr)
     if(tt != type_tags.end())
       return from_integer(tt->second, python_int_type());
 
+    // PLR §4.2.1: a reference to a name that is bound NOWHERE in the
+    // module (the authoritative, over-inclusive all_bound_names set from
+    // the AST server — covering assignment / tuple-or-list unpack / for /
+    // with-as / except-as / comprehension / walrus targets, plus def /
+    // class / arg / import / global / nonlocal names) and is not a builtin
+    // raises NameError at runtime. Model it as an uncaught NameError
+    // instead of silently returning a nondet placeholder (a soundness gap:
+    // a real NameError bug would be proved away).
+    //
+    // Guards against over-reporting:
+    //  * gated on ABSENCE from all_bound_names, never on "reached this
+    //    fallback" — names bound only via side-tables (e.g. `x, y = f()`)
+    //    ARE in all_bound_names, so they are never misflagged;
+    //  * restricted to code syntactically in the MAIN module (module level
+    //    or a main-module function), since all_bound_names describes the
+    //    main module — imported-module bodies have their own scopes;
+    //  * skipped under `from X import *` (names not enumerable);
+    //  * the Python builtin functions / constants below may be referenced
+    //    as bare values (`sorted(xs, key=len)`, `x is None`, `__name__`).
+    static const std::set<std::string> builtin_value_names = {
+      "abs",         "aiter",        "all",          "anext",
+      "any",         "ascii",        "bin",          "breakpoint",
+      "bytearray",   "bytes",        "callable",     "chr",
+      "classmethod", "compile",      "delattr",      "dir",
+      "divmod",      "enumerate",    "eval",         "exec",
+      "filter",      "format",       "frozenset",    "getattr",
+      "globals",     "hasattr",      "hash",         "help",
+      "hex",         "id",           "input",        "isinstance",
+      "issubclass",  "iter",         "len",          "locals",
+      "map",         "max",          "memoryview",   "min",
+      "next",        "oct",          "open",         "ord",
+      "pow",         "print",        "property",     "range",
+      "repr",        "reversed",     "round",        "setattr",
+      "slice",       "sorted",       "staticmethod", "sum",
+      "super",       "vars",         "zip",          "__import__",
+      "None",        "True",         "False",        "NotImplemented",
+      "Ellipsis",    "__debug__",    "__name__",     "__file__",
+      "__doc__",     "__builtins__", "__spec__",     "__loader__",
+      "__package__", "__dict__",     "__class__"};
+    const bool in_main_module =
+      current_function.empty() || main_module_defs.count(current_function) > 0;
+    if(
+      !saw_import_star && in_main_module && all_bound_names.count(id) == 0 &&
+      builtin_value_names.count(id) == 0)
+    {
+      emit_conditional_exception(true_exprt{}, "NameError");
+      return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+    }
+
     log.error() << "Unknown variable: " << id << messaget::eom;
     return nil_exprt{};
   }
