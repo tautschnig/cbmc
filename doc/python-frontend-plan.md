@@ -1528,17 +1528,33 @@ is actioned on its merits. Whole-group vs point is flagged per item.
    element bookkeeping to the literal⊕symbolic case; confirm against a
    minimal `g([[5]]) == [1,5]`.
 
-3. **`for r in f(k-1)` spurious `UnboundLocalError`** — *cross-cutting
-   architectural root (recursion), surfaces in list tests.* Minimal
-   isolation: `ret=[]; ret.append(1)` is fine; the same accumulator
-   inside a **recursive** function iterated over its own recursive call
-   (`for r in f(k-1)`) wrongly reports `ret` referenced-before-assignment.
-   The function-local binding established before the loop is lost on the
-   recursion-unwinding / base-case-return merge. *Fix-shape:* ensure
-   pre-loop local bindings are live on all unwound recursive paths (likely
-   in the recursion/`for`-over-call lowering, not in list code). Affects
-   **recursive accumulators generally**, so worth its own work item; verify
-   with a non-list recursive accumulator too.
+3. **`for r in f(k-1)` spurious `UnboundLocalError` — ROOT SHARPENED
+   2026-06-19; deep architectural item, NOT a point fix.** Isolation
+   nailed the trigger to a **recursive self-call in the loop iterable**
+   (`for r in f(k-1)` inside `f`), independent of the accumulator type
+   (`ret = 0` scalar reproduces it; empty-list is irrelevant). Mechanism:
+   the path-sensitive unbound check asserts a **single function-scoped
+   `python::f::<local>$bound` flag**, and all locals are **static
+   per-function symbols** (the frontend has no per-activation call stack —
+   recursion is bounded inlining). On `for r in f(k-1)`: the outer
+   activation sets `ret$bound = true` (`ret = 0`), then evaluating the
+   iterable **re-enters `f`**, whose entry resets `python::f::ret$bound =
+   false`; the base case (`k==0`) returns **without** re-assigning `ret`,
+   so the shared flag stays `false`, and the outer activation's next read
+   (`ret = ret + r`) sees `false` → spurious `UnboundLocalError`. A
+   non-recursive call in the iterable (`for r in g()`) is fine because `g`
+   owns *different* symbols. **Why it is not a point fix:** the correct
+   remedy is per-activation local storage (a real call-stack / save-restore
+   of locals **and** their `$bound` flags around a self-recursive call) —
+   the same static-symbol limitation also lets a recursive callee clobber a
+   caller's local *values*, so this is one facet of a model-level gap, not a
+   sort/list bug. It deserves its own work item (candidate: save/restore the
+   recursive-self-call frame's locals+bound-flags at the call chokepoint, or
+   move locals to an activation record). **Soundness caution:** the
+   `$bound` flag underpins a real PLR §4.2.2 check; any change must not
+   weaken genuine `UnboundLocalError` detection — validate against
+   `unbound-local-*` regressions and a full sweep. Until then this stays a
+   sound **false positive** (over-reports; never a false proof).
 
 4. **`nondet_float()` NaN domain — PLR/soundness, NOT a bug to "fix".**
    `nondet_list(8, nondet_float())` then `assert elem == elem` FAILS
