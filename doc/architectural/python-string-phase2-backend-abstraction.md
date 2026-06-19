@@ -3,8 +3,8 @@
 
 Status: **design draft**, May 2026. This is the Phase 2
 deliverable of the Python-string representation refactor
-documented in the strings plan (`../python-frontend-plans.md` §3). The
-Phase 1 inventory (the Phase 1 inventory (folded into `../python-frontend-plans.md` §3)) listed
+documented in the strings plan (`../python-frontend-plan.md` §3). The
+Phase 1 inventory (the Phase 1 inventory (folded into `../python-frontend-plan.md` §3)) listed
 the ~50 front-end sites that reach into the refined-string
 struct; this document specifies the back-end interface those
 sites will compile through so that each back-end can pick its
@@ -1802,7 +1802,7 @@ symbol-operand membership) on top.
 This section is the single current plan for all deferred string work. It
 **supersedes** the older, now-partly-stale plan fragments: the "Target design:
 `smt_string_typet` end-to-end" / "Phasing (4 phases)" subsections above (written
-before the hybrid landed) and the 5-phase plan in `python-frontend-plans.md`
+before the hybrid landed) and the 5-phase plan in `python-frontend-plan.md`
 §3 (pre-session). Where those conflict, this section wins.
 
 Plan-coverage audit (✅ detailed+current here · ⚠️ existed but stale, refreshed
