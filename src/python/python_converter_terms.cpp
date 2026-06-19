@@ -205,6 +205,27 @@ exprt python_convertert::convert_constant(const jsont &expr)
 }
 
 // PLR §6.2.1: Identifiers (Names)
+std::string
+python_convertert::undefined_annotation_name(const jsont &annotation) const
+{
+  // PEP 563: deferred annotations are strings, never evaluated -> no error.
+  if(future_annotations)
+    return {};
+  // Only a *bare name* annotation is evaluated to a single name. Subscripts
+  // (List[int]), attributes (typing.List), and string forward-references
+  // are not checkable here (and string forward-refs are not NameErrors).
+  if(!annotation.is_object() || !is_node_type(annotation, "Name"))
+    return {};
+  const std::string id = json_string(json_member(annotation, "id"));
+  if(id.empty())
+    return {};
+  // Bound somewhere in the module (incl. imported typing names / classes /
+  // aliases) or a builtin -> resolves fine.
+  if(all_bound_names.count(id) > 0 || is_python_builtin_name(id))
+    return {};
+  return id;
+}
+
 // "An identifier occurring as an atom is a name."
 exprt python_convertert::convert_name(const jsont &expr)
 {
@@ -408,89 +429,11 @@ exprt python_convertert::convert_name(const jsont &expr)
     //  * skipped under `from X import *` (names not enumerable);
     //  * the Python builtin functions / constants below may be referenced
     //    as bare values (`sorted(xs, key=len)`, `x is None`, `__name__`).
-    static const std::set<std::string> builtin_value_names = {
-      "abs",
-      "aiter",
-      "all",
-      "anext",
-      "any",
-      "ascii",
-      "bin",
-      "breakpoint",
-      "bytearray",
-      "bytes",
-      "callable",
-      "chr",
-      "classmethod",
-      "compile",
-      "delattr",
-      "dir",
-      "divmod",
-      "enumerate",
-      "eval",
-      "exec",
-      "filter",
-      "format",
-      "frozenset",
-      "getattr",
-      "globals",
-      "hasattr",
-      "hash",
-      "help",
-      "hex",
-      "id",
-      "input",
-      "isinstance",
-      "issubclass",
-      "iter",
-      "len",
-      "locals",
-      "map",
-      "max",
-      "memoryview",
-      "min",
-      "next",
-      "oct",
-      "open",
-      "ord",
-      "pow",
-      "print",
-      "property",
-      "range",
-      "repr",
-      "reversed",
-      "round",
-      "setattr",
-      "slice",
-      "sorted",
-      "staticmethod",
-      "sum",
-      "super",
-      "vars",
-      "zip",
-      "__import__",
-      "None",
-      "True",
-      "False",
-      "NotImplemented",
-      "Ellipsis",
-      "__debug__",
-      "__name__",
-      "__file__",
-      "__doc__",
-      "__builtins__",
-      "__spec__",
-      "__loader__",
-      "__package__",
-      "__dict__",
-      "__class__",
-      // builtin type usable as a value but absent from type_tags above
-      "complex"};
     const bool in_main_module =
       current_function.empty() || main_module_defs.count(current_function) > 0;
     if(
       !saw_import_star && in_main_module && all_bound_names.count(id) == 0 &&
-      builtin_value_names.count(id) == 0)
+      !is_python_builtin_name(id))
     {
       emit_conditional_exception(true_exprt{}, "NameError");
       return side_effect_expr_nondett{python_int_type(), get_location(expr)};

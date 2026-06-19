@@ -91,6 +91,35 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
           }
         }
       }
+      // PLR §4.2.1: a return/parameter annotation that is a bare name
+      // bound nowhere raises NameError when the `def` executes (def-time
+      // annotation evaluation). Module-level defs are handled here (they
+      // bypass convert_statement); nested defs in convert_statement. Emit
+      // the NameError into the module block.
+      {
+        std::vector<const jsont *> anns;
+        anns.push_back(&json_member(stmt, "returns"));
+        for(const char *grp : {"posonlyargs", "args", "kwonlyargs"})
+        {
+          const jsont &lst = json_member(func_args, grp);
+          if(lst.is_array())
+            for(const auto &a : as_array(lst))
+              anns.push_back(&json_member(a, "annotation"));
+        }
+        for(const jsont *ann : anns)
+        {
+          if(!undefined_annotation_name(*ann).empty())
+          {
+            auto saved = pending_checks;
+            pending_checks.clear();
+            emit_conditional_exception(true_exprt{}, "NameError");
+            for(auto &chk : pending_checks)
+              block.add(chk);
+            pending_checks = saved;
+            break;
+          }
+        }
+      }
       continue;
     }
     if(is_node_type(stmt, "ClassDef"))
@@ -913,6 +942,23 @@ bool python_convertert::convert()
         if(n.is_string())
           all_bound_names.insert(json_string(n));
   }
+
+  // PEP 563: `from __future__ import annotations` defers all annotations to
+  // strings (not evaluated), so they never raise NameError — disable the
+  // undefined-annotation check when present.
+  if(body.is_array())
+    for(const auto &stmt : as_array(body))
+    {
+      if(!is_node_type(stmt, "ImportFrom"))
+        continue;
+      if(json_string(json_member(stmt, "module")) != "__future__")
+        continue;
+      const jsont &names = json_member(stmt, "names");
+      if(names.is_array())
+        for(const auto &a : as_array(names))
+          if(json_string(json_member(a, "name")) == "annotations")
+            future_annotations = true;
+    }
 
   // PLR §7.12: pre-scan all function/method bodies for global mutations
   // (dict subscript-assign, `global X` rebind, dict-mutating methods) so

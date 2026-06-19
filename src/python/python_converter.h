@@ -999,6 +999,19 @@ private:
   /// NameError, never invent one on a legitimately-bound name such as a
   /// tuple-unpack / `for` / `with`-as target).
   std::set<std::string> all_bound_names;
+  /// True if the main module has `from __future__ import annotations`
+  /// (PEP 563): all annotations become strings and are NOT evaluated at
+  /// runtime, so they never raise NameError. Disables the
+  /// undefined-annotation-name check below.
+  bool future_annotations = false;
+
+  /// PLR §4.2.1: if `ann` is a *bare-name* annotation (`x: T` / `-> T`,
+  /// not a subscript / attribute / string forward-ref) whose name is bound
+  /// nowhere (absent from all_bound_names) and is not a builtin, return
+  /// that name — referencing it at def/assign time raises NameError.
+  /// Returns "" when the annotation is fine, deferred (__future__), or not
+  /// a checkable bare name.
+  std::string undefined_annotation_name(const jsont &annotation) const;
   /// Top-level function/class names defined in the MAIN module
   /// (populated by convert_module_body). Such names are always in
   /// scope, so they are excluded from the leaked-name NameError check

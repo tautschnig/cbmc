@@ -1187,6 +1187,44 @@ codet python_convertert::convert_statement(const jsont &stmt)
       result = std::move(with_bind.statements().front());
   }
 
+  // PLR §4.2.1: an annotation that is a bare name bound nowhere raises
+  // NameError when it is evaluated — at def time for function return /
+  // parameter annotations, at statement time for a variable annotation.
+  // Reuses the all_bound_names oracle (so typing imports / classes /
+  // aliases resolve), is disabled under `from __future__ import
+  // annotations`, and is restricted to main-module code (imported modules
+  // have their own scopes). Emitting via pending_checks lets the flush
+  // below prepend it so the exception is active at this statement.
+  if(
+    (node_type == "FunctionDef" || node_type == "AsyncFunctionDef" ||
+     node_type == "AnnAssign") &&
+    (current_function.empty() || main_module_defs.count(current_function) > 0))
+  {
+    std::vector<const jsont *> anns;
+    if(node_type == "AnnAssign")
+      anns.push_back(&json_member(stmt, "annotation"));
+    else
+    {
+      anns.push_back(&json_member(stmt, "returns"));
+      const jsont &args = json_member(stmt, "args");
+      for(const char *grp : {"posonlyargs", "args", "kwonlyargs"})
+      {
+        const jsont &lst = json_member(args, grp);
+        if(lst.is_array())
+          for(const auto &a : as_array(lst))
+            anns.push_back(&json_member(a, "annotation"));
+      }
+    }
+    for(const jsont *ann : anns)
+    {
+      if(!undefined_annotation_name(*ann).empty())
+      {
+        emit_conditional_exception(true_exprt{}, "NameError");
+        break;
+      }
+    }
+  }
+
   // If expression conversion generated checks, prepend them
   if(!pending_checks.empty())
   {
