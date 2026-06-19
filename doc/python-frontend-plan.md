@@ -1602,26 +1602,27 @@ Two roots (`complex_binop_promotion`, `complex_builtins`,
    the exact failing assert per test first (the binary rejects
    `--incremental-bmc`; run with `--unwind`).
 
-2. **`complex()` constructor + dunder protocols — DECOMPOSED 2026-06-19;
-   three distinct sub-features, none a point fix, and no single one flips
-   the corpus test.** `complex_constructor_extended` has 16 failing asserts
-   that split into:
-   - **A. `complex(<non-literal string>)`** (`s = "5+6j"; complex(s)`):
-     literal-string forms already fold correctly; the symbolic-string case
-     needs **runtime parsing of a complex string** (`"5+6j"` → `(5,6)`) via
-     the string solver — this is really a **[strings-plan](python-frontend-strings-plan.md#strings)**
-     item (string→number parsing), not complex arithmetic.
-   - **B. `__complex__` / `__float__` / `__index__` dunder dispatch** in the
-     constructor (and the `TypeError` when they return the wrong type or
-     raise) — needs protocol dispatch wired into `complex()`.
-   - **C. `TypeError` matrix** for `bytes` arguments and a string *second*
-     argument.
-   Each is independent and moderate; flipping the test needs **all three**
-   (A blocks it on its own). *Recommendation:* split A out to the strings
-   plan; treat B and C as separate small features. *PLR:* sound today
-   (these are missing-feature imprecisions / undetected-TypeError
-   over-permissiveness on exotic inputs, not false proofs). Smaller per-item
-   blast radius than C1, but **not** a single point fix.
+2. **`complex()` constructor + dunder protocols — B + C DONE (2026-06-19);
+   A moved to the strings plan.** `complex_constructor_extended` went from
+   16 failing asserts to 2.
+   - **A. `complex(<non-literal string>)`** — runtime parsing of a symbolic
+     complex string (`"5+6j"`→(5,6)); a **string-solver** task, now tracked
+     in the [strings plan](python-frontend-strings-plan.md#strings). The
+     only remaining failures in the corpus test (the literal-string forms
+     already fold).
+   - **B. `__complex__`/`__float__`/`__index__` dunder dispatch — LANDED**
+     (`python_converter_call_builtins.cpp`): `complex(obj)` dispatches the
+     numeric dunders in CPython priority order, materialising the call into
+     a temp; a wrong return type raises `TypeError` (PLR: `__complex__` must
+     return complex, etc.), while unannotated/`python_value` returns fall
+     through soundly (no false positive); a dunder that itself raises
+     propagates.
+   - **C. `TypeError` matrix — LANDED**: string-first-with-second
+     (`complex("1",2)`), str/bytes second arg, and >2 positional args are
+     now flagged (all genuine CPython `TypeError`s; sound to add).
+   *Validated:* `complex-constructor-dunders` regression added; full
+   `regression/python` + corpus sweep at 0 regressions. *Residual:* only A
+   (strings plan).
 
 > **Architectural verdict (answering "is there a whole-group root?"):**
 > mostly **no** — the spurious-failure DIFFs are separate roots. The real
