@@ -203,6 +203,16 @@ void python_convertert::validate_call_signature(
             emit_conditional_exception(true_exprt{}, "TypeError");
             return;
           }
+        // Missing required keyword-only argument (no default, not
+        // supplied by keyword).
+        auto rk = function_required_kwonly.find(func_key);
+        if(rk != function_required_kwonly.end())
+          for(const std::string &kn : rk->second)
+            if(kw_names.count(kn) == 0)
+            {
+              emit_conditional_exception(true_exprt{}, "TypeError");
+              return;
+            }
       }
     }
   }
