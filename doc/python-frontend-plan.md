@@ -1762,6 +1762,39 @@ Two roots (`complex_binop_promotion`, `complex_builtins`,
 > rows (`github_3010*`/`3015*`, `casting*-fail`, `range*-fail`) are the
 > cosmetic NO-PLAN output-format item, tracked separately — not precision.
 
+### `github_3560` family + dict/set spurious failures — triaged 2026-06-19 (each maps to a known area)
+
+Empirical triage converted these "no plan" DIFFs into concrete fix-shapes;
+they are **distinct features**, not one root:
+
+- **`github_3560` / `github_3560_1`** = `str.split(sep, maxsplit)` on a
+  **symbolic** string (`(input()+",end").split(",",1)`). This is the
+  **split list-valued residual** already tracked in the
+  [strings plan](python-frontend-strings-plan.md#strings) (variable-count
+  result; native or a bounded list-valued lowering). Not an everything-else
+  cluster — re-pointed there.
+- **`dict_fromkeys`** = `dict.fromkeys(iterable[, value])` is not modelled
+  (the values come back nondet). *Fix-shape (clean, self-contained):*
+  handle `dict.fromkeys` in the dict builtin/method path — build a dict
+  with one entry per (de-duplicated) key, each mapped to the given value
+  (or `None`). No aliasing concerns; the keys/value are converted directly.
+- **`dict_setdefault_list`** = `a.setdefault(k, []).append(v)` —
+  `setdefault` must return the *same* mutable stored in the dict so the
+  in-place `append` is observed on later reads. This is the **dict
+  by-reference** area ([§5](#dict-byref)): the returned list must alias the
+  stored value, not a copy. Harder (mutable-aliasing through a dict value);
+  belongs with the dict-by-ref work, not a standalone fix.
+- **`set_from_param`** = `len(set(s.lower()))` — `set(<str>)` should build a
+  set of the string's characters (so `len` = distinct-char count). *Fix-
+  shape:* `set()` of a string iterates its characters into the set
+  (strings-adjacent; depends on character iteration of a symbolic string,
+  so the symbolic case shares the string-iteration ceiling, but the
+  constant case is directly modellable).
+
+*Net:* one (split) folds into the strings plan; `dict.fromkeys` is an
+implementable standalone feature; `setdefault`-returns-mutable is dict-by-ref;
+`set(str)` is set-from-iterable. No new architectural root.
+
 ---
 
 ## 10. Attribute / descriptor protocol residuals (PLR §3.3.2)  {#descriptors}
