@@ -608,6 +608,61 @@ previously-deferred `github_3647_9_fail` (dict-mutation-during-iteration) is now
 **RESOLVED** (below), as is the return-type `None`-erasure vector — so there are
 no open deliberately-deferred soundness items at present.
 
+### Soundness re-audit (2026-06-19, current binary, sweep PASS 2704/2832) — CONFIRMS no false proofs + sharpens the methodology
+
+Re-ran every *expected-failure / got-SUCCESSFUL* row against the current
+binary (after the L1 / async / complex / IEEE work). The 2026-06-09
+conclusion holds: **no genuine algorithmic false proof** (we never prove a
+buggy computation correct). Two methodology points make this precise:
+
+- **The sweep config is unsound-by-construction for deep loops, so
+  "SUCCESSFUL" is NOT a false-proof signal.** The harness runs `--unwind 10
+  --no-unwinding-assertions`; when a loop needs more than 10 iterations the
+  cut adds `assume(!guard)`, which *prunes* the continuing path, so
+  post-loop assertions are vacuously SUCCESSFUL. Confirmed on
+  `github_2892_fail` (a 28-char inner loop): SUCCESSFUL at `--unwind 10
+  --no-unwinding-assertions`, but **FAILED** with unwinding assertions ON
+  (default) and at `--unwind 35`. `github_3836_fail` / `global2_fail`
+  likewise FAIL correctly at `--unwind 20`. A sound false-proof audit must
+  use unwinding assertions ON.
+- **Several "expected FAILED" tests are ESBMC-divergent and we are the
+  PLR-correct side.** `neural-net_fail` asserts `f >= 2.745`; CPython
+  computes `f == 2.745` (True), so the program **passes** — our SUCCESSFUL
+  is correct and the test's FAILED expectation is an ESBMC float-model
+  artifact. `--strict-types`-only (`github_3020_5`, `github_3093_1/2`),
+  `--function` (`ethereum_bug-fail`, a `uint64` overflow — Python ints are
+  unbounded), and `s.encode` "unsupported" (`github_2993_2_fail`, which
+  CPython runs cleanly) are all ESBMC-mode/limitation expectations where
+  SUCCESSFUL is the CPython-faithful answer.
+
+**The one genuine soundness-direction theme (whole-group root):
+incomplete `NameError` detection for definitely-undefined names.** CPython
+raises `NameError` and we silently proceed: `assign-fail` (reads `q`,
+never defined), `import-as-fail` (`mp`, a bad import alias), `return9-fail`
+(annotation `-> UnknownType`, evaluated at def time). These share one root
+— a `Name` (or annotation name) that resolves to **no** local / global /
+builtin / imported binding should raise `NameError`, not fall through to
+nondet. *Fix-shape (careful, whole-group):* at name resolution, when a
+name is provably unbound on the executed path (not assigned anywhere in
+scope, not a builtin, not imported, no `global`/`nonlocal`, no
+star-import / `exec` in the module), emit an uncaught `NameError`. **Risk:
+over-reporting** — dynamic definition, conditional assignment, and
+star-imports make "definitely unbound" subtle, so this must be
+conservative (only fire when no binding exists on *any* path) and
+sweep-validated for new false positives. Niche cousins (own fixes, not
+this root): `global-decl-fail` (`SyntaxError`: name used prior to `global`
+declaration — a parse-time check) and `enumerate()` arg-count
+(`TypeError`, same shape as the landed call-signature validation but for a
+builtin).
+
+**Accepted-by-design (not bugs):** `float(input())` / `int(input())`
+`ValueError` are covered by the opt-in `--python-raising-ops-check`
+(default favours precision); annotation mismatches (`process(3.14)` into an
+`int` param) are covered by opt-in `--python-check-annotations`. The
+message-format FAIL rows (`github_3010*`/`3015*`, `casting*-fail`) are the
+cosmetic output-format item — we detect the condition, we just don't
+reproduce ESBMC's exact string.
+
 ### Return-type inference erases `None` from `X`-or-`None` returns — HIGH PRIORITY (2026-06-12)
 
 ### Return-type inference erases `None` from `X`-or-`None` returns — RESOLVED (2026-06-14)
