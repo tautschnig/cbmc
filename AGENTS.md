@@ -912,10 +912,11 @@ To understand how data flows through CBMC:
 
 ### Python Frontend
 
-Two authoritative docs, plus the user guide and a few linked deep-dives:
+The architecture reference, two forward-looking plans, the user guide, and a few linked deep-dives:
 
-- [doc/python-frontend-architecture.md](doc/python-frontend-architecture.md) - **The** architecture reference: passes, type system, constant-tracking maps, symbol naming, generator/annotation/exception/method-dispatch semantics, regex/contracts/module/parse-daemon/any-erasure features, type-coercion boundaries, and a "Gaps & PLR deviations" table that links to the plans doc.
-- [doc/python-frontend-plans.md](doc/python-frontend-plans.md) - **The** single forward-looking backlog: every gap/PLR deviation as a concrete plan or explicit "no plan yet" (generators, closures, strings, regex, dict-by-ref, modules, check-annotations blockers, performance, precision clusters, descriptors, icontract, higher-order, async, residuals). Architecture-doc gaps link to its anchors.
+- [doc/python-frontend-architecture.md](doc/python-frontend-architecture.md) - **The** architecture reference: passes, type system, constant-tracking maps (+ call-site/loop invalidation), symbol naming, generator/annotation/exception/method-dispatch/call-signature semantics, string-backends/regex/contracts/module/parse-daemon/any-erasure features, type-coercion boundaries, and the **master "Gaps, soundness issues & imprecisions" inventory** (categorized: soundness / imprecision / performance / intrinsic / NO PLAN) that links to the two plans.
+- [doc/python-frontend-plan.md](doc/python-frontend-plan.md) - **The** forward-looking backlog for everything **except** strings: every gap/PLR deviation as a concrete plan or explicit "no plan yet" (soundness, generators, closures, dict-by-ref, modules, check-annotations blockers, performance, precision clusters, descriptors, icontract, higher-order, async, residuals).
+- [doc/python-frontend-strings-plan.md](doc/python-frontend-strings-plan.md) - **The** plan for all `str`/`bytes`/`re` work: native SMT-String backend status (complete), refined-string ceilings, regex, and the residual-gaps table.
 - [doc/python-verification-guide.md](doc/python-verification-guide.md) - User-facing guide for verifying Python programs.
 
 Linked deep-dives (referenced from the two docs above):
