@@ -990,6 +990,15 @@ private:
   /// the names it brings in.
   std::set<std::string> explicitly_imported_names;
   bool saw_import_star = false;
+  /// Over-inclusive set of every name bound ANYWHERE in the MAIN module
+  /// (all scopes, all binding forms), computed authoritatively by the AST
+  /// server (`_all_bound_names`, from Store-context Names + def/class/arg/
+  /// import/global/nonlocal/except names). The undefined-name `NameError`
+  /// check (PLR §4.2.1) fires only when a referenced name is ABSENT from
+  /// this set — over-inclusion is the safe direction (it can only miss a
+  /// NameError, never invent one on a legitimately-bound name such as a
+  /// tuple-unpack / `for` / `with`-as target).
+  std::set<std::string> all_bound_names;
   /// Top-level function/class names defined in the MAIN module
   /// (populated by convert_module_body). Such names are always in
   /// scope, so they are excluded from the leaked-name NameError check

@@ -109,7 +109,22 @@ void python_languaget::set_language_options(
   " if isinstance(o,complex):\n" \
   "  return{'__complex__':True,'real':o.real,'imag':o.imag}\n" \
   " return str(o)\n" \
-  "r=c(t);r['_filename']=sys.argv[1]\n" \
+  "def bn(t):\n" \
+  " s=set()\n" \
+  " for n in ast.walk(t):\n" \
+  "  if isinstance(n,ast.Name) and isinstance(n.ctx,ast.Store):s.add(n.id)\n" \
+  "  elif isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)):s.add(n.name)\n" \
+  "  elif isinstance(n,ast.arg):s.add(n.arg)\n" \
+  "  elif isinstance(n,ast.ExceptHandler):\n" \
+  "   if n.name:s.add(n.name)\n" \
+  "  elif isinstance(n,ast.Import):\n" \
+  "   for a in n.names:s.add((a.asname or a.name).split('.')[0])\n" \
+  "  elif isinstance(n,ast.ImportFrom):\n" \
+  "   for a in n.names:\n" \
+  "    if a.name!='*':s.add(a.asname or a.name)\n" \
+  "  elif isinstance(n,(ast.Global,ast.Nonlocal)):s.update(n.names)\n" \
+  " return sorted(s)\n" \
+  "r=c(t);r['_filename']=sys.argv[1];r['_all_bound_names']=bn(t)\n" \
   "json.dump(r,open(sys.argv[2],'w',encoding='utf-8'),default=jd,ensure_ascii=False)\n"
 // clang-format on
 

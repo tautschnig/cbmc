@@ -1,9 +1,15 @@
 CORE
 main.py
 
-^EXIT=0$
+^EXIT=10$
 ^SIGNAL=0$
-^VERIFICATION SUCCESSFUL$
-Unknown variable: x
+^\[exception.*uncaught exception: FAILURE$
+^VERIFICATION FAILED$
 --
 ^warning: ignoring
+--
+PLR §4.2.1: a reference to a name bound nowhere in the module raises
+NameError. The frontend gates this on absence from the authoritative
+all_bound_names set (computed by the AST server over every binding form),
+so legitimately-bound names (tuple/for/with/except/comprehension targets)
+are never misflagged.

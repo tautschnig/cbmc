@@ -96,7 +96,65 @@ def parse_file(path):
         }
     out = to_dict(tree)
     out["_filename"] = path
+    # Over-inclusive set of every name bound ANYWHERE in the module
+    # (all scopes, all binding forms). The C++ frontend gates its
+    # NameError-on-undefined-name check on ABSENCE from this set, so
+    # over-inclusion is the safe direction: it can only miss a NameError,
+    # never invent one. Authoritative because it uses Python's own ast
+    # (Store-context Names cover assignment / tuple-or-list unpack /
+    # for-targets / with-as / comprehension targets / walrus uniformly).
+    out["_all_bound_names"] = sorted(_collect_bound_names(tree))
     return out
+
+
+def _collect_bound_names(tree):
+    """All names bound anywhere in `tree`, across every scope and binding
+    form (PLR §4.2.1). Used as a conservative 'is this name bound at all?'
+    oracle for NameError detection."""
+    names = set()
+
+    class _V(ast.NodeVisitor):
+        def visit_Name(self, node):
+            if isinstance(node.ctx, ast.Store):
+                names.add(node.id)
+            self.generic_visit(node)
+
+        def visit_arg(self, node):
+            names.add(node.arg)
+            self.generic_visit(node)
+
+        def visit_FunctionDef(self, node):
+            names.add(node.name)
+            self.generic_visit(node)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_ClassDef(self, node):
+            names.add(node.name)
+            self.generic_visit(node)
+
+        def visit_Import(self, node):
+            for a in node.names:
+                names.add((a.asname or a.name).split(".")[0])
+
+        def visit_ImportFrom(self, node):
+            for a in node.names:
+                if a.name != "*":
+                    names.add(a.asname or a.name)
+
+        def visit_Global(self, node):
+            names.update(node.names)
+
+        def visit_Nonlocal(self, node):
+            names.update(node.names)
+
+        def visit_ExceptHandler(self, node):
+            if node.name:
+                names.add(node.name)
+            self.generic_visit(node)
+
+    _V().visit(tree)
+    return names
 
 
 def serve_one(conn):

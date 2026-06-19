@@ -903,6 +903,17 @@ bool python_convertert::convert()
 {
   const jsont &body = json_member(parse_tree.ast_json, "body");
 
+  // PLR §4.2.1: the authoritative over-inclusive set of names bound
+  // anywhere in the main module (computed by the AST server). The
+  // undefined-name NameError check gates on absence from this set.
+  {
+    const jsont &bn = json_member(parse_tree.ast_json, "_all_bound_names");
+    if(bn.is_array())
+      for(const auto &n : as_array(bn))
+        if(n.is_string())
+          all_bound_names.insert(json_string(n));
+  }
+
   // PLR §7.12: pre-scan all function/method bodies for global mutations
   // (dict subscript-assign, `global X` rebind, dict-mutating methods) so
   // the post-call invalidation only invalidates globals that some
