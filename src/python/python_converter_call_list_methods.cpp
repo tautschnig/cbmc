@@ -174,8 +174,16 @@ std::optional<exprt> python_convertert::try_list_method(
         const exprt &data_arr = lit->operands()[1];
         std::vector<std::pair<mp_integer, exprt>> int_pairs;
         std::vector<std::pair<std::string, exprt>> str_pairs;
+        // PLR §6.4.6 / §3.2.1: a list mixing int and float (numeric
+        // subtypes) is ordered by numeric value across the tagged
+        // union, exactly as `<` / `==` already promote. Keep a
+        // value-keyed view that accepts any constant numeric element
+        // so a mixed `[3, 1.5]` constant-folds instead of falling to
+        // the bubble sort (whose element `>` does not promote tags).
+        std::vector<std::pair<double, exprt>> num_pairs;
         bool all_const_int = true;
         bool all_const_str = true;
+        bool all_const_numeric = true;
         for(mp_integer i = 0; i < lv; ++i)
         {
           auto idx = i.to_ulong();
@@ -183,6 +191,7 @@ std::optional<exprt> python_convertert::try_list_method(
           {
             all_const_int = false;
             all_const_str = false;
+            all_const_numeric = false;
             break;
           }
           const exprt &e = data_arr.operands()[idx];
@@ -207,10 +216,44 @@ std::optional<exprt> python_convertert::try_list_method(
             else
               str_pairs.emplace_back(sv.value(), e);
           }
+          if(all_const_numeric)
+          {
+            std::optional<double> nv = try_eval_double(e);
+            if(
+              !nv.has_value() && e.id() == ID_struct &&
+              is_python_value_type(e.type()) && e.operands().size() >= 4)
+            {
+              // Mixed-numeric lists store each element as a python_value
+              // tagged-union struct {tag,int,float,bool,...}; read the
+              // active numeric field so the value-keyed fold applies
+              // (a whole-struct `>` would otherwise order by tag, putting
+              // every int before every float regardless of value).
+              const exprt &tag_op = e.operands()[0];
+              mp_integer t;
+              if(
+                tag_op.is_constant() && tag_op.type().id() == ID_signedbv &&
+                !to_integer(to_constant_expr(tag_op), t))
+              {
+                if(t == mp_integer{static_cast<int>(python_type_tagt::INT)})
+                  nv = try_eval_double(e.operands()[1]);
+                else if(
+                  t == mp_integer{static_cast<int>(python_type_tagt::FLOAT)})
+                  nv = try_eval_double(e.operands()[2]);
+                else if(
+                  t == mp_integer{static_cast<int>(python_type_tagt::BOOL)})
+                  nv = try_eval_double(e.operands()[3]);
+              }
+            }
+            if(!nv.has_value())
+              all_const_numeric = false;
+            else
+              num_pairs.emplace_back(nv.value(), e);
+          }
         }
         if(
           (all_const_int && !int_pairs.empty()) ||
-          (all_const_str && !str_pairs.empty()))
+          (all_const_str && !str_pairs.empty()) ||
+          (all_const_numeric && !num_pairs.empty()))
         {
           exprt::operandst sorted_elems;
           if(all_const_int)
@@ -222,13 +265,27 @@ std::optional<exprt> python_convertert::try_list_method(
             for(const auto &p : int_pairs)
               sorted_elems.push_back(p.second);
           }
-          else
+          else if(all_const_str)
           {
             std::sort(
               str_pairs.begin(),
               str_pairs.end(),
               [](const auto &a, const auto &b) { return a.first < b.first; });
             for(const auto &p : str_pairs)
+              sorted_elems.push_back(p.second);
+          }
+          else
+          {
+            // Mixed / all-float numeric: order by numeric value,
+            // preserving each element's original (int- or
+            // float-typed) expr — CPython keeps the objects, only
+            // reordering them. stable_sort matches CPython's stable
+            // sort so equal values (e.g. 2 and 2.0) keep input order.
+            std::stable_sort(
+              num_pairs.begin(),
+              num_pairs.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+            for(const auto &p : num_pairs)
               sorted_elems.push_back(p.second);
           }
           while(sorted_elems.size() < PYTHON_MAX_LIST_LENGTH)
