@@ -1498,16 +1498,26 @@ Triage of the spurious-failure DIFFs (`list-sort7`, `list_extend12`,
 **distinct roots, not one architectural fix** — recorded honestly so each
 is actioned on its merits. Whole-group vs point is flagged per item.
 
-1. **Mixed `int`/`float` `.sort()` mis-orders** — *small whole-group.*
-   `[3, 1.5].sort() == [1.5, 3]` FAILS, but pure-int `[3,1,2].sort()` and
-   cross-tag equality `[2] == [2.0]` both PASS. So the element *equality*
-   path already promotes across the int/float tagged-union; the **sort
-   comparator does not**. *Fix-shape:* route the sort comparison through
-   the same numeric cross-tag promotion `==` uses (compare by numeric
-   value, int promoted to float for ordering). One change covers
-   `sort`/`sorted`/`min`/`max` over mixed-numeric lists. *PLR:* CPython
-   orders int and float by numeric value (`3 > 1.5`); do **not** order by
-   tag. No NaN in these literals, so total order holds.
+1. **Mixed `int`/`float` `.sort()` mis-orders — FIXED (2026-06-19).**
+   `[3, 1.5].sort() == [1.5, 3]` FAILED because a mixed list is stored as a
+   `python_value` tagged-union struct array and the bubble-sort fallback
+   compared whole structs with `>`, ordering by the **tag** field first
+   (every int before every float). The element *equality* path already
+   promotes across the union; the sort comparator did not. *Landed:* the
+   constant-fold sort path gained a value-keyed numeric branch — classify a
+   list whose every element is a constant numeric (raw scalar or a
+   `python_value` INT/FLOAT/BOOL struct), read the active field via
+   `try_eval_double`, and `stable_sort` by that double key while preserving
+   each element's original int-/float-typed expr (CPython reorders the same
+   objects; stable for equal values like `2.0`/`2`). One change covers the
+   mixed-numeric constant `sort`/`sorted`. *Validated:* gained `list-sort7`,
+   `list-sort-mixed-numeric` regression added, full `regression/python` +
+   corpus sweep at **0 regressions**. *Residual:* the **symbolic** (non-
+   constant) mixed-numeric bubble sort still compares whole structs (tag-
+   ordered); no failing corpus test exercises it — left as a documented
+   follow-up (a cross-tag numeric comparator in the bubble path, mirroring
+   `python_converter_compare.cpp`). *PLR:* CPython orders int/float by
+   numeric value; never by tag.
 
 2. **`extend([literal] + param_list)` value precision** — *point.*
    `ret = []; for r in items: ret.extend([1] + r); return ret` gives the
