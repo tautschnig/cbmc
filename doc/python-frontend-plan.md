@@ -1773,17 +1773,28 @@ they are **distinct features**, not one root:
   [strings plan](python-frontend-strings-plan.md#strings) (variable-count
   result; native or a bounded list-valued lowering). Not an everything-else
   cluster — re-pointed there.
-- **`dict_fromkeys`** = `dict.fromkeys(iterable[, value])` is not modelled
-  (the values come back nondet). *Fix-shape (clean, self-contained):*
-  handle `dict.fromkeys` in the dict builtin/method path — build a dict
-  with one entry per (de-duplicated) key, each mapped to the given value
-  (or `None`). No aliasing concerns; the keys/value are converted directly.
-- **`dict_setdefault_list`** = `a.setdefault(k, []).append(v)` —
-  `setdefault` must return the *same* mutable stored in the dict so the
-  in-place `append` is observed on later reads. This is the **dict
-  by-reference** area ([§5](#dict-byref)): the returned list must alias the
-  stored value, not a copy. Harder (mutable-aliasing through a dict value);
-  belongs with the dict-by-ref work, not a standalone fix.
+- **`dict_fromkeys` — DONE 2026-06-19 (whole-group via shared
+  `build_dict_value`).** Extracted a `build_dict_value(pairs)` from
+  `convert_dict` that infers element types, **de-duplicates equal constant
+  keys** (PLR §6.4, last value wins), pads, and guards capacity.
+  `dict.fromkeys(list-literal[, value])` builds (key, value) pairs (value
+  defaults to `None`) and reuses it. The dedup also **fixed duplicate-key
+  dict literals** (`{1:5,1:5,2:5}` was len 3, now 2). Flips `dict_fromkeys`;
+  0 sweep regressions. New `dict-fromkeys-dedup` regression. (Residual:
+  `fromkeys` over a non-list iterable, and the int/float-key-equality edge
+  `{1:.., 1.0:..}`, are not deduped — uncommon.)
+- **`dict_setdefault_list` — the dict-VALUE-by-reference limitation
+  ([§5](#dict-byref)); NOT a standalone setdefault fix (characterized
+  2026-06-19).** Empirically, *all* mutation of a list stored as a dict
+  value is lost, not just via setdefault: `a={1:[]}; a[1].append(5)`,
+  `v=a[1]; v.append(7)`, and `a.setdefault(1,[]).append(v)` all fail,
+  because dict values are stored **by value** in the values array (a
+  retrieved value is a copy; `setdefault` returns a copied temp; an empty
+  `{}` even infers an `int` value type so storing a list mismatches). A
+  correct fix is the dict-value-by-reference representation (mutable values
+  behind a pointer, like the list-element `escaped_mutables` mechanism),
+  which §5 analyses as the perf-blocked uniform case — so this belongs with
+  that representation work, not a point fix.
 - **`set_from_param`** = `len(set(s.lower()))` — `set(<str>)` should build a
   set of the string's characters (so `len` = distinct-char count). *Fix-
   shape:* `set()` of a string iterates its characters into the set
