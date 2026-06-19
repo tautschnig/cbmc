@@ -681,10 +681,16 @@ omits). *Validated:* `assign-fail` / `import-as-fail` now soundly FAIL,
 `snippet-undefined-var` flipped to expect the NameError, new
 `nameerror-bound-forms-ok` locks in that every binding form is not
 misflagged; full `regression/python` + corpus sweep at **0 regressions**.
-Niche cousins still open (own fixes, not this root): `return9-fail`
-(undefined name in a *return annotation*, evaluated at a different site than
-`get_var` — needs def-time annotation evaluation + `from __future__ import
-annotations` tracking, a distinct type-vs-runtime concern; deferred).
+Niche cousins — **all LANDED 2026-06-19** (soundness-direction, 0 sweep
+regressions). `return9-fail` (undefined name in an annotation) is now
+handled by extending the `all_bound_names` oracle to **all** annotation
+sites (return / parameter / variable) via `undefined_annotation_name()`:
+a bare-name annotation bound nowhere raises `NameError` at def/statement
+time. Guards: disabled under `from __future__ import annotations`
+(PEP 563), bare-name only (Subscript / Attribute / string forward-refs
+skipped), main-module only; module-level defs handled in
+`convert_module_body` (they bypass `convert_statement`), nested defs +
+`AnnAssign` in `convert_statement`.
 
 **Cousins LANDED 2026-06-19** (soundness-direction, 0 sweep regressions):
 * **`enumerate()` arity** — `enumerate()` with no iterable, or >2 positional
