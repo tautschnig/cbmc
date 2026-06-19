@@ -1353,6 +1353,61 @@ std::optional<exprt> python_convertert::try_builtin_call(
           }
         }
       }
+      // PLR §6.10.1 second-argument rules:
+      //  * complex() can't take a second arg if the first is a string
+      //    (complex("1", 2) -> TypeError);
+      //  * the second argument must be a number, not str/bytes
+      //    (complex(1, "2") / complex(1, b"2") -> TypeError).
+      // The bytes/bytearray FIRST-arg case is handled above; here we add
+      // the string-first-with-second and the str/bytes-second cases.
+      if(!type_error && args.is_array())
+      {
+        std::vector<const jsont *> pos;
+        for(const auto &a : as_array(args))
+          if(!is_node_type(a, "Starred"))
+            pos.push_back(&a);
+        auto str_arg = [&](const jsont &a) -> bool
+        {
+          if(is_node_type(a, "Str"))
+            return true;
+          std::vector<codet> saved_pc2;
+          saved_pc2.swap(pending_checks);
+          exprt e = convert_expression(a);
+          saved_pc2.swap(pending_checks);
+          return is_python_string_type(e.type());
+        };
+        auto bytes_arg = [&](const jsont &a) -> bool
+        {
+          if(is_node_type(a, "Bytes"))
+            return true;
+          std::vector<codet> saved_pc2;
+          saved_pc2.swap(pending_checks);
+          exprt e = convert_expression(a);
+          saved_pc2.swap(pending_checks);
+          if(is_python_list_type(e.type()))
+          {
+            const auto &lt = to_struct_type(e.type());
+            if(lt.components().size() >= 2)
+            {
+              const auto &dt = to_array_type(lt.components()[1].type());
+              if(
+                dt.element_type().id() == ID_unsignedbv &&
+                to_unsignedbv_type(dt.element_type()).get_width() == 8)
+                return true;
+            }
+          }
+          return false;
+        };
+        if(
+          pos.size() >= 2 &&
+          (str_arg(*pos[0]) || str_arg(*pos[1]) || bytes_arg(*pos[1])))
+          type_error = true;
+        // PLR §6.10.1: complex() takes at most two positional args
+        // (complex(1, 2, 3) -> TypeError). Only explicit non-starred
+        // positionals are counted, so complex(*args) stays unflagged.
+        if(pos.size() > 2)
+          type_error = true;
+      }
       if(type_error)
       {
         emit_conditional_exception(true_exprt{}, "TypeError");
@@ -1379,6 +1434,87 @@ std::optional<exprt> python_convertert::try_builtin_call(
         return {
           member_exprt{arg, "real", double_type()},
           member_exprt{arg, "imag", double_type()}};
+      }
+      // PLR §6.10.1: a class instance is converted via the numeric
+      // dunders, in CPython's priority order __complex__ > __float__ >
+      // __index__. The dunder must return the right type, else TypeError
+      // (e.g. __complex__ returning a float). We materialise the call into
+      // a temp and read its result.
+      if(
+        arg.type().id() == ID_struct &&
+        to_struct_type(arg.type()).get_tag() != "python_complex")
+      {
+        std::string tag = id2string(to_struct_type(arg.type()).get_tag());
+        std::string cls =
+          tag.compare(0, 13, "python_class_") == 0 ? tag.substr(13) : tag;
+        for(const char *dn : {"__complex__", "__float__", "__index__"})
+        {
+          const symbolt *m = nullptr;
+          for(const auto &pfx :
+              {"python::" + tag + "::" + dn, "python::" + cls + "::" + dn})
+          {
+            m = symbol_table.lookup(irep_idt{pfx});
+            if(m != nullptr)
+              break;
+          }
+          if(m == nullptr || m->type.id() != ID_code)
+            continue;
+          const typet &rt = to_code_type(m->type).return_type();
+          const bool is_complex_rt =
+            rt.id() == ID_struct &&
+            to_struct_type(rt).get_tag() == "python_complex";
+          const bool is_float_rt = rt.id() == ID_floatbv;
+          const bool is_int_rt = rt.id() == ID_signedbv ||
+                                 rt.id() == ID_unsignedbv ||
+                                 rt.id() == ID_bool || rt.id() == ID_integer;
+          const bool is_str_rt = is_python_string_type(rt);
+          // PLR: the dunder must return the protocol's type. A wrong
+          // return type (e.g. __complex__ -> float, __float__ -> str)
+          // raises TypeError. Only flag KNOWN-incompatible types so an
+          // unannotated / python_value return falls through soundly.
+          bool wrong_type = false;
+          if(std::string(dn) == "__complex__")
+            wrong_type = is_str_rt || is_float_rt || is_int_rt;
+          else if(std::string(dn) == "__float__")
+            wrong_type = is_str_rt;
+          else // __index__
+            wrong_type = is_str_rt || is_float_rt;
+          if(wrong_type)
+          {
+            emit_conditional_exception(true_exprt{}, "TypeError");
+            return {safe_zero(double_type()), safe_zero(double_type())};
+          }
+          static unsigned cdx = 0;
+          std::string tn = "__complex_dunder_" + std::to_string(cdx++);
+          irep_idt tid{qualify_name(tn)};
+          if(symbol_table.lookup(tid) == nullptr)
+          {
+            symbolt ts{tid, rt, "python"};
+            ts.base_name = tn;
+            ts.is_lvalue = true;
+            ts.is_state_var = true;
+            symbol_table.add(ts);
+          }
+          symbol_exprt tmp = symbol_table.lookup_ref(tid).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{
+            tmp,
+            side_effect_expr_function_callt{
+              m->symbol_expr(),
+              {address_of_exprt{arg}},
+              rt,
+              get_location(expr)}});
+          if(is_complex_rt)
+            return {
+              member_exprt{tmp, "real", double_type()},
+              member_exprt{tmp, "imag", double_type()}};
+          if(is_float_rt)
+            return {tmp, safe_zero(double_type())};
+          if(is_int_rt)
+            return {
+              safe_typecast(tmp, double_type()), safe_zero(double_type())};
+          // python_value / unknown numeric return: unwrap to double.
+          return {unwrap_value(tmp, double_type()), safe_zero(double_type())};
+        }
       }
       // Float: (value, 0).
       if(arg.type().id() == ID_floatbv)
