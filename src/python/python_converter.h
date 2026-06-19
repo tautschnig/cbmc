@@ -1533,6 +1533,14 @@ private:
   exprt convert_list(const jsont &expr);
   exprt convert_attribute(const jsont &expr);
   exprt convert_dict(const jsont &expr);
+
+  /// Build a python_dict value from (key,value) pairs: element-type
+  /// inference (with tagged-union promotion when heterogeneous), constant-
+  /// key de-duplication (PLR §6.4, last value wins), padding, and the
+  /// over-capacity guard. Shared by `convert_dict` and `dict.fromkeys`.
+  exprt build_dict_value(
+    std::vector<std::pair<exprt, exprt>> pairs,
+    const source_locationt &loc);
   exprt convert_list_comp(const jsont &expr);
   exprt convert_dict_comp(const jsont &expr);
   exprt convert_lambda(const jsont &expr);
