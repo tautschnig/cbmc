@@ -2,13 +2,19 @@
 
 This doc explains how the Python frontend in `src/python/`
 turns a Python source file into a CBMC GOTO program. It is
-intended for contributors and AI agents extending the
-frontend. For verification usage see
+**the** authoritative architecture reference for contributors and
+AI agents extending the frontend. For verification usage see
 [python-verification-guide.md](python-verification-guide.md).
-For known gaps, PLR deviations, and the forward-looking
-backlog see
-[python-frontend-plan.md](python-frontend-plan.md) — every
-gap noted below links to a specific section there.
+
+The forward-looking backlog lives in two companion plans:
+[python-frontend-plan.md](python-frontend-plan.md) (everything except
+strings) and
+[python-frontend-strings-plan.md](python-frontend-strings-plan.md)
+(all `str`/`bytes`/`re` work). The **master inventory of every gap,
+known soundness issue, imprecision, and performance item** is the
+[Gaps, soundness issues & imprecisions](#gaps-soundness-issues--imprecisions-master-inventory)
+section below — each entry links to the owning plan section, or is
+marked **NO PLAN**.
 
 ## Top-level flow
 
@@ -145,6 +151,20 @@ or downgraded. The two main invalidation drivers:
   is applied to a tracked dict, drop all
   `dict_runtime_value_overrides` entries for that dict
   (any key could be affected).
+
+- **Call-site global invalidation** at the single `Call`
+  chokepoint in `convert_expression` — a call of *any* form
+  (free function, method, transitively) may mutate a module
+  global, so the scalar (`string_constants`, `float_constants`)
+  and `dict_literals` entries for globals are invalidated after
+  the call's arguments are converted. Scoped by a cheap
+  whole-program pre-pass, `collect_function_global_mutations`,
+  which records the names actually mutated inside *some*
+  function/method (subscript-assign / `global` rebind /
+  dict-mutating method) so never-mutated globals keep their
+  folding. symex then recovers the real post-call value from
+  the symbol — sound by construction. (Same invalidation
+  principle as the loop case, extended to calls.)
 
 ## Function summaries
 
@@ -444,10 +464,37 @@ causes verification failure.
   `return super().get_value() + 1` return 42 instead of
   43.
 
+## Call-signature validation
+
+`validate_call_signature(func_key, call_ast, args, implicit_self)` is the
+single chokepoint that flags PLR §8.7 call-arity errors uniformly across
+**free functions, methods, and constructors**: too many positional args,
+unknown keyword, missing required positional, multiple values for an
+argument, and missing required keyword-only. It is driven by per-function
+metadata captured at signature-registration time
+(`function_max_positional`, `function_required_positional`,
+`function_required_kwonly`, `function_has_kwargs`, `function_vararg_index`,
+`function_signature_checkable` — set for *undecorated* signatures only).
+A detected violation emits a may-raise `TypeError` (a nondet-guarded
+uncaught exception), so a downstream assertion can't be vacuously proved
+past a call that would `TypeError` at runtime. Bound-method values reaching
+the free-function path (`m = obj.meth; m()`) are recognised via a leading
+`self` parameter so their receiver-supplied `self` isn't counted missing.
+
 ## String-solver integration
 
-For string operations the frontend doesn't constant-fold,
-we route through CBMC's refinement-string solver:
+There are **two string back-ends** (see the
+[strings & regex plan](python-frontend-strings-plan.md#strings)):
+the **refined-string** backend is the no-external-solver **default**;
+the **native SMT-LIB `String`** backend (`--python-smt-strings` with
+`--cvc5`/`--z3`) is **complete** (Plan A, 2026-06-12) and is the precise
+option for the cases at the refined ceiling (ordering, symbol-operand
+membership, slice/replace). The two share the `cprover_string_*`
+intrinsic vocabulary; `--python-smt-strings` lowers them to native
+`str.*` terms, the default lowers them through the refinement solver.
+
+For string operations the frontend doesn't constant-fold, we route
+(on the default backend) through CBMC's refinement-string solver:
 
 - `cprover_string_concat_func(s1, s2)` — `s1 + s2`
 - `cprover_string_length_func(s)` — `len(s)`
@@ -483,11 +530,14 @@ SMT intrinsics, with a call-site `regex-no-match` check that
 flags statically-impossible matches. The layering invariant is
 that the **frontend emits refined-string arguments and the
 back-end is responsible for bridging them to SMT `String`**.
-Precise symbolic-subject matching needs that bridge, which is
-not yet implemented. The current-state reference (what's
+Precise symbolic-subject matching needs that bridge, which the
+**native SMT-String backend** (`--python-smt-strings`) provides;
+on the default refined backend a negated regex match in
+multi-assertion code can be slow (see `re4`/`re11` in the strings
+plan). The current-state reference (what's
 modelled, the backend-portability matrix, what doesn't work) is
 [python-frontend-regex-story.md](python-frontend-regex-story.md);
-the open work is [plans §4](python-frontend-strings-plan.md#regex).
+the open work is [strings plan §4](python-frontend-strings-plan.md#regex).
 
 ## Contracts (icontract → DFCC)
 
@@ -546,6 +596,7 @@ property at call sites whose argument class doesn't declare
 | `--python-required-kwarg-checks` | off | Stub-completeness checks for `Required[T]` keys in `Unpack[TypedDict]` kwargs |
 | `--python-check-typeddict-fields` | off | Field-type checks on PEP 448 `**kwargs` spreads |
 | `--python-lazy-stubs` | off | Skip method bodies in imported stubs; signatures-only |
+| `--python-raising-ops-check` | off | Model operations that *can* raise but whose success can't be proved (`int(str)`→`ValueError`, `os.*`→`OSError`, `re` non-str pattern→`TypeError`) as **may-raise**, instead of silently succeeding. Opt-in soundness; the default favours precision. Uses the declarative `@may_raise('Exc')` library decorator. |
 | `--python-smt-strings` | off | Represent `str` with the native SMT-LIB String sort instead of refinement-strings. Requires an SMT String solver (`--cvc5`/`--z3`). |
 
 ## Type-coercion at boundaries (PLR §3.2)
@@ -695,34 +746,81 @@ intermediate type-coercion inside an expression, internal
 representation conversions, etc. — anywhere there is no typed
 slot semantics involved.
 
-## Gaps & PLR deviations
+## Gaps, soundness issues & imprecisions (master inventory)
 
-This section is the honest inventory of where the frontend
-deviates from the Python Language Reference or is incomplete.
-Each entry links to the plan that addresses it (or records that
-there is no plan yet). Two ground rules hold throughout: the
-deviations below are **sound** (over-approximations / precision
-misses, not false proofs) unless explicitly flagged as a latent
-unsoundness, and bounded-container/64-bit-int limits are
-intrinsic design choices, not bugs.
+This is **the** honest, current inventory of where the frontend
+deviates from the Python Language Reference or is incomplete. Every
+entry links to the section in the [plan](python-frontend-plan.md) or
+[strings & regex plan](python-frontend-strings-plan.md) that addresses
+it, or is marked **NO PLAN**. Ground rules: every deviation is **sound**
+(over-approximation / precision miss, never a false proof) **unless
+explicitly flagged**; bounded-container and 64-bit-`int` limits are
+intrinsic design choices, not bugs. The tables are grouped by kind:
+soundness, imprecision, performance, intrinsic.
 
-| Area | Gap / deviation | Sound? | Plan |
+### A. Soundness (false proofs / latent unsoundness / deliberate tradeoffs)
+
+There are **no known open false proofs** in the default configuration —
+the 2026-06-18/19 audit plus the cross-module global-dict (`R1`) and the
+call-signature fixes closed the ones that were found. The entries below
+are the deliberate soundness-vs-precision tradeoffs and the guarded /
+opt-in cases.
+
+| Area | Issue | Status | Plan |
 |---|---|---|---|
-| Generators | List-with-cursor model: inter-yield side-effect ordering not faithful; module-global free vars in generator `if` drop the body; cross-boundary list-shape | yes | [§1](python-frontend-plan.md#generators) |
-| Closures | Escaping closures (returned/stored, called later) over-approximate captured free vars to nondet, so late binding (`lambda: i` in a loop) is imprecise. Non-escaping closures and `nonlocal` mutation are correct. | yes (sound — nondet over-approx, false positives only; KNOWNBUG) | [§2](python-frontend-plan.md#closures) |
-| Strings | Modelled as the refined-string struct (now stored **inline** in `python_value`, which removed a bulk string-refinement perf cliff); no native SMT-LIB String backend yet (selector exists, migration pending) | yes (precision/perf) | [§3](python-frontend-strings-plan.md#strings) |
-| Regex | Shallow stub + intrinsics; symbolic-subject matching needs the backend String bridge | yes (precision) | [§4](python-frontend-strings-plan.md#regex) |
-| dict params | Passed **by reference** (list/dict share the `safe_typecast` container boundary); mutations propagate for string- and non-string-keyed dicts alike since the uniform `dict[value,value]` default landed | yes (closed) | [§5](python-frontend-plan.md#dict-byref) |
-| Modules | `cmath`, `os`, `time`, `dataclasses`, `collections`, fuller `datetime`/`json` not modelled | yes (nondet) | [§6](python-frontend-plan.md#modules) |
-| Annotation checks | `--python-check-annotations` can't be default-on (two CBMC-core blockers) | yes | [§7](python-frontend-plan.md#check-annotations) |
-| Performance | `python_value` SSA expansion, kwarg-check axiom volume, `irept::operator==` hot path, 8 TIMEOUT tests | n/a | [§8](python-frontend-plan.md#performance), [§9](python-frontend-plan.md#precision) |
-| Descriptors | Non-data-descriptor (method) shadowing; custom `__set__` / stateful `__get__` (need instance-`__dict__` storage) | yes (KNOWNBUG) | [§10](python-frontend-plan.md#descriptors) |
-| Contracts | Multi-level Liskov; strict-C3 mixin precedence; async | yes | [§11](python-frontend-plan.md#icontract) |
-| Higher-order | No first-class function value storable in a container / called indirectly | yes | [§12](python-frontend-plan.md#higher-order) |
-| Async | `async`/`await`/async generators not modelled | n/a | [§13](python-frontend-plan.md#async) |
-| Comprehensions | dict-comprehension over a runtime iterable (nondet); iteration-var scope leak; inner-iterator shadow | yes | [§14](python-frontend-plan.md#residuals) |
-| Numbers | Default 64-bit `int` (`--python-unbounded-ints` opt-in); `math`/`complex` edge precision | intrinsic / precision | [§9](python-frontend-plan.md#precision) |
-| Identity | `is` + small-int interning approximated; `id()` deterministic | yes (warned) | — (intrinsic, by design) |
+| Operations that can raise | `int()`/`float()` of a non-constant string (`ValueError`), `os.*` file ops (`OSError`), `re` with a non-str pattern (`TypeError`) are modelled as **silently succeeding** by default (precision-favouring) → false **negatives** by design | sound **only** under opt-in `--python-raising-ops-check`; default favours precision | [plan §0](python-frontend-plan.md#false-proofs) |
+| Nested mutable-element aliasing | anonymous nested-mutable list/dict elements stored by value; the replication / self-append / new-container channels are **guarded** (report `python-model-bound`) | sound (guarded); one residual — extraction from an *untainted* literal (`r=g[i]`) — is a documented, corpus-invisible false proof (byref representation is empirically untenable) | [plan §0](python-frontend-plan.md#false-proofs) |
+| Native `smt_string`→int cast | under `--python-smt-strings`, a spurious str→int coercion from value plumbing lowers to `str.to_int` (defined-but-approximate); genuine `int(str)` is exact | sound (approximate, flagged) | [strings plan](python-frontend-strings-plan.md#strings) |
+| BMC bounds | bugs deeper than `--unwind` / beyond the bounded container or 64-bit ranges are not found | sound w.r.t. the bound (intrinsic to BMC) | — (intrinsic) |
+
+### B. Imprecisions (sound; spurious failures / nondet over-approximation)
+
+| Area | Gap / deviation | Plan |
+|---|---|---|
+| Generators | list-with-cursor model: inter-yield side-effect ordering not faithful; module-global free vars in a generator `if` drop the body; cross-boundary list-shape | [plan §1](python-frontend-plan.md#generators) |
+| Closures | **escaping** closures over-approximate captured free vars to nondet (late binding `lambda: i` in a loop imprecise); non-escaping + `nonlocal` mutation + capture-through-param are correct | [plan §2](python-frontend-plan.md#closures) + [fat-closure deep-dive](python-frontend-fat-closure-plan.md) |
+| Strings (refined default) | ordering, substring `replace`, `split`, `casefold`/`title`, symbolic `count` — sound-but-imprecise; all precise (or precise-able) on the **native** backend opt-in | [strings plan](python-frontend-strings-plan.md#strings) |
+| Regex | symbolic-subject and negated-membership (`re4`/`re11`) imprecise/slow on refined; precise on native | [strings plan §4](python-frontend-strings-plan.md#regex) |
+| Lists | symbolic-list precision cluster (`nondet_list*`, `list_extend*`, `list-sort*`) — spurious failures | [plan §9](python-frontend-plan.md#precision) |
+| Complex | `complex_*` edge precision (binop promotion, builtins, conjugate, `cmath` edges) | [plan §9](python-frontend-plan.md#precision) |
+| Comprehensions | dict-comprehension over a runtime iterable (nondet); iteration-var scope leak; inner-iterator shadow | [plan §14](python-frontend-plan.md#residuals) |
+| Descriptors | non-data (method) shadowing; custom `__set__` / stateful `__get__` (need instance-`__dict__`); **~0 corpus value** | [plan §10](python-frontend-plan.md#descriptors) |
+| Contracts | multi-level Liskov; strict-C3 mixin precedence; async | [plan §11](python-frontend-plan.md#icontract) |
+| Higher-order | container-/attribute-stored & composed closures (capture-through-param works); **~0 corpus value** | [plan §12](python-frontend-plan.md#higher-order) + [fat-closure](python-frontend-fat-closure-plan.md) |
+| dict / cross-module | global-dict-literal mutation across modules is fixed; **`**d` unpack of a *mutated* global dict** and **non-dict cross-module globals** remain (rare) | [plan §5](python-frontend-plan.md#dict-byref) |
+| Modules | `cmath`, fuller `os`/`time`/`datetime`/`json`/`dataclasses`/`collections` not modelled (nondet) | [plan §6](python-frontend-plan.md#modules) |
+| Annotation checks | `--python-check-annotations` can't be default-on (two CBMC-core blockers) | [plan §7](python-frontend-plan.md#check-annotations) |
+
+### C. Performance
+
+| Area | Issue | Plan |
+|---|---|---|
+| `python_value` | field-by-field SSA expansion cost for symex-bound benchmarks | [plan §8](python-frontend-plan.md#performance) |
+| Signature axioms | kwarg-check axiom volume | [plan §8](python-frontend-plan.md#performance) |
+| Core hot path | `irept::operator==`; the ~8 TIMEOUT corpus tests | [plan §8](python-frontend-plan.md#performance) + [perf deep-dive](architectural/python-perf-analysis.md) |
+
+### D. Intrinsic / by-design (not bugs)
+
+| Numbers | default 64-bit `int` (`--python-unbounded-ints` opt-in) | — |
+| Containers | bounded list/dict/set capacity | — |
+| Identity | `is` + small-int interning approximated; `id()` deterministic | — (warned) |
+| Async | `async`/`await`/async generators not modelled | [plan §13](python-frontend-plan.md#async) |
+
+### E. NO CURRENT PLAN (explicitly flagged)
+
+- **Call-signature error-message formatting** — the frontend now soundly
+  detects missing/duplicate/unknown args (emitting a generic uncaught
+  `TypeError`), but does **not** reproduce ESBMC's exact
+  `TypeError: foo() missing …` / `Properties: N verified` strings, so
+  those `github_30xx`/property-count sweep tests stay DIFF rather than
+  PASS. No plan (cosmetic output-format alignment, low value).
+- **`*args` + required keyword-only** signature combinations — the
+  vararg guard skips the kwonly-required check. No plan (rare).
+- **Native `casefold`/`title`** (Unicode case-mapping has no SMT-LIB
+  primitive) and **symbolic `count`** — listed in the strings plan as
+  residuals with no concrete encoding yet.
+- **Cross-module `**d`-of-mutated-dict** and **non-dict cross-module
+  global mutation** — no plan (rare).
 
 ## Where to make changes
 
