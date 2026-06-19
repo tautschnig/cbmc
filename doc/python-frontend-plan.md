@@ -1491,6 +1491,91 @@ So this single channel stays a known, corpus-invisible residual false
 proof. (The doc previously overstated the guard as covering all unsound
 patterns; this audit corrects that.)
 
+### List-precision cluster — implementable plan (empirically triaged 2026-06-19) {#list-precision}
+
+Triage of the spurious-failure DIFFs (`list-sort7`, `list_extend12`,
+`nondet_list2/4/5`, `list13`) against the current binary shows these are
+**distinct roots, not one architectural fix** — recorded honestly so each
+is actioned on its merits. Whole-group vs point is flagged per item.
+
+1. **Mixed `int`/`float` `.sort()` mis-orders** — *small whole-group.*
+   `[3, 1.5].sort() == [1.5, 3]` FAILS, but pure-int `[3,1,2].sort()` and
+   cross-tag equality `[2] == [2.0]` both PASS. So the element *equality*
+   path already promotes across the int/float tagged-union; the **sort
+   comparator does not**. *Fix-shape:* route the sort comparison through
+   the same numeric cross-tag promotion `==` uses (compare by numeric
+   value, int promoted to float for ordering). One change covers
+   `sort`/`sorted`/`min`/`max` over mixed-numeric lists. *PLR:* CPython
+   orders int and float by numeric value (`3 > 1.5`); do **not** order by
+   tag. No NaN in these literals, so total order holds.
+
+2. **`extend([literal] + param_list)` value precision** — *point.*
+   `ret = []; for r in items: ret.extend([1] + r); return ret` gives the
+   wrong structural value (`ret` *is* bound — the unbound checks pass).
+   The miss is in propagating the concatenation `[1] + r` (literal ⊕
+   param/symbolic list) through `extend` into the accumulator's tracked
+   length+elements. *Fix-shape:* extend the concat/extend length-and-
+   element bookkeeping to the literal⊕symbolic case; confirm against a
+   minimal `g([[5]]) == [1,5]`.
+
+3. **`for r in f(k-1)` spurious `UnboundLocalError`** — *cross-cutting
+   architectural root (recursion), surfaces in list tests.* Minimal
+   isolation: `ret=[]; ret.append(1)` is fine; the same accumulator
+   inside a **recursive** function iterated over its own recursive call
+   (`for r in f(k-1)`) wrongly reports `ret` referenced-before-assignment.
+   The function-local binding established before the loop is lost on the
+   recursion-unwinding / base-case-return merge. *Fix-shape:* ensure
+   pre-loop local bindings are live on all unwound recursive paths (likely
+   in the recursion/`for`-over-call lowering, not in list code). Affects
+   **recursive accumulators generally**, so worth its own work item; verify
+   with a non-list recursive accumulator too.
+
+4. **`nondet_float()` NaN domain — PLR/soundness, NOT a bug to "fix".**
+   `nondet_list(8, nondet_float())` then `assert elem == elem` FAILS
+   because a nondet float can be `NaN` and `NaN != NaN`. This is the
+   **PLR-correct** result: `NaN` is a valid `float`, so the assertion is
+   genuinely not guaranteed. The corpus expects `SUCCESSFUL` only because
+   ESBMC's `nondet_float` *excludes* NaN — which is **unsound** (it would
+   miss NaN-triggered bugs). **HARD constraint: do not match the corpus by
+   hiding NaN.** Options: (a) **accept the DIFF** (recommended; sound), or
+   (b) add an opt-in, explicitly-documented-as-unsound
+   `--python-nondet-float-finite` precision switch. The default stays
+   NaN-inclusive.
+
+### Complex-precision cluster — implementable plan (triaged 2026-06-19) {#complex-precision}
+
+Two roots (`complex_binop_promotion`, `complex_builtins`,
+`complex_conjugate_handler`, `complex_constructor_extended`):
+
+1. **IEEE float-edge semantics in complex parts** — *whole-group.* The
+   failing assertions concentrate on signed-zero (`math.copysign`), `inf`
+   /`nan` propagation, division-by-zero, overflow and subnormals flowing
+   through `+ - * /`, `abs`, and `conjugate`. The arithmetic helper
+   computes components with float ops but does not preserve CPython's
+   IEEE signed-zero / special-value behaviour. *Fix-shape:* harden the
+   single complex-arithmetic helper — component ops use IEEE-correct float
+   primitives, `abs` via `hypot`, `conjugate` flips the imag sign
+   including signed zero — which lifts the whole edge group at once.
+   *PLR:* match CPython/`cmath` IEEE semantics exactly. *Step 0:* capture
+   the exact failing assert per test first (the binary rejects
+   `--incremental-bmc`; run with `--unwind`).
+
+2. **`complex()` constructor + dunder protocols** — *point cluster.*
+   `complex(str)` parsing, `__complex__`/`__float__`/`__index__` dispatch,
+   `real=`/`imag=` kwargs, and the `TypeError`/`ValueError` error matrix.
+   Several independent sub-features; enumerate the failing asserts and
+   implement per feature. Smaller blast radius than root 1.
+
+> **Architectural verdict (answering "is there a whole-group root?"):**
+> mostly **no** — the spurious-failure DIFFs are separate roots. The real
+> whole-group levers are narrow: the mixed-numeric **compare/sort**
+> promotion (item L1, covers sort/min/max) and the **complex IEEE-edge
+> helper** (item C1, covers the arithmetic/abs/conjugate edges). The
+> recursion-binding miss (L3) is a genuine cross-cutting root but in the
+> recursion lowering, not in list code. The remaining message-format FAIL
+> rows (`github_3010*`/`3015*`, `casting*-fail`, `range*-fail`) are the
+> cosmetic NO-PLAN output-format item, tracked separately — not precision.
+
 ---
 
 ## 10. Attribute / descriptor protocol residuals (PLR §3.3.2)  {#descriptors}
