@@ -1,0 +1,135 @@
+# Python frontend: dict-VALUE-by-reference (mutable values mutated in place)
+
+Status: **DESIGN + SPIKE (2026-06-19).** Feasibility confirmed; a sound,
+non-regressing implementation needs per-instance value identity (below).
+Distinct from [§5 dict pass-by-reference](python-frontend-plan.md#dict-byref)
+(the *dict itself* as a by-reference parameter — RESOLVED). This is about a
+mutable **value** stored inside a dict being mutated in place.
+
+---
+
+## Problem (PLR §6.4 + §3.1)
+
+A list/dict stored as a dict value is a mutable object; mutating it in place
+must be observed on later reads:
+
+```python
+a = {1: []}
+a[1].append(5)
+assert len(a[1]) == 1        # FAILS today (mutation lost)
+
+a.setdefault(1, []).append(2.0)   # dict_setdefault_list
+```
+
+Today dict values are stored **by value** in the `values[]` array, so a
+subscript read (`a[k]`) and `setdefault` return a **copy**; the in-place
+`append` mutates the copy and is lost. Empirically *all* such mutation is
+lost (`a[1].append`, `v=a[1]; v.append`, `setdefault(...).append`).
+
+---
+
+## Feasibility: the by-reference mechanism already works (spike-confirmed)
+
+`convert_dict` already stores a dict value **by reference** when the value
+is a *name* resolving to an escaped mutable (`make_python_value(LIST/DICT,
+&symbol)` — a `python_value` whose `__list_ptr`/`__class_ptr` points at the
+named symbol's storage). With that representation, reads and in-place
+mutation propagate correctly and cheaply:
+
+```python
+row = []
+a = {1: row}
+a[1].append(5);  assert len(a[1]) == 1   # SUCCESSFUL (byref1)
+row.append(5);   assert len(a[1]) == 1   # SUCCESSFUL (byref2)
+v = a[1]; v.append(9); assert len(row)   # SUCCESSFUL (byref3)
+```
+
+Crucially this does **not** trigger the string-refinement explosion that
+blocks value-keyed dicts (§5): list/dict values use the **opaque**
+`__list_ptr`/`__class_ptr` slots, not the refined-string slot. The spike
+measured `nondet_dict2` at ~2.1 s and `dict_fromkeys` at 0.05 s — no cliff.
+
+## The gap and the spike
+
+The only missing piece is that list/dict **literal** values (`{1: []}`,
+`{k: [1,2]}`) are *not* wrapped by reference — only named escaped values
+are. **Spike:** extend `convert_dict`'s value handling so a list/dict
+literal value is promoted to a heap symbol referenced by a `python_value`
+pointer (the same representation). Result:
+
+- `a={1:[]}; a[1].append(5)`, `setdefault(1,[0]).append(...)`, and
+  `v=a[1]; v.append(...)` all **flip to SUCCESSFUL**; perf unaffected.
+
+**But the spike used a per-construction-SITE static counter for the heap
+symbol, which is unsound-as-precision for multi-construction:** a dict
+literal built repeatedly (a loop, or a function returning `{k: []}` called
+twice) shares one heap value, so distinct dicts **alias**:
+
+```python
+def make(): return {1: []}
+a = make(); b = make()
+a[1].append(5); assert len(b[1]) == 0   # wrongly FAILS (a,b alias)
+```
+
+This regressed 3 existing tests (`dict-nonprimitive-value-type`,
+`nested-container-access`, `nested-container-writes`). The aliasing
+produces **false positives** (over-reporting), not false proofs — sound
+direction — but it is a net regression, so **the spike was reverted**.
+
+---
+
+## The real requirement: per-instance value identity
+
+The escaped-*name* path works precisely because a named symbol **is** a
+per-instance anchor (each `row` is its own storage). Literals and repeated
+construction lack such an anchor; a per-site static symbol conflates
+instances. A correct implementation needs each runtime dict construction to
+own independent value storage. Options:
+
+1. **Per-instance dynamic allocation.** Give the value's heap storage a
+   construction-unique symbol (a `__CPROVER` dynamic object, or one
+   disambiguated by the enclosing loop/call unwinding index) so each
+   unrolled construction is distinct. Sound but needs the allocation to
+   participate in symex's per-unwinding renaming (a static symbol does not).
+2. **Anchor to the dict's own storage (preferred).** Keep the value
+   *inline* in the dict's `values[]` slot, but make subscript-read /
+   `setdefault` return the **lvalue slot** (`values[matched_idx]`) instead
+   of a copy, so `append` mutates the slot in place. No separate heap
+   object, hence **no aliasing** (each dict owns its `values[]`). The
+   challenge: the matched index is a runtime key search, so the read must
+   yield `values[search_idx]` as an lvalue and list-method dispatch must
+   mutate through it.
+
+## Whole-group root (the architectural observation)
+
+This is the **same root** as the nested-mutable-element aliasing in
+[§0](python-frontend-plan.md#nested-aliasing): *anonymous* mutable
+containers (list elements, dict values, built as literals) need a
+**per-instance identity** to be mutated/aliased correctly. Named values
+already have it (symbols); literals do not. A general "per-instance identity
+for anonymous mutable containers" mechanism would address both the
+nested-list-aliasing residual and dict-value-by-reference, rather than two
+separate point fixes. Option 2 (return the owning container's lvalue slot,
+no separate object) is the most direct expression of this for the dict case.
+
+## Residual sub-problem: empty-dict value typing
+
+`dict_setdefault_list` starts with `a = {}` (empty), which infers an `int`
+value type, so `setdefault(1, [])` storing a list mismatches (the "uncaught
+exception"). Even with value-by-reference, an empty `{}` whose values are
+later lists needs its value type inferred as list/`python_value` (from
+usage, or by defaulting empty-dict values to `python_value`). Prerequisite
+for the `setdefault`-of-list case specifically.
+
+## Recommendation / phasing
+
+1. **Pursue Option 2** (subscript-read / `setdefault` return the owning
+   dict's `values[]` lvalue slot; list-method dispatch mutates in place).
+   No heap allocation, no aliasing. Validate on d1/d2/d3 + the 3
+   nested-container tests + full sweep.
+2. **Empty-dict value typing** for the `{}`-then-list-`setdefault` case.
+3. Fold the per-instance-identity insight back into the §0 nested-aliasing
+   residual (shared mechanism).
+
+The spike proved the value model and perf are fine; the remaining work is
+the per-instance read-as-lvalue plumbing, scoped as above.

@@ -920,6 +920,7 @@ The architecture reference, two forward-looking plans, the user guide, and a few
 - [doc/python-verification-guide.md](doc/python-verification-guide.md) - User-facing guide for verifying Python programs.
 
 Linked deep-dives (referenced from the two docs above):
+- [doc/python-frontend-dict-value-byref-plan.md](doc/python-frontend-dict-value-byref-plan.md) - dict-VALUE-by-reference (a mutable list/dict stored AS a dict value, mutated in place): design+spike — the by-ref mechanism works (perf fine), the open work is per-instance value identity (return the owning dict's values[] lvalue slot); same per-instance-identity root as nested-list aliasing.
 - [doc/python-frontend-dict-byref-plan.md](doc/python-frontend-dict-byref-plan.md) - dict pass-by-reference: why a uniform `dict[value,value]` default is blocked (string-behind-pointer perf explosion), the landed `value_equal` foundation, and the option set (targeted string-keyed by-ref vs `python_value` string-storage change).
 - [doc/python-frontend-decimal-plan.md](doc/python-frontend-decimal-plan.md) - sound exact `Decimal` model: why float/`fixedbv` are unsound (base-2 vs base-10), the base-10 `(sign, coefficient, exponent)` representation, the stub+converter hybrid (literal parsing intrinsic + parts arithmetic via `10 ** Δexp`), soundness bounds, and P1–P3 phasing.
 - [doc/python-frontend-regex-story.md](doc/python-frontend-regex-story.md) - Current regex support (shallow stub + `__cbmc_re_*` SMT intrinsics), backend-portability matrix, what doesn't work.
