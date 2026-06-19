@@ -1519,14 +1519,30 @@ is actioned on its merits. Whole-group vs point is flagged per item.
    `python_converter_compare.cpp`). *PLR:* CPython orders int/float by
    numeric value; never by tag.
 
-2. **`extend([literal] + param_list)` value precision** — *point.*
-   `ret = []; for r in items: ret.extend([1] + r); return ret` gives the
-   wrong structural value (`ret` *is* bound — the unbound checks pass).
-   The miss is in propagating the concatenation `[1] + r` (literal ⊕
-   param/symbolic list) through `extend` into the accumulator's tracked
-   length+elements. *Fix-shape:* extend the concat/extend length-and-
-   element bookkeeping to the literal⊕symbolic case; confirm against a
-   minimal `g([[5]]) == [1,5]`.
+2. **`extend([literal] + param_list)` value precision — ROOT SHARPENED
+   2026-06-19; narrow inline-fold, shared boxed/unboxed representation.**
+   The real root is **not** in `extend`/concat: a list *parameter* is
+   reconstructed as a `python_value`-**boxed** element array (`__byref_cont`,
+   elements `{tag,val,…}`), whereas a homogeneous literal `[5]` keeps
+   **unboxed** raw-typed elements. Reading one element (`r[0]`) and `len(r)`
+   unbox fine, and the runtime list-`==` has a `can_bridge` path that
+   unwraps — so the only failing shape is the **inline** fold
+   `f([5]) == [5]` where `f` returns its parameter *directly*: that folds to
+   a constant `false` (boxed-vs-unboxed struct compare) instead of taking
+   the bridge. Materialising the result first already works:
+   `y = f([5]); y == [5]` PASS, and `s = r; return s` PASS. So real-world /
+   corpus impact is marginal (the corpus `list_extend*` DIFFs are L3
+   recursion or generator+nested-list under SMT-only flags, not this).
+   *Fix-shape (deferred, fold-sensitive):* either have the "returns its
+   parameter" inline fold yield the **argument's** representation, or make
+   the inline list compare fall back to the runtime `can_bridge` path
+   instead of constant-folding `false` on mismatched element
+   representations. This lives in the regression-sensitive comparison-fold
+   machinery (many `list-eq*` tests), so it should be done deliberately with
+   a full sweep, not as a point patch. *PLR:* sound today (false positive on
+   one inline shape; never a false proof). Part of the broader **boxed vs
+   unboxed list-element representation** theme (shared with how mixed lists
+   are stored — see L1).
 
 3. **`for r in f(k-1)` spurious `UnboundLocalError` — ROOT SHARPENED
    2026-06-19; deep architectural item, NOT a point fix.** Isolation
@@ -1586,11 +1602,26 @@ Two roots (`complex_binop_promotion`, `complex_builtins`,
    the exact failing assert per test first (the binary rejects
    `--incremental-bmc`; run with `--unwind`).
 
-2. **`complex()` constructor + dunder protocols** — *point cluster.*
-   `complex(str)` parsing, `__complex__`/`__float__`/`__index__` dispatch,
-   `real=`/`imag=` kwargs, and the `TypeError`/`ValueError` error matrix.
-   Several independent sub-features; enumerate the failing asserts and
-   implement per feature. Smaller blast radius than root 1.
+2. **`complex()` constructor + dunder protocols — DECOMPOSED 2026-06-19;
+   three distinct sub-features, none a point fix, and no single one flips
+   the corpus test.** `complex_constructor_extended` has 16 failing asserts
+   that split into:
+   - **A. `complex(<non-literal string>)`** (`s = "5+6j"; complex(s)`):
+     literal-string forms already fold correctly; the symbolic-string case
+     needs **runtime parsing of a complex string** (`"5+6j"` → `(5,6)`) via
+     the string solver — this is really a **[strings-plan](python-frontend-strings-plan.md#strings)**
+     item (string→number parsing), not complex arithmetic.
+   - **B. `__complex__` / `__float__` / `__index__` dunder dispatch** in the
+     constructor (and the `TypeError` when they return the wrong type or
+     raise) — needs protocol dispatch wired into `complex()`.
+   - **C. `TypeError` matrix** for `bytes` arguments and a string *second*
+     argument.
+   Each is independent and moderate; flipping the test needs **all three**
+   (A blocks it on its own). *Recommendation:* split A out to the strings
+   plan; treat B and C as separate small features. *PLR:* sound today
+   (these are missing-feature imprecisions / undetected-TypeError
+   over-permissiveness on exotic inputs, not false proofs). Smaller per-item
+   blast radius than C1, but **not** a single point fix.
 
 > **Architectural verdict (answering "is there a whole-group root?"):**
 > mostly **no** — the spurious-failure DIFFs are separate roots. The real
