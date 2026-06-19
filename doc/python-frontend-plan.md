@@ -1,11 +1,16 @@
 # CBMC Python frontend — plans & future work
 
-This is the **single** forward-looking backlog for the Python frontend
-(`src/python/`). It is the companion to
+# Python frontend plan (everything except strings)
+
+This is **the** forward-looking backlog for the Python frontend
+(`src/python/`), covering everything **except** `str`/`bytes`/`re`, which
+has its own dedicated
+[strings & regex plan](python-frontend-strings-plan.md). It is the
+companion to
 [python-frontend-architecture.md](python-frontend-architecture.md): every
-gap or PLR deviation noted there links to a section here. Each section is
-either a **concrete plan** (with a fix shape and scope) or an explicit
-**no plan yet**.
+gap or PLR deviation noted there links to a section here (or in the
+strings plan). Each section is either a **concrete plan** (with a fix
+shape and scope) or an explicit **no plan yet**.
 
 For how to *use* the frontend see
 [python-verification-guide.md](python-verification-guide.md). For the
@@ -64,7 +69,7 @@ robustness, then capability; difficulty is noted where high.
 > 2. **Instance-`__dict__` substrate phase 2+** ([§10](#descriptors)) — method
 >    shadowing, stateful descriptors, `setattr` (phase 1 / dynamic-attr
 >    discovery landed `9f52de49ee`). Contained precision substrate.
-> 3. **Native SMT-LIB String backend** ([§3](#strings)) — the strategic
+> 3. **Native SMT-LIB String backend** ([§3](python-frontend-strings-plan.md#strings)) — the strategic
 >    precision target; the refined-string frontier is measured as largely
 >    tapped, so this is the comprehensive answer (also unblocks the
 >    `github_3090` per-execution-content spike + JBMC native `smt_string`).
@@ -73,7 +78,7 @@ robustness, then capability; difficulty is noted where high.
 >    import frequency); async result-binding ([§13](#async), small live bug);
 >    icontract multi-level Liskov + C3 MRO ([§11](#icontract)).
 > 5. **Deferred** — `python_value` field-by-field SSA (perf-only, [§8](#performance));
->    closure Phases 4–6 (~0 corpus); regex finishers ([§4](#regex), fold into
+>    closure Phases 4–6 (~0 corpus); regex finishers ([§4](python-frontend-strings-plan.md#regex), fold into
 >    the native backend); `--python-check-annotations` default-on (BLOCKED on
 >    core); point precision (`complex` C/D, `math` domains, `nondet_list4/5`).
 
@@ -283,7 +288,7 @@ robustness, then capability; difficulty is noted where high.
 >   native. Closed the `re.sub`-on-refined core and every nondet-string
 >   fallback that reached the refined solver.
 >   (Latent, native-only, no corpus instance: `smt_string` members in
->   byte-operated structs — [#native-byte-ops](#native-byte-ops); lower.)
+>   byte-operated structs — [#native-byte-ops](python-frontend-strings-plan.md#native-byte-ops); lower.)
 > - **Tier 1 — symex-bound timeout cluster. PARTIAL: default list capacity
 >   lowered 64->16 (2026-06-17, `0bea6f8e75`).** The cluster (`dict65`,
 >   `github_3684`, `list31`, `github_3626`, `github_3667_2`) is dominated by
@@ -323,7 +328,7 @@ robustness, then capability; difficulty is noted where high.
 >   (`31f4cabfa2`), and **Match.start/end/span/group(0) positions + re.sub
 >   replace-all** (`c7733c5739`). All +0-regression sweeps (the corpus regex
 >   wins came from Match()/None, +12). Remaining: literal-symbolic patterns
->   ([§4](#regex)); **re.findall / re.split stay a sound over-approximation on
+>   ([§4](python-frontend-strings-plan.md#regex)); **re.findall / re.split stay a sound over-approximation on
 >   the default backend** — they chain positions through a loop whose `from` is
 >   the previous (solver-symbolic) `end`, which cannot constant-fold at solve
 >   time (a single list-returning intrinsic would be needed); the deep
@@ -417,7 +422,7 @@ robustness, then capability; difficulty is noted where high.
   verifies SUCCESSFUL and `len(input())>=0` is sound. Test
   `regex-len-native-no-crash`.
 - ~~**`smt_string` members in byte-operated structs**~~
-  ([#native-byte-ops](#native-byte-ops)): the dict by-reference *mutation* crash
+  ([#native-byte-ops](python-frontend-strings-plan.md#native-byte-ops)): the dict by-reference *mutation* crash
   is **RESOLVED** (the Any-container promote+write-back routes the dict through
   a clean typed view, no byte op); only a latent general `smt_string`-in-byte-op
   gap remains with no corpus instance.
@@ -426,11 +431,11 @@ robustness, then capability; difficulty is noted where high.
 - *Refined track — default back-end toward SMT parity (kept, not downgraded):*
   - constant-pattern **regex precision under refinement strings** — the proper
     fix for the `re*` benchmarks now nondet under the default back-end
-    (string-refinement regex axioms; [§4](#regex) "Wave 3", research-grade);
+    (string-refinement regex axioms; [§4](python-frontend-strings-plan.md#regex) "Wave 3", research-grade);
   - **membership convergence** (`not_contains` existential-witness
     instantiation) and **lexicographic ordering**;
   - **producing-op precision** (slice / `replace` / `repeat`) under refinement.
-- *SMT track — native reach ([§3](#strings)):*
+- *SMT track — native reach ([§3](python-frontend-strings-plan.md#strings)):*
   - **LANDED (2026-06-14):** case mapping `upper`/`lower`/`casefold`/`swapcase`
     (per-char `str.to_code`/ASCII-arithmetic/`str.from_code` + concat);
     `count`/`rfind`/`rindex` (constant subjects fold; symbolic forward
@@ -452,12 +457,12 @@ robustness, then capability; difficulty is noted where high.
       the match/fullmatch intrinsics). `str(float)` — **already sound** (no
       work): literal floats fold; symbolic floats are a sound nondet string.
     - symbolic `count` / backward `rfind`/`rindex` — bounded `str.indexof`
-      loops; same shape as the list-valued split loop ([§4](#regex)), but
+      loops; same shape as the list-valued split loop ([§4](python-frontend-strings-plan.md#regex)), but
       perf-heavy on fully-symbolic subjects, so gate/measure before enabling.
     - `split` (list-valued) and `repeat` with symbolic `n` (nonlinear) — see
-      the list-valued plan ([§4](#regex)) and keep `repeat`-symbolic nondet.
+      the list-valued plan ([§4](python-frontend-strings-plan.md#regex)) and keep `repeat`-symbolic nondet.
 
-**P3 — Regex reach (SMT path; [§4](#regex)).**
+**P3 — Regex reach (SMT path; [§4](python-frontend-strings-plan.md#regex)).**
 - **Soundness hardening — LANDED (2026-06-14).** The shared
   pattern→SMT-LIB-regex translator (`src/solvers/strings/python_regex_to_smt`)
   underpins *every* precise regex decision, so a mistranslation is a group-wide
@@ -674,7 +679,7 @@ that propagates, via `safe_typecast`'s struct→pointer promotion + post-call
 write-back, and `convert_user_call` already invalidated its tracking.) Under
 `--python-smt-strings` the same shape *crashed* in `lower_byte_operators` /
 `unpack_struct` (byte-unpacking the `smt_string`-keyed dict reached via the
-opaque `__class_ptr` cast — see [#native-byte-ops](#native-byte-ops)).
+opaque `__class_ptr` cast — see [#native-byte-ops](python-frontend-strings-plan.md#native-byte-ops)).
 
 **The fix (sound + precise).** Route a mutable-container *lvalue* argument bound
 to an `Any` parameter through the **same** promote + post-call write-back
@@ -969,319 +974,12 @@ plan are in
 
 ---
 
-## 3. Strings: native SMT-LIB String backend  {#strings}
+## 3–4. Strings & regex — moved
 
-**Status: NATIVE SMT-STRING BACKEND COMPLETE (Plan A, 2026-06-12); refined
-is the default.** `--python-smt-strings` (with `--cvc5`/`--z3`) selects a
-*native* SMT-LIB `String` representation end-to-end (the byte-array+`str`
-hybrid was retired); the full SMT-theory string surface is precise and fast
-there — `==`/`!=`, ordering (`<`/`<=`/…, the refined ceiling), `len`,
-`in`/`not in`, `startswith`/`endswith`, `find`/`index`, `+`/concat,
-subscript, slice, `replace`, `strip` family (via SMT-LIB regex), f-strings
-(incl. `str(int)`/`chr`/`ord`), with model extraction. The
-`regression/python` corpus is 540/540 with a verdict under native; refined
-remains the no-external-solver default. **Remaining string gaps are narrow:**
-on the *refined default* — ordering, substring `replace`, `split` stay
-sound-but-imprecise (existential-witness instantiation / list-valued axioms),
-all of which the native backend already answers via opt-in; on *native* —
-`split` (list-valued) and `casefold`/`title` (Unicode case-mapping, no SMT
-primitive) stay sound-nondet. Full detail:
-[python-string-phase2-backend-abstraction.md](architectural/python-string-phase2-backend-abstraction.md).
-The historical narrative below predates Plan A's completion and is kept as
-the design record.
-
-**Status (historical, pre-2026-06-12): PARTIAL.** Python `str` is modelled as
-CBMC's refined-string struct (`python_string`, tag
-`__CPROVER_refined_string_type`), routed
-through the refinement-string solver via `emit_string_function`. The
-backend-selector infrastructure has landed: a `python_string_kindt`-style
-selector and the `--python-smt-strings` flag exist and are threaded through
-`python_language.cpp`. What is **not** done is the migration that would let
-the frontend target either backend uniformly, and the SMT-String backend
-implementation itself.
-
-**Refined-string precision pass (2026-06-11, landed).** A "sound + precise,
-across the board" pass over the refined-string backend landed its
-cleanly-achievable wins and characterised the rest by measurement. Landed +
-validated (ESBMC sweep: 0 regressions, PASS 2916→2935): symbolic
-`rfind`/`rindex` → `last_index_of` (`ee0b89d939`); a dedicated
-Python-whitespace `strip`/`lstrip`/`rstrip` axiom (`6cabf82209`, *not* a
-`trim` reuse, which is unsound for control bytes). Measured/root-caused as
-blocked (kept sound): ordering via `compare_to` (axiom a3's existential
-first-diff-index witness isn't instantiated by the refinement); substring
-`replace` (existing axiom is char-only); `split` (list-valued); membership
-convergence (already handled at HEAD — eager instantiation measured as a net
-negative and reverted). **Net: the refined-string precision frontier is
-largely tapped; the remaining gaps need either existential-witness
-instantiation or new nonlinear/list-valued axioms, for which the SMT-String
-backend is the comprehensive answer.** Full per-step ledger:
-[python-string-phase2-backend-abstraction.md § consolidated outcome ledger](architectural/python-string-phase2-backend-abstraction.md#string-correctness-plan--consolidated-outcome-ledger-2026-06-11).
-
-
-**Spike (2026-06-09/10, `github_3090_4`) — diagnosis corrected.** The
-blocker is *not* `char*`-vs-`char[]` (JBMC's refined string is *also*
-`{length, char*}` and proves fine) and *not* the `array_pool` mechanism
-itself. It is **variable indirection + content storage**: `array_pool.find`
-already extracts the real array (crash-free, even with symbolic elements)
-when the content pointer is the syntactic form `address_of(index(<array>,
-0))`, but falls through to a *fresh unconstrained* array when the pointer is
-a `member` (e.g. `s.data` once the string is stored in a variable). Adding
-an explicit association fixed `chr(i)=="f"` + `github_3090_4/5` under the
-default backend (soundly) **but crashed `github_3130_fail`** — because
-`chr` used *static, shared* content storage, so one constant pointer was
-re-associated across loop unwinds. JBMC avoids this by giving each string
-**per-execution heap content** (distinct pointer per iteration), so the
-real bottleneck is **per-execution content storage**, not association.
-**Two viable, sound routes:** (a) JBMC-style per-execution storage (fresh
-allocation per producer) + the existing association — the "bigger change";
-(b) **symex content-pointer dereference** — verified feasible
-(`value_set_dereferencet` resolves `*(p+i)` for symbolic `i`; hook is the
-already-`cprover_string`-scoped `constant_propagate_assignment_with_side_
-effects`), re-materialising a bounded literal array that routes through
-`find`'s crash-free fast path with **no front-end storage change** and **no
-loop crash**, at the cost of bounded-deref perf + a scoped core-symex
-change. Route (b) is the lower-impact lean. A throwaway **prototype
-(2026-06-10, reverted) validated route (b)**: `chr(i)=="f"` and
-`chr(122) not in "abc"` prove **soundly** and `github_3130_fail` is
-**loop-safe (no crash)** — but a *broad* `symex_assign` hook regressed 9
-sweep tests (constant strings, multibyte UTF-8 `chr`, concat results) with
-0 new gains, so a production version must be **carefully scoped** (only the
-symbolic/variable-indirection case; preserve constant/literal/multibyte
-fast paths; materialise concat *producers*, not just comparison operands).
-**Decision (2026-06-10): route (b) is adopted** as the production direction
-— symex resolves content pointers to their array *object* (not per-element
-unroll) for static-value leaves, while produced/heap-backed content uses
-association (a Java migration was assessed and found **not applicable** —
-Java's strings are heap-backed and genuinely need association; the
-front-ends converged on association for produced content). **Phase 1 landed
-(2026-06-10):** symbolic `chr`
-content equality/contains and symbolic-`chr` concat chains
-(`github_3090_4/_5`) prove soundly and loop-safely, zero sweep regressions;
-see the design-decision section. **Phase 2 landed (2026-06-10):**
-refinement-produced results (concat, substring, `str(int)`, ...) get fresh
-per-execution real backing installed in the symex const-prop handlers
-(Python-gated; JBMC `jbmc-strings`/`strings-smoke-tests` green), so
-byte-level/chained ops on them — `(chr(i)+"oo")[0]`, iteration of a concat
-result — prove and are loop-safe; zero sweep regressions. Implementation
-discipline + sequencing in the
-[design-decision section](architectural/python-string-phase2-backend-abstraction.md#design-decision-2026-06-10-choice-b--symex-content-pointer-resolution).
-The SMT-string backend (`--python-smt-strings` / CVC5) remains an orthogonal
-precision option.
-Full analysis (JBMC loop handling, `find` fast path, storage options,
-symex-deref pros/cons, prototype results):
-[python-string-phase2-backend-abstraction.md](architectural/python-string-phase2-backend-abstraction.md#update-2026-06-10--corrected-conclusion--symex-deref-feasibility).
-
-**Plan (5 phases; phases 1–2 designed, 3–5 open):**
-
-> **Superseded (2026-06-11).** The single current plan for all deferred string
-> work — the `smt_string_typet` refactor (Plan A), interim SMT model extraction
-> (Plan B), and the refined-backend axioms replace/repeat/strip(chars)/split/
-> casefold/count and the compare_to existential (Plan C1–C6) — lives in
-> [python-string-phase2-backend-abstraction.md § Consolidated forward plan](architectural/python-string-phase2-backend-abstraction.md#consolidated-forward-plan-2026-06-11--supersedes-earlier-scattered-plans).
-> The 5 phases below are retained for the site inventory (phase 1) only.
-
-
-1. *Inventory* (done) — ~50 frontend sites reach into the refined-string
-   struct (`build_string_struct`, `.length`, `.data[i]`, scratch-loop
-   comparisons), classified as producers / consumers / mutators.
-2. *Backend abstraction design* (done) — opaque string handle, a literal
-   constructor intrinsic, and a per-intrinsic lowering table. The detailed
-   spec (intrinsic ↔ SMT-LIB term table, `smt_string_typet`, backend impact
-   on `smt2_conv` / `boolbv` / `string_refinement`, PR ordering) lives in
-   [architectural/python-string-phase2-backend-abstraction.md](architectural/python-string-phase2-backend-abstraction.md)
-   — keep that as the implementation spec.
-3. *Frontend refactor* (open) — migrate every site off the concrete struct
-   onto intrinsics: `build_string_struct` → `cprover_string_literal_func`
-   (33 callers), `.length` → `cprover_string_length_func` (17),
-   `.data[i]` → `cprover_string_char_at_func` (7), concat/repeat producers
-   → `cprover_string_concat_func` / a new `cprover_string_repeat_func`, and
-   add the 9 not-yet-available intrinsics (substring/replace/split/strip/
-   find-from) with `ID_` entries + axiom handlers. One PR per group.
-4. *Backend implementations* (open) — implement each intrinsic's SMT-String
-   lowering in `smt2_conv.cpp` per the phase-2 table; add `smt_string_typet`
-   and its `convert_type` mapping to SMT `String`.
-5. *Retire hacks* (open) — remove the `smt2_conv` subject-literal
-   materialisation workaround and the Python→C `str` marshalling special
-   case once 3–4 land.
-
-**Why it matters:** this unblocks precise symbolic regex (see
-[§4](#regex)) and removes a class of refined-string ↔ pointer-analysis
-performance cliffs (related to [§5](#dict-byref)).
-
----
-
-## 4. Regex (`re` module)  {#regex}
-
-**Status: PARTIAL.** Current support is a shallow library stub plus
-`__cbmc_re_*` SMT intrinsics, and a Stage-1 call-site `regex-no-match`
-check that flags statically-impossible matches. The current-state
-reference is [python-frontend-regex-story.md](python-frontend-regex-story.md).
-The architectural invariant: the **frontend emits refined-string
-arguments; the backend bridges them to SMT `String`**.
-
-**Already built (verified 2026-06-08):**
-
-- The **subject → SMT-String bridge (Approach C2) is implemented** in
-  `smt2_conv.cpp` (regex-intrinsic interception around the
-  `cprover_string_{match,search,fullmatch}_func` lowering): a constant
-  pattern is translated by `python_regex_to_smt.cpp`, a constant subject
-  lowers to a precise `(str.in_re "subj" re)`, and a *symbolic* subject is
-  bridged from the refined-string struct via
-  `str.++ (str.from_code (bv2nat (select array i)))` truncated to length.
-  Unsupported patterns / unrecognised subject shapes fall back to a sound
-  `bv0`.
-
-**The actual remaining gaps (the Wave-2 payoff), verified 2026-06-08:**
-
-1. **Symbol subjects fall through to `bv0` (the deep gap).** The bridge's
-   subject extractor only recognises a *syntactic* refined-string
-   `struct_exprt{len, address_of(index(array, 0))}`. A subject that is a
-   plain symbol (the common `s = nondet_str()` case) — whose bytes live in
-   the string-refinement `array_pool`, not syntactically in the expr —
-   hits the sound `bv0` fall-through, so the match is *never* taken and
-   queries over symbolic subjects are vacuous (measured: both
-   "`matches ⇒ len≥1`" and the contradictory "`matches ⇒ len==0`" verify
-   SUCCESSFUL, i.e. the branch is unreachable). Closing this needs
-   `smt2_conv` to expose an `array_pool`-tracked refined string to the
-   SMT-LIB String theory — deep CBMC-core work (shared with JBMC code
-   paths; the spec mandates a JBMC regression run per PR). Constant-subject
-   matching already works precisely under `--cvc5` (`re-wave2-cvc5`).
-2. **Library `Match`/`None` result not tied to the intrinsic — RESOLVED
-   (2026-06-17, `aa71a43868`); no flag.** The `re` stub now branches on the
-   intrinsic (`if __cbmc_re_match(p,s): return Match() else: return None`), and
-   the **default (refined-string) backend decides a CONSTANT pattern + CONSTANT
-   subject precisely** so the branch is exact (matched → `Match()`, proven
-   no-match → `None`) without `--cvc5`. This needed neither a flag nor the deep
-   array_pool work feared here: a conversion-time backtracking matcher
-   (`python_regex_match`, supported subset; conservative `std::nullopt` →
-   sound nondet) is invoked at SOLVE time inside the refined solver's
-   `match/search/fullmatch_func` handler (the re stub body is converted once
-   with symbolic params, so the literals are only available post-symex, where
-   `get_string_expr(array_pool,·).content()` yields the constant bytes). A
-   SYMBOLIC subject on the default backend stays a sound nondet Match-or-None
-   (precise on native via `str.in_re`). Sweep PASS 2930→2945, 0 regressions, 12
-   regex tests (`re1/3/4/5/6/8/9/10/11/12`, `github_3013/_2`) DIFF → PASS.
-   (The old `--python-strict-re-result` flag idea is dropped — the default is
-   now both sound and precise for the decidable case.)
-
-**Update (2026-06-12) — native SMT-String backend.** With `--python-smt-strings`
-now selecting the native `smt_string` representation (the byte-array hybrid is
-retired), the **subject** side of gap 1 is resolved: a symbolic subject is
-already an SMT `String`, so `(str.in_re <symbolic-subject> <RegLan>)` is precise
-with no `array_pool` extraction. One prerequisite fix: the
-match/search/fullmatch lowering's `extract_literal()` recognises only the
-refined `{length, address_of(array)}` struct, so under native — where the
-pattern is an `smt_string` *constant* — it returns `nullopt` and degrades to
-nondet. Teaching it to read the pattern from an `smt_string` constant restores
-regex precision under native (the **native regex pattern-extraction fix**;
-small, prerequisite for everything below).
-
-**Extension — structurally-constant patterns with symbolic literal substrings
-(native).** The pattern must remain *structurally* constant (its regex
-operators known at conversion time): SMT-LIB `RegLan` is built only from regex
-constructors (`re.union`, `re.*`, `re.range`, `str.to_re` of literals) and has
-no operation that interprets a *symbolic* string as a regex — `str.to_re(p)`
-accepts exactly the literal `p` (i.e. equality, not pattern semantics), so a
-fully-symbolic pattern degrades soundly to nondet. **But** a pattern whose
-*structure* is a compile-time constant while its *literal substrings* are
-symbolic — e.g. `re.compile("^" + prefix + "[0-9]+$")` with `prefix` a runtime
-`str` — is expressible as
-`(re.++ (str.to_re prefix) (re.+ (re.range "0" "9")))`: `str.to_re` on the
-symbolic literal "holes", `re.*` constructors for the constant structure.
-
-  *Design.*
-  - **Front-end:** when an f-string / `+`-concatenation forms a regex pattern,
-    carry it not as one flattened literal on the intrinsic but as a **list of
-    segments**, each either a constant pattern fragment or a symbolic
-    `smt_string` literal-hole. (Today the pattern is flattened to a single
-    literal, which loses this structure; a new intrinsic variant would take the
-    segment list.)
-  - **Backend** (`python_regex_to_smt.cpp` + the smt2_conv lowering): translate
-    constant fragments as today and emit `(str.to_re <hole>)` for each symbolic
-    hole, splicing them into the `RegLan` term with `re.++`.
-  - **Soundness / scope:** a symbolic hole is matched **literally** (spliced
-    verbatim as a `str`), which is exactly the intended semantics for the
-    `re.compile("..." + x + "...")` / `re.escape(x)` idiom. A hole meant to
-    carry regex *metacharacters* is out of scope (that is a fully-symbolic
-    pattern → nondet). Constant-only and fully-symbolic patterns are unchanged.
-  - **Effort / ordering:** front-end segment-tracking is the bulk; the backend
-    splice is small. Builds on the native pattern-extraction fix and the
-    `re.*`-wrapper routing ("a-prime") refactor, so it is sequenced after both.
-
-- **Compilation flags** (`re.IGNORECASE` etc.): currently fall back to
-  nondet. *Fix shape:* rewrite the regex AST per flag before lowering.
-
-**Implementation findings (2026-06-12).**
-
-- **Native regex pattern-extraction fix — LANDED** (commit `5231f3b61d`).
-  `__cbmc_re_{match,search,fullmatch}` is now precise under
-  `--cvc5 --python-smt-strings` for a constant pattern over **both constant and
-  symbolic subjects** (incl. character classes), via `str.in_re` directly on
-  the `smt_string` subject. This closes the old "symbol subjects fall through to
-  `bv0`" gap (gap 1) for the native backend — the refined bridge is no longer on
-  the path. (`string-smt-native-regex`.) A CVC5 perf edge remains: combining
-  `str.in_re` with a `len()` query on the same symbolic subject can time out;
-  match/no-match decisions themselves are fast.
-- **a-prime is *result-precision*, not *routing*.** The `re.*` stub **already
-  calls** `__cbmc_re_*` (for the SMT side-effect). The remaining work is to make
-  the returned `Match`/`None` *reflect* the intrinsic result. This is entangled:
-  the current always-`Match()` is itself a latent **unsoundness** (it never
-  explores the `None` path, so a missing-`None`-guard bug such as
-  `re.match(...).group()` on a non-match is not caught), but switching to real
-  `Match`/`None` makes the result **nondet under the default backend** (the
-  intrinsic is nondet there), which changes many benchmark outcomes. So a-prime
-  needs an opt-in `--python-strict-re-result` flag (off by default) and a
-  stub→flag mechanism, not just a stub rewrite. Higher-stakes than the doc
-  implied; prerequisite for the literal-symbolic and `re.sub` items having
-  real-world reach.
-- **Literal-symbolic patterns: anchor-soundness caveat.** The fragment-wise
-  composition (above) must handle `^`/`$` only at the *whole-pattern*
-  boundaries; a `^` at the start of a non-first fragment or `$` at the end of a
-  non-last fragment must **bail to nondet** (not be stripped per-fragment),
-  otherwise the regex is over-permissive (unsound). The translator currently
-  strips leading-`^`/trailing-`$` per input string, so a body-only fragment
-  translator + boundary handling is required.
-- **`re.sub` native:** expressible via CVC5 `str.replace_re_all` (a new
-  `__cbmc_re_sub` intrinsic + `str.replace_re_all` lowering), but also entangled
-  with the stub (`sub` returns `""` today) and only reaches real code via
-  a-prime-style routing.
-
----
-
-## Native robustness: smt_string members in byte-operated structs  {#native-byte-ops}
-
-**Status: PARTLY RESOLVED — the dict-by-reference-mutation crash is fixed; a
-general byte-op gap remains for other shapes (native only; sound — crashes,
-never a false proof).**
-
-The original trigger — **dict pass-by-reference *mutation*** through an
-`Any`/`python_value` parameter (`def f(d): d["k"]=v` then asserting the caller
-sees the mutation) — **no longer crashes** and now propagates *precisely* under
-native (see [the §0 by-reference fix](#false-proofs)): the argument is promoted
-to a clean, field-sensitive `dict[str, value]` temp instead of being reached
-via a byte-reinterpreting opaque `__class_ptr` cast, so no `byte_extract` /
-`byte_update` is generated for it.
-
-The underlying lowering limitation is still present for *other* shapes: a struct
-that embeds an `smt_string` member (e.g. `python_value.__str`, or a class/dict
-struct holding a string) cannot be **byte-operated**
-(`byte_extract`/`byte_update` → `lower_byte_operators`), because `smt_string`
-has no fixed bit-width and the lowering requires non-constant-width members to
-come last: `lower_byte_operators.cpp` fires *"members of non-constant width
-should come last in a struct"*. The `regression/python` corpus (543/543 under
-native, 0 crashes) does not currently exercise a remaining instance, so it is
-latent. Candidate fixes (both shared-code, non-trivial):
-(a) teach `lower_byte_operators` to treat `smt_string` members opaquely (NB: a
-naive "replace the unlowerable byte op with a fresh nondet" is **unsound** when
-the byte op is a write whose effect must alias a caller object — it silently
-drops the mutation; only safe for genuinely value-less reads);
-(b) order `smt_string` members last in the affected struct layouts. Lower
-priority than the regex items; recorded so it is not mistaken for soundness.
-- **Wave 3 — native regex axioms in the string-refinement loop: NO PLAN
-  YET** (research-grade; deferred). Back-references, lookahead, and capture
-  groups are explicitly out of scope.
-
----
+All `str`/`bytes` and `re` (regex) work now lives in the dedicated
+[Python frontend strings & regex plan](python-frontend-strings-plan.md)
+(native SMT-String backend, refined-string ceilings, regex). The
+architecture gaps table links there directly.
 
 ## 5. dict pass-by-reference & value-string storage  {#dict-byref}
 
@@ -1682,7 +1380,7 @@ substrate.**
     This same **symbolic-string content-equality** gap underlies the
     `github_3783_5` string-key `popitem`. It is string-refinement
     territory best addressed by the native SMT-LIB String backend
-    ([§3](#strings)), not a fragile point fix.
+    ([§3](python-frontend-strings-plan.md#strings)), not a fragile point fix.
   - **Module-stub + isinstance (2):** `github_2960`, `github_3286`
     (`import ll; ll.create(...)` then `isinstance(x, ll.Bar)`).
   - **Container-stored / default-arg callables (2) — FIXED
@@ -1732,7 +1430,7 @@ substrate.**
       representation.
     - `github_3560` (`input()` + `split`), `github_3594` (`"ß".upper()`
       unicode case mapping) — reduce to the symbolic-string /
-      string-refinement root ([§3](#strings)).
+      string-refinement root ([§3](python-frontend-strings-plan.md#strings)).
 - **`decimal` cluster (4) — P1/P2/P3 LANDED (`8f8ebf3aea`, `2fcd9c7b46`;
   see [decimal plan](python-frontend-decimal-plan.md)):** the old
   `decimal.py` stub modelled `Decimal` as a **float wrapper**, unsound for

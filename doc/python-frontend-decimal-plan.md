@@ -5,7 +5,7 @@ dispatch `7367a713bf`). Remaining residuals: non-terminating division and
 `sqrt` (28-digit context rounding exceeds the 64-bit coefficient → sound
 nondet), Inf-comparison precision (sound nondet), and the bounded
 exponent-alignment / 64-bit coefficient. See
-[§9 of the plans doc](python-frontend-plans.md#precision).
+[§9 of the plans doc](python-frontend-plan.md#precision).
 
 This deep-dive specifies a sound, exact model of the `decimal.Decimal`
 stdlib type for the CBMC Python frontend, replacing the previous

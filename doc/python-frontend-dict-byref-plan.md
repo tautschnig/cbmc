@@ -7,7 +7,7 @@ then Option A (commit `9da530b0e4`, inline the refined string into
 string-refinement perf cliff), which unblocked the uniform
 `dict[value, value]` default. Dict parameters now pass by reference for
 all key types and the latent unsoundness is closed. The analysis below is
-retained for context. See [python-frontend-plans.md §5](python-frontend-plans.md#dict-byref).
+retained for context. See [python-frontend-plan.md §5](python-frontend-plan.md#dict-byref).
 
 Last updated: 2026-06-08.
 

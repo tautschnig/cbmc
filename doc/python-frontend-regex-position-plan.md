@@ -2,7 +2,7 @@
 
 Status: **Phase 1 LANDED (2026-06-15, `1e52da2ca5`); Phases 2-4 PLANNED.**
 This is the deep-dive linked from
-[python-frontend-plans.md](python-frontend-plans.md) §4 (regex reach). It
+[python-frontend-plan.md](python-frontend-plan.md) §4 (regex reach). It
 designs the primitive that unlocks **precise** `re.findall` / `re.finditer` /
 `re.split` enumeration and `Match.start/end/span/group`, and analyses its
 soundness and (the dominant constraint) its performance.
@@ -198,7 +198,7 @@ splitting `subject[start:end]`. Whenever the intrinsic is gated out it returns
   - `group()` *no-arg* is now precise too: the general method-dispatch gap that
     left it nondet (method defaults not filled on optional/union receivers) was
     fixed in `27d677fc91`, see plans
-    §[method-default-optional](python-frontend-plans.md).
+    §[method-default-optional](python-frontend-plan.md).
   - **Open:** `span()==tuple` uses pre-existing tuple equality (elementwise is
     precise). `re.match` positions are not yet wired (only search/fullmatch).
 - **Phase 2 — precise `re.findall` / `re.split`. Blockers #1 and #2 RESOLVED;
@@ -213,7 +213,7 @@ splitting `subject[start:end]`. Whenever the intrinsic is gated out it returns
      loop no longer aborts. The non-annotated `[]` + call-indexed slice append
      is additionally made non-aborting by the back-end defensive net
      (`1c62587a8e`, sound nondet for `smt_string`↔scalar casts), plans
-     §[empty-container-elem-type](python-frontend-plans.md).
+     §[empty-container-elem-type](python-frontend-plan.md).
   2. **Symbolic-`from` lowering — RESOLVED (`bbcb5a3292`).** The lowering now
      accepts a symbolic `from` (guard each scan branch with `i >= from`,
      `let`-binding `from`) while keeping a constant-`from` fast path for

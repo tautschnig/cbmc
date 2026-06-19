@@ -247,7 +247,7 @@ the stubs takes longer than the verification itself.
 
 This is the headline finding for short benchmarks across the
 suite: stub-parse time is now a non-trivial fixed cost. See
-`../python-frontend-plans.md` (§8 performance) for the proposed mitigation.
+`../python-frontend-plan.md` (§8 performance) for the proposed mitigation.
 
 ## `--slice-formula` measurement
 
@@ -371,7 +371,7 @@ substantial. Pass `--no-slice-formula` to disable.
 ## Combined: parse daemon + `--slice-formula`
 
 The Python parse daemon
-(`../python-frontend-plans.md` §8) and
+(`../python-frontend-plan.md` §8) and
 `--slice-formula` are independent — daemon attacks the
 fork/exec-and-Python-startup cost, slice attacks the SMT
 solver cost. They compose cleanly.

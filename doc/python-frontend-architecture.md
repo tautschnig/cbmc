@@ -7,7 +7,7 @@ frontend. For verification usage see
 [python-verification-guide.md](python-verification-guide.md).
 For known gaps, PLR deviations, and the forward-looking
 backlog see
-[python-frontend-plans.md](python-frontend-plans.md) — every
+[python-frontend-plan.md](python-frontend-plan.md) — every
 gap noted below links to a specific section there.
 
 ## Top-level flow
@@ -487,7 +487,7 @@ Precise symbolic-subject matching needs that bridge, which is
 not yet implemented. The current-state reference (what's
 modelled, the backend-portability matrix, what doesn't work) is
 [python-frontend-regex-story.md](python-frontend-regex-story.md);
-the open work is [plans §4](python-frontend-plans.md#regex).
+the open work is [plans §4](python-frontend-strings-plan.md#regex).
 
 ## Contracts (icontract → DFCC)
 
@@ -499,7 +499,7 @@ subclass precondition is OR-weakened against the base
 (`require_else`), a postcondition AND-strengthened
 (`ensure_then`) — using the class MRO. Single-level inheritance
 composition works; the residual (multi-level Liskov, strict-C3
-mixin precedence, async) is [plans §11](python-frontend-plans.md#icontract).
+mixin precedence, async) is [plans §11](python-frontend-plan.md#icontract).
 
 ## Module & library support
 
@@ -510,7 +510,7 @@ C-backed primitive can be marked `@c_intrinsic` so it lowers to
 the corresponding CBMC/C-library routine instead of a Python
 body. Unresolved imports set `__exception_active` to
 `ImportError` so `try/except ImportError` composes. Open
-coverage work is [plans §6](python-frontend-plans.md#modules).
+coverage work is [plans §6](python-frontend-plan.md#modules).
 
 ## Parse daemon & performance
 
@@ -523,7 +523,7 @@ also relies on `--slice-formula` (default-on) and the
 and the slicer ↔ string-refinement contract are documented in
 [architectural/python-perf-analysis.md](architectural/python-perf-analysis.md);
 open optimization targets are
-[plans §8](python-frontend-plans.md#performance).
+[plans §8](python-frontend-plan.md#performance).
 
 ## Any-erasure attribute check
 
@@ -708,20 +708,20 @@ intrinsic design choices, not bugs.
 
 | Area | Gap / deviation | Sound? | Plan |
 |---|---|---|---|
-| Generators | List-with-cursor model: inter-yield side-effect ordering not faithful; module-global free vars in generator `if` drop the body; cross-boundary list-shape | yes | [§1](python-frontend-plans.md#generators) |
-| Closures | Escaping closures (returned/stored, called later) over-approximate captured free vars to nondet, so late binding (`lambda: i` in a loop) is imprecise. Non-escaping closures and `nonlocal` mutation are correct. | yes (sound — nondet over-approx, false positives only; KNOWNBUG) | [§2](python-frontend-plans.md#closures) |
-| Strings | Modelled as the refined-string struct (now stored **inline** in `python_value`, which removed a bulk string-refinement perf cliff); no native SMT-LIB String backend yet (selector exists, migration pending) | yes (precision/perf) | [§3](python-frontend-plans.md#strings) |
-| Regex | Shallow stub + intrinsics; symbolic-subject matching needs the backend String bridge | yes (precision) | [§4](python-frontend-plans.md#regex) |
-| dict params | Passed **by reference** (list/dict share the `safe_typecast` container boundary); mutations propagate for string- and non-string-keyed dicts alike since the uniform `dict[value,value]` default landed | yes (closed) | [§5](python-frontend-plans.md#dict-byref) |
-| Modules | `cmath`, `os`, `time`, `dataclasses`, `collections`, fuller `datetime`/`json` not modelled | yes (nondet) | [§6](python-frontend-plans.md#modules) |
-| Annotation checks | `--python-check-annotations` can't be default-on (two CBMC-core blockers) | yes | [§7](python-frontend-plans.md#check-annotations) |
-| Performance | `python_value` SSA expansion, kwarg-check axiom volume, `irept::operator==` hot path, 8 TIMEOUT tests | n/a | [§8](python-frontend-plans.md#performance), [§9](python-frontend-plans.md#precision) |
-| Descriptors | Non-data-descriptor (method) shadowing; custom `__set__` / stateful `__get__` (need instance-`__dict__` storage) | yes (KNOWNBUG) | [§10](python-frontend-plans.md#descriptors) |
-| Contracts | Multi-level Liskov; strict-C3 mixin precedence; async | yes | [§11](python-frontend-plans.md#icontract) |
-| Higher-order | No first-class function value storable in a container / called indirectly | yes | [§12](python-frontend-plans.md#higher-order) |
-| Async | `async`/`await`/async generators not modelled | n/a | [§13](python-frontend-plans.md#async) |
-| Comprehensions | dict-comprehension over a runtime iterable (nondet); iteration-var scope leak; inner-iterator shadow | yes | [§14](python-frontend-plans.md#residuals) |
-| Numbers | Default 64-bit `int` (`--python-unbounded-ints` opt-in); `math`/`complex` edge precision | intrinsic / precision | [§9](python-frontend-plans.md#precision) |
+| Generators | List-with-cursor model: inter-yield side-effect ordering not faithful; module-global free vars in generator `if` drop the body; cross-boundary list-shape | yes | [§1](python-frontend-plan.md#generators) |
+| Closures | Escaping closures (returned/stored, called later) over-approximate captured free vars to nondet, so late binding (`lambda: i` in a loop) is imprecise. Non-escaping closures and `nonlocal` mutation are correct. | yes (sound — nondet over-approx, false positives only; KNOWNBUG) | [§2](python-frontend-plan.md#closures) |
+| Strings | Modelled as the refined-string struct (now stored **inline** in `python_value`, which removed a bulk string-refinement perf cliff); no native SMT-LIB String backend yet (selector exists, migration pending) | yes (precision/perf) | [§3](python-frontend-strings-plan.md#strings) |
+| Regex | Shallow stub + intrinsics; symbolic-subject matching needs the backend String bridge | yes (precision) | [§4](python-frontend-strings-plan.md#regex) |
+| dict params | Passed **by reference** (list/dict share the `safe_typecast` container boundary); mutations propagate for string- and non-string-keyed dicts alike since the uniform `dict[value,value]` default landed | yes (closed) | [§5](python-frontend-plan.md#dict-byref) |
+| Modules | `cmath`, `os`, `time`, `dataclasses`, `collections`, fuller `datetime`/`json` not modelled | yes (nondet) | [§6](python-frontend-plan.md#modules) |
+| Annotation checks | `--python-check-annotations` can't be default-on (two CBMC-core blockers) | yes | [§7](python-frontend-plan.md#check-annotations) |
+| Performance | `python_value` SSA expansion, kwarg-check axiom volume, `irept::operator==` hot path, 8 TIMEOUT tests | n/a | [§8](python-frontend-plan.md#performance), [§9](python-frontend-plan.md#precision) |
+| Descriptors | Non-data-descriptor (method) shadowing; custom `__set__` / stateful `__get__` (need instance-`__dict__` storage) | yes (KNOWNBUG) | [§10](python-frontend-plan.md#descriptors) |
+| Contracts | Multi-level Liskov; strict-C3 mixin precedence; async | yes | [§11](python-frontend-plan.md#icontract) |
+| Higher-order | No first-class function value storable in a container / called indirectly | yes | [§12](python-frontend-plan.md#higher-order) |
+| Async | `async`/`await`/async generators not modelled | n/a | [§13](python-frontend-plan.md#async) |
+| Comprehensions | dict-comprehension over a runtime iterable (nondet); iteration-var scope leak; inner-iterator shadow | yes | [§14](python-frontend-plan.md#residuals) |
+| Numbers | Default 64-bit `int` (`--python-unbounded-ints` opt-in); `math`/`complex` edge precision | intrinsic / precision | [§9](python-frontend-plan.md#precision) |
 | Identity | `is` + small-int interning approximated; `id()` deterministic | yes (warned) | — (intrinsic, by design) |
 
 ## Where to make changes

@@ -4,7 +4,7 @@
 *fat-closure* representation that makes the remaining higher-order
 closure cases sound and precise, and the phased, validation-gated plan
 to build it. It is the forward-looking companion to
-[§2 of the plans doc](python-frontend-plans.md#closures), which records
+[§2 of the plans doc](python-frontend-plan.md#closures), which records
 what has already landed.
 
 ---
