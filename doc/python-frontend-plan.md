@@ -1589,18 +1589,25 @@ is actioned on its merits. Whole-group vs point is flagged per item.
 Two roots (`complex_binop_promotion`, `complex_builtins`,
 `complex_conjugate_handler`, `complex_constructor_extended`):
 
-1. **IEEE float-edge semantics in complex parts** — *whole-group.* The
-   failing assertions concentrate on signed-zero (`math.copysign`), `inf`
-   /`nan` propagation, division-by-zero, overflow and subnormals flowing
-   through `+ - * /`, `abs`, and `conjugate`. The arithmetic helper
-   computes components with float ops but does not preserve CPython's
-   IEEE signed-zero / special-value behaviour. *Fix-shape:* harden the
-   single complex-arithmetic helper — component ops use IEEE-correct float
-   primitives, `abs` via `hypot`, `conjugate` flips the imag sign
-   including signed zero — which lifts the whole edge group at once.
-   *PLR:* match CPython/`cmath` IEEE semantics exactly. *Step 0:* capture
-   the exact failing assert per test first (the binary rejects
-   `--incremental-bmc`; run with `--unwind`).
+1. **IEEE float-edge semantics in complex parts — DONE (2026-06-19), IEEE
+   logic centralised in `util/ieee_float`.** The failures were all
+   **signed-zero** subtleties (not the overflow/divzero edges first
+   suspected): `copysign`, `fabs`/`abs`, complex construction of `-0.0`,
+   and `0+0j` truthiness. Per review, the IEEE semantics now live in
+   general, **unit-tested** helpers rather than ad-hoc frontend code:
+   `util/ieee_float` gained `ieee_signbit` / `ieee_fabs` / `ieee_copysign`
+   (sign = the sign **bit**, so `-0.0` is negative — a `x < 0` test is
+   wrong), with dedicated Catch2 tests. The frontend now delegates:
+   `math.copysign`→`ieee_copysign`, `abs(float)`→`ieee_fabs`, complex-abs
+   magnitude assumes a clear sign bit, complex truthiness uses IEEE float
+   equality (`-0.0 == 0.0`), and `complex()` imag accumulation preserves a
+   `-0.0` addend. *Validated:* `complex_binop_promotion`, `complex_builtins`,
+   `complex_conjugate_handler` all flipped DIFF→PASS; unit + full
+   `regression/python` + corpus sweep at **0 regressions**; new
+   `ieee-signed-zero` regression. *Note:* the C99-Annex-G complex mul/div
+   overflow cases were not the failing ones and remain on the naive
+   formula (sound; no failing corpus test) — a future `ieee_float` helper
+   if needed.
 
 2. **`complex()` constructor + dunder protocols — B + C DONE (2026-06-19);
    A moved to the strings plan.** `complex_constructor_extended` went from
