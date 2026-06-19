@@ -649,11 +649,37 @@ star-import / `exec` in the module), emit an uncaught `NameError`. **Risk:
 over-reporting** — dynamic definition, conditional assignment, and
 star-imports make "definitely unbound" subtle, so this must be
 conservative (only fire when no binding exists on *any* path) and
-sweep-validated for new false positives. Niche cousins (own fixes, not
-this root): `global-decl-fail` (`SyntaxError`: name used prior to `global`
-declaration — a parse-time check) and `enumerate()` arg-count
-(`TypeError`, same shape as the landed call-signature validation but for a
-builtin).
+sweep-validated for new false positives.
+
+**Attempt 2026-06-19 — REVERTED (over-reports); prerequisite identified.**
+A first cut emitted the `NameError` directly in `get_var`'s "Unknown
+variable" fallback, guarded by `!saw_import_star` + a full Python-builtins
+exclusion set. It correctly flipped `assign-fail` and `import-as-fail` to
+FAILED, but **regressed 4 tests** (`limit-tuple-return`,
+`crash-nested-tuple-unpack`, `tuple-unpack-snapshot`, and
+`snippet-undefined-var`). Root cause: **the assumption "reaching the
+fallback ⇒ unbound" is false.** Names bound by tuple/list unpacking
+(`x, y = f()`), `for`-targets, `with ... as`, `except ... as`, and
+comprehension targets are tracked via side-tables (and their values flow),
+but **no findable symbol** is created, so a later read reaches the fallback
+and was wrongly flagged. So the fix's **prerequisite is a complete,
+over-inclusive bound-names set** (every name bound *anywhere* in the
+relevant scope, across *all* binding forms), and the `NameError` must be
+gated on *absence* from that set — never on "fell through to the
+fallback". Two C++ obstacles make a safe scan non-trivial: `collect_assigned_locals`
+only handles simple `Name` targets (not tuple/for/with/except), and
+`jsont`'s object member map is `protected` (no generic recursion to find
+every `ctx=="Store"` Name). **Recommended clean foundation:** compute the
+per-scope bound-name set in the **AST server** (`python_ast_server.py`),
+which has the authoritative `ast` (a `NodeVisitor` collecting `Store`-ctx
+names + `def`/`class`/`arg`/`import`/`global`/`nonlocal` names per scope),
+attach it to each scope node, and gate the C++ `NameError` on it. Niche
+cousins (own fixes, not this root): `global-decl-fail` (`SyntaxError`: name
+used prior to `global` declaration — a parse-time check) and `enumerate()`
+arg-count (`TypeError`, same shape as the landed call-signature validation
+but for a builtin). (`snippet-undefined-var` reads an undefined `x`; its
+current `SUCCESSFUL` expectation encodes the *unsound* nondet behaviour and
+should flip to FAILED once this lands.)
 
 **Accepted-by-design (not bugs):** `float(input())` / `int(input())`
 `ValueError` are covered by the opt-in `--python-raising-ops-check`
