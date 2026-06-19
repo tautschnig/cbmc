@@ -92,9 +92,19 @@ void python_languaget::set_language_options(
   "  ' its standard library (the ast and json modules are required).',\\\n" \
   "  file=sys.stderr);sys.exit(1)\n" \
   "try:\n" \
-  " t=ast.parse(open(sys.argv[1]).read(),sys.argv[1])\n" \
+  " src=open(sys.argv[1]).read()\n" \
+  " t=ast.parse(src,sys.argv[1])\n" \
   "except SyntaxError as e:\n" \
   " print(str(e),file=sys.stderr);sys.exit(1)\n" \
+  "try:\n" \
+  " compile(src,sys.argv[1],'exec')\n" \
+  "except SyntaxError as e:\n" \
+  "  if any(f in str(e)for f in('prior to global declaration',\\\n" \
+  "   'prior to nonlocal declaration','keyword argument repeated',\\\n" \
+  "   'duplicate argument')):\n" \
+  "   print(str(e),file=sys.stderr);sys.exit(1)\n" \
+  "except Exception:\n" \
+  "  pass\n" \
   "def c(n):\n" \
   " if isinstance(n,ast.AST):\n" \
   "  r={'_type':n.__class__.__name__}\n" \
