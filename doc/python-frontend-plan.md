@@ -1757,20 +1757,18 @@ value through, the loop is a no-op). Verified working: `assert (await f(4))
 value.
 
 **Live gap (specific):** binding an `await` / async-call result to a variable
-leaves the target **unbound** — `v = await f(4); assert v == 5` raises
-`UnboundLocalError` (and so does `v = f(4)` for an `async def f`). The inline
-form works, the assignment form does not, so the async-call result isn't
-captured at the assignment chokepoint (likely a `side_effect_expr_function_callt`
-handled in expression context but not in the statement-level assign, or an
-async call returning a coroutine placeholder at statement level).
+**Await-result binding — RESOLVED (verified 2026-06-19).** The prior live
+gap (binding an `await` / async-call result to a variable left the target
+**unbound** — `v = await f(4)` raising a spurious `UnboundLocalError`) no
+longer reproduces on the current binary. All forms now bind correctly and
+verify: inline `assert (await inc(4)) == 5`, assignment `v = await inc(4)`,
+reassignment `v = await inc(v)`, and `await` inside an `async def` driven by
+`asyncio.run(main())`. Locked in by the `async-await-assign` regression
+test. Single-task `await` chains are sound and exact.
 
-**Plan.**
+**Plan (remaining).**
 
-1. **Fix `await`/async-call result binding** (the live bug) — make `v = await
-   coro(...)` and `v = coro(...)` bind the coroutine's return value at the
-   assignment path, mirroring a regular call. Then drive `asyncio.run` /
-   `run_until_complete` to actually call the coroutine. Single-task `await`
-   chains are then **sound and exact**.
+1. ~~Fix `await`/async-call result binding~~ — **DONE** (see above).
 2. **Async generators** — reuse the existing generator **list-with-cursor**
    lowering ([§1](#generators)); `async for` / `async with` desugar to the
    sync `for` / `with` over the collapsed awaitable.
