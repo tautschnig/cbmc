@@ -40,6 +40,7 @@ string/regex gap.
 | membership over a symbolic-length *produced* needle | refined | converges in practice; bounded guard; precise on native |
 | negated-regex membership in multi-assert (`re4`/`re11`) | refined | slow/timeout; native precise; presence-based `Match` truthiness is the recovery |
 | regex literal-symbolic patterns, deep refined regex axioms | refined | fold into the native backend |
+| `complex(<non-literal string>)` parse (`"5+6j"`→(5,6)) | both | needs runtime string→number parsing; literal strings already fold. Moved here from the complex cluster (it is string-parsing, not complex arithmetic). The remaining 2 failing asserts in `complex_constructor_extended`. |
 
 **Cross-cutting conclusion:** one-off refined-string axioms hit
 diminishing returns; the native backend is the comprehensive answer for
