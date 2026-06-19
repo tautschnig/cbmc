@@ -77,6 +77,33 @@ def to_dict(node):
     return node
 
 
+def _compile_only_syntax_error(src, path):
+    """Return an Error envelope for the precise set of genuine SyntaxErrors
+    that `ast.parse` accepts but the compiler rejects, or None. Restricted
+    to an allow-list so the frontend keeps tolerating constructs it models
+    leniently (top-level await, break/return in except*)."""
+    _ALLOW = (
+        "prior to global declaration",
+        "prior to nonlocal declaration",
+        "keyword argument repeated",
+        "duplicate argument",
+    )
+    try:
+        compile(src, path, "exec")
+    except SyntaxError as e:
+        msg = str(e)
+        if any(frag in msg for frag in _ALLOW):
+            return {
+                "_type": "Error",
+                "message": msg,
+                "lineno": getattr(e, "lineno", 0) or 0,
+                "offset": getattr(e, "offset", 0) or 0,
+            }
+    except Exception:
+        pass
+    return None
+
+
 def parse_file(path):
     """Parse a single source file. Returns the JSON-serialisable AST or
     an error envelope."""
@@ -94,6 +121,16 @@ def parse_file(path):
             "lineno": e.lineno or 0,
             "offset": e.offset or 0,
         }
+    # Some genuine SyntaxErrors are only raised by the compiler, not by
+    # ast.parse (PLR §4.2.4 / §8): a name used prior to its `global` /
+    # `nonlocal` declaration, and a repeated keyword argument. Surface
+    # ONLY those (a precise allow-list) so CBMC rejects the invalid program
+    # instead of silently verifying it. Other compile-only errors that the
+    # frontend deliberately tolerates (top-level `await`, `break`/`return`
+    # in `except*`) are intentionally NOT surfaced here.
+    se = _compile_only_syntax_error(src, path)
+    if se is not None:
+        return se
     out = to_dict(tree)
     out["_filename"] = path
     # Over-inclusive set of every name bound ANYWHERE in the module

@@ -1,0 +1,8 @@
+CORE
+main.py
+
+^EXIT=6$
+prior to global declaration
+^PARSING ERROR$
+--
+^VERIFICATION SUCCESSFUL$

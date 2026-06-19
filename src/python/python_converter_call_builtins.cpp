@@ -2029,6 +2029,32 @@ std::optional<exprt> python_convertert::try_builtin_call(
   // enumerate(iterable, start=0) → list of (start+i, element) tuples
   else if(func_name == "enumerate")
   {
+    // PLR: enumerate(iterable, start=0) requires the iterable and takes at
+    // most two positional args. Flag arity violations as an uncaught
+    // TypeError (enumerate() with no iterable; >2 positional args).
+    {
+      std::size_t n_pos = 0;
+      bool has_starred = false;
+      if(args.is_array())
+        for(const auto &a : as_array(args))
+        {
+          if(is_node_type(a, "Starred"))
+            has_starred = true;
+          else
+            ++n_pos;
+        }
+      bool has_iterable_kw = false;
+      const jsont &ekw = json_member(expr, "keywords");
+      if(ekw.is_array())
+        for(const auto &k : as_array(ekw))
+          if(json_string(json_member(k, "arg")) == "iterable")
+            has_iterable_kw = true;
+      if(!has_starred && ((n_pos == 0 && !has_iterable_kw) || n_pos > 2))
+      {
+        emit_conditional_exception(true_exprt{}, "TypeError");
+        return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+      }
+    }
     if(args.is_array() && !as_array(args).empty())
     {
       auto arg_it = as_array(args).begin();
