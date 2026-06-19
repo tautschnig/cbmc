@@ -2262,6 +2262,116 @@ exprt python_convertert::convert_attribute(const jsont &expr)
 }
 
 // PLR §6.2.7: Dictionary displays
+// Build a python_dict value from (key, value) pairs. Determines the
+// key/value element types (promoting to the tagged union when
+// heterogeneous), de-duplicates equal *constant* keys (PLR §6.4: a dict has
+// at most one entry per key; the LAST value wins, matching Python's
+// overwrite semantics — symbolic keys cannot be compared at conversion time
+// and are kept as-is), pads to PYTHON_MAX_DICT_SIZE, and guards over-capacity.
+// Shared by convert_dict (dict literals) and dict.fromkeys.
+exprt python_convertert::build_dict_value(
+  std::vector<std::pair<exprt, exprt>> pairs,
+  const source_locationt &loc)
+{
+  // De-dup equal constant keys (keep last value).
+  {
+    std::vector<std::pair<exprt, exprt>> deduped;
+    for(const auto &p : pairs)
+    {
+      bool merged = false;
+      if(p.first.is_constant())
+      {
+        for(auto &d : deduped)
+          if(d.first.is_constant() && d.first == p.first)
+          {
+            d.second = p.second; // later value overwrites
+            merged = true;
+            break;
+          }
+      }
+      if(!merged)
+        deduped.push_back(p);
+    }
+    pairs = std::move(deduped);
+  }
+
+  // Determine key/value types from first pair
+  typet key_type = pairs.empty() ? python_string_type() : pairs[0].first.type();
+  typet val_type = pairs.empty() ? python_int_type() : pairs[0].second.type();
+
+  // Heterogeneous-value detection: if any later value's type
+  // disagrees with val_type, promote val_type to the tagged
+  // union (python_value_type) so each value can be wrapped via
+  // wrap_value rather than typecast through a smaller struct.
+  for(std::size_t i = 1; i < pairs.size(); i++)
+  {
+    if(pairs[i].second.type() != val_type)
+    {
+      val_type = python_value_type();
+      break;
+    }
+  }
+  // Same for keys.
+  for(std::size_t i = 1; i < pairs.size(); i++)
+  {
+    if(pairs[i].first.type() != key_type)
+    {
+      key_type = python_value_type();
+      break;
+    }
+  }
+
+  struct_typet dict_type = python_dict_type(key_type, val_type);
+  const auto &keys_arr_type = to_array_type(dict_type.components()[1].type());
+  const auto &vals_arr_type = to_array_type(dict_type.components()[2].type());
+
+  // Build keys array
+  exprt::operandst key_elems;
+  for(const auto &p : pairs)
+  {
+    exprt k = p.first;
+    if(k.type() != key_type)
+      k = is_python_value_type(key_type) ? wrap_value(k)
+                                         : safe_typecast(k, key_type);
+    key_elems.push_back(k);
+  }
+  while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
+    key_elems.push_back(safe_zero(key_type));
+
+  // Build values array
+  exprt::operandst val_elems;
+  for(const auto &p : pairs)
+  {
+    exprt v = p.second;
+    if(v.type() != val_type)
+      v = is_python_value_type(val_type) ? wrap_value(v)
+                                         : safe_typecast(v, val_type);
+    val_elems.push_back(v);
+  }
+  while(val_elems.size() < PYTHON_MAX_DICT_SIZE)
+    val_elems.push_back(safe_zero(val_type));
+
+  exprt length =
+    from_integer(static_cast<long long>(pairs.size()), signedbv_typet{64});
+
+  // Over-capacity dict: bounded scans miss entries beyond the cap, so
+  // report python-model-bound + cut at construction.
+  if(pairs.size() > static_cast<std::size_t>(PYTHON_MAX_DICT_SIZE))
+  {
+    emit_count_capacity_guard(
+      pending_checks, length, PYTHON_MAX_DICT_SIZE, loc);
+    key_elems.resize(PYTHON_MAX_DICT_SIZE);
+    val_elems.resize(PYTHON_MAX_DICT_SIZE);
+    length = from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64});
+  }
+
+  return struct_exprt{
+    {length,
+     array_exprt{std::move(key_elems), keys_arr_type},
+     array_exprt{std::move(val_elems), vals_arr_type}},
+    dict_type};
+}
+
 // "A dictionary display yields a new dictionary object."
 exprt python_convertert::convert_dict(const jsont &expr)
 {
@@ -2315,85 +2425,6 @@ exprt python_convertert::convert_dict(const jsont &expr)
     pairs.emplace_back(k, v);
   }
 
-  // Determine key/value types from first pair
-  typet key_type = pairs.empty() ? python_string_type() : pairs[0].first.type();
-  typet val_type = pairs.empty() ? python_int_type() : pairs[0].second.type();
-
-  // Heterogeneous-value detection: if any later value's type
-  // disagrees with val_type, promote val_type to the tagged
-  // union (python_value_type) so each value can be wrapped via
-  // wrap_value rather than typecast through a smaller struct.
-  // The latter triggers CBMC's struct-narrowing typecast that
-  // emits `((_ extract H L) <struct-value>)` — invalid SMT-LIB
-  // under cvc5's use_datatypes.
-  for(std::size_t i = 1; i < pairs.size(); i++)
-  {
-    if(pairs[i].second.type() != val_type)
-    {
-      val_type = python_value_type();
-      break;
-    }
-  }
-  // Same for keys.
-  for(std::size_t i = 1; i < pairs.size(); i++)
-  {
-    if(pairs[i].first.type() != key_type)
-    {
-      key_type = python_value_type();
-      break;
-    }
-  }
-
-  struct_typet dict_type = python_dict_type(key_type, val_type);
-  const auto &keys_arr_type = to_array_type(dict_type.components()[1].type());
-  const auto &vals_arr_type = to_array_type(dict_type.components()[2].type());
-
-  // Build keys array
-  exprt::operandst key_elems;
-  for(const auto &p : pairs)
-  {
-    exprt k = p.first;
-    if(k.type() != key_type)
-      k = is_python_value_type(key_type) ? wrap_value(k)
-                                         : safe_typecast(k, key_type);
-    key_elems.push_back(k);
-  }
-  while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
-    key_elems.push_back(safe_zero(key_type));
-
-  // Build values array
-  exprt::operandst val_elems;
-  for(const auto &p : pairs)
-  {
-    exprt v = p.second;
-    if(v.type() != val_type)
-      v = is_python_value_type(val_type) ? wrap_value(v)
-                                         : safe_typecast(v, val_type);
-    val_elems.push_back(v);
-  }
-  while(val_elems.size() < PYTHON_MAX_DICT_SIZE)
-    val_elems.push_back(safe_zero(val_type));
-
-  exprt length =
-    from_integer(static_cast<long long>(pairs.size()), signedbv_typet{64});
-
-  // Over-capacity dict literal: the key scan elsewhere is bounded by the
-  // constant PYTHON_MAX_DICT_SIZE, so a longer dict would silently miss
-  // entries at indices >= cap. Report python-model-bound + cut at
-  // construction (covers every downstream read AND iteration), and cap the
-  // arrays/length so the emitted struct stays well-formed on the cut path.
-  if(pairs.size() > static_cast<std::size_t>(PYTHON_MAX_DICT_SIZE))
-  {
-    emit_count_capacity_guard(
-      pending_checks, length, PYTHON_MAX_DICT_SIZE, get_location(expr));
-    key_elems.resize(PYTHON_MAX_DICT_SIZE);
-    val_elems.resize(PYTHON_MAX_DICT_SIZE);
-    length = from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64});
-  }
-
-  return struct_exprt{
-    {length,
-     array_exprt{std::move(key_elems), keys_arr_type},
-     array_exprt{std::move(val_elems), vals_arr_type}},
-    dict_type};
+  // Determine key/value types, dedup equal constant keys, build the struct.
+  return build_dict_value(std::move(pairs), get_location(expr));
 }

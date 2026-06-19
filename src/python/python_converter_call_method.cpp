@@ -311,6 +311,35 @@ std::optional<exprt> python_convertert::try_method_call(
     if(is_node_type(obj_node, "Name"))
     {
       std::string obj_name = json_string(json_member(obj_node, "id"));
+      // PLR §6.4: dict.fromkeys(iterable[, value]) — a new dict mapping each
+      // key from the iterable to `value` (default None). Build (key, value)
+      // pairs and reuse build_dict_value, which de-duplicates equal constant
+      // keys. Handles a list-literal iterable (the common case); other
+      // iterables fall through to the default dispatch.
+      if(obj_name == "dict" && method_name == "fromkeys" && args.is_array())
+      {
+        auto it = as_array(args).begin();
+        auto a_end = as_array(args).end();
+        if(it != a_end && is_node_type(*it, "List"))
+        {
+          exprt value;
+          auto vit = std::next(it);
+          if(vit != a_end)
+            value = convert_expression(*vit);
+          if(value.is_nil())
+            value = python_none_value();
+          std::vector<std::pair<exprt, exprt>> pairs;
+          const jsont &elts = json_member(*it, "elts");
+          if(elts.is_array())
+            for(const auto &e : as_array(elts))
+            {
+              exprt k = convert_expression(e);
+              if(!k.is_nil())
+                pairs.emplace_back(k, value);
+            }
+          return build_dict_value(std::move(pairs), get_location(expr));
+        }
+      }
       // PLR §4.4.2: int.from_bytes(b, byteorder, *, signed=False)
       //             int.to_bytes(self, length, byteorder, *, signed=False)
       // Class-method dispatch on the int built-in. The byteorder
