@@ -681,11 +681,23 @@ omits). *Validated:* `assign-fail` / `import-as-fail` now soundly FAIL,
 `snippet-undefined-var` flipped to expect the NameError, new
 `nameerror-bound-forms-ok` locks in that every binding form is not
 misflagged; full `regression/python` + corpus sweep at **0 regressions**.
-Niche cousins still open (own fixes, not this root): `global-decl-fail`
-(`SyntaxError`: name used prior to `global` declaration — a parse-time
-check), `return9-fail` (undefined name in a *return annotation*, evaluated
-at a different site than `get_var`), and `enumerate()` arg-count
-(`TypeError`, builtin variant of the call-signature validation).
+Niche cousins still open (own fixes, not this root): `return9-fail`
+(undefined name in a *return annotation*, evaluated at a different site than
+`get_var` — needs def-time annotation evaluation + `from __future__ import
+annotations` tracking, a distinct type-vs-runtime concern; deferred).
+
+**Cousins LANDED 2026-06-19** (soundness-direction, 0 sweep regressions):
+* **`enumerate()` arity** — `enumerate()` with no iterable, or >2 positional
+  args, now raises an uncaught `TypeError` (`enumerate3/4_fail`).
+* **Compile-only SyntaxErrors** — a name used prior to its `global`/
+  `nonlocal` declaration, a repeated keyword argument, and a duplicate
+  parameter are genuine errors that `ast.parse` accepts but the compiler
+  rejects; the AST server (daemon + embedded fallback) now runs `compile()`
+  and surfaces ONLY this allow-list as a parsing error
+  (`global-decl-fail`, `function-keyword-repeated-fail`), while
+  deliberately tolerating top-level `await` and `break`/`return` in
+  `except*`. Regressions: `enumerate-missing-iterable`,
+  `syntaxerror-name-before-global`, `syntaxerror-repeated-keyword`.
 
 **Accepted-by-design (not bugs):** `float(input())` / `int(input())`
 `ValueError` are covered by the opt-in `--python-raising-ops-check`
