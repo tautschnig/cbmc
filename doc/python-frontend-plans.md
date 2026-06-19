@@ -239,6 +239,28 @@ robustness, then capability; difficulty is noted where high.
 >     unpack never reflected runtime mutations). Sound (spurious failure, not a
 >     false proof), rare. The real fix is `**d` unpacking from the *runtime*
 >     dict (bounded key scan) rather than the conversion-time literal.
+> - **P0/P1 pass (2026-06-19).**
+>   - *R1 cross-module global-dict mutation — FIXED (`process_imported_module`
+>     now registers Dict/List-literal module globals, not just Constants), so
+>     `from m import state, mutate; mutate()` then a read of `state` is sound.*
+>   - *Sweep re-scan: no new false proofs* (the `SUCCESSFUL`-where-`FAILED`
+>     DIFFs are a subset of the original 21, all triaged).
+>   - *Call-signature false-proof whole-group — FIXED.* Signature validation
+>     was fragmented (constructors/methods used `validate_call_signature`
+>     [too-many + unknown-kwarg only]; free functions had a partial inline
+>     check) and missed missing-required-positional, multiple-values, and
+>     missing-required-keyword-only — a cluster of false proofs
+>     (`github_3010_*`, `github_3015_*`: CPython raises `TypeError`/`SyntaxError`,
+>     we verified). Unified: `function_required_positional` +
+>     `function_required_kwonly` (free fns + methods); the missing/multiple/
+>     kwonly checks added to `validate_call_signature`; free-function calls
+>     routed through it (bound-method `m=obj.f; m()` excused via leading-`self`
+>     detection). ~9 false proofs eliminated; 0 regressions. **Note:** these
+>     `_fail` tests expect ESBMC's *exact* `TypeError:`/`SyntaxError:` message,
+>     so the sweep verdict stays DIFF (our generic uncaught-`TypeError` FAILED
+>     doesn't match the string) — the soundness win is not reflected in PASS.
+>     Residual: `*args`+required-kwonly combos (vararg guard skips kwonly);
+>     `github_3560_1`-style `split` precision (list-valued, hard) unchanged.
 
 > **Refreshed status (2026-06-16).** **P0 (soundness) is empty.** The
 > **regex/string precision track is now largely complete on the native
