@@ -704,6 +704,22 @@ skipped), main-module only; module-level defs handled in
   deliberately tolerating top-level `await` and `break`/`return` in
   `except*`. Regressions: `enumerate-missing-iterable`,
   `syntaxerror-name-before-global`, `syntaxerror-repeated-keyword`.
+* **`range()` arg-count + zero-step** — 0 or >3 positional args →
+  `TypeError`; a zero step (literal or symbolic) → `ValueError`. A shared
+  `emit_range_arg_checks()` is used at both range sites (the
+  `for ... in range(...)` lowering and the `range()` builtin handler).
+  Flips `range2/20/21/22/23-fail`. Regressions: `range-step-zero`,
+  `range-bad-arg-count`.
+
+> **Whole-group observation (builtin argument/value validation).** Four
+> landed checks now share one shape — uncaught `TypeError`/`ValueError`
+> when a call violates a callable's contract: unified call-signature
+> validation (user functions), `complex()`, `enumerate()`, and `range()`.
+> Each builtin's rules are bespoke (range step≠0, enumerate iterable
+> required, …), so a single generic table is not obviously worthwhile yet;
+> but if more builtins need it, a declarative per-builtin arg-spec
+> (count-range + value constraints) feeding one emitter would consolidate
+> them. Recorded so the pattern is recognised, not re-derived.
 
 **Accepted-by-design (not bugs):** `float(input())` / `int(input())`
 `ValueError` are covered by the opt-in `--python-raising-ops-check`
