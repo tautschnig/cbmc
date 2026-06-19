@@ -593,6 +593,11 @@ private:
   /// "multiple values for argument". Populated alongside
   /// function_max_positional.
   std::map<irep_idt, std::size_t> function_required_positional;
+  /// Names of REQUIRED keyword-only params (kwonly args with no
+  /// default). A call not supplying one by keyword raises TypeError
+  /// "missing required keyword-only argument". Populated alongside
+  /// function_max_positional.
+  std::map<irep_idt, std::set<std::string>> function_required_kwonly;
   std::set<irep_idt> function_has_kwargs;
   // Default parameter values evaluated at definition time
   // Maps (function_name, param_index) → default value expression

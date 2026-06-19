@@ -794,9 +794,34 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     const jsont &kwonlyargs = json_member(args_node, "kwonlyargs");
     if(kwonlyargs.is_array())
     {
+      // kw_defaults is parallel to kwonlyargs; a null entry means the
+      // keyword-only arg has NO default and is therefore required.
+      const jsont &kw_defaults = json_member(args_node, "kw_defaults");
+      std::size_t kw_idx = 0;
       for(const auto &arg : as_array(kwonlyargs))
       {
         std::string param_name = json_string(json_member(arg, "arg"));
+        if(exact_signature)
+        {
+          bool has_default = false;
+          if(kw_defaults.is_array())
+          {
+            std::size_t j = 0;
+            for(const auto &d : as_array(kw_defaults))
+            {
+              if(j == kw_idx)
+              {
+                has_default = !d.is_null();
+                break;
+              }
+              ++j;
+            }
+          }
+          if(!has_default)
+            function_required_kwonly[irep_idt{"python::" + qualified_func_name}]
+              .insert(param_name);
+        }
+        ++kw_idx;
         typet ptype;
         const jsont &annot = json_member(arg, "annotation");
         if(!annot.is_null())
@@ -3178,6 +3203,34 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             m_defaults.is_array() ? as_array(m_defaults).size() : 0;
           function_required_positional[method_key] =
             parameters.size() > m_ndef ? parameters.size() - m_ndef : 0;
+          // Required keyword-only params (no kw_default) for methods.
+          const jsont &m_kwonly = json_member(args_node, "kwonlyargs");
+          const jsont &m_kwdef = json_member(args_node, "kw_defaults");
+          if(m_kwonly.is_array())
+          {
+            std::size_t ki = 0;
+            for(const auto &ka : as_array(m_kwonly))
+            {
+              bool has_default = false;
+              if(m_kwdef.is_array())
+              {
+                std::size_t j = 0;
+                for(const auto &d : as_array(m_kwdef))
+                {
+                  if(j == ki)
+                  {
+                    has_default = !d.is_null();
+                    break;
+                  }
+                  ++j;
+                }
+              }
+              if(!has_default)
+                function_required_kwonly[method_key].insert(
+                  json_string(json_member(ka, "arg")));
+              ++ki;
+            }
+          }
         }
 
         // *args for class methods
