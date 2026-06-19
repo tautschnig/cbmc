@@ -99,6 +99,35 @@ builtin_protocol_attr(const typet &t, const std::string &n)
   return std::nullopt;
 }
 
+bool python_convertert::emit_range_arg_checks(
+  const jsont &args_json,
+  const exprt *step_value)
+{
+  std::size_t n_pos = 0;
+  bool has_starred = false;
+  if(args_json.is_array())
+    for(const auto &a : as_array(args_json))
+    {
+      if(is_node_type(a, "Starred"))
+        has_starred = true;
+      else
+        ++n_pos;
+    }
+  // PLR §6.10.2: range() takes 1..3 positional args.
+  if(!has_starred && (n_pos == 0 || n_pos > 3))
+  {
+    emit_conditional_exception(true_exprt{}, "TypeError");
+    return true;
+  }
+  // PLR: a zero step is a ValueError ("range() arg 3 must not be zero").
+  // Unconditional for a literal 0; conditional on the zero path otherwise.
+  if(step_value != nullptr)
+    emit_conditional_exception(
+      equal_exprt{*step_value, from_integer(0, step_value->type())},
+      "ValueError");
+  return false;
+}
+
 std::optional<exprt> python_convertert::try_builtin_call(
   const jsont &expr,
   const std::string &func_name,
@@ -2554,6 +2583,11 @@ std::optional<exprt> python_convertert::try_builtin_call(
   // PLib builtins: range() as expression → list
   else if(func_name == "range")
   {
+    // PLR §6.10.2: arity (0 or >3 positional -> TypeError). The zero-step
+    // ValueError is emitted after the step is converted, below.
+    if(emit_range_arg_checks(args, nullptr))
+      return side_effect_expr_nondett{
+        python_list_type(python_int_type()), get_location(expr)};
     if(args.is_array() && !as_array(args).empty())
     {
       exprt start, stop, step;
@@ -2579,6 +2613,10 @@ std::optional<exprt> python_convertert::try_builtin_call(
       start = safe_typecast(start, python_int_type());
       stop = safe_typecast(stop, python_int_type());
       step = safe_typecast(step, python_int_type());
+      // PLR §6.10.2: zero step -> ValueError (literal or symbolic).
+      if(as_array(args).size() >= 3)
+        emit_conditional_exception(
+          equal_exprt{step, from_integer(0, step.type())}, "ValueError");
 
       typet lt = python_list_type(python_int_type());
       static unsigned range_ctr = 0;

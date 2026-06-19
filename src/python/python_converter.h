@@ -1587,6 +1587,16 @@ private:
   /// flag is set. See `python_raising_ops_check`.
   void emit_may_raise(const char *exc_type);
 
+  /// PLR §6.10.2: validate `range()` arguments. Emits (into pending_checks)
+  /// an uncaught TypeError when the positional-arg count is invalid (0, or
+  /// >3) and — when `step_value` is supplied (the 3-arg form) — a
+  /// ValueError conditional on `step == 0` (CPython: "range() arg 3 must
+  /// not be zero"; fires unconditionally for a literal 0, and on the
+  /// zero path for a symbolic step). Returns true if a fatal arity error
+  /// was emitted (caller should short-circuit). Shared by the `range()`
+  /// builtin handler and the `for ... in range(...)` lowering.
+  bool emit_range_arg_checks(const jsont &args_json, const exprt *step_value);
+
   /// Validate a call against the callee's recorded exact signature
   /// (PLR §8.7): emit TypeError for too-many positional arguments or
   /// an unexpected keyword. `implicit_self` is the number of leading

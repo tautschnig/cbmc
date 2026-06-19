@@ -657,6 +657,21 @@ codet python_convertert::convert_for(const jsont &stmt)
     json_string(json_member(json_member(iter, "func"), "id")) == "range")
   {
     const jsont &range_args = json_member(iter, "args");
+    // PLR §6.10.2: range() takes 1..3 positional args; 0 or >3 is a
+    // TypeError raised before the loop runs. Capture the emitted check
+    // into the loop preamble (pending_checks won't survive body
+    // conversion).
+    {
+      auto saved_pc = pending_checks;
+      pending_checks.clear();
+      bool fatal = emit_range_arg_checks(range_args, nullptr);
+      code_blockt errb;
+      for(auto &c : pending_checks)
+        errb.add(c);
+      pending_checks = saved_pc;
+      if(fatal)
+        return finalize_for(std::move(errb));
+    }
     if(!range_args.is_array() || as_array(range_args).empty())
       return finalize_for(code_skipt{});
 
@@ -740,6 +755,19 @@ codet python_convertert::convert_for(const jsont &stmt)
     while_stmt.add_source_location() = loc;
 
     code_blockt result;
+    // PLR §6.10.2: a zero step raises ValueError ("range() arg 3 must not
+    // be zero") — unconditional for a literal 0, conditional on the zero
+    // path for a symbolic step. Prepend so it fires before the loop.
+    if(as_array(range_args).size() >= 3)
+    {
+      auto saved_pc = pending_checks;
+      pending_checks.clear();
+      emit_conditional_exception(
+        equal_exprt{step, from_integer(0, int_type)}, "ValueError");
+      for(auto &c : pending_checks)
+        result.add(c);
+      pending_checks = saved_pc;
+    }
     result.add(std::move(init));
     result.add(std::move(while_stmt));
     return finalize_for(std::move(result));
