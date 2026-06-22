@@ -1612,6 +1612,17 @@ So this single channel stays a known, corpus-invisible residual false
 proof. (The doc previously overstated the guard as covering all unsound
 patterns; this audit corrects that.)
 
+> **Unified extraction-aliasing root (2026-06-22).** The `r = g[i]; mutate
+> r` pattern here is the *same* residual as `v = a[k]; v.append(...)` for
+> dicts (d3). **Direct** nested mutation now works for both containers via
+> lvalue slots (lists already; dicts per
+> [dict-value-byref](python-frontend-dict-value-byref-plan.md)); the shared
+> residual is **extraction-then-mutate**, whose fix is
+> *by-reference-at-extraction* (bind the LHS as a reference to the owning
+> container's slot — distinct from the untenable byref-at-construction).
+> See the dict-value-byref doc for the design + the §0-guard-interaction
+> caveats; it is a single mechanism that would close both residuals.
+
 ### List-precision cluster — implementable plan (empirically triaged 2026-06-19) {#list-precision}
 
 Triage of the spurious-failure DIFFs (`list-sort7`, `list_extend12`,

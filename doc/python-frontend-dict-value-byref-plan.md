@@ -116,14 +116,42 @@ nested-list-aliasing residual and dict-value-by-reference, rather than two
 separate point fixes. Option 2 (return the owning container's lvalue slot,
 no separate object) is the most direct expression of this for the dict case.
 
-## Residual sub-problem: empty-dict value typing
+**Confirmed unified picture (2026-06-22).** The lvalue-slot view splits the
+problem cleanly into two cases, identical for lists and dicts:
 
-`dict_setdefault_list` starts with `a = {}` (empty), which infers an `int`
-value type, so `setdefault(1, [])` storing a list mismatches (the "uncaught
-exception"). Even with value-by-reference, an empty `{}` whose values are
-later lists needs its value type inferred as list/`python_value` (from
-usage, or by defaulting empty-dict values to `python_value`). Prerequisite
-for the `setdefault`-of-list case specifically.
+| pattern | list | dict |
+|---|---|---|
+| **direct** mutation `c[i].append(...)` | works (subscript already returns the `data[i]` lvalue) | **works now** (subscript/setdefault return the `values[idx]` lvalue, int keys) |
+| **extraction** `r = c[i]; r.append(...)` | residual (L2 below) | residual (d3) |
+
+So **direct** nested mutation is solved for both containers via lvalue
+slots. The single remaining shared residual is **extraction-then-mutate**:
+
+```python
+g = [[0]]; r = g[0]; r.append(5); assert len(g[0]) == 2   # L2: wrongly FAILS
+a = {1:[9]}; v = a[1]; v.append(7); assert len(a[1]) == 2  # d3: wrongly FAILS
+```
+
+`r = c[i]` copies the slot's *value* into `r`, so the mutation through `r`
+is not observed on `c[i]`. The fix is **by-reference-at-extraction**: when
+the RHS of an assignment is a mutable-element subscript lvalue, bind the LHS
+as a reference to that slot (`make_python_value(LIST/DICT, &c.<arr>[i])`),
+so `r` aliases the slot. This is **distinct from** the byref-at-construction
+substrate §0 found untenable — it reuses the existing slot, no new object.
+**Caveat:** it lives in the soundness-delicate §0 nested-aliasing guard
+area, so it must (a) keep the slot address stable (capture the index at
+assignment), (b) supersede the model-bound guard only where the alias is
+exact, and (c) be sweep-validated against the §0 guard tests for new false
+proofs. Scoped as a careful follow-up.
+
+## Residual sub-problem: empty-dict value typing — RESOLVED (2026-06-22)
+
+`dict_setdefault_list` started with `a = {}` (empty), inferring an `int`
+value type so `setdefault(1, [])` mismatched. The empty-container inference
+prescan now infers a pending empty dict's key/value types from a
+`a.setdefault(k, default).<method>(...)` use (a List default → a list value
+type); combined with the int-keyed lvalue-slot setdefault, `dict_setdefault_list`
+verifies SUCCESSFUL (DIFF→PASS, 0 sweep regressions).
 
 ## Recommendation / phasing
 
