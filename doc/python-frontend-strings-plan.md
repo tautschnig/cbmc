@@ -41,12 +41,20 @@ string/regex gap.
 | negated-regex membership in multi-assert (`re4`/`re11`) | refined | slow/timeout; native precise; presence-based `Match` truthiness is the recovery |
 | regex literal-symbolic patterns, deep refined regex axioms | refined | fold into the native backend |
 | `complex(<non-literal string>)` parse (`"5+6j"`→(5,6)) | both | needs runtime string→number parsing; literal strings already fold. Moved here from the complex cluster (it is string-parsing, not complex arithmetic). The remaining 2 failing asserts in `complex_constructor_extended`. |
+| **native `nondet_string(N)` length** | native | **FIXED 2026-06-22** — the native path ignored the size arg (length only bounded to `[0,MAX]`, so `s` could be `""`), spuriously FAILing length-dependent asserts that pass on refined (`string-nondet-length-success`). Now constrains `len == N` (`string-smt-native-nondet-length`). |
+| **native `== ""` (empty-string literal)** | native | **ROBUSTNESS BUG found 2026-06-22** — comparing a string to the empty literal `""` emits malformed SMT2 (`VERIFICATION ERROR`, "non-Boolean value for variable B2"); `!= ""` and `== "<non-empty>"` are fine. Sound (errors, never a false proof). NO PLAN yet — likely the empty-`smt_string`-constant lowering in `smt2_conv`'s equality path. |
+| **native case-transform + `len()` perf** | native | **PERF cliff found 2026-06-22** — `upper`/`lower`/`casefold`/`swapcase`/`capitalize`/`title` build an `O(PYTHON_MAX_STRING_LENGTH)` `str.++` concat chain; a `len()` query over that on an *unconstrained* symbolic string times out in both cvc5 and z3 (constrained content is fast). Corpus-invisible today. A length-preserving encoding (assert `len(result)==len(input)` + per-position char map, avoiding the deep concat) would close it. |
 
 **Cross-cutting conclusion:** one-off refined-string axioms hit
 diminishing returns; the native backend is the comprehensive answer for
 every residual, and is the recommended route for new string precision
 work. Keep refined sound + at parity for the default sweep; do not
-downgrade refined to gain native.
+downgrade refined to gain native. **Caveat (2026-06-22):** the native
+backend is corpus-complete but **not** residual-free — the three native
+rows above (empty-string-`==` SMT2 error, case-transform+`len()` perf
+cliff) and the now-fixed `nondet_string` length divergence were found by
+direct probing; native is sound throughout (errors/timeouts, never false
+proofs).
 
 ## Linked design records (deep-dives)
 
