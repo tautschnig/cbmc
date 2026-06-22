@@ -1500,7 +1500,14 @@ bool python_convertert::convert()
         {
           auto mit = class_method_names.find(cn);
           if(mit != class_method_names.end() && mit->second.count(attr))
-            continue; // method shadowing -- deferred
+          {
+            // Method shadowing: an instance attribute shadows a same-named
+            // method. Declare a python_value storage field (via
+            // dynamic_class_attrs) AND record it as a method-shadow attr so
+            // the read path uses the runtime shadow ternary with a sound
+            // nondet fallback. (Previously skipped/deferred.)
+            method_shadow_attrs[cn].insert(attr);
+          }
           dynamic_class_attrs[cn].insert(attr);
         }
       };

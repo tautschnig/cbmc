@@ -534,6 +534,17 @@ private:
   /// class def picks the discovered names up alongside the
   /// method-body scan.
   std::map<std::string, std::set<std::string>> dynamic_class_attrs;
+  /// PLR §3.3.2 / §9.4: per-class set of attribute names that are BOTH a
+  /// method name AND assigned as an instance attribute somewhere
+  /// (`c.m = v` where `m` is a method) — i.e. a method shadowed by an
+  /// instance attribute (a non-data descriptor shadow). Such names get a
+  /// `python_value` storage field + a `__shadow_<attr>` flag; a bare read
+  /// `c.m` resolves via the runtime shadow ternary
+  /// `if(__shadow_m) instance.m else <nondet>` (the unshadowed fallback is
+  /// a sound nondet over-approximation — unshadowed reads of a method as a
+  /// VALUE are rare and a nondet cannot produce a false proof). Method
+  /// CALLS `c.m()` are unaffected (they resolve via `try_method_call`).
+  std::map<std::string, std::set<std::string>> method_shadow_attrs;
   /// Per-class set of method names that are declared with
   /// @property. Attribute reads of these names call the method
   /// with self as the single argument (PLR §3.3.2).
