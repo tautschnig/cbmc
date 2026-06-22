@@ -1851,9 +1851,12 @@ are landed.
   `c.m()` are unaffected). Reuses the existing class-level-data-attr
   shadow-fallback ternary, extended to non-data descriptors. 0 sweep
   regressions.
-- **Custom-descriptor `__set__` + stateful `__get__`.** *Fix shape:* both
-  need an instance-`__dict__`-as-storage model (class-object construction),
-  which is a larger substrate than the current per-field struct.
+- **Custom-descriptor `__set__` + stateful `__get__`.** **`__set__`
+  write-routing LANDED (2026-06-22):** `c.x = v` on a data descriptor now
+  calls `desc.__set__(descriptor, obj, v)`, enforcing the descriptor's
+  invariants/side-effects (`data-descriptor-set`). *Open:* shared
+  per-instance state read-back needs descriptor-method monomorphisation —
+  see [phase 3](#descriptors) below + `data-descriptor-state-knownbug`.
 
 **Instance-`__dict__` substrate — PLANNED (2026-06-15 spike).** Today an
 instance is a fixed CBMC struct whose fields are the attributes discovered by
@@ -1903,9 +1906,34 @@ remainder, so common code is unaffected. **Phases:**
    optional precision follow-up; the nondet is already sound), and (c) the
    runtime-`__dict__` method fallback (phase 3). Higher-order bound-method
    values (b) are done.
-3. **Custom data descriptors** — `__set__`/stateful `__get__` via class-object
-   descriptor instances whose storage is the instance `__dict__`. Largest step
-   (needs class objects carrying descriptor instances).
+3. **Custom data descriptors** — `__set__` / stateful `__get__`.
+   **Write-routing LANDED (2026-06-22).** A class attribute bound to an
+   instance whose class defines `__set__` is a DATA descriptor; `c.x = v`
+   now routes through `emit_descriptor_set` → `desc.__set__(descriptor,
+   obj, v)` (mirroring the existing read-side `emit_descriptor_get`
+   → `__get__`), so the descriptor body runs on assignment and its
+   invariants/side-effects are enforced (regression `data-descriptor-set`).
+   **Open — shared per-instance state** (`__set__` stores `obj._v`,
+   `__get__` reads it back; `data-descriptor-state-knownbug`): the
+   descriptor methods receive `obj` as a tagged `python_value`, whose
+   `obj._v` does **not** alias the instance's `_v`. The byref instance-field
+   path works only when the callee is **monomorphised** to the concrete
+   class (the [§12](#higher-order) higher-order clone path specialises a
+   `python_value` param to the call-site type). So phase 3's completion =
+   **monomorphise the descriptor methods' `obj` parameter to the instance
+   class** (re-convert `__get__`/`__set__` with `obj: C`), reusing/adapting
+   the HOF clone core (which today skips `self`-methods). This is the
+   well-scoped remaining step.
+
+   **Whole-group root.** "A generic `python_value` parameter that holds an
+   instance cannot read/write that instance's *fields* by reference; only
+   monomorphisation to the concrete class makes field access alias" is a
+   *group* root, not descriptor-specific — it also governs any function/
+   method that receives an instance as an `Any`/`python_value` param and
+   mutates its attributes. A general lever (monomorphise instance-typed
+   `python_value` params at the call site, or make the tagged-`python_value`
+   attribute read/write alias through `__class_ptr`) would close descriptors
+   *and* that broader class together.
 
 **Risk:** the attribute-access reroute is pervasive; mitigated by the hybrid
 fast path. This substrate also subsumes `setattr`/`getattr` with dynamic names.
