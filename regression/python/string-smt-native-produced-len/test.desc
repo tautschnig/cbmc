@@ -1,0 +1,12 @@
+CORE
+main.py
+--cvc5 --python-smt-strings
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+Native SMT-String back-end: exact len() over produced strings (concat +, +=,
+f-string, * repeat) and sound directional length bounds for replace. Regression
+for the int2bv length-family perf cliff (produced-string length hints).

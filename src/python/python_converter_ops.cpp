@@ -760,8 +760,18 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     if(use_smt_string_native)
     {
       // Native SMT-String back-end (Plan A): s + t is a native str.++; the
-      // result is an SMT String carrying its own length (no truncation).
-      return string_concat(left, right);
+      // result is an SMT String carrying its own length (no truncation). Wrap
+      // it with an exact length hint (len(left)+len(right)) so that an exact
+      // len() relation over the result is decidable -- without the hint the
+      // solver must reason across the int2bv(str.len ...) boundary, which
+      // times out (`len(s + t) == len(s) + len(t)` would not discharge).
+      const exprt concat = string_concat(left, right);
+      return bind_string_length_hint(
+        concat,
+        plus_exprt{
+          native_or_member_string_length(left),
+          native_or_member_string_length(right)},
+        get_location(expr));
     }
     // Fallback: use string solver for non-constant concat
     {
@@ -886,7 +896,14 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         exprt result = str_op;
         for(long long i = 1; i < n; ++i)
           result = string_concat(result, str_op);
-        return result;
+        // Exact length hint: len(s * n) == len(s) * n, so a len() relation over
+        // the repeated string is decidable (avoids int2bv-over-sum timeouts).
+        return bind_string_length_hint(
+          result,
+          mult_exprt{
+            native_or_member_string_length(str_op),
+            from_integer(n, signedbv_typet{64})},
+          get_location(expr));
       }
     }
   }

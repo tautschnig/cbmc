@@ -3859,7 +3859,15 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       // Native SMT-String back-end: s += t  ->  s = str.++(s, t).
       if(lhs.id() == ID_symbol)
         string_constants.erase(to_symbol_expr(lhs).get_identifier());
-      return code_frontend_assignt{lhs, string_concat(lhs, rhs)};
+      const exprt concat = string_concat(lhs, rhs);
+      return code_frontend_assignt{
+        lhs,
+        bind_string_length_hint(
+          concat,
+          plus_exprt{
+            native_or_member_string_length(lhs),
+            native_or_member_string_length(rhs)},
+          lhs.source_location())};
     }
     auto to_string_struct = [&](const exprt &s)
     {

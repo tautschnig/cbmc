@@ -1846,6 +1846,19 @@ private:
   /// Concatenation a + b (returns a string of the active representation).
   exprt string_concat(const exprt &a, const exprt &b);
 
+  /// Native SMT-String back-end: alias a produced native string to a fresh
+  /// symbol carrying an explicit length hint `len(result) == length_hint`, so
+  /// exact `len()` relations over the result are decidable without the
+  /// solver having to reason across the `int2bv(str.len ...)` boundary (which
+  /// times out for `int2bv(a+b)` vs `bvadd(int2bv a, int2bv b)`). Sound: under
+  /// the per-string `str.len < 2^63` bound the hint is implied by the alias.
+  /// \p produced must be an `smt_string`; \p length_hint is its length as a
+  /// python int.
+  exprt bind_string_length_hint(
+    const exprt &produced,
+    const exprt &length_hint,
+    const source_locationt &loc);
+
   /// Substring s[start : start+len] (returns a string).
   exprt string_substr(const exprt &s, const exprt &start, const exprt &len);
 
