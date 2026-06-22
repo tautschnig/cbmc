@@ -1,10 +1,14 @@
 # Python frontend: dict-VALUE-by-reference (mutable values mutated in place)
 
-Status: **DESIGN + SPIKE (2026-06-19).** Feasibility confirmed; a sound,
-non-regressing implementation needs per-instance value identity (below).
+Status: **PARTIALLY LANDED (2026-06-22).** Option 2 (lvalue value slots)
+implemented for **direct (int) keys**: `a[k].append(...)` and
+`setdefault(k, default).append(...)` now mutate the stored list/dict in
+place, with **0 sweep regressions**. Residuals: string-keyed dicts (kept
+read-only — the matched index there depends on a string-solver predicate),
+the `v = a[k]; v.append(...)` extraction-aliasing case (same root as the §0
+nested-list residual), and empty-`{}` value typing (`dict_setdefault_list`).
 Distinct from [§5 dict pass-by-reference](python-frontend-plan.md#dict-byref)
-(the *dict itself* as a by-reference parameter — RESOLVED). This is about a
-mutable **value** stored inside a dict being mutated in place.
+(the *dict itself* as a by-reference parameter — RESOLVED).
 
 ---
 

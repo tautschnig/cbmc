@@ -1793,11 +1793,13 @@ they are **distinct features**, not one root:
   `{}` even infers an `int` value type so storing a list mismatches). A
   correct fix is the dict-value-by-reference representation (mutable values
   behind a pointer, like the list-element `escaped_mutables` mechanism),
-  see the design+spike in
-  [dict-value-byref](python-frontend-dict-value-byref-plan.md) — feasibility
-  is confirmed (the by-ref mechanism works; perf is fine), the remaining work
-  is per-instance value identity (return the owning dict's values[] lvalue
-  slot). Not a point fix.
+  see
+  [dict-value-byref](python-frontend-dict-value-byref-plan.md): Option 2
+  (lvalue value slots) is **LANDED for int keys** (`a[k].append`,
+  `setdefault(k,d).append` now mutate in place, 0 regressions). The
+  remaining `dict_setdefault_list` failure is the empty-`{}` value-typing
+  residual (`a={}` infers an int value type); string-keyed dict-value
+  mutation and `v=a[k]` extraction-aliasing are documented residuals.
 - **`set_from_param` — NOT a set fix; multi-call constant-fold conflation
   (characterized 2026-06-19).** `set(<str>)` itself works (constant-folds a
   string to a unique-char bitmap; `len(set("abc"))==3`, and a single
