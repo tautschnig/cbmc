@@ -1777,8 +1777,15 @@ exprt python_convertert::emit_descriptor_get(
   if(mty.parameters().size() >= 2)
   {
     exprt obj = obj_ptr;
-    if(obj.type() != mty.parameters()[1].type())
-      obj = typecast_exprt{obj, mty.parameters()[1].type()};
+    const typet &ot = mty.parameters()[1].type();
+    // An unannotated `obj` param is python_value: box the instance
+    // pointer as a CLASS value so `obj.<field>` inside the descriptor
+    // method aliases the real instance storage (shared between
+    // __get__ and __set__).
+    if(is_python_value_type(ot))
+      obj = make_python_value(python_type_tagt::CLASS, obj_ptr);
+    else if(obj.type() != ot)
+      obj = typecast_exprt{obj, ot};
     args.push_back(obj);
   }
   if(mty.parameters().size() >= 3)
@@ -1789,6 +1796,86 @@ exprt python_convertert::emit_descriptor_get(
     side_effect_expr_function_callt{
       msym->symbol_expr(), args, mty.return_type(), loc}});
   return std::move(tv);
+}
+
+std::optional<codet> python_convertert::emit_descriptor_set(
+  const std::string &class_name,
+  const std::string &attr,
+  const exprt &obj_ptr,
+  const exprt &value,
+  const source_locationt &loc)
+{
+  std::vector<std::string> chain;
+  auto mro_it = class_mro.find(class_name);
+  if(mro_it != class_mro.end())
+    chain = mro_it->second;
+  if(chain.empty())
+    chain.push_back(class_name);
+
+  std::string desc_cls;
+  for(const std::string &anc : chain)
+  {
+    auto dit = class_descriptor_attrs.find(anc);
+    if(dit != class_descriptor_attrs.end())
+    {
+      auto ait = dit->second.find(attr);
+      if(ait != dit->second.end())
+      {
+        desc_cls = ait->second;
+        break;
+      }
+    }
+  }
+  if(desc_cls.empty())
+    return std::nullopt;
+  // A DATA descriptor defines __set__; without it the assignment is a
+  // plain (shadowing) store, not a descriptor write.
+  const symbolt *ssym =
+    symbol_table.lookup(irep_idt{"python::" + desc_cls + "::__set__"});
+  if(ssym == nullptr || ssym->type.id() != ID_code)
+    return std::nullopt;
+  const code_typet &mty = to_code_type(ssym->type);
+  // descriptor instance = the owning class object's storage for attr.
+  auto owner_obj = mro_owner_class_object(class_name, attr);
+  auto dc_it = class_types.find(desc_cls);
+  if(!owner_obj || dc_it == class_types.end())
+    return std::nullopt;
+  exprt self_desc =
+    address_of_exprt{member_exprt{*owner_obj, attr, dc_it->second}};
+
+  // Args: (descriptor self, obj, value), coerced to __set__'s signature.
+  exprt::operandst args;
+  if(!mty.parameters().empty())
+    args.push_back(
+      self_desc.type() == mty.parameters()[0].type()
+        ? self_desc
+        : typecast_exprt{self_desc, mty.parameters()[0].type()});
+  if(mty.parameters().size() >= 2)
+  {
+    exprt obj = obj_ptr;
+    const typet &ot = mty.parameters()[1].type();
+    // An unannotated `obj` param is python_value: box the instance
+    // pointer as a CLASS value so `obj.<field>` inside the descriptor
+    // method aliases the real instance storage (shared between
+    // __get__ and __set__).
+    if(is_python_value_type(ot))
+      obj = make_python_value(python_type_tagt::CLASS, obj_ptr);
+    else if(obj.type() != ot)
+      obj = typecast_exprt{obj, ot};
+    args.push_back(obj);
+  }
+  if(mty.parameters().size() >= 3)
+  {
+    exprt v = value;
+    const typet &vt = mty.parameters()[2].type();
+    if(v.type() != vt)
+      v = is_python_value_type(vt) && !is_python_value_type(v.type())
+            ? wrap_value(v)
+            : safe_typecast(v, vt);
+    args.push_back(v);
+  }
+  return code_expressiont{side_effect_expr_function_callt{
+    ssym->symbol_expr(), args, mty.return_type(), loc}};
 }
 
 // §11b: dispatch __getattr__ when normal attribute lookup fails.
