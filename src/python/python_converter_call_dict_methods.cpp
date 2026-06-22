@@ -501,8 +501,25 @@ std::optional<exprt> python_convertert::try_dict_method(
     }
     symbol_exprt result = symbol_table.lookup_ref(ri).symbol_expr();
 
+    // Slot index (found key's index, or the insert position) — used to
+    // return the value as an lvalue SLOT for mutable-container values
+    // (dict-value-by-reference, Option 2) so setdefault(k, []).append(...)
+    // mutates the stored list in place.
+    std::string xn = "__sd_idx_" + std::to_string(sd_ctr - 1);
+    irep_idt xi{qualify_name(xn)};
+    if(symbol_table.lookup(xi) == nullptr)
+    {
+      symbolt xs{xi, signedbv_typet{64}, "python"};
+      xs.base_name = xn;
+      xs.is_lvalue = true;
+      xs.is_state_var = true;
+      symbol_table.add(xs);
+    }
+    symbol_exprt slot_idx = symbol_table.lookup_ref(xi).symbol_expr();
+
     pending_checks.push_back(code_frontend_assignt{found, false_exprt{}});
     pending_checks.push_back(code_frontend_assignt{result, default_val});
+    pending_checks.push_back(code_frontend_assignt{slot_idx, length});
     for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
     {
       exprt idx = from_integer(i, signedbv_typet{64});
@@ -511,6 +528,7 @@ std::optional<exprt> python_convertert::try_dict_method(
       code_blockt update;
       update.add(code_frontend_assignt{found, true_exprt{}});
       update.add(code_frontend_assignt{result, index_exprt{vals_arr, idx}});
+      update.add(code_frontend_assignt{slot_idx, idx});
       pending_checks.push_back(
         code_ifthenelset{and_exprt{in_range, match}, std::move(update)});
     }
@@ -533,6 +551,14 @@ std::optional<exprt> python_convertert::try_dict_method(
     if(obj.id() == ID_symbol)
       dict_literals.erase(to_symbol_expr(obj).get_identifier());
 
+    // Dict-value-by-reference (Option 2): for a mutable-container value,
+    // return the lvalue SLOT values[slot_idx] so an in-place mutation of
+    // the returned default (setdefault(k, []).append(...)) propagates.
+    {
+      const typet &svet = vals_type.element_type();
+      if(is_python_list_type(svet) || is_python_dict_type(svet))
+        return index_exprt{vals_arr, slot_idx, svet};
+    }
     return result;
   }
   if(

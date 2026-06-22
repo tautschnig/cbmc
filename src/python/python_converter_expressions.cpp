@@ -460,7 +460,16 @@ exprt python_convertert::convert_subscript(const jsont &expr)
               {
                 auto kv = extract_string_value(keys_arr.operands()[idx]);
                 if(kv.has_value() && kv.value() == key_str.value())
-                  return vals_arr.operands()[idx];
+                {
+                  const exprt &cv = vals_arr.operands()[idx];
+                  // Mutable-container value: skip the constant fold so the
+                  // symbolic path returns an lvalue slot (Option 2); an
+                  // rvalue copy would drop a[k].append(...) mutations.
+                  if(
+                    !is_python_list_type(cv.type()) &&
+                    !is_python_dict_type(cv.type()))
+                    return cv;
+                }
               }
             }
           }
@@ -506,7 +515,13 @@ exprt python_convertert::convert_subscript(const jsont &expr)
                   {
                     mp_integer kv;
                     if(!to_integer(to_constant_expr(k), kv) && kv == slice_iv)
-                      return vals_arr.operands()[idx];
+                    {
+                      const exprt &cv = vals_arr.operands()[idx];
+                      if(
+                        !is_python_list_type(cv.type()) &&
+                        !is_python_dict_type(cv.type()))
+                        return cv;
+                    }
                   }
                 }
               }
@@ -543,6 +558,10 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       exprt result =
         safe_zero(vals_type.element_type()); // default if not found
       exprt found = false_exprt{};
+      // Matched index (lowest matching, mirroring `result`'s if-chain
+      // nesting) — used to return the value as an lvalue SLOT for
+      // mutable-container values (dict-value-by-reference, Option 2).
+      exprt found_idx = from_integer(0, signedbv_typet{64});
       for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
       {
         exprt idx = from_integer(i, signedbv_typet{64});
@@ -568,6 +587,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         }
         exprt cond = and_exprt{in_range, match};
         result = if_exprt{cond, index_exprt{vals, idx}, result};
+        found_idx = if_exprt{cond, idx, found_idx};
         found = or_exprt{found, cond};
       }
       // KeyError if key not found — unless the dict has a
@@ -676,6 +696,23 @@ exprt python_convertert::convert_subscript(const jsont &expr)
                 exc_type_sym->symbol_expr()}});
           }
         }
+      }
+      // Dict-value-by-reference (Option 2, PLR §6.4/§3.1): when the value
+      // type is a mutable container (list/dict) and the dict is an lvalue,
+      // return the lvalue SLOT `values[found_idx]` rather than the copied
+      // if-chain `result`, so an in-place mutation through the read
+      // (`a[k].append(...)`) propagates. Each dict owns its `values[]`
+      // storage, so there is no cross-dict aliasing. Scalar-value dicts
+      // (the common case) are unaffected — they keep the value if-chain.
+      {
+        const typet &vet = vals_type.element_type();
+        const bool mutable_val =
+          is_python_list_type(vet) || is_python_dict_type(vet);
+        const bool dict_is_lvalue =
+          value.id() == ID_symbol || value.id() == ID_dereference ||
+          value.id() == ID_member || value.id() == ID_index;
+        if(mutable_val && dict_is_lvalue)
+          return index_exprt{vals, found_idx, vet};
       }
       return result;
     }
