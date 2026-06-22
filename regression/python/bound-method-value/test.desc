@@ -1,0 +1,15 @@
+CORE
+main.py
+--unwind 4
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+PLR 3.3.2: a bound method `c.f` boxed as a runtime value (CLOSURE
+python_value capturing self), flowing through a container element, a
+conditional, and a function return, then dispatched via the closure
+dispatch (self prepended for bound methods). Previously each of these
+produced a "no body for callee" false positive.

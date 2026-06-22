@@ -2356,8 +2356,61 @@ exprt python_convertert::convert_attribute(const jsont &expr)
       return ga;
   }
 
+  // PLR §3.3.2: a bare read of a method name (not called here, not an
+  // alias target) — box it as a runtime bound-method value so it can be
+  // stored/passed/returned and dispatched later.
+  {
+    exprt bm = try_box_bound_method_read(value, attr, get_location(expr));
+    if(!bm.is_nil())
+      return bm;
+  }
+
   log_overapprox("attribute '" + attr + "': using nondet over-approximation");
   return side_effect_expr_nondett{python_int_type(), source_locationt{}};
+}
+
+exprt python_convertert::try_box_bound_method_read(
+  const exprt &value,
+  const std::string &attr,
+  const source_locationt &loc)
+{
+  // Normalise the receiver to a struct-typed expr + extract its class.
+  exprt recv = value;
+  typet rt = recv.type();
+  if(rt.id() == ID_pointer)
+  {
+    recv = dereference_exprt{recv};
+    rt = recv.type();
+  }
+  std::string cls_name;
+  if(rt.id() == ID_struct)
+    cls_name = id2string(to_struct_type(rt).get_tag());
+  else if(rt.id() == ID_struct_tag)
+    cls_name = id2string(to_struct_tag_type(rt).get_identifier());
+  else
+    return nil_exprt{};
+  if(cls_name.rfind("tag-", 0) == 0)
+    cls_name = cls_name.substr(4);
+  if(cls_name.rfind("python_class_", 0) == 0)
+    cls_name = cls_name.substr(13);
+
+  // Resolve `attr` as a method across the MRO (own class first).
+  std::vector<std::string> chain{cls_name};
+  auto mro_it = class_mro.find(cls_name);
+  if(mro_it != class_mro.end())
+    chain = mro_it->second;
+  for(const std::string &anc : chain)
+  {
+    // @property reads are values, not bound methods — leave them.
+    auto pit = class_property_methods.find(anc);
+    if(pit != class_property_methods.end() && pit->second.count(attr) > 0)
+      return nil_exprt{};
+    const symbolt *ms =
+      symbol_table.lookup(irep_idt{"python::" + anc + "::" + attr});
+    if(ms != nullptr && ms->type.id() == ID_code)
+      return box_bound_method(ms->name, recv, loc);
+  }
+  return nil_exprt{};
 }
 
 // PLR §6.2.7: Dictionary displays
