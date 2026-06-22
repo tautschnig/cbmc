@@ -1232,6 +1232,47 @@ std::optional<exprt> python_convertert::try_string_method(
         function_application_exprt app{
           symbol_table.lookup_ref(fn).symbol_expr(), {obj, old_expr, new_expr}};
         app.type() = smt_string_typet{};
+
+        // Length hint: str.replace_all changes the length by
+        // (len(new) - len(old)) per replaced occurrence. The exact result
+        // length is count-dependent (hard for the solver), but with CONSTANT
+        // old/new we know the *direction*, which is a sound bound that makes a
+        // len() relation over the result decidable instead of timing out:
+        //   len(new) == len(old)  =>  len(result) == len(s)
+        //   len(new)  > len(old)  =>  len(result) >= len(s)
+        //   len(new)  < len(old)  =>  len(result) <= len(s)
+        auto old_sv = extract_string_value(old_expr);
+        auto new_sv = extract_string_value(new_expr);
+        if(old_sv.has_value() && new_sv.has_value())
+        {
+          static unsigned rep_ctr = 0;
+          const std::string nm = "__replace_len_" + std::to_string(rep_ctr++);
+          const irep_idt rid{qualify_name(nm)};
+          if(symbol_table.lookup(rid) == nullptr)
+          {
+            symbolt sy{rid, smt_string_typet{}, "python"};
+            sy.base_name = nm;
+            sy.is_lvalue = true;
+            sy.is_state_var = true;
+            symbol_table.add(sy);
+          }
+          const symbol_exprt r = symbol_table.lookup_ref(rid).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{
+            r,
+            side_effect_expr_nondett{smt_string_typet{}, get_location(expr)}});
+          pending_checks.push_back(code_assumet{equal_exprt{r, app}});
+          const exprt rl = native_or_member_string_length(r);
+          const exprt ol = native_or_member_string_length(obj);
+          if(new_sv->size() == old_sv->size())
+            pending_checks.push_back(code_assumet{equal_exprt{rl, ol}});
+          else if(new_sv->size() > old_sv->size())
+            pending_checks.push_back(
+              code_assumet{binary_relation_exprt{rl, ID_ge, ol}});
+          else
+            pending_checks.push_back(
+              code_assumet{binary_relation_exprt{rl, ID_le, ol}});
+          return std::move(r);
+        }
         return std::move(app);
       }
     }

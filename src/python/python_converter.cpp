@@ -2515,6 +2515,44 @@ exprt python_convertert::string_concat(const exprt &a, const exprt &b)
     current_function);
 }
 
+exprt python_convertert::bind_string_length_hint(
+  const exprt &produced,
+  const exprt &length_hint,
+  const source_locationt &loc)
+{
+  // Native SMT-String back-end length-hint wrapper. A produced native string
+  // (e.g. the result of `s + t`) carries its length only as
+  // `int2bv(str.len(<term>))`. cvc5 cannot relate that across the int2bv
+  // boundary for an exact length relation: `int2bv(a+b)` and
+  // `bvadd(int2bv a, int2bv b)` need a no-overflow argument the solver does not
+  // discharge cheaply, so `len(s + t) == len(s) + len(t)`-style queries time
+  // out (verified: the int2bv-wrapped equality is a cvc5 timeout while the
+  // pure-Int form is instant). We alias the produced string to a fresh symbol
+  // r (`r == produced`) and assume `len(r) == length_hint`, so len() queries
+  // over r discharge by congruence against the hint. Sound: under the
+  // per-string `str.len < 2^63` bound (emitted in smt2_conv) the hint is
+  // implied by `r == produced`, so it adds no models.
+  PRECONDITION(produced.type().id() == ID_smt_string);
+  static unsigned strlen_hint_ctr = 0;
+  const std::string nm = "__strlen_hint_" + std::to_string(strlen_hint_ctr++);
+  const irep_idt id{qualify_name(nm)};
+  if(symbol_table.lookup(id) == nullptr)
+  {
+    symbolt sy{id, smt_string_typet{}, "python"};
+    sy.base_name = nm;
+    sy.is_lvalue = true;
+    sy.is_state_var = true;
+    symbol_table.add(sy);
+  }
+  const symbol_exprt r = symbol_table.lookup_ref(id).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{
+    r, side_effect_expr_nondett{smt_string_typet{}, loc}});
+  pending_checks.push_back(code_assumet{equal_exprt{r, produced}});
+  pending_checks.push_back(
+    code_assumet{equal_exprt{native_or_member_string_length(r), length_hint}});
+  return std::move(r);
+}
+
 exprt python_convertert::string_substr(
   const exprt &s,
   const exprt &start,
@@ -5093,6 +5131,17 @@ exprt python_convertert::convert_expression(const jsont &expr)
         exprt acc = parts[0];
         for(std::size_t i = 1; i < parts.size(); i++)
           acc = string_concat(acc, parts[i]);
+        // Native back-end: attach an exact length hint (sum of the part
+        // lengths) so a len() relation over the f-string result is decidable
+        // without int2bv-over-sum reasoning (which times out).
+        if(use_smt_string_native && acc.type().id() == ID_smt_string)
+        {
+          exprt total_len = native_or_member_string_length(parts[0]);
+          for(std::size_t i = 1; i < parts.size(); i++)
+            total_len =
+              plus_exprt{total_len, native_or_member_string_length(parts[i])};
+          return bind_string_length_hint(acc, total_len, get_location(expr));
+        }
         return acc;
       }
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
