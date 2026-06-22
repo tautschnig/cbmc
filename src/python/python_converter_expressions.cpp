@@ -2111,11 +2111,14 @@ exprt python_convertert::convert_attribute(const jsont &expr)
             member_exprt instance_v{msd, attr, st.get_component(attr).type()};
             member_exprt shadow_raw{msd, shadow_name, c_bool_typet{8}};
             typecast_exprt shadow_flag{shadow_raw, bool_typet{}};
-            return if_exprt{
-              shadow_flag,
-              std::move(instance_v),
-              side_effect_expr_nondett{
-                st.get_component(attr).type(), get_location(expr)}};
+            // Unshadowed fallback: the actual bound method (exact), else
+            // a sound nondet if it cannot be boxed.
+            exprt fb =
+              try_box_bound_method_read(value, attr, get_location(expr));
+            if(fb.is_nil() || fb.type() != instance_v.type())
+              fb = side_effect_expr_nondett{
+                st.get_component(attr).type(), get_location(expr)};
+            return if_exprt{shadow_flag, std::move(instance_v), std::move(fb)};
           }
         }
         if(
@@ -2221,11 +2224,11 @@ exprt python_convertert::convert_attribute(const jsont &expr)
           member_exprt instance_v{value, attr, st.get_component(attr).type()};
           member_exprt shadow_raw{value, shadow_name, c_bool_typet{8}};
           typecast_exprt shadow_flag{shadow_raw, bool_typet{}};
-          return if_exprt{
-            shadow_flag,
-            std::move(instance_v),
-            side_effect_expr_nondett{
-              st.get_component(attr).type(), get_location(expr)}};
+          exprt fb = try_box_bound_method_read(value, attr, get_location(expr));
+          if(fb.is_nil() || fb.type() != instance_v.type())
+            fb = side_effect_expr_nondett{
+              st.get_component(attr).type(), get_location(expr)};
+          return if_exprt{shadow_flag, std::move(instance_v), std::move(fb)};
         }
       }
       if(
@@ -2320,10 +2323,10 @@ exprt python_convertert::convert_attribute(const jsont &expr)
           member_exprt instance_v{deref, attr, field_type};
           member_exprt shadow_raw{deref, shadow_name, c_bool_typet{8}};
           typecast_exprt shadow_flag{shadow_raw, bool_typet{}};
-          return if_exprt{
-            shadow_flag,
-            std::move(instance_v),
-            side_effect_expr_nondett{field_type, get_location(expr)}};
+          exprt fb = try_box_bound_method_read(deref, attr, get_location(expr));
+          if(fb.is_nil() || fb.type() != instance_v.type())
+            fb = side_effect_expr_nondett{field_type, get_location(expr)};
+          return if_exprt{shadow_flag, std::move(instance_v), std::move(fb)};
         }
       }
       if(
