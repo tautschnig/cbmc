@@ -1851,12 +1851,13 @@ are landed.
   `c.m()` are unaffected). Reuses the existing class-level-data-attr
   shadow-fallback ternary, extended to non-data descriptors. 0 sweep
   regressions.
-- **Custom-descriptor `__set__` + stateful `__get__`.** **`__set__`
-  write-routing LANDED (2026-06-22):** `c.x = v` on a data descriptor now
-  calls `desc.__set__(descriptor, obj, v)`, enforcing the descriptor's
-  invariants/side-effects (`data-descriptor-set`). *Open:* shared
-  per-instance state read-back needs descriptor-method monomorphisation —
-  see [phase 3](#descriptors) below + `data-descriptor-state-knownbug`.
+- **Custom-descriptor `__set__` + stateful `__get__`. DONE (2026-06-22).**
+  `c.x = v` routes through `__set__` (`emit_descriptor_set`), `c.x` through
+  `__get__`; the instance is boxed as a CLASS `python_value` so `obj._v`
+  aliases it, and a 1a-bis re-pass (third condition) re-converts descriptor
+  methods after the field-owning class is registered, so forward-defined
+  owners resolve. Stateful descriptors verify (`data-descriptor-stateful`,
+  `data-descriptor-state-forward`, `data-descriptor-set`).
 
 **Instance-`__dict__` substrate — PLANNED (2026-06-15 spike).** Today an
 instance is a fixed CBMC struct whose fields are the attributes discovered by
@@ -1906,36 +1907,26 @@ remainder, so common code is unaffected. **Phases:**
    optional precision follow-up; the nondet is already sound), and (c) the
    runtime-`__dict__` method fallback (phase 3). Higher-order bound-method
    values (b) are done.
-3. **Custom data descriptors** — `__set__` / stateful `__get__`.
-   **Write-routing + stateful state LANDED for the registered-first case
+3. **Custom data descriptors** — `__set__` / stateful `__get__`. **DONE
    (2026-06-22).** `c.x = v` routes through `emit_descriptor_set` →
-   `desc.__set__(descriptor, obj, v)`; the instance is boxed as a CLASS
-   `python_value` via the canonical `coerce_to_typed_slot` (sets
-   `__class_tag`), so `obj._v` inside `__set__`/`__get__` aliases the real
-   instance. A **stateful** data descriptor (`__set__` stores `obj._v`,
-   `__get__` reads it back) now verifies (`data-descriptor-stateful`).
-   **Open — forward-reference order** (`data-descriptor-state-knownbug`):
-   when the descriptor class is defined *before* the field-owning class
-   (the common pattern), `obj._v` inside the descriptor method **bakes to
-   nondet** because, at descriptor-method conversion time, no registered
-   class declares `_v` yet (the owner class + its dynamic `_v` field are
-   registered later, in its own `convert_class_def`). The earlier
-   "monomorphisation" hypothesis was **wrong**: the boxing/read mechanism
-   already works once a class with the attr is registered (verified by
-   `getit`/`multi`/`order`); the true root is **conversion order**.
+   `__set__`; the instance is boxed as a CLASS `python_value`
+   (`coerce_to_typed_slot`, sets `__class_tag`) so `obj._v` aliases the
+   instance; a stateful descriptor (`__set__` stores `obj._v`, `__get__`
+   reads it back) verifies (`data-descriptor-stateful`,
+   `data-descriptor-state-forward`).
 
-   **Whole-group root + fix.** `obj.attr` on a `python_value` resolves at
-   *conversion time* against `class_types`; a **forward-referenced** class
-   or field (not yet registered) bakes a nondet. This is a *group* root —
-   it governs any `python_value` attribute access to a class/field defined
-   later, not just descriptors. The fix: **register every class's struct
-   (with all fields, incl. discovered dynamic attrs) before converting any
-   method body** — split `convert_class_def` into struct-registration
-   (≤ the `class_types[name] = class_type` step) and method-body conversion,
-   run all struct-registration first. That single ordering change closes
-   the descriptor common case *and* forward-referenced field access broadly.
-   (Deferred here: it restructures the central class/method conversion flow,
-   so it warrants its own focused, heavily-sweep-validated change.)
+   **Whole-group root + fix — LANDED.** `obj.attr` on a `python_value`
+   resolves at *conversion time* against `class_types`; a
+   **forward-referenced** class/field (defined later in the file) used to
+   bake a nondet — a *group* root governing any `python_value` attribute
+   access to a later-defined class/field, not just descriptors. Fixed by a
+   third **1a-bis re-pass condition**: re-convert a class if any method
+   accesses `<p>.attr` on a non-self UNANNOTATED parameter (a
+   `python_value`), so its body re-converts after the full 1a loop has
+   registered every class struct (incl. discovered dynamic attrs). The
+   re-pass is idempotent; 0 sweep regressions, +0.7% wall time. Closes the
+   common forward-defined stateful descriptor pattern AND non-descriptor
+   forward-referenced field access (`forward-ref-field-access`).
 
 **Risk:** the attribute-access reroute is pervasive; mitigated by the hybrid
 fast path. This substrate also subsumes `setattr`/`getattr` with dynamic names.
