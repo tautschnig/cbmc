@@ -8,10 +8,11 @@ main.py
 --
 ^warning: ignoring
 --
-PLR 3.3.2 stateful data descriptor: __set__ stores obj._v, __get__ reads
-it back. Requires the descriptor methods' `obj` param to alias the
-instance for field read/write. The __set__ routing + validation already
-work (data-descriptor-set); the shared-state read-back needs descriptor-
-method monomorphisation (specialise `obj` to the concrete class, like the
-higher-order clone path), which is not yet wired. KNOWNBUG states the
-PLR-correct outcome.
+PLR 3.3.2 stateful data descriptor, FORWARD-REFERENCE order: the
+descriptor class (Pos) is defined before the field-owning class (C), so
+when Pos.__get__/__set__ convert, no registered class declares `_v` yet
+and `obj._v` bakes to nondet. The __set__ routing + boxing are correct
+(see data-descriptor-stateful, which verifies when the field class is
+registered first). Completion needs registering all class struct fields
+before converting method bodies (conversion-ordering fix). KNOWNBUG states
+the PLR-correct outcome.

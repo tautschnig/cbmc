@@ -1776,16 +1776,25 @@ exprt python_convertert::emit_descriptor_get(
         : typecast_exprt{self_desc, mty.parameters()[0].type()});
   if(mty.parameters().size() >= 2)
   {
-    exprt obj = obj_ptr;
     const typet &ot = mty.parameters()[1].type();
-    // An unannotated `obj` param is python_value: box the instance
-    // pointer as a CLASS value so `obj.<field>` inside the descriptor
-    // method aliases the real instance storage (shared between
-    // __get__ and __set__).
+    exprt obj;
     if(is_python_value_type(ot))
-      obj = make_python_value(python_type_tagt::CLASS, obj_ptr);
-    else if(obj.type() != ot)
-      obj = typecast_exprt{obj, ot};
+    {
+      // Box the instance as a CLASS python_value via the CANONICAL
+      // coercion (coerce_to_typed_slot also sets `__class_tag` on the
+      // caller's storage), so `obj.<field>` inside the descriptor method
+      // resolves to the right class and ALIASES the real instance —
+      // shared between __get__ and __set__. A hand-rolled
+      // make_python_value(CLASS, &obj) omits the tag and does not alias.
+      exprt inst = obj_ptr.id() == ID_address_of
+                     ? to_address_of_expr(obj_ptr).object()
+                     : static_cast<exprt>(dereference_exprt{obj_ptr});
+      obj = coerce_to_typed_slot(inst, ot);
+    }
+    else if(obj_ptr.type() != ot)
+      obj = typecast_exprt{obj_ptr, ot};
+    else
+      obj = obj_ptr;
     args.push_back(obj);
   }
   if(mty.parameters().size() >= 3)
@@ -1852,16 +1861,25 @@ std::optional<codet> python_convertert::emit_descriptor_set(
         : typecast_exprt{self_desc, mty.parameters()[0].type()});
   if(mty.parameters().size() >= 2)
   {
-    exprt obj = obj_ptr;
     const typet &ot = mty.parameters()[1].type();
-    // An unannotated `obj` param is python_value: box the instance
-    // pointer as a CLASS value so `obj.<field>` inside the descriptor
-    // method aliases the real instance storage (shared between
-    // __get__ and __set__).
+    exprt obj;
     if(is_python_value_type(ot))
-      obj = make_python_value(python_type_tagt::CLASS, obj_ptr);
-    else if(obj.type() != ot)
-      obj = typecast_exprt{obj, ot};
+    {
+      // Box the instance as a CLASS python_value via the CANONICAL
+      // coercion (coerce_to_typed_slot also sets `__class_tag` on the
+      // caller's storage), so `obj.<field>` inside the descriptor method
+      // resolves to the right class and ALIASES the real instance —
+      // shared between __get__ and __set__. A hand-rolled
+      // make_python_value(CLASS, &obj) omits the tag and does not alias.
+      exprt inst = obj_ptr.id() == ID_address_of
+                     ? to_address_of_expr(obj_ptr).object()
+                     : static_cast<exprt>(dereference_exprt{obj_ptr});
+      obj = coerce_to_typed_slot(inst, ot);
+    }
+    else if(obj_ptr.type() != ot)
+      obj = typecast_exprt{obj_ptr, ot};
+    else
+      obj = obj_ptr;
     args.push_back(obj);
   }
   if(mty.parameters().size() >= 3)

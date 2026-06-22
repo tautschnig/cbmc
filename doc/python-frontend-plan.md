@@ -1907,33 +1907,35 @@ remainder, so common code is unaffected. **Phases:**
    runtime-`__dict__` method fallback (phase 3). Higher-order bound-method
    values (b) are done.
 3. **Custom data descriptors** — `__set__` / stateful `__get__`.
-   **Write-routing LANDED (2026-06-22).** A class attribute bound to an
-   instance whose class defines `__set__` is a DATA descriptor; `c.x = v`
-   now routes through `emit_descriptor_set` → `desc.__set__(descriptor,
-   obj, v)` (mirroring the existing read-side `emit_descriptor_get`
-   → `__get__`), so the descriptor body runs on assignment and its
-   invariants/side-effects are enforced (regression `data-descriptor-set`).
-   **Open — shared per-instance state** (`__set__` stores `obj._v`,
-   `__get__` reads it back; `data-descriptor-state-knownbug`): the
-   descriptor methods receive `obj` as a tagged `python_value`, whose
-   `obj._v` does **not** alias the instance's `_v`. The byref instance-field
-   path works only when the callee is **monomorphised** to the concrete
-   class (the [§12](#higher-order) higher-order clone path specialises a
-   `python_value` param to the call-site type). So phase 3's completion =
-   **monomorphise the descriptor methods' `obj` parameter to the instance
-   class** (re-convert `__get__`/`__set__` with `obj: C`), reusing/adapting
-   the HOF clone core (which today skips `self`-methods). This is the
-   well-scoped remaining step.
+   **Write-routing + stateful state LANDED for the registered-first case
+   (2026-06-22).** `c.x = v` routes through `emit_descriptor_set` →
+   `desc.__set__(descriptor, obj, v)`; the instance is boxed as a CLASS
+   `python_value` via the canonical `coerce_to_typed_slot` (sets
+   `__class_tag`), so `obj._v` inside `__set__`/`__get__` aliases the real
+   instance. A **stateful** data descriptor (`__set__` stores `obj._v`,
+   `__get__` reads it back) now verifies (`data-descriptor-stateful`).
+   **Open — forward-reference order** (`data-descriptor-state-knownbug`):
+   when the descriptor class is defined *before* the field-owning class
+   (the common pattern), `obj._v` inside the descriptor method **bakes to
+   nondet** because, at descriptor-method conversion time, no registered
+   class declares `_v` yet (the owner class + its dynamic `_v` field are
+   registered later, in its own `convert_class_def`). The earlier
+   "monomorphisation" hypothesis was **wrong**: the boxing/read mechanism
+   already works once a class with the attr is registered (verified by
+   `getit`/`multi`/`order`); the true root is **conversion order**.
 
-   **Whole-group root.** "A generic `python_value` parameter that holds an
-   instance cannot read/write that instance's *fields* by reference; only
-   monomorphisation to the concrete class makes field access alias" is a
-   *group* root, not descriptor-specific — it also governs any function/
-   method that receives an instance as an `Any`/`python_value` param and
-   mutates its attributes. A general lever (monomorphise instance-typed
-   `python_value` params at the call site, or make the tagged-`python_value`
-   attribute read/write alias through `__class_ptr`) would close descriptors
-   *and* that broader class together.
+   **Whole-group root + fix.** `obj.attr` on a `python_value` resolves at
+   *conversion time* against `class_types`; a **forward-referenced** class
+   or field (not yet registered) bakes a nondet. This is a *group* root —
+   it governs any `python_value` attribute access to a class/field defined
+   later, not just descriptors. The fix: **register every class's struct
+   (with all fields, incl. discovered dynamic attrs) before converting any
+   method body** — split `convert_class_def` into struct-registration
+   (≤ the `class_types[name] = class_type` step) and method-body conversion,
+   run all struct-registration first. That single ordering change closes
+   the descriptor common case *and* forward-referenced field access broadly.
+   (Deferred here: it restructures the central class/method conversion flow,
+   so it warrants its own focused, heavily-sweep-validated change.)
 
 **Risk:** the attribute-access reroute is pervasive; mitigated by the hybrid
 fast path. This substrate also subsumes `setattr`/`getattr` with dynamic names.
