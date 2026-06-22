@@ -1,0 +1,12 @@
+CORE
+main.py
+
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+re IGNORECASE/DOTALL flag support via the frontend call-site rewrite (prepends
+the inline-flag prefix to a literal pattern when flags is a compile-time
+constant). Decidable on the default backend for constant pattern+subject.
