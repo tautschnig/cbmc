@@ -691,6 +691,33 @@ private:
     const exprt &closure_val,
     const exprt::operandst &args,
     const source_locationt &loc);
+  /// Registry indices (in `closure_registry`) that are BOUND METHODS
+  /// rather than ordinary closures. A bound method `c.m` is boxed as a
+  /// CLOSURE python_value whose capture record holds `self`; unlike an
+  /// ordinary closure (captures appended LAST), a method's `self` is the
+  /// FIRST positional parameter, so `dispatch_closure_value` prepends the
+  /// capture for these indices. Lets a bound method flow as a runtime
+  /// value through containers / branches / returns (PLR §3.3.2).
+  std::set<std::size_t> bound_method_closures;
+  /// Box a bound method `c.m` as a CLOSURE python_value capturing `self`
+  /// (so it can be stored/passed/returned as a runtime value and later
+  /// dispatched via `dispatch_closure_value`). Emits the capture-record
+  /// allocation into `pending_checks`. Returns nil if `method_id` is not
+  /// a usable code symbol.
+  exprt box_bound_method(
+    const irep_idt &method_id,
+    const exprt &self_expr,
+    const source_locationt &loc);
+  /// If a bare attribute read `value.attr` names a method of `value`'s
+  /// class (resolved via its MRO, excluding @property), box it as a
+  /// runtime bound-method CLOSURE python_value (see box_bound_method);
+  /// otherwise return nil. Used to replace the nondet over-approximation
+  /// of a bare method read so the method can flow as a value (container
+  /// element, branch, return) and be dispatched later.
+  exprt try_box_bound_method_read(
+    const exprt &value,
+    const std::string &attr,
+    const source_locationt &loc);
   // Track constant string values for string method evaluation
   std::map<irep_idt, std::string> string_constants;
   std::map<irep_idt, exprt> dict_literals; // track dict literal values

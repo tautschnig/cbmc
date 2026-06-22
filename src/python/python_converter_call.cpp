@@ -177,6 +177,42 @@ exprt python_convertert::box_closure(
     static_cast<int>(register_closure(lambda_id)), rec_ptr);
 }
 
+exprt python_convertert::box_bound_method(
+  const irep_idt &method_id,
+  const exprt &self_expr,
+  const source_locationt &loc)
+{
+  const symbolt *ms = symbol_table.lookup(method_id);
+  if(ms == nullptr || ms->type.id() != ID_code)
+    return nil_exprt{};
+  const auto &mparams = to_code_type(ms->type).parameters();
+  if(mparams.empty())
+    return nil_exprt{}; // no self slot — not a bound method
+  const typet self_t = mparams[0].type();
+  // Register `self` as the (single) capture for this method. The capture
+  // record will hold self; the method's own first parameter IS self, so
+  // dispatch prepends the capture (see bound_method_closures).
+  closure_captures[id2string(method_id)] = {
+    std::make_tuple(std::string{}, std::string{"__self"}, self_t)};
+  bound_method_closures.insert(register_closure(method_id));
+  // Coerce the receiver to the method's self-parameter type (mirrors
+  // try_method_call): a pointer self takes the address, otherwise a
+  // value cast.
+  exprt self_val = self_expr;
+  if(self_val.type() != self_t)
+  {
+    if(self_t.id() == ID_pointer && self_val.type().id() != ID_pointer)
+      self_val = address_of_exprt{self_val};
+    else
+      self_val = safe_typecast(self_val, self_t);
+  }
+  std::vector<codet> out;
+  exprt boxed = box_closure(method_id, {self_val}, out, loc);
+  for(auto &c : out)
+    pending_checks.push_back(std::move(c));
+  return boxed;
+}
+
 exprt python_convertert::dispatch_closure_value(
   const exprt &closure_val,
   const exprt::operandst &args,
@@ -214,28 +250,51 @@ exprt python_convertert::dispatch_closure_value(
     if(nuser != args.size())
       continue; // positional arity mismatch -> not this candidate
     any = true;
-    exprt::operandst call_args;
-    for(std::size_t i = 0; i < args.size(); ++i)
-    {
-      exprt a = args[i];
-      if(i < lparams.size() && a.type() != lparams[i].type())
-      {
-        if(
-          is_python_value_type(lparams[i].type()) &&
-          !is_python_value_type(a.type()))
-          a = wrap_value(a);
-        else
-          a = safe_typecast(a, lparams[i].type());
-      }
-      call_args.push_back(a);
-    }
+    const bool self_first = bound_method_closures.count(k) > 0;
+    // For an ordinary closure the captures are appended LAST, so user
+    // arg i maps to lparams[i]; for a bound method `self` is the FIRST
+    // parameter (captures prepended), so user arg i maps to
+    // lparams[ncap + i].
     struct_typet rec_type = closure_record_type(lid);
     pointer_typet rec_ptr_t{rec_type, 64};
     exprt rec_ptr =
       typecast_exprt{python_value_closure_rec(closure_val), rec_ptr_t};
+    exprt::operandst user_args;
+    for(std::size_t i = 0; i < args.size(); ++i)
+    {
+      exprt a = args[i];
+      const std::size_t pidx = self_first ? ncap + i : i;
+      if(pidx < lparams.size() && a.type() != lparams[pidx].type())
+      {
+        if(
+          is_python_value_type(lparams[pidx].type()) &&
+          !is_python_value_type(a.type()))
+          a = wrap_value(a);
+        else
+          a = safe_typecast(a, lparams[pidx].type());
+      }
+      user_args.push_back(a);
+    }
+    exprt::operandst capture_args;
     for(const auto &c : rec_type.components())
-      call_args.push_back(
+      capture_args.push_back(
         member_exprt{dereference_exprt{rec_ptr}, c.get_name(), c.type()});
+    exprt::operandst call_args;
+    if(self_first)
+    {
+      // self (captures) first, then user args
+      for(auto &c : capture_args)
+        call_args.push_back(std::move(c));
+      for(auto &u : user_args)
+        call_args.push_back(std::move(u));
+    }
+    else
+    {
+      for(auto &u : user_args)
+        call_args.push_back(std::move(u));
+      for(auto &c : capture_args)
+        call_args.push_back(std::move(c));
+    }
     side_effect_expr_function_callt call{
       ls->symbol_expr(), call_args, to_code_type(ls->type).return_type(), loc};
     exprt cv = call;
@@ -1195,6 +1254,37 @@ exprt python_convertert::convert_call(const jsont &expr)
       is_python_value_type(vsym->type))
     {
       exprt callee = vsym->symbol_expr();
+      exprt::operandst cargs;
+      bool ok = true;
+      if(args.is_array())
+        for(const auto &a : as_array(args))
+        {
+          exprt ae = convert_expression(a);
+          if(ae.is_nil())
+          {
+            ok = false;
+            break;
+          }
+          cargs.push_back(ae);
+        }
+      if(ok)
+      {
+        exprt d = dispatch_closure_value(callee, cargs, get_location(expr));
+        if(d.is_not_nil())
+          return d;
+      }
+    }
+  }
+
+  // Calling a non-Name callee that evaluates to a python_value holding a
+  // boxed closure / bound method (e.g. `handlers[0]()`, `d[k]()`). Route
+  // through the closure dispatch (guarded on the CLOSURE tag, so a
+  // non-closure value falls back to the sound nondet path).
+  if(!closure_registry.empty() && is_node_type(func, "Subscript"))
+  {
+    exprt callee = convert_expression(func);
+    if(callee.is_not_nil() && is_python_value_type(callee.type()))
+    {
       exprt::operandst cargs;
       bool ok = true;
       if(args.is_array())
