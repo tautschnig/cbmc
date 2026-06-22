@@ -133,16 +133,51 @@ a = {1:[9]}; v = a[1]; v.append(7); assert len(a[1]) == 2  # d3: wrongly FAILS
 ```
 
 `r = c[i]` copies the slot's *value* into `r`, so the mutation through `r`
-is not observed on `c[i]`. The fix is **by-reference-at-extraction**: when
-the RHS of an assignment is a mutable-element subscript lvalue, bind the LHS
-as a reference to that slot (`make_python_value(LIST/DICT, &c.<arr>[i])`),
-so `r` aliases the slot. This is **distinct from** the byref-at-construction
-substrate §0 found untenable — it reuses the existing slot, no new object.
-**Caveat:** it lives in the soundness-delicate §0 nested-aliasing guard
-area, so it must (a) keep the slot address stable (capture the index at
-assignment), (b) supersede the model-bound guard only where the alias is
-exact, and (c) be sweep-validated against the §0 guard tests for new false
-proofs. Scoped as a careful follow-up.
+is not observed on `c[i]`.
+
+**Investigated 2026-06-22 — slot-aliasing is UNSOUND; the residual is
+genuinely blocked on per-object identity.** The tempting fix is
+*by-reference-at-extraction*: bind the LHS as a reference to the slot
+(`make_python_value(LIST/DICT, &c.<arr>[i])`) so `r` aliases the slot. But
+in CPython `r = c[i]` aliases the **object** that `c[i]` currently
+references, **not the slot** — and the two diverge whenever the slot's
+object identity changes. This is not an edge case; it has **many** hazard
+channels, each verified against CPython:
+
+```python
+g=[[1]]; r=g[0]; g[0]=[9];      r.append(5)   # subscript-assign: r=[1,5], g[0]=[9]
+g=[[1]]; r=g[0]; g.insert(0,x); r.append(5)   # insert shifts: g[1] is the old g[0]
+g=[[0],[1]]; r=g[1]; g.pop(0);  r.append(5)   # pop shifts
+g=[[2],[1]]; r=g[0]; g.reverse();r.append(5)  # sort/reverse reorder
+# … plus rebind (g = ...) and cross-function reassignment f(g): g[i]=...
+```
+
+A slot pointer follows the *slot*; CPython's `r` follows the *object*. So
+slot-aliasing gives the **wrong** result under any of subscript-assign,
+`insert`/`pop`/`sort`/`reverse`/`remove`/`del`, rebind, or a callee that
+reassigns `g[i]`. Worse, the divergence can be a **false proof**:
+
+```python
+g=[[1]]; r=g[0]; g[0]=[99]; r.append(5)
+assert g[0]==[99,5]   # CPython: AssertionError; slot-aliasing would PROVE it
+```
+
+(`haz` test — today correctly FAILS; slot-aliasing would wrongly prove it
+SUCCESSFUL.) A sound guard would have to exclude **every** channel
+(including cross-function reassignment, invisible to a scope scan) — miss
+one and it is a false proof, the hard-constraint violation. The benefit is
+narrow (the literal extraction pattern; the residual is corpus-invisible),
+the downside is maximal, so **slot-aliasing must not be shipped.**
+
+**The only sound fix is per-object identity** — each nested mutable element
+is a heap object that both `c[i]` and `r` reference and that moves with the
+object (so reorder/reassign behave correctly). That is precisely the
+**byref-at-construction** substrate §0 already found **perf-untenable**
+(the value-wrapped-string explosion). So the extraction-aliasing residual
+(L2 / d3) is confirmed **blocked on the same representation barrier as §0**,
+not a missing point fix. It stays a documented, corpus-invisible residual:
+the *direct* mutation case (the common one) is solved; *extraction* is left
+to the guarded by-value over-approximation (sound).
 
 ## Residual sub-problem: empty-dict value typing — RESOLVED (2026-06-22)
 
@@ -155,13 +190,19 @@ verifies SUCCESSFUL (DIFF→PASS, 0 sweep regressions).
 
 ## Recommendation / phasing
 
-1. **Pursue Option 2** (subscript-read / `setdefault` return the owning
-   dict's `values[]` lvalue slot; list-method dispatch mutates in place).
-   No heap allocation, no aliasing. Validate on d1/d2/d3 + the 3
-   nested-container tests + full sweep.
-2. **Empty-dict value typing** for the `{}`-then-list-`setdefault` case.
-3. Fold the per-instance-identity insight back into the §0 nested-aliasing
-   residual (shared mechanism).
+1. **Option 2 (lvalue value slots) — DONE for int keys.** Subscript-read
+   and `setdefault` return the owning dict's `values[idx]` lvalue slot;
+   `a[k].append(...)` / `setdefault(k, default).append(...)` mutate in
+   place. String/value keys stay read-only (the matched index would depend
+   on a string-solver predicate). 0 sweep regressions.
+2. **Empty-dict value typing — DONE** (setdefault inference); flips
+   `dict_setdefault_list`.
+3. **Extraction-aliasing (`r = c[i]; mutate r`) — analyzed, BLOCKED.**
+   Slot-aliasing is unsound (object-vs-slot divergence, false proofs); the
+   sound fix needs per-object identity = the perf-untenable
+   byref-at-construction. Stays a sound, guarded, corpus-invisible residual
+   for both lists (§0) and dicts (d3).
 
-The spike proved the value model and perf are fine; the remaining work is
-the per-instance read-as-lvalue plumbing, scoped as above.
+Net state: **direct** nested mutation works for both containers (int-keyed
+dicts); the extraction case is the single shared residual, blocked on the
+representation barrier, not on missing plumbing.
