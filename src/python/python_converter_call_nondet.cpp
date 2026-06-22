@@ -368,8 +368,21 @@ std::optional<exprt> python_convertert::try_nondet_call(
     if(use_smt_string_native)
     {
       // Native SMT-String back-end (Plan A): a free SMT String variable with a
-      // bounded length (see bounded_nondet_string).
-      return bounded_nondet_string(get_location(expr));
+      // bounded length (see bounded_nondet_string). When a size argument is
+      // given, constrain the length to EXACTLY it — matching the refined
+      // backend and the documented `nondet_string(N)` == length-exactly-N
+      // semantics (other tests, e.g. `assert len(s) == 10`, depend on this).
+      // Without this the native string was only bounded to [0, MAX], so
+      // length-dependent asserts spuriously FAILED (e.g. s could be "").
+      exprt s = bounded_nondet_string(get_location(expr));
+      if(args.is_array() && !as_array(args).empty())
+      {
+        exprt size = convert_expression(*as_array(args).begin());
+        exprt len = native_or_member_string_length(s);
+        exprt size_t = safe_typecast(size, len.type());
+        pending_checks.push_back(code_assumet{equal_exprt{len, size_t}});
+      }
+      return s;
     }
 
     pending_checks.push_back(code_frontend_assignt{
