@@ -2098,6 +2098,26 @@ exprt python_convertert::convert_attribute(const jsont &expr)
           tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
         auto cla_it = class_level_attrs.find(cls_name);
         std::string shadow_name = "__shadow_" + attr;
+        {
+          // PLR §3.3.2: a method shadowed by an instance attribute.
+          // `if(__shadow_m) instance.m else <nondet>` — the unshadowed
+          // fallback is a sound nondet over-approximation.
+          auto msa_it = method_shadow_attrs.find(cls_name);
+          if(
+            msa_it != method_shadow_attrs.end() &&
+            msa_it->second.count(attr) > 0 && st.has_component(shadow_name))
+          {
+            dereference_exprt msd{value};
+            member_exprt instance_v{msd, attr, st.get_component(attr).type()};
+            member_exprt shadow_raw{msd, shadow_name, c_bool_typet{8}};
+            typecast_exprt shadow_flag{shadow_raw, bool_typet{}};
+            return if_exprt{
+              shadow_flag,
+              std::move(instance_v),
+              side_effect_expr_nondett{
+                st.get_component(attr).type(), get_location(expr)}};
+          }
+        }
         if(
           cla_it != class_level_attrs.end() && cla_it->second.count(attr) > 0 &&
           st.has_component(shadow_name))
@@ -2190,6 +2210,28 @@ exprt python_convertert::convert_attribute(const jsont &expr)
         !is_class_object && cla_it != class_level_attrs.end() &&
         cla_it->second.count(attr) > 0 && st.has_component(shadow_name))
       {
+        // PLR §3.3.2: method shadowed by an instance attribute (struct
+        // receiver) — see the pointer-receiver branch above. Placed
+        // before the class-storage fallback because methods have no
+        // class-object data field to fall back to (nondet instead).
+        auto msa_it = method_shadow_attrs.find(cls_name);
+        if(
+          msa_it != method_shadow_attrs.end() && msa_it->second.count(attr) > 0)
+        {
+          member_exprt instance_v{value, attr, st.get_component(attr).type()};
+          member_exprt shadow_raw{value, shadow_name, c_bool_typet{8}};
+          typecast_exprt shadow_flag{shadow_raw, bool_typet{}};
+          return if_exprt{
+            shadow_flag,
+            std::move(instance_v),
+            side_effect_expr_nondett{
+              st.get_component(attr).type(), get_location(expr)}};
+        }
+      }
+      if(
+        !is_class_object && cla_it != class_level_attrs.end() &&
+        cla_it->second.count(attr) > 0 && st.has_component(shadow_name))
+      {
         // PLR §3.3.2: MRO walk for class-storage fallback.
         auto mro_owner = mro_owner_class_object(cls_name, attr);
         if(mro_owner)
@@ -2267,6 +2309,23 @@ exprt python_convertert::convert_attribute(const jsont &expr)
       // the instance hasn't shadowed.
       auto cla_it = class_level_attrs.find(cls_name);
       std::string shadow_name = "__shadow_" + attr;
+      {
+        // PLR §3.3.2: method shadowed by an instance attribute (tagged
+        // python_value receiver) — nondet unshadowed fallback.
+        auto msa_it = method_shadow_attrs.find(cls_name);
+        if(
+          msa_it != method_shadow_attrs.end() &&
+          msa_it->second.count(attr) > 0 && cls_type.has_component(shadow_name))
+        {
+          member_exprt instance_v{deref, attr, field_type};
+          member_exprt shadow_raw{deref, shadow_name, c_bool_typet{8}};
+          typecast_exprt shadow_flag{shadow_raw, bool_typet{}};
+          return if_exprt{
+            shadow_flag,
+            std::move(instance_v),
+            side_effect_expr_nondett{field_type, get_location(expr)}};
+        }
+      }
       if(
         cla_it != class_level_attrs.end() && cla_it->second.count(attr) > 0 &&
         cls_type.has_component(shadow_name))

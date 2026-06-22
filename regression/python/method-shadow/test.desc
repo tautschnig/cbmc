@@ -1,0 +1,17 @@
+CORE
+main.py
+--unwind 4
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+PLR §3.3.2 / §9.4: a non-data descriptor (method) shadowed by an
+instance attribute. After `c.m = 99`, reading `c.m` yields 99, not the
+bound method. Modeled by giving a method-shadow attr a python_value
+storage field + a runtime `__shadow_m` flag: `c.m` reads dispatch via
+`if(__shadow_m) instance.m else <nondet>` (the unshadowed fallback is a
+sound nondet over-approximation; method CALLS `c.m()` are unaffected and
+still resolve via the method-call path). Previously a KNOWNBUG.

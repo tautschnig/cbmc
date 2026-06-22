@@ -2570,11 +2570,26 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     auto dyn_it = dynamic_class_attrs.find(class_name);
     if(dyn_it != dynamic_class_attrs.end())
     {
+      auto msa_it = method_shadow_attrs.find(class_name);
       for(const auto &attr_name : dyn_it->second)
       {
         if(declared_fields.insert(attr_name).second)
+        {
           components.push_back(
             struct_typet::componentt{attr_name, python_value_type()});
+          // PLR §3.3.2: a method-shadow attr needs the runtime shadow
+          // flag + class_level_attrs membership so `c.m = v` sets the
+          // flag (maybe_shadow_assign) and `c.m` reads dispatch via the
+          // shadow ternary (with a nondet unshadowed fallback).
+          if(
+            msa_it != method_shadow_attrs.end() &&
+            msa_it->second.count(attr_name))
+          {
+            class_level_attrs[class_name].insert(attr_name);
+            components.push_back(struct_typet::componentt{
+              "__shadow_" + attr_name, c_bool_typet{8}});
+          }
+        }
       }
     }
   }
