@@ -2374,6 +2374,91 @@ bool python_convertert::convert()
             break;
         }
       }
+      // Third sub-condition (PLR §3.3.2 / forward-referenced fields): a
+      // method accesses `<p>.attr` where `p` is a non-self parameter
+      // WITHOUT a class annotation. Such `p` is a python_value, and
+      // `p.attr` resolves at conversion time against the THEN-registered
+      // classes; if the field belongs to a class defined LATER in the
+      // file, the first 1a pass baked a nondet over-approximation. A
+      // re-pass (after the full 1a loop registered every class struct,
+      // including discovered dynamic attrs) lets it resolve. The common
+      // case is a data/descriptor method (`__get__`/`__set__`) reading or
+      // writing `obj.<field>` of an instance whose class is defined after
+      // the descriptor class.
+      if(!needs_repass)
+      {
+        std::function<bool(const jsont &, const std::set<std::string> &)>
+          accesses_param_attr =
+            [&](const jsont &node, const std::set<std::string> &params) -> bool
+        {
+          if(node.is_array())
+          {
+            for(const auto &c : as_array(node))
+              if(accesses_param_attr(c, params))
+                return true;
+            return false;
+          }
+          if(!node.is_object())
+            return false;
+          if(is_node_type(node, "Attribute"))
+          {
+            const jsont &v = json_member(node, "value");
+            if(
+              is_node_type(v, "Name") &&
+              params.count(json_string(json_member(v, "id"))) > 0)
+              return true;
+          }
+          for(const char *key :
+              {"value",  "test",   "left",      "right",   "operand",
+               "values", "args",   "elts",      "keys",    "comparators",
+               "body",   "orelse", "finalbody", "targets", "target",
+               "slice",  "func",   "keywords",  "items",   "operands"})
+          {
+            const jsont &child = json_member(node, key);
+            if(child.is_null())
+              continue;
+            if(child.is_array())
+            {
+              for(const auto &c : as_array(child))
+                if(accesses_param_attr(c, params))
+                  return true;
+            }
+            else if(accesses_param_attr(child, params))
+              return true;
+          }
+          return false;
+        };
+        for(const auto &item : as_array(cbody))
+        {
+          if(
+            !is_node_type(item, "FunctionDef") &&
+            !is_node_type(item, "AsyncFunctionDef"))
+            continue;
+          // Collect non-self, unannotated parameters.
+          std::set<std::string> generic_params;
+          const jsont &args_node = json_member(item, "args");
+          const jsont &params_arr = json_member(args_node, "args");
+          if(params_arr.is_array())
+          {
+            bool first = true;
+            for(const auto &p : as_array(params_arr))
+            {
+              const std::string pn = json_string(json_member(p, "arg"));
+              const bool is_self = first && pn == "self";
+              first = false;
+              if(!is_self && json_member(p, "annotation").is_null())
+                generic_params.insert(pn);
+            }
+          }
+          if(generic_params.empty())
+            continue;
+          if(accesses_param_attr(json_member(item, "body"), generic_params))
+          {
+            needs_repass = true;
+            break;
+          }
+        }
+      }
       if(needs_repass)
         convert_class_def(stmt);
     }

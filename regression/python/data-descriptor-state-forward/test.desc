@@ -1,0 +1,16 @@
+CORE
+main.py
+--unwind 4
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+PLR 3.3.2 stateful data descriptor, FORWARD-REFERENCE order: the
+descriptor class (Pos) is defined before the field-owning class (C). The
+1a-bis re-pass (third condition: a method accesses an unannotated non-self
+param's attribute) re-converts Pos's __get__/__set__ after C's struct (with
+its dynamic `_v` field) is registered, so `obj._v` resolves instead of
+baking to nondet. Previously KNOWNBUG.
