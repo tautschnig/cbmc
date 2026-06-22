@@ -460,16 +460,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
               {
                 auto kv = extract_string_value(keys_arr.operands()[idx]);
                 if(kv.has_value() && kv.value() == key_str.value())
-                {
-                  const exprt &cv = vals_arr.operands()[idx];
-                  // Mutable-container value: skip the constant fold so the
-                  // symbolic path returns an lvalue slot (Option 2); an
-                  // rvalue copy would drop a[k].append(...) mutations.
-                  if(
-                    !is_python_list_type(cv.type()) &&
-                    !is_python_dict_type(cv.type()))
-                    return cv;
-                }
+                  return vals_arr.operands()[idx];
               }
             }
           }
@@ -587,7 +578,12 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         }
         exprt cond = and_exprt{in_range, match};
         result = if_exprt{cond, index_exprt{vals, idx}, result};
-        found_idx = if_exprt{cond, idx, found_idx};
+        // Only track the matched index for direct (int) keys — the only
+        // case that returns the lvalue slot. Building this if-chain for
+        // string/value keys (whose `cond` carries a string-solver
+        // predicate) adds solver cost for no benefit.
+        if(!keys_are_strings && !keys_are_values)
+          found_idx = if_exprt{cond, idx, found_idx};
         found = or_exprt{found, cond};
       }
       // KeyError if key not found — unless the dict has a
@@ -711,7 +707,14 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         const bool dict_is_lvalue =
           value.id() == ID_symbol || value.id() == ID_dereference ||
           value.id() == ID_member || value.id() == ID_index;
-        if(mutable_val && dict_is_lvalue)
+        // Restrict to direct (int/non-string) keys: found_idx is then a
+        // cheap, exact equality so the lvalue index resolves precisely.
+        // For string/value keys found_idx would depend on a string-solver
+        // predicate (mis-resolves the slot and is costly), so keep the
+        // value if-chain — string-keyed dict-value mutation is a residual.
+        if(
+          mutable_val && dict_is_lvalue && !keys_are_strings &&
+          !keys_are_values)
           return index_exprt{vals, found_idx, vet};
       }
       return result;
