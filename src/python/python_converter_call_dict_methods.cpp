@@ -556,7 +556,10 @@ std::optional<exprt> python_convertert::try_dict_method(
     // the returned default (setdefault(k, []).append(...)) propagates.
     {
       const typet &svet = vals_type.element_type();
-      if(is_python_list_type(svet) || is_python_dict_type(svet))
+      const typet &sket = keys_type.element_type();
+      if(
+        (is_python_list_type(svet) || is_python_dict_type(svet)) &&
+        !is_python_string_type(sket) && !is_python_value_type(sket))
         return index_exprt{vals_arr, slot_idx, svet};
     }
     return result;

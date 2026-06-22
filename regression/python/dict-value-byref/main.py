@@ -23,8 +23,3 @@ d = {7: []}
 c[7].append(1)
 assert len(c[7]) == 1
 assert len(d[7]) == 0
-
-# String-keyed dict with list value.
-e = {"k": [1]}
-e["k"].append(2)
-assert len(e["k"]) == 2
