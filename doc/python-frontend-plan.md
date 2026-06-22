@@ -1893,15 +1893,16 @@ remainder, so common code is unaffected. **Phases:**
    *field* declaration of non-shadow uses; the shadow path declares the field
    when a `c.m = v` (m a method) is discovered.
 
-   **Whole-group primitive uncovered here — bound-method-as-value boxing.**
-   The one piece the nondet fallback approximates is an *unshadowed* method
-   read used AS a callable value (`f = c.m; f()`). Producing the real value
-   needs **boxing a bound method as a `python_value`** (a closure capturing
-   `self`, built on the fat-closure runtime). That same primitive would serve
-   (a) the exact unshadowed shadow-ternary fallback, (b) higher-order
-   bound-method values ([§12](#higher-order): `m = obj.f; m()`), and (c) the
-   runtime-`__dict__` method fallback (phase 3 below). It is the shared
-   substrate move for this whole group — recommended before phase 3.
+   **Whole-group primitive — bound-method-as-value boxing — LANDED
+   (2026-06-22).** A bound method is now boxed as a runtime CLOSURE
+   `python_value` capturing `self` (`box_bound_method`; see
+   [§12](#higher-order)), so it flows through containers / conditionals /
+   returns and dispatches self-first. This is the shared primitive for the
+   group: it can now make (a) the unshadowed shadow-ternary fallback EXACT
+   (replace the nondet with `box_bound_method(C::m, self)` — a small,
+   optional precision follow-up; the nondet is already sound), and (c) the
+   runtime-`__dict__` method fallback (phase 3). Higher-order bound-method
+   values (b) are done.
 3. **Custom data descriptors** — `__set__`/stateful `__get__` via class-object
    descriptor instances whose storage is the instance `__dict__`. Largest step
    (needs class objects carrying descriptor instances).
@@ -1937,6 +1938,21 @@ doc's contracts section for the bridge semantics.
 **Status: PARTIAL.** Function aliasing (`g = h`), lambda-returning
 functions, and bound-method reassignment are tracked via
 `function_aliases` / `lambda_returning_functions` side-tables.
+
+**Bound method as a runtime value — LANDED (2026-06-22).** A bare method
+read `c.f` (not immediately called, not an alias target) is boxed as a
+runtime bound-method value (a CLOSURE `python_value` capturing `self`,
+reusing the fat-closure runtime; `box_bound_method` +
+`bound_method_closures` self-first dispatch). This lets a bound method
+flow through a **container** (`handlers=[c.f]; handlers[0]()`), a
+**conditional** (`m = c.f if cond else c.g; m()`), and a **function
+return** (`pick(c)()`) and be dispatched later — each previously a "no body
+for callee" false positive. The direct `m = obj.f; m()` case keeps using
+the (cheaper) conversion-time alias. Bound methods with args dispatch
+self-first; negatives correctly FAIL. Regression `bound-method-value`; 0
+sweep regressions. This is the shared bound-method-as-value primitive
+([§10](#descriptors)) that also enables an exact method-shadow fallback
+and the runtime-`__dict__` method fallback.
 
 **Object-accessing lambda parameters — FIXED (`4d808cefda`).** A lambda
 parameter used as an object (`lambda p: p.age`, `lambda a: a.m()`) was
