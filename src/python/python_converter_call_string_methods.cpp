@@ -344,12 +344,28 @@ std::optional<exprt> python_convertert::try_string_method(
       pending_checks.push_back(code_frontend_assignt{
         sym, side_effect_expr_nondett{list_type, get_location(expr)}});
       const member_exprt len{sym, "length", python_int_type()};
-      pending_checks.push_back(code_assumet{and_exprt{
-        binary_relation_exprt{len, ID_ge, from_integer(0, python_int_type())},
-        binary_relation_exprt{
+      // Sound bounds on the (otherwise unconstrained) segment count:
+      //  * with an explicit separator, split always returns >= 1 element
+      //    (even "".split(",") == ['']); whitespace mode may return [] (count
+      //    0, e.g. "".split()), so only the explicit-separator case gets the
+      //    >= 1 lower bound.
+      //  * a separator has length >= 1 (split("") raises ValueError), so there
+      //    can be at most len(s) + 1 segments; this prunes the spurious
+      //    over-count that made `len(s.split(d)) <= len(s) + 1` a false alarm.
+      //  * the list capacity bound (PYTHON_MAX_LIST_LENGTH) is retained.
+      exprt::operandst bounds;
+      bounds.push_back(binary_relation_exprt{
+        len, ID_ge, from_integer(whitespace_mode ? 0 : 1, python_int_type())});
+      bounds.push_back(binary_relation_exprt{
+        len, ID_le, from_integer(PYTHON_MAX_LIST_LENGTH, python_int_type())});
+      if(obj.type().id() == ID_smt_string)
+        bounds.push_back(binary_relation_exprt{
           len,
           ID_le,
-          from_integer(PYTHON_MAX_LIST_LENGTH, python_int_type())}}});
+          plus_exprt{
+            native_or_member_string_length(obj),
+            from_integer(1, python_int_type())}});
+      pending_checks.push_back(code_assumet{conjunction(bounds)});
       return std::move(sym);
     }
   }

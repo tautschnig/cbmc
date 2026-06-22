@@ -1,0 +1,11 @@
+CORE
+main.py
+--cvc5 --python-smt-strings
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+Native SMT-String back-end: sound segment-count bounds for split (>=1 with an
+explicit separator, <=len(s)+1) on a symbolic subject.
