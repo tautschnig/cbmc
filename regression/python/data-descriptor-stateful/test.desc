@@ -1,0 +1,15 @@
+CORE
+main.py
+--unwind 4
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+PLR 3.3.2: stateful data descriptor. `c.x = 5` routes through Pos.__set__
+(emit_descriptor_set), which stores obj._v; `c.x` routes through __get__,
+which reads obj._v. The instance is boxed as a CLASS python_value
+(coerce_to_typed_slot) so obj aliases c. Works because Holder (declaring
+_v) is registered before the descriptor method bodies convert.
