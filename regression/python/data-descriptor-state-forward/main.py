@@ -1,8 +1,8 @@
-# PLR 3.3.2: stateful data descriptor where the descriptor class (Pos) is
+# PLR 3.3.2 (now SUPPORTED): stateful data descriptor where the descriptor class (Pos) is
 # defined BEFORE the field-owning class (C). When Pos.__get__/__set__
 # bodies convert, no registered class yet declares `_v` (C and its dynamic
-# `_v` field are registered later), so `obj._v` inside the descriptor bakes
-# to a nondet over-approximation. (Contrast data-descriptor-stateful, where
+# `_v` field are registered later), so `obj._v` inside the descriptor is resolved by the 1a-bis re-pass
+# (which re-converts the descriptor methods after C's struct is registered). (Contrast data-descriptor-stateful, where
 # the field-owning base class is registered first and this verifies.)
 # Fix: register all class struct fields before converting any method body
 # (a conversion-ordering change); see the descriptors plan.
