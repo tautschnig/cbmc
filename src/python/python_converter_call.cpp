@@ -366,6 +366,193 @@ exprt python_convertert::convert_call(const jsont &expr)
     return side_effect_expr_nondett{python_value_type(), get_location(expr)};
   }
 
+  // ---- re IGNORECASE/DOTALL flag plumbing (whole-group, all re entry points)
+  // A constant `flags=` argument to re.<fn> does not constant-propagate into
+  // the re stub body (the stub's `flags` parameter stays symbolic), so the
+  // inline-flag prefix the stub would add via `_re_flag_prefix` is lost and the
+  // match degrades to nondet. When `flags` is a compile-time constant AND the
+  // pattern is a string literal, rewrite the call here: prepend the inline-flag
+  // group ((?i)/(?s)/(?is)) to the literal pattern and drop the flags argument,
+  // so the stub (and the regex translator/constant matcher, which already
+  // honour leading inline-flag groups) receive a flag-free constant pattern.
+  // Only the exact translator-supported flag values map to a prefix; any other
+  // flag (or a non-constant flag / non-literal pattern) is left unchanged ->
+  // sound nondet (never a guessed match). One uniform hook for every re entry.
+  if(is_node_type(func, "Attribute"))
+  {
+    const std::string re_attr = json_string(json_member(func, "attr"));
+    // Positional index of `flags` per re function (pattern is always index 0).
+    int flag_pos_idx = -1;
+    if(
+      re_attr == "match" || re_attr == "search" || re_attr == "fullmatch" ||
+      re_attr == "findall" || re_attr == "finditer")
+      flag_pos_idx = 2;
+    else if(re_attr == "compile")
+      flag_pos_idx = 1;
+    else if(re_attr == "sub" || re_attr == "subn")
+      flag_pos_idx = 4;
+    const jsont &re_recv = json_member(func, "value");
+    const bool recv_is_re = is_node_type(re_recv, "Name") &&
+                            json_string(json_member(re_recv, "id")) == "re";
+    if(flag_pos_idx >= 0 && recv_is_re && args.is_array())
+    {
+      // Pure evaluator for re flag expressions (no side effects): constant
+      // ints, `re.<FLAG>` attributes, and `|` combinations thereof.
+      std::function<std::optional<long>(const jsont &)> eval_re_flags =
+        [&](const jsont &n) -> std::optional<long>
+      {
+        if(is_node_type(n, "Constant"))
+        {
+          const jsont &v = json_member(n, "value");
+          if(v.is_number())
+          {
+            try
+            {
+              return std::stol(v.value);
+            }
+            catch(...)
+            {
+              return std::nullopt;
+            }
+          }
+          return std::nullopt;
+        }
+        if(is_node_type(n, "Attribute"))
+        {
+          const jsont &rv = json_member(n, "value");
+          if(
+            is_node_type(rv, "Name") &&
+            json_string(json_member(rv, "id")) == "re")
+          {
+            const std::string fa = json_string(json_member(n, "attr"));
+            if(fa == "IGNORECASE" || fa == "I")
+              return 2;
+            if(fa == "LOCALE" || fa == "L")
+              return 4;
+            if(fa == "MULTILINE" || fa == "M")
+              return 8;
+            if(fa == "DOTALL" || fa == "S")
+              return 16;
+            if(fa == "UNICODE" || fa == "U")
+              return 32;
+            if(fa == "VERBOSE" || fa == "X")
+              return 64;
+            if(fa == "ASCII" || fa == "A")
+              return 256;
+          }
+          return std::nullopt;
+        }
+        if(
+          is_node_type(n, "BinOp") &&
+          is_node_type(json_member(n, "op"), "BitOr"))
+        {
+          auto l = eval_re_flags(json_member(n, "left"));
+          auto r = eval_re_flags(json_member(n, "right"));
+          if(l.has_value() && r.has_value())
+            return *l | *r;
+        }
+        return std::nullopt;
+      };
+
+      // Locate the flags node: keyword `flags=` or the positional slot.
+      const jsont *flags_node = nullptr;
+      bool flags_is_kw = false;
+      const jsont &re_kws = json_member(expr, "keywords");
+      if(re_kws.is_array())
+        for(const auto &kw : as_array(re_kws))
+          if(json_string(json_member(kw, "arg")) == "flags")
+          {
+            flags_node = &json_member(kw, "value");
+            flags_is_kw = true;
+          }
+      const json_arrayt &old_args = as_array(args);
+      if(
+        flags_node == nullptr &&
+        static_cast<int>(old_args.size()) > flag_pos_idx)
+        flags_node = &*std::next(old_args.begin(), flag_pos_idx);
+
+      if(flags_node != nullptr && !old_args.empty())
+      {
+        const std::optional<long> fv = eval_re_flags(*flags_node);
+        // Map to a supported inline-flag prefix. f == 0 needs no prefix
+        // (skip); an unsupported flag/combination leaves the call unchanged
+        // (sound nondet).
+        std::string pfx;
+        bool supported = fv.has_value();
+        if(fv.has_value())
+        {
+          if(*fv == 0)
+            ; // no prefix needed
+          else if(*fv == 2)
+            pfx = "(?i)";
+          else if(*fv == 16)
+            pfx = "(?s)";
+          else if(*fv == 18)
+            pfx = "(?is)";
+          else
+            supported = false;
+        }
+        if(supported && !pfx.empty())
+        {
+          // The pattern (arg 0) must be a string literal or a Name bound to a
+          // string constant; otherwise leave the call unchanged (nondet).
+          const jsont &pat_node = *old_args.begin();
+          std::optional<std::string> pat;
+          if(is_node_type(pat_node, "Constant"))
+          {
+            const jsont &pv = json_member(pat_node, "value");
+            if(pv.is_string())
+              pat = pv.value;
+          }
+          else if(is_node_type(pat_node, "Name"))
+          {
+            auto si = string_constants.find(
+              irep_idt{qualify_name(json_string(json_member(pat_node, "id")))});
+            if(si != string_constants.end())
+              pat = si->second;
+          }
+          if(pat.has_value())
+          {
+            // Build the modified call: prefixed literal pattern at arg 0, the
+            // positional flags arg dropped (or the flags keyword removed).
+            jsont modified = expr;
+            json_objectt &mo = to_json_object(modified);
+            json_arrayt new_args;
+            std::size_t i = 0;
+            for(const auto &a : old_args)
+            {
+              if(i == 0)
+              {
+                jsont pc = pat_node; // inherit source location fields
+                json_objectt &pco = to_json_object(pc);
+                pco["_type"] = json_stringt("Constant");
+                pco["value"] = json_stringt(pfx + *pat);
+                new_args.push_back(std::move(pc));
+              }
+              else if(!flags_is_kw && static_cast<int>(i) == flag_pos_idx)
+              {
+                // drop positional flags argument
+              }
+              else
+                new_args.push_back(a);
+              i++;
+            }
+            mo["args"] = new_args;
+            if(flags_is_kw && re_kws.is_array())
+            {
+              json_arrayt new_kws;
+              for(const auto &kw : as_array(re_kws))
+                if(json_string(json_member(kw, "arg")) != "flags")
+                  new_kws.push_back(kw);
+              mo["keywords"] = new_kws;
+            }
+            return convert_call(modified);
+          }
+        }
+      }
+    }
+  }
+
   // Stage 1 of the re-precision plan: detect user-visible
   // regex call patterns whose pattern is a constant non-ε
   // accepting regex AND whose subject is statically the empty
