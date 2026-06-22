@@ -1842,8 +1842,15 @@ are landed.
 
 **Residuals (KNOWNBUG, sound):**
 
-- **Non-data-descriptor (method) shadowing** (`method-shadow-knownbug`):
-  an instance attribute shadowing a method.
+- **Non-data-descriptor (method) shadowing** (`method-shadow`):
+  an instance attribute shadowing a method. **RESOLVED (2026-06-22,
+  `7dd6429f0d`).** A method-shadow attr (`c.m = v` for a method `m`) gets a
+  `python_value` storage field + a runtime `__shadow_m` flag; a bare read
+  `c.m` dispatches via `if(__shadow_m) instance.m else <nondet>` (the
+  unshadowed fallback is a sound nondet over-approximation; method CALLS
+  `c.m()` are unaffected). Reuses the existing class-level-data-attr
+  shadow-fallback ternary, extended to non-data descriptors. 0 sweep
+  regressions.
 - **Custom-descriptor `__set__` + stateful `__get__`.** *Fix shape:* both
   need an instance-`__dict__`-as-storage model (class-object construction),
   which is a larger substrate than the current per-field struct.
@@ -1879,10 +1886,22 @@ remainder, so common code is unaffected. **Phases:**
    needed** for truly-dynamic names (`setattr(o, computed, v)`), instances
    returned from functions / aliased through containers, and method shadowing
    (next).
-2. **Shadowing** — route reads through step (2) before the class lookup, so an
-   instance `__dict__` entry shadows a class non-data attribute (method). Fixes
-   `method-shadow-knownbug`. (The static-discovery phase deliberately *skips*
-   method-named attrs, so it does not regress dispatch.)
+2. **Shadowing** — **DONE (2026-06-22, `7dd6429f0d`).** A method-shadow attr
+   gets a `python_value` field + `__shadow_m` flag; bare reads dispatch via
+   `if(__shadow_m) instance.m else <nondet>`. Fixed `method-shadow` (was
+   KNOWNBUG). The static-discovery phase still skips method-named attrs for
+   *field* declaration of non-shadow uses; the shadow path declares the field
+   when a `c.m = v` (m a method) is discovered.
+
+   **Whole-group primitive uncovered here — bound-method-as-value boxing.**
+   The one piece the nondet fallback approximates is an *unshadowed* method
+   read used AS a callable value (`f = c.m; f()`). Producing the real value
+   needs **boxing a bound method as a `python_value`** (a closure capturing
+   `self`, built on the fat-closure runtime). That same primitive would serve
+   (a) the exact unshadowed shadow-ternary fallback, (b) higher-order
+   bound-method values ([§12](#higher-order): `m = obj.f; m()`), and (c) the
+   runtime-`__dict__` method fallback (phase 3 below). It is the shared
+   substrate move for this whole group — recommended before phase 3.
 3. **Custom data descriptors** — `__set__`/stateful `__get__` via class-object
    descriptor instances whose storage is the instance `__dict__`. Largest step
    (needs class objects carrying descriptor instances).
