@@ -1612,16 +1612,21 @@ So this single channel stays a known, corpus-invisible residual false
 proof. (The doc previously overstated the guard as covering all unsound
 patterns; this audit corrects that.)
 
-> **Unified extraction-aliasing root (2026-06-22).** The `r = g[i]; mutate
-> r` pattern here is the *same* residual as `v = a[k]; v.append(...)` for
-> dicts (d3). **Direct** nested mutation now works for both containers via
-> lvalue slots (lists already; dicts per
+> **Unified extraction-aliasing root (analyzed 2026-06-22).** The `r = g[i];
+> mutate r` pattern here is the *same* residual as `v = a[k]; v.append(...)`
+> for dicts (d3). **Direct** nested mutation now works for both containers
+> via lvalue slots (lists already; dicts per
 > [dict-value-byref](python-frontend-dict-value-byref-plan.md)); the shared
-> residual is **extraction-then-mutate**, whose fix is
-> *by-reference-at-extraction* (bind the LHS as a reference to the owning
-> container's slot — distinct from the untenable byref-at-construction).
-> See the dict-value-byref doc for the design + the §0-guard-interaction
-> caveats; it is a single mechanism that would close both residuals.
+> residual is **extraction-then-mutate**. A slot-pointer fix
+> (*by-reference-at-extraction*) was investigated and found **unsound**:
+> CPython's `r = g[i]` aliases the *object*, not the slot, so it diverges
+> under subscript-assign / `insert` / `pop` / `sort` / rebind /
+> cross-function reassignment — a **false proof** (see the
+> dict-value-byref doc for the worked CPython examples). The only sound fix
+> is per-object identity = the **byref-at-construction** substrate already
+> found perf-untenable, so this residual is **blocked on the same
+> representation barrier**, not a missing point fix. It stays a sound,
+> guarded, corpus-invisible residual.
 
 ### List-precision cluster — implementable plan (empirically triaged 2026-06-19) {#list-precision}
 
