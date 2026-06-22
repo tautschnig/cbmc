@@ -1,0 +1,14 @@
+CORE
+main.py
+--unwind 4
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+PLR 3.3.2: assignment to a data-descriptor attribute (`c.x = 5`) routes
+through the descriptor's __set__ (emit_descriptor_set), so the invariant
+assert in __set__ is checked. (A bad value would violate it: see the
+companion negative behaviour.)

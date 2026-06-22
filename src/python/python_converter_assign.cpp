@@ -2867,6 +2867,37 @@ codet python_convertert::convert_assign(const jsont &stmt)
       {
         // If obj is a pointer (self in a method), dereference it
         typet obj_type = obj.type();
+        // PLR §3.3.2: a DATA descriptor (class attr whose class defines
+        // __set__) intercepts the assignment — route to __set__ instead
+        // of storing into the descriptor field.
+        {
+          std::string dcls;
+          exprt dobj;
+          if(
+            obj_type.id() == ID_pointer &&
+            to_pointer_type(obj_type).base_type().id() == ID_struct)
+          {
+            dcls = id2string(
+              to_struct_type(to_pointer_type(obj_type).base_type()).get_tag());
+            dobj = obj;
+          }
+          else if(obj_type.id() == ID_struct)
+          {
+            dcls = id2string(to_struct_type(obj_type).get_tag());
+            dobj = address_of_exprt{obj};
+          }
+          if(dcls.substr(0, 13) == "python_class_")
+            dcls = dcls.substr(13);
+          if(!dcls.empty())
+          {
+            if(auto ds = emit_descriptor_set(dcls, attr, dobj, rhs, loc))
+            {
+              ds->add_source_location() = loc;
+              block.add(std::move(*ds));
+              continue;
+            }
+          }
+        }
         if(obj_type.id() == ID_pointer)
         {
           const auto &base = to_pointer_type(obj_type).base_type();

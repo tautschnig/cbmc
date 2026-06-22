@@ -2120,6 +2120,20 @@ public:
     const exprt &obj_ptr,
     const source_locationt &loc);
 
+  /// PLR §3.3.2: a DATA descriptor (a class attribute bound to an
+  /// instance whose class defines `__set__`) intercepts attribute
+  /// assignment. If `attr` of `class_name` (walked via the MRO) is such
+  /// a descriptor, return the statement `desc.__set__(descriptor, obj,
+  /// value)` (so per-instance state lives wherever `__set__` puts it,
+  /// typically the instance's own fields), else std::nullopt. `obj_ptr`
+  /// is a pointer to the instance being assigned.
+  std::optional<codet> emit_descriptor_set(
+    const std::string &class_name,
+    const std::string &attr,
+    const exprt &obj_ptr,
+    const exprt &value,
+    const source_locationt &loc);
+
   /// §12c: lower a single-generator list comprehension over a runtime
   /// list (e.g. a `list` parameter, whose length is symbolic) into a
   /// real GOTO while-loop that populates a fresh temporary, instead of
