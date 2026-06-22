@@ -1,0 +1,12 @@
+CORE
+main.py
+--cvc5 --python-smt-strings
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+Native SMT-String back-end: equality/inequality against the empty literal ""
+must verify soundly. Regression for the int2bv modular-wrap length bug that
+made `nondet_string(0) == ""` report a spurious VERIFICATION ERROR.
