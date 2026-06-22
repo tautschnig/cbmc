@@ -103,6 +103,18 @@ contains either:
 2. A method whose body contains `self.<name>()` calls to
    sibling methods declared **later** in source order than
    the calling method.
+3. A method that accesses `<p>.attr` where `p` is a non-self
+   **unannotated** parameter (so `p` is `python_value`). Such
+   `p.attr` resolves at conversion time against the
+   *then-registered* classes; if the field belongs to a class
+   defined **later** in the file, pass 1a baked a nondet
+   over-approximation, and the re-pass (after the full 1a loop
+   registered every class struct, incl. discovered dynamic
+   attrs) lets it resolve. This is the *whole-group* lever for
+   forward-referenced field access through a generic parameter —
+   it also completes stateful data descriptors whose descriptor
+   class precedes the field-owning class (`__get__`/`__set__`
+   reading/writing `obj.<field>`).
 
 `convert_class_def` is idempotent under these conditions —
 class_mro / class_bases dedup, and method symbols /
@@ -251,6 +263,14 @@ runtime dispatch.
 union; `python_value_int(e)`, `python_value_float(e)`, etc.
 project out a specific field.
 
+A dedicated **`CLOSURE`** variant carries callables that must flow as
+runtime values: `__int_val` holds an index into the converter's
+`closure_registry` and `__class_ptr` points at a heap capture record.
+It backs both **fat closures** (capturing free variables) and **bound
+methods** (`box_bound_method`, capturing `self`); `dispatch_closure_value`
+calls the right target, prepending `self` for the bound-method entries
+recorded in `bound_method_closures`.
+
 ### Per-class structs
 
 Each user `class C` materialises a CBMC struct named
@@ -264,10 +284,31 @@ Each user `class C` materialises a CBMC struct named
    class).
 4. `__init__`-derived fields (`self.x = ...` writes inside
    the constructor).
+5. **Dynamically-discovered fields** — attributes written as
+   `<obj>.attr = ...` on a typed parameter or a local bound to an
+   instance, found by a whole-program pre-pass (`dynamic_class_attrs`,
+   Pass 0.27/0.27b) and declared as `python_value` fields up front
+   (CBMC structs are static). Method-shadow storage fields and their
+   `__shadow_<attr>` flags (see [Attribute access](#attribute-access-descriptors--shadowing))
+   are added here too.
 
 Method calls dispatch on `__class_tag` for tagged-union
 receivers; for direct-typed receivers (`f: Foo`), the call
 goes straight to `python::Foo::<method>`.
+
+### Empty-container element-type inference
+
+A literal `[]` / `{}` / `set()` has no element/value type at the
+construction site. A forward pre-scan (`collect_empty_list_inferred_types`)
+walks each scope and infers them from later usage — `x.append(v)` /
+`x.extend(...)` for lists, `a[k] = v` *and* `a.setdefault(k, default)`
+for dicts (a `List` default yields a list value type) — populating
+`empty_list_inferred_types` / `empty_dict_inferred_types`. The
+construction site then builds the container with the inferred element
+types instead of the `int` / `dict[str,int]` defaults, so e.g.
+`a = {}; a.setdefault(1, []).append(2.0)` types `a` as `dict[int, list]`.
+Inference fires only when usage is unambiguous; otherwise the default
+type stands (sound).
 
 ## Loop semantics
 
@@ -400,6 +441,17 @@ to cooperate for the second pass to land correctly:
   `*foo_ptr`. This handles a method passing `self` (a
   `Foo*`) to a constructor expecting `f: Foo` by value.
 
+A related forward-reference shape is **field access on a
+forward-defined class through a generic parameter**: a method
+`def f(self, x): return x.attr` where `x` is unannotated
+(`python_value`) and `attr` belongs to a class defined later. In
+pass 1a, `x.attr` resolves against the not-yet-complete registry and
+bakes a nondet; the **1a-bis third re-pass condition** (see Pass
+structure) re-converts such methods after every class struct is
+registered, so the field read resolves. This is what makes stateful
+data descriptors work when the descriptor class precedes the
+field-owning class.
+
 ## Exception model
 
 Exceptions use three globals plus a per-class
@@ -463,6 +515,56 @@ causes verification failure.
   function — the bug that previously made
   `return super().get_value() + 1` return 42 instead of
   43.
+
+### Bound method as a runtime value (PLR §3.3.2)
+
+A **bare** read of a method name — `m = obj.f` (not immediately
+called, and not the conversion-time alias case) — is boxed as a
+runtime **bound-method value**: a `CLOSURE` `python_value` whose
+capture record holds `self` (`box_bound_method`, reusing the
+fat-closure runtime; the registry index is recorded in
+`bound_method_closures`). This lets a bound method flow through a
+**container** (`handlers=[c.f]; handlers[0]()`), a **conditional**
+(`m = c.f if … else c.g; m()`), or a **function return**
+(`pick(c)()`) and be dispatched later via `dispatch_closure_value`,
+which **prepends** the captured `self` for bound methods (vs.
+appending captures for ordinary closures). The direct
+`m = obj.f; m()` case keeps the cheaper conversion-time alias
+(`bound_methods`/`function_aliases`). Calls to a non-Name
+`python_value` callee (e.g. `handlers[0]()`) are routed through the
+dispatch in `convert_call`.
+
+## Attribute access: descriptors & shadowing
+
+`obj.attr` **reads** resolve in this order (`convert_expression`
+on an `Attribute`): `@property` getter → custom-descriptor
+`__get__` (`emit_descriptor_get`) → declared struct field (with
+the class-level-attr shadow-fallback ternary) → `__getattr__`
+fallback → a bound-method box (if `attr` names a method) → nondet
+over-approximation.
+
+- **Data descriptors (`__set__` / stateful `__get__`).** A class
+  attribute bound to an instance whose class defines `__get__`/
+  `__set__` is a descriptor (`class_descriptor_attrs`). Reads route
+  to `__get__`; an assignment `c.x = v` routes through
+  `emit_descriptor_set` → `desc.__set__(descriptor, obj, v)` (so the
+  descriptor body runs on assignment and its invariants/side-effects
+  are enforced). The instance is boxed as a CLASS `python_value` via
+  the canonical `coerce_to_typed_slot` (which also sets
+  `__class_tag`), so `obj.<field>` inside the descriptor method
+  aliases the real instance — `__set__` storing `obj._v` and
+  `__get__` reading it back share state. (When the descriptor class
+  precedes the field-owning class, the 1a-bis third re-pass condition
+  makes `obj._v` resolve; see Pass structure.)
+- **Method shadowing.** An instance attribute that shadows a
+  same-named method (`c.m = 99` where `m` is a method, tracked in
+  `method_shadow_attrs`) gets a `python_value` storage field + a
+  runtime `__shadow_m` flag. A bare read `c.m` dispatches via
+  `if(__shadow_m) instance.m else <bound-method box>` — the
+  unshadowed branch is the exact bound method (or a sound nondet if
+  it cannot be boxed). Method **calls** `c.m()` are unaffected (they
+  resolve via the method-call path, separate from the attribute-read
+  field resolution).
 
 ## Call-signature validation
 
@@ -769,7 +871,7 @@ opt-in cases.
 | Area | Issue | Status | Plan |
 |---|---|---|---|
 | Operations that can raise | `int()`/`float()` of a non-constant string (`ValueError`), `os.*` file ops (`OSError`), `re` with a non-str pattern (`TypeError`) are modelled as **silently succeeding** by default (precision-favouring) → false **negatives** by design | sound **only** under opt-in `--python-raising-ops-check`; default favours precision | [plan §0](python-frontend-plan.md#false-proofs) |
-| Nested mutable-element aliasing | anonymous nested-mutable list/dict elements stored by value; the replication / self-append / new-container channels are **guarded** (report `python-model-bound`) | sound (guarded); one residual — extraction from an *untainted* literal (`r=g[i]`) — is a documented, corpus-invisible false proof (byref representation is empirically untenable) | [plan §0](python-frontend-plan.md#false-proofs) |
+| Nested mutable-element aliasing | anonymous nested-mutable list/dict elements stored by value; the replication / self-append / new-container channels are **guarded** (report `python-model-bound`). **Direct** nested mutation works (`c[i].append(...)` for lists, and int-keyed dict values via lvalue value slots) | sound (guarded); the single residual is **extraction-then-mutate** (`r=c[i]; r.append(...)` / `v=a[k]; v.append(...)`) — a documented, corpus-invisible false proof. Slot-aliasing is unsound (object-vs-slot divergence under reassign/insert/pop/sort); the sound fix needs per-object identity = the empirically-untenable byref-at-construction | [plan §0](python-frontend-plan.md#false-proofs) + [dict-byref](python-frontend-dict-value-byref-plan.md) |
 | Native `smt_string`→int cast | under `--python-smt-strings`, a spurious str→int coercion from value plumbing lowers to `str.to_int` (defined-but-approximate); genuine `int(str)` is exact | sound (approximate, flagged) | [strings plan](python-frontend-strings-plan.md#strings) |
 | BMC bounds | bugs deeper than `--unwind` / beyond the bounded container or 64-bit ranges are not found | sound w.r.t. the bound (intrinsic to BMC) | — (intrinsic) |
 
@@ -784,9 +886,9 @@ opt-in cases.
 | Lists | symbolic-list precision cluster (`nondet_list*`, `list_extend*`, `list-sort*`) — spurious failures | [plan §9](python-frontend-plan.md#precision) |
 | Complex | `complex_*` edge precision (binop promotion, builtins, conjugate, `cmath` edges) | [plan §9](python-frontend-plan.md#precision) |
 | Comprehensions | dict-comprehension over a runtime iterable (nondet); iteration-var scope leak; inner-iterator shadow | [plan §14](python-frontend-plan.md#residuals) |
-| Descriptors | non-data (method) shadowing; custom `__set__` / stateful `__get__` (need instance-`__dict__`); **~0 corpus value** | [plan §10](python-frontend-plan.md#descriptors) |
+| Descriptors / dynamic attrs | method shadowing, **data descriptors** (`__set__` + stateful `__get__`), and forward-referenced field access via a generic param are now modelled (2026-06-22); **remaining**: truly-dynamic attribute *names* (`setattr(o, computed, v)`) need a runtime instance-`__dict__` | [plan §10](python-frontend-plan.md#descriptors) |
 | Contracts | multi-level Liskov; strict-C3 mixin precedence; async | [plan §11](python-frontend-plan.md#icontract) |
-| Higher-order | container-/attribute-stored & composed closures (capture-through-param works); **~0 corpus value** | [plan §12](python-frontend-plan.md#higher-order) + [fat-closure](python-frontend-fat-closure-plan.md) |
+| Higher-order | **bound methods as runtime values** (container-/conditional-/return-flowed, `m=obj.f`) now work (2026-06-22); container-/attribute-stored & composed *closures* remain (capture-through-param works); **~0 corpus value** | [plan §12](python-frontend-plan.md#higher-order) + [fat-closure](python-frontend-fat-closure-plan.md) |
 | dict / cross-module | global-dict-literal mutation across modules is fixed; **`**d` unpack of a *mutated* global dict** and **non-dict cross-module globals** remain (rare) | [plan §5](python-frontend-plan.md#dict-byref) |
 | Modules | `cmath`, fuller `os`/`time`/`datetime`/`json`/`dataclasses`/`collections` not modelled (nondet) | [plan §6](python-frontend-plan.md#modules) |
 | Annotation checks | `--python-check-annotations` can't be default-on (two CBMC-core blockers) | [plan §7](python-frontend-plan.md#check-annotations) |
