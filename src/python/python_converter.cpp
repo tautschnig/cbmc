@@ -1691,6 +1691,57 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
           {
             std::string method = json_string(json_member(fn, "attr"));
             const jsont &obj_node = json_member(fn, "value");
+            // PLR §6.4: `a.setdefault(k, default).<method>(...)` on a
+            // pending empty dict infers the dict's key/value types from
+            // k / default (the empty-dict inference otherwise only fires on
+            // an `a[k] = v` subscript-assign, which setdefault code lacks).
+            if(is_node_type(obj_node, "Call"))
+            {
+              const jsont &ofn = json_member(obj_node, "func");
+              if(
+                is_node_type(ofn, "Attribute") &&
+                json_string(json_member(ofn, "attr")) == "setdefault" &&
+                is_node_type(json_member(ofn, "value"), "Name"))
+              {
+                irep_idt did{qualify_name(
+                  json_string(json_member(json_member(ofn, "value"), "id")))};
+                const jsont &sdargs = json_member(obj_node, "args");
+                if(
+                  pending_dict.count(did) > 0 &&
+                  empty_dict_inferred_types.count(did) == 0 &&
+                  sdargs.is_array() && as_array(sdargs).size() >= 2)
+                {
+                  auto ait = as_array(sdargs).begin();
+                  typet kt = type_of_expr(*ait);
+                  ++ait;
+                  const jsont &dft = *ait;
+                  typet vt;
+                  if(is_node_type(dft, "List"))
+                  {
+                    // List default: element type from its first element, or
+                    // int (length-only asserts don't depend on it).
+                    typet et = python_int_type();
+                    const jsont &de = json_member(dft, "elts");
+                    if(de.is_array() && !as_array(de).empty())
+                    {
+                      typet e0 = type_of_expr(*as_array(de).begin());
+                      if(!e0.id().empty() && e0.id() != ID_empty)
+                        et = e0;
+                    }
+                    vt = python_list_type(et);
+                  }
+                  else
+                    vt = type_of_expr(dft);
+                  if(
+                    !kt.id().empty() && kt.id() != ID_empty &&
+                    !vt.id().empty() && vt.id() != ID_empty)
+                  {
+                    empty_dict_inferred_types[did] = {kt, vt};
+                    pending_dict.erase(did);
+                  }
+                }
+              }
+            }
             if(
               is_node_type(obj_node, "Name") &&
               (method == "append" || method == "extend"))
