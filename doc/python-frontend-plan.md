@@ -1509,12 +1509,18 @@ common cases already work. Recorded to prevent a mis-targeted effort.
   caught + fixed an intermediate `classmethod-cls-construction` regression).
   +1 PASS (`method-instances`, 2713).
 - **`heapq` — BLOCKED by list sort/del pass-by-reference.** The stub models
-  ops via `heap.sort()` / `del heap[0]` / `heap.append(...)`. Verified:
-  `append` DOES propagate through a function param, but **`sort` and `del` do
-  NOT** (the sort handler rebuilds + reassigns the list instead of mutating the
-  shared by-ref storage `append` uses). So `heapify`/`heappop` lose their effect
-  on the caller's list. This is the documented hard by-ref / per-instance-
-  identity area; not a small fix. Deferred.
+  ops via `heap.sort()` / `del heap[0]` / `heap.append(...)`.
+  **UPDATE (`6091534cd4`): `sort` and `del l[i]` now propagate through a
+  by-reference USER-function parameter** (sort writes in place + compares the
+  python_value `__int_val` payload; del unwraps the by-ref container). Verified
+  with user functions (`def f(l): l.sort()` / `del l[0]`). **heapq is STILL
+  blocked by a third layer: module-qualified stub-function calls
+  (`heapq.heapify(heap)`) don't promote their list argument to a by-reference
+  container** (a user-function call does, via `coerce_call_argument`), so the
+  stub's now-correct mutations don't write back to the caller's list. Closing
+  heapq needs module/stub calls to route list args through the same by-ref
+  promotion as user calls. Float/mixed-payload sort is also a residual (only
+  `__int_val` compared). Deferred.
 
 **guarded for the common cases** (2026-06-17) with a documented residual — see
 it for the details. Verified against the 2026-06-08
