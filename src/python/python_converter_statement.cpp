@@ -356,6 +356,12 @@ codet python_convertert::convert_statement(const jsont &stmt)
         if(is_node_type(target, "Subscript"))
         {
           exprt obj = convert_expression(json_member(target, "value"));
+          // Unwrap a by-reference container (a python_value carrying
+          // __list_ptr) to the shared list lvalue, so `del l[i]` through a
+          // function parameter shifts the CALLER's list (mirrors how
+          // append/sort reach the container via unwrap_any_container_receiver).
+          if(!obj.is_nil() && is_python_value_type(obj.type()))
+            obj = python_value_list(obj);
           if(!obj.is_nil() && is_python_list_type(obj.type()))
           {
             exprt idx = convert_expression(json_member(target, "slice"));
