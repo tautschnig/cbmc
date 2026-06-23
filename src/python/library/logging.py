@@ -122,7 +122,7 @@ class Formatter:
         self.fmt = fmt
 
     def format(self, record):
-        return ""
+        return nondet_str()
 
 
 class LogRecord:

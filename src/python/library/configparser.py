@@ -70,10 +70,10 @@ class RawConfigParser:
         return section in self._sections
 
     def options(self, section):
-        return []
+        return nondet_list(8, nondet_str())
 
     def read(self, filenames, encoding=None):
-        return []
+        return nondet_list(8, nondet_str())
 
     def read_file(self, f, source=None):
         return None
@@ -85,24 +85,24 @@ class RawConfigParser:
         return None
 
     def get(self, section, option, *, raw=False, vars=None, fallback=None):
-        return fallback if fallback is not None else ""
+        return fallback if fallback is not None else nondet_str()
 
     def getint(self, section, option, *, raw=False, vars=None, fallback=None):
-        return fallback if fallback is not None else 0
+        return fallback if fallback is not None else nondet_int()
 
     def getfloat(self, section, option, *, raw=False, vars=None,
                  fallback=None):
-        return fallback if fallback is not None else 0.0
+        return fallback if fallback is not None else nondet_float()
 
     def getboolean(self, section, option, *, raw=False, vars=None,
                    fallback=None):
-        return fallback if fallback is not None else False
+        return fallback if fallback is not None else nondet_bool()
 
     def has_option(self, section, option):
-        return False
+        return nondet_bool()
 
     def items(self, section=None, *, raw=False, vars=None):
-        return []
+        return nondet_list(8, nondet_str())
 
     def set(self, section, option, value=None):
         return None
@@ -111,10 +111,10 @@ class RawConfigParser:
         return None
 
     def remove_option(self, section, option):
-        return False
+        return nondet_bool()
 
     def remove_section(self, section):
-        return False
+        return nondet_bool()
 
     def optionxform(self, optionstr):
         return optionstr.lower()

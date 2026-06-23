@@ -34,7 +34,7 @@ class PurePath:
 
     @property
     def suffixes(self):
-        return []
+        return nondet_list(8, nondet_str())
 
     @property
     def stem(self) -> str:
@@ -131,31 +131,31 @@ class Path(PurePath):
 
     # File-system queries
     def exists(self) -> bool:
-        return False
+        return nondet_bool()
 
     def is_file(self) -> bool:
-        return False
+        return nondet_bool()
 
     def is_dir(self) -> bool:
-        return False
+        return nondet_bool()
 
     def is_symlink(self) -> bool:
-        return False
+        return nondet_bool()
 
     def is_mount(self) -> bool:
-        return False
+        return nondet_bool()
 
     def is_block_device(self) -> bool:
-        return False
+        return nondet_bool()
 
     def is_char_device(self) -> bool:
-        return False
+        return nondet_bool()
 
     def is_fifo(self) -> bool:
-        return False
+        return nondet_bool()
 
     def is_socket(self) -> bool:
-        return False
+        return nondet_bool()
 
     def stat(self):
         return None
@@ -173,19 +173,19 @@ class Path(PurePath):
         return Path()
 
     def glob(self, pattern: str):
-        return []
+        return nondet_list(8, nondet_str())
 
     def rglob(self, pattern: str):
-        return []
+        return nondet_list(8, nondet_str())
 
     def iterdir(self):
-        return []
+        return nondet_list(8, nondet_str())
 
     def owner(self) -> str:
-        return ""
+        return nondet_str()
 
     def group(self) -> str:
-        return ""
+        return nondet_str()
 
     def readlink(self):
         return Path()
@@ -238,7 +238,7 @@ class Path(PurePath):
         return None
 
     def read_text(self, encoding=None, errors=None) -> str:
-        return ""
+        return nondet_str()
 
     def read_bytes(self):
         return b""
@@ -253,7 +253,7 @@ class Path(PurePath):
         return 0
 
     def write_bytes(self, data) -> int:
-        return 0
+        return nondet_int()
 
 
 class PosixPath(Path):

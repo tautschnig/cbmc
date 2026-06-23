@@ -117,7 +117,7 @@ def check_output(args=None, *, stdin=None, stderr=None,
 
 
 def getoutput(cmd) -> str:
-    return ""
+    return nondet_str()
 
 
 def getstatusoutput(cmd):

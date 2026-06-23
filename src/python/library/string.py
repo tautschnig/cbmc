@@ -39,10 +39,10 @@ class Template:
         return self.template
 
     def is_valid(self):
-        return True
+        return nondet_bool()
 
     def get_identifiers(self):
-        return []
+        return nondet_list(8, nondet_str())
 
 
 class Formatter:
@@ -53,7 +53,7 @@ class Formatter:
         return format_string
 
     def parse(self, format_string):
-        return []
+        return nondet_list(8, nondet_str())
 
     def get_field(self, field_name, args, kwargs):
         return (None, field_name)

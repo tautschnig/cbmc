@@ -1,0 +1,10 @@
+CORE
+main.py
+
+^VERIFICATION FAILED$
+^EXIT=10$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+Library-stub soundness guard: pathlib exists must not be a fixed False.

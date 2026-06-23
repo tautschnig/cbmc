@@ -1,0 +1,10 @@
+CORE
+main.py
+
+^VERIFICATION FAILED$
+^EXIT=10$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+Library-stub soundness guard: pathlib read_text must not be a fixed empty string.
