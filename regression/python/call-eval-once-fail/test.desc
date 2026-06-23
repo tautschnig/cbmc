@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^VERIFICATION FAILED$
+^EXIT=10$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+Soundness: f(h)==2 must FAIL (f returns 1); a call-duplication regression would
+false-prove it.
