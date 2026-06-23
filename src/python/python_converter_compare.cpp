@@ -406,6 +406,35 @@ exprt python_convertert::convert_compare(const jsont &expr)
         return e;
       return typecast_exprt{e, double_type()};
     };
+    // PLR §5.9: each operand of a comparison is evaluated ONCE. A
+    // python_value operand is referenced twice below (a tag predicate plus
+    // an unwrap of its payload); if the operand is a side-effecting call,
+    // that re-evaluates the call, and a call that mutates shared state
+    // (e.g. it `del`s/pops a by-reference list) DIVERGES between the two
+    // evaluations -> a false proof. Materialise such an operand into a
+    // fresh temp once, then reference the temp.
+    auto materialise_side_effect = [&](exprt &e)
+    {
+      if(e.id() == ID_side_effect && is_python_value_type(e.type()))
+      {
+        static unsigned cmp_se_ctr = 0;
+        const std::string nm = "__cmp_operand_" + std::to_string(cmp_se_ctr++);
+        const irep_idt id{qualify_name(nm)};
+        if(symbol_table.lookup(id) == nullptr)
+        {
+          symbolt s{id, e.type(), "python"};
+          s.base_name = nm;
+          s.is_lvalue = true;
+          s.is_state_var = true;
+          symbol_table.add(s);
+        }
+        const symbol_exprt sym = symbol_table.lookup_ref(id).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{sym, e});
+        e = sym;
+      }
+    };
+    materialise_side_effect(current_left);
+    materialise_side_effect(right);
     if(
       ordered_op && !is_python_none(current_left, symbol_table) &&
       !is_python_none(right, symbol_table) &&
