@@ -1510,17 +1510,24 @@ common cases already work. Recorded to prevent a mis-targeted effort.
   +1 PASS (`method-instances`, 2713).
 - **`heapq` — BLOCKED by list sort/del pass-by-reference.** The stub models
   ops via `heap.sort()` / `del heap[0]` / `heap.append(...)`.
-  **UPDATE (`6091534cd4`): `sort` and `del l[i]` now propagate through a
-  by-reference USER-function parameter** (sort writes in place + compares the
-  python_value `__int_val` payload; del unwraps the by-ref container). Verified
-  with user functions (`def f(l): l.sort()` / `del l[0]`). **heapq is STILL
-  blocked by a third layer: module-qualified stub-function calls
-  (`heapq.heapify(heap)`) don't promote their list argument to a by-reference
-  container** (a user-function call does, via `coerce_call_argument`), so the
-  stub's now-correct mutations don't write back to the caller's list. Closing
-  heapq needs module/stub calls to route list args through the same by-ref
-  promotion as user calls. Float/mixed-payload sort is also a residual (only
-  `__int_val` compared). Deferred.
+  **FIXED (`6091534cd4`, `73fce93762`, `48245ddbd9`).** Closing heapq took four
+  layers, all now resolved:
+  1. `sort` by-ref: write the sorted elements IN PLACE (not a whole-struct
+     reassign) and compare the by-ref container's python_value `__int_val`
+     payload (a raw `>` on the structs didn't compare values).
+  2. `del l[i]` by-ref: unwrap the by-reference container to the shared list
+     lvalue before the in-place shift.
+  3. module/stub call by-ref: annotate the heapq stub params as `list` so the
+     call site promotes the argument to a by-reference container with
+     write-back (same path user-function list params use).
+  4. **SOUNDNESS — call-duplication (`73fce93762`):** a python_value operand of
+     a comparison is referenced twice in the lowering (tag predicate + payload
+     unwrap); a side-effecting call (e.g. `heappop`, which pops a by-ref list)
+     was RE-EVALUATED and the two evaluations DIVERGED → a FALSE PROOF
+     (`f(h) == <wrong>` provable). Pre-existing hole, surfaced here; fixed by
+     materialising such an operand into a temp once. Guards `call-eval-once`,
+     `call-eval-once-fail`. heapq_import → PASS (sweep 2714, 0 regressions).
+     Residual: float/mixed-payload sort still compares only `__int_val`.
 
 **guarded for the common cases** (2026-06-17) with a documented residual — see
 it for the details. Verified against the 2026-06-08
