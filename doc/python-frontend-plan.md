@@ -1373,6 +1373,33 @@ hard problem. Recommended order if pursued: `function-default-function-var`
 (clean §8.7 fix) → the two scoping cases → defer the symbolic-split/Unicode/
 complex ones (hard) and the test-specific ones.
 
+**Update (2026-06-23, soundness + flag-artifact + string-method pass):**
+- **Soundness bucket cleared.** The `got=SUCCESSFUL / exp=FAILED` DIFFs have no
+  default-config false proof: `github_3836_fail` FAILS correctly under the
+  sweep's `--unwind 10` (CSV verdict is a harness artifact); `global2_fail` is
+  an unwind-bound artifact (`range(15)` needs unwind ≥ 15); the rest are
+  flag-dependent (`--python-check-annotations`, `--python-raising-ops-check`,
+  `--fixedbv`); `string-nondet-embedded-null` is sound under our documented
+  `nondet_string(N)` == EXACTLY-length-N contract (`nondet_str()` covers
+  [0,15]).
+- **Flag-artifact finding.** The DIFF count is partly inflated by the sweep's
+  uniform `--unwind 10` vs each test's own `test.desc` flags (per-test unwind,
+  `--no-standard-checks`, `--ir`/`--smt-during-symex`, solver selection,
+  `--nondet-str-length`, `--function foo`). Many DIFFs are config mismatches,
+  not frontend gaps; a clean auto-separation is blocked because our cbmc
+  rejects several ESBMC-only flags.
+- **`str.replace` empty pattern — FIXED for constants (`9fdc5906e9`).** The
+  constant path required a non-empty `old`, so `"a".replace("","x")` fell to
+  the nondet path; now the empty-pattern (insert at every boundary,
+  count-limited) and empty-source cases are computed precisely. Guard
+  `string-replace-empty-pattern`. RESIDUAL: the symbolic `nondet_str`-based
+  corpus tests (`string-replace-empty/count-nondet-success`) need an exact
+  symbolic empty-pattern LENGTH hint (`len(src)*(1+len(new))+len(new)`, with
+  backend-specific result typing); `string-index-empty-inverted` needs
+  `str.index("", start, end)` inverted-bounds `ValueError`. Both deferred — the
+  "empty-arg" cluster is themed, not single-root (each method has its own
+  semantics).
+
 **guarded for the common cases** (2026-06-17) with a documented residual — see
 it for the details. Verified against the 2026-06-08
 sweep baseline.
