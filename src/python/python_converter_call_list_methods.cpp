@@ -290,13 +290,22 @@ std::optional<exprt> python_convertert::try_list_method(
           }
           while(sorted_elems.size() < PYTHON_MAX_LIST_LENGTH)
             sorted_elems.push_back(safe_zero(data_type.element_type()));
-          exprt sorted_struct = struct_exprt{
-            {lit->operands()[0],
-             array_exprt{std::move(sorted_elems), data_type}},
-            obj.type()};
-          pending_checks.push_back(code_frontend_assignt{obj, sorted_struct});
+          // Write the sorted elements IN PLACE through `data` (a member of
+          // obj) rather than reassigning the whole struct to obj: an
+          // in-place write propagates when obj is a by-reference parameter
+          // (e.g. `heapq.heapify(h)` sorting the caller's list), whereas a
+          // whole-struct `obj = sorted` only updates a local alias. Mirrors
+          // reverse() / the bubble-sort fallback. (sort does not change the
+          // length.)
+          for(std::size_t si = 0; si < sorted_elems.size(); ++si)
+            pending_checks.push_back(code_frontend_assignt{
+              index_exprt{data, from_integer(si, signedbv_typet{64})},
+              sorted_elems[si]});
           if(!list_sym.empty())
-            list_literals[list_sym] = sorted_struct;
+            list_literals[list_sym] = struct_exprt{
+              {lit->operands()[0],
+               array_exprt{std::move(sorted_elems), data_type}},
+              obj.type()};
           return from_integer(0, python_int_type()); // None
         }
       }
@@ -309,8 +318,21 @@ std::optional<exprt> python_convertert::try_list_method(
         exprt idx = from_integer(i, signedbv_typet{64});
         exprt next = from_integer(i + 1, signedbv_typet{64});
         exprt in_bounds = binary_relation_exprt{next, ID_lt, length};
-        exprt should_swap = binary_relation_exprt{
-          index_exprt{data, idx}, ID_gt, index_exprt{data, next}};
+        // The by-reference container (and any python_value list) wraps each
+        // element as a tagged python_value struct; a raw `>` on the structs
+        // does not compare the underlying value. Compare the int payload
+        // (__int_val) when the element type is the tagged union, so a sort
+        // of an int list passed by reference (e.g. heapq.heapify) orders it
+        // correctly. (Float/mixed payloads remain a residual.)
+        exprt lhs_e = index_exprt{data, idx};
+        exprt rhs_e = index_exprt{data, next};
+        if(is_python_value_type(data_type.element_type()))
+        {
+          lhs_e = member_exprt{lhs_e, "__int_val", signedbv_typet{64}};
+          rhs_e = member_exprt{rhs_e, "__int_val", signedbv_typet{64}};
+        }
+        exprt should_swap =
+          binary_relation_exprt{std::move(lhs_e), ID_gt, std::move(rhs_e)};
         // Conditional swap
         static unsigned sort_counter = 0;
         std::string tmp_name = "__sort_tmp_" + std::to_string(sort_counter++);
