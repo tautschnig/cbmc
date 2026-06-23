@@ -1340,9 +1340,15 @@ particular the `github_3560` family (initially hoped to be one easy root) is
   functions / class constructors) and iterates to a **fixpoint** so forward
   tail-call chains (f→g→…) converge before bodies are converted; only refines a
   determinable type (conflicts→`python_value`, undetermined→unchanged), so it is
-  sound. +1 corpus PASS, 0 regressions; guard `forward-ref-return-type`. NOTE:
-  forward refs whose callee returns a CONTAINER (dict/list/tuple) are not yet
-  pre-inferred by 1b.4 (kept simple); a narrow residual.
+  sound. +1 corpus PASS, 0 regressions; guard `forward-ref-return-type`.
+  Forward refs whose callee returns a CONTAINER (dict/list/tuple) are now
+  ALSO handled (`f0c…` follow-up): sub-pass 1b.4 was unified to call the same
+  `infer_return_type_from_body` as 1c (which gained bare-constant + tail-call
+  cases), so containers/tuples/class-constructors/tail-calls all resolve
+  across forward references with 1b and 1c in exact agreement. (That unify
+  also tightened the resolver: a value-return + a None-return now always
+  yields `python_value` / Optional regardless of scalar type — fixing a
+  transient regression in the `github_3563*` Optional-dispatch tests.)
 - **`builtin_all_genexp_inner_iter_shadow` — re-diagnosed: NOT scoping.**
   Shadowing works (the list-comp form `[x for x in xs for x in range(x)]`
   passes). The failure is **`all()`/`any()` folding over a 2-generator genexp
