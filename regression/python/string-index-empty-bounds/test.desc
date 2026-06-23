@@ -1,0 +1,10 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+PLR/CPython str.index/find empty-substring bounds semantics + typed ValueError.
