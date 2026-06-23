@@ -1427,6 +1427,34 @@ exprt python_convertert::convert_call(const jsont &expr)
       }
     }
 
+    // PLR §9: a "pure" subclass of `int`/`bool` (no own instance
+    // attributes) behaves as that built-in, so model `U(v)` as the
+    // underlying int value — `U(5) == 5`, `U(5) % 3`, etc. all work.
+    // Subclasses that add instance state fall through to normal
+    // instance construction below.
+    {
+      auto bit = class_bases.find(func_name);
+      auto oit = class_owned_attrs.find(func_name);
+      const bool no_own_attrs =
+        (oit == class_owned_attrs.end() || oit->second.empty());
+      if(bit != class_bases.end() && no_own_attrs)
+      {
+        bool int_base = false;
+        for(const auto &b : bit->second)
+          if(b == "int" || b == "bool")
+            int_base = true;
+        if(int_base)
+        {
+          if(args.is_array() && !as_array(args).empty())
+          {
+            exprt a = convert_expression(*as_array(args).begin());
+            return safe_typecast(a, python_int_type());
+          }
+          return from_integer(0, python_int_type());
+        }
+      }
+    }
+
     // Constructor call as expression: create temp, call __init__, return temp
     const struct_typet &cls_type = class_types[func_name];
     static unsigned ctor_tmp_counter = 0;

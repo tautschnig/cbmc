@@ -4450,7 +4450,22 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     return vit != enum_value_type.end() ? vit->second : python_int_type();
   }
   else if(class_types.count(type_name))
+  {
+    // A "pure" subclass of int/bool (no own instance attributes) IS that
+    // built-in, so resolve the annotation to int — keeps `U(v)` (also
+    // modelled as int) and `x: U` consistent.
+    auto bit = class_bases.find(type_name);
+    auto oit = class_owned_attrs.find(type_name);
+    if(
+      bit != class_bases.end() &&
+      (oit == class_owned_attrs.end() || oit->second.empty()))
+    {
+      for(const auto &b : bit->second)
+        if(b == "int" || b == "bool")
+          return python_int_type();
+    }
     return class_types[type_name];
+  }
   else
   {
     // Try to resolve from imported modules
