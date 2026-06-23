@@ -30,31 +30,31 @@ def print_stack(f=None, limit=None, file=None):
 
 
 def format_tb(tb, limit=None):
-    return []
+    return nondet_list(8, nondet_str())
 
 
 def format_exception(exc, /, value=None, tb=None, limit=None, chain=True):
-    return []
+    return nondet_list(8, nondet_str())
 
 
 def format_exception_only(exc, /, value=None, show_group=False):
-    return []
+    return nondet_list(8, nondet_str())
 
 
-def format_exc(limit=None, chain=True):
-    return ""
+def format_exc(limit=None, chain=True) -> str:
+    return nondet_str()
 
 
 def format_stack(f=None, limit=None):
-    return []
+    return nondet_list(8, nondet_str())
 
 
 def extract_tb(tb, limit=None):
-    return []
+    return nondet_list(8, nondet_str())
 
 
 def extract_stack(f=None, limit=None):
-    return []
+    return nondet_list(8, nondet_str())
 
 
 def clear_frames(tb):

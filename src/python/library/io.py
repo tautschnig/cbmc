@@ -44,10 +44,10 @@ class IOBase:
         return 0
 
     def tell(self):
-        return 0
+        return nondet_int()
 
     def truncate(self, size=None):
-        return 0
+        return nondet_int()
 
     def __iter__(self):
         return self
@@ -108,10 +108,10 @@ class TextIOBase(IOBase):
         return ""
 
     def readline(self, size=-1):
-        return ""
+        return nondet_str()
 
     def readlines(self, hint=-1):
-        return []
+        return nondet_list(8, nondet_str())
 
     def write(self, s):
         return len(s)

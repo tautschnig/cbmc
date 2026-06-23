@@ -102,10 +102,10 @@ class ArgumentParser:
         pass
 
     def format_help(self):
-        return ""
+        return nondet_str()
 
     def format_usage(self):
-        return ""
+        return nondet_str()
 
     def set_defaults(self, **kwargs):
         return None

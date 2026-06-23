@@ -70,8 +70,8 @@ def replace(instance, **changes):
     return instance
 
 
-def is_dataclass(obj):
-    return False
+def is_dataclass(obj) -> bool:
+    return nondet_bool()
 
 
 class FrozenInstanceError(AttributeError):

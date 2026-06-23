@@ -6,12 +6,12 @@ Both parse TOML. For verification, return an empty dict.
 """
 
 
-def loads(s: str):
-    return {}
+def loads(s: str) -> dict:
+    return nondet_dict(8)
 
 
-def load(fp):
-    return {}
+def load(fp) -> dict:
+    return nondet_dict(8)
 
 
 class TOMLDecodeError(ValueError):

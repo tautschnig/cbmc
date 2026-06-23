@@ -76,13 +76,13 @@ class socket:
         return (socket(), ("", 0))
 
     def send(self, data, flags: int = 0) -> int:
-        return 0
+        return nondet_int()
 
     def sendall(self, data, flags: int = 0) -> None:
         return None
 
     def sendto(self, data, *args) -> int:
-        return 0
+        return nondet_int()
 
     def recv(self, bufsize: int, flags: int = 0) -> bytes:
         return b""
@@ -106,7 +106,7 @@ class socket:
         return None
 
     def getsockopt(self, level: int, optname: int, buflen: int = 0) -> int:
-        return 0
+        return nondet_int()
 
     def settimeout(self, timeout) -> None:
         return None
@@ -118,7 +118,7 @@ class socket:
         return None
 
     def fileno(self) -> int:
-        return 0
+        return nondet_int()
 
     def makefile(self, mode: str = "r", buffering=None, *, encoding=None,
                  errors=None, newline=None):
@@ -133,7 +133,7 @@ class socket:
 
 
 def gethostname() -> str:
-    return ""
+    return nondet_str()
 
 
 def gethostbyname(hostname: str) -> str:
@@ -150,7 +150,7 @@ def getaddrinfo(host, port, family: int = 0, type: int = 0, proto: int = 0,
 
 
 def getservbyname(servicename: str, protocolname: str = "") -> int:
-    return 0
+    return nondet_int()
 
 
 def getnameinfo(sockaddr, flags: int):

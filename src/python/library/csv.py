@@ -143,4 +143,4 @@ class Sniffer:
         return excel
 
     def has_header(self, sample):
-        return False
+        return nondet_bool()
