@@ -1382,23 +1382,33 @@ complex ones (hard) and the test-specific ones.
   `--fixedbv`); `string-nondet-embedded-null` is sound under our documented
   `nondet_string(N)` == EXACTLY-length-N contract (`nondet_str()` covers
   [0,15]).
-- **Flag-artifact finding.** The DIFF count is partly inflated by the sweep's
-  uniform `--unwind 10` vs each test's own `test.desc` flags (per-test unwind,
-  `--no-standard-checks`, `--ir`/`--smt-during-symex`, solver selection,
-  `--nondet-str-length`, `--function foo`). Many DIFFs are config mismatches,
-  not frontend gaps; a clean auto-separation is blocked because our cbmc
-  rejects several ESBMC-only flags.
-- **`str.replace` empty pattern — FIXED for constants (`9fdc5906e9`).** The
-  constant path required a non-empty `old`, so `"a".replace("","x")` fell to
-  the nondet path; now the empty-pattern (insert at every boundary,
-  count-limited) and empty-source cases are computed precisely. Guard
-  `string-replace-empty-pattern`. RESIDUAL: the symbolic `nondet_str`-based
-  corpus tests (`string-replace-empty/count-nondet-success`) need an exact
-  symbolic empty-pattern LENGTH hint (`len(src)*(1+len(new))+len(new)`, with
-  backend-specific result typing); `string-index-empty-inverted` needs
-  `str.index("", start, end)` inverted-bounds `ValueError`. Both deferred — the
-  "empty-arg" cluster is themed, not single-root (each method has its own
-  semantics).
+- **Flag-artifact finding (REVISED 2026-06-23).** Initial impression was that
+  the DIFF count was heavily inflated by the sweep's uniform `--unwind 10` vs
+  per-test flags. A proper re-audit (running each `got=FAILED/exp=SUCCESSFUL`
+  DIFF with its OWN unwind + check flags, dropping only solver/`--ir`/
+  `--smt-during-symex`/`--incremental-bmc`/`--nondet-str-length` which our cbmc
+  rejects) shows **30 of 32 still FAIL** — they are GENUINE precision gaps, not
+  config artifacts (only 2 inconclusive: `nondet_list4/5`). So the precision
+  backlog is real, ~30 gaps, clustered: symbolic-split `github_3560*` (4, hard);
+  string `string-casefold-accent`/`github_3594` (Unicode, hard) +
+  `string-index-empty-inverted`/`string-replace-count-nondet-success`
+  (tractable); nondet/list `nondet_list2`/`list_extend12,17`/`range36-nondet`/
+  `set_from_param`/`github_3719_4,5-nondet`/`github_3783_5-nondet` (~8, varied);
+  complex (2); import `heapq_import`/`import`/`github_3667`; misc
+  (`builtin_all_genexp_inner_iter_shadow`, `constants` uint64, `gb-2915`,
+  `global`, `int_subclass`, `loop-invariant2`, `method-instances`,
+  `object-empty-not-found`, `github_3701_14`). (Unwind-bound artifacts DO occur
+  in the OTHER bucket — `global2_fail` needs unwind ≥ 15 — but not here.)
+- **`str.replace` empty pattern — FIXED, constants + symbolic length
+  (`9fdc5906e9`, `79525a4702`).** Constants compute the exact result
+  (`"a".replace("","x")=="xax"`); a symbolic source with a constant empty
+  pattern binds the exact result length `len(src)*(1+len(new))+len(new)` on both
+  back-ends (content nondet, sound). Flipped `string-replace-empty-nondet-success`
+  (PASS 2709). Guard `string-replace-empty-pattern`. RESIDUAL:
+  `string-replace-count-nondet-success` is a different case (non-empty pattern +
+  CONTENT assertion on an `assume`-constant string → needs assume-folding);
+  `string-index-empty-inverted` needs `str.index("",start,end)` inverted-bounds
+  `ValueError`. The "empty-arg" cluster is themed, not single-root.
 
 **guarded for the common cases** (2026-06-17) with a documented residual — see
 it for the details. Verified against the 2026-06-08
