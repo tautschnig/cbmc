@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+A pure subclass of int (no own attributes) is modelled as int: construction and
+the annotation both resolve to int, so arithmetic/comparison work.
