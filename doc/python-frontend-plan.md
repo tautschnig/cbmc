@@ -1304,6 +1304,53 @@ on `(path, mtime)`; a multi-process pool for parallel parse requests.
 
 All items here are **sound** (misses / over-approximations, never false
 alarms). The nested-mutable-aliasing item below WAS a false proof; it is now
+
+### Corpus precision-gap DIFF triage (2026-06-23) — `got=FAILED exp=SUCCESSFUL`
+
+Triaged the sweep rows where we FAIL a program that should verify (the
+user-visible "raise the PASS count" set). Finding: these are a **long tail of
+individually-rooted moderate/hard cases, NOT a clean whole-group** — in
+particular the `github_3560` family (initially hoped to be one easy root) is
+**hard on both backends**. Per-case root cause:
+
+- **`github_3560` / `_1` / `_3` / `_4` (symbolic `split(sep, maxsplit=1)`)** —
+  `(s + ",end").split(",", 1)` with `s = input()`. **HARD, both backends:** the
+  refined string solver cannot prove the substring relations of even the
+  hand-expanded `find`+slice model on a symbolic concat (refined-string
+  ceiling); native (`--cvc5`) either returns nondet for `split` or **times out**
+  on the `find`+`substr`+concat+equality. A bounded `maxsplit=N` split IS
+  exactly `N` `find`+slice ops in principle, but neither backend discharges it
+  on a symbolic subject today. Research-grade (symbolic-string reasoning).
+- **`function-default-function-var` (PLR §8.7)** — a **function/reference-valued
+  default that is later reassigned** is stored as a *reference to the variable*,
+  not a def-time value snapshot, so it re-reads the variable's CURRENT value at
+  call time (`operator=cur` with `cur` later `= sub`). Precisely isolated:
+  int/list defaults DO value-snapshot (`fd_const`/`fd_list` pass) and a function
+  default with NO reassignment passes (`fv3`); only reassignment breaks it.
+  **Fix shape:** snapshot a non-value-folded (function/object) default into a
+  fresh def-time symbol initialised at the def point, and use that symbol as the
+  default — moderate (needs def-time snapshot-init emission); narrow corpus use.
+- **`forward-declaration5`** — a nested `def g()` inside `test()` should shadow
+  the global `g`; resolved to the global instead. Nested-function name
+  resolution / scoping.
+- **`builtin_all_genexp_inner_iter_shadow`** — `all(x>0 for x in xs for x in
+  range(x))`: the inner comprehension loop var shadowing the outer isn't
+  modelled. Comprehension-scoping edge.
+- **`github_3594`** — `"ß".upper() in ("SS","ẞ")`: Unicode case-mapping
+  (ß→SS); `upper` is ASCII-only. HARD (Unicode case maps; see the strings-plan
+  `casefold`/`title` residual).
+- **`constants` (`uint64(...)`), `gb-2915` (local package `import l; from l.ks
+  import foo`)** — test-specific (an unusual width-typed builtin; a local
+  package-import path), not general gaps.
+- **`complex_constructor_extended` / `complex_math_typeerror_edges`** — complex
+  precision; `complex(<non-literal str>)` parse is the strings-plan residual.
+
+**Net:** no single fix raises many; the largest cluster (`github_3560`) is the
+refined-string-ceiling / native-perf-cliff, already the documented strategic
+hard problem. Recommended order if pursued: `function-default-function-var`
+(clean §8.7 fix) → the two scoping cases → defer the symbolic-split/Unicode/
+complex ones (hard) and the test-specific ones.
+
 **guarded for the common cases** (2026-06-17) with a documented residual — see
 it for the details. Verified against the 2026-06-08
 sweep baseline.
