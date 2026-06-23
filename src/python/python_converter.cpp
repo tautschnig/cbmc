@@ -3892,6 +3892,42 @@ python_convertert::build_class_init_call(
       init_args.push_back(convert_expression(a));
   }
 
+  // PLR §8.7: pack trailing positionals into the *args list parameter. The
+  // loop above pushed self + each positional separately; if __init__ has a
+  // vararg param (`def __init__(self, *parts)`), collapse the positionals
+  // at/after its slot into one list — mirroring the user-call path —
+  // otherwise `*parts` is left unbound (e.g. `len(parts)` is wrong).
+  {
+    auto va_it = function_vararg_index.find(init_sym->name);
+    if(va_it != function_vararg_index.end() && va_it->second < params.size())
+    {
+      const std::size_t va_idx = va_it->second;
+      const typet &va_param_type = params[va_idx].type();
+      if(is_python_list_type(va_param_type) && va_idx <= init_args.size())
+      {
+        const auto &list_st = to_struct_type(va_param_type);
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        exprt::operandst elems;
+        for(std::size_t i = va_idx; i < init_args.size(); i++)
+        {
+          exprt a = init_args[i];
+          if(a.type() != data_type.element_type())
+            a = coerce_element(a, data_type.element_type());
+          elems.push_back(std::move(a));
+        }
+        const std::size_t n_packed = elems.size();
+        while(elems.size() < PYTHON_MAX_LIST_LENGTH)
+          elems.push_back(safe_zero(data_type.element_type()));
+        exprt packed = struct_exprt{
+          {from_integer(static_cast<long long>(n_packed), signedbv_typet{64}),
+           array_exprt{std::move(elems), data_type}},
+          va_param_type};
+        init_args.resize(va_idx);
+        init_args.push_back(std::move(packed));
+      }
+    }
+  }
+
   // Keyword arguments — match by parameter base-name; fill any
   // index gaps with `nil_exprt` so the default-padding pass below
   // can replace them with `safe_zero` of the param type.
