@@ -623,21 +623,58 @@ CPython). This is the same class as the earlier **re-stub cluster**
 `re` (earlier); `json` (loads/load/dumps/encode/decode/raw_decode/iterencode);
 `functools.reduce`; `os` (getcwd/getenv/getpid·ppid·uid·euid·gid·egid/listdir);
 `hashlib` hexdigest; `struct.unpack` (tuple VALUES; shape preserved);
-`datetime` (toordinal/weekday/isoweekday/isocalendar/isoformat/strftime/tzname).
-Validated: every batch left the ESBMC sweep byte-identical to baseline (PASS
-2706, 0 regressions); 651/651 local tests; guard tests `stub-*-fail` +
-`re-*-fail`.
+`datetime` (toordinal/weekday/isoweekday/isocalendar/isoformat/strftime/tzname);
+`tomllib`/`tomli` (loads/load); `configparser` (options/read/items/get-family-
+no-fallback/has_option/remove_*); `csv` (has_header); `string` (Template
+is_valid/get_identifiers, Formatter.parse); `argparse` (format_help/usage);
+`pathlib` (exists/is_*/read_text/owner/group/glob/rglob/iterdir/suffixes/
+write_bytes); `io` (readline/readlines/tell/truncate); `dataclasses`
+(is_dataclass); `subprocess` (getoutput); `socket` (send/sendto/getsockopt/
+fileno/getservbyname/gethostname); `logging` (Formatter.format); `traceback`
+(format_*/extract_*). Validated: every batch left the ESBMC sweep byte-identical
+to baseline (PASS 2706, 0 regressions); 657/657 local tests; ~18 guard tests
+`stub-*-fail` + `re-*-fail`.
+
+**Key learning — some stdlib calls are FRONTEND-INTERCEPTED** (computed
+precisely), so their stub concrete-default is *never used* and is NOT a false
+proof. Verified-and-left-alone: `math.factorial`/`comb`/`perm`/`gcd`/`lcm`/
+`isqrt`, `time.time`/`monotonic`/`perf_counter`, `math.isnan`(concrete). **Every
+suspicious default must be tested, not assumed** (cbmc-SUCCESSFUL + CPython-False
+== confirmed; otherwise intercepted/legitimate).
 
 **Left alone — LEGITIMATE fixed-value semantics (NOT bugs):** `contextlib`
 `__exit__ → False` ("don't suppress"), `defaultdict.__missing__` factory-zeros,
 `Counter` missing-key `0`, identity decorators (`lru_cache`/`wraps`/…),
 `__init__ → None`, `bisect.insort → None` (and `bisect_left/right` return a real
-computed index). The audit requires per-case judgment, not a blanket sweep.
+computed index), `io` `readable`/`writable`/`seekable`/`isatty`. The audit
+requires per-case judgment, not a blanket sweep.
 
-**Still flagged (same class, not yet fixed):** `csv`, `string`, `configparser`,
-`argparse`, and assorted others; plus `struct`'s format-parsing loop is a
-*pre-existing* symex perf cliff (`calcsize` times out), orthogonal to the value
-fix. Continue the audit by import frequency.
+**Documented residuals (sound today / out of stub scope):**
+- **bytes-returning reads** (`io.read`/`readall`, `socket.recv`) still return
+  `b""` — there is no `nondet_bytes()` builtin; the sound fix waits on adding
+  one. (`== b""` can still false-prove; low corpus use.)
+- **`pathlib` path-DERIVED methods** (`name`/`suffix`/`stem`/`root`/`drive`/
+  `anchor`/`as_posix`/`as_uri`/`__str__`/`__fspath__`/`is_absolute`/
+  `is_relative_to`/`match`) still return `""`/`False`: these are *computable
+  from the path string*, so the right fix is a PRECISE pathlib (compute), not
+  nondet — making them nondet would regress `str(path)`/`name` usage. Precision
+  follow-up, not a soundness-nondet target.
+- **`inspect`** (~26 introspection methods) — same class, rarely asserted in
+  verification; lower-priority, the guideline covers it.
+- **FRONTEND float intrinsic — `math.isnan`/`isinf` of a SYMBOLIC float** wrongly
+  returns `False` (so `not math.isnan(x)` false-proves nan-freedom of a symbolic
+  `x`; it is PRECISE for concrete args). This is a *frontend float-intrinsic*
+  soundness bug, NOT a stub default — flagged here for a dedicated float-
+  soundness review.
+- **Third-party integration stubs** (`numpy`/`pandas`/`flask`/`fastapi`/
+  `sqlalchemy`/`requests`/`click`/`rich`/`yaml`/`attr`/`attrs`/`pytest`/
+  `icontract`/`asyncio`) — vast APIs, not in the verification corpus; out of
+  scope (audit on-use, applying the guideline).
+
+**Stdlib audit status: COMPLETE** for the value-dependent concrete-default class
+(the realistic verification surface); the residuals above are either a needed
+builtin (`nondet_bytes`), a precision follow-up (pathlib paths), a separate
+subsystem (frontend `math.isnan`), or out-of-scope third-party.
 
 **Whole-group root + PREVENTION (stub-authoring guideline).** The root is a
 recurring stub-authoring anti-pattern, not a single code site, so the
