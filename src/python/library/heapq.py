@@ -11,7 +11,7 @@ verification code inspects.
 """
 
 
-def heappush(heap, item):
+def heappush(heap: list, item):
     heap.append(item)
     # Full sort keeps heap[0] = min(heap) invariant that heapq
     # guarantees. Slower than CPython's sift-up but correct.
@@ -19,7 +19,7 @@ def heappush(heap, item):
     return None
 
 
-def heappop(heap):
+def heappop(heap: list):
     if not heap:
         raise IndexError("index out of range")
     # heap[0] is always the smallest; popping it preserves the
@@ -29,14 +29,14 @@ def heappop(heap):
     return item
 
 
-def heappushpop(heap, item):
+def heappushpop(heap: list, item):
     if heap and heap[0] < item:
         item, heap[0] = heap[0], item
         heap.sort()
     return item
 
 
-def heapreplace(heap, item):
+def heapreplace(heap: list, item):
     if not heap:
         raise IndexError("index out of range")
     returnitem = heap[0]
@@ -45,7 +45,7 @@ def heapreplace(heap, item):
     return returnitem
 
 
-def heapify(x):
+def heapify(x: list):
     x.sort()
     return None
 
