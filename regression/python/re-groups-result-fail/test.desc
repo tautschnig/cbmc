@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^VERIFICATION FAILED$
+^EXIT=10$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+re stub result soundness guard: the asserted property used to false-prove
+(concrete default return) and must now FAIL (sound nondet model).
