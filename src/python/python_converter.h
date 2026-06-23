@@ -613,6 +613,15 @@ private:
   // Default parameter values evaluated at definition time
   // Maps (function_name, param_index) → default value expression
   std::map<std::pair<std::string, std::size_t>, exprt> default_values;
+  // PLR §8.7: for a parameter whose default is a callable-valued NAME
+  // (e.g. `op=cur` where `cur` was bound to a function), records the
+  // callable resolved AT DEFINITION TIME. Higher-order monomorphisation
+  // (try_monomorphise_call) must dispatch a defaulted call to this
+  // def-time callable, NOT to the name's current binding — otherwise a
+  // later reassignment of the variable would wrongly redirect the
+  // default (re-resolving the live `function_aliases` entry).
+  std::map<std::pair<std::string, std::size_t>, irep_idt>
+    default_callable_snapshot;
   // Functions that return lambdas: maps function name to lambda id
   std::map<std::string, irep_idt> lambda_returning_functions;
   // Bound methods: maps variable name → (method_id, self_expr)

@@ -57,6 +57,28 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
           exprt val = convert_expression(*def_it);
           if(!val.is_nil())
           {
+            // PLR §8.7: if this default is a callable-valued NAME, snapshot
+            // the callable it resolves to RIGHT NOW (definition time, after
+            // the preceding module statements — e.g. `cur = mul` — have been
+            // processed, so `function_aliases` holds the def-time binding).
+            // Higher-order monomorphisation consults this instead of the
+            // live alias, so a later `cur = sub` cannot redirect the default.
+            if(is_node_type(*def_it, "Name"))
+            {
+              const std::string dn = json_string(json_member(*def_it, "id"));
+              irep_idt cid;
+              auto ai = function_aliases.find(qualify_name(dn));
+              if(ai != function_aliases.end())
+                cid = ai->second;
+              else
+              {
+                const symbolt *bs = symbol_table.lookup("python::" + dn);
+                if(bs != nullptr && bs->type.id() == ID_code)
+                  cid = irep_idt{"python::" + dn};
+              }
+              if(!cid.empty())
+                default_callable_snapshot[{fname, i}] = cid;
+            }
             // Create a temp to freeze the value at definition time
             static unsigned def_freeze_ctr = 0;
             std::string tn =

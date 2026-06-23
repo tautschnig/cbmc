@@ -1,0 +1,12 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+PLR 8.7: a callable-valued default argument is bound at definition time;
+reassigning the source variable must not redirect a defaulted higher-order
+call (monomorphisation must dispatch to the def-time callable snapshot).
