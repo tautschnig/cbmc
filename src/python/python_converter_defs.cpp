@@ -169,6 +169,58 @@ python_convertert::infer_return_type_from_body(
                 else if(return_type != *this_type)
                   return_type = python_value_type();
               }
+              // `return h()` where h is another user FUNCTION → propagate
+              // h's return type (PLR §3.2). Forward references are resolved
+              // by the sub-pass 1b.4 fixpoint that calls this routine; here
+              // we read h's CURRENT symbol return type. This prevents a
+              // tail-calling function from falling to the int fallback
+              // below (which mis-types e.g. a forward `return g()` whose g
+              // returns a string/dict/list).
+              else if(call_name != "cls")
+              {
+                const symbolt *cs = symbol_table.lookup("python::" + call_name);
+                if(cs != nullptr && cs->type.id() == ID_code)
+                {
+                  const typet &rt = to_code_type(cs->type).return_type();
+                  if(rt.id() != ID_empty)
+                  {
+                    if(return_type.id() == ID_empty)
+                      return_type = rt;
+                    else if(return_type != rt)
+                      return_type = python_value_type();
+                  }
+                }
+              }
+            }
+            // `return <constant>` — infer the literal's type directly.
+            // Without this a bare constant return falls to the int
+            // fallback at the end (wrong for str/float), which only the
+            // later body conversion repairs — too late for a forward
+            // reference reading this signature.
+            if(is_node_type(rv, "Constant"))
+            {
+              const jsont &cv = json_member(rv, "value");
+              typet ct{ID_empty};
+              if(cv.is_string())
+                ct = python_string_type();
+              else if(cv.is_true() || cv.is_false())
+                ct = python_int_type(); // bool ⊂ int
+              else if(cv.is_number())
+              {
+                const std::string vs = cv.value;
+                ct = (vs.find('.') != std::string::npos ||
+                      vs.find('e') != std::string::npos ||
+                      vs.find('E') != std::string::npos)
+                       ? double_type()
+                       : python_int_type();
+              }
+              if(ct.id() != ID_empty)
+              {
+                if(return_type.id() == ID_empty)
+                  return_type = ct;
+                else if(return_type != ct)
+                  return_type = python_value_type();
+              }
             }
             // `return self` → the enclosing class (builder pattern).
             if(
@@ -420,13 +472,12 @@ python_convertert::infer_return_type_from_body(
 
   // Resolution (class/tuple already committed in return_type during the
   // walk; dict/list are the post-walk fall-backs).
-  if(
-    result.has_value_return && has_none_return &&
-    (return_type.id() == ID_struct_tag || return_type.id() == ID_struct))
-    // Optional[ClassName] → tagged union so `is not None` dispatches.
-    return_type = python_value_type();
-  else if(
-    result.has_value_return && has_none_return && return_type.id() == ID_empty)
+  if(result.has_value_return && has_none_return)
+    // A value return on one path and None on another → Optional[...] →
+    // tagged union (python_value) so `is not None` dispatches. Covers
+    // class types, scalars (e.g. `return 0` / `return None`), and
+    // containers alike — must take precedence over any concrete type
+    // committed during the walk (PLR §3.2).
     return_type = python_value_type();
   else if(
     return_type.id() == ID_empty && has_dict && all_dict &&

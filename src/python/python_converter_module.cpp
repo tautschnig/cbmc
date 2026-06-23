@@ -2533,20 +2533,20 @@ bool python_convertert::convert()
   }
   // Sub-pass 1b.4 (PLR §3.2 / §4.2.2): forward-reference return-type
   // fixpoint. Sub-pass 1b registers UNANNOTATED functions with the
-  // python_int_type() default; their real return type is only set later
-  // (sub-pass 1c, in source order) while the body is converted. So a
-  // function `f` whose body is `return g()` was converted reading g's
-  // INT default when g is defined AFTER f — yielding a wrong type for f
-  // and, downstream, false alarms (e.g. `f() == "global"` folding to a
-  // constant). Resolve this here, BEFORE bodies are converted, by
-  // inferring each unannotated function's return type from its body and
-  // iterating to a fixpoint so chains of forward tail-calls (f→g→…)
-  // converge. We only ever REFINE a determinable type (constant returns,
-  // a call to another user function or a class constructor); undetermined
-  // bodies keep the existing default, so this never makes a type worse.
+  // python_int_type() default; their real return type is otherwise only
+  // set later (sub-pass 1c, in source order) while the body is converted.
+  // So a function `f` whose body is `return g()` was converted reading
+  // g's INT default when g is defined AFTER f — mis-typing f and causing
+  // downstream false alarms (e.g. `f() == "global"` or `f() == {...}`
+  // folding to a constant). Resolve it here, BEFORE bodies are converted,
+  // using the SAME inference as sub-pass 1c (infer_return_type_from_body:
+  // constants, containers, tuples, class constructors, and forward
+  // tail-calls), iterating to a fixpoint so chains of forward tail-calls
+  // (f→g→…) converge. We only ever REFINE a determinable type (conflicts
+  // → python_value, undetermined value-returns → the int default), so it
+  // never makes a type worse or introduces a false proof.
   if(body.is_array())
   {
-    // Collect unannotated module-level functions: (symbol id, body).
     std::vector<std::pair<irep_idt, const jsont *>> unann;
     for(const auto &stmt : as_array(body))
     {
@@ -2563,90 +2563,20 @@ bool python_convertert::convert()
       irep_idt sid{"python::" + fname};
       const symbolt *s = symbol_table.lookup(sid);
       if(s != nullptr && s->type.id() == ID_code)
-        unann.emplace_back(sid, &json_member(stmt, "body"));
+        unann.emplace_back(sid, &stmt);
     }
-    // Infer a single return-value expression's type, reading callees'
-    // CURRENT symbol return types (the fixpoint propagates updates).
-    auto infer_rv_type = [&](const jsont &rv) -> typet
-    {
-      if(rv.is_null())
-        return python_value_type(); // bare `return` / `return None`
-      if(is_node_type(rv, "Constant"))
-      {
-        const jsont &cv = json_member(rv, "value");
-        if(cv.is_string())
-          return python_string_type();
-        if(cv.is_boolean())
-          return python_int_type(); // bool ⊂ int
-        if(cv.is_null())
-          return python_value_type();
-        if(cv.is_number())
-        {
-          const std::string vs = cv.value;
-          if(
-            vs.find('.') != std::string::npos ||
-            vs.find('e') != std::string::npos ||
-            vs.find('E') != std::string::npos)
-            return double_type();
-          return python_int_type();
-        }
-        return typet{ID_empty};
-      }
-      if(
-        is_node_type(rv, "Call") &&
-        is_node_type(json_member(rv, "func"), "Name"))
-      {
-        const std::string cn =
-          json_string(json_member(json_member(rv, "func"), "id"));
-        if(class_types.count(cn))
-          return class_types[cn];
-        const symbolt *cs = symbol_table.lookup("python::" + cn);
-        if(cs != nullptr && cs->type.id() == ID_code)
-        {
-          const typet &rt = to_code_type(cs->type).return_type();
-          if(rt.id() != ID_empty)
-            return rt;
-        }
-      }
-      return typet{ID_empty};
-    };
-    // Combine all return-value types in a body (recursing into compound
-    // statements); ID_empty = undetermined, python_value = conflicting.
-    std::function<void(const jsont &, typet &)> scan_returns =
-      [&](const jsont &b, typet &acc)
-    {
-      if(!b.is_array())
-        return;
-      for(const auto &s : as_array(b))
-      {
-        if(is_node_type(s, "Return"))
-        {
-          typet t = infer_rv_type(json_member(s, "value"));
-          if(t.id() != ID_empty)
-          {
-            if(acc.id() == ID_empty)
-              acc = t;
-            else if(acc != t)
-              acc = python_value_type();
-          }
-        }
-        for(const char *fld : {"body", "orelse", "finalbody"})
-          scan_returns(json_member(s, fld), acc);
-        const jsont &handlers = json_member(s, "handlers");
-        if(handlers.is_array())
-          for(const auto &h : as_array(handlers))
-            scan_returns(json_member(h, "body"), acc);
-      }
-    };
-    // Iterate to a fixpoint (bounded by the dependency-chain length).
+    const code_typet::parameterst no_params;
     bool changed = true;
     for(std::size_t pass = 0; changed && pass <= unann.size() + 1; ++pass)
     {
       changed = false;
-      for(const auto &[sid, fbody] : unann)
+      for(const auto &[sid, stmtp] : unann)
       {
-        typet rt{ID_empty};
-        scan_returns(*fbody, rt);
+        const std::string fname = json_string(json_member(*stmtp, "name"));
+        inferred_returnt inf = infer_return_type_from_body(
+          json_member(*stmtp, "body"), no_params, fname, "");
+        typet rt =
+          inf.has_yield ? python_list_type(inf.yield_element_type) : inf.type;
         if(rt.id() == ID_empty)
           continue;
         symbolt &s = symbol_table.get_writeable_ref(sid);
