@@ -97,22 +97,22 @@ class date:
         return None
 
     def toordinal(self) -> int:
-        return 0
+        return nondet_int()
 
     def weekday(self) -> int:
-        return 0
+        return nondet_int()
 
     def isoweekday(self) -> int:
-        return 0
+        return nondet_int()
 
     def isocalendar(self):
-        return (0, 0, 0)
+        return (nondet_int(), nondet_int(), nondet_int())
 
     def isoformat(self) -> str:
-        return ""
+        return nondet_str()
 
     def strftime(self, fmt: str) -> str:
-        return ""
+        return nondet_str()
 
 
 class time:
@@ -149,13 +149,13 @@ class time:
         return None
 
     def tzname(self) -> str:
-        return ""
+        return nondet_str()
 
     def isoformat(self, timespec: str = "auto") -> str:
-        return ""
+        return nondet_str()
 
     def strftime(self, fmt: str) -> str:
-        return ""
+        return nondet_str()
 
 
 class datetime(date):
@@ -235,13 +235,13 @@ class datetime(date):
         return None
 
     def tzname(self) -> str:
-        return ""
+        return nondet_str()
 
     def isoformat(self, sep: str = "T", timespec: str = "auto") -> str:
         return ""
 
     def strftime(self, fmt: str) -> str:
-        return ""
+        return nondet_str()
 
 
 # Singleton objects exposed by the module.
