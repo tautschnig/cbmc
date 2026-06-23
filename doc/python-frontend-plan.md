@@ -1529,6 +1529,16 @@ common cases already work. Recorded to prevent a mis-targeted effort.
      `call-eval-once-fail`. heapq_import → PASS (sweep 2714, 0 regressions).
      Residual: float/mixed-payload sort still compares only `__int_val`.
 
+**Update (2026-06-23, call-duplication class CLOSED + complex-from-var):**
+- The side-effecting-call double-eval false-proof class is now fully closed:
+  `==`/ordered/arithmetic (`73fce93762`) and **membership `in`** (`d210f808b0`,
+  materialise a container that embeds a side-effect). Audited sound: subscript,
+  boolean-op, augmented assignment, f-string. Guards `call-eval-once-fail`,
+  `membership-eval-once-fail`.
+- **`complex(<non-literal str>)` — FIXED:** parse via `extract_string_value`
+  so a variable holding a constant string is parsed, not just a literal.
+  complex_constructor_extended -> PASS (2715).
+
 **guarded for the common cases** (2026-06-17) with a documented residual — see
 it for the details. Verified against the 2026-06-08
 sweep baseline.
