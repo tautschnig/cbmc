@@ -2051,6 +2051,51 @@ std::optional<exprt> python_convertert::try_builtin_call(
       exprt arg = convert_expression(*as_array(args).begin());
       if(is_python_list_type(arg.type()))
         return arg;
+      // list(<str>) / reversed(<str>) iterate the string's CODE POINTS,
+      // producing a list of single-character strings (PLR §4.7.1). For a
+      // constant string we materialise this precisely.
+      auto sv = extract_string_value(arg);
+      if(sv.has_value())
+      {
+        const std::string &s = sv.value();
+        std::vector<std::string> chars;
+        for(std::size_t i = 0; i < s.size();)
+        {
+          const unsigned char b = static_cast<unsigned char>(s[i]);
+          std::size_t clen = 1;
+          if(b >= 0xF0)
+            clen = 4;
+          else if(b >= 0xE0)
+            clen = 3;
+          else if(b >= 0xC0)
+            clen = 2;
+          chars.push_back(s.substr(i, clen));
+          i += clen;
+        }
+        if(func_name == "reversed")
+          std::reverse(chars.begin(), chars.end());
+        const typet elem_type = python_string_type();
+        const std::size_t sz =
+          std::max<std::size_t>(PYTHON_MAX_LIST_LENGTH, chars.size());
+        struct_typet list_type = python_list_type(elem_type);
+        {
+          auto &comps = list_type.components();
+          if(comps.size() == 2)
+            comps[1].type() =
+              array_typet{elem_type, from_integer(sz, signedbv_typet{64})};
+        }
+        array_typet data_type{elem_type, from_integer(sz, signedbv_typet{64})};
+        exprt::operandst data_elems;
+        for(const auto &c : chars)
+          data_elems.push_back(python_string_literal(c));
+        while(data_elems.size() < sz)
+          data_elems.push_back(safe_zero(elem_type));
+        return struct_exprt{
+          {from_integer(
+             static_cast<long long>(chars.size()), signedbv_typet{64}),
+           array_exprt{std::move(data_elems), data_type}},
+          list_type};
+      }
     }
     return side_effect_expr_nondett{
       python_list_type(python_int_type()), get_location(expr)};
@@ -2227,6 +2272,55 @@ std::optional<exprt> python_convertert::try_builtin_call(
               }
             }
           }
+        }
+      }
+      // sorted(<str>) sorts the string's CODE POINTS into a list of
+      // single-character strings (UTF-8 byte order == code-point order).
+      if(sorted_key_index < 0 && sorted_key_attr.empty())
+      {
+        auto sv = extract_string_value(arg);
+        if(sv.has_value() && !is_python_list_type(arg.type()))
+        {
+          const std::string &s = sv.value();
+          std::vector<std::string> chars;
+          for(std::size_t i = 0; i < s.size();)
+          {
+            const unsigned char b = static_cast<unsigned char>(s[i]);
+            std::size_t clen = 1;
+            if(b >= 0xF0)
+              clen = 4;
+            else if(b >= 0xE0)
+              clen = 3;
+            else if(b >= 0xC0)
+              clen = 2;
+            chars.push_back(s.substr(i, clen));
+            i += clen;
+          }
+          std::sort(chars.begin(), chars.end());
+          if(sorted_reverse)
+            std::reverse(chars.begin(), chars.end());
+          const typet elem_type = python_string_type();
+          const std::size_t sz =
+            std::max<std::size_t>(PYTHON_MAX_LIST_LENGTH, chars.size());
+          struct_typet list_type = python_list_type(elem_type);
+          {
+            auto &comps = list_type.components();
+            if(comps.size() == 2)
+              comps[1].type() =
+                array_typet{elem_type, from_integer(sz, signedbv_typet{64})};
+          }
+          array_typet data_type{
+            elem_type, from_integer(sz, signedbv_typet{64})};
+          exprt::operandst data_elems;
+          for(const auto &c : chars)
+            data_elems.push_back(python_string_literal(c));
+          while(data_elems.size() < sz)
+            data_elems.push_back(safe_zero(elem_type));
+          return struct_exprt{
+            {from_integer(
+               static_cast<long long>(chars.size()), signedbv_typet{64}),
+             array_exprt{std::move(data_elems), data_type}},
+            list_type};
         }
       }
       if(is_python_list_type(arg.type()))
