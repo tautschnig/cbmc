@@ -1494,6 +1494,28 @@ multi-call (runtime-propagated args) does not. So:
 Conclusion: this is NOT the large whole-group lever it appeared to be — the
 common cases already work. Recorded to prevent a mis-targeted effort.
 
+**Update (2026-06-23, #1 string-iteration ops + #2 individual gaps):**
+- **`list()`/`reversed()`/`sorted()` over a string — FIXED (`28706f7918`)**:
+  iterate code points into a list of single-character strings (constants;
+  `sorted("cba")` failed even for a literal before). Correctness fix, no corpus
+  flip.
+- **pure `int` subclass — FIXED (`4d09b5a812`)**: `class U(int)` (no own attrs)
+  modelled as int for both construction (`U(5)→5`) and annotation (`x: U →
+  int`). +1 PASS (`int_subclass`, 2712). Limitation: an UNannotated `x = U(5)`
+  still infers x as the struct.
+- **unbound instance-method positional self — FIXED (`0b3fb25977`)**:
+  `Class.method(inst, ...)` now binds the explicit first positional as self
+  (gated on first param == `self`, so classmethods` `cls(...)` are untouched —
+  caught + fixed an intermediate `classmethod-cls-construction` regression).
+  +1 PASS (`method-instances`, 2713).
+- **`heapq` — BLOCKED by list sort/del pass-by-reference.** The stub models
+  ops via `heap.sort()` / `del heap[0]` / `heap.append(...)`. Verified:
+  `append` DOES propagate through a function param, but **`sort` and `del` do
+  NOT** (the sort handler rebuilds + reassigns the list instead of mutating the
+  shared by-ref storage `append` uses). So `heapify`/`heappop` lose their effect
+  on the caller's list. This is the documented hard by-ref / per-instance-
+  identity area; not a small fix. Deferred.
+
 **guarded for the common cases** (2026-06-17) with a documented residual — see
 it for the details. Verified against the 2026-06-08
 sweep baseline.
