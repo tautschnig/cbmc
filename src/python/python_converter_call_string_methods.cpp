@@ -1183,39 +1183,63 @@ std::optional<exprt> python_convertert::try_string_method(
         if(cv.has_value())
           max_count = static_cast<long long>(cv.value());
       }
-      // Extract all three as constant strings
-      auto extract_str = [&](const exprt &e) -> std::string
+      // Extract all three as constant strings, distinguishing a constant
+      // EMPTY string (has_value()=="") from a non-constant/symbolic
+      // operand (no value) — the latter must fall through to the symbolic
+      // path, the former is handled precisely here.
+      auto src_opt = extract_string_value(obj);
+      auto old_opt = extract_string_value(old_expr);
+      auto new_opt = extract_string_value(new_expr);
+      if(src_opt.has_value() && old_opt.has_value() && new_opt.has_value())
       {
-        auto sv = extract_string_value(e);
-        if(sv.has_value())
-          return sv.value();
-        return "";
-      };
-      std::string src = extract_str(obj);
-      std::string old_s = extract_str(old_expr);
-      std::string new_s = extract_str(new_expr);
-      if(!src.empty() && !old_s.empty())
-      {
-        // Perform replacement up to max_count times.
+        const std::string &src = src_opt.value();
+        const std::string &old_s = old_opt.value();
+        const std::string &new_s = new_opt.value();
         std::string result;
-        std::size_t pos = 0;
-        long long replaced = 0;
-        while(pos < src.size())
+        if(old_s.empty())
         {
-          if(max_count >= 0 && replaced >= max_count)
+          // PLR / CPython: an EMPTY pattern inserts `new` at every one of
+          // the len(src)+1 boundaries (before each character and at the
+          // end), left to right, limited to `max_count` insertions; the
+          // source characters always appear. e.g.
+          //   "ab".replace("", "-")    == "-a-b-"
+          //   "abc".replace("", "-", 2) == "-a-bc"
+          //   "".replace("", "x")      == "x"
+          long long inserted = 0;
+          for(std::size_t i = 0; i <= src.size(); ++i)
           {
-            result += src.substr(pos);
-            break;
+            if(max_count < 0 || inserted < max_count)
+            {
+              result += new_s;
+              ++inserted;
+            }
+            if(i < src.size())
+              result += src[i];
           }
-          auto found = src.find(old_s, pos);
-          if(found == std::string::npos)
+        }
+        else
+        {
+          // Non-empty pattern: replace up to max_count occurrences (an
+          // empty `src` yields "" — no occurrence to replace).
+          std::size_t pos = 0;
+          long long replaced = 0;
+          while(pos < src.size())
           {
-            result += src.substr(pos);
-            break;
+            if(max_count >= 0 && replaced >= max_count)
+            {
+              result += src.substr(pos);
+              break;
+            }
+            auto found = src.find(old_s, pos);
+            if(found == std::string::npos)
+            {
+              result += src.substr(pos);
+              break;
+            }
+            result += src.substr(pos, found - pos) + new_s;
+            pos = found + old_s.size();
+            replaced++;
           }
-          result += src.substr(pos, found - pos) + new_s;
-          pos = found + old_s.size();
-          replaced++;
         }
         // Build string literal
         return python_string_literal(result);
