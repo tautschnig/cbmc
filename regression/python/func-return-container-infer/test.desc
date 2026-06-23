@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+Function-return type inference: dict/list returns are container-typed, so
+structural queries (len) are precise.

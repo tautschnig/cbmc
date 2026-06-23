@@ -1,0 +1,10 @@
+CORE
+main.py
+
+^VERIFICATION FAILED$
+^EXIT=10$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+Function-return type inference: returning a dict-bound local var must be dict-typed (was int-default false proof).

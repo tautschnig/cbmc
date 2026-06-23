@@ -48,6 +48,62 @@ python_convertert::infer_return_type_from_body(
   bool has_list = false, all_list = true;
   typet first_dict_key, first_dict_val, first_list_elem;
 
+  // Container-shape of a return-value expression, for inferring dict/list
+  // return types beyond bare {...}/[...] literals. Closing the
+  // function-return type-propagation gap: a function that returns a dict/list
+  // via a CALL (dict()/list()/nondet_dict()/nondet_list()), a comprehension,
+  // or a local variable bound to one was previously typed as the int default,
+  // so the type-punned call result false-proved e.g. `f() == {}`. 0 = neither,
+  // 1 = dict, 2 = list. `direct_kind` is non-recursive; `rv_container_kind`
+  // additionally resolves a returned Name to its in-body assignment (one hop,
+  // no recursion -> no infinite loop).
+  auto direct_kind = [&](const jsont &e) -> int
+  {
+    if(is_node_type(e, "Dict") || is_node_type(e, "DictComp"))
+      return 1;
+    if(is_node_type(e, "List") || is_node_type(e, "ListComp"))
+      return 2;
+    if(is_node_type(e, "Call") && is_node_type(json_member(e, "func"), "Name"))
+    {
+      const std::string cn =
+        json_string(json_member(json_member(e, "func"), "id"));
+      if(cn == "dict" || cn == "nondet_dict")
+        return 1;
+      if(cn == "list" || cn == "nondet_list")
+        return 2;
+    }
+    return 0;
+  };
+  auto rv_container_kind = [&](const jsont &rv) -> int
+  {
+    int k = direct_kind(rv);
+    if(k != 0)
+      return k;
+    if(is_node_type(rv, "Name"))
+    {
+      const std::string rn = json_string(json_member(rv, "id"));
+      if(body.is_array())
+        for(const auto &bs : as_array(body))
+        {
+          if(!is_node_type(bs, "Assign"))
+            continue;
+          const jsont &tgts = json_member(bs, "targets");
+          if(!tgts.is_array() || as_array(tgts).empty())
+            continue;
+          const jsont &t0 = *as_array(tgts).begin();
+          if(
+            is_node_type(t0, "Name") &&
+            json_string(json_member(t0, "id")) == rn)
+          {
+            int vk = direct_kind(json_member(bs, "value"));
+            if(vk != 0)
+              return vk;
+          }
+        }
+    }
+    return 0;
+  };
+
   std::function<void(const jsont &)> scan = [&](const jsont &body_node)
   {
     if(!body_node.is_array())
@@ -236,67 +292,80 @@ python_convertert::infer_return_type_from_body(
             }
             // Eager dict / list shapes (used only if no class/tuple type
             // committed above).
-            if(is_node_type(rv, "Dict"))
+            const int ck = rv_container_kind(rv);
+            if(ck == 1)
             {
               has_dict = true;
               if(first_dict_key.id_string().empty())
               {
-                const jsont &keys = json_member(rv, "keys");
-                const jsont &values = json_member(rv, "values");
+                // Safe defaults for a non-literal dict return (call /
+                // comprehension / local var); refined below for a literal
+                // whose first entry is constant.
                 first_dict_key = python_string_type();
-                first_dict_val = python_value_type();
-                if(
-                  keys.is_array() && values.is_array() &&
-                  !as_array(keys).empty())
+                first_dict_val = python_int_type();
+                if(is_node_type(rv, "Dict"))
                 {
-                  const jsont &k0 = *as_array(keys).begin();
-                  const jsont &v0 = *as_array(values).begin();
-                  if(is_node_type(k0, "Constant"))
+                  const jsont &keys = json_member(rv, "keys");
+                  const jsont &values = json_member(rv, "values");
+                  first_dict_val = python_value_type();
+                  if(
+                    keys.is_array() && values.is_array() &&
+                    !as_array(keys).empty())
                   {
-                    const jsont &kcv = json_member(k0, "value");
-                    if(kcv.is_number())
-                      first_dict_key = python_int_type();
-                    else if(kcv.is_string())
-                      first_dict_key = python_string_type();
-                  }
-                  if(is_node_type(v0, "Constant"))
-                  {
-                    const jsont &vcv = json_member(v0, "value");
-                    if(vcv.is_number())
-                      first_dict_val = vcv.value.find('.') != std::string::npos
-                                         ? double_type()
-                                         : python_int_type();
-                    else if(vcv.is_string())
-                      first_dict_val = python_string_type();
-                    else if(vcv.is_true() || vcv.is_false())
-                      first_dict_val = bool_typet{};
+                    const jsont &k0 = *as_array(keys).begin();
+                    const jsont &v0 = *as_array(values).begin();
+                    if(is_node_type(k0, "Constant"))
+                    {
+                      const jsont &kcv = json_member(k0, "value");
+                      if(kcv.is_number())
+                        first_dict_key = python_int_type();
+                      else if(kcv.is_string())
+                        first_dict_key = python_string_type();
+                    }
+                    if(is_node_type(v0, "Constant"))
+                    {
+                      const jsont &vcv = json_member(v0, "value");
+                      if(vcv.is_number())
+                        first_dict_val =
+                          vcv.value.find('.') != std::string::npos
+                            ? double_type()
+                            : python_int_type();
+                      else if(vcv.is_string())
+                        first_dict_val = python_string_type();
+                      else if(vcv.is_true() || vcv.is_false())
+                        first_dict_val = bool_typet{};
+                    }
                   }
                 }
               }
             }
             else if(!this_is_none)
               all_dict = false;
-            if(is_node_type(rv, "List"))
+            if(ck == 2)
             {
               has_list = true;
               if(first_list_elem.id_string().empty())
               {
-                const jsont &elts = json_member(rv, "elts");
                 first_list_elem = python_value_type();
-                if(elts.is_array() && !as_array(elts).empty())
+                if(is_node_type(rv, "List"))
                 {
-                  const jsont &e0 = *as_array(elts).begin();
-                  if(is_node_type(e0, "Constant"))
+                  const jsont &elts = json_member(rv, "elts");
+                  if(elts.is_array() && !as_array(elts).empty())
                   {
-                    const jsont &cv = json_member(e0, "value");
-                    if(cv.is_string())
-                      first_list_elem = python_string_type();
-                    else if(cv.is_number())
-                      first_list_elem = cv.value.find('.') != std::string::npos
-                                          ? double_type()
-                                          : python_int_type();
-                    else if(cv.is_true() || cv.is_false())
-                      first_list_elem = bool_typet{};
+                    const jsont &e0 = *as_array(elts).begin();
+                    if(is_node_type(e0, "Constant"))
+                    {
+                      const jsont &cv = json_member(e0, "value");
+                      if(cv.is_string())
+                        first_list_elem = python_string_type();
+                      else if(cv.is_number())
+                        first_list_elem =
+                          cv.value.find('.') != std::string::npos
+                            ? double_type()
+                            : python_int_type();
+                      else if(cv.is_true() || cv.is_false())
+                        first_list_elem = bool_typet{};
+                    }
                   }
                 }
               }

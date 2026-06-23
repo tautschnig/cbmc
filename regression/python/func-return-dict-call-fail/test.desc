@@ -1,0 +1,10 @@
+CORE
+main.py
+
+^VERIFICATION FAILED$
+^EXIT=10$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+Function-return type inference: a dict-returning CALL must be dict-typed at the call site (was int-default false proof).
