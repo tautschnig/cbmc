@@ -608,6 +608,54 @@ previously-deferred `github_3647_9_fail` (dict-mutation-during-iteration) is now
 **RESOLVED** (below), as is the return-type `None`-erasure vector — so there are
 no open deliberately-deferred soundness items at present.
 
+### Library-stub soundness audit (2026-06-23) — concrete-default false-proof class
+
+A systematic audit of `src/python/library/` for a single bug class: **a stub
+method returns a fixed concrete value (`""` / `0` / `[]` / `{}` / `None` /
+`(None,0)`) for a result that is actually VALUE-DEPENDENT**, which false-proves
+assertions on that default (e.g. `json.loads(s) == {}`, `os.getcwd() == ""`,
+`functools.reduce(...) is None`, `d.weekday() == 0`, `h.hexdigest() == ""`,
+`struct.unpack("i",b)[0] == 0` all wrongly verified; each cross-checked against
+CPython). This is the same class as the earlier **re-stub cluster**
+(`re.escape`/`expand`/`groups`/`subn`/`groupdict`).
+
+**Fixed (→ sound nondet of the right type; commits `632dfa81ff`, `ff1dfa7bd1`):**
+`re` (earlier); `json` (loads/load/dumps/encode/decode/raw_decode/iterencode);
+`functools.reduce`; `os` (getcwd/getenv/getpid·ppid·uid·euid·gid·egid/listdir);
+`hashlib` hexdigest; `struct.unpack` (tuple VALUES; shape preserved);
+`datetime` (toordinal/weekday/isoweekday/isocalendar/isoformat/strftime/tzname).
+Validated: every batch left the ESBMC sweep byte-identical to baseline (PASS
+2706, 0 regressions); 651/651 local tests; guard tests `stub-*-fail` +
+`re-*-fail`.
+
+**Left alone — LEGITIMATE fixed-value semantics (NOT bugs):** `contextlib`
+`__exit__ → False` ("don't suppress"), `defaultdict.__missing__` factory-zeros,
+`Counter` missing-key `0`, identity decorators (`lru_cache`/`wraps`/…),
+`__init__ → None`, `bisect.insort → None` (and `bisect_left/right` return a real
+computed index). The audit requires per-case judgment, not a blanket sweep.
+
+**Still flagged (same class, not yet fixed):** `csv`, `string`, `configparser`,
+`argparse`, and assorted others; plus `struct`'s format-parsing loop is a
+*pre-existing* symex perf cliff (`calcsize` times out), orthogonal to the value
+fix. Continue the audit by import frequency.
+
+**Whole-group root + PREVENTION (stub-authoring guideline).** The root is a
+recurring stub-authoring anti-pattern, not a single code site, so the
+architectural fix is a guideline (there is no automatic detector — the frontend
+cannot know a stub method is value-dependent):
+
+> **A library-stub method that models a VALUE-DEPENDENT result MUST return a
+> sound nondet value of the correct type** (`nondet_str()` / `nondet_int()` /
+> `nondet_bool()` / `nondet_float()` / `nondet_dict(8)` / `nondet_list(8,
+> sample)`), **never a fixed concrete placeholder** (`""`/`0`/`[]`/`{}`/`None`).
+> A fixed concrete return is only correct when it is the genuine, input-
+> independent semantics (a predicate that is truly constant, `__exit__ → False`,
+> `__init__ → None`, a factory-zero). When in doubt, nondet is sound; a
+> placeholder is a latent false proof. Container/`Match`-shaped returns should
+> carry a return annotation (`-> dict`/`-> list`) or use the typed `nondet_*`
+> so the return-type inference types the call site correctly.
+
+
 ### Soundness re-audit (2026-06-19, current binary, sweep PASS 2704/2832) — CONFIRMS no false proofs + sharpens the methodology
 
 Re-ran every *expected-failure / got-SUCCESSFUL* row against the current
