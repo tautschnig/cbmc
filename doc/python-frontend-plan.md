@@ -1473,6 +1473,27 @@ complex ones (hard) and the test-specific ones.
   - `loop-invariant2` (`__loop_invariant` + 5e6 loop), `import`/`global`
     (local-module import): flag/feature/test-specific.
 
+**Update (2026-06-23, constant-string propagation — premise CORRECTED):**
+Investigated "constant-string propagation through attributes and call params"
+as a unifying whole-group fix. **The call-param half is mostly ALREADY SOLVED**
+— multi-call propagation with DIFFERENT constants works for `return s`,
+`s.lower()`, `len(s)`, `s[0]`, `"a" in s`, `s + "!"` (verified passing with two
+distinct constant args). It FAILS only for **container-producing ops that
+materialise per-character at CONVERSION time**: `set(s)`, `sorted(s)`,
+`s[::-1]`. Those need `extract_string_value` to succeed (a conversion-time
+constant), which single-call 1b.5 supplies (`string_constants[param]`) but
+multi-call (runtime-propagated args) does not. So:
+- The real call-param gap is narrow (~1 corpus test, `set_from_param`) and would
+  need per-call VALUE-monomorphisation (clone f per distinct constant arg,
+  seeding `string_constants` in the clone) OR runtime-materialisation of
+  `set`/`sorted`/reverse over a bounded symbolic string. A large/perf-sensitive
+  change for a 1-test payoff — NOT justified now.
+- The **attribute half** remains blocked by per-instance struct-value tracking
+  (the documented hard per-instance-identity problem); there is no
+  instance-literal map analogous to `list_literals`/`dict_literals`.
+Conclusion: this is NOT the large whole-group lever it appeared to be — the
+common cases already work. Recorded to prevent a mis-targeted effort.
+
 **guarded for the common cases** (2026-06-17) with a documented residual — see
 it for the details. Verified against the 2026-06-08
 sweep baseline.
