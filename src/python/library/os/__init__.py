@@ -41,35 +41,44 @@ environ: dict = {}
 # materialise the argument into a heap-allocated buffer before
 # calling C getenv.
 def getenv(key: str, default=None) -> str:
-    return ""
+    # value-dependent (or default) -> sound nondet (was "" : false proof for
+    # os.getenv(existing) == "").
+    return nondet_str()
 
 
 def getpid() -> int:
-    return 0
+    # value-dependent id -> sound nondet (was 0 : false proof for getpid() == 0).
+    return nondet_int()
 
 
 def getppid() -> int:
-    return 0
+    # value-dependent id -> sound nondet (was 0 : false proof for getppid() == 0).
+    return nondet_int()
 
 
 def getuid() -> int:
-    return 0
+    # value-dependent id -> sound nondet (was 0 : false proof for getuid() == 0).
+    return nondet_int()
 
 
 def geteuid() -> int:
-    return 0
+    # value-dependent id -> sound nondet (was 0 : false proof for geteuid() == 0).
+    return nondet_int()
 
 
 def getgid() -> int:
-    return 0
+    # value-dependent id -> sound nondet (was 0 : false proof for getgid() == 0).
+    return nondet_int()
 
 
 def getegid() -> int:
-    return 0
+    # value-dependent id -> sound nondet (was 0 : false proof for getegid() == 0).
+    return nondet_int()
 
 
 def getcwd() -> str:
-    return ""
+    # cwd is a non-empty path -> sound nondet (was "" : false proof).
+    return nondet_str()
 
 
 def chdir(path: str) -> None:
@@ -102,7 +111,9 @@ def rename(src: str, dst: str) -> None:
 
 
 def listdir(path: str = ""):
-    return []
+    # value-dependent directory contents -> sound nondet (was [] : false
+    # proof for os.listdir(d) == []).
+    return nondet_list(8, nondet_str())
 
 
 # os.path is provided by src/python/library/os/path.py.
