@@ -1,0 +1,10 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Unbound method call Class.method(inst, ...) binds the explicit instance as self.

@@ -2909,7 +2909,26 @@ std::optional<exprt> python_convertert::try_method_call(
           // Skip for @staticmethod (no self/cls parameter)
           bool has_self = !method_type.parameters().empty() &&
                           method_type.parameters()[0].type().id() == ID_pointer;
-          if(has_self)
+          // PLR §9.3.4: an UNBOUND call `Class.method(inst, ...)` passes the
+          // instance EXPLICITLY as the first positional arg, so we must NOT
+          // prepend the (class) receiver as self — the first positional fills
+          // self instead. A bound call `obj.m(...)` and a `self=` keyword are
+          // handled as before.
+          const jsont &recv_self_node = json_member(func, "value");
+          const bool recv_is_class =
+            is_node_type(recv_self_node, "Name") &&
+            class_types.count(json_string(json_member(recv_self_node, "id"))) >
+              0;
+          // Only an INSTANCE method (first param `self`) called unbound takes
+          // its instance as the first positional arg. A classmethod (first
+          // param `cls`) still receives the class via the receiver, so it must
+          // keep the prepend.
+          const std::string first_param_name =
+            has_self ? id2string(method_type.parameters()[0].get_base_name())
+                     : std::string{};
+          const bool is_unbound_class_call =
+            recv_is_class && first_param_name == "self";
+          if(has_self && !is_unbound_class_call)
           {
             if(obj.type().id() == ID_pointer)
               arguments.push_back(obj);
@@ -2946,8 +2965,45 @@ std::optional<exprt> python_convertert::try_method_call(
           }
           if(args.is_array())
           {
+            std::size_t ai = 0;
             for(const auto &arg : as_array(args))
-              arguments.push_back(convert_expression(arg));
+            {
+              // Unbound call: the first positional arg IS self; pass its
+              // address (materialising a temp when it isn't already an
+              // addressable lvalue), so the callee's pointer self is bound
+              // to the explicit instance instead of the class receiver.
+              if(has_self && is_unbound_class_call && ai == 0)
+              {
+                exprt self_arg = convert_expression(arg);
+                if(self_arg.type().id() == ID_pointer)
+                  arguments.push_back(self_arg);
+                else if(self_arg.id() == ID_symbol)
+                  arguments.push_back(address_of_exprt{self_arg});
+                else
+                {
+                  static unsigned ubnd_tmp_ctr = 0;
+                  std::string tn =
+                    "__unbound_self_" + std::to_string(ubnd_tmp_ctr++);
+                  irep_idt tid{qualify_name(tn)};
+                  if(symbol_table.lookup(tid) == nullptr)
+                  {
+                    symbolt ts{tid, self_arg.type(), "python"};
+                    ts.base_name = tn;
+                    ts.is_lvalue = true;
+                    ts.is_state_var = true;
+                    symbol_table.add(ts);
+                  }
+                  symbol_exprt tsym =
+                    symbol_table.lookup_ref(tid).symbol_expr();
+                  pending_checks.push_back(
+                    code_frontend_assignt{tsym, std::move(self_arg)});
+                  arguments.push_back(address_of_exprt{tsym});
+                }
+              }
+              else
+                arguments.push_back(convert_expression(arg));
+              ++ai;
+            }
           }
 
           // Handle keyword arguments for method calls
