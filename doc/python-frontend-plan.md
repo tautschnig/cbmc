@@ -1321,21 +1321,34 @@ particular the `github_3560` family (initially hoped to be one easy root) is
   on the `find`+`substr`+concat+equality. A bounded `maxsplit=N` split IS
   exactly `N` `find`+slice ops in principle, but neither backend discharges it
   on a symbolic subject today. Research-grade (symbolic-string reasoning).
-- **`function-default-function-var` (PLR §8.7)** — a **function/reference-valued
-  default that is later reassigned** is stored as a *reference to the variable*,
-  not a def-time value snapshot, so it re-reads the variable's CURRENT value at
-  call time (`operator=cur` with `cur` later `= sub`). Precisely isolated:
-  int/list defaults DO value-snapshot (`fd_const`/`fd_list` pass) and a function
-  default with NO reassignment passes (`fv3`); only reassignment breaks it.
-  **Fix shape:** snapshot a non-value-folded (function/object) default into a
-  fresh def-time symbol initialised at the def point, and use that symbol as the
-  default — moderate (needs def-time snapshot-init emission); narrow corpus use.
-- **`forward-declaration5`** — a nested `def g()` inside `test()` should shadow
-  the global `g`; resolved to the global instead. Nested-function name
-  resolution / scoping.
-- **`builtin_all_genexp_inner_iter_shadow`** — `all(x>0 for x in xs for x in
-  range(x))`: the inner comprehension loop var shadowing the outer isn't
-  modelled. Comprehension-scoping edge.
+- **`function-default-function-var` (PLR §8.7) — FIXED (`32bf9f7acd`).** Root was
+  NOT the default value-freeze (that worked) but **higher-order
+  monomorphisation**: a callable-valued NAME default (`operator=cur`, `cur=mul`)
+  was dispatched to `cur`'s *current* binding, so after `cur=sub` the defaulted
+  call `do_op(2)` was specialised to the `sub` variant. Fix: `convert_module_body`'s
+  def-time freeze loop now also snapshots the callable a Name default resolves to
+  (def-time `function_aliases`), and `try_monomorphise_call` consults that
+  snapshot before live resolution. +1 corpus PASS, 0 regressions; guard
+  `func-default-callable-reassign`.
+- **`forward-declaration5` — re-diagnosed: NOT scoping.** It is a
+  **forward-reference in return-literal inference**: `f` returns `g()` but `g` is
+  defined *after* `f`, and the inference is single-pass in source order, so when
+  `f`'s body is converted `function_returned_literal[g]` isn't known yet → `f()`
+  folds to a nondet string → `f() == "global"` can't be proven (precision miss,
+  SOUND — confirmed `f()` is nondet, not a wrong concrete value; defining `g`
+  before `f` passes). Nested-`g` shadowing itself WORKS (`nest.py` passes). Real
+  fix is a **two-pass / fixpoint return-literal inference** over the call graph —
+  whole-group but risky (the inference is widely used in assign/comprehension
+  folding); deferred.
+- **`builtin_all_genexp_inner_iter_shadow` — re-diagnosed: NOT scoping.**
+  Shadowing works (the list-comp form `[x for x in xs for x in range(x)]`
+  passes). The failure is **`all()`/`any()` folding over a 2-generator genexp
+  when the two loop vars are the SAME (shadowing) AND the inner iterable is a
+  data-dependent `range(x)`**: the 2-generator fold path
+  (`call_builtins.cpp` ~3102) explicitly bails on `outer_var == inner_var` and
+  only handles static list/Name inner iterables, so it falls through to the
+  single-generator path which ignores the inner `for`. Narrow, intricate
+  fold-unroll extension (not a group); deferred.
 - **`github_3594`** — `"ß".upper() in ("SS","ẞ")`: Unicode case-mapping
   (ß→SS); `upper` is ASCII-only. HARD (Unicode case maps; see the strings-plan
   `casefold`/`title` residual).
