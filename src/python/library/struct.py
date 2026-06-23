@@ -59,12 +59,14 @@ def unpack(fmt: str, buffer) -> tuple:
         if ch in _SIZES and ch != "x" and ch != "s" and ch != "p":
             mult = int(digits) if digits else 1
             for _ in range(mult):
+                # value-dependent unpacked fields -> sound nondet (a fixed 0/
+                # 0.0/False false-proves e.g. unpack(...)[0] == 0).
                 if ch == "?":
-                    out.append(False)
+                    out.append(nondet_bool())
                 elif ch in "fde":
-                    out.append(0.0)
+                    out.append(nondet_float())
                 else:
-                    out.append(0)
+                    out.append(nondet_int())
         elif ch == "s" or ch == "p":
             out.append(b"")
         digits = ""
