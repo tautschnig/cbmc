@@ -126,10 +126,14 @@ class Match:
         return nondet_str()
 
     def groups(self, default=None):
-        return ()
+        # The captured groups depend on the (symbolic) match; a fixed () was a
+        # false proof (it made `m.groups() == ()` verify even when the pattern
+        # has groups). Sound nondet: a bounded list of nondet strings.
+        return nondet_list(8, nondet_str())
 
     def groupdict(self, default=None):
-        return {}
+        # Likewise a fixed {} was a false proof for `m.groupdict() == {}`.
+        return nondet_dict(8)
 
     def start(self, group: int = 0) -> int:
         return self._start
@@ -141,7 +145,10 @@ class Match:
         return (self._start, self._end)
 
     def expand(self, template: str) -> str:
-        return ""
+        # Sound nondet: the expanded result depends on the (symbolic) matched
+        # groups; a fixed "" was a false proof (it made `m.expand(t) == ""`
+        # verify even when CPython produces a non-empty string).
+        return nondet_str()
 
 
 class Pattern:
@@ -229,7 +236,10 @@ class Pattern:
         return __cbmc_re_sub(self.pattern, repl, string, count)
 
     def subn(self, repl: str, string: str, count: int = 0):
-        return (self.sub(repl, string, count), 0)
+        # The substitution count is unknown; a fixed 0 was unsound (it made
+        # `subn(...)[1] == 0` verify even when substitutions occur). Sound
+        # nondet count.
+        return (self.sub(repl, string, count), nondet_int())
 
 
 # Module-level functions. Each returns a value of the shape CPython
@@ -382,7 +392,7 @@ def sub(pattern: str, repl: str, string: str, count: int = 0, flags: int = 0) ->
 
 
 def subn(pattern: str, repl: str, string: str, count: int = 0, flags: int = 0):
-    return (sub(pattern, repl, string, count, flags), 0)
+    return (sub(pattern, repl, string, count, flags), nondet_int())
 
 
 def escape(pattern: str) -> str:
