@@ -650,9 +650,10 @@ computed index), `io` `readable`/`writable`/`seekable`/`isatty`. The audit
 requires per-case judgment, not a blanket sweep.
 
 **Documented residuals (sound today / out of stub scope):**
-- **bytes-returning reads** (`io.read`/`readall`, `socket.recv`) still return
-  `b""` — there is no `nondet_bytes()` builtin; the sound fix waits on adding
-  one. (`== b""` can still false-prove; low corpus use.)
+- **bytes-returning reads** (`io.read`/`readall`, `socket.recv`) — **FIXED**
+  (`7d1e8f4a3c`): added a `nondet_bytes()` builtin (bytes is modelled as a list
+  of u8, so it builds a bounded nondet u8 list), wired into io.read/readall +
+  socket.recv. `read() == b""` now FAILs soundly.
 - **`pathlib` path-DERIVED methods** (`name`/`suffix`/`stem`/`root`/`drive`/
   `anchor`/`as_posix`/`as_uri`/`__str__`/`__fspath__`/`is_absolute`/
   `is_relative_to`/`match`) still return `""`/`False`: these are *computable
@@ -661,11 +662,16 @@ requires per-case judgment, not a blanket sweep.
   follow-up, not a soundness-nondet target.
 - **`inspect`** (~26 introspection methods) — same class, rarely asserted in
   verification; lower-priority, the guideline covers it.
-- **FRONTEND float intrinsic — `math.isnan`/`isinf` of a SYMBOLIC float** wrongly
-  returns `False` (so `not math.isnan(x)` false-proves nan-freedom of a symbolic
-  `x`; it is PRECISE for concrete args). This is a *frontend float-intrinsic*
-  soundness bug, NOT a stub default — flagged here for a dedicated float-
-  soundness review.
+- **`math.isnan`/`isinf` — NOT a bug (false alarm corrected 2026-06-23).** The
+  earlier note claiming a symbolic-float `isnan` soundness bug was a *test
+  artifact*: it used an UNCALLED function (`def f(x: float): assert not
+  math.isnan(x)`) whose body is unreachable → vacuously SUCCESSFUL (no property
+  checked). When the function is CALLED with `nondet_float()` (or at module
+  level), `isnan` is fully SOUND — both `assert math.isnan(x)` and `assert not
+  math.isnan(x)` correctly FAIL, and `x == x` FAILs (nan IS included in the
+  nondet float domain; `isnan` dispatches to `isnan_exprt`). No fix needed.
+  (Lesson: always verify a "false proof" is not a vacuous uncalled-function
+  result before declaring a bug.)
 - **Third-party integration stubs** (`numpy`/`pandas`/`flask`/`fastapi`/
   `sqlalchemy`/`requests`/`click`/`rich`/`yaml`/`attr`/`attrs`/`pytest`/
   `icontract`/`asyncio`) — vast APIs, not in the verification corpus; out of
