@@ -366,6 +366,56 @@ exprt python_convertert::convert_call(const jsont &expr)
     return side_effect_expr_nondett{python_value_type(), get_location(expr)};
   }
 
+  // ---- re.escape(x): sound model ----
+  // The library stub returns "" (an empty regex), which matches EVERYTHING:
+  // e.g. `re.match(re.escape("abc"), "zzz")` wrongly verifies as a match (a
+  // false proof; CPython returns None). Model it soundly: for a CONSTANT x,
+  // return the properly-escaped literal so the downstream regex matches x
+  // literally (precise); for a symbolic x (whose content we cannot escape),
+  // return a sound nondet string so the downstream match stays nondet.
+  if(
+    is_node_type(func, "Attribute") &&
+    json_string(json_member(func, "attr")) == "escape")
+  {
+    const jsont &erecv = json_member(func, "value");
+    if(
+      is_node_type(erecv, "Name") &&
+      json_string(json_member(erecv, "id")) == "re" && args.is_array() &&
+      !as_array(args).empty())
+    {
+      const jsont &xarg = *as_array(args).begin();
+      std::optional<std::string> xs;
+      if(is_node_type(xarg, "Constant"))
+      {
+        const jsont &v = json_member(xarg, "value");
+        if(v.is_string())
+          xs = v.value;
+      }
+      else if(is_node_type(xarg, "Name"))
+      {
+        auto si = string_constants.find(
+          irep_idt{qualify_name(json_string(json_member(xarg, "id")))});
+        if(si != string_constants.end())
+          xs = si->second;
+      }
+      if(xs.has_value())
+      {
+        // CPython 3.7+ re.escape: backslash-prefix the regex special chars.
+        static const std::string special = "()[]{}?*+-|^$\\.&~# \t\n\r\v\f";
+        std::string out;
+        for(char c : *xs)
+        {
+          if(special.find(c) != std::string::npos)
+            out.push_back('\\');
+          out.push_back(c);
+        }
+        return python_string_literal(out);
+      }
+      // Symbolic x: cannot escape unknown content -> sound nondet pattern.
+      return bounded_nondet_string(get_location(expr));
+    }
+  }
+
   // ---- re IGNORECASE/DOTALL flag plumbing (whole-group, all re entry points)
   // A constant `flags=` argument to re.<fn> does not constant-propagate into
   // the re stub body (the stub's `flags` parameter stays symbolic), so the

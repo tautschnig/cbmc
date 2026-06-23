@@ -1,0 +1,12 @@
+CORE
+main.py
+
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+re.escape is modelled soundly (was a false proof: the "" stub matched
+everything). Constant x is escaped properly (literal match); symbolic x falls
+back to a sound nondet string.
