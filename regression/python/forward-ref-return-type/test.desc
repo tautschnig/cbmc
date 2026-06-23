@@ -1,0 +1,13 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+PLR 3.2/4.2.2: forward-reference return-type inference (sub-pass 1b fixpoint).
+A function returning a forward-referenced callee's result must inherit its
+return type, so a string-equality check is a real runtime check, not a folded
+false alarm.
