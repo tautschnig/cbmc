@@ -1590,13 +1590,15 @@ std::optional<exprt> python_convertert::try_builtin_call(
         exprt arg = convert_expression(*it);
         // PLR §6.10.1: complex(str) parses a string like
         // "1+2j" / "(1-2j)" into the python_complex struct.
-        // Only valid as the sole positional arg.
-        if(is_python_string_type(arg.type()) && is_node_type(*it, "Constant"))
+        // Only valid as the sole positional arg. Use
+        // extract_string_value so a variable holding a constant string
+        // (e.g. `s = "5+6j"; complex(s)`) is parsed too, not just a
+        // string literal; a truly symbolic string falls through.
+        if(is_python_string_type(arg.type()))
         {
-          const jsont &cv = json_member(*it, "value");
-          if(cv.is_string())
+          if(auto svopt = extract_string_value(arg); svopt.has_value())
           {
-            std::string sv = cv.value;
+            const std::string &sv = svopt.value();
             if(auto cv_pair = parse_python_complex_string(sv);
                cv_pair.has_value())
             {
