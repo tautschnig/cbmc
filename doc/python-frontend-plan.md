@@ -1330,16 +1330,19 @@ particular the `github_3560` family (initially hoped to be one easy root) is
   (def-time `function_aliases`), and `try_monomorphise_call` consults that
   snapshot before live resolution. +1 corpus PASS, 0 regressions; guard
   `func-default-callable-reassign`.
-- **`forward-declaration5` — re-diagnosed: NOT scoping.** It is a
-  **forward-reference in return-literal inference**: `f` returns `g()` but `g` is
-  defined *after* `f`, and the inference is single-pass in source order, so when
-  `f`'s body is converted `function_returned_literal[g]` isn't known yet → `f()`
-  folds to a nondet string → `f() == "global"` can't be proven (precision miss,
-  SOUND — confirmed `f()` is nondet, not a wrong concrete value; defining `g`
-  before `f` passes). Nested-`g` shadowing itself WORKS (`nest.py` passes). Real
-  fix is a **two-pass / fixpoint return-literal inference** over the call graph —
-  whole-group but risky (the inference is widely used in assign/comprehension
-  folding); deferred.
+- **`forward-declaration5` — FIXED (`007bd7c53a`).** Was NOT scoping: a
+  **forward-reference in return-type inference**. Sub-pass 1b registered
+  unannotated functions with the int default and the real type was set only in
+  source order during body conversion (1c), so `f` returning `g()` (with `g`
+  defined later) was typed against g's int default → downstream false alarm
+  (`f() == "global"` folded to constant-false). Fix: new sub-pass **1b.4**
+  infers unannotated return types from the body (constants, calls to user
+  functions / class constructors) and iterates to a **fixpoint** so forward
+  tail-call chains (f→g→…) converge before bodies are converted; only refines a
+  determinable type (conflicts→`python_value`, undetermined→unchanged), so it is
+  sound. +1 corpus PASS, 0 regressions; guard `forward-ref-return-type`. NOTE:
+  forward refs whose callee returns a CONTAINER (dict/list/tuple) are not yet
+  pre-inferred by 1b.4 (kept simple); a narrow residual.
 - **`builtin_all_genexp_inner_iter_shadow` — re-diagnosed: NOT scoping.**
   Shadowing works (the list-comp form `[x for x in xs for x in range(x)]`
   passes). The failure is **`all()`/`any()` folding over a 2-generator genexp
