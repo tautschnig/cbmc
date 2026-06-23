@@ -65,10 +65,10 @@ class IOBase:
 
 class RawIOBase(IOBase):
     def read(self, size=-1):
-        return b""
+        return nondet_bytes()
 
     def readall(self):
-        return b""
+        return nondet_bytes()
 
     def readinto(self, b):
         return 0
@@ -81,7 +81,7 @@ class BufferedIOBase(IOBase):
     raw = None
 
     def read(self, size=-1):
-        return b""
+        return nondet_bytes()
 
     def read1(self, size=-1):
         return b""

@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^VERIFICATION FAILED$
+^EXIT=10$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+Library-stub soundness guard: io read() bytes must not be a fixed b"" (now
+nondet_bytes).

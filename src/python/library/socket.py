@@ -85,7 +85,7 @@ class socket:
         return nondet_int()
 
     def recv(self, bufsize: int, flags: int = 0) -> bytes:
-        return b""
+        return nondet_bytes()
 
     def recvfrom(self, bufsize: int, flags: int = 0):
         return (b"", ("", 0))
