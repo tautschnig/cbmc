@@ -475,6 +475,44 @@ std::optional<exprt> python_convertert::try_nondet_call(
       binary_relation_exprt{len, ID_le, max_len}}});
     return std::move(tmp);
   }
+  else if(func_name == "nondet_bytes")
+  {
+    // bytes is modelled as a list of unsigned 8-bit ints (see
+    // convert_type_annotation). A sound nondet bytes value is a bounded list
+    // of nondet u8 -- used by stubs whose bytes result is value-dependent
+    // (io.read / socket.recv) instead of a fixed b"" (which false-proves
+    // `read() == b""`). Optional first arg bounds the length to [0, N]
+    // (default 8, matching nondet_list).
+    static unsigned nb_ctr = 0;
+    exprt max_len = from_integer(8, signedbv_typet{64});
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(arg.type().id() != ID_signedbv)
+        arg = safe_typecast(arg, signedbv_typet{64});
+      max_len = arg;
+    }
+    const typet bt = python_list_type(unsignedbv_typet{8});
+    std::string tn = "__nondet_bytes_" + std::to_string(nb_ctr++);
+    std::string tq = qualify_name(tn);
+    irep_idt ti{tq};
+    if(symbol_table.lookup(ti) == nullptr)
+    {
+      symbolt ts{ti, bt, "python"};
+      ts.base_name = tn;
+      ts.is_lvalue = true;
+      ts.is_state_var = true;
+      symbol_table.add(ts);
+    }
+    symbol_exprt tmp = symbol_table.lookup_ref(ti).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{
+      tmp, side_effect_expr_nondett{bt, get_location(expr)}});
+    member_exprt len{tmp, "length", signedbv_typet{64}};
+    pending_checks.push_back(code_assumet{and_exprt{
+      binary_relation_exprt{len, ID_ge, from_integer(0, signedbv_typet{64})},
+      binary_relation_exprt{len, ID_le, max_len}}});
+    return std::move(tmp);
+  }
   else if(func_name == "nondet_dict")
   {
     // nondet_dict(n[, key_type=K, value_type=V]) — constrain
