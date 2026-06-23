@@ -2088,6 +2088,41 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // Set membership: x in s → (s.bitmap >> x) & 1
       exprt container = right;
       exprt item = current_left;
+      // PLR §5.9: a container that embeds a side-effecting expression (e.g.
+      // the list literal `[f(h)]` where f mutates a by-reference list) is
+      // referenced repeatedly below (the length check plus each
+      // `container.data[idx]`); evaluating it inline would RE-EVALUATE the
+      // embedded call, and a mutating call diverges between evaluations ->
+      // a false proof. Materialise it into a temp once.
+      {
+        std::function<bool(const exprt &)> has_side_effect =
+          [&](const exprt &e) -> bool
+        {
+          if(e.id() == ID_side_effect)
+            return true;
+          for(const auto &sub : e.operands())
+            if(has_side_effect(sub))
+              return true;
+          return false;
+        };
+        if(has_side_effect(container))
+        {
+          static unsigned in_ctr = 0;
+          const std::string nm = "__in_container_" + std::to_string(in_ctr++);
+          const irep_idt id{qualify_name(nm)};
+          if(symbol_table.lookup(id) == nullptr)
+          {
+            symbolt s{id, container.type(), "python"};
+            s.base_name = nm;
+            s.is_lvalue = true;
+            s.is_state_var = true;
+            symbol_table.add(s);
+          }
+          const symbol_exprt sym = symbol_table.lookup_ref(id).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{sym, container});
+          container = sym;
+        }
+      }
       // PLR §3.3.1: custom __contains__ dunder — if the
       // container is a user-defined class instance with a
       // __contains__ method, dispatch to it.
