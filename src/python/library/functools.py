@@ -82,7 +82,9 @@ def reduce(function, iterable, initializer=None):
     cumulatively. Returns a nondet value of the iterable's
     element type; we don't enumerate the iterable at
     verification time."""
-    return None
+    # Value-dependent result -> sound nondet (was None : false proof for
+    # `functools.reduce(...) is None`; CPython returns the accumulated value).
+    return nondet_int()
 
 
 def cmp_to_key(mycmp):

@@ -27,7 +27,9 @@ class _Hasher:
         return b""
 
     def hexdigest(self):
-        return ""
+        # value-dependent hash hex string -> sound nondet (was "" : false
+        # proof for h.hexdigest() == "").
+        return nondet_str()
 
     def copy(self):
         return _Hasher(self.name)
@@ -95,7 +97,7 @@ class _ShakeHasher(_Hasher):
         return b""
 
     def hexdigest(self, length):
-        return ""
+        return nondet_str()
 
 
 def shake_128(data=b"", **kwargs):
