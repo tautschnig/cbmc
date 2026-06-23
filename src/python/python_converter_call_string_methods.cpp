@@ -1244,6 +1244,66 @@ std::optional<exprt> python_convertert::try_string_method(
         // Build string literal
         return python_string_literal(result);
       }
+      // Symbolic source, CONSTANT EMPTY pattern, CONSTANT replacement, no
+      // count limit: CPython inserts `new` at each of the len(src)+1
+      // boundaries, so the number of insertions is DETERMINED (unlike a
+      // general pattern) and the result length is EXACTLY
+      //   len(result) = len(src) + (len(src)+1)*len(new)
+      //              = len(src)*(1+len(new)) + len(new)
+      // — linear in len(src). Bind that length precisely on a fresh nondet
+      // result (content stays nondet, which is sound: the true result is one
+      // such string), making len() relations decidable on both back-ends.
+      {
+        auto old_sv = extract_string_value(old_expr);
+        auto new_sv = extract_string_value(new_expr);
+        if(
+          max_count < 0 && old_sv.has_value() && old_sv->empty() &&
+          new_sv.has_value())
+        {
+          const long long ln = static_cast<long long>(new_sv->size());
+          static unsigned er_ctr = 0;
+          const std::string nm = "__replace_empty_" + std::to_string(er_ctr++);
+          const irep_idt rid{qualify_name(nm)};
+          const typet rt = obj.type();
+          if(symbol_table.lookup(rid) == nullptr)
+          {
+            symbolt sy{rid, rt, "python"};
+            sy.base_name = nm;
+            sy.is_lvalue = true;
+            sy.is_state_var = true;
+            symbol_table.add(sy);
+          }
+          const symbol_exprt r = symbol_table.lookup_ref(rid).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{
+            r, side_effect_expr_nondett{rt, get_location(expr)}});
+          const signedbv_typet i64{64};
+          if(rt.id() == ID_smt_string)
+          {
+            // Native: len() routes through cprover_string_length_func.
+            const exprt rl = native_or_member_string_length(r);
+            const exprt sl = native_or_member_string_length(obj);
+            const exprt rhs = plus_exprt{
+              mult_exprt{sl, from_integer(1 + ln, sl.type())},
+              from_integer(ln, sl.type())};
+            pending_checks.push_back(code_assumet{equal_exprt{rl, rhs}});
+          }
+          else
+          {
+            // Refined: bind through the length intrinsic + sync the struct's
+            // .length field (mirrors the nondet_str refined path).
+            const exprt rl = emit_string_int_function(
+              ID_cprover_string_length_func, r, symbol_table, pending_checks);
+            pending_checks.push_back(
+              code_assumet{equal_exprt{member_exprt{r, "length", i64}, rl}});
+            const exprt sl = emit_string_int_function(
+              ID_cprover_string_length_func, obj, symbol_table, pending_checks);
+            const exprt rhs = plus_exprt{
+              mult_exprt{sl, from_integer(1 + ln, i64)}, from_integer(ln, i64)};
+            pending_checks.push_back(code_assumet{equal_exprt{rl, rhs}});
+          }
+          return std::move(r);
+        }
+      }
       // Symbolic-string replace not wired: the solver's
       // cprover_string_replace_func handles char-to-char
       // replacement only (5 args, chars not strings).
