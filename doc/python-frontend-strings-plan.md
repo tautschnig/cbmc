@@ -48,6 +48,7 @@ string/regex gap.
 | regex `re.sub` over a *symbolic* subject — `len()` | native | **residual (hard).** `re.sub` is wired to `str.replace_re_all` (precise for a fixed-length pattern + literal repl), but a `len()` over the result times out: a length hint does not help because the `r == str.replace_re_all(...)` content link drags the (genuinely hard) regex-replace reasoning into the model regardless. Distinct from the concat len-family (cheap producer) — the bottleneck is the regex replace, not the int2bv length encoding. Sound (timeout, never a false proof). |
 | regex `IGNORECASE` / literal-symbolic patterns | native | **residual (precision).** `re.IGNORECASE` still degrades to nondet (sound) — a correct fix needs a case-folding pattern *rewrite* (per-literal/per-range, parsing-aware) before lowering; a naive lowercase is unsound (`[A-Z]`→`[a-z]` changes meaning). Literal-symbolic patterns (`re.compile("^"+prefix+"...")`) need front-end pattern *segment-tracking* (the bulk of that work) to splice `str.to_re` holes. Both are precision-only; a-prime `Match`/`None` is **verified sound on native** (`re.match([0-9]+, nondet) is not None` correctly FAILS — no always-`Match` false proof). |
 | ↳ IGNORECASE/DOTALL **FIXED** (2026-06-22, `ad89a2ca64`) | both | The row above's "case-folding rewrite before lowering" fix shape is **wrong**. The translator AND the constant matcher already honour a leading `(?i)`/`(?s)`/`(?is)` group (`re_char` case-fold, `strip_inline_flags`) and the `re` stub maps `flags=` to that prefix. Verified: `re.match("(?i)[a-z]+","ABC")` SUCCEEDs, `re.match("[a-z]+","ABC",re.IGNORECASE)` FAILs. The real blocker is that the **constant `flags` argument does not constant-propagate into the stub body** (the stub's `flags` param stays symbolic, so neither `_re_flag_prefix(flags)`'s return nor an inline branch folds — same gap as a minimal `mkprefix(2)` helper, which also fails to fold). General root: "constant args not propagated into a function body." **Fix (LANDED):** a single uniform hook at the top of `convert_call` — for a compile-time-constant `flags` + a string-literal pattern, prepend the inline-flag prefix to the pattern JSON node and zero/drop `flags` before re-dispatch (the stub then sees a flag-free constant pattern, which already works), across all re entry points (match/search/fullmatch/findall/finditer/sub/subn/compile), positional or keyword. Sound: only IGNORECASE/DOTALL (and their union) map to a prefix; any other flag/non-constant-flag/non-literal-pattern is left unchanged → nondet. Verified IGNORECASE does not make a digit class match letters; 0 sweep regressions. **Still open:** literal-symbolic patterns (`re.compile(prefix + "...")`) need front-end pattern *segment-tracking* to splice `str.to_re` holes. Not a translator change. |
+| ↳ literal-symbolic: re.escape FALSE PROOF **FIXED** (2026-06-23, `ed4475d00f`) | both | While scoping the literal-symbolic item, found that the documented "symbolic hole → `str.to_re(hole)`" design is **UNSOUND** for general holes: `str.to_re` matches the hole as a literal, but Python interprets it as a regex (`re.match("a+xyz","a+xyz")` is `None` in CPython — `a+` is one-or-more, not the literal `a+`; cross-checked). So a symbolic hole that may contain metacharacters cannot be spliced as `str.to_re` without risking a false proof. Only `re.escape(x)`-produced holes are provably literal. **Related real false proof found + fixed:** the `re.escape` library stub returned `""` (empty regex ⇒ matches everything), so `re.match(re.escape("abc"),"zzz")` wrongly verified. Now modelled soundly in `convert_call`: constant `x` → properly-escaped literal (precise; metacharacters become literal — `re.escape("a.c")` matches `"a.c"` not `"axc"`); symbolic `x` → sound nondet string. The general-hole literal-symbolic precision feature is therefore **left as sound nondet (not implemented)** — implementing it as documented would introduce false proofs. Regression test `re-escape-sound`. |
 
 **Cross-cutting conclusion:** one-off refined-string axioms hit
 diminishing returns; the native backend is the comprehensive answer for
@@ -281,6 +282,19 @@ pattern is an `smt_string` *constant* — it returns `nullopt` and degrades to
 nondet. Teaching it to read the pattern from an `smt_string` constant restores
 regex precision under native (the **native regex pattern-extraction fix**;
 small, prerequisite for everything below).
+
+> **⚠ SOUNDNESS WARNING (2026-06-23).** The design below is **unsound as
+> written** and must NOT be implemented for general symbolic holes. `str.to_re`
+> matches a hole as a *literal*, but Python interprets a pattern substring as a
+> *regex*: `re.match("a+xyz","a+xyz")` is `None` in CPython (`a+` is one-or-more
+> `a`, not the literal `a+`), whereas `str.to_re("a+xyz")` would match it →
+> false proof. A symbolic hole can carry ANY regex syntax, so splicing it as
+> `str.to_re` is unsound in both directions. The ONLY provably-literal hole is
+> one produced by `re.escape(x)` — which is now modelled soundly (constant →
+> escaped literal; symbolic → nondet; see the gaps table). Until holes are
+> tracked as escape-derived, the general literal-symbolic feature stays sound
+> nondet. The text below is retained only as the (corrected-scope) design
+> record for an escape-tracked implementation.
 
 **Extension — structurally-constant patterns with symbolic literal substrings
 (native).** The pattern must remain *structurally* constant (its regex
