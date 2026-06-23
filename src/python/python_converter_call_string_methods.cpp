@@ -2111,16 +2111,27 @@ std::optional<exprt> python_convertert::try_string_method(
           end = slen;
         std::string slice = (start < end) ? s.substr(start, end - start) : "";
         const std::string &sub = arg_val.value();
+        // CPython empty-substring search: the empty string is "found" only
+        // when the (normalized) start lies within [0, len] AND start <= end.
+        // slice.find("")/rfind("") would otherwise always succeed (0 /
+        // slice length), wrongly reporting a match for inverted or
+        // out-of-range bounds (e.g. "abc".index("", 2, 1) must raise
+        // ValueError). Forward position is `start`; backward is `end`.
+        const bool empty_found = sub.empty() && start <= slen && start <= end;
+        const std::size_t npos = std::string::npos;
         if(method_name == "find")
         {
-          auto pos = slice.find(sub);
+          auto pos = sub.empty() ? (empty_found ? std::size_t{0} : npos)
+                                 : slice.find(sub);
           return from_integer(
             pos == std::string::npos ? -1 : static_cast<long long>(pos + start),
             python_int_type());
         }
         if(method_name == "rfind")
         {
-          auto pos = slice.rfind(sub);
+          auto pos = sub.empty()
+                       ? (empty_found ? std::size_t(end - start) : npos)
+                       : slice.rfind(sub);
           return from_integer(
             pos == std::string::npos ? -1 : static_cast<long long>(pos + start),
             python_int_type());
@@ -2130,15 +2141,17 @@ std::optional<exprt> python_convertert::try_string_method(
           // PLR: str.index(sub, start, end) searches the
           // substring s[start:end], NOT the full string.
           auto pos =
-            (method_name == "index") ? slice.find(sub) : slice.rfind(sub);
+            (method_name == "index")
+              ? (sub.empty() ? (empty_found ? std::size_t{0} : npos)
+                             : slice.find(sub))
+              : (sub.empty() ? (empty_found ? std::size_t(end - start) : npos)
+                             : slice.rfind(sub));
           if(pos == std::string::npos)
           {
-            // Raise ValueError
-            const symbolt *exc_sym =
-              symbol_table.lookup("python::__exception_active");
-            if(exc_sym)
-              pending_checks.push_back(
-                code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+            // Raise ValueError (set BOTH the active flag and the type, so
+            // `except ValueError` matches — a bare active-flag set leaves the
+            // type unset and the handler can't dispatch).
+            emit_conditional_exception(true_exprt{}, "ValueError");
             return from_integer(-1, python_int_type());
           }
           // Translate slice-relative position back to the
