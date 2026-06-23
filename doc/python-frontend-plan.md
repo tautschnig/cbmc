@@ -1438,6 +1438,41 @@ complex ones (hard) and the test-specific ones.
   catches it (benefits ALL index ValueErrors). Flipped
   `string-index-empty-inverted` (PASS 2710). Guard `string-index-empty-bounds`.
 
+**Update (2026-06-23, precise-pathlib BLOCKED + Tier-4 triage):**
+- **precise-pathlib — BLOCKED by two frontend limitations** (stub-only attempt
+  reverted; would otherwise regress pathlib). To compute `name`/`suffix`/`stem`/
+  `__str__`/`is_absolute` from the path string a stub must (a) capture the
+  `PurePath(*parts)` constructor args and (b) run string ops on the stored
+  path. Both fail today:
+  1. **`self, *parts` varargs binding is broken** — inside a method, `parts[0]`,
+     `len(parts)`, and `for p in parts` all fail (plain-function `*args` works;
+     a fixed `first=""` param works). Whole-group gap: any method with pure
+     `*args` after `self`.
+  2. **constant-string tracking does NOT flow through instance attributes** —
+     `self.r = "/a/foo.txt"; self.r.rfind("/")` does not fold (the same op on a
+     LOCAL folds fine). So even storing the path in `first` doesn't help: the
+     accessors operate on `self._raw`. Whole-group gap: any string stored in /
+     read from a struct member then operated on.
+  Precise-pathlib needs one/both of these fixed first (extend `string_constants`
+  to member reads; fix method `*args` binding). Documented as the real
+  architectural prerequisites; pathlib stays at the sound (nondet/`""`)
+  fallback for now.
+- **Tier-4 individual-DIFF triage:**
+  - **`object-empty-not-found` — FIXED (`b46f2bff8d`)**: `set.pop()` now returns
+    a bitmap-constrained element (precise for singletons, sound for multi).
+    +1 PASS (2711).
+  - `complex_constructor_extended` — fails only at `complex("5+6j")` from a
+    NON-literal string variable: the documented hard `complex(<symbolic str>)`
+    parse residual (strings plan).
+  - `github_3667` — nested-list shallow `copy()` aliasing (`nested[0].append`
+    seen through `shallow[0]`): the documented HARD per-instance-identity
+    problem.
+  - `method-instances` (unbound method with POSITIONAL self —
+    `MyClass.m(inst)`; keyword `self=inst` works), `int_subclass`
+    (`class X(int)`), `heapq_import` (heapq ops): moderate individual gaps.
+  - `loop-invariant2` (`__loop_invariant` + 5e6 loop), `import`/`global`
+    (local-module import): flag/feature/test-specific.
+
 **guarded for the common cases** (2026-06-17) with a documented residual — see
 it for the details. Verified against the 2026-06-08
 sweep baseline.
