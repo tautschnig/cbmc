@@ -131,8 +131,12 @@ class Match:
         # has groups). Sound nondet: a bounded list of nondet strings.
         return nondet_list(8, nondet_str())
 
-    def groupdict(self, default=None):
+    def groupdict(self, default=None) -> dict:
         # Likewise a fixed {} was a false proof for `m.groupdict() == {}`.
+        # The `-> dict` annotation is required so the returned value is typed as
+        # a dict at the call site (without it the dict-equality path is skipped
+        # and `== {}` wrongly verifies -- a function-return type-propagation
+        # gap; lists do not need this).
         return nondet_dict(8)
 
     def start(self, group: int = 0) -> int:

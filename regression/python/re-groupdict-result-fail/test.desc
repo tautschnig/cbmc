@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^VERIFICATION FAILED$
+^EXIT=10$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+re stub result soundness guard: m.groupdict() == {} used to false-prove (the {}
+default + a function-return dict-type gap); must now FAIL (typed nondet dict).
