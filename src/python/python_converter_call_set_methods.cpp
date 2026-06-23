@@ -140,11 +140,41 @@ std::optional<exprt> python_convertert::try_set_method(
   }
   if(method_name == "pop")
   {
-    // Return nondet int and clear a nondet bit — over-approximation
-    // that reflects pop removing an arbitrary element.
+    // pop() removes and returns an ARBITRARY element. Model the result as a
+    // nondet index in [0, 64) whose bit is SET in the (pre-pop) bitmap, then
+    // clear that bit. This is sound (the result is always an actual element,
+    // and all elements remain reachable) AND precise for singletons (a single
+    // set bit pins the returned value). Empty set raises KeyError.
+    emit_conditional_exception(
+      equal_exprt{bm, from_integer(0, unsignedbv_typet{64})}, "KeyError");
+    static unsigned set_pop_ctr = 0;
+    const std::string nm = "__set_pop_" + std::to_string(set_pop_ctr++);
+    const irep_idt rid{qualify_name(nm)};
+    if(symbol_table.lookup(rid) == nullptr)
+    {
+      symbolt sy{rid, signedbv_typet{64}, "python"};
+      sy.base_name = nm;
+      sy.is_lvalue = true;
+      sy.is_state_var = true;
+      symbol_table.add(sy);
+    }
+    const symbol_exprt r = symbol_table.lookup_ref(rid).symbol_expr();
     pending_checks.push_back(code_frontend_assignt{
-      bm, side_effect_expr_nondett{unsignedbv_typet{64}, get_location(expr)}});
-    return side_effect_expr_nondett{signedbv_typet{64}, get_location(expr)};
+      r, side_effect_expr_nondett{signedbv_typet{64}, get_location(expr)}});
+    // 0 <= r < 64
+    pending_checks.push_back(code_assumet{and_exprt{
+      binary_relation_exprt{r, ID_ge, from_integer(0, signedbv_typet{64})},
+      binary_relation_exprt{r, ID_lt, from_integer(64, signedbv_typet{64})}}});
+    // bit = 1u << r ; assume the bit is set (r is a member)
+    const exprt bit = shl_exprt{
+      from_integer(1, unsignedbv_typet{64}),
+      typecast_exprt{r, unsignedbv_typet{64}}};
+    pending_checks.push_back(code_assumet{notequal_exprt{
+      bitand_exprt{bm, bit}, from_integer(0, unsignedbv_typet{64})}});
+    // clear the popped bit
+    pending_checks.push_back(
+      code_frontend_assignt{bm, bitand_exprt{bm, bitnot_exprt{bit}}});
+    return std::move(r);
   }
 
   return std::nullopt;

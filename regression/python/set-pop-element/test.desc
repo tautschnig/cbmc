@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+set.pop() returns an element constrained to the bitmap (precise for singletons,
+sound for multi-element); KeyError on empty.
