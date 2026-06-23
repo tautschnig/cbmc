@@ -230,7 +230,15 @@ bool python_convertert::try_monomorphise_call(
         const std::string pname = id2string(hparams[pi].get_base_name());
         if(!body_calls(*fn_ast, pname))
           continue;
-        irep_idt cid = resolve_callable(*default_nodes[pi - first_default]);
+        // PLR §8.7: prefer the callable snapshotted at definition time
+        // (so a later reassignment of the default's source variable does
+        // not redirect the default); fall back to resolving the AST node.
+        irep_idt cid;
+        auto si = default_callable_snapshot.find({func_name, pi});
+        if(si != default_callable_snapshot.end())
+          cid = si->second;
+        else
+          cid = resolve_callable(*default_nodes[pi - first_default]);
         if(!cid.empty())
           bindings.push_back({pi, pname, cid});
       }
