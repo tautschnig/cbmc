@@ -1410,6 +1410,34 @@ complex ones (hard) and the test-specific ones.
   `string-index-empty-inverted` needs `str.index("",start,end)` inverted-bounds
   `ValueError`. The "empty-arg" cluster is themed, not single-root.
 
+**Update (2026-06-23, nondet/list cluster triage + string edges):**
+- **nondet/list cluster is mostly NOT tractable point-bugs.** Triage:
+  - **`github_3719_4/5` + `nondet_list2` (float) — SOUND NaN divergence, NOT
+    bugs.** `nondet_float()` includes NaN (correct PLR), so `v == y` / `elem ==
+    elem` are legitimately false for NaN; with NaN excluded (`assume(y==y)`)
+    they pass. Our FAILED is the SOUND verdict — "fixing" to match the tests
+    would require excluding NaN (unsound). MUST NOT fix.
+  - **`range36-nondet`** — `len(range(n)) == n` fails for n > the materialised
+    cap (range is built as a bounded list); proper fix = lazy/symbolic range
+    length, a large change. (Negative-n is handled correctly: `n<0 →
+    len==0`.)
+  - **`set_from_param`** — `set(s)` over a string PARAMETER called with 2
+    different constants; needs per-call-site specialisation/inlining (the
+    constant `len(set("aaa"))==1` works). Moderate-hard.
+  - **`github_3783_5` (popitem)** — real bug but deep: dynamically-added dict
+    string keys are stored as pointers to distinct temp char arrays, and
+    `cprover_string_equal_func` doesn't relate `keys[i]` to the literal key
+    (popitem returns the right VALUE but a wrong KEY; literal-dict popitem +
+    `key in d.keys()` both work). Refined-string-representation issue.
+  - **`list_extend17`** — `list.extend(<generator expr>)` unsupported (extend
+    with a list works). Moderate.
+- **`str.index`/`find` empty-substring bounds — FIXED (`63976ea006`).** Empty
+  sub is found at `start` only when `start<=len && start<=end`; inverted/
+  out-of-range bounds raise ValueError (index) / return -1 (find). Also: the
+  index/rindex ValueError now sets the exception TYPE so `except ValueError`
+  catches it (benefits ALL index ValueErrors). Flipped
+  `string-index-empty-inverted` (PASS 2710). Guard `string-index-empty-bounds`.
+
 **guarded for the common cases** (2026-06-17) with a documented residual — see
 it for the details. Verified against the 2026-06-08
 sweep baseline.
