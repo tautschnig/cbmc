@@ -174,9 +174,15 @@ exprt python_convertert::box_closure(
     out.push_back(code_frontend_assignt{field, val});
   }
   int closure_idx = static_cast<int>(register_closure(lambda_id));
+  // The closure fn-index must stay PRECISE (it selects the dispatch target).
+  // box_int_for_storage over-approximates int VALUES to nondet, so box the
+  // index directly: it is a compile-time constant, so even if the boxed object
+  // aliases across closure instances every instance holds the SAME index —
+  // aliasing is harmless here.
   exprt fn_stored =
     unbounded_ints
-      ? box_int_for_storage(from_integer(closure_idx, integer_typet{}))
+      ? allocate_boxed_leaf(
+          from_integer(closure_idx, integer_typet{}), integer_typet{})
       : exprt{from_integer(closure_idx, signedbv_typet{64})};
   return make_python_closure(fn_stored, rec_ptr);
 }
