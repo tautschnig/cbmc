@@ -121,19 +121,25 @@ struct:
   `dict-native-string-key-box`. `github_3684` itself now computes the correct
   value (its assertion SUCCEEDS) but still reports a separate uncaught KeyError
   from the pre-existing symbolic-key-presence modelling gap (a dict-precision
-  item, not a string/boxing issue). **Integer case IMPLEMENTED 2026-06-24** (same pattern): under
-  `--python-unbounded-ints` a Python int is the non-fixed-width
-  `integer_typet`, so `python_value.__int_val` (a 64-bit bitvector) silently
-  truncated wrapped values mod 2**64 (unsound; `2**64+5 -> 5`) and drove a
-  `simplify_expr` abort on nested int containers. `__int_val` is now a typed
-  `integer*` boxed leaf (gated on `python_unbounded_ints_flag()`), mirroring
-  the string helpers (`python_boxed_int_ptr_type` /
-  `python_value_int_member_type` / `box_int_for_storage`); the closure fn-index
-  (also stored in `__int_val`) is boxed at its single caller. Truncation gone,
-  nested-int-container abort gone, default/int64 backend byte-identical (0
-  regressions). Regression test `int-unbounded-box-no-truncation`. (Residual
-  untyped-nested-dict value precision and unwind bounds are orthogonal
-  pre-existing limitations.)
+  item, not a string/boxing issue). **Integer case (2026-06-24):** under
+  `--python-unbounded-ints` a Python int is the non-fixed-width `integer_typet`.
+  `python_value.__int_val` (a 64-bit bitvector) silently truncated wrapped
+  values mod 2**64 (unsound) and drove a `simplify_expr` abort on nested int
+  containers. Boxing `__int_val` behind an `integer*` was attempted, but unlike
+  `smt_string` (tracked per-object by the string solver) **CBMC cannot allocate
+  distinct per-instance `integer_typet` heap objects** — a precise box aliased
+  across instances of the same construction site (a false proof). The sound
+  resolution: a wrapped unbounded int is **over-approximated to a fresh nondet
+  integer** (`box_int_for_storage`); the box keeps `python_value` fixed-width
+  (abort gone) and nondet makes the residual aliasing harmless. Typed int
+  positions (`dict[int,int]` / `list[int]` / typed vars) keep `integer_typet`
+  inline at full precision; the closure fn-index stays a precise box (constant →
+  aliasing-harmless). Sound, imprecise for Any-typed ints; default/int64 backend
+  byte-identical (0 regressions). Tests `int-unbounded-box-sound` (false proof
+  absent) + `int-unbounded-box-no-truncation` (precise typed path). **Note the
+  string leaf-boxing had the same static-symbol aliasing, fixed properly via
+  per-instance heap allocation (`allocate_boxed_leaf`); test
+  `leaf-box-no-alias-string`.**
 
 ## Linked design records (deep-dives)
 
