@@ -1589,6 +1589,15 @@ private:
   exprt build_dict_value(
     std::vector<std::pair<exprt, exprt>> pairs,
     const source_locationt &loc);
+
+  /// True if `e` is safe to substitute (constant-fold) at a program point
+  /// LATER than where it was tracked — i.e. it is invariant. A value embedding
+  /// a *mutable* program variable (a reassignable lvalue: a local, a boxed-leaf
+  /// materialisation pointer, etc.) is NOT safe: re-evaluating it at the later
+  /// point reads the variable's current value, not its value when the dict was
+  /// built (the dict-literal const-fold aliasing class). Read-only constants /
+  /// string-literal globals are safe.
+  bool value_is_const_foldable(const exprt &e) const;
   exprt convert_list_comp(const jsont &expr);
   exprt convert_dict_comp(const jsont &expr);
   exprt convert_lambda(const jsont &expr);
