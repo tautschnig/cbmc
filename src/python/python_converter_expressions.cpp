@@ -2553,6 +2553,30 @@ exprt python_convertert::box_string_for_storage(const exprt &str_value)
   return address_of_exprt{s.symbol_expr()};
 }
 
+exprt python_convertert::box_int_for_storage(const exprt &int_value)
+{
+  if(!unbounded_ints)
+    return int_value;
+  // Materialise the integer into a persistent heap symbol; store its address.
+  exprt v = int_value;
+  if(v.type().id() != ID_integer)
+    v = typecast_exprt{v, integer_typet{}};
+  static unsigned dint_counter = 0;
+  std::string nm = "__dint_val_" + std::to_string(dint_counter++);
+  irep_idt id{qualify_name(nm)};
+  if(symbol_table.lookup(id) == nullptr)
+  {
+    symbolt s{id, integer_typet{}, "python"};
+    s.base_name = nm;
+    s.is_lvalue = true;
+    s.is_state_var = true;
+    symbol_table.add(s);
+  }
+  const symbolt &s = symbol_table.lookup_ref(id);
+  pending_checks.push_back(code_frontend_assignt{s.symbol_expr(), v});
+  return address_of_exprt{s.symbol_expr()};
+}
+
 exprt python_convertert::build_dict_value(
   std::vector<std::pair<exprt, exprt>> pairs,
   const source_locationt &loc)

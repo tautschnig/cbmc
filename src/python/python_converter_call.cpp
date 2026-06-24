@@ -173,8 +173,12 @@ exprt python_convertert::box_closure(
       val = safe_typecast(val, comps[i].type());
     out.push_back(code_frontend_assignt{field, val});
   }
-  return make_python_closure(
-    static_cast<int>(register_closure(lambda_id)), rec_ptr);
+  int closure_idx = static_cast<int>(register_closure(lambda_id));
+  exprt fn_stored =
+    unbounded_ints
+      ? box_int_for_storage(from_integer(closure_idx, integer_typet{}))
+      : exprt{from_integer(closure_idx, signedbv_typet{64})};
+  return make_python_closure(fn_stored, rec_ptr);
 }
 
 exprt python_convertert::box_bound_method(

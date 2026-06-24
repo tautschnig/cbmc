@@ -3102,6 +3102,10 @@ exprt python_convertert::wrap_value(const exprt &e)
       python_type_tagt::CLASS, address_of_exprt{tmp_sym.symbol_expr()});
   }
 
+  // Unbounded ("int boxing"): an int value is materialised behind an
+  // integer* so python_value stays fixed-width and keeps full precision.
+  if(tag == python_type_tagt::INT && unbounded_ints)
+    return make_python_value(tag, box_int_for_storage(e));
   return make_python_value(tag, e);
 }
 
@@ -3136,9 +3140,7 @@ exprt python_convertert::value_equal(const exprt &a, const exprt &b)
   exprt bool_eq = equal_exprt{
     member_exprt{a, "__bool_val", i32}, member_exprt{b, "__bool_val", i32}};
   // INT default also covers NONE (both payloads are 0).
-  exprt int_eq = equal_exprt{
-    member_exprt{a, "__int_val", signedbv_typet{64}},
-    member_exprt{b, "__int_val", signedbv_typet{64}}};
+  exprt int_eq = equal_exprt{python_value_int(a), python_value_int(b)};
   return and_exprt{
     tags_eq,
     if_exprt{

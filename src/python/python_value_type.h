@@ -92,6 +92,26 @@ inline pointer_typet python_boxed_string_ptr_type()
   return pointer_typet{python_string_type(), 64};
 }
 
+/// Fixed-width pointer type used to box a heap mathematical integer under
+/// --python-unbounded-ints (see python_value_struct_def's __int_val member).
+inline pointer_typet python_boxed_int_ptr_type()
+{
+  return pointer_typet{integer_typet{}, 64};
+}
+
+/// Type of python_value's __int_val member: a typed pointer to a heap
+/// mathematical integer under --python-unbounded-ints ("int boxing"), or the
+/// inline int64 otherwise. Boxing keeps python_value fixed-width (so it stays
+/// byte_extract-valid) while preserving full integer precision -- an inline
+/// integer_typet would both make python_value variable-width AND, today,
+/// silently truncate to 64 bits when a value is wrapped into the tagged union.
+inline typet python_value_int_member_type()
+{
+  if(python_unbounded_ints_flag())
+    return python_boxed_int_ptr_type();
+  return signedbv_typet{64};
+}
+
 /// Type of python_value's __str member: a typed pointer to a heap smt_string
 /// on the native SMT-String back-end ("string boxing"), or the inline string
 /// struct on the refined back-end.
@@ -110,7 +130,7 @@ inline struct_typet python_value_struct_def()
 
   components.push_back(struct_typet::componentt{"__tag", signedbv_typet{32}});
   components.push_back(
-    struct_typet::componentt{"__int_val", signedbv_typet{64}});
+    struct_typet::componentt{"__int_val", python_value_int_member_type()});
   components.push_back(struct_typet::componentt{"__float_val", double_type()});
   components.push_back(
     struct_typet::componentt{"__bool_val", signedbv_typet{32}});
@@ -163,7 +183,9 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
   struct_typet vtype = python_value_struct_def();
 
   exprt tag_expr = from_integer(static_cast<int>(tag), signedbv_typet{32});
-  exprt int_val = from_integer(0, signedbv_typet{64});
+  exprt int_val = python_unbounded_ints_flag()
+                    ? exprt{null_pointer_exprt{python_boxed_int_ptr_type()}}
+                    : exprt{from_integer(0, signedbv_typet{64})};
   exprt float_val =
     ieee_floatt{
       ieee_float_spect::double_precision(),
@@ -187,9 +209,16 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
   switch(tag)
   {
   case python_type_tagt::INT:
-    int_val = value.type().id() == ID_signedbv
-                ? value
-                : typecast_exprt{value, signedbv_typet{64}};
+    // Unbounded ("int boxing"): the wrap site passes &heap_integer, stored
+    // directly as a typed integer* (no deref — python_value stays fixed-width).
+    if(python_unbounded_ints_flag())
+      int_val = value.type().id() == ID_pointer
+                  ? typecast_exprt{value, python_boxed_int_ptr_type()}
+                  : exprt{address_of_exprt{value}};
+    else
+      int_val = value.type().id() == ID_signedbv
+                  ? value
+                  : typecast_exprt{value, signedbv_typet{64}};
     break;
   case python_type_tagt::FLOAT:
     float_val = value;
@@ -278,8 +307,13 @@ inline member_exprt python_value_tag(const exprt &value)
 }
 
 /// Extract the int field from a tagged-union value.
-inline member_exprt python_value_int(const exprt &value)
+inline exprt python_value_int(const exprt &value)
 {
+  // Unbounded ("int boxing"): __int_val is a typed integer*; dereference it to
+  // get the heap mathematical integer. Otherwise it is the inline int64.
+  if(python_unbounded_ints_flag())
+    return dereference_exprt{
+      member_exprt{value, "__int_val", python_boxed_int_ptr_type()}};
   return member_exprt{value, "__int_val", signedbv_typet{64}};
 }
 
@@ -337,12 +371,13 @@ inline equal_exprt python_value_is(const exprt &value, python_type_tagt tag)
 /// closure in the converter's registry (stored in __int_val) and
 /// `record_ptr` points at its per-instance heap capture record (stored
 /// in the opaque __class_ptr slot, cast at the dispatch site).
-inline struct_exprt make_python_closure(int fn_index, const exprt &record_ptr)
+inline struct_exprt
+make_python_closure(const exprt &fn_index_stored, const exprt &record_ptr)
 {
   struct_typet vtype = python_value_struct_def();
   exprt tag_expr = from_integer(
     static_cast<int>(python_type_tagt::CLOSURE), signedbv_typet{32});
-  exprt fn_val = from_integer(fn_index, signedbv_typet{64});
+  exprt fn_val = fn_index_stored;
   exprt float_val =
     ieee_floatt{
       ieee_float_spect::double_precision(),
@@ -370,8 +405,11 @@ inline struct_exprt make_python_closure(int fn_index, const exprt &record_ptr)
 }
 
 /// Extract the fn-registry index from a fat-closure value.
-inline member_exprt python_value_closure_fn(const exprt &value)
+inline exprt python_value_closure_fn(const exprt &value)
 {
+  if(python_unbounded_ints_flag())
+    return dereference_exprt{
+      member_exprt{value, "__int_val", python_boxed_int_ptr_type()}};
   return member_exprt{value, "__int_val", signedbv_typet{64}};
 }
 
