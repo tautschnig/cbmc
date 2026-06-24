@@ -63,6 +63,34 @@ cliff) and the now-fixed `nondet_string` length divergence were found by
 direct probing; native is sound throughout (errors/timeouts, never false
 proofs).
 
+### Perf: the default-backend string-refinement cliff vs native (2026-06-24)
+Profiling the sweep's 4 TIMEOUTs (`github_3683/3684`, `nondet_list6`,
+`redundancy`) established that the dominant perf cliff is the **default
+(refined) backend's BV/string-refinement loop**, NOT the shared bounded-dict
+struct:
+- `github_3683` (`dict[str,dict[str,dict[str,str]]]` iterated with `v["x"] ==
+  "y"`): **default times out** (139s at `--unwind 5`, timeout at `--unwind 10`,
+  solver itself only ~0.3s — the cost is *many* MiniSAT refinement iterations);
+  **native (`--cvc5 --python-smt-strings`) does it in 9s, SUCCESSFUL.** The
+  16ᴺ dict struct is identical on both backends, so the explosion is the
+  refinement loop over the nested strings, which CVC5's string theory
+  dispatches directly. `redundancy` likewise: default 66s vs native <1s (both
+  SUCCESSFUL).
+- **Implication:** for string-heavy / nested-container workloads the native
+  backend is the perf answer (and feeds the **P4 Java** SMT-string story).
+  Improving refined-backend string-refinement perf is the harder, lower-ROI
+  path. The remaining lever on the *default* backend (smaller nested-level
+  container bounds) is a precision/soundness-margin tradeoff; deferred.
+- **BUT native is not yet a safe drop-in — two native gaps found:**
+  - `github_3684` (same nested-dict+string shape) **ABORTS on native**
+    (rc=134) in 6s — a native-backend crash on some construct in that test.
+  - `nondet_list6` (symbolic-list linear search) returns **FAILED on native**
+    (0s) vs expected SUCCESSFUL — native's symbolic-list/`nondet_list` handling
+    diverges (precision or a bug). **Under investigation (2026-06-24).**
+  Hardening these is the prerequisite to recommending native as the default for
+  string-heavy code; a crash and a verdict divergence are correctness gaps that
+  outrank the perf work.
+
 ## Linked design records (deep-dives)
 
 - [SMT-LIB String backend design + full implementation ledger](architectural/python-string-phase2-backend-abstraction.md)
