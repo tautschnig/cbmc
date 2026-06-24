@@ -1041,6 +1041,88 @@ std::string python_convertert::qualify_name(const std::string &name) const
 /// AFTER current_function has been set for the scope being scanned
 /// (i.e. inside convert_function_def's body conversion, after the
 /// `current_function = ...` assignment).
+void python_convertert::note_mutable_extraction(
+  const irep_idt &lhs_id,
+  const exprt &rhs,
+  const jsont &value)
+{
+  // This assignment is not (or no longer) a mutable extraction by default.
+  extracted_container_alias.erase(lhs_id);
+
+  if(!is_node_type(value, "Subscript"))
+    return;
+
+  // Only a result that may be a mutable object can be mutated in place.
+  const typet &rt = rhs.type();
+  if(
+    !is_python_list_type(rt) && !is_python_dict_type(rt) &&
+    !is_python_set_type(rt) && !is_python_value_type(rt))
+    return;
+
+  // The container must be a plain Name so we can re-resolve it without
+  // re-emitting side effects, and havoc it later.
+  const jsont &cont = json_member(value, "value");
+  if(!is_node_type(cont, "Name"))
+    return;
+  exprt container = convert_expression(cont);
+  if(container.id() != ID_symbol)
+    return;
+  const typet &ct = container.type();
+  if(
+    is_python_list_type(ct) || is_python_dict_type(ct) ||
+    is_python_set_type(ct) || is_python_value_type(ct))
+    extracted_container_alias[lhs_id] = container;
+}
+
+bool python_convertert::invalidate_extracted_source_on_mutation(
+  const exprt &obj,
+  const std::string &method_name)
+{
+  // In-place mutators across list / dict / set.
+  static const std::set<std::string> mutators = {
+    "append",
+    "extend",
+    "insert",
+    "remove",
+    "pop",
+    "sort",
+    "reverse",
+    "clear",
+    "add",
+    "discard",
+    "update",
+    "setdefault",
+    "popitem"};
+  if(mutators.count(method_name) == 0)
+    return false;
+  if(obj.id() != ID_symbol)
+    return false;
+  auto it =
+    extracted_container_alias.find(to_symbol_expr(obj).get_identifier());
+  if(it == extracted_container_alias.end())
+    return false;
+  // PLR reference semantics: `obj` is the same object as the source slot, so
+  // mutating it may change the source container. We store nested elements by
+  // value (no aliasing), so over-approximate soundly by havocing the source —
+  // subsequent reads become nondet rather than a stale (false-proof) copy.
+  // (The precise fix is reference semantics for mutable objects.)
+  pending_checks.push_back(code_frontend_assignt{
+    it->second,
+    side_effect_expr_nondett{it->second.type(), source_locationt{}}});
+  // Also drop the source from the constant-fold tracking maps, otherwise a
+  // subsequent subscript read (e.g. d[k]) would still fold to the stale tracked
+  // literal and bypass the havoc.
+  if(it->second.id() == ID_symbol)
+  {
+    const irep_idt sid = to_symbol_expr(it->second).get_identifier();
+    dict_literals.erase(sid);
+    list_literals.erase(sid);
+    dict_runtime_value_overrides.erase(sid);
+    dict_guaranteed_keys.erase(sid);
+  }
+  return true;
+}
+
 void python_convertert::collect_escaped_mutables(const jsont &body)
 {
   if(!body.is_array())
