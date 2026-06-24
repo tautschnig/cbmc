@@ -2963,24 +2963,15 @@ exprt python_convertert::wrap_value(const exprt &e)
     tag = python_type_tagt::BOOL;
   else if(is_python_string_type(e.type()))
   {
-    // Materialize string into a temporary symbol for the pointer
-    static unsigned str_wrap_counter = 0;
-    std::string tmp_name = "__str_val_" + std::to_string(str_wrap_counter++);
-    std::string tmp_qname = qualify_name(tmp_name);
-    irep_idt tmp_id{tmp_qname};
-    if(symbol_table.lookup(tmp_id) == nullptr)
-    {
-      symbolt tmp_sym{tmp_id, python_string_type(), "python"};
-      tmp_sym.base_name = tmp_name;
-      tmp_sym.is_lvalue = true;
-      tmp_sym.is_state_var = true;
-      symbol_table.add(tmp_sym);
-    }
-    const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
-    // Assign the string value to the temp via pending_checks
-    pending_checks.push_back(code_frontend_assignt{tmp_sym.symbol_expr(), e});
-    return make_python_value(
-      python_type_tagt::STR, address_of_exprt{tmp_sym.symbol_expr()});
+    // Native ("string boxing"): allocate a FRESH per-execution smt_string and
+    // store its pointer, so a string wrapped into python_value by a construction
+    // site reached more than once (function return / loop) does not alias.
+    // Refined: __str is inline, so just pass the value (make_python_value stores
+    // it directly — value semantics, no aliasing).
+    if(python_smt_string_native_flag())
+      return make_python_value(
+        python_type_tagt::STR, allocate_boxed_leaf(e, python_string_type()));
+    return make_python_value(python_type_tagt::STR, e);
   }
 
   // List: convert to list[python_value_type] and store pointer

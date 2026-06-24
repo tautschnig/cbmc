@@ -1774,6 +1774,14 @@ private:
   /// back-end or for a non-string value, returns the value unchanged.
   exprt box_string_for_storage(const exprt &str_value);
 
+  /// Materialise `value` into a FRESH per-execution heap object (via a dynamic
+  /// `ID_allocate`) and return a typed pointer to it. Unlike a static symbol,
+  /// each runtime execution of the construction site gets a distinct object,
+  /// so a value boxed inside a container that is built more than once (a
+  /// function returning it, a loop) does not alias across instances. Backs the
+  /// leaf-boxing materialisation (strings, unbounded ints).
+  exprt allocate_boxed_leaf(const exprt &value, const typet &leaf_type);
+
   /// Int-boxing for --python-unbounded-ints: materialise a mathematical
   /// integer into a heap integer_typet symbol and return its typed address
   /// (integer*), so a full-precision int can be stored fixed-width inside a
