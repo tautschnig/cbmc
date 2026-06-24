@@ -121,11 +121,19 @@ struct:
   `dict-native-string-key-box`. `github_3684` itself now computes the correct
   value (its assertion SUCCEEDS) but still reports a separate uncaught KeyError
   from the pre-existing symbolic-key-presence modelling gap (a dict-precision
-  item, not a string/boxing issue). **The same boxing pattern applies verbatim
-  to unbounded/mathematical integers** (box `__int_val` behind an `int*` on
-  that backend): `byte_extract` is equally incompatible with a non-fixed-width
-  Int sort, so when that option is enabled the integer leaf needs the identical
-  treatment.
+  item, not a string/boxing issue). **Integer case IMPLEMENTED 2026-06-24** (same pattern): under
+  `--python-unbounded-ints` a Python int is the non-fixed-width
+  `integer_typet`, so `python_value.__int_val` (a 64-bit bitvector) silently
+  truncated wrapped values mod 2**64 (unsound; `2**64+5 -> 5`) and drove a
+  `simplify_expr` abort on nested int containers. `__int_val` is now a typed
+  `integer*` boxed leaf (gated on `python_unbounded_ints_flag()`), mirroring
+  the string helpers (`python_boxed_int_ptr_type` /
+  `python_value_int_member_type` / `box_int_for_storage`); the closure fn-index
+  (also stored in `__int_val`) is boxed at its single caller. Truncation gone,
+  nested-int-container abort gone, default/int64 backend byte-identical (0
+  regressions). Regression test `int-unbounded-box-no-truncation`. (Residual
+  untyped-nested-dict value precision and unwind bounds are orthogonal
+  pre-existing limitations.)
 
 ## Linked design records (deep-dives)
 
