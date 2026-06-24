@@ -235,7 +235,7 @@ Python's runtime types. All defined in `python_types.h` /
 
 | Python type | CBMC type | Layout |
 |---|---|---|
-| `int` | `signedbv_typet{64}`, or `integer_typet` under `--python-unbounded-ints` | 64-bit signed by default. Under unbounded ints the mathematical (arbitrary-precision) `integer_typet` is non-fixed-width, so an int **boxed inside `python_value`** is stored behind a typed `integer*` pointer — see [Leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) |
+| `int` | `signedbv_typet{64}`, or `integer_typet` under `--python-unbounded-ints` | 64-bit signed by default. Under unbounded ints, `integer_typet` (arbitrary precision) is used inline in typed positions; an int **wrapped into `python_value`** cannot be stored per-instance-soundly (CBMC can't allocate distinct `integer_typet` objects) so it is **over-approximated to nondet** — see [Leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) |
 | `float` | `floatbv_typet` (double) | IEEE 754 double-precision |
 | `bool` | `bool_typet{}` | CBMC bool |
 | `str` | `python_string_type()` — the refined-string `struct_tag_typet` by default, or the native `smt_string` sort under `--python-smt-strings` | refinement-string struct `{ length, data: char* }` (fixed-width) by default; the native `smt_string` sort is **variable-width**, so a `str` stored inside a byte-imaged aggregate (`python_value.__str`, dict string keys) is **boxed** behind a typed `string*` pointer — see [Leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) |
@@ -308,10 +308,26 @@ Applied at:
 | `str` | dict string **keys** | `string*[]` | same | `python_dict_key_elem_type`, `python_dict_logical_key_type`, `python_dict_unbox_key` |
 | `int` | `python_value.__int_val` (incl. the `CLOSURE` fn-index) | `integer*` | `python_unbounded_ints_flag()` | `python_boxed_int_ptr_type`, `python_value_int_member_type`, `box_int_for_storage` |
 
-Writes materialise the leaf into a heap symbol (`__str_val_N` / `__dkey_val_N`
-/ `__dint_val_N`) and store its address (centralised in `wrap_value` and
-`coerce_element`); reads dereference (centralised in `python_value_str` /
-`python_value_int` / `string_equal` and per-site `python_dict_unbox_key`).
+Writes materialise the leaf into a **fresh per-execution heap object** (a
+dynamic `ID_allocate`, via `allocate_boxed_leaf`, mirroring the closure
+capture-record allocation) and store the resulting pointer; reads dereference
+(centralised in `python_value_str` / `python_value_int` / `string_equal` and
+per-site `python_dict_unbox_key`). Per-instance allocation is **required for
+soundness**: a static per-call-site symbol would be shared across every runtime
+instance of a construction site (a function returning the container, a loop), so
+the boxed leaves would alias and earlier instances would observe a later one's
+value (a false proof). Each `ID_allocate` execution yields a distinct object and
+the container copies the pointer *value* at construction, so instances stay
+independent.
+
+One asymmetry: this works for `smt_string` (the string solver tracks string
+objects per-object) but **not** for `integer_typet` — CBMC cannot represent
+distinct dynamically-allocated mathematical-integer objects (they alias). So a
+wrapped unbounded int cannot be boxed precisely *and* soundly; it is instead
+**over-approximated to a fresh nondet integer** (sound, full-range; only
+imprecise). Typed int containers (`dict[int,int]` / `list[int]`) are unaffected —
+they store `integer_typet` inline at full precision, never wrapped.
+
 Every transform is a **type-driven / flag-gated no-op** on the other
 back-end, so the default int64 / refined-string representations are
 byte-identical (the full local suite is a 0-regression guard). Each value
@@ -740,7 +756,7 @@ property at call sites whose argument class doesn't declare
 
 | Flag | Default | Effect |
 |------|---|---|
-| `--python-unbounded-ints` | off | Use CBMC bignums (`integer_typet`) instead of int64; requires an SMT solver (e.g. `--cvc5` / `--z3`) — a warning is emitted if none is selected. Ints wrapped into `python_value` are [boxed](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) behind an `integer*` (full precision + fixed-width union) |
+| `--python-unbounded-ints` | off | Use CBMC bignums (`integer_typet`) instead of int64; requires an SMT solver (e.g. `--cvc5` / `--z3`) — a warning is emitted if none is selected. Typed ints are full-precision; an int wrapped into `python_value` is [over-approximated to nondet](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) (sound, imprecise) |
 | `--python-no-exception-checks` | off | Suppress automatic `assert ¬__exception_active` after each statement |
 | `--python-check-annotations` | off | Emit `annotation-mismatch` properties when an `AnnAssign` RHS type differs from the declaration |
 | `--python-check-any-arg-attrs` | off | Emit `attribute-error` properties for `obj.X` accesses where `obj`'s argument-side type doesn't declare `X` |
@@ -920,10 +936,15 @@ operand call-duplication** class — a `python_value`-returning operand
 referenced twice in a lowering (tag predicate + payload unwrap, or a
 membership container) re-evaluated a side-effecting call, diverging the
 two copies → false proof; fixed by materialising such an operand **once**
-in `python_converter_compare.cpp`; and (ii) the **`--python-unbounded-ints`
-64-bit truncation** of an int wrapped into `python_value` (the
-`signedbv[64]` `__int_val` slot truncated `2**64+5` to `5`, a false
-*negative*); fixed by integer [leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates).
+in `python_converter_compare.cpp`; and (ii) the **leaf-boxing aliasing**
+class — the string/int [leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates)
+first materialised each boxed leaf into a *static per-call-site symbol*, so a
+container built more than once (function return / loop) aliased its leaves
+across instances (a false proof in the equality direction, and it superseded
+the pre-existing `--python-unbounded-ints` 64-bit truncation). Strings are
+fixed by **per-instance heap allocation**; wrapped unbounded ints, which CBMC
+cannot allocate per-instance, are **over-approximated to nondet** (sound; see
+the [imprecision table](#b-imprecisions-sound-spurious-failures--nondet-over-approximation)).
 The entries below are the deliberate soundness-vs-precision tradeoffs and
 the guarded / opt-in cases.
 
@@ -950,7 +971,7 @@ the guarded / opt-in cases.
 | Higher-order | **bound methods as runtime values** (container-/conditional-/return-flowed, `m=obj.f`) now work (2026-06-22); container-/attribute-stored & composed *closures* remain (capture-through-param works); **~0 corpus value** | [plan §12](python-frontend-plan.md#higher-order) + [fat-closure](python-frontend-fat-closure-plan.md) |
 | dict / cross-module | global-dict-literal mutation across modules is fixed; **`**d` unpack of a *mutated* global dict** and **non-dict cross-module globals** remain (rare) | [plan §5](python-frontend-plan.md#dict-byref) |
 | dict symbolic-key presence | a constant-key read (`d["k"]`) after a **symbolic-key** assign (`for k in …: d[k]=…`) can't prove the key is present, so it emits a spurious uncaught `KeyError` even when the value is correct (the `github_3684` residual — its assertion value verifies, only the KeyError path fails) | [plan §9](python-frontend-plan.md#precision) |
-| dict (untyped nested, unbounded ints) | values read out of an *untyped* nested dict iterated symbolically are over-approximated to nondet (so e.g. `sum(...) >= 0` is unprovable); orthogonal to the leaf-boxing crash/precision fix | [plan §9](python-frontend-plan.md#precision) |
+| Unbounded int in `python_value` | an `int` wrapped into the tagged union (Any-typed / heterogeneous-container value) under `--python-unbounded-ints` is **over-approximated to nondet** (sound) — CBMC can't store distinct per-instance `integer_typet` heap objects, so it can't be boxed precisely; typed int positions keep full precision. Also: values read out of an *untyped* nested dict iterated symbolically are nondet | [plan §9](python-frontend-plan.md#precision) |
 | Modules | `cmath`, fuller `os`/`time`/`datetime`/`json`/`dataclasses`/`collections` not modelled (nondet) | [plan §6](python-frontend-plan.md#modules) |
 | Annotation checks | `--python-check-annotations` can't be default-on (two CBMC-core blockers) | [plan §7](python-frontend-plan.md#check-annotations) |
 
