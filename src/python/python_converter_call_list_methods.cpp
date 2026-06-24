@@ -37,6 +37,9 @@ std::optional<exprt> python_convertert::try_list_method(
   const std::string &method_name,
   const jsont &args)
 {
+  // Extraction-then-mutate soundness: if `obj` aliases a container element
+  // (`r = c[i]`) and this is an in-place mutator, havoc the source container.
+  invalidate_extracted_source_on_mutation(obj, method_name);
   // PLR §3.3.1: list.__iter__() returns the list itself,
   // which is sufficient for our list-as-iterator model.
   // The for-loop iter path expects the same shape and

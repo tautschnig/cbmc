@@ -1365,6 +1365,23 @@ codet python_convertert::convert_assign(const jsont &stmt)
   if(rhs.is_nil())
     return code_skipt{};
 
+  // Extraction-then-mutate soundness: if a single Name target is bound to a
+  // mutable element extracted from a container (`r = c[i]`), remember the
+  // source so a later in-place mutation of `r` havocs it (PLR reference
+  // semantics). Also clears stale aliases on reassignment.
+  {
+    const jsont &targets_n = json_member(stmt, "targets");
+    if(targets_n.is_array() && as_array(targets_n).size() == 1)
+    {
+      const jsont &t0 = *as_array(targets_n).begin();
+      if(is_node_type(t0, "Name"))
+        note_mutable_extraction(
+          irep_idt{qualify_name(json_string(json_member(t0, "id")))},
+          rhs,
+          value);
+    }
+  }
+
   // PLR object identity (§9 #nested-aliasing): taint lists whose BY-VALUE
   // mutable elements get aliased by a replicating/sharing op, so a later
   // in-place element mutation is reported (not silently false-proved). The

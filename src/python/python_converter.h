@@ -928,6 +928,31 @@ private:
   /// module body / function body before convert_module_body runs).
   std::set<irep_idt> escaped_mutables;
   void collect_escaped_mutables(const jsont &body);
+
+  /// Extraction-then-mutate soundness (PLR reference semantics): when a MUTABLE
+  /// object is extracted from a container into a variable (`r = c[i]`,
+  /// `v = d[k]`), `r` is — in Python — the SAME object as the slot, so mutating
+  /// `r` mutates the container. The frontend stores nested elements by value,
+  /// so `r` is a copy and the mutation would NOT propagate (a false proof:
+  /// `r.append(x); assert x not in c[i]`). This maps such an extracted variable
+  /// to the source-container lvalue; on a subsequent mutation of the variable
+  /// we conservatively havoc the source (sound over-approximation). Cleared for
+  /// a variable when it is reassigned. The principled whole-group fix is
+  /// reference semantics for mutable objects (heap-allocate + alias by
+  /// pointer); this guard keeps the model sound until that lands.
+  std::map<irep_idt, exprt> extracted_container_alias;
+  /// Record `lhs = <subscript of container>` when the result is (or may be) a
+  /// mutable container. `rhs` is the converted RHS, `value` the RHS AST node.
+  void note_mutable_extraction(
+    const irep_idt &lhs_id,
+    const exprt &rhs,
+    const jsont &value);
+  /// If `obj` (a converted method-call receiver) is an extracted mutable alias
+  /// and `method_name` mutates it, havoc the source container (into
+  /// pending_checks). Returns true if a havoc was emitted.
+  bool invalidate_extracted_source_on_mutation(
+    const exprt &obj,
+    const std::string &method_name);
   /// PLR object identity (§9 #nested-aliasing): symbols bound to a list whose
   /// BY-VALUE mutable elements are aliased (shared) by a replicating/sharing
   /// op -- repetition `a*n`, concat `a+b`, slice `a[:]`, `a.copy()`,

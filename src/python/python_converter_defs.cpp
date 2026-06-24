@@ -4448,6 +4448,17 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
     const jsont &cf = json_member(value, "func");
     if(is_node_type(cf, "Attribute"))
     {
+      // Extraction-then-mutate (Name receiver aliasing a container element):
+      // `r = c[i]; r.append(...)`. The is_aliased_list_element guard below only
+      // covers Subscript receivers; here `r` is a Name recorded as an extracted
+      // mutable alias, so havoc its source container (PLR reference semantics —
+      // the by-value element copy would otherwise hide the mutation).
+      {
+        const jsont &recv0 = json_member(cf, "value");
+        if(is_node_type(recv0, "Name"))
+          invalidate_extracted_source_on_mutation(
+            convert_expression(recv0), json_string(json_member(cf, "attr")));
+      }
       static const std::set<std::string> mutating_methods{
         "append",
         "extend",
