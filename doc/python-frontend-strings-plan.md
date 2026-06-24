@@ -105,9 +105,27 @@ struct:
     "FAILED on native" was run at `--unwind 5`; the test needs `--unwind 9`
     (6-element list). At its own `--unwind 9` native verifies **SUCCESSFUL**
     (element stability holds on both backends). No divergence.
-  So the only real native gap is the `github_3684` byte-unpack crash above
-  (untyped-dict-of-python_value on native); hardening it is the prerequisite to
-  recommending native as the default for string-heavy nested code.
+  **RESOLVED 2026-06-24 ("option A" string boxing).** On the native backend a
+  non-fixed-width value that would sit inside a byte-imaged aggregate is now
+  boxed behind a typed pointer, keeping the byte-imaged skeleton all
+  fixed-width (so byte_extract stays valid) while the smt_string is read via a
+  clean typed dereference. Two commits: (1) `python_value.__str` -> `string*`
+  (values dimension); (2) dict string KEYS -> `string*[16]`
+  (`python_dict_type` / `python_dict_key_elem_type`, with
+  `python_dict_logical_key_type` + `python_dict_unbox_key` + boxing in
+  `coerce_element`/`box_string_for_storage`). All transforms are type-driven
+  no-ops on the refined backend (provably byte-identical; full local suite 0
+  regressions). The `github_3684`-class crash is gone and common native
+  string-keyed dict ops (construct, subscript read/assign/update, get, pop,
+  items, keys, for-in, ==, membership) verify; regression test
+  `dict-native-string-key-box`. `github_3684` itself now computes the correct
+  value (its assertion SUCCEEDS) but still reports a separate uncaught KeyError
+  from the pre-existing symbolic-key-presence modelling gap (a dict-precision
+  item, not a string/boxing issue). **The same boxing pattern applies verbatim
+  to unbounded/mathematical integers** (box `__int_val` behind an `int*` on
+  that backend): `byte_extract` is equally incompatible with a non-fixed-width
+  Int sort, so when that option is enabled the integer leaf needs the identical
+  treatment.
 
 ## Linked design records (deep-dives)
 
