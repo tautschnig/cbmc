@@ -456,7 +456,9 @@ codet python_convertert::convert_statement(const jsont &stmt)
               {
                 exprt idx = from_integer(i, signedbv_typet{64});
                 exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-                exprt match = equal_exprt{index_exprt{keys_arr, idx}, key};
+                exprt match = equal_exprt{
+                  python_dict_unbox_key(index_exprt{keys_arr, idx}),
+                  python_dict_unbox_key(key)};
                 // Set found on match
                 del_block.add(code_ifthenelset{
                   and_exprt{in_range, and_exprt{not_exprt{found}, match}},
@@ -979,7 +981,9 @@ codet python_convertert::convert_statement(const jsont &stmt)
           {
             exprt idx = from_integer(i, signedbv_typet{64});
             exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-            exprt key_eq = equal_exprt{index_exprt{dkeys, idx}, key_expr};
+            exprt key_eq = equal_exprt{
+              python_dict_unbox_key(index_exprt{dkeys, idx}),
+              python_dict_unbox_key(key_expr)};
             exprt slot_match = and_exprt{in_range, std::move(key_eq)};
             key_found = or_exprt{std::move(key_found), slot_match};
             // Value pattern match: if key is at this slot, val
