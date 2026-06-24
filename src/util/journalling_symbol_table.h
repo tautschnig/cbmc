@@ -128,6 +128,7 @@ public:
     for(const auto &named_symbol : base_symbol_table.symbols)
       on_remove(named_symbol.first);
     base_symbol_table.clear();
+    suffix_hint_cache.clear();
   }
 
   virtual iteratort begin() override
