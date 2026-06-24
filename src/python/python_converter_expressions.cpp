@@ -27,27 +27,29 @@
 
 #include <cmath>
 
-// True if `e` contains a boxed-leaf pointer: a pointer whose base type is the
-// non-fixed-width mathematical integer or a python string. Such a pointer is
-// produced by leaf boxing (allocate_boxed_leaf) and refers to a per-execution
-// materialisation symbol (e.g. __box_ptr_N). A tracked dict-literal value that
-// embeds one must NOT be constant-folded into a later subscript read: the
-// symbol is reassigned on each execution of its construction site, so
-// re-reading it observes another instance's value (the aliasing bug). Falling
-// through to the symbolic dict read instead reads the per-instance value that
-// symex copied at construction.
-static bool contains_boxed_leaf_pointer(const exprt &e)
+// True if `e` is safe to substitute at a program point later than where it was
+// tracked: it must be invariant. A value that embeds a MUTABLE program variable
+// (a reassignable lvalue — a local, a per-execution boxed-leaf materialisation
+// pointer, etc.) is unsafe, because re-evaluating it at the later read observes
+// the variable's CURRENT value, not its value when the dict was built (the
+// dict-literal const-fold aliasing class: `n=1; d={"k":n}; n=2; d["k"]` and the
+// boxed-leaf cases). Read-only constants and string-literal globals are safe.
+bool python_convertert::value_is_const_foldable(const exprt &e) const
 {
-  if(e.type().id() == ID_pointer)
+  if(e.id() == ID_symbol)
   {
-    const typet &base = to_pointer_type(e.type()).base_type();
-    if(base.id() == ID_integer || is_python_string_type(base))
-      return true;
+    const symbolt *s = symbol_table.lookup(to_symbol_expr(e).get_identifier());
+    if(s == nullptr)
+      return false; // unknown symbol — be conservative
+    // A reassignable program variable is unsafe; a read-only (const) symbol or
+    // a string-literal/static-const global is safe.
+    if(s->is_lvalue && !s->type.get_bool(ID_C_constant))
+      return false;
   }
   for(const auto &op : e.operands())
-    if(contains_boxed_leaf_pointer(op))
-      return true;
-  return false;
+    if(!value_is_const_foldable(op))
+      return false;
+  return true;
 }
 
 // Guard pending checks appended since `from` by `guard`.
@@ -490,7 +492,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
                   // per-execution materialisation pointer — re-reading it
                   // aliases across instances. Fall through to the symbolic
                   // read of the per-instance copy instead.
-                  if(!contains_boxed_leaf_pointer(cv))
+                  if(value_is_const_foldable(cv))
                     return cv;
                 }
               }
@@ -543,7 +545,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
                       if(
                         !is_python_list_type(cv.type()) &&
                         !is_python_dict_type(cv.type()) &&
-                        !contains_boxed_leaf_pointer(cv))
+                        value_is_const_foldable(cv))
                         return cv;
                     }
                   }
