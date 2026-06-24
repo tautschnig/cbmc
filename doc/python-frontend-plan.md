@@ -1443,20 +1443,26 @@ complex ones (hard) and the test-specific ones.
   reverted; would otherwise regress pathlib). To compute `name`/`suffix`/`stem`/
   `__str__`/`is_absolute` from the path string a stub must (a) capture the
   `PurePath(*parts)` constructor args and (b) run string ops on the stored
-  path. Both fail today:
-  1. **`self, *parts` varargs binding is broken** — inside a method, `parts[0]`,
-     `len(parts)`, and `for p in parts` all fail (plain-function `*args` works;
-     a fixed `first=""` param works). Whole-group gap: any method with pure
-     `*args` after `self`.
-  2. **constant-string tracking does NOT flow through instance attributes** —
-     `self.r = "/a/foo.txt"; self.r.rfind("/")` does not fold (the same op on a
-     LOCAL folds fine). So even storing the path in `first` doesn't help: the
-     accessors operate on `self._raw`. Whole-group gap: any string stored in /
-     read from a struct member then operated on.
-  Precise-pathlib needs one/both of these fixed first (extend `string_constants`
-  to member reads; fix method `*args` binding). Documented as the real
-  architectural prerequisites; pathlib stays at the sound (nondet/`""`)
-  fallback for now.
+  path.
+  1. **`self, *parts` varargs binding — FIXED (`9a6de18316`).** Method/
+     constructor calls now pack trailing positionals into the `*args` list
+     (`build_class_init_call`), so `len(parts)`/`parts[0]`/`name, *rest` work
+     (guard `init-varargs`). Whole-group fix: any `*args` method/constructor.
+  2. **constant-string tracking through instance attributes — PARTIAL.** A
+     PARAM-stored attribute folds (`self.r = s; c.r.upper()` works), but a
+     literal-stored one (`self.r = "x"; c.r.upper()`) and a *parts/loop-built
+     `_raw` do NOT (constant tracking doesn't survive the join loop).
+  3. **NEW BLOCKER — accessor string-ops perf.** With (1) fixed, a single-arg
+     precise pathlib works (verified: `PurePath("/usr/lib/foo.txt").name ==
+     "foo.txt"` etc.). BUT the multi-arg case (`PurePath("a","b","c")`, in the
+     `python-library-functools-pathlib-enum` test) builds a NON-folding `_raw`
+     via the join loop, and the accessors then run SYMBOLIC `rfind`/slice on it
+     → solver blowup / **timeout**. The stub can't cheaply do "fold if constant,
+     else nondet" — that needs a frontend string-method guard
+     (constant-fold-else-cheap-nondet). So precise-pathlib was reverted again;
+     it stays at the sound (nondet/`""`) fallback. Remaining prerequisite is now
+     a FRONTEND `extract_string_value`-fold-or-bail guard for str methods, not
+     varargs.
 - **Tier-4 individual-DIFF triage:**
   - **`object-empty-not-found` — FIXED (`b46f2bff8d`)**: `set.pop()` now returns
     a bitmap-constrained element (precise for singletons, sound for multi).
