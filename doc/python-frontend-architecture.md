@@ -235,18 +235,18 @@ Python's runtime types. All defined in `python_types.h` /
 
 | Python type | CBMC type | Layout |
 |---|---|---|
-| `int` | `signedbv_typet{64}` | 64-bit signed; PLR's unbounded ints are gated behind `--python-unbounded-ints` |
+| `int` | `signedbv_typet{64}`, or `integer_typet` under `--python-unbounded-ints` | 64-bit signed by default. Under unbounded ints the mathematical (arbitrary-precision) `integer_typet` is non-fixed-width, so an int **boxed inside `python_value`** is stored behind a typed `integer*` pointer — see [Leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) |
 | `float` | `floatbv_typet` (double) | IEEE 754 double-precision |
 | `bool` | `bool_typet{}` | CBMC bool |
-| `str` | `python_string_type()` (`struct_tag_typet` for `__CPROVER_refined_string_type`) | refinement-string struct: `{ length, data: char* }` |
+| `str` | `python_string_type()` — the refined-string `struct_tag_typet` by default, or the native `smt_string` sort under `--python-smt-strings` | refinement-string struct `{ length, data: char* }` (fixed-width) by default; the native `smt_string` sort is **variable-width**, so a `str` stored inside a byte-imaged aggregate (`python_value.__str`, dict string keys) is **boxed** behind a typed `string*` pointer — see [Leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) |
 | `bytes` | `python_list_type(unsignedbv_typet{8})` | list[uint8] |
 | `list[T]` | `python_list_type(T)` | `struct { int64 length; T data[PYTHON_MAX_LIST_LENGTH]; }` |
-| `dict[K, V]` | `python_dict_type(K, V)` | `struct { int64 length; K keys[PYTHON_MAX_DICT_SIZE]; V values[PYTHON_MAX_DICT_SIZE]; }` |
+| `dict[K, V]` | `python_dict_type(K, V)` | `struct { int64 length; K keys[PYTHON_MAX_DICT_SIZE]; V values[PYTHON_MAX_DICT_SIZE]; }`. On the native string backend a **string** key element is boxed (`string*[]`) via `python_dict_key_elem_type` so the struct stays byte-imageable |
 | `tuple[T1, T2, ...]` | `python_tuple_type({T1, T2, ...})` | struct of N components |
 | `complex` | `struct { double real; double imag; }` with tag `python_complex` | |
 | `set[T]` | `python_list_type(T)` (modelled as a list) + `python_set_set_<bool>` for unique-flagged variants | |
 | `None` | int sentinel `-2^62` (`-4611686018427387904`) | matches `is None` via integer equality |
-| `Any` / Union | `python_value_type()` (tagged-union struct) | `struct { tag, int_val, float_val, bool_val, str_ptr, list_ptr, ... }` |
+| `Any` / Union | `python_value_type()` (tagged-union struct) | `struct { __tag, __int_val, __float_val, __bool_val, __str, __list_ptr, __class_ptr }` — see [Tagged unions](#tagged-unions-for-any--union); `__int_val`/`__str` become boxed pointers under unbounded-ints / native-strings |
 | Class instance | `python_class_<Name>` struct | `struct { __class_tag, ...class fields... }` |
 
 ### Tagged unions for Any / Union
@@ -255,13 +255,18 @@ When a parameter or variable is typed `Any`, `T \| None`,
 `Optional[T]`, or any union, we use `python_value_type()` —
 a tagged union with discriminator `__tag` and per-type
 fields (`__int_val`, `__float_val`, `__bool_val`,
-`__str_ptr`, `__list_ptr`, `__class_ptr`). `convert_compare`,
+`__str`, `__list_ptr`, `__class_ptr`). `convert_compare`,
 `isinstance`, and `unwrap_value` consult `__tag` for
 runtime dispatch.
 
 `make_python_value(tag, value)` wraps a value into the
-union; `python_value_int(e)`, `python_value_float(e)`, etc.
-project out a specific field.
+union; `python_value_int(e)`, `python_value_float(e)`,
+`python_value_str(e)`, etc. project out a specific field.
+Scalars are stored inline; `__list_ptr` / `__class_ptr` are
+opaque (`empty*`) pointers cast to the concrete container /
+class struct at the use site (the indirection breaks the
+self-referential type that would otherwise force `smt2_conv`
+into unsatisfiable forward-reference datatype emission).
 
 A dedicated **`CLOSURE`** variant carries callables that must flow as
 runtime values: `__int_val` holds an index into the converter's
@@ -270,6 +275,50 @@ It backs both **fat closures** (capturing free variables) and **bound
 methods** (`box_bound_method`, capturing `self`); `dispatch_closure_value`
 calls the right target, prepending `self` for the bound-method entries
 recorded in `bound_method_closures`.
+
+### Leaf boxing: non-fixed-width values in byte-imaged aggregates
+
+CBMC's byte-operator lowering (`byte_extract` / `unpack_struct` in
+`lower_byte_operators.cpp`) lays a struct out at fixed byte offsets and
+**requires any non-constant-width member to come last** (one only). A
+struct is byte-extracted whenever it is read back through an opaque
+pointer cast (`*(cast(__class_ptr, DictStruct*))`) — which is exactly how
+nested containers stored in `python_value.__class_ptr` / `__list_ptr` are
+unwrapped. Two value representations are **non-fixed-width**:
+
+- the native `smt_string` sort (`--python-smt-strings`), and
+- the mathematical `integer_typet` (`--python-unbounded-ints`).
+
+Storing either *inline* inside a byte-imaged aggregate makes the
+aggregate variable-width and aborts `unpack_struct` (the `github_3684`
+crash class), and for ints additionally **truncates** silently to 64
+bits when wrapped into the union (`2**64+5` → `5`, unsound). `byte_extract`
+is fundamentally incompatible with both sorts.
+
+The fix is uniform **leaf boxing**: a non-fixed-width leaf that would sit
+inside a byte-imaged aggregate is stored behind a fixed-width **typed
+pointer** to a heap object; the byte-imaged skeleton stays all-fixed-width
+(so `byte_extract` is valid) and the actual `smt_string` / `integer` is
+only ever touched through a clean typed dereference, never byte-imaged.
+Applied at:
+
+| leaf | field / slot | boxed type | gate | helpers |
+|---|---|---|---|---|
+| `str` | `python_value.__str` | `string*` | `python_smt_string_native_flag()` | `python_boxed_string_ptr_type`, `python_value_str_member_type`, `box_string_for_storage` |
+| `str` | dict string **keys** | `string*[]` | same | `python_dict_key_elem_type`, `python_dict_logical_key_type`, `python_dict_unbox_key` |
+| `int` | `python_value.__int_val` (incl. the `CLOSURE` fn-index) | `integer*` | `python_unbounded_ints_flag()` | `python_boxed_int_ptr_type`, `python_value_int_member_type`, `box_int_for_storage` |
+
+Writes materialise the leaf into a heap symbol (`__str_val_N` / `__dkey_val_N`
+/ `__dint_val_N`) and store its address (centralised in `wrap_value` and
+`coerce_element`); reads dereference (centralised in `python_value_str` /
+`python_value_int` / `string_equal` and per-site `python_dict_unbox_key`).
+Every transform is a **type-driven / flag-gated no-op** on the other
+back-end, so the default int64 / refined-string representations are
+byte-identical (the full local suite is a 0-regression guard). Each value
+type keeps the SAME boxing pattern, so a future non-fixed-width leaf is a
+type-swap, not a re-architecture. Detailed rationale and the option
+analysis (boxing vs. reordering vs. mutually-recursive datatypes) live in
+the [strings plan](python-frontend-strings-plan.md#strings).
 
 ### Per-class structs
 
@@ -691,7 +740,7 @@ property at call sites whose argument class doesn't declare
 
 | Flag | Default | Effect |
 |------|---|---|
-| `--python-unbounded-ints` | off | Use CBMC bignums instead of int64; requires Z3 |
+| `--python-unbounded-ints` | off | Use CBMC bignums (`integer_typet`) instead of int64; requires Z3. Ints wrapped into `python_value` are [boxed](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) behind an `integer*` (full precision + fixed-width union) |
 | `--python-no-exception-checks` | off | Suppress automatic `assert ¬__exception_active` after each statement |
 | `--python-check-annotations` | off | Emit `annotation-mismatch` properties when an `AnnAssign` RHS type differs from the declaration |
 | `--python-check-any-arg-attrs` | off | Emit `attribute-error` properties for `obj.X` accesses where `obj`'s argument-side type doesn't declare `X` |
@@ -699,7 +748,7 @@ property at call sites whose argument class doesn't declare
 | `--python-check-typeddict-fields` | off | Field-type checks on PEP 448 `**kwargs` spreads |
 | `--python-lazy-stubs` | off | Skip method bodies in imported stubs; signatures-only |
 | `--python-raising-ops-check` | off | Model operations that *can* raise but whose success can't be proved (`int(str)`→`ValueError`, `os.*`→`OSError`, `re` non-str pattern→`TypeError`) as **may-raise**, instead of silently succeeding. Opt-in soundness; the default favours precision. Uses the declarative `@may_raise('Exc')` library decorator. |
-| `--python-smt-strings` | off | Represent `str` with the native SMT-LIB String sort instead of refinement-strings. Requires an SMT String solver (`--cvc5`/`--z3`). |
+| `--python-smt-strings` | off | Represent `str` with the native SMT-LIB String sort instead of refinement-strings. Requires an SMT String solver (`--cvc5`/`--z3`). Strings stored in byte-imaged aggregates (`python_value.__str`, dict keys) are [boxed](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) behind a `string*` |
 
 ## Type-coercion at boundaries (PLR §3.2)
 
@@ -775,7 +824,8 @@ the defaults loop would bind the wrong field for
 The first version of the frontend used `safe_typecast`
 everywhere, which doesn't know about boundary semantics. The
 generic path emits goto code that's "sound by accident" —
-NULL-deref of `__str_ptr` produces nondet which CBMC sometimes
+NULL-deref of an opaque container pointer (`__list_ptr` /
+`__class_ptr`) produces nondet which CBMC sometimes
 treats as nondet (correct for verification, wrong for "is
 None") and sometimes as undefined behaviour (sound but
 fragile). A test would pass or fail depending on which
@@ -864,9 +914,18 @@ soundness, imprecision, performance, intrinsic.
 
 There are **no known open false proofs** in the default configuration —
 the 2026-06-18/19 audit plus the cross-module global-dict (`R1`) and the
-call-signature fixes closed the ones that were found. The entries below
-are the deliberate soundness-vs-precision tradeoffs and the guarded /
-opt-in cases.
+call-signature fixes closed the ones that were found. The 2026-06-24 work
+closed two further latent-unsoundness classes: (i) the **side-effecting
+operand call-duplication** class — a `python_value`-returning operand
+referenced twice in a lowering (tag predicate + payload unwrap, or a
+membership container) re-evaluated a side-effecting call, diverging the
+two copies → false proof; fixed by materialising such an operand **once**
+in `python_converter_compare.cpp`; and (ii) the **`--python-unbounded-ints`
+64-bit truncation** of an int wrapped into `python_value` (the
+`signedbv[64]` `__int_val` slot truncated `2**64+5` to `5`, a false
+*negative*); fixed by integer [leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates).
+The entries below are the deliberate soundness-vs-precision tradeoffs and
+the guarded / opt-in cases.
 
 | Area | Issue | Status | Plan |
 |---|---|---|---|
@@ -890,6 +949,8 @@ opt-in cases.
 | Contracts | multi-level Liskov; strict-C3 mixin precedence; async | [plan §11](python-frontend-plan.md#icontract) |
 | Higher-order | **bound methods as runtime values** (container-/conditional-/return-flowed, `m=obj.f`) now work (2026-06-22); container-/attribute-stored & composed *closures* remain (capture-through-param works); **~0 corpus value** | [plan §12](python-frontend-plan.md#higher-order) + [fat-closure](python-frontend-fat-closure-plan.md) |
 | dict / cross-module | global-dict-literal mutation across modules is fixed; **`**d` unpack of a *mutated* global dict** and **non-dict cross-module globals** remain (rare) | [plan §5](python-frontend-plan.md#dict-byref) |
+| dict symbolic-key presence | a constant-key read (`d["k"]`) after a **symbolic-key** assign (`for k in …: d[k]=…`) can't prove the key is present, so it emits a spurious uncaught `KeyError` even when the value is correct (the `github_3684` residual — its assertion value verifies, only the KeyError path fails) | [plan §9](python-frontend-plan.md#precision) |
+| dict (untyped nested, unbounded ints) | values read out of an *untyped* nested dict iterated symbolically are over-approximated to nondet (so e.g. `sum(...) >= 0` is unprovable); orthogonal to the leaf-boxing crash/precision fix | [plan §9](python-frontend-plan.md#precision) |
 | Modules | `cmath`, fuller `os`/`time`/`datetime`/`json`/`dataclasses`/`collections` not modelled (nondet) | [plan §6](python-frontend-plan.md#modules) |
 | Annotation checks | `--python-check-annotations` can't be default-on (two CBMC-core blockers) | [plan §7](python-frontend-plan.md#check-annotations) |
 
@@ -899,7 +960,8 @@ opt-in cases.
 |---|---|---|
 | `python_value` | field-by-field SSA expansion cost for symex-bound benchmarks | [plan §8](python-frontend-plan.md#performance) |
 | Signature axioms | kwarg-check axiom volume | [plan §8](python-frontend-plan.md#performance) |
-| Core hot path | `irept::operator==`; the ~8 TIMEOUT corpus tests | [plan §8](python-frontend-plan.md#performance) + [perf deep-dive](architectural/python-perf-analysis.md) |
+| Core hot path | `irept::operator==`; the TIMEOUT corpus tests | [plan §8](python-frontend-plan.md#performance) + [perf deep-dive](architectural/python-perf-analysis.md) |
+| Default-backend string refinement | the nested-container TIMEOUTs (`github_3683`, `redundancy`, …) are dominated by the **default refined-string** refinement loop, not the shared container struct — the **native** SMT-String backend dispatches them ~15× faster and correctly (`github_3683`: 9 s vs. timeout). The `github_3684`-class **native crash** that previously blocked recommending native for nested string/int dicts is **fixed** by [leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) | [strings plan](python-frontend-strings-plan.md#strings) |
 
 ### D. Intrinsic / by-design (not bugs)
 
