@@ -1,7 +1,8 @@
 CORE
 main.py
 --cvc5 --python-unbounded-ints --unwind 5
-^EXIT=10$
-^VERIFICATION FAILED$
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring

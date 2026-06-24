@@ -27,6 +27,29 @@
 
 #include <cmath>
 
+// True if `e` contains a boxed-leaf pointer: a pointer whose base type is the
+// non-fixed-width mathematical integer or a python string. Such a pointer is
+// produced by leaf boxing (allocate_boxed_leaf) and refers to a per-execution
+// materialisation symbol (e.g. __box_ptr_N). A tracked dict-literal value that
+// embeds one must NOT be constant-folded into a later subscript read: the
+// symbol is reassigned on each execution of its construction site, so
+// re-reading it observes another instance's value (the aliasing bug). Falling
+// through to the symbolic dict read instead reads the per-instance value that
+// symex copied at construction.
+static bool contains_boxed_leaf_pointer(const exprt &e)
+{
+  if(e.type().id() == ID_pointer)
+  {
+    const typet &base = to_pointer_type(e.type()).base_type();
+    if(base.id() == ID_integer || is_python_string_type(base))
+      return true;
+  }
+  for(const auto &op : e.operands())
+    if(contains_boxed_leaf_pointer(op))
+      return true;
+  return false;
+}
+
 // Guard pending checks appended since `from` by `guard`.
 void python_convertert::guard_pending_checks(
   std::size_t from,
@@ -461,7 +484,15 @@ exprt python_convertert::convert_subscript(const jsont &expr)
               {
                 auto kv = extract_string_value(keys_arr.operands()[idx]);
                 if(kv.has_value() && kv.value() == key_str.value())
-                  return vals_arr.operands()[idx];
+                {
+                  const exprt &cv = vals_arr.operands()[idx];
+                  // Do not const-fold a value that boxes a leaf behind a
+                  // per-execution materialisation pointer — re-reading it
+                  // aliases across instances. Fall through to the symbolic
+                  // read of the per-instance copy instead.
+                  if(!contains_boxed_leaf_pointer(cv))
+                    return cv;
+                }
               }
             }
           }
@@ -511,7 +542,8 @@ exprt python_convertert::convert_subscript(const jsont &expr)
                       const exprt &cv = vals_arr.operands()[idx];
                       if(
                         !is_python_list_type(cv.type()) &&
-                        !is_python_dict_type(cv.type()))
+                        !is_python_dict_type(cv.type()) &&
+                        !contains_boxed_leaf_pointer(cv))
                         return cv;
                     }
                   }
@@ -2583,19 +2615,15 @@ exprt python_convertert::box_int_for_storage(const exprt &int_value)
 {
   if(!unbounded_ints)
     return int_value;
-  // SOUNDNESS: a mathematical (integer_typet) value boxed into python_value
-  // cannot be stored per-instance — CBMC cannot represent distinct
-  // dynamically-allocated integer_typet objects (they alias), so a precise box
-  // would let a container built more than once (function return / loop) observe
-  // another instance's value (a false proof). We therefore OVER-APPROXIMATE: a
-  // wrapped unbounded int is modelled as a fresh nondet integer (full range),
-  // which is sound (the aliasing is harmless once the value is nondet) and only
-  // imprecise. Typed int containers (dict[int,int] / list[int]) are unaffected
-  // — they store integer_typet inline, never wrapped. See the strings plan.
-  (void)int_value;
-  return allocate_boxed_leaf(
-    side_effect_expr_nondett{integer_typet{}, source_locationt{}},
-    integer_typet{});
+  // Box the int behind a per-instance heap integer (allocate_boxed_leaf gives
+  // a fresh object per execution; the dict-subscript const-fold is guarded
+  // against re-reading the boxed pointer, see contains_boxed_leaf_pointer), so
+  // a wrapped unbounded int keeps FULL PRECISION and does not alias across
+  // instances of the same construction site.
+  exprt v = int_value;
+  if(v.type().id() != ID_integer)
+    v = typecast_exprt{v, integer_typet{}};
+  return allocate_boxed_leaf(v, integer_typet{});
 }
 
 exprt python_convertert::build_dict_value(

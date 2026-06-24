@@ -1,10 +1,10 @@
-# Soundness: an unbounded int wrapped into python_value is over-approximated to
-# nondet (CBMC cannot store distinct per-instance integer_typet heap objects, so
-# a precise box would alias across instances of the same construction site). The
-# over-approximation must NOT let a wrong value be proven. mk is one construction
-# site reached twice; d1["v"] is really 100, so the (false) claim d1["v"] == 200
-# must NOT verify. Before the over-approximation the boxed int aliased d2's value
-# and this was a FALSE PROOF (wrongly SUCCESSFUL).
+# Per-instance soundness AND precision: an int wrapped into python_value is
+# boxed behind a FRESH per-execution heap object, so a dict built by a
+# construction site reached more than once (here mk, called twice) does not
+# alias its boxed int across instances. d1["v"] is really 100 (not d2's 200).
+# Before the per-instance fix this aliased (a false proof: d1["v"] == 200 was
+# wrongly provable, via the dict-literal const-fold re-reading the boxed
+# pointer).
 
 
 def mk(n: int) -> dict:
@@ -13,4 +13,5 @@ def mk(n: int) -> dict:
 
 d1 = mk(100)
 d2 = mk(200)
-assert d1["v"] == 200
+assert d1["v"] == 100
+assert d2["v"] == 200
