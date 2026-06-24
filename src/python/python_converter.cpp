@@ -1059,6 +1059,20 @@ void python_convertert::note_mutable_extraction(
     !is_python_set_type(rt) && !is_python_value_type(rt))
     return;
 
+  // SPIKE (--python-ref-mutables): under reference semantics a nested mutable
+  // container element is stored by reference -- a python_value wrapping a
+  // per-instance heap pointer (see convert_list). Extracting it (`r = c[i]`)
+  // copies the POINTER, so a later mutation through `r` propagates to the
+  // source slot precisely. The havoc-on-mutation guard below is the by-value
+  // fallback; for a wrapped reference it is not only unnecessary but actively
+  // destroys the precise result (it nondet-havocs the source). Skip recording
+  // the alias so the guard never fires for the reference case. A non-reference
+  // (by-value) subscript result keeps a concrete container type (list/dict/set)
+  // and still records the alias below, so soundness for the unwrapped world is
+  // unchanged.
+  if(ref_mutables && is_python_value_type(rt))
+    return;
+
   // The container must be a plain Name so we can re-resolve it without
   // re-emitting side effects, and havoc it later.
   const jsont &cont = json_member(value, "value");

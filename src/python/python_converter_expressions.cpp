@@ -1611,22 +1611,21 @@ exprt python_convertert::convert_list(const jsont &expr)
     exprt e = convert_expression(elt);
     if(e.is_nil())
       return nil_exprt{};
-    // SPIKE (--python-ref-mutables): a mutable container element (a nested
-    // list/dict/set literal) is given a PER-INSTANCE heap object and stored as
-    // a reference (make_python_value(.., heap_ptr)), so extraction/aliasing
-    // and multi-instance construction are precise (no by-value copy). Named
-    // escaped mutables are already handled above; this covers literals.
-    if(
-      ref_mutables && e.id() != ID_symbol &&
-      (is_python_list_type(e.type()) || is_python_dict_type(e.type()) ||
-       is_python_set_type(e.type())))
+    // SPIKE (--python-ref-mutables): a mutable list element (a nested list
+    // literal) is given a PER-INSTANCE heap object and stored as a reference
+    // (make_python_value(LIST, heap_ptr)), so extraction/aliasing and
+    // multi-instance construction are precise (no by-value copy). The heap
+    // object is canonicalised to list[python_value] via rebuild_list_as_pv so
+    // the deref-cast in python_value_list (which assumes list[python_value])
+    // is type-correct -- otherwise a nested value read (g[0][0]) would
+    // reinterpret the bytes of the natural element type. Named escaped
+    // mutables are already handled above; this covers literals. Scope: lists
+    // only (dicts/sets are phase 3, see the spike doc).
+    if(ref_mutables && e.id() != ID_symbol && is_python_list_type(e.type()))
     {
-      python_type_tagt tag =
-        is_python_list_type(e.type())
-          ? python_type_tagt::LIST
-          : (is_python_dict_type(e.type()) ? python_type_tagt::DICT
-                                           : python_type_tagt::SET);
-      e = make_python_value(tag, allocate_boxed_leaf(e, e.type()));
+      exprt canon = rebuild_list_as_pv(e);
+      e = make_python_value(
+        python_type_tagt::LIST, allocate_boxed_leaf(canon, canon.type()));
     }
     elements.push_back(e);
   }

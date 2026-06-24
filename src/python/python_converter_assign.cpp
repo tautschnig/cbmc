@@ -2868,14 +2868,36 @@ codet python_convertert::convert_assign(const jsont &stmt)
         if(typed_rhs.type() != data_type.element_type())
         {
           const typet &rt = typed_rhs.type();
-          bool scalar_rhs = rt.id() == ID_signedbv ||
-                            rt.id() == ID_unsignedbv || rt.id() == ID_floatbv ||
-                            rt.id() == ID_bool || rt.id() == ID_integer ||
-                            is_python_string_type(rt);
-          if(scalar_rhs && is_python_value_type(data_type.element_type()))
-            typed_rhs = coerce_element(typed_rhs, data_type.element_type());
+          // SPIKE (--python-ref-mutables): a mutable list RHS stored into a
+          // python_value element slot is given a FRESH per-instance heap
+          // reference (mirrors convert_list, canonicalised to
+          // list[python_value] so python_value_list reads it back correctly).
+          // Reassignment then rebinds the slot to a NEW object, so any
+          // previously-extracted alias keeps pointing at the OLD object --
+          // exactly CPython reference semantics for `c[i] = <new list>` (the
+          // slot-aliasing approach got this wrong). A named-symbol RHS is left
+          // to the existing escaped-mutable path; this covers literal /
+          // freshly-built lists. Scope: lists only (dicts/sets are phase 3).
+          if(
+            ref_mutables && typed_rhs.id() != ID_symbol &&
+            is_python_value_type(data_type.element_type()) &&
+            is_python_list_type(rt))
+          {
+            exprt canon = rebuild_list_as_pv(typed_rhs);
+            typed_rhs = make_python_value(
+              python_type_tagt::LIST, allocate_boxed_leaf(canon, canon.type()));
+          }
           else
-            typed_rhs = typecast_exprt{typed_rhs, data_type.element_type()};
+          {
+            bool scalar_rhs =
+              rt.id() == ID_signedbv || rt.id() == ID_unsignedbv ||
+              rt.id() == ID_floatbv || rt.id() == ID_bool ||
+              rt.id() == ID_integer || is_python_string_type(rt);
+            if(scalar_rhs && is_python_value_type(data_type.element_type()))
+              typed_rhs = coerce_element(typed_rhs, data_type.element_type());
+            else
+              typed_rhs = typecast_exprt{typed_rhs, data_type.element_type()};
+          }
         }
         code_frontend_assignt assign{lhs, typed_rhs};
         assign.add_source_location() = loc;
