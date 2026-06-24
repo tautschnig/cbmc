@@ -39,6 +39,7 @@ public:
   void set_unbounded_ints(bool v)
   {
     unbounded_ints = v;
+    python_unbounded_ints_flag() = v;
   }
 
   /// Set module resolver for import handling
@@ -1772,6 +1773,13 @@ private:
   /// be stored fixed-width inside a byte-imaged dict struct. On the refined
   /// back-end or for a non-string value, returns the value unchanged.
   exprt box_string_for_storage(const exprt &str_value);
+
+  /// Int-boxing for --python-unbounded-ints: materialise a mathematical
+  /// integer into a heap integer_typet symbol and return its typed address
+  /// (integer*), so a full-precision int can be stored fixed-width inside a
+  /// byte-imaged python_value. When unbounded ints are off, returns the value
+  /// unchanged (the caller stores it inline as int64).
+  exprt box_int_for_storage(const exprt &int_value);
 
   /// PLR §3.1/§3.3: unwrap an Any (`python_value`) *container* receiver to its
   /// concrete by-reference container lvalue, so the built-in container-method

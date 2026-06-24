@@ -52,6 +52,18 @@ inline bool &python_smt_string_native_flag()
   return flag;
 }
 
+/// Process-wide flag: when true (set by the Python converter under
+/// --python-unbounded-ints), Python `int` is represented as the mathematical
+/// (arbitrary-precision) `integer_typet` rather than int64. Because that type
+/// is non-fixed-width, an int stored inside a byte-imaged aggregate (e.g.
+/// python_value.__int_val) must be boxed behind a typed pointer, exactly like
+/// the native smt_string case (see python_value_struct_def).
+inline bool &python_unbounded_ints_flag()
+{
+  static bool flag = false;
+  return flag;
+}
+
 /// Return the CBMC type used to represent Python str.
 /// Default: a struct { signedbv[64] length; unsignedbv[8] data[N]; }.
 /// Native SMT-String backend: the SMT `String` sort (smt_string_typet).

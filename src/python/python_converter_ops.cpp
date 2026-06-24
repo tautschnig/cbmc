@@ -956,7 +956,8 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     }
 
     // Return tagged union with appropriate type
-    exprt int_wrapped = make_python_value(python_type_tagt::INT, int_result);
+    exprt int_wrapped =
+      make_python_value(python_type_tagt::INT, box_int_for_storage(int_result));
     exprt float_wrapped =
       make_python_value(python_type_tagt::FLOAT, float_result);
     return if_exprt{either_float, float_wrapped, int_wrapped};

@@ -328,8 +328,8 @@ std::optional<exprt> python_convertert::try_list_method(
         exprt rhs_e = index_exprt{data, next};
         if(is_python_value_type(data_type.element_type()))
         {
-          lhs_e = member_exprt{lhs_e, "__int_val", signedbv_typet{64}};
-          rhs_e = member_exprt{rhs_e, "__int_val", signedbv_typet{64}};
+          lhs_e = python_value_int(lhs_e);
+          rhs_e = python_value_int(rhs_e);
         }
         exprt should_swap =
           binary_relation_exprt{std::move(lhs_e), ID_gt, std::move(rhs_e)};

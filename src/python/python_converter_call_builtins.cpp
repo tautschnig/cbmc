@@ -4545,7 +4545,8 @@ std::optional<exprt> python_convertert::try_builtin_call(
             binary_relation_exprt{fv, ID_ge, safe_zero(fv.type())},
             fv,
             unary_minus_exprt{fv}};
-          exprt int_wrapped = make_python_value(python_type_tagt::INT, abs_int);
+          exprt int_wrapped = make_python_value(
+            python_type_tagt::INT, box_int_for_storage(abs_int));
           exprt float_wrapped =
             make_python_value(python_type_tagt::FLOAT, abs_float);
           return if_exprt{
