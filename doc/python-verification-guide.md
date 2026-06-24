@@ -17,7 +17,7 @@ cbmc program.py
 # Verify a specific function with nondet inputs
 cbmc program.py --function my_function
 
-# Use correct Python integer semantics (requires Z3)
+# Use correct Python integer semantics (requires an SMT solver, e.g. --z3 or --cvc5)
 cbmc program.py --python-unbounded-ints --z3
 ```
 
@@ -388,7 +388,7 @@ added regression coverage and fixes for several PLR
 | Option | Description |
 |--------|-------------|
 | `--function NAME` | Verify a specific function with nondet inputs |
-| `--python-unbounded-ints` | Use mathematical integers (requires `--z3`) |
+| `--python-unbounded-ints` | Use mathematical integers (requires an SMT solver, e.g. `--cvc5`/`--z3`) |
 | `--python-max-string-length N` | Bound string length (default 256) |
 | `--python-max-list-length N` | Bound list length (default 64) |
 | `--python-no-body-check` | Suppress the missing-function-body check |
