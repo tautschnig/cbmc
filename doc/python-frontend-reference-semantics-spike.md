@@ -251,3 +251,68 @@ remaining work (extraction-aliasing + `python_value`-variable mutators) is the
 substantive part of the ~1–2 day estimate and is the next step before the perf
 gate is meaningful. No revert — the wrapping is sound and gated; it is the
 foundation the extraction-aliasing builds on.
+
+---
+
+## 10. Spike run log — 2026-06-24 (extraction-aliasing: §4 precision GREEN)
+
+Continuing from §9, the extraction-then-mutate gap is closed. Three bugs sat
+between the wrapping and precise reference semantics; each was a *whole-group*
+issue, not a point fix:
+
+1. **The havoc guard defeated the reference (architectural root).** The
+   extraction-then-mutate guard (`note_mutable_extraction` +
+   `invalidate_extracted_source_on_mutation`) nondet-havocs the *source* on a
+   mutation through an extracted alias — sound but imprecise, and it actively
+   destroyed the precise result the reference now provides. Its own comment
+   said "the precise fix is reference semantics." Fix: in
+   `note_mutable_extraction`, under `ref_mutables`, **skip recording the alias
+   when the extracted value is a `python_value` reference** (the wrapped case);
+   a by-value (concrete list/dict/set-typed) subscript result still records the
+   alias, so the unwrapped world stays sound. Single locus — the only place the
+   alias is recorded. This made `r = g[0]; r.append` propagate (extraction +
+   membership precise).
+
+2. **Subscript-assign bit-reinterpreted a list into the slot.** `g[0] = [99]`
+   stored a list-typed RHS into a `python_value` slot via `typecast_exprt`
+   (byte reinterpret → corruption). Fix: under `ref_mutables`, wrap a mutable
+   list RHS as a **fresh per-instance reference** (`make_python_value(LIST,
+   allocate_boxed_leaf(...))`), so reassignment rebinds the slot to a NEW object
+   and a prior extracted alias keeps the OLD one — exactly CPython `c[i] = …`.
+
+3. **Read-back type mismatch (the real per-instance-identity subtlety).**
+   `python_value_list` derefs `__list_ptr` as `list[python_value]`, but
+   `allocate_boxed_leaf` boxed the inner list with its *natural* element type
+   (e.g. `int`), so a nested value read (`g[0][0]`) reinterpreted the bytes →
+   garbage (length read fine, hence `len` masked it). Fix: **canonicalise via
+   `rebuild_list_as_pv` before boxing** — the same helper the escaped-name byref
+   path already uses. This is the shared per-instance-identity representation;
+   reusing it (rather than inventing a parallel one) is the whole-group move.
+
+**Scope tightened to lists** (the spike's §4 slice); dicts/sets keep the
+by-value guard (phase 3).
+
+**Measured gate (`--python-ref-mutables`, OFF by default):**
+- **§4 precision — ALL GREEN:** extraction (`r=g[0]; r.append; len(g[0])==2`),
+  multi-instance (`mk()` twice, no cross-aliasing), reorder/reassign
+  (`g[0]=[99]; r.append; g[0]==[99]`), membership (`5 in g[0]`), nested value
+  reads (`g[0][0]==99`), and **3-deep composition** (`g=[[[1]]];
+  g[0][0].append(5)`) all SUCCESSFUL.
+- **Soundness — no false proof:** five genuinely-FALSE assertions
+  (`len(g[0])==1` after append, `g[0]==[99,5]`, `99 in g[0]`, multi-instance
+  negative, `len(r)==1`) all stay FAILED. `extraction-then-mutate-sound` stays
+  FAILED — now for the *precise* reason (99 provably in `c[0]`) rather than the
+  havoc over-approximation.
+- **Default suite — green:** full `regression/python` all successful (23 skipped
+  by design); the flag is off by default so the default path is untouched.
+- **Perf — within bar:** nested/alias/extraction tests show unchanged verdicts
+  and flat wall-clock with the flag; the heaviest (`nested-container-writes`)
+  goes 25.9 s → 27.2 s (+5 %, within the ≤10–15 % gate), no new TIMEOUTs.
+
+Two regression tests added: `ref-mutables-extraction` (precision) and
+`ref-mutables-sound-neg` (genuinely-false stays FAILED).
+
+**Decision:** spike PASSES its precision + soundness + (focused) perf gates for
+lists. Next: phase 2 (make it the default for lists + retire the list
+extraction/replication guards), then the full ESBMC sweep with the flag for the
+at-scale perf number before flipping the default.
