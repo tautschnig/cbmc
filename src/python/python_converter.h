@@ -42,6 +42,17 @@ public:
     python_unbounded_ints_flag() = v;
   }
 
+  /// SPIKE (--python-ref-mutables): model anonymous mutable list elements with
+  /// reference semantics (heap-allocate per instance + alias by pointer)
+  /// instead of by value. Lets extraction/aliasing/multi-instance be precise
+  /// rather than guarded. List literals only for now (see
+  /// doc/python-frontend-reference-semantics-spike.md).
+  bool ref_mutables = false;
+  void set_ref_mutables(bool v)
+  {
+    ref_mutables = v;
+  }
+
   /// Set module resolver for import handling
   using module_resolver_t = std::function<const jsont *(const std::string &)>;
   void set_module_resolver(module_resolver_t resolver)
