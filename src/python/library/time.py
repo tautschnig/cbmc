@@ -23,35 +23,35 @@ tzname = ("UTC", "UTC")
 
 
 def time() -> float:
-    return 0.0
+    return nondet_float()
 
 
 def monotonic() -> float:
-    return 0.0
+    return nondet_float()
 
 
 def monotonic_ns() -> int:
-    return 0
+    return nondet_int()
 
 
 def perf_counter() -> float:
-    return 0.0
+    return nondet_float()
 
 
 def perf_counter_ns() -> int:
-    return 0
+    return nondet_int()
 
 
 def process_time() -> float:
-    return 0.0
+    return nondet_float()
 
 
 def process_time_ns() -> int:
-    return 0
+    return nondet_int()
 
 
 def time_ns() -> int:
-    return 0
+    return nondet_int()
 
 
 def sleep(secs: float) -> None:

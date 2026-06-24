@@ -171,10 +171,12 @@ class deque:
         return None
 
     def count(self, x) -> int:
-        return 0
+        # Value-dependent (number of occurrences); a fixed 0 false-proved
+        # `dq.count(x) == 0`. Sound nondet of the right type.
+        return nondet_int()
 
     def index(self, x, start: int = 0, stop: int = 0) -> int:
-        return 0
+        return nondet_int()
 
     def insert(self, i: int, x) -> None:
         return None
@@ -189,7 +191,8 @@ class deque:
         return deque()
 
     def __len__(self) -> int:
-        return 0
+        # Value-dependent; a fixed 0 false-proved `len(dq) == 0`.
+        return nondet_int()
 
 
 class ChainMap:
