@@ -125,21 +125,23 @@ struct:
   `--python-unbounded-ints` a Python int is the non-fixed-width `integer_typet`.
   `python_value.__int_val` (a 64-bit bitvector) silently truncated wrapped
   values mod 2**64 (unsound) and drove a `simplify_expr` abort on nested int
-  containers. Boxing `__int_val` behind an `integer*` was attempted, but unlike
-  `smt_string` (tracked per-object by the string solver) **CBMC cannot allocate
-  distinct per-instance `integer_typet` heap objects** — a precise box aliased
-  across instances of the same construction site (a false proof). The sound
-  resolution: a wrapped unbounded int is **over-approximated to a fresh nondet
-  integer** (`box_int_for_storage`); the box keeps `python_value` fixed-width
-  (abort gone) and nondet makes the residual aliasing harmless. Typed int
-  positions (`dict[int,int]` / `list[int]` / typed vars) keep `integer_typet`
-  inline at full precision; the closure fn-index stays a precise box (constant →
-  aliasing-harmless). Sound, imprecise for Any-typed ints; default/int64 backend
-  byte-identical (0 regressions). Tests `int-unbounded-box-sound` (false proof
-  absent) + `int-unbounded-box-no-truncation` (precise typed path). **Note the
-  string leaf-boxing had the same static-symbol aliasing, fixed properly via
-  per-instance heap allocation (`allocate_boxed_leaf`); test
-  `leaf-box-no-alias-string`.**
+  containers. `__int_val` is now boxed behind a fresh per-instance `integer*`
+  (`allocate_boxed_leaf`), keeping **full precision** with no aliasing. The
+  aliasing that initially appeared was NOT the allocation (objects are distinct
+  per execution) but the **dict-literal const-fold** re-reading the boxed
+  pointer symbol: a dict returned from a function / built in a loop is tracked
+  with `__int_val = cast(__box_ptr_N, int*)`, the subscript const-fold returned
+  that tracked expression, and symex renamed `__box_ptr_N` to the *latest* value
+  (a later instance) → a deterministic false proof. Fix:
+  `contains_boxed_leaf_pointer` makes the const-fold skip any value embedding a
+  boxed-leaf pointer, falling through to the sound per-instance symbolic read
+  (a general correctness fix — re-reading a tracked dict-literal value that
+  embeds a per-execution symbol is unsound for any leaf type). The closure
+  fn-index stays a precise box (constant → aliasing-harmless). Both `str` and
+  `int` boxing are now sound AND precise; default/int64 backend byte-identical
+  (0 regressions). Tests `int-unbounded-box-sound` (per-instance precision),
+  `int-unbounded-box-no-truncation` (full precision, typed + wrapped),
+  `leaf-box-no-alias-string`.
 
 ## Linked design records (deep-dives)
 
