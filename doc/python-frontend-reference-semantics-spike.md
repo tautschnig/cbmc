@@ -206,3 +206,48 @@ so it can be measured against the default):**
   is wiring literals to per-instance allocation + the measurement harness.
 - Full rollout (phases 2–5) is a **multi-week** effort dominated by perf
   validation and the class-instance phase; gated on the spike's perf result.
+
+---
+
+## 9. Spike run log — 2026-06-24 (checkpoint: wrapping landed, extraction gap found)
+
+Flag `--python-ref-mutables` is plumbed end-to-end and the **§4 step-1 wrapping**
+is implemented: in `convert_list`, a nested list/dict/set-literal element is
+materialised with per-instance `allocate_boxed_leaf` and stored as
+`make_python_value(tag, heap_ptr)` (element type becomes `python_value`). Builds
+clean; flag is **off by default** (zero impact on the default backend).
+
+**Measured §4 gate (with the flag):**
+- **Reads — PRECISE.** `g=[[1]]; assert len(g[0])==1` ✓; the single-index read
+  returns the reference (`index_exprt{data,idx}` = the `python_value(LIST,ptr)`).
+- **Direct-subscript mutation — PRECISE.** `g=[[1]]; g[0].append(5); assert
+  len(g[0])==2` ✓ (the `obj.append` on a subscript writes back through the slot).
+- **Multi-instance — PRECISE.** `mk()` twice no longer aliases ✓ (already worked
+  via `allocate_boxed_leaf`).
+- **Extraction-then-mutate — STILL FAILS** (the headline case): `g=[[1]];
+  r=g[0]; r.append(5); assert len(g[0])==2` ✗. Root-caused precisely: the read
+  returns the reference, but `r = g[0]` gives `r` its **own object** (a copy) and
+  `r.append` grows that copy (`len(r)==2` ✓ but `g[0]` unchanged). The same holds
+  for the named-escaped case (`inner=[1]; g=[inner]; r=g[0]; r.append`).
+- **Soundness — OK so far.** The reassign/member-negative/multi-negative hazards
+  give identical verdicts with and without the flag (no new false proof).
+- **Perf — not yet measured** (premature while precision is blocked).
+
+**KEY FINDING — §4 "verify steps 2–3 already work" is FALSE.** The minimal
+wrapping is *necessary but not sufficient*. Achieving the headline
+extraction-then-mutate precision requires the **assignment + mutator paths to
+preserve and use the reference for a `python_value(LIST,ptr)`-typed VARIABLE**
+(not just a subscript receiver):
+  1. `r = c[i]` must alias (copy the pointer), not deep-copy the heap object —
+     audit the assignment boundary (open question §7.1) for a value-copy of a
+     `python_value`-wrapped element.
+  2. `r.append(...)` where `r` is a `python_value(LIST,ptr)` variable must
+     dereference `ptr` and mutate `*ptr` in place (today it grows `r`'s own
+     object). The working `g[0].append` path mutates via the slot; the
+     variable-receiver path needs the same deref-and-mutate-in-place.
+
+**Status:** spike checkpoint committed (flag + wrapping, off by default). The
+remaining work (extraction-aliasing + `python_value`-variable mutators) is the
+substantive part of the ~1–2 day estimate and is the next step before the perf
+gate is meaningful. No revert — the wrapping is sound and gated; it is the
+foundation the extraction-aliasing builds on.

@@ -46,6 +46,7 @@ void python_languaget::set_language_options(
 {
   function_entry_point = options.get_option("function");
   unbounded_ints = options.get_bool_option("python-unbounded-ints");
+  ref_mutables = options.get_bool_option("python-ref-mutables");
   no_body_check = options.get_bool_option("python-no-body-check");
   python_raising_ops_check =
     options.get_bool_option("python-raising-ops-check");
@@ -380,6 +381,7 @@ bool python_languaget::typecheck(
 {
   python_convertert converter{symbol_table, parse_tree, message_handler};
   converter.set_unbounded_ints(unbounded_ints);
+  converter.set_ref_mutables(ref_mutables);
   converter.set_use_smt_string_native(
     python_string_kind == python_string_kindt::smt_string_native);
   converter.set_no_body_check(no_body_check);

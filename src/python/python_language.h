@@ -79,6 +79,7 @@ protected:
 
   /// Whether to use mathematical integers instead of int64.
   bool unbounded_ints = false;
+  bool ref_mutables = false;
   bool no_body_check = false;
   bool python_raising_ops_check = false;
   bool python_strict_warnings = false;
