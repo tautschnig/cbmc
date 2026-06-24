@@ -82,14 +82,32 @@ struct:
   path. The remaining lever on the *default* backend (smaller nested-level
   container bounds) is a precision/soundness-margin tradeoff; deferred.
 - **BUT native is not yet a safe drop-in — two native gaps found:**
-  - `github_3684` (same nested-dict+string shape) **ABORTS on native**
-    (rc=134) in 6s — a native-backend crash on some construct in that test.
-  - `nondet_list6` (symbolic-list linear search) returns **FAILED on native**
-    (0s) vs expected SUCCESSFUL — native's symbolic-list/`nondet_list` handling
-    diverges (precision or a bug). **Under investigation (2026-06-24).**
-  Hardening these is the prerequisite to recommending native as the default for
-  string-heavy code; a crash and a verdict divergence are correctness gaps that
-  outrank the perf work.
+  - `github_3684` **ABORTS on native** (rc=134): CBMC-core invariant
+    `unpack_struct` — "members of non-constant width should come last in a
+    struct". **Root (investigated 2026-06-24):** on native, `python_value`'s
+    inline `__str` is the variable-width `smt_string`, so `python_value` itself
+    is variable-width. An UNTYPED dict (`d: dict`) has python_value keys AND
+    values, so the dict struct `{length, keys[python_value], values[python_value]}`
+    has TWO variable-width array members; CBMC's byte-operator lowering can put
+    only one non-constant-width member last, so byte-unpacking it (triggered by
+    iterating an untyped NESTED dict, `for k,v in d["p"].items()`) aborts.
+    Confirmed minimal: untyped nested-dict iteration crashes for BOTH int and
+    string keys; a TYPED `dict[str, dict[str, int]]` (concrete, fixed-width
+    value structs) does NOT crash. Reordering `__str` last in python_value does
+    NOT fix it (the python_value arrays are still variable-width). **Proper
+    fix:** make `python_value` constant-width on native — store `__str` as a
+    POINTER on the native backend (like `__list_ptr`/`__class_ptr`) instead of
+    inline `smt_string`. That reverses the inline-string perf choice (made for
+    the refined backend) for native only; a deeper, backend-conditional
+    representation change to weigh — NOT a quick reorder. Deferred to a focused
+    effort.
+  - `nondet_list6` — **NOT a native bug (measurement artifact).** The earlier
+    "FAILED on native" was run at `--unwind 5`; the test needs `--unwind 9`
+    (6-element list). At its own `--unwind 9` native verifies **SUCCESSFUL**
+    (element stability holds on both backends). No divergence.
+  So the only real native gap is the `github_3684` byte-unpack crash above
+  (untyped-dict-of-python_value on native); hardening it is the prerequisite to
+  recommending native as the default for string-heavy nested code.
 
 ## Linked design records (deep-dives)
 
