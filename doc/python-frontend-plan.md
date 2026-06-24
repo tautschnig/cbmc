@@ -579,6 +579,29 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
+**Soundness re-audit (2026-06-24).** Deliberate audit pass (the call-duplication
+hole was pre-existing; chasing features surfaced it, so a proactive sweep was
+warranted).
+- **Operand-duplication class — CONFIRMED CLOSED.** A side-effecting
+  `python_value`-returning call duplicated in a lowering false-proved only in
+  `==`/ordered (`73fce93762`) and membership `in` (`d210f808b0`), both fixed.
+  Audited the rest (arithmetic, `str()`, subscript, boolean-op, augmented
+  assignment, f-string, ternary, chained comparison): each returns a sound
+  NONDET (precision loss, not a false proof — verified the wrong value is NOT
+  provable). A mutation-count detector initially mis-flagged these; the
+  value-based check confirms soundness.
+- **Stub concrete-defaults — 2 value-dependent false proofs FIXED
+  (`11926ba06f`).** `collections.deque.count/index/__len__` (fixed 0) and
+  `time.process_time`/`_ns` variants (fixed 0/0.0 while `time()`/`monotonic()`
+  are intercepted-nondet) -> sound nondet. Guards `stub-deque-count-fail`,
+  `stub-process-time-fail`. Audited sound: `Counter[missing]==0` /
+  `defaultdict(int)[missing]==0` (correct semantics), `contextlib.__exit__->
+  False` (correct "don't suppress"), `math.isnan/gcd/...` (frontend-intercepted
+  dead defaults). Residual: `threading.wait_for->True` (optimistic, but
+  threading is an inherent sequential-BMC approximation); third-party stubs
+  (numpy/pandas/...) out of scope.
+
+
 **Refreshed triage (2026-06-09, sweep PASS 2916/3091).** Of the 23
 *expected-FAILED / got-SUCCESSFUL* DIFFs, **none is a genuine
 high-value false proof**: 22 are flag/scope artifacts and 1 is a niche
