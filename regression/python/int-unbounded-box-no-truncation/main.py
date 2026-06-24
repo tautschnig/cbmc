@@ -1,21 +1,17 @@
-# Under --python-unbounded-ints a Python int is a mathematical (arbitrary
-# precision) integer. When such a value is wrapped into the tagged-union
-# python_value (e.g. as a value in a heterogeneous dict/list, or any Any-typed
-# slot), it must NOT be truncated mod 2**64. Before "int boxing" the
-# python_value.__int_val slot was a 64-bit bitvector, so 2**64+5 silently
-# became 5 -- an unsound truncation. __int_val is now a typed pointer to a heap
-# mathematical integer (fixed-width pointer keeps python_value byte_extract
-# valid; the integer is read through a clean dereference).
+# Under --python-unbounded-ints a Python int is the mathematical integer_typet.
+# In TYPED positions (typed variables, dict[int,int] / list[int]) it is stored
+# inline at full precision — no overflow, no truncation:
+x = 2**100
+assert x > 2**99
+assert x + 1 > x
 
+d = {"a": 5, "b": 7}
+assert d["a"] == 5
+assert d["a"] + d["b"] == 12
 
-big = 2**64 + 5
-
-# Heterogeneous dict forces the value into python_value.
-d = {"a": big, "b": "x"}
-assert d["a"] != 5
-assert d["a"] == big
-
-# Heterogeneous list likewise.
-xs = [big, "y"]
-assert xs[0] != 7
-assert xs[0] == big
+# NOTE: an int wrapped into the python_value tagged union (Any-typed / a value
+# in a heterogeneous container) is SOUND but over-approximated to nondet — CBMC
+# cannot store distinct per-instance mathematical-integer heap objects, so a
+# precise box would alias across instances built by the same construction site
+# (a false proof). That over-approximation is covered by
+# int-unbounded-box-sound; this test pins the precise typed path.

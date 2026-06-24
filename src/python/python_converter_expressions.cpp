@@ -2583,10 +2583,19 @@ exprt python_convertert::box_int_for_storage(const exprt &int_value)
 {
   if(!unbounded_ints)
     return int_value;
-  exprt v = int_value;
-  if(v.type().id() != ID_integer)
-    v = typecast_exprt{v, integer_typet{}};
-  return allocate_boxed_leaf(v, integer_typet{});
+  // SOUNDNESS: a mathematical (integer_typet) value boxed into python_value
+  // cannot be stored per-instance — CBMC cannot represent distinct
+  // dynamically-allocated integer_typet objects (they alias), so a precise box
+  // would let a container built more than once (function return / loop) observe
+  // another instance's value (a false proof). We therefore OVER-APPROXIMATE: a
+  // wrapped unbounded int is modelled as a fresh nondet integer (full range),
+  // which is sound (the aliasing is harmless once the value is nondet) and only
+  // imprecise. Typed int containers (dict[int,int] / list[int]) are unaffected
+  // — they store integer_typet inline, never wrapped. See the strings plan.
+  (void)int_value;
+  return allocate_boxed_leaf(
+    side_effect_expr_nondett{integer_typet{}, source_locationt{}},
+    integer_typet{});
 }
 
 exprt python_convertert::build_dict_value(

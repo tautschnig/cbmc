@@ -1,0 +1,7 @@
+CORE
+main.py
+--cvc5 --python-unbounded-ints --unwind 5
+^EXIT=10$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
