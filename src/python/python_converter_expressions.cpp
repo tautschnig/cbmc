@@ -14,6 +14,7 @@
 #include <util/ieee_float.h>
 #include <util/json.h>
 #include <util/pointer_expr.h>
+#include <util/pointer_offset_size.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
@@ -2530,51 +2531,62 @@ exprt python_convertert::try_box_bound_method_read(
 // overwrite semantics — symbolic keys cannot be compared at conversion time
 // and are kept as-is), pads to PYTHON_MAX_DICT_SIZE, and guards over-capacity.
 // Shared by convert_dict (dict literals) and dict.fromkeys.
+exprt python_convertert::allocate_boxed_leaf(
+  const exprt &value,
+  const typet &leaf_type)
+{
+  // Per-instance heap object (mirrors the closure capture-record allocation):
+  // each execution of this construction site allocates a DISTINCT object, and
+  // the container copies the pointer VALUE at construction, so values boxed in
+  // a container built more than once (function return / loop) do not alias.
+  pointer_typet ptr_type{leaf_type, 64};
+  static unsigned box_ctr = 0;
+  std::string pn = "__box_ptr_" + std::to_string(box_ctr++);
+  irep_idt pid{qualify_name(pn)};
+  if(symbol_table.lookup(pid) == nullptr)
+  {
+    symbolt ps{pid, ptr_type, "python"};
+    ps.base_name = pn;
+    ps.is_lvalue = true;
+    ps.is_state_var = true;
+    ps.is_static_lifetime = current_function.empty();
+    symbol_table.add(ps);
+  }
+  symbol_exprt ptr = symbol_table.lookup_ref(pid).symbol_expr();
+  namespacet ns{symbol_table};
+  // A non-fixed-width leaf (smt_string / integer_typet) has no byte size; use
+  // a fixed nonzero size so each ID_allocate yields a DISTINCT dynamic object
+  // (a zero size collapses them to one, re-introducing aliasing).
+  auto computed = pointer_offset_size(leaf_type, ns);
+  std::size_t bytes = (computed.has_value() && *computed > 0)
+                        ? numeric_cast_v<std::size_t>(*computed)
+                        : 16;
+  exprt size = from_integer(bytes, size_type());
+  side_effect_exprt alloc{
+    ID_allocate, {size, false_exprt{}}, ptr_type, source_locationt{}};
+  pending_checks.push_back(code_frontend_assignt{ptr, alloc});
+  pending_checks.push_back(
+    code_frontend_assignt{dereference_exprt{ptr}, value});
+  return std::move(ptr);
+}
+
 exprt python_convertert::box_string_for_storage(const exprt &str_value)
 {
   if(
     !python_smt_string_native_flag() ||
     !is_python_string_type(str_value.type()))
     return str_value;
-  // Materialise the string into a persistent heap symbol; store its address.
-  static unsigned dkey_counter = 0;
-  std::string nm = "__dkey_val_" + std::to_string(dkey_counter++);
-  irep_idt id{qualify_name(nm)};
-  if(symbol_table.lookup(id) == nullptr)
-  {
-    symbolt s{id, python_string_type(), "python"};
-    s.base_name = nm;
-    s.is_lvalue = true;
-    s.is_state_var = true;
-    symbol_table.add(s);
-  }
-  const symbolt &s = symbol_table.lookup_ref(id);
-  pending_checks.push_back(code_frontend_assignt{s.symbol_expr(), str_value});
-  return address_of_exprt{s.symbol_expr()};
+  return allocate_boxed_leaf(str_value, python_string_type());
 }
 
 exprt python_convertert::box_int_for_storage(const exprt &int_value)
 {
   if(!unbounded_ints)
     return int_value;
-  // Materialise the integer into a persistent heap symbol; store its address.
   exprt v = int_value;
   if(v.type().id() != ID_integer)
     v = typecast_exprt{v, integer_typet{}};
-  static unsigned dint_counter = 0;
-  std::string nm = "__dint_val_" + std::to_string(dint_counter++);
-  irep_idt id{qualify_name(nm)};
-  if(symbol_table.lookup(id) == nullptr)
-  {
-    symbolt s{id, integer_typet{}, "python"};
-    s.base_name = nm;
-    s.is_lvalue = true;
-    s.is_state_var = true;
-    symbol_table.add(s);
-  }
-  const symbolt &s = symbol_table.lookup_ref(id);
-  pending_checks.push_back(code_frontend_assignt{s.symbol_expr(), v});
-  return address_of_exprt{s.symbol_expr()};
+  return allocate_boxed_leaf(v, integer_typet{});
 }
 
 exprt python_convertert::build_dict_value(
