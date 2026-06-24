@@ -128,7 +128,9 @@ std::optional<exprt> python_convertert::try_dict_method(
       {
         exprt idx = from_integer(i, signedbv_typet{64});
         exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-        exprt match = equal_exprt{index_exprt{keys, idx}, key_expr};
+        exprt match = equal_exprt{
+          python_dict_unbox_key(index_exprt{keys, idx}),
+          python_dict_unbox_key(key_expr)};
         result =
           if_exprt{and_exprt{in_range, match}, index_exprt{vals, idx}, result};
       }
@@ -155,7 +157,7 @@ std::optional<exprt> python_convertert::try_dict_method(
     }
     const auto &dict_st = to_struct_type(obj_base_type);
     const auto &keys_type = to_array_type(dict_st.components()[1].type());
-    typet key_type = keys_type.element_type();
+    typet key_type = python_dict_logical_key_type(keys_type.element_type());
     struct_typet list_type = python_list_type(key_type);
     const auto &list_data_type =
       to_array_type(list_type.components()[1].type());
@@ -165,7 +167,7 @@ std::optional<exprt> python_convertert::try_dict_method(
     {
       exprt::operandst elems;
       for(const auto &k : dict_val->operands()[1].operands())
-        elems.push_back(k);
+        elems.push_back(python_dict_unbox_key(k));
       while(elems.size() < PYTHON_MAX_LIST_LENGTH)
         elems.push_back(safe_zero(key_type));
       return struct_exprt{
@@ -178,7 +180,8 @@ std::optional<exprt> python_convertert::try_dict_method(
     member_exprt keys{obj, "keys", keys_type};
     exprt::operandst elems;
     for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
-      elems.push_back(index_exprt{keys, from_integer(i, signedbv_typet{64})});
+      elems.push_back(python_dict_unbox_key(
+        index_exprt{keys, from_integer(i, signedbv_typet{64})}));
     while(elems.size() < PYTHON_MAX_LIST_LENGTH)
       elems.push_back(safe_zero(key_type));
     return struct_exprt{
@@ -291,7 +294,8 @@ std::optional<exprt> python_convertert::try_dict_method(
       const auto &dict_st = to_struct_type(obj_base_type);
       const auto &keys_type = to_array_type(dict_st.components()[1].type());
       const auto &vals_type = to_array_type(dict_st.components()[2].type());
-      const typet key_t = keys_type.element_type();
+      const typet key_t =
+        python_dict_logical_key_type(keys_type.element_type());
       const typet val_t = vals_type.element_type();
       struct_typet tuple_t = python_tuple_type({key_t, val_t});
       tuple_t.set_tag("python_tuple");
@@ -307,7 +311,9 @@ std::optional<exprt> python_convertert::try_dict_method(
       {
         exprt idx = from_integer(i, signedbv_typet{64});
         elems.push_back(struct_exprt{
-          {index_exprt{obj_keys, idx}, index_exprt{obj_vals, idx}}, tuple_t});
+          {python_dict_unbox_key(index_exprt{obj_keys, idx}),
+           index_exprt{obj_vals, idx}},
+          tuple_t});
       }
       return struct_exprt{
         {obj_len, array_exprt{std::move(elems), list_data_type}}, list_t};
@@ -406,7 +412,9 @@ std::optional<exprt> python_convertert::try_dict_method(
             {
               exprt sidx = from_integer(si, signedbv_typet{64});
               exprt in_range = binary_relation_exprt{sidx, ID_lt, dst_len};
-              exprt match = equal_exprt{index_exprt{dst_keys, sidx}, k};
+              exprt match = equal_exprt{
+                python_dict_unbox_key(index_exprt{dst_keys, sidx}),
+                python_dict_unbox_key(k)};
               code_blockt upd;
               upd.add(code_frontend_assignt{index_exprt{dst_vals, sidx}, v});
               upd.add(code_frontend_assignt{found, true_exprt{}});
@@ -414,8 +422,8 @@ std::optional<exprt> python_convertert::try_dict_method(
                 code_ifthenelset{and_exprt{in_range, match}, std::move(upd)});
             }
             code_blockt append;
-            append.add(
-              code_frontend_assignt{index_exprt{dst_keys, dst_len}, k});
+            append.add(code_frontend_assignt{
+              index_exprt{dst_keys, dst_len}, box_string_for_storage(k)});
             append.add(
               code_frontend_assignt{index_exprt{dst_vals, dst_len}, v});
             append.add(code_frontend_assignt{
@@ -524,7 +532,9 @@ std::optional<exprt> python_convertert::try_dict_method(
     {
       exprt idx = from_integer(i, signedbv_typet{64});
       exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-      exprt match = equal_exprt{index_exprt{keys_arr, idx}, key_expr};
+      exprt match = equal_exprt{
+        python_dict_unbox_key(index_exprt{keys_arr, idx}),
+        python_dict_unbox_key(key_expr)};
       code_blockt update;
       update.add(code_frontend_assignt{found, true_exprt{}});
       update.add(code_frontend_assignt{result, index_exprt{vals_arr, idx}});
@@ -629,7 +639,9 @@ std::optional<exprt> python_convertert::try_dict_method(
     {
       exprt idx = from_integer(i, signedbv_typet{64});
       exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-      exprt match = equal_exprt{index_exprt{keys_arr, idx}, key_expr};
+      exprt match = equal_exprt{
+        python_dict_unbox_key(index_exprt{keys_arr, idx}),
+        python_dict_unbox_key(key_expr)};
       code_blockt update;
       update.add(code_frontend_assignt{found, true_exprt{}});
       update.add(code_frontend_assignt{result, index_exprt{vals_arr, idx}});
@@ -733,7 +745,7 @@ std::optional<exprt> python_convertert::try_dict_method(
     // CPython pops in LIFO order.
     member_exprt keys_arr{obj, "keys", keys_type};
     member_exprt vals_arr{obj, "values", vals_type};
-    exprt key_at = index_exprt{keys_arr, last_idx_sym};
+    exprt key_at = python_dict_unbox_key(index_exprt{keys_arr, last_idx_sym});
     exprt val_at = index_exprt{vals_arr, last_idx_sym};
     struct_typet::componentst tcomps;
     tcomps.push_back(struct_typet::componentt{"_0", key_at.type()});

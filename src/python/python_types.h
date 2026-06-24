@@ -158,6 +158,46 @@ inline bool is_python_set_type(const typet &type)
 #define PYTHON_MAX_DICT_SIZE 16
 
 /// Return the CBMC type for an array-based Python dict.
+/// On the native SMT-String back-end, a dict's string KEYS are boxed behind a
+/// typed pointer (exactly like python_value.__str), because an inline
+/// smt_string key array is variable-width and makes the byte-imaged dict struct
+/// abort CBMC's unpack_struct ("non-constant-width member must come last").
+/// The fixed-width pointer keeps the struct byte_extract-valid; the smt_string
+/// is read through a clean typed dereference, never byte-imaged. Non-string
+/// keys (int, python_value, ...) and the refined back-end are unchanged.
+inline typet python_dict_key_elem_type(const typet &key_type)
+{
+  if(python_smt_string_native_flag() && is_python_string_type(key_type))
+    return pointer_typet{key_type, 64};
+  return key_type;
+}
+
+/// True if `elem_type` is a boxed dict string key (native pointer-to-string).
+inline bool is_boxed_dict_key_type(const typet &elem_type)
+{
+  return elem_type.id() == ID_pointer &&
+         is_python_string_type(to_pointer_type(elem_type).base_type());
+}
+
+/// Logical key type seeing THROUGH the native string box (so callers'
+/// is_python_string_type(...) key-type checks keep working unchanged).
+inline typet python_dict_logical_key_type(const typet &keys_elem_type)
+{
+  if(is_boxed_dict_key_type(keys_elem_type))
+    return to_pointer_type(keys_elem_type).base_type();
+  return keys_elem_type;
+}
+
+/// Read+unbox a key element: dereference the box on native, identity otherwise.
+/// Use at every dict keys[i] READ site so the rest of the code sees a
+/// string-typed key as before.
+inline exprt python_dict_unbox_key(const exprt &key_elem)
+{
+  if(is_boxed_dict_key_type(key_elem.type()))
+    return dereference_exprt{key_elem};
+  return key_elem;
+}
+
 /// struct { int64 length; key_type keys[N]; value_type values[N]; }
 inline struct_typet
 python_dict_type(const typet &key_type, const typet &value_type)
@@ -167,7 +207,8 @@ python_dict_type(const typet &key_type, const typet &value_type)
   components.push_back(struct_typet::componentt{
     "keys",
     array_typet{
-      key_type, from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}});
+      python_dict_key_elem_type(key_type),
+      from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}});
   components.push_back(struct_typet::componentt{
     "values",
     array_typet{

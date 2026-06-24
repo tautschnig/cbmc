@@ -2320,8 +2320,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
               {
                 exprt idx = from_integer(i, signedbv_typet{64});
                 exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-                exprt match =
-                  equal_exprt{index_exprt{keys_arr, idx}, typed_key};
+                exprt match = equal_exprt{
+                  python_dict_unbox_key(index_exprt{keys_arr, idx}),
+                  python_dict_unbox_key(typed_key)};
                 code_blockt upd;
                 upd.add(
                   code_frontend_assignt{index_exprt{vals_arr, idx}, typed_rhs});
@@ -2386,8 +2387,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
             {
               exprt idx = from_integer(i, signedbv_typet{64});
               exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-              exprt match =
-                equal_exprt{index_exprt{keys_arr, idx}, outer_typed_key};
+              exprt match = equal_exprt{
+                python_dict_unbox_key(index_exprt{keys_arr, idx}),
+                python_dict_unbox_key(outer_typed_key)};
               block.add(code_ifthenelset{
                 and_exprt{in_range, match},
                 code_frontend_assignt{index_exprt{vals_arr, idx}, outer_rhs}});
@@ -2568,8 +2570,12 @@ codet python_convertert::convert_assign(const jsont &stmt)
           member_exprt keys_arr{obj, "keys", keys_type};
           member_exprt vals_arr{obj, "values", vals_type};
           exprt typed_key = key;
-          if(typed_key.type() != keys_type.element_type())
-            typed_key = coerce_element(typed_key, keys_type.element_type());
+          {
+            const typet lkt =
+              python_dict_logical_key_type(keys_type.element_type());
+            if(typed_key.type() != lkt)
+              typed_key = coerce_element(typed_key, lkt);
+          }
           exprt typed_val = rhs;
           if(typed_val.type() != vals_type.element_type())
             typed_val = coerce_element(typed_val, vals_type.element_type());
@@ -2591,7 +2597,8 @@ codet python_convertert::convert_assign(const jsont &stmt)
           {
             exprt idx = from_integer(i, signedbv_typet{64});
             exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-            exprt match = equal_exprt{index_exprt{keys_arr, idx}, typed_key};
+            exprt match = equal_exprt{
+              python_dict_unbox_key(index_exprt{keys_arr, idx}), typed_key};
             code_blockt update;
             update.add(
               code_frontend_assignt{index_exprt{vals_arr, idx}, typed_val});
@@ -2601,8 +2608,8 @@ codet python_convertert::convert_assign(const jsont &stmt)
           }
           code_blockt append;
           emit_capacity_guard(append, length, PYTHON_MAX_DICT_SIZE);
-          append.add(
-            code_frontend_assignt{index_exprt{keys_arr, length}, typed_key});
+          append.add(code_frontend_assignt{
+            index_exprt{keys_arr, length}, box_string_for_storage(typed_key)});
           append.add(
             code_frontend_assignt{index_exprt{vals_arr, length}, typed_val});
           append.add(code_frontend_assignt{
@@ -2763,7 +2770,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
           {
             exprt idx = from_integer(i, signedbv_typet{64});
             exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-            exprt match = equal_exprt{index_exprt{keys_arr, idx}, typed_key};
+            exprt match = equal_exprt{
+              python_dict_unbox_key(index_exprt{keys_arr, idx}),
+              python_dict_unbox_key(typed_key)};
             block.add(code_ifthenelset{
               and_exprt{in_range, match},
               code_frontend_assignt{index_exprt{vals_arr, idx}, typed_val}});
@@ -3786,10 +3795,11 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       {
         exprt idx = from_integer(i, signedbv_typet{64});
         exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-        exprt key_i = index_exprt{keys_arr, idx};
-        if(key_i.type() != key_expr.type())
-          key_i = safe_typecast(key_i, key_expr.type());
-        exprt match = equal_exprt{key_i, key_expr};
+        exprt key_i = python_dict_unbox_key(index_exprt{keys_arr, idx});
+        exprt key_q = python_dict_unbox_key(key_expr);
+        if(key_i.type() != key_q.type())
+          key_i = safe_typecast(key_i, key_q.type());
+        exprt match = equal_exprt{key_i, key_q};
         result = if_exprt{
           and_exprt{in_range, match}, index_exprt{vals_arr, idx}, result};
       }
@@ -4611,7 +4621,9 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     {
       exprt idx = from_integer(i, signedbv_typet{64});
       exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-      exprt match = equal_exprt{index_exprt{keys_arr, idx}, dict_aug_key};
+      exprt match = equal_exprt{
+        python_dict_unbox_key(index_exprt{keys_arr, idx}),
+        python_dict_unbox_key(dict_aug_key)};
       code_blockt update;
       update.add(
         code_frontend_assignt{index_exprt{vals_arr, idx}, typed_new_val});

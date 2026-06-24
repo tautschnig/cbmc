@@ -1262,7 +1262,7 @@ skip_string_unroll:;
   {
     const auto &dict_st = to_struct_type(iterable.type());
     const auto &keys_type = to_array_type(dict_st.components()[1].type());
-    typet key_type = keys_type.element_type();
+    typet key_type = python_dict_logical_key_type(keys_type.element_type());
 
     irep_idt var_id{qualified_name};
     if(symbol_table.lookup(var_id) == nullptr)
@@ -1306,7 +1306,7 @@ skip_string_unroll:;
       for(auto &st : cm_pro.statements())
         body_block.add(std::move(st));
     }
-    exprt key_val = index_exprt{keys, idx_var};
+    exprt key_val = python_dict_unbox_key(index_exprt{keys, idx_var});
     if(key_val.type() != loop_var.type())
       key_val = safe_typecast(key_val, loop_var.type());
     body_block.add(code_frontend_assignt{loop_var, key_val});

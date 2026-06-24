@@ -1332,7 +1332,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
         member_exprt lvals{current_left, "values", vals_t};
         member_exprt rvals{right, "values", vals_t};
 
-        bool keys_are_strings = is_python_string_type(keys_t.element_type());
+        bool keys_are_strings = is_python_string_type(
+          python_dict_logical_key_type(keys_t.element_type()));
         bool vals_are_strings = is_python_string_type(vals_t.element_type());
 
         // Build: lengths match AND for each i in [0, llen):
@@ -1342,14 +1343,16 @@ exprt python_convertert::convert_compare(const jsont &expr)
         {
           exprt iv = from_integer(i, signedbv_typet{64});
           exprt i_in_range = binary_relation_exprt{iv, ID_lt, llen};
-          exprt l_key = index_exprt{lkeys, iv, keys_t.element_type()};
+          exprt l_key = python_dict_unbox_key(
+            index_exprt{lkeys, iv, keys_t.element_type()});
           exprt l_val = index_exprt{lvals, iv, vals_t.element_type()};
           exprt found_match = false_exprt{};
           for(std::size_t j = 0; j < PYTHON_MAX_DICT_SIZE; j++)
           {
             exprt jv = from_integer(j, signedbv_typet{64});
             exprt j_in_range = binary_relation_exprt{jv, ID_lt, rlen};
-            exprt r_key = index_exprt{rkeys, jv, keys_t.element_type()};
+            exprt r_key = python_dict_unbox_key(
+              index_exprt{rkeys, jv, keys_t.element_type()});
             exprt r_val = index_exprt{rvals, jv, vals_t.element_type()};
             exprt key_eq;
             if(keys_are_strings)
@@ -1794,21 +1797,24 @@ exprt python_convertert::convert_compare(const jsont &expr)
         member_exprt rkeys{right, "keys", keys_t};
         member_exprt lvals{current_left, "values", vals_t};
         member_exprt rvals{right, "values", vals_t};
-        bool keys_are_strings = is_python_string_type(keys_t.element_type());
+        bool keys_are_strings = is_python_string_type(
+          python_dict_logical_key_type(keys_t.element_type()));
         bool vals_are_strings = is_python_string_type(vals_t.element_type());
         exprt all_match = equal_exprt{llen, rlen};
         for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
         {
           exprt iv = from_integer(i, signedbv_typet{64});
           exprt i_in_range = binary_relation_exprt{iv, ID_lt, llen};
-          exprt l_key = index_exprt{lkeys, iv, keys_t.element_type()};
+          exprt l_key = python_dict_unbox_key(
+            index_exprt{lkeys, iv, keys_t.element_type()});
           exprt l_val = index_exprt{lvals, iv, vals_t.element_type()};
           exprt found_match = false_exprt{};
           for(std::size_t j = 0; j < PYTHON_MAX_DICT_SIZE; j++)
           {
             exprt jv = from_integer(j, signedbv_typet{64});
             exprt j_in_range = binary_relation_exprt{jv, ID_lt, rlen};
-            exprt r_key = index_exprt{rkeys, jv, keys_t.element_type()};
+            exprt r_key = python_dict_unbox_key(
+              index_exprt{rkeys, jv, keys_t.element_type()});
             exprt r_val = index_exprt{rvals, jv, vals_t.element_type()};
             exprt key_eq;
             if(keys_are_strings)
@@ -2514,7 +2520,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
             {
               exprt idx = from_integer(i, signedbv_typet{64});
               exprt in_range = binary_relation_exprt{idx, ID_lt, dict_len};
-              exprt key_at = index_exprt{dict_keys, idx};
+              exprt key_at = python_dict_unbox_key(index_exprt{dict_keys, idx});
               exprt match = equal_exprt{key_at, key_item};
               dict_membership =
                 or_exprt{dict_membership, and_exprt{in_range, match}};
@@ -2579,7 +2585,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
         }
         if(
           !keys_are_values && key_str.has_value() &&
-          dict_val->id() == ID_struct && dict_val->operands().size() >= 2 &&
+          !python_smt_string_native_flag() && dict_val->id() == ID_struct &&
+          dict_val->operands().size() >= 2 &&
           dict_val->operands()[0].is_constant())
         {
           mp_integer len_val;
@@ -2624,7 +2631,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
           {
             exprt idx = from_integer(i, signedbv_typet{64});
             exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-            exprt key_i = index_exprt{keys, idx};
+            exprt key_i = python_dict_unbox_key(index_exprt{keys, idx});
             exprt match;
             if(is_python_value_type(key_i.type()))
             {

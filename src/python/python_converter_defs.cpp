@@ -4164,8 +4164,9 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                   {
                     exprt idx = from_integer(i, signedbv_typet{64});
                     exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-                    exprt match =
-                      equal_exprt{index_exprt{keys_arr, idx}, typed_req_key};
+                    exprt match = equal_exprt{
+                      python_dict_unbox_key(index_exprt{keys_arr, idx}),
+                      python_dict_unbox_key(typed_req_key)};
                     found = or_exprt{found, and_exprt{in_range, match}};
                   }
                   code_assertt req_assert{found};

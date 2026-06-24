@@ -534,7 +534,8 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       // the contents match. Use the string solver for content
       // equality so dict comprehensions like {str(i): v for ...}
       // can be looked up via d["0"].
-      bool keys_are_strings = is_python_string_type(keys_type.element_type());
+      bool keys_are_strings = is_python_string_type(
+        python_dict_logical_key_type(keys_type.element_type()));
       // PLR §6.10.1: value-typed (heterogeneous) keys cannot be matched
       // by a declared-type-gated equality — a str key would compare via
       // struct data-pointer (always miss) and a non-str key's unwrapped
@@ -557,7 +558,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       {
         exprt idx = from_integer(i, signedbv_typet{64});
         exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-        exprt key_i = index_exprt{keys, idx};
+        exprt key_i = python_dict_unbox_key(index_exprt{keys, idx});
         exprt match;
         if(keys_are_values)
         {
@@ -2529,6 +2530,29 @@ exprt python_convertert::try_box_bound_method_read(
 // overwrite semantics — symbolic keys cannot be compared at conversion time
 // and are kept as-is), pads to PYTHON_MAX_DICT_SIZE, and guards over-capacity.
 // Shared by convert_dict (dict literals) and dict.fromkeys.
+exprt python_convertert::box_string_for_storage(const exprt &str_value)
+{
+  if(
+    !python_smt_string_native_flag() ||
+    !is_python_string_type(str_value.type()))
+    return str_value;
+  // Materialise the string into a persistent heap symbol; store its address.
+  static unsigned dkey_counter = 0;
+  std::string nm = "__dkey_val_" + std::to_string(dkey_counter++);
+  irep_idt id{qualify_name(nm)};
+  if(symbol_table.lookup(id) == nullptr)
+  {
+    symbolt s{id, python_string_type(), "python"};
+    s.base_name = nm;
+    s.is_lvalue = true;
+    s.is_state_var = true;
+    symbol_table.add(s);
+  }
+  const symbolt &s = symbol_table.lookup_ref(id);
+  pending_checks.push_back(code_frontend_assignt{s.symbol_expr(), str_value});
+  return address_of_exprt{s.symbol_expr()};
+}
+
 exprt python_convertert::build_dict_value(
   std::vector<std::pair<exprt, exprt>> pairs,
   const source_locationt &loc)
@@ -2584,6 +2608,9 @@ exprt python_convertert::build_dict_value(
   struct_typet dict_type = python_dict_type(key_type, val_type);
   const auto &keys_arr_type = to_array_type(dict_type.components()[1].type());
   const auto &vals_arr_type = to_array_type(dict_type.components()[2].type());
+  // On native, string keys are boxed: the array element is a string*, so each
+  // key must be materialised behind a pointer (and padding is a null string*).
+  const typet &keys_elem_type = keys_arr_type.element_type();
 
   // Build keys array
   exprt::operandst key_elems;
@@ -2593,10 +2620,10 @@ exprt python_convertert::build_dict_value(
     if(k.type() != key_type)
       k = is_python_value_type(key_type) ? wrap_value(k)
                                          : safe_typecast(k, key_type);
-    key_elems.push_back(k);
+    key_elems.push_back(box_string_for_storage(k));
   }
   while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
-    key_elems.push_back(safe_zero(key_type));
+    key_elems.push_back(safe_zero(keys_elem_type));
 
   // Build values array
   exprt::operandst val_elems;

@@ -2576,8 +2576,11 @@ exprt python_convertert::string_substr(
     current_function);
 }
 
-exprt python_convertert::string_equal(const exprt &a, const exprt &b)
+exprt python_convertert::string_equal(const exprt &a_in, const exprt &b_in)
 {
+  // Native dict-key boxing: a stored key may be a string* box; unbox it.
+  exprt a = python_dict_unbox_key(a_in);
+  exprt b = python_dict_unbox_key(b_in);
   if(a.type().id() == ID_smt_string && b.type().id() == ID_smt_string)
     return equal_exprt{a, b};
   exprt r = emit_string_bool_function(
@@ -3589,6 +3592,10 @@ exprt python_convertert::coerce_element(
   const exprt &elem,
   const typet &element_type)
 {
+  // Native dict-key boxing: a string going into a boxed-key slot is
+  // materialised behind a typed pointer (covers all dict key-store sites).
+  if(is_boxed_dict_key_type(element_type) && is_python_string_type(elem.type()))
+    return box_string_for_storage(elem);
   return coerce_to_typed_slot(elem, element_type);
 }
 
