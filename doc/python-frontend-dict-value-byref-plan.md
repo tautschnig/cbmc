@@ -106,6 +106,11 @@ own independent value storage. Options:
 
 ## Whole-group root (the architectural observation)
 
+> **Update (2026-06-24):** the per-instance-identity blocker noted below is
+> resolved — `allocate_boxed_leaf` (dynamic `ID_allocate`) gives a distinct
+> object per execution. A focused spike of full reference semantics is scoped
+> in [reference-semantics spike](python-frontend-reference-semantics-spike.md).
+
 This is the **same root** as the nested-mutable-element aliasing in
 [§0](python-frontend-plan.md#nested-aliasing): *anonymous* mutable
 containers (list elements, dict values, built as literals) need a
