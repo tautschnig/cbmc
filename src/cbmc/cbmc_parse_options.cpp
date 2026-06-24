@@ -179,15 +179,38 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-use-stdlib-source", true);
   if(cmdline.isset("python-smt-strings"))
     options.set_option("python-smt-strings", true);
-  if(
-    cmdline.isset("python-smt-strings") && !cmdline.isset("cvc5") &&
-    !cmdline.isset("z3") && !cmdline.isset("outfile"))
   {
-    log.error()
-      << "--python-smt-strings selects the native SMT-LIB String backend, "
-         "which requires an SMT String solver: pass --cvc5 or --z3."
-      << messaget::eom;
-    exit(CPROVER_EXIT_USAGE_ERROR);
+    // Both --python-smt-strings (native SMT-LIB String sort) and
+    // --python-unbounded-ints (mathematical integer_typet) introduce
+    // non-fixed-width sorts that the bit-vector (SAT) backend cannot reason
+    // about: without an SMT backend the results are unreliable. Warn (rather
+    // than abort) so dump/inspection workflows still run. --outfile (SMT2
+    // dump) and any SMT solver flag count as "an SMT backend selected".
+    const bool string_smt_solver = cmdline.isset("cvc5") || cmdline.isset("z3");
+    const bool any_smt_solver =
+      string_smt_solver || cmdline.isset("cvc4") || cmdline.isset("bitwuzla") ||
+      cmdline.isset("boolector") || cmdline.isset("mathsat") ||
+      cmdline.isset("smt2") || cmdline.isset("outfile");
+    if(
+      cmdline.isset("python-smt-strings") && !string_smt_solver &&
+      !cmdline.isset("outfile"))
+    {
+      log.warning()
+        << "--python-smt-strings selects the native SMT-LIB String backend, "
+           "which requires an SMT String solver: pass --cvc5 or --z3. "
+           "Without one the bit-vector backend cannot represent the String "
+           "sort and results are unreliable."
+        << messaget::eom;
+    }
+    if(cmdline.isset("python-unbounded-ints") && !any_smt_solver)
+    {
+      log.warning()
+        << "--python-unbounded-ints uses mathematical (arbitrary-precision) "
+           "integers, which require an SMT solver: pass one of --cvc5 / --z3 "
+           "(or another SMT backend). Without one the bit-vector backend "
+           "cannot reason about them and results are unreliable."
+        << messaget::eom;
+    }
   }
   if(cmdline.isset("python-lazy-stubs"))
     options.set_option("python-lazy-stubs", true);

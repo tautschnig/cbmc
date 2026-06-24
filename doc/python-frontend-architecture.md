@@ -740,7 +740,7 @@ property at call sites whose argument class doesn't declare
 
 | Flag | Default | Effect |
 |------|---|---|
-| `--python-unbounded-ints` | off | Use CBMC bignums (`integer_typet`) instead of int64; requires Z3. Ints wrapped into `python_value` are [boxed](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) behind an `integer*` (full precision + fixed-width union) |
+| `--python-unbounded-ints` | off | Use CBMC bignums (`integer_typet`) instead of int64; requires an SMT solver (e.g. `--cvc5` / `--z3`) — a warning is emitted if none is selected. Ints wrapped into `python_value` are [boxed](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) behind an `integer*` (full precision + fixed-width union) |
 | `--python-no-exception-checks` | off | Suppress automatic `assert ¬__exception_active` after each statement |
 | `--python-check-annotations` | off | Emit `annotation-mismatch` properties when an `AnnAssign` RHS type differs from the declaration |
 | `--python-check-any-arg-attrs` | off | Emit `attribute-error` properties for `obj.X` accesses where `obj`'s argument-side type doesn't declare `X` |
