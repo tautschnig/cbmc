@@ -954,14 +954,20 @@ the pre-existing `--python-unbounded-ints` 64-bit truncation). Both are fixed
 by **per-instance heap allocation** plus a **const-fold guard** (the dict-literal
 subscript const-fold must not re-read a boxed leaf's per-execution pointer); the
 root was the const-fold, not the allocation, so strings and unbounded ints are
-both sound *and* precise.
-The entries below are the deliberate soundness-vs-precision tradeoffs and
-the guarded / opt-in cases.
+both sound *and* precise. The const-fold guard was then **generalised**
+(`value_is_const_foldable`) to the whole class — re-reading any tracked
+dict-literal value that embeds a mutable symbol (not just a boxed leaf) was
+unsound (`n=1; d={"k":n}; n=2; d["k"]`). Finally, the last documented open false
+proof — **extraction-then-mutate** (`r=c[i]; r.append(x)`) — was closed by an
+invalidate-on-mutation guard (havoc the source container; see the
+nested-mutable-aliasing row). The entries below are the deliberate
+soundness-vs-precision tradeoffs and the guarded / opt-in cases.
 
 | Area | Issue | Status | Plan |
 |---|---|---|---|
 | Operations that can raise | `int()`/`float()` of a non-constant string (`ValueError`), `os.*` file ops (`OSError`), `re` with a non-str pattern (`TypeError`) are modelled as **silently succeeding** by default (precision-favouring) → false **negatives** by design | sound **only** under opt-in `--python-raising-ops-check`; default favours precision | [plan §0](python-frontend-plan.md#false-proofs) |
-| Nested mutable-element aliasing | anonymous nested-mutable list/dict elements stored by value; the replication / self-append / new-container channels are **guarded** (report `python-model-bound`). **Direct** nested mutation works (`c[i].append(...)` for lists, and int-keyed dict values via lvalue value slots) | sound (guarded); the single residual is **extraction-then-mutate** (`r=c[i]; r.append(...)` / `v=a[k]; v.append(...)`) — a documented, corpus-invisible false proof. Slot-aliasing is unsound (object-vs-slot divergence under reassign/insert/pop/sort); the sound fix needs per-object identity = the empirically-untenable byref-at-construction | [plan §0](python-frontend-plan.md#false-proofs) + [dict-byref](python-frontend-dict-value-byref-plan.md) |
+| Nested mutable-element aliasing | anonymous nested-mutable list/dict elements stored by value; the replication / self-append / new-container channels are **guarded** (report `python-model-bound`). **Direct** nested mutation works (`c[i].append(...)` for lists, and int-keyed dict values via lvalue value slots). **Extraction-then-mutate** (`r=c[i]; r.append(...)` / `v=a[k]; v.append(...)`) is now also **guarded** (2026-06-24): the extracted variable is recorded (`extracted_container_alias`) and, on a subsequent in-place mutation, the source container is havoced + dropped from the const-fold maps (sound over-approximation) | sound. **No known open false proof in the default config.** The remaining cost is precision (the source becomes nondet after the mutation). The principled whole-group fix is **reference semantics** for mutable objects (heap-allocate + alias by pointer) — newly plausible given the validated `allocate_boxed_leaf` mechanism; would also subsume the guarded channels | [plan §0](python-frontend-plan.md#false-proofs) + [dict-byref](python-frontend-dict-value-byref-plan.md) |
+| dict-literal const-fold | the dict-subscript const-fold substituted a construction-time-tracked value at a later read; for a value embedding a **mutable** symbol (a reassignable variable, a boxed-leaf pointer) this re-read the current value → false proof (`n=1; d={"k":n}; n=2; d["k"]`). **Closed 2026-06-24** (`value_is_const_foldable`): the const-fold now fires only for invariant values | sound (closed) | — |
 | Native `smt_string`→int cast | under `--python-smt-strings`, a spurious str→int coercion from value plumbing lowers to `str.to_int` (defined-but-approximate); genuine `int(str)` is exact | sound (approximate, flagged) | [strings plan](python-frontend-strings-plan.md#strings) |
 | BMC bounds | bugs deeper than `--unwind` / beyond the bounded container or 64-bit ranges are not found | sound w.r.t. the bound (intrinsic to BMC) | — (intrinsic) |
 
