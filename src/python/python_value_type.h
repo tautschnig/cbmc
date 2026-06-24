@@ -85,6 +85,23 @@ inline struct_tag_typet python_value_type()
   return struct_tag_typet{PYTHON_VALUE_TAG};
 }
 
+/// Fixed-width pointer type used to box a heap smt_string on the native
+/// SMT-String back-end (see python_value_struct_def's __str member).
+inline pointer_typet python_boxed_string_ptr_type()
+{
+  return pointer_typet{python_string_type(), 64};
+}
+
+/// Type of python_value's __str member: a typed pointer to a heap smt_string
+/// on the native SMT-String back-end ("string boxing"), or the inline string
+/// struct on the refined back-end.
+inline typet python_value_str_member_type()
+{
+  if(python_smt_string_native_flag())
+    return python_boxed_string_ptr_type();
+  return python_string_type();
+}
+
 /// Return the actual struct definition for the Python tagged-union.
 /// Only used to register the type in the symbol table.
 inline struct_typet python_value_struct_def()
@@ -97,14 +114,19 @@ inline struct_typet python_value_struct_def()
   components.push_back(struct_typet::componentt{"__float_val", double_type()});
   components.push_back(
     struct_typet::componentt{"__bool_val", signedbv_typet{32}});
-  // Inline refined string (rather than a pointer to one). python_string
-  // is not self-referential (it does not contain python_value), so unlike
-  // __list_ptr / __class_ptr this needs no opaque-pointer indirection and
-  // raises no forward-reference issue in smt2_conv. Storing it inline
-  // avoids a pointer hop that, in bulk (e.g. a value-keyed string dict
-  // copied by value), forced the string-refinement solver to reason about
-  // many aliased refined strings at once and blew up.
-  components.push_back(struct_typet::componentt{"__str", python_string_type()});
+  // Inline refined string OR, on the native SMT-String back-end, a typed
+  // pointer to a heap smt_string ("string boxing"). Rationale: on native,
+  // python_string_type() is the variable-width `smt_string` sort; storing it
+  // inline makes python_value itself variable-width, so any byte-imaged
+  // aggregate of python_value (e.g. an untyped dict's value array) hits
+  // CBMC's unpack_struct "non-constant-width member must come last" invariant
+  // and aborts. Boxing the string behind a fixed-width typed pointer keeps the
+  // byte-imaged skeleton all-fixed-width (byte_extract stays valid), while the
+  // actual smt_string is only ever touched through a clean typed dereference,
+  // never byte-imaged. On the refined back-end the string is a fixed-width
+  // struct, so it stays inline (the historical perf choice is preserved).
+  components.push_back(
+    struct_typet::componentt{"__str", python_value_str_member_type()});
   // List values use an opaque pointer (like __class_ptr) — typed
   // pointer would create a recursive type definition
   // (python_value -> pointer to python_list[python_value]) which
@@ -149,12 +171,12 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
       .to_expr();
   exprt bool_val = from_integer(0, signedbv_typet{32});
   // Inline empty string (the default __str). Native SMT-String back-end
-  // (Plan A): an empty smt_string constant, since __str is smt_string-typed;
-  // a struct_exprt typed smt_string would be malformed and crash symex's
-  // struct-assignment recursion.
+  // (Plan A): __str is a typed pointer to a heap smt_string ("string
+  // boxing"), so the default is a null string* (no inline smt_string, which
+  // would re-introduce a variable-width member into the byte-imaged skeleton).
   exprt str_val =
     python_smt_string_native_flag()
-      ? exprt{constant_exprt{irep_idt{""}, smt_string_typet{}}}
+      ? exprt{null_pointer_exprt{python_boxed_string_ptr_type()}}
       : exprt{struct_exprt{
           {from_integer(0, signedbv_typet{64}),
            null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
@@ -178,8 +200,17 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
                  : value;
     break;
   case python_type_tagt::STR:
-    str_val =
-      value.type().id() == ID_pointer ? exprt{dereference_exprt{value}} : value;
+    // Native ("string boxing"): wrap_value passes &heap_smt_string, which we
+    // store directly as a typed string* (no deref — keeping python_value
+    // fixed-width). Refined: deref a pointer arg / store the inline string.
+    if(python_smt_string_native_flag())
+      str_val = value.type().id() == ID_pointer
+                  ? typecast_exprt{value, python_boxed_string_ptr_type()}
+                  : exprt{address_of_exprt{value}};
+    else
+      str_val = value.type().id() == ID_pointer
+                  ? exprt{dereference_exprt{value}}
+                  : value;
     break;
   case python_type_tagt::LIST:
     list_ptr = value.type().id() == ID_pointer
@@ -267,6 +298,11 @@ inline member_exprt python_value_bool(const exprt &value)
 /// Extract the (inline) string from a tagged-union value.
 inline exprt python_value_str(const exprt &value)
 {
+  // Native ("string boxing"): __str is a typed string*; dereference it to get
+  // the heap smt_string. Refined: __str is the inline string struct.
+  if(python_smt_string_native_flag())
+    return dereference_exprt{
+      member_exprt{value, "__str", python_boxed_string_ptr_type()}};
   return member_exprt{value, "__str", python_string_type()};
 }
 
@@ -315,7 +351,7 @@ inline struct_exprt make_python_closure(int fn_index, const exprt &record_ptr)
   exprt bool_val = from_integer(0, signedbv_typet{32});
   exprt str_val =
     python_smt_string_native_flag()
-      ? exprt{constant_exprt{irep_idt{""}, smt_string_typet{}}}
+      ? exprt{null_pointer_exprt{python_boxed_string_ptr_type()}}
       : exprt{struct_exprt{
           {from_integer(0, signedbv_typet{64}),
            null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},

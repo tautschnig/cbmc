@@ -2528,8 +2528,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
           extract_string_value(item).has_value())
         {
           // Reconstruct a python_string-typed expression for
-          // the container (inline __str).
-          member_exprt str_val{container, "__str", python_string_type()};
+          // the container (boxed string* on native, inline on refined).
+          exprt str_val = python_value_str(container);
           exprt key_item = item;
           if(!is_python_string_type(key_item.type()))
           {

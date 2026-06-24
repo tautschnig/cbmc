@@ -3121,8 +3121,8 @@ exprt python_convertert::value_equal(const exprt &a, const exprt &b)
   };
   exprt str_eq = emit_string_bool_function(
     ID_cprover_string_equal_func,
-    member_exprt{a, "__str", python_string_type()},
-    member_exprt{b, "__str", python_string_type()},
+    python_value_str(a),
+    python_value_str(b),
     symbol_table,
     pending_checks);
   if(str_eq.type() != bool_typet{})
