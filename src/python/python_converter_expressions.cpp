@@ -1471,6 +1471,27 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   // forcing an unsound smt_string->int cast on the index.)
   if(is_python_value_type(value.type()))
   {
+    // PLR §6.3.2: subscripting a value whose runtime tag is NOT a
+    // subscriptable type (int/float/bool/complex/set/closure) raises
+    // TypeError ("'X' object is not subscriptable"). The list-slot read
+    // below assumed the LIST tag unconditionally, so e.g.
+    // `def first(xs): return xs[0]` called as `first(5)` silently read
+    // garbage instead of raising. Emit a tag obligation: the tag must be a
+    // container (STR/LIST/DICT) or CLASS (the instance may define
+    // __getitem__, dispatched on the concrete-struct path). NONE is already
+    // handled (TypeError) at the top of this function.
+    exprt subscriptable = or_exprt{
+      or_exprt{
+        python_value_is(value, python_type_tagt::STR),
+        python_value_is(value, python_type_tagt::LIST)},
+      or_exprt{
+        python_value_is(value, python_type_tagt::DICT),
+        python_value_is(value, python_type_tagt::CLASS)}};
+    add_check(
+      subscriptable,
+      "python-type-error",
+      "object is not subscriptable (TypeError)",
+      get_location(expr));
     const bool int_slice =
       slice.type().id() == ID_signedbv || slice.type().id() == ID_unsignedbv ||
       slice.type().id() == ID_integer || slice.type() == python_int_type();
@@ -1488,6 +1509,23 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     // String key on a python_value (DICT tag) is not yet resolved to a
     // precise value here; fall through to the sound nondet python_value
     // over-approximation below rather than mis-indexing a list.
+  }
+
+  // PLR §6.3.2: subscripting a value of a concrete non-subscriptable scalar
+  // type (int/float/bool) is a DEFINITE TypeError ("'int' object is not
+  // subscriptable"). Reaching here with such a receiver (e.g. an unannotated
+  // parameter inferred as int, called as `first(5); xs[0]`) previously fell
+  // through to a silent nondet. The type is statically known, so assert false.
+  if(
+    value.type().id() == ID_signedbv || value.type().id() == ID_unsignedbv ||
+    value.type().id() == ID_integer || value.type().id() == ID_floatbv ||
+    value.type().id() == ID_bool || value.type() == python_int_type())
+  {
+    add_check(
+      false_exprt{},
+      "python-type-error",
+      "object is not subscriptable (TypeError)",
+      get_location(expr));
   }
 
   log_overapprox("Subscript: unsupported operand type, using nondet");
