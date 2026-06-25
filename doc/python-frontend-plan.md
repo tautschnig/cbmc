@@ -579,6 +579,27 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
+**Int shift unbounded-mode false proof — FIXED (2026-06-25).** Under
+`--python-unbounded-ints` (the SOUND int mode), `<<` and `>>` still truncated
+the operand to signedbv64 before shifting, so `1 << 70` false-proved `== 0` and
+`(2**70) >> 5` false-proved `== 0` even in the sound mode. Fix
+(python_converter_ops.cpp): in the integer domain `x << n == x * 2**n` and
+`x >> n == floor(x / 2**n)` (exact for a constant shift / non-negative operand;
+sound nondet for symbolic shift or negative-operand `>>`). Guards:
+`unbounded-shift-soundness`, `unbounded-shift-precise`. NOTE: the DEFAULT 64-bit
+int model still wraps on >64-bit values (a documented bound, like `--unwind`);
+`--python-unbounded-ints` is the sound mode and is now genuinely sound for
+shifts too.
+
+**String model + control-flow — full audit clean (2026-06-25).** P1 probed the
+string model (constant + symbolic; refined default + native) across
+find/index/count/replace/split/slice/startswith/in/==/ordering/case/join/format/
+len/concat/mult/f-string — all sound (native times out on symbolic = perf, not a
+false proof). P2 probed exceptions/`with`/generators (raise-flow, except-type
+match, finally-return, `__exit__` suppression, re-raise, generator values/len)
+-- all sound. Guards: `string-soundness-symbolic`, `control-flow-soundness`.
+
+
 **Dict string-keyed value direct-mutation false proof — FIXED (2026-06-25, `b8ad0b63a6`).**
 `d={"k":[1]}; d["k"].append(2); assert len(d["k"])==1` verified SUCCESSFUL
 (real len 2): a string-keyed dict value is returned by copy, so the in-place
