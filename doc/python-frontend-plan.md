@@ -597,6 +597,25 @@ int->float numeric tower are accepted. Guard: `param-coercion-typeerror`
 (flipped KNOWNBUG->CORE). The provenance set is reusable for return/assign
 boundary obligations (future).
 
+**Boundary-obligation scope finding (2026-06-25).** Investigated extending the
+provenance-gated tag obligation to the return and assignment boundaries: both are
+**already sound** -- a union/Any value flows through `return`/annotated-assign as
+a `python_value` (the tag is preserved), so the operator/subscript/call use-site
+obligations catch a later misuse; an unannotated return does not false-alarm.
+The remaining default-mode gap is a **concrete-type mismatch** at the call
+boundary (`use(d["k"])` where `d` is a str-valued dict and `use(y: int)`): the
+arg is a concrete `str`, not a `python_value`, so the tag obligation does not
+apply. Flagging it by default is **NOT done** because a parameter type-mismatch
+is not in general a runtime error -- Python does not check annotations at the
+call, only a *use* of the value as the wrong type raises, so a function that
+ignores the param (`def greet(name: str): pass; greet(42)`) does NOT raise and
+flagging it is a false positive (this regressed 3 corpus tests). It stays covered
+by opt-in `--python-check-annotations`. The same precision caveat applies in
+principle to the python_value call-boundary obligation (it could spuriously fail
+a tag-mismatched union/Any arg bound to a param the function ignores), but that
+shape is absent from the corpus (sweep clean); it remains a net soundness win
+(removes the param-coercion false proof) with a documented precision caveat.
+
 **Differential triage of the mypy/ty `narrowing-invalidation` cluster: DIVERSE
 roots, not one fix.** cbmc does no flow-narrowing, so these manifest as distinct
 feature gaps, several already documented / out-of-subset: nested-composition
