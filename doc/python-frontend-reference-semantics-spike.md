@@ -480,3 +480,26 @@ distinct-but-equal nested-list equality (sound nondet) and the deep-equality
 speed wall. Regression tests added: `ref-mutables-boundaries` (crash + concat +
 extend) and `ref-mutables-eq-soundness` (the `!=` false-proof guard). The
 default flip remains closed (§12); this hardens the opt-in mode itself.
+
+### 13a. Follow-up: list `extend` element-coercion (a wider, by-value bug)
+
+Chasing an `extend` value-read nuance under the flag surfaced a **pre-existing,
+flag-independent** defect: `list.extend` copied source elements into the
+destination's data array with **no element coercion** (unlike the string-extend
+branch beside it, which coerces). So extending a `list[int]` with a
+`list[python_value]` source — whether from a reference-list concat
+(`acc.extend([0] + r)`) or a plain **heterogeneous literal by-value**
+(`acc.extend([0, "s"])`) — bit-reinterpreted each element (a `python_value`
+struct stored into an `int` slot), corrupting the value on read-back.
+
+Fix (ungated, general): coerce each source element to the destination element
+type via `coerce_element` (which unwraps/wraps `python_value` ↔ scalar) before
+the copy. Resolves the reference-list case **and** the by-value heterogeneous
+case (`acc.extend([0,"s"]); assert acc[0]==0` went FAILED→SUCCESSFUL). Validated:
+soundness negative stays FAILED; full default `regression/python` suite green;
+by-value A/B sweep unchanged (PASS 2715, **0 regressions**). The
+`ref-mutables-boundaries` regression test now asserts the extended element value
+(`acc[1]==7`). Architectural note: element-type unification on container
+mutation (append/extend/insert/subscript-assign storing a value whose type
+differs from the list's inferred element type) is the general pattern; `append`
+and subscript-assign already coerce, `extend` was the gap.
