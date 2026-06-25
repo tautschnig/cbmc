@@ -504,15 +504,25 @@ std::optional<exprt> python_convertert::try_list_method(
           plus_exprt{length, arg_len},
           PYTHON_MAX_LIST_LENGTH,
           get_location(expr));
-        // Copy elements: obj.data[obj.length + i] = arg.data[i]
+        // Copy elements: obj.data[obj.length + i] = arg.data[i].
+        // Coerce each source element to the destination element type: the two
+        // lists need not share an element type (e.g. extending a list[int]
+        // with a list[python_value] produced by a reference-list concat, or a
+        // heterogeneous literal). A raw copy would bit-reinterpret the element
+        // (storing a python_value struct into an int slot, or vice versa) and
+        // corrupt the value on read-back. coerce_element unwraps/wraps as
+        // needed (python_value <-> scalar) so the stored value is faithful.
+        const typet &dst_elem = data_type.element_type();
         for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
         {
           exprt idx = from_integer(i, signedbv_typet{64});
           exprt dst = plus_exprt{length, idx};
+          exprt src_el = index_exprt{arg_data, idx};
+          if(src_el.type() != dst_elem)
+            src_el = coerce_element(src_el, dst_elem);
           pending_checks.push_back(code_ifthenelset{
             binary_relation_exprt{idx, ID_lt, arg_len},
-            code_frontend_assignt{
-              index_exprt{data, dst}, index_exprt{arg_data, idx}}});
+            code_frontend_assignt{index_exprt{data, dst}, src_el}});
         }
         pending_checks.push_back(code_frontend_assignt{
           member_exprt{obj, "length", signedbv_typet{64}},

@@ -27,3 +27,4 @@ acc = []
 for row in rows():
     acc.extend([0] + row)
 assert len(acc) == 2
+assert acc[1] == 7
