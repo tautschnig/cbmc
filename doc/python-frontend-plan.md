@@ -605,8 +605,13 @@ modelling (a13), context-manager `__enter__` mutation (a8), mutable-default
 shared state (a10), inheritance+union virtual dispatch (b3/b5/b6), `__setattr__`
 (c5 -> attribute-protocol residual), numeric-tower int-as-float method call (d1,
 which the subset marks OUT). Same-expression eval-order x union-retag is the a17
-residual. Each is its own modelling project; tracked via the (private)
-differential harness rather than 10 separate suite tests.
+residual. Each is its own modelling project. The distinct roots are now pinned
+as public KNOWNBUG regression tests (PLR-correct = VERIFICATION FAILED, to flip
+to CORE as each gap closes): `enum-value-after-mutation-knownbug`,
+`shared-object-aliasing-knownbug`, `context-manager-enter-mutation-knownbug`,
+`setattr-override-knownbug`, `union-use-after-mutation-typeerror-knownbug` — so
+the architecture inventory's "known open false proofs" claim is testable. (The
+broader set of witnesses is also tracked via the differential harness.)
 
 **FIXED (numeric tower):** `unwrap_value` to a float target now promotes an
 INT/BOOL-tagged value's `__int_val` payload to float instead of reading the
