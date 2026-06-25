@@ -579,6 +579,23 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
+**Subscript tag obligation — ADDED (Any/scalar receiver).** Subscripting a value
+whose runtime type is not subscriptable now raises TypeError instead of silently
+returning nondet/garbage: a concrete scalar receiver (`int`/`float`/`bool`, e.g.
+an unannotated param inferred as int then `xs[0]`) is a DEFINITE TypeError
+(assert false); a `python_value` (Any/union) receiver must carry a container tag
+(STR/LIST/DICT) or CLASS (may define `__getitem__`). Guard:
+`any-subscript-typeerror` (flipped KNOWNBUG->CORE). **Still open (KNOWNBUG
+`union-use-after-mutation-typeerror`):** the broader tag obligation on
+union/Any *extraction* used in an operator (`int|str` read as int via
+`unwrap_value`, which reads `__int_val` with no tag assertion) is deferred -- a
+blanket assert there is as noisy as the int-overflow blanket guard was (it would
+fire on every union/Any read incl. isinstance-guarded branches, because the
+frontend adds no flow-narrowing `assume(tag==INT)`). A sound non-noisy fix needs
+isinstance narrowing + a definite-mismatch-first obligation; tracked as the
+tag-obligation project.
+
+
 **`del obj.attr` no longer leaves a stale concrete value (FIXED).** For an
 instance-only attribute (no `__shadow_` presence flag), `del obj.attr` reset the
 slot to the None marker (0 for int), so `c.x = 42; del c.x; assert c.x == 0`
