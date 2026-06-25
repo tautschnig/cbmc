@@ -2238,6 +2238,33 @@ exprt python_convertert::convert_compare(const jsont &expr)
       {
         member_exprt bm{container, "bitmap", unsignedbv_typet{64}};
         member_exprt off{container, "offset", signedbv_typet{64}};
+        // The set is a 64-bit int BITMAP -- only int/bool elements have a
+        // precise bit position. A non-int element (tuple/str/...) cast to a
+        // bit position can COLLIDE with another element's bit, which would
+        // false-prove membership (e.g. `s.add((1,2)); (3,4) in s`). Sound
+        // over-approximation: membership of a non-int element is nondet.
+        const typet &it = item.type();
+        const bool int_elem = it.id() == ID_signedbv ||
+                              it.id() == ID_unsignedbv || it.id() == ID_bool ||
+                              it.id() == ID_integer;
+        if(!int_elem)
+        {
+          static unsigned set_in_nd = 0;
+          const irep_idt nd_id{
+            qualify_name("__set_in_nd_" + std::to_string(set_in_nd++))};
+          if(symbol_table.lookup(nd_id) == nullptr)
+          {
+            symbolt s{nd_id, bool_typet{}, "python"};
+            s.base_name = id2string(nd_id);
+            s.is_lvalue = true;
+            s.is_state_var = true;
+            symbol_table.add(s);
+          }
+          exprt in_set = symbol_table.lookup_ref(nd_id).symbol_expr();
+          cmp = (op == "In") ? in_set : exprt{not_exprt{in_set}};
+        }
+        else
+        {
         exprt shifted_item = item;
         if(shifted_item.type() != signedbv_typet{64})
           shifted_item = safe_typecast(shifted_item, signedbv_typet{64});
@@ -2249,6 +2276,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
         exprt in_set =
           notequal_exprt{bit, from_integer(0, unsignedbv_typet{64})};
         cmp = (op == "In") ? in_set : exprt{not_exprt{in_set}};
+        }
       }
       // x in lst → disjunction: lst.data[0]==x or lst.data[1]==x or ...
       else if(is_python_list_type(container.type()))

@@ -1503,27 +1503,68 @@ std::optional<exprt> python_convertert::try_method_call(
           c_intrinsic_map.count(func_id) == 0 && !intercept_random)
         {
           const code_typet &ft = to_code_type(sym->type);
+          const std::size_t nparams = ft.parameters().size();
           exprt::operandst arguments;
           if(args.is_array())
           {
             for(const auto &arg : as_array(args))
               arguments.push_back(convert_expression(arg));
           }
-          // Fill trailing parameters that were not supplied at the call
-          // site with their default values (e.g. re.sub(p, r, s) leaving
-          // count/flags defaulted). Without this the module-call dispatch
-          // passed too few arguments and the body saw the missing
-          // parameters as unconstrained nondet.
-          for(std::size_t i = arguments.size(); i < ft.parameters().size(); i++)
+          // Keyword arguments: match each `name=value` to the imported
+          // function's parameter base name (mirrors the local-call path).
+          // Without this, kwargs to imported functions were dropped -- the body
+          // saw the parameter as nondet/default (e.g. `mod.foo(a=5)` returned a
+          // wrong value) and the annotation check never ran.
+          const jsont &kws = json_member(expr, "keywords");
+          if(kws.is_array() && !as_array(kws).empty())
           {
-            auto def_it = default_values.find({method_name, i});
-            if(def_it == default_values.end())
-              break;
-            arguments.push_back(def_it->second);
+            if(arguments.size() < nparams)
+              arguments.resize(nparams, nil_exprt{});
+            auto pname = [&](std::size_t i) -> std::string {
+              std::string bn = id2string(ft.parameters()[i].get_base_name());
+              if(!bn.empty())
+                return bn;
+              std::string pid =
+                id2string(ft.parameters()[i].get_identifier());
+              auto pos = pid.rfind("::");
+              return pos == std::string::npos ? pid : pid.substr(pos + 2);
+            };
+            for(const auto &kw : as_array(kws))
+            {
+              const jsont &an = json_member(kw, "arg");
+              if(an.is_null()) // **kwargs spread — not handled here
+                continue;
+              const std::string kw_name = json_string(an);
+              exprt kw_val = convert_expression(json_member(kw, "value"));
+              for(std::size_t i = 0; i < nparams; i++)
+                if(pname(i) == kw_name)
+                {
+                  arguments[i] = kw_val;
+                  break;
+                }
+            }
           }
-          for(std::size_t i = 0;
-              i < arguments.size() && i < ft.parameters().size();
-              i++)
+          // Fill any not-supplied parameter (trailing, or a nil slot left by a
+          // positional+keyword mix) with its default value; anything still
+          // unsupplied becomes a sound nondet of the parameter type (the body
+          // would otherwise read an invalid nil operand).
+          for(std::size_t i = 0; i < nparams; i++)
+          {
+            if(i < arguments.size() && !arguments[i].is_nil())
+              continue;
+            auto def_it = default_values.find({method_name, i});
+            if(i >= arguments.size())
+              arguments.resize(i + 1, nil_exprt{});
+            if(def_it != default_values.end())
+              arguments[i] = def_it->second;
+          }
+          for(std::size_t i = 0; i < arguments.size() && i < nparams; i++)
+          {
+            if(arguments[i].is_nil())
+              arguments[i] = side_effect_expr_nondett{
+                ft.parameters()[i].type(), get_location(expr)};
+          }
+          for(std::size_t i = 0; i < arguments.size() && i < nparams; i++)
           {
             // PLR §3.1 (--python-check-annotations): flag an argument whose
             // type is incompatible with the imported function's declared

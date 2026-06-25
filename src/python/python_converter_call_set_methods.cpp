@@ -58,6 +58,19 @@ std::optional<exprt> python_convertert::try_set_method(
     if(!args.is_array() || as_array(args).empty())
       return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
     exprt val = convert_expression(*as_array(args).begin());
+    // The set is a 64-bit int BITMAP -- only int/bool elements have a precise
+    // bit. A non-int element (tuple/str/...) cast to a bit position can
+    // COLLIDE with an int element's bit and corrupt int membership (a false
+    // proof). Sound: do NOT touch the bitmap for a non-int element; its
+    // membership is modelled nondet at the `in` site (see convert_compare).
+    {
+      const typet &vt = val.type();
+      const bool int_elem = vt.id() == ID_signedbv ||
+                            vt.id() == ID_unsignedbv || vt.id() == ID_bool ||
+                            vt.id() == ID_integer;
+      if(!int_elem)
+        return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+    }
     if(val.type() != signedbv_typet{64})
       val = safe_typecast(val, signedbv_typet{64});
     // `add` introduces an element: guard it lies in the modelled bitmap range,
