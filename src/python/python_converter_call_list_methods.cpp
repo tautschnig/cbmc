@@ -40,6 +40,10 @@ std::optional<exprt> python_convertert::try_list_method(
   // Extraction-then-mutate soundness: if `obj` aliases a container element
   // (`r = c[i]`) and this is an in-place mutator, havoc the source container.
   invalidate_extracted_source_on_mutation(obj, method_name);
+  // Direct mutation of a non-int-keyed dict value (`d["k"].mutator(...)`): the
+  // value is returned by copy, so the mutation is lost -- havoc the dict.
+  invalidate_dict_value_on_mutation(
+    json_member(json_member(expr, "func"), "value"), method_name);
   // PLR §3.3.1: list.__iter__() returns the list itself,
   // which is sufficient for our list-as-iterator model.
   // The for-loop iter path expects the same shape and

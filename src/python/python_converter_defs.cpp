@@ -4458,6 +4458,12 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
         if(is_node_type(recv0, "Name"))
           invalidate_extracted_source_on_mutation(
             convert_expression(recv0), json_string(json_member(cf, "attr")));
+        // Direct mutation of a non-int-keyed dict value (`d["k"].append(...)`):
+        // the value is returned by copy, so the mutation is lost -- havoc the
+        // dict so a later read is nondet (not a stale false-proof value).
+        else if(is_node_type(recv0, "Subscript"))
+          invalidate_dict_value_on_mutation(
+            recv0, json_string(json_member(cf, "attr")));
       }
       static const std::set<std::string> mutating_methods{
         "append",
