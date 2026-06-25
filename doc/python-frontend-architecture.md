@@ -795,7 +795,7 @@ coercion happens. Each has a dedicated public helper on
 | Call argument | `coerce_call_argument(arg, param_type, param_id)` | every site emitting a `side_effect_expr_function_callt` for a Python user-call (see `coerce_call_arguments` for the batch form). `param_id` drives the tag obligation (below) |
 | Assignment RHS | `coerce_assign_rhs(rhs, lhs_type)` | every site emitting `code_frontend_assignt` whose LHS has a declared natural type |
 | Return value | `coerce_return_value(val, return_type)` | every site emitting `code_frontend_returnt` whose value has a different type than the function's declared return |
-| Container element | (no dedicated helper yet — uses `safe_typecast`) | list / dict / set element coercion in builders and builtins |
+| Container element | `coerce_element(elem, element_type)` | list / dict / set element coercion in builders and builtins (also boxes a string into a typed pointer for a boxed dict-key slot) |
 
 All four are thin wrappers over the private
 `coerce_to_typed_slot` (`src/python/python_converter.cpp`),
