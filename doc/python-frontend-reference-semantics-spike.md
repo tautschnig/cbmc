@@ -374,3 +374,56 @@ then the A/B sweep must show **0 regressions** (these six tests back to PASS,
 no crash) before flipping. The guard-retirement step (phase-2 tail) is deferred
 until then. Reverted the default flip; kept the validated opt-in work, the
 renamed precise test, and the `--extra-cbmc-flags` sweep-harness option.
+
+---
+
+## 12. Phase-2 boundary work — 2026-06-25 (equality cost wall: default flip NOT viable)
+
+Attempted to close the four boundary sites from §11 so the default could flip.
+Started with equality (sites: `list-eq9`, `list_depth_test`). Found a
+**fundamental backend cost wall** that blocks the default flip regardless of the
+other sites.
+
+**What was tried.** A dedicated reference-list equality: deref each
+`python_value` LIST element (`python_value_list`) and recurse structurally,
+bounded by a nesting `depth`, comparing INT/BOOL/FLOAT leaves precisely and
+falling back to nondet for the rest (deliberately NOT routing through the string
+solver, to avoid its blow-up).
+
+**Measured cost (`a=[[1]]; b=[[1]]; assert a==b`, length-1 lists):**
+- by-value (no flag): **0 s**, SUCCESSFUL (inline structs compare bitwise).
+- ref, **depth 1**: 4 s, SUCCESSFUL — fixes the **2-deep** case (`list-eq9`).
+- ref, **depth 2**: **TIMEOUT (>90 s)**.
+- ref, **depth 3 / 4**: TIMEOUT / OOM.
+
+Each deref level multiplies the per-element `dereference_exprt` count by the
+array width (16), and **pointer-analysis / value-set cost explodes**: ~16 derefs
+(depth 1) is 4 s; ~272 (depth 2) already times out. The original
+identity-or-nondet equality was chosen for exactly this reason.
+
+`list_depth_test` (a real corpus test) needs **precise 3-deep** equality, which
+requires depth ≥ 2 → intractable. So the 0-regression gate **cannot** be met for
+equality, independent of the concat/extend/coercion sites.
+
+**Architectural conclusion (the whole-group insight).** This is not six point
+fixes; it is one fundamental **value-vs-reference representation tradeoff** that
+the BMC backend's pointer cost makes unresolvable in favour of a single default:
+- **by-value** nested elements → equality is cheap + precise (bitwise on inline
+  structs), but aliasing/extraction/mutation are imprecise (handled by the
+  sound `python-model-bound` / havoc guards);
+- **by-reference** (`python_value` heap pointers) → aliasing/extraction/mutation
+  are precise, but **value-equality requires per-element pointer dereference
+  that blows up** (deep `==` intractable), plus concat/extend/coercion seams.
+
+There is no cheap representation that is precise for *both* aliasing and deep
+equality under bounded model checking. Therefore **reference semantics stays an
+opt-in precision mode** (`--python-ref-mutables`); it is **not** suitable as the
+default. The phase-2 "flip the default + retire the guards" goal is **closed as
+not-viable**; the by-value model + sound guards remain the right default. The
+opt-in mode keeps its validated phase-1 wins (precise extraction / reorder /
+replication / multi-instance) for users who need them and can accept the
+deep-equality cost (nondet beyond shallow nesting).
+
+Reverted the equality experiment; no source change lands from this phase (the
+finding is the deliverable). The boundary sites are retained in §11 as the
+record of *why* the default cannot flip, not as open TODOs.
