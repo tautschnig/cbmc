@@ -801,6 +801,11 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     // component.
     if(!annotation.is_null())
     {
+      // Annotation provenance: this parameter's type is a genuine source
+      // annotation (sound basis for a call-boundary tag obligation), unlike
+      // the default Any / a call-site-inferred type.
+      explicitly_annotated_params.insert(
+        irep_idt{"python::" + qualified_func_name + "::" + param_name});
       auto components = extract_union_components(annotation);
       if(!components.empty())
       {

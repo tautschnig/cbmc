@@ -405,7 +405,8 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           {
             const auto &gparams = to_code_type(gs->type).parameters();
             if(gparams.size() >= 2)
-              key_arg = coerce_call_argument(slice, gparams[1].type());
+              key_arg = coerce_call_argument(
+                slice, gparams[1].type(), gparams[1].get_identifier());
           }
           return side_effect_expr_function_callt{
             gs->symbol_expr(),

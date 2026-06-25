@@ -805,6 +805,15 @@ private:
   /// hold the None sentinel when assigned None, so the
   /// fast-path would lie about identity.
   std::set<irep_idt> optional_params;
+  /// Annotation provenance: parameter symbol ids whose type came from a GENUINE
+  /// source annotation (`def f(x: int)`), as opposed to the default
+  /// python_value (Any) or a call-site-INFERRED concrete type for an
+  /// unannotated parameter. Only a genuine annotation is a sound basis for a
+  /// runtime tag obligation at the call boundary: an inferred/default scalar
+  /// type (e.g. a lambda or unannotated param defaulted to int) really accepts
+  /// Any, so asserting its tag would false-alarm. Populated at def time;
+  /// consulted by coerce_call_argument.
+  std::set<irep_idt> explicitly_annotated_params;
   /// Track tuple literal values keyed by symbol identifier. Same
   /// purpose as list_literals: lets the constant-fold path in
   /// convert_call resolve `min(t)`/`max(t)`/etc. when `t` was
@@ -1990,7 +1999,14 @@ private:
   /// wrapper over `coerce_to_typed_slot` (the same rule applies
   /// to assignment-RHS and return-value boundaries via
   /// `coerce_assign_rhs` and `coerce_return_value`).
-  exprt coerce_call_argument(const exprt &arg, const typet &param_type);
+  /// \param param_id: the parameter's symbol identifier, when known. If it
+  ///   names an explicitly-annotated scalar parameter, a runtime tag
+  ///   obligation is emitted (a tagged-union/Any arg whose runtime tag does
+  ///   not match the annotated scalar type raises TypeError under CPython).
+  exprt coerce_call_argument(
+    const exprt &arg,
+    const typet &param_type,
+    const irep_idt &param_id = irep_idt{});
 
   /// Coerce a value being assigned to a variable of a declared
   /// type. Same PLR adaptations as `coerce_call_argument`
