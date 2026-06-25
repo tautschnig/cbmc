@@ -604,10 +604,10 @@ which the subset marks OUT). Same-expression eval-order x union-retag is the a17
 residual. Each is its own modelling project; tracked via the (private)
 differential harness rather than 10 separate suite tests.
 
-**Pre-existing precision/soundness note found in triage:** `unwrap_value` to a
-float target reads `__float_val` unconditionally, so an INT-tagged value bound to
-a float slot reads the (unset) float field instead of promoting `__int_val` ->
-float (PEP 484 numeric tower). Wrong value, not yet guarded.
+**FIXED (numeric tower):** `unwrap_value` to a float target now promotes an
+INT/BOOL-tagged value's `__int_val` payload to float instead of reading the
+unset `__float_val` (was a wrong-value bug for an int-tagged union/Any bound to
+a float slot). Guard: `unwrap-int-to-float-promotion`.
 
 
 **Subscript tag obligation — ADDED (Any/scalar receiver).** Subscripting a value
