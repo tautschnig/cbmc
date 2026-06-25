@@ -586,12 +586,16 @@ on a genuinely-numeric value or isinstance-guarded code). The SUBSCRIPT
 obligation landed (scalar receiver = definite TypeError; python_value receiver
 must be a container/CLASS tag). The CALL-BOUNDARY obligation (binding a union/Any
 arg to a concretely-typed scalar parameter, which `coerce_call_argument` ->
-`unwrap_value` does with no tag check) is **BLOCKED**: parameter types are not
-reliable real annotations -- lambdas and unannotated params default to a scalar
-type yet truly accept Any, so a blanket obligation false-alarms (demonstrated:
-`keep([A(),B()], lambda e: True)` regressed when an object was bound to a
-lambda param inferred as int). A sound version needs reliable "this is a genuine
-annotation" provenance. Pinned: `param-coercion-typeerror-knownbug`.
+`unwrap_value` does with no tag check) is now **ENABLED via annotation
+provenance**. `explicitly_annotated_params` records the parameter symbol ids
+whose type came from a GENUINE source annotation (vs the default Any or a
+call-site-INFERRED type); `coerce_call_argument` emits the tag obligation only
+for those. This sidesteps the earlier blocker -- lambdas / unannotated params
+default to a scalar type yet truly accept Any, so they are excluded
+(`keep([A(),B()], lambda e: True)` no longer false-alarms). int/bool and the
+int->float numeric tower are accepted. Guard: `param-coercion-typeerror`
+(flipped KNOWNBUG->CORE). The provenance set is reusable for return/assign
+boundary obligations (future).
 
 **Differential triage of the mypy/ty `narrowing-invalidation` cluster: DIVERSE
 roots, not one fix.** cbmc does no flow-narrowing, so these manifest as distinct
