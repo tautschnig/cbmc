@@ -1748,12 +1748,8 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   }
   else if(op == "LShift")
   {
-    if(left.type().id() == ID_integer)
-    {
-      left = typecast_exprt{left, signedbv_typet{64}};
-      right = typecast_exprt{right, signedbv_typet{64}};
-    }
-    // Negative shift raises ValueError
+    // Negative shift raises ValueError (both int widths).
+    auto emit_neg_shift_check = [&]()
     {
       const symbolt *exc_sym =
         symbol_table.lookup("python::__exception_active");
@@ -1764,17 +1760,29 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         pending_checks.push_back(code_ifthenelset{
           neg, code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
       }
+    };
+    if(left.type().id() == ID_integer)
+    {
+      // Unbounded int (--python-unbounded-ints): x << n == x * 2**n in the
+      // mathematical-integer domain. The old code truncated to signedbv64 and
+      // WRAPPED (so `1 << 70` false-proved == 0 even in the sound mode). For a
+      // constant non-negative shift, multiply by the exact 2**n; for a
+      // symbolic/negative shift, over-approximate soundly with a nondet integer
+      // rather than truncate-and-wrap.
+      emit_neg_shift_check();
+      mp_integer n;
+      if(
+        right.is_constant() && !to_integer(to_constant_expr(right), n) &&
+        n >= 0)
+        return mult_exprt{left, from_integer(power(2, n), integer_typet{})};
+      return side_effect_expr_nondett{integer_typet{}, source_locationt{}};
     }
+    emit_neg_shift_check();
     return shl_exprt{left, right};
   }
   else if(op == "RShift")
   {
-    if(left.type().id() == ID_integer)
-    {
-      left = typecast_exprt{left, signedbv_typet{64}};
-      right = typecast_exprt{right, signedbv_typet{64}};
-    }
-    // Negative shift raises ValueError
+    auto emit_neg_shift_check = [&]()
     {
       const symbolt *exc_sym =
         symbol_table.lookup("python::__exception_active");
@@ -1785,7 +1793,43 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         pending_checks.push_back(code_ifthenelset{
           neg, code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
       }
+    };
+    if(left.type().id() == ID_integer)
+    {
+      // Unbounded int (--python-unbounded-ints): x >> n == floor(x / 2**n) in
+      // the mathematical-integer domain. The old code truncated to signedbv64
+      // and wrapped (so `(2**70) >> 5` false-proved == 0). For a constant
+      // non-negative shift: for x >= 0 this is exact truncating division by
+      // 2**n; for x < 0 Python floors (toward -inf) while integer division
+      // truncates (toward 0), so fall back to a sound nondet there. A
+      // symbolic/negative shift is also a sound nondet.
+      emit_neg_shift_check();
+      mp_integer n;
+      if(
+        right.is_constant() && !to_integer(to_constant_expr(right), n) &&
+        n >= 0)
+      {
+        const exprt d = from_integer(power(2, n), integer_typet{});
+        static unsigned rsh_ctr = 0;
+        const irep_idt nd_id{
+          qualify_name("__rshift_nd_" + std::to_string(rsh_ctr++))};
+        if(symbol_table.lookup(nd_id) == nullptr)
+        {
+          symbolt s{nd_id, integer_typet{}, "python"};
+          s.base_name = id2string(nd_id);
+          s.is_lvalue = true;
+          s.is_state_var = true;
+          symbol_table.add(s);
+        }
+        const exprt nd = symbol_table.lookup_ref(nd_id).symbol_expr();
+        return if_exprt{
+          binary_relation_exprt{left, ID_ge, from_integer(0, integer_typet{})},
+          div_exprt{left, d},
+          nd};
+      }
+      return side_effect_expr_nondett{integer_typet{}, source_locationt{}};
     }
+    emit_neg_shift_check();
     return ashr_exprt{left, right};
   }
   else if(op == "MatMult")
