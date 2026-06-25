@@ -427,3 +427,56 @@ deep-equality cost (nondet beyond shallow nesting).
 Reverted the equality experiment; no source change lands from this phase (the
 finding is the deliverable). The boundary sites are retained in §11 as the
 record of *why* the default cannot flip, not as open TODOs.
+
+---
+
+## 13. Opt-in mode made correct + robust (modulo speed) — 2026-06-25
+
+Goal: make `--python-ref-mutables` *functionally correct and robust* (no
+crashes, no false proofs), accepting imprecision/slowness. Three value-semantic
+boundary defects were closed (all gated on the flag; **zero** change to the
+by-value default, full default suite green):
+
+1. **Crash at the coercion boundary (robustness).** Passing a wrapped
+   `list[python_value]` literal to a parameter/return/annotated-local typed as a
+   concrete nested list (`f([[1,2]])` with `items: list[list[int]]`) aborted in
+   `value_set::assign`. Fixed in `convert_type_annotation`: under the flag,
+   `list[list[...]]` lowers to `list[python_value]`, matching the literal
+   wrapping — a single locus that removes the seam at *every* annotated
+   boundary. Restricted to `list[list]` (convert_list wraps only list elements;
+   `list[dict]`/`list[set]` stay concrete, else a new mismatch appears — found
+   and fixed via `dict21`).
+
+2. **Concat (`+`) / `extend` with reference elements (correctness).**
+   `[1] + r` where `r` is an extracted inner-list reference was flagged an
+   incompatible-types TypeError (list + python_value) and returned nondet.
+   Fixed in `convert_binary_op`: allow `Add` when the other operand is a
+   python_value (possible LIST ref), then in the concat branch deref a
+   python_value operand (`python_value_list`) and, if element types differ,
+   promote both to `list[python_value]` before merging.
+
+3. **Equality false proof (soundness — the critical one).** `a=[[1]]; b=[[1]];
+   assert a != b` was wrongly **proved** (SUCCESSFUL): the bitwise struct
+   equality compared element heap pointers, so distinct references read as
+   unequal and `!=` became provable. Fixed in `convert_compare` with a sound,
+   cheap, deref-free branch: `element_eq = bitwise-equal OR (is-ref-tag AND
+   nondet)`. Scalars and same-object refs stay precise; distinct references are
+   nondet, so neither `==` nor `!=` is falsely proved. (Precise deep structural
+   equality remains intractable, §12; nondet is the *robust* choice — it avoids
+   the deref blow-up.)
+
+**A/B sweep (`--python-ref-mutables` via `--extra-cbmc-flags`) vs by-value:**
+- **CRASH: 0**, **FALSE PROOFS: 0** (verified no test is SUCCESSFUL-where-it-should-FAIL).
+- 1 **improvement**: `github_3667` (`list.copy()` shallow-copy aliasing now
+  modelled correctly; by-value got it wrong).
+- 6 **sound spurious-fails** vs by-value (`list-eq1/2/6/9`, `list_depth_test`,
+  `github_3238`) — all nested-list `==` of distinct-but-equal lists, now nondet
+  (sound) instead of precise. This is the deep-equality precision/speed tradeoff
+  from §12, not a correctness defect.
+
+**Conclusion: the opt-in mode is now functionally correct and robust** — no
+crashes, no false proofs — with the only residual being precision on
+distinct-but-equal nested-list equality (sound nondet) and the deep-equality
+speed wall. Regression tests added: `ref-mutables-boundaries` (crash + concat +
+extend) and `ref-mutables-eq-soundness` (the `!=` false-proof guard). The
+default flip remains closed (§12); this hardens the opt-in mode itself.
