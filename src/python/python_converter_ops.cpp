@@ -1785,8 +1785,58 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     // Bitwise ops require bitvectors — cast if using unbounded ints
     if(left.type().id() == ID_integer)
     {
-      left = typecast_exprt{left, signedbv_typet{64}};
-      right = typecast_exprt{right, signedbv_typet{64}};
+      // Unbounded ints (--python-unbounded-ints, the SOUND mode): a 64-bit
+      // bitwise is exact ONLY when both operands fit signedbv[64]. The old
+      // unconditional cast TRUNCATED and wrapped (a leak: `(2**70) & (2**70)`
+      // proved == 0). Fold constants exactly (arbitrary precision); for
+      // symbolic operands select the 64-bit result when both fit, else a sound
+      // nondet (the solver has no arbitrary-precision bitwise). In-range
+      // bitwise (the common flags/masks case) stays precise; out-of-range is
+      // over-approximated, never wrapped.
+      mp_integer lv, rv;
+      if(
+        left.is_constant() && right.is_constant() &&
+        !to_integer(to_constant_expr(left), lv) &&
+        !to_integer(to_constant_expr(right), rv))
+      {
+        const mp_integer res = op == "BitOr"    ? bitwise_or(lv, rv)
+                               : op == "BitAnd" ? bitwise_and(lv, rv)
+                                                : bitwise_xor(lv, rv);
+        return from_integer(res, integer_typet{});
+      }
+      const exprt l64 = typecast_exprt{left, signedbv_typet{64}};
+      const exprt r64 = typecast_exprt{right, signedbv_typet{64}};
+      exprt bw64;
+      if(op == "BitOr")
+        bw64 = bitor_exprt{l64, r64};
+      else if(op == "BitAnd")
+        bw64 = bitand_exprt{l64, r64};
+      else
+        bw64 = bitxor_exprt{l64, r64};
+      const exprt lo = from_integer(-power(2, 63), integer_typet{});
+      const exprt hi = from_integer(power(2, 63) - 1, integer_typet{});
+      auto in64 = [&](const exprt &e) -> exprt
+      {
+        return and_exprt{
+          binary_relation_exprt{e, ID_ge, lo},
+          binary_relation_exprt{e, ID_le, hi}};
+      };
+      static unsigned bw_nd_ctr = 0;
+      const irep_idt nd_id{
+        qualify_name("__bitw_nd_" + std::to_string(bw_nd_ctr++))};
+      if(symbol_table.lookup(nd_id) == nullptr)
+      {
+        symbolt s{nd_id, integer_typet{}, "python"};
+        s.base_name = id2string(nd_id);
+        s.is_lvalue = true;
+        s.is_state_var = true;
+        symbol_table.add(s);
+      }
+      const exprt nd = symbol_table.lookup_ref(nd_id).symbol_expr();
+      return if_exprt{
+        and_exprt{in64(left), in64(right)},
+        typecast_exprt{bw64, integer_typet{}},
+        nd};
     }
     if(op == "BitOr")
       return bitor_exprt{left, right};
