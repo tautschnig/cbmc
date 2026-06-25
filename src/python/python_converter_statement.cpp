@@ -589,16 +589,22 @@ codet python_convertert::convert_statement(const jsont &stmt)
               }
               else if(st != nullptr && st->has_component(attr))
               {
-                // Instance-only attr: reset to None marker.
-                exprt none_marker = coerce_to_typed_slot(
-                  python_none_value(), st->get_component(attr).type());
-                if(none_marker.type() != st->get_component(attr).type())
-                  none_marker =
-                    safe_typecast(none_marker, st->get_component(attr).type());
+                // PLR §7.4: `del obj.attr` on an instance-only attribute.
+                // Only class-level attrs carry a `__shadow_` presence flag,
+                // so we cannot flow-sensitively raise AttributeError on a
+                // later read here. Resetting the slot to the None marker
+                // (0 for int) was UNSOUND -- `c.x = 42; del c.x;
+                // assert c.x == 0` then verified even though CPython raises
+                // AttributeError. Over-approximate instead by havocking the
+                // slot to nondet, so a subsequent read cannot be proved equal
+                // to any concrete value (no silent wrong value). Precise
+                // AttributeError / `__getattr__` fallback for instance-only
+                // attrs needs per-instance presence tracking -- see the
+                // attribute-protocol gap in the plan.
+                const typet ft = st->get_component(attr).type();
                 del_block.add(code_frontend_assignt{
-                  member_exprt{
-                    obj_lvalue, attr, st->get_component(attr).type()},
-                  std::move(none_marker)});
+                  member_exprt{obj_lvalue, attr, ft},
+                  side_effect_expr_nondett{ft, loc}});
               }
             }
           }
