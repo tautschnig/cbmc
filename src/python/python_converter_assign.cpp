@@ -2199,6 +2199,96 @@ codet python_convertert::convert_assign(const jsont &stmt)
     // PLR §3.2: "Tuples are immutable sequences"
     if(is_node_type(target, "Subscript"))
     {
+      // PLR list slice-assignment: `a[lo:hi] = <iterable>` replaces the slice
+      // with the RHS elements (the result is a[0:lo] ++ rhs ++ a[hi:], so the
+      // length can change). Without this the Slice node was mis-converted as a
+      // single index, corrupting the list (even len() became nondet).
+      // Implemented for a list target + list RHS with step 1 and a matching
+      // (homogeneous) element type; other shapes fall through to the existing
+      // (sound) handling below.
+      {
+        const jsont &slice_node = json_member(target, "slice");
+        if(is_node_type(slice_node, "Slice"))
+        {
+          const jsont &step_node = json_member(slice_node, "step");
+          exprt obj = convert_expression(json_member(target, "value"));
+          exprt rhs_list = rhs;
+          if(
+            step_node.is_null() && !obj.is_nil() &&
+            is_python_list_type(obj.type()) &&
+            is_python_list_type(rhs_list.type()))
+          {
+            const auto &ost = to_struct_type(obj.type());
+            const auto &odt = to_array_type(ost.components()[1].type());
+            const auto &rst = to_struct_type(rhs_list.type());
+            const auto &rdt = to_array_type(rst.components()[1].type());
+            if(odt.element_type() == rdt.element_type())
+            {
+              const member_exprt olen{obj, "length", signedbv_typet{64}};
+              const member_exprt odata{obj, "data", odt};
+              const member_exprt rlen{rhs_list, "length", signedbv_typet{64}};
+              const member_exprt rdata{rhs_list, "data", rdt};
+              auto i64 = [](long v)
+              { return from_integer(v, signedbv_typet{64}); };
+              // Normalise a bound: negative wraps relative to length, then
+              // clamp to [0, length] (PLR §6.3.3 slice semantics).
+              auto norm = [&](const jsont &b, const exprt &dflt) -> exprt
+              {
+                if(b.is_null())
+                  return dflt;
+                exprt e = convert_expression(b);
+                if(e.type() != signedbv_typet{64})
+                  e = safe_typecast(e, signedbv_typet{64});
+                exprt wrapped = if_exprt{
+                  binary_relation_exprt{e, ID_lt, i64(0)},
+                  plus_exprt{e, olen},
+                  e};
+                exprt lo_clamp = if_exprt{
+                  binary_relation_exprt{wrapped, ID_lt, i64(0)},
+                  i64(0),
+                  wrapped};
+                return if_exprt{
+                  binary_relation_exprt{lo_clamp, ID_gt, olen}, olen, lo_clamp};
+              };
+              exprt lo = norm(json_member(slice_node, "lower"), i64(0));
+              exprt hi = norm(json_member(slice_node, "upper"), olen);
+              // hi >= lo (an empty slice when hi < lo).
+              hi = if_exprt{binary_relation_exprt{hi, ID_lt, lo}, lo, hi};
+              exprt removed = minus_exprt{hi, lo};
+              exprt new_len = plus_exprt{minus_exprt{olen, removed}, rlen};
+              emit_count_capacity_guard(
+                pending_checks, new_len, PYTHON_MAX_LIST_LENGTH, loc);
+              exprt::operandst elems;
+              for(std::size_t k = 0; k < PYTHON_MAX_LIST_LENGTH; k++)
+              {
+                exprt kk = i64(static_cast<long>(k));
+                // before the slice: a[k]
+                exprt before = index_exprt{odata, kk};
+                // within rhs: rhs[k - lo]
+                exprt in_rhs = index_exprt{rdata, minus_exprt{kk, lo}};
+                // after: a[hi + (k - lo - rlen)]
+                exprt after = index_exprt{
+                  odata,
+                  plus_exprt{hi, minus_exprt{minus_exprt{kk, lo}, rlen}}};
+                exprt sel = if_exprt{
+                  binary_relation_exprt{kk, ID_lt, lo},
+                  before,
+                  if_exprt{
+                    binary_relation_exprt{kk, ID_lt, plus_exprt{lo, rlen}},
+                    in_rhs,
+                    after}};
+                elems.push_back(std::move(sel));
+              }
+              array_exprt new_data{std::move(elems), odt};
+              exprt new_list = struct_exprt{{new_len, new_data}, obj.type()};
+              code_frontend_assignt sa{obj, new_list};
+              sa.add_source_location() = loc;
+              block.add(std::move(sa));
+              continue;
+            }
+          }
+        }
+      }
       // PLR object identity (§9): `g[i][j] = v` mutates the element `g[i]` of a
       // list `g` whose by-value mutable elements are aliased -- not modelled,
       // so report + cut. (`g[i] = v`, whole-slot reassignment, has

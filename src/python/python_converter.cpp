@@ -382,15 +382,25 @@ bool python_convertert::annotation_types_incompatible(
   // Equal types: compatible.
   if(declared == actual)
     return false;
-  // Numeric types (int/float/bool) are mutually coercible in
-  // Python (True is 1, int→float promotes).
+  // Numeric types (int/float/bool). The numeric tower is one-directional for
+  // assignability (PLR / typing): int and bool ARE assignable where a float is
+  // declared (int→float promotes, bool <: int <: float), but a float is NOT
+  // assignable where an int/bool is declared (narrowing loses the fraction).
+  // Flag only the narrowing float→int(/bool) case; keep the widening / same-
+  // kind combos compatible. (Shared helper: this also governs the assign-RHS
+  // and return-value annotation checks.)
   auto is_numeric = [](const typet &t)
   {
     return t.id() == ID_signedbv || t.id() == ID_unsignedbv ||
            t.id() == ID_floatbv || t.id() == ID_bool || t.id() == ID_integer;
   };
+  auto is_int_kind = [](const typet &t)
+  {
+    return t.id() == ID_signedbv || t.id() == ID_unsignedbv ||
+           t.id() == ID_integer || t.id() == ID_bool;
+  };
   if(is_numeric(declared) && is_numeric(actual))
-    return false;
+    return is_int_kind(declared) && actual.id() == ID_floatbv;
   // Categorize the remaining types. Different categories →
   // obvious incompatibility (e.g. str vs int).
   auto category = [&](const typet &t) -> int
