@@ -2053,6 +2053,48 @@ std::optional<exprt> python_convertert::try_builtin_call(
       exprt arg = convert_expression(*as_array(args).begin());
       if(is_python_list_type(arg.type()))
         return arg;
+      // list(<tuple>) / reversed(<tuple>): materialise a list from the tuple's
+      // fields (PLR §6.2.5 — a tuple is an iterable). Without this the call
+      // fell through to a nondet list (so even len() was unknown). The element
+      // type is the tuple's common field type, or python_value if the fields
+      // are heterogeneous (each field then wrapped via coerce_element).
+      if(is_python_tuple_type(arg.type()))
+      {
+        const auto &tup_st = to_struct_type(arg.type());
+        const auto &comps = tup_st.components();
+        exprt::operandst elems;
+        for(const auto &c : comps)
+          elems.push_back(member_exprt{arg, c.get_name(), c.type()});
+        if(func_name == "reversed")
+          std::reverse(elems.begin(), elems.end());
+        typet elem_type =
+          elems.empty() ? python_int_type() : elems.front().type();
+        for(const auto &e : elems)
+          if(e.type() != elem_type)
+          {
+            elem_type = python_value_type();
+            break;
+          }
+        for(auto &e : elems)
+          if(e.type() != elem_type)
+            e = coerce_element(e, elem_type);
+        const std::size_t n = elems.size();
+        const std::size_t sz = std::max<std::size_t>(PYTHON_MAX_LIST_LENGTH, n);
+        struct_typet list_type = python_list_type(elem_type);
+        {
+          auto &lc = list_type.components();
+          if(lc.size() == 2)
+            lc[1].type() =
+              array_typet{elem_type, from_integer(sz, signedbv_typet{64})};
+        }
+        array_typet data_type{elem_type, from_integer(sz, signedbv_typet{64})};
+        while(elems.size() < sz)
+          elems.push_back(safe_zero(elem_type));
+        return struct_exprt{
+          {from_integer(static_cast<long long>(n), signedbv_typet{64}),
+           array_exprt{std::move(elems), data_type}},
+          list_type};
+      }
       // list(<str>) / reversed(<str>) iterate the string's CODE POINTS,
       // producing a list of single-character strings (PLR §4.7.1). For a
       // constant string we materialise this precisely.

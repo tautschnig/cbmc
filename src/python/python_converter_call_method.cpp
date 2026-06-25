@@ -1525,9 +1525,29 @@ std::optional<exprt> python_convertert::try_method_call(
               i < arguments.size() && i < ft.parameters().size();
               i++)
           {
-            if(arguments[i].type() != ft.parameters()[i].type())
-              arguments[i] =
-                safe_typecast(arguments[i], ft.parameters()[i].type());
+            // PLR §3.1 (--python-check-annotations): flag an argument whose
+            // type is incompatible with the imported function's declared
+            // parameter type. Mirrors the local-call path
+            // (python_converter_call_user.cpp); without it a cross-module call
+            // `mod.foo(5)` with `foo(a: str)` was silently coerced.
+            const typet &pt = ft.parameters()[i].type();
+            const bool vararg_collect =
+              is_python_list_type(pt) &&
+              !is_python_list_type(arguments[i].type());
+            if(
+              python_check_annotations && !vararg_collect &&
+              annotation_types_incompatible(pt, arguments[i].type()))
+            {
+              add_check(
+                false_exprt{},
+                "annotation-mismatch",
+                "argument " + std::to_string(i) +
+                  "'s type does not match declared parameter type of '" +
+                  method_name + "'",
+                get_location(expr));
+            }
+            if(arguments[i].type() != pt)
+              arguments[i] = safe_typecast(arguments[i], pt);
           }
           side_effect_expr_function_callt call{
             sym->symbol_expr(),
