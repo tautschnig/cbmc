@@ -117,7 +117,7 @@ def classify(stdout: str, expected: list[str]):
 
 
 def run_one(test_dir: Path, cbmc: str, timeout_s: int, unwind: int,
-            extra_cbmc_flags=None):
+            extra_cbmc_flags=None, triage_bound=False):
     desc_file = test_dir / "test.desc"
     main_py = test_dir / "main.py"
     name = test_dir.name
@@ -233,6 +233,44 @@ def run_one(test_dir: Path, cbmc: str, timeout_s: int, unwind: int,
         if cp.returncode < 0:
             outcome = "CRASH"
             detail = f"signal={-cp.returncode}"
+        # Bound-artifact triage (P2): a "CBMC=SUCCESSFUL but expected=FAILED"
+        # DIFF may be a genuine false proof OR just the bug being deeper than
+        # the unwind bound (the default --no-unwinding-assertions silently
+        # assumes loops terminate within the bound). Re-run with
+        # --unwinding-assertions: if an unwinding assertion fails, the
+        # SUCCESSFUL was bound-limited (outcome BOUND, sound w.r.t. the bound);
+        # if it still verifies, the bound is adequate -> a genuine candidate
+        # false proof worth investigating.
+        if (
+            triage_bound
+            and outcome == "DIFF"
+            and verdict == "SUCCESSFUL"
+            and expected
+            and "FAILED" in expected[0]
+        ):
+            tcmd = [c for c in cmd if c != "--no-unwinding-assertions"]
+            if "--unwinding-assertions" not in tcmd:
+                tcmd.insert(1, "--unwinding-assertions")
+            try:
+                tcp = subprocess.run(
+                    tcmd,
+                    cwd=str(test_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_s,
+                    errors="replace",
+                    preexec_fn=_limit_mem,
+                )
+                tout = (tcp.stdout or "") + "\n" + (tcp.stderr or "")
+                if re.search(
+                    r"^VERIFICATION FAILED$", tout, re.M
+                ) and re.search(r"unwinding assertion.*FAILURE", tout):
+                    outcome = "BOUND"
+                    detail = "bound-limited (unwinding assertion fails); " + detail
+                elif re.search(r"^VERIFICATION SUCCESSFUL$", tout, re.M):
+                    detail = "candidate-false-proof (unwind-adequate); " + detail
+            except Exception:
+                pass
     except subprocess.TimeoutExpired:
         wall_ms = timeout_s * 1000
         outcome = "TIMEOUT"
@@ -274,6 +312,11 @@ def main():
     ap.add_argument("--extra-cbmc-flags", default="",
                     help="extra flags appended to every CBMC invocation "
                          "(space-separated), e.g. '--no-python-ref-mutables'")
+    ap.add_argument("--triage-bound", action="store_true",
+                    help="for each 'CBMC=SUCCESSFUL but expected=FAILED' DIFF, "
+                         "re-run with --unwinding-assertions to classify it as "
+                         "BOUND (bug deeper than --unwind, sound) vs a genuine "
+                         "candidate false proof")
     args = ap.parse_args()
 
     reg = Path(args.regression)
@@ -308,7 +351,7 @@ def main():
     t_start = time.monotonic()
     with cf.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         futures = {pool.submit(run_one, t, args.cbmc, args.timeout, args.unwind,
-                               args.extra_cbmc_flags.split()): t
+                               args.extra_cbmc_flags.split(), args.triage_bound): t
                    for t in tests}
         for fut in cf.as_completed(futures):
             row = fut.result()
