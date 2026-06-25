@@ -579,6 +579,22 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
+**Set non-int false proof — FIXED (2026-06-25, `da7f7fbb85`).** A set is a 64-bit
+int BITMAP (element -> bit position); a non-int element (tuple/str) cast to a bit
+could COLLIDE with another element's bit, FALSE-PROVING membership
+(`s=set(); s.add((1,2)); assert (3,4) in s` was SUCCESSFUL). Found by an
+adversarial soundness probe while auditing the "set non-int model" residual.
+Fix: non-int set membership -> nondet; set.add/discard of a non-int -> no-op on
+the bitmap (int sets stay precise; non-int set literals already use a precise
+list-backed representation). Guard: `set-non-int-soundness`.
+
+**Kwarg cross-module binding — FIXED (2026-06-25, `6f9417b754`).** Not a false
+proof (sound spurious-fail) but a correctness gap: keyword arguments to imported
+functions (`mod.foo(a=5)`) were dropped (callee saw nondet/default). Now bound
+like local calls; also closes the kwarg annotation check (github_3093_2). Guard:
+`kwarg-cross-module`.
+
+
 **Default-config false-proof triage + element-store audit (2026-06-25).** Two
 proactive soundness passes (P1, P2). **Result: the default config is clean — no
 genuine false proofs found in either pass.**
