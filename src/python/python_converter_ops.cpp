@@ -1281,6 +1281,10 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         "binary '+' on opaque struct types — returning nondet result");
       return side_effect_expr_nondett{left.type(), source_locationt{}};
     }
+    if(left.type().id() == ID_signedbv && right.type().id() == ID_signedbv)
+      emit_int_overflow_guard(
+        not_exprt{binary_overflow_exprt{left, ID_overflow_plus, right}},
+        get_location(expr));
     return plus_exprt{left, right};
   }
   else if(op == "Sub")
@@ -1293,6 +1297,10 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         "binary '-' on opaque struct types — returning nondet result");
       return side_effect_expr_nondett{left.type(), source_locationt{}};
     }
+    if(left.type().id() == ID_signedbv && right.type().id() == ID_signedbv)
+      emit_int_overflow_guard(
+        not_exprt{binary_overflow_exprt{left, ID_overflow_minus, right}},
+        get_location(expr));
     return minus_exprt{left, right};
   }
   else if(op == "Mult")
@@ -1305,6 +1313,10 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         "binary '*' on opaque struct types — returning nondet result");
       return side_effect_expr_nondett{left.type(), source_locationt{}};
     }
+    if(left.type().id() == ID_signedbv && right.type().id() == ID_signedbv)
+      emit_int_overflow_guard(
+        not_exprt{binary_overflow_exprt{left, ID_overflow_mult, right}},
+        get_location(expr));
     return mult_exprt{left, right};
   }
   else if(op == "FloorDiv")
@@ -1520,6 +1532,42 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         exp_d != std::floor(exp_d))
       {
         return double_to_floatbv(result_d);
+      }
+      // Integer result. Compute EXACTLY with mp_integer when the base and
+      // exponent are exact integer constants -- std::pow + cast-to-long-long
+      // both loses precision above 2**53 AND truncates beyond 64-bit (a silent
+      // false proof, e.g. 10**19). Strip int->float promotion typecasts to
+      // recover the integer constants.
+      auto strip_cast = [](exprt e) -> exprt
+      {
+        while(e.id() == ID_typecast && e.operands().size() == 1)
+          e = to_typecast_expr(e).op();
+        return e;
+      };
+      const exprt lb = strip_cast(left), rb = strip_cast(right);
+      mp_integer base_i, exp_i;
+      if(
+        lb.is_constant() && rb.is_constant() &&
+        !to_integer(to_constant_expr(lb), base_i) &&
+        !to_integer(to_constant_expr(rb), exp_i) && exp_i >= 0)
+      {
+        // PLR §6.5: x ** 0 == 1 for every x (including 0 ** 0); avoid calling
+        // power(base, 0) (whose result for 0**0 is convention-dependent).
+        if(exp_i == 0)
+          return from_integer(1, left.type());
+        const mp_integer res = power(base_i, exp_i);
+        if(left.type().id() == ID_integer)
+          return from_integer(res, integer_typet{}); // unbounded: exact
+        // DEFAULT 64-bit model: report+cut if the exact result exceeds the
+        // signedbv[64] range, instead of silently wrapping.
+        const mp_integer hi = power(2, 63) - 1;
+        const mp_integer lo = -power(2, 63);
+        if(res < lo || res > hi)
+        {
+          emit_int_overflow_guard(false_exprt{}, get_location(expr));
+          return from_integer(0, left.type()); // path cut by the assume
+        }
+        return from_integer(res, left.type());
       }
       return from_integer(
         mp_integer{static_cast<long long>(result_d)}, left.type());
@@ -1778,6 +1826,18 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       return side_effect_expr_nondett{integer_typet{}, source_locationt{}};
     }
     emit_neg_shift_check();
+    {
+      // Overflow guard only for a non-negative constant shift amount: a
+      // negative shift is a ValueError (handled above), and `overflow_shl`
+      // with a negative shift trips a power() precondition in the simplifier.
+      mp_integer sh;
+      if(
+        left.type().id() == ID_signedbv && right.is_constant() &&
+        !to_integer(to_constant_expr(right), sh) && sh >= 0)
+        emit_int_overflow_guard(
+          not_exprt{binary_overflow_exprt{left, ID_overflow_shl, right}},
+          get_location(expr));
+    }
     return shl_exprt{left, right};
   }
   else if(op == "RShift")

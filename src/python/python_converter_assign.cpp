@@ -4355,7 +4355,13 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
         struct_exprt{{plus_exprt{lr, rhs_d}, exprt{li}}, arith_lhs.type()};
     }
     else
+    {
+      if(arith_lhs.type().id() == ID_signedbv && rhs.type().id() == ID_signedbv)
+        emit_int_overflow_guard(
+          not_exprt{binary_overflow_exprt{arith_lhs, ID_overflow_plus, rhs}},
+          loc);
       new_rhs = plus_exprt{arith_lhs, rhs};
+    }
   }
   else if(op == "Sub")
   {
@@ -4403,7 +4409,13 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
         struct_exprt{{minus_exprt{lr, rhs_d}, exprt{li}}, arith_lhs.type()};
     }
     else
+    {
+      if(arith_lhs.type().id() == ID_signedbv && rhs.type().id() == ID_signedbv)
+        emit_int_overflow_guard(
+          not_exprt{binary_overflow_exprt{arith_lhs, ID_overflow_minus, rhs}},
+          loc);
       new_rhs = minus_exprt{arith_lhs, rhs};
+    }
   }
   else if(op == "Mult")
   {
@@ -4456,7 +4468,13 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
         {mult_exprt{lr, rhs_d}, mult_exprt{li, rhs_d}}, arith_lhs.type()};
     }
     else
+    {
+      if(arith_lhs.type().id() == ID_signedbv && rhs.type().id() == ID_signedbv)
+        emit_int_overflow_guard(
+          not_exprt{binary_overflow_exprt{arith_lhs, ID_overflow_mult, rhs}},
+          loc);
       new_rhs = mult_exprt{arith_lhs, rhs};
+    }
   }
   else if(op == "FloorDiv")
   {
@@ -4606,7 +4624,15 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   else if(op == "BitXor")
     new_rhs = bitxor_exprt{arith_lhs, rhs};
   else if(op == "LShift")
+  {
+    mp_integer sh;
+    if(
+      arith_lhs.type().id() == ID_signedbv && rhs.is_constant() &&
+      !to_integer(to_constant_expr(rhs), sh) && sh >= 0)
+      emit_int_overflow_guard(
+        not_exprt{binary_overflow_exprt{arith_lhs, ID_overflow_shl, rhs}}, loc);
     new_rhs = shl_exprt{arith_lhs, rhs};
+  }
   else if(op == "RShift")
     new_rhs = ashr_exprt{arith_lhs, rhs};
   else if(op == "MatMult")
