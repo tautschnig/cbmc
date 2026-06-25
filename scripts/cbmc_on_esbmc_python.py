@@ -116,7 +116,8 @@ def classify(stdout: str, expected: list[str]):
     return ("FAIL", verdict, f"expected={primary}")
 
 
-def run_one(test_dir: Path, cbmc: str, timeout_s: int, unwind: int):
+def run_one(test_dir: Path, cbmc: str, timeout_s: int, unwind: int,
+            extra_cbmc_flags=None):
     desc_file = test_dir / "test.desc"
     main_py = test_dir / "main.py"
     name = test_dir.name
@@ -208,6 +209,8 @@ def run_one(test_dir: Path, cbmc: str, timeout_s: int, unwind: int):
        "--unwinding-assertions" not in extra_flags:
         cmd.append("--no-unwinding-assertions")
     cmd.extend(extra_flags)
+    if extra_cbmc_flags:
+        cmd.extend(extra_cbmc_flags)
     cmd.append(str(main_py))
     start = time.monotonic()
     try:
@@ -268,6 +271,9 @@ def main():
                     help="limit number of tests (0 = no limit)")
     ap.add_argument("--filter", default="",
                     help="only run dir names matching this substring")
+    ap.add_argument("--extra-cbmc-flags", default="",
+                    help="extra flags appended to every CBMC invocation "
+                         "(space-separated), e.g. '--no-python-ref-mutables'")
     args = ap.parse_args()
 
     reg = Path(args.regression)
@@ -301,7 +307,8 @@ def main():
     completed = 0
     t_start = time.monotonic()
     with cf.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = {pool.submit(run_one, t, args.cbmc, args.timeout, args.unwind): t
+        futures = {pool.submit(run_one, t, args.cbmc, args.timeout, args.unwind,
+                               args.extra_cbmc_flags.split()): t
                    for t in tests}
         for fut in cf.as_completed(futures):
             row = fut.result()

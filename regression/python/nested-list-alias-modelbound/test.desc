@@ -1,8 +1,0 @@
-CORE
-main.py
---unwind 6
-^EXIT=10$
-^\[python-model-bound\.\d+\].*: FAILURE$
-^VERIFICATION FAILED$
---
-^warning: ignoring

@@ -316,3 +316,61 @@ Two regression tests added: `ref-mutables-extraction` (precision) and
 lists. Next: phase 2 (make it the default for lists + retire the list
 extraction/replication guards), then the full ESBMC sweep with the flag for the
 at-scale perf number before flipping the default.
+
+---
+
+## 11. Phase 2 attempt — 2026-06-24 (at-scale gate NOT met; default stays opt-in)
+
+Phase 2 (make list reference semantics the default + retire the subsumed
+guards) was attempted and **gated by the full ESBMC sweep**. Result: **do not
+flip the default yet.**
+
+**What was done:** flipped the default ON (with a `--no-python-ref-mutables`
+escape hatch), reran the full `regression/python` suite (green — only
+`nested-list-alias-modelbound` needed updating, a precision *improvement*: its
+`python-model-bound` cut is now a precise result, so it was rewritten +
+renamed to `nested-list-alias-precise`), then ran the ESBMC sweep both ways via
+a new `--extra-cbmc-flags` harness option for a per-test A/B diff.
+
+**A/B sweep (unwind 10, timeout 60, jobs 14):**
+- by-value (`--no-python-ref-mutables`): **PASS 2715**, DIFF 40, no crash.
+- reference (default-on): **PASS 2710**, DIFF 44, **CRASH 1**.
+- Per-test diff: **6 regressions, 1 improvement** (net −5). Regressions:
+  `list31` (PASS→**CRASH**), `list-eq9` / `list_depth_test` (PASS→DIFF),
+  `list_extend13` / `14` / `16` (PASS→DIFF). Improvement: `github_3667`
+  (DIFF→PASS).
+
+**Whole-group root (NOT six point fixes — one architectural gap).** The
+by-reference representation (`list[python_value]`, pointer-aliased) is correctly
+plumbed through *reads* and *mutators* (phase 1), but **not yet through the
+value-semantic boundaries**, so wherever a wrapped list meets code that expects
+the concrete nested type the seam breaks:
+1. **`list == list` element comparison.** `python_value_structural_eq` already
+   derefs nested LIST references recursively, but the **top-level** `list==list`
+   path compares elements bitwise (pointer compare) instead of routing
+   `python_value` elements through `python_value_structural_eq` → two distinct
+   references for equal values compare unequal → spurious FAILED (`list-eq9`,
+   `list_depth_test`). Sound (a spurious failure), but a precision regression.
+2. **Concat (`+`) and `extend`.** Combining lists whose elements are references
+   does not deref/normalise the elements (`list_extend13/14/16`).
+3. **Call-argument / return coercion (the CRASH).** Passing a wrapped
+   `list[python_value]` literal to a parameter annotated with a concrete nested
+   type (`process_nested([[1,2]])` with `items: list[list[int]]`) assigns
+   mismatched types in `value_set::assign` (`rhs.type() == lhs.type()` invariant)
+   → abort. The reference representation must be coerced to/from the concrete
+   nested type at the call/return boundary.
+
+**Severity:** all six are sound (5 precision DIFFs + 1 crash; no false proof —
+the crash aborts rather than mis-proves). But a corpus crash + 5 precision
+regressions fail the **0-regression gate**, so per the §4 failure-mode policy
+the default stays **opt-in** (`--python-ref-mutables` remains a precision mode;
+the by-value guards remain the sound default).
+
+**Phase-2 gate (acceptance set for a future default flip):** close the four
+boundary sites above (route `python_value` elements through structural
+deref/normalisation in list-equality / concat / extend, and add
+`list[python_value]` ↔ concrete-nested coercion at the call/return boundary),
+then the A/B sweep must show **0 regressions** (these six tests back to PASS,
+no crash) before flipping. The guard-retirement step (phase-2 tail) is deferred
+until then. Reverted the default flip; kept the validated opt-in work, the
+renamed precise test, and the `--extra-cbmc-flags` sweep-harness option.
