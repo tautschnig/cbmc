@@ -579,6 +579,42 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
+**Default-config false-proof triage + element-store audit (2026-06-25).** Two
+proactive soundness passes (P1, P2). **Result: the default config is clean — no
+genuine false proofs found in either pass.**
+
+- **P1 — the 14 default-config "CBMC=SUCCESSFUL where expected=FAILED" DIFFs are
+  NOT frontend false proofs.** Re-triaged each with adequate unwinding +
+  `--unwinding-assertions` (the sweep's `--unwind 10 --no-unwinding-assertions`
+  silently under-approximates). Categories: (a) **bound artifacts** — fail
+  correctly at higher unwind (`github_2892`, `github_3836`, `global2`,
+  `ethereum_bug`); sound w.r.t. the bound. (b) **float-model difference** —
+  `neural-net`: CBMC's IEEE result `f==2.745` matches CPython (verified with
+  `python3`); ESBMC's `--fixedbv` is the imprecise one, so CBMC is *correct*.
+  (c) **`nondet_string` semantics** — `string-nondet-...-null`:
+  `nondet_string(N)` is intentionally length-*exactly*-N, so an
+  `assume(s==<shorter literal>)` is unsatisfiable → a (sound) vacuous proof;
+  ESBMC's `nondet_string` differs. (d) **opt-in-check coverage gaps** — the
+  property is only emitted under an opt-in flag, so the default has nothing to
+  violate: `--python-check-annotations` incompleteness (float→int arg, cross-
+  module, return-value type: `github_3020_5`, `github_3093_1/2`,
+  `infer-func-no-return`) and `--python-raising-ops-check` (`input1/5`,
+  `import-os2`), plus unsupported `encode` (`github_2993_2`). The annotation-
+  check gaps are one coherent *precision* improvement area (not soundness).
+- **P2 — element-store coercion audit (generalising the `extend` bug): no new
+  false proofs.** Audited every container-mutation site that stores a value into
+  a typed slot. `append` / `insert` / subscript-assign / dict-value-store /
+  `*args` packing all coerce correctly; `extend` was the one genuine gap and is
+  fixed (`8a618fbdac`). Remaining cross-type imprecisions are all **sound**
+  (corruption → nondet, the wrong value is never provable — verified the
+  false direction FAILS): `set.add` of a non-int (the set is a 64-bit int
+  *bitmap* model — a fundamental limitation, not a coercion gap), slice-assign
+  `a[i:j]=…` and `list()`-from-tuple (both broken even *homogeneously* — a
+  separate list-construction precision family, not element-coercion). These are
+  precision residuals, catalogued for future work. Lock-in test:
+  `element-store-coercion`.
+
+
 **Soundness re-audit (2026-06-24).** Deliberate audit pass (the call-duplication
 hole was pre-existing; chasing features surfaced it, so a proactive sweep was
 warranted).
