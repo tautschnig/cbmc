@@ -527,6 +527,71 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     (void)tag_of; // unused for now; reserved for future cross-type compares
 
+    // Reference-list equality (--python-ref-mutables): a list whose elements
+    // are python_value REFERENCES must NOT be compared with the bitwise struct
+    // equality the default path falls through to -- that compares element heap
+    // POINTERS, so two distinct lists holding equal values compare unequal,
+    // which (critically) lets `!=` be wrongly PROVED (a false proof). Compare
+    // element-by-element soundly and cheaply (no deref, no recursion):
+    //   element_eq = (bitwise-equal) OR (element is a ref-tag AND nondet)
+    // i.e. equal bits => truly equal (same scalar, or same object); for a
+    // distinct reference we don't know (deep structural compare is
+    // intractable, §12) so we return nondet -- neither == nor != is proved.
+    // Scalars stay precise (bitwise differs => unequal, not a ref => no nondet).
+    if(
+      ref_mutables && (op == "Eq" || op == "NotEq") &&
+      is_python_list_type(current_left.type()) &&
+      is_python_list_type(right.type()))
+    {
+      const auto &lst = to_struct_type(current_left.type());
+      const auto &rst = to_struct_type(right.type());
+      const auto &lda_t = to_array_type(lst.components()[1].type());
+      const auto &rda_t = to_array_type(rst.components()[1].type());
+      if(
+        is_python_value_type(lda_t.element_type()) &&
+        is_python_value_type(rda_t.element_type()))
+      {
+        auto fresh_nd = [&]() -> exprt
+        {
+          static unsigned ctr = 0;
+          const std::string nm = "__reflist_eq_nd_" + std::to_string(ctr++);
+          const irep_idt id{qualify_name(nm)};
+          if(symbol_table.lookup(id) == nullptr)
+          {
+            symbolt s{id, bool_typet{}, "python"};
+            s.base_name = nm;
+            s.is_lvalue = true;
+            s.is_state_var = true;
+            symbol_table.add(s);
+          }
+          return symbol_table.lookup_ref(id).symbol_expr();
+        };
+        const member_exprt llen{current_left, "length", signedbv_typet{64}};
+        const member_exprt rlen{right, "length", signedbv_typet{64}};
+        const member_exprt lda{current_left, "data", lda_t};
+        const member_exprt rda{right, "data", rda_t};
+        exprt all = equal_exprt{llen, rlen};
+        for(int i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+        {
+          const exprt idx = from_integer(i, signedbv_typet{64});
+          const exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
+          const exprt le = index_exprt{lda, idx};
+          const exprt re = index_exprt{rda, idx};
+          const exprt is_ref = or_exprt{
+            python_value_is(le, python_type_tagt::LIST),
+            or_exprt{
+              python_value_is(le, python_type_tagt::DICT),
+              python_value_is(le, python_type_tagt::SET)}};
+          const exprt el_eq =
+            or_exprt{equal_exprt{le, re}, and_exprt{is_ref, fresh_nd()}};
+          all = and_exprt{std::move(all), or_exprt{not_exprt{in_range}, el_eq}};
+        }
+        if(op == "Eq")
+          return all;
+        return not_exprt{std::move(all)};
+      }
+    }
+
     // Type promotion for comparisons (skip for In/NotIn/Is/IsNot,
     // and for cross-type list ordering — handled in dedicated
     // list-lex-compare branch below).

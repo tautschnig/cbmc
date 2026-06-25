@@ -1,0 +1,7 @@
+CORE
+main.py
+--python-ref-mutables --unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--

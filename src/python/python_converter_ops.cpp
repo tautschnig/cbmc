@@ -158,15 +158,22 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     bool l_is_value = is_python_value_type(left.type());
     bool r_is_value = is_python_value_type(right.type());
     bool incompatible = false;
-    // list OP non-list: only list * int (repeat) is valid.
+    // list OP non-list: only list * int (repeat) is valid. Under reference
+    // semantics a python_value operand may be a LIST reference, so `list +
+    // python_value` is a possible concat (deref handled in the concat branch
+    // below); allow it through rather than flagging an incompatible TypeError.
     if(l_is_list && !r_is_list)
     {
-      if(!(op == "Mult" && (r_is_num || r_is_value)))
+      if(
+        !(op == "Mult" && (r_is_num || r_is_value)) &&
+        !(op == "Add" && r_is_value && ref_mutables))
         incompatible = true;
     }
     if(r_is_list && !l_is_list)
     {
-      if(!(op == "Mult" && (l_is_num || l_is_value)))
+      if(
+        !(op == "Mult" && (l_is_num || l_is_value)) &&
+        !(op == "Add" && l_is_value && ref_mutables))
         incompatible = true;
     }
     // dict / set with anything else is invalid.
@@ -1096,6 +1103,32 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   }
 
   // List concatenation: [1,2] + [3,4] → [1,2,3,4]
+  // List concatenation: [1,2] + [3,4] → [1,2,3,4].
+  // Under reference semantics an operand may be a python_value LIST reference
+  // (e.g. `[1] + r` where r iterates a list[python_value]); deref it to the
+  // concrete list first. If the two element types differ (e.g. list[int] +
+  // list[python_value]), promote both to list[python_value] so the merged
+  // data array is type-uniform.
+  {
+    exprt cl = left;
+    exprt cr = right;
+    if(ref_mutables && op == "Add" && is_python_value_type(cl.type()))
+      cl = python_value_list(cl);
+    if(ref_mutables && op == "Add" && is_python_value_type(cr.type()))
+      cr = python_value_list(cr);
+    if(
+      ref_mutables && is_python_list_type(cl.type()) &&
+      is_python_list_type(cr.type()) && op == "Add")
+    {
+      if(cl.type() != cr.type())
+      {
+        cl = rebuild_list_as_pv(cl);
+        cr = rebuild_list_as_pv(cr);
+      }
+      left = cl;
+      right = cr;
+    }
+  }
   if(
     is_python_list_type(left.type()) && is_python_list_type(right.type()) &&
     op == "Add")

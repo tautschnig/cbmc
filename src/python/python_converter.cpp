@@ -4271,6 +4271,17 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
       // Extract element type from the slice
       typet elem_type =
         convert_type_annotation(json_member(annotation, "slice"));
+      // SPIKE (--python-ref-mutables): a nested LIST element (a list whose
+      // items are themselves lists) is stored as a python_value REFERENCE by
+      // the literal wrapping in convert_list. Lower the annotation to match
+      // (list[python_value]) so parameter / return / annotated-local
+      // boundaries don't mismatch list[python_value] against a concrete nested
+      // list type (which aborts in value_set::assign). Restricted to list
+      // elements only: convert_list wraps ONLY list elements (dict/set
+      // elements stay by-value), so lowering list[dict]/list[set] would create
+      // the opposite mismatch.
+      if(ref_mutables && is_python_list_type(elem_type))
+        return python_list_type(python_value_type());
       return python_list_type(elem_type);
     }
     else if(base == "Optional")
