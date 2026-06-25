@@ -36,6 +36,7 @@
 #include <util/mathematical_expr.h>
 #include <util/mathematical_types.h>
 #include <util/pointer_expr.h>
+#include <util/simplify_expr.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/string_constant.h>
@@ -3788,6 +3789,34 @@ void python_convertert::emit_count_capacity_guard(
   code_assumet cap_assume{in_bounds};
   cap_assume.add_source_location() = loc;
   checks.push_back(std::move(cap_assume));
+}
+
+void python_convertert::emit_int_overflow_guard(
+  const exprt &no_overflow,
+  const source_locationt &loc)
+{
+  // Guard only a DEFINITE (statically-provable) overflow -- the constant /
+  // folded cases (10**19, 1<<70, big-literal arithmetic). A symbolic operation
+  // whose overflow cannot be decided at conversion time is left to the default
+  // 64-bit wrap (a documented bound; --python-unbounded-ints is the sound
+  // mode). Asserting on every POSSIBLY-overflowing symbolic arithmetic would be
+  // far too noisy -- it fires on `def f(a, b): return a * b` and `x + 1` on a
+  // nondet `x` -- unlike the container-capacity guards, whose size is usually
+  // provably in range. So: report+cut only when `no_overflow` simplifies to a
+  // definite false.
+  const namespacet ns{symbol_table};
+  const exprt simp = simplify_expr(no_overflow, ns);
+  if(!simp.is_false())
+    return;
+  source_locationt aloc = loc;
+  aloc.set_property_class("python-model-bound");
+  aloc.set_comment("integer exceeds 64-bit verifier model bound");
+  code_assertt ovf_assert{false_exprt{}};
+  ovf_assert.add_source_location() = aloc;
+  pending_checks.push_back(std::move(ovf_assert));
+  code_assumet ovf_assume{false_exprt{}};
+  ovf_assume.add_source_location() = loc;
+  pending_checks.push_back(std::move(ovf_assume));
 }
 
 bool python_convertert::is_aliased_list_element(const jsont &node)

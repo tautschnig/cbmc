@@ -2057,7 +2057,20 @@ private:
     long cap,
     const source_locationt &loc = source_locationt{});
 
-  /// Access-level container capacity guard. Push assert(idx < cap) +
+  /// Integer-arithmetic model-bound guard (DEFAULT 64-bit int model only).
+  /// Python ints are unbounded, but the default model represents them as
+  /// signedbv[64]. When an arithmetic op would exceed that range it silently
+  /// WRAPS (a false proof). Mirroring the container-capacity guards, push
+  /// assert(no_overflow) [property class "python-model-bound"] +
+  /// assume(no_overflow) into pending_checks: an overflowing computation is
+  /// REPORTED (the verifier's 64-bit bound is exceeded) and the wrapping path
+  /// is cut, instead of silently wrapping. No-op under --python-unbounded-ints
+  /// (operands are integer_typet, which cannot overflow); callers guard on
+  /// signedbv operands. `no_overflow` is the "operation does not overflow"
+  /// predicate.
+  void emit_int_overflow_guard(
+    const exprt &no_overflow,
+    const source_locationt &loc = source_locationt{});
   /// assume(idx < cap) into `checks`, where `idx` is a (normalized,
   /// non-negative) element index about to read/write the modelled data array
   /// of `cap` slots. This is the whole-group catch-all: it fires for an

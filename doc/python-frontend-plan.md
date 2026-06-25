@@ -579,6 +579,22 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
+**Default int-overflow model-bound guard — ADDED (2026-06-25).** The default
+64-bit int model silently wrapped on >64-bit results (a false proof, e.g.
+`10**19 < 0`, `1<<70 == 0`). Mirroring the container-capacity guards, an integer
+operation whose overflow is DEFINITE (statically provable: constant/folded
+operands, constant non-negative shift) now reports a `python-model-bound`
+(assert false + assume false -> cut) instead of wrapping
+(`emit_int_overflow_guard` + binary_overflow_exprt on Add/Sub/Mult/LShift in
+convert_bin_op and convert_aug_assign; exact mp_integer for constant `**`).
+A POSSIBLY-overflowing SYMBOLIC op (`def f(a,b): return a*b`, `x+1` on nondet
+x) is deliberately NOT guarded -- a blanket assert was far too noisy (it broke
+11 tests incl. ones documenting the no-check default, and fired on bounded
+comprehension arithmetic). Those remain the documented 64-bit bound;
+--python-unbounded-ints is the sound mode (now also sound for shifts). Guard:
+`int-overflow-literal-reported`.
+
+
 **Int shift unbounded-mode false proof — FIXED (2026-06-25).** Under
 `--python-unbounded-ints` (the SOUND int mode), `<<` and `>>` still truncated
 the operand to signedbv64 before shifting, so `1 << 70` false-proved `== 0` and
