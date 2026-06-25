@@ -1,0 +1,13 @@
+KNOWNBUG
+main.py
+--unwind 6
+^EXIT=10$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+differential (narrowing-invalidation cluster): an enum member's .value is used
+after the status was mutated to a different member. CPython: str - int ->
+TypeError. cbmc does not model the enum .value type change across the mutation,
+so it verifies. PLR-correct: VERIFICATION FAILED. Distinct root: enum .value
+modelling. Sound fix needs enum-member value typing.
