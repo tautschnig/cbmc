@@ -1013,7 +1013,8 @@ exprt python_convertert::convert_user_call(
                   // Typecast spread value to declared param type
                   // (see comment in the method-call branch above).
                   exprt v = vals_arr.operands()[i];
-                  v = coerce_call_argument(v, params[j].type());
+                  v = coerce_call_argument(
+                    v, params[j].type(), params[j].get_identifier());
                   arguments[j] = std::move(v);
                   matched = true;
                   break;
@@ -1038,7 +1039,8 @@ exprt python_convertert::convert_user_call(
         if(id2string(params[i].get_base_name()) == kw_name)
         {
           exprt v = kw_val;
-          v = coerce_call_argument(v, params[i].type());
+          v = coerce_call_argument(
+            v, params[i].type(), params[i].get_identifier());
           arguments[i] = std::move(v);
           matched = true;
           break;
@@ -1612,7 +1614,8 @@ exprt python_convertert::convert_user_call(
             python_type_tagt::SET, address_of_exprt{arguments[i]});
         }
         else
-          arguments[i] = coerce_call_argument(arguments[i], params[i].type());
+          arguments[i] = coerce_call_argument(
+            arguments[i], params[i].type(), params[i].get_identifier());
       }
     }
   }

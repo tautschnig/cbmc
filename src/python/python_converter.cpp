@@ -3736,8 +3736,46 @@ exprt python_convertert::coerce_to_typed_slot(
 
 exprt python_convertert::coerce_call_argument(
   const exprt &arg,
-  const typet &param_type)
+  const typet &param_type,
+  const irep_idt &param_id)
 {
+  // PLR §3.2 / type-safety: Python annotations are NOT runtime coercions.
+  // Binding a tagged-union/Any value (python_value) to a concretely-typed
+  // SCALAR parameter coerces it via unwrap_value, which reads the requested
+  // field (e.g. __int_val) with no tag check -- so a str-tagged value bound to
+  // an `int` parameter is silently used as an int instead of raising TypeError.
+  // Emit a runtime tag obligation, but ONLY when the parameter is EXPLICITLY
+  // ANNOTATED (annotation provenance): an inferred/default scalar param type
+  // (lambda / unannotated param) really accepts Any, so asserting its tag would
+  // false-alarm. bool ⊂ int and int/bool promote to float (PEP 484 numeric
+  // tower), so those tags are accepted. The obligation is over the arg's actual
+  // runtime tag, so a genuinely-matching value never false-alarms.
+  if(
+    !param_id.empty() && explicitly_annotated_params.count(param_id) &&
+    is_python_value_type(arg.type()) && !is_python_none(arg, symbol_table))
+  {
+    exprt ok = nil_exprt{};
+    if(
+      param_type.id() == ID_signedbv || param_type.id() == ID_integer ||
+      param_type == python_int_type())
+      ok = or_exprt{
+        python_value_is(arg, python_type_tagt::INT),
+        python_value_is(arg, python_type_tagt::BOOL)};
+    else if(param_type.id() == ID_floatbv)
+      ok = or_exprt{
+        or_exprt{
+          python_value_is(arg, python_type_tagt::FLOAT),
+          python_value_is(arg, python_type_tagt::INT)},
+        python_value_is(arg, python_type_tagt::BOOL)};
+    else if(is_python_string_type(param_type))
+      ok = python_value_is(arg, python_type_tagt::STR);
+    if(!ok.is_nil())
+      add_check(
+        ok,
+        "python-type-error",
+        "argument type does not match parameter annotation (TypeError)",
+        arg.source_location());
+  }
   return coerce_to_typed_slot(arg, param_type);
 }
 
@@ -3939,7 +3977,8 @@ void python_convertert::coerce_call_arguments(
 {
   const std::size_t n = std::min(args.size(), params.size());
   for(std::size_t i = 0; i < n; i++)
-    args[i] = coerce_call_argument(args[i], params[i].type());
+    args[i] = coerce_call_argument(
+      args[i], params[i].type(), params[i].get_identifier());
 }
 
 std::optional<symbol_exprt> python_convertert::mro_owner_class_object(
