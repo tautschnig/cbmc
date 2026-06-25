@@ -1,0 +1,13 @@
+KNOWNBUG
+main.py
+--unwind 6
+^EXIT=10$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+differential (narrowing-invalidation cluster): a with-statement __enter__
+mutates a union field that is then used as int after the block. CPython:
+TypeError. cbmc calls __enter__ but the union retag through the context object
+is not reflected at the later use, so it verifies. PLR-correct: FAILED. Distinct
+root: context-manager side-effect x union field.

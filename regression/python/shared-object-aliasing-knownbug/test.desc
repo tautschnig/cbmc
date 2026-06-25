@@ -1,0 +1,14 @@
+KNOWNBUG
+main.py
+--unwind 6
+^EXIT=10$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+differential (narrowing-invalidation cluster): one object is referenced by two
+holders (composition aliasing); a mutation through one holder is read through
+the other. CPython: a.shared.x is now str -> str - int -> TypeError. cbmc's
+value semantics for the composed object does not track the shared identity, so
+the mutation is invisible and it verifies. PLR-correct: FAILED. Distinct root:
+object-identity-via-composition aliasing (cf. the per-instance-identity area).

@@ -1,0 +1,12 @@
+KNOWNBUG
+main.py
+--unwind 6
+^EXIT=10$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+differential: a class defines __setattr__ that stores a different value/type
+than assigned. CPython: c.x is str -> str - int -> TypeError. cbmc does not model
+__setattr__ (writes go straight to the field), so it verifies. PLR-correct:
+FAILED. Distinct root: __setattr__ (attribute-protocol residual).
