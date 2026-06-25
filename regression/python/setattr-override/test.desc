@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 6
+^EXIT=10$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A class defining __setattr__ intercepts every write, so a stored field value
+cannot be trusted (here it stores a str into an int field). cbmc over-
+approximates attribute reads on __setattr__ / __getattribute__ instances to a
+nondet python_value, so c.x - 1 routes through the operator tag obligation and
+the possible TypeError is reported. PLR-correct: VERIFICATION FAILED.

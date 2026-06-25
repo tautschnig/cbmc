@@ -602,8 +602,11 @@ roots, not one fix.** cbmc does no flow-narrowing, so these manifest as distinct
 feature gaps, several already documented / out-of-subset: nested-composition
 aliasing (a23 -> the per-instance-identity intractable area), enum `.value`
 modelling (a13), context-manager `__enter__` mutation (a8), mutable-default
-shared state (a10), inheritance+union virtual dispatch (b3/b5/b6), `__setattr__`
-(c5 -> attribute-protocol residual), numeric-tower int-as-float method call (d1,
+shared state (a10), inheritance+union virtual dispatch (b3/b5/b6), `__setattr__` /
+`__getattribute__` (CLOSED 2026-06-25: reads on instances of classes defining
+these intercept-everything dunders are over-approximated to nondet python_value,
+routing uses through the tag obligations -- `setattr-override`/`getattribute-override`
+are CORE), numeric-tower int-as-float method call (d1,
 which the subset marks OUT). Same-expression eval-order x union-retag is the a17
 residual. Each is its own modelling project. The distinct roots are now pinned
 as public KNOWNBUG regression tests (PLR-correct = VERIFICATION FAILED, to flip
