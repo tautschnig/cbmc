@@ -579,6 +579,28 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
+**P1 tractability finding (2026-06-25, evening).** Investigated the two
+candidate "tractable" false proofs; neither has a clean DEFAULT-mode fix:
+- **The ty Any-laundering cluster (004/005/007) shares ONE root** — a wrong-typed
+  value crosses a declared-type boundary (call param, `list[int]` element via
+  `append`, dict value) and is coerced to the declared type, *losing* its actual
+  type, so a later use as the declared type does not fault (the concrete
+  `"s" + 1` IS detected directly — the value just is not typed str at the use).
+  Catching this by DEFAULT is precision-bounded: storing/passing a mismatched
+  value is legal Python (the error only arises on a *use* as the wrong type), so
+  a default obligation false-alarms on code that never misuses it (the
+  `greet(42): pass` lesson). The correct home is opt-in
+  `--python-check-annotations`, which already catches 004 but has GAPS at
+  `list.append` (007) and dict-value/`empty-dict.get` (005) — extending it to
+  those boundaries is the clean *opt-in* soundness-mode enhancement (no default
+  false positives), and is the concrete prerequisite for ever making that flag
+  default-on.
+- **`a17` same-expression eval-order × union-retag** (`e.gm() + e.x`) is a niche
+  union-tag sequencing subtlety (the int-typed version is already correct;
+  swapped operands `e.x + e.gm()` already agree with CPython) — not a localized
+  fix. Left as KNOWNBUG.
+
+
 **Any/union tag-obligation — status + the call-boundary blocker.** The
 arithmetic OPERATOR tag obligation already exists and works (a union/Any operand
 with a non-numeric runtime tag raises TypeError on +,-,/,//,%,**; no false alarm
