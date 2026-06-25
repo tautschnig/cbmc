@@ -579,6 +579,37 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
+**Any/union tag-obligation — status + the call-boundary blocker.** The
+arithmetic OPERATOR tag obligation already exists and works (a union/Any operand
+with a non-numeric runtime tag raises TypeError on +,-,/,//,%,**; no false alarm
+on a genuinely-numeric value or isinstance-guarded code). The SUBSCRIPT
+obligation landed (scalar receiver = definite TypeError; python_value receiver
+must be a container/CLASS tag). The CALL-BOUNDARY obligation (binding a union/Any
+arg to a concretely-typed scalar parameter, which `coerce_call_argument` ->
+`unwrap_value` does with no tag check) is **BLOCKED**: parameter types are not
+reliable real annotations -- lambdas and unannotated params default to a scalar
+type yet truly accept Any, so a blanket obligation false-alarms (demonstrated:
+`keep([A(),B()], lambda e: True)` regressed when an object was bound to a
+lambda param inferred as int). A sound version needs reliable "this is a genuine
+annotation" provenance. Pinned: `param-coercion-typeerror-knownbug`.
+
+**Differential triage of the mypy/ty `narrowing-invalidation` cluster: DIVERSE
+roots, not one fix.** cbmc does no flow-narrowing, so these manifest as distinct
+feature gaps, several already documented / out-of-subset: nested-composition
+aliasing (a23 -> the per-instance-identity intractable area), enum `.value`
+modelling (a13), context-manager `__enter__` mutation (a8), mutable-default
+shared state (a10), inheritance+union virtual dispatch (b3/b5/b6), `__setattr__`
+(c5 -> attribute-protocol residual), numeric-tower int-as-float method call (d1,
+which the subset marks OUT). Same-expression eval-order x union-retag is the a17
+residual. Each is its own modelling project; tracked via the (private)
+differential harness rather than 10 separate suite tests.
+
+**Pre-existing precision/soundness note found in triage:** `unwrap_value` to a
+float target reads `__float_val` unconditionally, so an INT-tagged value bound to
+a float slot reads the (unset) float field instead of promoting `__int_val` ->
+float (PEP 484 numeric tower). Wrong value, not yet guarded.
+
+
 **Subscript tag obligation — ADDED (Any/scalar receiver).** Subscripting a value
 whose runtime type is not subscriptable now raises TypeError instead of silently
 returning nondet/garbage: a concrete scalar receiver (`int`/`float`/`bool`, e.g.

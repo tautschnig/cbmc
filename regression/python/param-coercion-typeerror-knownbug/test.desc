@@ -1,0 +1,13 @@
+KNOWNBUG
+main.py
+--unwind 6
+^EXIT=10$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Union/Any value bound to a concretely-typed int parameter then used as int must
+raise TypeError (annotations are not runtime coercions). cbmc coerces via
+unwrap_value with no tag check. A call-boundary tag obligation is blocked by
+unreliable param-type info (inferred/default scalar conflates with Any) -- a
+blanket version false-alarms on lambda/unannotated params. PLR-correct: FAILED.

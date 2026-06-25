@@ -6,7 +6,10 @@ main.py
 --
 ^warning: ignoring
 --
-Union int|str used as int after str-mutation must raise TypeError. cbmc's
-tagged-union extraction (unwrap_value) reads the int field with no tag
-assertion, so the str-tagged value is used as int silently. A faithful fix
-emits a tag obligation on union extraction. Soundness-direction gap.
+A Union (int|str) attribute mutated to str within the SAME binary expression's
+operands (e.gm() mutates e.x, then e.x is read) must raise TypeError. The
+arithmetic tag obligation (python_converter_ops.cpp) already catches the
+straightforward forms (str+1 as param/local/attr, and after a separate-statement
+mutation); the residual is narrowly the same-expression case -- an evaluation-
+order x union-retag interaction, not a missing obligation. PLR-correct outcome:
+VERIFICATION FAILED.
