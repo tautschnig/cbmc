@@ -1,0 +1,12 @@
+KNOWNBUG
+main.py
+--unwind 6
+^EXIT=10$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Union int|str used as int after str-mutation must raise TypeError. cbmc's
+tagged-union extraction (unwrap_value) reads the int field with no tag
+assertion, so the str-tagged value is used as int silently. A faithful fix
+emits a tag obligation on union extraction. Soundness-direction gap.
