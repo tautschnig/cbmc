@@ -1,0 +1,12 @@
+KNOWNBUG
+main.py
+--unwind 6
+^EXIT=10$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Any/unannotated subscript: 5[0] must raise TypeError. cbmc treats the Any
+value's subscript as nondet with no tag obligation, so it verifies. A faithful
+fix emits a runtime tag check on Any/union use (raise TypeError on definite
+tag mismatch). Soundness-direction (false negative) gap.
