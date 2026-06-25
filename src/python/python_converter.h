@@ -964,6 +964,15 @@ private:
   bool invalidate_extracted_source_on_mutation(
     const exprt &obj,
     const std::string &method_name);
+  /// PLR object identity: a NON-int-keyed dict value (`d["k"]`) is returned by
+  /// value (not a writable lvalue like int-keyed values), so an in-place
+  /// mutation through `d["k"].mutator(...)` is lost. Havoc the dict (into
+  /// pending_checks) so a later read is nondet rather than the stale
+  /// pre-mutation value (which would false-prove). `subscript` is the receiver
+  /// `d[key]` node. Returns true if a havoc was emitted.
+  bool invalidate_dict_value_on_mutation(
+    const jsont &subscript,
+    const std::string &method_name);
   /// PLR object identity (§9 #nested-aliasing): symbols bound to a list whose
   /// BY-VALUE mutable elements are aliased (shared) by a replicating/sharing
   /// op -- repetition `a*n`, concat `a+b`, slice `a[:]`, `a.copy()`,

@@ -1147,6 +1147,58 @@ bool python_convertert::invalidate_extracted_source_on_mutation(
   return true;
 }
 
+bool python_convertert::invalidate_dict_value_on_mutation(
+  const jsont &subscript,
+  const std::string &method_name)
+{
+  // In-place mutators across list / dict / set.
+  static const std::set<std::string> mutators = {
+    "append",
+    "extend",
+    "insert",
+    "remove",
+    "pop",
+    "sort",
+    "reverse",
+    "clear",
+    "add",
+    "discard",
+    "update",
+    "setdefault",
+    "popitem"};
+  if(mutators.count(method_name) == 0)
+    return false;
+  if(!is_node_type(subscript, "Subscript"))
+    return false;
+  const jsont &base = json_member(subscript, "value");
+  if(!is_node_type(base, "Name"))
+    return false;
+  exprt base_e = convert_expression(base);
+  if(base_e.id() != ID_symbol || !is_python_dict_type(base_e.type()))
+    return false;
+  // Int-keyed dict values use a working lvalue value-slot (mutation
+  // propagates); only a NON-int key returns the value by COPY, so the in-place
+  // mutation is lost. Havoc only the non-int-keyed case to avoid regressing
+  // the precise int-keyed path.
+  exprt key = convert_expression(json_member(subscript, "slice"));
+  const typet &kt = key.type();
+  const bool int_key = kt.id() == ID_signedbv || kt.id() == ID_unsignedbv ||
+                       kt.id() == ID_integer || kt.id() == ID_bool;
+  if(int_key)
+    return false;
+  // Sound over-approximation: havoc the dict so a later read is nondet rather
+  // than the stale pre-mutation value (the precise fix is an lvalue value-slot
+  // for string keys -- see the dict-value-byref deep-dive).
+  pending_checks.push_back(code_frontend_assignt{
+    base_e, side_effect_expr_nondett{base_e.type(), source_locationt{}}});
+  const irep_idt did = to_symbol_expr(base_e).get_identifier();
+  dict_literals.erase(did);
+  list_literals.erase(did);
+  dict_runtime_value_overrides.erase(did);
+  dict_guaranteed_keys.erase(did);
+  return true;
+}
+
 void python_convertert::collect_escaped_mutables(const jsont &body)
 {
   if(!body.is_array())
