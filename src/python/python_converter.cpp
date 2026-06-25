@@ -2354,7 +2354,22 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
     target_type == python_int_type())
     return python_value_int(e);
   else if(target_type.id() == ID_floatbv)
-    return python_value_float(e);
+  {
+    // PEP 484 numeric tower: int (and bool ⊂ int) promote to float. An
+    // INT/BOOL-tagged python_value stores its payload in __int_val, not
+    // __float_val, so reading __float_val unconditionally returned the unset
+    // float slot (wrong value, e.g. an int-tagged union bound to a float
+    // slot). Promote the integer payload when the tag is INT/BOOL; otherwise
+    // read the float slot.
+    exprt int_payload =
+      typecast_exprt{python_value_int(e), to_floatbv_type(target_type)};
+    return if_exprt{
+      or_exprt{
+        python_value_is(e, python_type_tagt::INT),
+        python_value_is(e, python_type_tagt::BOOL)},
+      int_payload,
+      python_value_float(e)};
+  }
   else if(target_type.id() == ID_bool)
   {
     // PLib stdtypes: Truth Value Testing (precise)
