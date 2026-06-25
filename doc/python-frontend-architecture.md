@@ -792,7 +792,7 @@ coercion happens. Each has a dedicated public helper on
 
 | Boundary | Helper | Used at |
 |---|---|---|
-| Call argument | `coerce_call_argument(arg, param_type)` | every site emitting a `side_effect_expr_function_callt` for a Python user-call (see `coerce_call_arguments` for the batch form) |
+| Call argument | `coerce_call_argument(arg, param_type, param_id)` | every site emitting a `side_effect_expr_function_callt` for a Python user-call (see `coerce_call_arguments` for the batch form). `param_id` drives the tag obligation (below) |
 | Assignment RHS | `coerce_assign_rhs(rhs, lhs_type)` | every site emitting `code_frontend_assignt` whose LHS has a declared natural type |
 | Return value | `coerce_return_value(val, return_type)` | every site emitting `code_frontend_returnt` whose value has a different type than the function's declared return |
 | Container element | (no dedicated helper yet — uses `safe_typecast`) | list / dict / set element coercion in builders and builtins |
@@ -843,6 +843,39 @@ module scope into static `__def_<func>_<idx>` symbols (see
 `python_converter_module.cpp`). Without the symbol-form path
 the defaults loop would bind the wrong field for
 `Optional[T] = None` cases.
+
+### Any / union tag obligations (TypeError on a wrong runtime tag)
+
+Python annotations are **not** runtime coercions. When a tagged-union /
+`Any` value (`python_value`) is *used as* a concrete type and its runtime
+tag does not match, CPython raises `TypeError` — but the unwrap path
+(`unwrap_value`, which reads e.g. `__int_val`) would silently extract the
+wrong field. The frontend emits a runtime **tag obligation**
+(`python-type-error` property: `assert tag(v) ∈ expected`) at three sites so
+that mismatch is caught instead of silently producing a wrong value:
+
+| Site | Where | Rule |
+|---|---|---|
+| **Binary arithmetic operator** | `convert_bin_op` (`python_converter_ops.cpp`) | a `python_value` operand of `+ - / // % **` whose runtime tag is non-numeric raises `TypeError` (the other operand is a concrete numeric; `Mult` is excluded — `str/list * int` is repetition). Fires on the actual tag, so a genuinely-numeric value never false-alarms. |
+| **Subscript** | `convert_subscript` (`python_converter_expressions.cpp`) | a concrete non-subscriptable scalar receiver (`int/float/bool`) is a **definite** `TypeError`; a `python_value` receiver must carry a container tag (`STR/LIST/DICT`) or `CLASS` (may define `__getitem__`). |
+| **Call argument** | `coerce_call_argument` (`python_converter.cpp`) | binding a `python_value` arg to a concretely-typed **scalar** parameter requires the arg's tag to match (int: `INT`/`BOOL`; float: `INT`/`BOOL`/`FLOAT` per the PEP 484 numeric tower; str: `STR`). **Gated on annotation provenance** (below). |
+
+**Annotation provenance** (`explicitly_annotated_params`, a `std::set<irep_idt>`
+of parameter symbol ids) is the architectural enabler for the call-argument
+obligation. An unannotated parameter defaults to `python_value` (Any) but is then
+often overwritten by a *call-site-inferred* concrete type — so a bare `int`
+parameter type may be a genuine `def f(x: int)` annotation **or** an inferred
+type for a parameter (e.g. a `lambda`) that truly accepts Any. The set records
+only the former (`!annotation.is_null()` at def time). The obligation fires only
+for explicitly-annotated scalar params; inferred/default scalar params are
+excluded, so e.g. `keep([A(),B()], lambda e: True)` does not false-alarm. The
+parameter identifier (`python::<qualified_func>::<param_name>`) matches
+`params[i].get_identifier()` at every call site. The set is reusable for future
+return-/assign-boundary obligations.
+
+Related: `unwrap_value` to a `float` target **promotes** an `INT`/`BOOL`-tagged
+payload (`__int_val` → float) rather than reading the unset `__float_val`
+(numeric tower; guard `unwrap-int-to-float-promotion`).
 
 ### Why have a separate "boundary" abstraction?
 
@@ -937,9 +970,15 @@ soundness, imprecision, performance, intrinsic.
 
 ### A. Soundness (false proofs / latent unsoundness / deliberate tradeoffs)
 
-There are **no known open false proofs** in the default configuration —
+The **common-case** default configuration has no known false proofs —
 the 2026-06-18/19 audit plus the cross-module global-dict (`R1`) and the
-call-signature fixes closed the ones that were found. The 2026-06-24 work
+call-signature fixes closed the ones that were found. **However, differential
+testing against an external CPython-semantics corpus (2026-06-25) DID surface
+open false proofs in advanced-feature corners** — the "narrowing-invalidation"
+cluster (see the dedicated row below); they are now pinned as `*-knownbug`
+regression tests. So the honest headline is: the common-case config is clean,
+and the remaining false proofs are confined to advanced/dynamic features, each
+tracked by a KNOWNBUG test. The 2026-06-24 work
 closed two further latent-unsoundness classes: (i) the **side-effecting
 operand call-duplication** class — a `python_value`-returning operand
 referenced twice in a lowering (tag predicate + payload unwrap, or a
@@ -960,12 +999,33 @@ dict-literal value that embeds a mutable symbol (not just a boxed leaf) was
 unsound (`n=1; d={"k":n}; n=2; d["k"]`). Finally, the last documented open false
 proof — **extraction-then-mutate** (`r=c[i]; r.append(x)`) — was closed by an
 invalidate-on-mutation guard (havoc the source container; see the
-nested-mutable-aliasing row). The entries below are the deliberate
+nested-mutable-aliasing row). The **2026-06-25** work (sound-mode + numeric/type audit, plus differential
+testing) landed several soundness fixes and recorded several KNOWNBUG residuals.
+Fixes: **definite integer overflow** in the default 64-bit model now reports
+`python-model-bound` instead of silently wrapping (`10**19`, `1<<70`,
+big-literal arithmetic; `int-overflow-literal-reported`); **`--python-unbounded-ints`**
+(the sound int mode) is now genuinely sound for **shifts** and **bitwise `&|^`**
+(both previously truncated to 64-bit — leaks in the mode that promises
+soundness; `unbounded-bitwise-soundness`); **subscript** of a non-subscriptable
+value raises `TypeError` (`any-subscript-typeerror`); the **call-argument tag
+obligation** now fires for explicitly-annotated scalar params via annotation
+provenance (`param-coercion-typeerror`); **`del obj.attr`** on an instance-only
+attribute havocs the slot to nondet instead of leaving a stale concrete value
+(`del-attr-no-stale-value`); **`unwrap_value` → float** promotes an INT/BOOL
+payload (numeric tower; `unwrap-int-to-float-promotion`). Audited **clean** (no
+false proofs, with lock-in tests): bytes / complex / Decimal
+(`numeric-model-soundness`), and type / `isinstance` / virtual dispatch /
+`hasattr` (`type-dispatch-soundness`).
+
+The entries below are the deliberate
 soundness-vs-precision tradeoffs and the guarded / opt-in cases.
 
 | Area | Issue | Status | Plan |
 |---|---|---|---|
 | Operations that can raise | `int()`/`float()` of a non-constant string (`ValueError`), `os.*` file ops (`OSError`), `re` with a non-str pattern (`TypeError`) are modelled as **silently succeeding** by default (precision-favouring) → false **negatives** by design | sound **only** under opt-in `--python-raising-ops-check`; default favours precision | [plan §0](python-frontend-plan.md#false-proofs) |
+| **Narrowing-invalidation cluster** (OPEN false proofs) | a value's runtime type changes via an effect cbmc does not model, then it is used at the stale type → CPython `TypeError`, cbmc verifies. Distinct roots (each its own modelling gap, **not one fix**): enum `.value` after a status mutation, object-identity-via-**composition aliasing**, context-manager `__enter__` mutation of a union field, `__setattr__` override, inheritance+union virtual dispatch, and same-expression **eval-order × union-retag**. Surfaced by differential testing (2026-06-25) | **UNSOUND** (false proofs), confined to advanced/dynamic features; each pinned KNOWNBUG (`enum-value-after-mutation-knownbug`, `shared-object-aliasing-knownbug`, `context-manager-enter-mutation-knownbug`, `setattr-override-knownbug`, `union-use-after-mutation-typeerror-knownbug`) | [plan §0](python-frontend-plan.md#false-proofs) |
+| Any/union used at a wrong type | a tagged-union/`Any` value used as a concrete type with a mismatched runtime tag now raises `TypeError` via **tag obligations** at the operator, subscript, and (provenance-gated) call-argument boundaries — was a silent wrong-field read. The remaining hole is the call-argument obligation only firing for **explicitly-annotated** scalar params (inferred/Any params excluded to avoid false alarms) | sound (closed for the three covered sites); see the tag-obligation table in [Type-coercion at boundaries](#any--union-tag-obligations-typeerror-on-a-wrong-runtime-tag) | [plan §0](python-frontend-plan.md#false-proofs) |
+| Definite integer overflow (default 64-bit) | the default 64-bit model silently **wrapped** on a statically-provable >64-bit result (`10**19 < 0`, `1<<70 == 0`) — a false proof. Now reports `python-model-bound` (assert+assume cut) on a DEFINITE overflow; a symbolic/computed overflow remains the documented 64-bit bound (use `--python-unbounded-ints`, now sound incl. shifts/bitwise) | sound (definite cases reported; symbolic = documented bound) | [plan §0](python-frontend-plan.md#false-proofs) |
 | Nested mutable-element aliasing | anonymous nested-mutable list/dict elements stored by value; the replication / self-append / new-container channels are **guarded** (report `python-model-bound`). **Direct** nested mutation works (`c[i].append(...)` for lists, and int-keyed dict values via lvalue value slots). **Extraction-then-mutate** (`r=c[i]; r.append(...)` / `v=a[k]; v.append(...)`) is **guarded** in the default config (2026-06-24): the extracted variable is recorded (`extracted_container_alias`) and, on a subsequent in-place mutation, the source container is havoced + dropped from the const-fold maps (sound over-approximation). **For LISTS, the principled whole-group fix is now implemented behind opt-in `--python-ref-mutables`** (2026-06-24): nested list elements are heap-allocated per instance and aliased by pointer (`make_python_value(LIST, allocate_boxed_leaf(rebuild_list_as_pv(e)))`), so extraction / multi-instance / reorder / membership / nested value reads / 3-deep composition are **precise**; under the flag the havoc guard is skipped for wrapped references. | sound. **No known open false proof in the default config.** With `--python-ref-mutables` the list cases above become precise (validated: §4 gate green, 5 genuinely-false negatives stay FAILED, default suite green). **Confirmed OPT-IN ONLY (2026-06-25):** making it the default is **not viable** — precise nested-list `==` under reference semantics needs per-element pointer deref that blows up pointer analysis (depth-2 already TIMEOUTs; corpus needs 3-deep `==`), and the A/B sweep showed regressions (PASS 2710 vs by-value 2715 incl. a crash). The value-vs-reference tradeoff is fundamental in BMC; by-value + sound guards stays the default. Dicts/sets remain guarded. | [ref-semantics spike §10–§12](python-frontend-reference-semantics-spike.md) + [plan §0](python-frontend-plan.md#false-proofs) + [dict-byref](python-frontend-dict-value-byref-plan.md) |
 | dict-literal const-fold | the dict-subscript const-fold substituted a construction-time-tracked value at a later read; for a value embedding a **mutable** symbol (a reassignable variable, a boxed-leaf pointer) this re-read the current value → false proof (`n=1; d={"k":n}; n=2; d["k"]`). **Closed 2026-06-24** (`value_is_const_foldable`): the const-fold now fires only for invariant values | sound (closed) | — |
 | Native `smt_string`→int cast | under `--python-smt-strings`, a spurious str→int coercion from value plumbing lowers to `str.to_int` (defined-but-approximate); genuine `int(str)` is exact | sound (approximate, flagged) | [strings plan](python-frontend-strings-plan.md#strings) |
