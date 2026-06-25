@@ -600,6 +600,24 @@ candidate "tractable" false proofs; neither has a clean DEFAULT-mode fix:
   swapped operands `e.x + e.gm()` already agree with CPython) — not a localized
   fix. Left as KNOWNBUG.
 
+**Union-return-path precision bug (characterized; fix deferred).** A function
+with a concrete return annotation (`-> int`) and a return path that yields a
+union/Any value (`return x` where `x: int|str`) puns that `python_value` into
+the concrete int return slot, corrupting the value read on the *other* (taken)
+path too -- `def g(x:"int|str")->int: if isinstance(x,str): return len(x); return x`
+mis-evaluates `g("abc")` (returns the wrong value, a SOUND spurious failure).
+Root: with an annotation, `infer_return_type_from_body` is skipped and the slot
+is the concrete annotated type; the no-annotation path (which widens to
+python_value) is correct. **Fix shape:** widen the slot to python_value when a
+return path genuinely yields one -- but the naive `is_python_value_type(inf.type)`
+gate over-fires on **forward/recursive calls** (mutual recursion `-> bool`
+regressed: the inferer returns python_value from *uncertainty* about an
+unresolved call, not a genuine union). A safe fix must distinguish a genuine
+python_value-VALUE return from inferer uncertainty (e.g. flag a `return <union
+param>` specifically, excluding `return <call>`). Sound either way (precision
+only); deferred to avoid the recursion regression.
+
+
 
 **Any/union tag-obligation — status + the call-boundary blocker.** The
 arithmetic OPERATOR tag obligation already exists and works (a union/Any operand
