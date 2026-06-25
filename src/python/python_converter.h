@@ -1869,6 +1869,12 @@ private:
   /// rather than be treated as a built-in container method).
   bool any_user_class_defines_method(const std::string &method_name);
 
+  /// True if class `cls` (or any ancestor on its C3 MRO) defines `method` as a
+  /// code symbol. Used to detect unmodelled dynamic attribute dunders
+  /// (`__getattribute__` / `__setattr__`) so attribute access on such an
+  /// instance can be soundly over-approximated.
+  bool class_mro_defines(const std::string &cls, const std::string &method);
+
   /// PLR §3.3: dispatch a container method whose name is shared across built-in
   /// containers (pop / remove / clear / copy / update) on an Any
   /// (`python_value`) receiver, by branching on the runtime `__tag`. Each

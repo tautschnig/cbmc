@@ -1987,6 +1987,27 @@ std::optional<codet> python_convertert::emit_descriptor_set(
     ssym->symbol_expr(), args, mty.return_type(), loc}};
 }
 
+// True if `cls` or any MRO ancestor defines `method` as a code symbol.
+bool python_convertert::class_mro_defines(
+  const std::string &cls,
+  const std::string &method)
+{
+  std::vector<std::string> chain;
+  auto it = class_mro.find(cls);
+  if(it != class_mro.end())
+    chain = it->second;
+  if(chain.empty())
+    chain.push_back(cls);
+  for(const std::string &anc : chain)
+  {
+    const symbolt *s =
+      symbol_table.lookup(irep_idt{"python::" + anc + "::" + method});
+    if(s != nullptr && s->type.id() == ID_code)
+      return true;
+  }
+  return false;
+}
+
 // §11b: dispatch __getattr__ when normal attribute lookup fails.
 exprt python_convertert::emit_getattr_fallback(
   const exprt &value,
@@ -2214,6 +2235,42 @@ exprt python_convertert::convert_attribute(const jsont &expr)
       }
     }
     return side_effect_expr_nondett{python_value_type(), get_location(expr)};
+  }
+
+  // PLR §3.3.2: a class that overrides __getattribute__ (intercepts EVERY
+  // attribute access) or __setattr__ (intercepts every write, so a stored
+  // field value can no longer be trusted) is not modelled by the frontend.
+  // Reading the struct field directly would silently return a wrong value
+  // (e.g. the `__setattr__` that stores a str into an int field -> the read
+  // returns a stale int instead of raising TypeError when used). Over-
+  // approximate such an instance read to a nondet python_value (Any), so a
+  // subsequent use routes through the operator/subscript/call tag obligations
+  // (a possible TypeError) instead of fabricating a concrete value. NOTE:
+  // __getattr__ (the MISSING-attribute fallback only) is modelled precisely
+  // via emit_getattr_fallback and is deliberately NOT over-approximated. The
+  // class object itself (ClassName.attr) is excluded -- instance dunders do
+  // not intercept class-object access.
+  {
+    std::string rcls;
+    if(
+      value.type().id() == ID_pointer &&
+      to_pointer_type(value.type()).base_type().id() == ID_struct)
+      rcls = id2string(
+        to_struct_type(to_pointer_type(value.type()).base_type()).get_tag());
+    else if(value.type().id() == ID_struct)
+      rcls = id2string(to_struct_type(value.type()).get_tag());
+    if(rcls.compare(0, 13, "python_class_") == 0)
+    {
+      const std::string bare = rcls.substr(13);
+      bool is_class_object =
+        value.id() == ID_symbol &&
+        id2string(to_symbol_expr(value).get_identifier()) == "python::" + bare;
+      if(
+        !is_class_object && (class_mro_defines(bare, "__getattribute__") ||
+                             class_mro_defines(bare, "__setattr__")))
+        return side_effect_expr_nondett{
+          python_value_type(), get_location(expr)};
+    }
   }
 
   // PLR §6.10: AttributeError for an attribute a numeric scalar does
