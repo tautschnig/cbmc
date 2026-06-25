@@ -579,6 +579,21 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
+**Dict string-keyed value direct-mutation false proof — FIXED (2026-06-25, `b8ad0b63a6`).**
+`d={"k":[1]}; d["k"].append(2); assert len(d["k"])==1` verified SUCCESSFUL
+(real len 2): a string-keyed dict value is returned by copy, so the in-place
+mutation is lost and the stale value is read. The extraction guard covered only
+Name receivers; the direct subscript-receiver case was unguarded. Fix: havoc the
+dict on a non-int-keyed in-place value mutation (int-keyed lvalue slot stays
+precise). Found by the P2 adversarial dict probe. Guards:
+`dict-value-mutation-soundness`, `dict-value-intkey-precise`.
+
+**Set model — full audit clean (2026-06-25).** P1 probed every set
+operation/projection for non-int false proofs; all sound after the earlier
+membership-nondet + add-havoc fixes (`da7f7fbb85`, `00d563d7c6`). Guard:
+`set-ops-non-int-soundness`.
+
+
 **Set non-int false proof — FIXED (2026-06-25, `da7f7fbb85`).** A set is a 64-bit
 int BITMAP (element -> bit position); a non-int element (tuple/str) cast to a bit
 could COLLIDE with another element's bit, FALSE-PROVING membership
