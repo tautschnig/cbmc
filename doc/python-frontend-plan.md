@@ -579,6 +579,34 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
+**Sound-mode + numeric/type audit (2026-06-25). One leak found+fixed; rest
+clean.**
+- **P1 — `--python-unbounded-ints` (the SOUND mode) bitwise leak FIXED
+  (`c0b7ae0885`).** `&`/`|`/`^` truncated unbounded operands to signedbv[64]
+  and wrapped (`(2**70) & (2**70)` proved == 0). Fixed: arbitrary-precision fold
+  for constants; fit-select (64-bit when both fit, else sound nondet) for
+  symbolic. Exhaustively re-probed ~, %, //, divmod, abs, comparisons,
+  bit_length, bool, float(), int(), * -- all sound; bitwise was the only leak
+  (shifts fixed earlier, `b3682b875c`). Guards: `unbounded-bitwise-soundness`,
+  `unbounded-bitwise-precise`.
+- **P2 — bytes / complex / Decimal: clean.** No false proofs (index/slice/len/
+  concat/eq; arith/abs/eq; exact base-10 add); precise on positives. Guard:
+  `numeric-model-soundness`.
+- **P3 — whole-corpus `--triage-bound` sweep: no genuine false proofs.** The 7
+  `CBMC=SUCCESSFUL / expected=FAILED` candidates are all explained as opt-in-
+  check coverage (`import-os2`, `input1/5`, `infer-func-no-return` -- needs
+  --python-raising-ops-check / --python-check-annotations), model differences
+  (`neural-net` fixedbv-vs-IEEE; CBMC matches CPython), `nondet_string`
+  semantics (`string-nondet-...`; vacuous assume), or unsupported `encode`
+  (`github_2993_2`). The other 26 DIFFs are CBMC=FAILED (sound spurious-fails);
+  4 are BOUND (bug deeper than --unwind). The harness gained `--triage-bound`
+  to auto-classify these.
+- **P4 — type / isinstance / dispatch / Any-erasure: clean.** No false proofs
+  (isinstance incl. tuple/inheritance, type narrowing, virtual/MRO dispatch,
+  hasattr, Any-erasure attribute access); precise on positives. Guard:
+  `type-dispatch-soundness`.
+
+
 **Default int-overflow model-bound guard — ADDED (2026-06-25).** The default
 64-bit int model silently wrapped on >64-bit results (a false proof, e.g.
 `10**19 < 0`, `1<<70 == 0`). Mirroring the container-capacity guards, an integer
