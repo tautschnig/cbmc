@@ -617,6 +617,14 @@ python_value-VALUE return from inferer uncertainty (e.g. flag a `return <union
 param>` specifically, excluding `return <call>`). Sound either way (precision
 only); deferred to avoid the recursion regression.
 
+**P4 enum `.value` finding (a13).** cbmc does not track enum-member
+**reassignment** for `.value`: after `j.s = S.B`, `j.s.value` does not read
+`S.B.value` (`j.flip(); assert j.s.value == 2` FAILS -- a precision miss; the a13
+false proof, `.value` used as int after a flip to a str-valued member, is the
+soundness face of the same gap). Genuine enum-modelling work (track the dynamic
+member behind `.value`, heterogeneous member value types), not a clean
+over-approximation. Left as KNOWNBUG (a13).
+
 
 
 **Any/union tag-obligation — status + the call-boundary blocker.** The
