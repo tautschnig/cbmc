@@ -59,17 +59,24 @@ std::optional<exprt> python_convertert::try_set_method(
       return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
     exprt val = convert_expression(*as_array(args).begin());
     // The set is a 64-bit int BITMAP -- only int/bool elements have a precise
-    // bit. A non-int element (tuple/str/...) cast to a bit position can
-    // COLLIDE with an int element's bit and corrupt int membership (a false
-    // proof). Sound: do NOT touch the bitmap for a non-int element; its
-    // membership is modelled nondet at the `in` site (see convert_compare).
+    // bit. A non-int element (tuple/str/...) cannot be represented: casting it
+    // to a bit position can COLLIDE with another element's bit (false-proving
+    // membership) AND a no-op would leave popcount unchanged (false-proving
+    // len(), which is popcount(bitmap)). Sound over-approximation: havoc the
+    // bitmap so both int membership and len() become nondet; non-int
+    // membership is independently nondet at the `in` site (convert_compare).
     {
       const typet &vt = val.type();
       const bool int_elem = vt.id() == ID_signedbv ||
                             vt.id() == ID_unsignedbv || vt.id() == ID_bool ||
                             vt.id() == ID_integer;
       if(!int_elem)
+      {
+        pending_checks.push_back(code_frontend_assignt{
+          bm,
+          side_effect_expr_nondett{unsignedbv_typet{64}, get_location(expr)}});
         return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+      }
     }
     if(val.type() != signedbv_typet{64})
       val = safe_typecast(val, signedbv_typet{64});
