@@ -1429,6 +1429,14 @@ exprt python_convertert::convert_user_call(
           !is_python_list_type(arguments[i].type());
         if(
           python_check_annotations && !is_likely_vararg_collect &&
+          // Provenance gate: only a GENUINELY-annotated parameter is a sound
+          // basis for an argument-type mismatch. An inferred/default param
+          // type (a lambda param, an unannotated def param specialised from a
+          // call site, a `*args`/`**kwargs` element) really accepts Any, so
+          // checking it against the arg yields false positives (lambda10,
+          // method-signature `*args`, argparse). Same gate as the call-boundary
+          // tag obligation.
+          explicitly_annotated_params.count(params[i].get_identifier()) &&
           (annotation_types_incompatible(
              params[i].type(), arguments[i].type()) ||
            union_annotation_violated(params[i].get_identifier(), arguments[i])))

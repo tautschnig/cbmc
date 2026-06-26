@@ -3473,6 +3473,8 @@ std::optional<exprt> python_convertert::try_method_call(
                 bool is_self = i == 0 && mparams[i].type().id() == ID_pointer;
                 if(
                   !is_self && python_check_annotations &&
+                  explicitly_annotated_params.count(
+                    mparams[i].get_identifier()) &&
                   annotation_types_incompatible(
                     mparams[i].type(), arguments[i].type()))
                 {
@@ -3514,6 +3516,7 @@ std::optional<exprt> python_convertert::try_method_call(
                 bool is_self = i == 0 && fp[i].type().id() == ID_pointer;
                 if(
                   !is_self && python_check_annotations &&
+                  explicitly_annotated_params.count(fp[i].get_identifier()) &&
                   annotation_types_incompatible(
                     fp[i].type(), arguments[i].type()))
                 {
