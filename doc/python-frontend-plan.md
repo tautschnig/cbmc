@@ -1607,6 +1607,48 @@ Any-valued-container AnnAssign (`dict[K, Any]`), both rooted in
 careful separately-validated handling. The inherent floor is the real default-on
 gate.
 
+**Update (2026-06-26, the `convert_type_annotation` unknown-fallback fix).**
+Found and fixed a genuine WHOLE-GROUP architectural defect: `convert_type_annotation`
+overloaded `python_int_type()` as BOTH the legitimate `int` type AND the
+"I-can't-model-this-annotation" fallback. That single collision caused two
+otherwise-unrelated-looking symptoms:
+  - **PLR soundness (default mode):** an unknown-typed value was modeled with
+    *concrete int semantics* instead of being over-approximated to the top type.
+    This is a latent unsoundness -- and it was real: flipping the fallback to
+    `python_value` made the by-value sweep *gain* `ethereum_bug-fail` (the int
+    fallback had been masking a genuine bug).
+  - **`--python-check-annotations` FPs:** the checker read the unknown-fallback
+    `int` as a precise `int` declaration and flagged the real value (a `range`,
+    a bare `tuple`, an unknown forward-ref) as a mismatch.
+The fix: the unknown-annotation fallback is now `python_value` (Any / top) -- the
+sound over-approximation, which the checker already treats as
+compatible-with-everything. Applied to the unknown-forward-ref string, the final
+catch-all `else` (covers `range` etc.), and bare `tuple`. Left the intentional
+`Constant None -> int` (None sentinel) and `enum-without-value -> int` untouched.
+Validation: full default suite green; by-value sweep PASS 2719 (baseline 2718),
+0 regressions + the `ethereum_bug-fail` gain; oracle 0 NEW false proofs.
+
+Cumulative corpus FP under the flag this session: **43 -> 34** (call-arg
+provenance gating -3, range/unknown -> Any -4, bare tuple -2). The remaining 34
+are now dominated by the INHERENT narrowing class (real mismatches the flag is
+designed to catch but that are not runtime errors: `github_3775*` `int=<str>`,
+`function-keyword*` `int=<float>`, `recursion`/`while`/`sequence`, `inheritance2`
+`sound: int = dog.bark()`).
+
+**The one remaining shared-root case that is NOT fixed -- and why (a genuine
+deeper entanglement, not a point fix).** The dict-with-non-"safe"-value fallback
+(`dict[str, Optional[int]]`, `dict[str, Any]`, `dict[Any, Any]` -- `github_3658_6`,
+`any-dict-subscript`, `crash-comprehension-type-reuse`) is the SAME int-collision
+root, but every faithful fix (dict-with-`python_value`-values, or whole-thing
+`python_value`) regresses `dict-if-not-in-idiom`. The failure was diagnosed and
+is NOT the KeyError elision (that elision is AST-structural and type-independent):
+it is `[python-model-bound] container capacity exceeded` on
+`providers[key].append(item)` once the dict values become Any. So the Any-valued
+dict fix is gated behind a *separate, deeper* Any-valued-CONTAINER
+capacity-modeling representation issue, which must be addressed on its own (and
+validated) before the dict-value-nonsafe fallback can be flipped. Tracked here as
+the next step for this cluster.
+
 The decision The original blocker write-up is kept below for the
 record.
 
