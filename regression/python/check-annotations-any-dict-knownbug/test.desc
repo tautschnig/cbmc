@@ -1,0 +1,19 @@
+KNOWNBUG
+main.py
+--python-check-annotations --unwind 3 --no-unwinding-assertions
+^EXIT=0$
+^VERIFICATION SUCCESSFUL$
+--
+^\[annotation-mismatch
+--
+Opt-in --python-check-annotations FALSE POSITIVE (not a false proof). DESIRED
+behaviour (encoded above): an Any-valued dict annotation (`dict[str, Any]`)
+should NOT raise an annotation-mismatch, so the program verifies SUCCESSFUL.
+CURRENT behaviour: `dict[str, Any]` lowers to int (the dict-value non-"safe"
+fallback in convert_type_annotation), the checker reads that as a precise `int`
+declaration and flags the dict literal -> VERIFICATION FAILED. The principled
+fix (Any-valued dict -> python_dict with python_value values) is blocked by a
+separate Any-valued-CONTAINER capacity-model-bound issue (typing the values as
+Any makes `d[k].append(...)` hit [python-model-bound]; see dict-if-not-in-idiom,
+the architecture-doc master inventory section A, and plan §7). When that
+representation issue is fixed this test should start passing -> promote to CORE.
