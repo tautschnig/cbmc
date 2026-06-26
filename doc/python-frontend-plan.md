@@ -1734,6 +1734,29 @@ the inherent floor from false-positive to correctly-silent and re-aligns the
 property with runtime semantics. That gating is the tracked next step for this
 cluster.
 
+**Update (2026-06-26) — use-site misuse gating is ALREADY the default behaviour
+(reframes the default-on question).** Investigating how to build use-site gating
+revealed it largely already exists: in DEFAULT mode (no `--python-check-annotations`)
+the runtime obligation system (operator operand-type / subscript / call-arg tag
+obligations) catches an annotation-mismatched value *exactly when it is misused
+at a use site*, and stays silent when it is not — verified:
+`n: int = "x"; n + 1` → **FAILED** (caught), `n: int = "x"` unused → **SUCCESSFUL**
+(no FP), `s: str = 5; len(s)` → **FAILED**, `s: str = 5; x = s` → **SUCCESSFUL**.
+This is precisely the "flag only on misuse" semantics, and it is keyed on the
+value's ACTUAL runtime type (PLR-correct: annotations are not runtime coercions),
+independent of the annotation. So **there is no large new feature to build, and
+no soundness reason to make `--python-check-annotations` default-on** — runtime
+type-misuse is already caught by default; the flag adds *static declaration*
+strictness (mypy-style), which is correctly opt-in. Remaining default-mode
+use-site gaps are the SAME documented clusters, not new work: (a) a concrete
+mismatched scalar passed to an annotated param is *punned* by boundary coercion
+(`s: int = "x"; f(s)` with `f(k: int)` — the coercion-boundary PUN family, same
+root as list-element/attribute-field), and (b) some operand-type corners (now
+including `str` bitwise, closed 2026-06-26). Conclusion: the default-on question
+is **resolved** — keep `--python-check-annotations` opt-in (static strictness);
+the runtime-soundness goal is met by the default obligation system, and is
+extended incrementally as the coercion-boundary PUN cluster is addressed.
+
 The decision The original blocker write-up is kept below for the
 record.
 
