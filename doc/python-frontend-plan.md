@@ -579,6 +579,25 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
+**Standalone PLR re-audit (2026-06-26).** A differential pass (~255 generated
+probes under CPython vs cbmc) fixed one correctness false proof and pinned five
+new narrow ones as KNOWNBUG regression tests:
+- **FIXED — float floor division `//`** computed as true division (no floor:
+  `7.0 // 2.0` proved `==3.5`); now floored (`float-floordiv-correct`, CORE).
+- **OPEN** (each a KNOWNBUG; the fix sketch in parentheses):
+  - `annotation-extract-mutate-bypass-knownbug` — `r: list = c[i]; r.append(x)`
+    bypasses the extraction-then-mutate guard (record `extracted_container_alias`
+    on the AnnAssign path too).
+  - `method-arg-tag-obligation-knownbug` — the provenance-gated call-arg
+    TypeError obligation fires for free functions but not method calls (wire the
+    obligation into the method-call argument coercion sites).
+  - `float-bitwise-typeerror-knownbug` / `sequence-mul-float-typeerror-knownbug`
+    — a float operand to `& | ^ << >> ~`, and `seq * float`, should raise
+    TypeError (add an operand-type check, analogous to the existing tag
+    obligations).
+  - `positional-only-kwarg-typeerror-knownbug` — a positional-only param passed
+    by keyword (`def f(x, /, y); f(x=1)`) should be a TypeError (enforce `/`).
+
 **P1 tractability finding (2026-06-25, evening).** Investigated the two
 candidate "tractable" false proofs; neither has a clean DEFAULT-mode fix:
 - **The ty Any-laundering cluster (004/005/007) shares ONE root** — a wrong-typed

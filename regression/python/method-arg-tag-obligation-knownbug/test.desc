@@ -1,0 +1,11 @@
+KNOWNBUG
+main.py
+--unwind 6
+^VERIFICATION FAILED$
+--
+--
+Desired: the provenance-gated call-argument tag obligation that fires for free
+functions must also fire at METHOD call sites (the explicitly-annotated scalar
+param `n: int` receiving an Any whose runtime tag is STR is a TypeError). Today
+the obligation is not wired for method calls, so cbmc verifies (false proof).
+Promote to CORE when fixed.
