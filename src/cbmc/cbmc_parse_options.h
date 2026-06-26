@@ -88,6 +88,7 @@ class optionst;
   "(python-check-any-arg-attrs)" \
   "(python-missing-return-check)" \
   "(python-check-iter-none)" \
+  "(python-strict)" \
   "(claim):(show-claims)(floatbv)(all-claims)(all-properties)" // legacy, and will eventually disappear // NOLINT(whitespace/line_length)
 // clang-format on
 
