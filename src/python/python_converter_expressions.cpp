@@ -151,6 +151,16 @@ void python_convertert::validate_call_signature(
         if(an.is_null())
           continue; // **spread — cannot enumerate
         std::string kn = json_string(an);
+        // PLR §8.7: a positional-only parameter (declared before `/`) passed
+        // by keyword is a TypeError -- it cannot bind by name, and (this block
+        // only runs when the callee has no **kwargs) there is nothing to
+        // absorb it. e.g. `def f(x, /, y): ...; f(x=1, y=2)`.
+        auto po = function_posonly_params.find(func_key);
+        if(po != function_posonly_params.end() && po->second.count(kn) > 0)
+        {
+          emit_conditional_exception(true_exprt{}, "TypeError");
+          return;
+        }
         bool matched = false;
         for(const auto &p : params)
           if(id2string(p.get_base_name()) == kn)

@@ -621,6 +621,11 @@ private:
   /// "missing required keyword-only argument". Populated alongside
   /// function_max_positional.
   std::map<irep_idt, std::set<std::string>> function_required_kwonly;
+  /// Base names of POSITIONAL-ONLY params (those before the `/` marker).
+  /// Passing one by keyword (when the callee has no **kwargs to absorb it)
+  /// raises TypeError "got some positional-only arguments passed as keyword
+  /// arguments". Populated alongside function_max_positional.
+  std::map<irep_idt, std::set<std::string>> function_posonly_params;
   std::set<irep_idt> function_has_kwargs;
   // Default parameter values evaluated at definition time
   // Maps (function_name, param_index) → default value expression
