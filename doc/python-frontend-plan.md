@@ -620,6 +620,21 @@ semantics; the composition-via-constructor-parameter case
 aliasing through parameters/attributes. Deferred to a focused effort (the guard
 must avoid over-havocing common instance-passing patterns — validation-heavy).
 
+**Update (2026-06-26, second round).** Re-attempted the *precise* path more
+thoroughly (promote `b = a` instance to a pointer in convert_assign AND deref
+alias-promoted instance pointers in convert_name, gated on `alias_targets` so
+`self` is untouched). It STILL did not propagate: the goto shows `b := a` is a
+plain struct **copy** emitted by a symbol-creation path *upstream* of the
+`alias_targets` block, so neither the promotion nor the deref fires. Conclusion:
+precise instance aliasing is a genuine **reference-semantics project** (instances
+must be heap/pointer objects, like the container ref-semantics that is opt-in
+only), not a point fix. The havoc-guard remains the only contained *sound* option
+but carries a real precision cost on the **common** `obj2 = obj1; obj2.mutate();
+obj1.use()` pattern (reading shared state through the other alias). Both options
+are tradeoffs, not quick fixes — so the false proof stays pinned
+(`instance-aliasing-knownbug`, oracle baseline) pending a dedicated reference-
+semantics-for-instances effort or an accepted havoc-guard precision tradeoff.
+
 **P1 tractability finding (2026-06-25, evening).** Investigated the two
 candidate "tractable" false proofs; neither has a clean DEFAULT-mode fix:
 - **The ty Any-laundering cluster (004/005/007) shares ONE root** — a wrong-typed
