@@ -890,6 +890,12 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       sig_defaults.is_array() ? as_array(sig_defaults).size() : 0;
     function_required_positional[fkey] =
       parameters.size() > n_def ? parameters.size() - n_def : 0;
+    // PLR §8.7: record positional-only param base names (before `/`) so a
+    // call passing one by keyword can be flagged as a TypeError.
+    if(posonlyargs.is_array())
+      for(const auto &param : as_array(posonlyargs))
+        function_posonly_params[fkey].insert(
+          json_string(json_member(param, "arg")));
   }
 
   // PLR §8.7: keyword-only arguments are appended later (after *args),
