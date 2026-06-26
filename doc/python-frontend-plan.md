@@ -1678,7 +1678,8 @@ fixed).
 **Update (2026-06-26, `--python-strict` landed).** Decision taken: ship the
 annotation-strictness family as the opt-in preset `--python-strict`
 (= `--python-check-annotations` + `--python-missing-return-check` +
-`--python-required-kwarg-checks` + `--python-check-typeddict-fields`) rather than
+`--python-required-kwarg-checks` + `--python-check-typeddict-fields` +
+`--python-check-any-arg-attrs` + `--python-check-iter-none`) rather than
 flipping any of them on by default. Rationale: the residual precision cost is now
 mostly INHERENT (real annotation mismatches that are not runtime errors), so
 default-on would change what `VERIFICATION FAILED` means (conflating a runtime

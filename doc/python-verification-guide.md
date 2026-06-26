@@ -109,16 +109,16 @@ Optional flags worth considering:
   `int`). That is the flag working as designed, not a bug — which
   is why annotation strictness is opt-in rather than a default.
 
-- `--python-strict`: convenience preset that turns on the static
-  type-annotation-strictness family (mypy-style) in one switch:
+- `--python-strict`: convenience preset that turns on the
+  static-strictness family (mypy-style) in one switch:
   `--python-check-annotations`, `--python-missing-return-check`,
-  `--python-required-kwarg-checks` and
-  `--python-check-typeddict-fields`. It does **not** change the
-  default verification semantics (which stay runtime-soundness
-  oriented) and it does **not** imply the runtime-exception
-  soundness mode (`--python-raising-ops-check`, a separate axis).
-  Use it when you want declaration-level enforcement across a file
-  or project.
+  `--python-required-kwarg-checks`, `--python-check-typeddict-fields`,
+  `--python-check-any-arg-attrs` and `--python-check-iter-none`. It
+  does **not** change the default verification semantics (which stay
+  runtime-soundness oriented) and it does **not** imply the
+  runtime-exception soundness mode (`--python-raising-ops-check`, a
+  separate axis). Use it when you want declaration-level enforcement
+  across a file or project.
 
 - `--python-unbounded-ints --z3`: arbitrary-precision integers
   via SMT. Required for soundness on Python's `int` (which has no
