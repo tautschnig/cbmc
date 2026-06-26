@@ -1542,7 +1542,23 @@ an open-ended breadth task into a ranked queue.
 
 ## 7. `--python-check-annotations` default-on blockers  {#check-annotations}
 
-**Status: BLOCKED** on two CBMC-core issues; the flag stays off-by-default.
+**Status update (2026-06-26): the two CBMC-core CRASH blockers are RESOLVED.**
+Re-tested `--python-check-annotations` across the full `regression/python` suite
+(717 tests) plus `websocket_url_validator` (the original solver-ERROR witness):
+**0 flag-induced crashes / invariant violations** (the only rc≠0-without-output
+cases were two `syntaxerror-*` tests, which fail identically without the flag).
+The `boolbv_map` width-mismatch and per-property solver ERROR no longer
+reproduce -- almost certainly closed by the leaf-boxing / per-instance allocation
+/ native-string work landed across this arc. So the flag **no longer needs to be
+off for stability**. Default-on is now gated only by **precision**: the checker
+flags annotation mismatches that are not runtime errors when the value is never
+misused (Python checks no annotations at the call; the `greet(42): pass` case),
+so turning it on by default would add spurious failures on legal code. The next
+step is to **quantify that precision cost** (corpus PASS→FAIL delta under the
+flag) and decide the policy. The original blocker write-up is kept below for the
+record.
+
+**Original (now-resolved) blocker write-up.**
 The annotation checker itself is implemented and correct when it runs.
 
 - **Issue 1 — `boolbv_map` width mismatch** (`boolbv_map.cpp:68`
