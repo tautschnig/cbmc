@@ -1,9 +1,0 @@
-KNOWNBUG
-main.py
---unwind 3
-^VERIFICATION FAILED$
---
---
-Desired: `seq * float` (str/list/tuple * non-int) raises TypeError. cbmc
-currently models it (false proof). Covers "abc"*2.5 and [1]*2.0. Promote to CORE
-when the sequence-repeat count-type check is added.
