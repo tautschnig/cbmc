@@ -218,12 +218,12 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-lazy-stubs", true);
   if(cmdline.isset("python-no-exception-checks"))
     options.set_option("python-no-exception-checks", true);
-  // --python-strict: an opt-in preset that enables the static
-  // type-annotation-strictness family (mypy-style). It does NOT change the
-  // default verification semantics (which remain runtime-soundness oriented);
-  // it is purely a convenience that turns on the four declaration-enforcement
-  // checks below. Runtime-exception soundness (--python-raising-ops-check) is a
-  // separate axis and is intentionally NOT implied here.
+  // --python-strict: an opt-in preset that enables the static-strictness family
+  // (mypy-style). It does NOT change the default verification semantics (which
+  // remain runtime-soundness oriented); it is purely a convenience that turns on
+  // the declaration-enforcement + Any-erasure checks below. Runtime-exception
+  // soundness (--python-raising-ops-check) is a separate axis and is
+  // intentionally NOT implied here.
   const bool python_strict = cmdline.isset("python-strict");
   if(cmdline.isset("python-required-kwarg-checks") || python_strict)
     options.set_option("python-required-kwarg-checks", true);
@@ -231,11 +231,11 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-check-typeddict-fields", true);
   if(cmdline.isset("python-check-annotations") || python_strict)
     options.set_option("python-check-annotations", true);
-  if(cmdline.isset("python-check-any-arg-attrs"))
+  if(cmdline.isset("python-check-any-arg-attrs") || python_strict)
     options.set_option("python-check-any-arg-attrs", true);
   if(cmdline.isset("python-missing-return-check") || python_strict)
     options.set_option("python-missing-return-check", true);
-  if(cmdline.isset("python-check-iter-none"))
+  if(cmdline.isset("python-check-iter-none") || python_strict)
     options.set_option("python-check-iter-none", true);
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
