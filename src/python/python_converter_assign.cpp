@@ -166,6 +166,13 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   if(rhs.is_nil())
     return code_skipt{};
 
+  // Extraction-then-mutate soundness (mirror convert_assign): an ANNOTATED
+  // single-Name binding to a mutable element extracted from a container
+  // (`r: list = c[i]`) must record the source alias too, so a later in-place
+  // mutation of `r` havocs it. Without this the AnnAssign path bypassed the
+  // guard and cbmc proved the stale container (annotation-extract-mutate-bypass).
+  note_mutable_extraction(symbol_id, rhs, value);
+
   // PLR §3.2: a parameterised annotation (x: list[T] = []) is authoritative
   // for the empty list's element type. convert_list defaults an empty literal
   // to an int element type, so re-type the rhs from the annotation. Without
