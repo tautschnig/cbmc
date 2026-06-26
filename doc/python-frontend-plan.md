@@ -1570,8 +1570,16 @@ block) cannot safely `convert_expression` the appended argument just to read its
 type — a side-effecting arg (`xs.append(src())`) would be converted twice. A
 correct implementation needs the single append element-coercion site (currently
 dispersed across the method-dispatch path) so the already-converted element +
-the list's declared element type can be compared once. Scoped, opt-in, sound
-(gated on the flag); deferred pending that single coercion point.
+the list's declared element type can be compared once. Scoped, opt-in, sound (gated on the flag).
+**Partially landed (2026-06-26):** `--python-check-annotations` now flags
+`list[T].append(v)` / `insert(_, v)` when `v` is a **Constant or Name** whose
+type is incompatible with a concrete element type `T` (idempotent to convert, so
+no side-effect double-evaluation) -- guard `check-annotations-list-append`.
+**Still deferred:** a **Call** argument (`xs.append(src())`, the exact ty-007
+shape) is skipped to avoid double-evaluating a side-effecting expression; closing
+it needs the single (currently dispersed) append element-coercion site so the
+already-converted element can be compared once. Dict-value stores likewise
+pending.
 
 ---
 
