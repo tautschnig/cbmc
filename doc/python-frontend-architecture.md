@@ -877,6 +877,36 @@ Related: `unwrap_value` to a `float` target **promotes** an `INT`/`BOOL`-tagged
 payload (`__int_val` → float) rather than reading the unset `__float_val`
 (numeric tower; guard `unwrap-int-to-float-promotion`).
 
+### Coercion-boundary audit: which slots pun a `python_value` (2026-06-26)
+
+A whole-group audit of every boundary where a `python_value` (union/Any) value
+can cross into a *typed slot*, probing whether a wrong-tagged value is silently
+punned into a concrete field (a false proof) vs. kept tag-bearing (sound):
+
+| Boundary | Behaviour | Status |
+|---|---|---|
+| Call parameter (concrete scalar) | provenance-gated tag obligation | sound (precision-bounded: a function that *ignores* a mismatched param is not flagged — Python checks no annotations at the call) |
+| Return slot | **widens to `python_value`** when a path genuinely returns one | sound + precise (#2) |
+| Dict value (unannotated `{}`) | values are `python_value` → tag preserved → use-site obligation fires | **sound** |
+| **List element** (`list[int].append(u)`) | the concrete int element type **puns** the `python_value` (coerced via `coerce_element`/unwrap, losing the tag) | **OPEN false proof** — needs slot-widening |
+| **Attribute field** (`self.x: int; o.x = u`) | the concrete field type **puns** the `python_value` | **OPEN false proof** — needs slot-widening (the a2/a3 narrowing cluster) |
+
+**The architectural invariant the audit reveals:** a slot typed `python_value`
+(Any) *preserves* the runtime tag, so a later misuse is caught by the
+operator/subscript/call tag obligations — it is sound. A slot with a *concrete*
+type (`list[int]`, `field: int`) drops the tag on store, so a wrong-tagged value
+is read back at the concrete type and a misuse does not fault. The principled fix
+for the two OPEN rows is therefore **slot-widening**: type the container element
+/ struct field as `python_value` when a `python_value` is stored into it (the
+same move the return slot now makes). This is **invasive + perf-costly** (it
+changes container/struct element typing, with the precision/perf cost that drove
+the concrete-typing design and the not-viable `--python-ref-mutables` default),
+so it is deferred; the two cases remain KNOWNBUG (`shared-object-aliasing` and
+the a2/a3 field-narrowing witnesses). Tag obligations are NOT a default-mode fix
+here: storing a mismatched value is legal Python (the error arises on a later
+*use*), so a store-site assert false-alarms on values that are never misused
+(the `greet(42)` lesson).
+
 ### Why have a separate "boundary" abstraction?
 
 The first version of the frontend used `safe_typecast`
