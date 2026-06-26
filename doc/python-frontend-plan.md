@@ -1562,9 +1562,31 @@ reproduce -- almost certainly closed by the leaf-boxing / per-instance allocatio
 off for stability**. Default-on is now gated only by **precision**: the checker
 flags annotation mismatches that are not runtime errors when the value is never
 misused (Python checks no annotations at the call; the `greet(42): pass` case),
-so turning it on by default would add spurious failures on legal code. The next
-step is to **quantify that precision cost** (corpus PASS→FAIL delta under the
-flag) and decide the policy. The original blocker write-up is kept below for the
+so turning it on by default would add spurious failures on legal code. The precision cost is now
+**quantified (2026-06-26)**: forcing `--python-check-annotations` on flips
+**43 / 2718 ESBMC-corpus tests PASS→DIFF (~1.6%)** and **5 / 577 success-expecting
+`regression/python` tests (~0.9%)** to spurious failure. Crucially, a sampled
+classification shows **most of these are FIXABLE checker false positives, not
+inherent annotation-checking cost**:
+  - flagging an **Any / unannotated-function-return RHS** (`a: int = unann()`,
+    `d: Dict[str, Any] = {...}`) — the checker should not flag a `python_value`
+    source;
+  - flagging an **inferred parameter** type (lambda params, `*args`/`**kwargs`,
+    argparse-style flexible signatures) — the same annotation-provenance gap the
+    call-boundary obligation already solved (`annotation_types_incompatible` is
+    NOT provenance-gated);
+  - not recognising a **builtin return type** (`r: range = range(4)`,
+    `dict[Any,Any] = {comprehension}`).
+The genuinely **inherent** cost (a real mismatch that is not a runtime error
+because the value is never misused as the annotated type, e.g. `x: int = f()`
+where `f()->str` and `x` is used as a str) is the smaller remainder.
+
+**Path to default-on:** fix the checker false positives above (reuse
+`explicitly_annotated_params`-style provenance to skip inferred params; skip a
+`python_value`/Any RHS; recognise builtin/`range` return types), then re-measure
+— the residual inherent cost should fall well below 1%, at which point a
+default-on (or a `--python-strict` preset) annotation soundness mode becomes
+viable. The decision The original blocker write-up is kept below for the
 record.
 
 **Original (now-resolved) blocker write-up.**
