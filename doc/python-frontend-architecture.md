@@ -1106,15 +1106,16 @@ and **surfaced five new, narrow ones** (each now pinned KNOWNBUG):
     (no floor): `7.0 // 2.0` proved `== 3.5` instead of `3.0` (a wrong-arithmetic
     false proof). Fixed by applying the float-floor encoding (same as float `%`);
     lock-in `float-floordiv-correct`. By-value sweep 0 regressions.
-  - **OPEN — extraction-then-mutate guard bypassed by an annotation**: the
-    `r = c[i]; r.append(x)` guard (havoc the source) is sound, but `r: list =
-    c[i]` (annotated) skips it — the AnnAssign path doesn't record
-    `extracted_container_alias`, so cbmc proves the stale container
-    (`annotation-extract-mutate-bypass-knownbug`).
-  - **OPEN — method-call argument tag obligation gap**: the provenance-gated
-    call-arg tag obligation fires for free functions but **not method calls**, so
-    an `Any`-tagged `str` bound to an `int` method param is not caught
-    (`method-arg-tag-obligation-knownbug`).
+  - **CLOSED (2026-06-26) — extraction-then-mutate guard bypassed by an
+    annotation**: the `r = c[i]; r.append(x)` guard (havoc the source) is sound,
+    but `r: list = c[i]` (annotated) skipped it — the AnnAssign path did not
+    record `extracted_container_alias`. Now recorded on that path too
+    (`annotation-extract-mutate-guarded`).
+  - **CLOSED (2026-06-26) — method-call argument tag obligation gap**: the
+    provenance-gated call-arg tag obligation fired for free functions but **not
+    method calls** (the main method path used raw `safe_typecast`). The method
+    param-binding now routes through `coerce_call_argument`, so an `Any`-tagged
+    `str` bound to an `int` method param is caught (`method-arg-tag-obligation`).
   - **OPEN — missing TypeError for non-numeric operand shapes** (false negatives
     cbmc silently models): a **float operand to a bitwise/shift/invert** operator
     (`1.0 & 2`, `1.0 << 2`, `~1.0` — `float-bitwise-typeerror-knownbug`) and
@@ -1132,8 +1133,8 @@ soundness-vs-precision tradeoffs and the guarded / opt-in cases.
 | Area | Issue | Status | Plan |
 |---|---|---|---|
 | Float floor division | `//` on float operands was computed as true division (no floor): `7.0 // 2.0 == 3.5` — wrong arithmetic | **CLOSED 2026-06-26** (float-floor applied; `float-floordiv-correct`) | — |
-| Extraction-then-mutate via annotation | `r: list = c[i]; r.append(x)` bypasses the extraction guard (AnnAssign path skips `extracted_container_alias`) → stale container proved | **OPEN false proof** (`annotation-extract-mutate-bypass-knownbug`) | [plan §0](python-frontend-plan.md#false-proofs) |
-| Method-call arg tag obligation | the provenance-gated call-arg TypeError obligation fires for free functions but not method calls | **OPEN false proof** (`method-arg-tag-obligation-knownbug`) | [plan §0](python-frontend-plan.md#false-proofs) |
+| Extraction-then-mutate via annotation | `r: list = c[i]; r.append(x)` bypassed the extraction guard (AnnAssign path skipped `extracted_container_alias`) → stale container proved | **CLOSED 2026-06-26** (AnnAssign path now records the alias; `annotation-extract-mutate-guarded`) | — |
+| Method-call arg tag obligation | the provenance-gated call-arg TypeError obligation fired for free functions but not method calls (main method path used raw `safe_typecast`) | **CLOSED 2026-06-26** (method param-binding routed through `coerce_call_argument`; `method-arg-tag-obligation`) | — |
 | Non-numeric operand TypeErrors | float operand to `& \| ^ << >> ~`, and `seq * float` repetition, are silently modelled instead of raising TypeError | **OPEN false negatives** (`float-bitwise-typeerror-knownbug`, `sequence-mul-float-typeerror-knownbug`) | [plan §0](python-frontend-plan.md#false-proofs) |
 | Positional-only by keyword | `def f(x, /, y); f(x=1)` not flagged as TypeError | **OPEN false negative** (`positional-only-kwarg-typeerror-knownbug`) | [plan §0](python-frontend-plan.md#false-proofs) |
 | **Narrowing-invalidation cluster** (OPEN false proofs) | a value's runtime type changes via an effect cbmc does not model, then it is used at the stale type → CPython `TypeError`, cbmc verifies. Distinct roots (each its own modelling gap, **not one fix**): enum `.value` after a status mutation, object-identity-via-**composition aliasing**, context-manager `__enter__` mutation of a union field, inheritance+union virtual dispatch, and same-expression **eval-order × union-retag**. **`__setattr__` / `__getattribute__` are now CLOSED** (2026-06-25): attribute reads on instances of classes defining these intercept-everything dunders are over-approximated to a nondet `python_value`, routing uses through the tag obligations (`setattr-override`, `getattribute-override` are CORE). Surfaced by differential testing (2026-06-25) | **UNSOUND** (false proofs), confined to advanced/dynamic features; each pinned KNOWNBUG (`enum-value-after-mutation-knownbug`, `shared-object-aliasing-knownbug`, `context-manager-enter-mutation-knownbug`, `union-use-after-mutation-typeerror-knownbug`; `setattr-override`/`getattribute-override` now CORE) | [plan §0](python-frontend-plan.md#false-proofs) |

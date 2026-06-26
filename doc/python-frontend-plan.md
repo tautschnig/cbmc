@@ -584,17 +584,18 @@ probes under CPython vs cbmc) fixed one correctness false proof and pinned five
 new narrow ones as KNOWNBUG regression tests:
 - **FIXED — float floor division `//`** computed as true division (no floor:
   `7.0 // 2.0` proved `==3.5`); now floored (`float-floordiv-correct`, CORE).
+- **FIXED (2026-06-26) — extraction-then-mutate via annotation**: `r: list =
+  c[i]; r.append(x)` now records `extracted_container_alias` on the AnnAssign
+  path too, so the havoc-on-mutation guard fires (`annotation-extract-mutate-guarded`, CORE).
+- **FIXED (2026-06-26) — method-call argument tag obligation**: the main method
+  param-binding now routes through `coerce_call_argument` (not raw
+  `safe_typecast`), so the provenance-gated TypeError obligation fires at method
+  calls too (`method-arg-tag-obligation`, CORE).
 - **OPEN** (each a KNOWNBUG; the fix sketch in parentheses):
-  - `annotation-extract-mutate-bypass-knownbug` — `r: list = c[i]; r.append(x)`
-    bypasses the extraction-then-mutate guard (record `extracted_container_alias`
-    on the AnnAssign path too).
-  - `method-arg-tag-obligation-knownbug` — the provenance-gated call-arg
-    TypeError obligation fires for free functions but not method calls (wire the
-    obligation into the method-call argument coercion sites).
   - `float-bitwise-typeerror-knownbug` / `sequence-mul-float-typeerror-knownbug`
     — a float operand to `& | ^ << >> ~`, and `seq * float`, should raise
     TypeError (add an operand-type check, analogous to the existing tag
-    obligations).
+    obligations). **← P1.1 target.**
   - `positional-only-kwarg-typeerror-knownbug` — a positional-only param passed
     by keyword (`def f(x, /, y); f(x=1)`) should be a TypeError (enforce `/`).
 
