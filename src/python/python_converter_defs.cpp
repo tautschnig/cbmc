@@ -244,7 +244,10 @@ python_convertert::infer_return_type_from_body(
                 if(p.get_base_name() == rname)
                 {
                   if(is_python_value_type(p.type()))
+                  {
                     return_type = python_value_type();
+                    result.saw_python_value_return = true;
+                  }
                   break;
                 }
               }
@@ -1069,6 +1072,24 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     }
     if(!is_none_annotation)
       annotated_return_functions.insert(qualified_func_name);
+    // If the annotation is a concrete (non-python_value) type but some return
+    // path GENUINELY yields a python_value VALUE (`return <union/Any param>`),
+    // WIDEN the return slot to python_value. Otherwise that path's python_value
+    // is punned into the concrete slot, corrupting the value read on *other*
+    // paths too (`def g(x:"int|str")->int: if isinstance(x,str): return len(x);
+    // return x` mis-evaluated g("abc")). Gated on `saw_python_value_return`, NOT
+    // merely `is_python_value_type(inf.type)`: the latter is also set when the
+    // inferer is UNCERTAIN about an unresolved forward/recursive call (a
+    // mutually-recursive `-> bool` must NOT widen). The annotation stays a hint;
+    // soundness is preserved (a returned value keeps its tag, so use-site tag
+    // obligations still fire on a misuse).
+    if(!is_python_value_type(return_type))
+    {
+      inferred_returnt inf = infer_return_type_from_body(
+        json_member(stmt, "body"), parameters, qualified_func_name, "");
+      if(inf.saw_python_value_return)
+        return_type = python_value_type();
+    }
   }
   else
   {

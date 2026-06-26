@@ -1467,6 +1467,13 @@ private:
     typet type = empty_typet{};
     bool has_value_return = false;
     bool has_yield = false;
+    /// True when a return path genuinely yields a `python_value` VALUE
+    /// (e.g. `return <union/Any-typed param>`), as opposed to the type being
+    /// widened to `python_value` out of UNCERTAINTY about an unresolved
+    /// forward/recursive call. Lets an annotated function's return slot widen
+    /// to `python_value` for the genuine-union case (avoiding a punning false
+    /// proof) without widening a forward-referencing `-> T` function.
+    bool saw_python_value_return = false;
     typet yield_element_type;
   };
 
