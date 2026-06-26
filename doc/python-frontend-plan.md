@@ -602,6 +602,24 @@ new narrow ones as KNOWNBUG regression tests:
   - `positional-only-kwarg-typeerror-knownbug` — a positional-only param passed
     by keyword (`def f(x, /, y); f(x=1)`) should be a TypeError (enforce `/`).
 
+**P2 composition-aliasing investigation (2026-06-26).** Surfaced a *simpler*
+sibling of the composition false proof: **direct instance aliasing** `b = a;
+b.x = 99; read a.x` (cbmc value-copies the instance at a top-level `b = a`
+assignment) — pinned `instance-aliasing-knownbug` (+ oracle corpus). The natural
+lead — extend the list/dict `alias_targets` pointer mechanism to class instances
+— was spiked and **does not work as a one-line change**: instance attribute
+read/write does not route through the alias pointer the way list subscript does
+(the per-instance-identity / attribute-field-reference problem the ref-semantics
+spike flagged as not-viable-as-default). **The viable sound fix is a
+havoc-on-mutation guard** (the same shape as the extraction-then-mutate guard:
+record `b = a` instance aliases; on a mutation through either alias — attribute
+assign or a mutating method call — havoc the other so a later read is nondet,
+sound over-approximation). This closes the `b = a` case without true reference
+semantics; the composition-via-constructor-parameter case
+(`shared-object-aliasing-knownbug`) needs the same guard generalised to
+aliasing through parameters/attributes. Deferred to a focused effort (the guard
+must avoid over-havocing common instance-passing patterns — validation-heavy).
+
 **P1 tractability finding (2026-06-25, evening).** Investigated the two
 candidate "tractable" false proofs; neither has a clean DEFAULT-mode fix:
 - **The ty Any-laundering cluster (004/005/007) shares ONE root** — a wrong-typed
