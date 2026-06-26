@@ -456,6 +456,30 @@ not a coerced version.
 
 The frontend reflects this in two places:
 
+### Annotation → type lowering (`convert_type_annotation`)
+
+`convert_type_annotation` maps an annotation AST to the CBMC type used both
+for the binding's runtime representation and (under `--python-check-annotations`)
+as the declared type the checker compares against. Two principles matter for
+soundness:
+
+- **Unknown ⇒ `python_value` (Any/top), never `int`.** When the frontend cannot
+  model an annotation precisely — a bare `range`, an unmodeled builtin, an
+  unknown forward-reference, a bare `tuple` (`tuple[Any, ...]`) — it lowers to
+  `python_value`. This is the sound over-approximation (the value could be
+  anything) *and* it is checker-compatible (Any matches every concrete type, so
+  no spurious `annotation-mismatch`). An earlier design used `python_int_type()`
+  as the unknown fallback; that single collision was both a **latent
+  unsoundness** (an unknown value modeled with concrete int semantics could mask
+  a real bug — see the master inventory) and a **false-positive source** (the
+  checker read the fallback int as a precise `int` declaration). Fixed 2026-06-26.
+- **`Any`/`Union`/`Optional[container]` ⇒ `python_value`** so the runtime tag is
+  tracked (see [Tagged unions](#tagged-unions-for-any--union) and the None-marker
+  convention). The one remaining exception is a dict with a non-"safe" value type
+  (`dict[str, Any]`, `dict[str, Optional[int]]`), which still falls back to int —
+  a known checker false-positive blocked by a separate Any-valued-container
+  representation issue (master inventory A; `check-annotations-any-dict-knownbug`).
+
 ### Scalar variant (`convert_ann_assign`)
 
 When the RHS of an `AnnAssign` has a concrete type
@@ -767,7 +791,9 @@ property at call sites whose argument class doesn't declare
 |------|---|---|
 | `--python-unbounded-ints` | off | Use CBMC bignums (`integer_typet`) instead of int64; requires an SMT solver (e.g. `--cvc5` / `--z3`) — a warning is emitted if none is selected. Ints are full-precision, including when wrapped into `python_value` ([per-instance leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates)) |
 | `--python-no-exception-checks` | off | Suppress automatic `assert ¬__exception_active` after each statement |
-| `--python-check-annotations` | off | Emit `annotation-mismatch` properties when an `AnnAssign` RHS type differs from the declaration |
+| `--python-check-annotations` | off | Emit `annotation-mismatch` properties where a declared annotation and the actual value/return/argument type are incompatible: AnnAssign RHS, reassignment after an AnnAssign, return slot, `list[T].append/insert` of an incompatible literal/name, and (provenance-gated) call arguments. Includes class-vs-class via MRO and `Union[...]` member checking. Sound when it runs (earlier CBMC-core blockers resolved); opt-in because it enforces *static* annotations, so it reports the irreducible class of real mismatches Python runs anyway (`n: int = "x"` never used as int) |
+| `--python-strict` | off | Opt-in convenience **preset** enabling the static type-annotation-strictness family (mypy-style) in one switch: `--python-check-annotations`, `--python-missing-return-check`, `--python-required-kwarg-checks`, `--python-check-typeddict-fields`. Additive (no default-semantics change); does **not** imply `--python-raising-ops-check` (a separate runtime-exception-soundness axis) |
+| `--python-missing-return-check` | off | Emit a property at the implicit fall-through of a function with a non-`None` return annotation; fires only when that path is reachable |
 | `--python-check-any-arg-attrs` | off | Emit `attribute-error` properties for `obj.X` accesses where `obj`'s argument-side type doesn't declare `X` |
 | `--python-required-kwarg-checks` | off | Stub-completeness checks for `Required[T]` keys in `Unpack[TypedDict]` kwargs |
 | `--python-check-typeddict-fields` | off | Field-type checks on PEP 448 `**kwargs` spreads |
@@ -870,8 +896,15 @@ only the former (`!annotation.is_null()` at def time). The obligation fires only
 for explicitly-annotated scalar params; inferred/default scalar params are
 excluded, so e.g. `keep([A(),B()], lambda e: True)` does not false-alarm. The
 parameter identifier (`python::<qualified_func>::<param_name>`) matches
-`params[i].get_identifier()` at every call site. The set is reusable for future
-return-/assign-boundary obligations.
+`params[i].get_identifier()` at every call site. The set is populated for BOTH
+free functions (`convert_function_def`) and **methods** (`convert_class_def`,
+which has its own param-processing path) — without the method-side population the
+provenance gate would skip *every* method-argument check (it then over-skipped a
+genuine `calc.multiply(5, "ten")` mismatch). The same provenance set now also
+gates the `--python-check-annotations` **call-argument annotation-mismatch**
+check (not just the tag obligation), which is what removed the lambda/`*args`/
+inferred-param checker false positives (2026-06-26). It remains reusable for
+future return-/assign-boundary obligations.
 
 Related: `unwrap_value` to a `float` target **promotes** an `INT`/`BOOL`-tagged
 payload (`__int_val` → float) rather than reading the unset `__float_val`
@@ -1047,6 +1080,24 @@ false proofs, with lock-in tests): bytes / complex / Decimal
 (`numeric-model-soundness`), and type / `isinstance` / virtual dispatch /
 `hasattr` (`type-dispatch-soundness`).
 
+The **2026-06-26** work closed a further **latent unsoundness** and reduced
+`--python-check-annotations` false positives. `convert_type_annotation` had
+overloaded `python_int_type()` as both the legitimate `int` type AND the
+"annotation I cannot model" fallback (a bare `range`, an unmodeled builtin, an
+unknown forward-ref, a bare `tuple`). Modeling an *unknown-typed* value with
+concrete `int` semantics is a latent unsoundness — and it was real: switching the
+fallback to `python_value` (Any/top, the sound over-approximation) made the
+by-value corpus sweep *gain* `ethereum_bug-fail` (the int fallback had been
+masking a genuine bug). The same change removed the matching checker
+false-positives (the checker had read the fallback int as a precise `int`
+declaration). Lock-in: `check-annotations-unknown-is-any`. The other 2026-06-26
+work was **precision-only** (no soundness change): the call-argument
+annotation-mismatch checks are now **provenance-gated** (fire only for genuinely
+annotated scalar params — `explicitly_annotated_params`, extended this turn to
+method parameters), removing the lambda/`*args`/inferred-param false positives;
+and the annotation-strictness family was packaged behind the opt-in
+`--python-strict` preset (it is **not** default-on — see inventory B).
+
 The entries below are the deliberate
 soundness-vs-precision tradeoffs and the guarded / opt-in cases.
 
@@ -1056,6 +1107,7 @@ soundness-vs-precision tradeoffs and the guarded / opt-in cases.
 | **Narrowing-invalidation cluster** (OPEN false proofs) | a value's runtime type changes via an effect cbmc does not model, then it is used at the stale type → CPython `TypeError`, cbmc verifies. Distinct roots (each its own modelling gap, **not one fix**): enum `.value` after a status mutation, object-identity-via-**composition aliasing**, context-manager `__enter__` mutation of a union field, inheritance+union virtual dispatch, and same-expression **eval-order × union-retag**. **`__setattr__` / `__getattribute__` are now CLOSED** (2026-06-25): attribute reads on instances of classes defining these intercept-everything dunders are over-approximated to a nondet `python_value`, routing uses through the tag obligations (`setattr-override`, `getattribute-override` are CORE). Surfaced by differential testing (2026-06-25) | **UNSOUND** (false proofs), confined to advanced/dynamic features; each pinned KNOWNBUG (`enum-value-after-mutation-knownbug`, `shared-object-aliasing-knownbug`, `context-manager-enter-mutation-knownbug`, `union-use-after-mutation-typeerror-knownbug`; `setattr-override`/`getattribute-override` now CORE) | [plan §0](python-frontend-plan.md#false-proofs) |
 | Any/union used at a wrong type | a tagged-union/`Any` value used as a concrete type with a mismatched runtime tag now raises `TypeError` via **tag obligations** at the operator, subscript, and (provenance-gated) call-argument boundaries — was a silent wrong-field read. The remaining hole is the call-argument obligation only firing for **explicitly-annotated** scalar params (inferred/Any params excluded to avoid false alarms) | sound (closed for the three covered sites); see the tag-obligation table in [Type-coercion at boundaries](#any--union-tag-obligations-typeerror-on-a-wrong-runtime-tag) | [plan §0](python-frontend-plan.md#false-proofs) |
 | Definite integer overflow (default 64-bit) | the default 64-bit model silently **wrapped** on a statically-provable >64-bit result (`10**19 < 0`, `1<<70 == 0`) — a false proof. Now reports `python-model-bound` (assert+assume cut) on a DEFINITE overflow; a symbolic/computed overflow remains the documented 64-bit bound (use `--python-unbounded-ints`, now sound incl. shifts/bitwise) | sound (definite cases reported; symbolic = documented bound) | [plan §0](python-frontend-plan.md#false-proofs) |
+| Unknown annotation fallback | `convert_type_annotation` lowered an annotation it could not model (bare `range`/`tuple`, unmodeled builtin, unknown forward-ref) to `python_int_type()`, modeling an unknown value with concrete int semantics — a latent unsoundness that could mask a real bug | **CLOSED 2026-06-26**: unknown ⇒ `python_value` (Any/top), the sound over-approximation (sweep gained `ethereum_bug-fail`). Lock-in `check-annotations-unknown-is-any`. **Exception still open:** a dict with a non-"safe" value type (`dict[str, Any]`) still falls back to int — an opt-in `--python-check-annotations` false positive (not a false proof), blocked by a separate Any-valued-container capacity-model-bound issue; pinned `check-annotations-any-dict-knownbug` | [plan §7](python-frontend-plan.md#check-annotations) |
 | Nested mutable-element aliasing | anonymous nested-mutable list/dict elements stored by value; the replication / self-append / new-container channels are **guarded** (report `python-model-bound`). **Direct** nested mutation works (`c[i].append(...)` for lists, and int-keyed dict values via lvalue value slots). **Extraction-then-mutate** (`r=c[i]; r.append(...)` / `v=a[k]; v.append(...)`) is **guarded** in the default config (2026-06-24): the extracted variable is recorded (`extracted_container_alias`) and, on a subsequent in-place mutation, the source container is havoced + dropped from the const-fold maps (sound over-approximation). **For LISTS, the principled whole-group fix is now implemented behind opt-in `--python-ref-mutables`** (2026-06-24): nested list elements are heap-allocated per instance and aliased by pointer (`make_python_value(LIST, allocate_boxed_leaf(rebuild_list_as_pv(e)))`), so extraction / multi-instance / reorder / membership / nested value reads / 3-deep composition are **precise**; under the flag the havoc guard is skipped for wrapped references. | sound for the CONTAINER-ELEMENT aliasing channels (guarded). **However a distinct aliasing channel — object-identity-via-COMPOSITION (one object referenced by two attributes, mutated through one and read through the other) — is an OPEN false proof in the default config**, pinned `shared-object-aliasing-knownbug` (value semantics for the composed object does not track the shared identity). With `--python-ref-mutables` the nested-list cases below become precise (validated: §4 gate green, 5 genuinely-false negatives stay FAILED, default suite green). **Confirmed OPT-IN ONLY (2026-06-25):** making it the default is **not viable** — precise nested-list `==` under reference semantics needs per-element pointer deref that blows up pointer analysis (depth-2 already TIMEOUTs; corpus needs 3-deep `==`), and the A/B sweep showed regressions (PASS 2710 vs by-value 2715 incl. a crash). The value-vs-reference tradeoff is fundamental in BMC; by-value + sound guards stays the default. Dicts/sets remain guarded. | [ref-semantics spike §10–§12](python-frontend-reference-semantics-spike.md) + [plan §0](python-frontend-plan.md#false-proofs) + [dict-byref](python-frontend-dict-value-byref-plan.md) |
 | dict-literal const-fold | the dict-subscript const-fold substituted a construction-time-tracked value at a later read; for a value embedding a **mutable** symbol (a reassignable variable, a boxed-leaf pointer) this re-read the current value → false proof (`n=1; d={"k":n}; n=2; d["k"]`). **Closed 2026-06-24** (`value_is_const_foldable`): the const-fold now fires only for invariant values | sound (closed) | — |
 | Native `smt_string`→int cast | under `--python-smt-strings`, a spurious str→int coercion from value plumbing lowers to `str.to_int` (defined-but-approximate); genuine `int(str)` is exact | sound (approximate, flagged) | [strings plan](python-frontend-strings-plan.md#strings) |
@@ -1079,7 +1131,7 @@ soundness-vs-precision tradeoffs and the guarded / opt-in cases.
 | dict symbolic-key presence | a constant-key read (`d["k"]`) after a **symbolic-key** assign (`for k in …: d[k]=…`) can't prove the key is present, so it emits a spurious uncaught `KeyError` even when the value is correct (the `github_3684` residual — its assertion value verifies, only the KeyError path fails) | [plan §9](python-frontend-plan.md#precision) |
 | dict (untyped nested, unbounded ints) | values read out of an *untyped* nested dict iterated symbolically are over-approximated to nondet (sum-bound unprovable); orthogonal to leaf boxing | [plan §9](python-frontend-plan.md#precision) |
 | Modules | `cmath`, fuller `os`/`time`/`datetime`/`json`/`dataclasses`/`collections` not modelled (nondet) | [plan §6](python-frontend-plan.md#modules) |
-| Annotation checks | `--python-check-annotations` can't be default-on (two CBMC-core blockers) | [plan §7](python-frontend-plan.md#check-annotations) |
+| Annotation checks (`--python-check-annotations`) | Opt-in, not default-on. The earlier two CBMC-core crash blockers are **resolved** (2026-06-26) and the checker-bug false positives are minimized (provenance-gating; unknown⇒Any). It stays opt-in for a *semantic* reason, not a quality bar: the residual cost is now mostly **inherent** — real annotation mismatches the flag is designed to catch but that are not runtime errors (`n: int = "x"` never used as int), so default-on would change what `VERIFICATION FAILED` means. Shipped as the `--python-strict` preset; a future default-on needs **use-site misuse gating**. Remaining checker FP: Any-valued dict (`check-annotations-any-dict-knownbug`) | [plan §7](python-frontend-plan.md#check-annotations) |
 
 ### C. Performance
 
@@ -1184,4 +1236,7 @@ cbmc \
 ```
 
 See [python-verification-guide.md](python-verification-guide.md)
-for full flag reference and tuning advice.
+for full flag reference and tuning advice. For mypy-style static
+type-annotation enforcement, add the opt-in `--python-strict` preset
+(`--python-check-annotations` + `--python-missing-return-check` +
+`--python-required-kwarg-checks` + `--python-check-typeddict-fields`).

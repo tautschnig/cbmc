@@ -1549,7 +1549,7 @@ an open-ended breadth task into a ranked queue.
 
 ---
 
-## 7. `--python-check-annotations` default-on blockers  {#check-annotations}
+## 7. `--python-check-annotations`: status, the `--python-strict` preset & the default-on prerequisite  {#check-annotations}
 
 **Status update (2026-06-26): the two CBMC-core CRASH blockers are RESOLVED.**
 Re-tested `--python-check-annotations` across the full `regression/python` suite
@@ -1565,9 +1565,13 @@ misused (Python checks no annotations at the call; the `greet(42): pass` case),
 so turning it on by default would add spurious failures on legal code. The precision cost is now
 **quantified (2026-06-26)**: forcing `--python-check-annotations` on flips
 **43 / 2718 ESBMC-corpus tests PASS→DIFF (~1.6%)** and **5 / 577 success-expecting
-`regression/python` tests (~0.9%)** to spurious failure. Crucially, a sampled
-classification shows **most of these are FIXABLE checker false positives, not
-inherent annotation-checking cost**:
+`regression/python` tests (~0.9%)** to spurious failure. An initial sampled
+classification suggested **most of these were FIXABLE checker false positives**
+— but this estimate was **superseded by the 2026-06-26 re-measurement after the
+fixes landed** (see the updates further down): once the fixable checker-bug
+classes were removed, the remaining residual is in fact **mostly INHERENT** (real
+annotation mismatches that are not runtime errors). The initial fixable-looking
+categories were:
   - flagging an **Any / unannotated-function-return RHS** (`a: int = unann()`,
     `d: Dict[str, Any] = {...}`) — the checker should not flag a `python_value`
     source;
@@ -1647,7 +1651,10 @@ it is `[python-model-bound] container capacity exceeded` on
 dict fix is gated behind a *separate, deeper* Any-valued-CONTAINER
 capacity-modeling representation issue, which must be addressed on its own (and
 validated) before the dict-value-nonsafe fallback can be flipped. Tracked here as
-the next step for this cluster.
+the next step for this cluster, and pinned by the KNOWNBUG regression test
+`regression/python/check-annotations-any-dict-knownbug` (desired: SUCCESSFUL;
+currently the spurious FAILURE — promote to CORE when the representation issue is
+fixed).
 
 **Update (2026-06-26, `--python-strict` landed).** Decision taken: ship the
 annotation-strictness family as the opt-in preset `--python-strict`
