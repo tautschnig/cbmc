@@ -311,7 +311,7 @@ def main():
                     help="only run dir names matching this substring")
     ap.add_argument("--extra-cbmc-flags", default="",
                     help="extra flags appended to every CBMC invocation "
-                         "(space-separated), e.g. '--no-python-ref-mutables'")
+                         "(space-separated), e.g. '--python-check-annotations'")
     ap.add_argument("--triage-bound", action="store_true",
                     help="for each 'CBMC=SUCCESSFUL but expected=FAILED' DIFF, "
                          "re-run with --unwinding-assertions to classify it as "
