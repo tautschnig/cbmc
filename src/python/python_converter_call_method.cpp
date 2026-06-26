@@ -3486,7 +3486,15 @@ std::optional<exprt> python_convertert::try_method_call(
                       method_name + "'",
                     get_location(expr));
                 }
-                arguments[i] = safe_typecast(arguments[i], mparams[i].type());
+                // Use the call-argument boundary helper (not raw
+                // safe_typecast): besides the None-marker adaptation it emits
+                // the python-type-error tag obligation for an Any value bound to
+                // an explicitly-annotated scalar method param -- closing the
+                // method-call soundness gap (the obligation already fired for
+                // free functions). Provenance-gated, so self / inferred params
+                // do not false-alarm.
+                arguments[i] = coerce_call_argument(
+                  arguments[i], mparams[i].type(), mparams[i].get_identifier());
               }
             }
           }
@@ -3528,7 +3536,10 @@ std::optional<exprt> python_convertert::try_method_call(
                       method_name + "'",
                     get_location(expr));
                 }
-                arguments[i] = safe_typecast(arguments[i], fp[i].type());
+                // Boundary helper (see the mparams loop above): emits the
+                // tag obligation for an Any bound to an annotated scalar param.
+                arguments[i] = coerce_call_argument(
+                  arguments[i], fp[i].type(), fp[i].get_identifier());
               }
             }
           }
