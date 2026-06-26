@@ -1397,6 +1397,27 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
           from_integer(1, left.type()),
           from_integer(0, left.type())}};
     }
+    // PLR §6.7: float floor division is floor(left / right) (the result is a
+    // float). Without the floor this returned plain true division
+    // (`7.0 // 2.0 == 3.5` instead of `3.0`) -- a correctness false proof.
+    // Same float-floor encoding as the float Mod branch below: truncate toward
+    // zero via an int64 round-trip, then subtract 1 when the quotient is below
+    // the truncation (i.e. it was negative and non-integral).
+    if(left.type().id() == ID_floatbv || right.type().id() == ID_floatbv)
+    {
+      exprt fl = left, fr = right;
+      if(fl.type().id() != ID_floatbv)
+        fl = typecast_exprt{fl, double_type()};
+      if(fr.type().id() != ID_floatbv)
+        fr = typecast_exprt{fr, double_type()};
+      exprt quotient = div_exprt{fl, fr};
+      exprt truncated = typecast_exprt{
+        typecast_exprt{quotient, signedbv_typet{64}}, double_type()};
+      return if_exprt{
+        binary_relation_exprt{quotient, ID_lt, truncated},
+        minus_exprt{truncated, double_to_floatbv(1.0)},
+        truncated};
+    }
     return div_exprt{left, right};
   }
   else if(op == "Mod")
