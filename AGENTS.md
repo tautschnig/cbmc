@@ -929,7 +929,8 @@ Linked deep-dives (referenced from the two docs above):
 - [doc/architectural/python-perf-analysis.md](doc/architectural/python-perf-analysis.md) - Empirical 51-benchmark performance analysis and the slicer ↔ string-refinement contract.
 
 CLI flags worth knowing about:
-- `--python-check-annotations` — emit annotation-mismatch properties when value/return/argument types don't match declared annotations. Includes class-vs-class via MRO, reassignment after AnnAssign, and `Union[...]` member checking.
+- `--python-check-annotations` — emit annotation-mismatch properties when value/return/argument types don't match declared annotations. Includes class-vs-class via MRO, reassignment after AnnAssign, and `Union[...]` member checking. Sound when it runs (earlier CBMC-core blockers resolved); opt-in because it enforces *static* annotations and so reports the irreducible class of real mismatches Python runs anyway (e.g. `n: int = "x"` never used as int).
+- `--python-strict` — opt-in convenience preset that enables the static type-annotation-strictness family (mypy-style) in one switch: `--python-check-annotations`, `--python-missing-return-check`, `--python-required-kwarg-checks`, `--python-check-typeddict-fields`. Does NOT change default semantics and does NOT imply `--python-raising-ops-check` (a separate runtime-exception-soundness axis).
 - `--python-missing-return-check` — emit a property at the implicit fall-through of any function with a non-None return-type annotation. Fires only when the path is actually reachable.
 - `--python-required-kwarg-checks` — flag missing `Required[...]` TypedDict keys at call sites.
 - `--python-check-typeddict-fields` — flag unknown keys when constructing a TypedDict.

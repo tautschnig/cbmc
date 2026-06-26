@@ -96,11 +96,27 @@ Optional flags worth considering:
 
 - `--python-check-annotations`: emit `annotation-mismatch`
   properties at variable / parameter / return assignments where
-  the annotation and assigned-value types are incompatible. Off
-  by default — exposes 2 pre-existing CBMC core invariant
-  violations (`boolbv_map.cpp:68`) on a couple of benchmarks. Use
-  for individual files if the bench-level CBMC core blockers are
-  not in your way.
+  the annotation and assigned-value types are incompatible
+  (includes class-vs-class via MRO, reassignment after AnnAssign,
+  and `Union[...]` member checking). Off by default. It is
+  *sound when it runs* and the earlier CBMC-core blockers are
+  resolved; it remains opt-in because it enforces *static*
+  annotations, so it reports the (irreducible) class of real
+  annotation mismatches that Python nonetheless runs without a
+  runtime error (e.g. `n: int = "x"` where `n` is never used as an
+  `int`). That is the flag working as designed, not a bug — which
+  is why annotation strictness is opt-in rather than a default.
+
+- `--python-strict`: convenience preset that turns on the static
+  type-annotation-strictness family (mypy-style) in one switch:
+  `--python-check-annotations`, `--python-missing-return-check`,
+  `--python-required-kwarg-checks` and
+  `--python-check-typeddict-fields`. It does **not** change the
+  default verification semantics (which stay runtime-soundness
+  oriented) and it does **not** imply the runtime-exception
+  soundness mode (`--python-raising-ops-check`, a separate axis).
+  Use it when you want declaration-level enforcement across a file
+  or project.
 
 - `--python-unbounded-ints --z3`: arbitrary-precision integers
   via SMT. Required for soundness on Python's `int` (which has no
