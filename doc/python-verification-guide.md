@@ -81,8 +81,8 @@ Each flag's role:
   when a TypedDict field's value type doesn't match its declared
   type (e.g. passing `None` where the schema says `str`).
 
-The following flag is **on by default** for `.py` source files —
-listed here for visibility:
+The following flag is **opt-in** (off by default) — it adds a
+cross-function Any-erasure analysis:
 
 - `--python-check-any-arg-attrs`: at each call site where the
   callee's parameter is annotated `Any` and the caller's argument
@@ -90,7 +90,9 @@ listed here for visibility:
   properties for `param.X(...)` references in the callee's body
   where `X` is not a method on the argument's class. Catches
   cross-function Any-erasure bugs (e.g. wrong boto3 client class
-  flowing through an `Any`-typed parameter).
+  flowing through an `Any`-typed parameter). (Direct missing-attribute
+  accesses on a known concrete receiver are already caught without
+  this flag; it adds the *cross-function* flow case.)
 
 Optional flags worth considering:
 
