@@ -4657,7 +4657,12 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
         return bool_typet{};
       if(ref_name == "None")
         return empty_typet{};
-      return python_int_type(); // unknown forward ref
+      // Unknown forward reference: the frontend does not know this type, so
+      // the sound over-approximation is python_value (Any / top), NOT int.
+      // Using int here both modelled an unknown value with concrete int
+      // semantics (latent unsoundness) and made --python-check-annotations
+      // read it as a precise `int` declaration (spurious mismatch).
+      return python_value_type(); // unknown forward ref -> Any
     }
     if(val.is_null())
       return empty_typet{};
@@ -4779,8 +4784,16 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
       type_name != "Any" && type_name != "S3" && !type_name.empty() &&
       !std::isupper(static_cast<unsigned char>(type_name[0])))
       log.warning() << "Unknown Python type annotation: " << type_name
-                    << ", defaulting to int" << messaget::eom;
-    return python_int_type();
+                    << ", defaulting to Any (python_value)" << messaget::eom;
+    // Unknown/unmodeled annotation (e.g. `range`, an unmodeled builtin, or an
+    // unresolved name): the frontend does not know the type, so the sound
+    // over-approximation is python_value (Any / top) rather than int. The old
+    // int fallback (a) modelled an unknown value with concrete int semantics --
+    // a latent unsoundness -- and (b) made --python-check-annotations read it as
+    // a precise `int` declaration and flag the real value as a mismatch (e.g.
+    // `r: range = range(4)`). python_value is compatible with every value type
+    // in the checker and is the correct top element.
+    return python_value_type();
   }
 }
 
