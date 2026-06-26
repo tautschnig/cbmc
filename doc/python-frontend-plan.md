@@ -593,9 +593,12 @@ new narrow ones as KNOWNBUG regression tests:
   calls too (`method-arg-tag-obligation`, CORE).
 - **OPEN** (each a KNOWNBUG; the fix sketch in parentheses):
   - `float-bitwise-typeerror-knownbug` / `sequence-mul-float-typeerror-knownbug`
-    — a float operand to `& | ^ << >> ~`, and `seq * float`, should raise
-    TypeError (add an operand-type check, analogous to the existing tag
-    obligations). **← P1.1 target.**
+- **FIXED (2026-06-26) — non-numeric operand TypeErrors (P1.1, whole-group)**: a
+  concrete float operand to `& | ^ << >> ~`, and `seq * float` repetition, now
+  raise TypeError via a unified operand-type obligation in convert_bin_op /
+  convert_unary_op (concrete-float-only, so set bitwise is unaffected).
+  `float-bitwise-typeerror`, `sequence-mul-float-typeerror` (CORE).
+- **OPEN** (KNOWNBUG):
   - `positional-only-kwarg-typeerror-knownbug` — a positional-only param passed
     by keyword (`def f(x, /, y); f(x=1)`) should be a TypeError (enforce `/`).
 

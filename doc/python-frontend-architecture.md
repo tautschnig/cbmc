@@ -1117,12 +1117,14 @@ and **surfaced five new, narrow ones** (each now pinned KNOWNBUG):
     param-binding now routes through `coerce_call_argument`, so an `Any`-tagged
     `str` bound to an `int` method param is caught (`method-arg-tag-obligation`).
   - **OPEN — missing TypeError for non-numeric operand shapes** (false negatives
-    cbmc silently models): a **float operand to a bitwise/shift/invert** operator
-    (`1.0 & 2`, `1.0 << 2`, `~1.0` — `float-bitwise-typeerror-knownbug`) and
-    **sequence × float** repetition (`"abc" * 2.5`, `[1] * 2.0` —
-    `sequence-mul-float-typeerror-knownbug`).
+  - **CLOSED (2026-06-26) — missing TypeError for non-numeric operand shapes**:
+    a concrete **float operand to a bitwise/shift/invert** operator (`1.0 & 2`,
+    `1.0 << 2`, `~1.0`) and **sequence × float** repetition (`"abc" * 2.5`,
+    `[1] * 2.0`) now raise TypeError via the whole-group operand-type obligation
+    (`float-bitwise-typeerror`, `sequence-mul-float-typeerror`).
   - **OPEN — positional-only param passed by keyword** (`def f(x, /, y); f(x=1)`)
-    is not a flagged TypeError (`positional-only-kwarg-typeerror-knownbug`).
+    is not a flagged TypeError (`positional-only-kwarg-typeerror-knownbug`) — the
+    one re-audit item still open.
   The audit also **re-confirmed** the documented clusters still reproduce
   (composition aliasing, union dispatch, context-manager mutation, list/attr PUN,
   `*args`+kwonly, `int()`/`float()` ValueError default-off).
@@ -1135,7 +1137,7 @@ soundness-vs-precision tradeoffs and the guarded / opt-in cases.
 | Float floor division | `//` on float operands was computed as true division (no floor): `7.0 // 2.0 == 3.5` — wrong arithmetic | **CLOSED 2026-06-26** (float-floor applied; `float-floordiv-correct`) | — |
 | Extraction-then-mutate via annotation | `r: list = c[i]; r.append(x)` bypassed the extraction guard (AnnAssign path skipped `extracted_container_alias`) → stale container proved | **CLOSED 2026-06-26** (AnnAssign path now records the alias; `annotation-extract-mutate-guarded`) | — |
 | Method-call arg tag obligation | the provenance-gated call-arg TypeError obligation fired for free functions but not method calls (main method path used raw `safe_typecast`) | **CLOSED 2026-06-26** (method param-binding routed through `coerce_call_argument`; `method-arg-tag-obligation`) | — |
-| Non-numeric operand TypeErrors | float operand to `& \| ^ << >> ~`, and `seq * float` repetition, are silently modelled instead of raising TypeError | **OPEN false negatives** (`float-bitwise-typeerror-knownbug`, `sequence-mul-float-typeerror-knownbug`) | [plan §0](python-frontend-plan.md#false-proofs) |
+| Non-numeric operand TypeErrors | a concrete float operand to `& \| ^ << >> ~`, and `seq * float` repetition, were silently modelled instead of raising TypeError | **CLOSED 2026-06-26** (whole-group operand-type obligation; concrete-float-only so set bitwise is unaffected; `float-bitwise-typeerror`, `sequence-mul-float-typeerror`) | — |
 | Positional-only by keyword | `def f(x, /, y); f(x=1)` not flagged as TypeError | **OPEN false negative** (`positional-only-kwarg-typeerror-knownbug`) | [plan §0](python-frontend-plan.md#false-proofs) |
 | **Narrowing-invalidation cluster** (OPEN false proofs) | a value's runtime type changes via an effect cbmc does not model, then it is used at the stale type → CPython `TypeError`, cbmc verifies. Distinct roots (each its own modelling gap, **not one fix**): enum `.value` after a status mutation, object-identity-via-**composition aliasing**, context-manager `__enter__` mutation of a union field, inheritance+union virtual dispatch, and same-expression **eval-order × union-retag**. **`__setattr__` / `__getattribute__` are now CLOSED** (2026-06-25): attribute reads on instances of classes defining these intercept-everything dunders are over-approximated to a nondet `python_value`, routing uses through the tag obligations (`setattr-override`, `getattribute-override` are CORE). Surfaced by differential testing (2026-06-25) | **UNSOUND** (false proofs), confined to advanced/dynamic features; each pinned KNOWNBUG (`enum-value-after-mutation-knownbug`, `shared-object-aliasing-knownbug`, `context-manager-enter-mutation-knownbug`, `union-use-after-mutation-typeerror-knownbug`; `setattr-override`/`getattribute-override` now CORE) | [plan §0](python-frontend-plan.md#false-proofs) |
 | Any/union used at a wrong type | a tagged-union/`Any` value used as a concrete type with a mismatched runtime tag now raises `TypeError` via **tag obligations** at the operator, subscript, and (provenance-gated) call-argument boundaries — was a silent wrong-field read. The remaining hole is the call-argument obligation only firing for **explicitly-annotated** scalar params (inferred/Any params excluded to avoid false alarms) | sound (closed for the three covered sites); see the tag-obligation table in [Type-coercion at boundaries](#any--union-tag-obligations-typeerror-on-a-wrong-runtime-tag) | [plan §0](python-frontend-plan.md#false-proofs) |
