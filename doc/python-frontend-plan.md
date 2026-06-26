@@ -1844,6 +1844,28 @@ on `(path, mtime)`; a multi-process pool for parallel parse requests.
 All items here are **sound** (misses / over-approximations, never false
 alarms). The nested-mutable-aliasing item below WAS a false proof; it is now
 
+### dict symbolic-key / value-mutation cluster — characterized MULTI-root (2026-06-26) {#dict-cluster}
+
+Investigated the "symbolic-key dict precision" cluster end-to-end; it is **not a
+single architectural root** — four distinct sub-cases:
+1. **symbolic-key build + constant-key read** (`for k,v in src.items(): d[k]=v` then
+   `d["const"]`) — **already works** (the `github_3684` shape verifies), and a read
+   of a definitely-unwritten key still raises `KeyError` (soundness intact).
+2. **int/bool-keyed constant re-store** (`d={1:10}; d[1]=20; d[1]`) — **FIXED**
+   (commit dropping the string-only const-fold for the dict on a non-string
+   constant-key store, so the read uses the updated runtime array;
+   `dict-int-key-restore`). Was a stale-read precision bug.
+3. **dict-VALUE in-place mutation** (`d[k]=[]; d[k].append(x)`; also literal
+   str-keyed `{"a":[10]}; d["a"].append`) — **OPEN**: the subscript-read value is
+   a by-VALUE copy, so the append does not propagate (only the int-*literal*
+   value happens to alias via the int-keyed lvalue value-slot). This is the
+   documented **dict-value-by-reference** limitation (per-instance value
+   identity) — see [dict-value-byref plan](python-frontend-dict-value-byref-plan.md).
+4. **genuinely symbolic/nondet key** read — **OPEN**: over-approximates to a
+   nondet value/length, so a downstream `.append` capacity guard or `KeyError`
+   fires spuriously. Deep symbolic-dict-modelling work.
+Sub-cases 3 and 4 are deep (not point fixes); 1 and 2 are resolved.
+
 ### Corpus precision-gap DIFF triage (2026-06-23) — `got=FAILED exp=SUCCESSFUL`
 
 Triaged the sweep rows where we FAIL a program that should verify (the
