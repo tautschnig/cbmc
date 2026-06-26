@@ -598,9 +598,12 @@ new narrow ones as KNOWNBUG regression tests:
   raise TypeError via a unified operand-type obligation in convert_bin_op /
   convert_unary_op (concrete-float-only, so set bitwise is unaffected).
   `float-bitwise-typeerror`, `sequence-mul-float-typeerror` (CORE).
-- **OPEN** (KNOWNBUG):
-  - `positional-only-kwarg-typeerror-knownbug` — a positional-only param passed
-    by keyword (`def f(x, /, y); f(x=1)`) should be a TypeError (enforce `/`).
+- **FIXED (2026-06-26) — positional-only param passed by keyword**: recorded
+  per-function (`function_posonly_params`) and flagged in the shared
+  `validate_call_signature` (a `**kwargs` callee correctly absorbs the keyword,
+  no FP). `positional-only-kwarg-typeerror` (CORE). **All five re-audit findings
+  are now closed**; the remaining open false proof is the per-instance-identity /
+  aliasing cluster (see the P2 note above).
 
 **P2 composition-aliasing investigation (2026-06-26).** Surfaced a *simpler*
 sibling of the composition false proof: **direct instance aliasing** `b = a;
