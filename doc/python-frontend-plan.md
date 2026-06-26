@@ -1586,7 +1586,28 @@ where `f()->str` and `x` is used as a str) is the smaller remainder.
 `python_value`/Any RHS; recognise builtin/`range` return types), then re-measure
 — the residual inherent cost should fall well below 1%, at which point a
 default-on (or a `--python-strict` preset) annotation soundness mode becomes
-viable. The decision The original blocker write-up is kept below for the
+viable.
+
+**Update (2026-06-26, FP-reduction pass).** Fixed the call-argument checker-bug
+class: the call-arg annotation-mismatch checks are now provenance-gated (reuse
+`explicitly_annotated_params`), so an inferred/default param (lambda,
+`*args`/`**kwargs`, argparse) is no longer flagged; this also required populating
+`explicitly_annotated_params` for METHOD parameters (separate param-processing
+path). Result: curated-suite FPs 5->3, corpus FPs 43->40, no default-mode
+regression (`calc.multiply(5,"ten")` and the cross-module mismatch still
+detected). The re-measurement reveals the REMAINING cost is mostly INHERENT --
+real mismatches the flag is designed to catch but that are not runtime errors
+because the value is never misused (`a: int = <float>`, `x: int = f()` where
+`f()->str` and x is used as a str -- the github_3775 / function-keyword /
+recursion / while / sequence clusters). The smaller fixable remainder is
+`range`/builtin-return recognition (`r: range = range(4)`, github_3751*) and
+Any-valued-container AnnAssign (`dict[K, Any]`), both rooted in
+`convert_type_annotation` fallbacks whose naive fix has DEFAULT-mode side effects
+(a `dict[K,Any]->dict` attempt regressed `dict-if-not-in-idiom`), so they need
+careful separately-validated handling. The inherent floor is the real default-on
+gate.
+
+The decision The original blocker write-up is kept below for the
 record.
 
 **Original (now-resolved) blocker write-up.**
