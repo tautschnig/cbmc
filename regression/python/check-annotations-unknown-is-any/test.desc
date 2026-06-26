@@ -1,0 +1,7 @@
+CORE
+main.py
+--python-check-annotations --unwind 4
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+--
+^\[annotation-mismatch
