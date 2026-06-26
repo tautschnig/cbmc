@@ -3318,6 +3318,15 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             "python::" + class_name + "::" + method_name + "::" + param_name);
           p.set_base_name(param_name);
           parameters.push_back(p);
+          // Annotation provenance (mirrors convert_function_def): record a
+          // method parameter whose type came from a GENUINE annotation, so the
+          // call-site annotation/tag checks fire for it but NOT for inferred /
+          // `*args` / `self` params. Without this, method params were absent
+          // from explicitly_annotated_params and the provenance-gated method-
+          // call check skipped EVERY method argument (missing real mismatches
+          // like `calc.multiply(5, "ten")`).
+          if(!json_member(param, "annotation").is_null())
+            explicitly_annotated_params.insert(p.get_identifier());
           // PLR §6.10.3: mark Optional / Union[..., None] params
           // so the Is/IsNot fast-path treats them as nullable.
           if(!is_staticmethod || param_name != "self")
