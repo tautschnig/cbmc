@@ -1,0 +1,5 @@
+CORE
+main.py
+--python-strict-warnings --unwind 3 --no-unwinding-assertions
+using nondet over-approximation
+--
