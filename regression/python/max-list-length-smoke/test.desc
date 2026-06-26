@@ -1,0 +1,6 @@
+CORE
+main.py
+--python-max-list-length 8 --unwind 6 --no-unwinding-assertions
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+--
