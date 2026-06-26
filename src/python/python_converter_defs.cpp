@@ -4505,6 +4505,56 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
         is_aliased_list_element(json_member(cf, "value")))
         emit_aliased_mutation_guard(get_location(stmt));
 
+      // --python-check-annotations: appending/inserting a value whose type is
+      // definitely incompatible with a list's CONCRETE element type
+      // (`list[int].append("s")`) is an annotation mismatch (the ty-007
+      // laundering witness). Opt-in only -- it is legal at runtime (the error
+      // arises on a later USE), so it is gated behind the flag, like the
+      // call-arg / assign annotation checks. Restricted to a Constant/Name
+      // argument: those are idempotent to convert (no side effect), so reading
+      // the arg type here does not double-evaluate a side-effecting expression
+      // (a `Call` arg such as `xs.append(src())` is skipped -- see the §7
+      // single-coercion-point note). Lists with a `python_value` (Any) element
+      // type never mismatch.
+      if(python_check_annotations)
+      {
+        const std::string m = json_string(json_member(cf, "attr"));
+        if(m == "append" || m == "insert")
+        {
+          const jsont &cargs = json_member(value, "args");
+          if(cargs.is_array())
+          {
+            auto it = as_array(cargs).begin();
+            const auto end = as_array(cargs).end();
+            if(m == "insert" && it != end)
+              ++it; // insert(index, value): the value is the 2nd arg
+            if(
+              it != end &&
+              (is_node_type(*it, "Constant") || is_node_type(*it, "Name")))
+            {
+              exprt recv_e = convert_expression(json_member(cf, "value"));
+              if(!recv_e.is_nil() && is_python_list_type(recv_e.type()))
+              {
+                const typet elem_t =
+                  to_array_type(
+                    to_struct_type(recv_e.type()).components()[1].type())
+                    .element_type();
+                exprt val_e = convert_expression(*it);
+                if(
+                  !val_e.is_nil() && !is_python_value_type(elem_t) &&
+                  annotation_types_incompatible(elem_t, val_e.type()))
+                  add_check(
+                    false_exprt{},
+                    "annotation-mismatch",
+                    "appended element type does not match list element "
+                    "annotation",
+                    get_location(stmt));
+              }
+            }
+          }
+        }
+      }
+
       // Nested-aliasing soundness (PLR §9): `a.append(a[i])` /
       // `a.insert(_, g[i])` inserts a MUTABLE INNER element (a subscript
       // of a list, or a name already tracked as a shared inner) into
