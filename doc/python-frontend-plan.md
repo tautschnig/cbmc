@@ -625,9 +625,18 @@ precise and mutual recursion (`forward-declaration4`) is not regressed. Guard:
 **reassignment** for `.value`: after `j.s = S.B`, `j.s.value` does not read
 `S.B.value` (`j.flip(); assert j.s.value == 2` FAILS -- a precision miss; the a13
 false proof, `.value` used as int after a flip to a str-valued member, is the
-soundness face of the same gap). Genuine enum-modelling work (track the dynamic
-member behind `.value`, heterogeneous member value types), not a clean
-over-approximation. Left as KNOWNBUG (a13).
+soundness face of the same gap). Refined (2026-06-26): enum members are represented **as their value** (`j.s == 2`
+and `j.s == S.B` both hold after `j.s = S.B`; field reassignment IS tracked, and
+constant `S.B.value` works). The ONLY broken case is `.value` on a **runtime**
+enum value (`j.s.value`): the `.value` handler matches only the literal
+`EnumClass.MEMBER.value` AST shape. Since a member IS its value, the precise fix
+is `j.s.value → j.s` -- but it must fire ONLY when the receiver is enum-typed
+(`j.s` is stored as a plain int, so `.value` on a non-enum int must stay an
+AttributeError), and there is no value-level enum marker nor a (class,field)→
+annotation map to detect that. So the fix needs enum-type tracking
+infrastructure (a value-level enum tag or a class-field-annotation map) -- a
+scoped enum-modelling task, not a clean over-approximation. Left as KNOWNBUG
+(a13); the soundness face is `j.s.value - 1` reading a str member value.
 
 
 
