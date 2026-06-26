@@ -243,13 +243,14 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       // exception emission for those preserves the silent-
       // nondet behaviour that several library models depend
       // on while still flagging arithmetic mismatches.
-      bool fire_exc = op == "Add" || op == "Sub" || op == "Mult" ||
-                      op == "Div" || op == "FloorDiv" || op == "Mod" ||
-                      op == "Pow" ||
-                      // a concrete float operand to a bitwise/shift op is an
-                      // unambiguous TypeError (not the set-ambiguous general
-                      // bitwise case)
-                      (bitwise_op && (l_is_float || r_is_float));
+      bool fire_exc =
+        op == "Add" || op == "Sub" || op == "Mult" || op == "Div" ||
+        op == "FloorDiv" || op == "Mod" || op == "Pow" ||
+        // a concrete float OR str operand to a bitwise/shift op
+        // is an unambiguous TypeError -- neither is ever a set, so
+        // this does not disturb the set-ambiguous general bitwise
+        // case (which stays silent on coarse nondet ints).
+        (bitwise_op && (l_is_float || r_is_float || l_is_str || r_is_str));
       if(fire_exc)
       {
         const symbolt *exc_sym =
