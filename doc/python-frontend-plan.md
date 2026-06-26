@@ -600,7 +600,7 @@ candidate "tractable" false proofs; neither has a clean DEFAULT-mode fix:
   swapped operands `e.x + e.gm()` already agree with CPython) — not a localized
   fix. Left as KNOWNBUG.
 
-**Union-return-path precision bug (characterized; fix deferred).** A function
+**Union-return-path precision bug — FIXED (gated widen).** A function
 with a concrete return annotation (`-> int`) and a return path that yields a
 union/Any value (`return x` where `x: int|str`) puns that `python_value` into
 the concrete int return slot, corrupting the value read on the *other* (taken)
@@ -614,8 +614,12 @@ gate over-fires on **forward/recursive calls** (mutual recursion `-> bool`
 regressed: the inferer returns python_value from *uncertainty* about an
 unresolved call, not a genuine union). A safe fix must distinguish a genuine
 python_value-VALUE return from inferer uncertainty (e.g. flag a `return <union
-param>` specifically, excluding `return <call>`). Sound either way (precision
-only); deferred to avoid the recursion regression.
+param>` specifically, excluding `return <call>`). Sound either way (precision only). **Fixed:** added
+`inferred_returnt::saw_python_value_return`, set only at a genuine
+`return <union/Any param>` site (NOT the call-uncertainty path), and widen the
+annotated slot to python_value only when that flag is set -- so `g("abc")` is
+precise and mutual recursion (`forward-declaration4`) is not regressed. Guard:
+`union-return-path-precise`.
 
 **P4 enum `.value` finding (a13).** cbmc does not track enum-member
 **reassignment** for `.value`: after `j.s = S.B`, `j.s.value` does not read
