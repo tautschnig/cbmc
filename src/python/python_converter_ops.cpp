@@ -149,6 +149,22 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     bool r_is_num =
       right.type().id() == ID_signedbv || right.type().id() == ID_integer ||
       right.type().id() == ID_floatbv || right.type().id() == ID_bool;
+    // Concrete operand-type discriminators for the whole-group operand-type
+    // obligation below. A *concrete* float operand is unambiguous (it is never
+    // a set/sequence at runtime), so operators that require an integral operand
+    // (bitwise/shift, sequence-repeat count) can flag it as a DEFINITE
+    // TypeError without the set/coarse-nondet ambiguity that blocks the general
+    // bitwise case.
+    bool l_is_float = left.type().id() == ID_floatbv;
+    bool r_is_float = right.type().id() == ID_floatbv;
+    bool l_is_intlike = left.type().id() == ID_signedbv ||
+                        left.type().id() == ID_integer ||
+                        left.type().id() == ID_bool;
+    bool r_is_intlike = right.type().id() == ID_signedbv ||
+                        right.type().id() == ID_integer ||
+                        right.type().id() == ID_bool;
+    bool bitwise_op = op == "BitAnd" || op == "BitOr" || op == "BitXor" ||
+                      op == "LShift" || op == "RShift";
     // PLR §3.2: a python_value (tagged union) operand can hold
     // an int / float / bool (or any other type) at runtime.
     // For list / str repetition we accept it as 'num-like' so
@@ -165,14 +181,14 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     if(l_is_list && !r_is_list)
     {
       if(
-        !(op == "Mult" && (r_is_num || r_is_value)) &&
+        !(op == "Mult" && (r_is_intlike || r_is_value)) &&
         !(op == "Add" && r_is_value && ref_mutables))
         incompatible = true;
     }
     if(r_is_list && !l_is_list)
     {
       if(
-        !(op == "Mult" && (l_is_num || l_is_value)) &&
+        !(op == "Mult" && (l_is_intlike || l_is_value)) &&
         !(op == "Add" && l_is_value && ref_mutables))
         incompatible = true;
     }
@@ -184,12 +200,12 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     // str OP non-str/num: invalid unless str * int (repeat).
     if(l_is_str && !r_is_str)
     {
-      if(!(op == "Mult" && (r_is_num || r_is_value)))
+      if(!(op == "Mult" && (r_is_intlike || r_is_value)))
         incompatible = true;
     }
     if(r_is_str && !l_is_str)
     {
-      if(!(op == "Mult" && (l_is_num || l_is_value)))
+      if(!(op == "Mult" && (l_is_intlike || l_is_value)))
         incompatible = true;
     }
     // str * str is invalid: only str * int repeats a string.
@@ -199,6 +215,14 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     if(l_is_complex && (r_is_str || r_is_list || r_is_dict))
       incompatible = true;
     if(r_is_complex && (l_is_str || l_is_list || l_is_dict))
+      incompatible = true;
+    // PLR §6.7: bitwise/shift operators require integral operands. A CONCRETE
+    // float operand (`1.0 & 2`, `1.0 << 2`) is a definite TypeError -- and,
+    // being concretely float, is unambiguously not a set, so this does not
+    // disturb the set bitwise ops (which the general bitwise case below stays
+    // silent on). Sequence-repeat with a concrete float count is already
+    // flagged above (the count must be int-like, not float).
+    if(bitwise_op && (l_is_float || r_is_float))
       incompatible = true;
     if(incompatible)
     {
@@ -221,7 +245,11 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       // on while still flagging arithmetic mismatches.
       bool fire_exc = op == "Add" || op == "Sub" || op == "Mult" ||
                       op == "Div" || op == "FloorDiv" || op == "Mod" ||
-                      op == "Pow";
+                      op == "Pow" ||
+                      // a concrete float operand to a bitwise/shift op is an
+                      // unambiguous TypeError (not the set-ambiguous general
+                      // bitwise case)
+                      (bitwise_op && (l_is_float || r_is_float));
       if(fire_exc)
       {
         const symbolt *exc_sym =
@@ -2066,6 +2094,28 @@ exprt python_convertert::convert_unary_op(const jsont &expr)
     return not_exprt{python_truthiness(operand)};
   else if(op == "Invert")
   {
+    // PLR §6.7: ~x requires an integral operand; a CONCRETE float raises
+    // TypeError ("bad operand type for unary ~: 'float'"). Emit it via the
+    // shared exception flag (same as the binary operand-type obligations) and
+    // return nondet so the GOTO stays well-typed.
+    if(operand.type().id() == ID_floatbv)
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+      {
+        pending_checks.push_back(
+          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+        if(exc_type_sym != nullptr)
+          pending_checks.push_back(code_frontend_assignt{
+            exc_type_sym->symbol_expr(),
+            from_integer(
+              exception_type_hash("TypeError"), exc_type_sym->type)});
+      }
+      return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+    }
     // PLR §6.7: bitwise ~x. Promote bool to int, then bitnot.
     exprt cast_operand = operand.type().id() == ID_bool
                            ? safe_typecast(operand, python_int_type())
