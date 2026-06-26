@@ -1559,6 +1559,20 @@ The annotation checker itself is implemented and correct when it runs.
   annotation-mismatch check when the declared element type is
   `python_value` (Any), avoiding the construct that trips the solver.
 
+**Coverage-extension backlog (the whole-group view of `--python-check-annotations`).**
+The checker fires at the call-argument and annotated-assignment boundaries, but
+NOT yet at the **container-element** boundaries: `list[int].append("s")` (the ty
+`007` laundering witness) and dict-value stores. Extending it there would let
+the flag catch the *whole* coercion-boundary laundering cluster (the architectural
+prerequisite for ever making it default-on). **Implementation note / blocker
+(2026-06-26):** the natural AST hook (`convert_expr_stmt`'s append/insert mutator
+block) cannot safely `convert_expression` the appended argument just to read its
+type — a side-effecting arg (`xs.append(src())`) would be converted twice. A
+correct implementation needs the single append element-coercion site (currently
+dispersed across the method-dispatch path) so the already-converted element +
+the list's declared element type can be compared once. Scoped, opt-in, sound
+(gated on the flag); deferred pending that single coercion point.
+
 ---
 
 ## 8. Performance optimization backlog  {#performance}
