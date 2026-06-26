@@ -4724,7 +4724,10 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
   else if(type_name == "set" || type_name == "Set")
     return python_set_type();
   else if(type_name == "tuple" || type_name == "Tuple")
-    return python_int_type(); // unparameterized tuple
+    // PLR §3.2: bare `tuple` is `tuple[Any, ...]` (any length / element type);
+    // there is no fixed-size struct for that, so python_value (Any) is the
+    // correct top model. (The old int fallback flagged `t: tuple = (1, 2)`.)
+    return python_value_type(); // unparameterized tuple -> Any
   else if(
     type_name == "Any" || type_name == "Union" || type_name == "Literal" ||
     type_name == "Callable" || type_name == "BinaryIO" ||
