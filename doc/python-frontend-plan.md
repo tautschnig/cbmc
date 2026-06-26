@@ -1649,6 +1649,24 @@ capacity-modeling representation issue, which must be addressed on its own (and
 validated) before the dict-value-nonsafe fallback can be flipped. Tracked here as
 the next step for this cluster.
 
+**Update (2026-06-26, `--python-strict` landed).** Decision taken: ship the
+annotation-strictness family as the opt-in preset `--python-strict`
+(= `--python-check-annotations` + `--python-missing-return-check` +
+`--python-required-kwarg-checks` + `--python-check-typeddict-fields`) rather than
+flipping any of them on by default. Rationale: the residual precision cost is now
+mostly INHERENT (real annotation mismatches that are not runtime errors), so
+default-on would change what `VERIFICATION FAILED` means (conflating a runtime
+fault with a static annotation mismatch CPython tolerates) — a category change,
+not a tunable FP rate. The preset is additive (no default-semantics change) and
+deliberately does NOT imply `--python-raising-ops-check` (a separate
+runtime-exception-soundness axis). **The prerequisite for any future *default-on*
+decision is use-site misuse gating**: only flag an annotation mismatch when the
+value is actually used *as* the annotated type in a way that causes a real
+runtime fault (`n: int = "x"; n + 1`) and stay silent otherwise — that converts
+the inherent floor from false-positive to correctly-silent and re-aligns the
+property with runtime semantics. That gating is the tracked next step for this
+cluster.
+
 The decision The original blocker write-up is kept below for the
 record.
 
