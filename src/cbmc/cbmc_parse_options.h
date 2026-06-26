@@ -74,7 +74,6 @@ class optionst;
   "(python-max-string-length):" \
   "(python-max-list-length):" \
   "(python-ref-mutables)" \
-  "(no-python-ref-mutables)" \
   "(python-no-body-check)" \
   "(python-strict-warnings)" \
   "(python-use-stdlib-source)" \
