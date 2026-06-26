@@ -1098,12 +1098,44 @@ method parameters), removing the lambda/`*args`/inferred-param false positives;
 and the annotation-strictness family was packaged behind the opt-in
 `--python-strict` preset (it is **not** default-on — see inventory B).
 
+**Standalone PLR re-audit (2026-06-26)** — a differential pass (≈255 generated
+probes run under both CPython and cbmc, flagging every program where CPython
+raises/asserts-false but cbmc verifies). It **fixed one correctness false proof**
+and **surfaced five new, narrow ones** (each now pinned KNOWNBUG):
+  - **CLOSED — float floor division `//`** was computed as plain *true* division
+    (no floor): `7.0 // 2.0` proved `== 3.5` instead of `3.0` (a wrong-arithmetic
+    false proof). Fixed by applying the float-floor encoding (same as float `%`);
+    lock-in `float-floordiv-correct`. By-value sweep 0 regressions.
+  - **OPEN — extraction-then-mutate guard bypassed by an annotation**: the
+    `r = c[i]; r.append(x)` guard (havoc the source) is sound, but `r: list =
+    c[i]` (annotated) skips it — the AnnAssign path doesn't record
+    `extracted_container_alias`, so cbmc proves the stale container
+    (`annotation-extract-mutate-bypass-knownbug`).
+  - **OPEN — method-call argument tag obligation gap**: the provenance-gated
+    call-arg tag obligation fires for free functions but **not method calls**, so
+    an `Any`-tagged `str` bound to an `int` method param is not caught
+    (`method-arg-tag-obligation-knownbug`).
+  - **OPEN — missing TypeError for non-numeric operand shapes** (false negatives
+    cbmc silently models): a **float operand to a bitwise/shift/invert** operator
+    (`1.0 & 2`, `1.0 << 2`, `~1.0` — `float-bitwise-typeerror-knownbug`) and
+    **sequence × float** repetition (`"abc" * 2.5`, `[1] * 2.0` —
+    `sequence-mul-float-typeerror-knownbug`).
+  - **OPEN — positional-only param passed by keyword** (`def f(x, /, y); f(x=1)`)
+    is not a flagged TypeError (`positional-only-kwarg-typeerror-knownbug`).
+  The audit also **re-confirmed** the documented clusters still reproduce
+  (composition aliasing, union dispatch, context-manager mutation, list/attr PUN,
+  `*args`+kwonly, `int()`/`float()` ValueError default-off).
+
 The entries below are the deliberate
 soundness-vs-precision tradeoffs and the guarded / opt-in cases.
 
 | Area | Issue | Status | Plan |
 |---|---|---|---|
-| Operations that can raise | `int()`/`float()` of a non-constant string (`ValueError`), `os.*` file ops (`OSError`), `re` with a non-str pattern (`TypeError`) are modelled as **silently succeeding** by default (precision-favouring) → false **negatives** by design | sound **only** under opt-in `--python-raising-ops-check`; default favours precision | [plan §0](python-frontend-plan.md#false-proofs) |
+| Float floor division | `//` on float operands was computed as true division (no floor): `7.0 // 2.0 == 3.5` — wrong arithmetic | **CLOSED 2026-06-26** (float-floor applied; `float-floordiv-correct`) | — |
+| Extraction-then-mutate via annotation | `r: list = c[i]; r.append(x)` bypasses the extraction guard (AnnAssign path skips `extracted_container_alias`) → stale container proved | **OPEN false proof** (`annotation-extract-mutate-bypass-knownbug`) | [plan §0](python-frontend-plan.md#false-proofs) |
+| Method-call arg tag obligation | the provenance-gated call-arg TypeError obligation fires for free functions but not method calls | **OPEN false proof** (`method-arg-tag-obligation-knownbug`) | [plan §0](python-frontend-plan.md#false-proofs) |
+| Non-numeric operand TypeErrors | float operand to `& \| ^ << >> ~`, and `seq * float` repetition, are silently modelled instead of raising TypeError | **OPEN false negatives** (`float-bitwise-typeerror-knownbug`, `sequence-mul-float-typeerror-knownbug`) | [plan §0](python-frontend-plan.md#false-proofs) |
+| Positional-only by keyword | `def f(x, /, y); f(x=1)` not flagged as TypeError | **OPEN false negative** (`positional-only-kwarg-typeerror-knownbug`) | [plan §0](python-frontend-plan.md#false-proofs) |
 | **Narrowing-invalidation cluster** (OPEN false proofs) | a value's runtime type changes via an effect cbmc does not model, then it is used at the stale type → CPython `TypeError`, cbmc verifies. Distinct roots (each its own modelling gap, **not one fix**): enum `.value` after a status mutation, object-identity-via-**composition aliasing**, context-manager `__enter__` mutation of a union field, inheritance+union virtual dispatch, and same-expression **eval-order × union-retag**. **`__setattr__` / `__getattribute__` are now CLOSED** (2026-06-25): attribute reads on instances of classes defining these intercept-everything dunders are over-approximated to a nondet `python_value`, routing uses through the tag obligations (`setattr-override`, `getattribute-override` are CORE). Surfaced by differential testing (2026-06-25) | **UNSOUND** (false proofs), confined to advanced/dynamic features; each pinned KNOWNBUG (`enum-value-after-mutation-knownbug`, `shared-object-aliasing-knownbug`, `context-manager-enter-mutation-knownbug`, `union-use-after-mutation-typeerror-knownbug`; `setattr-override`/`getattribute-override` now CORE) | [plan §0](python-frontend-plan.md#false-proofs) |
 | Any/union used at a wrong type | a tagged-union/`Any` value used as a concrete type with a mismatched runtime tag now raises `TypeError` via **tag obligations** at the operator, subscript, and (provenance-gated) call-argument boundaries — was a silent wrong-field read. The remaining hole is the call-argument obligation only firing for **explicitly-annotated** scalar params (inferred/Any params excluded to avoid false alarms) | sound (closed for the three covered sites); see the tag-obligation table in [Type-coercion at boundaries](#any--union-tag-obligations-typeerror-on-a-wrong-runtime-tag) | [plan §0](python-frontend-plan.md#false-proofs) |
 | Definite integer overflow (default 64-bit) | the default 64-bit model silently **wrapped** on a statically-provable >64-bit result (`10**19 < 0`, `1<<70 == 0`) — a false proof. Now reports `python-model-bound` (assert+assume cut) on a DEFINITE overflow; a symbolic/computed overflow remains the documented 64-bit bound (use `--python-unbounded-ints`, now sound incl. shifts/bitwise) | sound (definite cases reported; symbolic = documented bound) | [plan §0](python-frontend-plan.md#false-proofs) |

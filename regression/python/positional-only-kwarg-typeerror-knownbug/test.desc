@@ -1,0 +1,9 @@
+KNOWNBUG
+main.py
+--unwind 3
+^VERIFICATION FAILED$
+--
+--
+Desired: passing a positional-only parameter (declared before `/`) by keyword
+raises TypeError. cbmc currently binds it by name and verifies (false proof).
+Promote to CORE when positional-only enforcement is added.
