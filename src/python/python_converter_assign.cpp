@@ -2741,6 +2741,16 @@ codet python_convertert::convert_assign(const jsont &stmt)
             json_string(json_member(slice_node, "_type")) == "Constant")
           {
             auto key_str = extract_string_value(key);
+            // Non-string constant key (int / bool): the dict_literals
+            // key-array const-fold machinery below is string-keyed and cannot
+            // update an int/bool entry in place, so it would leave a STALE
+            // construction value (`d = {1: 10}; d[1] = 20; d[1]` folded to 10).
+            // Drop the const-fold for this dict instead -> the subsequent
+            // `d[<int key>]` read falls back to the runtime values array, which
+            // the store above DID update, giving the correct value. (String
+            // keys take the precise in-place update path below.)
+            if(!key_str.has_value())
+              dict_literals.erase(to_symbol_expr(obj).get_identifier());
             if(key_str.has_value())
             {
               irep_idt obj_id = to_symbol_expr(obj).get_identifier();
