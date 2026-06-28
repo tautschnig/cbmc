@@ -1807,6 +1807,66 @@ exprt python_convertert::emit_property_get(
   return std::move(tv);
 }
 
+// PLR §3.3.2: dispatch a @property setter on `obj.<attr> = value`.
+std::optional<codet> python_convertert::emit_property_set(
+  const std::string &class_name,
+  const std::string &attr,
+  const exprt &obj_ptr,
+  const exprt &value,
+  const source_locationt &loc)
+{
+  std::vector<std::string> chain;
+  auto mro_it = class_mro.find(class_name);
+  if(mro_it != class_mro.end())
+    chain = mro_it->second;
+  if(chain.empty())
+    chain.push_back(class_name);
+
+  std::string setter_id;
+  for(const std::string &anc : chain)
+  {
+    auto pit = class_property_setters.find(anc);
+    if(pit != class_property_setters.end())
+    {
+      auto ait = pit->second.find(attr);
+      if(ait != pit->second.end())
+      {
+        setter_id = ait->second;
+        break;
+      }
+    }
+  }
+  if(setter_id.empty())
+    return std::nullopt;
+  const symbolt *ssym = symbol_table.lookup(irep_idt{setter_id});
+  if(ssym == nullptr || ssym->type.id() != ID_code)
+    return std::nullopt;
+
+  const code_typet &mty = to_code_type(ssym->type);
+  exprt::operandst args;
+  // self (the instance pointer), coerced to the setter's first parameter type.
+  if(!mty.parameters().empty())
+  {
+    const typet &st = mty.parameters()[0].type();
+    args.push_back(
+      obj_ptr.type() == st ? obj_ptr : typecast_exprt{obj_ptr, st});
+  }
+  // value, coerced to the setter's declared value parameter type (an Any/
+  // python_value param is boxed via wrap_value; otherwise a safe typecast).
+  if(mty.parameters().size() >= 2)
+  {
+    const typet &vt = mty.parameters()[1].type();
+    exprt v = value;
+    if(v.type() != vt)
+      v = is_python_value_type(vt) && !is_python_value_type(v.type())
+            ? wrap_value(v)
+            : safe_typecast(v, vt);
+    args.push_back(v);
+  }
+  return code_expressiont{side_effect_expr_function_callt{
+    ssym->symbol_expr(), args, mty.return_type(), loc}};
+}
+
 // §11b: dispatch a custom descriptor's __get__ on attribute read.
 exprt python_convertert::emit_descriptor_get(
   const std::string &class_name,

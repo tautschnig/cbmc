@@ -3132,6 +3132,14 @@ codet python_convertert::convert_assign(const jsont &stmt)
             dcls = dcls.substr(13);
           if(!dcls.empty())
           {
+            // @property setter (a data descriptor): `obj.<attr> = v` invokes
+            // the setter (with its side effects) instead of a shadowing store.
+            if(auto ps = emit_property_set(dcls, attr, dobj, rhs, loc))
+            {
+              ps->add_source_location() = loc;
+              block.add(std::move(*ps));
+              continue;
+            }
             if(auto ds = emit_descriptor_set(dcls, attr, dobj, rhs, loc))
             {
               ds->add_source_location() = loc;
