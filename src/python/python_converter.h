@@ -588,6 +588,13 @@ private:
   /// @property. Attribute reads of these names call the method
   /// with self as the single argument (PLR §3.3.2).
   std::map<std::string, std::set<std::string>> class_property_methods;
+  /// @property setters: class -> property name -> the setter method's symbol
+  /// id (`python::<class>::<prop>__setter`). A `@<prop>.setter` accessor is
+  /// stored under a DISTINCT symbol so it does not clobber the getter
+  /// (`python::<class>::<prop>`); `obj.<prop> = v` dispatches the setter (a
+  /// data descriptor, PLR §3.3.2) rather than a shadowing field store.
+  std::map<std::string, std::map<std::string, std::string>>
+    class_property_setters;
   /// All method names declared on a class (regardless of whether
   /// they have been converted yet). Populated in convert_class_def
   /// before any method body is converted, so forward-reference
@@ -2300,6 +2307,17 @@ public:
   /// typically the instance's own fields), else std::nullopt. `obj_ptr`
   /// is a pointer to the instance being assigned.
   std::optional<codet> emit_descriptor_set(
+    const std::string &class_name,
+    const std::string &attr,
+    const exprt &obj_ptr,
+    const exprt &value,
+    const source_locationt &loc);
+
+  /// PLR §3.3.2: dispatch a @property setter on `obj.<attr> = value`. Resolves
+  /// `attr` as a property setter across `class_name`'s MRO and, if found,
+  /// returns a call `setter(obj_ptr, value)`. Returns nullopt when `attr` is
+  /// not a property setter (the caller then performs the normal store).
+  std::optional<codet> emit_property_set(
     const std::string &class_name,
     const std::string &attr,
     const exprt &obj_ptr,

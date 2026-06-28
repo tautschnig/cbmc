@@ -3198,6 +3198,38 @@ codet python_convertert::convert_class_def(const jsont &stmt)
       {
         std::string method_name = json_string(json_member(item, "name"));
 
+        // PLR §3.3.2: a property accessor `@<prop>.setter` / `.getter` /
+        // `.deleter` shares the method name with its getter (`def <prop>`).
+        // Convert it under a DISTINCT symbol (`<prop>__<accessor>`) so it does
+        // not clobber the getter (`python::<class>::<prop>`) -- without this a
+        // class with both a getter and a setter had its getter silently
+        // overwritten. Record setters so `obj.<prop> = v` dispatches the setter
+        // (a data descriptor) instead of a shadowing field store.
+        {
+          const jsont &decs = json_member(item, "decorator_list");
+          if(decs.is_array())
+          {
+            for(const auto &dec : as_array(decs))
+            {
+              if(!is_node_type(dec, "Attribute"))
+                continue;
+              const jsont &dval = json_member(dec, "value");
+              if(!is_node_type(dval, "Name"))
+                continue;
+              const std::string acc = json_string(json_member(dec, "attr"));
+              const std::string prop = json_string(json_member(dval, "id"));
+              if(acc != "setter" && acc != "getter" && acc != "deleter")
+                continue;
+              if(prop == method_name)
+                method_name = method_name + "__" + acc;
+              if(acc == "setter")
+                class_property_setters[class_name][prop] =
+                  "python::" + class_name + "::" + method_name;
+              break;
+            }
+          }
+        }
+
         // PLR §8.7: Check for @classmethod/@staticmethod decorator
         bool is_classmethod = false;
         bool is_staticmethod = false;
