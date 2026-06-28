@@ -2589,6 +2589,23 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           typet attr_type = annotation.is_null()
                               ? python_value_type()
                               : convert_type_annotation(annotation);
+          // reference-semantics-for-instances (Phase 3): an instance-typed
+          // field assigned a by-REFERENCE value (`self.x: C = <Name>` -- a
+          // param/alias) is held by reference -> type it pointer-to-instance so
+          // it aliases (not value-copies). A FRESH construction
+          // (`self.x: C = C()`) is an OWNED object -> keep the struct type
+          // (distinct per instance; pointer-ifying it would make all instances
+          // share one constructed temp -- over-aliasing).
+          const jsont &av = json_member(s, "value");
+          const bool field_is_instance =
+            (attr_type.id() == ID_struct &&
+             id2string(to_struct_type(attr_type).get_tag())
+                 .find("python_class_") != std::string::npos) ||
+            (attr_type.id() == ID_struct_tag &&
+             id2string(to_struct_tag_type(attr_type).get_identifier())
+                 .find("python_class_") != std::string::npos);
+          if(field_is_instance && is_node_type(av, "Name"))
+            attr_type = pointer_type(attr_type);
           if(declared_fields.insert(attr_name).second)
             components.push_back(
               struct_typet::componentt{attr_name, attr_type});
@@ -2642,7 +2659,26 @@ codet python_convertert::convert_class_def(const jsont &stmt)
               {
                 const jsont &ann = json_member(p, "annotation");
                 if(!ann.is_null())
-                  attr_type = convert_type_annotation(ann);
+                {
+                  typet at = convert_type_annotation(ann);
+                  // reference-semantics-for-instances (Phase 3): a field
+                  // assigned a by-reference instance PARAMETER (which is itself
+                  // a pointer-to-instance) must PRESERVE identity. Type the
+                  // field as a pointer-to-instance (matching the param) so the
+                  // store binds the reference (not a value copy) and
+                  // `obj.field.attr` dereferences to the SAME object. A concrete
+                  // struct type value-copies the parameter -> a mutation through
+                  // the field is invisible to the caller's object (the
+                  // composition false proof).
+                  const bool at_is_instance =
+                    (at.id() == ID_struct &&
+                     id2string(to_struct_type(at).get_tag())
+                         .find("python_class_") != std::string::npos) ||
+                    (at.id() == ID_struct_tag &&
+                     id2string(to_struct_tag_type(at).get_identifier())
+                         .find("python_class_") != std::string::npos);
+                  attr_type = at_is_instance ? typet{pointer_type(at)} : at;
+                }
                 // else: stays as python_value_type (tagged union)
                 break;
               }

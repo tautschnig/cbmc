@@ -3998,6 +3998,14 @@ std::optional<exprt> python_convertert::try_builtin_call(
         }
       }
       exprt obj = convert_expression(*it);
+      // reference-semantics: an instance held BY REFERENCE (a concrete-class
+      // param / field, or an alias) is a pointer-to-struct. Dereference it so
+      // the __class_tag dispatch below sees the instance struct. (Fixes the
+      // pre-existing isinstance-on-by-ref-param gap too.)
+      if(
+        obj.type().id() == ID_pointer &&
+        to_pointer_type(obj.type()).base_type().id() == ID_struct)
+        obj = dereference_exprt{obj};
       ++it;
       std::string cls_name;
       if(is_node_type(*it, "Name"))
