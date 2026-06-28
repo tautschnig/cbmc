@@ -625,6 +625,18 @@ Findings:
   together with a reference-semantics-for-instances effort (the high-value
   whole-group play), not a per-feature guard.
 
+**Reference-semantics-for-instances PLAN (2026-06-28).** The cluster above is now
+designed and phased in
+[python-frontend-instance-reference-semantics-plan.md](python-frontend-instance-reference-semantics-plan.md):
+instances are by-value at the three remaining copy sites (local assignment,
+field store, return) while params/`self` are ALREADY by-reference pointers and
+the Any path is by-address. The fix extends pointer-reference representation to
+those sites (phased: return → local-alias → field/composition, each
+validation-gated). Pinning suite landed: CORE guards + KNOWNBUG acceptance
+criteria. Perf gate per phase: single-level instance pointers are already
+default+fast; deep-composition `==` is the risk to measure (the ref_mutables
+cliff).
+
 **P2 composition-aliasing investigation (2026-06-26).** Surfaced a *simpler*
 sibling of the composition false proof: **direct instance aliasing** `b = a;
 b.x = 99; read a.x` (cbmc value-copies the instance at a top-level `b = a`
