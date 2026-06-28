@@ -473,6 +473,23 @@ private:
   /// member value (with the runtime tag) instead of a nondet attribute read --
   /// the field analogue of enum_member_vars.
   std::map<std::string, std::set<std::string>> enum_typed_fields;
+  /// True if `t` is a pointer to a class-instance struct (`python_class_*`):
+  /// an instance held BY REFERENCE (a concrete-class param/self, or a
+  /// returned/aliased instance). Extends the list/dict by-reference machinery
+  /// to instances (reference-semantics-for-instances, Phase 1: return-flow).
+  bool is_instance_pointer(const typet &t) const
+  {
+    if(t.id() != ID_pointer)
+      return false;
+    const typet &b = to_pointer_type(t).base_type();
+    if(b.id() == ID_struct)
+      return id2string(to_struct_type(b).get_tag()).find("python_class_") !=
+             std::string::npos;
+    if(b.id() == ID_struct_tag)
+      return id2string(to_struct_tag_type(b).get_identifier())
+               .find("python_class_") != std::string::npos;
+    return false;
+  }
   /// Names bound to an enum base via `from enum import Enum as E` (so a
   /// class deriving from `E` is recognised as an enum). Seeded with the
   /// standard base names.

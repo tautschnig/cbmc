@@ -533,7 +533,8 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   if(
     rhs.type().id() == ID_pointer &&
     (is_python_list_type(to_pointer_type(rhs.type()).base_type()) ||
-     is_python_dict_type(to_pointer_type(rhs.type()).base_type())))
+     is_python_dict_type(to_pointer_type(rhs.type()).base_type()) ||
+     is_instance_pointer(rhs.type())))
   {
     symbol_table.get_writeable_ref(symbol_id).type = rhs.type();
     code_frontend_assignt assign{
@@ -3499,7 +3500,8 @@ codet python_convertert::convert_assign(const jsont &stmt)
     if(
       rhs.type().id() == ID_pointer &&
       (is_python_list_type(to_pointer_type(rhs.type()).base_type()) ||
-       is_python_dict_type(to_pointer_type(rhs.type()).base_type())))
+       is_python_dict_type(to_pointer_type(rhs.type()).base_type()) ||
+       is_instance_pointer(rhs.type())))
     {
       symbolt &lhs_sym = symbol_table.get_writeable_ref(symbol_id);
       if(lhs_sym.type != rhs.type())
