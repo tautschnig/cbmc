@@ -1,8 +1,8 @@
 # Reference semantics for instances — design & phased plan
 
-Status: **planned** (pinning suite landed 2026-06-28; implementation phased,
-each phase validation-gated). This is the whole-group fix for the
-**instance-identity cluster** of false proofs.
+Status: **COMPLETE** (Phases 1+2+3 landed 2026-06-28, each validation-gated).
+The whole-group fix for the **instance-identity cluster** of false proofs --
+all five cluster knownbugs are now CORE; oracle baseline dropped 22 -> 17.
 
 ## 1. The whole-group root
 
@@ -153,10 +153,20 @@ Ordering by **tractability × isolation** (least cross-cutting first):
   normally. Both alias directions verified; distinct instances stay distinct.
   Flipped KNOWNBUG → CORE; suite green, sweep 0-reg, oracle resolved (baseline
   21→20).
-- **Phase 3 — Field store / composition** (`instance-field-aliasing-knownbug`,
-  `shared-object-aliasing-knownbug`, `context-manager-enter-mutation-knownbug`).
-  The deepest: change instance-valued field *types* to pointers + field-store +
-  `obj.f.attr` deref. This is where deep-composition `==` perf must be measured.
+- **Phase 3 — Field store / composition** (`instance-field-aliasing`,
+  `shared-object-aliasing`, `context-manager-enter-mutation`) — **DONE
+  (2026-06-28).** An instance-valued field assigned a by-REFERENCE value (a
+  concrete-class param/alias) is typed pointer-to-instance, so it aliases.
+  Reads / method dispatch / arg-passing already deref a pointer receiver; ALSO
+  fixed the pre-existing isinstance-on-by-ref-instance gap (deref in isinstance,
+  benefiting params too). **Soundness:** a FRESH construction (`self.t: C = C()`
+  / constructor-RHS) keeps the OWNED struct type -> distinct per instance (only a
+  by-reference RHS is pointer-typed); rebind re-aliases. **PERF: the
+  deep-composition `==` cliff did NOT materialise** (3-deep composition +
+  field-eq ~0 s; single-level instance pointers are what params already use). So
+  this is **default-on, no opt-in needed** -- the key divergence from the
+  container ref-semantics (which stays opt-in). 3 knownbugs -> CORE; suite green,
+  sweep 0-reg, oracle 3 resolved.
 
 **Per-phase validation gate (hard requirements):**
 1. The phase's KNOWNBUG(s) flip to detection (FAILED) → promote to CORE.
@@ -173,9 +183,10 @@ opt-in and document the residual.
 ## 5. Acceptance criteria
 
 The cluster is "done" when these flip KNOWNBUG → CORE with all gates green:
-`instance-aliasing` (✅ Phase 2), `instance-field-aliasing`,
-`instance-return-aliasing` (✅ Phase 1), `shared-object-aliasing`,
-`context-manager-enter-mutation` (⬜ Phase 3). The
+`instance-aliasing` (✅ Phase 2), `instance-field-aliasing` (✅ Phase 3),
+`instance-return-aliasing` (✅ Phase 1), `shared-object-aliasing` (✅ Phase 3),
+`context-manager-enter-mutation` (✅ Phase 3). **ALL DONE.** The
+concrete-class-param coercion PUN is closed as a corollary. The
 concrete-class-param coercion PUN (coercion-boundary audit) is then also closed
 as a corollary (the param→field copy disappears).
 
