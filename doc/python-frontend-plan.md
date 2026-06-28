@@ -605,6 +605,26 @@ new narrow ones as KNOWNBUG regression tests:
   are now closed**; the remaining open false proof is the per-instance-identity /
   aliasing cluster (see the P2 note above).
 
+**Narrowing-invalidation cluster sweep (2026-06-28).** Swept the cluster for
+cheap sound-guard closures (like the `__setattr__`/`__getattribute__` over-approx).
+Findings:
+- **CLOSED — enum `.value` after a member retag** (`enum-value-after-mutation`
+  now CORE): two coordinated fixes — a HETEROGENEOUS enum's value type is now
+  `python_value` (union), and `.value` resolves on an enum-typed **variable**
+  (`enum_member_vars`) *and* **field** (`enum_typed_fields`) to the stored member
+  value. A retagged member used at the wrong type now routes through the
+  operand/tag obligations. Also fixed the common precision gap (`c = C.R;
+  c.value`). Tests `enum-var-value-precision`, `enum-var-retag-typeerror`.
+- **NOT a cheap guard — context-manager `__enter__`/`__exit__` field mutation is
+  the SAME root as composition/instance aliasing**: a class instance bound to a
+  CONCRETE-class-typed param/field (`t: SomeClass`) is value-COPIED (identity
+  lost), so a mutation through the holder is invisible to the original (verified:
+  even a plain int mutation is lost). The Any-typed path preserves identity
+  by-address. So `context-manager-enter-mutation-knownbug` unifies with
+  `instance-aliasing-knownbug` / `shared-object-aliasing-knownbug` — all close
+  together with a reference-semantics-for-instances effort (the high-value
+  whole-group play), not a per-feature guard.
+
 **P2 composition-aliasing investigation (2026-06-26).** Surfaced a *simpler*
 sibling of the composition false proof: **direct instance aliasing** `b = a;
 b.x = 99; read a.x` (cbmc value-copies the instance at a top-level `b = a`
