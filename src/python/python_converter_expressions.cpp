@@ -2137,6 +2137,32 @@ exprt python_convertert::convert_attribute(const jsont &expr)
       if(enum_member_vars.count(sid) > 0)
         return convert_expression(inner);
     }
+    // enum-typed FIELD: `obj.<field>.value` where field was annotated with an
+    // enum class (`self.<field>: SomeEnum`). The field stores the member value
+    // (retagged on each `self.<field> = E.M`), so `.value` is the field itself.
+    // Closes the field analogue of the variable case, incl. the heterogeneous
+    // retag-after-method-mutation false proof (enum-value-after-mutation).
+    if(attr == "value" && is_node_type(inner, "Attribute"))
+    {
+      const std::string fld = json_string(json_member(inner, "attr"));
+      exprt base = convert_expression(json_member(inner, "value"));
+      typet bt = base.type();
+      if(bt.id() == ID_pointer)
+        bt = to_pointer_type(bt).base_type();
+      std::string btag;
+      if(bt.id() == ID_struct)
+        btag = id2string(to_struct_type(bt).get_tag());
+      else if(bt.id() == ID_struct_tag)
+        btag = id2string(to_struct_tag_type(bt).get_identifier());
+      const auto pos = btag.find("python_class_");
+      if(pos != std::string::npos)
+      {
+        const std::string cls = btag.substr(pos + 13);
+        auto fit = enum_typed_fields.find(cls);
+        if(fit != enum_typed_fields.end() && fit->second.count(fld) > 0)
+          return convert_expression(inner);
+      }
+    }
   }
 
   // icontract Phase 5: resolve OLD.<name> to the captured

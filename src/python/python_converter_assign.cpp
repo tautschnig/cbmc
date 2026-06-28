@@ -48,6 +48,18 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     if(obj.is_nil() || rhs.is_nil())
       return code_skipt{};
 
+    // enum-typed-field tracking (PLR §8.13): `self.<attr>: SomeEnum` records
+    // the field as enum-typed for the current class, so a later
+    // `obj.<attr>.value` resolves to the stored member value (the field
+    // analogue of enum_member_vars).
+    {
+      const jsont &ann = json_member(stmt, "annotation");
+      if(
+        !current_class.empty() && is_node_type(ann, "Name") &&
+        enum_members.count(json_string(json_member(ann, "id"))) > 0)
+        enum_typed_fields[current_class].insert(attr);
+    }
+
     typet obj_type = obj.type();
     if(obj_type.id() == ID_pointer)
     {
