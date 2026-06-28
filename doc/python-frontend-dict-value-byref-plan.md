@@ -211,3 +211,32 @@ verifies SUCCESSFUL (DIFF→PASS, 0 sweep regressions).
 Net state: **direct** nested mutation works for both containers (int-keyed
 dicts); the extraction case is the single shared residual, blocked on the
 representation barrier, not on missing plumbing.
+
+## Investigation 2026-06-28: why string-keyed mutation can't be a point fix
+
+Re-examined whether the string-keyed residual could be closed by simply
+extending the int-keyed lvalue-slot path (`convert_subscript` returns
+`values[found_idx]`) to string keys -- the `found_idx` if-chain can REUSE the
+string-equality `cond` already built for `result`, so it adds no NEW
+string-solver calls. **This does not work, and the naive version is UNSOUND:**
+
+- A string-keyed `d["a"]` read is intercepted by **const-folding** *before*
+  `convert_subscript`: the dict literal's value is returned as a constant
+  rvalue (`{2,{1,2,...}}`), so the in-place mutation hits a temporary and is
+  lost. The extended lvalue slot is never reached.
+- The `invalidate_dict_value_on_mutation` **havoc** on a non-int-keyed mutation
+  is therefore **load-bearing for soundness**, not just precision: without it a
+  later read returns the stale const value, which false-proves a genuinely-false
+  assertion (`d["a"].append(3); assert len(d["a"]) == 2` -> wrongly SUCCESSFUL).
+  This is exactly what `dict-value-mutation-soundness` (CORE) pins. A trial
+  removal of the havoc reintroduced that false proof and was reverted.
+
+So the string-keyed case is **not** a missing-lvalue point fix; it requires the
+const-fold to yield (or skip to) a writable slot for mutation targets -- the
+same by-value-vs-by-reference **representation barrier** as the extraction
+case above and the §0 nested-list / instance-extraction residuals. The
+reference-semantics-for-instances work (pointer-to-struct identity) solved that
+barrier for *instances*; it is not applied uniformly to dict-stored list/dict
+values because the uniform by-reference representation hits the nested-container
+`==` perf cliff. Pinned + sound (havoc over-approximation); deferred to the deep
+representation work, not a point fix.
