@@ -468,6 +468,11 @@ private:
   /// (the static `E.M.value` form already works; this covers the variable
   /// form). Reassigning the variable to a non-enum value clears it.
   std::set<irep_idt> enum_member_vars;
+  /// Per class, instance field names annotated with an enum class
+  /// (`self.s: SomeEnum`), so `obj.s.value` resolves to the field's stored
+  /// member value (with the runtime tag) instead of a nondet attribute read --
+  /// the field analogue of enum_member_vars.
+  std::map<std::string, std::set<std::string>> enum_typed_fields;
   /// Names bound to an enum base via `from enum import Enum as E` (so a
   /// class deriving from `E` is recognised as an enum). Seeded with the
   /// standard base names.
