@@ -1178,9 +1178,23 @@ codet python_convertert::convert_assign(const jsont &stmt)
         auto it = alias_targets.find(rhs_id);
         irep_idt target_id = (it != alias_targets.end()) ? it->second : rhs_id;
         const symbolt *target_sym = symbol_table.lookup(target_id);
+        // reference-semantics-for-instances (Phase 2): a local instance is a
+        // python_class_* struct; `b = a` must alias it (pointer-promote +
+        // address_of), exactly like list/dict, so a mutation through `b` is
+        // visible via `a`. Without this it fell through to a struct copy (the
+        // local-alias false proof).
+        const bool tgt_is_instance =
+          target_sym != nullptr &&
+          ((target_sym->type.id() == ID_struct &&
+            id2string(to_struct_type(target_sym->type).get_tag())
+                .find("python_class_") != std::string::npos) ||
+           (target_sym->type.id() == ID_struct_tag &&
+            id2string(to_struct_tag_type(target_sym->type).get_identifier())
+                .find("python_class_") != std::string::npos));
         if(
-          target_sym != nullptr && (is_python_list_type(target_sym->type) ||
-                                    is_python_dict_type(target_sym->type)))
+          target_sym != nullptr &&
+          (is_python_list_type(target_sym->type) ||
+           is_python_dict_type(target_sym->type) || tgt_is_instance))
         {
           // PLR §3.1: pointer-promotion. Bind lhs's symbol type
           // to pointer-to-target so subsequent reads through
@@ -1297,6 +1311,16 @@ codet python_convertert::convert_assign(const jsont &stmt)
           new_symbol.is_state_var = true;
           new_symbol.is_static_lifetime = current_function.empty();
           symbol_table.add(new_symbol);
+        }
+        // reference-semantics-for-instances (Phase 2): if the target was a
+        // prior instance ALIAS (`b = a` -> pointer-to-instance), constructing a
+        // FRESH instance must REBIND it to a new object, not write through the
+        // stale alias pointer (which would corrupt the aliased object `a`).
+        // Reset the symbol to the class struct type and drop the alias.
+        if(is_instance_pointer(symbol_table.lookup_ref(symbol_id).type))
+        {
+          symbol_table.get_writeable_ref(symbol_id).type = cls_type;
+          alias_targets.erase(symbol_id);
         }
 
         const symbolt &var_sym = symbol_table.lookup_ref(symbol_id);

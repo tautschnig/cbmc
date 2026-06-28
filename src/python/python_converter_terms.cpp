@@ -456,7 +456,15 @@ exprt python_convertert::convert_name(const jsont &expr)
   if(
     sym->type.id() == ID_pointer &&
     (is_python_list_type(to_pointer_type(sym->type).base_type()) ||
-     is_python_dict_type(to_pointer_type(sym->type).base_type())))
+     is_python_dict_type(to_pointer_type(sym->type).base_type()) ||
+     // reference-semantics-for-instances (Phase 2): a local instance ALIAS
+     // (`b = a`) is pointer-promoted and recorded in alias_targets. Deref it so
+     // attribute access / method dispatch through `b` go through the aliased
+     // object's storage. Gated on alias_targets membership so a method `self`
+     // pointer or a by-ref instance PARAM (pointer-to-instance but NOT an
+     // alias) is untouched -- those are dereferenced at the attribute-access
+     // sites, not here.
+     (is_instance_pointer(sym->type) && alias_targets.count(irep_idt{qname}))))
   {
     return dereference_exprt{sym->symbol_expr()};
   }
