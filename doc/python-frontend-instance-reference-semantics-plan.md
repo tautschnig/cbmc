@@ -127,8 +127,20 @@ under the existing `--python-ref-mutables` umbrella (or a new
 Ordering by **tractability × isolation** (least cross-cutting first):
 
 - **Phase 1 — Return-flow** (`instance-return-aliasing-knownbug`).
-  Return an instance by reference. Most isolated: touches the return slot typing
-  + call-result binding + `convert_name` deref. No field-layout change.
+- **Phase 1 — Return-flow** (`instance-return-aliasing`) — **DONE (2026-06-28).**
+  A function returning a by-reference instance (`return t` for a concrete-class
+  param / self / instance alias) returns the POINTER and promotes its return
+  type; the caller's `u = f(v)` aliases the same object. Implemented as a
+  whole-group extension of the EXISTING list/dict return-by-reference machinery
+  (return-Name pointer path + caller pointer-RHS binding) via
+  `is_instance_pointer(typet)`. **Key discovery:** instances are *cleaner* than
+  containers — the call site already passes `address_of(v)` directly (no by-ref
+  temp copy; the container path uses a `__byref_cont` temp, a separate
+  list/dict-only gap NOT in scope here), so only the return-deref (`*t` → `t`)
+  and caller-binding needed extending. **Soundness:** gated on a pointer-typed
+  Name, so a fresh `return V()` stays by-value (distinct identity, no
+  over-aliasing — validated). Flipped KNOWNBUG → CORE; suite green, sweep 0-reg,
+  oracle 0 NEW.
 - **Phase 2 — Local alias `b = a`** (`instance-aliasing-knownbug`).
   Extend `alias_targets` + `convert_name` deref to instances (the spike's
   identified two-line direction, plus locating/fixing the upstream struct-copy
@@ -153,8 +165,8 @@ opt-in and document the residual.
 ## 5. Acceptance criteria
 
 The cluster is "done" when these flip KNOWNBUG → CORE with all gates green:
-`instance-aliasing`, `instance-field-aliasing`, `instance-return-aliasing`,
-`shared-object-aliasing`, `context-manager-enter-mutation`. The
+`instance-aliasing`, `instance-field-aliasing`, `instance-return-aliasing`
+(✅ **DONE** Phase 1), `shared-object-aliasing`, `context-manager-enter-mutation`. The
 concrete-class-param coercion PUN (coercion-boundary audit) is then also closed
 as a corollary (the param→field copy disappears).
 
