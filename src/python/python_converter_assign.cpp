@@ -468,9 +468,24 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   // new struct), but only the first should promote — `.copy()` MUST
   // produce a fresh container, not an alias.
   bool rhs_is_direct_name = is_node_type(value, "Name");
+  // reference-semantics-for-instances: a local instance is a python_class_*
+  // struct; an annotated alias `r: C = o` (Name RHS) must pointer-promote and
+  // share identity exactly like list/dict, so a mutation through `r` (or
+  // through a callee that receives `r`) is visible via `o`. Without this the
+  // annotated alias fell through to a struct copy -- a false proof
+  // (a2_narrowing_alias). A fresh `r: C = C()` has a Call RHS, so
+  // rhs_is_direct_name is false and it stays a distinct object.
+  const bool rhs_is_instance_struct =
+    (rhs.type().id() == ID_struct &&
+     id2string(to_struct_type(rhs.type()).get_tag()).find("python_class_") !=
+       std::string::npos) ||
+    (rhs.type().id() == ID_struct_tag &&
+     id2string(to_struct_tag_type(rhs.type()).get_identifier())
+         .find("python_class_") != std::string::npos);
   if(
     rhs_is_direct_name && rhs.id() == ID_symbol &&
-    (is_python_list_type(rhs.type()) || is_python_dict_type(rhs.type())))
+    (is_python_list_type(rhs.type()) || is_python_dict_type(rhs.type()) ||
+     rhs_is_instance_struct))
   {
     irep_idt rhs_id = to_symbol_expr(rhs).get_identifier();
     auto chain = alias_targets.find(rhs_id);
