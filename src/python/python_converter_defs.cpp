@@ -2363,6 +2363,17 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         auto &members = enum_members[class_name];
         typet &vtype = enum_value_type[class_name];
         vtype = python_int_type(); // default for int-valued enums
+        // PLR §8.13: a HETEROGENEOUS enum (members with different value types,
+        // e.g. `A = 1; B = "x"`) has a union value type. Track whether any
+        // member value is a string vs non-string; if BOTH appear, type `.value`
+        // as python_value (Any) so a member-typed variable reassigned across
+        // members carries the correct RUNTIME tag, and a use at the wrong type
+        // (`S.B.value - 1`) is caught by the operand/tag obligations -- the same
+        // mechanism that already makes plain `x: "int|str"` retags sound.
+        // Without this, a mixed enum defaulted to the first member's type, so a
+        // later member's `.value` was read at the stale type (a false proof:
+        // enum-value-after-mutation).
+        bool enum_saw_str = false, enum_saw_nonstr = false;
         if(body.is_array())
           for(const auto &item : as_array(body))
           {
@@ -2382,15 +2393,21 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             }
             if(tgt != nullptr && is_node_type(*tgt, "Name"))
             {
-              const bool first = members.empty();
               members.insert(json_string(json_member(*tgt, "id")));
-              if(
-                first && valnode != nullptr &&
-                is_node_type(*valnode, "Constant") &&
-                json_member(*valnode, "value").is_string())
-                vtype = python_string_type();
+              const bool is_str_val =
+                valnode != nullptr && is_node_type(*valnode, "Constant") &&
+                json_member(*valnode, "value").is_string();
+              if(is_str_val)
+                enum_saw_str = true;
+              else
+                enum_saw_nonstr = true;
             }
           }
+        if(enum_saw_str && enum_saw_nonstr)
+          vtype = python_value_type(); // heterogeneous -> union (Any)
+        else if(enum_saw_str)
+          vtype = python_string_type();
+        // else: all-non-string -> python_int_type() (the default above)
         break;
       }
     }

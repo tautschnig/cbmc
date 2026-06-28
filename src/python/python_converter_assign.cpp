@@ -173,6 +173,20 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   // guard and cbmc proved the stale container (annotation-extract-mutate-bypass).
   note_mutable_extraction(symbol_id, rhs, value);
 
+  // enum-member-variable tracking (mirror convert_assign): an annotated
+  // `s: E = E.M` (or any `s = E.M`) records s so `s.value` resolves precisely.
+  {
+    const bool rhs_is_enum_member =
+      is_node_type(value, "Attribute") &&
+      is_node_type(json_member(value, "value"), "Name") &&
+      enum_members.count(
+        json_string(json_member(json_member(value, "value"), "id"))) > 0;
+    if(rhs_is_enum_member)
+      enum_member_vars.insert(symbol_id);
+    else
+      enum_member_vars.erase(symbol_id);
+  }
+
   // PLR §3.2: a parameterised annotation (x: list[T] = []) is authoritative
   // for the empty list's element type. convert_list defaults an empty literal
   // to an int element type, so re-type the rhs from the annotation. Without
@@ -1047,6 +1061,27 @@ codet python_convertert::convert_assign(const jsont &stmt)
     return code_skipt{};
 
   source_locationt loc = get_location(stmt);
+
+  // enum-member-variable tracking (PLR §8.13): `s = SomeEnum.MEMBER` records the
+  // target so a later `s.value` resolves to the member's stored value instead
+  // of a nondet attribute read. Any other RHS clears the record (reassignment
+  // to a non-enum value).
+  {
+    const bool rhs_is_enum_member =
+      is_node_type(value, "Attribute") &&
+      is_node_type(json_member(value, "value"), "Name") &&
+      enum_members.count(
+        json_string(json_member(json_member(value, "value"), "id"))) > 0;
+    for(const auto &t : as_array(targets))
+      if(is_node_type(t, "Name"))
+      {
+        irep_idt sid{qualify_name(json_string(json_member(t, "id")))};
+        if(rhs_is_enum_member)
+          enum_member_vars.insert(sid);
+        else
+          enum_member_vars.erase(sid);
+      }
+  }
 
   // Track unannotated `d = {}` so the first `d[k] = v` can rebuild the
   // dict with the real key/value types (the empty literal defaults to

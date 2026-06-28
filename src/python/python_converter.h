@@ -463,6 +463,11 @@ private:
   /// member resolves to and therefore the effective type of a parameter
   /// or variable annotated with the enum class. Defaults to int.
   std::map<std::string, typet> enum_value_type;
+  /// Variable symbol ids currently bound to an enum MEMBER (`s = E.M`), so a
+  /// later `s.value` resolves to the member's stored value instead of nondet
+  /// (the static `E.M.value` form already works; this covers the variable
+  /// form). Reassigning the variable to a non-enum value clears it.
+  std::set<irep_idt> enum_member_vars;
   /// Names bound to an enum base via `from enum import Enum as E` (so a
   /// class deriving from `E` is recognised as an enum). Seeded with the
   /// standard base names.

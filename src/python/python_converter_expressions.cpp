@@ -2123,6 +2123,20 @@ exprt python_convertert::convert_attribute(const jsont &expr)
         }
       }
     }
+    // enum-member VARIABLE: `s.value` where `s = SomeEnum.MEMBER` was recorded
+    // in enum_member_vars. The variable already stores the member's value (so
+    // `s == SomeEnum.MEMBER` holds), but `.value` on a Name otherwise fell
+    // through to a nondet attribute read. Return the variable itself -- its
+    // stored value IS the member's value (with the correct runtime tag for a
+    // heterogeneous enum, so `s.value` used at the wrong type is caught by the
+    // operand/tag obligations). `.name` is left nondet (the member identity is
+    // not recovered from a reassignable variable).
+    if(attr == "value" && is_node_type(inner, "Name"))
+    {
+      irep_idt sid{qualify_name(json_string(json_member(inner, "id")))};
+      if(enum_member_vars.count(sid) > 0)
+        return convert_expression(inner);
+    }
   }
 
   // icontract Phase 5: resolve OLD.<name> to the captured
