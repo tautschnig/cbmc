@@ -3705,8 +3705,20 @@ exprt python_convertert::coerce_to_typed_slot(
   // (call-argument boundary). Centralised here so the same
   // identity-preservation rule applies to assign-RHS and
   // return-value boundaries too.
+  // An LVALUE instance bound to an Any/python_value slot must preserve object
+  // identity: box address_of(expr) so callee mutations propagate back to the
+  // caller's object (PLR §3.1 reference semantics). A plain symbol is the
+  // common case; a DEREFERENCE (`*r`, an aliased instance pointer -- `r = obj`)
+  // / MEMBER (`obj.field`) / INDEX (`lst[i]`) are equally persistent lvalues,
+  // and address_of of each yields the same storage (e.g. address_of(*r) == r),
+  // so they share identity too. Without this, `f(r)` where `r = obj` boxed a
+  // throwaway __class_val copy -- callee mutations were lost (a false proof:
+  // a2_narrowing_alias). RVALUE structs (a fresh `V()`) are NOT lvalues here,
+  // so they keep the copy path (a new object, identity irrelevant).
   if(
-    expr.id() == ID_symbol && is_python_value_type(target_type) &&
+    (expr.id() == ID_symbol || expr.id() == ID_dereference ||
+     expr.id() == ID_member || expr.id() == ID_index) &&
+    is_python_value_type(target_type) &&
     (expr.type().id() == ID_struct || expr.type().id() == ID_struct_tag))
   {
     std::string atag;
