@@ -240,3 +240,31 @@ barrier for *instances*; it is not applied uniformly to dict-stored list/dict
 values because the uniform by-reference representation hits the nested-container
 `==` perf cliff. Pinned + sound (havoc over-approximation); deferred to the deep
 representation work, not a point fix.
+
+## Revisit 2026-06-28 (after the instance-identity fixes)
+
+The instance-reference cluster was closed this period by **identity
+preservation**: box `address_of(lvalue)` (symbol / dereference / member / index)
+when an instance crosses an Any boundary instead of materialising a copy
+(coerce_to_typed_slot), plus pointer-promoting annotated aliases. Re-examined
+whether that lens transfers to the string-keyed dict-value residual. **It does
+not transfer directly**: the instance bug was a *boxing copy* (fixable by
+address_of), whereas the dict bug is that **const-folding returns the value as
+an rvalue literal** before `convert_subscript` runs, so there is no lvalue to
+take the address of. The havoc remains load-bearing for soundness (verified
+again: `d["a"].append(3); assert len(d["a"]) == 2` still correctly FAILS rather
+than false-proving).
+
+It does sharpen the scoped path: make a constant-string-keyed dict value read
+that is the **receiver of an in-place mutation** (`d["a"].append`,
+`d["a"][i] = ...`) bypass const-fold and return the `values[found_idx]` lvalue
+slot (the string-keyed slot machinery already exists), and skip the
+`invalidate_dict_value_on_mutation` havoc for *exactly that* scoped case -- the
+mutation then propagates through the slot, so the havoc is no longer needed for
+soundness. Remaining blockers are narrow: (1) threading the "mutation receiver"
+context to the subscript read (or detecting it at the mutator call site), and
+(2) the string-solver cost of the `found_idx` predicate on each such read. This
+is a sound, perf-gated PRECISION improvement, not a soundness fix -- the cluster
+is already sound and fully pinned (dict-value-byref / dict-value-mutation-
+soundness / dict-constfold-mutable-value, all CORE). Symbolic/nondet-key reads
+remain a separate sound over-approximation (spurious FAILED), not a false proof.
