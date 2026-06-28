@@ -325,6 +325,12 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   {
     bool arith = op == "Add" || op == "Sub" || op == "Div" ||
                  op == "FloorDiv" || op == "Mod" || op == "Pow";
+    // Shift / bitwise ops accept only INT and BOOL operands -- a FLOAT, str,
+    // None, etc. behind a tagged union raises TypeError (e.g. `x >> 1` where x
+    // is str or float; b3/b5). This is STRICTER than `arith` (which also
+    // accepts FLOAT/COMPLEX), so it needs its own int-only obligation.
+    bool bitshift = op == "LShift" || op == "RShift" || op == "BitAnd" ||
+                    op == "BitOr" || op == "BitXor";
     bool l_val = is_python_value_type(left.type());
     bool r_val = is_python_value_type(right.type());
     bool l_num = left.type().id() == ID_signedbv ||
@@ -333,6 +339,11 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     bool r_num =
       right.type().id() == ID_signedbv || right.type().id() == ID_integer ||
       right.type().id() == ID_floatbv || right.type().id() == ID_bool;
+    bool l_int = left.type().id() == ID_signedbv ||
+                 left.type().id() == ID_integer || left.type().id() == ID_bool;
+    bool r_int = right.type().id() == ID_signedbv ||
+                 right.type().id() == ID_integer ||
+                 right.type().id() == ID_bool;
     auto tag_is_numeric = [](const exprt &v) -> exprt
     {
       return or_exprt{
@@ -343,11 +354,21 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
           python_value_is(v, python_type_tagt::BOOL),
           python_value_is(v, python_type_tagt::COMPLEX)}};
     };
+    auto tag_is_int_like = [](const exprt &v) -> exprt
+    {
+      return or_exprt{
+        python_value_is(v, python_type_tagt::INT),
+        python_value_is(v, python_type_tagt::BOOL)};
+    };
     exprt non_numeric = nil_exprt{};
     if(arith && l_val && r_num)
       non_numeric = not_exprt{tag_is_numeric(left)};
     else if(arith && r_val && l_num)
       non_numeric = not_exprt{tag_is_numeric(right)};
+    else if(bitshift && l_val && r_int)
+      non_numeric = not_exprt{tag_is_int_like(left)};
+    else if(bitshift && r_val && l_int)
+      non_numeric = not_exprt{tag_is_int_like(right)};
     if(!non_numeric.is_nil())
     {
       const symbolt *exc_sym =
