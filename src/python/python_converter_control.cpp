@@ -2032,7 +2032,16 @@ codet python_convertert::convert_return(const jsont &stmt)
     if(
       ret_sym != nullptr && ret_sym->type.id() == ID_pointer &&
       (is_python_list_type(to_pointer_type(ret_sym->type).base_type()) ||
-       is_python_dict_type(to_pointer_type(ret_sym->type).base_type())))
+       is_python_dict_type(to_pointer_type(ret_sym->type).base_type()) ||
+       // reference-semantics-for-instances (Phase 1): a function returning a
+       // by-reference instance (a concrete-class param / self / instance alias)
+       // returns the POINTER, so the caller's `u = f(v)` aliases the same
+       // object. The call site already passes address_of(v) directly for
+       // instances (no temp copy, unlike containers), and `return t` otherwise
+       // derefs to `*t` (a struct copy) -- a soundness gap (return-flow false
+       // proof). Only fires for a pointer-typed Name (param/self/alias), so a
+       // fresh `return Foo()` stays by-value (distinct identity, no over-alias).
+       is_instance_pointer(ret_sym->type)))
     {
       // Promote the function's return type to pointer so the call
       // site sees a pointer-typed result.
