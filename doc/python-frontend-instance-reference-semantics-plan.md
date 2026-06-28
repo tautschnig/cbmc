@@ -141,10 +141,18 @@ Ordering by **tractability × isolation** (least cross-cutting first):
   Name, so a fresh `return V()` stays by-value (distinct identity, no
   over-aliasing — validated). Flipped KNOWNBUG → CORE; suite green, sweep 0-reg,
   oracle 0 NEW.
-- **Phase 2 — Local alias `b = a`** (`instance-aliasing-knownbug`).
-  Extend `alias_targets` + `convert_name` deref to instances (the spike's
-  identified two-line direction, plus locating/fixing the upstream struct-copy
-  emission found in the 2026-06-26 second-round spike). No field-layout change.
+- **Phase 2 — Local alias `b = a`** (`instance-aliasing`) — **DONE (2026-06-28).**
+  Extended the `alias_targets` b=a alias block (convert_assign) to
+  `python_class_*` instances + the `convert_name` auto-deref (gated on
+  alias_targets membership so self/by-ref-params are untouched). The
+  "upstream struct-copy" the spike saw was simply the alias block being gated on
+  list/dict; extending the gate fired the promotion. **Soundness — alias
+  invalidation:** a constructor rebind `b = V()` resets the symbol to a fresh
+  struct + drops the alias (was writing through the stale pointer, corrupting
+  `a`); a Name rebind `b = c` re-aliases; a non-instance rebind re-types
+  normally. Both alias directions verified; distinct instances stay distinct.
+  Flipped KNOWNBUG → CORE; suite green, sweep 0-reg, oracle resolved (baseline
+  21→20).
 - **Phase 3 — Field store / composition** (`instance-field-aliasing-knownbug`,
   `shared-object-aliasing-knownbug`, `context-manager-enter-mutation-knownbug`).
   The deepest: change instance-valued field *types* to pointers + field-store +
@@ -165,8 +173,9 @@ opt-in and document the residual.
 ## 5. Acceptance criteria
 
 The cluster is "done" when these flip KNOWNBUG → CORE with all gates green:
-`instance-aliasing`, `instance-field-aliasing`, `instance-return-aliasing`
-(✅ **DONE** Phase 1), `shared-object-aliasing`, `context-manager-enter-mutation`. The
+`instance-aliasing` (✅ Phase 2), `instance-field-aliasing`,
+`instance-return-aliasing` (✅ Phase 1), `shared-object-aliasing`,
+`context-manager-enter-mutation` (⬜ Phase 3). The
 concrete-class-param coercion PUN (coercion-boundary audit) is then also closed
 as a corollary (the param→field copy disappears).
 
