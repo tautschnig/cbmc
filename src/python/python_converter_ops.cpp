@@ -36,6 +36,39 @@
 exprt python_convertert::convert_bin_op(const jsont &expr)
 {
   exprt left = convert_expression(json_member(expr, "left"));
+  // PLR §6.16 evaluation order: operands are evaluated left-to-right. If the
+  // LEFT operand is a side-effecting call AND the RIGHT operand is a READ
+  // (Name / Attribute / Subscript) whose value the call could mutate,
+  // materialise the left into a temp NOW -- before converting the right -- so
+  // the right's read and its tag obligation observe the left's effects. Without
+  // this, `e.gm() + e.x` (gm() retags the union field e.x to str) checked e.x's
+  // STALE int tag before the call ran (union-use-after-mutation false proof).
+  // Gated on the right being a READ so a `f() + g()` (both calls -- e.g.
+  // `fib(n-1) + fib(n-2)`) is NOT materialised (the right is freshly computed,
+  // not a stale read; and the extra temp hurts recursive-unwinding convergence).
+  {
+    const std::string rty =
+      json_string(json_member(json_member(expr, "right"), "_type"));
+    const bool right_is_read =
+      rty == "Name" || rty == "Attribute" || rty == "Subscript";
+    if(left.id() == ID_side_effect && right_is_read)
+    {
+      static unsigned binop_lhs_ctr = 0;
+      const std::string nm = "__binop_lhs_" + std::to_string(binop_lhs_ctr++);
+      const irep_idt tid{qualify_name(nm)};
+      if(symbol_table.lookup(tid) == nullptr)
+      {
+        symbolt s{tid, left.type(), "python"};
+        s.base_name = nm;
+        s.is_lvalue = true;
+        s.is_state_var = true;
+        symbol_table.add(s);
+      }
+      const symbol_exprt lsym = symbol_table.lookup_ref(tid).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{lsym, left});
+      left = lsym;
+    }
+  }
   exprt right = convert_expression(json_member(expr, "right"));
   std::string op = json_string(json_member(json_member(expr, "op"), "_type"));
 
