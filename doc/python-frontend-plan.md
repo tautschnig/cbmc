@@ -815,12 +815,19 @@ instance-only attribute (no `__shadow_` presence flag), `del obj.attr` reset the
 slot to the None marker (0 for int), so `c.x = 42; del c.x; assert c.x == 0`
 verified even though CPython raises AttributeError. Now the slot is havocked to
 nondet (over-approximation), so a post-`del` read cannot be proved equal to any
-concrete value. **Residual (open):** the full 4-step attribute protocol is still
-partial -- a class defining `__getattr__` (step-4 fallback) is not modeled, and
-`del obj.attr` on an instance-only attr does not raise a precise AttributeError
-on a later read (both need per-instance presence tracking + `__getattr__`
-return-type modeling; the cross-type `TypeError` from `del`+`__getattr__`+use is
-not caught). Tracked as the attribute-protocol gap.
+concrete value. **Properties CLOSED (2026-06-28):** `@property` getters AND
+setters are now modeled as data descriptors -- `obj.p = v` dispatches the
+`@p.setter` (with side effects) via `emit_property_set`, and the setter no longer
+clobbers the getter symbol (each `@p.X` accessor is stored under a distinct
+symbol). Closed `a32_property_setter_side_effect` + `b6_property_covariant_override`.
+**Residual (open):** the `del obj.attr` + `__getattr__` step-4 fallback is still
+not modeled -- after `del`, a concretely-typed field cannot hold `__getattr__`'s
+differently-typed return (e.g. `del self.x` then `self.x` returning str from
+`__getattr__` while `x` is declared int), so the cross-type `TypeError`
+(`c4_getattr_fallback` / laurel-006) is not caught. This needs per-instance
+field-presence tracking or making deletable fields `python_value` -- an invasive
+fixed-struct-model change. Pinned in the oracle; tracked as the attribute-protocol
+gap.
 
 
 **Sound-mode + numeric/type audit (2026-06-25). One leak found+fixed; rest
