@@ -2301,6 +2301,57 @@ std::optional<exprt> python_convertert::try_method_call(
     if(obj_base_type.id() == ID_pointer)
       obj_base_type = to_pointer_type(obj_base_type).base_type();
 
+    // PLR §4: a str-ONLY method called on a CONCRETE non-str built-in receiver
+    // raises AttributeError (e.g. `(5).upper()`, `[1,2].upper()`,
+    // `(1,2,3).upper()`). Carefully gated to avoid false positives:
+    //   - only DEFINITELY-str-only method names (NOT count/index, which
+    //     list/tuple share; NOT shared dunder/other names);
+    //   - NOT python_value/Any (could be a str at runtime);
+    //   - NOT str / smt_string receivers;
+    //   - NOT bytes (modelled as list[uint8] -- it HAS upper/lower/strip/...),
+    //     so a list whose element type is unsignedbv[8] is excluded;
+    //   - NOT user-class instances (they may define a method of that name).
+    {
+      static const std::set<std::string> str_only_methods = {
+        "upper",        "lower",      "capitalize",   "title",
+        "swapcase",     "casefold",   "strip",        "lstrip",
+        "rstrip",       "startswith", "endswith",     "split",
+        "rsplit",       "splitlines", "join",         "replace",
+        "find",         "rfind",      "format",       "format_map",
+        "encode",       "zfill",      "center",       "ljust",
+        "rjust",        "expandtabs", "removeprefix", "removesuffix",
+        "partition",    "rpartition", "translate",    "isdigit",
+        "isalpha",      "isalnum",    "isspace",      "isupper",
+        "islower",      "istitle",    "isnumeric",    "isdecimal",
+        "isidentifier", "isascii",    "isprintable"};
+      if(str_only_methods.count(method_name))
+      {
+        const typet &t = obj_base_type;
+        const bool numeric = t.id() == ID_signedbv || t.id() == ID_unsignedbv ||
+                             t.id() == ID_integer || t.id() == ID_floatbv ||
+                             t.id() == ID_bool;
+        const bool is_complex = t.id() == ID_struct &&
+                                to_struct_type(t).get_tag() == "python_complex";
+        // bytes := list[uint8]; it HAS these methods, so exclude it.
+        const bool is_bytes =
+          is_python_list_type(t) &&
+          to_array_type(to_struct_type(t).components()[1].type())
+              .element_type() == unsignedbv_typet{8};
+        const bool container =
+          is_python_dict_type(t) || is_python_set_type(t) ||
+          is_python_tuple_type(t) || (is_python_list_type(t) && !is_bytes);
+        const bool user_class =
+          t.id() == ID_struct &&
+          id2string(to_struct_type(t).get_tag()).rfind("python_class_", 0) == 0;
+        if((numeric || is_complex || container) && !user_class)
+        {
+          emit_conditional_exception(true_exprt{}, "AttributeError");
+          return side_effect_expr_nondett{
+            python_value_type(), get_location(expr)};
+        }
+      }
+    }
+
     // PLR §4.4.2: int instance methods. obj is python_int
     // (signedbv 64). Dispatch on method_name.
     if(obj_base_type.id() == ID_signedbv)
