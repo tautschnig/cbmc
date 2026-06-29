@@ -268,3 +268,22 @@ is a sound, perf-gated PRECISION improvement, not a soundness fix -- the cluster
 is already sound and fully pinned (dict-value-byref / dict-value-mutation-
 soundness / dict-constfold-mutable-value, all CORE). Symbolic/nondet-key reads
 remain a separate sound over-approximation (spurious FAILED), not a false proof.
+
+## Related dict-by-reference findings (2026-06-29)
+
+- **Structural mutation through a call (c2) — OPEN, deep.** A dict passed to a
+  function is by-reference for EXISTING-key value modifications (`p[k] = v`
+  propagates to the caller), but NOT for STRUCTURAL mutations: adding a new key
+  (`p["z"] = 9`) or deleting one (`del p["x"]`) does not cross the call boundary
+  — the caller`s `keys`/`values`/`length` arrays are not shared. So
+  `rm(d); d["x"]` misses the `KeyError` (pinned `dict-del-through-call-knownbug`;
+  oracle c2). Same representation barrier as the string-keyed value mutation
+  above: the fixed-size dict struct shares value *slots* by reference but a
+  by-value copy of the length/keys is taken at the call.
+
+- **`get`/`pop`/`setdefault` default TYPE — CLOSED (separate from the above).**
+  Distinct from the in-place-value-mutation residual: the *return type* of
+  `d.get(k, default)` / `pop` / `setdefault` is now `value_type | type(default)`
+  (a provably-absent key returns the default in its OWN type; `setdefault` widens
+  the empty-dict value type via inference). Closes ty-005. See the architecture
+  doc soundness table.
