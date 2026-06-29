@@ -2869,6 +2869,10 @@ std::optional<exprt> python_convertert::try_builtin_call(
         a = safe_typecast(a, python_int_type());
         b = safe_typecast(b, python_int_type());
       }
+      // PLR §6.7: divmod(a, 0) raises ZeroDivisionError (mirrors a // 0 / a % 0,
+      // which were already checked but divmod was not).
+      emit_conditional_exception(
+        equal_exprt{b, safe_zero(b.type())}, "ZeroDivisionError");
       struct_typet::componentst comps;
       comps.push_back(struct_typet::componentt{"_0", result_type});
       comps.push_back(struct_typet::componentt{"_1", result_type});
