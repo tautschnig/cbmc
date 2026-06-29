@@ -664,6 +664,15 @@ private:
   // Default parameter values evaluated at definition time
   // Maps (function_name, param_index) → default value expression
   std::map<std::pair<std::string, std::size_t>, exprt> default_values;
+  // PLR §8.7 mutable-default gotcha for METHODS: a method`s mutable
+  // (list/dict/set) default is frozen into a static-lifetime symbol so the
+  // shared state persists across calls (the module-level def path freezes its
+  // own; methods, processed in convert_class_def across idempotent passes, queue
+  // the once-only initialiser here and flush it into the module-init block at
+  // the start of convert_module_body). `frozen_method_defaults` guards the
+  // freeze so it happens exactly once per (class::method::index).
+  std::vector<code_frontend_assignt> deferred_static_default_inits;
+  std::set<std::string> frozen_method_defaults;
   // PLR §8.7: for a parameter whose default is a callable-valued NAME
   // (e.g. `op=cur` where `cur` was bound to a function), records the
   // callable resolved AT DEFINITION TIME. Higher-order monomorphisation
