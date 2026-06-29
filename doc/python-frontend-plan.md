@@ -589,13 +589,13 @@ robustness, then capability; difficulty is noted where high.
 > setters (a32/b6), shift/bitwise + both-union operand obligations (b3/b5/a12),
 > tuple-unpack arity (ty-015), method mutable-default sharing (a10), str-method
 > on a concrete non-str, and `dict.get`/`pop`/`setdefault` default type (ty-005).
-> The **8 remaining**: DEEP representation work (c2 dict structural-mutation
-> through a call; c4 ≡ laurel-006 `del`+`__getattr__` retype, 2 of the 8) and the
-> annotation-laundering family caught under `--python-check-annotations` with
-> default-on declined (~1.25% FP) — `004`/`007` (arg/element) and **ty-010**
-> (return annotation; reclassified 2026-06-29 — the `-> str` is trusted, NOT a
+> The **6 remaining**: DEEP representation work (c2 dict structural-mutation
+> through a call) and the annotation-laundering family caught under
+> `--python-check-annotations` with default-on declined (~1.25% FP) — `004`/`007`
+> (arg/element) and **ty-010** (return annotation; the `-> str` is trusted, NOT a
 > variable-length-tuple gap) — plus `binop-mirror-evalorder` (pinned) and `d1`
-> (numeric-tower, out-of-subset). Fixed-tuple slicing was corrected this arc.
+> (numeric-tower, out-of-subset). Closed this arc also: fixed-tuple slicing, and
+> `del`+`__getattr__` retype (c4/laurel-006 — method-del in a `__getattr__`-class).
 > The dated entries below are retained for design rationale.
 
 **Standalone PLR re-audit (2026-06-26).** A differential pass (~255 generated
