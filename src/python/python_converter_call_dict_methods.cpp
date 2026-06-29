@@ -76,9 +76,22 @@ std::optional<exprt> python_convertert::try_dict_method(
           default_val = safe_zero(elem_t);
       }
       ++arg_it;
+      exprt raw_default = default_val; // default in its ACTUAL type (uncoerced)
       if(arg_it != as_array(args).end())
-        default_val =
-          coerce_element(convert_expression(*arg_it), vals_type.element_type());
+      {
+        raw_default = convert_expression(*arg_it);
+        default_val = coerce_element(raw_default, vals_type.element_type());
+      }
+      // PLR §6.4.6: get(k, default) returns d[k] if k is present, else `default`
+      // -- so the result type is value_type | type(default). When the default's
+      // type DIFFERS from the dict's value-element type, coercing it to the
+      // value type (e.g. "s" -> int) loses the default's real type and
+      // false-proves a later use (005: `{}.get(k, "s") + 1` missed the str
+      // TypeError). Keep the default's actual type in that case.
+      const bool default_differs =
+        !raw_default.is_nil() &&
+        raw_default.type() != vals_type.element_type() &&
+        !is_python_value_type(vals_type.element_type());
 
       // Constant-key fast path: same logic as subscript read.
       // When the dict value is a literal struct or a tracked
@@ -117,12 +130,37 @@ std::optional<exprt> python_convertert::try_dict_method(
                   return vals_arr.operands()[idx];
               }
             }
-            // Key not present in the literal: default path.
-            return default_val;
+            // Key not present in the literal: the result is exactly the
+            // default, in its own type (PLR §6.4.6) -- not coerced to the
+            // dict's value type.
+            return raw_default;
           }
         }
       }
 
+      // Symbolic scan: result = (key present ? d[key] : default). When the
+      // default's type differs from the value type, the result is the union
+      // value_type | type(default): model it as a python_value whose tag is the
+      // matched value's when present and the default's when absent, so a later
+      // type-restricting use observes the absent-key (default) possibility
+      // (PLR-sound -- the absent case is real for a non-constant key).
+      if(default_differs)
+      {
+        exprt result = wrap_value(raw_default);
+        for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
+        {
+          exprt idx = from_integer(i, signedbv_typet{64});
+          exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+          exprt match = equal_exprt{
+            python_dict_unbox_key(index_exprt{keys, idx}),
+            python_dict_unbox_key(key_expr)};
+          result = if_exprt{
+            and_exprt{in_range, match},
+            wrap_value(index_exprt{vals, idx}),
+            result};
+        }
+        return result;
+      }
       exprt result = default_val;
       for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
       {
@@ -598,14 +636,27 @@ std::optional<exprt> python_convertert::try_dict_method(
       key_expr = coerce_element(key_expr, keys_type.element_type());
     bool has_default = false;
     exprt default_val = safe_zero(vals_type.element_type());
+    exprt raw_default = default_val;
     ++arg_it;
     if(arg_it != as_array(args).end())
     {
       has_default = true;
-      default_val = convert_expression(*arg_it);
+      raw_default = convert_expression(*arg_it);
+      default_val = raw_default;
       if(default_val.type() != vals_type.element_type())
         default_val = coerce_element(default_val, vals_type.element_type());
     }
+    // PLR §6.4.6: pop(k, default) returns d[k] if present else `default` -- the
+    // result type is value_type | type(default). When the default's type
+    // differs, model the result as a python_value (the matched value's tag when
+    // present, the default's when absent) so a later type-restricting use sees
+    // the default possibility (a coerced default lost its type -- the get/005
+    // bug, shared by pop).
+    const bool default_differs =
+      has_default && raw_default.type() != vals_type.element_type() &&
+      !is_python_value_type(vals_type.element_type());
+    const typet result_type =
+      default_differs ? python_value_type() : vals_type.element_type();
 
     static unsigned pop_ctr = 0;
     std::string fn = "__pop_found_" + std::to_string(pop_ctr++);
@@ -624,7 +675,7 @@ std::optional<exprt> python_convertert::try_dict_method(
     irep_idt ri{qualify_name(rn)};
     if(symbol_table.lookup(ri) == nullptr)
     {
-      symbolt rs{ri, vals_type.element_type(), "python"};
+      symbolt rs{ri, result_type, "python"};
       rs.base_name = rn;
       rs.is_lvalue = true;
       rs.is_state_var = true;
@@ -633,7 +684,8 @@ std::optional<exprt> python_convertert::try_dict_method(
     symbol_exprt result = symbol_table.lookup_ref(ri).symbol_expr();
 
     pending_checks.push_back(code_frontend_assignt{found, false_exprt{}});
-    pending_checks.push_back(code_frontend_assignt{result, default_val});
+    pending_checks.push_back(code_frontend_assignt{
+      result, default_differs ? wrap_value(raw_default) : default_val});
     // Find and remove (compact by shifting).
     for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
     {
@@ -644,7 +696,10 @@ std::optional<exprt> python_convertert::try_dict_method(
         python_dict_unbox_key(key_expr)};
       code_blockt update;
       update.add(code_frontend_assignt{found, true_exprt{}});
-      update.add(code_frontend_assignt{result, index_exprt{vals_arr, idx}});
+      update.add(code_frontend_assignt{
+        result,
+        default_differs ? wrap_value(index_exprt{vals_arr, idx})
+                        : static_cast<exprt>(index_exprt{vals_arr, idx})});
       // Shift remaining entries down to compact.
       for(std::size_t j = i; j + 1 < PYTHON_MAX_DICT_SIZE; j++)
       {
