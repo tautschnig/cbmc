@@ -4628,27 +4628,60 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
             const auto end = as_array(cargs).end();
             if(m == "insert" && it != end)
               ++it; // insert(index, value): the value is the 2nd arg
-            if(
-              it != end &&
-              (is_node_type(*it, "Constant") || is_node_type(*it, "Name")))
+            if(it != end)
             {
-              exprt recv_e = convert_expression(json_member(cf, "value"));
-              if(!recv_e.is_nil() && is_python_list_type(recv_e.type()))
+              const jsont &arg_node = *it;
+              // Resolve the argument's type WITHOUT re-converting a
+              // side-effecting expression. Constant/Name are idempotent to
+              // convert; for a Call (`xs.append(src())`, the ty-007 witness) we
+              // read the callee's declared/inferred RETURN type from its symbol
+              // instead of converting the call (which would double-evaluate it).
+              typet val_t;
+              bool have_type = false;
+              if(
+                is_node_type(arg_node, "Constant") ||
+                is_node_type(arg_node, "Name"))
               {
-                const typet elem_t =
-                  to_array_type(
-                    to_struct_type(recv_e.type()).components()[1].type())
-                    .element_type();
-                exprt val_e = convert_expression(*it);
-                if(
-                  !val_e.is_nil() && !is_python_value_type(elem_t) &&
-                  annotation_types_incompatible(elem_t, val_e.type()))
-                  add_check(
-                    false_exprt{},
-                    "annotation-mismatch",
-                    "appended element type does not match list element "
-                    "annotation",
-                    get_location(stmt));
+                exprt val_e = convert_expression(arg_node);
+                if(!val_e.is_nil())
+                {
+                  val_t = val_e.type();
+                  have_type = true;
+                }
+              }
+              else if(is_node_type(arg_node, "Call"))
+              {
+                const jsont &acf = json_member(arg_node, "func");
+                if(is_node_type(acf, "Name"))
+                {
+                  const symbolt *fs = symbol_table.lookup(
+                    irep_idt{"python::" + json_string(json_member(acf, "id"))});
+                  if(fs != nullptr && fs->type.id() == ID_code)
+                  {
+                    val_t = to_code_type(fs->type).return_type();
+                    have_type = true;
+                  }
+                }
+              }
+              if(have_type)
+              {
+                exprt recv_e = convert_expression(json_member(cf, "value"));
+                if(!recv_e.is_nil() && is_python_list_type(recv_e.type()))
+                {
+                  const typet elem_t =
+                    to_array_type(
+                      to_struct_type(recv_e.type()).components()[1].type())
+                      .element_type();
+                  if(
+                    !is_python_value_type(elem_t) &&
+                    annotation_types_incompatible(elem_t, val_t))
+                    add_check(
+                      false_exprt{},
+                      "annotation-mismatch",
+                      "appended element type does not match list element "
+                      "annotation",
+                      get_location(stmt));
+                }
               }
             }
           }
