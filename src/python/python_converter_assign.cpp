@@ -2107,6 +2107,22 @@ codet python_convertert::convert_assign(const jsont &stmt)
       if(elts.is_array() && is_python_tuple_type(rhs.type()))
       {
         const auto &tuple_st = to_struct_type(rhs.type());
+        // PLR §7.2.1: `a, b, ... = <tuple>` requires the tuple's arity to equal
+        // the number of targets, else ValueError ("too many / not enough values
+        // to unpack"). For a fixed-arity tuple both sides are known statically,
+        // so a mismatch is a DEFINITE ValueError. Skipped when a Starred target
+        // is present (it absorbs the surplus, so any arity >= n-1 is valid).
+        // Without this the unpack silently skipped a missing `_i` field
+        // (ty-015 / `a, b = (1,)`).
+        if(!has_starred)
+        {
+          std::size_t n_targets = as_array(elts).size();
+          std::size_t rhs_arity = 0;
+          while(tuple_st.has_component("_" + std::to_string(rhs_arity)))
+            ++rhs_arity;
+          if(rhs_arity != n_targets)
+            emit_conditional_exception(true_exprt{}, "ValueError");
+        }
         // PLR §7.2.1: the assignment target list is bound
         // _after_ the expression list on the right is
         // fully evaluated, so the swap idiom
