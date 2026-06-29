@@ -1487,6 +1487,23 @@ skip_string_unroll:;
 
         return finalize_for(std::move(result));
       }
+      // PLR §3.3.1: iterating an instance requires __iter__ (or the old
+      // sequence protocol via __getitem__). A class whose MRO defines neither
+      // is not iterable -> `for x in C()` raises TypeError. Reached only when
+      // there is no self-iterator __next__ above; gated so a __getitem__-only
+      // class (sequence protocol) or an __iter__ returning a separate iterator
+      // object is NOT flagged (those fall through, modelled imprecisely).
+      if(
+        !class_mro_defines(bare, "__iter__") &&
+        !class_mro_defines(bare, "__getitem__"))
+      {
+        source_locationt tloc = loc;
+        tloc.set_property_class("type-error");
+        tloc.set_comment("object is not iterable");
+        code_assertt te{false_exprt{}};
+        te.add_source_location() = tloc;
+        return finalize_for(std::move(te));
+      }
     }
 
     // PLR §6.2.4 / §6.4.6: 'for x in s' over a python_set

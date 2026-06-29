@@ -187,6 +187,25 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       saved.swap(pending_checks);
       if(iter_val.type().id() == ID_pointer)
         iter_val = dereference_exprt{iter_val};
+      // PLR §3.3.1: a comprehension over a class instance whose MRO defines
+      // neither __iter__ nor __getitem__ is not iterable -> TypeError (mirrors
+      // the for-loop check). Gated identically so a __getitem__-only sequence
+      // class is not flagged.
+      {
+        std::string itag;
+        if(iter_val.type().id() == ID_struct)
+          itag = id2string(to_struct_type(iter_val.type()).get_tag());
+        else if(iter_val.type().id() == ID_struct_tag)
+          itag =
+            id2string(to_struct_tag_type(iter_val.type()).get_identifier());
+        if(
+          itag.substr(0, 13) == "python_class_" &&
+          !class_mro_defines(itag.substr(13), "__iter__") &&
+          !class_mro_defines(itag.substr(13), "__getitem__"))
+        {
+          emit_conditional_exception(true_exprt{}, "TypeError");
+        }
+      }
       bool const_len = iter_val.id() == ID_struct &&
                        !iter_val.operands().empty() &&
                        iter_val.operands()[0].is_constant();
