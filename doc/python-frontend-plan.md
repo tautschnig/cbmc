@@ -732,16 +732,31 @@ candidate "tractable" false proofs; neither has a clean DEFAULT-mode fix:
   TypeError obligation (Sub/Div/FloorDiv/Pow only -- Add/Mod/bitwise excluded:
   concat / str %-format / set ops are valid). Oracle a12 resolved. Same
   obligation block as the b3/b5 shift fix (one coherent operand-type group).
-- **`a10` mutable-default shared state in a METHOD — characterized, OPEN.** A
-  mutable default (`def add(self, items=[])`) is evaluated once and SHARED across
-  calls; the accumulation works for module-level functions (their defaults are
-  frozen into a static-lifetime symbol with a module-init assignment), but a
-  METHOD default is stored as a raw value and re-copied per call, so the shared
-  state is lost. Freezing the method default into a static symbol needs a
-  once-only runtime init, complicated by convert_class_def being invoked
-  idempotently (no clean module-init block as the module-level path has). The fix
-  is to freeze method mutable-defaults in the module-level statement pass (where
-  the init block runs once) -- deferred.
+- **`a10` mutable-default shared state in a METHOD — FIXED (2026-06-29).** A
+  method`s mutable (list/dict/set) default is now frozen into a static-lifetime
+  symbol with a once-only module-init (queued in convert_class_def, guarded per
+  class::method::index, flushed at the start of convert_module_body) -- so it is
+  evaluated once and SHARED across calls and instances (PLR §8.7). Annotated
+  method defaults accumulate precisely (call1==1, call2==2, ...). Oracle a10
+  resolved. (UNannotated method defaults bind through a separate Any path and do
+  not yet accumulate -- pre-existing limitation, not a regression.)
+- **`c2` TypedDict del through a call — DEEP, OPEN.** `del p["x"]` inside
+  `rm(p)` does not propagate the deletion to the caller`s dict, so a later
+  `pt["x"]` misses the KeyError. Root: dicts are shared by-reference for
+  EXISTING-key value modifications (`p[k]=v` propagates) but NOT for STRUCTURAL
+  mutations -- adding a new key (`p["z"]=9`) or deleting one (`del p["x"]`)
+  through a call does not cross the boundary. This is the documented partial
+  dict-by-reference barrier (length/keys arrays not shared across the call), the
+  same representation limit as the dict-value-byref work. Deferred.
+- **`ty-010` slice of `tuple[int, ...]` then a str method — DEEP, OPEN.**
+  `tuple[int, ...]` is modelled as `python_value` (Any), so `t[1:]` is Any and a
+  `-> str` return annotation is trusted, so `f(...).upper()` is accepted. Needs a
+  real variable-length-tuple model (symbolic length + element type) so the slice
+  is a tuple, not Any. Deferred. **Adjacent tractable gap (noted):** a str-only
+  method (`upper`/`lower`/...) on a CONCRETE non-str receiver (`(5).upper()`,
+  `[1,2].upper()`, `(1,2,3).upper()`) is silently accepted instead of raising
+  AttributeError -- a whole-group soundness opportunity (gate str-method dispatch
+  on a str/Any receiver, else AttributeError) independent of the var-tuple model.
 - **`a17` same-expression eval-order × union-retag** (`e.gm() + e.x`) is a niche
   union-tag sequencing subtlety (the int-typed version is already correct;
   swapped operands `e.x + e.gm()` already agree with CPython) — not a localized
