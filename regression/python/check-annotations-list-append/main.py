@@ -1,7 +1,12 @@
-# --python-check-annotations: appending a definitely-incompatible value to a
-# list with a concrete element type (list[int]) is an annotation mismatch
-# (the ty-007 laundering shape). Opt-in only -- legal at runtime, so gated
-# behind the flag like the call-arg / assign annotation checks.
+# --python-check-annotations: a value whose type is incompatible with a list's
+# CONCRETE element annotation, appended via a CALL argument (xs.append(src())),
+# is an annotation mismatch (ty-007 laundering). The call-arg case was
+# previously skipped (to avoid double-evaluating a side-effecting arg); it is
+# now checked by reading the callee's static return type. Opt-in (legal at
+# runtime; the TypeError arises on a later use).
+def src() -> str:
+    return "s"
+
+
 xs: list[int] = []
-v = "s"
-xs.append(v)
+xs.append(src())

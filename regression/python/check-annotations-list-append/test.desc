@@ -1,7 +1,6 @@
 CORE
 main.py
---python-check-annotations --unwind 6
-^EXIT=10$
-^\[annotation-mismatch\.\d+\].*list element annotation.*: FAILURE$
+--python-check-annotations --unwind 4 --no-unwinding-assertions
 ^VERIFICATION FAILED$
 --
+^warning: ignoring

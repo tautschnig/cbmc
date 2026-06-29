@@ -2711,6 +2711,24 @@ codet python_convertert::convert_assign(const jsont &stmt)
           const auto &keys_type = to_array_type(dict_st.components()[1].type());
           const auto &vals_type = to_array_type(dict_st.components()[2].type());
 
+          // --python-check-annotations: storing a value whose type is
+          // definitely incompatible with a dict's CONCRETE value-element type
+          // (`d: dict[str, int]; d[k] = "s"`) is an annotation mismatch -- the
+          // dict-store analog of the list `append` check (ty-007). Opt-in only
+          // (legal at runtime; the error arises on a later USE), runtime-legal
+          // so gated behind the flag like the call-arg / assign / append checks.
+          // A `python_value` (Any) value-type accepts anything, so never
+          // mismatches. `rhs` is already converted once here -- no double-eval.
+          if(
+            python_check_annotations &&
+            !is_python_value_type(vals_type.element_type()) && !rhs.is_nil() &&
+            annotation_types_incompatible(vals_type.element_type(), rhs.type()))
+            add_check(
+              false_exprt{},
+              "annotation-mismatch",
+              "stored dict value type does not match dict value annotation",
+              loc);
+
           // PLR §3.1, §3.2: when the stored value's type doesn't
           // match the declared element type and both the dict
           // and the key are statically resolvable, record the
