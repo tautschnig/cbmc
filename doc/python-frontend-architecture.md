@@ -1202,6 +1202,23 @@ propagates), and del/setattr + `__getattr__` through an ANNOTATED param
 UNannotated/Any param (the class is not statically resolvable for dispatch),
 which unifies with c2 (class/structural resolution across a call boundary).
 
+**Differential audit round 2 (2026-06-29)** — new areas (exceptions, comprehensions,
+f-strings/format specs, dunder-protocol violations, str/%-format ops, builtins).
+Found 14 false proofs. **Fixed:** subscripting a class with no `__getitem__` in
+its MRO → TypeError (`subscript-no-getitem`); `divmod(a, 0)` → ZeroDivisionError
+(`divmod-by-zero`) — both 0 sweep regressions. **Pinned (KNOWNBUG +
+oracle corpus, clusters):** dunder-protocol-missing (`for x in C()` with no
+`__iter__`/`__getitem__`), `__len__` returning non-int/negative, %-format /
+format-spec / f-string type errors (`"%d" % "x"`, `"{:d}".format("hello")`,
+`f"{s:d}"`), `str.join` of non-str, `ord(multichar)`, `round(str)`,
+`sorted(incomparable)`, `str.encode(bad-codec)`, dict-comprehension unhashable
+key. The oracle baseline grew 10 → 22 (12 newly-tracked). These cluster into a
+few whole-group opportunities for future work: **builtin arg/edge type-checks**
+(ord/round/join/sorted/encode), **format-spec validation** (the `%`/`{:d}`
+family), **dunder-protocol-missing → TypeError** (extend the subscript fix to
+iteration, respecting the `__getitem__` sequence-iteration fallback), and
+**`__len__`/`__index__` return validation**.
+
 | Area | Issue | Status | Plan |
 |---|---|---|---|
 | Float floor division | `//` on float operands was computed as true division (no floor): `7.0 // 2.0 == 3.5` — wrong arithmetic | **CLOSED 2026-06-26** (float-floor applied; `float-floordiv-correct`) | — |
