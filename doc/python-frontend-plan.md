@@ -695,9 +695,15 @@ candidate "tractable" false proofs; neither has a clean DEFAULT-mode fix:
   (empty/constant-miss) returns the default in its OWN type, a present constant
   key returns the value, and the symbolic case returns a python_value union. 005
   resolved in DEFAULT mode (oracle 12 -> 11), 0 sweep regressions. `setdefault`
-  (which also INSERTS the default, so its mutation needs dict value-type widening)
-  shares the bug and is the remaining whole-group item. And making the
-  (now-complete) check-annotations flag default-on
+  (which also INSERTS the default) was the remaining group member: **DONE
+  (2026-06-29)** -- the empty-dict-value prescan now infers the value type from a
+  setdefault default in an assignment (`v = a.setdefault(k, d)`), so the dict
+  value type accommodates type(default); the default is stored AND returned in
+  its own type, consistently (the return and a later d[k] read agree). The whole
+  get/pop/setdefault default-fallback group is now closed (the heterogeneous
+  same-dict case -- int values AND a str default -- stays the pre-existing
+  first-use-wins inference limitation). And making the (now-complete)
+  check-annotations flag default-on
   is the deferred (B) policy decision (the benign-false-positive tradeoff).
 - **Default-on MEASURED + DECLINED (2026-06-29).** Ran the full sweep with
   `--python-check-annotations` forced on: **34 regressions / 2718 (~1.25%)**,
