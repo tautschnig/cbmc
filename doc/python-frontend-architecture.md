@@ -1183,6 +1183,25 @@ under `--python-check-annotations` with default-on declined** — **004**/**007*
 gap); and other settled — **binop-mirror-evalorder** (pinned KNOWNBUG) and **d1**
 (numeric-tower, out-of-subset) — see the rows below.
 
+**Differential audit (2026-06-29).** A targeted probe batch (under-exercised
+sequence/container/builtin/operator/dunder edges, CPython vs cbmc default) found
+7 new false proofs. **Fixed (whole-group):** a type-EXCLUSIVE method on the wrong
+concrete receiver → AttributeError (`(5).append`, `[1].keys`, `(1,2).add` —
+generalises the str-method check; `method-on-wrong-type`); fixed-length
+**list-unpack arity** (`a,b,c=[1,2]` → ValueError; `list-unpack-arity`); and a
+constant **tuple index out of range** (`(1,2)[9]` → IndexError; `tuple-index-oob`)
+— each 0 sweep regressions. **Pinned (KNOWNBUG + oracle corpus
+`plr-audit-2026-06-29`):** `sum(["a","b"])` (TypeError), `for i in 5` (TypeError),
+`set().pop()` (KeyError), `[1,2] < [1,"a"]` (mixed-type ordering TypeError). The
+oracle baseline therefore grew 6 → 10 (4 newly-tracked false proofs). Also noted:
+`import sys` alone spuriously emits an uncaught-exception (a false POSITIVE — sound
+direction — to investigate). **P1 scope-spike (instance structural-mutation through
+a call):** an instance is by-reference through a parameter (a field write
+propagates), and del/setattr + `__getattr__` through an ANNOTATED param
+(`clr(o: F)`) already works (`getattr-after-del-param`); the open case is an
+UNannotated/Any param (the class is not statically resolvable for dispatch),
+which unifies with c2 (class/structural resolution across a call boundary).
+
 | Area | Issue | Status | Plan |
 |---|---|---|---|
 | Float floor division | `//` on float operands was computed as true division (no floor): `7.0 // 2.0 == 3.5` — wrong arithmetic | **CLOSED 2026-06-26** (float-floor applied; `float-floordiv-correct`) | — |
