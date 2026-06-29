@@ -2565,14 +2565,20 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         methods_to_scan.push_back(&item);
     }
   }
-  // Attribute-protocol (del + __getattr__): a field that is `del`-ed in some
-  // method of a class that defines __getattr__ must, after the del, read back
-  // __getattr__'s (possibly differently-typed) result -- not the stale field.
-  // Model such fields as `python_value` so the slot can hold both the normal
-  // value and the __getattr__ fallback, and so a later cross-type use routes
-  // through the operand/tag obligations. `del self.x` then assigns the
-  // __getattr__ result into the slot (see the Delete handler). Closes
-  // c4_getattr_fallback / laurel-006.
+  // Attribute-protocol (del + __getattr__): a field that is `del`-ed ANYWHERE
+  // (via `del self.x` in a method, OR a direct `del obj.x` in module/function
+  // code on an external instance) on a class that defines __getattr__ must,
+  // after the del, read back __getattr__'s (possibly differently-typed) result
+  // -- not the stale field. Model such fields as `python_value` so the slot can
+  // hold both the normal value and the __getattr__ fallback, and so a later
+  // cross-type use routes through the operand/tag obligations. `del obj.x` then
+  // assigns the __getattr__ result into the slot (see the Delete handler). The
+  // scan below is MODULE-WIDE and keys on the attribute NAME (a sound
+  // over-approximation -- an extra python_value field just routes through the
+  // tag obligations, never a false proof; only __getattr__-classes are
+  // affected). Closes c4_getattr_fallback / laurel-006 + the external-del
+  // residual. (Residual: `del o.x` through an Any-boxed function parameter does
+  // not propagate -- the structural-mutation-through-a-call family.)
   bool class_defines_getattr = false;
   std::set<std::string> getattr_deletable_fields;
   for(const jsont *mn : methods_to_scan)
