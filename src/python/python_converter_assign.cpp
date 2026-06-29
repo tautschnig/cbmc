@@ -2265,10 +2265,30 @@ codet python_convertert::convert_assign(const jsont &stmt)
         // enough values to unpack'. We assume length matches
         // for soundness of the unpack — under-approximating
         // the error case (a separate lint could flag it).
-        block.add(code_assumet{equal_exprt{
-          rhs_len,
-          from_integer(
-            static_cast<long long>(target_count), signedbv_typet{64})}});
+        // PLR §7.2.1 arity: if the rhs length folds to a CONSTANT that differs
+        // from the number of targets, it is a DEFINITE ValueError ('too many' /
+        // 'not enough values to unpack') -- e.g. `a, b, c = [1, 2]`. For a
+        // symbolic-length list, assume the length matches (a sound-direction
+        // under-approximation of the error case; changing it to an assertion
+        // would spuriously fail legitimate symbolic-length unpacks).
+        std::optional<mp_integer> const_len;
+        if(
+          rhs.id() == ID_struct && !rhs.operands().empty() &&
+          rhs.operands()[0].is_constant())
+        {
+          mp_integer v;
+          if(!to_integer(to_constant_expr(rhs.operands()[0]), v))
+            const_len = v;
+        }
+        if(
+          const_len.has_value() &&
+          *const_len != mp_integer{static_cast<long long>(target_count)})
+          emit_conditional_exception(true_exprt{}, "ValueError");
+        else
+          block.add(code_assumet{equal_exprt{
+            rhs_len,
+            from_integer(
+              static_cast<long long>(target_count), signedbv_typet{64})}});
         std::size_t i = 0;
         for(const auto &elt : as_array(elts))
         {
