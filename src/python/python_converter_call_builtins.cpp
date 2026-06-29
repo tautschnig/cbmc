@@ -1259,6 +1259,26 @@ std::optional<exprt> python_convertert::try_builtin_call(
       {
         // For constant strings, compute Unicode code point
         auto sv = extract_string_value(arg);
+        if(sv.has_value())
+        {
+          const std::string &s = sv.value();
+          // PLR §6.10: ord() expects a string of exactly ONE character.
+          // For a constant operand we know the length precisely: an empty or
+          // multi-character string raises TypeError. (Symbolic strings of
+          // unknown length are not flagged -- we cannot prove a violation.)
+          std::size_t cp_bytes = 0;
+          if(!s.empty())
+          {
+            unsigned char c0 = static_cast<unsigned char>(s[0]);
+            cp_bytes = c0 < 0xC0 ? 1 : c0 < 0xE0 ? 2 : c0 < 0xF0 ? 3 : 4;
+          }
+          if(s.empty() || s.size() != cp_bytes)
+          {
+            emit_conditional_exception(true_exprt{}, "TypeError");
+            return side_effect_expr_nondett{
+              python_int_type(), get_location(expr)};
+          }
+        }
         if(sv.has_value() && !sv.value().empty())
         {
           const std::string &s = sv.value();
