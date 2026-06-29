@@ -2595,10 +2595,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         const jsont &tgts = json_member(n, "targets");
         if(tgts.is_array())
           for(const auto &t : as_array(tgts))
-            if(
-              is_node_type(t, "Attribute") &&
-              is_node_type(json_member(t, "value"), "Name") &&
-              json_string(json_member(json_member(t, "value"), "id")) == "self")
+            if(is_node_type(t, "Attribute")) // any `<expr>.<attr>` deletion
               getattr_deletable_fields.insert(
                 json_string(json_member(t, "attr")));
       }
@@ -2609,8 +2606,9 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           walk(c);
       }
     };
-    for(const jsont *mn : methods_to_scan)
-      walk(json_member(*mn, "body"));
+    // Whole-module AST: covers `del self.x` in this class's methods AND a
+    // `del obj.x` in module-level / function code on an external instance.
+    walk(json_member(parse_tree.ast_json, "body"));
   }
   auto getattr_deletable_override =
     [&](const std::string &attr_name, typet &attr_type)
