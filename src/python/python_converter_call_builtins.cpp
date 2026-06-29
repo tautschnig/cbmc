@@ -613,11 +613,31 @@ std::optional<exprt> python_convertert::try_builtin_call(
         {
           const symbolt *len_sym = symbol_table.lookup(irep_idt{prefix});
           if(len_sym != nullptr)
+          {
+            // PLR §3.3.1: __len__ must return an integer. Validate the dunder's
+            // return-type contract at the len() call site: a concretely non-int
+            // return type (str/float/list/...) raises TypeError ('__len__ should
+            // return an integer'). A python_value (Any / unannotated-inferred)
+            // return is NOT flagged -- we cannot prove a violation, so flagging
+            // would be a false positive.
+            typet len_ret = python_int_type();
+            if(len_sym->type.id() == ID_code)
+              len_ret = to_code_type(len_sym->type).return_type();
+            const bool int_like =
+              len_ret.id() == ID_signedbv || len_ret.id() == ID_unsignedbv ||
+              len_ret.id() == ID_c_bool || len_ret.id() == ID_bool;
+            if(!int_like && !is_python_value_type(len_ret))
+            {
+              emit_conditional_exception(true_exprt{}, "TypeError");
+              return side_effect_expr_nondett{
+                python_int_type(), get_location(expr)};
+            }
             return side_effect_expr_function_callt{
               len_sym->symbol_expr(),
               {address_of_exprt{arg}},
               python_int_type(),
               get_location(expr)};
+          }
         }
       }
     }
