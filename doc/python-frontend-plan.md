@@ -721,6 +721,27 @@ candidate "tractable" false proofs; neither has a clean DEFAULT-mode fix:
   EXPLICIT container annotation provenance (variable_annotations), so an inferred
   empty `[]`/`{}` (e.g. `setdefault(1, [])`) is not flagged (dict_setdefault_list).
   Both PLR-safe (suppress-only). The remaining 27 are the irreducible benign class.
+- **Tuple-unpack arity — FIXED (2026-06-29).** `a, b = (1,)` (and ty-015`s
+  `a, b = make()` returning the fixed `(1,)`) silently skipped the missing `_i`
+  field; a fixed-arity mismatch is now a definite ValueError (gated on no Starred
+  target). Oracle ty-015 resolved. (Residual: starred unpack from a TUPLE literal
+  rhs `first, *rest = (1,2,3,4)` is a pre-existing spurious FAILED -- the starred
+  path only expands a LIST rhs; separate, not a regression.)
+- **Both-union strictly-numeric binop — FIXED (2026-06-29).** `p.a - p.b` where
+  BOTH operands are tagged unions retagged to str now emits the operand-type
+  TypeError obligation (Sub/Div/FloorDiv/Pow only -- Add/Mod/bitwise excluded:
+  concat / str %-format / set ops are valid). Oracle a12 resolved. Same
+  obligation block as the b3/b5 shift fix (one coherent operand-type group).
+- **`a10` mutable-default shared state in a METHOD — characterized, OPEN.** A
+  mutable default (`def add(self, items=[])`) is evaluated once and SHARED across
+  calls; the accumulation works for module-level functions (their defaults are
+  frozen into a static-lifetime symbol with a module-init assignment), but a
+  METHOD default is stored as a raw value and re-copied per call, so the shared
+  state is lost. Freezing the method default into a static symbol needs a
+  once-only runtime init, complicated by convert_class_def being invoked
+  idempotently (no clean module-init block as the module-level path has). The fix
+  is to freeze method mutable-defaults in the module-level statement pass (where
+  the init block runs once) -- deferred.
 - **`a17` same-expression eval-order × union-retag** (`e.gm() + e.x`) is a niche
   union-tag sequencing subtlety (the int-typed version is already correct;
   swapped operands `e.x + e.gm()` already agree with CPython) — not a localized
