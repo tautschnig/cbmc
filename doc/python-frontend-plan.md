@@ -752,11 +752,13 @@ candidate "tractable" false proofs; neither has a clean DEFAULT-mode fix:
   `tuple[int, ...]` is modelled as `python_value` (Any), so `t[1:]` is Any and a
   `-> str` return annotation is trusted, so `f(...).upper()` is accepted. Needs a
   real variable-length-tuple model (symbolic length + element type) so the slice
-  is a tuple, not Any. Deferred. **Adjacent tractable gap (noted):** a str-only
-  method (`upper`/`lower`/...) on a CONCRETE non-str receiver (`(5).upper()`,
-  `[1,2].upper()`, `(1,2,3).upper()`) is silently accepted instead of raising
-  AttributeError -- a whole-group soundness opportunity (gate str-method dispatch
-  on a str/Any receiver, else AttributeError) independent of the var-tuple model.
+  is a tuple, not Any. Deferred. **Adjacent gap — FIXED (2026-06-29):** a str-only
+  method (`upper`/`lower`/...) on a CONCRETE non-str built-in receiver
+  (`(5).upper()`, `[1,2].upper()`, `(1,2,3).upper()`, `{}.strip()`) now raises
+  AttributeError. Gated to avoid FPs (only str-only names -- not count/index;
+  not Any/str/bytes=list[uint8]; not user-class instances). 0 sweep regressions.
+  This closes the CONCRETE-receiver class; ty-010 itself (the Any-erasure variant
+  via `tuple[int, ...]`) still needs the var-tuple model.
 - **`a17` same-expression eval-order × union-retag** (`e.gm() + e.x`) is a niche
   union-tag sequencing subtlety (the int-typed version is already correct;
   swapped operands `e.x + e.gm()` already agree with CPython) — not a localized
