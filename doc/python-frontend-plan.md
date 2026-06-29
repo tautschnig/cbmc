@@ -579,6 +579,23 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
+> **Current state (2026-06-29).** The differential-oracle baseline is **8** known
+> false proofs (down from 22 over the 2026-06-28/29 arc). The canonical,
+> categorised list lives in the [architecture doc master inventory](python-frontend-architecture.md)
+> ("Gaps, soundness issues & imprecisions"); this section is the chronological
+> design log. Closed over the arc:
+> reference-semantics-for-instances (instance-identity cluster + `a2`
+> annotated-alias/lvalue-into-Any), binop eval-order (forward), `@property`
+> setters (a32/b6), shift/bitwise + both-union operand obligations (b3/b5/a12),
+> tuple-unpack arity (ty-015), method mutable-default sharing (a10), str-method
+> on a concrete non-str, and `dict.get`/`pop`/`setdefault` default type (ty-005).
+> The **8 remaining** are DEEP representation work (ty-010 variable-length-tuple
+> Any-erasure; c2 dict structural-mutation-through-call; c4/laurel-006
+> `del`+`__getattr__` retype) or settled (`004`/`007` flag-gated under
+> `--python-check-annotations`, default-on measured ~1.25% FP and declined;
+> `binop-mirror-evalorder` pinned KNOWNBUG; `d1` numeric-tower out-of-subset).
+> The dated entries below are retained for design rationale.
+
 **Standalone PLR re-audit (2026-06-26).** A differential pass (~255 generated
 probes under CPython vs cbmc) fixed one correctness false proof and pinned five
 new narrow ones as KNOWNBUG regression tests:
