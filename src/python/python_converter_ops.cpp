@@ -369,6 +369,17 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       non_numeric = not_exprt{tag_is_int_like(left)};
     else if(bitshift && r_val && l_int)
       non_numeric = not_exprt{tag_is_int_like(right)};
+    // BOTH operands tagged-union: for the STRICTLY-numeric ops (Sub/Div/
+    // FloorDiv/Pow -- where NO non-numeric operand is ever valid, unlike Add
+    // (str/list concatenation), Mod (str %-formatting), or bitwise (set ops)),
+    // fire if EITHER operand is non-numeric. Closes a12 (`p.a - p.b` where both
+    // union fields were retagged to str). Runtime-tag-guarded: both genuinely
+    // numeric -> no fire.
+    else if(
+      (op == "Sub" || op == "Div" || op == "FloorDiv" || op == "Pow") &&
+      l_val && r_val)
+      non_numeric =
+        not_exprt{and_exprt{tag_is_numeric(left), tag_is_numeric(right)}};
     if(!non_numeric.is_nil())
     {
       const symbolt *exc_sym =
