@@ -1934,6 +1934,30 @@ codet python_convertert::convert_assign(const jsont &stmt)
     if(is_node_type(target, "Tuple") || is_node_type(target, "List"))
     {
       const jsont &elts = json_member(target, "elts");
+      // PLR §3.3.1: unpacking requires an iterable. A concrete class instance
+      // whose MRO defines neither __iter__ nor __getitem__ is not iterable, so
+      // `a, b = C()` raises TypeError ('cannot unpack non-iterable ...'). Same
+      // whole-group check (and gating) as the for-loop / comprehension sites.
+      {
+        std::string rtag;
+        if(rhs.type().id() == ID_struct)
+          rtag = id2string(to_struct_type(rhs.type()).get_tag());
+        else if(rhs.type().id() == ID_struct_tag)
+          rtag = id2string(to_struct_tag_type(rhs.type()).get_identifier());
+        if(
+          rtag.substr(0, 13) == "python_class_" &&
+          !class_mro_defines(rtag.substr(13), "__iter__") &&
+          !class_mro_defines(rtag.substr(13), "__getitem__"))
+        {
+          source_locationt tloc = loc;
+          tloc.set_property_class("type-error");
+          tloc.set_comment("cannot unpack non-iterable object");
+          code_assertt te{false_exprt{}};
+          te.add_source_location() = tloc;
+          block.add(std::move(te));
+          return std::move(block);
+        }
+      }
       // PLR §7.2.2: extended starred unpacking
       //   first, *rest = [1, 2, 3]
       //   *head, last = [1, 2, 3]
