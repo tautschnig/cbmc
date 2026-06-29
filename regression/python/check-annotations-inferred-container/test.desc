@@ -1,0 +1,5 @@
+CORE
+main.py
+--python-check-annotations --unwind 6 --no-unwinding-assertions
+^VERIFICATION SUCCESSFUL$
+--
