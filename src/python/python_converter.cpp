@@ -1850,6 +1850,44 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
             }
           }
         }
+        // §dict: `<target> = a.setdefault(k, default)` on a pending empty dict
+        // resolves its key/value types from k / default -- the assignment
+        // analogue of the chained `setdefault(...).method()` inference below.
+        // Without it the dict's value type stayed the int default and a
+        // mismatched default (e.g. "s") was coerced/lost, false-proving a later
+        // use of the returned value (the setdefault analogue of ty-005). PLR
+        // §6.4.6: setdefault inserts AND returns the default, so the dict value
+        // type must accommodate type(default).
+        if(!is_ann && is_node_type(value, "Call"))
+        {
+          const jsont &vfn = json_member(value, "func");
+          if(
+            is_node_type(vfn, "Attribute") &&
+            json_string(json_member(vfn, "attr")) == "setdefault" &&
+            is_node_type(json_member(vfn, "value"), "Name"))
+          {
+            irep_idt did{qualify_name(
+              json_string(json_member(json_member(vfn, "value"), "id")))};
+            const jsont &sdargs = json_member(value, "args");
+            if(
+              pending_dict.count(did) > 0 &&
+              empty_dict_inferred_types.count(did) == 0 && sdargs.is_array() &&
+              as_array(sdargs).size() >= 2)
+            {
+              auto ait = as_array(sdargs).begin();
+              typet kt = type_of_expr(*ait);
+              ++ait;
+              typet vt = type_of_expr(*ait);
+              if(
+                !kt.id().empty() && kt.id() != ID_empty && !vt.id().empty() &&
+                vt.id() != ID_empty)
+              {
+                empty_dict_inferred_types[did] = {kt, vt};
+                pending_dict.erase(did);
+              }
+            }
+          }
+        }
       }
       else if(is_node_type(stmt, "Expr"))
       {
