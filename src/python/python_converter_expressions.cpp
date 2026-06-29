@@ -770,6 +770,87 @@ exprt python_convertert::convert_subscript(const jsont &expr)
 
   // List/string slicing: lst[1:4] or s[::-1]
   const jsont &slice_json = json_member(expr, "slice");
+
+  // Tuple slicing: `t[lo:hi:step]`. A tuple is a fixed struct (`_0`..`_{n-1}`);
+  // for a CONSTANT slice the result is a fixed tuple of known length, so build
+  // it directly (PLR §6.3.3: a tuple slice returns a tuple). Without this a
+  // tuple slice fell through to the single-index path and mis-modelled the
+  // result's `len`/indexing (`(1,2,3)[1:]` had the wrong length).
+  if(is_node_type(slice_json, "Slice") && is_python_tuple_type(value.type()))
+  {
+    const auto &st = to_struct_type(value.type());
+    std::vector<typet> comp_types;
+    while(st.has_component("_" + std::to_string(comp_types.size())))
+      comp_types.push_back(
+        st.get_component("_" + std::to_string(comp_types.size())).type());
+    const long n = static_cast<long>(comp_types.size());
+    const jsont &lo_j = json_member(slice_json, "lower");
+    const jsont &hi_j = json_member(slice_json, "upper");
+    const jsont &st_j = json_member(slice_json, "step");
+    auto cst = [&](const jsont &j) -> std::optional<long>
+    {
+      auto d = try_eval_double(convert_expression(j));
+      if(d.has_value() && *d == std::floor(*d))
+        return static_cast<long>(*d);
+      return std::nullopt;
+    };
+    long step = 1;
+    bool ok = true;
+    if(!st_j.is_null())
+    {
+      auto s = cst(st_j);
+      if(s.has_value())
+        step = *s;
+      else
+        ok = false;
+    }
+    std::vector<long> idxs;
+    if(ok && step == 1)
+    {
+      long lo = 0, hi = n;
+      auto clamp = [&](long v) { return v < 0 ? 0L : (v > n ? n : v); };
+      if(!lo_j.is_null())
+      {
+        auto v = cst(lo_j);
+        if(v.has_value())
+          lo = clamp(*v < 0 ? *v + n : *v);
+        else
+          ok = false;
+      }
+      if(!hi_j.is_null())
+      {
+        auto v = cst(hi_j);
+        if(v.has_value())
+          hi = clamp(*v < 0 ? *v + n : *v);
+        else
+          ok = false;
+      }
+      if(ok)
+        for(long i = lo; i < hi; i++)
+          idxs.push_back(i);
+    }
+    else if(ok && step == -1 && lo_j.is_null() && hi_j.is_null())
+    {
+      for(long i = n - 1; i >= 0; i--)
+        idxs.push_back(i); // t[::-1]
+    }
+    else
+      ok = false;
+    if(ok)
+    {
+      exprt::operandst elems;
+      std::vector<typet> types;
+      for(long i : idxs)
+      {
+        types.push_back(comp_types[i]);
+        elems.push_back(
+          member_exprt{value, "_" + std::to_string(i), comp_types[i]});
+      }
+      return struct_exprt{std::move(elems), python_tuple_type(types)};
+    }
+    // symbolic bounds / unsupported step: fall through (over-approx below)
+  }
+
   if(
     is_node_type(slice_json, "Slice") &&
     (is_python_list_type(value.type()) || is_python_string_type(value.type())))
