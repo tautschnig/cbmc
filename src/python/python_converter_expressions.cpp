@@ -425,6 +425,15 @@ exprt python_convertert::convert_subscript(const jsont &expr)
             get_location(expr)};
         }
       }
+      // PLR §3.3.1: subscripting an instance requires __getitem__. If no
+      // ancestor in the MRO defines it, `obj[key]` raises TypeError ('object is
+      // not subscriptable') -- previously this fell through to a nondet read.
+      if(!class_mro_defines(bare, "__getitem__"))
+      {
+        emit_conditional_exception(true_exprt{}, "TypeError");
+        return side_effect_expr_nondett{
+          python_value_type(), get_location(expr)};
+      }
     }
   }
 
