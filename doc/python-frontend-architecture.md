@@ -1232,6 +1232,39 @@ and `comprehension-no-iter` (CORE). **Residual:** the assign-unpack site
 `unpack-no-iter-knownbug`; and a `__getitem__`-only class is correctly not
 flagged but its iteration is still modelled imprecisely (zero iterations).
 
+**Cluster roadmap progress (2026-06-29, cont.).**
+- *Iteration-protocol-missing: CLOSED across all three sites.* Added the
+  assign-unpack site (`a, b = C()` -> TypeError, `unpack-no-iter` CORE) alongside
+  the for-loop and comprehension sites. The `class_mro_defines(__iter__) &&
+  class_mro_defines(__getitem__)` gate + a type-error assert is now the shared
+  whole-group lever across for-loop / comprehension / unpack. (Residual: the
+  star-in-list-display `[*C()]` is a separate path, minor.)
+- *Dunder-return-contract validation (type axis): whole-group via a helper.*
+  `dunder_return_type_violation(sym, kind)` flags a dunder whose
+  declared/inferred return type concretely violates its contract (Any never
+  flagged). Applied to `__len__` (int) and `__str__` (str); `__index__` was
+  already caught. Tests `dunder-len-nonint-type`, `dunder-str-nonstr` (CORE).
+  *Residuals:* `__bool__` (bool vs int not reliably distinguishable in the repr
+  -> a strict check risks FP), `__hash__` (not dispatched at all -- custom-key
+  hashing unmodelled), and the `__len__` NEGATIVE-VALUE case (a value check that
+  would FP on symbolic-but-nonneg returns -> `dunder-len-nonint-knownbug`).
+- *Builtin arg/edge preconditions: an irreducible per-builtin FAMILY, not a
+  single whole-group.* Each member has a distinct predicate (ord: one-char
+  string; divmod: nonzero divisor; round: numeric arg; join: all-str elements;
+  sorted: mutually-comparable; encode: valid codec). The SHARED lever is
+  `emit_conditional_exception(predicate, exc)` gated on a CONSTANT operand (so
+  symbolic operands are never falsely flagged). Done: `divmod` (ZeroDivisionError)
+  and `ord` (single-char TypeError, `builtin-ord-multichar` CORE). The rest
+  (round/join/sorted/encode) remain tracked in the oracle corpus as individual
+  family members.
+- *Format-spec validation (`"%d" % x`, `"{:d}".format(...)`, `f"{x:d}"`): deep,
+  pinned.* Requires modelling format-string parsing and per-conversion type
+  rules; tracked in the oracle (`fmt_*`) and as `str-percent-format-type-knownbug`.
+
+Net effect of the two audit rounds + roadmap: oracle false-proof baseline
+6 -> 22 (discovery) -> 19 (after the iteration cluster, `__len__`/`__str__`
+return-type, and `ord`/`divmod` fixes).
+
 | Area | Issue | Status | Plan |
 |---|---|---|---|
 | Float floor division | `//` on float operands was computed as true division (no floor): `7.0 // 2.0 == 3.5` — wrong arithmetic | **CLOSED 2026-06-26** (float-floor applied; `float-floordiv-correct`) | — |
