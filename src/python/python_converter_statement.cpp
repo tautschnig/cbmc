@@ -589,22 +589,24 @@ codet python_convertert::convert_statement(const jsont &stmt)
               }
               else if(st != nullptr && st->has_component(attr))
               {
-                // PLR §7.4: `del obj.attr` on an instance-only attribute.
-                // Only class-level attrs carry a `__shadow_` presence flag,
-                // so we cannot flow-sensitively raise AttributeError on a
-                // later read here. Resetting the slot to the None marker
-                // (0 for int) was UNSOUND -- `c.x = 42; del c.x;
-                // assert c.x == 0` then verified even though CPython raises
-                // AttributeError. Over-approximate instead by havocking the
-                // slot to nondet, so a subsequent read cannot be proved equal
-                // to any concrete value (no silent wrong value). Precise
-                // AttributeError / `__getattr__` fallback for instance-only
-                // attrs needs per-instance presence tracking -- see the
-                // attribute-protocol gap in the plan.
+                // PLR §7.4 / §3.3.2: `del obj.attr` on an instance-only
+                // attribute. If the class defines __getattr__, a subsequent
+                // read falls through to it -- store __getattr__'s (possibly
+                // differently-typed) result into the slot so the retype is
+                // modelled and a later cross-type use is caught (the slot was
+                // typed `python_value` for this; closes c4/laurel-006).
+                // Otherwise over-approximate by havocking the slot to nondet so
+                // a later read cannot be proved equal to any concrete value
+                // (resetting to the None marker was UNSOUND).
                 const typet ft = st->get_component(attr).type();
-                del_block.add(code_frontend_assignt{
-                  member_exprt{obj_lvalue, attr, ft},
-                  side_effect_expr_nondett{ft, loc}});
+                member_exprt slot{obj_lvalue, attr, ft};
+                exprt ga = emit_getattr_fallback(obj_lvalue, attr, loc);
+                if(!ga.is_nil())
+                  del_block.add(
+                    code_frontend_assignt{slot, coerce_to_typed_slot(ga, ft)});
+                else
+                  del_block.add(code_frontend_assignt{
+                    slot, side_effect_expr_nondett{ft, loc}});
               }
             }
           }
