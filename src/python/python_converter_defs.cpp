@@ -2565,6 +2565,59 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         methods_to_scan.push_back(&item);
     }
   }
+  // Attribute-protocol (del + __getattr__): a field that is `del`-ed in some
+  // method of a class that defines __getattr__ must, after the del, read back
+  // __getattr__'s (possibly differently-typed) result -- not the stale field.
+  // Model such fields as `python_value` so the slot can hold both the normal
+  // value and the __getattr__ fallback, and so a later cross-type use routes
+  // through the operand/tag obligations. `del self.x` then assigns the
+  // __getattr__ result into the slot (see the Delete handler). Closes
+  // c4_getattr_fallback / laurel-006.
+  bool class_defines_getattr = false;
+  std::set<std::string> getattr_deletable_fields;
+  for(const jsont *mn : methods_to_scan)
+    if(json_string(json_member(*mn, "name")) == "__getattr__")
+      class_defines_getattr = true;
+  if(class_defines_getattr)
+  {
+    std::function<void(const jsont &)> walk = [&](const jsont &n)
+    {
+      if(n.is_array())
+      {
+        for(const auto &e : as_array(n))
+          walk(e);
+        return;
+      }
+      if(!n.is_object())
+        return;
+      if(is_node_type(n, "Delete"))
+      {
+        const jsont &tgts = json_member(n, "targets");
+        if(tgts.is_array())
+          for(const auto &t : as_array(tgts))
+            if(
+              is_node_type(t, "Attribute") &&
+              is_node_type(json_member(t, "value"), "Name") &&
+              json_string(json_member(json_member(t, "value"), "id")) == "self")
+              getattr_deletable_fields.insert(
+                json_string(json_member(t, "attr")));
+      }
+      for(const char *k : {"body", "orelse", "finalbody", "handlers"})
+      {
+        const jsont &c = json_member(n, k);
+        if(!c.is_null())
+          walk(c);
+      }
+    };
+    for(const jsont *mn : methods_to_scan)
+      walk(json_member(*mn, "body"));
+  }
+  auto getattr_deletable_override =
+    [&](const std::string &attr_name, typet &attr_type)
+  {
+    if(class_defines_getattr && getattr_deletable_fields.count(attr_name))
+      attr_type = python_value_type();
+  };
   for(const jsont *method_node : methods_to_scan)
   {
     const jsont &init_body = json_member(*method_node, "body");
@@ -2606,6 +2659,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                  .find("python_class_") != std::string::npos);
           if(field_is_instance && is_node_type(av, "Name"))
             attr_type = pointer_type(attr_type);
+          getattr_deletable_override(attr_name, attr_type);
           if(declared_fields.insert(attr_name).second)
             components.push_back(
               struct_typet::componentt{attr_name, attr_type});
@@ -2761,6 +2815,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           }
         }
 
+        getattr_deletable_override(attr_name, attr_type);
         if(declared_fields.insert(attr_name).second)
           components.push_back(struct_typet::componentt{attr_name, attr_type});
       }
