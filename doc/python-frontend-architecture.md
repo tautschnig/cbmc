@@ -1215,9 +1215,22 @@ format-spec / f-string type errors (`"%d" % "x"`, `"{:d}".format("hello")`,
 key. The oracle baseline grew 10 → 22 (12 newly-tracked). These cluster into a
 few whole-group opportunities for future work: **builtin arg/edge type-checks**
 (ord/round/join/sorted/encode), **format-spec validation** (the `%`/`{:d}`
-family), **dunder-protocol-missing → TypeError** (extend the subscript fix to
-iteration, respecting the `__getitem__` sequence-iteration fallback), and
-**`__len__`/`__index__` return validation**.
+family), **dunder-protocol-missing → TypeError** (DONE for the main sites — see below),
+and **`__len__`/`__index__` return validation**.
+
+**Dunder-protocol-missing cluster (closed for the main sites, 2026-06-29).**
+A whole-group: an operation that requires a protocol dunder on a concrete class
+instance that does not define it (across its MRO) raises TypeError. Now covered:
+subscript (`obj[k]` needs `__getitem__`), call (`obj()` needs `__call__`), and
+**iteration** (`for x in obj` / `[.. for x in obj ..]` needs `__iter__`, or
+`__getitem__` for the old sequence protocol) — the for-loop and single-generator
+comprehension sites emit the not-iterable TypeError, gated on
+`class_mro_defines` so a `__getitem__`-only sequence class (and an `__iter__`
+returning a separate iterator object) is NOT flagged. Tests `iterate-no-iter`
+and `comprehension-no-iter` (CORE). **Residual:** the assign-unpack site
+(`a, b = C()`, `[*C()]`) is a structurally different handler, pinned
+`unpack-no-iter-knownbug`; and a `__getitem__`-only class is correctly not
+flagged but its iteration is still modelled imprecisely (zero iterations).
 
 | Area | Issue | Status | Plan |
 |---|---|---|---|
