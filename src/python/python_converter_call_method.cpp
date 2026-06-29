@@ -2324,7 +2324,35 @@ std::optional<exprt> python_convertert::try_method_call(
         "isalpha",      "isalnum",    "isspace",      "isupper",
         "islower",      "istitle",    "isnumeric",    "isdecimal",
         "isidentifier", "isascii",    "isprintable"};
+      // Methods EXCLUSIVE to one built-in type. Calling such a method on a
+      // CONCRETE receiver of a DIFFERENT built-in type is a definite
+      // AttributeError (e.g. `(5).append(3)`, `[1].keys()`, `(1,2).add(3)`).
+      // Only strictly-exclusive names (NOT count/index/pop/clear/copy/remove,
+      // which several types share).
+      static const std::set<std::string> list_only_methods = {
+        "append", "extend", "insert", "sort", "reverse"};
+      static const std::set<std::string> dict_only_methods = {
+        "keys", "values", "items", "setdefault", "popitem", "fromkeys"};
+      static const std::set<std::string> set_only_methods = {
+        "add",
+        "discard",
+        "isdisjoint",
+        "issubset",
+        "issuperset",
+        "symmetric_difference",
+        "intersection_update",
+        "difference_update",
+        "symmetric_difference_update"};
+      const char *owner = nullptr;
       if(str_only_methods.count(method_name))
+        owner = "str";
+      else if(list_only_methods.count(method_name))
+        owner = "list";
+      else if(dict_only_methods.count(method_name))
+        owner = "dict";
+      else if(set_only_methods.count(method_name))
+        owner = "set";
+      if(owner != nullptr)
       {
         const typet &t = obj_base_type;
         const bool numeric = t.id() == ID_signedbv || t.id() == ID_unsignedbv ||
@@ -2332,18 +2360,30 @@ std::optional<exprt> python_convertert::try_method_call(
                              t.id() == ID_bool;
         const bool is_complex = t.id() == ID_struct &&
                                 to_struct_type(t).get_tag() == "python_complex";
-        // bytes := list[uint8]; it HAS these methods, so exclude it.
+        const bool is_list_recv = is_python_list_type(t); // incl. bytes
+        // bytes := list[uint8]; it HAS the str methods, so exclude it from the
+        // str-owner check (a list receiver already excludes list_only).
         const bool is_bytes =
-          is_python_list_type(t) &&
+          is_list_recv &&
           to_array_type(to_struct_type(t).components()[1].type())
               .element_type() == unsignedbv_typet{8};
-        const bool container =
-          is_python_dict_type(t) || is_python_set_type(t) ||
-          is_python_tuple_type(t) || (is_python_list_type(t) && !is_bytes);
+        const bool is_str_recv =
+          is_python_string_type(t) || t.id() == ID_smt_string;
+        const bool is_dict_recv = is_python_dict_type(t);
+        const bool is_set_recv = is_python_set_type(t);
+        const bool is_tuple_recv = is_python_tuple_type(t);
         const bool user_class =
           t.id() == ID_struct &&
           id2string(to_struct_type(t).get_tag()).rfind("python_class_", 0) == 0;
-        if((numeric || is_complex || container) && !user_class)
+        const bool concrete_builtin = numeric || is_complex || is_str_recv ||
+                                      is_list_recv || is_dict_recv ||
+                                      is_set_recv || is_tuple_recv;
+        const std::string ow{owner};
+        const bool matches_owner = (ow == "str" && (is_str_recv || is_bytes)) ||
+                                   (ow == "list" && is_list_recv) ||
+                                   (ow == "dict" && is_dict_recv) ||
+                                   (ow == "set" && is_set_recv);
+        if(concrete_builtin && !user_class && !matches_owner)
         {
           emit_conditional_exception(true_exprt{}, "AttributeError");
           return side_effect_expr_nondett{
