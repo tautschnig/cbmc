@@ -1530,6 +1530,16 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       }
       if(idx < 0)
         idx += mp_integer{(long long)tup_len};
+      // PLR §6.3.2: a constant tuple index outside [0, len) is a definite
+      // IndexError ('tuple index out of range') -- e.g. `(1, 2)[9]`. (list/str
+      // OOB are bounds-checked elsewhere; the fixed-tuple struct had no such
+      // check, so an OOB constant index fell through to a nondet read.)
+      if(idx < 0 || idx >= mp_integer{(long long)tup_len})
+      {
+        emit_conditional_exception(true_exprt{}, "IndexError");
+        return side_effect_expr_nondett{
+          python_value_type(), get_location(expr)};
+      }
       std::string field = "_" + integer2string(idx);
       if(st.has_component(field))
         return member_exprt{value, field, st.get_component(field).type()};
