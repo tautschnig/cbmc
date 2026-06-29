@@ -681,11 +681,17 @@ candidate "tractable" false proofs; neither has a clean DEFAULT-mode fix:
   value is legal Python (the error only arises on a *use* as the wrong type), so
   a default obligation false-alarms on code that never misuses it (the
   `greet(42): pass` lesson). The correct home is opt-in
-  `--python-check-annotations`, which already catches 004 but has GAPS at
-  `list.append` (007) and dict-value/`empty-dict.get` (005) — extending it to
-  those boundaries is the clean *opt-in* soundness-mode enhancement (no default
-  false positives), and is the concrete prerequisite for ever making that flag
-  default-on.
+  `--python-check-annotations`. **DONE (2026-06-29):** the flag now catches the
+  argument boundary (004), the `list.append`/`insert` element boundary INCLUDING
+  a call arg `xs.append(src())` (007, via the callee's static return type -- no
+  double-eval), and the `dict[K,V]` value-store boundary (`d[k] = v`). All
+  opt-in, default UNCHANGED (0 sweep regressions), runtime-tag/concrete-type
+  guarded (Any element/value types and genuinely-matching values never
+  false-alarm). **Remaining:** `005` is NOT an annotation case (no annotation) --
+  it is `{}.get("k", "s")` returning the dict's inferred concrete value type
+  (int) instead of `value_type | type(default)`, a separate DEFAULT-mode
+  `.get`-return-union precision fix. And making the (now-complete) flag default-on
+  is the deferred (B) policy decision (the benign-false-positive tradeoff).
 - **`a17` same-expression eval-order × union-retag** (`e.gm() + e.x`) is a niche
   union-tag sequencing subtlety (the int-typed version is already correct;
   swapped operands `e.x + e.gm()` already agree with CPython) — not a localized

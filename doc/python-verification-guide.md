@@ -100,7 +100,11 @@ Optional flags worth considering:
   properties at variable / parameter / return assignments where
   the annotation and assigned-value types are incompatible
   (includes class-vs-class via MRO, reassignment after AnnAssign,
-  and `Union[...]` member checking). Off by default. It is
+  `Union[...]` member checking, and container boundaries: a value
+  incompatible with a list's concrete element type appended via
+  `list.append`/`insert` -- including a call argument such as
+  `xs.append(src())` -- or stored into a concrete-valued
+  `dict[K, V]` via `d[k] = v`). Off by default. It is
   *sound when it runs* and the earlier CBMC-core blockers are
   resolved; it remains opt-in because it enforces *static*
   annotations, so it reports the (irreducible) class of real
