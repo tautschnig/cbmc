@@ -33,6 +33,13 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
   if(!body.is_array())
     return block;
 
+  // PLR §8.7: flush the once-only initialisers for frozen method mutable-default
+  // symbols (queued during convert_class_def across the earlier passes) FIRST,
+  // so the shared default object is initialised before any method call in the
+  // module body executes (a10_mutable_default).
+  for(const auto &init : deferred_static_default_inits)
+    block.add(init);
+
   for(const auto &stmt : as_array(body))
   {
     // Function and class definitions are handled in the first pass

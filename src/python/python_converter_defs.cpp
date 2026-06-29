@@ -3663,7 +3663,45 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                     tag != "python_complex" && tag != "python_list")
                     continue;
                 }
-                default_values[{method_name, i}] = val;
+                // PLR §8.7 mutable-default gotcha: a mutable (list/dict/set)
+                // default is evaluated ONCE at def time and SHARED across all
+                // calls, so mutations through it accumulate. Freeze it into a
+                // static-lifetime symbol (once per class::method::index) and
+                // queue a once-only initialiser for the module-init block, so
+                // the shared state persists. Without this each call got a fresh
+                // copy and the accumulation was lost (a10_mutable_default).
+                // Immutable defaults keep the raw value.
+                const bool mutable_default = is_python_list_type(val.type()) ||
+                                             is_python_dict_type(val.type()) ||
+                                             is_python_set_type(val.type());
+                if(mutable_default)
+                {
+                  const std::string fkey =
+                    class_name + "::" + method_name + "::" + std::to_string(i);
+                  std::string tn = "__mdef_" + class_name + "_" + method_name +
+                                   "_" + std::to_string(i);
+                  irep_idt ti{qualify_name(tn)};
+                  if(frozen_method_defaults.insert(fkey).second)
+                  {
+                    if(symbol_table.lookup(ti) == nullptr)
+                    {
+                      symbolt ts{ti, val.type(), "python"};
+                      ts.base_name = tn;
+                      ts.is_lvalue = true;
+                      ts.is_state_var = true;
+                      ts.is_static_lifetime = true;
+                      ts.value = val;
+                      symbol_table.add(ts);
+                    }
+                    deferred_static_default_inits.push_back(
+                      code_frontend_assignt{
+                        symbol_table.lookup_ref(ti).symbol_expr(), val});
+                  }
+                  default_values[{method_name, i}] =
+                    symbol_table.lookup_ref(ti).symbol_expr();
+                }
+                else
+                  default_values[{method_name, i}] = val;
               }
             }
           }
