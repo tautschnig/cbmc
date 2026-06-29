@@ -1755,6 +1755,15 @@ private:
   /// ValueError when a search finds nothing).
   void emit_conditional_exception(const exprt &cond, const char *exc_type);
 
+  /// Validate a dunder's return-type contract. If \p dunder_sym's
+  /// declared/inferred return type concretely violates the contract for
+  /// \p kind ("int" for __len__/__index__/__int__, "str" for __str__/__repr__),
+  /// emit an unconditional TypeError into pending_checks and return true.
+  /// A python_value (Any / unannotated-inferred-as-Any) return is never flagged
+  /// -- a violation cannot be proven, so flagging would be a false positive.
+  bool
+  dunder_return_type_violation(const symbolt *dunder_sym, const char *kind);
+
   /// Opt-in (--python-raising-ops-check): model an operation that CAN
   /// raise `exc_type` but whose success the frontend cannot prove as
   /// may-raise (a nondet-guarded __exception_active). No-op unless the

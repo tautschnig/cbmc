@@ -84,6 +84,32 @@ void python_convertert::emit_conditional_exception(
   pending_checks.push_back(code_ifthenelset{cond, std::move(body)});
 }
 
+// Validate a dunder's return-type contract (PLR §3.3). See the header.
+bool python_convertert::dunder_return_type_violation(
+  const symbolt *dunder_sym,
+  const char *kind)
+{
+  if(dunder_sym == nullptr || dunder_sym->type.id() != ID_code)
+    return false;
+  const typet &ret = to_code_type(dunder_sym->type).return_type();
+  // Any / unannotated-inferred-as-Any: cannot prove a violation.
+  if(is_python_value_type(ret))
+    return false;
+  const irep_idt id = ret.id();
+  bool ok = false;
+  if(std::string{kind} == "int")
+    ok = id == ID_signedbv || id == ID_unsignedbv || id == ID_c_bool ||
+         id == ID_bool;
+  else if(std::string{kind} == "str")
+    ok = is_python_string_type(ret);
+  if(!ok)
+  {
+    emit_conditional_exception(true_exprt{}, "TypeError");
+    return true;
+  }
+  return false;
+}
+
 // Opt-in (--python-raising-ops-check) modeling of an operation that
 // CAN raise `exc_type` at runtime but whose success the frontend
 // cannot prove (int()/float() of a non-constant string, os.* file
