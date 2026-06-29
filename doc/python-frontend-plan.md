@@ -692,6 +692,22 @@ candidate "tractable" false proofs; neither has a clean DEFAULT-mode fix:
   (int) instead of `value_type | type(default)`, a separate DEFAULT-mode
   `.get`-return-union precision fix. And making the (now-complete) flag default-on
   is the deferred (B) policy decision (the benign-false-positive tradeoff).
+- **Default-on MEASURED + DECLINED (2026-06-29).** Ran the full sweep with
+  `--python-check-annotations` forced on: **34 regressions / 2718 (~1.25%)**,
+  almost all the IRREDUCIBLE benign class (CPython does not enforce annotations
+  and the value is used per its ACTUAL type, so CPython never raises -- e.g.
+  `x: int = b.f()` where `f()->str` then `assert x=="Woof!"`; `div: int = 1/count`
+  true-division float). A boundary obligation cannot distinguish "misused (real
+  bug, sound to catch)" from "used per actual type (benign)" without use-site
+  flow analysis. Default-on therefore declined; opt-in remains the home.
+- **Opt-in precision improved (2026-06-29), FP 34 -> 27.** Of the 34, ~7 were
+  CHECK imprecisions (not benign): (1) a `python_value` union component (the
+  container ABCs Sequence/Iterable/Mapping model as Any) now satisfies the union,
+  so a list arg to `Sequence[str] | None` is accepted (a list IS a Sequence;
+  sequence_2/3/4); (2) the list-append + dict-value-store checks now gate on
+  EXPLICIT container annotation provenance (variable_annotations), so an inferred
+  empty `[]`/`{}` (e.g. `setdefault(1, [])`) is not flagged (dict_setdefault_list).
+  Both PLR-safe (suppress-only). The remaining 27 are the irreducible benign class.
 - **`a17` same-expression eval-order × union-retag** (`e.gm() + e.x`) is a niche
   union-tag sequencing subtlety (the int-typed version is already correct;
   swapped operands `e.x + e.gm()` already agree with CPython) — not a localized
