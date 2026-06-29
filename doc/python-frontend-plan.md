@@ -690,7 +690,14 @@ candidate "tractable" false proofs; neither has a clean DEFAULT-mode fix:
   false-alarm). **Remaining:** `005` is NOT an annotation case (no annotation) --
   it is `{}.get("k", "s")` returning the dict's inferred concrete value type
   (int) instead of `value_type | type(default)`, a separate DEFAULT-mode
-  `.get`-return-union precision fix. And making the (now-complete) flag default-on
+  `.get`-return-union precision fix. **DONE (2026-06-29):** `dict.get`/`dict.pop`
+  `(k, default)` now return `value_type | type(default)` -- a provably-absent key
+  (empty/constant-miss) returns the default in its OWN type, a present constant
+  key returns the value, and the symbolic case returns a python_value union. 005
+  resolved in DEFAULT mode (oracle 12 -> 11), 0 sweep regressions. `setdefault`
+  (which also INSERTS the default, so its mutation needs dict value-type widening)
+  shares the bug and is the remaining whole-group item. And making the
+  (now-complete) check-annotations flag default-on
   is the deferred (B) policy decision (the benign-false-positive tradeoff).
 - **Default-on MEASURED + DECLINED (2026-06-29).** Ran the full sweep with
   `--python-check-annotations` forced on: **34 regressions / 2718 (~1.25%)**,
