@@ -334,6 +334,17 @@ bool python_convertert::union_annotation_violated(
   int actual_cat = strict_category(effective);
   if(actual_cat == 0)
     return false; // unknown — don't flag
+  // A python_value (Any) component accepts ANY value, so the union is trivially
+  // satisfiable. This includes the container ABCs we model as Any
+  // (Sequence/Iterable/Mapping/Collection/Container/Reversible -> python_value):
+  // without this, `s: Sequence[str] | None` (an Any-like component + None)
+  // spuriously rejected a list argument even though a list IS a Sequence
+  // (sequence_2/3/4). `None` is NOT python_value, so `int | None` still strictly
+  // rejects a list. PLR-safe: this only SUPPRESSES a would-be mismatch, it can
+  // never introduce one (and so cannot turn a real bug into a false proof).
+  for(const typet &c : components)
+    if(is_python_value_type(c))
+      return false;
   // Match against each component. If any component shares the
   // strict category, the union is satisfied.
   for(const typet &c : components)

@@ -2722,6 +2722,8 @@ codet python_convertert::convert_assign(const jsont &stmt)
           if(
             python_check_annotations &&
             !is_python_value_type(vals_type.element_type()) && !rhs.is_nil() &&
+            obj.id() == ID_symbol &&
+            variable_annotations.count(to_symbol_expr(obj).get_identifier()) &&
             annotation_types_incompatible(vals_type.element_type(), rhs.type()))
             add_check(
               false_exprt{},

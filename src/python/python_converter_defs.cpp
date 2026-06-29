@@ -4666,7 +4666,18 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
               if(have_type)
               {
                 exprt recv_e = convert_expression(json_member(cf, "value"));
-                if(!recv_e.is_nil() && is_python_list_type(recv_e.type()))
+                // Provenance gate: only flag when the receiver list's element
+                // type comes from an EXPLICIT annotation (`xs: list[int]`, in
+                // variable_annotations), not from inference. An inferred empty
+                // `[]` (e.g. `a.setdefault(1, [])`) gets a DEFAULT element type
+                // that may not reflect the real contents, so checking it
+                // false-alarms (dict_setdefault_list). PLR-safe: only narrows
+                // when we fire.
+                if(
+                  !recv_e.is_nil() && recv_e.id() == ID_symbol &&
+                  variable_annotations.count(
+                    to_symbol_expr(recv_e).get_identifier()) &&
+                  is_python_list_type(recv_e.type()))
                 {
                   const typet elem_t =
                     to_array_type(
