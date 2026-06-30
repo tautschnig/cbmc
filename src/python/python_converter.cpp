@@ -5693,6 +5693,21 @@ exprt python_convertert::convert_expression(const jsont &expr)
       result = convert_expression(v);
     else
       result = side_effect_expr_nondett{python_int_type(), source_locationt{}};
+    // PLR §6.2.9: an expression-context yield (`x = yield X`, `f(yield X)`,
+    // `[yield X]`) must still count toward the eager `__gen_result` list. The
+    // bare-statement path (convert_expr_stmt) appends for `yield X;` statements
+    // and returns early, so control only reaches here for expression-context
+    // yields -- meaning every yield is counted exactly once. (yield-from is
+    // appended element-wise at the statement level only.) The value of the
+    // yield expression itself (the value sent in via .send()) is not tracked
+    // by the eager model -- plan §1 Phase 2.
+    if(node_type == "Yield")
+    {
+      code_blockt app =
+        build_gen_result_append(v.is_null() ? python_none_value() : result);
+      if(!app.statements().empty())
+        pending_checks.push_back(std::move(app));
+    }
   }
   else
   {

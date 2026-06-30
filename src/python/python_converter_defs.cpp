@@ -503,6 +503,30 @@ python_convertert::infer_return_type_from_body(
   return result;
 }
 
+// PLR §6.2.9: see header. Build `__gen_result_<current_function>.data[length]
+// = v; length += 1`, or an empty block if not in a generator / no result sym.
+code_blockt python_convertert::build_gen_result_append(const exprt &v)
+{
+  code_blockt block;
+  if(current_function.empty() || !generator_functions.count(current_function))
+    return block;
+  irep_idt gri{qualify_name("__gen_result_" + current_function)};
+  const symbolt *grs = symbol_table.lookup(gri);
+  if(grs == nullptr)
+    return block;
+  const auto &list_st = to_struct_type(grs->type);
+  const auto &data_type = to_array_type(list_st.components()[1].type());
+  member_exprt data{grs->symbol_expr(), "data", data_type};
+  member_exprt length{grs->symbol_expr(), "length", signedbv_typet{64}};
+  exprt typed_val = v;
+  if(typed_val.type() != data_type.element_type())
+    typed_val = coerce_element(typed_val, data_type.element_type());
+  block.add(code_frontend_assignt{index_exprt{data, length}, typed_val});
+  block.add(code_frontend_assignt{
+    length, plus_exprt{length, from_integer(1, signedbv_typet{64})}});
+  return block;
+}
+
 // PLR §6.2.9: create the eager-result list symbol `__gen_result_<name>`
 // for a generator function/method and emit its initialisation
 // (length = 0 + zeroed data) into \p body_block. Shared by free
@@ -4997,28 +5021,9 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
     const jsont &yield_val = json_member(value, "value");
     exprt val =
       yield_val.is_null() ? python_none_value() : convert_expression(yield_val);
-
-    std::string grn = "__gen_result_" + current_function;
-    std::string grq = qualify_name(grn);
-    irep_idt gri{grq};
-    const symbolt *grs = symbol_table.lookup(gri);
-    if(grs != nullptr)
-    {
-      const auto &list_st = to_struct_type(grs->type);
-      const auto &data_type = to_array_type(list_st.components()[1].type());
-      member_exprt data{grs->symbol_expr(), "data", data_type};
-      member_exprt length{grs->symbol_expr(), "length", signedbv_typet{64}};
-      code_blockt block;
-      // data[length] = val
-      exprt typed_val = val;
-      if(typed_val.type() != data_type.element_type())
-        typed_val = coerce_element(typed_val, data_type.element_type());
-      block.add(code_frontend_assignt{index_exprt{data, length}, typed_val});
-      // length += 1
-      block.add(code_frontend_assignt{
-        length, plus_exprt{length, from_integer(1, signedbv_typet{64})}});
+    code_blockt block = build_gen_result_append(val);
+    if(!block.statements().empty())
       return std::move(block);
-    }
   }
   // PLR §6.2.9: 'yield from G()' delegates: each value yielded
   // by G is yielded by the enclosing generator. Equivalent to:
