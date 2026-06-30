@@ -1939,6 +1939,11 @@ private:
   /// instance can be soundly over-approximated.
   bool class_mro_defines(const std::string &cls, const std::string &method);
 
+  /// True iff \p t is a concrete user-class instance type (python_class_*)
+  /// whose MRO defines no \p dunder. False for builtins / python_value (Any) /
+  /// non-class types. The shared gate for the dunder-protocol-missing checks.
+  bool concrete_class_lacks_dunder(const typet &t, const char *dunder);
+
   /// PLR §3.3: dispatch a container method whose name is shared across built-in
   /// containers (pop / remove / clear / copy / update) on an Any
   /// (`python_value`) receiver, by branching on the runtime `__tag`. Each

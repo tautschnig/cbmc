@@ -2227,6 +2227,18 @@ exprt python_convertert::convert_compare(const jsont &expr)
               goto done_cmp;
             }
           }
+          // PLR §3.3.1: `x in obj` needs __contains__, or __iter__ / __getitem__
+          // as a fallback (membership tries iteration). A concrete class whose
+          // MRO defines NONE of the three is not a container -> TypeError.
+          if(
+            concrete_class_lacks_dunder(container.type(), "__contains__") &&
+            concrete_class_lacks_dunder(container.type(), "__iter__") &&
+            concrete_class_lacks_dunder(container.type(), "__getitem__"))
+          {
+            emit_conditional_exception(true_exprt{}, "TypeError");
+            cmp = (op == "In") ? exprt{false_exprt{}} : exprt{true_exprt{}};
+            goto done_cmp;
+          }
         }
       }
       if(is_python_value_type(container.type()))

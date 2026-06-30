@@ -2489,6 +2489,15 @@ codet python_convertert::convert_assign(const jsont &stmt)
               }
             }
           }
+          // PLR §3.3.1: obj[k] = v requires __setitem__. A concrete class whose
+          // MRO defines none does not support item assignment -> TypeError.
+          if(
+            !dispatched_setitem &&
+            concrete_class_lacks_dunder(obj_probe.type(), "__setitem__"))
+          {
+            emit_conditional_exception(true_exprt{}, "TypeError");
+            dispatched_setitem = true;
+          }
         }
       }
       if(dispatched_setitem)

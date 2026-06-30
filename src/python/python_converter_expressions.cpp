@@ -2204,6 +2204,30 @@ bool python_convertert::class_mro_defines(
   return false;
 }
 
+// Whole-group helper for the dunder-protocol-missing checks (subscript /
+// iteration / call / with / setitem / delitem / contains / ...). Returns true
+// iff `t` is a CONCRETE user-class instance type (python_class_*) whose MRO
+// defines no `dunder`. Returns false for builtins, python_value (Any), and
+// non-class types, so a missing-protocol exception is emitted only when a
+// violation is provable -- no false positive on Any / symbolic / builtin
+// receivers, and an inherited dunder is respected via class_mro_defines.
+bool python_convertert::concrete_class_lacks_dunder(
+  const typet &t,
+  const char *dunder)
+{
+  typet bt = t;
+  if(bt.id() == ID_pointer)
+    bt = to_pointer_type(bt).base_type();
+  std::string tag;
+  if(bt.id() == ID_struct)
+    tag = id2string(to_struct_type(bt).get_tag());
+  else if(bt.id() == ID_struct_tag)
+    tag = id2string(to_struct_tag_type(bt).get_identifier());
+  if(tag.compare(0, 13, "python_class_") != 0)
+    return false;
+  return !class_mro_defines(tag.substr(13), dunder);
+}
+
 // §11b: dispatch __getattr__ when normal attribute lookup fails.
 exprt python_convertert::emit_getattr_fallback(
   const exprt &value,
