@@ -619,6 +619,19 @@ std::optional<exprt> python_convertert::try_builtin_call(
             if(dunder_return_type_violation(len_sym, "int"))
               return side_effect_expr_nondett{
                 python_int_type(), get_location(expr)};
+            // PLR §3.3.1: __len__() must return >= 0. A class whose __len__
+            // provably returns a negative integer constant raises ValueError
+            // (detected at class definition; constant-only, no FP).
+            {
+              const std::string bare =
+                tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
+              if(class_len_negative.count(bare) > 0)
+              {
+                emit_conditional_exception(true_exprt{}, "ValueError");
+                return side_effect_expr_nondett{
+                  python_int_type(), get_location(expr)};
+              }
+            }
             return side_effect_expr_function_callt{
               len_sym->symbol_expr(),
               {address_of_exprt{arg}},

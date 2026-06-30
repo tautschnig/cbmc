@@ -548,6 +548,11 @@ private:
   /// positional arg is left at the class-level default, not nondet-bound).
   std::map<std::string, std::vector<std::string>> dataclass_init_fields;
   std::map<std::string, std::set<std::string>> dataclass_defaulted_fields;
+  /// Classes whose __len__ PROVABLY returns a negative integer constant
+  /// (body is a single `return <neg const>`). `len()` on such an instance
+  /// raises ValueError ('__len__() should return >= 0'). Constant-only, so no
+  /// false positive on a symbolic/non-negative __len__.
+  std::set<std::string> class_len_negative;
   std::map<std::string, std::set<std::string>> class_all_bare;
   std::map<std::string, std::set<std::string>>
     class_ctor_assigned; /// Per-class set of class-level attributes that were
