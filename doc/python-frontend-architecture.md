@@ -1057,6 +1057,67 @@ soundness, imprecision, performance, intrinsic.
 
 ### A. Soundness (false proofs / latent unsoundness / deliberate tradeoffs)
 
+**CURRENT STATE (2026-06-30) — read this first; the dated notes below are a
+chronological changelog.** The differential oracle (external CPython-semantics
+corpus, default config) tracks **3 known false proofs, all requiring a dedicated
+FEATURE** (not point fixes), plus **4 intrinsic / out-of-subset residuals** and
+~206 false *alarms* (sound over-approximations / unsupported-feature precision —
+see inventory B). The standing **oracle 0-NEW gate** (run after every change)
+keeps new false proofs out.
+
+- *The 3 remaining false proofs (features):* `dec_not_callable` + `dec_wrong_arity`
+  — the frontend does not model GENERAL decorator application (`@d` → `f = d(f)`),
+  so a non-callable decorator and a wrapper-arity mismatch are not caught (needs
+  decorator-application modelling); `gen_send_before_start` — generators are
+  modelled as eager `__gen_result` lists with no generator-object identity /
+  priming state, so `gen.send()` semantics are unmodelled (needs a generator
+  state machine). Pinned `dec-not-callable-knownbug`, `dec-wrong-arity-knownbug`,
+  `gen-send-before-start-knownbug`.
+- *The 4 intrinsic / out-of-subset residuals* (marked `ORACLE-INTRINSIC`, NOT
+  default-subset bugs): the annotation-laundering family — `004` (arg boundary),
+  `007` (list-element via append), `ty-010` (return-annotation) — caught under
+  opt-in `--python-check-annotations`; and `d1` (int→float coercion at a call
+  boundary, documented OUT of the PyHard subset). See inventory D.
+- *Whole-groups COMPLETED this session* (each landed validation-gated: target
+  flips, full suite green, by-value sweep 2719 PASS / 0 regressions, oracle
+  0-NEW). All have CORE lock-in tests:
+  - **dunder-protocol-missing** (one `class_mro_defines` lever, 9 sites):
+    subscript read (`__getitem__`) / store (`__setitem__`) / delete
+    (`__delitem__`), iteration `for`/comprehension/unpack (`__iter__`, with the
+    `__getitem__` sequence fallback), membership (`__contains__`), call
+    (`__call__`), context-manager `with` (`__enter__`/`__exit__`), unary
+    (`__neg__`/…), binary operators (`__add__`/reflected `__radd__`/…), and
+    ordering (`__lt__`/…). A concrete user-class instance lacking the dunder
+    raises TypeError; Any/symbolic/builtin/inherited never flagged.
+  - **format-spec validation** (`format_code_violation` + `value_format_category`,
+    3 sites): `%`-format (`%d % "x"` → TypeError), `str.format` and f-string
+    (`{:d}` on str/float → ValueError, `{:s}` on int → ValueError). Constant
+    spec + concrete value only.
+  - **comparison/ordering**: ordering missing-dunder (above); mixed-category
+    element comparison (`[1,2] < [1,"a"]` via static lexicographic eval;
+    `sorted([1,"a"])`; concrete `list[int] < list[str]`) → TypeError.
+  - **hashability** (`is_unhashable_type`): an unhashable (list/dict/set) dict
+    key / set element at dict-literal / dict-comp / `d[k]=` / `set.add`/`discard`
+    → TypeError.
+  - **@dataclass construction** (`build_class_construction`): the synthesised
+    `__init__` binds constructor args to the annotated fields at all four
+    construction sites (assignment, expression, `return`, `with`) and clears the
+    spurious unassigned-field AttributeError — closed ~59 false ALARMS.
+  - **dunder-return contracts** (`dunder_return_type_violation`): `__len__`/`__str__`
+    return-type, plus a constant-negative `__len__` value → ValueError.
+  - **builtin-edge family** (constant-operand gated): `divmod(x,0)`,
+    `ord(multichar)`, `round(str)`, `sum([str])`, `",".join([int])`, `int(inf)`/
+    `int(nan)`, `str.encode(bad-codec)`, `for x in <scalar>`.
+  - **soundness corner-cases**: `set().pop()` (a masking-`assume` that cut the
+    empty path), `len()` negative-`__len__`, and `x + g()` left-operand
+    evaluation order (module-global snapshot before a side-effecting right).
+
+The dated narrative below records how this state was reached (oracle baseline
+journey: a 2026-06-25 audit; the 2026-06-28/29 reference-semantics arc; two
+2026-06-29 differential-audit rounds 6→22 discovery; then 22→3 via the
+whole-groups above). Where a dated note's running tally disagrees with this
+header, **this header is current**.
+
 The **common-case** default configuration has no known false proofs —
 the 2026-06-18/19 audit plus the cross-module global-dict (`R1`) and the
 call-signature fixes closed the ones that were found. **However, differential
@@ -1140,13 +1201,11 @@ and **surfaced five new, narrow ones** (each now pinned KNOWNBUG):
     method calls** (the main method path used raw `safe_typecast`). The method
     param-binding now routes through `coerce_call_argument`, so an `Any`-tagged
     `str` bound to an `int` method param is caught (`method-arg-tag-obligation`).
-  - **OPEN — missing TypeError for non-numeric operand shapes** (false negatives
   - **CLOSED (2026-06-26) — missing TypeError for non-numeric operand shapes**:
     a concrete **float operand to a bitwise/shift/invert** operator (`1.0 & 2`,
     `1.0 << 2`, `~1.0`) and **sequence × float** repetition (`"abc" * 2.5`,
     `[1] * 2.0`) now raise TypeError via the whole-group operand-type obligation
     (`float-bitwise-typeerror`, `sequence-mul-float-typeerror`).
-  - **OPEN — positional-only param passed by keyword** (`def f(x, /, y); f(x=1)`)
   - **CLOSED (2026-06-26) — positional-only param passed by keyword** (`def
     f(x, /, y); f(x=1)`) now raises TypeError (`positional-only-kwarg-typeerror`)
     — recorded per-function (`function_posonly_params`) and checked in the shared
@@ -1476,11 +1535,11 @@ guards against new false proofs.
 | Tuple-unpack arity | `a, b = (1,)` silently skipped the missing `_1` field instead of raising `ValueError` | **CLOSED 2026-06-29** (fixed-tuple arity mismatch is a definite ValueError, gated on no `*starred` target; `tuple-unpack-arity`; closes ty-015) | — |
 | Method mutable-default sharing | a method`s mutable default (`def add(self, items=[])`) was copied fresh per call, so the shared-state accumulation (and the threshold-retag exploit) was lost | **CLOSED 2026-06-29** (method mutable defaults frozen into a static-lifetime symbol with a once-only module-init; annotated defaults accumulate precisely and share across instances; `method-mutable-default-shared`; closes a10). UNannotated method defaults bind via a separate Any path and do not yet accumulate (pre-existing precision limitation, not a regression) | — |
 | dict `get`/`pop`/`setdefault` default type | the `default` was coerced to the dict`s value type (`{}.get("k","s")` returned int `0`, not `"s"`), so a later `+ 1` missed the str `TypeError` | **CLOSED 2026-06-29** (result type is `value_type \| type(default)`: a provably-absent key returns the default in its own type, a present constant key the value, the symbolic case a `python_value` union; `setdefault` also widens the empty-dict value type via inference; `dict-get-pop-default-type`, `dict-setdefault-default-type`; closes ty-005) | — |
-| binop eval-order **MIRROR** | `x + g()` where `g()` mutates a value read by the LEFT operand: cbmc reads `x` AFTER `g()` (hoisted) rather than before (PLR left-to-right), so a wrong value can false-prove. The FORWARD case `g() + x` is fixed | **OPEN** (pinned `binop-mirror-evalorder-knownbug`); needs left-operand-read materialisation, narrowly gated to avoid the recursive-unwind regression the broad version caused | [plan §0](python-frontend-plan.md#false-proofs) |
+| binop eval-order **MIRROR** | `x + g()` where `g()` mutates a value read by the LEFT operand: cbmc read `x` AFTER `g()` (lazy symbol ref) rather than before (PLR left-to-right), so a wrong value could false-prove. The FORWARD case `g() + x` was already fixed | **CLOSED 2026-06-30** (`binop-evalorder-left-snapshot`): a module-level GLOBAL left read is snapshotted before a side-effecting right call. Gated to module scope — a callee can rebind a global but not a caller local — which also avoids the recursive-unwind regression the broad version caused (`n * fact(n-1)`); closes `binop_mirror_evalorder` | — |
 | Variable-length-tuple slice → str method (ty-010) | `def f(t) -> str: return t[1:]` then `f(...).upper()`: the **`-> str` return annotation is trusted**, so `f(...)` is typed `str` and `.upper()` is accepted even though the body returns a tuple/list | **Annotation-laundering family (same as 004/007), flag-gated.** Caught under `--python-check-annotations` — the *return*-annotation-mismatch check fires on `return t[1:]` (a sequence vs declared `str`). DEFAULT trusts the annotation (declined for the same measured ~1.25% benign-FP reason as 004/007); pinned `vartuple-slice-strmethod-knownbug`. **NOT a variable-length-tuple-model gap** (a fixed-tuple slice is now modelled exactly — see "Fixed-tuple slicing"; a `tuple[int,...]` sequence model is a separate *precision* item, not required to close this) | [plan §7](python-frontend-plan.md#check-annotations) |
 | dict `del` through a call (c2) | `del p["x"]` inside `rm(p)` does not propagate the deletion to the caller`s dict, so a later `pt["x"]` misses the `KeyError` | **OPEN, deep**: dicts are by-reference for EXISTING-key value modifications but NOT for STRUCTURAL mutations — adding a key or deleting one does not cross the call boundary (keys/length arrays not shared); same representation limit as dict-value-byref | [dict-byref](python-frontend-dict-value-byref-plan.md) |
 | `del obj.attr` + `__getattr__` fallback (c4/laurel-006) | after `del self.x`, access falls to `__getattr__` returning a different type; the concretely-typed field could not hold it, so `del` havocked the slot to nondet (sound for a stale read, but it missed the cross-type `TypeError`) | **CLOSED 2026-06-29** (`getattr-after-del`): a field `del self.x`-ed in a method of a `__getattr__`-class is typed `python_value`, and `del` stores `__getattr__`'s result into the slot, so the cross-type use routes through the operand obligation and raises `TypeError`. The deletable-field scan is module-wide, so both `del self.x` (in a method) and a direct `del f.x` (external instance) are covered. Present-int read / del-then-reassign / non-deleted field / no-`__getattr__` class all correct. **Residual:** `del o.x` through an Any-boxed FUNCTION PARAMETER does not propagate (the del handler cannot resolve the param's class) -- the structural-mutation-through-a-call family (c2) | [plan §10](python-frontend-plan.md#descriptors) |
-| **Narrowing-invalidation cluster** (CLOSED 2026-06-28) | a value's runtime type changes via an effect cbmc does not model, then it is used at the stale type → CPython `TypeError`, cbmc verifies. Distinct roots (**not one fix**). **CLOSED:** `__setattr__`/`__getattribute__` (2026-06-25, over-approx to nondet `python_value`); **enum `.value` after a member retag** (2026-06-28: heterogeneous-enum value type is `python_value` + `.value` resolves on enum-typed variables AND fields, so the retagged value routes through the operand/tag obligations — `enum-value-after-mutation` is now CORE). **CLOSED 2026-06-28 (reference-semantics-for-instances):** context-manager `__enter__`/`__exit__` field mutation AND composition aliasing were the SAME *concrete-class-typed slot copies the instance* root, now fixed (instance fields are by-reference) (a `t: SomeClass` param/field is value-copied, so a mutation through it is invisible to the original; the Any-typed path preserves identity by-address). Also OPEN: inheritance+union virtual dispatch, same-expression **eval-order × union-retag** | partly **UNSOUND** (the reference-semantics false proofs remain), confined to advanced/dynamic features; the reference-semantics cases AND the eval-order case (`union-use-after-mutation-typeerror`, 2026-06-28: a side-effecting binop left operand is now sequenced before a right read so a same-expression union retag is observed) are now CORE. **Fully CLOSED (2026-06-28).** The only residual is the *mirror* eval-order case (`x + g()` where the side-effecting operand is on the RIGHT and mutates a value read on the LEFT) — pinned `binop-mirror-evalorder-knownbug` (the forward-only sequencing fix does not cover it; the reverse needs left-operand-read materialisation, narrowly gated to avoid the recursion-unwind regression the broad version caused) | [plan §0](python-frontend-plan.md#false-proofs) |
+| **Narrowing-invalidation cluster** (CLOSED 2026-06-28) | a value's runtime type changes via an effect cbmc does not model, then it is used at the stale type → CPython `TypeError`, cbmc verifies. Distinct roots (**not one fix**). **CLOSED:** `__setattr__`/`__getattribute__` (2026-06-25, over-approx to nondet `python_value`); **enum `.value` after a member retag** (2026-06-28: heterogeneous-enum value type is `python_value` + `.value` resolves on enum-typed variables AND fields, so the retagged value routes through the operand/tag obligations — `enum-value-after-mutation` is now CORE). **CLOSED 2026-06-28 (reference-semantics-for-instances):** context-manager `__enter__`/`__exit__` field mutation AND composition aliasing were the SAME *concrete-class-typed slot copies the instance* root, now fixed (instance fields are by-reference) (a `t: SomeClass` param/field is value-copied, so a mutation through it is invisible to the original; the Any-typed path preserves identity by-address). Also OPEN: inheritance+union virtual dispatch, same-expression **eval-order × union-retag** | partly **UNSOUND** (the reference-semantics false proofs remain), confined to advanced/dynamic features; the reference-semantics cases AND the eval-order case (`union-use-after-mutation-typeerror`, 2026-06-28: a side-effecting binop left operand is now sequenced before a right read so a same-expression union retag is observed) are now CORE. **Fully CLOSED (2026-06-28).** The *mirror* eval-order case (`x + g()` where the side-effecting operand is on the RIGHT and mutates a value read on the LEFT) is now also **CLOSED 2026-06-30** (`binop-evalorder-left-snapshot`; module-scope left snapshot — see the "binop eval-order MIRROR" row) | [plan §0](python-frontend-plan.md#false-proofs) |
 | Any/union used at a wrong type | a tagged-union/`Any` value used as a concrete type with a mismatched runtime tag now raises `TypeError` via **tag obligations** at the operator, subscript, and (provenance-gated) call-argument boundaries — was a silent wrong-field read. The remaining hole is the call-argument obligation only firing for **explicitly-annotated** scalar params (inferred/Any params excluded to avoid false alarms) | sound (closed for the three covered sites); see the tag-obligation table in [Type-coercion at boundaries](#any--union-tag-obligations-typeerror-on-a-wrong-runtime-tag) | [plan §0](python-frontend-plan.md#false-proofs) |
 | Definite integer overflow (default 64-bit) | the default 64-bit model silently **wrapped** on a statically-provable >64-bit result (`10**19 < 0`, `1<<70 == 0`) — a false proof. Now reports `python-model-bound` (assert+assume cut) on a DEFINITE overflow; a symbolic/computed overflow remains the documented 64-bit bound (use `--python-unbounded-ints`, now sound incl. shifts/bitwise) | sound (definite cases reported; symbolic = documented bound) | [plan §0](python-frontend-plan.md#false-proofs) |
 | Unknown annotation fallback | `convert_type_annotation` lowered an annotation it could not model (bare `range`/`tuple`, unmodeled builtin, unknown forward-ref) to `python_int_type()`, modeling an unknown value with concrete int semantics — a latent unsoundness that could mask a real bug | **CLOSED 2026-06-26**: unknown ⇒ `python_value` (Any/top), the sound over-approximation (sweep gained `ethereum_bug-fail`). Lock-in `check-annotations-unknown-is-any`. **Exception still open:** a dict with a non-"safe" value type (`dict[str, Any]`) still falls back to int — an opt-in `--python-check-annotations` false positive (not a false proof), blocked by a separate Any-valued-container capacity-model-bound issue; pinned `check-annotations-any-dict-knownbug` | [plan §9](python-frontend-plan.md#precision) |
@@ -1527,6 +1586,8 @@ guards against new false proofs.
 | Containers | bounded list/dict/set capacity | — |
 | Identity | `is` + small-int interning approximated; `id()` deterministic | — (warned) |
 | Async | `async`/`await`/async generators not modelled | [plan §13](python-frontend-plan.md#async) |
+| Annotation-laundering (default mode) | an Unknown/unannotated value crossing a TRUSTED annotation boundary raises only at runtime — argument boundary (`004`), list-element via `append` (`007`), return annotation (`ty-010`). Default mode trusts static annotations by design (enforcing them would false-positive on harmless wrong-but-unused annotations); caught under opt-in `--python-check-annotations` (CORE `annotation-call-arg-wrong-type`, `check-annotations-list-append`, `annotation-return-wrong-type`). Marked `ORACLE-INTRINSIC` in the differential corpus | [plan §7](python-frontend-plan.md#check-annotations) |
+| Numeric-tower at a call boundary (`d1`) | an `int` passed where `float` is declared then a float-only method (`x.hex()`): the int→float coercion at a call boundary is documented OUT of the PyHard subset. (Within the subset, a float-only method on a CONCRETE int receiver is caught — `method-on-wrong-type`.) Marked `ORACLE-INTRINSIC` | — |
 
 ### E. NO CURRENT PLAN (explicitly flagged)
 
@@ -1555,7 +1616,7 @@ guards against new false proofs.
 | New language flag | `python_language.{h,cpp}` (declare + parse) + `set_python_*` setter on `python_convertert` | The flag needs to be threaded from CLI to the converter |
 | New checker property | `add_check(cond, kind, message, loc)` from any converter file | Properties register with the frontend's `pending_checks` and surface in CBMC output |
 | New boundary call site (call / assign / return) | Use `coerce_call_argument`, `coerce_assign_rhs`, or `coerce_return_value` instead of `safe_typecast` | The boundary helpers apply PLR §3.2 None-marker adaptations; raw `safe_typecast` would emit NULL-deref for typed-None — see the "Type-coercion at boundaries" section above |
-| New class-constructor call site | Call `build_class_init_call(class_name, self_lvalue, call_ast, loc)` and wrap the result in `code_expressiont` | Centralises MRO walk + arg conversion + kwarg matching + default padding + boundary coercion in one place |
+| New class-constructor call site | Call `build_class_construction(class_name, self_lvalue, call_ast, loc)` and add the returned statements | The unified chokepoint: emits the `__init__` call (MRO walk + arg conversion + kwarg matching + default padding + boundary coercion via `build_class_init_call`), OR the synthesised `@dataclass` field binding when there is no explicit `__init__`. Used by all four construction sites (assignment, expression, return, with) |
 | New PLR adaptation for typed slots (e.g. `Optional[list]` marker) | `coerce_to_typed_slot` in `python_converter.cpp` | All four boundary helpers (call/assign/return/element) delegate here, so the rule applies everywhere uniformly |
 
 ## Tips for new contributors
