@@ -337,6 +337,38 @@ codet python_convertert::convert_with(const jsont &stmt)
         continue;
       }
 
+      // PLR §8.5: the context-manager protocol requires BOTH __enter__ and
+      // __exit__. A class that (across its MRO) lacks either does not support
+      // the protocol -> TypeError. Same dunder-protocol-missing whole-group as
+      // subscript / iteration / call.
+      if(
+        is_node_type(ctx_expr_pre, "Call") &&
+        is_node_type(json_member(ctx_expr_pre, "func"), "Name"))
+      {
+        std::string cn =
+          json_string(json_member(json_member(ctx_expr_pre, "func"), "id"));
+        if(
+          class_types.count(cn) && (!class_mro_defines(cn, "__enter__") ||
+                                    !class_mro_defines(cn, "__exit__")))
+        {
+          const symbolt *exc_sym =
+            symbol_table.lookup("python::__exception_active");
+          const symbolt *exc_type_sym =
+            symbol_table.lookup("python::__exception_type");
+          if(exc_sym != nullptr)
+          {
+            block.add(
+              code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+            if(exc_type_sym != nullptr)
+              block.add(code_frontend_assignt{
+                exc_type_sym->symbol_expr(),
+                from_integer(
+                  exception_type_hash("TypeError"), exc_type_sym->type)});
+          }
+          continue;
+        }
+      }
+
       if(!optional_vars.is_null() && is_node_type(optional_vars, "Name"))
       {
         std::string var_name = json_string(json_member(optional_vars, "id"));
