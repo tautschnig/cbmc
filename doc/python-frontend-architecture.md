@@ -381,8 +381,20 @@ for dicts (a `List` default yields a list value type) — populating
 construction site then builds the container with the inferred element
 types instead of the `int` / `dict[str,int]` defaults, so e.g.
 `a = {}; a.setdefault(1, []).append(2.0)` types `a` as `dict[int, list]`.
-Inference fires only when usage is unambiguous; otherwise the default
-type stands (sound).
+
+For **lists**, the inference is a JOIN over all `append`/`extend` sites with
+**Any-dominance** (2026-06-30, soundness): if an appended element's type is
+**uninferable** (e.g. a call result the prescan can't resolve) OR two appends
+have **different** concrete types (a heterogeneous list), the element type
+becomes `python_value` (Any), which *dominates* any prior concrete inference.
+This is sound: an unknown/heterogeneous element really is Any — defaulting it to a
+concrete `int` would PUN a non-int store (cast to int) and let a later
+`isinstance(xs[0], int)` fold to true (a false proof; `list-element-infer-any`,
+CORE). The common, well-typed case (literal appends, annotated-return calls)
+stays concrete (no perf cost — measured 0 sweep regressions). NB: an EXPLICIT
+`list[int]` annotation still types the element `int` and so still puns a
+mismatched store — that is the intrinsic *annotation-laundering* residual
+(`slot-pun-list-element-knownbug`), not this inference path.
 
 ## Loop semantics
 
@@ -1012,24 +1024,27 @@ punned into a concrete field (a false proof) vs. kept tag-bearing (sound):
 | Call parameter (concrete scalar) | provenance-gated tag obligation | sound (precision-bounded: a function that *ignores* a mismatched param is not flagged — Python checks no annotations at the call) |
 | Return slot | **widens to `python_value`** when a path genuinely returns one | sound + precise (#2) |
 | Dict value (unannotated `{}`) | values are `python_value` → tag preserved → use-site obligation fires | **sound** |
-| **List element** (`list[int].append(u)`) | the concrete int element type **puns** the `python_value` (coerced via `coerce_element`/unwrap, losing the tag) | **OPEN false proof** — needs slot-widening |
-| **Attribute field** (`self.x: int; o.x = u`) | the concrete field type **puns** the `python_value` | **OPEN false proof** — needs slot-widening (the a2/a3 narrowing cluster) |
+| List element, **inferred** (`xs = []; xs.append(u)`) | empty-list element-type inference defaults uninferable/heterogeneous elements to `python_value` (Any-dominance) → tag preserved | **sound** (2026-06-30; `list-element-infer-any` CORE) |
+| List element, **annotated** (`xs: list[int]; xs.append(u)`) | the explicit `int` element type **puns** the `python_value`/mismatched value (coerced via `coerce_element`/unwrap, losing the tag) | **annotation-laundering** (`ORACLE-INTRINSIC`; `slot-pun-list-element-knownbug`) — would need slot-widening |
+| **Attribute field**, annotated (`self.x: int; o.x = u`) | the concrete field type **puns** the `python_value` | **annotation-laundering** (`ORACLE-INTRINSIC`; `slot-pun-attr-field-knownbug`) — would need slot-widening. (Untyped field is `python_value` → sound; the tagged-union field `x: int|str` is caught by a tag obligation, `tagged-union-narrowing-unsound` CORE) |
 
 **The architectural invariant the audit reveals:** a slot typed `python_value`
 (Any) *preserves* the runtime tag, so a later misuse is caught by the
 operator/subscript/call tag obligations — it is sound. A slot with a *concrete*
 type (`list[int]`, `field: int`) drops the tag on store, so a wrong-tagged value
-is read back at the concrete type and a misuse does not fault. The principled fix
-for the two OPEN rows is therefore **slot-widening**: type the container element
-/ struct field as `python_value` when a `python_value` is stored into it (the
-same move the return slot now makes). This is **invasive + perf-costly** (it
-changes container/struct element typing, with the precision/perf cost that drove
-the concrete-typing design and the not-viable `--python-ref-mutables` default),
-so it is deferred; the two cases are pinned KNOWNBUG
-(`slot-pun-list-element-knownbug`, `slot-pun-attr-field-knownbug` — each requires
-a concrete annotation: without `list[int]` / `x: int` the slot stays
-`python_value` and the tag is preserved, so default-mode code with no concrete
-container/field annotation is sound). This punning is the same mechanism as the
+is read back at the concrete type and a misuse does not fault. **The
+`python_value`-preserving default is now applied wherever the slot type is
+INFERRED rather than annotated:** unannotated dict values, and (2026-06-30)
+empty-list elements that are uninferable/heterogeneous — both stay `python_value`,
+so untyped containers are sound. The residual is the **annotated** rows
+(`list[int]`, `field: int`): here the explicit annotation forces a concrete slot,
+and the principled fix would be **slot-widening** (type the element / field
+`python_value` when a `python_value` is stored, the same move the return slot
+makes). That is **invasive + perf-costly** (it changes container/struct element
+typing, with the precision/perf cost that drove the concrete-typing design and
+the not-viable `--python-ref-mutables` default), so it is deferred; the annotated
+cases are pinned KNOWNBUG (`slot-pun-list-element-knownbug`,
+`slot-pun-attr-field-knownbug`). They are the same mechanism as the
 `ORACLE-INTRINSIC` annotation-laundering residuals in the CURRENT STATE header
 (`007` list-element, `ty-010` field/return) — a real false proof, classified
 intrinsic because it depends on a (wrong) static annotation Python never enforces.
@@ -1037,9 +1052,9 @@ Two *adjacent* cases that the earlier draft lumped here are now **CLOSED**:
 composition/object-identity aliasing (`shared-object-aliasing`, CORE — fixed by
 reference semantics, a distinct root) and the **tagged-union** field case
 (`x: int | str`; `tagged-union-narrowing-unsound`, CORE — fixed by a tag
-obligation on union-field extraction). Only the **concrete-typed** slot still
-puns. Tag obligations are NOT a default-mode fix
-here: storing a mismatched value is legal Python (the error arises on a later
+obligation on union-field extraction). Tag obligations are NOT a default-mode fix
+for the annotated rows:
+storing a mismatched value is legal Python (the error arises on a later
 *use*), so a store-site assert false-alarms on values that are never misused
 (the `greet(42)` lesson).
 

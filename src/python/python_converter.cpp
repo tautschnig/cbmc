@@ -1956,7 +1956,12 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
             {
               std::string nm = json_string(json_member(obj_node, "id"));
               irep_idt sid{qualify_name(nm)};
-              if(pending.count(sid) > 0)
+              // Track a list that started as an empty literal (`pending`) or
+              // that we have already begun inferring, so a LATER append can
+              // widen the element type (Any dominates) -- not just the first.
+              if(
+                pending.count(sid) > 0 ||
+                empty_list_inferred_types.count(sid) > 0)
               {
                 const jsont &args = json_member(val, "args");
                 if(args.is_array() && !as_array(args).empty())
@@ -1983,10 +1988,40 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
                         t = python_string_type();
                     }
                   }
-                  if(!t.id().empty() && t.id() != ID_empty)
+                  const bool inferable = !t.id().empty() && t.id() != ID_empty;
+                  auto cur = empty_list_inferred_types.find(sid);
+                  const bool already_pv =
+                    cur != empty_list_inferred_types.end() &&
+                    is_python_value_type(cur->second);
+                  if(!inferable)
                   {
+                    // The appended element's type is uninferable (e.g. a call
+                    // result the prescan can't resolve). An unknown element is
+                    // Any, NOT int -- a concrete int default PUNS a non-int
+                    // store (cast to int), a false proof. Model the element as
+                    // python_value (Any) so the runtime tag is preserved and a
+                    // later misuse faults. Any DOMINATES: this overrides a
+                    // prior concrete inference (a mixed `[1, src()]` list must
+                    // not pun `src()`).
+                    empty_list_inferred_types[sid] = python_value_type();
+                    pending.erase(sid);
+                  }
+                  else if(already_pv)
+                  {
+                    // Already Any — a later concrete append does not narrow it.
+                  }
+                  else if(cur == empty_list_inferred_types.end())
+                  {
+                    // First concrete inference wins (for the homogeneous case).
                     empty_list_inferred_types[sid] = t;
                     pending.erase(sid);
+                  }
+                  else if(cur->second != t)
+                  {
+                    // A second, DIFFERENT concrete element type: the list is
+                    // heterogeneous -> python_value (Any) so neither concrete
+                    // type puns the other.
+                    empty_list_inferred_types[sid] = python_value_type();
                   }
                 }
               }
