@@ -992,6 +992,10 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
     exprt v = convert_expression(val_expr_json);
     subst(k);
     subst(v);
+    // PLR §3.2: a dict-comprehension key must be hashable; a list/dict/set key
+    // raises TypeError ('unhashable type').
+    if(!k.is_nil() && is_unhashable_type(k.type()))
+      emit_conditional_exception(true_exprt{}, "TypeError");
     // PLR §6.2.7: when a dict-comp key/value is a function call
     // whose only non-constant argument was the iteration variable,
     // the post-substitution expression is a side-effect (e.g.
