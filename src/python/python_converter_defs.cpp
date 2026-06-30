@@ -1965,7 +1965,57 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         const jsont &dec = **rit;
         exprt dec_expr = convert_expression(dec);
         if(dec_expr.is_nil() || dec_expr.type().id() != ID_code)
+        {
+          // PLR §8.7: `@dec def f` applies `f = dec(f)` at def-time, so the
+          // decorator value MUST be callable. A provably non-callable concrete
+          // value (int/float/str/list/...) raises TypeError here. Gated to a
+          // PROVABLE violation: a nil decorator (unresolved import / forward
+          // reference) and a python_value (Any) decorator cannot be proven
+          // non-callable, so they are NOT flagged (no false positive). A
+          // callable instance (a class with __call__) is ID_code-typed via its
+          // dispatch and falls through. The exception is emitted DIRECTLY into
+          // dec_block (which convert_function_def returns) -- not via
+          // pending_checks, which are discarded at the def site.
+          // Only a bare `@name` decorator is checked here (a Call/Attribute
+          // factory or library decorator cannot be proven non-callable -> no
+          // false positive).
+          if(
+            is_node_type(dec, "Name") && !dec_expr.is_nil() &&
+            !is_python_value_type(dec_expr.type()))
+          {
+            // Callable iff a user-class instance whose MRO defines __call__;
+            // any other concrete value, or a user-class lacking __call__, is
+            // non-callable.
+            std::string dtag;
+            if(dec_expr.type().id() == ID_struct)
+              dtag = id2string(to_struct_type(dec_expr.type()).get_tag());
+            else if(dec_expr.type().id() == ID_struct_tag)
+              dtag =
+                id2string(to_struct_tag_type(dec_expr.type()).get_identifier());
+            const bool is_user_class =
+              dtag.compare(0, 13, "python_class_") == 0;
+            const bool noncallable =
+              !is_user_class ||
+              concrete_class_lacks_dunder(dec_expr.type(), "__call__");
+            if(noncallable)
+            {
+              const symbolt *ea =
+                symbol_table.lookup("python::__exception_active");
+              const symbolt *et =
+                symbol_table.lookup("python::__exception_type");
+              if(ea != nullptr)
+              {
+                dec_block.add(
+                  code_frontend_assignt{ea->symbol_expr(), true_exprt{}});
+                if(et != nullptr)
+                  dec_block.add(code_frontend_assignt{
+                    et->symbol_expr(),
+                    from_integer(exception_type_hash("TypeError"), et->type)});
+              }
+            }
+          }
           continue;
+        }
         // The decorator is a function. Call it with the current
         // function as argument. The result becomes the new binding.
         // We model this by recording the decorator's inner function
@@ -2051,7 +2101,16 @@ codet python_convertert::convert_function_def(const jsont &stmt)
                 {
                   std::string inner_name =
                     json_string(json_member(inner, "name"));
-                  irep_idt cand{"python::" + inner_name};
+                  // PLR §8.7: the wrapper is a nested function of the
+                  // decorator, so its symbol is QUALIFIED by the decorator's
+                  // name (python::<dec>::<inner>). Look there first; fall back
+                  // to the bare name for top-level / older shapes. Without the
+                  // qualifier the lookup missed, the alias was never registered,
+                  // and the call bypassed the wrapper (so its arity was never
+                  // enforced -- the dec_wrong_arity false proof).
+                  irep_idt cand{"python::" + dec_short + "::" + inner_name};
+                  if(symbol_table.lookup(cand) == nullptr)
+                    cand = irep_idt{"python::" + inner_name};
                   if(symbol_table.lookup(cand) != nullptr)
                   {
                     wrapper_id = cand;
@@ -2092,8 +2151,14 @@ codet python_convertert::convert_function_def(const jsont &stmt)
             std::string param_base =
               id2string(dec_type.parameters()[0].get_base_name());
             // Bind fn → original f in all scopes the wrapper might
-            // look it up from.
-            function_aliases["python::" + param_base] = symbol_id;
+            // look it up from. Guard the global bare-name binding when the
+            // decorator's parameter shares the decorated function's name
+            // (`def dec(f): ... @dec def f`): writing `python::f -> f` there
+            // would clobber the decorated-function -> wrapper alias above and
+            // mask a wrong-arity call. The wrapper-scoped and param-qualified
+            // bindings below still resolve `fn` inside the wrapper body.
+            if(irep_idt{"python::" + param_base} != symbol_id)
+              function_aliases["python::" + param_base] = symbol_id;
             function_aliases[id2string(wrapper_id) + "::" + param_base] =
               symbol_id;
             function_aliases[id2string(

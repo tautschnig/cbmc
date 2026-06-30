@@ -50,6 +50,90 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
       // have their definition-time values (PLR §8.7)
       std::string fname = json_string(json_member(stmt, "name"));
       main_module_defs.insert(fname); // Root B: in-scope main def
+
+      // PLR §8.7: a module-level `@dec def f` applies `f = dec(f)` at def-time,
+      // so the decorator value must be callable. A provably non-callable
+      // concrete value (int/float/str/list/...) raises TypeError at the def
+      // site. The def statement otherwise emits nothing into the module block
+      // (defs are registered in an earlier pass), so the check lives here.
+      // Gated to a PROVABLE violation: a nil (unresolved) or python_value (Any)
+      // decorator is never flagged; functions/classes/lambdas are ID_code.
+      {
+        const jsont &decos = json_member(stmt, "decorator_list");
+        if(decos.is_array())
+          for(const auto &dec : as_array(decos))
+          {
+            if(is_node_type(dec, "Name"))
+            {
+              const std::string did = json_string(json_member(dec, "id"));
+              if(
+                did == "overload" || did == "staticmethod" ||
+                did == "classmethod" || did == "property")
+                continue;
+            }
+            if(is_node_type(dec, "Call"))
+            {
+              const jsont &df = json_member(dec, "func");
+              if(
+                is_node_type(df, "Name") &&
+                json_string(json_member(df, "id")) == "c_intrinsic")
+                continue;
+            }
+            // Only a bare `@name` decorator is checked: a Call (`@factory(...)`)
+            // or Attribute (`@mod.deco`, e.g. @icontract.require) form is a
+            // decorator factory / library decorator whose callability cannot be
+            // proven here -- skip to avoid false positives.
+            if(!is_node_type(dec, "Name"))
+              continue;
+            exprt de = convert_expression(dec);
+            if(
+              !de.is_nil() && de.type().id() != ID_code &&
+              !is_python_value_type(de.type()))
+            {
+              // Callable iff it is a user-class instance whose MRO defines
+              // __call__; any other concrete value (int/str/list/...) or a
+              // user-class lacking __call__ is non-callable.
+              std::string dtag;
+              if(de.type().id() == ID_struct)
+                dtag = id2string(to_struct_type(de.type()).get_tag());
+              else if(de.type().id() == ID_struct_tag)
+                dtag =
+                  id2string(to_struct_tag_type(de.type()).get_identifier());
+              const bool is_user_class =
+                dtag.compare(0, 13, "python_class_") == 0;
+              const bool noncallable =
+                !is_user_class ||
+                concrete_class_lacks_dunder(de.type(), "__call__");
+              if(noncallable)
+              {
+                const symbolt *ea =
+                  symbol_table.lookup("python::__exception_active");
+                const symbolt *et =
+                  symbol_table.lookup("python::__exception_type");
+                if(ea != nullptr)
+                {
+                  block.add(
+                    code_frontend_assignt{ea->symbol_expr(), true_exprt{}});
+                  if(et != nullptr)
+                    block.add(code_frontend_assignt{
+                      et->symbol_expr(),
+                      from_integer(
+                        exception_type_hash("TypeError"), et->type)});
+                  // The FunctionDef statement is otherwise skipped for the
+                  // per-statement uncaught-exception assert below, so emit one
+                  // here so the def-time TypeError is actually verified.
+                  source_locationt eloc = get_location(stmt);
+                  eloc.set_property_class("exception");
+                  eloc.set_comment("uncaught exception");
+                  code_assertt exc_check{not_exprt{ea->symbol_expr()}};
+                  exc_check.add_source_location() = eloc;
+                  block.add(std::move(exc_check));
+                }
+                break;
+              }
+            }
+          }
+      }
       const jsont &func_args = json_member(stmt, "args");
       const jsont &defaults = json_member(func_args, "defaults");
       const jsont &params_json = json_member(func_args, "args");
