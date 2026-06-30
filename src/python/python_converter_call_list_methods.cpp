@@ -120,6 +120,104 @@ std::optional<exprt> python_convertert::try_list_method(
   member_exprt length{obj, "length", signedbv_typet{64}};
   member_exprt data{obj, "data", data_type};
 
+  // PLR §6.2.9 / PEP 342: generator.send(value). A generator object starts
+  // suspended *before* its first line; the first interaction must prime it
+  // (next() / send(None)). send(non-None) on a just-started generator raises
+  // TypeError ("can't send non-None value to a just-started generator").
+  //
+  // The eager list-with-cursor model already encodes priming state in the
+  // cursor: allocate_generator_cursor inits it to 0 at `it = g()`, and next()
+  // does cursor++ before returning data[cursor-1]. So `cursor == 0` *is* the
+  // not-yet-started state -- no separate flag is needed (single source of
+  // truth for generator progress). We resolve the receiver's cursor (a Name
+  // bound to a `gen()` call); an opaque/aliased generator with no resolvable
+  // cursor is not flagged (sound, no false positive). Faithful value-passing
+  // into the pending `yield` needs real resumption and is deferred (plan §1
+  // Phase 2); send() here resumes like next() and returns the next element.
+  if(method_name == "send")
+  {
+    const jsont &recv = json_member(json_member(expr, "func"), "value");
+    irep_idt cursor_id;
+    if(is_node_type(recv, "Name"))
+    {
+      irep_idt sid{qualify_name(json_string(json_member(recv, "id")))};
+      auto cit = generator_cursors.find(sid);
+      if(cit != generator_cursors.end())
+        cursor_id = cit->second;
+    }
+    if(
+      !cursor_id.empty() && symbol_table.lookup(cursor_id) != nullptr &&
+      args.is_array() && !as_array(args).empty())
+    {
+      symbol_exprt cursor = symbol_table.lookup_ref(cursor_id).symbol_expr();
+      const jsont &arg0 = *as_array(args).begin();
+      exprt arg_expr = convert_expression(arg0);
+
+      // Is the sent value provably None? A None send always primes the
+      // generator (valid) and is never flagged.
+      bool provably_none = false;
+      if(is_node_type(arg0, "Constant") && json_member(arg0, "value").is_null())
+        provably_none = true;
+      else if(
+        is_node_type(arg0, "Name") &&
+        json_string(json_member(arg0, "id")) == "None")
+        provably_none = true;
+      else if(is_python_none_constant(arg_expr))
+        provably_none = true;
+
+      if(!provably_none)
+      {
+        // Runtime "argument is not None": a concrete-typed value is never
+        // None; a python_value may be None at runtime, so guard on its tag.
+        exprt arg_not_none =
+          is_python_value_type(arg_expr.type())
+            ? static_cast<exprt>(
+                not_exprt{python_value_is(arg_expr, python_type_tagt::NONE)})
+            : static_cast<exprt>(true_exprt{});
+        exprt not_started =
+          equal_exprt{cursor, from_integer(0, signedbv_typet{64})};
+        emit_conditional_exception(
+          and_exprt{not_started, arg_not_none}, "TypeError");
+      }
+
+      // Resume: advance the cursor like next() and return the next yielded
+      // value. StopIteration once the cursor reaches the eager-yield length.
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr && exc_type_sym != nullptr)
+      {
+        exprt cond = binary_relation_exprt{cursor, ID_ge, length};
+        code_blockt then_block;
+        then_block.add(
+          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+        long h = exception_type_hash("StopIteration");
+        then_block.add(code_frontend_assignt{
+          exc_type_sym->symbol_expr(), from_integer(h, python_int_type())});
+        code_blockt else_block;
+        else_block.add(code_frontend_assignt{
+          cursor, plus_exprt{cursor, from_integer(1, signedbv_typet{64})}});
+        code_ifthenelset advance{
+          cond, std::move(then_block), std::move(else_block)};
+        advance.add_source_location() = get_location(expr);
+        pending_checks.push_back(std::move(advance));
+      }
+      else
+      {
+        pending_checks.push_back(code_frontend_assignt{
+          cursor, plus_exprt{cursor, from_integer(1, signedbv_typet{64})}});
+      }
+      exprt prev = minus_exprt{cursor, from_integer(1, signedbv_typet{64})};
+      if_exprt safe_idx{
+        binary_relation_exprt{prev, ID_lt, from_integer(0, signedbv_typet{64})},
+        from_integer(0, signedbv_typet{64}),
+        prev};
+      return index_exprt{data, safe_idx};
+    }
+    // Unresolvable / opaque generator receiver: no model, no flag.
+  }
+
   if(method_name == "reverse")
   {
     // Reverse in place: swap data[i] with data[len-1-i]

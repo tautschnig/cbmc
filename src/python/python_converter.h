@@ -1120,6 +1120,15 @@ private:
     const jsont &value,
     const source_locationt &loc);
 
+  /// PLR §6.2.9: build the eager append of one yielded value to the current
+  /// generator's `__gen_result_<fn>` list (`data[length] = v; length += 1`).
+  /// Used by BOTH the bare `yield X` statement path (convert_expr_stmt) and
+  /// every expression-context yield (`x = yield X`, `f(yield X)`, ...) via
+  /// convert_expression, so every yield is counted exactly once. Returns an
+  /// empty block when the current function is not a generator or its result
+  /// symbol is absent.
+  code_blockt build_gen_result_append(const exprt &yielded_value);
+
   /// Best-effort static category of an expression node directly
   /// from the Python AST (i.e. before any safe_typecast erases
   /// its original type). Returns one of {"str","int","float",
