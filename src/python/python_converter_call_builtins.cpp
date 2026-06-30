@@ -642,6 +642,27 @@ std::optional<exprt> python_convertert::try_builtin_call(
         if(is_python_value_type(arg.type()))
           return unwrap_value(arg, python_int_type());
 
+        // PLR §6.10: int(x) of a floating-point infinity raises OverflowError
+        // ('cannot convert float infinity to integer'); a NaN raises
+        // ValueError ('cannot convert float NaN to integer'). Detect a
+        // constant inf/nan operand (a symbolic float is not flagged).
+        if(arg.type().id() == ID_floatbv)
+        {
+          auto dv = try_eval_double(arg);
+          if(dv.has_value() && std::isinf(dv.value()))
+          {
+            emit_conditional_exception(true_exprt{}, "OverflowError");
+            return side_effect_expr_nondett{
+              python_int_type(), get_location(expr)};
+          }
+          if(dv.has_value() && std::isnan(dv.value()))
+          {
+            emit_conditional_exception(true_exprt{}, "ValueError");
+            return side_effect_expr_nondett{
+              python_int_type(), get_location(expr)};
+          }
+        }
+
         // PLR builtins: int(x, base=10). Parse the optional second
         // positional `base` argument; supported bases are 0
         // (auto-detect via 0x/0b/0o prefix) and 2..36.
