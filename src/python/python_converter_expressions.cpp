@@ -2240,6 +2240,48 @@ bool python_convertert::is_unhashable_type(const typet &t)
          is_python_set_type(t);
 }
 
+int python_convertert::orderable_category_of(const exprt &e)
+{
+  const typet &t = e.type();
+  if(
+    t.id() == ID_signedbv || t.id() == ID_unsignedbv || t.id() == ID_integer ||
+    t.id() == ID_floatbv || t.id() == ID_bool)
+    return 1; // numeric
+  if(is_python_string_type(t))
+    return 2; // str
+  // A CONSTANT python_value (a make_python_value struct literal) carries a
+  // statically-known __tag; recover the category from it so a boxed literal
+  // element (e.g. "a" in the mixed list [1, "a"]) is seen as str. A symbolic
+  // python_value is NOT a struct_exprt, so it returns 0 (never flagged).
+  if(is_python_value_type(t) && e.id() == ID_struct)
+  {
+    static const struct_typet pv = python_value_struct_def();
+    std::size_t idx = pv.components().size();
+    for(std::size_t i = 0; i < pv.components().size(); ++i)
+      if(pv.components()[i].get_name() == "__tag")
+      {
+        idx = i;
+        break;
+      }
+    if(idx < e.operands().size() && e.operands()[idx].is_constant())
+    {
+      mp_integer tv;
+      if(!to_integer(to_constant_expr(e.operands()[idx]), tv))
+      {
+        const int tg = tv.to_long();
+        if(
+          tg == static_cast<int>(python_type_tagt::INT) ||
+          tg == static_cast<int>(python_type_tagt::FLOAT) ||
+          tg == static_cast<int>(python_type_tagt::BOOL))
+          return 1;
+        if(tg == static_cast<int>(python_type_tagt::STR))
+          return 2;
+      }
+    }
+  }
+  return 0; // unknown / not flaggable
+}
+
 // §11b: dispatch __getattr__ when normal attribute lookup fails.
 exprt python_convertert::emit_getattr_fallback(
   const exprt &value,
