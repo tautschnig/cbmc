@@ -1962,6 +1962,17 @@ private:
   /// flagged, so the check stays false-positive-free.
   int orderable_category_of(const exprt &e);
 
+  /// Value category for format-spec validation: 1=int, 2=float, 3=str,
+  /// 0=other/Any (never flagged).
+  int value_format_category(const typet &t);
+
+  /// Format-spec whole-group rule: given a conversion/presentation \p code
+  /// (lowercased; 0 = none), the value's \p cat (see value_format_category) and
+  /// whether this is %-style (TypeError) vs {}/f-string-style (ValueError),
+  /// return the exception name if the code is INCOMPATIBLE with the value type,
+  /// else nullptr. Returns nullptr for cat==0 (unknown) so it is FP-free.
+  const char *format_code_violation(char code, int cat, bool percent);
+
   /// PLR §3.3: dispatch a container method whose name is shared across built-in
   /// containers (pop / remove / clear / copy / update) on an Any
   /// (`python_value`) receiver, by branching on the runtime `__tag`. Each

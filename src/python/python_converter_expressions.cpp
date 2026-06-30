@@ -2282,6 +2282,54 @@ int python_convertert::orderable_category_of(const exprt &e)
   return 0; // unknown / not flaggable
 }
 
+int python_convertert::value_format_category(const typet &t)
+{
+  if(
+    t.id() == ID_signedbv || t.id() == ID_unsignedbv || t.id() == ID_integer ||
+    t.id() == ID_bool)
+    return 1; // int
+  if(t.id() == ID_floatbv)
+    return 2; // float
+  if(is_python_string_type(t))
+    return 3; // str
+  return 0;   // other / Any
+}
+
+const char *
+python_convertert::format_code_violation(char code, int cat, bool percent)
+{
+  if(cat == 0)
+    return nullptr; // unknown value type -> never flag
+  switch(code)
+  {
+  // Integer presentation codes.
+  case 'd':
+  case 'i':
+  case 'o':
+  case 'x':
+  case 'b':
+  case 'n':
+    if(percent)
+      return cat == 3 ? "TypeError" : nullptr; // %d etc.: number ok, str fails
+    return cat == 1 ? nullptr : "ValueError";  // {:d}: requires int
+  // Float presentation codes.
+  case 'e':
+  case 'f':
+  case 'g':
+  case '%':
+    if(percent)
+      return cat == 3 ? "TypeError" : nullptr; // %f: number ok, str fails
+    return cat == 3 ? "ValueError" : nullptr;  // {:f}: number ok, str fails
+  // String presentation.
+  case 's':
+    if(percent)
+      return nullptr;                         // %s accepts anything
+    return cat == 3 ? nullptr : "ValueError"; // {:s}: requires str
+  default:
+    return nullptr; // r/a/c/none/unknown -> don't flag (conservative)
+  }
+}
+
 // §11b: dispatch __getattr__ when normal attribute lookup fails.
 exprt python_convertert::emit_getattr_fallback(
   const exprt &value,
