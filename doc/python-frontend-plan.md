@@ -591,7 +591,10 @@ robustness, then capability; difficulty is noted where high.
 > handler + whole-group expression-context yield counting) and the two
 > decorator-application false proofs `dec_not_callable` + `dec_wrong_arity`
 > (commit `27bb327b26`, §15 OUTCOME). A genuine generator-object identity model
-> (aliasing / pass-by-reference) remains future work but is NOT a false proof.
+> (aliasing / container / `for`-after-`next`) remains future work and **IS a
+> known false-proof cluster** (consumption-state; pinned 2026-06-30 via a
+> proactive sweep — `gen-foriter-after-next`/`gen-alias-consume`/`gen-in-container-consume`
+> knownbugs; outside the oracle corpus).
 > The **4 intrinsic residuals** (`ORACLE-INTRINSIC`): the annotation-laundering
 > family — `004` (arg), `007` (list-element/append), `ty-010` (return-annotation)
 > — caught under opt-in `--python-check-annotations`; and `d1` (int→float at a
@@ -1610,8 +1613,10 @@ inter-yield side effects.
 priming-state false proof is closed without one: the cursor already encodes
 progress (`cursor == 0` ⟺ not yet started), so `gen.send(non-None)` on a
 just-started generator now raises `TypeError`. See the **Phase 1 OUTCOME** below.
-A genuine generator-object identity model (aliasing `it2 = it`, passing a
-generator to a function) remains future work but is NOT a known false proof.
+A genuine generator-object identity model (aliasing `it2 = it`, container slots,
+`for`-after-partial-`next`) remains future work and **IS a known false-proof
+cluster** (consumption-state; pinned 2026-06-30 — see the dedicated paragraph
+after Phase 2 below). Passing a generator to a function is sound.
 
 **Spike (2026-06-30, confirmed).** `it = g()` lowers to a call returning the eager
 `__gen_result_g` list, plus a per-call-site cursor `__cursor_it` that `next()`
@@ -1655,6 +1660,28 @@ suspension point; `.close()` injects `GeneratorExit`.
   real suspension/resumption — the same state-machine encoding noted above. Only
   worth it if a benchmark needs faithful inter-yield value passing; Phase 1
   closes the soundness hole without it.
+
+**Generator consumption-state / identity — KNOWN false-proof cluster (UNSOUND,
+pinned 2026-06-30 via a proactive soundness sweep).** The cursor tracks
+consumption only for a *direct* `next(name)` / `name.send()` on the original
+call-site Name. Any other access path reads a fresh (cursor-0 / counter-from-0)
+view and re-yields already-consumed elements — a false proof. Confirmed,
+each pinned KNOWNBUG:
+- `for x in g` after a partial `next(g)` re-iterates from the start
+  (`gen-foriter-after-next-knownbug`) — the most common idiom.
+- an alias `it2 = it` does not share consumption state
+  (`gen-alias-consume-knownbug`).
+- a generator in a container consumed via the slot (`box=[g()]; next(box[0])`)
+  reads a fresh view (`gen-in-container-consume-knownbug`).
+Passing a generator to a function is sound (the param view is over-approximated
+to nondet, not re-yielded). **Fix: a generator-OBJECT model** whose consumption
+state (the cursor) is tied to the object and shared across all access paths
+(`for`, alias, container, param) rather than keyed on the call-site Name — the
+same "identity, not value/Name" move as the instance-reference-semantics cluster.
+A cheap partial step would be to (a) make `for x in g` resume from `g`'s cursor,
+and (b) propagate `generator_cursors` on a Name alias; the container/param
+channels need the full object model. **Spike before implementing** (cursor-shared
+`for`-resume interacts with the for-loop iteration encoding; measure the sweep).
 
 ---
 
