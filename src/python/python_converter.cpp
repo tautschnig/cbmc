@@ -4236,6 +4236,31 @@ std::optional<code_blockt> python_convertert::build_dataclass_init_block(
   return block;
 }
 
+std::vector<codet> python_convertert::build_class_construction(
+  const std::string &class_name,
+  const exprt &self_lvalue,
+  const jsont &call_node,
+  const source_locationt &loc)
+{
+  std::vector<codet> out;
+  if(
+    auto init_call =
+      build_class_init_call(class_name, self_lvalue, call_node, loc))
+  {
+    code_expressiont c{*init_call};
+    c.add_source_location() = loc;
+    out.push_back(std::move(c));
+    return out;
+  }
+  // No explicit/inherited __init__: a @dataclass binds its fields here.
+  if(
+    auto dc =
+      build_dataclass_init_block(class_name, self_lvalue, call_node, loc))
+    for(auto &s : dc->statements())
+      out.push_back(std::move(s));
+  return out;
+}
+
 std::optional<side_effect_expr_function_callt>
 python_convertert::build_class_init_call(
   const std::string &class_name,

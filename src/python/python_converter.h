@@ -2294,6 +2294,18 @@ public:
     const exprt &self_lvalue,
     const jsont &call_node,
     const source_locationt &loc);
+
+  /// Unified construction emission: the statements that initialise a freshly
+  /// allocated instance of `class_name` from the `ClassName(args)` call -- the
+  /// __init__ call when one exists, otherwise the synthesized @dataclass field
+  /// binding (or empty for a plain class with neither). Single chokepoint so
+  /// every construction site (assignment, expression, return, with) handles
+  /// both uniformly.
+  std::vector<codet> build_class_construction(
+    const std::string &class_name,
+    const exprt &self_lvalue,
+    const jsont &call_node,
+    const source_locationt &loc);
   /// Returns std::nullopt if no class in the MRO owns the
   /// attr — which means the attr is purely instance-level
   /// (e.g. assigned only via `self.X = ...` inside __init__)

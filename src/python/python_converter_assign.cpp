@@ -1438,24 +1438,10 @@ codet python_convertert::convert_assign(const jsont &stmt)
                         << messaget::eom;
         }
 
-        // Call __init__(&var, args...)
-        auto init_call =
-          build_class_init_call(call_name, var_sym.symbol_expr(), value, loc);
-        if(init_call)
-        {
-          code_expressiont call_stmt{*init_call};
-          call_stmt.add_source_location() = loc;
-          result.add(std::move(call_stmt));
-        }
-        else if(
-          auto dc_init = build_dataclass_init_block(
-            call_name, var_sym.symbol_expr(), value, loc))
-        {
-          // @dataclass with no explicit __init__: bind the constructor args to
-          // the annotated fields (the synthesized __init__).
-          for(auto &s : dc_init->statements())
-            result.add(std::move(s));
-        }
+        // Construct: __init__ call, or @dataclass field binding.
+        for(auto &s : build_class_construction(
+              call_name, var_sym.symbol_expr(), value, loc))
+          result.add(std::move(s));
 
         if(result.statements().size() == 1)
           return result.statements().front();
