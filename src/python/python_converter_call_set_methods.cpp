@@ -196,8 +196,15 @@ std::optional<exprt> python_convertert::try_set_method(
     const exprt bit = shl_exprt{
       from_integer(1, unsignedbv_typet{64}),
       typecast_exprt{r, unsignedbv_typet{64}}};
-    pending_checks.push_back(code_assumet{notequal_exprt{
-      bitand_exprt{bm, bit}, from_integer(0, unsignedbv_typet{64})}});
+    // Assume the chosen bit is a member -- BUT permit the empty-set case
+    // (bm == 0): otherwise this assume is `0 != 0` (false) on the empty path,
+    // which would silently CUT it and mask the KeyError emitted above (a false
+    // proof: `set().pop()` would vacuously verify). With the bm==0 disjunct the
+    // empty path stays feasible so the KeyError uncaught-exception assert fires.
+    pending_checks.push_back(code_assumet{or_exprt{
+      equal_exprt{bm, from_integer(0, unsignedbv_typet{64})},
+      notequal_exprt{
+        bitand_exprt{bm, bit}, from_integer(0, unsignedbv_typet{64})}}});
     // clear the popped bit
     pending_checks.push_back(
       code_frontend_assignt{bm, bitand_exprt{bm, bitnot_exprt{bit}}});
