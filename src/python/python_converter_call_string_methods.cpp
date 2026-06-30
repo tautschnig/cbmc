@@ -2336,6 +2336,19 @@ std::optional<exprt> python_convertert::try_string_method(
         }
         const auto &list_st = to_struct_type(list_arg.type());
         to_array_type(list_st.components()[1].type());
+        // PLR §4.7.3: str.join requires every element to be a str. A concretely
+        // non-str element type raises TypeError ('sequence item: expected str').
+        // python_value (Any) is not flagged -- a violation cannot be proven.
+        {
+          const typet &jet =
+            to_array_type(list_st.components()[1].type()).element_type();
+          if(!is_python_string_type(jet) && !is_python_value_type(jet))
+          {
+            emit_conditional_exception(true_exprt{}, "TypeError");
+            return side_effect_expr_nondett{
+              python_string_type(), get_location(expr)};
+          }
+        }
         if(
           list_val->id() == ID_struct && list_val->operands().size() >= 2 &&
           list_val->operands()[0].is_constant())
