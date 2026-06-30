@@ -2990,7 +2990,33 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             is_dataclass = true;
         }
       if(is_dataclass)
+      {
         own_def.insert(own_bare.begin(), own_bare.end());
+        // Record the fields in ANNOTATION ORDER so construction can bind
+        // positional args to them (the synthesized __init__ signature). A
+        // field with a default value (`x: int = 5` or `= field(...)`) is noted
+        // so an omitted positional arg is left at its class-level default.
+        // Only meaningful for a @dataclass WITHOUT an explicit __init__.
+        if(!has_init)
+        {
+          std::vector<std::string> ordered;
+          std::set<std::string> defaulted;
+          if(body.is_array())
+            for(const auto &item : as_array(body))
+              if(
+                is_node_type(item, "AnnAssign") &&
+                is_node_type(json_member(item, "target"), "Name"))
+              {
+                std::string fn =
+                  json_string(json_member(json_member(item, "target"), "id"));
+                ordered.push_back(fn);
+                if(!json_member(item, "value").is_null())
+                  defaulted.insert(fn);
+              }
+          dataclass_init_fields[class_name] = ordered;
+          dataclass_defaulted_fields[class_name] = defaulted;
+        }
+      }
     }
     std::set<std::string> all_bare = own_bare, ctor = own_def;
     bool inherit_ctor = calls_super || !has_init;

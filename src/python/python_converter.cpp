@@ -4162,6 +4162,80 @@ std::optional<code_frontend_assignt> python_convertert::maybe_shadow_assign(
     from_integer(1, c_bool_typet{8})};
 }
 
+std::optional<code_blockt> python_convertert::build_dataclass_init_block(
+  const std::string &class_name,
+  const exprt &self_lvalue,
+  const jsont &call_node,
+  const source_locationt &loc)
+{
+  auto fit = dataclass_init_fields.find(class_name);
+  if(fit == dataclass_init_fields.end())
+    return std::nullopt;
+  // Only synthesize when there is NO explicit/inherited __init__ (otherwise
+  // that real __init__ runs and binds the fields itself).
+  if(lookup_init_via_mro(class_name).second != nullptr)
+    return std::nullopt;
+  auto cit = class_types.find(class_name);
+  if(cit == class_types.end())
+    return std::nullopt;
+  const struct_typet &st = cit->second;
+  const std::vector<std::string> &fields = fit->second;
+
+  // Gather positional and keyword constructor arguments.
+  std::vector<exprt> pos;
+  const jsont &args = json_member(call_node, "args");
+  if(args.is_array())
+    for(const auto &a : as_array(args))
+      pos.push_back(convert_expression(a));
+  std::map<std::string, exprt> kw;
+  const jsont &kws = json_member(call_node, "keywords");
+  if(kws.is_array())
+    for(const auto &k : as_array(kws))
+    {
+      const jsont &arg = json_member(k, "arg");
+      if(!arg.is_null())
+        kw[json_string(arg)] = convert_expression(json_member(k, "value"));
+    }
+
+  code_blockt block;
+  for(std::size_t i = 0; i < fields.size(); ++i)
+  {
+    const std::string &fn = fields[i];
+    if(!st.has_component(fn))
+      continue;
+    const typet &ft = st.get_component(fn).type();
+    exprt val;
+    if(i < pos.size())
+      val = pos[i]; // positional arg
+    else
+    {
+      auto kit = kw.find(fn);
+      if(kit != kw.end())
+        val = kit->second; // keyword arg
+      else
+        continue; // omitted -> leave the class-level default in place
+    }
+    if(val.is_nil())
+      continue;
+    if(val.type() != ft)
+      val = safe_typecast(val, ft);
+    code_frontend_assignt a{member_exprt{self_lvalue, fn, ft}, val};
+    a.add_source_location() = loc;
+    block.add(std::move(a));
+    // If the field also exists as a class-level attribute, reads route through
+    // `__shadow_<f> ? self.f : Class.f`; mark the shadow so the read picks the
+    // instance value we just bound (mirrors a normal `self.f = ...` store).
+    if(auto shadow = maybe_shadow_assign(self_lvalue, fn))
+    {
+      shadow->add_source_location() = loc;
+      block.add(std::move(*shadow));
+    }
+  }
+  if(block.statements().empty())
+    return std::nullopt;
+  return block;
+}
+
 std::optional<side_effect_expr_function_callt>
 python_convertert::build_class_init_call(
   const std::string &class_name,

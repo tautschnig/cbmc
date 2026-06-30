@@ -542,6 +542,12 @@ private:
   /// c() definitely assigns, accounting for the super().__init__()
   /// chain (so a subclass that omits super leaves inherited fields
   /// unassigned). attrerror = all_bare - ctor_assigned.
+  /// @dataclass synthesized-__init__ support: per-dataclass ORDERED list of
+  /// instance fields (in annotation order) that the synthesized __init__ binds
+  /// positionally, plus the subset that carry a default (so an omitted
+  /// positional arg is left at the class-level default, not nondet-bound).
+  std::map<std::string, std::vector<std::string>> dataclass_init_fields;
+  std::map<std::string, std::set<std::string>> dataclass_defaulted_fields;
   std::map<std::string, std::set<std::string>> class_all_bare;
   std::map<std::string, std::set<std::string>>
     class_ctor_assigned; /// Per-class set of class-level attributes that were
@@ -2277,9 +2283,17 @@ public:
     const jsont &call_node,
     const source_locationt &loc);
 
-  /// PLR §3.3.2: walk the MRO of `class_name` and return the
-  /// symbol_expr of the class object that OWNS `attr` (the
-  /// first class in the MRO whose body declares `attr`).
+  /// @dataclass construction: when `class_name` is a @dataclass WITHOUT an
+  /// explicit/inherited __init__, the synthesized __init__ binds each
+  /// constructor argument (positional, then keyword) to the corresponding
+  /// annotated field in declaration order. Returns the field-binding
+  /// assignments, or nullopt if not such a dataclass. Sound: mirrors CPython's
+  /// generated __init__ exactly (field order + defaults).
+  std::optional<code_blockt> build_dataclass_init_block(
+    const std::string &class_name,
+    const exprt &self_lvalue,
+    const jsont &call_node,
+    const source_locationt &loc);
   /// Returns std::nullopt if no class in the MRO owns the
   /// attr — which means the attr is purely instance-level
   /// (e.g. assigned only via `self.X = ...` inside __init__)

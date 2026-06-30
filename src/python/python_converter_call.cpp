@@ -1500,6 +1500,14 @@ exprt python_convertert::convert_call(const jsont &expr)
       // Inject the __init__ call before the current statement
       pending_checks.push_back(code_expressiont{*init_call});
     }
+    else if(
+      auto dc_init = build_dataclass_init_block(
+        func_name, tmp_sym.symbol_expr(), expr, get_location(expr)))
+    {
+      // @dataclass with no explicit __init__: bind constructor args to fields.
+      for(auto &s : dc_init->statements())
+        pending_checks.push_back(std::move(s));
+    }
 
     return tmp_sym.symbol_expr();
   }
