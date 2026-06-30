@@ -1377,10 +1377,16 @@ the numeric/operator-order pair (`d1_numeric_tower`, `binop_mirror_evalorder`).
   inherited `__init__`. Sound (mirrors CPython field order/defaults): suite
   green, sweep 2719/0-reg, oracle 0 NEW false proofs, **false ALARMS 265 -> 231
   (-34, the @dataclass field-value cluster)**. CORE `dataclass-construct-fields`.
-  (Residual construction sites -- `with Cfg() as c`, for-loop temp -- are rarer
-  and not yet hooked.) The remaining ~231 false alarms are dominated by the
-  instance-reference-semantics conservatism and unsupported-feature unprovable
-  assertions, not scattered cheap FPs.
+- *Unified construction (2026-06-30).* Factored `build_class_construction` (the
+  __init__ call, else the @dataclass binding, else empty) and routed ALL four
+  construction sites through it -- assignment, expression constructor,
+  `return ClassName(...)`, and with-manager -- so @dataclass binds uniformly
+  everywhere. The `return`-constructor path was heavily used by dataclass
+  witnesses: false ALARMS **231 -> 206 (-25)**. CORE `dataclass-return-construct`.
+  **Cumulative @dataclass precision: 265 -> 206 (-59), 0 new false proofs.** The
+  remaining ~206 false alarms are dominated by instance-reference-semantics
+  conservatism and unsupported-feature unprovable assertions, not scattered
+  cheap FPs.
 
 | Area | Issue | Status | Plan |
 |---|---|---|---|
