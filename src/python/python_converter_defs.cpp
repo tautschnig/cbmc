@@ -3041,6 +3041,47 @@ codet python_convertert::convert_class_def(const jsont &stmt)
       if(ctor.count(f) == 0)
         class_attrerror_fields[class_name].insert(f);
   }
+
+  // PLR §3.3.1: detect a __len__ that PROVABLY returns a negative integer
+  // constant (body is a single `return <neg const>`); len() on such an instance
+  // raises ValueError. Constant-only -> no false positive on a symbolic or
+  // non-negative __len__.
+  if(body.is_array())
+    for(const auto &item : as_array(body))
+    {
+      if(
+        !is_node_type(item, "FunctionDef") ||
+        json_string(json_member(item, "name")) != "__len__")
+        continue;
+      const jsont &lb = json_member(item, "body");
+      if(!lb.is_array() || as_array(lb).size() != 1)
+        continue;
+      const jsont &s0 = *as_array(lb).begin();
+      if(!is_node_type(s0, "Return"))
+        continue;
+      const jsont &rv = json_member(s0, "value");
+      bool neg = false;
+      if(is_node_type(rv, "Constant"))
+      {
+        const jsont &cv = json_member(rv, "value");
+        if(cv.is_number() && !cv.value.empty() && cv.value[0] == '-')
+          neg = true;
+      }
+      else if(
+        is_node_type(rv, "UnaryOp") &&
+        is_node_type(json_member(rv, "op"), "USub"))
+      {
+        const jsont &operand = json_member(rv, "operand");
+        if(is_node_type(operand, "Constant"))
+        {
+          const jsont &cv = json_member(operand, "value");
+          if(cv.is_number() && !cv.value.empty() && cv.value != "0")
+            neg = true;
+        }
+      }
+      if(neg)
+        class_len_negative.insert(class_name);
+    }
   if(!class_tag_ids.count(class_name))
     class_tag_ids[class_name] = static_cast<int>(class_tag_ids.size()) + 1;
 
