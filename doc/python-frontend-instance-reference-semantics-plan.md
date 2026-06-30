@@ -216,6 +216,65 @@ default retained where the cliff bites. Recommendation: a dedicated, measured
 "Phase 4 — container-element instances" effort, not a quick fix; the single-
 level instance work is complete and the dataclass cluster is closed.
 
+## 5c. Phase 4 plan — container-element instances (by-reference)
+
+**Status: PLAN (spike-confirmed 2026-06-30).** This is the design for the
+remaining precision cluster (~150 false ALARMS; `087_list_of_class_instances_
+element_mutation`, `099_object_stored_in_container_stale_copy`). It is the only
+remaining big precision whole-group; it is **perf-gated** (see §3, §5b).
+
+**PLR §3.1.** A container holds *references* to objects. `xs[i].x = v`,
+`for t in xs: t.x = v`, and a binding `t = xs[i]; t.x = v` all mutate the SAME
+object that lives in the container; a later read through the container observes
+the mutation. Today list/dict elements are by-VALUE structs, so extraction
+copies and the mutation is lost — a sound-direction precision miss (cbmc FAILs a
+valid program), confirmed: `for t in xs: t.x=1; assert xs[0].x==1` → FAILED in
+~0.09 s (by-value is cheap but wrong).
+
+**Representation.** Reuse the Phase 1–3 pointer-to-struct machinery: a list/dict
+element that holds a class instance stores a **pointer to a per-instance heap
+struct** (the same `make_python_value(CLASS, &heap)` / `allocate` shape already
+used for single-level instances and for `--python-ref-mutables` list elements),
+so the loop variable / extracted binding / subscript read all alias the stored
+object. Gate behind **`--python-ref-instances`** (the single-level instance work
+is default-on because its `==` cliff did not materialise; the container-element
+case is exactly the nested-container `==` cliff, so it stays opt-in until a phase
+is measured cliff-free).
+
+**Access sites to change** (ordered cheapest-first by the §5b/§3 perf evidence —
+nested-container *structural equality* is the cliff, plain field mutation is
+not):
+1. **`for t in xs: t.x = …`** — bind the loop variable to the element's
+   by-reference slot (pointer), not a copy. The §5b spike found plain
+   field-mutation-through-a-loop is cheap; this pattern dominates the witnesses
+   ("iterate a list of objects and mutate each").
+2. **`xs[i].x = …`** (subscript read-then-attribute-store) — return the
+   element's lvalue slot so the attribute store writes through.
+3. **`t = xs[i]; t.x = …`** (extract-then-mutate) — bind `t` by-reference (the
+   extraction alias, mirroring the existing `extracted_container_alias` guard
+   but aliasing instead of havocking).
+
+**Per-phase perf gate (HARD).** Each access-site phase: run the by-value sweep
+and require **0 PASS regressions and no new TIMEOUT**; if a phase reintroduces
+the nested-container `==` blow-up (the A/B sweep's 2710-vs-2719 regression),
+**keep by-value for that site** and document it. Measure with
+`--python-ref-instances` ON vs OFF on the corpus; the flag default stays OFF
+until/unless a site is proven cliff-free.
+
+**Soundness.** No over-aliasing: a FRESH element (`xs.append(T())`) stays
+owned/by-value-identity like a fresh single-level instance; only an element
+EXTRACTED-and-mutated or iterated aliases the stored object. Dicts/sets stay
+guarded (same representation limit as [dict-value-byref](python-frontend-dict-value-byref-plan.md)).
+
+**Acceptance criteria.** Gates (under `--python-ref-instances`): `087`/`099`
+witnesses → SUCCESSFUL (the false alarm clears) AND a *genuinely* false post-
+mutation assert still FAILs. Regression: the single-level instance tests
+(`instance-return-aliasing`, `instance-aliasing`, `instance-field-aliasing`,
+`shared-object-aliasing`, `context-manager-enter-mutation`) stay green; default
+(flag-off) suite + sweep unchanged (0-reg); oracle 0-NEW. Pin the witnesses as
+`container-element-instance-knownbug` until Phase 4 lands, then flip to CORE
+(flag-gated).
+
 ## 6. Cross-references
 
 - Master inventory: the **Class-instance identity / aliasing** and
