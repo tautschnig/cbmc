@@ -362,6 +362,13 @@ codet python_convertert::convert_statement(const jsont &stmt)
           // append/sort reach the container via unwrap_any_container_receiver).
           if(!obj.is_nil() && is_python_value_type(obj.type()))
             obj = python_value_list(obj);
+          // PLR §3.3.1: del obj[k] requires __delitem__. A concrete class whose
+          // MRO defines none does not support item deletion -> TypeError.
+          if(concrete_class_lacks_dunder(obj.type(), "__delitem__"))
+          {
+            emit_conditional_exception(true_exprt{}, "TypeError");
+            continue;
+          }
           if(!obj.is_nil() && is_python_list_type(obj.type()))
           {
             exprt idx = convert_expression(json_member(target, "slice"));
