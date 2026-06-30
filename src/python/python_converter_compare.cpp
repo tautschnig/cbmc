@@ -899,6 +899,30 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // axioms (a == b implies a not < b).
       auto element_lt = [&](const exprt &a, const exprt &b) -> exprt
       {
+        // PLR §6.10.1: element-wise ordering of two provably-incompatible
+        // concrete categories (numeric vs str) is unsupported -> TypeError
+        // (e.g. `[1, 2] < [1, "a"]` compares 2 < "a"). Only fires when BOTH
+        // element types are concrete and in different orderable categories;
+        // Any/symbolic and numeric-numeric (int vs float) are left to the
+        // existing promotion paths below (no false positive).
+        {
+          auto cat = [this](const typet &t) -> int
+          {
+            if(
+              t.id() == ID_signedbv || t.id() == ID_unsignedbv ||
+              t.id() == ID_integer || t.id() == ID_floatbv || t.id() == ID_bool)
+              return 1;
+            if(is_python_string_type(t))
+              return 2;
+            return 0;
+          };
+          const int ca = cat(a.type()), cb = cat(b.type());
+          if(ca != 0 && cb != 0 && ca != cb)
+          {
+            emit_conditional_exception(true_exprt{}, "TypeError");
+            return false_exprt{};
+          }
+        }
         if(is_python_string_type(a.type()) && is_python_string_type(b.type()))
         {
           const auto &adt = pointer_typet(unsignedbv_typet{8}, 64);
@@ -2142,6 +2166,29 @@ exprt python_convertert::convert_compare(const jsont &expr)
               rmty.return_type(),
               get_location(expr)};
             cmp = std::move(call);
+            goto done_cmp;
+          }
+        }
+        // PLR §3.3 / §6.10.1: neither operand provides the ordering dunder
+        // (nor the reflected form) anywhere in its MRO, so `<`/`<=`/`>`/`>=`
+        // is unsupported between these instances -> TypeError. (Eq/NotEq/Is
+        // are not ordered_op and never reach this block, so identity-default
+        // `==`/`!=` are left intact.)
+        {
+          const char *mname = op == "Lt"    ? "__lt__"
+                              : op == "LtE" ? "__le__"
+                              : op == "Gt"  ? "__gt__"
+                                            : "__ge__";
+          const char *rname = op == "Lt"    ? "__gt__"
+                              : op == "LtE" ? "__ge__"
+                              : op == "Gt"  ? "__lt__"
+                                            : "__le__";
+          if(
+            concrete_class_lacks_dunder(current_left.type(), mname) &&
+            concrete_class_lacks_dunder(right.type(), rname))
+          {
+            emit_conditional_exception(true_exprt{}, "TypeError");
+            cmp = false_exprt{};
             goto done_cmp;
           }
         }
