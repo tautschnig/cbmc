@@ -1367,12 +1367,20 @@ the numeric/operator-order pair (`d1_numeric_tower`, `binop_mirror_evalorder`).
   EXPLICIT `__init__`, but a `@dataclass`'s synthesised `__init__` assigns them
   all. **Fixed** the spurious AttributeError (a `@dataclass` folds its bare
   annotations into the constructor-assigned set; sound, 0 new false proofs).
-  *Follow-up to fully resolve the cluster:* model the synthesised `__init__` so
-  it BINDS constructor args to field values (currently nondet, so value
-  assertions still fail) -- the highest-value remaining precision fix. The
-  triage also shows the false-alarm debt is largely known limitations
-  (dataclass-construction + instance-reference-semantics conservatism +
-  unsupported-feature assertions), not scattered cheap FPs.
+- *@dataclass `__init__` synthesis (DONE 2026-06-30).* Modelled the synthesised
+  `__init__` so construction BINDS constructor args to field values:
+  `build_dataclass_init_block` records the annotation-ordered fields at class
+  definition and, at the construction sites (assignment + expression
+  constructor), binds each positional/keyword arg to its field (omitted-with-
+  default left at the class default) and sets the class-level-attr shadow flag
+  so reads pick the instance value. Gated to a `@dataclass` without an explicit/
+  inherited `__init__`. Sound (mirrors CPython field order/defaults): suite
+  green, sweep 2719/0-reg, oracle 0 NEW false proofs, **false ALARMS 265 -> 231
+  (-34, the @dataclass field-value cluster)**. CORE `dataclass-construct-fields`.
+  (Residual construction sites -- `with Cfg() as c`, for-loop temp -- are rarer
+  and not yet hooked.) The remaining ~231 false alarms are dominated by the
+  instance-reference-semantics conservatism and unsupported-feature unprovable
+  assertions, not scattered cheap FPs.
 
 | Area | Issue | Status | Plan |
 |---|---|---|---|
