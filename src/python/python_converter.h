@@ -1944,6 +1944,10 @@ private:
   /// non-class types. The shared gate for the dunder-protocol-missing checks.
   bool concrete_class_lacks_dunder(const typet &t, const char *dunder);
 
+  /// True iff \p t is a built-in mutable container (list/dict/set), which is
+  /// unhashable -- using one as a dict key or set element raises TypeError.
+  bool is_unhashable_type(const typet &t);
+
   /// PLR §3.3: dispatch a container method whose name is shared across built-in
   /// containers (pop / remove / clear / copy / update) on an Any
   /// (`python_value`) receiver, by branching on the runtime `__tag`. Each

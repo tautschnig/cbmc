@@ -58,6 +58,13 @@ std::optional<exprt> python_convertert::try_set_method(
     if(!args.is_array() || as_array(args).empty())
       return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
     exprt val = convert_expression(*as_array(args).begin());
+    // PLR §3.2: set elements must be hashable; a list/dict/set argument to
+    // add/discard raises TypeError ('unhashable type').
+    if(!val.is_nil() && is_unhashable_type(val.type()))
+    {
+      emit_conditional_exception(true_exprt{}, "TypeError");
+      return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+    }
     // The set is a 64-bit int BITMAP -- only int/bool elements have a precise
     // bit. A non-int element (tuple/str/...) cannot be represented: casting it
     // to a bit position can COLLIDE with another element's bit (false-proving

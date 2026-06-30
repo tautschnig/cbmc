@@ -2228,6 +2228,18 @@ bool python_convertert::concrete_class_lacks_dunder(
   return !class_mro_defines(tag.substr(13), dunder);
 }
 
+// PLR §3.2: a dict key / set element must be hashable. The built-in mutable
+// containers list/dict/set are unhashable, so using one as a key or set element
+// raises TypeError ('unhashable type'). Shared predicate for the hashability
+// checks at the dict-literal / dict-store / dict-comp / set sites. (A tuple is
+// hashable, and a user class is hashable by default via object.__hash__, so
+// neither is flagged -- only the concrete mutable builtins.)
+bool python_convertert::is_unhashable_type(const typet &t)
+{
+  return is_python_list_type(t) || is_python_dict_type(t) ||
+         is_python_set_type(t);
+}
+
 // §11b: dispatch __getattr__ when normal attribute lookup fails.
 exprt python_convertert::emit_getattr_fallback(
   const exprt &value,
@@ -3122,6 +3134,10 @@ exprt python_convertert::convert_dict(const jsont &expr)
   for(; key_it != as_array(keys).end(); ++key_it, ++val_it)
   {
     exprt k = convert_expression(*key_it);
+    // PLR §3.2: a dict key must be hashable; a list/dict/set key raises
+    // TypeError ('unhashable type').
+    if(!k.is_nil() && is_unhashable_type(k.type()))
+      emit_conditional_exception(true_exprt{}, "TypeError");
     exprt v;
     // PLR §3.1: if the value is a Name resolving to an escaped
     // list/dict-typed symbol, wrap as `make_python_value(LIST/DICT,
