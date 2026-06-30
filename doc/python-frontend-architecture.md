@@ -1348,6 +1348,32 @@ comparability), `set_pop_empty` (empty-set bitmap not provably 0), `len_nonint`
 negative-value, the format-spec family (`fmt_*`), `gen_send_before_start`, and
 the numeric/operator-order pair (`d1_numeric_tower`, `binop_mirror_evalorder`).
 
+**P0a + P1 triage (2026-06-30, cont.).**
+- *Ordering protocol completed.* `<`/`<=`/`>`/`>=` between user-class instances
+  whose MRO defines none of `__lt__`/`__le__`/`__gt__`/`__ge__` (nor the
+  reflected form) now raises TypeError, reusing `concrete_class_lacks_dunder`
+  (`==`/`!=`/`is` untouched). The dunder-protocol-missing whole-group now covers
+  **subscript r/w/del, iteration (for/comprehension/unpack), membership, call,
+  context-manager, unary, binary, AND ordering**. CORE `ordering-no-dunder`.
+  (A defensive element-wise mixed-category check was added to the list-lex
+  `element_lt`, but mixed list literals box the element to `python_value`, so
+  `list_compare_mixed`/`sorted_incomparable` still need boxed-element concrete-
+  type tracking -- deferred.)
+- *Precision-debt triage (the 265 false alarms).* Categorised: ~143 are
+  unprovable assertions (mostly unsupported-feature sound over-approximations --
+  acceptable), and ~101 are `python-attribute-error` false positives, almost all
+  in `laurel-encoding-soundness` and **dominated by `@dataclass` field access**:
+  the attribute-error tracker flagged every bare annotation not assigned by an
+  EXPLICIT `__init__`, but a `@dataclass`'s synthesised `__init__` assigns them
+  all. **Fixed** the spurious AttributeError (a `@dataclass` folds its bare
+  annotations into the constructor-assigned set; sound, 0 new false proofs).
+  *Follow-up to fully resolve the cluster:* model the synthesised `__init__` so
+  it BINDS constructor args to field values (currently nondet, so value
+  assertions still fail) -- the highest-value remaining precision fix. The
+  triage also shows the false-alarm debt is largely known limitations
+  (dataclass-construction + instance-reference-semantics conservatism +
+  unsupported-feature assertions), not scattered cheap FPs.
+
 | Area | Issue | Status | Plan |
 |---|---|---|---|
 | Float floor division | `//` on float operands was computed as true division (no floor): `7.0 // 2.0 == 3.5` — wrong arithmetic | **CLOSED 2026-06-26** (float-floor applied; `float-floordiv-correct`) | — |
