@@ -2296,7 +2296,49 @@ std::optional<exprt> python_convertert::try_builtin_call(
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
-      // PLR builtins: sorted(iterable, /, *, key=None, reverse=False).
+      // PLR §6.10.1: sorting a list whose CONSTANT elements span two
+      // incompatible orderable categories (numeric vs str) raises TypeError --
+      // the sort compares a number with a str. Only fires for a constant list
+      // literal whose element tags are statically known; a symbolic/Any list
+      // is never flagged (no false positive). No key= (a key could remap the
+      // compared values), so restrict to the plain case below.
+      if(
+        !arg.is_nil() && is_python_list_type(arg.type()) &&
+        arg.id() == ID_struct && arg.operands().size() >= 2 &&
+        arg.operands()[0].is_constant() && arg.operands()[1].id() == ID_array)
+      {
+        mp_integer n;
+        if(!to_integer(to_constant_expr(arg.operands()[0]), n))
+        {
+          const exprt &data = arg.operands()[1];
+          int seen = 0;
+          for(mp_integer i = 0;
+              i < n && i.to_long() < (long)data.operands().size();
+              ++i)
+          {
+            const int c = orderable_category_of(data.operands()[i.to_long()]);
+            if(c != 0)
+              seen |= (1 << c);
+          }
+          // both numeric (bit 1<<1) AND str (bit 1<<2) present
+          if(seen == ((1 << 1) | (1 << 2)))
+          {
+            const jsont &kw = json_member(expr, "keywords");
+            const bool has_key = kw.is_array() && [&]
+            {
+              for(const auto &k : as_array(kw))
+                if(json_string(json_member(k, "arg")) == "key")
+                  return true;
+              return false;
+            }();
+            if(!has_key)
+            {
+              emit_conditional_exception(true_exprt{}, "TypeError");
+              return side_effect_expr_nondett{arg.type(), get_location(expr)};
+            }
+          }
+        }
+      }
       // Pick up the reverse=... keyword; key= is supported for
       // a narrow but common shape: key=lambda x: x[N] where N
       // is a constant integer. For each element (assumed to
