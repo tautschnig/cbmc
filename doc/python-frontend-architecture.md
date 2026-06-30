@@ -1059,17 +1059,20 @@ soundness, imprecision, performance, intrinsic.
 
 **CURRENT STATE (2026-06-30) — read this first; the dated notes below are a
 chronological changelog.** The differential oracle (external CPython-semantics
-corpus, default config) tracks **1 known false proof, requiring a dedicated
-FEATURE** (not a point fix), plus **4 intrinsic / out-of-subset residuals** and
-~206 false *alarms* (sound over-approximations / unsupported-feature precision —
-see inventory B). The standing **oracle 0-NEW gate** (run after every change)
-keeps new false proofs out.
+corpus, default config) tracks **0 known false proofs**, plus **4 intrinsic /
+out-of-subset residuals** and ~206 false *alarms* (sound over-approximations /
+unsupported-feature precision — see inventory B). The standing **oracle 0-NEW
+gate** (run after every change) keeps new false proofs out.
 
-- *The 1 remaining false proof (a feature) — has a spike-confirmed phased plan:*
-  `gen_send_before_start` — generators are modelled as eager `__gen_result`
-  lists with no generator-object identity / priming state, so `gen.send()`
-  semantics are unmodelled ([plan §1](python-frontend-plan.md#generators),
-  Phase 1). Pinned `gen-send-before-start-knownbug`.
+- *Closed 2026-06-30 (commit `70401b6d90`):* `gen_send_before_start` — the eager
+  generator cursor already encodes priming (`cursor == 0` ⟺ not started), so a
+  new `.send()` handler raises `TypeError` for a non-None send to a just-started
+  generator; en route a whole-group fix made `yield` *expressions* (`x = yield`)
+  count toward `__gen_result` alongside `yield` statements
+  ([plan §1 Phase 1 OUTCOME](python-frontend-plan.md#generators)). Now CORE:
+  `gen-send-before-start-typeerror`, `gen-send-prime-nofp`. A genuine
+  generator-object identity model (aliasing / pass-by-reference) remains future
+  work but is NOT a false proof.
 - *Closed 2026-06-30 (commit `27bb327b26`):* `dec_not_callable` +
   `dec_wrong_arity` — the frontend now models bare-`@name` decorator
   application (`@d` → `f = d(f)`): a provably non-callable decorator raises a
@@ -1521,6 +1524,9 @@ Per "soundness is the utmost priority even for single-digit corner cases":
   at a call boundary is documented OUT of the PyHard subset.
 
 **Remaining 3 false proofs are all FEATURES, not point fixes:**
+*(All three CLOSED later on 2026-06-30 — see the CURRENT STATE header; commits
+`27bb327b26` decorators + `70401b6d90` generator-send. This entry records the
+triage at the time.)*
 `dec_not_callable` + `dec_wrong_arity` need general decorator-application
 modelling (above); `gen_send_before_start` needs a generator state machine
 (generators are currently modelled as EAGER `__gen_result` lists with no

@@ -585,14 +585,13 @@ robustness, then capability; difficulty is noted where high.
 > [architecture doc master inventory](python-frontend-architecture.md) — see its
 > **CURRENT STATE (2026-06-30)** header; this section is the chronological design
 > log.
-> The **1 remaining false proof is a FEATURE**, not a point fix:
-> `gen_send_before_start` (a generator state machine — generators are eager
-> `__gen_result` lists with no priming state / `.send()`). Pinned
-> `gen-send-before-start-knownbug`.
-> *Closed 2026-06-30 (commit `27bb327b26`, §15 OUTCOME):* the two
+> **No known false proofs remain** in the differential oracle (default config,
+> external CPython-semantics corpus). *Closed 2026-06-30:* `gen_send_before_start`
+> (commit `70401b6d90`, §1 Phase 1 OUTCOME — cursor-encoded priming + a `.send()`
+> handler + whole-group expression-context yield counting) and the two
 > decorator-application false proofs `dec_not_callable` + `dec_wrong_arity`
-> (`@d` → `f = d(f)` def-time callability + wrapper arity) — now CORE
-> (`dec-not-callable-typeerror`, `dec-wrong-arity-typeerror`, `dec-callable-nofp`).
+> (commit `27bb327b26`, §15 OUTCOME). A genuine generator-object identity model
+> (aliasing / pass-by-reference) remains future work but is NOT a false proof.
 > The **4 intrinsic residuals** (`ORACLE-INTRINSIC`): the annotation-laundering
 > family — `004` (arg), `007` (list-element/append), `ty-010` (return-annotation)
 > — caught under opt-in `--python-check-annotations`; and `d1` (int→float at a
@@ -1600,11 +1599,13 @@ PLAN YET** — the list-with-cursor model is the deliberate design choice;
 a resumption encoding is only worth it if a benchmark needs faithful
 inter-yield side effects.
 
-**Generator-object state (`.send()` / priming) — soundness residual.** The eager
-list model has no generator-OBJECT identity or priming state, so `gen.send(v)`
-is not modelled. In particular `it = g(); it.send(5)` on a just-started
-generator should raise `TypeError` ("can't send non-None value to a just-started
-generator") — a known **false proof** (`gen-send-before-start-knownbug`).
+**Generator-object state (`.send()` / priming) — RESOLVED (2026-06-30, commit
+`70401b6d90`).** The eager list model has no generator-OBJECT identity, but the
+priming-state false proof is closed without one: the cursor already encodes
+progress (`cursor == 0` ⟺ not yet started), so `gen.send(non-None)` on a
+just-started generator now raises `TypeError`. See the **Phase 1 OUTCOME** below.
+A genuine generator-object identity model (aliasing `it2 = it`, passing a
+generator to a function) remains future work but is NOT a known false proof.
 
 **Spike (2026-06-30, confirmed).** `it = g()` lowers to a call returning the eager
 `__gen_result_g` list, plus a per-call-site cursor `__cursor_it` that `next()`
@@ -1623,18 +1624,26 @@ expression (`x = yield 1` binds `x` to the sent value); `.throw()` raises at the
 suspension point; `.close()` injects `GeneratorExit`.
 
 **Phased plan.**
-- **Phase 1 — priming-state TypeError (closes `gen_send_before_start`).** Give
-  each generator-call-site a boolean `__started_<it>` symbol, initialised `false`
-  at `it = g()` and set `true` by the first `next(it)` / `it.send(None)`. Add a
-  `.send()` method handler (no handler exists today) that, on a generator
-  receiver, emits `emit_conditional_exception(arg != None && !started, "TypeError")`
-  then advances the cursor like `next()` and returns the next element.
-  *Soundness gating (no FP):* fire ONLY when the argument is provably non-None
-  (a `None` send, or a send after a prior `next()`/`send(None)`, must not flag);
-  a generator received through an opaque value (no resolvable `__started`) is not
-  flagged. *Acceptance:* `gen-send-before-start-knownbug` → CORE FAILED;
-  `next(it); it.send(5)` and `it.send(None)` → SUCCESSFUL; suite green; sweep
-  0-reg; oracle 0-NEW. Cheap (one flag + one handler), no resumption needed.
+- **Phase 1 — priming-state TypeError (closes `gen_send_before_start`) — DONE
+  (2026-06-30, commit `70401b6d90`).** *Shipped differently from this sketch — no
+  `__started` flag.* The eager cursor already encodes priming: it inits to 0 at
+  `it = g()` and `next()` does `cursor++` before returning `data[cursor-1]`, so
+  `cursor == 0` *is* the not-yet-started state (single source of truth — a
+  parallel flag would only risk desync). A new `.send()` method handler (none
+  existed; `.send()` fell through to a no-op) resolves the receiver's cursor and
+  emits `emit_conditional_exception(cursor == 0 ∧ arg≠None, "TypeError")`, then
+  resumes like `next()`. *No-FP gating:* a provably-None send is never flagged; a
+  concrete arg is never None; a `python_value` arg is guarded on its NONE tag; an
+  opaque/aliased generator with no resolvable cursor is not flagged.
+  *Whole-group fix discovered en route:* the eager model only appended `yield`
+  *statements*, dropping `yield` *expressions* (`x = yield 1`), so such
+  generators under-counted their yields — surfacing as a spurious StopIteration
+  once `.send()` advanced the cursor. Factored `build_gen_result_append` and
+  called it from BOTH `convert_expr_stmt` and `convert_expression(Yield)` so every
+  yield is counted exactly once; this also fixed pre-existing false alarms (a
+  two-`next()` yield-expression generator, +1 sweep case). *Validated:* suite
+  green; sweep 2719 PASS / 0-reg (+1 new pass); oracle **1 → 0** false proofs.
+  CORE: `gen-send-before-start-typeerror`, `gen-send-prime-nofp`.
 - **Phase 2 — faithful `.send()` value-passing / `.throw()` / `.close()` (NO
   PLAN YET).** Making the *sent value* flow into the `yield` expression requires
   real suspension/resumption — the same state-machine encoding noted above. Only
