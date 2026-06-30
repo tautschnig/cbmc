@@ -688,6 +688,96 @@ std::optional<exprt> python_convertert::try_string_method(
     method_name == "decode" || method_name == "removeprefix" ||
     method_name == "removesuffix")
   {
+    // PLR: str.encode(enc) / bytes.decode(enc) with an unknown CONSTANT codec
+    // name raises LookupError ('unknown encoding'). Validate a constant codec
+    // argument against the standard-encodings set (normalised: lowercased,
+    // '_'/' ' -> '-'); a symbolic codec is never flagged. Generous set to avoid
+    // false-positives on valid-but-uncommon codecs.
+    if(
+      (method_name == "encode" || method_name == "decode") && args.is_array() &&
+      !as_array(args).empty())
+    {
+      if(
+        auto codec =
+          extract_string_value(convert_expression(*as_array(args).begin())))
+      {
+        std::string nm;
+        for(char ch : *codec)
+        {
+          ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+          if(ch == '_' || ch == ' ')
+            ch = '-';
+          nm += ch;
+        }
+        static const std::set<std::string> known = {
+          "utf-8",
+          "utf8",
+          "u8",
+          "utf",
+          "cp65001",
+          "ascii",
+          "us-ascii",
+          "646",
+          "latin-1",
+          "latin1",
+          "latin",
+          "iso-8859-1",
+          "iso8859-1",
+          "8859",
+          "cp819",
+          "l1",
+          "utf-16",
+          "utf16",
+          "u16",
+          "utf-16-le",
+          "utf-16-be",
+          "utf-32",
+          "utf32",
+          "u32",
+          "utf-32-le",
+          "utf-32-be",
+          "utf-7",
+          "u7",
+          "cp1252",
+          "windows-1252",
+          "cp437",
+          "cp850",
+          "cp1251",
+          "windows-1251",
+          "mac-roman",
+          "macroman",
+          "koi8-r",
+          "koi8-u",
+          "big5",
+          "gbk",
+          "gb2312",
+          "gb18030",
+          "shift-jis",
+          "sjis",
+          "euc-jp",
+          "euc-kr",
+          "iso-8859-2",
+          "iso-8859-15",
+          "cp1250",
+          "hex",
+          "base64",
+          "rot-13",
+          "rot13",
+          "zlib",
+          "bz2",
+          "idna",
+          "punycode",
+          "unicode-escape",
+          "raw-unicode-escape",
+          "string-escape"};
+        if(known.find(nm) == known.end())
+        {
+          emit_conditional_exception(true_exprt{}, "LookupError");
+          return side_effect_expr_nondett{
+            python_string_type(), get_location(expr)};
+        }
+      }
+    }
     // Try exact computation for constant strings
     auto str_val = extract_string_value(obj);
     if(str_val.has_value())
