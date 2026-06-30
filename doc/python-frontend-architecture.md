@@ -1388,6 +1388,30 @@ the numeric/operator-order pair (`d1_numeric_tower`, `binop_mirror_evalorder`).
   conservatism and unsupported-feature unprovable assertions, not scattered
   cheap FPs.
 
+**Comparison whole-group + P1 triage (2026-06-30, cont.).**
+- *list_compare_mixed CLOSED.* `[1,2] < [1,"a"]` -> TypeError via static
+  lexicographic evaluation of the two constant lists (per-element
+  `orderable_category_of` + a normalized order-key that recovers a boxed
+  python_value's static tag/value), flagging a numeric-vs-str element comparison
+  ONLY when the earlier positions are provably equal (so `[5,2] < [1,"a"]` is
+  not flagged). With `sorted` and `element_lt`, the comparison/ordering
+  whole-group is complete. CORE `list-compare-mixed`.
+- *str_encode_bad CLOSED.* `str.encode`/`bytes.decode` with an unknown CONSTANT
+  codec (normalized) outside a generous standard-encodings whitelist ->
+  LookupError; symbolic never flagged; sweep-clean. CORE `str-encode-bad-codec`.
+  Oracle false-proof debt **12 -> 10**.
+- *dec_not_callable DEFERRED:* needs def-time decorator-APPLICATION modeling
+  (the frontend doesn't apply a general `@d` -> `f = d(f)`, so there's no site
+  to check `d`'s callability) -- awkward, parked.
+- *P1 triage of the 54 `ast-bytecode-lowering` false alarms:* NOT a whole-group.
+  They are a LONG TAIL of individual subtle-semantics imprecisions -- call/arg
+  evaluation order (008), def-time default-argument timing (014), with-LIFO
+  (018), walrus escape, cell promotion, class-scope opacity, annotation scopes,
+  ... -- each a distinct point issue, plus 6 `no-body` unsupported stubs. So the
+  cheap-discovery loop found NO new dataclass-sized cluster here. **The one
+  remaining big precision whole-group stays the perf-gated container-element
+  instances** (§5b); `ast-bytecode-lowering` is a low-priority long tail.
+
 | Area | Issue | Status | Plan |
 |---|---|---|---|
 | Float floor division | `//` on float operands was computed as true division (no floor): `7.0 // 2.0 == 3.5` — wrong arithmetic | **CLOSED 2026-06-26** (float-floor applied; `float-floordiv-correct`) | — |
