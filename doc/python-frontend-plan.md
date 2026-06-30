@@ -585,12 +585,14 @@ robustness, then capability; difficulty is noted where high.
 > [architecture doc master inventory](python-frontend-architecture.md) — see its
 > **CURRENT STATE (2026-06-30)** header; this section is the chronological design
 > log.
-> The **3 remaining false proofs are all FEATURES**, not point fixes:
-> `dec_not_callable` + `dec_wrong_arity` (general decorator-application modelling
-> `@d` → `f = d(f)` + wrapper arity) and `gen_send_before_start` (a generator
-> state machine — generators are eager `__gen_result` lists with no priming
-> state / `.send()`). Pinned `dec-not-callable-knownbug`,
-> `dec-wrong-arity-knownbug`, `gen-send-before-start-knownbug`.
+> The **1 remaining false proof is a FEATURE**, not a point fix:
+> `gen_send_before_start` (a generator state machine — generators are eager
+> `__gen_result` lists with no priming state / `.send()`). Pinned
+> `gen-send-before-start-knownbug`.
+> *Closed 2026-06-30 (commit `27bb327b26`, §15 OUTCOME):* the two
+> decorator-application false proofs `dec_not_callable` + `dec_wrong_arity`
+> (`@d` → `f = d(f)` def-time callability + wrapper arity) — now CORE
+> (`dec-not-callable-typeerror`, `dec-wrong-arity-typeerror`, `dec-callable-nofp`).
 > The **4 intrinsic residuals** (`ORACLE-INTRINSIC`): the annotation-laundering
 > family — `004` (arg), `007` (list-element/append), `ty-010` (return-annotation)
 > — caught under opt-in `--python-check-annotations`; and `d1` (int→float at a
@@ -3195,8 +3197,10 @@ rediscovered as "new":
 
 ## 15. Decorator application (PLR §8.7)  {#decorators}
 
-**Status: PLAN (spike-confirmed 2026-06-30).** Closes the two remaining decorator
-false proofs `dec_not_callable` and `dec_wrong_arity`.
+**Status: DONE (2026-06-30, commit `27bb327b26`).** Both decorator false proofs
+`dec_not_callable` and `dec_wrong_arity` are closed. Implementation notes (where
+it diverged from the spike plan) are in the **OUTCOME** block at the end of this
+section.
 
 **PLR semantics.** `@dec def f(x): …` lowers to `def f(x): …; f = dec(f)`,
 evaluated at def-time (stacked decorators apply bottom-up: `@d1 @d2 def f` →
@@ -3251,6 +3255,38 @@ decorator (`@deco(arg)` / `@functools.wraps(fn)`), an Any-typed decorator
 and the existing `python-decorator-varargs` / `python-decorator-inside-function`
 tests all stay SUCCESSFUL. Per phase: suite green, sweep 2719/0-reg, oracle
 0-NEW. Estimated ~20 lines + the no-FP regression tests.
+
+**OUTCOME (DONE — what actually shipped).** Two divergences from the spike plan:
+
+1. *Phase 1 emission point.* `emit_conditional_exception` at `:1967` did **not**
+   fire for a module-level `@d def f`: a module-level FunctionDef is registered
+   in an earlier pass and its `convert_function_def` result (`dec_block`) is
+   **not** added to `__main__` (`convert_module_body` special-cases FunctionDef
+   and only evaluates defaults), and `pending_checks` are discarded at the def
+   site. So the def-time TypeError is emitted at **two** points: (a) module-level
+   defs — directly in `convert_module_body`'s FunctionDef branch, with an
+   explicit `uncaught exception` assert (the per-statement loop skips FunctionDef
+   for that assert); (b) nested defs — into the returned `dec_block` in
+   `convert_function_def` (those DO reach their enclosing body via
+   `convert_statement`). Gating tightened beyond the plan: only a **bare
+   `@Name`** decorator is checked (Call/Attribute factory & library decorator
+   forms are skipped — this is what keeps `@icontract.require(...)` from
+   false-positiving), and a user-class-instance decorator is callable iff its MRO
+   defines `__call__` (`concrete_class_lacks_dunder`).
+2. *Phase 2 alias collision.* The qualified wrapper lookup
+   (`python::<dec>::<inner>`) was necessary but not sufficient: the oracle witness
+   names the decorator parameter `f` — the same as the decorated function — and
+   the fn-param binding `function_aliases["python::f"] = original` then clobbered
+   the decorated-function→wrapper alias (same key), masking the wrong-arity call.
+   Fixed with a guard that skips the global bare-name fn-param binding when it
+   equals the decorated function's symbol id (the wrapper-scoped and
+   param-qualified bindings still resolve `fn` inside the wrapper body).
+
+Validated: regression/python suite green; sweep 2719 PASS / 0 regressions; oracle
+false proofs **3 → 1** (only `gen_send_before_start` remains), 0 new. CORE
+lock-in tests: `dec-not-callable-typeerror`, `dec-wrong-arity-typeerror` (uses
+the colliding-param witness), `dec-callable-nofp` (identity / `*args` / callable
+instance — all SUCCESSFUL).
 
 ---
 
