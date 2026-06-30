@@ -656,7 +656,13 @@ Findings:
   together with a reference-semantics-for-instances effort (the high-value
   whole-group play), not a per-feature guard.
 
-**Reference-semantics-for-instances PLAN (2026-06-28).** The cluster above is now
+**Reference-semantics-for-instances PLAN (2026-06-28).** *(COMPLETED 2026-06-28 —
+Phases 1+2+3 landed; all five cluster pins are now CORE [`instance-aliasing`,
+`instance-field-aliasing`, `shared-object-aliasing`, `instance-return-aliasing`,
+`context-manager-enter-mutation`]; oracle baseline dropped 22→17. See the
+COMPLETE [instance ref-semantics plan](python-frontend-instance-reference-semantics-plan.md).
+The "now pinned as KNOWNBUG … to flip to CORE" wording below is the design-time
+state.)* The cluster above is now
 designed and phased in
 [python-frontend-instance-reference-semantics-plan.md](python-frontend-instance-reference-semantics-plan.md):
 instances are by-value at the three remaining copy sites (local assignment,
