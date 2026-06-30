@@ -1436,6 +1436,33 @@ Both need def-time emission across `convert_function_def`'s many return paths pl
 wrapper-signature plumbing -- a dedicated decorator-application effort, not a
 point fix.
 
+**Soundness corner-case closes (2026-06-30, cont.) -- oracle false proofs 7 -> 3.**
+Per "soundness is the utmost priority even for single-digit corner cases":
+- *`set_pop_empty`* -- the set.pop KeyError on `bm==0` was being MASKED: a
+  subsequent `assume (bm & bit) != 0` (the nondet member) is `0 != 0` on the
+  empty path, silently cutting it. Added a `bm == 0` disjunct so the empty path
+  stays feasible and the KeyError fires. (A masking-assume soundness bug -- worth
+  watching for elsewhere.)
+- *`len_nonint`* -- value-axis of the dunder-return contract: a `__len__` that
+  provably returns a negative integer constant (detected at class definition) ->
+  ValueError. Constant-only, so a symbolic/non-negative `__len__` is never
+  flagged (no FP). CORE `len-negative-dunder`.
+- *`binop_mirror_evalorder`* -- `x + g()` reads the left BEFORE the right; a
+  module-level GLOBAL left read is now snapshotted before a side-effecting right
+  call (a callee can rebind a global but not a caller local, so the gate is
+  module-scope only -- which also avoids breaking recursive-call convergence
+  like `n * fact(n-1)`). CORE `binop-evalorder-left-snapshot`.
+- *`d1_numeric_tower`* reclassified ORACLE-INTRINSIC -- the int->float coercion
+  at a call boundary is documented OUT of the PyHard subset.
+
+**Remaining 3 false proofs are all FEATURES, not point fixes:**
+`dec_not_callable` + `dec_wrong_arity` need general decorator-application
+modelling (above); `gen_send_before_start` needs a generator state machine
+(generators are currently modelled as EAGER `__gen_result` lists with no
+generator-object identity / priming state / `.send()` semantics). Each is a
+dedicated feature. The standing oracle 0-NEW gate keeps these from regressing and
+guards against new false proofs.
+
 | Area | Issue | Status | Plan |
 |---|---|---|---|
 | Float floor division | `//` on float operands was computed as true division (no floor): `7.0 // 2.0 == 3.5` — wrong arithmetic | **CLOSED 2026-06-26** (float-floor applied; `float-floordiv-correct`) | — |
