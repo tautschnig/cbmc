@@ -5349,6 +5349,29 @@ exprt python_convertert::convert_expression(const jsont &expr)
             }
           }
         }
+        // PLR §2.4.3: validate the format presentation code against the
+        // value's concrete type (a numeric code on a str -> ValueError, etc.).
+        // The type char is the trailing letter of the spec; gated on a constant
+        // spec + a concrete value type (symbolic/Any never flagged).
+        if(spec_constant && !spec_str.empty())
+        {
+          const char last = spec_str.back();
+          const char code = std::isalpha(static_cast<unsigned char>(last))
+                              ? static_cast<char>(std::tolower(
+                                  static_cast<unsigned char>(last)))
+                              : char{0};
+          if(code != 0)
+          {
+            exprt fv = convert_expression(json_member(v, "value"));
+            if(!fv.is_nil())
+            {
+              const char *exc = format_code_violation(
+                code, value_format_category(fv.type()), false);
+              if(exc != nullptr)
+                emit_conditional_exception(true_exprt{}, exc);
+            }
+          }
+        }
         // Treat ':0N' (zero-pad to width N) for int args as a
         // precision win: emit a nondet string whose length is
         // exactly N. The content won't match Python's exact

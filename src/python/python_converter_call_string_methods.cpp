@@ -1799,6 +1799,28 @@ std::optional<exprt> python_convertert::try_string_method(
               continue;
             }
 
+            // PLR §6.1.3: validate the format presentation code against the
+            // arg's concrete type ({:d} on a str -> ValueError, {:s} on an int
+            // -> ValueError, ...). The type char is the trailing letter of the
+            // spec; gated on a concrete arg type (symbolic/Any never flagged).
+            if(!fmt_spec.empty())
+            {
+              const char last = fmt_spec.back();
+              const char code = std::isalpha(static_cast<unsigned char>(last))
+                                  ? static_cast<char>(std::tolower(
+                                      static_cast<unsigned char>(last)))
+                                  : char{0};
+              if(code != 0)
+              {
+                const char *exc = format_code_violation(
+                  code,
+                  value_format_category(arg_exprs[use_idx].type()),
+                  false);
+                if(exc != nullptr)
+                  emit_conditional_exception(true_exprt{}, exc);
+              }
+            }
+
             // Extract value
             // Detect None argument by AST inspection (not type)
             // since Python's None becomes a signedbv sentinel
