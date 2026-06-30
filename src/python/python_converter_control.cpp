@@ -2021,10 +2021,10 @@ codet python_convertert::convert_return(const jsont &stmt)
       const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
       code_blockt block;
 
-      auto init_call =
-        build_class_init_call(call_name, tmp_sym.symbol_expr(), value, loc);
-      if(init_call)
-        block.add(code_expressiont{*init_call});
+      // Construct: __init__ call, or @dataclass field binding.
+      for(auto &s : build_class_construction(
+            call_name, tmp_sym.symbol_expr(), value, loc))
+        block.add(std::move(s));
 
       // Typecast to function's return type if needed
       exprt ret_expr = tmp_sym.symbol_expr();

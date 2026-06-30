@@ -437,11 +437,10 @@ codet python_convertert::convert_with(const jsont &stmt)
             symbol_table.add(new_sym);
           }
 
-          // Call __init__ on manager
-          auto init_call =
-            build_class_init_call(cls_name, mgr.symbol_expr(), ctx_expr, loc);
-          if(init_call)
-            block.add(code_expressiont{*init_call});
+          // Construct the manager: __init__ call, or @dataclass field binding.
+          for(auto &s : build_class_construction(
+                cls_name, mgr.symbol_expr(), ctx_expr, loc))
+            block.add(std::move(s));
 
           // Call __enter__ and bind result to v.
           if(enter_sym != nullptr)

@@ -1493,21 +1493,10 @@ exprt python_convertert::convert_call(const jsont &expr)
         code_frontend_assignt{tmp_sym.symbol_expr(), class_obj->symbol_expr()});
     }
 
-    auto init_call = build_class_init_call(
-      func_name, tmp_sym.symbol_expr(), expr, get_location(expr));
-    if(init_call)
-    {
-      // Inject the __init__ call before the current statement
-      pending_checks.push_back(code_expressiont{*init_call});
-    }
-    else if(
-      auto dc_init = build_dataclass_init_block(
-        func_name, tmp_sym.symbol_expr(), expr, get_location(expr)))
-    {
-      // @dataclass with no explicit __init__: bind constructor args to fields.
-      for(auto &s : dc_init->statements())
-        pending_checks.push_back(std::move(s));
-    }
+    // Construct: __init__ call, or @dataclass field binding.
+    for(auto &s : build_class_construction(
+          func_name, tmp_sym.symbol_expr(), expr, get_location(expr)))
+      pending_checks.push_back(std::move(s));
 
     return tmp_sym.symbol_expr();
   }
