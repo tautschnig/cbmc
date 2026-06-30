@@ -49,9 +49,28 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   {
     const std::string rty =
       json_string(json_member(json_member(expr, "right"), "_type"));
+    const std::string lty =
+      json_string(json_member(json_member(expr, "left"), "_type"));
     const bool right_is_read =
       rty == "Name" || rty == "Attribute" || rty == "Subscript";
-    if(left.id() == ID_side_effect && right_is_read)
+    // PLR §6.16: the LEFT operand is evaluated (read) BEFORE the right. If the
+    // left is a READ and the right is a side-effecting CALL that could mutate
+    // the left's source, the left must be SNAPSHOTTED before the right runs --
+    // otherwise the (lazy) symbol reference reads the right's post-mutation
+    // value (e.g. `x + g()` where g() rebinds x: r must be the OLD x, not the
+    // new one). Covers the direct-call right; an await is treated likewise.
+    const bool left_is_read =
+      lty == "Name" || lty == "Attribute" || lty == "Subscript";
+    const bool right_is_call = rty == "Call" || rty == "Await";
+    // Restrict the left-read snapshot to MODULE scope: only a module-level
+    // global can be rebound by the right call (a callee cannot rebind a
+    // caller's local/param), so snapshotting a function-local left here is
+    // unnecessary AND breaks recursive-call unwinding convergence (e.g.
+    // `n * fact(n-1)`). At module level the left name IS global -> snapshot.
+    const bool left_read_global = left_is_read && current_function.empty();
+    if(
+      (left.id() == ID_side_effect && right_is_read) ||
+      (left_read_global && right_is_call))
     {
       static unsigned binop_lhs_ctr = 0;
       const std::string nm = "__binop_lhs_" + std::to_string(binop_lhs_ctr++);
