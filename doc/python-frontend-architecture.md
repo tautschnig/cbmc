@@ -1065,13 +1065,15 @@ FEATURE** (not point fixes), plus **4 intrinsic / out-of-subset residuals** and
 see inventory B). The standing **oracle 0-NEW gate** (run after every change)
 keeps new false proofs out.
 
-- *The 3 remaining false proofs (features):* `dec_not_callable` + `dec_wrong_arity`
-  — the frontend does not model GENERAL decorator application (`@d` → `f = d(f)`),
-  so a non-callable decorator and a wrapper-arity mismatch are not caught (needs
-  decorator-application modelling); `gen_send_before_start` — generators are
-  modelled as eager `__gen_result` lists with no generator-object identity /
-  priming state, so `gen.send()` semantics are unmodelled (needs a generator
-  state machine). Pinned `dec-not-callable-knownbug`, `dec-wrong-arity-knownbug`,
+- *The 3 remaining false proofs (features) — each now has a spike-confirmed
+  phased plan:* `dec_not_callable` + `dec_wrong_arity` — the frontend does not
+  model GENERAL decorator application (`@d` → `f = d(f)`), so a non-callable
+  decorator and a wrapper-arity mismatch are not caught
+  ([plan §15](python-frontend-plan.md#decorators)); `gen_send_before_start` —
+  generators are modelled as eager `__gen_result` lists with no generator-object
+  identity / priming state, so `gen.send()` semantics are unmodelled
+  ([plan §1](python-frontend-plan.md#generators), Phase 1). Pinned
+  `dec-not-callable-knownbug`, `dec-wrong-arity-knownbug`,
   `gen-send-before-start-knownbug`.
 - *The 4 intrinsic / out-of-subset residuals* (marked `ORACLE-INTRINSIC`, NOT
   default-subset bugs): the annotation-laundering family — `004` (arg boundary),

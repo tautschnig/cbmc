@@ -1602,9 +1602,42 @@ inter-yield side effects.
 list model has no generator-OBJECT identity or priming state, so `gen.send(v)`
 is not modelled. In particular `it = g(); it.send(5)` on a just-started
 generator should raise `TypeError` ("can't send non-None value to a just-started
-generator") — a known **false proof** (`gen-send-before-start-knownbug`). Closing
-it (and modelling `.send()`/`.throw()`/`.close()` generally) needs a generator
-state machine, i.e. the same resumption encoding above. Until then it is pinned.
+generator") — a known **false proof** (`gen-send-before-start-knownbug`).
+
+**Spike (2026-06-30, confirmed).** `it = g()` lowers to a call returning the eager
+`__gen_result_g` list, plus a per-call-site cursor `__cursor_it` that `next()`
+advances. So the "generator object" today *is* the list — there is **no
+generator-object struct and no priming state**, and **`.send()` has no method
+handler** (it falls through to a generic nondet method dispatch → no-op → the
+false proof). Confirmed by `--show-goto-functions`: `CALL it := g(); __cursor_it
+:= 0; …`. Both `it.send(5)` (must raise) and the valid `next(it); it.send(5)`
+verify SUCCESSFUL today.
+
+**PEP 342 / PLR §6.2.9 semantics.** A generator object starts *suspended before
+its first line*. The first interaction must be `next(it)` or `it.send(None)`;
+`it.send(non-None)` on a just-started generator raises `TypeError`. Thereafter
+`it.send(v)` resumes execution and `v` becomes the value of the pending `yield`
+expression (`x = yield 1` binds `x` to the sent value); `.throw()` raises at the
+suspension point; `.close()` injects `GeneratorExit`.
+
+**Phased plan.**
+- **Phase 1 — priming-state TypeError (closes `gen_send_before_start`).** Give
+  each generator-call-site a boolean `__started_<it>` symbol, initialised `false`
+  at `it = g()` and set `true` by the first `next(it)` / `it.send(None)`. Add a
+  `.send()` method handler (no handler exists today) that, on a generator
+  receiver, emits `emit_conditional_exception(arg != None && !started, "TypeError")`
+  then advances the cursor like `next()` and returns the next element.
+  *Soundness gating (no FP):* fire ONLY when the argument is provably non-None
+  (a `None` send, or a send after a prior `next()`/`send(None)`, must not flag);
+  a generator received through an opaque value (no resolvable `__started`) is not
+  flagged. *Acceptance:* `gen-send-before-start-knownbug` → CORE FAILED;
+  `next(it); it.send(5)` and `it.send(None)` → SUCCESSFUL; suite green; sweep
+  0-reg; oracle 0-NEW. Cheap (one flag + one handler), no resumption needed.
+- **Phase 2 — faithful `.send()` value-passing / `.throw()` / `.close()` (NO
+  PLAN YET).** Making the *sent value* flow into the `yield` expression requires
+  real suspension/resumption — the same state-machine encoding noted above. Only
+  worth it if a benchmark needs faithful inter-yield value passing; Phase 1
+  closes the soundness hole without it.
 
 ---
 
@@ -3157,6 +3190,67 @@ rediscovered as "new":
   "implicit-None-capable" tracking.
 - **`type-inference-for-len`** — symbolic-string for-loops need per-call-site
   specialisation or a bounded default unwind.
+
+---
+
+## 15. Decorator application (PLR §8.7)  {#decorators}
+
+**Status: PLAN (spike-confirmed 2026-06-30).** Closes the two remaining decorator
+false proofs `dec_not_callable` and `dec_wrong_arity`.
+
+**PLR semantics.** `@dec def f(x): …` lowers to `def f(x): …; f = dec(f)`,
+evaluated at def-time (stacked decorators apply bottom-up: `@d1 @d2 def f` →
+`f = d1(d2(f))`). `dec` must be callable (else `TypeError` at def-time); the
+result rebinds `f`, and the *returned* callable's signature governs subsequent
+calls.
+
+**Spike (confirmed by code read + cbmc).** The frontend ALREADY partially applies
+general decorators: `convert_function_def` has a `user_decorators` application
+loop (`python_converter_defs.cpp:1932`–~2062) that, for each decorator, resolves
+the decorator value and registers a `function_aliases` entry so calls to `f`
+dispatch through the wrapper. Two precise gaps:
+- **`dec_not_callable`** — at `:1967`, `if(dec_expr.is_nil() || dec_expr.type().id()
+  != ID_code) continue;` *silently skips* a non-callable decorator value (e.g. an
+  `int`), emitting no TypeError.
+- **`dec_wrong_arity`** — the wrapper lookup at `:2054` builds the nested-function
+  symbol as `"python::" + inner_name`, but a function nested in `dec` is qualified
+  `python::dec::<inner>`; the lookup misses, the alias is not registered, and the
+  call bypasses the wrapper (dispatching to the original `f`, whose arity matches)
+  — so the wrapper's arity is never enforced.
+
+Both confirmed: `dec_not_callable`/`dec_wrong_arity` verify SUCCESSFUL today; the
+cited code sites exist; `function_max_positional`/`function_vararg_index` already
+back `validate_call_signature`.
+
+**Phase 1 — def-time callability check (`dec_not_callable`).** At `:1967`, when
+`dec_expr` is non-nil and its type is neither `ID_code` nor `python_value`
+(Any) — i.e. a *provably non-callable* concrete value (int/float/str/list/…) —
+emit `emit_conditional_exception(true_exprt{}, "TypeError")` instead of silently
+`continue`-ing. The `FunctionDef` statement flushes pending checks, so the
+TypeError fires at the def site (CPython's def-time semantics).
+*Soundness gating (no FP):* skip a `nil` decorator (unresolved import/forward-ref
+— cannot prove non-callable) and a `python_value`/Any decorator (might be
+callable); functions/classes/lambdas are `ID_code` and fall through unflagged;
+`@staticmethod`/`@property`/`@icontract`/`@c_intrinsic` are filtered out before
+this loop. ~10 lines, one site.
+
+**Phase 2 — wrapper-arity enforcement (`dec_wrong_arity`).** Fix the wrapper
+lookup at `:2054` to use the decorator's qualified name (`dec_name + "::" +
+inner_name`) with a fallback to the bare name. Once the alias points at the real
+wrapper symbol, the EXISTING `validate_call_signature` enforces the wrapper's
+arity at the call site (the wrapper is undecorated, so it is in
+`function_signature_checkable` with `function_max_positional = 0`) — *no further
+code change* for the check itself. *Soundness gating (no FP):* a wrapper with
+`*args` has a `function_vararg_index` entry → arity check correctly skipped; a
+wrapper whose arity matches the call is unaffected.
+
+**Acceptance criteria.** Gates: `dec-not-callable-knownbug` → CORE FAILED (Phase
+1); `dec-wrong-arity-knownbug` → CORE FAILED (Phase 2). No-FP: a parametric
+decorator (`@deco(arg)` / `@functools.wraps(fn)`), an Any-typed decorator
+(`d: Any; @d`), a `*args` wrapper, `@staticmethod`/`@classmethod`/`@property`,
+and the existing `python-decorator-varargs` / `python-decorator-inside-function`
+tests all stay SUCCESSFUL. Per phase: suite green, sweep 2719/0-reg, oracle
+0-NEW. Estimated ~20 lines + the no-FP regression tests.
 
 ---
 
