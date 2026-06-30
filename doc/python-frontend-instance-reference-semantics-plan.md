@@ -190,6 +190,32 @@ concrete-class-param coercion PUN is closed as a corollary. The
 concrete-class-param coercion PUN (coercion-boundary audit) is then also closed
 as a corollary (the param→field copy disappears).
 
+## 5b. Spike (2026-06-30): the remaining false-alarm cluster is instances-in-containers
+
+A re-triage of the oracle's 206 false ALARMS (after the @dataclass construction
+fix) found **150 in `laurel-encoding-soundness`, all assertion failures** (~73%
+of the precision debt). Sampling them:
+
+- *Already resolved* by Phases 1–3 + the @dataclass `__init__` binding:
+  field-mutation-through-a-method, composition, augmented-assign field, multiple
+  field-writes threading (`098`, `048`, `101`, `105` → 0 failures).
+- *Still failing* — the dominant remaining sub-pattern: **an instance stored in
+  a container** (`list[Task]`, dict of objects), mutated through an extracted
+  element or a `for t in tasks: t.x = …` loop (`087`, `099`). Extracting a
+  container element yields a by-VALUE copy, so the mutation is lost.
+
+This is exactly the case Phases 1–3 deliberately did NOT cover: it is the
+**nested-container `==` perf cliff** (`ref_mutables`). The A/B sweep in §3
+regressed PASS 2710 vs 2719 when containers held by-reference values, because
+nested-container structural equality blows up the solver. So this remaining
+cluster is **perf-gated, not a free win**: making list/dict ELEMENTS
+by-reference (so `tasks[i].x = …` and `for t in tasks: t.x = …` propagate) needs
+the by-reference-container mechanism plus careful per-element-access perf
+measurement — likely behind the `--python-ref-instances` flag with the by-value
+default retained where the cliff bites. Recommendation: a dedicated, measured
+"Phase 4 — container-element instances" effort, not a quick fix; the single-
+level instance work is complete and the dataclass cluster is closed.
+
 ## 6. Cross-references
 
 - Master inventory: the **Class-instance identity / aliasing** and
