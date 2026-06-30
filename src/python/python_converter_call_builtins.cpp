@@ -2704,6 +2704,24 @@ std::optional<exprt> python_convertert::try_builtin_call(
         member_exprt length{arg, "length", signedbv_typet{64}};
         member_exprt data{arg, "data", data_type};
 
+        // PLR §6.10: sum() starts at 0 and adds each element, so a concretely
+        // non-numeric element type (str/list/...) raises TypeError
+        // ('unsupported operand type(s) for +'). python_value (Any, e.g. *args)
+        // is NOT flagged -- a violation cannot be proven.
+        {
+          const typet &et = data_type.element_type();
+          const bool numeric = et.id() == ID_signedbv ||
+                               et.id() == ID_unsignedbv ||
+                               et.id() == ID_floatbv || et.id() == ID_c_bool ||
+                               et.id() == ID_bool || et.id() == ID_fixedbv;
+          if(!numeric && !is_python_value_type(et))
+          {
+            emit_conditional_exception(true_exprt{}, "TypeError");
+            return side_effect_expr_nondett{
+              python_int_type(), get_location(expr)};
+          }
+        }
+
         // PLR §6.2.5: if the list element type is python_value
         // (typical for *args), unwrap each element to its
         // numeric content. Otherwise accumulate at the element
@@ -2848,6 +2866,13 @@ std::optional<exprt> python_convertert::try_builtin_call(
     {
       auto ait = as_array(args).begin();
       exprt arg = convert_expression(*ait);
+      // PLR §6.10: round(x) requires a number (or a __round__ method). A str
+      // operand raises TypeError ('type str doesn't define __round__ method').
+      if(is_python_string_type(arg.type()))
+      {
+        emit_conditional_exception(true_exprt{}, "TypeError");
+        return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+      }
       auto eval_val = try_eval_double(arg);
       if(eval_val.has_value())
       {
