@@ -151,6 +151,28 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       exprt reflected = try_dispatch(right, left, du->second.second);
       if(reflected.id() != ID_nil)
         return reflected;
+
+      // PLR §3.3.8: both __op__ (left) and __r op__ (right) failed. If a
+      // concrete user-class operand provably cannot handle the operator (its
+      // MRO defines neither the direct nor the reflected dunder) and the other
+      // operand is not Any, the operation is a definite TypeError. Builtins
+      // never reflect-handle a user class, so class-vs-builtin is caught too;
+      // python_value (Any) operands are never flagged (no false positive).
+      // Inherited dunders are respected via class_mro_defines, so this does not
+      // fire when the method is inherited.
+      const bool left_cant =
+        concrete_class_lacks_dunder(left.type(), du->second.first.c_str()) &&
+        concrete_class_lacks_dunder(left.type(), du->second.second.c_str());
+      const bool right_cant =
+        concrete_class_lacks_dunder(right.type(), du->second.first.c_str()) &&
+        concrete_class_lacks_dunder(right.type(), du->second.second.c_str());
+      if(
+        (left_cant && !is_python_value_type(right.type())) ||
+        (right_cant && !is_python_value_type(left.type())))
+      {
+        emit_conditional_exception(true_exprt{}, "TypeError");
+        return side_effect_expr_nondett{python_int_type(), source_locationt{}};
+      }
     }
   }
 
@@ -2120,6 +2142,14 @@ exprt python_convertert::convert_unary_op(const jsont &expr)
               source_locationt{}};
           }
         }
+      }
+      // PLR §3.3.8: a unary operator on a concrete class whose MRO defines no
+      // matching dunder (__neg__/__pos__/__invert__) raises TypeError ('bad
+      // operand type for unary ...').
+      if(concrete_class_lacks_dunder(operand.type(), du->second.c_str()))
+      {
+        emit_conditional_exception(true_exprt{}, "TypeError");
+        return side_effect_expr_nondett{operand.type(), source_locationt{}};
       }
     }
   }

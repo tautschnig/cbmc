@@ -5541,6 +5541,13 @@ exprt python_convertert::convert_expression(const jsont &expr)
   else if(node_type == "Await")
   {
     result = convert_expression(json_member(expr, "value"));
+    // PLR §3.4.4: `await obj` requires __await__. A concrete class whose MRO
+    // defines none is not awaitable -> TypeError. (Coroutine objects from
+    // `async def` are not python_class_ instances, so they are not flagged.)
+    if(
+      !result.is_nil() &&
+      concrete_class_lacks_dunder(result.type(), "__await__"))
+      emit_conditional_exception(true_exprt{}, "TypeError");
   }
   // PLR §6.3.3: slicings (x[a:b], x[a:b:c]). A full precise model is
   // out of scope for Step 1 of the module support plan, but emitting
