@@ -1306,7 +1306,8 @@ flagged but its iteration is still modelled imprecisely (zero iterations).
   *Residuals:* `__bool__` (bool vs int not reliably distinguishable in the repr
   -> a strict check risks FP), `__hash__` (not dispatched at all -- custom-key
   hashing unmodelled), and the `__len__` NEGATIVE-VALUE case (a value check that
-  would FP on symbolic-but-nonneg returns -> `dunder-len-nonint-knownbug`).
+  would FP on symbolic-but-nonneg returns). *(The negative-VALUE case was LATER
+  CLOSED via a constant-only check -- `len-negative-dunder` CORE; see header.)*
 - *Builtin arg/edge preconditions: an irreducible per-builtin FAMILY, not a
   single whole-group.* Each member has a distinct predicate (ord: one-char
   string; divmod: nonzero divisor; round: numeric arg; join: all-str elements;
@@ -1316,9 +1317,10 @@ flagged but its iteration is still modelled imprecisely (zero iterations).
   and `ord` (single-char TypeError, `builtin-ord-multichar` CORE). The rest
   (round/join/sorted/encode) remain tracked in the oracle corpus as individual
   family members.
-- *Format-spec validation (`"%d" % x`, `"{:d}".format(...)`, `f"{x:d}"`): deep,
-  pinned.* Requires modelling format-string parsing and per-conversion type
-  rules; tracked in the oracle (`fmt_*`) and as `str-percent-format-type-knownbug`.
+- *Format-spec validation (`"%d" % x`, `"{:d}".format(...)`, `f"{x:d}"`):*
+  Requires modelling format-string parsing and per-conversion type rules.
+  *(LATER CLOSED -- the format-spec whole-group is complete across all three
+  sites; CORE `format-spec-{percent,strformat,fstring}`; see header.)*
 
 Net effect of the two audit rounds + roadmap: oracle false-proof baseline
 6 -> 22 (discovery) -> 19 (after the iteration cluster, `__len__`/`__str__`
