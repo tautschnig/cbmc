@@ -2965,6 +2965,33 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             }
         }
       }
+    // A @dataclass synthesizes an __init__ that assigns every annotated field,
+    // so those bare class-body annotations ARE constructor-assigned and must
+    // NOT be flagged as unassigned-field AttributeErrors (a frequent precision
+    // false alarm: reading `cfg.host` on a @dataclass instance). Detect the
+    // decorator in any of its spellings (@dataclass, @dataclass(...),
+    // @dataclasses.dataclass[(...)]) and fold the bare annotations into the
+    // constructor-assigned set.
+    {
+      const jsont &dl = json_member(stmt, "decorator_list");
+      bool is_dataclass = false;
+      if(dl.is_array())
+        for(const auto &d : as_array(dl))
+        {
+          const jsont *node = &d;
+          if(is_node_type(d, "Call"))
+            node = &json_member(d, "func");
+          std::string dn;
+          if(is_node_type(*node, "Name"))
+            dn = json_string(json_member(*node, "id"));
+          else if(is_node_type(*node, "Attribute"))
+            dn = json_string(json_member(*node, "attr"));
+          if(dn == "dataclass")
+            is_dataclass = true;
+        }
+      if(is_dataclass)
+        own_def.insert(own_bare.begin(), own_bare.end());
+    }
     std::set<std::string> all_bare = own_bare, ctor = own_def;
     bool inherit_ctor = calls_super || !has_init;
     if(bases.is_array())
