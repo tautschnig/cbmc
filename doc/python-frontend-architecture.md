@@ -1325,6 +1325,29 @@ protocol false proofs closed that were never in the corpus).
 ordering, so the missing-dunder hook needs careful placement to stay FP-free;
 tracked. (`==`/`!=` must stay unflagged -- they have identity defaults.)
 
+**P1 closes (2026-06-30).**
+- *Hashability mini-group (whole-group).* A dict key / set element must be
+  hashable; the built-in mutable containers list/dict/set are unhashable (PLR
+  §3.2). Factored `is_unhashable_type()` and applied it at the previously
+  unchecked sites (the `d[k]=v` store already had it): dict literal `{[1]: 2}`,
+  dict comprehension `{k: 1 for k in [[1]]}` (closes `comp_key_unhashable`), and
+  `set.add`/`set.discard`. Tuples and user classes (hashable by default) are
+  never flagged. CORE `dict-literal-unhashable-key`, `dictcomp-unhashable-key`,
+  `set-add-unhashable`.
+- *int() float-domain cluster.* `int(float('inf'))` / `int(math.inf)` ->
+  OverflowError; `int(float('nan'))` -> ValueError (constant operands only;
+  symbolic floats not flagged). Closes `int_inf`; `int("3.5")` was already
+  caught. CORE `int-float-inf`, `int-float-nan`.
+- Oracle debt 15 -> 13. All: suite green, sweep 2719/0-reg, 0 new false alarms.
+
+*P1 remaining (tracked):* `str_encode_bad` (needs a codec-name whitelist),
+decorators (`dec_not_callable` -- decorator value not callable; `dec_wrong_arity`
+-- wrapper-arity mismatch, in the complex HOF/wrapper handler), plus the
+deeper/harder items: `sorted_incomparable` + `list_compare_mixed` (mixed-element
+comparability), `set_pop_empty` (empty-set bitmap not provably 0), `len_nonint`
+negative-value, the format-spec family (`fmt_*`), `gen_send_before_start`, and
+the numeric/operator-order pair (`d1_numeric_tower`, `binop_mirror_evalorder`).
+
 | Area | Issue | Status | Plan |
 |---|---|---|---|
 | Float floor division | `//` on float operands was computed as true division (no floor): `7.0 // 2.0 == 3.5` — wrong arithmetic | **CLOSED 2026-06-26** (float-floor applied; `float-floordiv-correct`) | — |
