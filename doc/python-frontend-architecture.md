@@ -1296,6 +1296,35 @@ Net 2026-06-30: oracle 19 -> 16 (P3) -> 12 (P0) -> 16 (round-3 discovery of 4
 new). The dunder-protocol-missing whole-group now spans subscript, iteration
 (for/comprehension/unpack), call, and the context-manager protocol.
 
+**Protocol-completeness sweep (2026-06-30).** A probe confirmed 7 more
+unhandled protocol sites, so the dunder-protocol-missing whole-group was closed
+systematically via a factored helper `concrete_class_lacks_dunder(type, dunder)`
+(true iff a concrete `python_class_*` receiver lacks the dunder across its MRO;
+false for builtins / Any / non-class, inherited dunders respected). New sites:
+`obj[k]=v` (`__setitem__`), `del obj[k]` (`__delitem__`), `x in obj`
+(`__contains__`, gated on ALSO lacking `__iter__`/`__getitem__`), unary
+`__neg__`/`__pos__`/`__invert__`, and binary operators (`__add__`.. with the
+reflected `__r op__`: after both dispatches fail, a concrete user-class operand
+that cannot handle the op and whose partner is not Any -> TypeError; builtins
+never reflect-handle a user class). CORE tests `setitem-no-dunder`,
+`delitem-no-dunder`, `contains-no-dunder`, `unaryop-no-dunder`,
+`binop-no-dunder`. `await` (`__await__`) is wired but inert (async results'
+types are not surfaced -- sound, harmless). The whole-group now spans:
+subscript-read/-store/-delete, iteration (for/comprehension/unpack), membership,
+call, context-manager, unary, and binary operators -- ALL on the one
+`class_mro_defines` lever. Validated: each site flips to FAILED on a class
+lacking the dunder; valid/inherited/builtin/Any/reflected cases SUCCESSFUL; suite
+green; sweep PASS 2719, 0 regressions; oracle 0 NEW false proofs, no new false
+alarms. **Bonus:** the sweep resolved the long-standing deep finding
+`c2_typeddict_del` (cross-call `del` invalidating `in`-narrowing) -- it now
+correctly raises at the post-`del` read. Oracle debt 16 -> 15 (plus ~6 latent
+protocol false proofs closed that were never in the corpus).
+
+**Remaining protocol site:** ordering comparisons (`<`/`>`/`<=`/`>=` with no
+`__lt__`/`__gt__`/... ) -- the compare handler interleaves list/string/sequence
+ordering, so the missing-dunder hook needs careful placement to stay FP-free;
+tracked. (`==`/`!=` must stay unflagged -- they have identity defaults.)
+
 | Area | Issue | Status | Plan |
 |---|---|---|---|
 | Float floor division | `//` on float operands was computed as true division (no floor): `7.0 // 2.0 == 3.5` — wrong arithmetic | **CLOSED 2026-06-26** (float-floor applied; `float-floordiv-correct`) | — |
