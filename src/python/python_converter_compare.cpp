@@ -906,17 +906,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
         // Any/symbolic and numeric-numeric (int vs float) are left to the
         // existing promotion paths below (no false positive).
         {
-          auto cat = [this](const typet &t) -> int
-          {
-            if(
-              t.id() == ID_signedbv || t.id() == ID_unsignedbv ||
-              t.id() == ID_integer || t.id() == ID_floatbv || t.id() == ID_bool)
-              return 1;
-            if(is_python_string_type(t))
-              return 2;
-            return 0;
-          };
-          const int ca = cat(a.type()), cb = cat(b.type());
+          const int ca = orderable_category_of(a),
+                    cb = orderable_category_of(b);
           if(ca != 0 && cb != 0 && ca != cb)
           {
             emit_conditional_exception(true_exprt{}, "TypeError");

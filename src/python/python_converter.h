@@ -1954,6 +1954,14 @@ private:
   /// unhashable -- using one as a dict key or set element raises TypeError.
   bool is_unhashable_type(const typet &t);
 
+  /// Orderable category of an operand for the mixed-type ordering TypeError
+  /// check: 1 = numeric (int/float/bool), 2 = str, 0 = unknown/not-flaggable.
+  /// Recovers the category from a CONSTANT python_value's static tag too, so a
+  /// boxed literal element (e.g. "a" in the mixed list [1, "a"]) is seen as
+  /// str. A symbolic/Any python_value (no static tag) returns 0 -- never
+  /// flagged, so the check stays false-positive-free.
+  int orderable_category_of(const exprt &e);
+
   /// PLR §3.3: dispatch a container method whose name is shared across built-in
   /// containers (pop / remove / clear / copy / update) on an Any
   /// (`python_value`) receiver, by branching on the runtime `__tag`. Each
