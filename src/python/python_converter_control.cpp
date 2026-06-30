@@ -780,6 +780,25 @@ codet python_convertert::convert_for(const jsont &stmt)
   if(iterable.is_nil())
     return finalize_for(code_skipt{});
 
+  // PLR §3.3.1: a concrete non-iterable scalar (int/float/bool) is not
+  // iterable -> `for x in 5` raises TypeError ('object is not iterable'). Only
+  // bare numeric scalar types are flagged; str/list/dict/set/tuple/range/class/
+  // python_value are legitimately iterable and never reach here as a scalar.
+  {
+    const irep_idt itid = iterable.type().id();
+    if(
+      itid == ID_signedbv || itid == ID_unsignedbv || itid == ID_floatbv ||
+      itid == ID_fixedbv || itid == ID_c_bool)
+    {
+      source_locationt tloc = loc;
+      tloc.set_property_class("type-error");
+      tloc.set_comment("object is not iterable");
+      code_assertt te{false_exprt{}};
+      te.add_source_location() = tloc;
+      return finalize_for(std::move(te));
+    }
+  }
+
   // PLR: "dictionary changed size during iteration" (RuntimeError). CPython's
   // dict views (the dict itself and .items()/.keys()/.values()) check the
   // dict's size at every __next__ and raise if it changed. Model it by
