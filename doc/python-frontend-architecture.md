@@ -480,19 +480,35 @@ When the body of a function `gen` contains `yield`:
    into the pending `yield` needs real resumption (plan §1
    Phase 2).
 6. `for x in g` iterates the eager list directly via the
-   for-loop's own counter — the cursor is independent.
+   for-loop's own counter, **independent of the cursor** — so a
+   `for` loop after a partial `next(g)` re-iterates from the
+   start. This is **UNSOUND** (see the consumption-state cluster
+   below), not a deliberate simplification.
 
 Existing exception infrastructure handles the StopIteration
 propagation; `try / except StopIteration:` catches it
 without further changes.
 
-**Not modelled (not a false proof):** generator-object
-*identity* — there is no heap object, so an alias `it2 = it`
-or passing a generator to a function does not share cursor /
-priming state with the original. `.send()`'s priming check
-and the cursor only resolve through the call-site Name; an
-unresolvable receiver is soundly left unflagged. A faithful
-generator-object model is plan §1 future work.
+**KNOWN false-proof cluster — generator consumption-state /
+identity (UNSOUND; pinned 2026-06-30).** The cursor tracks
+consumption only for *direct* `next(name)` / `name.send(v)` on
+the original call-site Name. Any other access path reads a
+fresh (cursor-0 or counter-from-0) view, so already-consumed
+elements are yielded again — a false proof. Confirmed channels,
+each pinned KNOWNBUG:
+- `for x in g` after a partial `next(g)` re-iterates from the
+  start (`gen-foriter-after-next-knownbug`) — the most common.
+- an alias `it2 = it` does not share consumption state
+  (`gen-alias-consume-knownbug`).
+- a generator stored in a container and consumed via the slot
+  (`box = [g()]; next(box[0])`) reads a fresh view
+  (`gen-in-container-consume-knownbug`).
+Passing a generator to a function is sound (the param view is
+over-approximated to nondet, not re-yielded). The principled
+fix is a generator-OBJECT model whose consumption state is tied
+to the object (shared across `for`, alias, container, param),
+not the Name — plan §1 future work. (These were found by a
+proactive soundness sweep, not the oracle corpus.)
 
 ## Annotation semantics (PLR §3.1, §3.2)
 
@@ -1158,6 +1174,18 @@ out-of-subset residuals** and ~206 false *alarms* (sound over-approximations /
 unsupported-feature precision — see inventory B). The standing **oracle 0-NEW
 gate** (run after every change) keeps new false proofs out.
 
+> **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
+> under-tested corners (beyond the oracle corpus) found a **generator
+> consumption-state / identity** false-proof cluster: a generator consumed
+> through anything other than a direct `next(name)`/`name.send()` on its
+> original Name — a `for` loop after a partial `next()`, an alias `it2 = it`, or
+> a container slot `box[0]` — re-yields already-consumed elements. Pinned
+> KNOWNBUG (`gen-foriter-after-next-knownbug`, `gen-alias-consume-knownbug`,
+> `gen-in-container-consume-knownbug`); the fix is a generator-OBJECT model (plan
+> §1). So "0 false proofs" is accurate *for the oracle corpus*; this cluster is a
+> known residual outside it. (Async, symbolic-key dict, and escaping closures
+> probed sound in the same sweep.)
+
 - *Closed 2026-06-30 (commit `70401b6d90`):* `gen_send_before_start` — the eager
   generator cursor already encodes priming (`cursor == 0` ⟺ not started), so a
   new `.send()` handler raises `TypeError` for a non-None send to a just-started
@@ -1165,8 +1193,9 @@ gate** (run after every change) keeps new false proofs out.
   count toward `__gen_result` alongside `yield` statements
   ([plan §1 Phase 1 OUTCOME](python-frontend-plan.md#generators)). Now CORE:
   `gen-send-before-start-typeerror`, `gen-send-prime-nofp`. A genuine
-  generator-object identity model (aliasing / pass-by-reference) remains future
-  work but is NOT a false proof.
+  generator-object identity model (aliasing / container / `for`-after-`next`)
+  remains future work and **IS a known false-proof cluster** — see the
+  proactive-sweep note above (consumption-state).
 - *Closed 2026-06-30 (commit `27bb327b26`):* `dec_not_callable` +
   `dec_wrong_arity` — the frontend now models bare-`@name` decorator
   application (`@d` → `f = d(f)`): a provably non-callable decorator raises a
@@ -1666,7 +1695,7 @@ genuinely-false negatives stay FAILED, default suite green). **Confirmed OPT-IN 
 
 | Area | Gap / deviation | Plan |
 |---|---|---|
-| Generators | list-with-cursor model: inter-yield side-effect ordering is eager (not faithful); the *value sent in* via `gen.send(v)` is not passed into the pending `yield` expression (the priming-state TypeError IS modelled — see soundness/Generator semantics); no generator-object identity (aliasing / pass-by-reference). (The earlier "module-global free vars in a generator `if`" and "cross-boundary list-shape" residuals are resolved.) | [plan §1](python-frontend-plan.md#generators) |
+| Generators | list-with-cursor model: inter-yield side-effect ordering is eager (not faithful); the *value sent in* via `gen.send(v)` is not passed into the pending `yield` expression (the priming-state TypeError IS modelled — see soundness/Generator semantics). **Consumption-state / identity is a known false-proof cluster, NOT a mere imprecision — see section A** (`for` after partial `next`, alias, container slot). (The earlier "module-global free vars in a generator `if`" and "cross-boundary list-shape" residuals are resolved.) | [plan §1](python-frontend-plan.md#generators) |
 | Closures | **escaping** closures over-approximate captured free vars to nondet (late binding `lambda: i` in a loop imprecise); non-escaping + `nonlocal` mutation + capture-through-param are correct | [plan §2](python-frontend-plan.md#closures) + [fat-closure deep-dive](python-frontend-fat-closure-plan.md) |
 | Strings (refined default) | ordering, substring `replace`, `split`, `casefold`/`title`, symbolic `count` — sound-but-imprecise; all precise (or precise-able) on the **native** backend opt-in | [strings plan](python-frontend-strings-plan.md#strings) |
 | Regex | symbolic-subject and negated-membership (`re4`/`re11`) imprecise/slow on refined; precise on native | [strings plan §4](python-frontend-strings-plan.md#regex) |
