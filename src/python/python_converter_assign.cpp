@@ -1447,6 +1447,15 @@ codet python_convertert::convert_assign(const jsont &stmt)
           call_stmt.add_source_location() = loc;
           result.add(std::move(call_stmt));
         }
+        else if(
+          auto dc_init = build_dataclass_init_block(
+            call_name, var_sym.symbol_expr(), value, loc))
+        {
+          // @dataclass with no explicit __init__: bind the constructor args to
+          // the annotated fields (the synthesized __init__).
+          for(auto &s : dc_init->statements())
+            result.add(std::move(s));
+        }
 
         if(result.statements().size() == 1)
           return result.statements().front();
