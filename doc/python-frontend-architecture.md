@@ -1265,6 +1265,37 @@ Net effect of the two audit rounds + roadmap: oracle false-proof baseline
 6 -> 22 (discovery) -> 19 (after the iteration cluster, `__len__`/`__str__`
 return-type, and `ord`/`divmod` fixes).
 
+**Roadmap execution (2026-06-30).**
+- *P3 re-triage.* The 3 ty-unsoundness laundering witnesses (004 arg / 007
+  list-element / 010 return boundary) are default-mode false proofs that
+  `--python-check-annotations` CATCHES (verified). They are the annotation-trust
+  design boundary -- intrinsic to default mode, mitigated by the opt-in flag,
+  already locked by the `annotation-*` / `check-annotations-*` CORE tests. The
+  oracle gained an `ORACLE-INTRINSIC` marker so such witnesses are excluded from
+  the default-mode soundness debt. Honest debt: 19 -> 16 (+3 intrinsic).
+- *P0 builtin-edge family (element-type / arg / iteration axes).* Closed:
+  `sum([...])` non-numeric element type, `",".join([...])` non-str element type,
+  `round(str)`, and `for x in <scalar>` (int/float/bool not iterable). All gate
+  on a CONCRETE element/arg type (Any/symbolic never flagged). The shared lever
+  is the constant element/arg type + `emit_conditional_exception`. CORE tests
+  `builtin-sum-nonnumeric`, `builtin-join-nonstr`, `builtin-round-str`,
+  `iterate-non-iterable-scalar`. Debt 16 -> 12.
+- *P1 audit round 3* (exceptions / with / generators / decorators / numeric):
+  found 6 false proofs. *Fixed (whole-group):* the **context-manager protocol**
+  (`with C()` where C lacks `__enter__`/`__exit__` -> TypeError) -- this EXTENDS
+  the dunder-protocol-missing cluster (subscript/iteration/call) to `with`,
+  reusing `class_mro_defines`. CORE `with-no-enter`, `with-no-exit`. *Pinned*
+  (oracle corpus `plr-audit-2026-06-30`): non-callable decorator, decorator
+  wrapper-arity mismatch, generator `.send()` before priming, `int(math.inf)`.
+- *Remaining builtin-edge members* (`sorted` mixed-comparable, `set().pop()`
+  empty-set repr, `str.encode` bad-codec, `comp_key_unhashable` dict-comp
+  key-hashability, `list_compare_mixed`) need element-iteration/categorisation,
+  empty-set bitmap, a codec whitelist, or loop-var typing -- moderate, tracked.
+
+Net 2026-06-30: oracle 19 -> 16 (P3) -> 12 (P0) -> 16 (round-3 discovery of 4
+new). The dunder-protocol-missing whole-group now spans subscript, iteration
+(for/comprehension/unpack), call, and the context-manager protocol.
+
 | Area | Issue | Status | Plan |
 |---|---|---|---|
 | Float floor division | `//` on float operands was computed as true division (no floor): `7.0 // 2.0 == 3.5` — wrong arithmetic | **CLOSED 2026-06-26** (float-floor applied; `float-floordiv-correct`) | — |
