@@ -1412,6 +1412,30 @@ the numeric/operator-order pair (`d1_numeric_tower`, `binop_mirror_evalorder`).
   remaining big precision whole-group stays the perf-gated container-element
   instances** (§5b); `ast-bytecode-lowering` is a low-priority long tail.
 
+**Format-spec whole-group COMPLETE (2026-06-30).** A shared
+`format_code_violation(code, value_category, percent_style)` +
+`value_format_category` enforce conversion/presentation-code vs value-type
+compatibility at ALL three sites: f-string (`FormattedValue`), `str.format`, and
+`%`-format (str `Mod`). `%d`/`%f` on a str -> TypeError; `{:d}` on a str/float ->
+ValueError; `{:s}` on an int -> ValueError. Gated on a constant spec + concrete
+value (symbolic/Any, `%s`/`%r`/`%a`, bare and width-only specs never flagged).
+Closes `fmt_pct_type`, `fmt_spec_d_on_str`, `fmt_fstring_d_str`; oracle
+false-proof debt **10 -> 7**. CORE `format-spec-{percent,strformat,fstring}`.
+*Separate PRE-EXISTING false alarm noted:* `"%d" % <int/float>` spuriously
+raises an uncaught exception in the str-`Mod` path (not introduced here; the
+str-%-format result production is itself imprecise) -- tracked.
+
+**Decorators (`dec_not_callable`, `dec_wrong_arity`) DEFERRED -- needs a real
+feature.** The frontend does not model GENERAL decorator application (`@d` is not
+lowered to `f = d(f)`; only special decorators -- icontract/c_intrinsic/property/
+overload -- are recognised, others ignored). Closing these two requires modelling
+the application: (a) at def time, if a decorator value is a concrete non-callable
+-> TypeError (`dec_not_callable`); (b) tracking the wrapper's signature so a call
+through the decorated name with mismatched arity -> TypeError (`dec_wrong_arity`).
+Both need def-time emission across `convert_function_def`'s many return paths plus
+wrapper-signature plumbing -- a dedicated decorator-application effort, not a
+point fix.
+
 | Area | Issue | Status | Plan |
 |---|---|---|---|
 | Float floor division | `//` on float operands was computed as true division (no floor): `7.0 // 2.0 == 3.5` — wrong arithmetic | **CLOSED 2026-06-26** (float-floor applied; `float-floordiv-correct`) | — |
