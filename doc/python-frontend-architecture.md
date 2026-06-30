@@ -1059,22 +1059,24 @@ soundness, imprecision, performance, intrinsic.
 
 **CURRENT STATE (2026-06-30) — read this first; the dated notes below are a
 chronological changelog.** The differential oracle (external CPython-semantics
-corpus, default config) tracks **3 known false proofs, all requiring a dedicated
-FEATURE** (not point fixes), plus **4 intrinsic / out-of-subset residuals** and
+corpus, default config) tracks **1 known false proof, requiring a dedicated
+FEATURE** (not a point fix), plus **4 intrinsic / out-of-subset residuals** and
 ~206 false *alarms* (sound over-approximations / unsupported-feature precision —
 see inventory B). The standing **oracle 0-NEW gate** (run after every change)
 keeps new false proofs out.
 
-- *The 3 remaining false proofs (features) — each now has a spike-confirmed
-  phased plan:* `dec_not_callable` + `dec_wrong_arity` — the frontend does not
-  model GENERAL decorator application (`@d` → `f = d(f)`), so a non-callable
-  decorator and a wrapper-arity mismatch are not caught
-  ([plan §15](python-frontend-plan.md#decorators)); `gen_send_before_start` —
-  generators are modelled as eager `__gen_result` lists with no generator-object
-  identity / priming state, so `gen.send()` semantics are unmodelled
-  ([plan §1](python-frontend-plan.md#generators), Phase 1). Pinned
-  `dec-not-callable-knownbug`, `dec-wrong-arity-knownbug`,
-  `gen-send-before-start-knownbug`.
+- *The 1 remaining false proof (a feature) — has a spike-confirmed phased plan:*
+  `gen_send_before_start` — generators are modelled as eager `__gen_result`
+  lists with no generator-object identity / priming state, so `gen.send()`
+  semantics are unmodelled ([plan §1](python-frontend-plan.md#generators),
+  Phase 1). Pinned `gen-send-before-start-knownbug`.
+- *Closed 2026-06-30 (commit `27bb327b26`):* `dec_not_callable` +
+  `dec_wrong_arity` — the frontend now models bare-`@name` decorator
+  application (`@d` → `f = d(f)`): a provably non-callable decorator raises a
+  def-time TypeError, and a decorated call dispatches through the wrapper so its
+  arity is enforced ([plan §15 OUTCOME](python-frontend-plan.md#decorators)).
+  Now CORE: `dec-not-callable-typeerror`, `dec-wrong-arity-typeerror`,
+  `dec-callable-nofp`.
 - *The 4 intrinsic / out-of-subset residuals* (marked `ORACLE-INTRINSIC`, NOT
   default-subset bugs): the annotation-laundering family — `004` (arg boundary),
   `007` (list-element via append), `ty-010` (return-annotation) — caught under
