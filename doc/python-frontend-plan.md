@@ -579,23 +579,34 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
-> **Current state (2026-06-29).** The differential-oracle baseline is **8** known
-> false proofs (down from 22 over the 2026-06-28/29 arc). The canonical,
-> categorised list lives in the [architecture doc master inventory](python-frontend-architecture.md)
-> ("Gaps, soundness issues & imprecisions"); this section is the chronological
-> design log. Closed over the arc:
-> reference-semantics-for-instances (instance-identity cluster + `a2`
-> annotated-alias/lvalue-into-Any), binop eval-order (forward), `@property`
-> setters (a32/b6), shift/bitwise + both-union operand obligations (b3/b5/a12),
-> tuple-unpack arity (ty-015), method mutable-default sharing (a10), str-method
-> on a concrete non-str, and `dict.get`/`pop`/`setdefault` default type (ty-005).
-> The **6 remaining**: DEEP representation work (c2 dict structural-mutation
-> through a call) and the annotation-laundering family caught under
-> `--python-check-annotations` with default-on declined (~1.25% FP) — `004`/`007`
-> (arg/element) and **ty-010** (return annotation; the `-> str` is trusted, NOT a
-> variable-length-tuple gap) — plus `binop-mirror-evalorder` (pinned) and `d1`
-> (numeric-tower, out-of-subset). Closed this arc also: fixed-tuple slicing, and
-> `del`+`__getattr__` retype (c4/laurel-006 — method-del in a `__getattr__`-class).
+> **Current state (2026-06-30).** The differential-oracle baseline is **3** known
+> false proofs + **4** intrinsic/out-of-subset residuals (down from 22 over the
+> 2026-06-28→30 arc). The canonical, categorised list lives in the
+> [architecture doc master inventory](python-frontend-architecture.md) — see its
+> **CURRENT STATE (2026-06-30)** header; this section is the chronological design
+> log.
+> The **3 remaining false proofs are all FEATURES**, not point fixes:
+> `dec_not_callable` + `dec_wrong_arity` (general decorator-application modelling
+> `@d` → `f = d(f)` + wrapper arity) and `gen_send_before_start` (a generator
+> state machine — generators are eager `__gen_result` lists with no priming
+> state / `.send()`). Pinned `dec-not-callable-knownbug`,
+> `dec-wrong-arity-knownbug`, `gen-send-before-start-knownbug`.
+> The **4 intrinsic residuals** (`ORACLE-INTRINSIC`): the annotation-laundering
+> family — `004` (arg), `007` (list-element/append), `ty-010` (return-annotation)
+> — caught under opt-in `--python-check-annotations`; and `d1` (int→float at a
+> call boundary, out of the PyHard subset).
+> Closed over the arc (each whole-group, validation-gated, CORE lock-in): the
+> reference-semantics-for-instances instance-identity cluster; binop eval-order
+> (forward AND mirror); `@property` setters; shift/bitwise + both-union operand
+> obligations; tuple-unpack arity; method mutable-default sharing;
+> `dict.get`/`pop`/`setdefault` default type; fixed-tuple slicing;
+> `del`+`__getattr__` retype; the **dunder-protocol-missing** group (9 sites);
+> **format-spec** validation (3 sites); **comparison/ordering** (missing-dunder +
+> mixed-category); **hashability** (dict key / set element); **@dataclass**
+> construction (arg→field binding, also −59 false alarms); **dunder-return
+> contracts** (`__len__`/`__str__` type, `__len__` negative value); the
+> **builtin-edge** family (divmod/ord/round/sum/join/int(inf|nan)/encode/iterate-
+> scalar); and the soundness corner-cases (`set().pop()` masking-assume).
 > The dated entries below are retained for design rationale.
 
 **Standalone PLR re-audit (2026-06-26).** A differential pass (~255 generated
@@ -1586,6 +1597,14 @@ rest) and is PASS in the sweep baseline, with one exception:
 PLAN YET** — the list-with-cursor model is the deliberate design choice;
 a resumption encoding is only worth it if a benchmark needs faithful
 inter-yield side effects.
+
+**Generator-object state (`.send()` / priming) — soundness residual.** The eager
+list model has no generator-OBJECT identity or priming state, so `gen.send(v)`
+is not modelled. In particular `it = g(); it.send(5)` on a just-started
+generator should raise `TypeError` ("can't send non-None value to a just-started
+generator") — a known **false proof** (`gen-send-before-start-knownbug`). Closing
+it (and modelling `.send()`/`.throw()`/`.close()` generally) needs a generator
+state machine, i.e. the same resumption encoding above. Until then it is pinned.
 
 ---
 
