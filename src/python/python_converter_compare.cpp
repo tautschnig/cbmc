@@ -876,6 +876,97 @@ exprt python_convertert::convert_compare(const jsont &expr)
       is_python_list_type(right.type()) &&
       (op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE"))
     {
+      // PLR §6.10.1: if BOTH operands are constant list literals, statically
+      // walk the lexicographic comparison and flag a definite cross-category
+      // (numeric vs str) element comparison -> TypeError. Sound + FP-free: the
+      // mismatch at position i is flagged ONLY when positions 0..i-1 are
+      // PROVABLY equal (so CPython actually reaches i); if an earlier position
+      // differs or cannot be normalized, we stop without flagging. Recovers the
+      // value/tag of a boxed python_value element (mixed literals box).
+      {
+        auto const_elems =
+          [](const exprt &lst) -> std::optional<std::vector<exprt>>
+        {
+          if(
+            lst.id() != ID_struct || lst.operands().size() < 2 ||
+            !lst.operands()[0].is_constant() ||
+            lst.operands()[1].id() != ID_array)
+            return std::nullopt;
+          mp_integer n;
+          if(to_integer(to_constant_expr(lst.operands()[0]), n))
+            return std::nullopt;
+          std::vector<exprt> es;
+          const exprt &data = lst.operands()[1];
+          for(mp_integer i = 0; i < n; ++i)
+          {
+            if(i.to_long() >= (long)data.operands().size())
+              return std::nullopt;
+            es.push_back(data.operands()[i.to_long()]);
+          }
+          return es;
+        };
+        // Normalized order-key for a constant element: "n:<int>" for an
+        // integer/bool (boxed or not) or "s:<bytes>" for a str; nullopt when it
+        // cannot be normalized (float, unbounded-int pointer, unreadable str).
+        auto order_key = [this](const exprt &e) -> std::optional<std::string>
+        {
+          const int c = orderable_category_of(e);
+          if(c == 1)
+          {
+            exprt v = e;
+            if(
+              is_python_value_type(e.type()) && e.id() == ID_struct &&
+              e.operands().size() > 3 && e.operands()[0].is_constant())
+            {
+              mp_integer tg;
+              if(to_integer(to_constant_expr(e.operands()[0]), tg))
+                return std::nullopt;
+              const int t = tg.to_long();
+              if(t == static_cast<int>(python_type_tagt::INT))
+                v = e.operands()[1];
+              else if(t == static_cast<int>(python_type_tagt::BOOL))
+                v = e.operands()[3];
+              else
+                return std::nullopt; // float etc.
+            }
+            if(
+              v.is_constant() &&
+              (v.type().id() == ID_signedbv || v.type().id() == ID_unsignedbv ||
+               v.type().id() == ID_bool))
+            {
+              mp_integer iv;
+              if(!to_integer(to_constant_expr(v), iv))
+                return "n:" + integer2string(iv);
+            }
+            return std::nullopt;
+          }
+          if(c == 2)
+          {
+            if(auto sv = extract_string_value(e))
+              return "s:" + *sv;
+          }
+          return std::nullopt;
+        };
+        auto le = const_elems(current_left), re = const_elems(right);
+        if(le && re)
+        {
+          const std::size_t n = std::min(le->size(), re->size());
+          for(std::size_t i = 0; i < n; ++i)
+          {
+            const int ca = orderable_category_of((*le)[i]);
+            const int cb = orderable_category_of((*re)[i]);
+            if(ca != 0 && cb != 0 && ca != cb)
+            {
+              emit_conditional_exception(true_exprt{}, "TypeError");
+              return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
+            }
+            auto ka = order_key((*le)[i]), kb = order_key((*re)[i]);
+            if(ka && kb && *ka == *kb)
+              continue; // provably equal -> position i+1 is reached
+            break;      // differ / unknown -> result determined or unprovable
+          }
+        }
+      }
       const auto &lt = to_struct_type(current_left.type());
       const auto &rt = to_struct_type(right.type());
       const auto &ldata = to_array_type(lt.components()[1].type());
