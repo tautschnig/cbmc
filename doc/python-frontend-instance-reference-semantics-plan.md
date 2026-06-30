@@ -15,12 +15,12 @@ mutation through one binding is invisible to the others — a **false proof**.
 This single representation gap is the root of a cluster that otherwise looks like
 five separate bugs:
 
-| Manifestation | Pinning test | Copy site |
+| Manifestation | Pinning test (now CORE) | Copy site |
 |---|---|---|
-| local alias `b = a; b.x = …; a.x` | `instance-aliasing-knownbug` | local assignment (struct copy) |
-| composition `self.t = t; self.t.x = …` (read via the original) | `instance-field-aliasing-knownbug`, `shared-object-aliasing-knownbug` | **field store** |
-| return-flow `u = f(v); u.x = …; v.x` | `instance-return-aliasing-knownbug` | **return** |
-| context-manager `with CM(v): …` mutating `v` via `self.t` | `context-manager-enter-mutation-knownbug` | field store (composition) |
+| local alias `b = a; b.x = …; a.x` | `instance-aliasing` | local assignment (struct copy) |
+| composition `self.t = t; self.t.x = …` (read via the original) | `instance-field-aliasing`, `shared-object-aliasing` | **field store** |
+| return-flow `u = f(v); u.x = …; v.x` | `instance-return-aliasing` | **return** |
+| context-manager `with CM(v): …` mutating `v` via `self.t` | `context-manager-enter-mutation` | field store (composition) |
 | concrete-class-param coercion PUN | (part of the coercion-boundary audit) | param→field copy |
 
 **What already works** (and must keep working — `instance-ref-*` CORE tests):

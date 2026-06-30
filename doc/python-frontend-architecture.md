@@ -430,23 +430,57 @@ When the body of a function `gen` contains `yield`:
 1. `gen` is added to `generator_functions`.
 2. The body is rewritten so each `yield X` becomes
    `__gen_result_gen.append(X)` and the function returns
-   the populated list at the end.
+   the populated list at the end. The append is built by
+   `build_gen_result_append` and emitted from **both** the
+   bare-statement path (`convert_expr_stmt`, for `yield X;`)
+   **and** `convert_expression` (for an *expression-context*
+   yield such as `x = yield 1`, `f(yield 1)`). The statement
+   path returns early, so each yield is counted **exactly
+   once**. (Counting expression-context yields was a 2026-06-30
+   fix; previously `x = yield 1` was dropped and such
+   generators under-counted their yields.) The *value* of a
+   yield expression — the value sent in via `.send()` — is not
+   tracked by the eager model (plan §1 Phase 2).
 3. A call site `g = gen()` triggers
    `allocate_generator_cursor` in `convert_assign`, which
    allocates `__cursor_g` (int64, initialised to 0) and
    records the pairing in `generator_cursors[g] = cursor_g`.
+   The cursor doubles as the **priming state**: because
+   `next()` does `cursor++` *before* returning, `cursor == 0`
+   is exactly the "suspended before the first line" state (no
+   separate `__started` flag is kept — single source of truth).
 4. `next(g)` in `convert_call`:
    - Checks `if cursor >= length: raise StopIteration` via
      `pending_checks` setting `__exception_active = true`
      and `__exception_type = hash("StopIteration")`.
    - Otherwise increments `cursor`.
    - Returns `data[max(cursor - 1, 0)]`.
-5. `for x in g` iterates the eager list directly via the
+5. `g.send(v)` (handled as a list method, since the generator
+   object *is* the eager list) resolves `g`'s cursor and, per
+   PEP 342, raises `TypeError` when the generator is
+   **just-started and the sent value is non-None**
+   (`emit_conditional_exception(cursor == 0 ∧ v≠None, …)`),
+   then resumes like `next()`. *Soundness gating (no false
+   positive):* a provably-`None` send is never flagged; a
+   concrete-typed `v` is never `None`; a `python_value` `v` is
+   guarded on its `NONE` tag; an opaque/aliased generator with
+   no resolvable cursor is not flagged. Faithful value-passing
+   into the pending `yield` needs real resumption (plan §1
+   Phase 2).
+6. `for x in g` iterates the eager list directly via the
    for-loop's own counter — the cursor is independent.
 
 Existing exception infrastructure handles the StopIteration
 propagation; `try / except StopIteration:` catches it
 without further changes.
+
+**Not modelled (not a false proof):** generator-object
+*identity* — there is no heap object, so an alias `it2 = it`
+or passing a generator to a function does not share cursor /
+priming state with the original. `.send()`'s priming check
+and the cursor only resolve through the call-site Name; an
+unresolvable receiver is soundly left unflagged. A faithful
+generator-object model is plan §1 future work.
 
 ## Annotation semantics (PLR §3.1, §3.2)
 
@@ -691,6 +725,39 @@ uncaught exception), so a downstream assertion can't be vacuously proved
 past a call that would `TypeError` at runtime. Bound-method values reaching
 the free-function path (`m = obj.meth; m()`) are recognised via a leading
 `self` parameter so their receiver-supplied `self` isn't counted missing.
+
+## Decorator application (PLR §8.7)
+
+`@dec def f` lowers to `f = dec(f)` at def-time. Special decorators
+(`@overload`/`@staticmethod`/`@classmethod`/`@property`/`@c_intrinsic`, and the
+`@icontract.*` family) are recognised and handled by their own machinery; the
+rest are processed by the **`user_decorators` loop** in `convert_function_def`,
+which applies them bottom-up and registers a `function_aliases` entry so calls to
+`f` dispatch through the decorator's returned wrapper.
+
+- **Def-time callability (`dec_not_callable`).** A bare `@name` decorator whose
+  value is *provably non-callable* raises `TypeError` at the def site. "Provably
+  non-callable" = the resolved value is neither `ID_code` (a function / method /
+  lambda / class) nor a `python_value` (Any), and — if it is a user-class
+  instance — its MRO does **not** define `__call__` (`concrete_class_lacks_dunder`).
+  This is emitted at **two** points because a module-level `def` registers in an
+  earlier pass and contributes *no* runtime code to `__main__`: (a) module-level
+  defs emit the check in `convert_module_body`'s FunctionDef branch, with an
+  explicit `uncaught exception` assert (the per-statement loop skips FunctionDef);
+  (b) nested defs emit into the `dec_block` that `convert_function_def` returns
+  (those reach the enclosing body via `convert_statement`). *No-FP gating:* only a
+  bare `@Name` is checked — a Call (`@factory(...)`) or Attribute (`@mod.deco`,
+  e.g. `@icontract.require`, `@functools.wraps`) form is a factory / library
+  decorator whose callability cannot be proven, so it is never flagged; a `nil`
+  (unresolved) or `python_value` (Any) decorator is never flagged.
+- **Wrapper-arity (`dec_wrong_arity`).** The wrapper symbol is looked up by its
+  **qualified** name (`python::<dec>::<inner>`, falling back to the bare name) so
+  the alias points at the real nested wrapper; `validate_call_signature` then
+  enforces the *wrapper's* arity at the call site (the wrapper is undecorated, so
+  it is in `function_signature_checkable`). A guard prevents the decorator's
+  fn-parameter binding from clobbering the decorated-function→wrapper alias when
+  the parameter shares the decorated function's name (`def dec(f): … @dec def f`),
+  which would otherwise mask the wrong-arity call.
 
 ## String-solver integration
 
@@ -958,8 +1025,20 @@ for the two OPEN rows is therefore **slot-widening**: type the container element
 same move the return slot now makes). This is **invasive + perf-costly** (it
 changes container/struct element typing, with the precision/perf cost that drove
 the concrete-typing design and the not-viable `--python-ref-mutables` default),
-so it is deferred; the two cases remain KNOWNBUG (`shared-object-aliasing` and
-the a2/a3 field-narrowing witnesses). Tag obligations are NOT a default-mode fix
+so it is deferred; the two cases are pinned KNOWNBUG
+(`slot-pun-list-element-knownbug`, `slot-pun-attr-field-knownbug` — each requires
+a concrete annotation: without `list[int]` / `x: int` the slot stays
+`python_value` and the tag is preserved, so default-mode code with no concrete
+container/field annotation is sound). This punning is the same mechanism as the
+`ORACLE-INTRINSIC` annotation-laundering residuals in the CURRENT STATE header
+(`007` list-element, `ty-010` field/return) — a real false proof, classified
+intrinsic because it depends on a (wrong) static annotation Python never enforces.
+Two *adjacent* cases that the earlier draft lumped here are now **CLOSED**:
+composition/object-identity aliasing (`shared-object-aliasing`, CORE — fixed by
+reference semantics, a distinct root) and the **tagged-union** field case
+(`x: int | str`; `tagged-union-narrowing-unsound`, CORE — fixed by a tag
+obligation on union-field extraction). Only the **concrete-typed** slot still
+puns. Tag obligations are NOT a default-mode fix
 here: storing a mismatched value is legal Python (the error arises on a later
 *use*), so a store-site assert false-alarms on values that are never misused
 (the `greet(42)` lesson).
@@ -1292,11 +1371,11 @@ subscript (`obj[k]` needs `__getitem__`), call (`obj()` needs `__call__`), and
 `__getitem__` for the old sequence protocol) — the for-loop and single-generator
 comprehension sites emit the not-iterable TypeError, gated on
 `class_mro_defines` so a `__getitem__`-only sequence class (and an `__iter__`
-returning a separate iterator object) is NOT flagged. Tests `iterate-no-iter`
-and `comprehension-no-iter` (CORE). **Residual:** the assign-unpack site
-(`a, b = C()`, `[*C()]`) is a structurally different handler, pinned
-`unpack-no-iter-knownbug`; and a `__getitem__`-only class is correctly not
-flagged but its iteration is still modelled imprecisely (zero iterations).
+returning a separate iterator object) is NOT flagged. Tests `iterate-no-iter`,
+`comprehension-no-iter`, and the assign-unpack site (`a, b = C()`, `[*C()]`,
+a structurally different handler) `unpack-no-iter` — all CORE. **Residual:** a
+`__getitem__`-only class is correctly not flagged but its iteration is still
+modelled imprecisely (zero iterations).
 
 **Cluster roadmap progress (2026-06-29, cont.).**
 - *Iteration-protocol-missing: CLOSED across all three sites.* Added the
@@ -1557,7 +1636,13 @@ guards against new false proofs.
 | Unknown annotation fallback | `convert_type_annotation` lowered an annotation it could not model (bare `range`/`tuple`, unmodeled builtin, unknown forward-ref) to `python_int_type()`, modeling an unknown value with concrete int semantics — a latent unsoundness that could mask a real bug | **CLOSED 2026-06-26**: unknown ⇒ `python_value` (Any/top), the sound over-approximation (sweep gained `ethereum_bug-fail`). Lock-in `check-annotations-unknown-is-any`. **Exception still open:** a dict with a non-"safe" value type (`dict[str, Any]`) still falls back to int — an opt-in `--python-check-annotations` false positive (not a false proof), blocked by a separate Any-valued-container capacity-model-bound issue; pinned `check-annotations-any-dict-knownbug` | [plan §9](python-frontend-plan.md#precision) |
 <!-- 2026-06-26: the blocker is the SYMBOLIC-KEY dict precision cluster, not a standalone capacity bug -- an Any dict value makes d.get(k,...) a nondet key, so a later d2[key].append(...) over-approximates and fires a spurious python-model-bound (github_3684 class). -->
 | Class-instance identity / aliasing | a class instance was value-semantics (struct copy) at a top-level `b = a` assignment, so a mutation through one alias was invisible to the other. Distinct from the list/dict case, which already aliased (the `alias_targets` pointer mechanism). | **CLOSED 2026-06-28** (reference-semantics-for-instances, Phases 1-3): instances are by-reference at returns, local aliases, and fields -- so return-flow, local alias `b=a`, AND composition/field store all preserve identity. `instance-return-aliasing`, `instance-aliasing`, `instance-field-aliasing`, `shared-object-aliasing`, `context-manager-enter-mutation` are all CORE. **Extended (a2):** an ANNOTATED alias `r: C = o` now pointer-promotes too (`convert_ann_assign`), and an lvalue instance crossing an Any/`python_value` boundary preserves identity by `address_of` for ALL lvalue forms (symbol / dereference / member / index), not just a plain symbol — so `f(r)` where `r=o` no longer passes a throwaway copy (`instance-annotated-alias-call`; closes a2_narrowing_alias). Soundness: a FRESH construction stays owned/by-value (distinct, no over-aliasing). The deep-composition `==` perf cliff did NOT materialise, so this is default-on (unlike container ref-semantics) | [instance ref-semantics plan](python-frontend-instance-reference-semantics-plan.md) + [plan §0](python-frontend-plan.md#false-proofs) |
-| Nested mutable-element aliasing | anonymous nested-mutable list/dict elements stored by value; the replication / self-append / new-container channels are **guarded** (report `python-model-bound`). **Direct** nested mutation works (`c[i].append(...)` for lists, and int-keyed dict values via lvalue value slots). **Extraction-then-mutate** (`r=c[i]; r.append(...)` / `v=a[k]; v.append(...)`) is **guarded** in the default config (2026-06-24): the extracted variable is recorded (`extracted_container_alias`) and, on a subsequent in-place mutation, the source container is havoced + dropped from the const-fold maps (sound over-approximation). **For LISTS, the principled whole-group fix is now implemented behind opt-in `--python-ref-mutables`** (2026-06-24): nested list elements are heap-allocated per instance and aliased by pointer (`make_python_value(LIST, allocate_boxed_leaf(rebuild_list_as_pv(e)))`), so extraction / multi-instance / reorder / membership / nested value reads / 3-deep composition are **precise**; under the flag the havoc guard is skipped for wrapped references. | sound for the CONTAINER-ELEMENT aliasing channels (guarded). **However a distinct aliasing channel — object-identity-via-COMPOSITION (one object referenced by two attributes, mutated through one and read through the other) — is an OPEN false proof in the default config**, pinned `shared-object-aliasing-knownbug` (value semantics for the composed object does not track the shared identity). With `--python-ref-mutables` the nested-list cases below become precise (validated: §4 gate green, 5 genuinely-false negatives stay FAILED, default suite green). **Confirmed OPT-IN ONLY (2026-06-25):** making it the default is **not viable** — precise nested-list `==` under reference semantics needs per-element pointer deref that blows up pointer analysis (depth-2 already TIMEOUTs; corpus needs 3-deep `==`), and the A/B sweep showed regressions (PASS 2710 vs by-value 2715 incl. a crash). The value-vs-reference tradeoff is fundamental in BMC; by-value + sound guards stays the default. Dicts/sets remain guarded. | [ref-semantics spike §10–§12](python-frontend-reference-semantics-spike.md) + [plan §0](python-frontend-plan.md#false-proofs) + [dict-byref](python-frontend-dict-value-byref-plan.md) |
+| Nested mutable-element aliasing | anonymous nested-mutable list/dict elements stored by value; the replication / self-append / new-container channels are **guarded** (report `python-model-bound`). **Direct** nested mutation works (`c[i].append(...)` for lists, and int-keyed dict values via lvalue value slots). **Extraction-then-mutate** (`r=c[i]; r.append(...)` / `v=a[k]; v.append(...)`) is **guarded** in the default config (2026-06-24): the extracted variable is recorded (`extracted_container_alias`) and, on a subsequent in-place mutation, the source container is havoced + dropped from the const-fold maps (sound over-approximation). **For LISTS, the principled whole-group fix is now implemented behind opt-in `--python-ref-mutables`** (2026-06-24): nested list elements are heap-allocated per instance and aliased by pointer (`make_python_value(LIST, allocate_boxed_leaf(rebuild_list_as_pv(e)))`), so extraction / multi-instance / reorder / membership / nested value reads / 3-deep composition are **precise**; under the flag the havoc guard is skipped for wrapped references. | sound for the CONTAINER-ELEMENT aliasing channels (guarded). **The distinct
+object-identity-via-COMPOSITION channel** (one object referenced by two
+attributes, mutated through one and read through the other) **is now CLOSED**
+(`shared-object-aliasing`, CORE — fixed by reference-semantics-for-instances,
+2026-06-28; instance fields are by-reference). With `--python-ref-mutables` the
+nested-list cases below become precise (validated: §4 gate green, 5
+genuinely-false negatives stay FAILED, default suite green). **Confirmed OPT-IN ONLY (2026-06-25):** making it the default is **not viable** — precise nested-list `==` under reference semantics needs per-element pointer deref that blows up pointer analysis (depth-2 already TIMEOUTs; corpus needs 3-deep `==`), and the A/B sweep showed regressions (PASS 2710 vs by-value 2715 incl. a crash). The value-vs-reference tradeoff is fundamental in BMC; by-value + sound guards stays the default. Dicts/sets remain guarded. | [ref-semantics spike §10–§12](python-frontend-reference-semantics-spike.md) + [plan §0](python-frontend-plan.md#false-proofs) + [dict-byref](python-frontend-dict-value-byref-plan.md) |
 | dict-literal const-fold | the dict-subscript const-fold substituted a construction-time-tracked value at a later read; for a value embedding a **mutable** symbol (a reassignable variable, a boxed-leaf pointer) this re-read the current value → false proof (`n=1; d={"k":n}; n=2; d["k"]`). **Closed 2026-06-24** (`value_is_const_foldable`): the const-fold now fires only for invariant values | sound (closed) | — |
 | Native `smt_string`→int cast | under `--python-smt-strings`, a spurious str→int coercion from value plumbing lowers to `str.to_int` (defined-but-approximate); genuine `int(str)` is exact | sound (approximate, flagged) | [strings plan](python-frontend-strings-plan.md#strings) |
 | BMC bounds | bugs deeper than `--unwind` / beyond the bounded container or 64-bit ranges are not found | sound w.r.t. the bound (intrinsic to BMC) | — (intrinsic) |
@@ -1566,7 +1651,7 @@ guards against new false proofs.
 
 | Area | Gap / deviation | Plan |
 |---|---|---|
-| Generators | list-with-cursor model: inter-yield side-effect ordering not faithful; module-global free vars in a generator `if` drop the body; cross-boundary list-shape | [plan §1](python-frontend-plan.md#generators) |
+| Generators | list-with-cursor model: inter-yield side-effect ordering is eager (not faithful); the *value sent in* via `gen.send(v)` is not passed into the pending `yield` expression (the priming-state TypeError IS modelled — see soundness/Generator semantics); no generator-object identity (aliasing / pass-by-reference). (The earlier "module-global free vars in a generator `if`" and "cross-boundary list-shape" residuals are resolved.) | [plan §1](python-frontend-plan.md#generators) |
 | Closures | **escaping** closures over-approximate captured free vars to nondet (late binding `lambda: i` in a loop imprecise); non-escaping + `nonlocal` mutation + capture-through-param are correct | [plan §2](python-frontend-plan.md#closures) + [fat-closure deep-dive](python-frontend-fat-closure-plan.md) |
 | Strings (refined default) | ordering, substring `replace`, `split`, `casefold`/`title`, symbolic `count` — sound-but-imprecise; all precise (or precise-able) on the **native** backend opt-in | [strings plan](python-frontend-strings-plan.md#strings) |
 | Regex | symbolic-subject and negated-membership (`re4`/`re11`) imprecise/slow on refined; precise on native | [strings plan §4](python-frontend-strings-plan.md#regex) |
