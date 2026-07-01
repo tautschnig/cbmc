@@ -127,6 +127,30 @@ void python_convertert::emit_may_raise(const char *exc_type)
 }
 
 // Shared call-site signature validation (PLR §8.7).
+
+// PLR §8.7: the number of positional slots a `*`-unpacked call argument fills,
+// when statically known — a list/tuple *literal* with no nested spread. Returns
+// std::nullopt for anything whose length can't be proven (a Name, a call
+// result, a nested spread), so the caller conservatively skips the arity check
+// (no false positive).
+std::optional<std::size_t>
+python_convertert::static_unpack_length(const jsont &starred_value) const
+{
+  if(
+    is_node_type(starred_value, "List") || is_node_type(starred_value, "Tuple"))
+  {
+    const jsont &elts = json_member(starred_value, "elts");
+    if(elts.is_array())
+    {
+      for(const auto &e : as_array(elts))
+        if(is_node_type(e, "Starred"))
+          return std::nullopt; // nested spread — length not statically known
+      return as_array(elts).size();
+    }
+  }
+  return std::nullopt;
+}
+
 void python_convertert::validate_call_signature(
   const irep_idt &func_key,
   const jsont &expr,
@@ -146,10 +170,19 @@ void python_convertert::validate_call_signature(
       {
         if(is_node_type(a, "Starred"))
         {
-          starred = true;
-          break;
+          // Fold a statically-known *-unpack length (list/tuple literal) into
+          // the positional count; bail only when the length is unknown.
+          auto len = static_unpack_length(json_member(a, "value"));
+          if(len.has_value())
+            n_pos += *len;
+          else
+          {
+            starred = true;
+            break;
+          }
         }
-        ++n_pos;
+        else
+          ++n_pos;
       }
     if(!starred)
     {
@@ -223,10 +256,17 @@ void python_convertert::validate_call_signature(
         {
           if(is_node_type(a, "Starred"))
           {
-            starred = true;
-            break;
+            auto len = static_unpack_length(json_member(a, "value"));
+            if(len.has_value())
+              n_pos += *len;
+            else
+            {
+              starred = true;
+              break;
+            }
           }
-          ++n_pos;
+          else
+            ++n_pos;
         }
       std::set<std::string> kw_names;
       bool kw_spread = false;

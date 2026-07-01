@@ -1201,20 +1201,24 @@ gate** (run after every change) keeps new false proofs out.
 > mutation-during-iteration, exception/`finally`, identity/`is`, numeric
 > coercion, comprehension scope, aliasing, unpacking, MRO, float edges) found the
 > frontend **sound on all of those** (each correctly FAILED), plus **two more
-> false-proof roots**, now pinned:
+> false-proof roots** (both since **CLOSED** — see below):
 > - **Container-literal cross-type numeric dedup** (one root): a set literal
->   `{1, 1.0}` / `{1, True}` and a dict literal `{True: 1, 1: 2}` over-count
->   distinct elements/keys because the literal builder dedups with type-sensitive
->   equality instead of Python numeric equality (`1 == 1.0 == True`). The
->   *incremental* paths are already sound (`set.add`, `d[k]=v`, `dict.update`,
->   `frozenset(list)`, `dict(list-of-pairs)` all dedup). Pinned
->   `set-literal-numeric-dedup-knownbug`, `dict-literal-numeric-dedup-knownbug`;
->   fix = dedup literal elements/keys by numeric equality.
-> - **Star-unpack call arity**: `f(*[1, 2, 3])` into a 2-parameter `f` is not
->   flagged (`validate_call_signature` ignores a statically-known `*`-unpack
->   length). Pinned `star-unpack-call-arity-knownbug`.
-> - Additional generator-cluster channels confirmed (same root as above):
->   `list(gen)` / `sum(gen)` after a partial `next()` also re-yield.
+>   `{1, 1.0}` / `{1, True}` and a dict literal `{True: 1, 1: 2}` over-counted
+>   distinct elements/keys because the literal builder deduped with
+>   type-sensitive equality instead of Python numeric equality
+>   (`1 == 1.0 == True`). **CLOSED 2026-07-01** via a shared `python_numeric_key`
+>   helper (canonical integer for int/bool/integral-float) used by both the
+>   set-literal bitmap and `build_dict_value`; now CORE `set-literal-numeric-dedup`,
+>   `dict-literal-numeric-dedup`. (The *incremental* paths — `set.add`, `d[k]=v`,
+>   `dict.update`, `frozenset(list)`, `dict(list-of-pairs)` — were already sound.)
+> - **Star-unpack call arity**: `f(*[1, 2, 3])` into a 2-parameter `f` was not
+>   flagged. **CLOSED 2026-07-01**: `validate_call_signature` now folds a
+>   statically-known `*`-unpack length (list/tuple literal) into the positional
+>   count (too-many AND too-few); a Name-bound unpack / vararg callee is not
+>   flagged (sound). Now CORE `star-unpack-call-arity` (+ `-nofp`).
+> - Additional generator-cluster channels confirmed (same root as the
+>   consumption-state cluster): `list(gen)` / `sum(gen)` after a partial `next()`
+>   also re-yield (still open — aggregating builtins iterate via their own path).
 > A precision *false alarm* (not a false proof) was also seen: `1.0 in {1}` is
 > not proven (membership over-approximates a cross-type numeric hit).
 
