@@ -497,6 +497,16 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
       pointer_typet ptr_type{target_sym->type, 64};
       symbol_table.get_writeable_ref(symbol_id).type = ptr_type;
       alias_targets[qualified_name] = target_id;
+      // PLR §3.1 / §6.2.9: a generator aliased by `it2 = it` refers to the SAME
+      // object and shares its consumption cursor. Propagate the cursor mapping
+      // so next()/for/list on `it2` advance the same cursor (the alias is a
+      // pointer to `it`'s storage, and reads auto-dereference, so the cursor
+      // path sees the shared list).
+      {
+        auto gc = generator_cursors.find(target_id);
+        if(gc != generator_cursors.end())
+          generator_cursors[symbol_id] = gc->second;
+      }
       // Aliasing makes the target's contents reachable through a
       // second name; subsequent constant-fold lookups via
       // list_literals / dict_literals would mis-fold reads against
@@ -1234,6 +1244,14 @@ codet python_convertert::convert_assign(const jsont &stmt)
           // Record the alias chain so the 'is' check walks to
           // canonical and treats both ends as the same object.
           alias_targets[lhs_id] = target_id;
+          // PLR §3.1 / §6.2.9: a generator aliased by `it2 = it` shares its
+          // consumption cursor (same object). Propagate the cursor so
+          // next()/for on either name advances the same cursor.
+          {
+            auto gc = generator_cursors.find(target_id);
+            if(gc != generator_cursors.end())
+              generator_cursors[lhs_id] = gc->second;
+          }
           // Drop any cached literal for the canonical source
           // because the alias makes its contents reachable
           // via two names — subsequent reads must re-fetch

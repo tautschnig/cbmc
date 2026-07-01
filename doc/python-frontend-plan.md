@@ -1669,21 +1669,29 @@ view and re-yields already-consumed elements — a false proof. Status:
 - **CLOSED (2026-07-01):** `for x in g` after a partial `next(g)` now resumes
   from `g`'s cursor and exhausts it (`gen-foriter-after-next-typeerror`, CORE).
   The most common idiom; measured 0 sweep regressions / oracle 0-NEW.
-- **OPEN** (pinned KNOWNBUG): an alias `it2 = it`
-  (`gen-alias-consume-knownbug`), a container slot (`box=[g()]; next(box[0])`,
-  `gen-in-container-consume-knownbug`), and `list(g)`/`sum(g)` after a partial
+- **CLOSED (2026-07-01):** an alias `it2 = it` now shares the consumption cursor
+  (`gen-alias-consume-typeerror`, CORE) — the alias-assign path propagates
+  `generator_cursors[it2] = generator_cursors[it]`, and since the alias is a
+  pointer whose reads auto-dereference, `next(it2)`/`for` resolve the shared
+  cursor on the deref'd struct.
+- **OPEN** (pinned KNOWNBUG): a container slot (`box=[g()]; next(box[0])`,
+  `gen-in-container-consume-knownbug`) and `list(g)`/`sum(g)` after a partial
   `next()` (aggregating builtins iterate via their own path).
 Passing a generator to a function is sound (the param view is over-approximated
 to nondet, not re-yielded). **Fix for the rest: a generator-OBJECT model** whose
 consumption state (the cursor) is tied to the object and shared across all access
 paths rather than keyed on the call-site Name — the same "identity, not
 value/Name" move as the instance-reference-semantics cluster.
-*Spike outcome (2026-07-01):* the `for`-resume step was cheap and clean (init the
-loop counter to the cursor, exhaust after). The alias step is NOT cheap as first
-thought: an alias is already a by-reference pointer (`it2 = &it`), but
-`next(it2)`/`for` take a pointer fallback that bypasses the cursor lookup, so
-closing it needs `next()`-side pointer-aliased-generator handling (part of the
-full object model), not just a `generator_cursors` map propagation.
+*Spike outcome (2026-07-01):* the `for`-resume and alias steps landed. The alias
+fix's subtlety was finding the RIGHT alias-assign path: `it2 = it` is handled by
+the main assign handler (not the `get_var_assign` path), and the cursor
+propagation had to go there; once `generator_cursors[it2]` is set, the EXISTING
+cursor path works because reads of the pointer-alias auto-dereference to the list
+struct. The remaining container/aggregating channels each have their own
+consumption path (container-subscript read, `list`/`sum` builtins) that would
+each need cursor-awareness — the clean whole-group answer is to make the cursor a
+FIELD of the generator's list struct so it travels with the object regardless of
+access path (a representation change; deferred).
 
 ---
 

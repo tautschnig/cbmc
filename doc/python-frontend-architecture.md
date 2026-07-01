@@ -501,10 +501,11 @@ the generator object:
 - **CLOSED (2026-07-01):** `for x in g` after a partial `next(g)`
   now resumes from the cursor (`gen-foriter-after-next-typeerror`,
   CORE).
-- an alias `it2 = it` does not share consumption state
-  (`gen-alias-consume-knownbug`) — the alias is a by-reference
-  pointer (`it2 = &it`) but `next(it2)`/`for` take a pointer
-  fallback that bypasses the cursor.
+- **CLOSED (2026-07-01):** an alias `it2 = it` now shares the
+  consumption cursor (`gen-alias-consume-typeerror`, CORE) — the
+  alias-assign path propagates `generator_cursors[it2]`, and the
+  pointer-alias's reads auto-dereference to the list struct so
+  the cursor path resolves.
 - a generator in a container consumed via the slot
   (`box = [g()]; next(box[0])`) reads a fresh view
   (`gen-in-container-consume-knownbug`).
@@ -1187,13 +1188,14 @@ gate** (run after every change) keeps new false proofs out.
 > under-tested corners (beyond the oracle corpus) found a **generator
 > consumption-state / identity** false-proof cluster: a generator consumed
 > through anything other than a direct `next(name)`/`name.send()` on its
-> original Name re-yields already-consumed elements. **The `for`-loop channel is
-> now CLOSED (2026-07-01):** `for x in g` resumes from `g`'s cursor
-> (`gen-foriter-after-next-typeerror`, CORE). Still open (pinned KNOWNBUG): an
-> alias `it2 = it` (`gen-alias-consume-knownbug`), a container slot `box[0]`
-> (`gen-in-container-consume-knownbug`), and `list(g)`/`sum(g)` after a partial
-> `next()`; the fix for the rest is a generator-OBJECT model (plan §1). So "0
-> false proofs" is accurate *for the oracle corpus*; this cluster is a known
+> original Name re-yields already-consumed elements. **The `for`-loop and alias
+> channels are now CLOSED (2026-07-01):** `for x in g` resumes from `g`'s cursor
+> (`gen-foriter-after-next-typeerror`, CORE) and an alias `it2 = it` shares the
+> cursor (`gen-alias-consume-typeerror`, CORE). Still open (pinned KNOWNBUG): a
+> container slot `box[0]` (`gen-in-container-consume-knownbug`) and
+> `list(g)`/`sum(g)` after a partial `next()`; the fix for the rest is a
+> generator-OBJECT model (plan §1). So "0 false proofs" is accurate *for the
+> oracle corpus*; this cluster is a known
 > residual outside it. (Async, symbolic-key dict, and escaping closures probed
 > sound in the same sweep.)
 >
