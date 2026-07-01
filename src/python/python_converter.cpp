@@ -5068,9 +5068,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
         exprt val = convert_expression(elt);
         // PLR §3.2: list/dict/set are unhashable, so using one as a
         // set element raises TypeError (tuple is fine).
-        if(
-          is_python_list_type(val.type()) || is_python_dict_type(val.type()) ||
-          is_python_set_type(val.type()))
+        if(is_unhashable_type(val.type()))
           unhashable_elt = true;
         // PLR §3: an int / bool / INTEGRAL-float constant participates in
         // numeric element equality (1 == 1.0 == True, all hash equal), so it

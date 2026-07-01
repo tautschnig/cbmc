@@ -2305,8 +2305,23 @@ bool python_convertert::concrete_class_lacks_dunder(
 // neither is flagged -- only the concrete mutable builtins.)
 bool python_convertert::is_unhashable_type(const typet &t)
 {
-  return is_python_list_type(t) || is_python_dict_type(t) ||
-         is_python_set_type(t);
+  if(is_python_list_type(t) || is_python_dict_type(t) || is_python_set_type(t))
+    return true;
+  // PLR §3.3.1: an instance of a class whose own body defines __eq__ without
+  // __hash__ (or sets `__hash__ = None`) is unhashable.
+  if(!class_eq_without_hash.empty())
+  {
+    std::string tag;
+    if(t.id() == ID_struct)
+      tag = id2string(to_struct_type(t).get_tag());
+    else if(t.id() == ID_struct_tag)
+      tag = id2string(to_struct_tag_type(t).get_identifier());
+    if(tag.rfind("python_class_", 0) == 0)
+      tag = tag.substr(13);
+    if(!tag.empty() && class_eq_without_hash.count(tag) > 0)
+      return true;
+  }
+  return false;
 }
 
 std::optional<mp_integer>

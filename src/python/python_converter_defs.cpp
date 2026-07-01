@@ -3408,6 +3408,46 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           json_string(json_member(item, "name")));
       }
     }
+    // PLR §3.3.1: a class whose OWN body defines __eq__ but neither a __hash__
+    // method nor `__hash__ = None`/a __hash__ value has __hash__ implicitly set
+    // to None -> its instances are UNHASHABLE. (`__hash__ = None` alone is also
+    // unhashable.) Detected on the own body only (inherited __eq__/__hash__ keep
+    // their own hashability).
+    {
+      bool own_eq = false, own_hash = false, own_hash_none = false;
+      for(const auto &item : as_array(body))
+      {
+        if(
+          is_node_type(item, "FunctionDef") ||
+          is_node_type(item, "AsyncFunctionDef"))
+        {
+          const std::string mn = json_string(json_member(item, "name"));
+          if(mn == "__eq__")
+            own_eq = true;
+          else if(mn == "__hash__")
+            own_hash = true;
+        }
+        else if(is_node_type(item, "Assign"))
+        {
+          for(const auto &tgt : as_array(json_member(item, "targets")))
+            if(
+              is_node_type(tgt, "Name") &&
+              json_string(json_member(tgt, "id")) == "__hash__")
+            {
+              own_hash = true;
+              const jsont &v = json_member(item, "value");
+              if(
+                (is_node_type(v, "Constant") &&
+                 json_member(v, "value").is_null()) ||
+                (is_node_type(v, "Name") &&
+                 json_string(json_member(v, "id")) == "None"))
+                own_hash_none = true;
+            }
+        }
+      }
+      if((own_eq && !own_hash) || own_hash_none)
+        class_eq_without_hash.insert(class_name);
+    }
     // Also include methods inherited from base classes —
     // a subclass calling self.parent_method() shouldn't
     // trip the missing-method detector when the method is
