@@ -1237,9 +1237,16 @@ gate** (run after every change) keeps new false proofs out.
 > chained/augmented assignment) found the frontend **sound on most** (each
 > correctly FAILED), plus **five more false-proof roots**, now pinned KNOWNBUG:
 > - **`__slots__` not enforced** — assigning/reading an attribute not in a class's
->   `__slots__` should raise AttributeError (`slots-not-enforced-knownbug`).
+> - **`__slots__` not enforced** — assigning an attribute not in a class's
+>   `__slots__` should raise AttributeError. **CLOSED 2026-07-01**
+>   (`slots-not-enforced`, CORE): `class_slots` + `slots_forbidden_attr` flag an
+>   attribute STORE on a slots-enforced class (all MRO user-bases declare
+>   __slots__). Reading a non-slot attribute is a documented follow-up.
 > - **`__eq__` without `__hash__`** — such a class's instances are unhashable, so
->   a set/dict-key use raises TypeError (`eq-without-hash-unhashable-knownbug`).
+>   a set/dict-key use raises TypeError. **CLOSED 2026-07-01**
+>   (`eq-without-hash-unhashable`, CORE): `class_eq_without_hash` +
+>   `is_unhashable_type` (the shared lever, so all hashability sites benefit;
+>   the last two hardcoded checks were routed through it).
 > - **Augmented-assignment type errors** — `x += y` applies the binary operator,
 >   so `int += str` / `list += int` / `str += int` should TypeError, but the
 >   AugAssign path skipped the binary-op type check. **CLOSED 2026-07-01**
@@ -1253,8 +1260,9 @@ gate** (run after every change) keeps new false proofs out.
 >   INSTANCE assignment `a = b = C()` still copies (needs constructor-once + alias
 >   handling — a documented follow-up).
 > - **Read-only `@property` assignment** — assigning to a getter-only property
->   raises AttributeError; the frontend accepts a shadowing store
->   (`property-readonly-assign-knownbug`).
+>   raises AttributeError. **CLOSED 2026-07-01** (`property-readonly-assign`,
+>   CORE): emit_property_set raises AttributeError when the attr is a property
+>   with no setter across the MRO.
 
 - *Closed 2026-06-30 (commit `70401b6d90`):* `gen_send_before_start` — the eager
   generator cursor already encodes priming (`cursor == 0` ⟺ not started), so a
