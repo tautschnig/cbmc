@@ -3222,6 +3222,31 @@ exprt python_convertert::build_dict_value(
             break;
           }
       }
+      else if(is_python_none_constant(p.first))
+      {
+        // PLR §3: None is a singleton — `{None: 1, None: 2}` has one key.
+        for(auto &d : deduped)
+          if(is_python_none_constant(d.first))
+          {
+            d.second = p.second; // later value overwrites
+            merged = true;
+            break;
+          }
+      }
+      else if(is_python_tuple_type(p.first.type()))
+      {
+        // PLR §3: structurally-identical tuple keys are equal (`(1,2)` twice).
+        // Structural expr equality is sound (identical trees denote the same
+        // value); a cross-type-numeric element difference (`(1,2)` vs `(1,2.0)`)
+        // is not merged here (a rare residual).
+        for(auto &d : deduped)
+          if(is_python_tuple_type(d.first.type()) && d.first == p.first)
+          {
+            d.second = p.second; // later value overwrites
+            merged = true;
+            break;
+          }
+      }
       else if(p.first.is_constant())
       {
         for(auto &d : deduped)
