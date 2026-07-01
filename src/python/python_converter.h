@@ -613,6 +613,10 @@ private:
   /// later in the class body) can be distinguished from genuinely
   /// missing methods.
   std::map<std::string, std::set<std::string>> class_declared_methods;
+  /// PLR §3.3.1: classes whose OWN body defines `__eq__` but not `__hash__`
+  /// (so `__hash__` is set to None, making instances UNHASHABLE). Consulted by
+  /// is_unhashable_type at dict-key / set-element sites.
+  std::set<std::string> class_eq_without_hash;
   /// The class whose method call initiated the current super()
   /// dispatch. Set by the call site (e.g. when D() is called,
   /// set to "D"); nested super() inlining preserves it. Empty

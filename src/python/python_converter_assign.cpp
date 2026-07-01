@@ -2814,9 +2814,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
         {
           // PLR §3.2: list/dict/set are unhashable, so using one as
           // a dict key raises TypeError.
-          if(
-            is_python_list_type(key.type()) ||
-            is_python_dict_type(key.type()) || is_python_set_type(key.type()))
+          if(is_unhashable_type(key.type()))
           {
             code_blockt type_error;
             const symbolt *ea =
