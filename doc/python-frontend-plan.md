@@ -1678,20 +1678,46 @@ view and re-yields already-consumed elements — a false proof. Status:
   `gen-in-container-consume-knownbug`) and `list(g)`/`sum(g)` after a partial
   `next()` (aggregating builtins iterate via their own path).
 Passing a generator to a function is sound (the param view is over-approximated
-to nondet, not re-yielded). **Fix for the rest: a generator-OBJECT model** whose
-consumption state (the cursor) is tied to the object and shared across all access
-paths rather than keyed on the call-site Name — the same "identity, not
-value/Name" move as the instance-reference-semantics cluster.
-*Spike outcome (2026-07-01):* the `for`-resume and alias steps landed. The alias
-fix's subtlety was finding the RIGHT alias-assign path: `it2 = it` is handled by
-the main assign handler (not the `get_var_assign` path), and the cursor
-propagation had to go there; once `generator_cursors[it2]` is set, the EXISTING
-cursor path works because reads of the pointer-alias auto-dereference to the list
-struct. The remaining container/aggregating channels each have their own
-consumption path (container-subscript read, `list`/`sum` builtins) that would
-each need cursor-awareness — the clean whole-group answer is to make the cursor a
-FIELD of the generator's list struct so it travels with the object regardless of
-access path (a representation change; deferred).
+to nondet, not re-yielded).
+
+**Spike (2026-07-01, #2) — generator-object model for the container +
+aggregating channels.** Findings:
+- **Representation:** a generator IS the eager `__gen_result` list *value*; the
+  consumption cursor is a **Name-keyed side-table** symbol (`__cursor_<name>`),
+  separate from the list. This is why the Name-resolvable channels are
+  closeable (for / next / send / alias all resolve the cursor via the Name — all
+  now CLOSED) and why the others are not.
+- **The remaining channels split by root:**
+  - *Aggregating builtins on a NAME* (`list(g)`, `sum(g)`, and the family
+    `tuple`/`sorted`/`any`/`all`/`max`/`min`/`"".join` …): the cursor is
+    Name-resolvable, but each builtin reads the list from index 0. Each COULD be
+    made cursor-aware (consume `data[cursor:length]`, then set `cursor=length`)
+    the same way the `for`-loop was — but that is **a series of per-builtin
+    point-fixes**, one per consumer, not a single lever.
+  - *Object-identity channels* (`box = [g()]; next(box[0])`, a generator stored
+    in a field / passed-and-stored): there is **no Name** to key the cursor on,
+    and the eager list is **copied by value** into the container slot, so no
+    Name-keyed scheme can share consumption state. This needs the generator to be
+    a **by-reference (heap) object** carrying its cursor.
+- **Whole-group conclusion — do NOT build a standalone generator-object model.**
+  A "cursor as a struct FIELD" alone is insufficient: a by-VALUE copy (`box[0]`,
+  `it2 = it` without the pointer alias) copies the field, giving each holder its
+  own cursor — the opposite of shared identity. Correct shared identity requires
+  the generator to be a **by-reference object**, which is *exactly* the
+  measured, perf-gated **container-element-by-reference "Phase 4"** effort in the
+  [instance ref-semantics plan §3](python-frontend-instance-reference-semantics-plan.md)
+  (containers holding by-reference values regressed the sweep 2719→2710; deferred
+  as "not a quick fix"). A generator is just another mutable object needing
+  reference identity, so the `box[0]` channel is **subsumed** by that effort and
+  should ride along with it rather than a bespoke generator mechanism.
+- **Recommendation:** (a) the object-identity channel is **deferred to Phase 4**
+  (container-element by-reference); it lands for free when that does. (b) The
+  Name-aggregating channels (`list`/`sum`/…) are **low-frequency** (partial
+  `next()` then re-consume via a *different* builtin) and are per-builtin
+  point-fixes; **defer** unless a benchmark needs them — if pursued, share one
+  "remaining-slice from cursor" helper across the consumers rather than N ad-hoc
+  edits. The common channels (for / next / send / alias) are already closed, so
+  the Name-keyed cursor remains the right lightweight model for them.
 
 ---
 
