@@ -3187,9 +3187,16 @@ exprt python_convertert::build_dict_value(
     for(const auto &p : pairs)
     {
       bool merged = false;
-      // PLR §3: dedup keys by Python numeric equality (1 == 1.0 == True) for
-      // numeric-key constants, else by exact constant equality (strings, etc.).
+      // PLR §3: dedup keys by Python equality — numeric equality
+      // (1 == 1.0 == True) for numeric-key constants, string VALUE equality for
+      // string-literal keys (a python_string struct is not a constant_exprt, so
+      // exact-expr equality below never merges them), else exact constant
+      // equality. A symbolic string key has no known value -> not deduped
+      // (sound: cannot prove two symbolic keys equal).
       std::optional<mp_integer> pk = python_numeric_key(p.first);
+      std::optional<std::string> ps;
+      if(!pk.has_value() && is_python_string_type(p.first.type()))
+        ps = extract_string_value(p.first);
       if(pk.has_value())
       {
         for(auto &d : deduped)
@@ -3202,6 +3209,18 @@ exprt python_convertert::build_dict_value(
             break;
           }
         }
+      }
+      else if(ps.has_value())
+      {
+        for(auto &d : deduped)
+          if(
+            is_python_string_type(d.first.type()) &&
+            extract_string_value(d.first) == ps)
+          {
+            d.second = p.second; // later value overwrites
+            merged = true;
+            break;
+          }
       }
       else if(p.first.is_constant())
       {
