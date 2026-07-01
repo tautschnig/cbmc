@@ -216,6 +216,17 @@ default retained where the cliff bites. Recommendation: a dedicated, measured
 "Phase 4 — container-element instances" effort, not a quick fix; the single-
 level instance work is complete and the dataclass cluster is closed.
 
+> **Generators ride along with Phase 4 (2026-07-01 spike #2).** A generator
+> stored in a container (`box = [g()]; next(box[0])`) re-yields consumed elements
+> for the same root: the generator (an eager `__gen_result` list) is copied
+> by-VALUE into the slot, and its consumption cursor is a Name-keyed side-table
+> that a subscript read cannot resolve. Making the generator a by-reference
+> container element — carrying its cursor — is the same mechanism as this Phase 4
+> and closes the `box[0]` channel for free. (The Name-resolvable generator
+> channels — for / next / send / alias — are already closed via the cursor;
+> `list(g)`/`sum(g)` on a Name are separate low-frequency per-builtin point-fixes,
+> see plan §1.)
+
 ## 5c. Phase 4 plan — container-element instances (by-reference)
 
 **Status: PLAN (spike-confirmed 2026-06-30).** This is the design for the
