@@ -34,14 +34,26 @@
 // PLR §6.8: Shifting operations
 // PLR §6.9: Binary bitwise operations
 
-// PLR §6.7: whether `op` on these operand types is a PROVABLE TypeError. Mirrors
-// the "incompatible + fire_exc" decision inside convert_bin_op below (kept in
-// sync); factored so the augmented-assign path (`x += y`) applies the same
-// check. Any/python_value operands are never flagged.
-bool python_convertert::binop_operand_type_error(
+// PLR §6.7: the operand-type verdict for a binary/augmented operator, SHARED by
+// convert_bin_op and binop_operand_type_error so the rule lives in ONE place.
+// `ok` = compatible; `nondet` = incompatible but AMBIGUOUS in our model (return
+// nondet, don't flag — e.g. set-vs-int bitwise, where a "set" may be a
+// nondet-int-backed value); `error` = a PROVABLE TypeError (emit).
+// Any/`python_value` operands are never `error`.
+namespace
+{
+enum class binop_verdict
+{
+  ok,
+  nondet,
+  error
+};
+
+binop_verdict compute_binop_verdict(
   const std::string &op,
   const exprt &left,
-  const exprt &right) const
+  const exprt &right,
+  bool ref_mutables)
 {
   const bool l_is_list = is_python_list_type(left.type());
   const bool r_is_list = is_python_list_type(right.type());
@@ -57,6 +69,11 @@ bool python_convertert::binop_operand_type_error(
   const bool r_is_complex =
     right.type().id() == ID_struct &&
     to_struct_type(right.type()).get_tag() == "python_complex";
+  // PLR §3.2: a PROVABLE None operand (constant None) supports no arithmetic /
+  // bitwise operator. A python_value that only MIGHT be None at runtime is not
+  // flagged (is_python_none_constant is false for a non-constant).
+  const bool l_is_none = is_python_none_constant(left);
+  const bool r_is_none = is_python_none_constant(right);
   const bool l_is_num =
     left.type().id() == ID_signedbv || left.type().id() == ID_integer ||
     left.type().id() == ID_floatbv || left.type().id() == ID_bool;
@@ -104,13 +121,38 @@ bool python_convertert::binop_operand_type_error(
     incompatible = true;
   if(bitwise_op && (l_is_float || r_is_float))
     incompatible = true;
+  if(l_is_none || r_is_none) // None supports no arithmetic/bitwise operator
+    incompatible = true;
   if(!incompatible)
-    return false;
-  const bool fire_exc =
-    op == "Add" || op == "Sub" || op == "Mult" || op == "Div" ||
-    op == "FloorDiv" || op == "Mod" || op == "Pow" ||
-    (bitwise_op && (l_is_float || r_is_float || l_is_str || r_is_str));
-  return fire_exc;
+    return binop_verdict::ok;
+  const bool arith = op == "Add" || op == "Sub" || op == "Mult" ||
+                     op == "Div" || op == "FloorDiv" || op == "Mod" ||
+                     op == "Pow";
+  // A bitwise/shift operator with a CONCRETE operand that is definitely NOT a
+  // set is an unambiguous TypeError: float / str / None / dict / complex. NB
+  // `list` is EXCLUDED here -- a non-int set literal (e.g. `{'a', 'b'}`) is
+  // modelled internally as a python_list, so a `list` operand to `|`/`&` may in
+  // fact be a set (valid set-union), which must stay `nondet` (no false alarm on
+  // `frozenset(..) | {..}`).
+  const bool l_bad_bitwise =
+    l_is_float || l_is_str || l_is_dict || l_is_none || l_is_complex;
+  const bool r_bad_bitwise =
+    r_is_float || r_is_str || r_is_dict || r_is_none || r_is_complex;
+  const bool fire = arith || l_is_none || r_is_none ||
+                    (bitwise_op && (l_bad_bitwise || r_bad_bitwise));
+  return fire ? binop_verdict::error : binop_verdict::nondet;
+}
+} // namespace
+
+// PLR §6.7: whether `op` on these operand types is a PROVABLE TypeError. Shares
+// compute_binop_verdict with convert_bin_op; used by the augmented-assign path.
+bool python_convertert::binop_operand_type_error(
+  const std::string &op,
+  const exprt &left,
+  const exprt &right) const
+{
+  return compute_binop_verdict(op, left, right, ref_mutables) ==
+         binop_verdict::error;
 }
 
 exprt python_convertert::convert_bin_op(const jsont &expr)
@@ -283,147 +325,12 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   // combinations so the symex graph stays well-typed; the
   // caller's reasoning continues with an over-approximation.
   {
-    bool l_is_list = is_python_list_type(left.type());
-    bool r_is_list = is_python_list_type(right.type());
-    bool l_is_dict = is_python_dict_type(left.type());
-    bool r_is_dict = is_python_dict_type(right.type());
-    bool l_is_set = is_python_set_type(left.type());
-    bool r_is_set = is_python_set_type(right.type());
-    bool l_is_str = is_python_string_type(left.type());
-    bool r_is_str = is_python_string_type(right.type());
-    bool l_is_complex =
-      left.type().id() == ID_struct &&
-      to_struct_type(left.type()).get_tag() == "python_complex";
-    bool r_is_complex =
-      right.type().id() == ID_struct &&
-      to_struct_type(right.type()).get_tag() == "python_complex";
-    bool l_is_num =
-      left.type().id() == ID_signedbv || left.type().id() == ID_integer ||
-      left.type().id() == ID_floatbv || left.type().id() == ID_bool;
-    bool r_is_num =
-      right.type().id() == ID_signedbv || right.type().id() == ID_integer ||
-      right.type().id() == ID_floatbv || right.type().id() == ID_bool;
-    // Concrete operand-type discriminators for the whole-group operand-type
-    // obligation below. A *concrete* float operand is unambiguous (it is never
-    // a set/sequence at runtime), so operators that require an integral operand
-    // (bitwise/shift, sequence-repeat count) can flag it as a DEFINITE
-    // TypeError without the set/coarse-nondet ambiguity that blocks the general
-    // bitwise case.
-    bool l_is_float = left.type().id() == ID_floatbv;
-    bool r_is_float = right.type().id() == ID_floatbv;
-    bool l_is_intlike = left.type().id() == ID_signedbv ||
-                        left.type().id() == ID_integer ||
-                        left.type().id() == ID_bool;
-    bool r_is_intlike = right.type().id() == ID_signedbv ||
-                        right.type().id() == ID_integer ||
-                        right.type().id() == ID_bool;
-    bool bitwise_op = op == "BitAnd" || op == "BitOr" || op == "BitXor" ||
-                      op == "LShift" || op == "RShift";
-    // PLR §3.2: a python_value (tagged union) operand can hold
-    // an int / float / bool (or any other type) at runtime.
-    // For list / str repetition we accept it as 'num-like' so
-    // 'list * unannotated_int_param' doesn't trip an incompatible
-    // TypeError at conversion time. The operand-promotion path
-    // below unwraps it as needed.
-    bool l_is_value = is_python_value_type(left.type());
-    bool r_is_value = is_python_value_type(right.type());
-    bool incompatible = false;
-    // list OP non-list: only list * int (repeat) is valid. Under reference
-    // semantics a python_value operand may be a LIST reference, so `list +
-    // python_value` is a possible concat (deref handled in the concat branch
-    // below); allow it through rather than flagging an incompatible TypeError.
-    if(l_is_list && !r_is_list)
+    // PLR §6.7: shared operand-type verdict (compute_binop_verdict above).
+    binop_verdict v = compute_binop_verdict(op, left, right, ref_mutables);
+    if(v != binop_verdict::ok)
     {
-      if(
-        !(op == "Mult" && (r_is_intlike || r_is_value)) &&
-        !(op == "Add" && r_is_value && ref_mutables))
-        incompatible = true;
-    }
-    if(r_is_list && !l_is_list)
-    {
-      if(
-        !(op == "Mult" && (l_is_intlike || l_is_value)) &&
-        !(op == "Add" && l_is_value && ref_mutables))
-        incompatible = true;
-    }
-    // dict / set with anything else is invalid.
-    if(l_is_dict != r_is_dict)
-      incompatible = true;
-    if(l_is_set != r_is_set && (l_is_num || r_is_num))
-      incompatible = true;
-    // str OP non-str/num: invalid unless str * int (repeat).
-    if(l_is_str && !r_is_str)
-    {
-      if(!(op == "Mult" && (r_is_intlike || r_is_value)))
-        incompatible = true;
-    }
-    if(r_is_str && !l_is_str)
-    {
-      if(!(op == "Mult" && (l_is_intlike || l_is_value)))
-        incompatible = true;
-    }
-    // str * str is invalid: only str * int repeats a string.
-    if(l_is_str && r_is_str && op == "Mult")
-      incompatible = true;
-    // PLR §6.7: complex OP str / list / etc. raises TypeError.
-    if(l_is_complex && (r_is_str || r_is_list || r_is_dict))
-      incompatible = true;
-    if(r_is_complex && (l_is_str || l_is_list || l_is_dict))
-      incompatible = true;
-    // PLR §6.7: bitwise/shift operators require integral operands. A CONCRETE
-    // float operand (`1.0 & 2`, `1.0 << 2`) is a definite TypeError -- and,
-    // being concretely float, is unambiguously not a set, so this does not
-    // disturb the set bitwise ops (which the general bitwise case below stays
-    // silent on). Sequence-repeat with a concrete float count is already
-    // flagged above (the count must be int-like, not float).
-    if(bitwise_op && (l_is_float || r_is_float))
-      incompatible = true;
-    if(incompatible)
-    {
-      // PLR §6.7: incompatible operand types raise TypeError.
-      // Set the __exception_active flag (gated by the
-      // statement-level wrapper) so try/except TypeError can
-      // catch the path. Returning nondet keeps the GOTO
-      // well-typed regardless of whether the exception is
-      // caught.
-      //
-      // Restricted to ops where the incompatibility is
-      // unambiguous (Add / Sub / Mult / Div / FloorDiv /
-      // Mod / Pow). Bitwise ops (BitOr / BitAnd / BitXor /
-      // LShift / RShift) operate on ints AND sets, and our
-      // value-type tracking is too coarse to distinguish
-      // (set | set built on top of nondet ints from
-      // frozenset-returning functions, etc.). Skipping the
-      // exception emission for those preserves the silent-
-      // nondet behaviour that several library models depend
-      // on while still flagging arithmetic mismatches.
-      bool fire_exc =
-        op == "Add" || op == "Sub" || op == "Mult" || op == "Div" ||
-        op == "FloorDiv" || op == "Mod" || op == "Pow" ||
-        // a concrete float OR str operand to a bitwise/shift op
-        // is an unambiguous TypeError -- neither is ever a set, so
-        // this does not disturb the set-ambiguous general bitwise
-        // case (which stays silent on coarse nondet ints).
-        (bitwise_op && (l_is_float || r_is_float || l_is_str || r_is_str));
-      if(fire_exc)
-      {
-        const symbolt *exc_sym =
-          symbol_table.lookup("python::__exception_active");
-        const symbolt *exc_type_sym =
-          symbol_table.lookup("python::__exception_type");
-        if(exc_sym != nullptr)
-        {
-          pending_checks.push_back(
-            code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-          if(exc_type_sym != nullptr)
-          {
-            long h = exception_type_hash("TypeError");
-            pending_checks.push_back(code_frontend_assignt{
-              exc_type_sym->symbol_expr(),
-              from_integer(h, exc_type_sym->type)});
-          }
-        }
-      }
+      if(v == binop_verdict::error)
+        emit_conditional_exception(true_exprt{}, "TypeError");
       log_overapprox(
         "BinOp " + op + " on incompatible types — returning nondet");
       return side_effect_expr_nondett{python_int_type(), get_location(expr)};

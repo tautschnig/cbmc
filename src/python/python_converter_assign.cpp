@@ -4256,11 +4256,26 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   std::string op = json_string(json_member(op_node, "_type"));
 
   // PLR §7.2.2 / §6.7: augmented assignment applies the binary operator, so an
-  // operand-type mismatch (int += str, list += int, str += int, ...) is the
-  // SAME TypeError as the plain binary op. Reuse the shared operand-type check;
-  // on a PROVABLE error emit TypeError and skip the (mixed-type) lowering.
-  // Any/python_value operands are not flagged (no false positive).
-  if(binop_operand_type_error(op, lhs, rhs))
+  // operand-type mismatch (int += str, str += int, ...) is the SAME TypeError as
+  // the plain binary op -- with ONE exception: the augmented (in-place) form of
+  // a MUTABLE container is more permissive than the binary operator. `list +=`
+  // is `list.__iadd__` = extend, which accepts ANY iterable (`[1] += "ab"` is
+  // valid, unlike `[1] + "ab"`), so it is a TypeError only for a provably
+  // NON-iterable rhs (int/float/bool/complex/None). Other ops (scalar lhs,
+  // `list *=`, str +=, …) use the shared binary rule.
+  bool aug_error;
+  if(op == "Add" && is_python_list_type(lhs.type()))
+  {
+    const typet &rt = rhs.type();
+    aug_error = rt.id() == ID_signedbv || rt.id() == ID_integer ||
+                rt.id() == ID_floatbv || rt.id() == ID_bool ||
+                (rt.id() == ID_struct &&
+                 to_struct_type(rt).get_tag() == "python_complex") ||
+                is_python_none_constant(rhs);
+  }
+  else
+    aug_error = binop_operand_type_error(op, lhs, rhs);
+  if(aug_error)
   {
     emit_conditional_exception(true_exprt{}, "TypeError");
     return code_skipt{};
