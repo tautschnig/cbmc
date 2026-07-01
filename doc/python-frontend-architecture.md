@@ -1211,6 +1211,13 @@ gate** (run after every change) keeps new false proofs out.
 >   set-literal bitmap and `build_dict_value`; now CORE `set-literal-numeric-dedup`,
 >   `dict-literal-numeric-dedup`. (The *incremental* paths — `set.add`, `d[k]=v`,
 >   `dict.update`, `frozenset(list)`, `dict(list-of-pairs)` — were already sound.)
+>   `build_dict_value` also deduped a repeated **string** literal key by value
+>   (**CLOSED 2026-07-01**, `dict-literal-string-key-dedup` CORE — a python_string
+>   is a struct, not a `constant_exprt`, so exact-expr equality never merged
+>   them; `{"a":1,"a":2}` had over-counted len and read the first value). So the
+>   dict/set literal builders now dedup **all** constant-key kinds by Python
+>   equality: numeric, string (by value), exact for others; symbolic keys are
+>   not deduped (sound).
 > - **Star-unpack call arity**: `f(*[1, 2, 3])` into a 2-parameter `f` was not
 >   flagged. **CLOSED 2026-07-01**: `validate_call_signature` now folds a
 >   statically-known `*`-unpack length (list/tuple literal) into the positional
