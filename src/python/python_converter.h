@@ -1981,6 +1981,17 @@ private:
   /// std::nullopt otherwise (so the call-arity check is conservatively skipped).
   std::optional<std::size_t> static_unpack_length(const jsont &value) const;
 
+  /// PLR §6.7: true iff applying binary operator \p op to operands of the given
+  /// (already-converted) types is a PROVABLE TypeError — the "incompatible
+  /// operands" condition `convert_bin_op` uses to fire a TypeError (e.g.
+  /// `int + str`, `list + int`, `str + int`). Shared with the augmented-assign
+  /// path (`x += y` applies the same operator). Any/`python_value` operands are
+  /// never flagged (no false positive).
+  bool binop_operand_type_error(
+    const std::string &op,
+    const exprt &left,
+    const exprt &right) const;
+
   /// Orderable category of an operand for the mixed-type ordering TypeError
   /// check: 1 = numeric (int/float/bool), 2 = str, 0 = unknown/not-flaggable.
   /// Recovers the category from a CONSTANT python_value's static tag too, so a

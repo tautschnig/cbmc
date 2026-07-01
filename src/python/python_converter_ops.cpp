@@ -33,6 +33,86 @@
 // PLR §6.7: Binary arithmetic operations
 // PLR §6.8: Shifting operations
 // PLR §6.9: Binary bitwise operations
+
+// PLR §6.7: whether `op` on these operand types is a PROVABLE TypeError. Mirrors
+// the "incompatible + fire_exc" decision inside convert_bin_op below (kept in
+// sync); factored so the augmented-assign path (`x += y`) applies the same
+// check. Any/python_value operands are never flagged.
+bool python_convertert::binop_operand_type_error(
+  const std::string &op,
+  const exprt &left,
+  const exprt &right) const
+{
+  const bool l_is_list = is_python_list_type(left.type());
+  const bool r_is_list = is_python_list_type(right.type());
+  const bool l_is_dict = is_python_dict_type(left.type());
+  const bool r_is_dict = is_python_dict_type(right.type());
+  const bool l_is_set = is_python_set_type(left.type());
+  const bool r_is_set = is_python_set_type(right.type());
+  const bool l_is_str = is_python_string_type(left.type());
+  const bool r_is_str = is_python_string_type(right.type());
+  const bool l_is_complex =
+    left.type().id() == ID_struct &&
+    to_struct_type(left.type()).get_tag() == "python_complex";
+  const bool r_is_complex =
+    right.type().id() == ID_struct &&
+    to_struct_type(right.type()).get_tag() == "python_complex";
+  const bool l_is_num =
+    left.type().id() == ID_signedbv || left.type().id() == ID_integer ||
+    left.type().id() == ID_floatbv || left.type().id() == ID_bool;
+  const bool r_is_num =
+    right.type().id() == ID_signedbv || right.type().id() == ID_integer ||
+    right.type().id() == ID_floatbv || right.type().id() == ID_bool;
+  const bool l_is_float = left.type().id() == ID_floatbv;
+  const bool r_is_float = right.type().id() == ID_floatbv;
+  const bool l_is_intlike = left.type().id() == ID_signedbv ||
+                            left.type().id() == ID_integer ||
+                            left.type().id() == ID_bool;
+  const bool r_is_intlike = right.type().id() == ID_signedbv ||
+                            right.type().id() == ID_integer ||
+                            right.type().id() == ID_bool;
+  const bool bitwise_op = op == "BitAnd" || op == "BitOr" || op == "BitXor" ||
+                          op == "LShift" || op == "RShift";
+  const bool l_is_value = is_python_value_type(left.type());
+  const bool r_is_value = is_python_value_type(right.type());
+  bool incompatible = false;
+  if(l_is_list && !r_is_list)
+    if(
+      !(op == "Mult" && (r_is_intlike || r_is_value)) &&
+      !(op == "Add" && r_is_value && ref_mutables))
+      incompatible = true;
+  if(r_is_list && !l_is_list)
+    if(
+      !(op == "Mult" && (l_is_intlike || l_is_value)) &&
+      !(op == "Add" && l_is_value && ref_mutables))
+      incompatible = true;
+  if(l_is_dict != r_is_dict)
+    incompatible = true;
+  if(l_is_set != r_is_set && (l_is_num || r_is_num))
+    incompatible = true;
+  if(l_is_str && !r_is_str)
+    if(!(op == "Mult" && (r_is_intlike || r_is_value)))
+      incompatible = true;
+  if(r_is_str && !l_is_str)
+    if(!(op == "Mult" && (l_is_intlike || l_is_value)))
+      incompatible = true;
+  if(l_is_str && r_is_str && op == "Mult")
+    incompatible = true;
+  if(l_is_complex && (r_is_str || r_is_list || r_is_dict))
+    incompatible = true;
+  if(r_is_complex && (l_is_str || l_is_list || l_is_dict))
+    incompatible = true;
+  if(bitwise_op && (l_is_float || r_is_float))
+    incompatible = true;
+  if(!incompatible)
+    return false;
+  const bool fire_exc =
+    op == "Add" || op == "Sub" || op == "Mult" || op == "Div" ||
+    op == "FloorDiv" || op == "Mod" || op == "Pow" ||
+    (bitwise_op && (l_is_float || r_is_float || l_is_str || r_is_str));
+  return fire_exc;
+}
+
 exprt python_convertert::convert_bin_op(const jsont &expr)
 {
   exprt left = convert_expression(json_member(expr, "left"));

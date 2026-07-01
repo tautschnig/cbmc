@@ -4169,6 +4169,17 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
 
   std::string op = json_string(json_member(op_node, "_type"));
 
+  // PLR §7.2.2 / §6.7: augmented assignment applies the binary operator, so an
+  // operand-type mismatch (int += str, list += int, str += int, ...) is the
+  // SAME TypeError as the plain binary op. Reuse the shared operand-type check;
+  // on a PROVABLE error emit TypeError and skip the (mixed-type) lowering.
+  // Any/python_value operands are not flagged (no false positive).
+  if(binop_operand_type_error(op, lhs, rhs))
+  {
+    emit_conditional_exception(true_exprt{}, "TypeError");
+    return code_skipt{};
+  }
+
   // PLR §7.2.1: For string +=, use content-tracking concat
   if(
     op == "Add" && is_python_string_type(lhs.type()) &&
