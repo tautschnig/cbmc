@@ -1941,6 +1941,85 @@ codet python_convertert::convert_assign(const jsont &stmt)
 
   code_blockt block;
 
+  // PLR §7.2: a chained assignment `a = b = <mutable>` evaluates the RHS ONCE
+  // and binds ALL targets to the SAME object, so a mutation through one target
+  // is visible through the others. The default per-target loop below binds each
+  // target to an independent copy of `rhs` (value semantics), which is a false
+  // proof for a mutable container. When there is more than one plain Name target
+  // and `rhs` is a mutable container, materialise the value in the FIRST target
+  // and alias the rest to it (pointer + alias_targets) — the same mechanism as
+  // `b = a`. Immutable rhs (int/str/tuple) needs no aliasing (copies are
+  // equivalent), and non-Name targets (subscript/attribute/unpack) keep the
+  // default path.
+  if(
+    as_array(targets).size() > 1 &&
+    (is_python_list_type(rhs.type()) || is_python_dict_type(rhs.type()) ||
+     is_python_set_type(rhs.type())))
+  {
+    bool all_names = true;
+    for(const auto &t : as_array(targets))
+      if(!is_node_type(t, "Name"))
+      {
+        all_names = false;
+        break;
+      }
+    if(all_names)
+    {
+      // First target: materialise the value.
+      const jsont &first = *as_array(targets).begin();
+      const irep_idt first_id{
+        qualify_name(json_string(json_member(first, "id")))};
+      if(symbol_table.lookup(first_id) == nullptr)
+      {
+        symbolt fs{first_id, rhs.type(), "python"};
+        fs.base_name = json_string(json_member(first, "id"));
+        fs.location = loc;
+        fs.is_lvalue = true;
+        fs.is_state_var = true;
+        fs.is_static_lifetime = current_function.empty();
+        symbol_table.add(fs);
+      }
+      else
+        symbol_table.get_writeable_ref(first_id).type = rhs.type();
+      exprt first_sym = symbol_table.lookup_ref(first_id).symbol_expr();
+      block.add(code_frontend_assignt{first_sym, rhs});
+      // The aliased object is reachable through several names; drop any cached
+      // literal so later reads go through storage (mirrors the `b = a` path).
+      list_literals.erase(first_id);
+      dict_literals.erase(first_id);
+      tuple_literals.erase(first_id);
+      // Remaining targets: alias to the first (pointer-promote + address_of).
+      pointer_typet ptr_type{rhs.type(), 64};
+      bool skip_first = true;
+      for(const auto &t : as_array(targets))
+      {
+        if(skip_first)
+        {
+          skip_first = false;
+          continue;
+        }
+        const irep_idt tid{qualify_name(json_string(json_member(t, "id")))};
+        if(symbol_table.lookup(tid) == nullptr)
+        {
+          symbolt ts{tid, ptr_type, "python"};
+          ts.base_name = json_string(json_member(t, "id"));
+          ts.location = loc;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          ts.is_static_lifetime = current_function.empty();
+          symbol_table.add(ts);
+        }
+        else
+          symbol_table.get_writeable_ref(tid).type = ptr_type;
+        alias_targets[tid] = first_id;
+        block.add(code_frontend_assignt{
+          symbol_table.lookup_ref(tid).symbol_expr(),
+          address_of_exprt{first_sym}});
+      }
+      return std::move(block);
+    }
+  }
+
   for(const auto &target : as_array(targets))
   {
     // Handle tuple unpacking: a, b, c = expr
