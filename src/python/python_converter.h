@@ -1976,6 +1976,11 @@ private:
   /// by exact equality or not at all).
   std::optional<mp_integer> python_numeric_key(const exprt &v) const;
 
+  /// PLR §8.7: the number of positional slots a `*`-unpacked call argument
+  /// fills, when statically known (a list/tuple literal with no nested spread);
+  /// std::nullopt otherwise (so the call-arity check is conservatively skipped).
+  std::optional<std::size_t> static_unpack_length(const jsont &value) const;
+
   /// Orderable category of an operand for the mixed-type ordering TypeError
   /// check: 1 = numeric (int/float/bool), 2 = str, 0 = unknown/not-flaggable.
   /// Recovers the category from a CONSTANT python_value's static tag too, so a
