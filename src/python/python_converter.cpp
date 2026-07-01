@@ -5072,14 +5072,13 @@ exprt python_convertert::convert_expression(const jsont &expr)
           is_python_list_type(val.type()) || is_python_dict_type(val.type()) ||
           is_python_set_type(val.type()))
           unhashable_elt = true;
-        if(val.is_constant() && val.type().id() == ID_signedbv)
-        {
-          mp_integer iv;
-          if(!to_integer(to_constant_expr(val), iv))
-            values.push_back(iv);
-          else
-            all_int_constant = false;
-        }
+        // PLR §3: an int / bool / INTEGRAL-float constant participates in
+        // numeric element equality (1 == 1.0 == True, all hash equal), so it
+        // maps to the SAME bitmap bit and dedups. A non-integral float / string
+        // / non-constant is not an int-bitmap element (falls to the list model).
+        std::optional<mp_integer> nk = python_numeric_key(val);
+        if(nk.has_value())
+          values.push_back(*nk);
         else
           all_int_constant = false;
       }
