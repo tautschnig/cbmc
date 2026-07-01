@@ -1228,6 +1228,29 @@ gate** (run after every change) keeps new false proofs out.
 >   also re-yield (still open — aggregating builtins iterate via their own path).
 > A precision *false alarm* (not a false proof) was also seen: `1.0 in {1}` is
 > not proven (membership over-approximates a cross-type numeric hit).
+>
+> **Sweep round 3 (2026-07-01)** — another batch (~35 probes over string/slice
+> edges, the numeric tower, custom iterator protocol, exception/`finally`/`else`
+> flow, `__slots__`/inheritance, `@property`, format, dict-ordering, hashing,
+> chained/augmented assignment) found the frontend **sound on most** (each
+> correctly FAILED), plus **five more false-proof roots**, now pinned KNOWNBUG:
+> - **`__slots__` not enforced** — assigning/reading an attribute not in a class's
+>   `__slots__` should raise AttributeError (`slots-not-enforced-knownbug`).
+> - **`__eq__` without `__hash__`** — such a class's instances are unhashable, so
+>   a set/dict-key use raises TypeError (`eq-without-hash-unhashable-knownbug`).
+> - **Augmented-assignment type errors** — `x += y` applies the binary operator,
+>   so `int += str` / `list += int` / `str += int` should TypeError, but the
+>   AugAssign path skips the binary-op type check (`augassign-type-error-knownbug`).
+>   *Likely a cheap whole-group win: route AugAssign through the same binop-dunder
+>   check as `+`.*
+> - **Chained-assignment aliasing** — `a = b = <mutable>` binds BOTH targets to the
+>   SAME object; the frontend binds independent copies, so a mutation through one
+>   is invisible to the other (`chained-assign-aliasing-knownbug`; also instances,
+>   3-way). *Likely a cheap whole-group win: evaluate the RHS once and bind all
+>   targets to it.*
+> - **Read-only `@property` assignment** — assigning to a getter-only property
+>   raises AttributeError; the frontend accepts a shadowing store
+>   (`property-readonly-assign-knownbug`).
 
 - *Closed 2026-06-30 (commit `70401b6d90`):* `gen_send_before_start` — the eager
   generator cursor already encodes priming (`cursor == 0` ⟺ not started), so a
