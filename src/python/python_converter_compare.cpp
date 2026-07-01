@@ -205,6 +205,29 @@ exprt python_convertert::convert_compare(const jsont &expr)
     if(current_left.is_nil() || right.is_nil())
       return nil_exprt{};
 
+    // PLR §6.10.1: ordering (< > <= >=) of two operands whose orderable
+    // CATEGORIES differ (numeric / str / list / tuple / set / dict / None) is a
+    // TypeError -- e.g. `1 < [1]`, `[1] < 1`, `1 < "a"`, `None < 1`. Placed here
+    // (before the numeric/string/list comparison paths) so it fires regardless
+    // of which downstream path would handle the operands. Same-category
+    // comparisons proceed normally (num<num incl. int<float<bool, str<str,
+    // list<list lexicographic, set<set subset); an Any/class operand is category
+    // 0 and is never flagged (no false positive; a class's __lt__ is dispatched
+    // below).
+    if(op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE")
+    {
+      const int cl = orderable_category_of(current_left);
+      const int cr = orderable_category_of(right);
+      if(cl != 0 && cr != 0 && cl != cr)
+      {
+        emit_conditional_exception(true_exprt{}, "TypeError");
+        exprt c = false_exprt{};
+        result = result.is_nil() ? c : exprt(and_exprt{result, c});
+        current_left = right;
+        continue;
+      }
+    }
+
     // Native SMT-String back-end (Plan A): compare two SMT String values
     // directly. ==/!= lower to (= s t); ordering routes through compare_to
     // (lowered to str.< in smt2_conv). Bypasses the refined struct path.

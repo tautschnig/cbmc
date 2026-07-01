@@ -2396,6 +2396,16 @@ int python_convertert::orderable_category_of(const exprt &e)
     return 1; // numeric
   if(is_python_string_type(t))
     return 2; // str
+  if(is_python_none_constant(e))
+    return 7; // None: orderable with nothing
+  if(is_python_list_type(t))
+    return 3;
+  if(is_python_tuple_type(t))
+    return 4;
+  if(is_python_set_type(t))
+    return 5;
+  if(is_python_dict_type(t))
+    return 6;
   // A CONSTANT python_value (a make_python_value struct literal) carries a
   // statically-known __tag; recover the category from it so a boxed literal
   // element (e.g. "a" in the mixed list [1, "a"]) is seen as str. A symbolic
