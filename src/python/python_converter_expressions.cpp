@@ -2240,6 +2240,41 @@ bool python_convertert::is_unhashable_type(const typet &t)
          is_python_set_type(t);
 }
 
+std::optional<mp_integer>
+python_convertert::python_numeric_key(const exprt &v) const
+{
+  if(!v.is_constant())
+    return std::nullopt;
+  const typet &t = v.type();
+  if(t.id() == ID_bool)
+    return v.is_true() ? mp_integer{1} : mp_integer{0};
+  if(
+    t.id() == ID_signedbv || t.id() == ID_unsignedbv || t.id() == ID_integer ||
+    t.id() == ID_c_bool)
+  {
+    mp_integer iv;
+    if(!to_integer(to_constant_expr(v), iv))
+      return iv;
+    return std::nullopt;
+  }
+  if(t.id() == ID_floatbv)
+  {
+    ieee_floatt f(
+      to_constant_expr(v), ieee_floatt::rounding_modet::ROUND_TO_EVEN);
+    if(f.is_NaN() || f.is_infinity())
+      return std::nullopt;
+    // Integral value (1.0) participates in numeric key equality with int/bool
+    // (1 == 1.0, hash(1) == hash(1.0)); a non-integral float (1.5) does not.
+    const mp_integer iv = f.to_integer();
+    ieee_floatt round_trip(f.spec, ieee_floatt::rounding_modet::ROUND_TO_EVEN);
+    round_trip.from_integer(iv);
+    if(round_trip == f)
+      return iv;
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
 int python_convertert::orderable_category_of(const exprt &e)
 {
   const typet &t = e.type();
@@ -3112,7 +3147,23 @@ exprt python_convertert::build_dict_value(
     for(const auto &p : pairs)
     {
       bool merged = false;
-      if(p.first.is_constant())
+      // PLR §3: dedup keys by Python numeric equality (1 == 1.0 == True) for
+      // numeric-key constants, else by exact constant equality (strings, etc.).
+      std::optional<mp_integer> pk = python_numeric_key(p.first);
+      if(pk.has_value())
+      {
+        for(auto &d : deduped)
+        {
+          std::optional<mp_integer> dk = python_numeric_key(d.first);
+          if(dk.has_value() && *dk == *pk)
+          {
+            d.second = p.second; // later value overwrites
+            merged = true;
+            break;
+          }
+        }
+      }
+      else if(p.first.is_constant())
       {
         for(auto &d : deduped)
           if(d.first.is_constant() && d.first == p.first)

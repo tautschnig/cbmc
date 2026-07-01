@@ -1968,6 +1968,14 @@ private:
   /// unhashable -- using one as a dict key or set element raises TypeError.
   bool is_unhashable_type(const typet &t);
 
+  /// PLR §3: the canonical integer key for a constant that participates in
+  /// Python numeric key/element equality (`1 == 1.0 == True`, and all hash
+  /// equal), used to dedup set-literal elements and dict-literal keys. Returns
+  /// the integer value for an int / bool / INTEGRAL-float constant; std::nullopt
+  /// otherwise (a non-integral float, a string, or a non-constant — those dedup
+  /// by exact equality or not at all).
+  std::optional<mp_integer> python_numeric_key(const exprt &v) const;
+
   /// Orderable category of an operand for the mixed-type ordering TypeError
   /// check: 1 = numeric (int/float/bool), 2 = str, 0 = unknown/not-flaggable.
   /// Recovers the category from a CONSTANT python_value's static tag too, so a
