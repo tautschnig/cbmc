@@ -2273,6 +2273,34 @@ bool python_convertert::class_mro_defines(
   return false;
 }
 
+bool python_convertert::slots_forbidden_attr(
+  const std::string &cls,
+  const std::string &attr) const
+{
+  if(class_slots.find(cls) == class_slots.end())
+    return false; // no __slots__ on the class => __dict__ => any attr allowed
+  std::vector<std::string> chain;
+  auto mit = class_mro.find(cls);
+  if(mit != class_mro.end())
+    chain = mit->second;
+  if(chain.empty())
+    chain.push_back(cls);
+  std::set<std::string> allowed;
+  for(const std::string &b : chain)
+  {
+    if(b == "object")
+      continue;
+    auto bs = class_slots.find(b);
+    if(bs == class_slots.end())
+      // A base without a known __slots__ record contributes a __dict__ (or is
+      // unknown/imported): not slots-enforced -> never flag (sound, no FP).
+      return false;
+    for(const std::string &s : bs->second)
+      allowed.insert(s);
+  }
+  return allowed.count(attr) == 0;
+}
+
 // Whole-group helper for the dunder-protocol-missing checks (subscript /
 // iteration / call / with / setitem / delitem / contains / ...). Returns true
 // iff `t` is a CONCRETE user-class instance type (python_class_*) whose MRO

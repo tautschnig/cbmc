@@ -3325,6 +3325,15 @@ codet python_convertert::convert_assign(const jsont &stmt)
               block.add(std::move(*ds));
               continue;
             }
+            // PLR §3.3.2.4: on a slots-enforced class, assigning an attribute
+            // not named in __slots__ (across the MRO) raises AttributeError
+            // ('object has no attribute'). Property setters / data descriptors
+            // are handled above; a slot store falls through to the normal path.
+            if(slots_forbidden_attr(dcls, attr))
+            {
+              emit_conditional_exception(true_exprt{}, "AttributeError");
+              continue;
+            }
           }
         }
         if(obj_type.id() == ID_pointer)
