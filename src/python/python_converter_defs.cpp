@@ -3448,6 +3448,51 @@ codet python_convertert::convert_class_def(const jsont &stmt)
       if((own_eq && !own_hash) || own_hash_none)
         class_eq_without_hash.insert(class_name);
     }
+    // PLR §3.3.2.4: record a `__slots__ = (...)` declaration (the permitted
+    // instance-attribute names). Only a tuple/list/set of string CONSTANTS is
+    // recognised; a single string `__slots__ = "x"` names one slot. A dynamic
+    // __slots__ (a name / comprehension) is not modelled -> the class is left
+    // without a slots record (so no enforcement, no false positive).
+    for(const auto &item : as_array(body))
+    {
+      if(!is_node_type(item, "Assign"))
+        continue;
+      bool is_slots_target = false;
+      for(const auto &tgt : as_array(json_member(item, "targets")))
+        if(
+          is_node_type(tgt, "Name") &&
+          json_string(json_member(tgt, "id")) == "__slots__")
+          is_slots_target = true;
+      if(!is_slots_target)
+        continue;
+      const jsont &v = json_member(item, "value");
+      std::set<std::string> names;
+      bool ok = true;
+      auto add_str = [&](const jsont &e)
+      {
+        if(is_node_type(e, "Constant") && json_member(e, "value").is_string())
+          names.insert(json_string(json_member(e, "value")));
+        else
+          ok = false;
+      };
+      if(is_node_type(v, "Constant") && json_member(v, "value").is_string())
+        names.insert(json_string(json_member(v, "value")));
+      else if(
+        is_node_type(v, "Tuple") || is_node_type(v, "List") ||
+        is_node_type(v, "Set"))
+      {
+        const jsont &elts = json_member(v, "elts");
+        if(elts.is_array())
+          for(const auto &e : as_array(elts))
+            add_str(e);
+        else
+          ok = false;
+      }
+      else
+        ok = false;
+      if(ok)
+        class_slots[class_name] = std::move(names);
+    }
     // Also include methods inherited from base classes —
     // a subclass calling self.parent_method() shouldn't
     // trip the missing-method detector when the method is

@@ -617,6 +617,18 @@ private:
   /// (so `__hash__` is set to None, making instances UNHASHABLE). Consulted by
   /// is_unhashable_type at dict-key / set-element sites.
   std::set<std::string> class_eq_without_hash;
+  /// PLR §3.3.2.4: `__slots__` declaration per class (the set of permitted
+  /// instance attribute names). Absent key => the class did not declare
+  /// __slots__ (so instances have a __dict__ and accept arbitrary attributes).
+  std::map<std::string, std::set<std::string>> class_slots;
+
+  /// PLR §3.3.2.4: true iff class \p cls is slots-enforced (it AND every
+  /// user-class base in its MRO declare `__slots__`, so instances have no
+  /// __dict__) AND \p attr is not one of the permitted slot names across the
+  /// MRO -- i.e. assigning `obj.attr` raises AttributeError. Conservatively
+  /// false when any base's slots are unknown (no false positive).
+  bool
+  slots_forbidden_attr(const std::string &cls, const std::string &attr) const;
   /// The class whose method call initiated the current super()
   /// dispatch. Set by the call site (e.g. when D() is called,
   /// set to "D"); nested super() inlining preserves it. Empty
