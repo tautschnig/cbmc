@@ -2003,7 +2003,36 @@ std::optional<codet> python_convertert::emit_property_set(
     }
   }
   if(setter_id.empty())
-    return std::nullopt;
+  {
+    // PLR §3.3.2: assigning to a READ-ONLY property (a getter with no setter
+    // across the MRO) raises AttributeError ("property '...' of '...' object
+    // has no setter"). Distinguish from a plain non-property attribute store,
+    // which returns nullopt to take the normal (shadowing) path.
+    bool is_readonly_property = false;
+    for(const std::string &anc : chain)
+    {
+      auto pit = class_property_methods.find(anc);
+      if(pit != class_property_methods.end() && pit->second.count(attr) > 0)
+      {
+        is_readonly_property = true;
+        break;
+      }
+    }
+    if(!is_readonly_property)
+      return std::nullopt;
+    code_blockt blk;
+    const symbolt *ea = symbol_table.lookup("python::__exception_active");
+    const symbolt *et = symbol_table.lookup("python::__exception_type");
+    if(ea != nullptr)
+    {
+      blk.add(code_frontend_assignt{ea->symbol_expr(), true_exprt{}});
+      if(et != nullptr)
+        blk.add(code_frontend_assignt{
+          et->symbol_expr(),
+          from_integer(exception_type_hash("AttributeError"), et->type)});
+    }
+    return std::move(blk);
+  }
   const symbolt *ssym = symbol_table.lookup(irep_idt{setter_id});
   if(ssym == nullptr || ssym->type.id() != ID_code)
     return std::nullopt;
