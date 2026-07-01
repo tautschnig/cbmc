@@ -1242,14 +1242,16 @@ gate** (run after every change) keeps new false proofs out.
 >   a set/dict-key use raises TypeError (`eq-without-hash-unhashable-knownbug`).
 > - **Augmented-assignment type errors** — `x += y` applies the binary operator,
 >   so `int += str` / `list += int` / `str += int` should TypeError, but the
->   AugAssign path skips the binary-op type check (`augassign-type-error-knownbug`).
->   *Likely a cheap whole-group win: route AugAssign through the same binop-dunder
->   check as `+`.*
+>   AugAssign path skipped the binary-op type check. **CLOSED 2026-07-01**
+>   (`augassign-type-error`, CORE): convert_aug_assign reuses the shared
+>   `binop_operand_type_error` predicate factored from convert_bin_op.
 > - **Chained-assignment aliasing** — `a = b = <mutable>` binds BOTH targets to the
->   SAME object; the frontend binds independent copies, so a mutation through one
->   is invisible to the other (`chained-assign-aliasing-knownbug`; also instances,
->   3-way). *Likely a cheap whole-group win: evaluate the RHS once and bind all
->   targets to it.*
+>   SAME object; the frontend bound independent copies, so a mutation through one
+>   was invisible to the other. **CLOSED 2026-07-01** for mutable CONTAINERS
+>   (`chained-assign-aliasing`, CORE): convert_assign materialises the value in
+>   the first target and aliases the rest (pointer + alias_targets). A chained
+>   INSTANCE assignment `a = b = C()` still copies (needs constructor-once + alias
+>   handling — a documented follow-up).
 > - **Read-only `@property` assignment** — assigning to a getter-only property
 >   raises AttributeError; the frontend accepts a shadowing store
 >   (`property-readonly-assign-knownbug`).
