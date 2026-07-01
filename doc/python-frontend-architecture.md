@@ -1185,6 +1185,27 @@ gate** (run after every change) keeps new false proofs out.
 > §1). So "0 false proofs" is accurate *for the oracle corpus*; this cluster is a
 > known residual outside it. (Async, symbolic-key dict, and escaping closures
 > probed sound in the same sweep.)
+>
+> **Sweep round 2 (2026-07-01)** — a broader batch (~40 probes over
+> mutation-during-iteration, exception/`finally`, identity/`is`, numeric
+> coercion, comprehension scope, aliasing, unpacking, MRO, float edges) found the
+> frontend **sound on all of those** (each correctly FAILED), plus **two more
+> false-proof roots**, now pinned:
+> - **Container-literal cross-type numeric dedup** (one root): a set literal
+>   `{1, 1.0}` / `{1, True}` and a dict literal `{True: 1, 1: 2}` over-count
+>   distinct elements/keys because the literal builder dedups with type-sensitive
+>   equality instead of Python numeric equality (`1 == 1.0 == True`). The
+>   *incremental* paths are already sound (`set.add`, `d[k]=v`, `dict.update`,
+>   `frozenset(list)`, `dict(list-of-pairs)` all dedup). Pinned
+>   `set-literal-numeric-dedup-knownbug`, `dict-literal-numeric-dedup-knownbug`;
+>   fix = dedup literal elements/keys by numeric equality.
+> - **Star-unpack call arity**: `f(*[1, 2, 3])` into a 2-parameter `f` is not
+>   flagged (`validate_call_signature` ignores a statically-known `*`-unpack
+>   length). Pinned `star-unpack-call-arity-knownbug`.
+> - Additional generator-cluster channels confirmed (same root as above):
+>   `list(gen)` / `sum(gen)` after a partial `next()` also re-yield.
+> A precision *false alarm* (not a false proof) was also seen: `1.0 in {1}` is
+> not proven (membership over-approximates a cross-type numeric hit).
 
 - *Closed 2026-06-30 (commit `70401b6d90`):* `gen_send_before_start` — the eager
   generator cursor already encodes priming (`cursor == 0` ⟺ not started), so a
