@@ -1729,8 +1729,25 @@ skip_string_unroll:;
 
   code_blockt result;
 
-  // __idx = 0
-  result.add(code_frontend_assignt{idx_var, from_integer(0, int_type)});
+  // __idx = 0  (or the generator's cursor — see below)
+  // PLR §6.2.9: iterating a generator consumes from its CURRENT position. If
+  // the iterable is a generator with a live cursor, start the loop at the
+  // cursor (so `next(g); for x in g` resumes) and exhaust it afterwards.
+  irep_idt for_gen_cursor;
+  if(is_node_type(iter, "Name"))
+  {
+    auto git = generator_cursors.find(
+      qualify_name(json_string(json_member(iter, "id"))));
+    if(
+      git != generator_cursors.end() &&
+      symbol_table.lookup(git->second) != nullptr)
+      for_gen_cursor = git->second;
+  }
+  exprt for_start_idx = from_integer(0, int_type);
+  if(!for_gen_cursor.empty())
+    for_start_idx = safe_typecast(
+      symbol_table.lookup_ref(for_gen_cursor).symbol_expr(), int_type);
+  result.add(code_frontend_assignt{idx_var, for_start_idx});
   if(cm_dict)
     result.add(cm_snapshot_stmt());
 
@@ -1933,6 +1950,15 @@ skip_string_unroll:;
     std::move(body_block)};
   while_stmt.add_source_location() = loc;
   result.add(std::move(while_stmt));
+
+  // PLR §6.2.9: a `for` loop over a generator exhausts it — set the cursor to
+  // the length so a subsequent next()/for re-observes exhaustion (no re-yield).
+  if(!for_gen_cursor.empty())
+  {
+    const symbolt &cs = symbol_table.lookup_ref(for_gen_cursor);
+    result.add(
+      code_frontend_assignt{cs.symbol_expr(), safe_typecast(length, cs.type)});
+  }
 
   // Prepend pre-loop setup (temp for complex iterables)
   if(!pre_loop.statements().empty())

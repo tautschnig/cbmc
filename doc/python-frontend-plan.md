@@ -1665,23 +1665,25 @@ suspension point; `.close()` injects `GeneratorExit`.
 pinned 2026-06-30 via a proactive soundness sweep).** The cursor tracks
 consumption only for a *direct* `next(name)` / `name.send()` on the original
 call-site Name. Any other access path reads a fresh (cursor-0 / counter-from-0)
-view and re-yields already-consumed elements — a false proof. Confirmed,
-each pinned KNOWNBUG:
-- `for x in g` after a partial `next(g)` re-iterates from the start
-  (`gen-foriter-after-next-knownbug`) — the most common idiom.
-- an alias `it2 = it` does not share consumption state
-  (`gen-alias-consume-knownbug`).
-- a generator in a container consumed via the slot (`box=[g()]; next(box[0])`)
-  reads a fresh view (`gen-in-container-consume-knownbug`).
+view and re-yields already-consumed elements — a false proof. Status:
+- **CLOSED (2026-07-01):** `for x in g` after a partial `next(g)` now resumes
+  from `g`'s cursor and exhausts it (`gen-foriter-after-next-typeerror`, CORE).
+  The most common idiom; measured 0 sweep regressions / oracle 0-NEW.
+- **OPEN** (pinned KNOWNBUG): an alias `it2 = it`
+  (`gen-alias-consume-knownbug`), a container slot (`box=[g()]; next(box[0])`,
+  `gen-in-container-consume-knownbug`), and `list(g)`/`sum(g)` after a partial
+  `next()` (aggregating builtins iterate via their own path).
 Passing a generator to a function is sound (the param view is over-approximated
-to nondet, not re-yielded). **Fix: a generator-OBJECT model** whose consumption
-state (the cursor) is tied to the object and shared across all access paths
-(`for`, alias, container, param) rather than keyed on the call-site Name — the
-same "identity, not value/Name" move as the instance-reference-semantics cluster.
-A cheap partial step would be to (a) make `for x in g` resume from `g`'s cursor,
-and (b) propagate `generator_cursors` on a Name alias; the container/param
-channels need the full object model. **Spike before implementing** (cursor-shared
-`for`-resume interacts with the for-loop iteration encoding; measure the sweep).
+to nondet, not re-yielded). **Fix for the rest: a generator-OBJECT model** whose
+consumption state (the cursor) is tied to the object and shared across all access
+paths rather than keyed on the call-site Name — the same "identity, not
+value/Name" move as the instance-reference-semantics cluster.
+*Spike outcome (2026-07-01):* the `for`-resume step was cheap and clean (init the
+loop counter to the cursor, exhaust after). The alias step is NOT cheap as first
+thought: an alias is already a by-reference pointer (`it2 = &it`), but
+`next(it2)`/`for` take a pointer fallback that bypasses the cursor lookup, so
+closing it needs `next()`-side pointer-aliased-generator handling (part of the
+full object model), not just a `generator_cursors` map propagation.
 
 ---
 

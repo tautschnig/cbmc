@@ -479,36 +479,45 @@ When the body of a function `gen` contains `yield`:
    no resolvable cursor is not flagged. Faithful value-passing
    into the pending `yield` needs real resumption (plan §1
    Phase 2).
-6. `for x in g` iterates the eager list directly via the
-   for-loop's own counter, **independent of the cursor** — so a
-   `for` loop after a partial `next(g)` re-iterates from the
-   start. This is **UNSOUND** (see the consumption-state cluster
-   below), not a deliberate simplification.
+6. `for x in g` **resumes from `g`'s cursor** (2026-07-01): the
+   loop counter is initialised to the generator's cursor (0 for
+   a fresh generator) and the cursor is set to the length
+   afterwards, so `next(g); for x in g` yields the remaining
+   elements and a subsequent `next(g)`/`for` sees exhaustion.
+   (A generator called inline — `for x in g()` — has a fresh
+   cursor of 0, unchanged.)
 
 Existing exception infrastructure handles the StopIteration
 propagation; `try / except StopIteration:` catches it
 without further changes.
 
 **KNOWN false-proof cluster — generator consumption-state /
-identity (UNSOUND; pinned 2026-06-30).** The cursor tracks
-consumption only for *direct* `next(name)` / `name.send(v)` on
-the original call-site Name. Any other access path reads a
-fresh (cursor-0 or counter-from-0) view, so already-consumed
-elements are yielded again — a false proof. Confirmed channels,
-each pinned KNOWNBUG:
-- `for x in g` after a partial `next(g)` re-iterates from the
-  start (`gen-foriter-after-next-knownbug`) — the most common.
+identity (partially UNSOUND).** The cursor tracks consumption
+correctly for a *direct* `next(name)` / `name.send(v)` and now
+for a **`for` loop** (above). The remaining channels still read
+a fresh view and re-yield already-consumed elements — a false
+proof — because the cursor is keyed on the call-site Name, not
+the generator object:
+- **CLOSED (2026-07-01):** `for x in g` after a partial `next(g)`
+  now resumes from the cursor (`gen-foriter-after-next-typeerror`,
+  CORE).
 - an alias `it2 = it` does not share consumption state
-  (`gen-alias-consume-knownbug`).
-- a generator stored in a container and consumed via the slot
+  (`gen-alias-consume-knownbug`) — the alias is a by-reference
+  pointer (`it2 = &it`) but `next(it2)`/`for` take a pointer
+  fallback that bypasses the cursor.
+- a generator in a container consumed via the slot
   (`box = [g()]; next(box[0])`) reads a fresh view
   (`gen-in-container-consume-knownbug`).
+- `list(g)` / `sum(g)` after a partial `next(g)` (aggregating
+  builtins iterate via their own path, not the `for` lowering).
 Passing a generator to a function is sound (the param view is
 over-approximated to nondet, not re-yielded). The principled
-fix is a generator-OBJECT model whose consumption state is tied
-to the object (shared across `for`, alias, container, param),
-not the Name — plan §1 future work. (These were found by a
-proactive soundness sweep, not the oracle corpus.)
+fix for the rest is a generator-OBJECT model whose consumption
+state is tied to the object (shared across alias, container,
+aggregating builtins), not the Name — needs `next()`-side
+handling of a pointer-aliased generator; plan §1 future work.
+(These were found by a proactive soundness sweep, not the
+oracle corpus.)
 
 ## Annotation semantics (PLR §3.1, §3.2)
 
@@ -1178,13 +1187,15 @@ gate** (run after every change) keeps new false proofs out.
 > under-tested corners (beyond the oracle corpus) found a **generator
 > consumption-state / identity** false-proof cluster: a generator consumed
 > through anything other than a direct `next(name)`/`name.send()` on its
-> original Name — a `for` loop after a partial `next()`, an alias `it2 = it`, or
-> a container slot `box[0]` — re-yields already-consumed elements. Pinned
-> KNOWNBUG (`gen-foriter-after-next-knownbug`, `gen-alias-consume-knownbug`,
-> `gen-in-container-consume-knownbug`); the fix is a generator-OBJECT model (plan
-> §1). So "0 false proofs" is accurate *for the oracle corpus*; this cluster is a
-> known residual outside it. (Async, symbolic-key dict, and escaping closures
-> probed sound in the same sweep.)
+> original Name re-yields already-consumed elements. **The `for`-loop channel is
+> now CLOSED (2026-07-01):** `for x in g` resumes from `g`'s cursor
+> (`gen-foriter-after-next-typeerror`, CORE). Still open (pinned KNOWNBUG): an
+> alias `it2 = it` (`gen-alias-consume-knownbug`), a container slot `box[0]`
+> (`gen-in-container-consume-knownbug`), and `list(g)`/`sum(g)` after a partial
+> `next()`; the fix for the rest is a generator-OBJECT model (plan §1). So "0
+> false proofs" is accurate *for the oracle corpus*; this cluster is a known
+> residual outside it. (Async, symbolic-key dict, and escaping closures probed
+> sound in the same sweep.)
 >
 > **Sweep round 2 (2026-07-01)** — a broader batch (~40 probes over
 > mutation-during-iteration, exception/`finally`, identity/`is`, numeric
