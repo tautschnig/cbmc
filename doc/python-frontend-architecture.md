@@ -899,7 +899,14 @@ an `Any`-annotated parameter and the body does `param.attr`, the
 checker (caller-side body sniff via `function_param_attr_uses`,
 narrowed by `isinstance` gates) emits an `attribute-error`
 property at call sites whose argument class doesn't declare
-`attr`. PLR §3.3.5 isinstance-narrowing is respected.
+`attr`. PLR §3.3.5 isinstance-narrowing is respected. PLR §3.3.2: a plain
+`param.attr = ...` STORE *creates* the attribute, so it is treated as a creation
+(not a missing-attribute access) and is excluded from the flagged read-uses —
+including a later read of the created attr (`o.x = 5; return o.x`); a Load read,
+an `AugAssign` target, and a nested target read (`o.x[i]=`) are still flagged
+(`any-arg-attr-store-nofp` CORE). Default-on for `.py`. (Residual precision: the
+Any-param store→read VALUE does not propagate — `f(o)` that sets `o.x=5` then
+reads it returns nondet, not 5 — a separate item.)
 
 ## Key flags
 
