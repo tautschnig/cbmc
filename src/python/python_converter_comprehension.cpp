@@ -192,6 +192,12 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       // the for-loop check). Gated identically so a __getitem__-only sequence
       // class is not flagged.
       {
+        // PLR §3.3.1: a provably non-iterable SCALAR (int/float/bool/complex/
+        // None) as the comprehension source raises TypeError (`[x for x in 5]`).
+        // Shared predicate with the for-loop / unpack sites; PROVABLE scalars
+        // only (Any / str / containers never fire).
+        if(provably_non_iterable_scalar(iter_val))
+          emit_conditional_exception(true_exprt{}, "TypeError");
         std::string itag;
         if(iter_val.type().id() == ID_struct)
           itag = id2string(to_struct_type(iter_val.type()).get_tag());

@@ -2015,7 +2015,11 @@ private:
   /// str. A symbolic/Any python_value (no static tag) returns 0 -- never
   /// flagged, so the check stays false-positive-free.
   int orderable_category_of(const exprt &e);
-
+  /// PLR §3.3.1: whether `e` is a PROVABLY non-iterable scalar (concrete
+  /// numeric / complex / constant None). Shared by the for-loop, unpack and
+  /// comprehension sites; PROVABLE scalars only (Any / class / str / containers
+  /// never fire), so it is false-positive-free.
+  bool provably_non_iterable_scalar(const exprt &e) const;
   /// Value category for format-spec validation: 1=int, 2=float, 3=str,
   /// 0=other/Any (never flagged).
   int value_format_category(const typet &t);
