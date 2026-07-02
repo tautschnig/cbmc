@@ -99,6 +99,21 @@ builtin_protocol_attr(const typet &t, const std::string &n)
   return std::nullopt;
 }
 
+std::optional<symbol_exprt>
+python_convertert::generator_cursor_for_arg(const jsont &arg_ast)
+{
+  if(!is_node_type(arg_ast, "Name"))
+    return std::nullopt;
+  irep_idt sid{qualify_name(json_string(json_member(arg_ast, "id")))};
+  auto it = generator_cursors.find(sid);
+  if(it == generator_cursors.end())
+    return std::nullopt;
+  const symbolt *cs = symbol_table.lookup(it->second);
+  if(cs == nullptr)
+    return std::nullopt;
+  return cs->symbol_expr();
+}
+
 bool python_convertert::emit_range_arg_checks(
   const jsont &args_json,
   const exprt *step_value)
@@ -2111,9 +2126,59 @@ std::optional<exprt> python_convertert::try_builtin_call(
   {
     if(args.is_array() && !as_array(args).empty())
     {
-      exprt arg = convert_expression(*as_array(args).begin());
+      const jsont &list_arg_ast = *as_array(args).begin();
+      exprt arg = convert_expression(list_arg_ast);
       if(is_python_list_type(arg.type()))
+      {
+        // PLR §6.2.9: `list(gen)` over a partially-consumed generator
+        // materialises only the REMAINING items `data[cursor:length]` and marks
+        // it exhausted. (reversed() over a generator is a separate concern —
+        // handled only for a fresh/whole list here.)
+        const auto lcur = (func_name == "list")
+                            ? generator_cursor_for_arg(list_arg_ast)
+                            : std::optional<symbol_exprt>{};
+        if(lcur)
+        {
+          const auto &lst_st = to_struct_type(arg.type());
+          const auto &ldata_t = to_array_type(lst_st.components()[1].type());
+          const typet et = ldata_t.element_type();
+          const member_exprt old_len{arg, "length", signedbv_typet{64}};
+          const member_exprt old_data{arg, "data", ldata_t};
+          const exprt cur = *lcur;
+          static unsigned genlist_ctr = 0;
+          const std::string nm = "__genlist_" + std::to_string(genlist_ctr++);
+          const irep_idt rid{qualify_name(nm)};
+          if(symbol_table.lookup(rid) == nullptr)
+          {
+            symbolt rs{rid, arg.type(), "python"};
+            rs.base_name = nm;
+            rs.is_lvalue = true;
+            rs.is_state_var = true;
+            symbol_table.add(rs);
+          }
+          const symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
+          // res.length = old_len - cursor
+          pending_checks.push_back(code_frontend_assignt{
+            member_exprt{res, "length", signedbv_typet{64}},
+            minus_exprt{old_len, cur}});
+          // res.data[i] = (cursor + i < old_len) ? old_data[cursor + i] : 0
+          for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+          {
+            const exprt idx = from_integer(i, signedbv_typet{64});
+            const exprt src = plus_exprt{cur, idx};
+            const exprt val = if_exprt{
+              binary_relation_exprt{src, ID_lt, old_len},
+              index_exprt{old_data, src},
+              safe_zero(et)};
+            pending_checks.push_back(code_frontend_assignt{
+              index_exprt{member_exprt{res, "data", ldata_t}, idx}, val});
+          }
+          // Mark the generator exhausted (cursor = length).
+          pending_checks.push_back(code_frontend_assignt{*lcur, old_len});
+          return std::move(res);
+        }
         return arg;
+      }
       // list(<tuple>) / reversed(<tuple>): materialise a list from the tuple's
       // fields (PLR §6.2.5 — a tuple is an iterable). Without this the call
       // fell through to a nondet list (so even len() was unknown). The element
@@ -2772,9 +2837,17 @@ std::optional<exprt> python_convertert::try_builtin_call(
   {
     if(args.is_array() && !as_array(args).empty())
     {
-      exprt arg = convert_expression(*as_array(args).begin());
+      const jsont &sum_arg_ast = *as_array(args).begin();
+      exprt arg = convert_expression(sum_arg_ast);
       if(!arg.is_nil() && is_python_list_type(arg.type()))
       {
+        // PLR §6.2.9: sum() over a generator consumes its REMAINING items. If
+        // the arg is a Name-bound generator with a live cursor, start from
+        // data[cursor:] (not 0) and mark it exhausted; otherwise start at 0.
+        const auto sum_cursor = generator_cursor_for_arg(sum_arg_ast);
+        const exprt sum_start = sum_cursor
+                                  ? static_cast<exprt>(*sum_cursor)
+                                  : from_integer(0, signedbv_typet{64});
         const auto &list_st = to_struct_type(arg.type());
         const auto &data_type = to_array_type(list_st.components()[1].type());
         member_exprt length{arg, "length", signedbv_typet{64}};
@@ -2831,9 +2904,13 @@ std::optional<exprt> python_convertert::try_builtin_call(
           else if(elem.type() != acc_type)
             elem = safe_typecast(elem, acc_type);
           pending_checks.push_back(code_ifthenelset{
-            binary_relation_exprt{idx, ID_lt, length},
+            and_exprt{
+              binary_relation_exprt{idx, ID_ge, sum_start},
+              binary_relation_exprt{idx, ID_lt, length}},
             code_frontend_assignt{tmp, plus_exprt{tmp, elem}}});
         }
+        if(sum_cursor)
+          pending_checks.push_back(code_frontend_assignt{*sum_cursor, length});
         return std::move(tmp);
       }
     }
