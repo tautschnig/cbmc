@@ -2301,6 +2301,46 @@ bool python_convertert::slots_forbidden_attr(
   return allowed.count(attr) == 0;
 }
 
+// PLR §3.3.2.4: whether READING `cls.attr` on a slots-enforced instance is a
+// provable AttributeError. A fully slots-enforced class (every MRO base has
+// __slots__) has a CLOSED attribute set: no __dict__, so an attribute that is
+// not a slot, not a method, not a class-level attribute (own or inherited), and
+// not an object-provided dunder cannot exist -> AttributeError. slots_forbidden_
+// attr already returns false unless the class is slots-enforced AND attr is not
+// a slot, so this is false-positive-free (plain classes with a __dict__, and any
+// slot / method / class-attr / property, are never flagged). Properties and
+// descriptors are resolved by convert_attribute BEFORE this check is reached.
+bool python_convertert::slots_read_forbidden(
+  const std::string &cls,
+  const std::string &attr)
+{
+  if(!slots_forbidden_attr(cls, attr))
+    return false; // not slots-enforced, or attr is a permitted slot
+  // Object-provided dunders (__class__, __doc__, __dict__, __init__, ...) always
+  // resolve on any instance -- never flag them.
+  if(
+    attr.size() >= 4 && attr.compare(0, 2, "__") == 0 &&
+    attr.compare(attr.size() - 2, 2, "__") == 0)
+    return false;
+  if(class_mro_defines(cls, attr))
+    return false; // a method (own or inherited via the MRO)
+  // A class-level data attribute (own or inherited). Walk the MRO defensively;
+  // an extra ancestor only makes the check MORE conservative (never a FP).
+  std::vector<std::string> chain;
+  auto mit = class_mro.find(cls);
+  if(mit != class_mro.end())
+    chain = mit->second;
+  if(chain.empty())
+    chain.push_back(cls);
+  for(const std::string &anc : chain)
+  {
+    auto it = class_level_attrs.find(anc);
+    if(it != class_level_attrs.end() && it->second.count(attr) > 0)
+      return false;
+  }
+  return true;
+}
+
 // Whole-group helper for the dunder-protocol-missing checks (subscript /
 // iteration / call / with / setitem / delitem / contains / ...). Returns true
 // iff `t` is a CONCRETE user-class instance type (python_class_*) whose MRO
@@ -2875,6 +2915,14 @@ exprt python_convertert::convert_attribute(const jsont &expr)
             ptag.substr(13), attr, value, get_location(expr));
           if(!dg.is_nil())
             return dg;
+          // PLR §3.3.2.4: reading a non-slot attribute on a fully slots-
+          // enforced instance is an AttributeError (closed attribute set).
+          if(slots_read_forbidden(ptag.substr(13), attr))
+          {
+            emit_conditional_exception(true_exprt{}, "AttributeError");
+            return side_effect_expr_nondett{
+              python_value_type(), get_location(expr)};
+          }
         }
       }
       if(st.has_component(attr))
@@ -2980,6 +3028,14 @@ exprt python_convertert::convert_attribute(const jsont &expr)
         stag.substr(13), attr, address_of_exprt{value}, get_location(expr));
       if(!dg.is_nil())
         return dg;
+      // PLR §3.3.2.4: reading a non-slot attribute on a fully slots-enforced
+      // instance is an AttributeError (closed attribute set).
+      if(slots_read_forbidden(stag.substr(13), attr))
+      {
+        emit_conditional_exception(true_exprt{}, "AttributeError");
+        return side_effect_expr_nondett{
+          python_value_type(), get_location(expr)};
+      }
     }
     if(st.has_component(attr))
     {
