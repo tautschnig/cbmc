@@ -1184,10 +1184,11 @@ out-of-subset residuals** and ~206 false *alarms* (sound over-approximations /
 unsupported-feature precision — see inventory B). Two standing soundness-
 regression gates run after every change: the **oracle 0-NEW gate** (real-world
 corpus) and the **PLR-fuzz 0-NEW gate** (template-generated PLR-tagged programs
-vs a committed baseline of 14 known/deferred false-proof labels — see Sweep
-round 4). All 14 baselined fuzzer false proofs are deferred-with-plan (10
-list-bitwise → set-representation; plain-class `missing_attr`) or planned
-(generator ×3 → §1); none are un-planned.
+vs a committed baseline of **4** known/deferred false-proof labels — see Sweep
+round 4). All 4 baselined fuzzer false proofs are deferred-with-plan (plain-class
+`missing_attr`) or planned (generator ×3 → §1); none are un-planned. (The 10
+list-bitwise labels that were baselined earlier are now **closed** — see Sweep
+round 4.)
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
@@ -1326,10 +1327,16 @@ list-bitwise → set-representation; plain-class `missing_attr`) or planned
 >
 > **Deferred with a sound, PLR-grounded plan** (NOT shipped — the fuzzer's
 > remaining false proofs, each spiked this session):
-> - **list-bitwise** (`1 & [1]` etc., 10 labels) — blocked by the set/Any typing
->   inconsistency (a non-int set is a python_list; `set()`/`frozenset()` and
->   `value|value` bitwise are typed as nondet-int), so any "int operand" rule
->   mis-fires. Sound design = consistent set typing; see
+> - **list-bitwise** (`1 & [1]` etc., 10 labels) — **SOUNDNESS CLOSED 2026-07-02**
+>   (`1d15e1d7de`, `binop-int-bitwise-list`, `binop-bitwise-set-nofp` CORE) as the
+>   spike-gated Phase 1: an int-like operand bitwise-combined with a REAL list
+>   (`python_list` NOT `#python_set_semantic`-tagged, not a bitmap set) is a
+>   TypeError; a set LITERAL is excluded so `set|set` / `frozenset(..)|{..}` stays
+>   nondet. The full distinct-type refactor is still DEFERRED (it ripples into
+>   type identity across ~180 `is_python_list_type` sites and is entangled with
+>   the `frozenset()`/set-union "typed as nondet-int" warts), but that refactor is
+>   now needed only for the set-union / set-comprehension *precision* residuals
+>   (inventory B), not the soundness. See
 >   [plan §0: set-representation spike](python-frontend-plan.md#false-proofs).
 > - **plain-class `missing_attr`** (`c.missing` on a `__dict__` class) — the
 >   per-class attribute set is incomplete (unannotated-param / alias / setattr /
@@ -1869,7 +1876,7 @@ genuinely-false negatives stay FAILED, default suite green). **Confirmed OPT-IN 
 | Annotation checks (`--python-check-annotations`) | Opt-in, not default-on. The earlier two CBMC-core crash blockers are **resolved** (2026-06-26) and the checker-bug false positives are minimized (provenance-gating; unknown⇒Any). **Coverage extended (2026-06-29)** to the container-element boundary (`xs.append(v)` incl. a call arg `xs.append(src())`, via the callee`s static return type) and the dict-value-store boundary (`d[k]=v`); both flag-gated. **Precision improved (2026-06-29):** an Any-like (`python_value`) union component now satisfies the union (a list IS a `Sequence[str]`), and the element/dict-store checks are provenance-gated on EXPLICIT container annotations (not inferred `[]`/`{}`). It stays opt-in for a *semantic* reason: **default-on was MEASURED (2026-06-29) at ~1.25% spurious failures** (34/2718 sweep regressions, dominated by the irreducible class — real annotation mismatches the flag is designed to catch that are not runtime errors, e.g. `x: int = b.f()` where `f()->str` but the value is used as str) **and DECLINED**; default-on needs **use-site misuse gating**. Shipped as the `--python-strict` preset. Remaining checker FP: Any-valued dict (`check-annotations-any-dict-knownbug`) | [plan §7](python-frontend-plan.md#check-annotations) |
 
 | Call / `*args` value unpack | `f(*t)` / `f(*xs)` where the unpacked iterable is a tuple or Name does not fold the concrete element VALUES into the positional parameter bindings, so an assert on the result over-approximates (spurious FAILED). Distinct from the *arity* check (`star-unpack-call-arity`, sound/closed) — this is the value-binding precision. Found by the PLR fuzzer (`kwargs/args_ok`) | [plan §9](python-frontend-plan.md#precision) |
-| Sets (list-backed) | a NON-int set is modelled as a `python_list`, so (a) `{"a"} \| {"b"}` and other set-algebra ops (`\|`/`&`/`-`/`^`) over list-backed sets over-approximate length/contents (spurious FAILED on a `len`/membership assert), and (b) a **set comprehension** `{e for …}` routes through the list-comprehension path WITHOUT element dedup, so its `len` is over-counted (spurious FAILED). Both sound-direction; found by the PLR fuzzer (`kwargs`/`compvar/setcomp_ok`). Same list-backed-set root as the deferred list-bitwise soundness item (§0 set-representation) | [plan §9](python-frontend-plan.md#precision) |
+| Sets (list-backed) | a NON-int set is modelled as a `python_list`, so (a) `{"a"} \| {"b"}` and other set-algebra ops (`\|`/`&`/`-`/`^`) over list-backed sets over-approximate length/contents (spurious FAILED on a `len`/membership assert), and (b) a **set comprehension** `{e for …}` routes through the list-comprehension path WITHOUT element dedup, so its `len` is over-counted (spurious FAILED). Both sound-direction; found by the PLR fuzzer (`kwargs`/`compvar/setcomp_ok`). Same list-backed-set root as the list-bitwise item whose SOUNDNESS half is now closed (§A, Sweep round 4); this PRECISION face needs the set-union modelling / representation work that was deferred | [plan §9](python-frontend-plan.md#precision) |
 | Comparison RESULT (same-category) | the cross-category ordering TYPE check is sound (§A), but the RESULT of a same-category ordering is sometimes not proven: `bool < int` (`True < 2 == True`) and `set < set` subset (`{1} < {1,2}`) verify FAILED against an `== expected` assertion — a value-precision miss, NOT a type error. Found by the PLR fuzzer | [plan §9](python-frontend-plan.md#precision) |
 
 ### C. Performance

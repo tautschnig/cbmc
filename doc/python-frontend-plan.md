@@ -1075,6 +1075,22 @@ representation change (a distinct type tag so `set` is never confused with
 `list`/`int`), grounded in §3.2's statement that `set` is a distinct built-in
 type, not a list.
 
+**Phase 1 OUTCOME (2026-07-02, `1d15e1d7de`) — list-bitwise SOUNDNESS closed
+without the refactor.** The re-spike confirmed the distinct-type refactor is real
+(a `python_set_list` tag ripples into type identity across ~180
+`is_python_list_type` sites; `frozenset(literal)` and set-union `|` both return
+nondet-int). Instead of the refactor, the soundness half was closed with a
+targeted rule in `compute_binop_verdict`: an int-like operand bitwise/shift-
+combined with a REAL list — a `python_list` operand that is NOT
+`#python_set_semantic`-tagged and NOT a bitmap `python_set` — is a TypeError
+(PLR §6.10.1). A set LITERAL carries the marker and is excluded, so `set|set`
+(incl. the `crash-typing-py-solver` `frozenset(..)|{..}` pattern) stays nondet; a
+set in a symbol loses the marker but `int & set` is *also* a TypeError so firing
+stays sound. Closed all 10 list-bitwise fuzzer labels (baseline 14→4), 0 sweep
+regressions, oracle 0-NEW. **Still deferred:** the distinct-type refactor itself
+— now needed only for the set-union / set-comprehension *precision* residuals
+(the union result is nondet-int), not soundness (see §9 {#fuzz-precision}).
+
 **Attribute-read AttributeError whole-group SPIKE (2026-07-02).** The fuzzer
 found reading an undeclared instance attribute verifies SUCCESSFUL but raises
 AttributeError. Investigated the whole group (missing-method reads are ALREADY
