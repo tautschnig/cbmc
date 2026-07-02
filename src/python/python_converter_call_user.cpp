@@ -717,6 +717,31 @@ exprt python_convertert::convert_user_call(
           arguments.push_back(nil_exprt{});
           continue;
         }
+        // PEP 448 / PLR §6.3.4: f(*t) where t is a TUPLE. A tuple struct's
+        // operands ARE its elements (no length/data split like a list), so
+        // spread each element as a positional argument. Covers a tuple literal
+        // (struct) and a Name bound to a tuple literal (tuple_literals). Handled
+        // before the list-layout path below (which would misread element 0 as a
+        // length field).
+        if(is_python_tuple_type(inner.type()))
+        {
+          const exprt *tlit = nullptr;
+          if(inner.id() == ID_struct)
+            tlit = &inner;
+          else if(inner.id() == ID_symbol)
+          {
+            auto tit =
+              tuple_literals.find(to_symbol_expr(inner).get_identifier());
+            if(tit != tuple_literals.end())
+              tlit = &tit->second;
+          }
+          if(tlit != nullptr && tlit->id() == ID_struct)
+          {
+            for(const auto &el : tlit->operands())
+              arguments.push_back(el);
+            continue;
+          }
+        }
         const exprt *lit = nullptr;
         if(inner.id() == ID_struct && inner.operands().size() >= 2)
           lit = &inner;
