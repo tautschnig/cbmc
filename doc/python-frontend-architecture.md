@@ -1177,12 +1177,17 @@ soundness, imprecision, performance, intrinsic.
 
 ### A. Soundness (false proofs / latent unsoundness / deliberate tradeoffs)
 
-**CURRENT STATE (2026-06-30) — read this first; the dated notes below are a
+**CURRENT STATE (2026-07-02) — read this first; the dated notes below are a
 chronological changelog.** The differential oracle (external CPython-semantics
 corpus, default config) tracks **0 known false proofs**, plus **4 intrinsic /
 out-of-subset residuals** and ~206 false *alarms* (sound over-approximations /
-unsupported-feature precision — see inventory B). The standing **oracle 0-NEW
-gate** (run after every change) keeps new false proofs out.
+unsupported-feature precision — see inventory B). Two standing soundness-
+regression gates run after every change: the **oracle 0-NEW gate** (real-world
+corpus) and the **PLR-fuzz 0-NEW gate** (template-generated PLR-tagged programs
+vs a committed baseline of 14 known/deferred false-proof labels — see Sweep
+round 4). All 14 baselined fuzzer false proofs are deferred-with-plan (10
+list-bitwise → set-representation; plain-class `missing_attr`) or planned
+(generator ×3 → §1); none are un-planned.
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
@@ -1236,12 +1241,16 @@ gate** (run after every change) keeps new false proofs out.
 > flow, `__slots__`/inheritance, `@property`, format, dict-ordering, hashing,
 > chained/augmented assignment) found the frontend **sound on most** (each
 > correctly FAILED), plus **five more false-proof roots**, now pinned KNOWNBUG:
-> - **`__slots__` not enforced** — assigning/reading an attribute not in a class's
-> - **`__slots__` not enforced** — assigning an attribute not in a class's
->   `__slots__` should raise AttributeError. **CLOSED 2026-07-01**
+> - **`__slots__` not enforced** — assigning or reading an attribute not in a
+>   class's `__slots__` should raise AttributeError. **STORE CLOSED 2026-07-01**
 >   (`slots-not-enforced`, CORE): `class_slots` + `slots_forbidden_attr` flag an
 >   attribute STORE on a slots-enforced class (all MRO user-bases declare
->   __slots__). Reading a non-slot attribute is a documented follow-up.
+>   __slots__). **READ CLOSED 2026-07-02** (`slots-read-missing-attr`,
+>   `slots-read-nofp`, CORE): the read side (`slots_read_forbidden`, both the
+>   pointer/self and struct/value base paths in `convert_attribute`) raises
+>   AttributeError for a read that is not a slot / method / class-attr (own or
+>   inherited) / object-dunder; properties/descriptors resolve earlier
+>   (`fae9d5db4f`).
 > - **`__eq__` without `__hash__`** — such a class's instances are unhashable, so
 >   a set/dict-key use raises TypeError. **CLOSED 2026-07-01**
 >   (`eq-without-hash-unhashable`, CORE): `class_eq_without_hash` +
@@ -1256,13 +1265,82 @@ gate** (run after every change) keeps new false proofs out.
 >   SAME object; the frontend bound independent copies, so a mutation through one
 >   was invisible to the other. **CLOSED 2026-07-01** for mutable CONTAINERS
 >   (`chained-assign-aliasing`, CORE): convert_assign materialises the value in
->   the first target and aliases the rest (pointer + alias_targets). A chained
->   INSTANCE assignment `a = b = C()` still copies (needs constructor-once + alias
->   handling — a documented follow-up).
+>   the first target and aliases the rest (pointer + alias_targets). **Chained
+>   INSTANCE assignment `a = b = C()` CLOSED 2026-07-02**
+>   (`chained-assign-instance-alias`, `chained-assign-nofp`, CORE): convert_assign
+>   rewrites `a = b = <value>` to `a = <value>; b = a; …` so the later targets go
+>   through the proven single-target `b = a` alias path — mutable objects
+>   (instance / list / dict) alias, immutables copy, value evaluated once
+>   (`e5e8b61e2c`).
 > - **Read-only `@property` assignment** — assigning to a getter-only property
 >   raises AttributeError. **CLOSED 2026-07-01** (`property-readonly-assign`,
 >   CORE): emit_property_set raises AttributeError when the attr is a property
 >   with no setter across the MRO.
+>
+> **Sweep round 4 (2026-07-02) — PLR-tagged differential fuzzer.** A template
+> generator of PLR-tagged programs (now ~450 across binop/augassign/compare/
+> dedup/hash/slots/property/chained/generator/arity/unpack/tryflow/seqindex/
+> dictops/numedge/iterproto/strmethod/classedge/slicing/fstring/kwargs/closure/
+> withctx/matchstmt/excflow/compvar/metaclass) runs CPython vs cbmc and classifies
+> FALSE_PROOF / FALSE_ALARM / AGREE, gated against a committed baseline of known
+> false-proof labels (a standing soundness-regression gate alongside the oracle).
+> It drove a false-proof count from 73 (first run) down through the closures
+> below; the remaining are all deferred-with-plan or planned (see the rows). Each
+> closure landed validation-gated (target flips, suite green, sweep 2719/0-reg,
+> oracle 0-NEW):
+> - **Operand-type verdict unified + extended** (`981b546971`): the duplicated
+>   `convert_bin_op` inline check + `binop_operand_type_error` were merged into one
+>   `compute_binop_verdict(op,l,r)` → {ok, nondet, error}. Extended (PLR §6.7): a
+>   PROVABLE `None` operand to any arithmetic/bitwise op → TypeError; a bitwise/
+>   shift op with an int-like operand and any non-int-like, non-`set` operand →
+>   TypeError (`1 & [1]`, `1 & 'a'`; `list` is EXCLUDED — a non-int set literal is
+>   modelled as a python_list so `set|set` must stay nondet, hence the residual
+>   list-bitwise row below). CORE `binop-none-operand`, `binop-bitwise-dict`; the
+>   aug-assign path now models `list += <iterable>` as extend (`augassign-list-
+>   iterable-nofp`).
+> - **Compare cross-category ordering** (`bf26f21979`, PLR §6.10.1): `<`/`<=`/`>`/
+>   `>=` between two operands of different orderable categories (numeric / str /
+>   list / tuple / set / dict / None) → TypeError (`1 < [1]`, `None < 1`). Placed
+>   EARLY in `convert_compare` (before the numeric fast-path) via
+>   `orderable_category_of`; same-category and Any/class operands are never
+>   flagged. CORE `compare-cross-category-typeerror`, `-nofp`.
+> - **Non-iterable scalar whole-group** (`a20166d97f`, PLR §3.3.1): iterating or
+>   unpacking a PROVABLY non-iterable scalar (concrete numeric / complex / constant
+>   None) → TypeError, via one shared `provably_non_iterable_scalar` predicate at
+>   ALL three sites — `for`-loop, tuple/list unpack, and comprehension (previously
+>   only the for-loop flagged numeric scalars, missing None/complex, and unpack /
+>   comprehension had no scalar check). CORE `noniterable-for-none`,
+>   `noniterable-unpack-scalar`, `noniterable-comprehension`, `noniterable-nofp`.
+> - **Container-key canonicalization generalised** (`f3449ecbbc`, PLR §3/§6.2):
+>   the earlier per-type dedup patchwork (numeric / string / None / tuple-
+>   STRUCTURAL / exact) in `build_dict_value` AND the string-only set-literal dedup
+>   were replaced by ONE recursive `canonical_key` over the full constant lattice —
+>   numeric cross-type, non-integral float, str value, None singleton, and tuples
+>   ELEMENT-WISE (recursing). Closes cross-type-numeric tuple keys
+>   (`{(1,2):a,(1,2.0):b}` → 1), None-set dedup (`{None,None}` → 1), the set
+>   tuple-xtype analogue, and nested tuples. CORE `dict-tuple-key-xtype-dedup`,
+>   `set-none-tuple-xtype-dedup`. A symbolic key has no canonical form and is never
+>   merged (sound).
+> - **`__slots__` read + chained-instance alias** — see the corrected bullets
+>   above (both closed 2026-07-02).
+>
+> **Deferred with a sound, PLR-grounded plan** (NOT shipped — the fuzzer's
+> remaining false proofs, each spiked this session):
+> - **list-bitwise** (`1 & [1]` etc., 10 labels) — blocked by the set/Any typing
+>   inconsistency (a non-int set is a python_list; `set()`/`frozenset()` and
+>   `value|value` bitwise are typed as nondet-int), so any "int operand" rule
+>   mis-fires. Sound design = consistent set typing; see
+>   [plan §0: set-representation spike](python-frontend-plan.md#false-proofs).
+> - **plain-class `missing_attr`** (`c.missing` on a `__dict__` class) — the
+>   per-class attribute set is incomplete (unannotated-param / alias / setattr /
+>   `__dict__` / decorator injection). Sound design = a program-wide
+>   `assigned_attr_names` set + a `class_attr_set_closed` predicate; see
+>   [plan §0: plain-class missing-attr](python-frontend-plan.md#false-proofs).
+> - **generator container / `list(g)` / `sum(g)` after `next()`** — the
+>   generator-OBJECT identity model, [plan §1](python-frontend-plan.md#generators).
+>
+> A few new PRECISION false alarms (sound direction) were also catalogued — see
+> inventory B: star-args tuple unpack `f(*t)`, set-comprehension dedup length.
 
 - *Closed 2026-06-30 (commit `70401b6d90`):* `gen_send_before_start` — the eager
   generator cursor already encodes priming (`cursor == 0` ⟺ not started), so a
@@ -1790,6 +1868,10 @@ genuinely-false negatives stay FAILED, default suite green). **Confirmed OPT-IN 
 | Modules | `cmath`, fuller `os`/`time`/`datetime`/`json`/`dataclasses`/`collections` not modelled (nondet) | [plan §6](python-frontend-plan.md#modules) |
 | Annotation checks (`--python-check-annotations`) | Opt-in, not default-on. The earlier two CBMC-core crash blockers are **resolved** (2026-06-26) and the checker-bug false positives are minimized (provenance-gating; unknown⇒Any). **Coverage extended (2026-06-29)** to the container-element boundary (`xs.append(v)` incl. a call arg `xs.append(src())`, via the callee`s static return type) and the dict-value-store boundary (`d[k]=v`); both flag-gated. **Precision improved (2026-06-29):** an Any-like (`python_value`) union component now satisfies the union (a list IS a `Sequence[str]`), and the element/dict-store checks are provenance-gated on EXPLICIT container annotations (not inferred `[]`/`{}`). It stays opt-in for a *semantic* reason: **default-on was MEASURED (2026-06-29) at ~1.25% spurious failures** (34/2718 sweep regressions, dominated by the irreducible class — real annotation mismatches the flag is designed to catch that are not runtime errors, e.g. `x: int = b.f()` where `f()->str` but the value is used as str) **and DECLINED**; default-on needs **use-site misuse gating**. Shipped as the `--python-strict` preset. Remaining checker FP: Any-valued dict (`check-annotations-any-dict-knownbug`) | [plan §7](python-frontend-plan.md#check-annotations) |
 
+| Call / `*args` value unpack | `f(*t)` / `f(*xs)` where the unpacked iterable is a tuple or Name does not fold the concrete element VALUES into the positional parameter bindings, so an assert on the result over-approximates (spurious FAILED). Distinct from the *arity* check (`star-unpack-call-arity`, sound/closed) — this is the value-binding precision. Found by the PLR fuzzer (`kwargs/args_ok`) | [plan §9](python-frontend-plan.md#precision) |
+| Sets (list-backed) | a NON-int set is modelled as a `python_list`, so (a) `{"a"} \| {"b"}` and other set-algebra ops (`\|`/`&`/`-`/`^`) over list-backed sets over-approximate length/contents (spurious FAILED on a `len`/membership assert), and (b) a **set comprehension** `{e for …}` routes through the list-comprehension path WITHOUT element dedup, so its `len` is over-counted (spurious FAILED). Both sound-direction; found by the PLR fuzzer (`kwargs`/`compvar/setcomp_ok`). Same list-backed-set root as the deferred list-bitwise soundness item (§0 set-representation) | [plan §9](python-frontend-plan.md#precision) |
+| Comparison RESULT (same-category) | the cross-category ordering TYPE check is sound (§A), but the RESULT of a same-category ordering is sometimes not proven: `bool < int` (`True < 2 == True`) and `set < set` subset (`{1} < {1,2}`) verify FAILED against an `== expected` assertion — a value-precision miss, NOT a type error. Found by the PLR fuzzer | [plan §9](python-frontend-plan.md#precision) |
+
 ### C. Performance
 
 | Area | Issue | Plan |
@@ -1810,19 +1892,36 @@ genuinely-false negatives stay FAILED, default suite green). **Confirmed OPT-IN 
 
 ### E. NO CURRENT PLAN (explicitly flagged)
 
-- **Call-signature error-message formatting** — the frontend now soundly
-  detects missing/duplicate/unknown args (emitting a generic uncaught
-  `TypeError`), but does **not** reproduce ESBMC's exact
-  `TypeError: foo() missing …` / `Properties: N verified` strings, so
-  those `github_30xx`/property-count sweep tests stay DIFF rather than
-  PASS. No plan (cosmetic output-format alignment, low value).
-- **`*args` + required keyword-only** signature combinations — the
-  vararg guard skips the kwonly-required check. No plan (rare).
-- **Native `casefold`/`title`** (Unicode case-mapping has no SMT-LIB
-  primitive) and **symbolic `count`** — listed in the strings plan as
-  residuals with no concrete encoding yet.
-- **Cross-module `**d`-of-mutated-dict** and **non-dict cross-module
-  global mutation** — no plan (rare).
+Each item below is classified as either **not a PLR gap** (cosmetic / tool-output
+alignment — soundness and semantics are already correct) or a **genuine but
+low-priority semantic gap** with a one-line PLR-grounded sketch (a full plan is
+deferred as disproportionate to the value, per the standing worklist; none of
+these is a *soundness* hole — all are sound over-approximations or cosmetics):
+
+- **Call-signature error-message formatting** — *NOT a PLR gap.* The frontend
+  soundly detects missing/duplicate/unknown args (emitting a generic uncaught
+  `TypeError`), but does not reproduce ESBMC's exact `TypeError: foo() missing …`
+  / `Properties: N verified` strings, so those `github_30xx`/property-count sweep
+  tests stay DIFF rather than PASS. This is tool-output alignment, not a
+  semantic/PLR deviation — no PLR grounding applies; no plan (low value).
+- **`*args` + required keyword-only** signature combinations — *semantic gap
+  (sound: a missing kwonly is not flagged).* PLR §4.8.2/§8.6: a keyword-only
+  parameter with no default MUST be supplied. *Sketch:* extend
+  `validate_call_signature` so the vararg branch still runs the
+  required-kwonly-present check (it currently short-circuits when `*args` is
+  present). Low priority (rare).
+- **Native `casefold`/`title`** (Unicode case-mapping has no SMT-LIB primitive)
+  and **symbolic `count`** — tracked as residuals in the
+  [strings plan](python-frontend-strings-plan.md#strings) (their home doc), no
+  concrete SMT encoding yet.
+- **Cross-module `**d`-of-mutated-dict** and **non-dict cross-module global
+  mutation** — *semantic gap (sound: over-approximated to nondet / stale).* PLR
+  §7.6/§4.2.2: a module global mutated in module A and `**`-unpacked or read in
+  module B must observe the mutation. *Sketch:* the cross-module global-dict
+  channel already exists for dict-literal mutation; extend it to the `**d` unpack
+  read and to non-dict globals (share the module-global symbol rather than a
+  per-module copy). Rare; deferred. See [plan §5](python-frontend-plan.md#dict-byref)
+  / [§6](python-frontend-plan.md#modules).
 
 ## Where to make changes
 
