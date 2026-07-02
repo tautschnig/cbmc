@@ -218,6 +218,32 @@ std::optional<exprt> python_convertert::try_list_method(
     // Unresolvable / opaque generator receiver: no model, no flag.
   }
 
+  // PLR §6.2.9 / PEP 342: gen.close() finalises the generator, so a subsequent
+  // next()/send() raises StopIteration. Model it by exhausting the consumption
+  // cursor (cursor = length); the existing next()/send() StopIteration guard
+  // (cursor >= length) then fires. Only a resolvable generator receiver is
+  // handled; `[1,2].close()` on a real list falls through to the missing-method
+  // path. Returns None.
+  if(method_name == "close")
+  {
+    const jsont &recv = json_member(json_member(expr, "func"), "value");
+    if(is_node_type(recv, "Name"))
+    {
+      irep_idt sid{qualify_name(json_string(json_member(recv, "id")))};
+      auto cit = generator_cursors.find(sid);
+      if(
+        cit != generator_cursors.end() &&
+        symbol_table.lookup(cit->second) != nullptr)
+      {
+        symbol_exprt cursor =
+          symbol_table.lookup_ref(cit->second).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{cursor, length});
+        return python_none_value();
+      }
+    }
+    // not a resolvable generator -> fall through
+  }
+
   if(method_name == "reverse")
   {
     // Reverse in place: swap data[i] with data[len-1-i]
