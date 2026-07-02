@@ -1978,6 +1978,37 @@ private:
   /// (`__getattribute__` / `__setattr__`) so attribute access on such an
   /// instance can be soundly over-approximated.
   bool class_mro_defines(const std::string &cls, const std::string &method);
+  /// PLR §3.3.2 attribute-set-closure analysis (for the plain-class
+  /// AttributeError-on-missing-read check). `assigned_attr_names`: every
+  /// attribute NAME that appears as a Store-context `X.attr = ` target ANYWHERE
+  /// in the program (a sound over-approximation of "an attribute that could
+  /// exist on some instance" — keyed on the name, class-agnostic).
+  /// `program_uses_dynamic_attr`: the program uses `setattr` / `.__dict__` /
+  /// `vars(` (string-named injection that `assigned_attr_names` cannot see), so
+  /// no attribute set can be proven closed. Populated by a module-wide pre-pass.
+  std::set<std::string> assigned_attr_names;
+  bool program_uses_dynamic_attr = false;
+  /// Classes that are NOT attr-set-closed regardless of the above: a class with
+  /// a decorator (may inject attributes / replace the class) or a custom
+  /// metaclass. Populated by the same pre-pass.
+  std::set<std::string> attr_unsafe_classes;
+  /// Collect `assigned_attr_names` + `program_uses_dynamic_attr` over the whole
+  /// program AST (recursive; run once before conversion).
+  void collect_assigned_attr_names(const jsont &node);
+  /// PLR §3.3.2.4: whether class `cls` has a provably CLOSED attribute set — no
+  /// `__getattr__`/`__getattribute__`, no metaclass, no class decorators, all
+  /// MRO bases known — and the program uses no dynamic-attr injection. Only then
+  /// is a missing-attribute read a provable AttributeError.
+  bool class_attr_set_closed(const std::string &cls);
+  /// PLR §3.3.2: whether READING `cls.attr` on a plain (__dict__) instance is a
+  /// provable AttributeError -- the class has a closed attribute set
+  /// (class_attr_set_closed), and `attr` is not a struct component / method /
+  /// class-attr / dunder AND appears as NO `X.attr =` target anywhere
+  /// (assigned_attr_names). False-positive-free by construction.
+  bool plain_missing_attr_read(
+    const std::string &cls,
+    const std::string &attr,
+    const struct_typet &st);
   /// PLR §6.2.9: if `arg_ast` is a Name bound to a generator with a live
   /// consumption cursor (`generator_cursors`), return that cursor symbol so an
   /// aggregating builtin (list/sum/...) can consume from `data[cursor:length]`

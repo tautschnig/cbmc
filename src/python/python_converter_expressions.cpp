@@ -2310,6 +2310,133 @@ bool python_convertert::slots_forbidden_attr(
 // a slot, so this is false-positive-free (plain classes with a __dict__, and any
 // slot / method / class-attr / property, are never flagged). Properties and
 // descriptors are resolved by convert_attribute BEFORE this check is reached.
+void python_convertert::collect_assigned_attr_names(const jsont &node)
+{
+  if(node.is_array())
+  {
+    for(const auto &e : as_array(node))
+      collect_assigned_attr_names(e);
+    return;
+  }
+  if(!node.is_object())
+    return;
+  if(is_node_type(node, "Attribute"))
+  {
+    const std::string attr = json_string(json_member(node, "attr"));
+    const jsont &ctx = json_member(node, "ctx");
+    if(ctx.is_object() && json_string(json_member(ctx, "_type")) == "Store")
+      assigned_attr_names.insert(attr); // X.attr = ... anywhere
+    if(attr == "__dict__")
+      program_uses_dynamic_attr = true; // instance-__dict__ manipulation
+  }
+  else if(is_node_type(node, "Call"))
+  {
+    const jsont &f = json_member(node, "func");
+    if(is_node_type(f, "Name"))
+    {
+      const std::string fn = json_string(json_member(f, "id"));
+      if(fn == "setattr" || fn == "vars")
+        program_uses_dynamic_attr = true; // string-named attr injection
+    }
+  }
+  else if(
+    is_node_type(node, "ClassDef") || is_node_type(node, "AsyncFunctionDef"))
+  {
+    // A decorated class (may inject attrs / replace the class) or a class with a
+    // custom metaclass is not attr-set-closed.
+    if(is_node_type(node, "ClassDef"))
+    {
+      const std::string cname = json_string(json_member(node, "name"));
+      const jsont &decos = json_member(node, "decorator_list");
+      bool unsafe = decos.is_array() && !as_array(decos).empty();
+      const jsont &kws = json_member(node, "keywords");
+      if(kws.is_array())
+        for(const auto &kw : as_array(kws))
+          if(json_string(json_member(kw, "arg")) == "metaclass")
+            unsafe = true;
+      if(unsafe)
+        attr_unsafe_classes.insert(cname);
+    }
+  }
+  const json_objectt &obj = to_json_object(node);
+  for(const auto &kv : obj)
+    collect_assigned_attr_names(kv.second);
+}
+
+// PLR §3.3.2.4: whether class `cls` has a provably CLOSED attribute set.
+bool python_convertert::class_attr_set_closed(const std::string &cls)
+{
+  if(program_uses_dynamic_attr)
+    return false; // setattr / __dict__ / vars anywhere -> no closed set
+  if(attr_unsafe_classes.count(cls))
+    return false; // decorated / metaclass class
+  if(
+    class_mro_defines(cls, "__getattr__") ||
+    class_mro_defines(cls, "__getattribute__"))
+    return false; // dynamic attribute hooks
+  // Every MRO base must be a KNOWN user class (or object); an imported/unknown
+  // base could inject attributes the pre-pass never saw.
+  std::vector<std::string> chain;
+  auto mit = class_mro.find(cls);
+  if(mit != class_mro.end())
+    chain = mit->second;
+  if(chain.empty())
+    chain.push_back(cls);
+  for(const std::string &anc : chain)
+  {
+    if(anc == "object")
+      continue;
+    if(class_types.count(anc) == 0 && attr_unsafe_classes.count(anc) == 0)
+    {
+      // `anc` is not a known-converted user class -> unknown base. (A decorated
+      // ancestor already returned false above via attr_unsafe_classes on cls's
+      // own check only, so also treat an unknown ancestor conservatively.)
+      if(class_mro.find(anc) == class_mro.end())
+        return false;
+    }
+    if(attr_unsafe_classes.count(anc))
+      return false; // a decorated/metaclass ancestor
+    if(
+      class_mro_defines(anc, "__getattr__") ||
+      class_mro_defines(anc, "__getattribute__"))
+      return false;
+  }
+  return true;
+}
+
+bool python_convertert::plain_missing_attr_read(
+  const std::string &cls,
+  const std::string &attr,
+  const struct_typet &st)
+{
+  if(st.has_component(attr))
+    return false; // a real instance field
+  if(
+    attr.size() >= 4 && attr.compare(0, 2, "__") == 0 &&
+    attr.compare(attr.size() - 2, 2, "__") == 0)
+    return false; // object-provided dunder always resolves
+  if(!class_attr_set_closed(cls))
+    return false; // attribute set is not provably closed
+  if(assigned_attr_names.count(attr) > 0)
+    return false; // assigned as `X.attr =` somewhere -> could exist
+  if(class_mro_defines(cls, attr))
+    return false; // a method (own or inherited)
+  // A class-level data attribute (own or inherited via the MRO).
+  std::vector<std::string> chain;
+  auto mit = class_mro.find(cls);
+  if(mit != class_mro.end())
+    chain = mit->second;
+  if(chain.empty())
+    chain.push_back(cls);
+  for(const std::string &anc : chain)
+  {
+    auto it = class_level_attrs.find(anc);
+    if(it != class_level_attrs.end() && it->second.count(attr) > 0)
+      return false;
+  }
+  return true;
+}
+
 bool python_convertert::slots_read_forbidden(
   const std::string &cls,
   const std::string &attr)
@@ -2923,6 +3050,12 @@ exprt python_convertert::convert_attribute(const jsont &expr)
             return side_effect_expr_nondett{
               python_value_type(), get_location(expr)};
           }
+          if(plain_missing_attr_read(ptag.substr(13), attr, st))
+          {
+            emit_conditional_exception(true_exprt{}, "AttributeError");
+            return side_effect_expr_nondett{
+              python_value_type(), get_location(expr)};
+          }
         }
       }
       if(st.has_component(attr))
@@ -3031,6 +3164,12 @@ exprt python_convertert::convert_attribute(const jsont &expr)
       // PLR §3.3.2.4: reading a non-slot attribute on a fully slots-enforced
       // instance is an AttributeError (closed attribute set).
       if(slots_read_forbidden(stag.substr(13), attr))
+      {
+        emit_conditional_exception(true_exprt{}, "AttributeError");
+        return side_effect_expr_nondett{
+          python_value_type(), get_location(expr)};
+      }
+      if(plain_missing_attr_read(stag.substr(13), attr, st))
       {
         emit_conditional_exception(true_exprt{}, "AttributeError");
         return side_effect_expr_nondett{
