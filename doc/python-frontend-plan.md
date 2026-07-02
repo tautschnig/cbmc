@@ -2315,6 +2315,31 @@ CLOSED (2026-07-02); the third rides with the set-representation project:
   PLR §3.2: `set` ordering is the subset partial order, now modelled as the
   bitmap subset predicate (`A&B==A` for `<=`, `+ A≠B` for `<`).
 
+**Rounds 5–6 residuals (2026-07-02) — OPEN, distinct roots, low priority.** Each
+is a sound-direction FALSE ALARM tracked by the PLR-fuzz false-alarm list; none
+is a whole-group and none is a quick win:
+- **Comprehension over `range(param)`** (`def f(n): sum([i*i for i in
+  range(n)])`; `f(3)` FAILs). Root: the function summary converts the
+  comprehension ONCE with `n` symbolic — it is not inlined/specialised at the
+  concrete call `f(3)`, so the materialised list has symbolic length and the sum
+  is unprovable. A CONSTANT-range comprehension IS precise (`sum([i*i for i in
+  range(3)])` PASSes). This is the function-summary/symbolic-loop-bound
+  limitation (PLR §6.2.4), not a comprehension-model bug; a fix needs call-site
+  specialisation or symbolic-range sum reasoning (not local).
+- **Walrus-in-comprehension** (`[y for x in … if (y := x*2) > 2]`) length
+  (PLR §6.2.8) — the `:=` binding inside a comp filter is not tracked precisely.
+- **`bytearray`** — `len(bytearray(b"ab")) == 2` PROVES, but a spurious uncaught
+  exception fires at the `len` site (a stray raising-op/model-bound check on the
+  bytearray path; §4.8). Investigate + suppress.
+- **Custom `__iadd__`** in-place result (`c += x` dispatching a user `__iadd__`)
+  and **3-arg `pow`** (`pow(a,b,m)` modular, §6.7) — not modelled (nondet).
+- **Any-param store→read VALUE** (`def f(o): o.x = 5; return o.x` returns nondet,
+  not 5; PLR §3.3.2). The attribute-error store false alarm is closed
+  (`276f4ff045`); the VALUE does not propagate because an Any/`python_value`
+  param has no concrete struct slot for `x`. A fix needs a per-Any-instance
+  attribute store map — the same per-instance-identity root as the deferred
+  dict-value-by-ref / container-element Phase 4.
+
 
 
 Investigated the "symbolic-key dict precision" cluster end-to-end; it is **not a
