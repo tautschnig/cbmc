@@ -129,17 +129,31 @@ binop_verdict compute_binop_verdict(
                      op == "Div" || op == "FloorDiv" || op == "Mod" ||
                      op == "Pow";
   // A bitwise/shift operator with a CONCRETE operand that is definitely NOT a
-  // set is an unambiguous TypeError: float / str / None / dict / complex. NB
-  // `list` is EXCLUDED here -- a non-int set literal (e.g. `{'a', 'b'}`) is
-  // modelled internally as a python_list, so a `list` operand to `|`/`&` may in
-  // fact be a set (valid set-union), which must stay `nondet` (no false alarm on
-  // `frozenset(..) | {..}`).
+  // set is an unambiguous TypeError: float / str / None / dict / complex.
   const bool l_bad_bitwise =
     l_is_float || l_is_str || l_is_dict || l_is_none || l_is_complex;
   const bool r_bad_bitwise =
     r_is_float || r_is_str || r_is_dict || r_is_none || r_is_complex;
+  // PLR §6.10.1 / §3.2: a bitwise/shift op is valid only between two int-likes
+  // or (for &|^) two sets. So an int-like operand combined with a REAL `list`
+  // is always a TypeError (`1 & [1]`). A non-int set literal is modelled as a
+  // python_list, so we EXCLUDE a `list` operand that is set-semantic-tagged
+  // (`#python_set_semantic`, set by the set-literal builder): `set|set` (incl.
+  // `frozenset(..) | {..}`) must stay nondet. A set stored in a symbol loses the
+  // tag but `int & set` is *also* a TypeError, so firing on it is still sound;
+  // the only excluded case is a provable set literal, which keeps `set|set`
+  // from mis-firing. A concrete BITMAP set operand (`is_python_set_type`) is
+  // likewise not treated as a real list.
+  const bool l_real_list =
+    l_is_list && !l_is_set && !left.get_bool("#python_set_semantic");
+  const bool r_real_list =
+    r_is_list && !r_is_set && !right.get_bool("#python_set_semantic");
+  const bool bitwise_int_vs_real_list =
+    bitwise_op &&
+    ((l_is_intlike && r_real_list) || (r_is_intlike && l_real_list));
   const bool fire = arith || l_is_none || r_is_none ||
-                    (bitwise_op && (l_bad_bitwise || r_bad_bitwise));
+                    (bitwise_op && (l_bad_bitwise || r_bad_bitwise)) ||
+                    bitwise_int_vs_real_list;
   return fire ? binop_verdict::error : binop_verdict::nondet;
 }
 } // namespace
