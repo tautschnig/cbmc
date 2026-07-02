@@ -1063,6 +1063,18 @@ closes are contrived (`1 & [1]`), niche (`{None,None}`), or minor precision
 fix specified.** The disciplined outcome (do not ship point-fixes that regress a
 CORE test) over a precision/contrived-soundness win.
 
+*PLR grounding.* The soundness target is **PLR §6.10 "Binary bitwise operations"
+/ §6.7**: `&`, `|`, `^`, `<<`, `>>` are defined only between two integers or
+(for `&|^`) two `set`/`frozenset` operands (set intersection / union / symmetric
+difference, PLR §3.2 "set types"); any other operand combination raises
+`TypeError`. So `int <bitwise> list` and `int <bitwise> set` are *always*
+TypeErrors — the sound rule is correct per §6.10; it is only the frontend's
+INTERNAL set typing (a non-int set aliased to `python_list`; `set()`/`frozenset()`
+typed nondet-int) that defeats it. The required fix is therefore a
+representation change (a distinct type tag so `set` is never confused with
+`list`/`int`), grounded in §3.2's statement that `set` is a distinct built-in
+type, not a list.
+
 **Attribute-read AttributeError whole-group SPIKE (2026-07-02).** The fuzzer
 found reading an undeclared instance attribute verifies SUCCESSFUL but raises
 AttributeError. Investigated the whole group (missing-method reads are ALREADY
@@ -1136,6 +1148,18 @@ ship only the rock-solid part (`__slots__`, done), and defer the rest until the
 reusable `assigned_attr_names` / `class_attr_set_closed` property is worth
 building for multiple consumers (or a per-flow setattr/`__dict__` analysis makes
 gate 4 precise).
+
+*PLR grounding.* The target is **PLR §3.3.2 "Customizing attribute access" /
+§6.3.1 "Attribute references"**: `object.__getattribute__` raises
+`AttributeError` when an attribute is found neither on the instance `__dict__`
+nor via the type's MRO (data/non-data descriptors, class attributes), and
+`__getattr__` is consulted only as the missing-attribute fallback. The check is
+therefore sound exactly when the frontend can prove the closed set of possible
+attributes — which §3.3.2's `__getattr__`/`__getattribute__` hooks, and the
+`__dict__` mutability of a non-`__slots__` class (§3.3.2.4 makes `__slots__` the
+*only* way to close that set), specifically defeat. The `__slots__` half is
+shipped precisely because §3.3.2.4 guarantees the closed set; the plain-class
+half waits on the `assigned_attr_names` closure analysis above.
 
 **Kwarg cross-module binding — FIXED (2026-06-25, `6f9417b754`).** Not a false
 proof (sound spurious-fail) but a correctness gap: keyword arguments to imported
@@ -2212,7 +2236,39 @@ on `(path, mtime)`; a multi-process pool for parallel parse requests.
 All items here are **sound** (misses / over-approximations, never false
 alarms). The nested-mutable-aliasing item below WAS a false proof; it is now
 
-### dict symbolic-key / value-mutation cluster — characterized MULTI-root (2026-06-26) {#dict-cluster}
+### Fuzzer-found precision residuals (2026-07-02) — sound over-approximations {#fuzz-precision}
+
+The PLR differential fuzzer catalogued three sound precision misses (each
+verifies FAILED against an `== expected` assert — the sound direction, never a
+false proof). Implementation sketches, PLR-grounded:
+
+- **`*args` value unpack** (`f(*t)` / `f(*xs)`, `kwargs/args_ok`). PLR §6.3.4 /
+  §4.8.2: an iterable prefixed with `*` in a call expands into consecutive
+  positional arguments. The *arity* fold is done (`star-unpack-call-arity`,
+  sound); the missing piece is binding the concrete element VALUES to the
+  parameters. *Plan:* when the unpacked operand is a constant tuple/list with a
+  statically-known length matching the callee's positional count, bind
+  `param[i] := elems[i]` instead of nondet — reusing the tuple/list element
+  extraction already used by `static_unpack_length`. Symbolic length / vararg
+  callee stays nondet (sound). Low priority (rare in the corpus).
+- **List-backed set operations & set-comprehension length** (`{"a"}|{"b"}`,
+  `{e for …}`). PLR §3.2 / §6.2.5: `set` is a distinct type with
+  order-insensitive, deduplicated membership; a set display/comprehension keeps
+  one representative per equal element. The frontend models a non-int set as a
+  `python_list` (no dedup on `|`/`&`/`-`/`^`, and SetComp routes through the
+  list-comprehension path), so `len` over-counts. *Plan:* this is the PRECISION
+  face of the same root as the deferred §0 set-representation item — a real
+  `python_set` (element array + canonical-key dedup, reusing `canonical_key`)
+  would make both the soundness (list-bitwise) and precision (union / comp len)
+  faces precise at once. Deferred with that project.
+- **Same-category ordering RESULT** (`True < 2`, `{1} < {1,2}`). PLR §6.10.1:
+  `bool` is a subtype of `int` so `True < 2` is `1 < 2`; `set` ordering is the
+  subset partial order. The cross-category TYPE check is sound (§A); the RESULT
+  value is not always proven. *Plan:* model `bool` operands in a comparison by
+  their int value (`True→1`), and `set < set` / `<=` as the subset predicate
+  over the bitmap/element model. Small, self-contained; low priority.
+
+
 
 Investigated the "symbolic-key dict precision" cluster end-to-end; it is **not a
 single architectural root** — four distinct sub-cases:
