@@ -1978,6 +1978,12 @@ private:
   /// (`__getattribute__` / `__setattr__`) so attribute access on such an
   /// instance can be soundly over-approximated.
   bool class_mro_defines(const std::string &cls, const std::string &method);
+  /// PLR §6.2.9: if `arg_ast` is a Name bound to a generator with a live
+  /// consumption cursor (`generator_cursors`), return that cursor symbol so an
+  /// aggregating builtin (list/sum/...) can consume from `data[cursor:length]`
+  /// (the REMAINING items) instead of re-yielding from 0, and mark it exhausted.
+  /// Returns nullopt for a non-Name / non-generator / cursorless arg.
+  std::optional<symbol_exprt> generator_cursor_for_arg(const jsont &arg_ast);
 
   /// True iff \p t is a concrete user-class instance type (python_class_*)
   /// whose MRO defines no \p dunder. False for builtins / python_value (Any) /
