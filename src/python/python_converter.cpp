@@ -5122,52 +5122,61 @@ exprt python_convertert::convert_expression(const jsont &expr)
         // present, build the resulting struct directly with
         // the unique elements rather than going through
         // convert_list (which keeps duplicates).
-        std::vector<std::pair<exprt, std::string>> unique_elts;
-        std::set<std::string> seen_strings;
-        bool has_only_string_consts = true;
+        // Non-integer set: list-backed model. Dedup CONSTANT elements by the
+        // unified canonical_key (str / None / tuple / non-integral float /
+        // cross-type numeric); a symbolic element is kept (sound: not provably
+        // equal to anything). Only when a provable duplicate is removed do we
+        // build the deduped list directly (otherwise the existing convert_list
+        // path is used unchanged) -- so the blast radius is duplicate-bearing
+        // non-int set literals only.
+        std::vector<exprt> uniq;
+        std::vector<std::optional<std::string>> ukeys;
+        bool all_string = true;
+        std::size_t total = 0;
         if(elts.is_array())
         {
           for(const auto &elt : as_array(elts))
           {
-            std::string key;
-            if(is_node_type(elt, "Constant"))
+            ++total;
+            exprt ce = convert_expression(elt);
+            if(!is_python_string_type(ce.type()))
+              all_string = false;
+            std::optional<std::string> ck = canonical_key(ce);
+            bool merged = false;
+            if(ck.has_value())
+              for(std::size_t i = 0; i < uniq.size(); ++i)
+                if(ukeys[i].has_value() && *ukeys[i] == *ck)
+                {
+                  merged = true;
+                  break;
+                }
+            if(!merged)
             {
-              const jsont &cv = json_member(elt, "value");
-              if(cv.is_string())
-                key = cv.value;
-              else
-                has_only_string_consts = false;
-            }
-            else
-              has_only_string_consts = false;
-            if(has_only_string_consts && !key.empty())
-            {
-              if(seen_strings.count(key) > 0)
-                continue;
-              seen_strings.insert(key);
-              unique_elts.emplace_back(convert_expression(elt), key);
+              uniq.push_back(ce);
+              ukeys.push_back(ck);
             }
           }
         }
-        if(
-          has_only_string_consts && unique_elts.size() != as_array(elts).size())
+        if(uniq.size() != total)
         {
-          // Build a python_list_type with the unique strings.
-          typet str_t = python_string_type();
-          typet list_t = python_list_type(str_t);
+          // A duplicate was removed. Build the deduped set-semantic list: keep
+          // a str element type when every element is a string (unchanged), else
+          // use the universal python_value element type (wrap each element).
+          const bool as_str = all_string;
+          typet elem_t = as_str ? python_string_type() : python_value_type();
+          typet list_t = python_list_type(elem_t);
           const auto &list_st = to_struct_type(list_t);
           const auto &data_t = to_array_type(list_st.components()[1].type());
           exprt::operandst ops;
-          for(auto &p : unique_elts)
-            ops.push_back(p.first);
+          for(auto &e : uniq)
+            ops.push_back(as_str ? e : wrap_value(e));
           while(ops.size() < PYTHON_MAX_LIST_LENGTH)
-            ops.push_back(safe_zero(str_t));
+            ops.push_back(safe_zero(elem_t));
           struct_exprt se{
-            {from_integer((long)unique_elts.size(), signedbv_typet{64}),
+            {from_integer((long)uniq.size(), signedbv_typet{64}),
              array_exprt{std::move(ops), data_t}},
             list_t};
-          // PLR §3.2: tag this expression as set-semantic so
-          // comparison treats it as a multiset (order-insensitive).
+          // PLR §3.2: tag as set-semantic (order-insensitive multiset).
           se.set("#python_set_semantic", "1");
           result = std::move(se);
         }
