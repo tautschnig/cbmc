@@ -1988,6 +1988,16 @@ private:
   /// no attribute set can be proven closed. Populated by a module-wide pre-pass.
   std::set<std::string> assigned_attr_names;
   bool program_uses_dynamic_attr = false;
+  /// PLR §7.5: raw local NAMES that appear as a `del <Name>` target anywhere in
+  /// the program. Only these names get a `__del_<qname>` deleted-flag (set true
+  /// on `del x`, false on any assignment to x, checked at reads to emit a
+  /// conditional NameError). Keeps the deleted-state instrumentation off the hot
+  /// path for every other name.
+  std::set<std::string> deleted_name_targets;
+  /// Get-or-create the `<qname>$deleted` bool flag symbol for a del-tracked
+  /// name (local per function, static at module scope). Init is provided by the
+  /// binding assignment (which sets it false); `del` sets true; reads guard.
+  symbol_exprt deleted_name_flag(const irep_idt &qname);
   /// Classes that are NOT attr-set-closed regardless of the above: a class with
   /// a decorator (may inject attributes / replace the class) or a custom
   /// metaclass. Populated by the same pre-pass.
