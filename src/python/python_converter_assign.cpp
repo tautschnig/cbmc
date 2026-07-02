@@ -1098,6 +1098,61 @@ codet python_convertert::convert_assign(const jsont &stmt)
   if(!targets.is_array() || as_array(targets).empty())
     return code_skipt{};
 
+  // PLR §7.2: chained assignment `a = b = <value>` binds ONE object to every
+  // target. Rewrite it to `a = <value>; b = a; ...` so the later targets go
+  // through the proven single-target `b = a` path -- which ALIASES a mutable
+  // object (instance / list / dict): a mutation via one name is then visible
+  // through the others (closes the chain_instance false proof), while an
+  // immutable is copied exactly as before (a Name RHS of int/str type does not
+  // pointer-promote). `<value>` is still evaluated exactly once (only the first
+  // assignment carries it). Applies only when every target is a plain Name (the
+  // common chained form); a mixed tuple / attribute / subscript target falls
+  // through to the existing per-target handling. The rewritten single-target
+  // statements re-enter convert_assign with targets.size()==1, so this does not
+  // recurse further.
+  if(as_array(targets).size() >= 2)
+  {
+    bool all_names = true;
+    for(const auto &t : as_array(targets))
+      if(!is_node_type(t, "Name"))
+      {
+        all_names = false;
+        break;
+      }
+    if(all_names)
+    {
+      code_blockt block;
+      const jsont &t0 = *as_array(targets).begin();
+      // First target: `t0 = <value>` (keeps the original RHS).
+      {
+        jsont s0 = stmt;
+        json_arrayt tj;
+        tj.push_back(t0);
+        to_json_object(s0)["targets"] = tj;
+        block.add(convert_assign(s0));
+      }
+      // Remaining targets: `t_i = t0` (Name RHS -> alias for a mutable object,
+      // copy for an immutable), mirroring `b = a`.
+      bool first = true;
+      for(const auto &t : as_array(targets))
+      {
+        if(first)
+        {
+          first = false;
+          continue;
+        }
+        jsont si = stmt;
+        json_objectt &oi = to_json_object(si);
+        json_arrayt tj;
+        tj.push_back(t);
+        oi["targets"] = tj;
+        oi["value"] = t0; // t0 is a Name node -> read of the first target
+        block.add(convert_assign(si));
+      }
+      return std::move(block);
+    }
+  }
+
   source_locationt loc = get_location(stmt);
 
   // enum-member-variable tracking (PLR §8.13): `s = SomeEnum.MEMBER` records the
