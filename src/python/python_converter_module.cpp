@@ -320,6 +320,7 @@ void python_convertert::process_imported_module(
   // invalidation covers globals mutated in imported modules — the
   // collector must cover the whole program, not just the main module.
   collect_function_global_mutations(body);
+  collect_assigned_attr_names(body);
 
   std::string prefix = module_name + "::";
 
@@ -1080,6 +1081,7 @@ bool python_convertert::convert()
   // conversion-time folding). Must run before any function body /
   // module statement is converted.
   collect_function_global_mutations(body);
+  collect_assigned_attr_names(body);
 
   // PLR §8.13: pre-scan top-level `from enum import <base> as <alias>` so
   // a class deriving from the alias is recognised as an enum during the
