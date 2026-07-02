@@ -629,6 +629,10 @@ private:
   /// false when any base's slots are unknown (no false positive).
   bool
   slots_forbidden_attr(const std::string &cls, const std::string &attr) const;
+  /// PLR §3.3.2.4: whether READING `cls.attr` on a slots-enforced instance is a
+  /// provable AttributeError (attr not a slot / method / class-attr / dunder on
+  /// a fully slots-enforced class). False-positive-free; see the definition.
+  bool slots_read_forbidden(const std::string &cls, const std::string &attr);
   /// The class whose method call initiated the current super()
   /// dispatch. Set by the call site (e.g. when D() is called,
   /// set to "D"); nested super() inlining preserves it. Empty
