@@ -1154,7 +1154,24 @@ bases are known (not imported). `assigned_attr_names` + a `class_attr_set_closed
 predicate (gates 3/5/6/7) is a REUSABLE property that could also serve `hasattr`
 precision and annotation checks -- the whole-group payoff.
 
-*Decision: DEFER.* The design is sound and regresses nothing, but gate 4 is a
+*Decision (updated 2026-07-02): IMPLEMENTED (`3bc104028b`).* The sound
+whole-group design was built: a module-wide pre-pass populates
+`assigned_attr_names` (every Store-context `X.attr=` target) +
+`attr_unsafe_classes` (decorated/metaclass classes) + `program_uses_dynamic_attr`
+(`setattr`/`.__dict__`/`vars`); `class_attr_set_closed(cls)` gates on those plus
+no `__getattr__`/`__getattribute__` and all-known MRO bases; and
+`plain_missing_attr_read` flags `c.attr` iff `attr` is not a component / method /
+class-attr / dunder AND not in `assigned_attr_names` on a closed-set class.
+Validated FP-free (suite green, sweep 2719/0-reg, oracle 0-NEW, and the whole
+measured FP surface — unannotated-param / alias / setattr / `__dict__` /
+decorator / metaclass / inherited / `__getattr__` / dunder — all correctly NOT
+flagged). CORE `plain-missing-attr-read`, `plain-missing-attr-nofp`. The earlier
+"gate 4 neuters it" concern stands as a PRECISION note (the check is silent in a
+program that uses `setattr`/decorators), but it is sound and closes the residual
+where it applies. The original DEFER reasoning is retained below for the record.
+
+*Original DEFER reasoning (pre-implementation).* The design is sound and
+regresses nothing, but gate 4 is a
 program-wide suppression (no per-instance flow analysis), so a single `setattr` /
 `__dict__` / `vars` anywhere disables the check -- and those (plus class
 decorators like `@dataclass`) are common in real code, so the practical hit rate
