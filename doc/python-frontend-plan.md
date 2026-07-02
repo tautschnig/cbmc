@@ -1032,6 +1032,37 @@ Fix: non-int set membership -> nondet; set.add/discard of a non-int -> no-op on
 the bitmap (int sets stay precise; non-int set literals already use a precise
 list-backed representation). Guard: `set-non-int-soundness`.
 
+**Set-representation whole-group SPIKE — DEFERRED (2026-07-01).** The
+differential fuzzer surfaced a cluster of low-severity residuals that all trace
+to ONE root: **the frontend types sets inconsistently.** A set is modelled as
+(a) a 64-bit **bitmap** when its elements are ints/bools; (b) a **list-backed**
+`python_list` when its elements are str/tuple/class/mixed (so a set and a real
+list share the same type); (c) a **nondet `int`** when produced by a
+known-nondet builtin (`set()`/`frozenset()` returned `python_int_type()`); and
+(d) an **`int`-collapsed** result out of the tagged-union bitwise path
+(`value | value`). The cluster: 10 `int <bitwise> list` false proofs (`1 & [1]`
+etc.), `{None, None}` set-dedup, and the `set < set` result-precision alarm.
+
+Spike attempt (reverted): a SOUND local rule — an int-like operand bitwise-
+combined with any non-int-like operand is *always* a TypeError, since the only
+valid non-int bitwise (`set & set`) needs BOTH operands to be sets — closed the
+10 false proofs cleanly, but **regressed `crash-typing-py-solver`**:
+`frozenset({..}) | {..}` mis-types the frozenset as (c)/(d) `int`, so the union
+looked like `int | list` and mis-fired. Retyping `set`/`frozenset` to
+`python_value` fixed the single-union case but the CHAIN `a | b | {..}` still
+broke because `value | value` bitwise collapses to `int` (d), which lives deep
+in the tagged-union arithmetic machinery (interacting a12/b3/b5 exception paths).
+
+Conclusion: any rule keyed on "int operand" is defeated by sets mis-typed as int;
+a sound fix requires making set/Any typing CONSISTENT first (the set-
+representation project — e.g. a distinct type tag for list-backed sets, and
+set-typed nondet builtins/op-results). That whole-group refactor touches every
+set-handling site (12 files) with real regression risk, and the residuals it
+closes are contrived (`1 & [1]`), niche (`{None,None}`), or minor precision
+(`set < set`). **Verdict: not worth it now — deferred, root cause + required
+fix specified.** The disciplined outcome (do not ship point-fixes that regress a
+CORE test) over a precision/contrived-soundness win.
+
 **Kwarg cross-module binding — FIXED (2026-06-25, `6f9417b754`).** Not a false
 proof (sound spurious-fail) but a correctness gap: keyword arguments to imported
 functions (`mod.foo(a=5)`) were dropped (callee saw nondet/default). Now bound
