@@ -3338,88 +3338,91 @@ exprt python_convertert::box_int_for_storage(const exprt &int_value)
   return allocate_boxed_leaf(v, integer_typet{});
 }
 
+// PLR §3: the canonical hash/equality key of a CONSTANT container key/element,
+// over the full constant lattice. Two keys coalesce in a dict/set display iff
+// their canonical_key strings are equal. Handles numeric cross-type
+// (`1 == 1.0 == True` -> "n:<int>"), non-integral float (distinct, by bits),
+// str VALUE, None (singleton), and -- recursively -- tuples (element-wise), so
+// `(1, 2)` and `(1, 2.0)` canonicalise identically. Returns nullopt for a
+// symbolic / non-constant / unknown key (SOUND: two such keys are never proven
+// equal, so they are not merged). Shared by build_dict_value and the set-literal
+// builder -- the container-key canonicalisation whole-group.
+std::optional<std::string>
+python_convertert::canonical_key(const exprt &e) const
+{
+  if(is_python_none_constant(e))
+    return std::string{"N"};
+  if(std::optional<mp_integer> nk = python_numeric_key(e))
+    return "n:" + integer2string(*nk);
+  if(e.is_constant() && e.type().id() == ID_floatbv)
+  {
+    ieee_floatt f(
+      to_constant_expr(e), ieee_floatt::rounding_modet::ROUND_TO_EVEN);
+    if(f.is_NaN() || f.is_infinity())
+      return std::nullopt; // NaN != NaN; not a stable key
+    return "f:" + id2string(to_constant_expr(e).get_value());
+  }
+  if(is_python_string_type(e.type()))
+  {
+    std::optional<std::string> s = extract_string_value(e);
+    if(s.has_value())
+      return "s:" + *s;
+    return std::nullopt; // symbolic string
+  }
+  if(is_python_tuple_type(e.type()) && e.id() == ID_struct)
+  {
+    std::string acc = "t:(";
+    for(const exprt &op : e.operands())
+    {
+      std::optional<std::string> ck = canonical_key(op);
+      if(!ck.has_value())
+        return std::nullopt; // a symbolic element -> tuple not canonicalisable
+      acc += *ck + ",";
+    }
+    acc += ")";
+    return acc;
+  }
+  return std::nullopt;
+}
+
 exprt python_convertert::build_dict_value(
   std::vector<std::pair<exprt, exprt>> pairs,
   const source_locationt &loc)
 {
   // De-dup equal constant keys (keep last value).
   {
+    // PLR §3: coalesce keys equal under Python equality via the unified
+    // canonical_key (numeric cross-type / non-integral float / str value / None
+    // singleton / tuple element-wise -- so `(1,2)` and `(1,2.0)` coalesce). A
+    // key with no canonical form (symbolic) falls back to exact-expr equality on
+    // constants (sound: identical trees denote the same value; two symbolic keys
+    // are never proven equal).
     std::vector<std::pair<exprt, exprt>> deduped;
+    std::vector<std::optional<std::string>> dkeys;
     for(const auto &p : pairs)
     {
+      std::optional<std::string> ck = canonical_key(p.first);
       bool merged = false;
-      // PLR §3: dedup keys by Python equality — numeric equality
-      // (1 == 1.0 == True) for numeric-key constants, string VALUE equality for
-      // string-literal keys (a python_string struct is not a constant_exprt, so
-      // exact-expr equality below never merges them), else exact constant
-      // equality. A symbolic string key has no known value -> not deduped
-      // (sound: cannot prove two symbolic keys equal).
-      std::optional<mp_integer> pk = python_numeric_key(p.first);
-      std::optional<std::string> ps;
-      if(!pk.has_value() && is_python_string_type(p.first.type()))
-        ps = extract_string_value(p.first);
-      if(pk.has_value())
+      for(std::size_t i = 0; i < deduped.size(); ++i)
       {
-        for(auto &d : deduped)
+        bool eq;
+        if(ck.has_value())
+          eq = dkeys[i].has_value() && *dkeys[i] == *ck;
+        else
+          eq = !dkeys[i].has_value() && p.first.is_constant() &&
+               deduped[i].first.is_constant() && deduped[i].first == p.first;
+        if(eq)
         {
-          std::optional<mp_integer> dk = python_numeric_key(d.first);
-          if(dk.has_value() && *dk == *pk)
-          {
-            d.second = p.second; // later value overwrites
-            merged = true;
-            break;
-          }
+          deduped[i].second = p.second; // later value overwrites
+          merged = true;
+          break;
         }
       }
-      else if(ps.has_value())
-      {
-        for(auto &d : deduped)
-          if(
-            is_python_string_type(d.first.type()) &&
-            extract_string_value(d.first) == ps)
-          {
-            d.second = p.second; // later value overwrites
-            merged = true;
-            break;
-          }
-      }
-      else if(is_python_none_constant(p.first))
-      {
-        // PLR §3: None is a singleton — `{None: 1, None: 2}` has one key.
-        for(auto &d : deduped)
-          if(is_python_none_constant(d.first))
-          {
-            d.second = p.second; // later value overwrites
-            merged = true;
-            break;
-          }
-      }
-      else if(is_python_tuple_type(p.first.type()))
-      {
-        // PLR §3: structurally-identical tuple keys are equal (`(1,2)` twice).
-        // Structural expr equality is sound (identical trees denote the same
-        // value); a cross-type-numeric element difference (`(1,2)` vs `(1,2.0)`)
-        // is not merged here (a rare residual).
-        for(auto &d : deduped)
-          if(is_python_tuple_type(d.first.type()) && d.first == p.first)
-          {
-            d.second = p.second; // later value overwrites
-            merged = true;
-            break;
-          }
-      }
-      else if(p.first.is_constant())
-      {
-        for(auto &d : deduped)
-          if(d.first.is_constant() && d.first == p.first)
-          {
-            d.second = p.second; // later value overwrites
-            merged = true;
-            break;
-          }
-      }
       if(!merged)
+      {
         deduped.push_back(p);
+        dkeys.push_back(ck);
+      }
     }
     pairs = std::move(deduped);
   }

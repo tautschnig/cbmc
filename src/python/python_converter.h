@@ -1995,6 +1995,11 @@ private:
   /// otherwise (a non-integral float, a string, or a non-constant — those dedup
   /// by exact equality or not at all).
   std::optional<mp_integer> python_numeric_key(const exprt &v) const;
+  /// PLR §3: unified canonical hash/equality key of a CONSTANT container
+  /// key/element over the full constant lattice (numeric cross-type /
+  /// non-integral float / str value / None singleton / tuple element-wise).
+  /// nullopt for symbolic/unknown (never merged). See the definition.
+  std::optional<std::string> canonical_key(const exprt &e) const;
 
   /// PLR §8.7: the number of positional slots a `*`-unpacked call argument
   /// fills, when statically known (a list/tuple literal with no nested spread);
