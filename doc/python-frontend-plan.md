@@ -1091,6 +1091,52 @@ FP-safety:
   unless a strong per-class "no dynamic injection" gate is added first. Verdict:
   ship the rock-solid `__slots__` half; defer the plain-class half.
 
+**Plain-class `missing_attr` SCOPING SPIKE (2026-07-02) — DEFERRED with a sound
+design.** Measured the false-positive surface with an ungated experimental flag
+(then reverted). Flagging `c.missing` on a plain class when `missing` is not a
+struct component / method / class-attr / dunder and the class has no
+`__getattr__`/`__getattribute__` FALSE-POSITIVES on five legitimate cases:
+
+| assignment form | tracked as component? | flag FPs? |
+|---|---|---|
+| `self.x=` in `__init__` / any method | yes (defs.cpp all-method scan) | no |
+| module-level `c.x=` on a known instance | yes | no |
+| `def f(o: C): o.x=` (ANNOTATED param) | yes (module.cpp Pass 0.27) | no |
+| `def f(o): o.x=` (UNANNOTATED param) | no | YES |
+| `d = c; d.x=` (local alias) | no | YES |
+| `setattr(c, 'x', v)` (constant name) | no | YES |
+| `c.__dict__['x'] = v` / `vars(c)[...]` | no | YES |
+| `@deco` that sets `cls.injected` | no | YES |
+
+The per-class component set is therefore INCOMPLETE (unannotated-param, alias,
+setattr, `__dict__`, decorator/metaclass injection all escape it), so a naive
+`!has_component` flag is unsound.
+
+*Sound whole-group design* (the reusable architectural frame, not a point fix): a
+program-wide **`assigned_attr_names`** set = every Store-context `X.attr =`
+target anywhere in the program. Flag `c.attr` as AttributeError iff ALL hold:
+(1) `attr` not in C's per-class known set (component / method / class-attr /
+property / dunder); (2) `attr` not in `assigned_attr_names` -- this single global
+gate closes the alias / unannotated-param / decorator / any-normal-dynamic FPs,
+since each of those puts the NAME in the set; (3) C and its MRO define no
+`__getattr__` / `__getattribute__`; (4) the program uses no `setattr` /
+`.__dict__` / `vars` (covers the STRING-named injection that gate 2 cannot see);
+(5) C has no custom metaclass; (6) C has no class decorators; (7) all of C's
+bases are known (not imported). `assigned_attr_names` + a `class_attr_set_closed`
+predicate (gates 3/5/6/7) is a REUSABLE property that could also serve `hasattr`
+precision and annotation checks -- the whole-group payoff.
+
+*Decision: DEFER.* The design is sound and regresses nothing, but gate 4 is a
+program-wide suppression (no per-instance flow analysis), so a single `setattr` /
+`__dict__` / `vars` anywhere disables the check -- and those (plus class
+decorators like `@dataclass`) are common in real code, so the practical hit rate
+is low while the build is substantial and every gate is a potential soundness
+hole. Mirrors the set-representation call: specify the sound whole-group design,
+ship only the rock-solid part (`__slots__`, done), and defer the rest until the
+reusable `assigned_attr_names` / `class_attr_set_closed` property is worth
+building for multiple consumers (or a per-flow setattr/`__dict__` analysis makes
+gate 4 precise).
+
 **Kwarg cross-module binding — FIXED (2026-06-25, `6f9417b754`).** Not a false
 proof (sound spurious-fail) but a correctness gap: keyword arguments to imported
 functions (`mod.foo(a=5)`) were dropped (callee saw nondet/default). Now bound
