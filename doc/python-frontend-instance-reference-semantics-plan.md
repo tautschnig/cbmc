@@ -286,6 +286,41 @@ mutation assert still FAILs. Regression: the single-level instance tests
 `container-element-instance-knownbug` until Phase 4 lands, then flip to CORE
 (flag-gated).
 
+### Phase-4 perf re-spike (2026-07-02) — ASSESS ONLY; verdict: DEFER (flag-gated)
+
+Re-measured and re-scoped the last remaining container-element residuals
+(`gen_container` soundness + the ~150 instance-container-mutation precision
+alarms). Findings:
+- **The cliff is real and there is no free lunch.** By-VALUE containers compare
+  `==` cheaply at every depth (measured: flat / depth-1 / depth-2 all ~0.1 s).
+  The SOUND by-reference representation stores an element as a heap pointer
+  (`make_python_value(LIST, &heap)`), which makes nested `==` compare pointers;
+  the in-tree `--python-ref-mutables` avoids a deep-compare TIMEOUT by returning
+  **nondet** for distinct references (so `[[1]] == [[1]]` is unprovable) — sound
+  but a PRECISION loss, which is exactly the A/B-sweep 2719→2710 regression.
+- **The cheaper alternative (slot-aliasing: bind the access var to
+  `&container.data[i]`) is UNSOUND** for reassign/reorder (`r = g[0]; g[0] = X;
+  <mutate r>` must follow the OBJECT, not the slot — documented in the spike doc
+  §4). So the sound design must be element-as-heap-pointer, which carries the
+  nested-`==` precision cost. No cliff-free sound shortcut exists.
+- **Neither residual is covered by the existing `--python-ref-mutables`** (which
+  handles only nested list/dict elements): `gen_container` and
+  instance-in-container both still FAIL under it — they need the unimplemented
+  `--python-ref-instances` Phase 4. `gen_container` does NO `==`, so it would not
+  itself hit the precision cost, but keying a generator's cursor on a container
+  slot needs the same by-reference-object machinery (a bespoke generator-only
+  heap identity would duplicate Phase 4 for one niche case — rejected).
+
+*Verdict: DEFER, flag-gated.* Phase 4 is worth doing as an **opt-in
+`--python-ref-instances`** (default OFF), phased cheapest-site-first (for-loop
+mutation → subscript store → extract-then-mutate), each site behind the HARD
+per-phase precision+perf gate (0 default-config regressions; nested-`==` stays
+by-value/precise unless the user opts in). The default stays by-value (cheap +
+sound via the extraction/replication guards). `gen_container` rides Phase 4 and
+remains the single pinned KNOWNBUG until then. Not shipped this pass: it is a
+dedicated multi-day flag-gated effort whose payoff is OPT-IN precision (~150
+alarms) plus one niche soundness residual, not a spike-sized change.
+
 ## 6. Cross-references
 
 - Master inventory: the **Class-instance identity / aliasing** and
