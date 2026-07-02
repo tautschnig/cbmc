@@ -1191,12 +1191,14 @@ out-of-subset residuals** and ~206 false *alarms* (sound over-approximations /
 unsupported-feature precision — see inventory B). Two standing soundness-
 regression gates run after every change: the **oracle 0-NEW gate** (real-world
 corpus) and the **PLR-fuzz 0-NEW gate** (template-generated PLR-tagged programs
-vs a committed baseline of **1** known/deferred false-proof label — see Sweep
-round 4). The single baselined fuzzer false proof is planned (generator `box[0]`
-container slot → the perf-gated by-reference "Phase 4", §1); it is not un-planned.
-(The 10 list-bitwise labels, the `list(g)`/`sum(g)`-after-`next()` aggregating
-channels, and the plain-class `missing_attr` read that were baselined earlier are
-now all **closed** — see Sweep round 4.)
+vs a committed baseline of **2** known/deferred false-proof labels — see Sweep
+round 4). Both are documented/planned: generator `box[0]` container slot (→ the
+perf-gated by-reference "Phase 4", §1) and `del c.a` attribute-read (→ per-
+instance deleted state, the same Phase-4 instance-identity family). Neither is
+un-planned. (The 10 list-bitwise labels, the `list(g)`/`sum(g)`-after-`next()`
+aggregating channels, the plain-class `missing_attr` read, `gen.close()`+next,
+and `del x`-name NameError that were baselined earlier are now all **closed** —
+see Sweep round 4.)
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
@@ -1364,6 +1366,23 @@ now all **closed** — see Sweep round 4.)
 >
 > A few new PRECISION false alarms (sound direction) were also catalogued — see
 > inventory B: star-args tuple unpack `f(*t)`, set-comprehension dedup length.
+>
+> **Sweep round 5 (2026-07-02) — del / generator lifecycle.** The fuzzer's del/
+> generator-lifecycle category found three false proofs:
+> - **`gen.close()` then `next()`/`for`** — a closed generator raises
+>   StopIteration. **CLOSED** (`b999ef340d`, `gen-close-then-next` CORE): close()
+>   exhausts the consumption cursor, so the existing next()/for StopIteration
+>   guard fires.
+> - **`del x` then read** — NameError. **CLOSED** (`7af40cffb5`, `del-name-use`,
+>   `del-name-nofp` CORE): a per-name `<qname>$deleted` flag (set on del, cleared
+>   by any assignment, checked at reads via convert_name → conditional NameError)
+>   replaces the old None-reset approximation. Control-flow-precise (not-taken
+>   conditional del / reassignment are clean) and off the hot path for
+>   non-del-tracked names.
+> - **`del c.a` then read** — AttributeError. **PINNED KNOWNBUG**
+>   (`del-attr-read-knownbug`): a sound read-raise needs PER-INSTANCE deleted
+>   state (a scope-local per-name flag is unsound under aliasing — `del c.a; d=c;
+>   d.a` must still raise), which is the per-instance-identity / Phase-4 family.
 
 - *Closed 2026-06-30 (commit `70401b6d90`):* `gen_send_before_start` — the eager
   generator cursor already encodes priming (`cursor == 0` ⟺ not started), so a
