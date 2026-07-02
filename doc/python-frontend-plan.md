@@ -1063,6 +1063,34 @@ closes are contrived (`1 & [1]`), niche (`{None,None}`), or minor precision
 fix specified.** The disciplined outcome (do not ship point-fixes that regress a
 CORE test) over a precision/contrived-soundness win.
 
+**Attribute-read AttributeError whole-group SPIKE (2026-07-02).** The fuzzer
+found reading an undeclared instance attribute verifies SUCCESSFUL but raises
+AttributeError. Investigated the whole group (missing-method reads are ALREADY
+flagged; the class struct collects `self.x =` from every method body + class
+body + annotations + inherited + module-level `obj.x =`, so the struct component
+set is the complete statically-known attribute set; `__getattr__` and
+`__getattribute__` are detected and route to a nondet fallback). Split by
+FP-safety:
+
+- **`__slots__` classes — DONE (`fae9d5db4f`).** A fully slots-enforced class
+  (every MRO base has `__slots__`) has a CLOSED attribute set (no `__dict__`), so
+  a read that is not a slot / method / class-attr / dunder is a PROVABLE
+  AttributeError. Implemented the read side (mirroring the existing write-side
+  `slots_forbidden_attr`) with read-only FP-safety additions (methods,
+  class-level attrs incl. inherited, object dunders excluded; properties/
+  descriptors resolved earlier). Closes the `slots_read` fuzzer residual.
+
+- **plain (`__dict__`) classes — DEFERRED.** Flagging `c.missing` on a plain
+  class is NOT sound in general: `setattr(obj, 'x', v)` with a constant name,
+  `obj.__dict__['x'] = v`, module-level monkey-patching (`obj.x = v` on an
+  external instance), class decorators, and metaclasses can all add attributes
+  the struct-component scan does not capture -- each a legitimate case CPython
+  accepts. The whole-program view narrows this, but the residual FP surface
+  (setattr / `__dict__` / decorator / metaclass) is large relative to the value
+  (a typo'd attribute), so the plain-class read stays a documented residual
+  unless a strong per-class "no dynamic injection" gate is added first. Verdict:
+  ship the rock-solid `__slots__` half; defer the plain-class half.
+
 **Kwarg cross-module binding — FIXED (2026-06-25, `6f9417b754`).** Not a false
 proof (sound spurious-fail) but a correctness gap: keyword arguments to imported
 functions (`mod.foo(a=5)`) were dropped (callee saw nondet/default). Now bound
