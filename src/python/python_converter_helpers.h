@@ -567,6 +567,10 @@ collect_param_names(const jsont &func_def)
     return std::make_pair(canonical, gate_class);
   };
 
+  // PLR §3.3.2: attributes CREATED via a plain `param.attr = ...` store in this
+  // function. A later read of such an attr is not a missing-attribute access
+  // (the store created it), so these are subtracted from `out` after the walk.
+  std::map<std::string, std::set<std::string>> created;
   std::function<void(const jsont &)> attr_pass = [&](const jsont &n)
   {
     if(n.is_null())
@@ -595,6 +599,43 @@ collect_param_names(const jsont &func_def)
           // Don't fall through to the generic walk.
           return;
         }
+      }
+
+      // PLR §3.3.2: a plain attribute-assignment target `o.attr = ...` CREATES
+      // the attribute, so it is NOT a missing-attribute access — do not record
+      // it. Still record uses in the assigned VALUE and any nested reads in the
+      // targets (`o.x[i] = ...` READS `o.x`). AugAssign (`o.x += 1`) reads and
+      // is a different node type, so it falls through to the generic walk and is
+      // still recorded.
+      if(type == "Assign")
+      {
+        attr_pass(n["value"]);
+        if(n["targets"].is_array())
+          for(const auto &t : to_json_array(n["targets"]))
+          {
+            if(
+              t.is_object() && t["_type"].value == "Attribute" &&
+              t["value"].is_object() && t["value"]["_type"].value == "Name")
+            {
+              // `name.attr = ...` -> attribute creation. Record it as created
+              // (resolving param/alias) so a later read of it is not flagged.
+              const std::string &nm = t["value"]["id"].value;
+              std::string canon;
+              if(param_names.count(nm) > 0)
+                canon = nm;
+              else
+              {
+                auto ai = alias_to_param.find(nm);
+                if(ai != alias_to_param.end())
+                  canon = ai->second;
+              }
+              if(!canon.empty() && !t["attr"].value.empty())
+                created[canon].insert(t["attr"].value);
+              continue;
+            }
+            attr_pass(t); // Subscript / nested target -> recurse for reads
+          }
+        return;
       }
 
       if(type == "Attribute")
@@ -653,6 +694,26 @@ collect_param_names(const jsont &func_def)
     }
   };
   attr_pass(node);
+
+  // PLR §3.3.2: an attribute CREATED by a plain `param.attr = ...` store in the
+  // function is not a missing-attribute access — remove it from the recorded
+  // read-uses (and its gate entries) so a create-then-read does not false-alarm.
+  for(const auto &kv : created)
+  {
+    auto oi = out.find(kv.first);
+    if(oi == out.end())
+      continue;
+    for(const std::string &a : kv.second)
+    {
+      oi->second.erase(a);
+      if(gates != nullptr)
+      {
+        auto gp = gates->find(kv.first);
+        if(gp != gates->end())
+          gp->second.erase(a);
+      }
+    }
+  }
 }
 
 /// Convert a double to a 64-bit floatbv constant expression.
