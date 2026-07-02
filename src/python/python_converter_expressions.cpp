@@ -2386,6 +2386,29 @@ python_convertert::python_numeric_key(const exprt &v) const
   }
   return std::nullopt;
 }
+// PLR §3.3.1: whether `e` is a PROVABLY non-iterable scalar -- a concrete
+// numeric (int/float/bool), complex, or a constant None. Iterating or unpacking
+// such a value (`for x in 5`, `a, b = None`, `[x for x in 3j]`) raises
+// TypeError. Shared by the for-loop, tuple/list-unpack and comprehension sites
+// (the "non-iterable operand" whole-group). PLR-correct: only PROVABLE scalars
+// fire -- str/list/tuple/set/dict/range/generator are iterable, a `python_value`
+// (Any) MIGHT be iterable at runtime, and a class instance is handled by the
+// separate __iter__/__getitem__ protocol check (never here).
+bool python_convertert::provably_non_iterable_scalar(const exprt &e) const
+{
+  const typet &t = e.type();
+  const irep_idt tid = t.id();
+  if(
+    tid == ID_signedbv || tid == ID_unsignedbv || tid == ID_integer ||
+    tid == ID_floatbv || tid == ID_fixedbv || tid == ID_bool ||
+    tid == ID_c_bool)
+    return true;
+  if(tid == ID_struct && to_struct_type(t).get_tag() == "python_complex")
+    return true;
+  if(is_python_none_constant(e))
+    return true;
+  return false;
+}
 
 int python_convertert::orderable_category_of(const exprt &e)
 {

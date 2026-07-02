@@ -2031,6 +2031,19 @@ codet python_convertert::convert_assign(const jsont &stmt)
       // `a, b = C()` raises TypeError ('cannot unpack non-iterable ...'). Same
       // whole-group check (and gating) as the for-loop / comprehension sites.
       {
+        // Provably non-iterable SCALAR (int/float/bool/complex/None): `a, b = 5`
+        // / `a, b = None` raise TypeError. Shared predicate; PROVABLE scalars
+        // only (Any / str / containers never fire).
+        if(provably_non_iterable_scalar(rhs))
+        {
+          source_locationt tloc = loc;
+          tloc.set_property_class("type-error");
+          tloc.set_comment("cannot unpack non-iterable object");
+          code_assertt te{false_exprt{}};
+          te.add_source_location() = tloc;
+          block.add(std::move(te));
+          return std::move(block);
+        }
         std::string rtag;
         if(rhs.type().id() == ID_struct)
           rtag = id2string(to_struct_type(rhs.type()).get_tag());

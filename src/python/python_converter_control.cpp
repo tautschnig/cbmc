@@ -780,15 +780,12 @@ codet python_convertert::convert_for(const jsont &stmt)
   if(iterable.is_nil())
     return finalize_for(code_skipt{});
 
-  // PLR §3.3.1: a concrete non-iterable scalar (int/float/bool) is not
-  // iterable -> `for x in 5` raises TypeError ('object is not iterable'). Only
-  // bare numeric scalar types are flagged; str/list/dict/set/tuple/range/class/
-  // python_value are legitimately iterable and never reach here as a scalar.
+  // PLR §3.3.1: a PROVABLY non-iterable scalar (concrete int/float/bool/complex
+  // or a constant None) is not iterable -> `for x in 5` / `for x in None` raises
+  // TypeError ('object is not iterable'). str/list/dict/set/tuple/range/class/
+  // python_value are legitimately iterable (or MIGHT be) and are not flagged.
   {
-    const irep_idt itid = iterable.type().id();
-    if(
-      itid == ID_signedbv || itid == ID_unsignedbv || itid == ID_floatbv ||
-      itid == ID_fixedbv || itid == ID_c_bool)
+    if(provably_non_iterable_scalar(iterable))
     {
       source_locationt tloc = loc;
       tloc.set_property_class("type-error");
