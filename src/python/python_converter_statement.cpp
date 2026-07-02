@@ -34,9 +34,43 @@ codet python_convertert::convert_statement(const jsont &stmt)
   codet result = code_skipt{};
 
   if(node_type == "AnnAssign")
+  {
     result = convert_ann_assign(stmt);
+    // PLR §7.5: an annotated (re)binding of a del-tracked name clears its flag.
+    const jsont &t = json_member(stmt, "target");
+    if(is_node_type(t, "Name"))
+    {
+      const std::string nm = json_string(json_member(t, "id"));
+      if(deleted_name_targets.count(nm) > 0)
+      {
+        code_blockt w;
+        w.add(result);
+        w.add(code_frontend_assignt{
+          deleted_name_flag(qualify_name(nm)), false_exprt{}});
+        result = std::move(w);
+      }
+    }
+  }
   else if(node_type == "Assign")
+  {
     result = convert_assign(stmt);
+    // PLR §7.5: an assignment to a del-tracked name (re)binds it, clearing its
+    // deleted flag (this also provides the flag's init-false at the binding).
+    if(!deleted_name_targets.empty())
+    {
+      code_blockt w;
+      w.add(result);
+      for(const auto &t : as_array(json_member(stmt, "targets")))
+        if(is_node_type(t, "Name"))
+        {
+          const std::string nm = json_string(json_member(t, "id"));
+          if(deleted_name_targets.count(nm) > 0)
+            w.add(code_frontend_assignt{
+              deleted_name_flag(qualify_name(nm)), false_exprt{}});
+        }
+      result = std::move(w);
+    }
+  }
   else if(node_type == "AugAssign")
     result = convert_aug_assign(stmt);
   else if(node_type == "Assert")
@@ -545,6 +579,14 @@ codet python_convertert::convert_statement(const jsont &stmt)
             del_block.add(
               code_frontend_assignt{s->symbol_expr(), std::move(none_marker)});
           }
+          // PLR §7.5: mark the name deleted so a subsequent read (before any
+          // reassignment) raises NameError. The `<qname>$deleted` flag flows
+          // through the SSA; convert_name emits the conditional NameError, and
+          // any assignment to the name clears it. Only del-tracked names carry
+          // a flag (deleted_name_targets), so the read path stays cheap.
+          if(deleted_name_targets.count(nm) > 0)
+            del_block.add(
+              code_frontend_assignt{deleted_name_flag(sid), true_exprt{}});
         }
         // PLR §7.4 / §9.4: `del obj.attr` on an instance
         // attribute. For a class-level attr, clear the

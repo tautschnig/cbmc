@@ -255,6 +255,21 @@ exprt python_convertert::convert_name(const jsont &expr)
   else if(id == "__name__")
     return python_string_literal("__main__");
 
+  // PLR §7.5: reading a name that was `del`-eted (and not since reassigned)
+  // raises NameError. Guard on the name's `<qname>$deleted` flag — only names
+  // that appear as a `del` target anywhere (deleted_name_targets) carry a flag,
+  // so every other name read stays on the fast path. The flag flows through the
+  // SSA, so the guard is control-flow-precise: unconditional after a
+  // straight-line del, conditional after a branch del, and false after a
+  // reassignment (the binding/assignment clears it).
+  if(deleted_name_targets.count(id) > 0)
+  {
+    const irep_idt fid{id2string(qualify_name(id)) + "$deleted"};
+    if(symbol_table.lookup(fid) != nullptr)
+      emit_conditional_exception(
+        symbol_table.lookup_ref(fid).symbol_expr(), "NameError");
+  }
+
   // Closure cell substrate (PLR §4.2.2), comprehension late-binding: a
   // loop variable referenced inside a comprehension's element closure
   // resolves to the unique per-comprehension symbol (final value),

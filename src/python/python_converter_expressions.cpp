@@ -2310,6 +2310,21 @@ bool python_convertert::slots_forbidden_attr(
 // a slot, so this is false-positive-free (plain classes with a __dict__, and any
 // slot / method / class-attr / property, are never flagged). Properties and
 // descriptors are resolved by convert_attribute BEFORE this check is reached.
+symbol_exprt python_convertert::deleted_name_flag(const irep_idt &qname)
+{
+  const irep_idt fid{id2string(qname) + "$deleted"};
+  if(symbol_table.lookup(fid) == nullptr)
+  {
+    symbolt fs{fid, bool_typet{}, "python"};
+    fs.base_name = id2string(fid);
+    fs.is_lvalue = true;
+    fs.is_state_var = true;
+    fs.is_static_lifetime = current_function.empty();
+    symbol_table.add(fs);
+  }
+  return symbol_table.lookup_ref(fid).symbol_expr();
+}
+
 void python_convertert::collect_assigned_attr_names(const jsont &node)
 {
   if(node.is_array())
@@ -2338,6 +2353,15 @@ void python_convertert::collect_assigned_attr_names(const jsont &node)
       if(fn == "setattr" || fn == "vars")
         program_uses_dynamic_attr = true; // string-named attr injection
     }
+  }
+  else if(is_node_type(node, "Delete"))
+  {
+    // PLR §7.5: record `del <Name>` targets so their reads can be guarded.
+    const jsont &tgts = json_member(node, "targets");
+    if(tgts.is_array())
+      for(const auto &t : as_array(tgts))
+        if(is_node_type(t, "Name"))
+          deleted_name_targets.insert(json_string(json_member(t, "id")));
   }
   else if(
     is_node_type(node, "ClassDef") || is_node_type(node, "AsyncFunctionDef"))

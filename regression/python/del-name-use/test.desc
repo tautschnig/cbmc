@@ -1,6 +1,6 @@
-KNOWNBUG
+CORE
 main.py
 --unwind 6 --no-unwinding-assertions
-^VERIFICATION SUCCESSFUL$
+^VERIFICATION FAILED$
 --
 ^warning: ignoring
