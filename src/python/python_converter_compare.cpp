@@ -458,6 +458,22 @@ exprt python_convertert::convert_compare(const jsont &expr)
     };
     materialise_side_effect(current_left);
     materialise_side_effect(right);
+    // PLR §6.10.1: `bool` is a subtype of `int` (`True == 1`, `False == 0`), so
+    // an ordered comparison with a bool operand compares by integer value.
+    // Promote a CONCRETE bool operand to int here; otherwise the relation is
+    // built at bool width and the other side is cast DOWN to bool (`True < 2`
+    // became `True < bool(2)==True` → False). A python_value (Any) bool is left
+    // to the tag-dispatch path below. Ordered ops only (Eq/NotEq already work
+    // via the tag path; `is`/`in` are identity/membership, not value order).
+    if(ordered_op)
+    {
+      if(
+        current_left.type().id() == ID_bool ||
+        current_left.type().id() == ID_c_bool)
+        current_left = typecast_exprt{current_left, python_int_type()};
+      if(right.type().id() == ID_bool || right.type().id() == ID_c_bool)
+        right = typecast_exprt{right, python_int_type()};
+    }
     if(
       ordered_op && !is_python_none(current_left, symbol_table) &&
       !is_python_none(right, symbol_table) &&
@@ -886,6 +902,34 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
 
     exprt cmp;
+
+    // PLR §3.2 / §6.10.1: set ordering is the SUBSET partial order (not a total
+    // order): `A <= B` iff A is a subset of B, `A < B` iff a PROPER subset (and
+    // symmetrically for `>`/`>=`). For two bitmap sets, subset is a bit-mask
+    // test on the bitmaps. The literal bitmap model uses offset 0 with a range
+    // guard (elements in [0,64)), so the bitmaps are directly comparable.
+    if(
+      (op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE") &&
+      is_python_set_type(current_left.type()) &&
+      is_python_set_type(right.type()))
+    {
+      const exprt la =
+        member_exprt{current_left, "bitmap", unsignedbv_typet{64}};
+      const exprt lb = member_exprt{right, "bitmap", unsignedbv_typet{64}};
+      const exprt inter = bitand_exprt{la, lb};
+      const exprt a_sub_b = equal_exprt{inter, la}; // A ⊆ B
+      const exprt b_sub_a = equal_exprt{inter, lb}; // B ⊆ A
+      const exprt neq = notequal_exprt{la, lb};
+      if(op == "LtE")
+        cmp = a_sub_b;
+      else if(op == "Lt")
+        cmp = and_exprt{a_sub_b, neq};
+      else if(op == "GtE")
+        cmp = b_sub_a;
+      else // Gt
+        cmp = and_exprt{b_sub_a, neq};
+      goto done_cmp;
+    }
 
     // PLR §6.10.1: lexicographic ordering of sequences.
     // Lists compare element by element from index 0. The first
