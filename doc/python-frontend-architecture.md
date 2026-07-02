@@ -1184,11 +1184,12 @@ out-of-subset residuals** and ~206 false *alarms* (sound over-approximations /
 unsupported-feature precision — see inventory B). Two standing soundness-
 regression gates run after every change: the **oracle 0-NEW gate** (real-world
 corpus) and the **PLR-fuzz 0-NEW gate** (template-generated PLR-tagged programs
-vs a committed baseline of **4** known/deferred false-proof labels — see Sweep
-round 4). All 4 baselined fuzzer false proofs are deferred-with-plan (plain-class
-`missing_attr`) or planned (generator ×3 → §1); none are un-planned. (The 10
-list-bitwise labels that were baselined earlier are now **closed** — see Sweep
-round 4.)
+vs a committed baseline of **2** known/deferred false-proof labels — see Sweep
+round 4). Both baselined fuzzer false proofs are deferred-with-plan (plain-class
+`missing_attr`) or planned (generator `box[0]` container slot → the perf-gated
+by-reference "Phase 4", §1); none are un-planned. (The 10 list-bitwise labels and
+the `list(g)`/`sum(g)`-after-`next()` aggregating channels that were baselined
+earlier are now **closed** — see Sweep round 4.)
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
@@ -1197,9 +1198,10 @@ round 4.)
 > original Name re-yields already-consumed elements. **The `for`-loop and alias
 > channels are now CLOSED (2026-07-01):** `for x in g` resumes from `g`'s cursor
 > (`gen-foriter-after-next-typeerror`, CORE) and an alias `it2 = it` shares the
-> cursor (`gen-alias-consume-typeerror`, CORE). Still open (pinned KNOWNBUG): a
-> container slot `box[0]` (`gen-in-container-consume-knownbug`) and
-> `list(g)`/`sum(g)` after a partial `next()`; the fix for the rest is a
+> cursor (`gen-alias-consume-typeerror`, CORE). `list(g)`/`sum(g)` after a partial
+> `next()` are now CLOSED too (2026-07-02 — cursor-aware aggregating builtins,
+> `gen-aggregating-after-next` CORE). Still open (pinned KNOWNBUG): a container
+> slot `box[0]` (`gen-in-container-consume-knownbug`); the fix for it is a
 > generator-OBJECT model (plan §1). So "0 false proofs" is accurate *for the
 > oracle corpus*; this cluster is a known
 > residual outside it. (Async, symbolic-key dict, and escaping closures probed
@@ -1233,7 +1235,7 @@ round 4.)
 >   flagged (sound). Now CORE `star-unpack-call-arity` (+ `-nofp`).
 > - Additional generator-cluster channels confirmed (same root as the
 >   consumption-state cluster): `list(gen)` / `sum(gen)` after a partial `next()`
->   also re-yield (still open — aggregating builtins iterate via their own path).
+>   also re-yielded — **CLOSED 2026-07-02** (cursor-aware aggregating builtins).
 > A precision *false alarm* (not a false proof) was also seen: `1.0 in {1}` is
 > not proven (membership over-approximates a cross-type numeric hit).
 >
@@ -1343,8 +1345,11 @@ round 4.)
 >   `__dict__` / decorator injection). Sound design = a program-wide
 >   `assigned_attr_names` set + a `class_attr_set_closed` predicate; see
 >   [plan §0: plain-class missing-attr](python-frontend-plan.md#false-proofs).
-> - **generator container / `list(g)` / `sum(g)` after `next()`** — the
->   generator-OBJECT identity model, [plan §1](python-frontend-plan.md#generators).
+> - **generator `box[0]` container slot** — `list(g)`/`sum(g)`-after-`next()` are
+>   now CLOSED (2026-07-02, cursor-aware aggregating builtins); the remaining
+>   channel is a generator stored in a container slot (no Name to key the cursor,
+>   copied by value), which needs by-reference containers (perf-gated Phase 4),
+>   [plan §1](python-frontend-plan.md#generators).
 >
 > A few new PRECISION false alarms (sound direction) were also catalogued — see
 > inventory B: star-args tuple unpack `f(*t)`, set-comprehension dedup length.

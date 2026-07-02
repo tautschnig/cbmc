@@ -1873,18 +1873,14 @@ plan). Verdict by channel:
 - **`gen_container` (`box=[g()]; next(box[0])`)** — the cursor cannot be keyed on
   a Name and the eager list is copied by value into the slot, so this needs
   **by-reference containers (perf-gated Phase 4)**. DEFER (unchanged).
-- **`gen_list_after_next` / `gen_sum_after_next`** — the cursor IS Name-resolvable
-  (`list(it)` / `sum(it)`), so these are *not* perf-gated: `list`/`sum` (and the
-  aggregating family `tuple`/`sorted`/`any`/`all`/`max`/`min`/`"".join`) can be
-  made cursor-aware exactly like `next()`/`for`, reading `data[cursor:length]`
-  and setting `cursor=length`. The right shape is a **single shared
-  `consume_remaining_from_cursor(gen_expr, cursor)` helper** called by each
-  aggregating builtin (a whole-group lever, not N ad-hoc edits) — PLR §6.2.9
-  (an exhausted/partly-consumed iterator yields only its remaining items).
-  **Bounded and viable**, but medium-value (the "partial `next()` then re-consume
-  via a *different* builtin" idiom is uncommon), so tracked as the next bounded
-  soundness step rather than done this pass. Implementing it would close 2 of the
-  4 remaining fuzzer false proofs without the perf-gated refactor.
+- **`gen_list_after_next` / `gen_sum_after_next`** — **CLOSED 2026-07-02**
+  (`ba250e9338`, `gen-aggregating-after-next` CORE). The cursor is
+  Name-resolvable, so one shared `generator_cursor_for_arg` helper makes the
+  aggregating builtins cursor-aware: `sum` accumulates `data[cursor:length]`,
+  `list` materialises the remaining slice, both mark the generator exhausted.
+  Sound (no re-yield) AND precise (`next(it); list(it) == [2,3]`, `sum == 5`).
+  The same helper can be extended to `tuple`/`sorted`/`any`/`all`/`max`/`min`/
+  `"".join` when a benchmark needs them (PLR §6.2.9). Not perf-gated.
 
 ---
 
