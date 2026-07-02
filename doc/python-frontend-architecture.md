@@ -1184,12 +1184,12 @@ out-of-subset residuals** and ~206 false *alarms* (sound over-approximations /
 unsupported-feature precision — see inventory B). Two standing soundness-
 regression gates run after every change: the **oracle 0-NEW gate** (real-world
 corpus) and the **PLR-fuzz 0-NEW gate** (template-generated PLR-tagged programs
-vs a committed baseline of **2** known/deferred false-proof labels — see Sweep
-round 4). Both baselined fuzzer false proofs are deferred-with-plan (plain-class
-`missing_attr`) or planned (generator `box[0]` container slot → the perf-gated
-by-reference "Phase 4", §1); none are un-planned. (The 10 list-bitwise labels and
-the `list(g)`/`sum(g)`-after-`next()` aggregating channels that were baselined
-earlier are now **closed** — see Sweep round 4.)
+vs a committed baseline of **1** known/deferred false-proof label — see Sweep
+round 4). The single baselined fuzzer false proof is planned (generator `box[0]`
+container slot → the perf-gated by-reference "Phase 4", §1); it is not un-planned.
+(The 10 list-bitwise labels, the `list(g)`/`sum(g)`-after-`next()` aggregating
+channels, and the plain-class `missing_attr` read that were baselined earlier are
+now all **closed** — see Sweep round 4.)
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
@@ -1340,11 +1340,15 @@ earlier are now **closed** — see Sweep round 4.)
 >   now needed only for the set-union / set-comprehension *precision* residuals
 >   (inventory B), not the soundness. See
 >   [plan §0: set-representation spike](python-frontend-plan.md#false-proofs).
-> - **plain-class `missing_attr`** (`c.missing` on a `__dict__` class) — the
->   per-class attribute set is incomplete (unannotated-param / alias / setattr /
->   `__dict__` / decorator injection). Sound design = a program-wide
->   `assigned_attr_names` set + a `class_attr_set_closed` predicate; see
->   [plan §0: plain-class missing-attr](python-frontend-plan.md#false-proofs).
+> - **plain-class `missing_attr`** (`c.missing` on a `__dict__` class) —
+>   **CLOSED 2026-07-02** (`3bc104028b`, `plain-missing-attr-read`,
+>   `plain-missing-attr-nofp` CORE). Whole-group lever: a program-wide
+>   `assigned_attr_names` set (every Store-context `X.attr=` target) +
+>   `class_attr_set_closed` (no `__getattr__`/`__getattribute__`/metaclass/
+>   decorator, known bases, no `setattr`/`__dict__`/`vars`). Flags `c.attr` iff
+>   `attr` is not a component/method/class-attr/dunder AND not in
+>   `assigned_attr_names`, on a closed-set class — FP-free (the unannotated-param
+>   / alias / decorator stores all put the name in `assigned_attr_names`).
 > - **generator `box[0]` container slot** — `list(g)`/`sum(g)`-after-`next()` are
 >   now CLOSED (2026-07-02, cursor-aware aggregating builtins); the remaining
 >   channel is a generator stored in a container slot (no Name to key the cursor,
