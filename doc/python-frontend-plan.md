@@ -1864,6 +1864,28 @@ aggregating channels.** Findings:
   edits. The common channels (for / next / send / alias) are already closed, so
   the Name-keyed cursor remains the right lightweight model for them.
 
+**Re-assessment (2026-07-02, perf spike — ASSESS ONLY, unchanged verdict).**
+Re-confirmed the split of the 3 remaining generator residuals; nothing in the
+container representation changed since spike #2, so the perf characterization
+still holds (the sweep is still at 2719 PASS; the by-reference-container
+prototype regressed it to 2710 with depth-2 `==` TIMEOUTs — see the ref-semantics
+plan). Verdict by channel:
+- **`gen_container` (`box=[g()]; next(box[0])`)** — the cursor cannot be keyed on
+  a Name and the eager list is copied by value into the slot, so this needs
+  **by-reference containers (perf-gated Phase 4)**. DEFER (unchanged).
+- **`gen_list_after_next` / `gen_sum_after_next`** — the cursor IS Name-resolvable
+  (`list(it)` / `sum(it)`), so these are *not* perf-gated: `list`/`sum` (and the
+  aggregating family `tuple`/`sorted`/`any`/`all`/`max`/`min`/`"".join`) can be
+  made cursor-aware exactly like `next()`/`for`, reading `data[cursor:length]`
+  and setting `cursor=length`. The right shape is a **single shared
+  `consume_remaining_from_cursor(gen_expr, cursor)` helper** called by each
+  aggregating builtin (a whole-group lever, not N ad-hoc edits) — PLR §6.2.9
+  (an exhausted/partly-consumed iterator yields only its remaining items).
+  **Bounded and viable**, but medium-value (the "partial `next()` then re-consume
+  via a *different* builtin" idiom is uncommon), so tracked as the next bounded
+  soundness step rather than done this pass. Implementing it would close 2 of the
+  4 remaining fuzzer false proofs without the perf-gated refactor.
+
 ---
 
 ## 2. Closures & late binding (PLR §4.2.2)  {#closures}
@@ -2254,35 +2276,31 @@ alarms). The nested-mutable-aliasing item below WAS a false proof; it is now
 
 ### Fuzzer-found precision residuals (2026-07-02) — sound over-approximations {#fuzz-precision}
 
-The PLR differential fuzzer catalogued three sound precision misses (each
-verifies FAILED against an `== expected` assert — the sound direction, never a
-false proof). Implementation sketches, PLR-grounded:
+The PLR differential fuzzer catalogued three sound precision misses. Two are now
+CLOSED (2026-07-02); the third rides with the set-representation project:
 
-- **`*args` value unpack** (`f(*t)` / `f(*xs)`, `kwargs/args_ok`). PLR §6.3.4 /
-  §4.8.2: an iterable prefixed with `*` in a call expands into consecutive
-  positional arguments. The *arity* fold is done (`star-unpack-call-arity`,
-  sound); the missing piece is binding the concrete element VALUES to the
-  parameters. *Plan:* when the unpacked operand is a constant tuple/list with a
-  statically-known length matching the callee's positional count, bind
-  `param[i] := elems[i]` instead of nondet — reusing the tuple/list element
-  extraction already used by `static_unpack_length`. Symbolic length / vararg
-  callee stays nondet (sound). Low priority (rare in the corpus).
+- **`*args` value unpack** (`f(*t)`) — **CLOSED (`55d3efaf5a`,
+  `star-arg-value-unpack`).** PLR §6.3.4 / PEP 448: a `*`-prefixed iterable
+  expands into consecutive positional arguments. Root: a tuple `*`-unpack was
+  misread with list layout (`{length, data[]}`), so the element values were not
+  bound; now a tuple struct's operands (its elements) are spread directly (list
+  `*xs` / literal `*[..]` were already handled). Arity check unchanged.
 - **List-backed set operations & set-comprehension length** (`{"a"}|{"b"}`,
-  `{e for …}`). PLR §3.2 / §6.2.5: `set` is a distinct type with
+  `{e for …}`) — **OPEN.** PLR §3.2 / §6.2.5: `set` is a distinct type with
   order-insensitive, deduplicated membership; a set display/comprehension keeps
   one representative per equal element. The frontend models a non-int set as a
   `python_list` (no dedup on `|`/`&`/`-`/`^`, and SetComp routes through the
-  list-comprehension path), so `len` over-counts. *Plan:* this is the PRECISION
-  face of the same root as the deferred §0 set-representation item — a real
-  `python_set` (element array + canonical-key dedup, reusing `canonical_key`)
-  would make both the soundness (list-bitwise) and precision (union / comp len)
+  list-comprehension path), so `len` over-counts. This is the PRECISION face of
+  the same root as the deferred §0 set-representation item — a real `python_set`
+  (element array + canonical-key dedup, reusing `canonical_key`) would make both
+  the soundness (list-bitwise, already closed) and precision (union / comp len)
   faces precise at once. Deferred with that project.
-- **Same-category ordering RESULT** (`True < 2`, `{1} < {1,2}`). PLR §6.10.1:
-  `bool` is a subtype of `int` so `True < 2` is `1 < 2`; `set` ordering is the
-  subset partial order. The cross-category TYPE check is sound (§A); the RESULT
-  value is not always proven. *Plan:* model `bool` operands in a comparison by
-  their int value (`True→1`), and `set < set` / `<=` as the subset predicate
-  over the bitmap/element model. Small, self-contained; low priority.
+- **Same-category ordering RESULT** (`True < 2`, `{1} < {1,2}`) — **CLOSED
+  (`d4e0e27c7b`, `compare-bool-set-result-precision`).** PLR §6.10.1: `bool` is a
+  subtype of `int`, so a concrete bool operand is promoted to int for ordered
+  comparisons (the relation was built at bool width, truncating the other side).
+  PLR §3.2: `set` ordering is the subset partial order, now modelled as the
+  bitmap subset predicate (`A&B==A` for `<=`, `+ A≠B` for `<`).
 
 
 
