@@ -2332,7 +2332,9 @@ is a whole-group and none is a quick win:
   exception fires at the `len` site (a stray raising-op/model-bound check on the
   bytearray path; §4.8). Investigate + suppress.
 - **Custom `__iadd__`** in-place result (`c += x` dispatching a user `__iadd__`)
-  and **3-arg `pow`** (`pow(a,b,m)` modular, §6.7) — not modelled (nondet).
+  — not modelled (nondet). (**`pow` CLOSED 2026-07-03** `bc13e1f145`: builtin
+  `pow(a,b[,m])` now routes through the **/% operator lowering; **`zip` CLOSED**
+  same commit: the two-list case materialises a precise list of tuples.)
 - **Any-param store→read VALUE** (`def f(o): o.x = 5; return o.x` returns nondet,
   not 5; PLR §3.3.2). The attribute-error store false alarm is closed
   (`276f4ff045`); the VALUE does not propagate because an Any/`python_value`
