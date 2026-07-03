@@ -221,7 +221,54 @@ std::optional<exprt> python_convertert::try_builtin_call(
   // PLib builtins: zip(*iterables)
   else if(func_name == "zip")
   {
-    // Return nondet list of tuples
+    // PLR §6.2.5: zip(a, b) yields tuples (a[i], b[i]) up to the SHORTER input.
+    // Materialise the common two-list case precisely (a list of python_tuple
+    // (_0=a[i], _1=b[i]), length = min(len(a), len(b))); reuse the enumerate
+    // list-of-tuples shape. Other arities / non-list args -> nondet fallback.
+    if(args.is_array() && as_array(args).size() == 2)
+    {
+      auto it = as_array(args).begin();
+      exprt la = convert_expression(*it);
+      ++it;
+      exprt lb = convert_expression(*it);
+      if(
+        !la.is_nil() && !lb.is_nil() && is_python_list_type(la.type()) &&
+        is_python_list_type(lb.type()))
+      {
+        const auto &sta = to_struct_type(la.type());
+        const auto &stb = to_struct_type(lb.type());
+        const auto &da_t = to_array_type(sta.components()[1].type());
+        const auto &db_t = to_array_type(stb.components()[1].type());
+        const typet ea = da_t.element_type();
+        const typet eb = db_t.element_type();
+        member_exprt len_a{la, "length", signedbv_typet{64}};
+        member_exprt len_b{lb, "length", signedbv_typet{64}};
+        member_exprt data_a{la, "data", da_t};
+        member_exprt data_b{lb, "data", db_t};
+        struct_typet::componentst comps;
+        comps.push_back(struct_typet::componentt{"_0", ea});
+        comps.push_back(struct_typet::componentt{"_1", eb});
+        struct_typet tuple_type{comps};
+        tuple_type.set_tag("python_tuple");
+        struct_typet result_list_type = python_list_type(tuple_type);
+        const auto &res_data_t =
+          to_array_type(result_list_type.components()[1].type());
+        exprt::operandst elems;
+        for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+        {
+          exprt idx = from_integer(i, signedbv_typet{64});
+          elems.push_back(struct_exprt{
+            {index_exprt{data_a, idx}, index_exprt{data_b, idx}}, tuple_type});
+        }
+        // length = min(len(a), len(b))
+        exprt zip_len =
+          if_exprt{binary_relation_exprt{len_a, ID_lt, len_b}, len_a, len_b};
+        return struct_exprt{
+          {zip_len, array_exprt{std::move(elems), res_data_t}},
+          result_list_type};
+      }
+    }
+    // Return nondet list of tuples (other arities / non-list iterables).
     return side_effect_expr_nondett{
       python_list_type(python_int_type()), get_location(expr)};
   }
@@ -4682,6 +4729,38 @@ std::optional<exprt> python_convertert::try_builtin_call(
       return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
     }
     return false_exprt{};
+  }
+  // PLR §6 / §3.3.8: pow(a, b) == a ** b; pow(a, b, m) == (a ** b) % m. Route
+  // through the operator lowering (synthesise a BinOp) so the **/% precision is
+  // reused instead of returning nondet. 2 or 3 positional args.
+  else if(
+    func_name == "pow" && args.is_array() &&
+    (as_array(args).size() == 2 || as_array(args).size() == 3))
+  {
+    auto mk_binop =
+      [&](const jsont &l, const jsont &r, const char *opname) -> jsont
+    {
+      jsont node = expr; // inherit source-location fields
+      json_objectt &o = to_json_object(node);
+      o["_type"] = json_stringt("BinOp");
+      o["left"] = l;
+      o["right"] = r;
+      json_objectt op;
+      op["_type"] = json_stringt(opname);
+      o["op"] = op;
+      return node;
+    };
+    auto it = as_array(args).begin();
+    const jsont &a = *it;
+    ++it;
+    const jsont &b = *it;
+    jsont powexpr = mk_binop(a, b, "Pow");
+    if(as_array(args).size() == 3)
+    {
+      ++it;
+      powexpr = mk_binop(powexpr, *it, "Mod");
+    }
+    return convert_expression(powexpr);
   }
   // abs()
   else if(func_name == "abs")
