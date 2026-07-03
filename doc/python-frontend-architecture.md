@@ -1191,14 +1191,20 @@ out-of-subset residuals** and ~206 false *alarms* (sound over-approximations /
 unsupported-feature precision — see inventory B). Two standing soundness-
 regression gates run after every change: the **oracle 0-NEW gate** (real-world
 corpus) and the **PLR-fuzz 0-NEW gate** (template-generated PLR-tagged programs
-vs a committed baseline of **2** known/deferred false-proof labels — see Sweep
-round 4). Both are documented/planned: generator `box[0]` container slot (→ the
-perf-gated by-reference "Phase 4", §1) and `del c.a` attribute-read (→ per-
-instance deleted state, the same Phase-4 instance-identity family). Neither is
-un-planned. (The 10 list-bitwise labels, the `list(g)`/`sum(g)`-after-`next()`
-aggregating channels, the plain-class `missing_attr` read, `gen.close()`+next,
-and `del x`-name NameError that were baselined earlier are now all **closed** —
-see Sweep round 4.)
+vs a committed baseline of **3** known/deferred false-proof labels — see Sweep
+rounds 4–6). All three are documented/planned AND share ONE root — the
+**by-value-vs-by-reference OBJECT IDENTITY** family: generator `box[0]` container
+slot (→ perf-gated by-reference "Phase 4", §1), `del c.a` attribute-read (→ per-
+instance deleted state, same Phase-4 instance-identity), and `del`-of-a-closure-
+captured variable (→ the free var is captured BY VALUE, so `del` of the enclosing
+binding is not observed — needs the cell-capture model, [fat-closure
+plan](python-frontend-fat-closure-plan.md)). None is un-planned; a unified
+reference-identity effort (cell-capture for closures + `--python-ref-instances`
+for instances/containers) is the ONE architectural lever that closes all three.
+(The 10 list-bitwise labels, the `list(g)`/`sum(g)`-after-`next()` aggregating
+channels, the plain-class `missing_attr` read, `gen.close()`+next, and `del x`
+DIRECT-read NameError that were baselined earlier are now all **closed** — see
+Sweep rounds 4–6.)
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
