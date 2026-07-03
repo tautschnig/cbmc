@@ -1384,6 +1384,21 @@ see Sweep round 4.)
 >   state (a scope-local per-name flag is unsound under aliasing — `del c.a; d=c;
 >   d.a` must still raise), which is the per-instance-identity / Phase-4 family.
 
+> **Sweep round 6 (2026-07-03) — feature-combination fuzzing.** Combination
+> templates (feature A x B, where interaction bugs hide) found ONE new false
+> proof: **`del` of a closure-captured variable** — `def f(): x=5; def g(): return
+> x; del x; return g()` raises NameError in CPython (capture is by CELL, so `del`
+> unbinds the shared cell) but cbmc verifies SUCCESSFUL. Root: the frontend
+> captures a free variable BY VALUE, so the nested function reads a stale copy
+> unaffected by `del`; the DIRECT-read del case is caught (`del-name-use` CORE),
+> but the closure sub-case needs the by-reference cell-capture model (the
+> [fat-closure plan](python-frontend-fat-closure-plan.md)). PINNED KNOWNBUG
+> (`del-closure-nameerror-knownbug`). Precision-only combination findings (sound
+> FALSE ALARMS, not proofs): a comprehension over a partially-consumed generator
+> is not cursor-aware (the list/sum cursor work does not extend to the
+> comprehension consumer yet), and `a=[1]; b=a; a+=[2]` does not propagate the
+> in-place extend to the alias (list aug-assign aliasing).
+
 - *Closed 2026-06-30 (commit `70401b6d90`):* `gen_send_before_start` — the eager
   generator cursor already encodes priming (`cursor == 0` ⟺ not started), so a
   new `.send()` handler raises `TypeError` for a non-None send to a just-started
