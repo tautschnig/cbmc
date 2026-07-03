@@ -321,6 +321,29 @@ remains the single pinned KNOWNBUG until then. Not shipped this pass: it is a
 dedicated multi-day flag-gated effort whose payoff is OPT-IN precision (~150
 alarms) plus one niche soundness residual, not a spike-sized change.
 
+### `del c.a` (del-attr) rides the same per-instance-identity family (2026-07-03 spike)
+
+The `del c.a; read c.a → AttributeError` residual (`del-attr-read-knownbug`,
+pinned) is the SAME per-instance-identity family. Spike outcome:
+- **Sound design:** a per-instance **deleted-flag** carried WITH the object — a
+  `__shadow_<attr>`-style bool struct field (the machinery to add such fields
+  and to emit `python-attribute-error` on an unshadowed read already exists for
+  class-level / bare-annotation attrs — defs.cpp `__shadow_` + `class_attrerror_
+  fields` + the convert_attribute read-guard). `del c.a` sets it deleted, a
+  `self.a =`/`c.a =` store clears it, a read emits a conditional AttributeError.
+  **Sound under aliasing for free:** `d = c` is already a pointer to `c`'s struct
+  (Phase-2 instance-by-reference, default-on), so `del c.a; d = c; d.a` reads
+  `c`'s deleted flag and raises — this is exactly why the flag must live on the
+  OBJECT (a scope-local per-name flag, like del-name, would be unsound here).
+- **Why deferred:** it is a struct-LAYOUT change for every del'd instance
+  attribute (constructor init to bound, a clear at every `self.a =`, the read
+  guard) — moderately invasive, rippling to constructors / struct equality /
+  leaf-boxing — for a niche pattern. It belongs with the Phase-4 per-instance
+  work: `del_attr` + `gen_container` are the two remaining fuzzer residuals and
+  BOTH are per-instance object identity, so a single per-instance-state effort
+  (the flag-gated `--python-ref-instances` object-identity infrastructure) closes
+  both. Kept pinned until then; the design above is implementation-ready.
+
 ## 6. Cross-references
 
 - Master inventory: the **Class-instance identity / aliasing** and
