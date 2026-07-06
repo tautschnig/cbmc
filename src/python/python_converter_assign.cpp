@@ -101,6 +101,11 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
             shadow->add_source_location() = loc;
             result.add(std::move(*shadow));
           }
+          if(auto present = maybe_present_assign(deref, attr))
+          {
+            present->add_source_location() = loc;
+            result.add(std::move(*present));
+          }
           if(result.statements().size() == 1)
             return std::move(result.statements().front());
           return std::move(result);
@@ -3473,6 +3478,11 @@ codet python_convertert::convert_assign(const jsont &stmt)
                 shadow->add_source_location() = loc;
                 block.add(std::move(*shadow));
               }
+              if(auto present = maybe_present_assign(deref, attr))
+              {
+                present->add_source_location() = loc;
+                block.add(std::move(*present));
+              }
               continue;
             }
           }
@@ -3521,6 +3531,11 @@ codet python_convertert::convert_assign(const jsont &stmt)
               shadow->add_source_location() = loc;
               block.add(std::move(*shadow));
             }
+            if(auto present = maybe_present_assign(obj, attr))
+            {
+              present->add_source_location() = loc;
+              block.add(std::move(*present));
+            }
             continue;
           }
         }
@@ -3557,6 +3572,11 @@ codet python_convertert::convert_assign(const jsont &stmt)
             {
               shadow->add_source_location() = loc;
               block.add(std::move(*shadow));
+            }
+            if(auto present = maybe_present_assign(deref, attr))
+            {
+              present->add_source_location() = loc;
+              block.add(std::move(*present));
             }
             done = true;
             break;

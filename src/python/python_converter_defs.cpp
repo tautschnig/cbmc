@@ -2986,6 +2986,37 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   for(auto &c : components)
     tagged_components.push_back(std::move(c));
 
+  // PLR §7.5/§6.10: for each attribute `del`-eted somewhere in the program AND
+  // declared on this class, add a per-instance `__present_<attr>` bool flag
+  // (mirrors the ripple-safe `__shadow_` bool field). A store sets it true, a
+  // `del c.a` sets it false, and a read raises AttributeError when false.
+  if(!deleted_attr_targets.empty())
+  {
+    std::set<std::string> existing_names;
+    for(const auto &c : tagged_components)
+      existing_names.insert(id2string(c.get_name()));
+    std::vector<std::string> present_to_add;
+    const auto cla_it = class_level_attrs.find(class_name);
+    for(const auto &c : tagged_components)
+    {
+      const std::string n = id2string(c.get_name());
+      // Only INSTANCE-ONLY attrs get a present flag. A class-level attr (with a
+      // class default) uses the existing __shadow_ mechanism: `del c.a` there
+      // removes the instance override and reads FALL BACK to the class value --
+      // not AttributeError. Adding a present flag/read-guard for such attrs
+      // would wrongly raise on the fallback read (class10 regression).
+      const bool is_class_level =
+        cla_it != class_level_attrs.end() && cla_it->second.count(n) > 0;
+      if(
+        deleted_attr_targets.count(n) > 0 && !is_class_level &&
+        n.rfind("__", 0) != 0 && existing_names.count("__present_" + n) == 0)
+        present_to_add.push_back(n);
+    }
+    for(const auto &n : present_to_add)
+      tagged_components.push_back(
+        struct_typet::componentt{"__present_" + n, c_bool_typet{8}});
+  }
+
   struct_typet class_type{tagged_components};
   class_type.set_tag("python_class_" + class_name);
   class_types[class_name] = class_type;

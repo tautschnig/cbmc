@@ -4149,6 +4149,38 @@ python_convertert::lookup_init_via_mro(const std::string &class_name) const
   return {irep_idt{}, nullptr};
 }
 
+/// PLR §7.5/§6.10: if `obj.<attr>` has a `__present_<attr>` flag (i.e. the attr
+/// is `del`-eted somewhere in the program), return an assignment setting it true
+/// -- any store to the attribute makes it present. Returns nullopt when there is
+/// no such flag, so ordinary attributes are unaffected. Mirrors
+/// maybe_shadow_assign; call it at the same store sites.
+std::optional<code_frontend_assignt> python_convertert::maybe_present_assign(
+  const exprt &obj_lvalue,
+  const std::string &attr)
+{
+  if(deleted_attr_targets.count(attr) == 0)
+    return std::nullopt;
+  const std::string present_name = "__present_" + attr;
+  const struct_typet *st = nullptr;
+  if(obj_lvalue.type().id() == ID_struct)
+    st = &to_struct_type(obj_lvalue.type());
+  else if(obj_lvalue.type().id() == ID_struct_tag)
+  {
+    std::string tag =
+      id2string(to_struct_tag_type(obj_lvalue.type()).get_identifier());
+    std::string cls_name =
+      tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
+    auto cls_it = class_types.find(cls_name);
+    if(cls_it != class_types.end())
+      st = &cls_it->second;
+  }
+  if(st == nullptr || !st->has_component(present_name))
+    return std::nullopt;
+  return code_frontend_assignt{
+    member_exprt{obj_lvalue, present_name, c_bool_typet{8}},
+    from_integer(1, c_bool_typet{8})};
+}
+
 std::optional<code_frontend_assignt> python_convertert::maybe_shadow_assign(
   const exprt &obj_lvalue,
   const std::string &attr)
@@ -4264,6 +4296,11 @@ std::optional<code_blockt> python_convertert::build_dataclass_init_block(
     {
       shadow->add_source_location() = loc;
       block.add(std::move(*shadow));
+    }
+    if(auto present = maybe_present_assign(self_lvalue, fn))
+    {
+      present->add_source_location() = loc;
+      block.add(std::move(*present));
     }
   }
   if(block.statements().empty())

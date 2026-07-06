@@ -627,6 +627,18 @@ codet python_convertert::convert_statement(const jsont &stmt)
                 if(cls_it != class_types.end())
                   st = &cls_it->second;
               }
+              // PLR §7.5/§6.10: mark the attribute ABSENT on this instance so a
+              // later read raises AttributeError. Soundness-critical: this fires
+              // for every `del c.a` of a present-tracked attr reaching this
+              // handler (all struct / struct-pointer receivers), before the
+              // shadow/instance value handling below.
+              {
+                const std::string present_name = "__present_" + attr;
+                if(st != nullptr && st->has_component(present_name))
+                  del_block.add(code_frontend_assignt{
+                    member_exprt{obj_lvalue, present_name, c_bool_typet{8}},
+                    from_integer(0, c_bool_typet{8})});
+              }
               if(
                 cla_it != class_level_attrs.end() &&
                 cla_it->second.count(attr) > 0 && st != nullptr &&
