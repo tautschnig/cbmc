@@ -1630,15 +1630,58 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           return member_exprt{value, field, st.get_component(field).type()};
       }
     }
-    log.error() << "Tuple indexing requires a constant index" << messaget::eom;
-    // PLR §6.3.2: with a non-constant index, we can't pick a
-    // specific tuple element statically. Returning nil_exprt
-    // would propagate as a malformed argument into downstream
-    // calls (CBMC SSA's equal_exprt, if_exprt invariants). Use
-    // a sound over-approximation: nondet of python_value.
+    // PLR §6.3.2: a NON-constant tuple index still has a statically KNOWN tuple
+    // arity, so emit the same symbolic IndexError bounds check lists use --
+    // `t[i]` with i outside [-len, len) raises IndexError. Previously this
+    // branch returned nondet with NO bounds check, so a computed OOB index
+    // (e.g. `t[sum(xs)]`) false-proved SUCCESSFUL. Found by the property-based
+    // random fuzzer (21 of 25 false proofs).
+    {
+      const auto &st = to_struct_type(value.type());
+      std::size_t tup_len = 0;
+      for(const auto &c : st.components())
+      {
+        std::string n = id2string(c.get_name());
+        if(n.size() > 1 && n[0] == '_' && std::isdigit((unsigned char)n[1]))
+          tup_len++;
+      }
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+      {
+        // Normalise negatives (idx + len) then require 0 <= eff < len.
+        exprt len_e = from_integer(tup_len, slice.type());
+        exprt eff = if_exprt{
+          binary_relation_exprt{slice, ID_lt, safe_zero(slice.type())},
+          plus_exprt{len_e, slice},
+          slice};
+        exprt in_range = and_exprt{
+          binary_relation_exprt{eff, ID_ge, safe_zero(eff.type())},
+          binary_relation_exprt{eff, ID_lt, from_integer(tup_len, eff.type())}};
+        exprt out_of_range = not_exprt{in_range};
+        pending_checks.push_back(code_frontend_assignt{
+          exc_sym->symbol_expr(),
+          or_exprt{exc_sym->symbol_expr(), out_of_range}});
+        if(exc_type_sym != nullptr)
+        {
+          long h = exception_type_hash("IndexError");
+          pending_checks.push_back(code_frontend_assignt{
+            exc_type_sym->symbol_expr(),
+            if_exprt{
+              out_of_range,
+              from_integer(h, exc_type_sym->type),
+              exc_type_sym->symbol_expr()}});
+        }
+      }
+    }
+    // With a non-constant index we cannot pick a specific element statically;
+    // return a sound nondet python_value (the OOB path is covered by the check
+    // above). Precision (selecting the in-bounds element) is a follow-up.
     log_overapprox(
-      "tuple subscript with non-constant index — returning nondet "
-      "python_value");
+      "tuple subscript with non-constant index — bounds-checked, "
+      "returning nondet python_value");
     return side_effect_expr_nondett{python_value_type(), get_location(expr)};
   }
 
