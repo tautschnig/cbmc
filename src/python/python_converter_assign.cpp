@@ -3718,7 +3718,23 @@ codet python_convertert::convert_assign(const jsont &stmt)
           block.add(std::move(assign));
           continue;
         }
-        rhs = safe_typecast(rhs, existing->type);
+        // PLR §3.2: a list whose element type WIDENED to python_value (e.g. a
+        // concat that promoted mixed element types, `xs = xs + ["c"]`) must
+        // RETYPE the binding, not cast back to the old narrower element type --
+        // the cast drops the widened content and hides the min/max/sorted
+        // mixed-category TypeError. Python permits rebinding a name's type; the
+        // later emit then sees sym.type == rhs.type() and does not re-cast.
+        else if(
+          is_python_list_type(existing->type) &&
+          is_python_list_type(rhs.type()) &&
+          is_python_value_type(
+            to_array_type(to_struct_type(rhs.type()).components()[1].type())
+              .element_type()))
+        {
+          symbol_table.get_writeable_ref(existing->name).type = rhs.type();
+        }
+        else
+          rhs = safe_typecast(rhs, existing->type);
       }
       else if(if_else_depth > 0)
       {
