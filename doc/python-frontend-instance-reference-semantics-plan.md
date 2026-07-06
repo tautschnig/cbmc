@@ -344,6 +344,37 @@ pinned) is the SAME per-instance-identity family. Spike outcome:
   (the flag-gated `--python-ref-instances` object-identity infrastructure) closes
   both. Kept pinned until then; the design above is implementation-ready.
 
+### Re-spike (2026-07-06) — NOT blocked on Phase-4; concrete de-risked plan
+
+Re-examined `del_attr` with the "is there a cheap del_in_closure-style path?"
+lens (that lens closed del_in_closure via the existing deleted-flag). Findings:
+- **No cheap reuse.** The `getattr_deletable_fields` scan (defs.cpp) is gated on
+  the class defining `__getattr__`; the `__shadow_<attr>` machinery
+  (`maybe_shadow_assign`, `class_level_attrs`, the convert_attribute read-guard)
+  covers only attrs WITH a class-level default, and its shadow-false fallback
+  reads *class storage* — but a del'd instance-only attr has none, so shadow-false
+  must instead raise AttributeError. So there is no ready flag to thread (contrast
+  del_in_closure, which just needed the existing name flag at the capture-read).
+- **Correction: NOT blocked on Phase-4.** Instances are already by-reference
+  (Phase-2 default-on), so a per-instance flag *field* is shared through aliases
+  (`b = c; del c.a; b.a`) for free. So `del_attr` can land INDEPENDENTLY of the
+  by-VALUE container work (`gen_container`), which is the real Phase-4 blocker.
+  The two residuals are related (per-instance state) but separable.
+- **De-risked plan (implementation-ready).** Add a `__present_<attr>` bool struct
+  field (mirroring the proven ripple-safe `__shadow_` bool field, so struct
+  equality / leaf-boxing / copy already handle it) ONLY for attrs in a new
+  program-wide `deleted_attr_targets` pre-scan (parallel to `deleted_name_targets`,
+  populated in the same Delete walk — `del <expr>.<attr>` → insert `attr`). Hooks:
+  (a) every attribute store `x.a = ...` sets `__present_a = true` — reuse the
+  `maybe_shadow_assign` call sites so coverage is complete; (b) `del c.a` sets it
+  false (statement.cpp Delete/Attribute handler); (c) the convert_attribute read
+  emits a conditional AttributeError when `!__present_a`. **Soundness risk to
+  watch:** a MISSED store leaves it false → false ALARM (sound); a MISSED `del`
+  leaves it true → false PROOF (unsound) — so the del hook must be exhaustive
+  (all Delete/Attribute shapes) and validated. Deferred from THIS session only to
+  avoid rushing a multi-site struct-field feature; the plan above is ready for a
+  focused implementation.
+
 ## 6. Cross-references
 
 - Master inventory: the **Class-instance identity / aliasing** and
