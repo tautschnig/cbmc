@@ -1150,7 +1150,20 @@ exprt python_convertert::convert_user_call(
         }
         const symbolt *outer_sym = symbol_table.lookup(src);
         if(outer_sym != nullptr)
+        {
+          // PLR §4.2.2 / §7.5: a captured free variable that was `del`-eted in
+          // the enclosing scope is unbound, so reading it -- here, snapshotting
+          // it as the closure's capture argument at the call site -- raises
+          // NameError. Guard on the enclosing scope's per-name deleted flag
+          // (set by `del`, cleared on rebind); a call BEFORE the `del` is fine,
+          // one AFTER raises. The flag symbol exists only for del-tracked names,
+          // so ordinary closure captures are unaffected. Closes del_in_closure.
+          const irep_idt fid{id2string(src) + "$deleted"};
+          const symbolt *fsym = symbol_table.lookup(fid);
+          if(fsym != nullptr)
+            emit_conditional_exception(fsym->symbol_expr(), "NameError");
           arguments.push_back(outer_sym->symbol_expr());
+        }
         else
           arguments.push_back(
             side_effect_expr_nondett{type, get_location(expr)});
