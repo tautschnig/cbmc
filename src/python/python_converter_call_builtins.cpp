@@ -114,6 +114,31 @@ python_convertert::generator_cursor_for_arg(const jsont &arg_ast)
   return cs->symbol_expr();
 }
 
+bool python_convertert::constant_list_orderable_conflict(const exprt &arg)
+{
+  if(!(is_python_list_type(arg.type()) && arg.id() == ID_struct &&
+       arg.operands().size() >= 2 && arg.operands()[0].is_constant() &&
+       arg.operands()[1].id() == ID_array))
+    return false;
+  mp_integer n;
+  if(to_integer(to_constant_expr(arg.operands()[0]), n))
+    return false;
+  const exprt &data = arg.operands()[1];
+  int seen = 0;
+  for(mp_integer i = 0; i < n && i.to_long() < (long)data.operands().size();
+      ++i)
+  {
+    const int c = orderable_category_of(data.operands()[i.to_long()]);
+    if(c != 0)
+      seen |= (1 << c);
+  }
+  // Two or more DISTINCT orderable categories present -> at least one element
+  // pair is mutually incomparable (numeric vs str, int vs list, ...) -> the
+  // comparison raises TypeError. (Same category, e.g. all numeric or all lists,
+  // is fine; an Any/symbolic element is category 0 and never counted.)
+  return (seen & (seen - 1)) != 0; // popcount(seen) >= 2
+}
+
 bool python_convertert::emit_range_arg_checks(
   const jsont &args_json,
   const exprt *step_value)
@@ -4936,6 +4961,25 @@ std::optional<exprt> python_convertert::try_builtin_call(
       if(as_array(args).size() == 1)
       {
         exprt arg = convert_expression(*as_array(args).begin());
+        // PLR §6.10.1: min()/max() compare elements pairwise, so a constant
+        // list spanning mixed orderable categories (e.g. int + str) raises
+        // TypeError -- the same rule sorted() enforces. No key= (a key remaps
+        // the compared values).
+        if(constant_list_orderable_conflict(arg))
+        {
+          const jsont &mkw = json_member(expr, "keywords");
+          bool has_key = false;
+          if(mkw.is_array())
+            for(const auto &k : as_array(mkw))
+              if(json_string(json_member(k, "arg")) == "key")
+                has_key = true;
+          if(!has_key)
+          {
+            emit_conditional_exception(true_exprt{}, "TypeError");
+            return side_effect_expr_nondett{
+              python_value_type(), get_location(expr)};
+          }
+        }
         // Tuple-argument form: walk the struct.s components in
         // order. PLR §6.10.2 treats tuples and lists uniformly
         // for min()/max().

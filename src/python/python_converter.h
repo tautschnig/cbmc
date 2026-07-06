@@ -2025,6 +2025,12 @@ private:
   /// (the REMAINING items) instead of re-yielding from 0, and mark it exhausted.
   /// Returns nullopt for a non-Name / non-generator / cursorless arg.
   std::optional<symbol_exprt> generator_cursor_for_arg(const jsont &arg_ast);
+  /// PLR §6.10.1: whether `arg` is a CONSTANT list literal whose elements span
+  /// 2+ distinct orderable categories (numeric / str / list / tuple / set /
+  /// dict / None), i.e. a comparison-based reduction (sorted/min/max) over it
+  /// raises TypeError. Constant literal only; an Any/symbolic element (category
+  /// 0) never triggers it, so it is false-positive-free.
+  bool constant_list_orderable_conflict(const exprt &arg);
 
   /// True iff \p t is a concrete user-class instance type (python_class_*)
   /// whose MRO defines no \p dunder. False for builtins / python_value (Any) /
