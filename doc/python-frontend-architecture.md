@@ -1322,6 +1322,21 @@ Sweep rounds 4–6.)
 >   EARLY in `convert_compare` (before the numeric fast-path) via
 >   `orderable_category_of`; same-category and Any/class operands are never
 >   flagged. CORE `compare-cross-category-typeerror`, `-nofp`.
+> - **Comparison-reduction mixed-category whole-group** (`2d76730fb9`,
+>   `845a831cac`, PLR §6.10.1): `sorted()`/`min()`/`max()` compare elements
+>   pairwise, so a list spanning 2+ distinct orderable categories (int vs str,
+>   int vs list, ...) → TypeError. All three now share one
+>   `constant_list_orderable_conflict` helper (previously only `sorted` had a
+>   narrower numeric-vs-str-only inline check, and `min`/`max` had none). The
+>   helper resolves a Name bound to a list literal (so `xs=[1,"a"]; min(xs)` is
+>   caught, not only `min([1,"a"])`); no `key=` (a key remaps compared values);
+>   Any/symbolic elements are never flagged (FP-free). Found by the property-based
+>   random fuzzer (rand_169). CORE `min-max-mixed-category`, `-nofp`. **Residual:**
+>   the CONCAT form (`xs = xs + ["c"]; min(xs)`) is a pinned KNOWNBUG
+>   (`min-max-mixed-concat-knownbug`) — list `+` builds an opaque symbolic struct
+>   so the merged list is not tracked in `list_literals`; closing it needs a sound
+>   list-concat constant-fold (operand resolution + element-type promotion +
+>   aliasing safety), a feature not a fold.
 > - **Non-iterable scalar whole-group** (`a20166d97f`, PLR §3.3.1): iterating or
 >   unpacking a PROVABLY non-iterable scalar (concrete numeric / complex / constant
 >   None) → TypeError, via one shared `provably_non_iterable_scalar` predicate at
