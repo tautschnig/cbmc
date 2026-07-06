@@ -1190,25 +1190,22 @@ corpus, default config) tracks **0 known false proofs**, plus **4 intrinsic /
 out-of-subset residuals** and ~206 false *alarms* (sound over-approximations /
 unsupported-feature precision — see inventory B). Two standing soundness-
 regression gates run after every change: the **oracle 0-NEW gate** (real-world
-corpus) and the **PLR-fuzz 0-NEW gate** (template-generated PLR-tagged programs
-vs a committed baseline of **1** known/deferred false-proof labels — see Sweep
-rounds 4–7). All three are documented/planned and fall into TWO architectural
-roots. **(A) Reference-identity (object identity) — now FULLY CLOSED.** All three of its
-residuals were closed WITHOUT the multi-day fat-closure / Phase-4 infrastructure,
-by spiking each for a separable cheaper path: `del`-of-closure-captured-var
-(`be037ec01a`, deleted-flag guard at the capture-read), `del c.a` attribute-read
-(`41d6788612`, per-instance `__present_<attr>` flag — lands independently of
-Phase-4 since instances are already by-reference), and generator-in-a-container
-consumed via the slot (`1f6b9d3905`, sound nondet for `next()` on a stored
-Subscript/Attribute channel, keeping fresh/Name cursors precise). **(B)
-List-length/identity tracking:** `min`/`max`-empty via a comprehension over
-`range(non-constant bound)` then slice (`min-empty-symbolic-comprehension`, needs
-symbolic-length range-comprehension modeling). A unified reference-identity effort
-(`--python-ref-instances` Phase 4) closes root (A); symbolic-length comprehension
-closes (B). **`del`-of-a-closure-captured variable is now CLOSED** (`be037ec01a`):
-the spike found the read-only capture passes the enclosing var as a call argument,
-so guarding that capture-read with the existing per-name deleted flag closes it
-PRECISELY — no full cell-capture needed (CORE `del-closure-nameerror`). (The 10
+corpus) and the **PLR-fuzz 0-NEW gate** (template + randomized PLR-tagged programs
+vs a committed baseline of **0** false-proof labels — see Sweep rounds 4–8). **The
+fuzzer and oracle are now BOTH at zero false proofs** (the soundness arc drove the
+debt 73 → 0); the fuzzer's remaining output is precision-only FALSE_ALARMs (sound).
+Both architectural roots that held the last residuals are now FULLY CLOSED, each
+via spike-found separable paths rather than the multi-day infrastructure they were
+assumed to need. **(A) Reference-identity (object identity):** `del`-of-closure-
+captured-var (`be037ec01a`, deleted-flag guard at the capture-read — no cell-
+capture), `del c.a` attribute-read (`41d6788612`, per-instance `__present_<attr>`
+flag — independent of Phase-4 since instances are already by-reference), and
+generator-in-a-container consumed via the slot (`1f6b9d3905`, sound nondet for
+`next()` on a stored Subscript/Attribute channel, keeping fresh/Name cursors
+precise). **(B) List-length/identity:** mixed-concat (`2eceff5929`/`c9d592fed8`,
+constant-fold + element-widening retype) and `min`/`max`-empty via a
+`range(non-constant bound)` comprehension (`e766dde276`, symbolic-length range-
+comprehension: exact length with no filter, `[0,bound]` with a filter). (The 10
 list-bitwise labels, the `list(g)`/`sum(g)`-after-`next()` aggregating channels,
 the plain-class `missing_attr` read, `gen.close()`+next, `del x` DIRECT-read
 NameError, and the min/max/sorted mixed-category-via-concat that were baselined
