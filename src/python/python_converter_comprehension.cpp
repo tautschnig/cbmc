@@ -316,9 +316,13 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       }
       std::vector<mp_integer> ints;
       bool ok = true;
+      const bool single_arg = as_array(args_n).size() == 1;
+      exprt single_bound;
       for(const auto &a : as_array(args_n))
       {
         exprt av = convert_expression(a);
+        if(single_arg)
+          single_bound = av;
         // Try constant. Accept integer_typet (--python-unbounded-ints)
         // as well as signedbv, else range() args are unrecognised
         // under that flag and the comprehension is silently dropped.
@@ -345,6 +349,71 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       }
       if(!ok || ints.size() < 1 || ints.size() > 3)
       {
+        // PLR §6.3.3: `[f(x) for x in range(n)]` with a NON-constant int bound
+        // cannot be unrolled, but its result LENGTH is the bound (clamped to
+        // [0, capacity]: range(<0) is empty, range(>=cap) is modelled up to the
+        // array capacity). Return a symbolic-length list with nondet data --
+        // NOT nil, which would DROP the enclosing assignment and unsoundly
+        // retain the target's stale value (e.g. `xs = sorted([5]); xs =
+        // [i for i in range(len(xs))][1:5]` kept the old [5], hiding the
+        // min()-of-empty ValueError). Element values are unknown (nondet); only
+        // the length is tracked, which is what len()/slice/min-empty need.
+        const bool bound_is_int = !single_bound.is_nil() &&
+                                  (single_bound.type().id() == ID_signedbv ||
+                                   single_bound.type().id() == ID_integer ||
+                                   single_bound.type().id() == ID_unsignedbv ||
+                                   single_bound.type() == python_int_type());
+        // Only safe with exactly ONE generator. A filter (`if ...`) means fewer
+        // elements survive, so the length is not exactly the bound -- handled
+        // below by a NONDET length bounded by the range size (still lets
+        // min()-of-empty fire). Multiple generators multiply lengths -> fall
+        // through to conservative nil.
+        const jsont &cur_ifs = json_member(gen, "ifs");
+        const bool no_ifs = !cur_ifs.is_array() || as_array(cur_ifs).empty();
+        const bool single_gen = as_array(generators).size() == 1;
+        if(single_arg && bound_is_int && single_gen)
+        {
+          const source_locationt loc = get_location(expr);
+          typet et = python_int_type();
+          struct_typet lt = python_list_type(et);
+          static unsigned rc_ctr = 0;
+          irep_idt tid{
+            qualify_name("__range_comp_" + std::to_string(rc_ctr++))};
+          if(symbol_table.lookup(tid) == nullptr)
+          {
+            symbolt ts{tid, lt, "python"};
+            ts.base_name = id2string(tid);
+            ts.is_lvalue = true;
+            ts.is_state_var = true;
+            ts.is_static_lifetime = current_function.empty();
+            symbol_table.add(ts);
+          }
+          symbol_exprt tmp = symbol_table.lookup_ref(tid).symbol_expr();
+          // Nondet the whole list (havocs length AND data)...
+          pending_checks.push_back(
+            code_frontend_assignt{tmp, side_effect_expr_nondett{lt, loc}});
+          exprt b64 = safe_typecast(single_bound, signedbv_typet{64});
+          exprt zero = from_integer(0, signedbv_typet{64});
+          exprt cap = from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64});
+          exprt clamped = if_exprt{
+            binary_relation_exprt{b64, ID_lt, zero},
+            zero,
+            if_exprt{binary_relation_exprt{b64, ID_gt, cap}, cap, b64}};
+          member_exprt len_m{tmp, "length", signedbv_typet{64}};
+          if(no_ifs)
+            // No filter: length is EXACTLY the range size.
+            pending_checks.push_back(code_frontend_assignt{len_m, clamped});
+          else
+          {
+            // Filter: 0 <= length <= range size (unknown how many survive).
+            code_assumet a{and_exprt{
+              binary_relation_exprt{len_m, ID_ge, zero},
+              binary_relation_exprt{len_m, ID_le, clamped}}};
+            a.add_source_location() = loc;
+            pending_checks.push_back(std::move(a));
+          }
+          return std::move(tmp);
+        }
         log.warning()
           << "range() in comprehension requires constant integer arguments"
           << messaget::eom;
