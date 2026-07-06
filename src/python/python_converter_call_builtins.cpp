@@ -530,6 +530,21 @@ std::optional<exprt> python_convertert::try_builtin_call(
           return index_exprt{data, safe_idx};
         }
 
+        // PLR §6.2.9: a generator accessed via a STORED channel (a container
+        // slot `box[0]` or an attribute `self.g`) has no per-Name cursor here,
+        // so its consumption state is unknown. Returning data[0] (the first
+        // yield) is UNSOUND when it was already partially consumed --
+        // `box=[g()]; next(box[0]); next(box[0])` must NOT prove the 2nd read
+        // equals the 1st (gen_container false proof). Over-approximate soundly
+        // with nondet. A FRESH inline iterator (`next(g())`, `next(iter(x))`,
+        // arg is a Call) is not a re-access, so it keeps the precise first-read
+        // model below.
+        if(
+          is_node_type(arg_ast, "Subscript") ||
+          is_node_type(arg_ast, "Attribute"))
+          return side_effect_expr_nondett{
+            data_type.element_type(), get_location(expr)};
+
         // PLR §6.10: next() on an exhausted iterator raises
         // StopIteration. Without a tracked cursor we model the first
         // read, but an empty iterable is definitively exhausted.
