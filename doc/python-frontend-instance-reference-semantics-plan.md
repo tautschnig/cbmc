@@ -344,6 +344,19 @@ pinned) is the SAME per-instance-identity family. Spike outcome:
   (the flag-gated `--python-ref-instances` object-identity infrastructure) closes
   both. Kept pinned until then; the design above is implementation-ready.
 
+### IMPLEMENTED (2026-07-06, `41d6788612`)
+
+The de-risked plan below was implemented and CLOSES del_attr. A per-instance
+`__present_<attr>` bool field is added ONLY for INSTANCE-ONLY del'd attrs (class-
+level attrs keep the __shadow_ class-fallback path -- over-applying the guard to
+them caused a class10 regression, caught by the sweep and fixed by the class-level
+skip). Store->true (the 5 maybe_shadow_assign sites), del->false (Delete handler,
+before value handling), read->AttributeError when false (both convert_attribute
+paths). Sound under aliasing via by-reference instances; precise (read-before-del /
+rebind / distinct-instance / class-fallback all correct). CORE del-attr-read/-nofp;
+fuzzer del_attr_read resolved. Only gen_container remains in this root (genuine
+by-value Phase-4).
+
 ### Re-spike (2026-07-06) — NOT blocked on Phase-4; concrete de-risked plan
 
 Re-examined `del_attr` with the "is there a cheap del_in_closure-style path?"
