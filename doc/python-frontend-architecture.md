@@ -1337,6 +1337,21 @@ Sweep rounds 4–6.)
 >   so the merged list is not tracked in `list_literals`; closing it needs a sound
 >   list-concat constant-fold (operand resolution + element-type promotion +
 >   aliasing safety), a feature not a fold.
+> - **Tuple subscript bounds whole-group** (`bb58c69c1e`, PLR §6.3.2): `t[i]` with
+>   i outside `[-len, len)` raises IndexError. The constant-index path already
+>   flagged OOB, but a NON-constant/computed index (`t[sum(xs)]`, `t[len(...)]`)
+>   returned nondet with NO check -> false proof. A tuple's arity is static, so
+>   emit the same symbolic IndexError check lists use (normalise negatives, then
+>   `0 <= eff < len`). Found by the property-based random fuzzer (21 of 25 false
+>   proofs in one run). CORE `tuple-index-computed-oob`, `-nofp`.
+> - **Self-assignment self-pointer fix** (`9aa080d426`, PLR §3.1): `x = x` is a
+>   no-op, but the local-alias by-reference transform (`b = a` -> `b =
+>   address_of(a)`) fired on it, binding `x = address_of(x)` -- a self-referential
+>   pointer that corrupted the object: OOB index checks stopped firing (false
+>   proof) and `len(x)`/`x[i]` became nondet (false alarms). Both alias-transform
+>   sites now skip when the resolved target equals the LHS symbol; genuine
+>   aliasing (`b = a`, chained `c = b`) is unaffected. Found by the property-based
+>   random fuzzer. CORE `list-self-assign-alias`, `-nofp`.
 > - **Non-iterable scalar whole-group** (`a20166d97f`, PLR §3.3.1): iterating or
 >   unpacking a PROVABLY non-iterable scalar (concrete numeric / complex / constant
 >   None) → TypeError, via one shared `provably_non_iterable_scalar` predicate at
