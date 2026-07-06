@@ -1191,13 +1191,16 @@ out-of-subset residuals** and ~206 false *alarms* (sound over-approximations /
 unsupported-feature precision — see inventory B). Two standing soundness-
 regression gates run after every change: the **oracle 0-NEW gate** (real-world
 corpus) and the **PLR-fuzz 0-NEW gate** (template-generated PLR-tagged programs
-vs a committed baseline of **3** known/deferred false-proof labels — see Sweep
+vs a committed baseline of **1** known/deferred false-proof labels — see Sweep
 rounds 4–7). All three are documented/planned and fall into TWO architectural
-roots. **(A) Reference-identity (object identity):** generator `box[0]` container
-slot (→ perf-gated by-reference "Phase 4", §1). (`del c.a` attribute-read is now
-CLOSED — `41d6788612` — via a per-instance `__present_<attr>` flag for
-instance-only attrs, which lands INDEPENDENTLY of Phase-4 because instances are
-already by-reference; CORE `del-attr-read`.) **(B)
+roots. **(A) Reference-identity (object identity) — now FULLY CLOSED.** All three of its
+residuals were closed WITHOUT the multi-day fat-closure / Phase-4 infrastructure,
+by spiking each for a separable cheaper path: `del`-of-closure-captured-var
+(`be037ec01a`, deleted-flag guard at the capture-read), `del c.a` attribute-read
+(`41d6788612`, per-instance `__present_<attr>` flag — lands independently of
+Phase-4 since instances are already by-reference), and generator-in-a-container
+consumed via the slot (`1f6b9d3905`, sound nondet for `next()` on a stored
+Subscript/Attribute channel, keeping fresh/Name cursors precise). **(B)
 List-length/identity tracking:** `min`/`max`-empty via a comprehension over
 `range(non-constant bound)` then slice (`min-empty-symbolic-comprehension`, needs
 symbolic-length range-comprehension modeling). A unified reference-identity effort
