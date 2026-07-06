@@ -116,14 +116,24 @@ python_convertert::generator_cursor_for_arg(const jsont &arg_ast)
 
 bool python_convertert::constant_list_orderable_conflict(const exprt &arg)
 {
-  if(!(is_python_list_type(arg.type()) && arg.id() == ID_struct &&
-       arg.operands().size() >= 2 && arg.operands()[0].is_constant() &&
-       arg.operands()[1].id() == ID_array))
+  // Resolve a Name bound to a known list literal to its stored struct, so
+  // `xs = [..]; min(xs)` and `xs = a + [..]; min(xs)` are covered, not only a
+  // direct `min([..])`.
+  const exprt *lst = &arg;
+  if(arg.id() == ID_symbol)
+  {
+    auto it = list_literals.find(to_symbol_expr(arg).get_identifier());
+    if(it != list_literals.end())
+      lst = &it->second;
+  }
+  if(!(is_python_list_type(lst->type()) && lst->id() == ID_struct &&
+       lst->operands().size() >= 2 && lst->operands()[0].is_constant() &&
+       lst->operands()[1].id() == ID_array))
     return false;
   mp_integer n;
-  if(to_integer(to_constant_expr(arg.operands()[0]), n))
+  if(to_integer(to_constant_expr(lst->operands()[0]), n))
     return false;
-  const exprt &data = arg.operands()[1];
+  const exprt &data = lst->operands()[1];
   int seen = 0;
   for(mp_integer i = 0; i < n && i.to_long() < (long)data.operands().size();
       ++i)
@@ -2446,47 +2456,24 @@ std::optional<exprt> python_convertert::try_builtin_call(
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
-      // PLR §6.10.1: sorting a list whose CONSTANT elements span two
-      // incompatible orderable categories (numeric vs str) raises TypeError --
-      // the sort compares a number with a str. Only fires for a constant list
-      // literal whose element tags are statically known; a symbolic/Any list
-      // is never flagged (no false positive). No key= (a key could remap the
-      // compared values), so restrict to the plain case below.
-      if(
-        !arg.is_nil() && is_python_list_type(arg.type()) &&
-        arg.id() == ID_struct && arg.operands().size() >= 2 &&
-        arg.operands()[0].is_constant() && arg.operands()[1].id() == ID_array)
+      // PLR §6.10.1: sorting a list whose CONSTANT elements span 2+ distinct
+      // orderable categories raises TypeError (a number compared with a str,
+      // int with a list, ...). Shared with min()/max() via
+      // constant_list_orderable_conflict, which also resolves a Name bound to a
+      // list literal. No key= (a key could remap the compared values); a
+      // symbolic/Any element is never flagged (no false positive).
+      if(constant_list_orderable_conflict(arg))
       {
-        mp_integer n;
-        if(!to_integer(to_constant_expr(arg.operands()[0]), n))
+        const jsont &kw = json_member(expr, "keywords");
+        bool has_key = false;
+        if(kw.is_array())
+          for(const auto &k : as_array(kw))
+            if(json_string(json_member(k, "arg")) == "key")
+              has_key = true;
+        if(!has_key)
         {
-          const exprt &data = arg.operands()[1];
-          int seen = 0;
-          for(mp_integer i = 0;
-              i < n && i.to_long() < (long)data.operands().size();
-              ++i)
-          {
-            const int c = orderable_category_of(data.operands()[i.to_long()]);
-            if(c != 0)
-              seen |= (1 << c);
-          }
-          // both numeric (bit 1<<1) AND str (bit 1<<2) present
-          if(seen == ((1 << 1) | (1 << 2)))
-          {
-            const jsont &kw = json_member(expr, "keywords");
-            const bool has_key = kw.is_array() && [&]
-            {
-              for(const auto &k : as_array(kw))
-                if(json_string(json_member(k, "arg")) == "key")
-                  return true;
-              return false;
-            }();
-            if(!has_key)
-            {
-              emit_conditional_exception(true_exprt{}, "TypeError");
-              return side_effect_expr_nondett{arg.type(), get_location(expr)};
-            }
-          }
+          emit_conditional_exception(true_exprt{}, "TypeError");
+          return side_effect_expr_nondett{arg.type(), get_location(expr)};
         }
       }
       // Pick up the reverse=... keyword; key= is supported for
