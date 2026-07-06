@@ -1192,19 +1192,22 @@ unsupported-feature precision — see inventory B). Two standing soundness-
 regression gates run after every change: the **oracle 0-NEW gate** (real-world
 corpus) and the **PLR-fuzz 0-NEW gate** (template-generated PLR-tagged programs
 vs a committed baseline of **3** known/deferred false-proof labels — see Sweep
-rounds 4–6). All three are documented/planned AND share ONE root — the
-**by-value-vs-by-reference OBJECT IDENTITY** family: generator `box[0]` container
-slot (→ perf-gated by-reference "Phase 4", §1), `del c.a` attribute-read (→ per-
-instance deleted state, same Phase-4 instance-identity), and `del`-of-a-closure-
-captured variable (→ the free var is captured BY VALUE, so `del` of the enclosing
-binding is not observed — needs the cell-capture model, [fat-closure
-plan](python-frontend-fat-closure-plan.md)). None is un-planned; a unified
-reference-identity effort (cell-capture for closures + `--python-ref-instances`
-for instances/containers) is the ONE architectural lever that closes all three.
-(The 10 list-bitwise labels, the `list(g)`/`sum(g)`-after-`next()` aggregating
-channels, the plain-class `missing_attr` read, `gen.close()`+next, and `del x`
-DIRECT-read NameError that were baselined earlier are now all **closed** — see
-Sweep rounds 4–6.)
+rounds 4–7). All three are documented/planned and fall into TWO architectural
+roots. **(A) Reference-identity (object identity):** generator `box[0]` container
+slot (→ perf-gated by-reference "Phase 4", §1) and `del c.a` attribute-read (→
+per-instance deleted state, same Phase-4 instance-identity). **(B)
+List-length/identity tracking:** `min`/`max`-empty via a comprehension over
+`range(non-constant bound)` then slice (`min-empty-symbolic-comprehension`, needs
+symbolic-length range-comprehension modeling). A unified reference-identity effort
+(`--python-ref-instances` Phase 4) closes root (A); symbolic-length comprehension
+closes (B). **`del`-of-a-closure-captured variable is now CLOSED** (`be037ec01a`):
+the spike found the read-only capture passes the enclosing var as a call argument,
+so guarding that capture-read with the existing per-name deleted flag closes it
+PRECISELY — no full cell-capture needed (CORE `del-closure-nameerror`). (The 10
+list-bitwise labels, the `list(g)`/`sum(g)`-after-`next()` aggregating channels,
+the plain-class `missing_attr` read, `gen.close()`+next, `del x` DIRECT-read
+NameError, and the min/max/sorted mixed-category-via-concat that were baselined
+earlier are now all **closed** — see Sweep rounds 4–7.)
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator

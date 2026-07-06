@@ -33,6 +33,18 @@ These are **per-channel** mechanisms: each binds a closure's captures at
 a recognised site using a key specific to that channel (the variable
 name, the container element, the comprehension symbol).
 
+## 1a. `del` of a captured variable — CLOSED without cell-capture (2026-07-06)
+
+A separate soundness sub-case: `def f(): x=5; def g(): return x; del x; return
+g()` raises NameError (the captured cell is unbound by `del`). This did NOT need
+the fat-closure cell model. The read-only carry passes the enclosing variable as
+a trailing call argument (`g()` -> `g(f::x)`), so guarding that capture-read at
+the call site with the enclosing scope's per-name `<qname>$deleted` flag (the
+existing del-name mechanism) closes it PRECISELY: a call before the `del` is fine,
+after raises, and a rebind (`del x; x=9`) is defined again. Commit `be037ec01a`,
+CORE `del-closure-nameerror`/`-nofp`. This is orthogonal to the value-capture
+phases below (it concerns unbinding, not multi-call value identity).
+
 ## 2. Root cause of the remaining gaps (measured, not theorised)
 
 The remaining gaps — **capture-through-param** (`apply(make())`),
