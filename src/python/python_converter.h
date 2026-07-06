@@ -1994,6 +1994,13 @@ private:
   /// conditional NameError). Keeps the deleted-state instrumentation off the hot
   /// path for every other name.
   std::set<std::string> deleted_name_targets;
+  /// PLR §7.5/§6.10: attribute names that are `del`-eted somewhere in the
+  /// program (`del <expr>.<attr>`). A class struct gets a `__present_<attr>`
+  /// bool field for each such attr it defines, set true on any `x.a=` store,
+  /// false on `del c.a`, and checked on read (`!present` -> AttributeError).
+  /// Per-instance (a struct field) so aliasing is handled by by-reference
+  /// instances. Kept off the hot path for classes with no del'd attrs.
+  std::set<std::string> deleted_attr_targets;
   /// Get-or-create the `<qname>$deleted` bool flag symbol for a del-tracked
   /// name (local per function, static at module scope). Init is provided by the
   /// binding assignment (which sets it false); `del` sets true; reads guard.
@@ -2546,6 +2553,11 @@ public:
   /// up class_level_attrs.
   std::optional<code_frontend_assignt>
   maybe_shadow_assign(const exprt &obj_lvalue, const std::string &attr);
+
+  /// PLR §7.5/§6.10: setter for the `__present_<attr>` flag (attr present).
+  /// Call at attribute-store sites alongside maybe_shadow_assign.
+  std::optional<code_frontend_assignt>
+  maybe_present_assign(const exprt &obj_lvalue, const std::string &attr);
 
   /// Safe zero: returns from_integer(0, type) for numeric types,
   /// or a nondet value for struct/other types.

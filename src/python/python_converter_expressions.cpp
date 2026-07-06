@@ -2403,8 +2403,15 @@ void python_convertert::collect_assigned_attr_names(const jsont &node)
     const jsont &tgts = json_member(node, "targets");
     if(tgts.is_array())
       for(const auto &t : as_array(tgts))
+      {
         if(is_node_type(t, "Name"))
           deleted_name_targets.insert(json_string(json_member(t, "id")));
+        // PLR §7.5/§6.10: `del <expr>.<attr>` -> the attr becomes absent on
+        // that instance; record the attr name so its class struct gets a
+        // `__present_<attr>` flag and reads after the del raise AttributeError.
+        else if(is_node_type(t, "Attribute"))
+          deleted_attr_targets.insert(json_string(json_member(t, "attr")));
+      }
   }
   else if(
     is_node_type(node, "ClassDef") || is_node_type(node, "AsyncFunctionDef"))
@@ -3204,6 +3211,27 @@ exprt python_convertert::convert_attribute(const jsont &expr)
               shadow_flag, std::move(instance_v), std::move(class_v)};
           }
         }
+        // PLR §7.5/§6.10: a `del`-tracked attribute that has been deleted (its
+        // per-instance __present_<attr> flag is false) raises AttributeError on
+        // read. The flag is set true by any store and false by `del c.a`; a
+        // never-assigned del-tracked attr is absent (flag defaults false).
+        {
+          const std::string present_name = "__present_" + attr;
+          if(st.has_component(present_name))
+          {
+            std::string tg = id2string(st.get_tag());
+            std::string cn =
+              tg.substr(0, 13) == "python_class_" ? tg.substr(13) : tg;
+            member_exprt present_raw{
+              dereference_exprt{value}, present_name, c_bool_typet{8}};
+            add_check(
+              typecast_exprt{present_raw, bool_typet{}},
+              "python-attribute-error",
+              "'" + cn + "' object has no attribute '" + attr +
+                "' (AttributeError)",
+              get_location(expr));
+          }
+        }
         return member_exprt{
           dereference_exprt{value}, attr, st.get_component(attr).type()};
       }
@@ -3331,6 +3359,19 @@ exprt python_convertert::convert_attribute(const jsont &expr)
             return member_exprt{
               *mro_owner, attr, st.get_component(attr).type()};
         }
+      }
+      // PLR §7.5/§6.10: del-tracked attribute read guard (direct-struct path;
+      // mirrors the pointer path). AttributeError when __present_<attr> false.
+      {
+        const std::string present_name = "__present_" + attr;
+        if(st.has_component(present_name))
+          add_check(
+            typecast_exprt{
+              member_exprt{value, present_name, c_bool_typet{8}}, bool_typet{}},
+            "python-attribute-error",
+            "'" + cls_name + "' object has no attribute '" + attr +
+              "' (AttributeError)",
+            get_location(expr));
       }
       return member_exprt{value, attr, st.get_component(attr).type()};
     }
