@@ -1306,6 +1306,86 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       right = cr;
     }
   }
+  // Constant-fold list concatenation when BOTH operands resolve to constant
+  // list literals (directly, or a Name via list_literals). Concatenation always
+  // produces a FRESH list in Python, so folding to a new constant struct is
+  // sound regardless of operand aliasing, and it keeps length/content trackable
+  // (via list_literals on the assign) -- closing sorted/min/max-over-concat
+  // (mixed-category KNOWNBUG), len(), and index folding through `a + b`.
+  // Requirements learned from an earlier reverted spike: resolve Names to their
+  // literal, and PROMOTE mismatched element types to python_value (via
+  // rebuild_list_as_pv) so the merged data array is type-uniform (else a
+  // list[int] + list[str] merge is malformed).
+  if(op == "Add")
+  {
+    auto resolve_const_list = [&](const exprt &e) -> std::optional<exprt>
+    {
+      if(e.id() == ID_struct && is_python_list_type(e.type()))
+        return e;
+      if(e.id() == ID_symbol)
+      {
+        auto it = list_literals.find(to_symbol_expr(e).get_identifier());
+        if(
+          it != list_literals.end() && it->second.id() == ID_struct &&
+          is_python_list_type(it->second.type()))
+          return it->second;
+      }
+      return std::nullopt;
+    };
+    auto is_const_struct = [](const exprt &s)
+    {
+      return s.operands().size() >= 2 && s.operands()[0].is_constant() &&
+             s.operands()[1].id() == ID_array;
+    };
+    std::optional<exprt> lco = resolve_const_list(left);
+    std::optional<exprt> rco = resolve_const_list(right);
+    if(lco && rco && is_const_struct(*lco) && is_const_struct(*rco))
+    {
+      mp_integer nl, nr;
+      if(
+        !to_integer(to_constant_expr(lco->operands()[0]), nl) &&
+        !to_integer(to_constant_expr(rco->operands()[0]), nr) && nl >= 0 &&
+        nr >= 0 && nl + nr <= (long)PYTHON_MAX_LIST_LENGTH)
+      {
+        exprt lc = *lco, rc = *rco;
+        // Promote to a common element type when they differ.
+        if(lc.type() != rc.type())
+        {
+          lc = rebuild_list_as_pv(lc);
+          rc = rebuild_list_as_pv(rc);
+        }
+        if(lc.type() == rc.type() && is_const_struct(lc) && is_const_struct(rc))
+        {
+          const exprt &ld = lc.operands()[1];
+          const exprt &rd = rc.operands()[1];
+          const auto &mdt =
+            to_array_type(to_struct_type(lc.type()).components()[1].type());
+          if(
+            ld.operands().size() == PYTHON_MAX_LIST_LENGTH &&
+            rd.operands().size() == PYTHON_MAX_LIST_LENGTH)
+          {
+            const long nll = nl.to_long(), nrl = nr.to_long();
+            exprt::operandst merged;
+            merged.reserve(PYTHON_MAX_LIST_LENGTH);
+            for(long k = 0; k < (long)PYTHON_MAX_LIST_LENGTH; ++k)
+            {
+              if(k < nll)
+                merged.push_back(ld.operands()[k]);
+              else if(k < nll + nrl)
+                merged.push_back(rd.operands()[k - nll]);
+              else
+                merged.push_back(ld.operands()[k]); // unread padding
+            }
+            array_exprt merged_data{std::move(merged), mdt};
+            return struct_exprt{
+              {from_integer(nl + nr, signedbv_typet{64}), merged_data},
+              lc.type()};
+          }
+        }
+      }
+    }
+  }
+
   if(
     is_python_list_type(left.type()) && is_python_list_type(right.type()) &&
     op == "Add")
