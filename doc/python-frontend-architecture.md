@@ -1331,12 +1331,22 @@ Sweep rounds 4–6.)
 >   helper resolves a Name bound to a list literal (so `xs=[1,"a"]; min(xs)` is
 >   caught, not only `min([1,"a"])`); no `key=` (a key remaps compared values);
 >   Any/symbolic elements are never flagged (FP-free). Found by the property-based
->   random fuzzer (rand_169). CORE `min-max-mixed-category`, `-nofp`. **Residual:**
->   the CONCAT form (`xs = xs + ["c"]; min(xs)`) is a pinned KNOWNBUG
->   (`min-max-mixed-concat-knownbug`) — list `+` builds an opaque symbolic struct
->   so the merged list is not tracked in `list_literals`; closing it needs a sound
->   list-concat constant-fold (operand resolution + element-type promotion +
->   aliasing safety), a feature not a fold.
+>   random fuzzer (rand_169). CORE `min-max-mixed-category`, `-nofp`.
+> - **List-concat constant-fold whole-group** (`2eceff5929`, PLR §6.3.2/§3.2):
+>   list `+` of two constant literals (directly, or a Name via `list_literals`)
+>   now folds to a merged CONSTANT struct instead of an opaque symbolic one, with
+>   element-type promotion to `python_value` when operand element types differ
+>   (via `rebuild_list_as_pv`, so `list[int] + list[str]` merges without a
+>   malformed array). Concatenation always makes a fresh list, so folding is sound
+>   regardless of operand aliasing. Effect: length, content, index bounds, and
+>   sorted/min/max mixed-category detection all track through `a + b` (and
+>   homogeneous `xs = xs + [..]`). CORE `list-concat-fold-mixed`, `-oob`, `-nofp`.
+>   **Residual:** the mixed-element VARIABLE reassignment (`xs=[8,8]; xs=xs+["c"]`)
+>   still casts the promoted list back to the original narrower slot on rebinding
+>   (a layered coercion path), dropping the widened content -- pinned KNOWNBUG
+>   `min-max-mixed-concat-knownbug`, needs list-element retype on reassignment.
+>   This + the min-empty-via-symbolic-comprehension residual are the emerging
+>   **list-length/identity-tracking** whole-group (distinct from reference-identity).
 > - **Tuple subscript bounds whole-group** (`bb58c69c1e`, PLR §6.3.2): `t[i]` with
 >   i outside `[-len, len)` raises IndexError. The constant-index path already
 >   flagged OOB, but a NON-constant/computed index (`t[sum(xs)]`, `t[len(...)]`)
