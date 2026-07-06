@@ -492,7 +492,14 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     irep_idt target_id =
       (chain != alias_targets.end()) ? chain->second : rhs_id;
     const symbolt *target_sym = symbol_table.lookup(target_id);
-    if(target_sym != nullptr)
+    // Self-assignment `x = x` (or a chain resolving to the same symbol) is a
+    // no-op in Python. Pointer-promoting it would bind `x = address_of(x)` -- a
+    // self-referential pointer -- corrupting the object (every later read
+    // dereferences a pointer to itself, yielding nondet: OOB index checks stop
+    // firing and len(x)/x[0] become unprovable). Skip the alias transform and
+    // fall through to the normal identity assign. Found by the property-based
+    // random fuzzer (self-assign after list ops).
+    if(target_sym != nullptr && target_id != symbol_id)
     {
       pointer_typet ptr_type{target_sym->type, 64};
       symbol_table.get_writeable_ref(symbol_id).type = ptr_type;
@@ -1272,10 +1279,15 @@ codet python_convertert::convert_assign(const jsont &stmt)
             id2string(to_struct_tag_type(target_sym->type).get_identifier())
                 .find("python_class_") != std::string::npos));
         if(
-          target_sym != nullptr &&
+          target_sym != nullptr && target_id != lhs_id &&
           (is_python_list_type(target_sym->type) ||
            is_python_dict_type(target_sym->type) || tgt_is_instance))
         {
+          // (Self-assignment `x = x`, where target_id == lhs_id, is excluded
+          // above: pointer-promoting it would bind `x = address_of(x)`, a
+          // self-referential pointer that corrupts the object -- OOB checks
+          // stop firing and len(x)/x[i] become nondet. Found by the
+          // property-based random fuzzer.)
           // PLR §3.1: pointer-promotion. Bind lhs's symbol type
           // to pointer-to-target so subsequent reads through
           // lhs auto-dereference, and mutations through lhs
