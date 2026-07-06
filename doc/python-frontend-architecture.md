@@ -1341,12 +1341,16 @@ Sweep rounds 4–6.)
 >   regardless of operand aliasing. Effect: length, content, index bounds, and
 >   sorted/min/max mixed-category detection all track through `a + b` (and
 >   homogeneous `xs = xs + [..]`). CORE `list-concat-fold-mixed`, `-oob`, `-nofp`.
->   **Residual:** the mixed-element VARIABLE reassignment (`xs=[8,8]; xs=xs+["c"]`)
->   still casts the promoted list back to the original narrower slot on rebinding
->   (a layered coercion path), dropping the widened content -- pinned KNOWNBUG
->   `min-max-mixed-concat-knownbug`, needs list-element retype on reassignment.
->   This + the min-empty-via-symbolic-comprehension residual are the emerging
->   **list-length/identity-tracking** whole-group (distinct from reference-identity).
+>   The mixed-element VARIABLE reassignment (`xs=[8,8]; xs=xs+["c"]`) is now also
+>   CLOSED (`c9d592fed8`, CORE `min-max-mixed-concat`): a reassignment whose RHS is
+>   a list whose element type widened to python_value RETYPES the binding instead
+>   of casting it back to the narrower slot (which dropped the widened content).
+>   **Remaining list-length/identity residual:** min/max-empty via a comprehension
+>   over range(NON-constant bound) then slice (`min-empty-symbolic-comprehension-
+>   knownbug`) -- the unroll-based comprehension can't track a symbolic-bound
+>   range length; needs symbolic-length range comprehension modeling. This is the
+>   open item of the **list-length/identity-tracking** whole-group (distinct from
+>   the reference-identity family).
 > - **Tuple subscript bounds whole-group** (`bb58c69c1e`, PLR §6.3.2): `t[i]` with
 >   i outside `[-len, len)` raises IndexError. The constant-index path already
 >   flagged OOB, but a NON-constant/computed index (`t[sum(xs)]`, `t[len(...)]`)
