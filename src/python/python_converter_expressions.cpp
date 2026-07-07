@@ -1181,15 +1181,34 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     // value-oracle fuzzer mode). Precise constant-step slicing is a follow-up.
     if(unsupported_step)
     {
-      // Precise fold for `xs[::k]` (both bounds default) with a CONSTANT step k
-      // over a CONSTANT list: enumerate Python's indices exactly (k>0: 0,k,2k..
-      // <n; k<0: n-1,n-1+k,.. >=0) and build the result struct. Explicit-bound
-      // step slices and non-constant lists fall through to the sound
-      // over-approximation below.
-      if(
-        step_val.has_value() && is_python_list_type(value.type()) &&
-        lower_json.is_null() && upper_json.is_null())
+      // Precise fold for a CONSTANT step k over a CONSTANT list, with bounds
+      // that are default (None) or literal constants. Enumerate Python's slice
+      // indices exactly (PySlice_GetIndicesEx). Non-constant lists/bounds fall
+      // through to the sound over-approximation below.
+      if(step_val.has_value() && is_python_list_type(value.type()))
       {
+        bool bounds_ok = true;
+        // Evaluate a bound ONLY when it is a literal (Constant / UnaryOp) so
+        // re-converting it here emits no side effects; None => default.
+        auto eval_b = [&](const jsont &j) -> std::optional<long long>
+        {
+          if(j.is_null())
+            return std::nullopt;
+          if(!is_node_type(j, "Constant") && !is_node_type(j, "UnaryOp"))
+          {
+            bounds_ok = false;
+            return std::nullopt;
+          }
+          auto d = try_eval_double(convert_expression(j));
+          if(!d.has_value() || *d != std::floor(*d))
+          {
+            bounds_ok = false;
+            return std::nullopt;
+          }
+          return (long long)*d;
+        };
+        std::optional<long long> lo_opt = eval_b(lower_json);
+        std::optional<long long> hi_opt = eval_b(upper_json);
         const exprt *lst = nullptr;
         if(value.id() == ID_struct)
           lst = &value;
@@ -1200,7 +1219,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
             lst = &it->second;
         }
         if(
-          lst != nullptr && lst->operands().size() >= 2 &&
+          bounds_ok && lst != nullptr && lst->operands().size() >= 2 &&
           lst->operands()[0].is_constant() &&
           lst->operands()[1].id() == ID_array)
         {
@@ -1211,12 +1230,25 @@ exprt python_convertert::convert_subscript(const jsont &expr)
             k != 0)
           {
             const long long nn = n.to_long();
+            // Python slice.indices(nn): bounds differ by step sign, then clamp.
+            const long long lo_b = (k > 0) ? 0 : -1;
+            const long long hi_b = (k > 0) ? nn : nn - 1;
+            auto clamp = [&](long long v)
+            {
+              if(v < 0)
+                v += nn;
+              return v < lo_b ? lo_b : (v > hi_b ? hi_b : v);
+            };
+            long long start =
+              lo_opt.has_value() ? clamp(*lo_opt) : ((k < 0) ? hi_b : lo_b);
+            long long stop =
+              hi_opt.has_value() ? clamp(*hi_opt) : ((k < 0) ? lo_b : hi_b);
             std::vector<long long> idxs;
             if(k > 0)
-              for(long long i = 0; i < nn; i += k)
+              for(long long i = start; i < stop; i += k)
                 idxs.push_back(i);
             else
-              for(long long i = nn - 1; i >= 0; i += k)
+              for(long long i = start; i > stop; i += k)
                 idxs.push_back(i);
             const exprt &data = lst->operands()[1];
             const auto &dt =
