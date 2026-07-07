@@ -1152,8 +1152,19 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       upper = normalize(std::move(upper));
     }
 
-    exprt new_length =
-      is_reverse ? exprt{length} : exprt{minus_exprt{upper, lower}};
+    // PLR §6.3.3: an empty slice (start >= stop, e.g. `xs[2:1]`) has length 0,
+    // NOT a negative `upper - lower`. Clamp to max(0, upper - lower); otherwise
+    // a negative length makes the empty slice look non-empty -> `xs[2:1] != []`
+    // false-proves and `len(xs[2:1]) == 0` false-alarms (found by the negated
+    // value-oracle / mutation-oracle fuzzer mode).
+    exprt new_length = is_reverse ? exprt{length} : [&]() -> exprt
+    {
+      exprt raw = minus_exprt{upper, lower};
+      return if_exprt{
+        binary_relation_exprt{raw, ID_lt, from_integer(0, raw.type())},
+        from_integer(0, raw.type()),
+        raw};
+    }();
 
     // Determine result type (same as source: list or string)
     std::size_t max_len = is_python_string_type(value.type())
