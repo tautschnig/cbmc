@@ -2274,6 +2274,32 @@ std::optional<exprt> python_convertert::try_builtin_call(
           pending_checks.push_back(code_frontend_assignt{*lcur, old_len});
           return std::move(res);
         }
+        // PLR §6.2.9: reversed(list) returns the elements in REVERSE order --
+        // `return arg` (unchanged) was wrong (it computed reversed(xs) == xs, a
+        // false proof found by the negated value-oracle). Build the reversed
+        // copy: result.data[i] = arg.data[length-1-i] for i < length. `list(xs)`
+        // is an ordered copy, so it keeps `return arg`.
+        if(func_name == "reversed")
+        {
+          const auto &lst_st = to_struct_type(arg.type());
+          const auto &ldata_t = to_array_type(lst_st.components()[1].type());
+          const member_exprt alen{arg, "length", signedbv_typet{64}};
+          const member_exprt adata{arg, "data", ldata_t};
+          exprt::operandst rev;
+          rev.reserve(PYTHON_MAX_LIST_LENGTH);
+          for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+          {
+            const exprt idx = from_integer(i, signedbv_typet{64});
+            const exprt src = minus_exprt{
+              minus_exprt{alen, from_integer(1, signedbv_typet{64})}, idx};
+            rev.push_back(if_exprt{
+              binary_relation_exprt{idx, ID_lt, alen},
+              index_exprt{adata, src},
+              safe_zero(ldata_t.element_type())});
+          }
+          return struct_exprt{
+            {alen, array_exprt{std::move(rev), ldata_t}}, arg.type()};
+        }
         return arg;
       }
       // list(<tuple>) / reversed(<tuple>): materialise a list from the tuple's

@@ -946,6 +946,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     // through UnaryOp(USub, Constant(1)) — the AST shape for
     // -1 in slice steps.
     bool is_reverse = false;
+    bool unsupported_step = false;
     if(!step_json.is_null())
     {
       exprt step = convert_expression(step_json);
@@ -959,6 +960,12 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           "exception",
           "ValueError: slice step cannot be zero",
           get_location(expr));
+      // Any other step (|step| >= 2, or a symbolic/non-foldable step) is NOT
+      // modelled precisely; the fall-through would silently return the step-1
+      // (contiguous) slice -- a WRONG value that false-proves (`xs[::2] !=
+      // [1,3,5]`). Over-approximate soundly below. (step == 1 is the identity.)
+      else if(!step_d.has_value() || (*step_d != 1.0))
+        unsupported_step = true;
     }
 
     // Constant-string optimization for slicing
@@ -1150,6 +1157,38 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       };
       lower = normalize(std::move(lower));
       upper = normalize(std::move(upper));
+    }
+
+    // PLR §6.3.3: a step slice we do not model precisely (|step| >= 2, or a
+    // symbolic step) -- return a SOUND over-approximation: a fresh value whose
+    // length is nondet but bounded by the source length (a step slice has at
+    // most len(source) elements), with nondet data. Avoids emitting the wrong
+    // step-1 (contiguous) slice, which false-proves (found by the negated
+    // value-oracle fuzzer mode). Precise constant-step slicing is a follow-up.
+    if(unsupported_step)
+    {
+      static unsigned stepslice_ctr = 0;
+      const irep_idt tid{
+        qualify_name("__stepslice_" + std::to_string(stepslice_ctr++))};
+      if(symbol_table.lookup(tid) == nullptr)
+      {
+        symbolt ts{tid, value.type(), "python"};
+        ts.base_name = id2string(tid);
+        ts.is_lvalue = true;
+        ts.is_state_var = true;
+        ts.is_static_lifetime = current_function.empty();
+        symbol_table.add(ts);
+      }
+      symbol_exprt tmp = symbol_table.lookup_ref(tid).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{
+        tmp, side_effect_expr_nondett{value.type(), get_location(expr)}});
+      member_exprt tlen{tmp, "length", signedbv_typet{64}};
+      code_assumet a{and_exprt{
+        binary_relation_exprt{tlen, ID_ge, from_integer(0, signedbv_typet{64})},
+        binary_relation_exprt{tlen, ID_le, length}}};
+      a.add_source_location() = get_location(expr);
+      pending_checks.push_back(std::move(a));
+      return std::move(tmp);
     }
 
     // PLR §6.3.3: an empty slice (start >= stop, e.g. `xs[2:1]`) has length 0,
