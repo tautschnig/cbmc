@@ -710,10 +710,15 @@ exprt python_convertert::convert_compare(const jsont &expr)
         // value/float). Truly incompatible (e.g. list[list] vs
         // list[int]) still gets the never-equal trick.
         bool can_bridge = false;
+        // bool is int-compatible (bool subset of int in Python), so a
+        // list[bool] element bridges numerically with int/float/python_value
+        // -- e.g. `[0] == [False]` (list[int] vs list[bool]). Without ID_bool
+        // here, can_bridge was false and the comparison fell to the never-equal
+        // trick -> `[0] != [False]` false-proved (found by the mutation-oracle).
         bool le_num = le.id() == ID_signedbv || le.id() == ID_floatbv ||
-                      is_python_value_type(le);
+                      le.id() == ID_bool || is_python_value_type(le);
         bool re_num = re.id() == ID_signedbv || re.id() == ID_floatbv ||
-                      is_python_value_type(re);
+                      re.id() == ID_bool || is_python_value_type(re);
         if(le_num && re_num)
           can_bridge = true;
         // Both python_string is also handled here.
