@@ -1356,6 +1356,19 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 >   range length; needs symbolic-length range comprehension modeling. This is the
 >   open item of the **list-length/identity-tracking** whole-group (distinct from
 >   the reference-identity family).
+> - **In-place list mutation invalidates the constant-fold snapshot whole-group**
+>   (`8d0dbf3d0f`, `e1e7e6cfc9`, PLR §3.3, SOUNDNESS): a list mutation updates the
+>   runtime list but must also invalidate the `list_literals` snapshot, else
+>   `sorted`/`min`/`max`/`index`/the mixed-orderable check constant-fold against
+>   PRE-mutation data -> false proof (`xs.append(-5); assert min(xs) == 0` proved
+>   SUCCESSFUL). Now ALL in-place list mutations erase the snapshot: methods
+>   (append/insert/extend/remove/pop/clear) and subscript/slice/aug-subscript
+>   stores; sort/reverse maintain it in place. Found by PRECISION TRIAGE of the
+>   value-oracle fuzzer's false alarms -- the fuzzer cannot catch this class
+>   directly (it asserts CPython's correct value, so a stale-fold is a false
+>   ALARM, not a proof); CORE `list-mutate-invalidates-fold`,
+>   `list-substore-invalidates-fold` are the regression guard. Also restored
+>   precision (append-then-op). CORE `-nofp` variants.
 > - **Tuple subscript bounds whole-group** (`bb58c69c1e`, PLR §6.3.2): `t[i]` with
 >   i outside `[-len, len)` raises IndexError. The constant-index path already
 >   flagged OOB, but a NON-constant/computed index (`t[sum(xs)]`, `t[len(...)]`)
