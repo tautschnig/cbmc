@@ -1211,6 +1211,30 @@ the plain-class `missing_attr` read, `gen.close()`+next, `del x` DIRECT-read
 NameError, and the min/max/sorted mixed-category-via-concat that were baselined
 earlier are now all **closed** — see Sweep rounds 4–7.)
 
+> **Mutation-oracle + value-computation soundness campaign (2026-07-07).** The
+> value-oracle fuzzer (`assert r == V`, V = CPython's value) has a structural
+> blind spot: when cbmc MIScomputes a value, `r == V` merely FAILS (a false
+> *alarm*), never a false *proof* — so value-miscomputation soundness bugs hide
+> behind false alarms. Added a **negated value-oracle / mutation-oracle** mode
+> (`PLR_NEGATE_ORACLE=1`): it emits `assert r != V`, so CPython always raises and
+> cbmc verifying SUCCESSFUL pinpoints a DEFINITE value miscomputation. A
+> nondet/imprecise `r` cannot be proven `!= V`, so the mode discriminates
+> soundness from precision. It runs as a **second standing gate pass**
+> (`baseline-negate.json`, empty). Triaging value-oracle false alarms + running
+> the mutation-oracle over a progressively widened grammar (containers, slicing
+> incl. step/negative, comprehensions, sets, string methods, f-strings,
+> try/except, `.index`/`reversed`) drove a whole batch of value-computation
+> soundness fixes to **0**: in-place-list-mutation stale constant-fold
+> (`8d0dbf3d0f`/`e1e7e6cfc9`, whole-group across methods + subscript/slice/aug
+> stores), self-referential aggregate reassignment read-write hazard
+> (`3ad447fb84`, evaluate-then-bind), empty-slice negative length (`4cae112617`),
+> unsupported step slice (`a0922d4aed`, sound over-approx), `reversed(list)`
+> returning the list unchanged (`6b522077f0`), symbolic `tuple.index`
+> (`c91476a4b4`), and the **cross-element-type list `==`/`!=` whole-group**
+> (`ef71196c6f` double-negation in the bridge tunnel + `40d5b7d91d` bool-element
+> bridging). Both gate passes are green across the widened grammar; convergence
+> is strong (each widening pass now yields ≤1 bug, all in the comparison group).
+
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
 > consumption-state / identity** false-proof cluster: a generator consumed
