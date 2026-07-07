@@ -828,6 +828,8 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
       rhs = coerce_assign_rhs(rhs, sym2.type);
   }
 
+  // Reassigning `symbol_id` invalidates any cached list built from it.
+  invalidate_list_literals_referencing(symbol_id);
   code_frontend_assignt assign{sym2.symbol_expr(), rhs};
   assign.add_source_location() = loc;
   // Track constant string values
@@ -3875,6 +3877,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
     }
 
     const symbolt &sym = symbol_table.lookup_ref(symbol_id);
+    // Reassigning `symbol_id` invalidates any cached list built from it (a
+    // stale-symbol false proof otherwise -- `xs = xs + [b]; b = ...`).
+    invalidate_list_literals_referencing(symbol_id);
     exprt typed_rhs = rhs;
     if(typed_rhs.type() != sym.type)
       typed_rhs = safe_typecast(typed_rhs, sym.type);

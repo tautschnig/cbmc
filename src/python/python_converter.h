@@ -2120,6 +2120,14 @@ private:
   /// equality does not apply.
   exprt value_equal(const exprt &a, const exprt &b);
 
+  /// Erase any cached list_literals entry whose stored struct references the
+  /// symbol `sym`. Called when `sym` is (re)assigned: a cached list built from
+  /// `sym` (`xs = xs + [b]`) becomes STALE once `sym` changes (`b = ...`), and
+  /// a later fold/read reusing the cached struct would read the new value -- a
+  /// false proof. Keeps symbol-bearing caches (precision) but drops them on
+  /// reassignment (soundness).
+  void invalidate_list_literals_referencing(const irep_idt &sym);
+
   /// PLR §4.1 (Truth Value Testing): return a `bool_typet`-typed
   /// expression that is true iff `e` is "truthy" in Python.
   ///

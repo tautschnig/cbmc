@@ -1428,6 +1428,57 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   }
   if(is_python_list_type(left.type()) && op == "Mult")
   {
+    // Constant-fold `xs * n` over a CONSTANT list with a CONSTANT n -> a
+    // CONSTANT struct (keeps list_literals trackable, enables chained
+    // `(xs*n)[::-k]` folding; same root as the concat/slice folds).
+    {
+      const exprt *cl = nullptr;
+      if(left.id() == ID_struct)
+        cl = &left;
+      else if(left.id() == ID_symbol)
+      {
+        auto it = list_literals.find(to_symbol_expr(left).get_identifier());
+        if(it != list_literals.end() && it->second.id() == ID_struct)
+          cl = &it->second;
+      }
+      auto nv = try_eval_double(right);
+      if(
+        cl != nullptr && cl->operands().size() >= 2 &&
+        cl->operands()[0].is_constant() && cl->operands()[1].id() == ID_array &&
+        nv.has_value() && *nv == std::floor(*nv))
+      {
+        mp_integer src_len;
+        if(
+          !to_integer(to_constant_expr(cl->operands()[0]), src_len) &&
+          src_len > 0)
+        {
+          const long long sl = src_len.to_long();
+          long long nn = (long long)*nv;
+          if(nn < 0)
+            nn = 0;
+          const long long total = sl * nn;
+          if(total >= 0 && total <= (long long)PYTHON_MAX_LIST_LENGTH)
+          {
+            const exprt &cdata = cl->operands()[1];
+            const auto &dt =
+              to_array_type(to_struct_type(cl->type()).components()[1].type());
+            exprt::operandst el;
+            el.reserve(PYTHON_MAX_LIST_LENGTH);
+            for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+            {
+              if((long long)i < total)
+                el.push_back(cdata.operands()[(long long)i % sl]);
+              else
+                el.push_back(safe_zero(dt.element_type()));
+            }
+            return struct_exprt{
+              {from_integer(total, signedbv_typet{64}),
+               array_exprt{std::move(el), dt}},
+              cl->type()};
+          }
+        }
+      }
+    }
     struct_typet list_type = to_struct_type(left.type());
     const auto &data_type = to_array_type(list_type.components()[1].type());
     member_exprt old_len{left, "length", signedbv_typet{64}};

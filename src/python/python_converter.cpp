@@ -3365,6 +3365,30 @@ exprt python_convertert::wrap_value(const exprt &e)
 /// the inline __str field on both operands; for a non-STR operand __str
 /// is the empty {0, NULL} default, and the surrounding tag guard
 /// discards the result anyway.
+
+void python_convertert::invalidate_list_literals_referencing(
+  const irep_idt &sym)
+{
+  if(list_literals.empty())
+    return;
+  std::function<bool(const exprt &)> refs = [&](const exprt &e) -> bool
+  {
+    if(e.id() == ID_symbol && to_symbol_expr(e).get_identifier() == sym)
+      return true;
+    for(const auto &op : e.operands())
+      if(refs(op))
+        return true;
+    return false;
+  };
+  for(auto it = list_literals.begin(); it != list_literals.end();)
+  {
+    if(it->first != sym && refs(it->second))
+      it = list_literals.erase(it);
+    else
+      ++it;
+  }
+}
+
 exprt python_convertert::value_equal(const exprt &a, const exprt &b)
 {
   PRECONDITION(
