@@ -5215,6 +5215,23 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
     if(is_node_type(func, "Attribute"))
     {
       std::string method = json_string(json_member(func, "attr"));
+      // PLR §3.3: a content-changing in-place list mutation invalidates the
+      // list_literals constant-fold snapshot of the receiver. A stale snapshot
+      // lets sorted()/min()/max()/index()/the mixed-orderable check fold against
+      // PRE-mutation data -- a SOUNDNESS bug (`xs.append(-5); min(xs)` folded to
+      // the old min 0 and false-proved `min(xs) == 0`). Erasing forces those
+      // ops to read the runtime (mutated) list. Placed at the statement-level
+      // dispatch so it runs regardless of which sub-handler emits the mutation;
+      // sort()/reverse() maintain the snapshot themselves and are excluded.
+      {
+        static const std::set<std::string> list_content_mutators = {
+          "append", "insert", "extend", "remove", "pop", "clear"};
+        const jsont &recv = json_member(func, "value");
+        if(
+          list_content_mutators.count(method) > 0 && is_node_type(recv, "Name"))
+          list_literals.erase(
+            irep_idt{qualify_name(json_string(json_member(recv, "id")))});
+      }
       if(method == "append")
       {
         exprt obj = convert_expression(json_member(func, "value"));

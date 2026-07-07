@@ -44,6 +44,21 @@ std::optional<exprt> python_convertert::try_list_method(
   // value is returned by copy, so the mutation is lost -- havoc the dict.
   invalidate_dict_value_on_mutation(
     json_member(json_member(expr, "func"), "value"), method_name);
+  // PLR §3.3: a content-changing in-place mutator (append/insert/extend/remove/
+  // pop/clear) alters the receiver's length/elements but does NOT update the
+  // `list_literals` constant-fold snapshot. Leaving the stale snapshot lets
+  // sorted()/min()/max()/index()/the mixed-orderable check fold against
+  // PRE-mutation data -- a SOUNDNESS bug: `xs.append(-5); min(xs)` folded to the
+  // old min 0 and false-proved `min(xs) == 0`. Erase the snapshot so those ops
+  // read the runtime (mutated) list. sort()/reverse() maintain the snapshot
+  // in-place themselves, so they are excluded.
+  if(obj.id() == ID_symbol)
+  {
+    static const std::set<std::string> content_mutators = {
+      "append", "insert", "extend", "remove", "pop", "clear"};
+    if(content_mutators.count(method_name) > 0)
+      list_literals.erase(to_symbol_expr(obj).get_identifier());
+  }
   // PLR §3.3.1: list.__iter__() returns the list itself,
   // which is sufficient for our list-as-iterator model.
   // The for-loop iter path expects the same shape and
