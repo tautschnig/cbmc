@@ -3868,6 +3868,55 @@ codet python_convertert::convert_assign(const jsont &stmt)
     if(typed_rhs.type() != sym.type)
       typed_rhs = safe_typecast(typed_rhs, sym.type);
 
+    // PLR (evaluate-then-bind): a self-referential reassignment `x = f(x)` --
+    // e.g. `xs = xs[1:4]`, `xs = xs[::-1]` -- must evaluate the RHS fully BEFORE
+    // rebinding x. Emitting `x := <aggregate expr reading x.data/x.length>`
+    // directly risks a read-write hazard where later element reads observe the
+    // partially-updated x, corrupting elements (`xs = xs[1:4]` dropped xs[1],
+    // which also produced a slice/index false proof). Materialize the RHS into a
+    // temp first, then bind -- exactly the correct fresh-binding path
+    // (`ys = xs[1:4]`). Restricted to aggregate (list/dict/tuple/struct) RHS,
+    // where element-wise reads can interleave with the update; scalars have no
+    // such hazard, so `a = a + 1` is unaffected.
+    const typet &rt = typed_rhs.type();
+    const bool rhs_is_aggregate =
+      is_python_list_type(rt) || is_python_dict_type(rt) ||
+      is_python_tuple_type(rt) || rt.id() == ID_struct;
+    if(typed_rhs.id() != ID_symbol && rhs_is_aggregate)
+    {
+      std::function<bool(const exprt &)> uses_sym = [&](const exprt &e) -> bool
+      {
+        if(
+          e.id() == ID_symbol &&
+          to_symbol_expr(e).get_identifier() == symbol_id)
+          return true;
+        for(const auto &op : e.operands())
+          if(uses_sym(op))
+            return true;
+        return false;
+      };
+      if(uses_sym(typed_rhs))
+      {
+        static unsigned selfref_ctr = 0;
+        irep_idt tmp_id{
+          qualify_name("__selfref_" + std::to_string(selfref_ctr++))};
+        if(symbol_table.lookup(tmp_id) == nullptr)
+        {
+          symbolt ts{tmp_id, typed_rhs.type(), "python"};
+          ts.base_name = id2string(tmp_id);
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          ts.is_static_lifetime = current_function.empty();
+          symbol_table.add(ts);
+        }
+        symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
+        code_frontend_assignt eval{tmp, typed_rhs};
+        eval.add_source_location() = loc;
+        block.add(std::move(eval));
+        typed_rhs = tmp;
+      }
+    }
+
     // Inside a try block with a function call RHS: split into
     // call-into-temp + guarded-assign so that if the call raises,
     // the assignment is skipped.
