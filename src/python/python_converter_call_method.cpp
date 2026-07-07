@@ -2607,6 +2607,48 @@ std::optional<exprt> python_convertert::try_method_call(
             !as_array(args).empty())
           {
             exprt arg = convert_expression(*as_array(args).begin());
+            // Symbolic-arg path (PLR §6.10): a constant NUMERIC tuple with a
+            // possibly non-constant numeric arg. Build the match index
+            // symbolically and raise ValueError when NO element equals the arg
+            // -- mirrors list.index. Closes `t.index(b)` with a computed b
+            // (a large false-proof cluster: the constant path below only fired
+            // when the arg itself was constant).
+            if(method_name == "index" && !tup->operands().empty())
+            {
+              bool all_num = true;
+              for(const auto &el : tup->operands())
+              {
+                mp_integer ev;
+                if(!(el.is_constant() && !to_integer(to_constant_expr(el), ev)))
+                {
+                  all_num = false;
+                  break;
+                }
+              }
+              const typet &at = arg.type();
+              const bool arg_num =
+                at.id() == ID_signedbv || at.id() == ID_unsignedbv ||
+                at.id() == ID_integer || at.id() == ID_bool ||
+                at == python_int_type();
+              if(all_num && arg_num)
+              {
+                exprt argi = safe_typecast(arg, signedbv_typet{64});
+                exprt result = from_integer(-1, python_int_type());
+                for(long i = (long)tup->operands().size() - 1; i >= 0; --i)
+                {
+                  mp_integer ev;
+                  to_integer(to_constant_expr(tup->operands()[i]), ev);
+                  exprt match =
+                    equal_exprt{argi, from_integer(ev, signedbv_typet{64})};
+                  result =
+                    if_exprt{match, from_integer(i, python_int_type()), result};
+                }
+                emit_conditional_exception(
+                  equal_exprt{result, from_integer(-1, result.type())},
+                  "ValueError");
+                return result;
+              }
+            }
             mp_integer count_val = 0;
             mp_integer first_match = -1;
             bool all_comparable = true;
