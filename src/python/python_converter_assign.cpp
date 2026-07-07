@@ -2530,6 +2530,17 @@ codet python_convertert::convert_assign(const jsont &stmt)
     // PLR §3.2: "Tuples are immutable sequences"
     if(is_node_type(target, "Subscript"))
     {
+      // PLR §3.3: a subscript/slice store `xs[i] = v` / `xs[lo:hi] = ...`
+      // mutates the list in place, so invalidate the receiver's constant-fold
+      // snapshot -- else min()/max()/sorted()/index() fold against pre-mutation
+      // data (same soundness whole-group as the in-place list methods:
+      // `xs[0] = 9; min(xs)` had folded the old min).
+      {
+        const jsont &sub_base = json_member(target, "value");
+        if(is_node_type(sub_base, "Name"))
+          list_literals.erase(
+            irep_idt{qualify_name(json_string(json_member(sub_base, "id")))});
+      }
       // PLR list slice-assignment: `a[lo:hi] = <iterable>` replaces the slice
       // with the RHS elements (the result is a[0:lo] ++ rhs ++ a[hi:], so the
       // length can change). Without this the Slice node was mis-converted as a
@@ -4313,6 +4324,15 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   bool have_subscript_rewrite = false;
   if(is_node_type(target, "Subscript"))
   {
+    // PLR §3.3: `xs[i] += v` mutates the list in place -> invalidate the
+    // constant-fold snapshot (same soundness whole-group as list methods /
+    // plain subscript store).
+    {
+      const jsont &sub_base = json_member(target, "value");
+      if(is_node_type(sub_base, "Name"))
+        list_literals.erase(
+          irep_idt{qualify_name(json_string(json_member(sub_base, "id")))});
+    }
     const jsont &slice = json_member(target, "slice");
     if(is_node_type(slice, "Call"))
     {
