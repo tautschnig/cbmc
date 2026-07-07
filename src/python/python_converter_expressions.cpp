@@ -1315,6 +1315,90 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     array_typet result_data_type{
       elem_type, from_integer(max_len, signedbv_typet{64})};
 
+    // Constant-fold the slice when the source resolves to a CONSTANT list and
+    // the bounds are default/literal -> emit a CONSTANT struct so a following
+    // operation (a chained slice `xs[a:b][::-k]`, sorted, ==) can fold too.
+    // Uses raw literal bounds + Python's slice.indices with step +-1 (reliable,
+    // avoids folding the normalized if_exprt bounds). List only; constant
+    // strings are handled above.
+    if(is_python_list_type(value.type()))
+    {
+      bool bounds_ok = true;
+      auto eval_b = [&](const jsont &j) -> std::optional<long long>
+      {
+        if(j.is_null())
+          return std::nullopt;
+        if(!is_node_type(j, "Constant") && !is_node_type(j, "UnaryOp"))
+        {
+          bounds_ok = false;
+          return std::nullopt;
+        }
+        auto d = try_eval_double(convert_expression(j));
+        if(!d.has_value() || *d != std::floor(*d))
+        {
+          bounds_ok = false;
+          return std::nullopt;
+        }
+        return (long long)*d;
+      };
+      std::optional<long long> lo_opt = eval_b(lower_json);
+      std::optional<long long> hi_opt = eval_b(upper_json);
+      const exprt *cl = nullptr;
+      if(value.id() == ID_struct)
+        cl = &value;
+      else if(value.id() == ID_symbol)
+      {
+        auto it = list_literals.find(to_symbol_expr(value).get_identifier());
+        if(it != list_literals.end() && it->second.id() == ID_struct)
+          cl = &it->second;
+      }
+      if(
+        bounds_ok && cl != nullptr && cl->operands().size() >= 2 &&
+        cl->operands()[0].is_constant() && cl->operands()[1].id() == ID_array)
+      {
+        mp_integer src_len;
+        if(!to_integer(to_constant_expr(cl->operands()[0]), src_len))
+        {
+          const long long nn = src_len.to_long();
+          const long long k = is_reverse ? -1 : 1;
+          const long long lo_b = (k > 0) ? 0 : -1;
+          const long long hi_b = (k > 0) ? nn : nn - 1;
+          auto clamp = [&](long long v)
+          {
+            if(v < 0)
+              v += nn;
+            return v < lo_b ? lo_b : (v > hi_b ? hi_b : v);
+          };
+          const long long start =
+            lo_opt.has_value() ? clamp(*lo_opt) : ((k < 0) ? hi_b : lo_b);
+          const long long stop =
+            hi_opt.has_value() ? clamp(*hi_opt) : ((k < 0) ? lo_b : hi_b);
+          std::vector<long long> idxs;
+          if(k > 0)
+            for(long long i = start; i < stop; i += k)
+              idxs.push_back(i);
+          else
+            for(long long i = start; i > stop; i += k)
+              idxs.push_back(i);
+          const exprt &cdata = cl->operands()[1];
+          const long long ndata = (long long)cdata.operands().size();
+          exprt::operandst el;
+          el.reserve(max_len);
+          for(std::size_t i = 0; i < max_len; i++)
+          {
+            if(i < idxs.size() && idxs[i] >= 0 && idxs[i] < ndata)
+              el.push_back(cdata.operands()[idxs[i]]);
+            else
+              el.push_back(safe_zero(elem_type));
+          }
+          return struct_exprt{
+            {from_integer((long long)idxs.size(), signedbv_typet{64}),
+             array_exprt{std::move(el), result_data_type}},
+            st};
+        }
+      }
+    }
+
     exprt::operandst result_elems;
     for(std::size_t i = 0; i < max_len; i++)
     {
