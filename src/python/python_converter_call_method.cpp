@@ -2609,6 +2609,12 @@ std::optional<exprt> python_convertert::try_method_call(
             exprt arg = convert_expression(*as_array(args).begin());
             mp_integer count_val = 0;
             mp_integer first_match = -1;
+            bool all_comparable = true;
+            {
+              auto a_str_top = extract_string_value(arg);
+              if(!a_str_top.has_value() && !arg.is_constant())
+                all_comparable = false;
+            }
             for(std::size_t i = 0; i < tup->operands().size(); ++i)
             {
               const exprt &elem = tup->operands()[i];
@@ -2625,6 +2631,11 @@ std::optional<exprt> python_convertert::try_method_call(
                   !to_integer(to_constant_expr(arg), av))
                   matches = ev == av;
               }
+              // If neither comparison path could evaluate this element against
+              // the arg, we cannot prove it is NOT a match -> absence is not
+              // definite (do not raise a spurious ValueError below).
+              if(!(e_str.has_value() || elem.is_constant()))
+                all_comparable = false;
               if(matches)
               {
                 count_val += 1;
@@ -2636,8 +2647,17 @@ std::optional<exprt> python_convertert::try_method_call(
             {
               if(first_match >= 0)
                 return from_integer(first_match, python_int_type());
-              // PLR: index() raises ValueError if not found —
-              // fall through to nondet.
+              // PLR §6.10: tuple.index(v) raises ValueError when v is absent.
+              // When every element and the arg are constant-comparable, absence
+              // is DEFINITE -> emit the exception (was silently falling through
+              // to nondet, a false proof). Otherwise absence is not provable;
+              // keep the nondet fall-through.
+              if(all_comparable)
+              {
+                emit_conditional_exception(true_exprt{}, "ValueError");
+                return side_effect_expr_nondett{
+                  python_int_type(), get_location(expr)};
+              }
             }
             else
             {
