@@ -821,16 +821,17 @@ exprt python_convertert::convert_compare(const jsont &expr)
           // Tunnel the bridged comparison through the rest of the
           // pipeline by replacing both operands with concrete
           // booleans of the same content.
-          if(op == "Eq")
-          {
-            current_left = std::move(all_equal);
-            right = true_exprt{};
-          }
-          else
-          {
-            current_left = not_exprt{std::move(all_equal)};
-            right = true_exprt{};
-          }
+          // Tunnel the bridged element-equality back through the pipeline so
+          // the python_value tag-guard stage (done_cmp) still applies -- needed
+          // when this branch is reached after unwrapping a python_value operand
+          // (e.g. `None == []`, where the NONE tag must make it unequal).
+          // Set current_left = all_equal for BOTH ops and let the pipeline's op
+          // differentiate: Eq -> `all_equal == true` = all_equal; NotEq ->
+          // `all_equal != true` = not(all_equal). (Setting not(all_equal) for
+          // NotEq here DOUBLE-NEGATED via the second `!= true`, so `a != b`
+          // returned `a == b` -- a false proof found by the mutation-oracle.)
+          current_left = std::move(all_equal);
+          right = true_exprt{};
         }
         else
         {
