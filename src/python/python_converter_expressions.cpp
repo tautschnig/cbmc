@@ -81,7 +81,14 @@ void python_convertert::emit_conditional_exception(
     body.add(code_frontend_assignt{
       exc_type_sym->symbol_expr(),
       from_integer(exception_type_hash(exc_type), exc_type_sym->type)});
-  pending_checks.push_back(code_ifthenelset{cond, std::move(body)});
+  // PLR §8.3: the FIRST exception raised on a path wins. If an exception is
+  // already active (e.g. from evaluating a sub-expression -- `xs.index(xs[4])`
+  // where `xs[4]` raised IndexError), a later conditional exception (index()'s
+  // not-found ValueError) must NOT overwrite it, or a `try/except ValueError`
+  // would wrongly catch the IndexError (a false proof). Guard the raise with
+  // `not __exception_active` so only the first exception sets active + type.
+  pending_checks.push_back(code_ifthenelset{
+    and_exprt{cond, not_exprt{exc_sym->symbol_expr()}}, std::move(body)});
 }
 
 // Validate a dunder's return-type contract (PLR §3.3). See the header.
