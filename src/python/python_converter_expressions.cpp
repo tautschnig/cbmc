@@ -947,6 +947,8 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     // -1 in slice steps.
     bool is_reverse = false;
     bool unsupported_step = false;
+    std::optional<mp_integer>
+      step_val; // constant step (|step| >= 2) if foldable
     if(!step_json.is_null())
     {
       exprt step = convert_expression(step_json);
@@ -961,11 +963,16 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           "ValueError: slice step cannot be zero",
           get_location(expr));
       // Any other step (|step| >= 2, or a symbolic/non-foldable step) is NOT
-      // modelled precisely; the fall-through would silently return the step-1
-      // (contiguous) slice -- a WRONG value that false-proves (`xs[::2] !=
-      // [1,3,5]`). Over-approximate soundly below. (step == 1 is the identity.)
+      // modelled by the step-1 path; a constant step over a CONSTANT list is
+      // folded precisely below (precise_step_fold); otherwise it is soundly
+      // over-approximated (nondet, length-bounded). The step-1 fall-through
+      // would return the contiguous slice -- a WRONG value that false-proves.
       else if(!step_d.has_value() || (*step_d != 1.0))
+      {
         unsupported_step = true;
+        if(step_d.has_value() && *step_d == std::floor(*step_d))
+          step_val = mp_integer{(long long)*step_d};
+      }
     }
 
     // Constant-string optimization for slicing
@@ -1167,6 +1174,63 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     // value-oracle fuzzer mode). Precise constant-step slicing is a follow-up.
     if(unsupported_step)
     {
+      // Precise fold for `xs[::k]` (both bounds default) with a CONSTANT step k
+      // over a CONSTANT list: enumerate Python's indices exactly (k>0: 0,k,2k..
+      // <n; k<0: n-1,n-1+k,.. >=0) and build the result struct. Explicit-bound
+      // step slices and non-constant lists fall through to the sound
+      // over-approximation below.
+      if(
+        step_val.has_value() && is_python_list_type(value.type()) &&
+        lower_json.is_null() && upper_json.is_null())
+      {
+        const exprt *lst = nullptr;
+        if(value.id() == ID_struct)
+          lst = &value;
+        else if(value.id() == ID_symbol)
+        {
+          auto it = list_literals.find(to_symbol_expr(value).get_identifier());
+          if(it != list_literals.end() && it->second.id() == ID_struct)
+            lst = &it->second;
+        }
+        if(
+          lst != nullptr && lst->operands().size() >= 2 &&
+          lst->operands()[0].is_constant() &&
+          lst->operands()[1].id() == ID_array)
+        {
+          mp_integer n;
+          const long long k = step_val->to_long();
+          if(
+            !to_integer(to_constant_expr(lst->operands()[0]), n) && n >= 0 &&
+            k != 0)
+          {
+            const long long nn = n.to_long();
+            std::vector<long long> idxs;
+            if(k > 0)
+              for(long long i = 0; i < nn; i += k)
+                idxs.push_back(i);
+            else
+              for(long long i = nn - 1; i >= 0; i += k)
+                idxs.push_back(i);
+            const exprt &data = lst->operands()[1];
+            const auto &dt =
+              to_array_type(to_struct_type(lst->type()).components()[1].type());
+            const exprt pad = safe_zero(dt.element_type());
+            exprt::operandst res;
+            res.reserve(PYTHON_MAX_LIST_LENGTH);
+            for(std::size_t j = 0; j < PYTHON_MAX_LIST_LENGTH; ++j)
+            {
+              if(j < idxs.size() && idxs[j] < (long long)data.operands().size())
+                res.push_back(data.operands()[idxs[j]]);
+              else
+                res.push_back(pad);
+            }
+            return struct_exprt{
+              {from_integer((long long)idxs.size(), signedbv_typet{64}),
+               array_exprt{std::move(res), dt}},
+              lst->type()};
+          }
+        }
+      }
       static unsigned stepslice_ctr = 0;
       const irep_idt tid{
         qualify_name("__stepslice_" + std::to_string(stepslice_ctr++))};
