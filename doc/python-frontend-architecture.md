@@ -1319,10 +1319,13 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > `[7.0,8.0]` / `[(1,2)]` / `list(zip(xs,xs))`) reinterprets the bits instead of
 > rebinding the name -> false proof. Scalars already rebind soundly. A single-site
 > retype fix was insufficient (two paths: coerce_assign_rhs + the assign-cast) and
-> was reverted. Root cause, both paths, and the uniform-rebind fix direction are
-> in [python-frontend-retype-on-reassign-plan.md](python-frontend-retype-on-reassign-plan.md).
-> The `python_value` TUPLE tag remains a separate (precision) item; it is NOT
-> what these residuals need.
+> was reverted. **Now CLOSED (`c295841ecf`):** both reassignment paths retype the
+> binding for an aggregate RHS (Python rebinds), so a differently-typed list/dict/
+> tuple/set reassignment is no longer reinterpreted. The **`PLR_WIDE` negated
+> sweep is now 0** (all residuals closed); the standing gates + oracle stay at 0.
+> Root cause + both paths: [python-frontend-retype-on-reassign-plan.md](python-frontend-retype-on-reassign-plan.md).
+> The `python_value` TUPLE tag remains a separate PRECISION item (boxed-tuple
+> isinstance/extract/Any are sound false alarms), tracked in its own plan.
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
