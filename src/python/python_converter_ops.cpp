@@ -57,6 +57,8 @@ binop_verdict compute_binop_verdict(
 {
   const bool l_is_list = is_python_list_type(left.type());
   const bool r_is_list = is_python_list_type(right.type());
+  const bool l_is_tuple = is_python_tuple_type(left.type());
+  const bool r_is_tuple = is_python_tuple_type(right.type());
   const bool l_is_dict = is_python_dict_type(left.type());
   const bool r_is_dict = is_python_dict_type(right.type());
   const bool l_is_set = is_python_set_type(left.type());
@@ -102,6 +104,15 @@ binop_verdict compute_binop_verdict(
     if(
       !(op == "Mult" && (l_is_intlike || l_is_value)) &&
       !(op == "Add" && l_is_value && ref_mutables))
+      incompatible = true;
+  // PLR §6.3: a tuple mixed with a concrete non-tuple is a TypeError for + (and
+  // only tuple*int repetition is valid for *). tuple+tuple concat is handled
+  // before this verdict; python_value stays dynamic (may hold a tuple). This
+  // also prevents the mistyped `tuple(iterable)` nondet (currently a python_int)
+  // from reaching the arithmetic builder as `int + tuple` and tripping the
+  // CBMC-core "add/sub with mixed types" invariant (a crash).
+  if(l_is_tuple != r_is_tuple && !l_is_value && !r_is_value)
+    if(!(op == "Mult" && (l_is_tuple ? r_is_intlike : l_is_intlike)))
       incompatible = true;
   if(l_is_dict != r_is_dict)
     incompatible = true;
