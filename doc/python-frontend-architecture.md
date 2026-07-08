@@ -1285,6 +1285,32 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > instead mutation-oracle unwinding artifacts: `range(sum(xs))` cannot fully
 > unroll at the sweep bound, so `r != <full literal>` is legitimately true under
 > bounded execution — a harness limitation, not a frontend bug.)
+>
+> **Continuation (2026-07-08) — heterogeneous elements, dict iteration &
+> evaluate-once.** Further widening (nested references, dict value/key iteration,
+> class instances) surfaced three more whole-group soundness fixes.
+> **(1) list[python_value] element equality by pointer** (`54b6c3a71b`, PLR
+> §6.10.1) — element comparison used a plain equal_exprt on the tagged union
+> (incl. the heap pointer), so equal-but-distinct references (nested list/dict/
+> set, or a tuple-as-CLASS) compared unequal → `!=` wrongly PROVED; now routed
+> through `python_value_structural_eq` (scalars precise, strings by content,
+> pointer-backed tags → sound nondet). **(2) dict variable-key store left the
+> `dict_literals` snapshot stale** (`f7d5f10977`, PLR §6.2.7) — `d[b]=v` (non-
+> constant key) updated the runtime arrays but not the constant snapshot, so
+> `d.values()`/`keys()`/`items()` read the pre-insert state (false proof); now the
+> snapshot is dropped on a variable-key store (same whole-group as the list
+> stale-snapshot invalidation). **(3) evaluate-once for operand-duplicating
+> builtins** (`b116b0d516`/`edfbebebb4` abs, `00ddd0845b` min/max, PLR §6.2/§6.10)
+> — abs()/min()/max() duplicate their operand across dispatch/comparison branches
+> (min/max additionally re-converted the 2-arg case), so a side-effecting call arg
+> (`abs(o.bump())`, a mutating method) executed multiple times and read a stale
+> value (false proof); operands are now materialised once via a shared
+> `materialize_call_operand` helper (a broad materialise-at-the-Call-chokepoint
+> variant was REJECTED — it regressed closure/generator call semantics, which
+> consume the raw call expression). Wide-negated FPs 4 → 2 (the only remaining
+> residual is the tuple-tag class above). CORE guards:
+> `list-pv-element-ref-equality`, `dict-varkey-store-iteration`,
+> `abs-side-effecting-arg`, `min-max-side-effecting-arg`.
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
