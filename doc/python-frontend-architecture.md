@@ -1280,7 +1280,8 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > certain combinations), remain a residual FALSE-PROOF class exercised only under
 > `PLR_WIDE` (the standing narrow gate is at 0). The whole-group fix is a
 > `python_value` TUPLE tag + tuple-aware boxing/`structural_eq`/materialisation —
-> a representation change, not a point fix. (`rand_2660`-style residuals are
+> a representation change, not a point fix (design + phased plan:
+> [python-frontend-tuple-tag-plan.md](python-frontend-tuple-tag-plan.md)). (`rand_2660`-style residuals are
 > instead mutation-oracle unwinding artifacts: `range(sum(xs))` cannot fully
 > unroll at the sweep bound, so `r != <full literal>` is legitimately true under
 > bounded execution — a harness limitation, not a frontend bug.)
