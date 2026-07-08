@@ -627,6 +627,34 @@ std::optional<exprt> python_convertert::try_list_method(
     }
   }
 
+  // PLib stdtypes: list.count(value) -- number of occurrences. Was unmodelled
+  // (nondet). Sum 1 for each in-range element equal to the search value; works
+  // for constant AND symbolic lists.
+  if(method_name == "count")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt search = convert_expression(*as_array(args).begin());
+      if(search.type() != data_type.element_type())
+        search = coerce_element(search, data_type.element_type());
+      exprt count = from_integer(0, python_int_type());
+      for(int i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+      {
+        exprt idx = from_integer(i, signedbv_typet{64});
+        exprt match = and_exprt{
+          binary_relation_exprt{idx, ID_lt, length},
+          equal_exprt{index_exprt{data, idx}, search}};
+        count = plus_exprt{
+          count,
+          if_exprt{
+            match,
+            from_integer(1, python_int_type()),
+            from_integer(0, python_int_type())}};
+      }
+      return count;
+    }
+  }
+
   // PLib stdtypes: list.extend(iterable)
   if(method_name == "extend")
   {
