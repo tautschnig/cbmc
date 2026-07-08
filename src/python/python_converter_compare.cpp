@@ -631,6 +631,63 @@ exprt python_convertert::convert_compare(const jsont &expr)
       }
     }
 
+    // General same-type list equality (PLR §6.10.1): a plain equal_exprt on two
+    // list structs compares the ENTIRE fixed-size `data` array (all
+    // PYTHON_MAX_LIST_LENGTH slots), not just the first `length` elements. Two
+    // lists that are equal in Python but differ BEYOND their logical length
+    // (e.g. `list(enumerate(xs))` leaves OOB reads of xs beyond length, whereas
+    // the literal `[(0,7),..]` pads with zeros) would then compare unequal --
+    // letting `!=` be wrongly PROVED (a false proof found by the mutation-
+    // oracle via list(zip)/list(enumerate)). Compare length-bounded instead:
+    //   len(L) == len(R) ∧ ∀i<len. L.data[i] == R.data[i]
+    // Only for the same-type case (different element types are handled by the
+    // dedicated bridge below); the ref_mutables python_value-element case was
+    // already handled above.
+    if(
+      (op == "Eq" || op == "NotEq") &&
+      is_python_list_type(current_left.type()) &&
+      is_python_list_type(right.type()) && current_left.type() == right.type())
+    {
+      const auto &lst = to_struct_type(current_left.type());
+      const auto &lda_t = to_array_type(lst.components()[1].type());
+      const typet &el_t = lda_t.element_type();
+      const member_exprt llen{current_left, "length", signedbv_typet{64}};
+      const member_exprt rlen{right, "length", signedbv_typet{64}};
+      const member_exprt lda{current_left, "data", lda_t};
+      const member_exprt rda{right, "data", lda_t};
+      exprt all = equal_exprt{llen, rlen};
+      for(int i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+      {
+        const exprt idx = from_integer(i, signedbv_typet{64});
+        const exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
+        const exprt l_el = index_exprt{lda, idx};
+        const exprt r_el = index_exprt{rda, idx};
+        exprt el_eq;
+        if(is_python_string_type(el_t))
+        {
+          // String elements compare by CONTENT, not (length, data_ptr) --
+          // a runtime-built "a" and a literal "a" have different pointers.
+          exprt sm = emit_string_bool_function(
+            ID_cprover_string_equal_func,
+            l_el,
+            r_el,
+            symbol_table,
+            pending_checks);
+          if(sm.type() != bool_typet{})
+            sm = typecast_exprt{std::move(sm), bool_typet{}};
+          el_eq = std::move(sm);
+        }
+        else if(el_t.id() == ID_floatbv)
+          el_eq = ieee_float_equal_exprt{l_el, r_el};
+        else
+          el_eq = equal_exprt{l_el, r_el};
+        all = and_exprt{std::move(all), or_exprt{not_exprt{in_range}, el_eq}};
+      }
+      if(op == "Eq")
+        return all;
+      return not_exprt{std::move(all)};
+    }
+
     // Type promotion for comparisons (skip for In/NotIn/Is/IsNot,
     // and for cross-type list ordering — handled in dedicated
     // list-lex-compare branch below).
@@ -840,9 +897,54 @@ exprt python_convertert::convert_compare(const jsont &expr)
         }
         else
         {
-          // Fallback: structurally incompatible → never equal
-          current_left = python_string_literal("__NEVER_EQUAL__");
-          right = python_string_literal("__NOT_EQUAL_TO_THIS__");
+          // le/re are not scalar-bridgeable. Two sub-cases:
+          //  (1) genuinely different Python categories (e.g. a list[int]
+          //      element vs a list[list] element) -> Python compares the
+          //      mismatched positions unequal, so the lists can never be equal:
+          //      the NEVER_EQUAL trick is correct.
+          //  (2) the SAME aggregate category (both tuple / both list / both
+          //      dict / both set) that differ only in cbmc STRUCT type -- e.g.
+          //      `list(enumerate(xs))`/`list(zip(a,b))` build
+          //      list<tuple<python_int,elem>> whereas the literal `[(0,7),..]`
+          //      has a different tuple/data cbmc type. These lists CAN be equal
+          //      in Python, so NEVER_EQUAL would be a FALSE PROOF (found by the
+          //      mutation-oracle). Fall back to a SOUND result: definitely
+          //      unequal when the lengths differ, else nondet. (A precise
+          //      structural recursion into the nested elements is future work.)
+          const bool same_aggregate =
+            (is_python_tuple_type(le) && is_python_tuple_type(re)) ||
+            (is_python_list_type(le) && is_python_list_type(re)) ||
+            (is_python_dict_type(le) && is_python_dict_type(re)) ||
+            (is_python_set_type(le) && is_python_set_type(re));
+          if(same_aggregate)
+          {
+            static unsigned nd_ctr = 0;
+            const std::string nm =
+              "__list_agg_eq_nd_" + std::to_string(nd_ctr++);
+            const irep_idt id{qualify_name(nm)};
+            if(symbol_table.lookup(id) == nullptr)
+            {
+              symbolt s{id, bool_typet{}, "python"};
+              s.base_name = nm;
+              s.is_lvalue = true;
+              s.is_state_var = true;
+              symbol_table.add(s);
+            }
+            symbol_exprt nd = symbol_table.lookup_ref(id).symbol_expr();
+            pending_checks.push_back(code_frontend_assignt{
+              nd, side_effect_expr_nondett{bool_typet{}, source_locationt{}}});
+            member_exprt llen{current_left, "length", signedbv_typet{64}};
+            member_exprt rlen{right, "length", signedbv_typet{64}};
+            // length-mismatch => definitely unequal; else nondet (sound).
+            current_left = and_exprt{equal_exprt{llen, rlen}, std::move(nd)};
+            right = true_exprt{};
+          }
+          else
+          {
+            // Fallback: structurally incompatible → never equal
+            current_left = python_string_literal("__NEVER_EQUAL__");
+            right = python_string_literal("__NOT_EQUAL_TO_THIS__");
+          }
         }
       }
       // PLR §6.10.1: list vs non-list (excluding python_value tagged
