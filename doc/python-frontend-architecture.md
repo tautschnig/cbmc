@@ -494,10 +494,8 @@ without further changes.
 **KNOWN false-proof cluster — generator consumption-state /
 identity (partially UNSOUND).** The cursor tracks consumption
 correctly for a *direct* `next(name)` / `name.send(v)` and now
-for a **`for` loop** (above). The remaining channels still read
-a fresh view and re-yield already-consumed elements — a false
-proof — because the cursor is keyed on the call-site Name, not
-the generator object:
+for a **`for` loop** (above). The other consumption channels are
+also handled now — the consumption-state cluster is CLOSED:
 - **CLOSED (2026-07-01):** `for x in g` after a partial `next(g)`
   now resumes from the cursor (`gen-foriter-after-next-typeerror`,
   CORE).
@@ -506,19 +504,22 @@ the generator object:
   alias-assign path propagates `generator_cursors[it2]`, and the
   pointer-alias's reads auto-dereference to the list struct so
   the cursor path resolves.
-- a generator in a container consumed via the slot
-  (`box = [g()]; next(box[0])`) reads a fresh view
-  (`gen-in-container-consume-knownbug`).
-- `list(g)` / `sum(g)` after a partial `next(g)` (aggregating
-  builtins iterate via their own path, not the `for` lowering).
+- **CLOSED (2026-07-02):** `list(g)` / `sum(g)` after a partial
+  `next(g)` are cursor-aware (`gen-aggregating-after-next`, CORE).
+- **CLOSED (2026-07-06, `1f6b9d3905`):** a generator in a container
+  consumed via the slot (`box = [g()]; next(box[0])`) has no
+  per-Name cursor, so `next()` on a STORED channel (a Subscript /
+  Attribute receiver) returns a sound NONDET yield instead of the
+  unsound first-yield guess — it can no longer prove a stale value
+  (`gen-in-container-consume`, CORE). Precise fresh (`next(g())`) and
+  Name-cursor consumption are unaffected.
 Passing a generator to a function is sound (the param view is
-over-approximated to nondet, not re-yielded). The principled
-fix for the rest is a generator-OBJECT model whose consumption
-state is tied to the object (shared across alias, container,
-aggregating builtins), not the Name — needs `next()`-side
-handling of a pointer-aliased generator; plan §1 future work.
-(These were found by a proactive soundness sweep, not the
-oracle corpus.)
+over-approximated to nondet, not re-yielded). A fully PRECISE
+generator-OBJECT model (consumption state tied to the object and
+shared through container/attribute channels) remains future work
+(plan §1) — but every channel is now SOUND. (These were found by a
+proactive soundness sweep and the mutation-oracle, not the oracle
+corpus.)
 
 ## Annotation semantics (PLR §3.1, §3.2)
 
@@ -1234,6 +1235,28 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > (`ef71196c6f` double-negation in the bridge tunnel + `40d5b7d91d` bool-element
 > bridging). Both gate passes are green across the widened grammar; convergence
 > is strong (each widening pass now yields ≤1 bug, all in the comparison group).
+>
+> **Continuation (2026-07-07/08).** Two further soundness bugs surfaced by the
+> widened mutation-oracle + precision triage, both fixed as whole-groups:
+> **first-raised-exception-wins** (`d6bd7b25ed`, PLR §8.3) — `emit_conditional_
+> exception` overwrote a *pending* exception, so an arg-evaluation exception
+> inside `try/except` could be wrongly caught by the outer handler; now every
+> conditional exception is guarded by `not __exception_active` so the first raise
+> wins. **Stale-symbol-in-`list_literals`** (`3803c3fa7e`, PLR §3.1) — a cached
+> list struct referencing a live symbol (`xs = xs + [b]`) went stale when the
+> symbol was reassigned (`b = 9`); a later fold/read reusing the cached struct
+> read the NEW value → false proof (pre-existing, also affected the concat fold).
+> Fixed by INVALIDATING any cached list referencing a symbol when that symbol is
+> reassigned (keeps symbol-bearing caches, so closure/comprehension precision
+> tests still pass — the first, blunter "don't cache symbol-bearing structs" fix
+> was rejected because it regressed two such tests). Precision in the same arc:
+> constant-fold-through-operations now spans slice (`67e5f2fc70` step-1/reverse,
+> `18b48b949e`/`c4e1ed5b14` constant-step via Python `slice.indices`) and repeat
+> (`xs*n`, bundled in `3803c3fa7e`) over a constant list, plus `list.count()`
+> modelled as a symbolic occurrence count (`82e55fba06`). Value-oracle false
+> alarms fell 87 → 67 across the arc; the negated (mutation) oracle sweep is at
+> **0 miscomputations** and both standing gate passes stay green. CORE guards:
+> `list-literal-stale-symbol`(+`-nofp`), `list-count`, `slice-constant-fold-chain`.
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
@@ -1244,12 +1267,12 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > (`gen-foriter-after-next-typeerror`, CORE) and an alias `it2 = it` shares the
 > cursor (`gen-alias-consume-typeerror`, CORE). `list(g)`/`sum(g)` after a partial
 > `next()` are now CLOSED too (2026-07-02 — cursor-aware aggregating builtins,
-> `gen-aggregating-after-next` CORE). Still open (pinned KNOWNBUG): a container
-> slot `box[0]` (`gen-in-container-consume-knownbug`); the fix for it is a
-> generator-OBJECT model (plan §1). So "0 false proofs" is accurate *for the
-> oracle corpus*; this cluster is a known
-> residual outside it. (Async, symbolic-key dict, and escaping closures probed
-> sound in the same sweep.)
+> `gen-aggregating-after-next` CORE). The container slot `box[0]` is now CLOSED
+> too (2026-07-06, `1f6b9d3905`): `next()` on a stored channel returns sound
+> nondet (`gen-in-container-consume`, CORE). The whole generator consumption-state
+> cluster is now sound; a fully precise generator-OBJECT model remains future work
+> (plan §1). (Async, symbolic-key dict, and escaping closures probed sound in the
+> same sweep.)
 >
 > **Sweep round 2 (2026-07-01)** — a broader batch (~40 probes over
 > mutation-during-iteration, exception/`finally`, identity/`is`, numeric
@@ -1374,12 +1397,13 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 >   CLOSED (`c9d592fed8`, CORE `min-max-mixed-concat`): a reassignment whose RHS is
 >   a list whose element type widened to python_value RETYPES the binding instead
 >   of casting it back to the narrower slot (which dropped the widened content).
->   **Remaining list-length/identity residual:** min/max-empty via a comprehension
->   over range(NON-constant bound) then slice (`min-empty-symbolic-comprehension-
->   knownbug`) -- the unroll-based comprehension can't track a symbolic-bound
->   range length; needs symbolic-length range comprehension modeling. This is the
->   open item of the **list-length/identity-tracking** whole-group (distinct from
->   the reference-identity family).
+>   **List-length/identity residual — now CLOSED (`e766dde276`):** min/max-empty
+>   via a comprehension over range(NON-constant bound) then slice
+>   (`min-empty-symbolic-comprehension`, CORE) -- the unroll-based comprehension
+>   now models a symbolic-bound range length (exact with no filter, `[0,bound]`
+>   with a filter). This was the last open item of the **list-length/identity-
+>   tracking** whole-group (distinct from the reference-identity family); both
+>   whole-groups are now closed.
 > - **In-place list mutation invalidates the constant-fold snapshot whole-group**
 >   (`8d0dbf3d0f`, `e1e7e6cfc9`, PLR §3.3, SOUNDNESS): a list mutation updates the
 >   runtime list but must also invalidate the `list_literals` snapshot, else
@@ -1451,9 +1475,11 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 >   `assigned_attr_names`, on a closed-set class — FP-free (the unannotated-param
 >   / alias / decorator stores all put the name in `assigned_attr_names`).
 > - **generator `box[0]` container slot** — `list(g)`/`sum(g)`-after-`next()` are
->   now CLOSED (2026-07-02, cursor-aware aggregating builtins); the remaining
->   channel is a generator stored in a container slot (no Name to key the cursor,
->   copied by value), which needs by-reference containers (perf-gated Phase 4),
+>   now CLOSED (2026-07-02, cursor-aware aggregating builtins); the generator
+>   stored in a container slot (no Name to key the cursor, copied by value) is now
+>   CLOSED for SOUNDNESS too (2026-07-06, `1f6b9d3905`: `next()` on a stored
+>   channel returns sound nondet, `gen-in-container-consume` CORE). A fully
+>   precise per-object cursor for that channel remains future work,
 >   [plan §1](python-frontend-plan.md#generators).
 >
 > A few new PRECISION false alarms (sound direction) were also catalogued — see
@@ -1475,6 +1501,9 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 >   (`del-attr-read-knownbug`): a sound read-raise needs PER-INSTANCE deleted
 >   state (a scope-local per-name flag is unsound under aliasing — `del c.a; d=c;
 >   d.a` must still raise), which is the per-instance-identity / Phase-4 family.
+>   **→ later CLOSED (2026-07-06, `41d6788612`)** via a per-instance
+>   `__present_<attr>` flag (independent of Phase-4); test now `del-attr-read`
+>   (CORE).
 
 > **Sweep round 6 (2026-07-03) — feature-combination fuzzing.** Combination
 > templates (feature A x B, where interaction bugs hide) found ONE new false
@@ -1485,7 +1514,9 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > unaffected by `del`; the DIRECT-read del case is caught (`del-name-use` CORE),
 > but the closure sub-case needs the by-reference cell-capture model (the
 > [fat-closure plan](python-frontend-fat-closure-plan.md)). PINNED KNOWNBUG
-> (`del-closure-nameerror-knownbug`). Precision-only combination findings (sound
+> (`del-closure-nameerror-knownbug`). **→ later CLOSED (2026-07-06, `be037ec01a`)**
+> via a deleted-flag guard at the capture-read (no cell-capture needed); test now
+> `del-closure-nameerror` (CORE). Precision-only combination findings (sound
 > FALSE ALARMS, not proofs): a comprehension over a partially-consumed generator
 > is not cursor-aware (the list/sum cursor work does not extend to the
 > comprehension consumer yet), and `a=[1]; b=a; a+=[2]` does not propagate the

@@ -323,8 +323,9 @@ alarms) plus one niche soundness residual, not a spike-sized change.
 
 ### `del c.a` (del-attr) rides the same per-instance-identity family (2026-07-03 spike)
 
-The `del c.a; read c.a → AttributeError` residual (`del-attr-read-knownbug`,
-pinned) is the SAME per-instance-identity family. Spike outcome:
+The `del c.a; read c.a → AttributeError` residual (now CLOSED — `del-attr-read`,
+CORE; see **IMPLEMENTED** below) is the SAME per-instance-identity family. Spike
+outcome (the design that was implemented):
 - **Sound design:** a per-instance **deleted-flag** carried WITH the object — a
   `__shadow_<attr>`-style bool struct field (the machinery to add such fields
   and to emit `python-attribute-error` on an unshadowed read already exists for
