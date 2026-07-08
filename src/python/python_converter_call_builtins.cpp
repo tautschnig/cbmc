@@ -4824,30 +4824,8 @@ std::optional<exprt> python_convertert::try_builtin_call(
       if(!arg.is_nil())
       {
         // Evaluate-once: abs() duplicates its operand across the tag/sign
-        // dispatch branches. If the operand is a side-effecting call
-        // (`abs(o.bump())`, a mutating method), duplicating it re-executes the
-        // call per branch and reads a stale value -- a false proof found by the
-        // mutation-oracle. Materialise it into a temp first so it runs once.
-        if(
-          arg.id() == ID_side_effect &&
-          to_side_effect_expr(arg).get_statement() == ID_function_call &&
-          arg.type().id() != ID_empty)
-        {
-          static unsigned abs_arg_ctr = 0;
-          const std::string nm = "__abs_arg_" + std::to_string(abs_arg_ctr++);
-          const irep_idt id{qualify_name(nm)};
-          if(symbol_table.lookup(id) == nullptr)
-          {
-            symbolt s{id, arg.type(), "python"};
-            s.base_name = nm;
-            s.is_lvalue = true;
-            s.is_state_var = true;
-            symbol_table.add(s);
-          }
-          symbol_exprt se = symbol_table.lookup_ref(id).symbol_expr();
-          pending_checks.push_back(code_frontend_assignt{se, arg});
-          arg = std::move(se);
-        }
+        // dispatch branches; a side-effecting call operand must run once.
+        arg = materialize_call_operand(arg);
         // PLib builtins: abs(complex) = sqrt(real² + imag²)
         if(
           arg.type().id() == ID_struct &&

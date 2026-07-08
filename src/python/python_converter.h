@@ -2128,6 +2128,13 @@ private:
   /// reassignment (soundness).
   void invalidate_list_literals_referencing(const irep_idt &sym);
 
+  /// If `e` is a side-effecting call (a side_effect_expr_function_callt with a
+  /// value), materialise it into a fresh temp via `pending_checks` and return
+  /// the temp; otherwise return `e` unchanged. Used by operand-DUPLICATING
+  /// builtins (abs/min/max) so a mutating call argument executes exactly ONCE
+  /// instead of once per duplicated branch (a false proof otherwise).
+  exprt materialize_call_operand(const exprt &e);
+
   /// PLR §4.1 (Truth Value Testing): return a `bool_typet`-typed
   /// expression that is true iff `e` is "truthy" in Python.
   ///
