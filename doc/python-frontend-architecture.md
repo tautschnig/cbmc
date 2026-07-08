@@ -1311,6 +1311,18 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > residual is the tuple-tag class above). CORE guards:
 > `list-pv-element-ref-equality`, `dict-varkey-store-iteration`,
 > `abs-side-effecting-arg`, `min-max-side-effecting-arg`.
+>
+> **Correction (2026-07-08 spike).** The last two `PLR_WIDE` negated residuals
+> (attributed above to the TUPLE-tag class) were root-caused to a DIFFERENT and
+> broader whole-group: **retype-on-reassign** -- reassigning a list variable to a
+> value of a different element/container type (`xs=[6,2]` then `xs=["a","b"]` /
+> `[7.0,8.0]` / `[(1,2)]` / `list(zip(xs,xs))`) reinterprets the bits instead of
+> rebinding the name -> false proof. Scalars already rebind soundly. A single-site
+> retype fix was insufficient (two paths: coerce_assign_rhs + the assign-cast) and
+> was reverted. Root cause, both paths, and the uniform-rebind fix direction are
+> in [python-frontend-retype-on-reassign-plan.md](python-frontend-retype-on-reassign-plan.md).
+> The `python_value` TUPLE tag remains a separate (precision) item; it is NOT
+> what these residuals need.
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
