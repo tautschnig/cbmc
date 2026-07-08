@@ -679,6 +679,17 @@ exprt python_convertert::convert_compare(const jsont &expr)
         }
         else if(el_t.id() == ID_floatbv)
           el_eq = ieee_float_equal_exprt{l_el, r_el};
+        else if(is_python_value_type(el_t))
+          // Heterogeneous (python_value) elements: compare tag-aware and
+          // structurally. A plain equal_exprt compares the union bits / heap
+          // pointers -- so a python_value holding a tuple (currently boxed via
+          // the CLASS fallback: no TUPLE tag) compares unequal to an equal
+          // tuple built elsewhere, wrongly PROVING `!=`. structural_eq compares
+          // scalars precisely, strings by content, and falls back to a sound
+          // nondet for pointer-backed tags (CLASS/DICT/SET/tuple), so equal-
+          // valued distinct references are never proved unequal.
+          // (python-frontend-tuple-tag-plan.md, P1 sound floor.)
+          el_eq = python_value_structural_eq(l_el, r_el, 3);
         else
           el_eq = equal_exprt{l_el, r_el};
         all = and_exprt{std::move(all), or_exprt{not_exprt{in_range}, el_eq}};
