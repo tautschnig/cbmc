@@ -1257,6 +1257,33 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > alarms fell 87 → 67 across the arc; the negated (mutation) oracle sweep is at
 > **0 miscomputations** and both standing gate passes stay green. CORE guards:
 > `list-literal-stale-symbol`(+`-nofp`), `list-count`, `slice-constant-fold-chain`.
+>
+> **Continuation (2026-07-08) — tuples & list-of-tuples.** Widening the mutation-
+> oracle grammar (behind `PLR_WIDE`, default OFF to keep the standing gate green)
+> with tuple folds, `list(zip)`/`list(enumerate)`/`map`, and rebuild-container-
+> from-variables surfaced a batch (17 negated FPs) fixed as whole-groups:
+> **(1) list `==` compared the whole fixed-size backing array, not just the first
+> `length` elements** (`6e6ef86280`, PLR §6.10.1) — `list(enumerate(xs))` leaves
+> OOB reads beyond length while a literal pads with zeros, so `!=` was wrongly
+> PROVED; now a length-bounded element-wise compare (string by content, float via
+> ieee). **(2) tuple mixed with a non-tuple in arithmetic** (`b20aa67663`, PLR
+> §6.3) — had no incompatibility case, so `int + tuple` (incl. the mistyped
+> `tuple()` nondet) reached the arithmetic builder and CRASHED ("add/sub with
+> mixed types" invariant); now a TypeError. **(3) non-constant different-element-
+> type list concat** (`388d8c9b01`, PLR §6.3.2) — the general concat read both
+> operands with the LEFT element type, mis-typing e.g. `list(zip(..)) + [5]` into
+> a definite-wrong value (false-proved `!=`); now a sound nondet list. Precision:
+> constant tuple concat folds (`56f73dfd14`). Wide-negated FPs 17 → 4.
+> **Architectural residual (soundness, tracked):** `python_value` has **no TUPLE
+> tag**, so a tuple cannot be soundly boxed. Lists whose elements are tuples,
+> flowing through the heterogeneous/box-requiring operations (set/sorted/slice in
+> certain combinations), remain a residual FALSE-PROOF class exercised only under
+> `PLR_WIDE` (the standing narrow gate is at 0). The whole-group fix is a
+> `python_value` TUPLE tag + tuple-aware boxing/`structural_eq`/materialisation —
+> a representation change, not a point fix. (`rand_2660`-style residuals are
+> instead mutation-oracle unwinding artifacts: `range(sum(xs))` cannot fully
+> unroll at the sweep bound, so `r != <full literal>` is legitimately true under
+> bounded execution — a harness limitation, not a frontend bug.)
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
