@@ -3366,6 +3366,29 @@ exprt python_convertert::wrap_value(const exprt &e)
 /// is the empty {0, NULL} default, and the surrounding tag guard
 /// discards the result anyway.
 
+exprt python_convertert::materialize_call_operand(const exprt &e)
+{
+  if(
+    e.id() != ID_side_effect ||
+    to_side_effect_expr(e).get_statement() != ID_function_call ||
+    e.type().id() == ID_empty || e.type().id() == ID_code)
+    return e;
+  static unsigned call_operand_ctr = 0;
+  const std::string nm = "__call_operand_" + std::to_string(call_operand_ctr++);
+  const irep_idt id{qualify_name(nm)};
+  if(symbol_table.lookup(id) == nullptr)
+  {
+    symbolt s{id, e.type(), "python"};
+    s.base_name = nm;
+    s.is_lvalue = true;
+    s.is_state_var = true;
+    symbol_table.add(s);
+  }
+  symbol_exprt se = symbol_table.lookup_ref(id).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{se, e});
+  return std::move(se);
+}
+
 void python_convertert::invalidate_list_literals_referencing(
   const irep_idt &sym)
 {
