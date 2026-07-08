@@ -1836,14 +1836,22 @@ view and re-yields already-consumed elements — a false proof. Status:
   `generator_cursors[it2] = generator_cursors[it]`, and since the alias is a
   pointer whose reads auto-dereference, `next(it2)`/`for` resolve the shared
   cursor on the deref'd struct.
-- **OPEN** (pinned KNOWNBUG): a container slot (`box=[g()]; next(box[0])`,
-  `gen-in-container-consume-knownbug`) and `list(g)`/`sum(g)` after a partial
-  `next()` (aggregating builtins iterate via their own path).
+- **CLOSED (2026-07-02):** `list(g)`/`sum(g)` and the aggregating family after a
+  partial `next()` are now cursor-aware (`gen-aggregating-after-next`, CORE).
+- **CLOSED for soundness (2026-07-06, `1f6b9d3905`):** a container slot
+  (`box=[g()]; next(box[0])`) has no Name to key the cursor on, so `next()` on a
+  STORED channel (a Subscript/Attribute receiver) returns a sound NONDET yield
+  instead of the unsound first-yield guess (`gen-in-container-consume`, CORE).
+  This closes the soundness residual; a fully PRECISE per-object cursor for the
+  stored channel remains future work (spike #2 below).
 Passing a generator to a function is sound (the param view is over-approximated
 to nondet, not re-yielded).
 
 **Spike (2026-07-01, #2) — generator-object model for the container +
-aggregating channels.** Findings:
+aggregating channels.** (Soundness UPDATE 2026-07-06: the aggregating channels
+are cursor-aware, CORE, and the stored-channel `next()` returns sound nondet
+(`1f6b9d3905`), so this spike is now PRECISION-only future work, not a soundness
+gap.) Findings:
 - **Representation:** a generator IS the eager `__gen_result` list *value*; the
   consumption cursor is a **Name-keyed side-table** symbol (`__cursor_<name>`),
   separate from the list. This is why the Name-resolvable channels are
