@@ -3094,6 +3094,18 @@ codet python_convertert::convert_assign(const jsont &stmt)
             length, plus_exprt{length, from_integer(1, signedbv_typet{64})}});
           block.add(code_ifthenelset{not_exprt{found}, std::move(append)});
 
+          // Variable (non-constant) key store: the key-set / values cannot be
+          // tracked statically, so DROP the dict_literals snapshot -- later
+          // reads and d.keys()/d.values()/d.items() then fall back to the
+          // runtime keys/values arrays (which the store above DID update).
+          // Otherwise the snapshot goes stale (missing the inserted entry) and
+          // d.values()/d.keys() read the pre-insert values -- a false proof
+          // found by the mutation-oracle (`d[b] = b; sorted(d.values())`).
+          if(
+            obj.id() == ID_symbol &&
+            json_string(json_member(slice_node, "_type")) != "Constant")
+            dict_literals.erase(to_symbol_expr(obj).get_identifier());
+
           // dict_literals update: if obj is a symbol and the
           // assigned key is a compile-time constant string,
           // add the key to the tracked key-set. Later
