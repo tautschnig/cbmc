@@ -3763,18 +3763,16 @@ codet python_convertert::convert_assign(const jsont &stmt)
           block.add(std::move(assign));
           continue;
         }
-        // PLR §3.2: a list whose element type WIDENED to python_value (e.g. a
-        // concat that promoted mixed element types, `xs = xs + ["c"]`) must
-        // RETYPE the binding, not cast back to the old narrower element type --
-        // the cast drops the widened content and hides the min/max/sorted
-        // mixed-category TypeError. Python permits rebinding a name's type; the
-        // later emit then sees sym.type == rhs.type() and does not re-cast.
+        // PLR §3.1: Python rebinds a name on assignment, so reassigning to a
+        // fresh aggregate of a DIFFERENT type must RETYPE the binding. Casting
+        // to the old aggregate type reinterprets a different element/container
+        // layout (list[int] bits read as list[str]/list[float]/list[tuple]) ->
+        // garbage / a false proof (found by the mutation-oracle). The RHS
+        // already carries correct bits, so assign it as-is. (Generalises the
+        // earlier list-widened-to-python_value retype to every aggregate.)
         else if(
-          is_python_list_type(existing->type) &&
-          is_python_list_type(rhs.type()) &&
-          is_python_value_type(
-            to_array_type(to_struct_type(rhs.type()).components()[1].type())
-              .element_type()))
+          is_python_list_type(rhs.type()) || is_python_tuple_type(rhs.type()) ||
+          is_python_dict_type(rhs.type()) || is_python_set_type(rhs.type()))
         {
           symbol_table.get_writeable_ref(existing->name).type = rhs.type();
         }
@@ -3894,7 +3892,22 @@ codet python_convertert::convert_assign(const jsont &stmt)
     invalidate_list_literals_referencing(symbol_id);
     exprt typed_rhs = rhs;
     if(typed_rhs.type() != sym.type)
-      typed_rhs = safe_typecast(typed_rhs, sym.type);
+    {
+      // PLR §3.1 retype-on-reassign (see the sibling handling in the versioned/
+      // existing-variable path above and doc/python-frontend-retype-on-reassign-
+      // plan.md): Python rebinds a name, so reassigning to a fresh aggregate of
+      // a different type must RETYPE the binding. safe_typecast to the prior
+      // aggregate type reinterprets a different element/container layout
+      // (list[int] bits as list[str]/list[tuple]) -> a false proof. Scalars keep
+      // the value-preserving safe_typecast.
+      const typet &rt2 = typed_rhs.type();
+      if(
+        is_python_list_type(rt2) || is_python_dict_type(rt2) ||
+        is_python_tuple_type(rt2) || is_python_set_type(rt2))
+        symbol_table.get_writeable_ref(symbol_id).type = rt2;
+      else
+        typed_rhs = safe_typecast(typed_rhs, sym.type);
+    }
 
     // PLR (evaluate-then-bind): a self-referential reassignment `x = f(x)` --
     // e.g. `xs = xs[1:4]`, `xs = xs[::-1]` -- must evaluate the RHS fully BEFORE
