@@ -230,6 +230,40 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   if(left.is_nil() || right.is_nil())
     return nil_exprt{};
 
+  // PLR §6.3.2: tuple + tuple concatenation. The arithmetic paths below do not
+  // handle it -- falling through builds a plus_exprt on tuple STRUCTS, which
+  // trips the CBMC-core "add/sub with mixed types" invariant (a crash) when the
+  // two tuple types differ (e.g. `tuple(xs) + (3,)`). Fold precisely when both
+  // operands are constant tuple struct_exprts; otherwise return a sound nondet
+  // tuple (matching the already-sound behaviour of `(1,2)+(3,)`).
+  if(
+    op == "Add" && is_python_tuple_type(left.type()) &&
+    is_python_tuple_type(right.type()))
+  {
+    if(left.id() == ID_struct && right.id() == ID_struct)
+    {
+      struct_typet::componentst comps;
+      exprt::operandst vals;
+      std::size_t idx = 0;
+      const auto append = [&](const exprt &src)
+      {
+        const auto &st = to_struct_type(src.type());
+        for(std::size_t i = 0; i < src.operands().size(); i++)
+        {
+          comps.push_back(struct_typet::componentt{
+            "_" + std::to_string(idx++), st.components()[i].type()});
+          vals.push_back(src.operands()[i]);
+        }
+      };
+      append(left);
+      append(right);
+      struct_typet tt{comps};
+      tt.set_tag("python_tuple");
+      return struct_exprt{std::move(vals), tt};
+    }
+    return side_effect_expr_nondett{left.type(), get_location(expr)};
+  }
+
   // PLR §3.3.1: binary-operator dunder dispatch — if the
   // left operand is a user-defined class instance with a
   // matching __<op>__ method, dispatch to it.
