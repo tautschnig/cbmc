@@ -1,8 +1,9 @@
 # Retype-on-reassign — a soundness whole-group (spike 2026-07-08)
 
-**Status:** root-caused, fix deferred (multi-path; needs a uniform rebind). This
-is the ACTUAL root of the two remaining `PLR_WIDE` "tuple-tag" residuals — they
-were mis-attributed to tuple boxing.
+**Status:** IMPLEMENTED (2026-07-08, cbmc `c295841ecf`). Both reassignment paths
+now retype the binding for an aggregate RHS; the two remaining `PLR_WIDE` negated
+residuals (mis-attributed to tuple boxing) are closed — wide-negated sweep is now
+0. CORE `list-reassign-retype`(+ `-nofp`). The notes below record the root cause.
 
 ## Symptom (false proofs)
 
