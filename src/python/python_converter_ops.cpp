@@ -1435,6 +1435,18 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     is_python_list_type(left.type()) && is_python_list_type(right.type()) &&
     op == "Add")
   {
+    // The general concat below reads BOTH operands' data with the LEFT
+    // operand's element type. When the element types DIFFER (e.g.
+    // `list(zip(..))` [list of tuples] + `[5]` [list of int]) that reads the
+    // right operand's elements at the wrong type -> a definite WRONG value,
+    // which lets `!=` be wrongly PROVED (a false proof found by the mutation-
+    // oracle). Constant different-type concat was already promoted+folded
+    // above; a non-constant different-type concat cannot be soundly merged
+    // (python_value has no TUPLE tag to unify tuple elements), so
+    // over-approximate soundly with a nondet list.
+    if(left.type() != right.type())
+      return side_effect_expr_nondett{
+        python_list_type(python_value_type()), get_location(expr)};
     const auto &list_st = to_struct_type(left.type());
     const auto &data_type = to_array_type(list_st.components()[1].type());
     typet elem_type = data_type.element_type();
