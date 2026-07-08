@@ -5330,6 +5330,10 @@ std::optional<exprt> python_convertert::try_builtin_call(
           exprt e = convert_expression(a);
           if(e.is_nil())
             return nil_exprt{};
+          // Evaluate-once: elems are duplicated across the pairwise-comparison
+          // fold (and the 2-arg fallback below reuses them), so a side-effecting
+          // call operand must run exactly once (`min(o.bump(), 5)`).
+          e = materialize_call_operand(e);
           if(!is_numeric(e.type()))
             all_num = false;
           elems.push_back(std::move(e));
@@ -5377,19 +5381,15 @@ std::optional<exprt> python_convertert::try_builtin_call(
               binary_relation_exprt{elems[i], op, result}, elems[i], result};
           return result;
         }
-      }
 
-      // Two-arg legacy fallback (preserved for non-numeric mixes
-      // that previously worked, e.g. comparing python_value tagged
-      // unions).
-      if(as_array(args).size() == 2)
-      {
-        auto it = as_array(args).begin();
-        exprt a = convert_expression(*it);
-        ++it;
-        exprt b = convert_expression(*it);
-        if(!a.is_nil() && !b.is_nil())
+        // Two-arg legacy fallback (preserved for non-numeric mixes that
+        // previously worked, e.g. comparing python_value tagged unions). REUSE
+        // the already-converted (and materialised) elems -- re-converting would
+        // evaluate a side-effecting call operand a SECOND time.
+        if(elems.size() == 2)
         {
+          exprt a = elems[0];
+          exprt b = elems[1];
           if(a.type() != b.type())
           {
             if(a.type().id() == ID_floatbv)
