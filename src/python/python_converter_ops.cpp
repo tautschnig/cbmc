@@ -275,6 +275,55 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     return side_effect_expr_nondett{left.type(), get_location(expr)};
   }
 
+  // PLR §6.3.2: tuple * int repetition. Unmodelled, the arithmetic path returned
+  // the tuple UNCHANGED, so `t * 0` kept its elements -> len(t*0) != 0 and
+  // t.index() found elements when the tuple should be empty (false proofs found
+  // by the mutation-oracle). Fold precisely when the tuple is a constant struct
+  // and the count is a constant integer (n copies; n<=0 -> the empty tuple);
+  // otherwise a sound nondet tuple.
+  const auto is_int_like = [](const typet &t) {
+    return t.id() == ID_signedbv || t.id() == ID_integer || t.id() == ID_bool;
+  };
+  if(
+    op == "Mult" &&
+    ((is_python_tuple_type(left.type()) && is_int_like(right.type())) ||
+     (is_python_tuple_type(right.type()) && is_int_like(left.type()))))
+  {
+    const exprt &tup = is_python_tuple_type(left.type()) ? left : right;
+    const exprt &cnt = is_python_tuple_type(left.type()) ? right : left;
+    // Resolve a Name to its tracked constant tuple literal.
+    const exprt *tval = &tup;
+    if(tup.id() == ID_symbol)
+    {
+      auto it = tuple_literals.find(to_symbol_expr(tup).get_identifier());
+      if(it != tuple_literals.end() && it->second.id() == ID_struct)
+        tval = &it->second;
+    }
+    mp_integer n;
+    if(
+      tval->id() == ID_struct && cnt.is_constant() &&
+      !to_integer(to_constant_expr(cnt), n))
+    {
+      if(n < 0)
+        n = 0;
+      const auto &st = to_struct_type(tval->type());
+      struct_typet::componentst comps;
+      exprt::operandst vals;
+      std::size_t idx = 0;
+      for(mp_integer k = 0; k < n; ++k)
+        for(std::size_t i = 0; i < tval->operands().size(); i++)
+        {
+          comps.push_back(struct_typet::componentt{
+            "_" + std::to_string(idx++), st.components()[i].type()});
+          vals.push_back(tval->operands()[i]);
+        }
+      struct_typet tt{comps};
+      tt.set_tag("python_tuple");
+      return struct_exprt{std::move(vals), tt};
+    }
+    return side_effect_expr_nondett{tup.type(), get_location(expr)};
+  }
+
   // PLR §3.3.1: binary-operator dunder dispatch — if the
   // left operand is a user-defined class instance with a
   // matching __<op>__ method, dispatch to it.
