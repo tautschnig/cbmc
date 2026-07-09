@@ -2113,8 +2113,19 @@ codet python_convertert::convert_assign(const jsont &stmt)
           [&](const jsont &tnode)
         {
           if(is_node_type(tnode, "Name"))
-            invalidate_list_literals_referencing(
-              irep_idt{qualify_name(json_string(json_member(tnode, "id")))});
+          {
+            const irep_idt tid{
+              qualify_name(json_string(json_member(tnode, "id")))};
+            invalidate_list_literals_referencing(tid);
+            // The unpacked value is not a tracked compile-time constant, so
+            // clear any stale scalar constant -- else `b = 1; a, b = (t[0],
+            // t[1])` leaves float_constants[b] = 1 and a later `t[b]` folds to
+            // t[1] using the STALE 1 (wrong element + masks an IndexError), a
+            // false proof found by the mutation-oracle. The plain assign
+            // already erases these on a non-constant reassignment.
+            float_constants.erase(tid);
+            string_constants.erase(tid);
+          }
           else if(
             (is_node_type(tnode, "Tuple") || is_node_type(tnode, "List")) &&
             json_member(tnode, "elts").is_array())
