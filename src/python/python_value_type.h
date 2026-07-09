@@ -71,6 +71,11 @@ enum class python_type_tagt
   /// captures from the value it actually received — see
   /// doc/python-frontend-fat-closure-plan.md.
   CLOSURE = 10,
+  /// Tuple stored via __class_ptr pointing at a python_tuple struct. Separated
+  /// from CLASS so isinstance(x, tuple), truthiness, and structural comparison
+  /// can treat a boxed tuple as a tuple rather than a user-class instance. See
+  /// doc/python-frontend-tuple-tag-plan.md.
+  TUPLE = 11,
 };
 
 /// Tag name for the python_value type in the symbol table.
@@ -280,6 +285,16 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
     // Sets use the class_ptr slot to store the python_set-struct address.
     // The set struct is element-type-agnostic (a bitmap), so unlike list /
     // dict it can be shared by direct address with no element promotion.
+    class_ptr =
+      value.type().id() == ID_pointer
+        ? typecast_exprt{value, pointer_typet{empty_typet{}, 64}}
+        : typecast_exprt{
+            address_of_exprt{value}, pointer_typet{empty_typet{}, 64}};
+    break;
+  case python_type_tagt::TUPLE:
+    // Tuples use the class_ptr slot to store the python_tuple-struct address,
+    // tagged TUPLE (not CLASS) so isinstance / truthiness / comparison treat it
+    // as a tuple rather than a user-class instance.
     class_ptr =
       value.type().id() == ID_pointer
         ? typecast_exprt{value, pointer_typet{empty_typet{}, 64}}

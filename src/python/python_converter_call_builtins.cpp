@@ -4383,6 +4383,8 @@ std::optional<exprt> python_convertert::try_builtin_call(
                 m = python_value_is(obj, python_type_tagt::STR);
               else if(tname == "list")
                 m = python_value_is(obj, python_type_tagt::LIST);
+              else if(tname == "tuple")
+                m = python_value_is(obj, python_type_tagt::TUPLE);
               else if(class_types.count(tname) > 0)
               {
                 // Precise per-class dispatch on __class_tag.
@@ -4626,6 +4628,12 @@ std::optional<exprt> python_convertert::try_builtin_call(
             return python_value_is(obj, python_type_tagt::STR);
           if(cls_name == "list")
             return python_value_is(obj, python_type_tagt::LIST);
+          if(cls_name == "tuple")
+            return python_value_is(obj, python_type_tagt::TUPLE);
+          if(cls_name == "dict")
+            return python_value_is(obj, python_type_tagt::DICT);
+          if(cls_name == "set" || cls_name == "frozenset")
+            return python_value_is(obj, python_type_tagt::SET);
           // User-defined class: dispatch precisely on the
           // __class_tag read through __class_ptr.
           //
