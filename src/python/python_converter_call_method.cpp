@@ -2602,9 +2602,22 @@ std::optional<exprt> python_convertert::try_method_call(
             if(it != tuple_literals.end())
               tup = &it->second;
           }
+          // Element expressions: from a resolved struct literal's operands, or
+          // -- for a tuple-typed value that is NOT a resolved literal (a symbol,
+          // a computed tuple like `t[0:1]*2`, a self-assigned `t = t`) -- from
+          // the fixed-arity TYPE's components via member access. This lets
+          // index()/count() work on ANY tuple-typed receiver, not just constant
+          // literals (a non-resolved tuple otherwise skipped the logic and
+          // index() never raised -- a false proof found by the mutation-oracle).
+          exprt::operandst elems;
+          if(tup->id() == ID_struct)
+            elems = tup->operands();
+          else if(is_python_tuple_type(obj.type()))
+            for(const auto &c : to_struct_type(obj.type()).components())
+              elems.push_back(member_exprt{obj, c.get_name(), c.type()});
           if(
-            tup->id() == ID_struct && args.is_array() &&
-            !as_array(args).empty())
+            (tup->id() == ID_struct || is_python_tuple_type(obj.type())) &&
+            args.is_array() && !as_array(args).empty())
           {
             exprt arg = convert_expression(*as_array(args).begin());
             // PLR §6.10: index() / count of an EMPTY tuple. index() always
@@ -2612,7 +2625,7 @@ std::optional<exprt> python_convertert::try_method_call(
             // below is guarded on a non-empty tuple, so without this an empty
             // tuple with a NON-constant arg silently succeeded (a false proof
             // found by the mutation-oracle: `t = (a,b)[2:3]; t.index(sym)`).
-            if(method_name == "index" && tup->operands().empty())
+            if(method_name == "index" && elems.empty())
             {
               emit_conditional_exception(true_exprt{}, "ValueError");
               return from_integer(0, python_int_type());
@@ -2623,7 +2636,7 @@ std::optional<exprt> python_convertert::try_method_call(
             // -- mirrors list.index. Closes `t.index(b)` with a computed b
             // (a large false-proof cluster: the constant path below only fired
             // when the arg itself was constant).
-            if(method_name == "index" && !tup->operands().empty())
+            if(method_name == "index" && !elems.empty())
             {
               // Numeric elements -- constant OR symbolic (e.g. `t = (b, a)`).
               // Build the match over the element EXPRESSIONS so a NON-constant
@@ -2636,7 +2649,7 @@ std::optional<exprt> python_convertert::try_method_call(
                        t == python_int_type();
               };
               bool all_num = true;
-              for(const auto &el : tup->operands())
+              for(const auto &el : elems)
                 if(!is_num_t(el.type()))
                 {
                   all_num = false;
@@ -2647,10 +2660,9 @@ std::optional<exprt> python_convertert::try_method_call(
               {
                 exprt argi = safe_typecast(arg, signedbv_typet{64});
                 exprt result = from_integer(-1, python_int_type());
-                for(long i = (long)tup->operands().size() - 1; i >= 0; --i)
+                for(long i = (long)elems.size() - 1; i >= 0; --i)
                 {
-                  exprt eli =
-                    safe_typecast(tup->operands()[i], signedbv_typet{64});
+                  exprt eli = safe_typecast(elems[i], signedbv_typet{64});
                   exprt match = equal_exprt{argi, std::move(eli)};
                   result =
                     if_exprt{match, from_integer(i, python_int_type()), result};
@@ -2669,9 +2681,9 @@ std::optional<exprt> python_convertert::try_method_call(
               if(!a_str_top.has_value() && !arg.is_constant())
                 all_comparable = false;
             }
-            for(std::size_t i = 0; i < tup->operands().size(); ++i)
+            for(std::size_t i = 0; i < elems.size(); ++i)
             {
-              const exprt &elem = tup->operands()[i];
+              const exprt &elem = elems[i];
               bool matches = false;
               auto e_str = extract_string_value(elem);
               auto a_str = extract_string_value(arg);
@@ -2720,9 +2732,9 @@ std::optional<exprt> python_convertert::try_method_call(
               // the mutation-oracle, e.g. `t.index(o.v)`).
               exprt found = false_exprt{};
               exprt result = from_integer(-1, python_int_type());
-              for(long i = (long)tup->operands().size() - 1; i >= 0; --i)
+              for(long i = (long)elems.size() - 1; i >= 0; --i)
               {
-                const exprt &elem = tup->operands()[i];
+                const exprt &elem = elems[i];
                 exprt e_eq;
                 if(
                   is_python_value_type(elem.type()) ||
