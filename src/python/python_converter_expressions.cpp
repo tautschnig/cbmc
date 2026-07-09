@@ -806,20 +806,27 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           if(found_bool.type() != bool_typet{})
             found_bool = safe_typecast(found_bool, bool_typet{});
           exprt missing = not_exprt{found_bool};
-          // exc_active := exc_active || missing
-          pending_checks.push_back(code_frontend_assignt{
-            exc_sym->symbol_expr(), or_exprt{exc_sym->symbol_expr(), missing}});
           if(exc_type_sym != nullptr)
           {
             long h = exception_type_hash("KeyError");
-            // exc_type := missing ? KeyError : exc_type
+            // First-exception-wins (PLR §8.3): set the type to KeyError ONLY
+            // when NO exception is already pending -- else a prior exception
+            // (e.g. a ValueError from `t.index(k)` evaluated as the key in
+            // `d[t.index(k)]`) would be OVERWRITTEN with KeyError and wrongly
+            // caught by an `except KeyError` (a false proof found by the
+            // mutation-oracle). Emitted BEFORE the exc_active update so it reads
+            // the PRIOR active flag.
+            exprt fires = and_exprt{missing, not_exprt{exc_sym->symbol_expr()}};
             pending_checks.push_back(code_frontend_assignt{
               exc_type_sym->symbol_expr(),
               if_exprt{
-                missing,
+                fires,
                 from_integer(h, exc_type_sym->type),
                 exc_type_sym->symbol_expr()}});
           }
+          // exc_active := exc_active || missing
+          pending_checks.push_back(code_frontend_assignt{
+            exc_sym->symbol_expr(), or_exprt{exc_sym->symbol_expr(), missing}});
         }
       }
       // Dict-value-by-reference (Option 2, PLR §6.4/§3.1): when the value
