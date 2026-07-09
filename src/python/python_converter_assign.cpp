@@ -4452,6 +4452,39 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       dict_subscript_aug = true;
       dict_aug_container = std::move(container_check);
       dict_aug_key = std::move(key_expr);
+
+      // PLR §6.2.7: for a REGULAR dict, `d[k] += v` on a MISSING key raises
+      // KeyError (the read half of the augmented op). The read above omits the
+      // check to support defaultdict/Counter auto-insert; restrict that to
+      // dicts actually known to be a defaultdict, else emit the KeyError guard
+      // (a false proof otherwise -- found by the mutation-oracle). The key is
+      // present iff some in-range keys[i] == k.
+      bool is_defaultdict = false;
+      if(dict_aug_container.id() == ID_symbol)
+        is_defaultdict =
+          defaultdict_factories.count(
+            to_symbol_expr(dict_aug_container).get_identifier()) > 0;
+      if(!is_defaultdict)
+      {
+        const auto &dst = to_struct_type(dict_aug_container.type());
+        const auto &ktype = to_array_type(dst.components()[1].type());
+        member_exprt klen{dict_aug_container, "length", signedbv_typet{64}};
+        member_exprt karr{dict_aug_container, "keys", ktype};
+        exprt present = false_exprt{};
+        for(int i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+        {
+          exprt idx = from_integer(i, signedbv_typet{64});
+          exprt ki = python_dict_unbox_key(index_exprt{karr, idx});
+          exprt kq = python_dict_unbox_key(dict_aug_key);
+          if(ki.type() != kq.type())
+            ki = safe_typecast(ki, kq.type());
+          present = or_exprt{
+            present,
+            and_exprt{
+              binary_relation_exprt{idx, ID_lt, klen}, equal_exprt{ki, kq}}};
+        }
+        emit_conditional_exception(not_exprt{std::move(present)}, "KeyError");
+      }
     }
     else
       lhs = convert_subscript(target);
