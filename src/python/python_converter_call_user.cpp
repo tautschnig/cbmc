@@ -690,6 +690,9 @@ exprt python_convertert::convert_user_call(
 
   // Build argument list: start with positional args
   exprt::operandst arguments;
+  // Set when `f(*xs)` forwards a whole list directly into the target's *args
+  // (vararg) parameter -- the packing step below then skips re-packing.
+  bool vararg_bound_directly = false;
   if(args.is_array())
   {
     std::size_t arg_index = 0;
@@ -777,6 +780,31 @@ exprt python_convertert::convert_user_call(
         // for the common case where the caller correctly forwards.
         if(is_python_list_type(inner.type()))
         {
+          // PLR §8.7: `f(*xs)` forwarding a NON-literal list into the target's
+          // *args (vararg) parameter. The vararg absorbs a SYMBOLIC number of
+          // elements (xs's runtime length), which the fixed-count spread below
+          // cannot represent -- it read `params.size()-already` elements (one
+          // slot for the vararg) and so computed the wrong count (`h(*xs)` gave
+          // sum(xs[:1]) not sum(xs), a false proof found by the mutation-
+          // oracle). When this `*xs` lands exactly at the vararg slot and is the
+          // LAST positional arg, bind the vararg to a SOUND nondet list. (A
+          // precise same-length forwarding is future work: the untyped vararg
+          // param would force an expensive element-wise python_value re-wrap.)
+          {
+            auto va_it = function_vararg_index.find(sym->name);
+            if(
+              va_it != function_vararg_index.end() &&
+              arguments.size() == va_it->second &&
+              cur_idx + 1 == as_array(args).size() &&
+              va_it->second < params.size() &&
+              is_python_list_type(params[va_it->second].type()))
+            {
+              arguments.push_back(side_effect_expr_nondett{
+                params[va_it->second].type(), get_location(expr)});
+              vararg_bound_directly = true;
+              continue;
+            }
+          }
           // Number of remaining positional slots in the target
           // (params already provided so far excluded).
           std::size_t already = arguments.size();
@@ -948,7 +976,7 @@ exprt python_convertert::convert_user_call(
   {
     auto va_it_pre = function_vararg_index.find(sym->name);
     if(
-      va_it_pre != function_vararg_index.end() &&
+      !vararg_bound_directly && va_it_pre != function_vararg_index.end() &&
       va_it_pre->second < params.size())
     {
       std::size_t va_idx = va_it_pre->second;
