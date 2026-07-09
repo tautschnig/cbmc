@@ -3423,7 +3423,7 @@ exprt python_convertert::materialize_call_operand(const exprt &e)
 void python_convertert::invalidate_list_literals_referencing(
   const irep_idt &sym)
 {
-  if(list_literals.empty())
+  if(list_literals.empty() && tuple_literals.empty() && dict_literals.empty())
     return;
   std::function<bool(const exprt &)> refs = [&](const exprt &e) -> bool
   {
@@ -3434,13 +3434,26 @@ void python_convertert::invalidate_list_literals_referencing(
         return true;
     return false;
   };
-  for(auto it = list_literals.begin(); it != list_literals.end();)
+  // A cached literal that references `sym` (e.g. `t = (b, a)` caches a struct
+  // holding symbol b) goes STALE when `sym` is reassigned: a later fold/read
+  // reusing the snapshot reads the NEW value -> a false proof (found by the
+  // mutation-oracle for both list_literals and, via the tuple-repeat fold,
+  // tuple_literals). Drop such entries from every constant-tracking map that
+  // stores element expressions. The entry keyed by `sym` itself is kept (it is
+  // being (re)assigned, so its snapshot is refreshed by the store).
+  const auto sweep = [&](std::map<irep_idt, exprt> &m)
   {
-    if(it->first != sym && refs(it->second))
-      it = list_literals.erase(it);
-    else
-      ++it;
-  }
+    for(auto it = m.begin(); it != m.end();)
+    {
+      if(it->first != sym && refs(it->second))
+        it = m.erase(it);
+      else
+        ++it;
+    }
+  };
+  sweep(list_literals);
+  sweep(tuple_literals);
+  sweep(dict_literals);
 }
 
 exprt python_convertert::value_equal(const exprt &a, const exprt &b)
