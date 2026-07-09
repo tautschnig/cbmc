@@ -4002,6 +4002,14 @@ codet python_convertert::convert_assign(const jsont &stmt)
       try_depth > 0 && (typed_rhs.id() == ID_side_effect ||
                         rhs_has_side_effect || !pending_checks.empty()))
     {
+      // This split path handles a non-constant (side-effecting) RHS and returns
+      // early, bypassing the scalar-constant management the straight-line path
+      // does below. Clear any stale tracked constant for the target -- else
+      // `a = 1; try: a = xs[1] ...` leaves float_constants[a] = 1, and a later
+      // `t[a]` constant-folds the index to the STALE 1 (wrong element + masks
+      // an IndexError) -- a false proof found by the mutation-oracle.
+      float_constants.erase(sym.name);
+      string_constants.erase(sym.name);
       const symbolt *exc_sym =
         symbol_table.lookup("python::__exception_active");
       if(exc_sym != nullptr)
