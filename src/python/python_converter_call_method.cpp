@@ -2625,31 +2625,33 @@ std::optional<exprt> python_convertert::try_method_call(
             // when the arg itself was constant).
             if(method_name == "index" && !tup->operands().empty())
             {
+              // Numeric elements -- constant OR symbolic (e.g. `t = (b, a)`).
+              // Build the match over the element EXPRESSIONS so a NON-constant
+              // element tuple still raises ValueError when the arg is absent
+              // (a false proof otherwise, found by the mutation-oracle).
+              auto is_num_t = [this](const typet &t)
+              {
+                return t.id() == ID_signedbv || t.id() == ID_unsignedbv ||
+                       t.id() == ID_integer || t.id() == ID_bool ||
+                       t == python_int_type();
+              };
               bool all_num = true;
               for(const auto &el : tup->operands())
-              {
-                mp_integer ev;
-                if(!(el.is_constant() && !to_integer(to_constant_expr(el), ev)))
+                if(!is_num_t(el.type()))
                 {
                   all_num = false;
                   break;
                 }
-              }
-              const typet &at = arg.type();
-              const bool arg_num =
-                at.id() == ID_signedbv || at.id() == ID_unsignedbv ||
-                at.id() == ID_integer || at.id() == ID_bool ||
-                at == python_int_type();
+              const bool arg_num = is_num_t(arg.type());
               if(all_num && arg_num)
               {
                 exprt argi = safe_typecast(arg, signedbv_typet{64});
                 exprt result = from_integer(-1, python_int_type());
                 for(long i = (long)tup->operands().size() - 1; i >= 0; --i)
                 {
-                  mp_integer ev;
-                  to_integer(to_constant_expr(tup->operands()[i]), ev);
-                  exprt match =
-                    equal_exprt{argi, from_integer(ev, signedbv_typet{64})};
+                  exprt eli =
+                    safe_typecast(tup->operands()[i], signedbv_typet{64});
+                  exprt match = equal_exprt{argi, std::move(eli)};
                   result =
                     if_exprt{match, from_integer(i, python_int_type()), result};
                 }
