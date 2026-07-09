@@ -1,7 +1,10 @@
 # `python_value` TUPLE tag — design & phased plan
 
-**Status:** spike complete (2026-07-08), implementation deferred (see
-*Proportionality* below). This is the whole-group fix for the residual
+**Status:** P1 IMPLEMENTED (2026-07-09, cbmc `40815b36c5`): TUPLE tag added;
+wrap_value boxes tuples as TUPLE; isinstance recognises it; boxed-tuple truthiness
+is sound nondet (fixed a latent empty-tuple false proof); structural_eq TUPLE case
+is sound nondet. P2 (unwrap/len precision) and P3 (precise boxed-tuple comparison)
+remain -- they are PRECISION-only. Original spike below. This is the whole-group fix for the residual
 list-of-tuples soundness class documented in the architecture doc's mutation-
 oracle campaign entry.
 
