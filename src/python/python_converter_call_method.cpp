@@ -2607,6 +2607,16 @@ std::optional<exprt> python_convertert::try_method_call(
             !as_array(args).empty())
           {
             exprt arg = convert_expression(*as_array(args).begin());
+            // PLR §6.10: index() / count of an EMPTY tuple. index() always
+            // raises ValueError (no element can match); the symbolic-arg path
+            // below is guarded on a non-empty tuple, so without this an empty
+            // tuple with a NON-constant arg silently succeeded (a false proof
+            // found by the mutation-oracle: `t = (a,b)[2:3]; t.index(sym)`).
+            if(method_name == "index" && tup->operands().empty())
+            {
+              emit_conditional_exception(true_exprt{}, "ValueError");
+              return from_integer(0, python_int_type());
+            }
             // Symbolic-arg path (PLR §6.10): a constant NUMERIC tuple with a
             // possibly non-constant numeric arg. Build the match index
             // symbolically and raise ValueError when NO element equals the arg
