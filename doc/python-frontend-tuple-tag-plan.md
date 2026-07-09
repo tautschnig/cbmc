@@ -120,8 +120,17 @@ guarded on a resolvable struct receiver, which a nondet is not). These are the
 last ~7 PLR_WIDE value-sweep (missed-exception) residuals.
 
 Root: `tuple(list)` is a VARIABLE-arity tuple (the list length is symbolic),
-which the fixed-arity python_tuple struct cannot represent. The whole-group fix
-is to model `tuple(list)` -- e.g. a length+data tuple representation (like lists)
-or a sound may-raise wrapper for methods on an unresolved tuple. A representation
-change in the same family as the TUPLE tag; deferred. NOTE the NEGATED sweep
-(definite miscomputations) is at 0 -- this residual is missed-EXCEPTIONS only.
+which the fixed-arity python_tuple struct cannot represent.
+
+**RESOLVED (2026-07-09) for the common cases:**
+- `tuple(constant-list)` folds to a fixed-arity tuple with the list's elements
+  (39c5f92644), so tuple(xs)/tuple(sorted(xs)) index/len/==/concat are precise.
+- tuple.index/count read the fixed-arity TYPE components (9cc1ea1423), so they
+  work on any tuple-typed receiver (symbol, self-assigned, computed), not just
+  resolved literals -- an absent value raises ValueError.
+- dict-subscript KeyError no longer overwrites a pending exception (5fcecc9d79),
+  fixing `d[t.index(k)]` inside try/except.
+Wide value + negated sweeps are now BOTH 0. Remaining (no known false proof):
+`tuple(SYMBOLIC-length list)` still falls to the nondet fallback -- a truly
+variable-arity tuple (length+data) representation would make it precise, but it
+does not currently manifest as a false proof.
