@@ -2100,6 +2100,32 @@ codet python_convertert::convert_assign(const jsont &stmt)
     if(is_node_type(target, "Tuple") || is_node_type(target, "List"))
     {
       const jsont &elts = json_member(target, "elts");
+      // PLR §3.1: every unpack target Name is (re)assigned, so invalidate any
+      // cached list/tuple/dict literal that references it. Otherwise
+      // `t = (b, a); a, b = ...` leaves the tuple_literals[t] snapshot (which
+      // references symbols a/b) stale, and a later fold reusing it reads the NEW
+      // a/b -- a false proof found by the mutation-oracle. Recurses into nested
+      // Tuple/List/Starred targets. (Same whole-group as the plain-assign and
+      // ann-assign invalidation sites.)
+      if(elts.is_array())
+      {
+        std::function<void(const jsont &)> invalidate_targets =
+          [&](const jsont &tnode)
+        {
+          if(is_node_type(tnode, "Name"))
+            invalidate_list_literals_referencing(
+              irep_idt{qualify_name(json_string(json_member(tnode, "id")))});
+          else if(
+            (is_node_type(tnode, "Tuple") || is_node_type(tnode, "List")) &&
+            json_member(tnode, "elts").is_array())
+            for(const auto &e : as_array(json_member(tnode, "elts")))
+              invalidate_targets(e);
+          else if(is_node_type(tnode, "Starred"))
+            invalidate_targets(json_member(tnode, "value"));
+        };
+        for(const auto &e : as_array(elts))
+          invalidate_targets(e);
+      }
       // PLR §3.3.1: unpacking requires an iterable. A concrete class instance
       // whose MRO defines neither __iter__ nor __getitem__ is not iterable, so
       // `a, b = C()` raises TypeError ('cannot unpack non-iterable ...'). Same
