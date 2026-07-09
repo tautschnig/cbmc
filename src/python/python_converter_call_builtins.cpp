@@ -2218,6 +2218,62 @@ std::optional<exprt> python_convertert::try_builtin_call(
       return struct_exprt{std::move(zeros), st_t};
     }
   }
+  // tuple() — tuple(iterable). PLR §6.10: a tuple with the same elements as the
+  // iterable. Fixed-arity python_tuple can only represent a KNOWN length, so
+  // fold when the argument resolves to a constant list/tuple (directly, or a
+  // Name via list_literals/tuple_literals). Otherwise return nullopt so the
+  // known_nondet_builtins fallback applies (previously ALL tuple() calls fell
+  // there -> `tuple(xs).index(v)` never raised, a false proof / imprecision).
+  else if(func_name == "tuple")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      // Already a tuple: identity.
+      if(is_python_tuple_type(arg.type()))
+        return arg;
+      // Resolve a Name to a tracked constant list literal.
+      const exprt *cl = nullptr;
+      if(arg.id() == ID_struct && is_python_list_type(arg.type()))
+        cl = &arg;
+      else if(arg.id() == ID_symbol)
+      {
+        auto it = list_literals.find(to_symbol_expr(arg).get_identifier());
+        if(
+          it != list_literals.end() && it->second.id() == ID_struct &&
+          is_python_list_type(it->second.type()))
+          cl = &it->second;
+      }
+      if(
+        cl != nullptr && cl->operands().size() >= 2 &&
+        cl->operands()[0].is_constant() && cl->operands()[1].id() == ID_array)
+      {
+        mp_integer n;
+        if(
+          !to_integer(to_constant_expr(cl->operands()[0]), n) && n >= 0 &&
+          n <= (long)PYTHON_MAX_LIST_LENGTH)
+        {
+          const exprt::operandst &data = cl->operands()[1].operands();
+          const typet &et =
+            to_array_type(to_struct_type(cl->type()).components()[1].type())
+              .element_type();
+          struct_typet::componentst comps;
+          exprt::operandst vals;
+          const long nl = n.to_long();
+          for(long i = 0; i < nl && i < (long)data.size(); i++)
+          {
+            comps.push_back(
+              struct_typet::componentt{"_" + std::to_string(i), et});
+            vals.push_back(data[i]);
+          }
+          struct_typet tt{comps};
+          tt.set_tag("python_tuple");
+          return struct_exprt{std::move(vals), tt};
+        }
+      }
+    }
+    // Non-constant iterable: fall through to the nondet fallback.
+  }
   // list() / reversed() — return copy or nondet
   else if(func_name == "list" || func_name == "reversed")
   {
