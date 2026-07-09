@@ -2507,6 +2507,30 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
     // Without __bool__/__len__ dunder support, treat the
     // instance pointer as truthy when present (non-NULL).
     exprt class_truthy = python_value_is(e, python_type_tagt::CLASS);
+    // TUPLE tag → truthy iff the tuple is non-empty. Its arity is not
+    // recoverable from the opaque __class_ptr box, so use a SOUND nondet:
+    // treating a boxed tuple as unconditionally truthy would be a FALSE PROOF
+    // for a boxed empty tuple () (which is falsy and would then skip the
+    // else-branch CPython takes). A fresh nondet explores both branches.
+    exprt tuple_truthy;
+    {
+      static unsigned tt_ctr = 0;
+      const std::string nm = "__tuple_truthy_nd_" + std::to_string(tt_ctr++);
+      const irep_idt id{qualify_name(nm)};
+      if(symbol_table.lookup(id) == nullptr)
+      {
+        symbolt s{id, bool_typet{}, "python"};
+        s.base_name = nm;
+        s.is_lvalue = true;
+        s.is_state_var = true;
+        symbol_table.add(s);
+      }
+      symbol_exprt nd = symbol_table.lookup_ref(id).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{
+        nd, side_effect_expr_nondett{bool_typet{}, source_locationt{}}});
+      tuple_truthy =
+        and_exprt{python_value_is(e, python_type_tagt::TUPLE), std::move(nd)};
+    }
     // DICT tag → truthy iff length > 0.
     {
       // Read the length from the dict struct via __class_ptr;
@@ -2524,7 +2548,7 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
         or_exprt{
           or_exprt{
             float_true, or_exprt{or_exprt{str_true, list_true}, complex_true}},
-          or_exprt{class_truthy, dict_truthy_local}}};
+          or_exprt{or_exprt{class_truthy, tuple_truthy}, dict_truthy_local}}};
     }
   }
   else if(is_python_string_type(target_type))
@@ -3326,6 +3350,13 @@ exprt python_convertert::wrap_value(const exprt &e)
     {
       return make_python_value(
         python_type_tagt::SET, address_of_exprt{tmp_sym.symbol_expr()});
+    }
+    // python_tuple struct: use TUPLE tag (not CLASS) so isinstance(x, tuple),
+    // truthiness (empty tuple is falsy) and comparison treat it as a tuple.
+    if(is_python_tuple_type(e.type()))
+    {
+      return make_python_value(
+        python_type_tagt::TUPLE, address_of_exprt{tmp_sym.symbol_expr()});
     }
     // python_complex struct: use COMPLEX tag (not CLASS).
     // Lets python_truthiness / unwrap_value dereference and

@@ -104,6 +104,7 @@ exprt python_convertert::python_value_structural_eq(
     case python_type_tagt::DICT:
     case python_type_tagt::COMPLEX:
     case python_type_tagt::SET:
+    case python_type_tagt::TUPLE:
       return fresh_nondet_bool(); // not yet structurally compared here (sound)
     case python_type_tagt::CLOSURE:
       // PLR: closures have no __eq__; equality is identity. Two
