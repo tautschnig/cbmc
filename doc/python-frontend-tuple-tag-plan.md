@@ -107,3 +107,21 @@ real regression risk (retagging tuples CLASS→TUPLE alters truthiness / isinsta
 to the gated, documented residual. Recommended trigger to implement: either the
 residual class widens (more real-world / oracle-corpus hits), or a broader
 tuple-in-container feature (e.g. `dict.items()`, `zip` pipelines) is prioritised.
+
+
+## Related residual: `tuple(iterable)` returns an untyped nondet (2026-07-09)
+
+`tuple(xs)` / `tuple(sorted(xs))` map to the `known_nondet_builtins` fallback
+(nondet), NOT a tuple value. Consequences: downstream tuple operations are
+unsound/imprecise -- `tuple(xs) + (..)` previously CRASHED (fixed by the
+tuple-mixed-arith TypeError guard, b20aa67663), and `t = tuple(xs); t.index(v)`
+does not raise ValueError for an absent v (the tuple.index soundness paths are
+guarded on a resolvable struct receiver, which a nondet is not). These are the
+last ~7 PLR_WIDE value-sweep (missed-exception) residuals.
+
+Root: `tuple(list)` is a VARIABLE-arity tuple (the list length is symbolic),
+which the fixed-arity python_tuple struct cannot represent. The whole-group fix
+is to model `tuple(list)` -- e.g. a length+data tuple representation (like lists)
+or a sound may-raise wrapper for methods on an unresolved tuple. A representation
+change in the same family as the TUPLE tag; deferred. NOTE the NEGATED sweep
+(definite miscomputations) is at 0 -- this residual is missed-EXCEPTIONS only.
