@@ -2704,14 +2704,69 @@ std::optional<exprt> python_convertert::try_method_call(
               // PLR §6.10: tuple.index(v) raises ValueError when v is absent.
               // When every element and the arg are constant-comparable, absence
               // is DEFINITE -> emit the exception (was silently falling through
-              // to nondet, a false proof). Otherwise absence is not provable;
-              // keep the nondet fall-through.
+              // to nondet, a false proof).
               if(all_comparable)
               {
                 emit_conditional_exception(true_exprt{}, "ValueError");
                 return side_effect_expr_nondett{
                   python_int_type(), get_location(expr)};
               }
+              // Not constant-comparable (symbolic/python_value arg or elements,
+              // computed tuple). Build a best-effort symbolic `found` predicate
+              // over the element expressions and raise ValueError when NOT
+              // found. An element we cannot compare contributes a nondet
+              // maybe-match, so `found` is an over-approximation and the raise
+              // is SOUND: silently succeeding here was a false proof (found by
+              // the mutation-oracle, e.g. `t.index(o.v)`).
+              exprt found = false_exprt{};
+              exprt result = from_integer(-1, python_int_type());
+              for(long i = (long)tup->operands().size() - 1; i >= 0; --i)
+              {
+                const exprt &elem = tup->operands()[i];
+                exprt e_eq;
+                if(
+                  is_python_value_type(elem.type()) ||
+                  is_python_value_type(arg.type()))
+                  e_eq = value_equal(wrap_value(elem), wrap_value(arg));
+                else if(
+                  (elem.type().id() == ID_signedbv ||
+                   elem.type().id() == ID_integer ||
+                   elem.type().id() == ID_bool) &&
+                  (arg.type().id() == ID_signedbv ||
+                   arg.type().id() == ID_integer || arg.type().id() == ID_bool))
+                  e_eq = equal_exprt{
+                    safe_typecast(elem, signedbv_typet{64}),
+                    safe_typecast(arg, signedbv_typet{64})};
+                else
+                {
+                  static unsigned tim_ctr = 0;
+                  const std::string nm =
+                    "__tup_idx_maybe_" + std::to_string(tim_ctr++);
+                  const irep_idt id{qualify_name(nm)};
+                  if(symbol_table.lookup(id) == nullptr)
+                  {
+                    symbolt s{id, bool_typet{}, "python"};
+                    s.base_name = nm;
+                    s.is_lvalue = true;
+                    s.is_state_var = true;
+                    symbol_table.add(s);
+                  }
+                  e_eq = symbol_table.lookup_ref(id).symbol_expr();
+                  pending_checks.push_back(code_frontend_assignt{
+                    e_eq,
+                    side_effect_expr_nondett{
+                      bool_typet{}, source_locationt{}}});
+                }
+                if(e_eq.type() != bool_typet{})
+                  e_eq = typecast_exprt{std::move(e_eq), bool_typet{}};
+                // index() returns the FIRST match -> later (smaller i) wins.
+                result =
+                  if_exprt{e_eq, from_integer(i, python_int_type()), result};
+                found = or_exprt{std::move(found), std::move(e_eq)};
+              }
+              emit_conditional_exception(
+                not_exprt{std::move(found)}, "ValueError");
+              return result;
             }
             else
             {
