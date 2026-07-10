@@ -2705,6 +2705,158 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     // `del obj.x` in module-level / function code on an external instance.
     walk(json_member(parse_tree.ast_json, "body"));
   }
+  // External-store slot-pun (PLR §3.1) -- the LAST slot-pun. A concrete-typed
+  // field (`self.x: int`) puns a mismatched value stored EXTERNALLY (`o.x = "s"`
+  // / `o.x = src()`), which the per-method self-store scan does not see. Storing
+  // is legal Python (the error arises on a later USE), so the fix is to WIDEN
+  // the field to python_value at class-definition time. Module-wide scan keying
+  // on the attribute NAME (a sound over-approximation, exactly like the del +
+  // __getattr__ scan above): record the scalar CATEGORY of each externally
+  // stored value, then widen a concrete scalar field whose category differs.
+  // Scoped to Constant literals + resolvable Call return types (a bare Name RHS
+  // is left alone to avoid over-widening); bool is treated as int (Python
+  // subtype). Not under --python-check-annotations (that mode reports the
+  // mismatch as a property instead).
+  std::map<std::string, std::set<std::string>> ext_store_scalar_cats;
+  const auto type_cat = [this](const typet &t) -> std::string
+  {
+    if(t == python_string_type())
+      return "str";
+    if(t == double_type())
+      return "float";
+    if(t == python_int_type() || t == bool_typet{})
+      return "int"; // bool is a subtype of int
+    return "";
+  };
+  if(!python_check_annotations)
+  {
+    // Map function name -> return scalar category, resolved from the AST (the
+    // symbol table may not yet hold a callee defined AFTER this class). From the
+    // `-> T` annotation, else inferred from the first `return <Constant>`.
+    std::map<std::string, std::string> func_return_cat;
+    const auto const_cat = [](const jsont &cv) -> std::string
+    {
+      if(cv.is_string())
+        return "str";
+      if(cv.is_boolean())
+        return "int";
+      if(cv.is_number())
+        return cv.value.find('.') != std::string::npos ? "float" : "int";
+      return "";
+    };
+    std::function<void(const jsont &)> fscan = [&](const jsont &n)
+    {
+      if(n.is_array())
+      {
+        for(const auto &e : as_array(n))
+          fscan(e);
+        return;
+      }
+      if(!n.is_object())
+        return;
+      if(is_node_type(n, "FunctionDef") || is_node_type(n, "AsyncFunctionDef"))
+      {
+        std::string fn = json_string(json_member(n, "name"));
+        std::string cat;
+        const jsont &ret = json_member(n, "returns");
+        if(is_node_type(ret, "Name"))
+        {
+          const std::string tn = json_string(json_member(ret, "id"));
+          if(tn == "str")
+            cat = "str";
+          else if(tn == "float")
+            cat = "float";
+          else if(tn == "int" || tn == "bool")
+            cat = "int";
+        }
+        if(cat.empty())
+        {
+          // infer from the first `return <Constant>` in the body
+          const jsont &fb = json_member(n, "body");
+          if(fb.is_array())
+            for(const auto &s : as_array(fb))
+              if(
+                is_node_type(s, "Return") &&
+                is_node_type(json_member(s, "value"), "Constant"))
+              {
+                cat = const_cat(json_member(json_member(s, "value"), "value"));
+                break;
+              }
+        }
+        if(!cat.empty())
+          func_return_cat[fn] = cat;
+      }
+      for(const char *k : {"body", "orelse", "finalbody", "handlers"})
+      {
+        const jsont &c = json_member(n, k);
+        if(!c.is_null())
+          fscan(c);
+      }
+    };
+    fscan(json_member(parse_tree.ast_json, "body"));
+
+    const auto cat_of_value = [&](const jsont &v) -> std::string
+    {
+      if(is_node_type(v, "Constant"))
+        return const_cat(json_member(v, "value"));
+      if(
+        is_node_type(v, "Call") && is_node_type(json_member(v, "func"), "Name"))
+      {
+        auto it = func_return_cat.find(
+          json_string(json_member(json_member(v, "func"), "id")));
+        if(it != func_return_cat.end())
+          return it->second;
+      }
+      return "";
+    };
+    std::function<void(const jsont &)> escan = [&](const jsont &n)
+    {
+      if(n.is_array())
+      {
+        for(const auto &e : as_array(n))
+          escan(e);
+        return;
+      }
+      if(!n.is_object())
+        return;
+      if(is_node_type(n, "Assign"))
+      {
+        const jsont &tgts = json_member(n, "targets");
+        if(tgts.is_array())
+          for(const auto &t : as_array(tgts))
+            if(is_node_type(t, "Attribute"))
+            {
+              std::string cat = cat_of_value(json_member(n, "value"));
+              if(!cat.empty())
+                ext_store_scalar_cats[json_string(json_member(t, "attr"))]
+                  .insert(cat);
+            }
+      }
+      for(const char *k : {"body", "orelse", "finalbody", "handlers"})
+      {
+        const jsont &c = json_member(n, k);
+        if(!c.is_null())
+          escan(c);
+      }
+    };
+    escan(json_member(parse_tree.ast_json, "body"));
+  }
+  // Widen a concrete scalar field to python_value when an external store of a
+  // DIFFERENT scalar category was seen for a field of that name.
+  const auto ext_store_punned = [&](const std::string &attr, const typet &d)
+  {
+    auto it = ext_store_scalar_cats.find(attr);
+    if(it == ext_store_scalar_cats.end())
+      return false;
+    const std::string dcat = type_cat(d);
+    if(dcat.empty())
+      return false;
+    for(const auto &c : it->second)
+      if(c != dcat)
+        return true;
+    return false;
+  };
+
   auto getattr_deletable_override =
     [&](const std::string &attr_name, typet &attr_type)
   {
@@ -2817,6 +2969,10 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                  .find("python_class_") != std::string::npos);
           if(field_is_instance && is_node_type(av, "Name"))
             attr_type = pointer_type(attr_type);
+          // External-store slot-pun: widen when a mismatched external store to
+          // a field of this name was seen module-wide.
+          if(ext_store_punned(attr_name, attr_type))
+            attr_type = python_value_type();
           getattr_deletable_override(attr_name, attr_type);
           if(declared_fields.insert(attr_name).second)
             components.push_back(
@@ -2973,6 +3129,8 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           }
         }
 
+        if(ext_store_punned(attr_name, attr_type))
+          attr_type = python_value_type();
         getattr_deletable_override(attr_name, attr_type);
         if(declared_fields.insert(attr_name).second)
           components.push_back(struct_typet::componentt{attr_name, attr_type});
