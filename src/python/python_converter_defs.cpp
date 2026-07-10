@@ -2735,6 +2735,71 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           typet attr_type = annotation.is_null()
                               ? python_value_type()
                               : convert_type_annotation(annotation);
+          // §field slot-pun (default mode): a `self.x: T = v` init where T is a
+          // concrete SCALAR but the init value's type is uninferable (e.g. an
+          // UNANNOTATED param -> Any) or a different scalar category WIDENS the
+          // field to python_value, so a mismatched store preserves its runtime
+          // tag instead of being PUNNED into T (a false proof). Mirrors the
+          // list-element inference; also fixes later external `o.x = <bad>`
+          // stores since they coerce to the (now widened) field type. Under
+          // --python-check-annotations the concrete T is kept so the mismatch
+          // is reported as a property.
+          if(!python_check_annotations)
+          {
+            const auto is_scalar = [this](const typet &t)
+            {
+              return t == python_int_type() || t == double_type() ||
+                     t == bool_typet{} || t == python_string_type();
+            };
+            if(is_scalar(attr_type))
+            {
+              const jsont &av = json_member(s, "value");
+              std::optional<typet> vt;
+              bool considered = false;
+              if(is_node_type(av, "Constant"))
+              {
+                considered = true;
+                const jsont &cv = json_member(av, "value");
+                if(cv.is_string())
+                  vt = python_string_type();
+                else if(cv.is_boolean())
+                  vt = bool_typet{};
+                else if(cv.is_number())
+                {
+                  std::string vs = cv.value;
+                  vt = (vs.find('.') != std::string::npos) ? double_type()
+                                                           : python_int_type();
+                }
+              }
+              else if(is_node_type(av, "Name"))
+              {
+                considered = true;
+                // resolve a param's declared type; unannotated -> Any (nullopt)
+                std::string vn = json_string(json_member(av, "id"));
+                const jsont &margs = json_member(*method_node, "args");
+                const jsont &params = json_member(margs, "args");
+                if(params.is_array())
+                  for(const auto &p : as_array(params))
+                    if(json_string(json_member(p, "arg")) == vn)
+                    {
+                      const jsont &pa = json_member(p, "annotation");
+                      if(!pa.is_null())
+                        vt = convert_type_annotation(pa);
+                      break;
+                    }
+              }
+              // Only widen for a store form we actually resolved (Constant /
+              // Name param). Other RHS forms keep the annotation (conservative
+              // -- avoids over-widening a `self.x: int = compute()`).
+              if(considered)
+              {
+                const bool uninferable =
+                  !vt.has_value() || vt->id().empty() || vt->id() == ID_empty;
+                if(uninferable || (is_scalar(*vt) && *vt != attr_type))
+                  attr_type = python_value_type();
+              }
+            }
+          }
           // reference-semantics-for-instances (Phase 3): an instance-typed
           // field assigned a by-REFERENCE value (`self.x: C = <Name>` -- a
           // param/alias) is held by reference -> type it pointer-to-instance so
