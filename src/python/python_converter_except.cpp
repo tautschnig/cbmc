@@ -374,6 +374,11 @@ codet python_convertert::convert_with(const jsont &stmt)
         std::string var_name = json_string(json_member(optional_vars, "id"));
         std::string qname = qualify_name(var_name);
         irep_idt sym_id{qname};
+        // PLR §8.5: the `as v` variable is (re)assigned to __enter__'s result,
+        // so invalidate its tracking -- else `b = 1; with CM(3) as b: pass;
+        // t[b]` folds t[b] on the stale b=1 (found by probing the reassignment
+        // whole-group).
+        invalidate_reassigned_symbol(sym_id);
 
         const jsont &ctx_expr = json_member(item, "context_expr");
 
@@ -1276,9 +1281,7 @@ codet python_convertert::convert_try(const jsont &stmt)
           if(is_node_type(t, "Name"))
           {
             const irep_idt id{qualify_name(json_string(json_member(t, "id")))};
-            invalidate_list_literals_referencing(id);
-            float_constants.erase(id);
-            string_constants.erase(id);
+            invalidate_reassigned_symbol(id);
           }
           else if(
             (is_node_type(t, "Tuple") || is_node_type(t, "List")) &&

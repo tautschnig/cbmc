@@ -411,6 +411,27 @@ codet python_convertert::convert_for(const jsont &stmt)
   source_locationt loc = get_location(stmt);
   typet int_type = python_int_type();
 
+  // PLR §8.3: the loop variable(s) are (re)assigned each iteration, so
+  // invalidate their tracking -- else `b = 1; for b in [3]: pass; t[b]` folds
+  // t[b] on the stale b=1 (found by proactively probing the reassignment
+  // whole-group). Recurse into tuple/list/starred targets.
+  {
+    std::function<void(const jsont &)> inv = [&](const jsont &tn)
+    {
+      if(is_node_type(tn, "Name"))
+        invalidate_reassigned_symbol(
+          irep_idt{qualify_name(json_string(json_member(tn, "id")))});
+      else if(
+        (is_node_type(tn, "Tuple") || is_node_type(tn, "List")) &&
+        json_member(tn, "elts").is_array())
+        for(const auto &e : as_array(json_member(tn, "elts")))
+          inv(e);
+      else if(is_node_type(tn, "Starred"))
+        inv(json_member(tn, "value"));
+    };
+    inv(target);
+  }
+
   // PLR §8.3: for target in iter: body [else: orelse]
   // If orelse is non-empty, create a break-flag symbol so the
   // else clause is skipped on break.

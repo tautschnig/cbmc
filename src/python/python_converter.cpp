@@ -3456,6 +3456,13 @@ void python_convertert::invalidate_list_literals_referencing(
   sweep(dict_literals);
 }
 
+void python_convertert::invalidate_reassigned_symbol(const irep_idt &sym)
+{
+  invalidate_list_literals_referencing(sym);
+  float_constants.erase(sym);
+  string_constants.erase(sym);
+}
+
 exprt python_convertert::value_equal(const exprt &a, const exprt &b)
 {
   PRECONDITION(
@@ -5358,20 +5365,14 @@ exprt python_convertert::convert_expression(const jsont &expr)
     {
       std::string name = json_string(json_member(target, "id"));
       irep_idt sym_id{qualify_name(name)};
-      // PLR §6.12: the walrus rebinds `name`, so refresh its tracking like a
-      // plain assign -- else `b = 1; (b := 3); t[b]` folds t[b] on the STALE
-      // b = 1 (wrong element + masked IndexError), a false proof found by
-      // direct probing of the stale-tracking whole-group. Invalidate cached
-      // literals referencing it; set its scalar constant when the value folds
-      // to a constant, otherwise clear it.
-      invalidate_list_literals_referencing(sym_id);
+      // PLR §6.12: the walrus rebinds `name` -- invalidate its stale tracking
+      // like any reassignment, then re-establish the scalar constant when the
+      // value folds to one (keeps `(b := 2); t[b]` precise).
+      invalidate_reassigned_symbol(sym_id);
       {
         auto ev = try_eval_double(rhs);
         if(ev.has_value())
           float_constants[sym_id] = ev.value();
-        else
-          float_constants.erase(sym_id);
-        string_constants.erase(sym_id);
       }
       if(symbol_table.lookup(sym_id) == nullptr)
       {

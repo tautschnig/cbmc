@@ -2116,15 +2116,8 @@ codet python_convertert::convert_assign(const jsont &stmt)
           {
             const irep_idt tid{
               qualify_name(json_string(json_member(tnode, "id")))};
-            invalidate_list_literals_referencing(tid);
-            // The unpacked value is not a tracked compile-time constant, so
-            // clear any stale scalar constant -- else `b = 1; a, b = (t[0],
-            // t[1])` leaves float_constants[b] = 1 and a later `t[b]` folds to
-            // t[1] using the STALE 1 (wrong element + masks an IndexError), a
-            // false proof found by the mutation-oracle. The plain assign
-            // already erases these on a non-constant reassignment.
-            float_constants.erase(tid);
-            string_constants.erase(tid);
+            // The unpacked value is not a tracked compile-time constant.
+            invalidate_reassigned_symbol(tid);
           }
           else if(
             (is_node_type(tnode, "Tuple") || is_node_type(tnode, "List")) &&
@@ -4004,12 +3997,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
     {
       // This split path handles a non-constant (side-effecting) RHS and returns
       // early, bypassing the scalar-constant management the straight-line path
-      // does below. Clear any stale tracked constant for the target -- else
-      // `a = 1; try: a = xs[1] ...` leaves float_constants[a] = 1, and a later
-      // `t[a]` constant-folds the index to the STALE 1 (wrong element + masks
-      // an IndexError) -- a false proof found by the mutation-oracle.
-      float_constants.erase(sym.name);
-      string_constants.erase(sym.name);
+      // does below. Invalidate the target's tracking (a stale constant survived
+      // otherwise -- `a = 1; try: a = xs[1] ...; t[a]` folded on the stale 1).
+      invalidate_reassigned_symbol(sym.name);
       const symbolt *exc_sym =
         symbol_table.lookup("python::__exception_active");
       if(exc_sym != nullptr)
