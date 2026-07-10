@@ -1949,8 +1949,14 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         python_value_is(value, python_type_tagt::STR),
         python_value_is(value, python_type_tagt::LIST)},
       or_exprt{
-        python_value_is(value, python_type_tagt::DICT),
-        python_value_is(value, python_type_tagt::CLASS)}};
+        or_exprt{
+          python_value_is(value, python_type_tagt::DICT),
+          python_value_is(value, python_type_tagt::CLASS)},
+        // PLR §6.10: a boxed tuple IS subscriptable (a plain/forward-ref-
+        // annotated tuple param, or a variadic `tuple[int,...]`, flows here as
+        // a TUPLE-tagged python_value). Omitting it raised a spurious
+        // "not subscriptable" TypeError -- a false alarm.
+        python_value_is(value, python_type_tagt::TUPLE)}};
     add_check(
       subscriptable,
       "python-type-error",
@@ -1967,7 +1973,14 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         const auto &list_st = to_struct_type(list_val.type());
         const auto &data_type = to_array_type(list_st.components()[1].type());
         member_exprt data{list_val, "data", data_type};
-        return index_exprt{data, slice};
+        // Only the LIST tag reads the list slot; a TUPLE (or other) tag stores
+        // its data elsewhere (class_ptr), so reading the list slot would be
+        // unsound -- return a sound nondet element for the non-LIST case
+        // (precise boxed-tuple element extraction is a follow-up).
+        return if_exprt{
+          python_value_is(value, python_type_tagt::LIST),
+          index_exprt{data, slice},
+          side_effect_expr_nondett{python_value_type(), get_location(expr)}};
       }
     }
     // String key on a python_value (DICT tag) is not yet resolved to a
