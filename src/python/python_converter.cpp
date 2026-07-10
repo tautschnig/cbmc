@@ -1864,6 +1864,48 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
             }
           }
         }
+        // §list: a `xs[i] = v` store whose value type is uninferable or
+        // incompatible with the list's known element type WIDENS the element to
+        // python_value (Any-dominance) -- else the concrete slot PUNS the
+        // mismatched value (a false proof). Targeted: only lists we already know
+        // an element type for (a literal init recorded in name_list_elem_t, or
+        // an in-progress inference) widen, and only on a genuine mismatch, so a
+        // correctly-typed store leaves the list untouched (no precision cost).
+        // Not done under --python-check-annotations (that mode keeps the
+        // concrete type to report the mismatch as a property).
+        if(
+          !is_ann && !python_check_annotations && targets.is_array() &&
+          as_array(targets).size() == 1)
+        {
+          const jsont &t0 = *as_array(targets).begin();
+          if(
+            is_node_type(t0, "Subscript") &&
+            is_node_type(json_member(t0, "value"), "Name") &&
+            !is_node_type(json_member(t0, "slice"), "Slice"))
+          {
+            irep_idt lid{qualify_name(
+              json_string(json_member(json_member(t0, "value"), "id")))};
+            typet cur_elem;
+            auto eit = empty_list_inferred_types.find(lid);
+            if(eit != empty_list_inferred_types.end())
+              cur_elem = eit->second;
+            else
+            {
+              auto nit = name_list_elem_t.find(lid);
+              if(nit != name_list_elem_t.end())
+                cur_elem = nit->second;
+            }
+            if(
+              !cur_elem.id().empty() && cur_elem.id() != ID_empty &&
+              !is_python_value_type(cur_elem))
+            {
+              typet vt = type_of_expr(value);
+              const bool uninferable = vt.id().empty() || vt.id() == ID_empty;
+              if(uninferable || vt != cur_elem)
+                empty_list_inferred_types[lid] = python_value_type();
+            }
+          }
+        }
         // §dict: `<target> = a.setdefault(k, default)` on a pending empty dict
         // resolves its key/value types from k / default -- the assignment
         // analogue of the chained `setdefault(...).method()` inference below.

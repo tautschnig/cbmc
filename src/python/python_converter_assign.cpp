@@ -278,6 +278,41 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
       }
     }
   }
+
+  // §list widening (annotated, NON-empty init): `xs: list[int] = [0]` with a
+  // later mismatched `xs[i] = v` (detected in the pre-pass -> inferred
+  // python_value) is rebuilt with python_value elements so the tag is preserved
+  // (else the concrete slot puns the subscript-store, a false proof). Wrap each
+  // literal element.
+  if(
+    is_node_type(value, "List") && json_member(value, "elts").is_array() &&
+    !as_array(json_member(value, "elts")).empty() &&
+    is_python_list_type(rhs.type()) && rhs.id() == ID_struct &&
+    rhs.operands().size() >= 2 && rhs.operands()[1].id() == ID_array)
+  {
+    auto inf_it = empty_list_inferred_types.find(symbol_id);
+    if(
+      inf_it != empty_list_inferred_types.end() &&
+      is_python_value_type(inf_it->second))
+    {
+      struct_typet new_list_type = python_list_type(python_value_type());
+      const auto &new_data_type =
+        to_array_type(new_list_type.components()[1].type());
+      const exprt &src_arr = rhs.operands()[1];
+      exprt::operandst wrapped;
+      for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+      {
+        if(i < src_arr.operands().size())
+          wrapped.push_back(wrap_value(src_arr.operands()[i]));
+        else
+          wrapped.push_back(safe_zero(python_value_type()));
+      }
+      rhs = struct_exprt{
+        {rhs.operands()[0], array_exprt{std::move(wrapped), new_data_type}},
+        new_list_type};
+      symbol_table.get_writeable_ref(symbol_id).type = new_list_type;
+    }
+  }
   // PLR §3.2: empty-dict key/value-type inference. When the user
   // wrote 'name: dict[K, V] = {}' the annotation specifies the
   // dict's key and value types but convert_dict for the empty
@@ -1752,6 +1787,43 @@ codet python_convertert::convert_assign(const jsont &stmt)
       array_exprt new_data{std::move(zeros), new_data_type};
       rhs = struct_exprt{
         {from_integer(0, signedbv_typet{64}), new_data}, new_list_type};
+    }
+  }
+
+  // §list widening: a NON-empty list literal whose element inference widened to
+  // python_value (the pre-pass detected a later `xs[i] = <mismatch>` store) is
+  // rebuilt with python_value elements so the runtime tag is PRESERVED -- else
+  // the concrete slot puns the mismatched subscript-store (a false proof). Each
+  // literal element is wrapped via wrap_value.
+  if(
+    is_node_type(value, "List") && json_member(value, "elts").is_array() &&
+    !as_array(json_member(value, "elts")).empty() &&
+    as_array(targets).size() == 1 &&
+    is_node_type(*as_array(targets).begin(), "Name") && rhs.id() == ID_struct &&
+    rhs.operands().size() >= 2 && rhs.operands()[1].id() == ID_array)
+  {
+    irep_idt lhs_id{
+      qualify_name(json_string(json_member(*as_array(targets).begin(), "id")))};
+    auto inf_it = empty_list_inferred_types.find(lhs_id);
+    if(
+      inf_it != empty_list_inferred_types.end() &&
+      is_python_value_type(inf_it->second))
+    {
+      struct_typet new_list_type = python_list_type(python_value_type());
+      const auto &new_data_type =
+        to_array_type(new_list_type.components()[1].type());
+      const exprt &src_arr = rhs.operands()[1];
+      exprt::operandst wrapped;
+      for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+      {
+        if(i < src_arr.operands().size())
+          wrapped.push_back(wrap_value(src_arr.operands()[i]));
+        else
+          wrapped.push_back(safe_zero(python_value_type()));
+      }
+      rhs = struct_exprt{
+        {rhs.operands()[0], array_exprt{std::move(wrapped), new_data_type}},
+        new_list_type};
     }
   }
 
