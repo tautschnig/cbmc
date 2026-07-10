@@ -2128,6 +2128,17 @@ private:
   /// reassignment (soundness).
   void invalidate_list_literals_referencing(const irep_idt &sym);
 
+  /// Canonical "a Name is being (re)assigned" tracking invalidation. Call this
+  /// at EVERY reassignment site (plain/ann/aug assign, tuple-unpack targets,
+  /// walrus, for-target, finally-assigned names, ...) so stale tracking cannot
+  /// survive the rebind. It (a) drops cached list/tuple/dict literals that
+  /// REFERENCE `sym` (stale-symbol-in-container), and (b) clears `sym`'s own
+  /// scalar constants (float/string). A site that then rebinds `sym` to a
+  /// constant/literal re-establishes the precise tracking AFTER calling this.
+  /// Consolidates a rule that was previously replicated per-site and repeatedly
+  /// missed (unpack/walrus/try-split/finally stale-tracking false proofs).
+  void invalidate_reassigned_symbol(const irep_idt &sym);
+
   /// If `e` is a side-effecting call (a side_effect_expr_function_callt with a
   /// value), materialise it into a fresh temp via `pending_checks` and return
   /// the temp; otherwise return `e` unchanged. Used by operand-DUPLICATING
