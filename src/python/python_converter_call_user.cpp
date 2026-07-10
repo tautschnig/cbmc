@@ -407,6 +407,42 @@ exprt python_convertert::convert_user_call(
   const std::string &func_name,
   const jsont &args)
 {
+  // PLR §6.2.9 generator identity: a generator is a REFERENCE; passing it to a
+  // function that consumes it advances the SAME cursor, visible to the caller.
+  // The list-with-cursor model uses a per-Name cursor and passes the backing
+  // list BY VALUE, so a callee's consumption is NOT reflected in the caller's
+  // cursor -- `it=g(); c(it); next(it)` re-yielded from the start (a false
+  // proof). A precise shared cursor doesn't fit the once-converted-callee model,
+  // so SOUNDLY over-approximate: after passing a generator Name to a user
+  // function, its cursor may have advanced by an unknown amount -> havoc it to a
+  // nondet position in [0, length]. Subsequent next()/for/list then read an
+  // unknown position (no false proof); a callee that doesn't consume loses
+  // precision (sound). Emitted via pending_checks (flushed at the statement);
+  // the call itself does not read the caller's cursor, so ordering is immaterial.
+  if(args.is_array())
+  {
+    for(const auto &a : as_array(args))
+    {
+      if(!is_node_type(a, "Name"))
+        continue;
+      irep_idt aid{qualify_name(json_string(json_member(a, "id")))};
+      auto gc = generator_cursors.find(aid);
+      if(gc == generator_cursors.end())
+        continue;
+      const symbolt *cur = symbol_table.lookup(gc->second);
+      const symbolt *lst = symbol_table.lookup(aid);
+      if(cur == nullptr || lst == nullptr || !is_python_list_type(lst->type))
+        continue;
+      const signedbv_typet i64{64};
+      symbol_exprt cur_e = cur->symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{
+        cur_e, side_effect_expr_nondett{i64, get_location(expr)}});
+      member_exprt len{lst->symbol_expr(), "length", i64};
+      pending_checks.push_back(code_assumet{and_exprt{
+        binary_relation_exprt{cur_e, ID_ge, from_integer(0, i64)},
+        binary_relation_exprt{cur_e, ID_le, len}}});
+    }
+  }
   // PLR §4.2.1: nested function definitions live in their
   // enclosing function's scope. Look up the callee in the
   // current function scope first, then walk outward through

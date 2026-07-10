@@ -531,13 +531,23 @@ also handled now — the consumption-state cluster is CLOSED:
   unsound first-yield guess — it can no longer prove a stale value
   (`gen-in-container-consume`, CORE). Precise fresh (`next(g())`) and
   Name-cursor consumption are unaffected.
-Passing a generator to a function is sound (the param view is
-over-approximated to nondet, not re-yielded). A fully PRECISE
-generator-OBJECT model (consumption state tied to the object and
-shared through container/attribute channels) remains future work
-(plan §1) — but every channel is now SOUND. (These were found by a
-proactive soundness sweep and the mutation-oracle, not the oracle
-corpus.)
+Passing a generator to a function is now SOUND (2026-07-10): the
+callee consumes an independent (by-value) cursor, so the caller's
+cursor was left unadvanced and a subsequent `next(it)` re-yielded
+from the start — a false proof (`it=g(); c(it); next(it)==1` was
+proved). Found by the generator-identity spike; the exact channel
+the earlier draft wrongly claimed was already sound. Fixed by
+soundly HAVOC-ing the caller's cursor to a nondet position in
+`[0, length]` after a generator Name is passed to a user function
+(a callee may advance it by an unknown amount), so a re-yield can
+no longer be proved (`gen-func-consume-sound`, CORE). A callee that
+does not consume loses precision (sound over-approximation); a
+precise shared cursor does not fit the once-converted-callee model.
+A fully PRECISE generator-OBJECT model (consumption state tied to
+the object and shared through container/attribute/param channels)
+remains future work (plan §1) — but every channel is now SOUND.
+(These were found by a proactive soundness sweep and the
+mutation-oracle, not the oracle corpus.)
 
 ## Annotation semantics (PLR §3.1, §3.2)
 
