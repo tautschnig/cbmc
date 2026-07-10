@@ -689,6 +689,12 @@ codet python_convertert::convert_statement(const jsont &stmt)
     // Helper: compile a pattern into a (condition, bindings)
     // pair. Bindings are statements that bind names from the
     // matched subject; they prepend the case body.
+    // `pattern_captures` accumulates the names a pattern binds so
+    // the caller can invalidate their tracking (a capture rebinds
+    // the name to the subject -- PLR §11.6 -- so a stale scalar
+    // constant must not survive into the arm body or the merged
+    // post-match state). Cleared before each top-level call.
+    std::set<irep_idt> pattern_captures;
     std::function<std::pair<exprt, code_blockt>(const jsont &, const exprt &)>
       compile_pattern =
         [&](
@@ -769,6 +775,7 @@ codet python_convertert::convert_statement(const jsont &stmt)
           }
           binds.add(code_frontend_assignt{
             symbol_table.lookup_ref(sym_id).symbol_expr(), subj});
+          pattern_captures.insert(sym_id);
         }
         return {std::move(cond), std::move(binds)};
       }
@@ -991,6 +998,7 @@ codet python_convertert::convert_statement(const jsont &stmt)
               }
               binds.add(code_frontend_assignt{
                 symbol_table.lookup_ref(sym_id).symbol_expr(), subj});
+              pattern_captures.insert(sym_id);
             }
           }
           // Match suffix against the last `suffix` elements.
@@ -1126,10 +1134,21 @@ codet python_convertert::convert_statement(const jsont &stmt)
       const jsont &guard = json_member(match_case, "guard");
       const jsont &body = json_member(match_case, "body");
 
+      pattern_captures.clear();
       auto [cond, binds] = compile_pattern(pattern, subject);
       code_blockt body_block;
       // Restore tracking to pre-match so this arm starts fresh.
       restore_tracking(pre_match_tracking);
+      // The capture patterns rebind their names to (parts of) the
+      // subject, so invalidate their tracking AFTER the restore --
+      // else a stale scalar constant from before the match folds
+      // inside the body and (via this arm's snapshot) into the
+      // merged post-match state (`b = 1; match 3: case int() as b:
+      // ...; t[b]` folded t[b] on the stale b=1). The restore above
+      // would otherwise undo an invalidation done during
+      // compile_pattern, so it must happen here.
+      for(const auto &cap : pattern_captures)
+        invalidate_reassigned_symbol(cap);
       // PLR §8.6: match case bodies are branches — bump
       // if_else_depth so legacy-callers of the path-insensitive
       // gate are still inhibited inside.
