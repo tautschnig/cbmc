@@ -1427,9 +1427,13 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 >   `match-capture-stale-tracking` (plus the earlier `*-stale-tracking` guards).
 >
 > Both standing gate passes (narrow PLR-fuzz + negated mutation-oracle) stay at 0;
-> the wide negated sweep is at 0; the oracle is at 0-NEW. The remaining `PLR_WIDE`
-> value residual is the documented `tuple()`-of-computed-list variable-arity case
-> (combination-specific, no minimal form — a boxed-tuple PRECISION item).
+> the wide negated sweep is at 0; the oracle is at 0-NEW. The `PLR_WIDE` value
+> residual (the `tuple()`-of-computed-list / `.index` and try-else stale-tracking
+> cases) is now **CLOSED (2026-07-10)**: `tuple(<non-constant iterable>)` returns a
+> nondet `python_value` and `.index` on an unresolved receiver soundly may-raises
+> (`de482e6345`); and try-`else`-assigned names have their tracking cleared after
+> the arm-merge like the finally clause (`5321a713c4`). **Both the WIDE negated
+> AND WIDE value sweeps (3000 seeds each) are now at 0 false proofs.**
 >
 > **Exception-propagation audit (2026-07-10).** Systematically probed the invariant
 > "a raising subexpression must propagate at EVERY evaluation site" (the theme
