@@ -1077,9 +1077,8 @@ punned into a concrete field (a false proof) vs. kept tag-bearing (sound):
 | Return slot | **widens to `python_value`** when a path genuinely returns one | sound + precise (#2) |
 | Dict value (unannotated `{}`) | values are `python_value` → tag preserved → use-site obligation fires | **sound** |
 | List element, **inferred** (`xs = []; xs.append(u)`) | empty-list element-type inference defaults uninferable/heterogeneous elements to `python_value` (Any-dominance) → tag preserved | **sound** (2026-06-30; `list-element-infer-any` CORE) |
-| List element — `append`/`extend`/`insert` into an **empty-init** list (`xs: list[int] = []; xs.append(u)`), any annotation form, and literal-init `[u]` | the element-inference pre-pass WIDENS the element to `python_value` (Any-dominance) when a store's type is uninferable or incompatible with the declared `T` → tag preserved, use-site obligation fires; a correctly-typed store keeps `T` (precision) | **sound** (2026-07-10; `slot-pun-list-element-append-sound` / `-insert-sound`(+`-nofp`) CORE). Under `--python-check-annotations` the concrete `T` is kept instead so the append/insert MISMATCH is reported as a property (`check-annotations-list-append`) |
-| List element — **subscript-store** (`xs[0]=u`) or a store into a **NON-empty-init** list (`xs: list[int] = [0]; ...`) | the concrete `int` element type **puns** the mismatched value (not covered by the empty-init inference pre-pass) | **annotation-laundering** (`ORACLE-INTRINSIC`; `slot-pun-list-element-knownbug`) — the remaining list-element hole; would need subscript-store/non-empty-init inference or slot-widening |
-| **Attribute field**, annotated (`self.x: int; o.x = u`) | the concrete field type **puns** the `python_value` | **annotation-laundering** (`ORACLE-INTRINSIC`; `slot-pun-attr-field-knownbug`) — would need slot-widening. (Untyped field is `python_value` → sound; the tagged-union field `x: int|str` is caught by a tag obligation, `tagged-union-narrowing-unsound` CORE) |
+| List element — any store form (`append`/`extend`/`insert`, subscript-store `xs[0]=u`), empty- OR non-empty-init, any annotation form | the element-inference pre-pass WIDENS the element to `python_value` (Any-dominance) when a store's type is uninferable or incompatible with the declared `T` → tag preserved, use-site obligation fires; a correctly-typed store keeps `T` (precision) | **sound** (2026-07-10; `slot-pun-list-element-{append,insert,subscript}-sound`(+`-nofp`) CORE). Under `--python-check-annotations` the concrete `T` is kept so the MISMATCH is reported as a property (`check-annotations-list-append`). Slice-assignment `xs[i:j]=[..]` is excluded from the scan (its RHS is a list of elements, not one element) |
+| **Attribute field**, annotated (`self.x: int; o.x = u`) | the concrete field type **puns** the `python_value` | **annotation-laundering** (`ORACLE-INTRINSIC`; `slot-pun-attr-field-knownbug`) — the LAST remaining slot-pun; would need slot-widening. (Untyped field is `python_value` → sound; the tagged-union field `x: int|str` is caught by a tag obligation, `tagged-union-narrowing-unsound` CORE) |
 
 **The architectural invariant the audit reveals:** a slot typed `python_value`
 (Any) *preserves* the runtime tag, so a later misuse is caught by the
@@ -1096,24 +1095,27 @@ and the principled fix would be **slot-widening** (type the element / field
 makes). That is **invasive + perf-costly** (it changes container/struct element
 typing, with the precision/perf cost that drove the concrete-typing design and
 the not-viable `--python-ref-mutables` default), so it is deferred; the residual
-cases are pinned KNOWNBUG (`slot-pun-list-element-knownbug` — now the
-subscript-store / non-empty-init path — and `slot-pun-attr-field-knownbug`).
-**Progress (2026-07-10):** the empty-init list `append`/`extend`/`insert` paths
-(any annotation form) are now **sound** — the element-inference pre-pass widens
-the element to `python_value` (Any-dominance) when a store is uninferable or
-incompatible with the declared `T`, preserving the tag, while a correctly-typed
-store keeps `T` (`slot-pun-list-element-append-sound` / `-insert-sound`(+`-nofp`)
+cases are pinned KNOWNBUG (`slot-pun-attr-field-knownbug` — the annotated
+attribute field, now the LAST slot-pun).
+**Progress (2026-07-10):** the **entire list-element** punning class is now
+**closed** — every store form (`append`/`extend`/`insert`, subscript-store
+`xs[i]=u`), empty- OR non-empty-init, any annotation form, widens the element to
+`python_value` (Any-dominance) at the list's creation site when a store is
+uninferable or incompatible with the declared `T`, preserving the tag; a
+correctly-typed store keeps `T` (`slot-pun-list-element-{append,insert,subscript}-sound`(+`-nofp`)
 CORE). This closed a real, previously-unpinned false proof (unquoted
 `list[int].append(src())` punned a str into int; only the quoted-forward-ref
-variant was accidentally sound before). The **remaining** list holes are the
-subscript-store (`xs[i]=u`) and stores into a NON-empty-init list — the pre-pass
-only fires at the empty-list creation site — plus the annotated attribute
-`field: int`. They are the same mechanism as the `ORACLE-INTRINSIC`
-annotation-laundering residuals in the CURRENT STATE header (`007` list-element,
-`ty-010` field/return) — a real false proof, classified intrinsic because it
+variant was accidentally sound before) plus the subscript-store/non-empty-init
+paths. The element-inference pre-pass is the right architecture (element typing
+is fixed at the list's creation site; the widening is targeted so it avoids the
+global `python_value` perf cliff) and slice-assignment `xs[i:j]=[..]` is excluded
+(its RHS is a list of elements, not one element). The **remaining** slot-pun is
+the annotated attribute `field: int` — the same mechanism as the
+`ORACLE-INTRINSIC` annotation-laundering residuals in the CURRENT STATE header
+(`ty-010` field/return) — a real false proof, classified intrinsic because it
 depends on a (wrong) static annotation Python never enforces. (Under
-`--python-check-annotations` the concrete `T` is kept and the append/insert
-mismatch is reported as a property.)
+`--python-check-annotations` the concrete `T` is kept and the list mismatch is
+reported as a property.)
 Two *adjacent* cases that the earlier draft lumped here are now **CLOSED**:
 composition/object-identity aliasing (`shared-object-aliasing`, CORE — fixed by
 reference semantics, a distinct root) and the **tagged-union** field case
