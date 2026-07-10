@@ -2272,7 +2272,15 @@ std::optional<exprt> python_convertert::try_builtin_call(
         }
       }
     }
-    // Non-constant iterable: fall through to the nondet fallback.
+    // Non-constant iterable (e.g. `tuple(zip(...))`): a fixed-arity python_tuple
+    // cannot represent the unknown length, and the python_int nondet fallback
+    // was MISTYPED (`tuple(zip(xs,xs)).index(v)` never raised -- a false proof).
+    // Return a nondet python_value (Any): its type is unknown, so the
+    // method-dispatch routes `.index` through the python_value path where an
+    // unresolved-receiver `.index` soundly may-raises; `len`/`isinstance`/`[i]`
+    // stay nondet (sound). A wrong fixed arity is NOT used (would false-prove
+    // `len(t) != N`).
+    return side_effect_expr_nondett{python_value_type(), get_location(expr)};
   }
   // list() / reversed() — return copy or nondet
   else if(func_name == "list" || func_name == "reversed")

@@ -2819,7 +2819,35 @@ std::optional<exprt> python_convertert::try_method_call(
               method_owners.push_back(cls_name);
           }
           if(method_owners.empty())
+          {
+            // PLR §6.10: a container-query `.index(v)` on a receiver whose type
+            // we cannot resolve to a list/tuple/str (e.g. `tuple(zip(...))` --
+            // a non-fixed-arity tuple modelled as a nondet value) MAY raise:
+            // ValueError if v is absent, AttributeError if the value is not a
+            // sequence. Model it as a SOUND may-raise instead of a silent nondet
+            // (a false proof otherwise: `tuple(zip(xs,xs)).index(1)` never
+            // raised). Scoped to `index` so other nondet method fallbacks
+            // (library stubs, re, ...) are unaffected.
+            if(method_name == "index")
+            {
+              static unsigned mri = 0;
+              const irep_idt gid{
+                qualify_name("__idx_mayraise_" + std::to_string(mri++))};
+              if(symbol_table.lookup(gid) == nullptr)
+              {
+                symbolt s{gid, bool_typet{}, "python"};
+                s.base_name = id2string(gid);
+                s.is_lvalue = true;
+                s.is_state_var = true;
+                symbol_table.add(s);
+              }
+              symbol_exprt g = symbol_table.lookup_ref(gid).symbol_expr();
+              pending_checks.push_back(code_frontend_assignt{
+                g, side_effect_expr_nondett{bool_typet{}, get_location(expr)}});
+              emit_conditional_exception(g, "ValueError");
+            }
             return side_effect_expr_nondett{obj.type(), get_location(expr)};
+          }
 
           // Build argument list (shared across all branches).
           exprt::operandst call_args;
