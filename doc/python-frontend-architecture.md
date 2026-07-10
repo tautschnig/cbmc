@@ -154,13 +154,17 @@ or downgraded. The two main invalidation drivers:
   clears `sym`'s own scalar constants (`float_constants`/`string_constants`); a
   site that rebinds `sym` to a constant/literal re-establishes precise tracking
   afterwards. **Every** reassignment site MUST call it: tuple-unpack targets,
-  walrus (`:=`), the try-block-split assign path, finally-assigned names, and the
-  `for`/`with as` targets. This consolidates a rule that was previously
-  replicated per-site and repeatedly missed — a recurring false-proof class where
-  a rebind (`b = 1; a, b = (t[0], t[1]); t[b]`, or via `for`/`with`/walrus/
-  finally) left a stale constant and a later `t[b]` folded the index to the old
-  value (wrong element + masked IndexError). Seven fixes across the campaign
-  collapsed into this one invariant.
+  walrus (`:=`), the try-block-split assign path, finally-assigned names, the
+  `for`/`with as` targets, augmented assign (referencing-literal half), and
+  match-statement capture patterns (invalidated AFTER the per-arm
+  `restore_tracking`, since the match snapshots/restores tracking around each
+  arm). This consolidates a rule that was previously replicated per-site and
+  repeatedly missed — a recurring false-proof class where a rebind
+  (`b = 1; a, b = (t[0], t[1]); t[b]`, or via `for`/`with`/walrus/finally/aug/
+  `match ... case .. as b`) left a stale constant and a later `t[b]` folded the
+  index to the old value (wrong element + masked IndexError). A whole-codebase
+  audit of every reassignment construct confirmed all are now sound (no false
+  proofs; residual starred-capture length imprecision is a sound over-approx).
 
 - **`invalidate_loop_writes(body)`** in
   `python_converter.cpp` — called at every loop-body entry
