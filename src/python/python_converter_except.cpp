@@ -1254,15 +1254,14 @@ codet python_convertert::convert_try(const jsont &stmt)
     }
   }
 
-  // PLR §8.4.2: the finally body runs on ALL paths and is the LAST thing
-  // executed, so a name it (re)assigns is definitely updated afterwards. The
-  // arm-merge above only reflects the try/except post-states, DISCARDING the
-  // finalbody's tracking updates -- so a stale constant survived (e.g.
-  // `b = 4; try: ... finally: b = len(s); ...; range(b)` folded range() on the
-  // stale b=4, a false proof found by the mutation-oracle). Clear the
-  // constant/literal tracking for every name the finalbody assigns, so later
-  // reads use the runtime value.
-  if(finalbody.is_array())
+  // PLR §8.4 / §8.4.2: both the finally body (runs on ALL paths, LAST) and the
+  // else clause (runs on the no-exception path) apply tracking updates that the
+  // arm-merge above DISCARDS -- the merge reflects only the try/except
+  // post-states. So a stale constant survived (`b=4; try: ... finally: b=len(s);
+  // range(b)` folded range() on b=4; `b=1; try: ... else: b=9; t[b]` folded t[b]
+  // on b=1 -- both false proofs found by the mutation-oracle). Clear the
+  // constant/literal tracking for every name they (re)assign, so later reads use
+  // the runtime value.
   {
     std::function<void(const jsont &)> clear_assigned = [&](const jsont &node)
     {
@@ -1309,8 +1308,12 @@ codet python_convertert::convert_try(const jsont &stmt)
             clear_assigned(e);
       }
     };
-    for(const auto &s : as_array(finalbody))
-      clear_assigned(s);
+    if(orelse.is_array())
+      for(const auto &s : as_array(orelse))
+        clear_assigned(s);
+    if(finalbody.is_array())
+      for(const auto &s : as_array(finalbody))
+        clear_assigned(s);
   }
 
   return std::move(block);
