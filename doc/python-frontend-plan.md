@@ -579,21 +579,26 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
-> **Current state (2026-06-30).** The differential-oracle baseline is **3** known
-> false proofs + **4** intrinsic/out-of-subset residuals (down from 22 over the
-> 2026-06-28→30 arc). The canonical, categorised list lives in the
+> **Current state (2026-07-10).** The canonical, categorised list of every
+> soundness item lives in the
 > [architecture doc master inventory](python-frontend-architecture.md) — see its
-> **CURRENT STATE (2026-06-30)** header; this section is the chronological design
-> log.
+> **CURRENT STATE (2026-07-10)** header and the dated changelog notes; this
+> section is the chronological design log.
 > **No known false proofs remain** in the differential oracle (default config,
-> external CPython-semantics corpus). *Closed 2026-06-30:* `gen_send_before_start`
-> (commit `70401b6d90`, §1 Phase 1 OUTCOME — cursor-encoded priming + a `.send()`
-> handler + whole-group expression-context yield counting) and the two
-> decorator-application false proofs `dec_not_callable` + `dec_wrong_arity`
-> (commit `27bb327b26`, §15 OUTCOME). A genuine generator-object identity model
-> (aliasing / container / `for`-after-`next`) remains future work and **IS a
-> known false-proof cluster** (consumption-state; pinned 2026-06-30 via a
-> proactive sweep — `gen-foriter-after-next`/`gen-alias-consume`/`gen-in-container-consume`
+> external CPython-semantics corpus); both standing gates (narrow PLR-fuzz +
+> negated mutation-oracle) and the wide negated sweep are at 0. Whole-groups
+> closed since the 2026-06-30 note (all validation-gated, CORE lock-in): the
+> **value-computation** campaign (list/tuple `==` and concat/repeat/fold, element
+> structural-eq, dict variable-key stale snapshot, evaluate-once builtins,
+> `tuple.index`/`count`, exception-propagation first-raise-wins) and the
+> **reassignment stale-tracking whole-group** — consolidated into one
+> `invalidate_reassigned_symbol` chokepoint (cbmc `65a47547ef`) and audited across
+> every reassignment construct (unpack/for/with/walrus/finally/aug/match), which
+> itself surfaced and closed the for/with/aug/match instances. See the arch-doc
+> changelog (2026-07-09/10) for commits + CORE guards. A genuine generator-object
+> identity model (aliasing / container / `for`-after-`next`) remains future work
+> and **IS a known false-proof cluster** (consumption-state; pinned 2026-06-30 via
+> a proactive sweep — `gen-foriter-after-next`/`gen-alias-consume`/`gen-in-container-consume`
 > knownbugs; outside the oracle corpus).
 > The **4 intrinsic residuals** (`ORACLE-INTRINSIC`): the annotation-laundering
 > family — `004` (arg), `007` (list-element/append), `ty-010` (return-annotation)

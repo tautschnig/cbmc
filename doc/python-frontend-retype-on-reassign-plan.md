@@ -5,6 +5,15 @@ now retype the binding for an aggregate RHS; the two remaining `PLR_WIDE` negate
 residuals (mis-attributed to tuple boxing) are closed — wide-negated sweep is now
 0. CORE `list-reassign-retype`(+ `-nofp`). The notes below record the root cause.
 
+> **Related whole-group.** Reassignment has a second soundness obligation besides
+> retyping: dropping the OLD value's *tracking* (cached list/tuple/dict literals
+> referencing the name + its scalar constants), else a stale constant folds into a
+> later use. That rule is consolidated in `invalidate_reassigned_symbol` and
+> audited across every reassignment construct — see the architecture doc's
+> [Invalidation](python-frontend-architecture.md#invalidation) section and the
+> 2026-07-09/10 changelog note. Retype (this doc) and tracking-invalidation are
+> the two halves a correct rebind must perform.
+
 ## Symptom (false proofs)
 
 Reassigning a variable to a value of a **different aggregate element/container

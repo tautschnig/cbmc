@@ -146,7 +146,7 @@ content rather than opaquely emitting symbolic operations.
 
 When a name's value can change (loop iteration, branch
 merge, alias write), the corresponding entry must be removed
-or downgraded. The two main invalidation drivers:
+or downgraded. The main invalidation drivers:
 
 - **`invalidate_reassigned_symbol(sym)`** in `python_converter.cpp` — the
   canonical "a Name is being (re)assigned" invalidation. Drops cached
@@ -1203,7 +1203,7 @@ soundness, imprecision, performance, intrinsic.
 
 ### A. Soundness (false proofs / latent unsoundness / deliberate tradeoffs)
 
-**CURRENT STATE (2026-07-02) — read this first; the dated notes below are a
+**CURRENT STATE (2026-07-10) — read this first; the dated notes below are a
 chronological changelog.** The differential oracle (external CPython-semantics
 corpus, default config) tracks **0 known false proofs**, plus **4 intrinsic /
 out-of-subset residuals** and ~206 false *alarms* (sound over-approximations /
@@ -1344,6 +1344,60 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > Root cause + both paths: [python-frontend-retype-on-reassign-plan.md](python-frontend-retype-on-reassign-plan.md).
 > The `python_value` TUPLE tag remains a separate PRECISION item (boxed-tuple
 > isinstance/extract/Any are sound false alarms), tracked in its own plan.
+>
+> **Continuation (2026-07-09/10) — tuple methods, exception propagation, and the
+> reassignment stale-tracking whole-group + consolidation + AUDIT.** Widening the
+> mutation-oracle grammar further (behind `PLR_WIDE`: boolean short-circuit,
+> walrus, chained assignment, plus direct probing) closed the following, each as a
+> whole-group:
+> - **`python_value` TUPLE tag P1** (`40815b36c5`, PLR §6.10) — isinstance
+>   recognises boxed tuples; boxed-tuple truthiness is sound nondet (fixed a
+>   latent empty-tuple false proof); `structural_eq` has a TUPLE case. Boxed-tuple
+>   extract/Any remain a sound PRECISION residual (own plan).
+> - **tuple `+`/`*` folds & mixed-arithmetic TypeError** (`56f73dfd14`,
+>   `f626285c4a`, `b20aa67663`) and **`tuple(iterable)` over a constant list →
+>   fixed-arity tuple** (`39c5f92644`).
+> - **`tuple.index`/`count` family** (`e57f15b1d1` empty-tuple ValueError,
+>   `abdd981786` symbolic numeric elements, `375693095b` sound may-raise fallback,
+>   `9cc1ea1423` over the tuple TYPE components, `c91476a4b4` symbolic-absent
+>   ValueError) — all now sound (may-raise where presence isn't provable).
+> - **Augmented dict subscript `d[k]+=v` on a missing key → KeyError**
+>   (`cf3e51150d`, PLR §6.2.7), restricted the defaultdict auto-insert skip to
+>   actual defaultdicts. **`f(*xs)` non-literal spread → sound nondet `*args`**
+>   (`10129615ca`, PLR §8.7).
+> - **Exception-propagation whole-group** (theme: *an exception must propagate
+>   through every evaluation site*): dict-subscript KeyError must not overwrite a
+>   pending exception — first-raise-wins (`5fcecc9d79`, PLR §8.3, extends
+>   `d6bd7b25ed`); `with EXPR as v` flushes the context-expression's exception
+>   checks before the body (`a7d713850c`, PLR §8.5).
+> - **Reassignment stale-tracking whole-group.** A rebind of a name must drop
+>   cached list/tuple/dict literals REFERENCING it AND its own scalar constants,
+>   else a later `t[b]` folds the index on the stale value (wrong element + masks
+>   an IndexError — a false proof). This rule was replicated per-site and
+>   repeatedly missed; the campaign fixed each site (`fd85bd9ea1`/`94967b0dc9`
+>   tuple-unpack, `8663ee9b87` try-block-split, `16e58ddf48` finally-assigned,
+>   `f1f48bf738` walrus, plus the earlier `3803c3fa7e`/`079b193810` list/tuple/
+>   dict-literal generalisation) then **CONSOLIDATED** them into one
+>   `invalidate_reassigned_symbol(sym)` helper (`65a47547ef`) — see the
+>   [Invalidation](#invalidation) section. A whole-codebase **audit** of every
+>   reassignment construct with the consolidated invariant then found two MORE
+>   latent instances, fixed via the helper: the `for`/`with as` targets
+>   (`65a47547ef`), augmented-assign's referencing-literal half (`3ae74cb72e`,
+>   PLR §7.2.2), and match-statement capture patterns (`1bf48a0429`, PLR §11.6 —
+>   subtle: the match handler snapshots/restores tracking per arm, so captures are
+>   invalidated AFTER `restore_tracking`). The audit confirmed all reassignment
+>   constructs (plain/ann/aug/unpack/for/with/walrus/except-as/global/del/chained/
+>   match) are sound; residual FAs (starred-capture `a,*b=..` length,
+>   match-sequence-star) are sound over-approximations, not false proofs. **The
+>   reassignment-invalidation whole-group is CLOSED.** CORE guards:
+>   `walrus-stale-tracking`, `walrus-const-tracking`, `for-target-stale-tracking`,
+>   `with-as-stale-tracking`, `augassign-stale-container`,
+>   `match-capture-stale-tracking` (plus the earlier `*-stale-tracking` guards).
+>
+> Both standing gate passes (narrow PLR-fuzz + negated mutation-oracle) stay at 0;
+> the wide negated sweep is at 0; the oracle is at 0-NEW. The remaining `PLR_WIDE`
+> value residual is the documented `tuple()`-of-computed-list variable-arity case
+> (combination-specific, no minimal form — a boxed-tuple PRECISION item).
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
