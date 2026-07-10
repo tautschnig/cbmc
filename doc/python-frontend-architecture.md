@@ -1089,7 +1089,7 @@ punned into a concrete field (a false proof) vs. kept tag-bearing (sound):
 | List element, **inferred** (`xs = []; xs.append(u)`) | empty-list element-type inference defaults uninferable/heterogeneous elements to `python_value` (Any-dominance) → tag preserved | **sound** (2026-06-30; `list-element-infer-any` CORE) |
 | List element — any store form (`append`/`extend`/`insert`, subscript-store `xs[0]=u`), empty- OR non-empty-init, any annotation form | the element-inference pre-pass WIDENS the element to `python_value` (Any-dominance) when a store's type is uninferable or incompatible with the declared `T` → tag preserved, use-site obligation fires; a correctly-typed store keeps `T` (precision) | **sound** (2026-07-10; `slot-pun-list-element-{append,insert,subscript}-sound`(+`-nofp`) CORE). Under `--python-check-annotations` the concrete `T` is kept so the MISMATCH is reported as a property (`check-annotations-list-append`). Slice-assignment `xs[i:j]=[..]` is excluded from the scan (its RHS is a list of elements, not one element) |
 | **Attribute field**, annotated — INIT store (`self.x: int = v`, v uninferable/mismatched) | the field-typing scan WIDENS the field to `python_value` when the init store is uninferable (unannotated param → Any) or a different scalar category → tag preserved; also fixes later external stores to the widened field. A correctly-typed init keeps the concrete type | **sound** (2026-07-10; `slot-pun-attr-field-init-sound`(+`-nofp`) CORE) |
-| **Attribute field**, annotated — EXTERNAL store to a CORRECTLY-init'd field (`self.x: int = 0; o.x = u`) | the concrete field type **puns** the mismatched external store (the init-store scan doesn't fire — the field is legitimately `int`) | **annotation-laundering** (`ORACLE-INTRINSIC`; `slot-pun-attr-field-knownbug`) — the last slot-pun; needs external-store scanning with receiver-class resolution, or slot-widening. (Untyped field is `python_value` → sound; the tagged-union field `x: int|str` is caught by a tag obligation, `tagged-union-narrowing-unsound` CORE) |
+| **Attribute field**, annotated — EXTERNAL store to a CORRECTLY-init'd field (`self.x: int = 0; o.x = u`) | a module-wide scan (keyed on the attribute NAME, a sound over-approximation like the del + __getattr__ scan) records the scalar CATEGORY of each external `<expr>.attr = value` store; a concrete scalar field whose category differs is WIDENED to python_value at class-definition time → tag preserved. Store category resolved from the AST (Constant / callee `-> T` / first `return <Constant>`); a bare Name RHS is left alone (no over-widening) | **sound** (2026-07-10; `slot-pun-attr-field-external-sound`(+`-nofp`) CORE). Under `--python-check-annotations` the concrete type is kept so the mismatch is reported as a property. **This closes the LAST slot-pun — the concrete-slot-punning whole-group is fully closed.** (Untyped field is `python_value` → sound; the tagged-union field `x: int|str` is caught by a tag obligation, `tagged-union-narrowing-unsound` CORE) |
 
 **The architectural invariant the audit reveals:** a slot typed `python_value`
 (Any) *preserves* the runtime tag, so a later misuse is caught by the
@@ -1105,9 +1105,9 @@ and the principled fix would be **slot-widening** (type the element / field
 `python_value` when a `python_value` is stored, the same move the return slot
 makes). That is **invasive + perf-costly** (it changes container/struct element
 typing, with the precision/perf cost that drove the concrete-typing design and
-the not-viable `--python-ref-mutables` default), so it is deferred; the residual
-case is pinned KNOWNBUG (`slot-pun-attr-field-knownbug` — an EXTERNAL store to a
-correctly-initialised annotated field, now the last slot-pun).
+the not-viable `--python-ref-mutables` default). **The concrete-slot-punning
+whole-group is now FULLY CLOSED (2026-07-10)** — no residual slot-pun remains
+(the previously-deferred attribute-field external store is closed below).
 **Progress (2026-07-10):** the **entire list-element** punning class is now
 **closed** — every store form (`append`/`extend`/`insert`, subscript-store
 `xs[i]=u`), empty- OR non-empty-init, any annotation form, widens the element to
@@ -1124,13 +1124,14 @@ global `python_value` perf cliff) and slice-assignment `xs[i:j]=[..]` is exclude
 is now *mostly* closed the same way: a `self.x: T = v` INIT store whose value is
 uninferable (unannotated param → Any) or a mismatched scalar widens the field to
 `python_value` at the field-typing scan (`slot-pun-attr-field-init-sound`(+`-nofp`)
-CORE), which also fixes later external stores to that widened field. The
-**remaining** slot-pun is an EXTERNAL store to a CORRECTLY-initialised field
-(`self.x: int = 0; o.x = u`) — the same mechanism as the `ORACLE-INTRINSIC`
-annotation-laundering residuals in the CURRENT STATE header (`ty-010`
-field/return) — a real false proof, classified intrinsic because it depends on a
-(wrong) static annotation Python never enforces; closing it needs external-store
-scanning with receiver-class resolution. (Under `--python-check-annotations` the
+CORE), which also fixes later external stores to that widened field. The EXTERNAL
+store to a CORRECTLY-initialised field (`self.x: int = 0; o.x = u`) is **now also
+closed (2026-07-10)**: a module-wide scan (keyed on the attribute NAME, like the
+del + __getattr__ scan) records the scalar category of each external
+`<expr>.attr = value` store — resolved from the AST (Constant / callee `-> T` /
+first `return <Constant>`) so it is order-independent — and widens a concrete
+scalar field whose category differs (`slot-pun-attr-field-external-sound`(+`-nofp`)
+CORE). **No slot-pun residual remains.** (Under `--python-check-annotations` the
 concrete `T` is kept and the mismatch is reported as a property.)
 Two *adjacent* cases that the earlier draft lumped here are now **CLOSED**:
 composition/object-identity aliasing (`shared-object-aliasing`, CORE — fixed by
