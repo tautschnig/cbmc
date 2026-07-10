@@ -152,6 +152,38 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
   if(!generators.is_array() || as_array(generators).empty())
     return nil_exprt{};
 
+  // Nested comprehension: an element expression that itself contains a
+  // comprehension (e.g. `[len([j for j in range(i)]) for i in range(n)]`) is
+  // not correctly re-evaluated per OUTER iteration by the unroll path -- the
+  // inner comp's outer-var-dependent iterable produced definite-WRONG element
+  // values (a false proof found by the mutation-oracle). Over-approximate
+  // soundly with a nondet list until nested comps are precisely modelled.
+  {
+    std::function<bool(const jsont &)> has_comp = [&](const jsont &n) -> bool
+    {
+      if(
+        is_node_type(n, "ListComp") || is_node_type(n, "SetComp") ||
+        is_node_type(n, "DictComp") || is_node_type(n, "GeneratorExp"))
+        return true;
+      if(n.is_array())
+      {
+        for(const auto &e : as_array(n))
+          if(has_comp(e))
+            return true;
+      }
+      else if(n.is_object())
+      {
+        for(const auto &kv : to_json_object(n))
+          if(has_comp(kv.second))
+            return true;
+      }
+      return false;
+    };
+    if(has_comp(elt))
+      return side_effect_expr_nondett{
+        python_list_type(python_value_type()), get_location(expr)};
+  }
+
   // §12c: single generator over a runtime list whose length is
   // symbolic (a `list` parameter, or a call/expression yielding a
   // non-constant-length list). The unroll path below only supports
