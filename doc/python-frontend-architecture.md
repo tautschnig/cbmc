@@ -1420,6 +1420,27 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > the wide negated sweep is at 0; the oracle is at 0-NEW. The remaining `PLR_WIDE`
 > value residual is the documented `tuple()`-of-computed-list variable-arity case
 > (combination-specific, no minimal form — a boxed-tuple PRECISION item).
+>
+> **Exception-propagation audit (2026-07-10).** Systematically probed the invariant
+> "a raising subexpression must propagate at EVERY evaluation site" (the theme
+> behind first-exception-wins / with-context-expr) by embedding an always-raising
+> `[][0]` at ~27 sites: call args/kwargs, nested calls, binop operands,
+> compare/chained-compare, boolean short-circuit operands, conditional-expr
+> arms, list/tuple/set/dict literal elements (and dict keys), f-strings,
+> subscript index, return value, walrus, comprehension element AND iterable,
+> aug value. **All propagate correctly** (each FAILED) — the frontend's exception
+> propagation is comprehensive. The audit found ONE gap: **default argument
+> values that raise are not evaluated at def-time** (`def f(a=[][0])` — Python
+> evaluates defaults once when the `def` executes, so it raises there; the
+> frontend only re-derives the default at call sites for its value, swallowing a
+> raising default). Pinned `default-arg-raises-knownbug`. A spike showed the fix
+> is not a point change: def-time evaluation must run across three paths
+> (module pass / nested-def `convert_statement` / method bodies), needs the
+> uncaught-exception assertion that the general per-statement check deliberately
+> SKIPS for FunctionDef, and must respect module-init ordering (a naive module
+> eval false-alarmed on `def f(a=G[1])` reading an already-bound global before its
+> value was established). Deferred until module-init sequencing is addressed;
+> low real-world impact (raising defaults do not appear in the oracle corpus).
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
