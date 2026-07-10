@@ -688,6 +688,16 @@ codet python_convertert::convert_with(const jsont &stmt)
     }
   }
 
+  // Flush any pending exception checks generated while evaluating the context
+  // expression(s) / __enter__ (e.g. a ValueError from
+  // `with CM(t.index(k)) as v:`) into the block BEFORE the body, so a raising
+  // context expression is not silently dropped -- otherwise the body and the
+  // rest of the program run unguarded and the exception is lost (a false proof
+  // found by the mutation-oracle).
+  for(auto &c : pending_checks)
+    block.add(std::move(c));
+  pending_checks.clear();
+
   // Convert the body. When a context manager declares __exit__ the
   // `with` behaves like try/finally: a raise/return/break/continue
   // must run __exit__ first (which may suppress an exception). Bump
