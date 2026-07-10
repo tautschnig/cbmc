@@ -1249,5 +1249,66 @@ codet python_convertert::convert_try(const jsont &stmt)
     }
   }
 
+  // PLR §8.4.2: the finally body runs on ALL paths and is the LAST thing
+  // executed, so a name it (re)assigns is definitely updated afterwards. The
+  // arm-merge above only reflects the try/except post-states, DISCARDING the
+  // finalbody's tracking updates -- so a stale constant survived (e.g.
+  // `b = 4; try: ... finally: b = len(s); ...; range(b)` folded range() on the
+  // stale b=4, a false proof found by the mutation-oracle). Clear the
+  // constant/literal tracking for every name the finalbody assigns, so later
+  // reads use the runtime value.
+  if(finalbody.is_array())
+  {
+    std::function<void(const jsont &)> clear_assigned = [&](const jsont &node)
+    {
+      if(!node.is_object() && !node.is_array())
+        return;
+      if(node.is_array())
+      {
+        for(const auto &e : as_array(node))
+          clear_assigned(e);
+        return;
+      }
+      auto clear_target = [&](const jsont &tgt)
+      {
+        std::function<void(const jsont &)> ct = [&](const jsont &t)
+        {
+          if(is_node_type(t, "Name"))
+          {
+            const irep_idt id{qualify_name(json_string(json_member(t, "id")))};
+            invalidate_list_literals_referencing(id);
+            float_constants.erase(id);
+            string_constants.erase(id);
+          }
+          else if(
+            (is_node_type(t, "Tuple") || is_node_type(t, "List")) &&
+            json_member(t, "elts").is_array())
+            for(const auto &e : as_array(json_member(t, "elts")))
+              ct(e);
+          else if(is_node_type(t, "Starred"))
+            ct(json_member(t, "value"));
+        };
+        ct(tgt);
+      };
+      if(
+        is_node_type(node, "Assign") && json_member(node, "targets").is_array())
+        for(const auto &tg : as_array(json_member(node, "targets")))
+          clear_target(tg);
+      else if(
+        is_node_type(node, "AnnAssign") || is_node_type(node, "AugAssign"))
+        clear_target(json_member(node, "target"));
+      // Recurse into nested compound statements (if/for/while/with/try).
+      for(const char *child : {"body", "orelse", "finalbody", "handlers"})
+      {
+        const jsont &c = json_member(node, child);
+        if(c.is_array())
+          for(const auto &e : as_array(c))
+            clear_assigned(e);
+      }
+    };
+    for(const auto &s : as_array(finalbody))
+      clear_assigned(s);
+  }
+
   return std::move(block);
 }
