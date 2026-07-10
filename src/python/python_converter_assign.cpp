@@ -251,14 +251,18 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     if(inf_it != empty_list_inferred_types.end())
     {
       typet new_elem_t = inf_it->second;
-      // Only override when annotation was bare list (or list
-      // with default int element). Skip when annotation
-      // already specified the element type.
+      // Override when annotation was bare list (int/empty default element), OR
+      // when the inference widened to python_value (Any). The latter is the
+      // SOUND widening for an incompatible/uninferable store into a concrete
+      // slot (`list[str] = []; xs.append(src())`): Any dominates the declared
+      // element type so the runtime tag is preserved (else a later misuse
+      // faults). A concrete inference that matches the declared type is a no-op.
       const auto &cur_st = to_struct_type(rhs.type());
       const auto &cur_data_t = to_array_type(cur_st.components()[1].type());
       if(
         cur_data_t.element_type() == python_int_type() ||
-        cur_data_t.element_type().id() == ID_empty)
+        cur_data_t.element_type().id() == ID_empty ||
+        is_python_value_type(new_elem_t))
       {
         struct_typet new_list_type = python_list_type(new_elem_t);
         const auto &new_data_type =

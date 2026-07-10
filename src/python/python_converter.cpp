@@ -1674,11 +1674,25 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
           // 'name = []' — register as pending if not already
           // inferred and the value is an empty List, AND the
           // annotation (if any) doesn't already pin the type.
+          // NOTE: parameterised `list[T] = []` is ALSO admitted here (was
+          // excluded) so a later append/extend/insert of a value whose type is
+          // uninferable or incompatible with T widens the element to
+          // python_value (Any-dominance) instead of PUNNING it into the
+          // concrete T -- a false proof (`xs: list[int] = []; xs.append(src())`
+          // read back xs[0] as int). A correctly-typed store keeps T (the
+          // inference's "first concrete wins"), so precision is retained; a
+          // never-appended list keeps its annotated T. Bare/forward-ref/no-ann
+          // lists were already admitted. EXCEPTION: under
+          // --python-check-annotations the concrete T is kept (parameterised
+          // lists NOT admitted) so the append/insert annotation-MISMATCH check
+          // can fire on the incompatible store -- that opt-in mode reports the
+          // laundering as a property instead of soundly widening it away.
           if(
-            !ann_is_parameterised && is_node_type(value, "List") &&
+            is_node_type(value, "List") &&
             json_member(value, "elts").is_array() &&
             as_array(json_member(value, "elts")).empty() &&
-            empty_list_inferred_types.count(sid) == 0)
+            empty_list_inferred_types.count(sid) == 0 &&
+            (!ann_is_parameterised || !python_check_annotations))
           {
             pending.insert(sid);
           }
@@ -1952,7 +1966,7 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
             }
             if(
               is_node_type(obj_node, "Name") &&
-              (method == "append" || method == "extend"))
+              (method == "append" || method == "extend" || method == "insert"))
             {
               std::string nm = json_string(json_member(obj_node, "id"));
               irep_idt sid{qualify_name(nm)};
@@ -1964,11 +1978,15 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
                 empty_list_inferred_types.count(sid) > 0)
               {
                 const jsont &args = json_member(val, "args");
-                if(args.is_array() && !as_array(args).empty())
+                // insert(index, value): the stored element is the 2nd arg.
+                std::size_t val_arg_idx = (method == "insert") ? 1 : 0;
+                if(args.is_array() && as_array(args).size() > val_arg_idx)
                 {
-                  const jsont &arg = *as_array(args).begin();
+                  auto arg_it = as_array(args).begin();
+                  std::advance(arg_it, val_arg_idx);
+                  const jsont &arg = *arg_it;
                   typet t;
-                  if(method == "append")
+                  if(method == "append" || method == "insert")
                     t = type_of_expr(arg);
                   else
                   {
