@@ -148,6 +148,20 @@ When a name's value can change (loop iteration, branch
 merge, alias write), the corresponding entry must be removed
 or downgraded. The two main invalidation drivers:
 
+- **`invalidate_reassigned_symbol(sym)`** in `python_converter.cpp` — the
+  canonical "a Name is being (re)assigned" invalidation. Drops cached
+  list/tuple/dict literals that REFERENCE `sym` (stale-symbol-in-container) and
+  clears `sym`'s own scalar constants (`float_constants`/`string_constants`); a
+  site that rebinds `sym` to a constant/literal re-establishes precise tracking
+  afterwards. **Every** reassignment site MUST call it: tuple-unpack targets,
+  walrus (`:=`), the try-block-split assign path, finally-assigned names, and the
+  `for`/`with as` targets. This consolidates a rule that was previously
+  replicated per-site and repeatedly missed — a recurring false-proof class where
+  a rebind (`b = 1; a, b = (t[0], t[1]); t[b]`, or via `for`/`with`/walrus/
+  finally) left a stale constant and a later `t[b]` folded the index to the old
+  value (wrong element + masked IndexError). Seven fixes across the campaign
+  collapsed into this one invariant.
+
 - **`invalidate_loop_writes(body)`** in
   `python_converter.cpp` — called at every loop-body entry
   (`convert_while`, four `convert_for` variants).
