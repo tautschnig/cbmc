@@ -4455,7 +4455,15 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   if(have_subscript_rewrite)
     lhs = subscript_lhs;
   else if(is_node_type(target, "Name"))
+  {
     lhs = convert_name(target);
+    // PLR §7.2.2: `b += ..` rebinds b, so drop cached list/tuple/dict literals
+    // that REFERENCE b -- else `b = 2; t = (b, 0); b += 7; t * 1` reuses the
+    // stale symbol b in the cached tuple (found by the reassignment-invariant
+    // audit). The scalar constant for b is refreshed by the store paths below.
+    invalidate_list_literals_referencing(
+      irep_idt{qualify_name(json_string(json_member(target, "id")))});
+  }
   else if(is_node_type(target, "Subscript"))
   {
     exprt container_check = convert_expression(json_member(target, "value"));
