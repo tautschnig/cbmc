@@ -582,27 +582,27 @@ robustness, then capability; difficulty is noted where high.
 > **Current state (2026-07-10).** The canonical, categorised list of every
 > soundness item lives in the
 > [architecture doc master inventory](python-frontend-architecture.md) — see its
-> **CURRENT STATE (2026-07-10)** header and the dated changelog notes; this
+> **CURRENT STATE (2026-07-13)** header and the dated changelog notes; this
 > section is the chronological design log.
-> **No known false proofs remain** in the differential oracle (default config,
-> external CPython-semantics corpus); both standing gates (narrow PLR-fuzz +
-> negated mutation-oracle) and the wide negated sweep are at 0. Whole-groups
-> closed since the 2026-06-30 note (all validation-gated, CORE lock-in): the
-> **value-computation** campaign (list/tuple `==` and concat/repeat/fold, element
-> structural-eq, dict variable-key stale snapshot, evaluate-once builtins,
-> `tuple.index`/`count`, exception-propagation first-raise-wins) and the
-> **reassignment stale-tracking whole-group** — consolidated into one
-> `invalidate_reassigned_symbol` chokepoint (cbmc `65a47547ef`) and audited across
-> every reassignment construct (unpack/for/with/walrus/finally/aug/match), which
-> itself surfaced and closed the for/with/aug/match instances. See the arch-doc
-> changelog (2026-07-09/10) for commits + CORE guards. A genuine generator-object
-> identity model (aliasing / container / `for`-after-`next`) remains future work
-> and **IS a known false-proof cluster** (consumption-state; pinned 2026-06-30 via
-> a proactive sweep — `gen-foriter-after-next`/`gen-alias-consume`/`gen-in-container-consume`
-> knownbugs; outside the oracle corpus).
-> The **4 intrinsic residuals** (`ORACLE-INTRINSIC`): the annotation-laundering
-> family — `004` (arg), `007` (list-element/append), `ty-010` (return-annotation)
-> — caught under opt-in `--python-check-annotations`; and `d1` (int→float at a
+> **No known false proofs remain on ANY axis** (oracle, both standing gates, WIDE
+> negated AND WIDE value sweeps at 3000 seeds), **and no deferred soundness
+> residual remains**. Whole-groups closed since the 2026-06-30 note (all
+> validation-gated, CORE lock-in): the **value-computation** campaign; the
+> **reassignment stale-tracking whole-group** — consolidated into
+> `invalidate_reassigned_symbol` (cbmc `65a47547ef`), audited across every
+> reassignment construct, later extended to try-`else` (`5321a713c4`); the
+> **concrete-slot-punning whole-group** — FULLY closed via targeted
+> slot-widening at the creation site (list element: every store form; attribute
+> field: init + external stores; see the coercion-boundary audit table); the
+> **generator consumption-state cluster** — every channel now sound, incl. the
+> func-consume cursor havoc (`8115f204c1`); and **def-time default-argument
+> evaluation** (`ccc371931d`) — the last deferred residual. A fully PRECISE
+> generator-OBJECT model remains future work (plan §1) but is a PRECISION item —
+> every generator channel is sound.
+> The **3 intrinsic residuals** (`ORACLE-INTRINSIC`): the annotation-laundering
+> pair — `004` (arg), `ty-010` (return-annotation) — caught under opt-in
+> `--python-check-annotations` (the former third member `007` list-element is now
+> CLOSED by the slot-pun widening); and `d1` (int→float at a
 > call boundary, out of the PyHard subset).
 > Closed over the arc (each whole-group, validation-gated, CORE lock-in): the
 > reference-semantics-for-instances instance-identity cluster; binop eval-order

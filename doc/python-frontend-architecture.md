@@ -154,7 +154,9 @@ or downgraded. The main invalidation drivers:
   clears `sym`'s own scalar constants (`float_constants`/`string_constants`); a
   site that rebinds `sym` to a constant/literal re-establishes precise tracking
   afterwards. **Every** reassignment site MUST call it: tuple-unpack targets,
-  walrus (`:=`), the try-block-split assign path, finally-assigned names, the
+  walrus (`:=`), the try-block-split assign path, finally- AND try-`else`-assigned
+  names (the `clear_assigned` scan in `convert_try` covers both clauses after the
+  arm-merge), the
   `for`/`with as` targets, augmented assign (referencing-literal half), and
   match-statement capture patterns (invalidated AFTER the per-arm
   `restore_tracking`, since the match snapshots/restores tracking around each
@@ -1236,11 +1238,19 @@ soundness, imprecision, performance, intrinsic.
 
 ### A. Soundness (false proofs / latent unsoundness / deliberate tradeoffs)
 
-**CURRENT STATE (2026-07-10) — read this first; the dated notes below are a
+**CURRENT STATE (2026-07-13) — read this first; the dated notes below are a
 chronological changelog.** The differential oracle (external CPython-semantics
-corpus, default config) tracks **0 known false proofs**, plus **4 intrinsic /
-out-of-subset residuals** and ~206 false *alarms* (sound over-approximations /
-unsupported-feature precision — see inventory B). Two standing soundness-
+corpus, default config) tracks **0 known false proofs**, plus **3 intrinsic /
+out-of-subset residuals** (the annotation-laundering pair `004` call-arg +
+`ty-010` return-annotation — flag-gated under `--python-check-annotations` — and
+`d1` int→float, out of subset; the former third member `007` list-element is now
+**CLOSED** by the slot-pun widening, see the 2026-07-10/13 note) and ~200 false
+*alarms* (sound over-approximations / unsupported-feature precision — see
+inventory B). **Every fuzzing axis is at zero false proofs**: the two standing
+gates (narrow PLR-fuzz + negated mutation-oracle), the WIDE negated sweep, AND
+the WIDE value sweep (3000 seeds each), alongside the oracle. **No deferred
+soundness residual remains** (the last one, def-time default-arg evaluation, was
+closed 2026-07-13). Two standing soundness-
 regression gates run after every change: the **oracle 0-NEW gate** (real-world
 corpus) and the **PLR-fuzz 0-NEW gate** (template + randomized PLR-tagged programs
 vs a committed baseline of **0** false-proof labels — see Sweep rounds 4–8). **The
@@ -1457,6 +1467,52 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > reading an already-bound global) — G's assignment is added to the module block
 > before the def. CORE `default-arg-raises-sound`, `default-arg-nested-method-sound`,
 > `default-arg-ordering-nofp`. **This was the last deferred soundness residual.**
+>
+> **Continuation (2026-07-10 pm → 2026-07-13) — slot-pun closure, generator
+> func-consume, try-else tracking, def-time defaults; ZERO-residual milestone.**
+> The arc that closed every remaining known false-proof class:
+> - **Concrete-slot-punning whole-group FULLY CLOSED** (see the coercion-boundary
+>   audit table): list element — append/extend/insert (`f56bda8fd9`, incl. the
+>   previously-unpinned unquoted `list[int].append(src())` false proof),
+>   subscript-store + non-empty-init (`217c916f56`, slice-assignment excluded);
+>   attribute field — init store (`7bdbe6c01f`) and EXTERNAL store
+>   (`60826f775f`, module-wide attribute-NAME-keyed scan mirroring the
+>   del+__getattr__ precedent, AST-resolved store categories so definition order
+>   is immaterial). All widenings are TARGETED (only a detected mismatched /
+>   uninferable store widens the slot to `python_value`) — no measurable
+>   precision or perf cost (sweep 2719/0 at every step); gated to default mode
+>   (`--python-check-annotations` keeps the concrete type and reports the
+>   mismatch as a property).
+> - **Generator func-consume channel** (`8115f204c1`): passing a generator Name
+>   to a user function now soundly HAVOCs the caller's cursor to `[0, length]`
+>   (the callee consumes by-value, so the caller's cursor was left unadvanced —
+>   `it=g(); c(it); next(it)==1` was a false proof the earlier draft wrongly
+>   claimed sound). Every generator consumption channel is now sound.
+> - **`tuple(<non-constant iterable>).index`** (`de482e6345`): tuple() over e.g.
+>   `zip(...)` returns a nondet `python_value` (was a MIStyped python_int) and
+>   `.index` on an unresolved receiver soundly may-raises.
+> - **try-`else` stale tracking** (`5321a713c4`): else-assigned names now have
+>   their tracking cleared after the arm-merge (the same reassignment whole-group
+>   as `finally`; the `clear_assigned` scan is hoisted to cover both). With this
+>   + the tuple.index fix, **the WIDE value sweep reached 0** (all 4 documented
+>   residuals closed).
+> - **Def-time default-argument evaluation** (`ccc371931d`, consolidated
+>   `90ef9a8eb7` into `collect_def_time_default_checks`): defaults are evaluated
+>   at the def's SOURCE-ORDER position across all three def-execution paths
+>   (module pass / ClassDef methods / nested defs), closing the last deferred
+>   soundness residual (`default-arg-raises-sound` + `-nested-method-sound` +
+>   `-ordering-nofp` CORE; source-order emission dissolves the earlier spike's
+>   `def f(a=G[1])` false alarm).
+> - Precision in the same arc: boxed TUPLE recognised as subscriptable
+>   (`24f7f6b3b8` — tuple params no longer raise a spurious "not subscriptable"
+>   TypeError; extraction stays sound-nondet, LIST-tag-guarded) and
+>   `reversed()` constant-folds over a constant list (`836a3b3445`, mirroring
+>   sorted(), so `tuple(reversed(const))` folds).
+> Milestone: **no known false proofs on any axis** (both standing gates, WIDE
+> negated + WIDE value sweeps, oracle) **and no deferred soundness residuals**.
+> Three KNOWNBUGs promoted to CORE this arc (`slot-pun-list-element-knownbug` →
+> `-subscript-sound`, `slot-pun-attr-field-knownbug` → `-external-sound`,
+> `default-arg-raises-knownbug` → `-sound`).
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
@@ -1739,11 +1795,13 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
   arity is enforced ([plan §15 OUTCOME](python-frontend-plan.md#decorators)).
   Now CORE: `dec-not-callable-typeerror`, `dec-wrong-arity-typeerror`,
   `dec-callable-nofp`.
-- *The 4 intrinsic / out-of-subset residuals* (marked `ORACLE-INTRINSIC`, NOT
-  default-subset bugs): the annotation-laundering family — `004` (arg boundary),
-  `007` (list-element via append), `ty-010` (return-annotation) — caught under
+- *The intrinsic / out-of-subset residuals* (marked `ORACLE-INTRINSIC`, NOT
+  default-subset bugs; **3 as of 2026-07-13**): the annotation-laundering pair —
+  `004` (arg boundary), `ty-010` (return-annotation) — caught under
   opt-in `--python-check-annotations`; and `d1` (int→float coercion at a call
-  boundary, documented OUT of the PyHard subset). See inventory D.
+  boundary, documented OUT of the PyHard subset). The former third laundering
+  member `007` (list-element via append) is now **CLOSED** by the slot-pun
+  element widening (see the 2026-07-10/13 note). See inventory D.
 - *Whole-groups COMPLETED this session* (each landed validation-gated: target
   flips, full suite green, by-value sweep 2719 PASS / 0 regressions, oracle
   0-NEW). All have CORE lock-in tests:
@@ -2269,7 +2327,7 @@ genuinely-false negatives stay FAILED, default suite green). **Confirmed OPT-IN 
 | Containers | bounded list/dict/set capacity | — |
 | Identity | `is` + small-int interning approximated; `id()` deterministic | — (warned) |
 | Async | `async`/`await`/async generators not modelled | [plan §13](python-frontend-plan.md#async) |
-| Annotation-laundering (default mode) | an Unknown/unannotated value crossing a TRUSTED annotation boundary raises only at runtime — argument boundary (`004`), list-element via `append` (`007`), return annotation (`ty-010`). Default mode trusts static annotations by design (enforcing them would false-positive on harmless wrong-but-unused annotations); caught under opt-in `--python-check-annotations` (CORE `annotation-call-arg-wrong-type`, `check-annotations-list-append`, `annotation-return-wrong-type`). Marked `ORACLE-INTRINSIC` in the differential corpus | [plan §7](python-frontend-plan.md#check-annotations) |
+| Annotation-laundering (default mode) | an Unknown/unannotated value crossing a TRUSTED annotation boundary raises only at runtime — argument boundary (`004`) and return annotation (`ty-010`). The former list-element member (`007`, via `append`) is **CLOSED in default mode** (2026-07-10, slot-pun element widening — the element is kept `python_value` so the misuse faults). Default mode trusts static annotations by design for the remaining pair (enforcing them would false-positive on harmless wrong-but-unused annotations); caught under opt-in `--python-check-annotations` (CORE `annotation-call-arg-wrong-type`, `check-annotations-list-append`, `annotation-return-wrong-type`). Marked `ORACLE-INTRINSIC` in the differential corpus | [plan §7](python-frontend-plan.md#check-annotations) |
 | Numeric-tower at a call boundary (`d1`) | an `int` passed where `float` is declared then a float-only method (`x.hex()`): the int→float coercion at a call boundary is documented OUT of the PyHard subset. (Within the subset, a float-only method on a CONCRETE int receiver is caught — `method-on-wrong-type`.) Marked `ORACLE-INTRINSIC` | — |
 
 ### E. NO CURRENT PLAN (explicitly flagged)
