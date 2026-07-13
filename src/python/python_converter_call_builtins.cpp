@@ -2345,6 +2345,57 @@ std::optional<exprt> python_convertert::try_builtin_call(
         // is an ordered copy, so it keeps `return arg`.
         if(func_name == "reversed")
         {
+          // Constant-fold: if arg resolves to a constant list literal, reverse
+          // its constant elements at conversion time -> a CONSTANT struct that
+          // downstream folds recognise (tuple(reversed(const)) / ==), mirroring
+          // sorted(). The symbolic build below handles the non-constant case.
+          const exprt *cl = nullptr;
+          if(arg.id() == ID_struct)
+            cl = &arg;
+          else if(arg.id() == ID_symbol)
+          {
+            auto it = list_literals.find(to_symbol_expr(arg).get_identifier());
+            if(it != list_literals.end() && it->second.id() == ID_struct)
+              cl = &it->second;
+          }
+          if(
+            cl != nullptr && cl->operands().size() >= 2 &&
+            cl->operands()[0].is_constant() &&
+            cl->operands()[1].id() == ID_array)
+          {
+            mp_integer n;
+            if(
+              !to_integer(to_constant_expr(cl->operands()[0]), n) && n >= 0 &&
+              n <= (long)PYTHON_MAX_LIST_LENGTH)
+            {
+              const exprt::operandst &src = cl->operands()[1].operands();
+              const long nl = n.to_long();
+              const auto &clst = to_struct_type(cl->type());
+              const auto &cdt = to_array_type(clst.components()[1].type());
+              bool foldable = true;
+              for(long i = 0; i < nl && i < (long)src.size(); i++)
+                if(!src[i].is_constant() && src[i].id() != ID_struct)
+                {
+                  foldable = false;
+                  break;
+                }
+              if(foldable)
+              {
+                exprt::operandst rev;
+                for(long i = 0; i < (long)PYTHON_MAX_LIST_LENGTH; i++)
+                {
+                  const long srci = nl - 1 - i;
+                  if(i < nl && srci >= 0 && srci < (long)src.size())
+                    rev.push_back(src[srci]);
+                  else
+                    rev.push_back(safe_zero(cdt.element_type()));
+                }
+                return struct_exprt{
+                  {cl->operands()[0], array_exprt{std::move(rev), cdt}},
+                  cl->type()};
+              }
+            }
+          }
           const auto &lst_st = to_struct_type(arg.type());
           const auto &ldata_t = to_array_type(lst_st.components()[1].type());
           const member_exprt alen{arg, "length", signedbv_typet{64}};
