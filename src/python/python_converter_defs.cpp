@@ -573,6 +573,46 @@ irep_idt python_convertert::setup_generator_result(
 }
 
 // "A function definition defines a user-defined function object."
+void python_convertert::collect_def_time_default_checks(
+  const jsont &args_node,
+  const source_locationt &loc,
+  code_blockt &out)
+{
+  bool raised = false;
+  for(const char *grp : {"defaults", "kw_defaults"})
+  {
+    const jsont &lst = json_member(args_node, grp);
+    if(!lst.is_array())
+      continue;
+    for(const auto &d : as_array(lst))
+    {
+      if(!d.is_object() || d.is_null())
+        continue;
+      // Evaluate for exception side effects only; discard the value. Save /
+      // clear / restore so the caller's pending_checks is undisturbed and the
+      // newly-emitted checks are captured into `out`.
+      auto saved = pending_checks;
+      pending_checks.clear();
+      (void)convert_expression(d);
+      if(!pending_checks.empty())
+        raised = true;
+      for(auto &chk : pending_checks)
+        out.add(chk);
+      pending_checks = saved;
+    }
+  }
+  const symbolt *ea = symbol_table.lookup("python::__exception_active");
+  if(raised && !python_no_exception_checks && ea != nullptr)
+  {
+    source_locationt eloc = loc;
+    eloc.set_property_class("exception");
+    eloc.set_comment("uncaught exception");
+    code_assertt exc_check{not_exprt{ea->symbol_expr()}};
+    exc_check.add_source_location() = eloc;
+    out.add(std::move(exc_check));
+  }
+}
+
 codet python_convertert::convert_function_def(const jsont &stmt)
 {
   // PLR §8.7: skip @overload decorated functions (type hints only)

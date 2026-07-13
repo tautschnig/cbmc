@@ -1544,6 +1544,24 @@ private:
   codet convert_function_def(const jsont &stmt);
   codet convert_class_def(const jsont &stmt);
 
+  /// PLR §8.7: evaluate a function/method's default argument values for their
+  /// DEF-TIME exception side effects, collecting the resulting checks — plus an
+  /// uncaught-exception assertion if any default raises (the general
+  /// per-statement check omits FunctionDef/ClassDef) — into `out`. Python
+  /// evaluates defaults once, when the `def` executes; a raising default
+  /// (`def f(a=[][0])`) raises there. Called at every def's SOURCE-ORDER
+  /// position (module-level defs, methods, nested defs) so the raise propagates
+  /// and a default reading an already-bound global does not spuriously fault.
+  /// Uses save/clear/restore around convert_expression so the caller's
+  /// pending_checks is left undisturbed.
+  /// \param args_node: the def's `args` AST node.
+  /// \param loc: source location for the uncaught-exception assertion.
+  /// \param [out] out: block receiving the exception checks + assertion.
+  void collect_def_time_default_checks(
+    const jsont &args_node,
+    const source_locationt &loc,
+    code_blockt &out);
+
   /// Result of scanning a function/method body for its return type
   /// (used only when there is no explicit return annotation).
   struct inferred_returnt
