@@ -233,46 +233,14 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
           }
         }
       }
-      // PLR §8.7: a module-level def evaluates its default argument values at
-      // def-time (in source order, so module globals assigned earlier are
-      // established). A raising default (`def f(a=[][0])`) raises at the def
-      // site. Evaluate each default for its exception side effects and flush the
-      // checks into the module block at this (source-order) position; the value
-      // is discarded (call sites re-derive it). The general per-statement
-      // uncaught-exception check below SKIPS FunctionDef, so emit it here when a
-      // default actually raised.
+      // PLR §8.7: evaluate this def's default argument values at its
+      // source-order position (module globals assigned earlier are established).
       {
-        const jsont &def_args = json_member(stmt, "args");
-        bool def_default_check = false;
-        for(const char *grp : {"defaults", "kw_defaults"})
-        {
-          const jsont &lst = json_member(def_args, grp);
-          if(!lst.is_array())
-            continue;
-          for(const auto &d : as_array(lst))
-          {
-            if(!d.is_object() || d.is_null())
-              continue;
-            auto saved = pending_checks;
-            pending_checks.clear();
-            (void)convert_expression(d);
-            if(!pending_checks.empty())
-              def_default_check = true;
-            for(auto &chk : pending_checks)
-              block.add(chk);
-            pending_checks = saved;
-          }
-        }
-        const symbolt *ea = symbol_table.lookup("python::__exception_active");
-        if(def_default_check && !python_no_exception_checks && ea != nullptr)
-        {
-          source_locationt eloc = get_location(stmt);
-          eloc.set_property_class("exception");
-          eloc.set_comment("uncaught exception");
-          code_assertt exc_check{not_exprt{ea->symbol_expr()}};
-          exc_check.add_source_location() = eloc;
-          block.add(std::move(exc_check));
-        }
+        code_blockt cb;
+        collect_def_time_default_checks(
+          json_member(stmt, "args"), get_location(stmt), cb);
+        for(const auto &s : cb.statements())
+          block.add(s);
       }
       continue;
     }
@@ -289,49 +257,22 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
         block.add(std::move(init));
       }
       // PLR §8.7: method default argument values are evaluated when the class
-      // body executes (class-def time); a raising method default raises there.
-      // Evaluate each method's defaults for exception side effects at this
-      // (source-order) position, and emit the uncaught-exception assertion the
-      // general per-statement check omits for ClassDef.
+      // body executes (class-def time); evaluate each method's defaults at this
+      // source-order position.
       {
         const jsont &cbody = json_member(stmt, "body");
-        bool cls_default_check = false;
         if(cbody.is_array())
           for(const auto &m : as_array(cbody))
             if(
               is_node_type(m, "FunctionDef") ||
               is_node_type(m, "AsyncFunctionDef"))
             {
-              const jsont &margs = json_member(m, "args");
-              for(const char *grp : {"defaults", "kw_defaults"})
-              {
-                const jsont &lst = json_member(margs, grp);
-                if(!lst.is_array())
-                  continue;
-                for(const auto &d : as_array(lst))
-                  if(d.is_object() && !d.is_null())
-                  {
-                    auto saved = pending_checks;
-                    pending_checks.clear();
-                    (void)convert_expression(d);
-                    if(!pending_checks.empty())
-                      cls_default_check = true;
-                    for(auto &chk : pending_checks)
-                      block.add(chk);
-                    pending_checks = saved;
-                  }
-              }
+              code_blockt cb;
+              collect_def_time_default_checks(
+                json_member(m, "args"), get_location(stmt), cb);
+              for(const auto &s : cb.statements())
+                block.add(s);
             }
-        const symbolt *ea = symbol_table.lookup("python::__exception_active");
-        if(cls_default_check && !python_no_exception_checks && ea != nullptr)
-        {
-          source_locationt eloc = get_location(stmt);
-          eloc.set_property_class("exception");
-          eloc.set_comment("uncaught exception");
-          code_assertt exc_check{not_exprt{ea->symbol_expr()}};
-          exc_check.add_source_location() = eloc;
-          block.add(std::move(exc_check));
-        }
       }
       continue;
     }

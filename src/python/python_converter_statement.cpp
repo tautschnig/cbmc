@@ -1325,39 +1325,15 @@ codet python_convertert::convert_statement(const jsont &stmt)
 
   // PLR §8.7: a NESTED def (or method body) reached via convert_statement
   // evaluates its default argument values at def-time too (top-level module defs
-  // are handled in the module pass). Evaluate each default for its exception
-  // side effects at this (source-order) position in the enclosing body; the
-  // general per-statement uncaught check does not cover a FunctionDef, so add
-  // the uncaught-exception assertion here when a default actually raised. Both
-  // are flushed by the pending_checks block below.
+  // are handled in the module pass). Collect the checks at this source-order
+  // position and route them through pending_checks (flushed below).
   if(node_type == "FunctionDef" || node_type == "AsyncFunctionDef")
   {
-    const jsont &def_args = json_member(stmt, "args");
-    bool def_default_check = false;
-    for(const char *grp : {"defaults", "kw_defaults"})
-    {
-      const jsont &lst = json_member(def_args, grp);
-      if(!lst.is_array())
-        continue;
-      for(const auto &d : as_array(lst))
-        if(d.is_object() && !d.is_null())
-        {
-          size_t before = pending_checks.size();
-          (void)convert_expression(d);
-          if(pending_checks.size() > before)
-            def_default_check = true;
-        }
-    }
-    const symbolt *ea = symbol_table.lookup("python::__exception_active");
-    if(def_default_check && !python_no_exception_checks && ea != nullptr)
-    {
-      source_locationt eloc = get_location(stmt);
-      eloc.set_property_class("exception");
-      eloc.set_comment("uncaught exception");
-      code_assertt exc_check{not_exprt{ea->symbol_expr()}};
-      exc_check.add_source_location() = eloc;
-      pending_checks.push_back(exc_check);
-    }
+    code_blockt cb;
+    collect_def_time_default_checks(
+      json_member(stmt, "args"), get_location(stmt), cb);
+    for(const auto &s : cb.statements())
+      pending_checks.push_back(s);
   }
 
   // If expression conversion generated checks, prepend them
