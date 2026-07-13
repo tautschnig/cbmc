@@ -1448,14 +1448,15 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > values that raise are not evaluated at def-time** (`def f(a=[][0])` — Python
 > evaluates defaults once when the `def` executes, so it raises there; the
 > frontend only re-derives the default at call sites for its value, swallowing a
-> raising default). Pinned `default-arg-raises-knownbug`. A spike showed the fix
-> is not a point change: def-time evaluation must run across three paths
-> (module pass / nested-def `convert_statement` / method bodies), needs the
-> uncaught-exception assertion that the general per-statement check deliberately
-> SKIPS for FunctionDef, and must respect module-init ordering (a naive module
-> eval false-alarmed on `def f(a=G[1])` reading an already-bound global before its
-> value was established). Deferred until module-init sequencing is addressed;
-> low real-world impact (raising defaults do not appear in the oracle corpus).
+>> raising default). **CLOSED (2026-07-13, `ccc371931d`).** Def-time evaluation is
+> now emitted at the def's SOURCE-ORDER position across all three paths where a
+> def executes (module pass for top-level defs, ClassDef handling for methods,
+> `convert_statement` for nested defs), plus the uncaught-exception assertion the
+> general per-statement check omits for FunctionDef/ClassDef. Emitting in source
+> order is exactly what dissolves the earlier spike's false alarm (`def f(a=G[1])`
+> reading an already-bound global) — G's assignment is added to the module block
+> before the def. CORE `default-arg-raises-sound`, `default-arg-nested-method-sound`,
+> `default-arg-ordering-nofp`. **This was the last deferred soundness residual.**
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
