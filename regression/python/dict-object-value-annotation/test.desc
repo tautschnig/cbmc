@@ -1,0 +1,6 @@
+CORE
+main.py
+--object-bits 12 --no-unwinding-assertions --unwind 3 --python-no-exception-checks
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
