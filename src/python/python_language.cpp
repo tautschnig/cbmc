@@ -136,6 +136,7 @@ void python_languaget::set_language_options(
   "  elif isinstance(n,(ast.Global,ast.Nonlocal)):s.update(n.names)\n" \
   " return sorted(s)\n" \
   "r=c(t);r['_filename']=sys.argv[1];r['_all_bound_names']=bn(t)\n" \
+  "r['_python_version']=[sys.version_info[0],sys.version_info[1]]\n" \
   "json.dump(r,open(sys.argv[2],'w',encoding='utf-8'),default=jd,ensure_ascii=False)\n"
 // clang-format on
 

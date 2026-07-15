@@ -1100,6 +1100,34 @@ bool python_convertert::convert()
           if(json_string(json_member(a, "name")) == "annotations")
             future_annotations = true;
     }
+  // PEP 649/749 (Python 3.14): annotations are LAZILY evaluated by default --
+  // `def f() -> Any:` without importing Any does NOT raise NameError at the
+  // def; evaluation happens only on __annotations__ access. Version-dependent
+  // PLR semantics: follow the parsing interpreter's version (reported by the
+  // AST payload as `_python_version`), so verification matches the CPython the
+  // program would actually run under. Under <= 3.13 the eager check stays
+  // (a missing `from typing import Any` IS a def-time NameError).
+  {
+    const jsont &pv = json_member(parse_tree.ast_json, "_python_version");
+    if(pv.is_array() && as_array(pv).size() >= 2)
+    {
+      const auto to_int = [](const jsont &j) -> int
+      {
+        if(j.value.empty())
+          return -1;
+        for(const char ch : j.value)
+          if(!isdigit(ch))
+            return -1;
+        return std::atoi(j.value.c_str());
+      };
+      auto it = as_array(pv).begin();
+      const int maj = to_int(*it);
+      ++it;
+      const int min = to_int(*it);
+      if(maj > 3 || (maj == 3 && min >= 14))
+        future_annotations = true;
+    }
+  }
 
   // PLR §7.12: pre-scan all function/method bodies for global mutations
   // (dict subscript-assign, `global X` rebind, dict-mutating methods) so
