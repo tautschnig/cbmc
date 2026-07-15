@@ -1200,8 +1200,11 @@ bool python_convertert::invalidate_dict_value_on_mutation(
     return false;
   // Sound over-approximation: havoc the dict so a later read is nondet rather
   // than the stale pre-mutation value (the precise fix is an lvalue value-slot
-  // for string keys -- see the dict-value-byref deep-dive).
-  pending_checks.push_back(code_frontend_assignt{
+  // for string keys -- see the dict-value-byref deep-dive). Queued AFTER the
+  // statement: the havoc models the post-mutation state, and prepending it
+  // (via pending_checks) landed it between the receiver's model-bound length
+  // assumption and the mutator's capacity assert, causing a spurious failure.
+  pending_post_checks.push_back(code_frontend_assignt{
     base_e, side_effect_expr_nondett{base_e.type(), source_locationt{}}});
   const irep_idt did = to_symbol_expr(base_e).get_identifier();
   dict_literals.erase(did);
@@ -3179,7 +3182,27 @@ exprt python_convertert::unwrap_any_container_receiver(
   // shared via __list_ptr / __class_ptr (see make_python_value), so methods
   // that mutate the returned lvalue propagate to the caller's object.
   if(is_list)
-    return python_value_list(obj);
+  {
+    exprt lst = python_value_list(obj);
+    // Model-bound assumption (intrinsic, inventory D): a list reachable behind
+    // an Any slot (e.g. `p[k].append(x)` through a python_value dict value) has
+    // an UNCONSTRAINED length, so the mutator's capacity ASSERT fired
+    // spuriously ("container capacity exceeded" -- the dict-if-not-in-idiom
+    // regression under the Dict[str, object] lowering). Assume the pre-state
+    // fits the bounded-container model, exactly like the nondet-list creation
+    // sites do (python_converter_call_nondet.cpp) -- the same design
+    // assumption, applied at the unbox chokepoint.
+    if(is_python_list_type(lst.type()))
+    {
+      const signedbv_typet i64{64};
+      member_exprt len{lst, "length", i64};
+      pending_checks.push_back(code_assumet{and_exprt{
+        binary_relation_exprt{len, ID_ge, from_integer(0, i64)},
+        binary_relation_exprt{
+          len, ID_lt, from_integer(PYTHON_MAX_LIST_LENGTH, i64)}}});
+    }
+    return lst;
+  }
 
   if(is_set)
   {
@@ -4957,7 +4980,24 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
       }
       if(safe)
         return python_dict_type(key_t, val_t);
-      return python_int_type();
+      // Non-"safe" element types (e.g. `Dict[str, object]` / `dict[str, Any]`):
+      // the old python_int_type() fallback modelled the DICT as a concrete int
+      // -- a latent unsoundness AND the dominant real-world FP cluster (a
+      // `-> Dict[str, object]` callee's result was INT-tagged, so `r["k"]`
+      // raised a spurious "not subscriptable" TypeError; 14 of the 51 boto3
+      // benchmarks). When the KEY type is safe, keep the DICT shape with
+      // python_value (Any) VALUES so the tag and subscript stay precise;
+      // otherwise lower to python_value (Any/top), the sound fallback.
+      {
+        auto is_safe_key = [](const typet &t)
+        {
+          return t.id() == ID_signedbv || t.id() == ID_floatbv ||
+                 t.id() == ID_bool || is_python_string_type(t);
+        };
+        if(is_safe_key(key_t))
+          return python_dict_type(key_t, python_value_type());
+      }
+      return python_value_type();
     }
     if(base == "tuple" || base == "Tuple")
     {
