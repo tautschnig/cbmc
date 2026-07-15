@@ -1957,11 +1957,19 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         // a TUPLE-tagged python_value). Omitting it raised a spurious
         // "not subscriptable" TypeError -- a false alarm.
         python_value_is(value, python_type_tagt::TUPLE)}};
-    add_check(
-      subscriptable,
-      "python-type-error",
-      "object is not subscriptable (TypeError)",
-      get_location(expr));
+    // PLR §8.4: this TypeError is CATCHABLE. When an enclosing handler catches
+    // TypeError (incl. `except Exception`), raise it through the exception
+    // machinery so the program's own handling runs (a hard ASSERT here
+    // false-alarmed on the real-world corpus's `try: ... except Exception`
+    // shape). With no enclosing handler it remains a definite property.
+    if(exception_is_caught("TypeError"))
+      emit_conditional_exception(not_exprt{subscriptable}, "TypeError");
+    else
+      add_check(
+        subscriptable,
+        "python-type-error",
+        "object is not subscriptable (TypeError)",
+        get_location(expr));
     const bool int_slice =
       slice.type().id() == ID_signedbv || slice.type().id() == ID_unsignedbv ||
       slice.type().id() == ID_integer || slice.type() == python_int_type();
@@ -1998,11 +2006,16 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     value.type().id() == ID_integer || value.type().id() == ID_floatbv ||
     value.type().id() == ID_bool || value.type() == python_int_type())
   {
-    add_check(
-      false_exprt{},
-      "python-type-error",
-      "object is not subscriptable (TypeError)",
-      get_location(expr));
+    // PLR §8.4: catchable when an enclosing handler covers TypeError (see the
+    // python_value case above); definite property otherwise.
+    if(exception_is_caught("TypeError"))
+      emit_conditional_exception(true_exprt{}, "TypeError");
+    else
+      add_check(
+        false_exprt{},
+        "python-type-error",
+        "object is not subscriptable (TypeError)",
+        get_location(expr));
   }
 
   log_overapprox("Subscript: unsupported operand type, using nondet");
