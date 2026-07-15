@@ -141,6 +141,7 @@ def parse_file(path):
     # (Store-context Names cover assignment / tuple-or-list unpack /
     # for-targets / with-as / comprehension targets / walrus uniformly).
     out["_all_bound_names"] = sorted(_collect_bound_names(tree))
+    out["_python_version"] = [sys.version_info[0], sys.version_info[1]]
     return out
 
 
