@@ -1544,6 +1544,20 @@ private:
   codet convert_function_def(const jsont &stmt);
   codet convert_class_def(const jsont &stmt);
 
+  /// Build a well-formed address-of `e` for passing by reference (e.g. a
+  /// method-call `self`). A plain `address_of_exprt{e}` crashes symex
+  /// ("address_arithmetic: either non-persistent array or pointer to result")
+  /// when `e` is not an lvalue — notably the class-attribute SHADOW-FALLBACK
+  /// ternary (`__shadow_x ? instance.x : Class.x`, an `if_exprt`), the shape
+  /// behind the real-world boto3-benchmark crash whole-group. Distribute the
+  /// address-of over an `if_exprt` (both arms are genuine lvalues, so
+  /// reference semantics are preserved: the callee mutates the SELECTED
+  /// storage); take the address directly for lvalue kinds
+  /// (symbol/member/index/dereference); otherwise materialise a temp via
+  /// pending_checks and return its address (by-value fallback, same tradeoff
+  /// as the chained-call temp).
+  exprt safe_address_of(const exprt &e, const source_locationt &loc);
+
   /// PLR §8.7: evaluate a function/method's default argument values for their
   /// DEF-TIME exception side effects, collecting the resulting checks — plus an
   /// uncaught-exception assertion if any default raises (the general

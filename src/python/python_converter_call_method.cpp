@@ -50,6 +50,48 @@
 #include <sstream>
 #include <string>
 
+exprt python_convertert::safe_address_of(
+  const exprt &e,
+  const source_locationt &loc)
+{
+  // Lvalue kinds: take the address directly.
+  if(
+    e.id() == ID_symbol || e.id() == ID_member || e.id() == ID_index ||
+    e.id() == ID_dereference)
+    return address_of_exprt{e};
+  // Ternary (e.g. the class-attribute shadow-fallback read): distribute the
+  // address-of over the arms so symex sees addresses of genuine lvalues.
+  // Reference semantics are preserved -- the callee mutates the SELECTED
+  // storage (instance field or class storage).
+  if(e.id() == ID_if)
+  {
+    const if_exprt &ie = to_if_expr(e);
+    exprt t = safe_address_of(ie.true_case(), loc);
+    exprt f = safe_address_of(ie.false_case(), loc);
+    if(t.type() == f.type())
+      return if_exprt{ie.cond(), std::move(t), std::move(f)};
+  }
+  // Fallback: materialise into a temp (by-value; mutations do not write back
+  // -- the same tradeoff as the chained-call temp).
+  static unsigned safe_ao_ctr = 0;
+  const std::string tn = "__addr_tmp_" + std::to_string(safe_ao_ctr++);
+  const irep_idt tid{qualify_name(tn)};
+  if(symbol_table.lookup(tid) == nullptr)
+  {
+    symbolt ts{tid, e.type(), "python"};
+    ts.base_name = tn;
+    ts.is_lvalue = true;
+    ts.is_state_var = true;
+    ts.is_static_lifetime = current_function.empty();
+    symbol_table.add(ts);
+  }
+  symbol_exprt tsym = symbol_table.lookup_ref(tid).symbol_expr();
+  code_frontend_assignt asg{tsym, e};
+  asg.add_source_location() = loc;
+  pending_checks.push_back(std::move(asg));
+  return address_of_exprt{std::move(tsym)};
+}
+
 std::optional<exprt> python_convertert::try_method_call(
   const jsont &expr,
   std::string &func_name,
@@ -3285,7 +3327,14 @@ std::optional<exprt> python_convertert::try_method_call(
               arguments.push_back(address_of_exprt{tmp_sym.symbol_expr()});
             }
             else
-              arguments.push_back(address_of_exprt{obj});
+            {
+              // safe_address_of handles a non-lvalue receiver -- notably the
+              // class-attribute shadow-fallback TERNARY (a method call through
+              // a class-level-annotated field, `a.client.start()`), which a
+              // plain address_of crashed in symex ("non-persistent array") --
+              // the real-world boto3-benchmark crash whole-group (8/51).
+              arguments.push_back(safe_address_of(obj, get_location(expr)));
+            }
           }
           if(args.is_array())
           {
