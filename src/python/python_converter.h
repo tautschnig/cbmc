@@ -1477,18 +1477,20 @@ private:
   std::vector<std::set<std::string>> active_exception_handlers;
 
   /// Return true if `exc_class` would be caught by an active
-  /// enclosing except handler. Only EXACT class-name matches
-  /// suppress the missing-method assertion; generic catch-alls
-  /// like 'except Exception:' or bare 'except:' do NOT suppress
-  /// it because those handlers are typically used for last-resort
-  /// recovery, not to mask statically-known wrong method names.
-  /// (PLR semantics: such a call IS an AttributeError; the catch
-  /// just hides the symptom while the bug remains.)
+  /// enclosing except handler. PLR §8.4: a handler naming the class, a
+  /// catch-all `except Exception:` / `except BaseException:`, or a bare
+  /// `except:` ALL catch the raise -- the program continues normally, so a
+  /// hard ASSERT at the raise site would be a false alarm (the real-world
+  /// boto3 corpus catches AttributeError/TypeError with `except Exception`
+  /// as normal control flow). The earlier lint-style carve-out that ignored
+  /// catch-alls contradicted PLR and produced exactly those false alarms.
   bool exception_is_caught(const std::string &exc_class) const
   {
     for(const auto &frame : active_exception_handlers)
     {
-      if(frame.count(exc_class) > 0)
+      if(
+        frame.count(exc_class) > 0 || frame.count("Exception") > 0 ||
+        frame.count("BaseException") > 0 || frame.count("") > 0)
         return true;
     }
     return false;
