@@ -1787,10 +1787,27 @@ precision false-positive.
 > pv-SLICE `__getitem__` dispatch is the phase-2 item). The earlier reverted
 > attempts' root cause was mundane, not architectural: a side_effect call
 > nested in an if_exprt arm is never lowered, and convert_for dropped
-> pending_checks pushed after its pre_loop flush. REMAINING for phase 2+:
-> per-instance ELEMENT provenance (element type/tag bounds on the producing
-> instance — generator-object precision, pv-slice dispatch, dict-value-byref
-> unification).
+> pending_checks pushed after its pre_loop flush.
+>
+> **PHASE 2 LANDED (`6ca71f6636`).** Opened with a soundness find in phase
+> 1's own pinning: `__iter__` returning a plain list is NOT valid Python —
+> CPython raises "TypeError: iter() returned non-iterator", and a broken
+> `__iter__` SHADOWS the legacy `__getitem__` protocol (CPython-verified,
+> incl. `return self` without `__next__`). The model erases iter(x) to x,
+> so validity is classified SYNTACTICALLY at ClassDef registration
+> (`classify_iter_protocol`: VALID / INVALID / UNKNOWN-unflagged,
+> MRO-aware) and enforced at the concrete for-loop path and
+> `lower_pv_iterable` (for-loops + comprehensions) — two false-proof
+> classes closed. ELEMENT provenance: the dispatched view's in-bounds
+> slots are the WRAPPED dispatched elements (nondet before), so concrete
+> element values flow through the Any iteration channel (`total == 3`
+> provable; negated + vacuity probed). CORE pins:
+> `iter-protocol-non-iterator`, `pv-iter-element-provenance`. REMAINING
+> for phase 3+: generator-OBJECT consumption precision, pv-slice
+> `__getitem__` dispatch (athena's residual is now solver-time, not a
+> false alarm), dict-value-byref per-instance identity, and UNKNOWN
+> `__iter__` returns (a may-raise under --python-raising-ops-check is the
+> natural home).
 
 **Status: DONE for the modelled scope.** The **list-with-cursor** model is
 implemented (see the architecture doc's "Generator semantics" section):
