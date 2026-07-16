@@ -450,6 +450,52 @@ private:
   std::map<std::string, struct_typet> class_types;
   std::map<std::string, int> class_tag_ids;
 
+  /// PLR §3.3.1 iterator-protocol classification of a class's __iter__
+  /// (syntactic, computed at ClassDef registration): CPython requires
+  /// __iter__ to return an ITERATOR -- `for x in obj` with an __iter__
+  /// returning a plain list/tuple/dict/constant raises
+  /// "TypeError: iter() returned non-iterator", and a broken __iter__
+  /// SHADOWS the legacy __getitem__ protocol (verified against CPython).
+  /// The frontend's value model erases the iterator/list distinction
+  /// (iter(x) returns x), so validity is classified on the def's AST.
+  enum class iter_protocol_kindt
+  {
+    VALID,   // provably returns an iterator: iter(...), a generator
+             // function (yield), a genexp, or `return self` with __next__
+    INVALID, // provably returns a non-iterator: list/tuple/dict/set/str
+             // literal or numeric/None constant, or `return self`
+             // without __next__
+    UNKNOWN, // anything else (calls, params, mixed returns): not flagged
+  };
+  std::map<std::string, iter_protocol_kindt> class_iter_protocol;
+
+  /// Classify \p cls_name's __iter__ def body (see iter_protocol_kindt).
+  /// \p fdef is the FunctionDef AST node; \p has_next whether the class
+  /// itself defines __next__ (for the `return self` form).
+  void classify_iter_protocol(
+    const std::string &cls_name,
+    const jsont &fdef,
+    bool has_next);
+
+  /// MRO-aware lookup: the classification of the __iter__ that \p cls_name
+  /// would actually resolve (its own, or the first classified ancestor's).
+  /// UNKNOWN when nothing is classified.
+  iter_protocol_kindt iter_protocol_of(const std::string &cls_name) const
+  {
+    auto it = class_iter_protocol.find(cls_name);
+    if(it != class_iter_protocol.end())
+      return it->second;
+    auto mit = class_mro.find(cls_name);
+    if(mit != class_mro.end())
+      for(const auto &anc : mit->second)
+      {
+        auto ait = class_iter_protocol.find(anc);
+        if(ait != class_iter_protocol.end())
+          return ait->second;
+      }
+    return iter_protocol_kindt::UNKNOWN;
+  }
+
   /// Per-instance class-identity provenance (see plan §1). A CLASS-tagged
   /// python_value's opaque __class_ptr points at an instance struct whose
   /// first component is __class_tag (int32), set at construction and kept by

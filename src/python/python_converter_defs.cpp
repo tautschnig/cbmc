@@ -3429,6 +3429,25 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   // constant (body is a single `return <neg const>`); len() on such an instance
   // raises ValueError. Constant-only -> no false positive on a symbolic or
   // non-negative __len__.
+  // PLR §3.3.1: classify the class's __iter__ against the iterator
+  // protocol (see classify_iter_protocol). Idempotent per class.
+  if(body.is_array() && class_iter_protocol.count(class_name) == 0)
+  {
+    bool has_next_m = false;
+    const jsont *iter_def = nullptr;
+    for(const auto &item : as_array(body))
+    {
+      if(!is_node_type(item, "FunctionDef"))
+        continue;
+      const std::string mn = json_string(json_member(item, "name"));
+      if(mn == "__next__")
+        has_next_m = true;
+      else if(mn == "__iter__")
+        iter_def = &item;
+    }
+    if(iter_def != nullptr)
+      classify_iter_protocol(class_name, *iter_def, has_next_m);
+  }
   if(body.is_array())
     for(const auto &item : as_array(body))
     {
@@ -5629,4 +5648,128 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
   code_expressiont code_expr{expr};
   code_expr.add_source_location() = get_location(stmt);
   return std::move(code_expr);
+}
+
+void python_convertert::classify_iter_protocol(
+  const std::string &cls_name,
+  const jsont &fdef,
+  bool has_next)
+{
+  // A generator FUNCTION (any yield in the body, not nested in an inner
+  // def) returns a generator object -- always a valid iterator.
+  std::function<bool(const jsont &)> has_yield = [&](const jsont &n) -> bool
+  {
+    if(is_node_type(n, "FunctionDef") || is_node_type(n, "AsyncFunctionDef"))
+      return false; // nested def: its yields are not ours
+    if(is_node_type(n, "Yield") || is_node_type(n, "YieldFrom"))
+      return true;
+    if(n.is_object())
+    {
+      const auto &obj = static_cast<const json_objectt &>(n);
+      for(const auto &kv : obj)
+      {
+        const jsont &child = kv.second;
+        if(child.is_array())
+        {
+          for(const auto &c : as_array(child))
+            if(has_yield(c))
+              return true;
+        }
+        else if(child.is_object() && has_yield(child))
+          return true;
+      }
+    }
+    return false;
+  };
+  const jsont &body = json_member(fdef, "body");
+  if(!body.is_array())
+    return;
+  if(has_yield(fdef))
+  {
+    class_iter_protocol[cls_name] = iter_protocol_kindt::VALID;
+    return;
+  }
+  // Classify every Return statement; the def is VALID/INVALID only if ALL
+  // its returns agree (mixed or unclassifiable -> UNKNOWN, not flagged).
+  bool saw_return = false, all_valid = true, all_invalid = true;
+  std::function<void(const jsont &)> scan = [&](const jsont &n)
+  {
+    if(is_node_type(n, "FunctionDef") || is_node_type(n, "AsyncFunctionDef"))
+      return; // nested def
+    if(is_node_type(n, "Return"))
+    {
+      saw_return = true;
+      const jsont &rv = json_member(n, "value");
+      bool valid = false, invalid = false;
+      if(rv.is_null())
+        invalid = true; // bare return -> None: not an iterator
+      else if(is_node_type(rv, "Call"))
+      {
+        const jsont &fn = json_member(rv, "func");
+        if(is_node_type(fn, "Name"))
+        {
+          const std::string callee = json_string(json_member(fn, "id"));
+          // iter()/reversed() return iterators; map/filter/zip/enumerate
+          // likewise. Other calls: UNKNOWN.
+          if(
+            callee == "iter" || callee == "reversed" || callee == "map" ||
+            callee == "filter" || callee == "zip" || callee == "enumerate")
+            valid = true;
+        }
+      }
+      else if(is_node_type(rv, "GeneratorExp"))
+        valid = true;
+      else if(
+        is_node_type(rv, "List") || is_node_type(rv, "Tuple") ||
+        is_node_type(rv, "Dict") || is_node_type(rv, "Set") ||
+        is_node_type(rv, "ListComp") || is_node_type(rv, "DictComp") ||
+        is_node_type(rv, "SetComp") || is_node_type(rv, "JoinedStr"))
+        invalid = true;
+      else if(is_node_type(rv, "Constant"))
+        invalid = true; // numbers, strings, None, bools: not iterators
+      else if(is_node_type(rv, "Name"))
+      {
+        const std::string nm = json_string(json_member(rv, "id"));
+        if(nm == "self")
+        {
+          // `return self` is valid iff the class defines __next__.
+          (has_next ? valid : invalid) = true;
+        }
+      }
+      if(!valid)
+        all_valid = false;
+      if(!invalid)
+        all_invalid = false;
+      return;
+    }
+    if(n.is_object())
+    {
+      const auto &obj = static_cast<const json_objectt &>(n);
+      for(const auto &kv : obj)
+      {
+        const jsont &child = kv.second;
+        if(child.is_array())
+        {
+          for(const auto &c : as_array(child))
+            scan(c);
+        }
+        else if(child.is_object())
+          scan(child);
+      }
+    }
+  };
+  for(const auto &st : as_array(body))
+    scan(st);
+  if(!saw_return)
+  {
+    // No return -> falls through returning None: not an iterator.
+    class_iter_protocol[cls_name] = iter_protocol_kindt::INVALID;
+    return;
+  }
+  if(all_valid)
+    class_iter_protocol[cls_name] = iter_protocol_kindt::VALID;
+  else if(all_invalid)
+    class_iter_protocol[cls_name] = iter_protocol_kindt::INVALID;
+  else
+    class_iter_protocol[cls_name] = iter_protocol_kindt::UNKNOWN;
 }
