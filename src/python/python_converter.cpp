@@ -4510,6 +4510,30 @@ std::vector<codet> python_convertert::build_class_construction(
   const source_locationt &loc)
 {
   std::vector<codet> out;
+  // Per-instance class-identity provenance (plan §1): EVERY instance
+  // construction stamps __class_tag first, so identity-refined dunder
+  // dispatch and tag obligations (isinstance, pv-CLASS __getitem__/__iter__,
+  // subscript/iterability) can read it back through the boxed __class_ptr.
+  // Previously only some wrap sites set it, so instances constructed inside
+  // methods carried a NONDET tag -- identity checks were unprovable.
+  {
+    auto ti = class_tag_ids.find(class_name);
+    // Guard on a struct-typed receiver: a scalar-to-class REBIND reaches
+    // here with the lvalue still carrying the old scalar type (the
+    // rebind-scalar-to-class shape) -- member_exprt on a non-struct is a
+    // frontend invariant violation.
+    const typet &recv_t = self_lvalue.type();
+    const bool recv_is_struct =
+      recv_t.id() == ID_struct || recv_t.id() == ID_struct_tag;
+    if(ti != class_tag_ids.end() && recv_is_struct)
+    {
+      code_frontend_assignt stamp{
+        member_exprt{self_lvalue, "__class_tag", signedbv_typet{32}},
+        from_integer(ti->second, signedbv_typet{32})};
+      stamp.add_source_location() = loc;
+      out.push_back(std::move(stamp));
+    }
+  }
   if(
     auto init_call =
       build_class_init_call(class_name, self_lvalue, call_node, loc))
@@ -6025,3 +6049,31 @@ exprt python_convertert::convert_expression(const jsont &expr)
 // PLR §6.2.5: List displays
 // "A list display yields a new list object, the contents being specified
 // by either a list of expressions or a comprehension."
+
+exprt python_convertert::python_value_class_tag(const exprt &value) const
+{
+  const pointer_typet i32_ptr{signedbv_typet{32}, 64};
+  return dereference_exprt{
+    typecast_exprt{python_value_class_ptr(value), i32_ptr}, signedbv_typet{32}};
+}
+
+exprt python_convertert::python_value_is_class_of(
+  const exprt &value,
+  const std::vector<std::string> &owners) const
+{
+  exprt id_match = false_exprt{};
+  for(const auto &o : owners)
+  {
+    auto ti = class_tag_ids.find(o);
+    if(ti == class_tag_ids.end())
+      continue;
+    equal_exprt eq{
+      python_value_class_tag(value),
+      from_integer(ti->second, signedbv_typet{32})};
+    id_match = id_match.id() == ID_false
+                 ? exprt{std::move(eq)}
+                 : exprt{or_exprt{std::move(id_match), std::move(eq)}};
+  }
+  return and_exprt{
+    python_value_is(value, python_type_tagt::CLASS), std::move(id_match)};
+}

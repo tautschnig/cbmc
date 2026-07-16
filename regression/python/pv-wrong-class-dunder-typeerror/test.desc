@@ -1,0 +1,9 @@
+CORE
+main.py
+--unwind 4 --no-unwinding-assertions
+^\[type-error\.\d+\].*object is not iterable: FAILURE$
+^VERIFICATION FAILED$
+^EXIT=10$
+^SIGNAL=0$
+--
+--
