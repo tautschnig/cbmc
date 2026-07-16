@@ -257,7 +257,12 @@ std::optional<exprt> python_convertert::try_nondet_call(
           ID_cprover_string_re_sub_func,
           {to_str(pattern), to_str(repl), to_str(subject)},
           symbol_table,
-          pending_checks);
+          pending_checks,
+          loop_depth > 0,
+          // global (documented): see emit_string_function -- scoping these
+          // sites regressed refined-string precision (re-flags/github_2992);
+          // they are candidates for the per-site scope audit.
+          std::string{});
         if(n == 3)
           return precise;
         exprt count = convert_expression(*it);

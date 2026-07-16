@@ -4716,7 +4716,8 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       {to_string_struct(lhs), to_string_struct(rhs)},
       symbol_table,
       pending_checks,
-      loop_depth > 0);
+      loop_depth > 0,
+      current_function);
     if(lhs.id() == ID_symbol)
       string_constants.erase(to_symbol_expr(lhs).get_identifier());
     return code_frontend_assignt{lhs, std::move(concat)};
