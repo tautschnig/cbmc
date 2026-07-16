@@ -2,6 +2,6 @@ CORE
 main.py
 --unwind 6
 ^EXIT=10$
-^\[python-type-error\.\d+\].*does not match parameter annotation.*: FAILURE$
+^\[exception\.\d+\].*uncaught exception.*: FAILURE$
 ^VERIFICATION FAILED$
 --

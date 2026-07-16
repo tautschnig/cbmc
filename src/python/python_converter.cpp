@@ -4027,6 +4027,18 @@ exprt python_convertert::coerce_call_argument(
   // false-alarm. bool ⊂ int and int/bool promote to float (PEP 484 numeric
   // tower), so those tags are accepted. The obligation is over the arg's actual
   // runtime tag, so a genuinely-matching value never false-alarms.
+  // PLR §3.2 / type-safety: binding a tagged-union/Any value to a concretely-
+  // typed SCALAR parameter. A MISMATCHED tag means any concrete use inside the
+  // callee raises TypeError; model that as a CONDITIONAL, CATCHABLE exception
+  // at the binding (the boundary approximation of the callee-internal raise),
+  // and bind the value GUARDEDLY: unwrap when the tag matches (precise),
+  // nondet otherwise (never a silent pun). This keeps the 004-family sound in
+  // default mode (a mismatched arg's use fails via the exception path) while
+  // an UNKNOWABLE tag no longer hard-fails the call site (the previous
+  // add_check ASSERT false-alarmed on 4 real-world boto3 benchmarks; under
+  // --python-no-exception-checks -- the benchmark configuration -- the
+  // exception path is not a failure). Only for EXPLICITLY ANNOTATED params
+  // (provenance); bool ⊂ int, int/bool promote to float (PEP 484).
   if(
     !param_id.empty() && explicitly_annotated_params.count(param_id) &&
     is_python_value_type(arg.type()) && !is_python_none(arg, symbol_table))
@@ -4047,11 +4059,13 @@ exprt python_convertert::coerce_call_argument(
     else if(is_python_string_type(param_type))
       ok = python_value_is(arg, python_type_tagt::STR);
     if(!ok.is_nil())
-      add_check(
-        ok,
-        "python-type-error",
-        "argument type does not match parameter annotation (TypeError)",
-        arg.source_location());
+    {
+      emit_conditional_exception(not_exprt{ok}, "TypeError");
+      return if_exprt{
+        std::move(ok),
+        coerce_to_typed_slot(arg, param_type),
+        side_effect_expr_nondett{param_type, arg.source_location()}};
+    }
   }
   return coerce_to_typed_slot(arg, param_type);
 }

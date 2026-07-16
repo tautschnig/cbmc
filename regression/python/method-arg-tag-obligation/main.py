@@ -4,6 +4,10 @@
 # as int raises TypeError. The provenance-gated call-argument obligation that
 # fires for free functions now also fires at method-call sites (the main method
 # path routes args through coerce_call_argument, not raw safe_typecast).
+# 2026-07-16: the obligation is now a CONDITIONAL, CATCHABLE TypeError at the
+# binding (the boundary approximation of the callee-internal raise) plus a
+# guarded nondet bind -- the property that fires is the uncaught-exception one
+# (the old hard call-site assert false-alarmed on unknowable tags in real code).
 from typing import Any
 
 

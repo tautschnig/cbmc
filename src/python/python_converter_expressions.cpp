@@ -1979,6 +1979,56 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         "python-type-error",
         "object is not subscriptable (TypeError)",
         get_location(expr));
+    // pv-CLASS __getitem__ dispatch (PLR §3.3.1): a class instance boxed in a
+    // python_value dispatches __getitem__ on subscript (the boto3 stub
+    // response-object shape; chained `r["A"]["B"]`, and `r["A"][0]` with an
+    // int key). Single user-class owner only; the KEY binds by shape (no
+    // annotation obligation -- it is not an annotated call argument). Used as
+    // the fallback arm of BOTH the int-key LIST read and the string-key path,
+    // guarded by the CLASS tag; anything else stays the sound nondet.
+    auto class_getitem_or_nondet = [&]() -> exprt
+    {
+      exprt fallback =
+        side_effect_expr_nondett{python_value_type(), get_location(expr)};
+      std::vector<std::string> gi_owners;
+      for(const auto &p : class_types)
+        if(
+          symbol_table.lookup(
+            irep_idt{"python::" + p.first + "::__getitem__"}) != nullptr)
+          gi_owners.push_back(p.first);
+      if(gi_owners.size() != 1)
+        return fallback;
+      const symbolt &gs = symbol_table.lookup_ref(
+        irep_idt{"python::" + gi_owners[0] + "::__getitem__"});
+      if(gs.type.id() != ID_code)
+        return fallback;
+      const code_typet &gt = to_code_type(gs.type);
+      const typet &cls_t = class_types.at(gi_owners[0]);
+      exprt self_ptr =
+        typecast_exprt{python_value_class_ptr(value), pointer_typet{cls_t, 64}};
+      exprt key_arg = slice;
+      if(gt.parameters().size() >= 2)
+      {
+        const typet &kt = gt.parameters()[1].type();
+        if(is_python_value_type(kt) && !is_python_value_type(slice.type()))
+          key_arg = wrap_value(slice);
+        else if(kt != slice.type())
+          key_arg = safe_typecast(slice, kt);
+      }
+      side_effect_expr_function_callt gi_call{
+        gs.symbol_expr(),
+        {self_ptr, key_arg},
+        gt.return_type(),
+        get_location(expr)};
+      exprt res =
+        is_python_value_type(gt.return_type())
+          ? exprt{gi_call}
+          : exprt{make_python_value(python_type_tagt::CLASS, gi_call)};
+      return if_exprt{
+        python_value_is(value, python_type_tagt::CLASS),
+        std::move(res),
+        std::move(fallback)};
+    };
     const bool int_slice =
       slice.type().id() == ID_signedbv || slice.type().id() == ID_unsignedbv ||
       slice.type().id() == ID_integer || slice.type() == python_int_type();
@@ -1997,60 +2047,11 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         return if_exprt{
           python_value_is(value, python_type_tagt::LIST),
           index_exprt{data, slice},
-          side_effect_expr_nondett{python_value_type(), get_location(expr)}};
+          class_getitem_or_nondet()};
       }
     }
-    // pv-CLASS __getitem__ dispatch (PLR §3.3.1): a class instance boxed in a
-    // python_value (e.g. an Any-annotated call result chained into a second
-    // subscript, `r["A"]["B"]` where __getitem__ returns a fresh instance)
-    // previously fell through to the nondet over-approximation -- the
-    // receiver's __getitem__ was never invoked, so stub response objects (the
-    // boto3 _AnyDict) raised spurious not-subscriptable/nondet reads (5
-    // real-world benchmarks). When exactly ONE user class defines __getitem__
-    // (the common stub-corpus case), dispatch to it under the CLASS tag;
-    // multiple owners keep the sound nondet fallback (a tag-directed if-chain
-    // mirroring the method-call virtual dispatch is a follow-up).
-    {
-      std::vector<std::string> gi_owners;
-      for(const auto &p : class_types)
-        if(
-          symbol_table.lookup(
-            irep_idt{"python::" + p.first + "::__getitem__"}) != nullptr)
-          gi_owners.push_back(p.first);
-      if(gi_owners.size() == 1)
-      {
-        const symbolt &gs = symbol_table.lookup_ref(
-          irep_idt{"python::" + gi_owners[0] + "::__getitem__"});
-        if(gs.type.id() == ID_code)
-        {
-          const code_typet &gt = to_code_type(gs.type);
-          const typet &cls_t = class_types.at(gi_owners[0]);
-          exprt self_ptr = typecast_exprt{
-            python_value_class_ptr(value), pointer_typet{cls_t, 64}};
-          exprt key_arg = slice;
-          if(gt.parameters().size() >= 2)
-            key_arg = coerce_call_argument(
-              slice,
-              gt.parameters()[1].type(),
-              gt.parameters()[1].get_identifier());
-          side_effect_expr_function_callt gi_call{
-            gs.symbol_expr(),
-            {self_ptr, key_arg},
-            gt.return_type(),
-            get_location(expr)};
-          exprt res =
-            is_python_value_type(gt.return_type())
-              ? exprt{gi_call}
-              : exprt{make_python_value(python_type_tagt::CLASS, gi_call)};
-          // Only the CLASS tag routes to __getitem__; other tags keep the
-          // sound nondet.
-          return if_exprt{
-            python_value_is(value, python_type_tagt::CLASS),
-            std::move(res),
-            side_effect_expr_nondett{python_value_type(), get_location(expr)}};
-        }
-      }
-    }
+    return class_getitem_or_nondet();
+    // (unreachable fall-through retained for documentation)
     // String key on a python_value (DICT tag) is not yet resolved to a
     // precise value here; fall through to the sound nondet python_value
     // over-approximation below rather than mis-indexing a list.
