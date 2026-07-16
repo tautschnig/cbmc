@@ -579,10 +579,10 @@ robustness, then capability; difficulty is noted where high.
 
 ## 0. Soundness-direction gaps (verified false proofs) — TOP PRIORITY  {#false-proofs}
 
-> **Current state (2026-07-10).** The canonical, categorised list of every
+> **Current state (2026-07-16).** The canonical, categorised list of every
 > soundness item lives in the
 > [architecture doc master inventory](python-frontend-architecture.md) — see its
-> **CURRENT STATE (2026-07-13)** header and the dated changelog notes; this
+> **CURRENT STATE (2026-07-16)** header and the dated changelog notes; this
 > section is the chronological design log.
 > **No known false proofs remain on ANY axis** (oracle, both standing gates, WIDE
 > negated AND WIDE value sweeps at 3000 seeds), **and no deferred soundness
@@ -598,7 +598,15 @@ robustness, then capability; difficulty is noted where high.
 > func-consume cursor havoc (`8115f204c1`); and **def-time default-argument
 > evaluation** (`ccc371931d`) — the last deferred residual. A fully PRECISE
 > generator-OBJECT model remains future work (plan §1) but is a PRECISION item —
-> every generator channel is sound.
+> every generator channel is sound. The 2026-07-14/16 real-world corpus
+> campaign additionally closed the **UNSAT-vacuity GLOBAL false-proof class**
+> (string-emitter scope invariant: six vectors, one historical sweep PASS
+> proven vacuous), the **safe_address_of** symex-crash class, made
+> TypeError/AttributeError obligations **handler-aware** (PLR §8.4 catch-alls
+> honored), and added **PEP 649 version-dependent annotation semantics**; the
+> remaining real-world **pv-provenance/iteration** residual (4 boto3 FPs) is
+> the same architectural family as the generator-object model — see §1's
+> per-instance-provenance note.
 > The **3 intrinsic residuals** (`ORACLE-INTRINSIC`): the annotation-laundering
 > pair — `004` (arg), `ty-010` (return-annotation) — caught under opt-in
 > `--python-check-annotations` (the former third member `007` list-element is now
@@ -1749,6 +1757,25 @@ precision false-positive.
 ---
 
 ## 1. Generators / `yield` (PLR §6.2.9)  {#generators}
+
+> **Per-instance element provenance (design item, 2026-07-16).** Two open
+> precision residuals share one architectural root: values extracted from a
+> per-instance container-like OBJECT lose their provenance and become wholly
+> nondet — (a) the precise generator-OBJECT model (consumption state tied to
+> the object through container/attribute/param channels; every channel is
+> SOUND today via cursor havoc / nondet, but imprecise), and (b) the
+> real-world **pv-provenance/iteration** family (4 boto3 FPs: iterating a
+> pv-CLASS stub response and subscripting the loop element false-alarms the
+> subscript tag obligation — the element's tag is unconstrained). Four
+> point-fix attempts at `__iter__` dispatch could not propagate element/length
+> constraints across the dispatched view and were reverted (2026-07-16): the
+> lesson is that dispatching the dunder is NOT enough — the ELEMENTS need a
+> provenance link back to the instance that produced them (the same
+> per-instance identity the generator cursor, the dict-value-byref plan, and
+> the fat-closure capture record all need). Any design here should solve the
+> shared root: a per-instance heap record carrying element type/tag bounds,
+> consulted by the subscript/iteration obligations. Until then the residuals
+> stay documented sound false alarms.
 
 **Status: DONE for the modelled scope.** The **list-with-cursor** model is
 implemented (see the architecture doc's "Generator semantics" section):

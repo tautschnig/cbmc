@@ -1238,7 +1238,7 @@ soundness, imprecision, performance, intrinsic.
 
 ### A. Soundness (false proofs / latent unsoundness / deliberate tradeoffs)
 
-**CURRENT STATE (2026-07-13) — read this first; the dated notes below are a
+**CURRENT STATE (2026-07-16) — read this first; the dated notes below are a
 chronological changelog.** The differential oracle (external CPython-semantics
 corpus, default config) tracks **0 known false proofs**, plus **3 intrinsic /
 out-of-subset residuals** (the annotation-laundering pair `004` call-arg +
@@ -1249,8 +1249,13 @@ out-of-subset residuals** (the annotation-laundering pair `004` call-arg +
 inventory B). **Every fuzzing axis is at zero false proofs**: the two standing
 gates (narrow PLR-fuzz + negated mutation-oracle), the WIDE negated sweep, AND
 the WIDE value sweep (3000 seeds each), alongside the oracle. **No deferred
-soundness residual remains** (the last one, def-time default-arg evaluation, was
-closed 2026-07-13). Two standing soundness-
+soundness residual remains**. The 2026-07-14/16 real-world campaign (see that
+changelog note) additionally closed the **UNSAT-vacuity GLOBAL false-proof
+class** (string-emitter output symbols shared across re-executions poisoned the
+whole formula — six vectors fixed, one historical sweep PASS proven vacuous and
+re-baselined), fixed a symex CRASH class, made TypeError/AttributeError
+obligations handler-aware per PLR §8.4, and added PEP 649 version-dependent
+annotation semantics. Two standing soundness-
 regression gates run after every change: the **oracle 0-NEW gate** (real-world
 corpus) and the **PLR-fuzz 0-NEW gate** (template + randomized PLR-tagged programs
 vs a committed baseline of **0** false-proof labels — see Sweep rounds 4–8). **The
@@ -1513,6 +1518,73 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > Three KNOWNBUGs promoted to CORE this arc (`slot-pun-list-element-knownbug` →
 > `-subscript-sound`, `slot-pun-attr-field-knownbug` → `-external-sound`,
 > `default-arg-raises-knownbug` → `-sound`).
+>
+> **Continuation (2026-07-14 → 2026-07-16) — the real-world corpus campaign.**
+> Running the 51-benchmark AWS/boto3 suite (python-verification-benchmarks)
+> end-to-end drove the suite from a de-poisoned baseline of CLEAN 18 / FP 17 /
+> TOERR 8 to **CLEAN 34 / TP 7 / FP 4 / TOERR 0 / OOM 0**, surfacing and fixing
+> several classes no fuzzing axis had reached:
+> - **UNSAT-vacuity GLOBAL false-proof class** (`9434661bbf`, `b70b52746d`): a
+>   string-emitter call site that omits the enclosing-function scope gives its
+>   solver output symbols GLOBAL identity; re-execution (loop iterations — the
+>   long-known form — or a TWICE-CALLED function) asserts conflicting content
+>   constraints over one SSA value → the refinement formula goes UNSAT →
+>   **every property in the program vacuously SUCCESSFUL**. Six vectors closed
+>   (binop concat, str(int), str(float), str.strip, subscript-slice ×2-audited);
+>   `emit_string_function`'s in_loop/scope parameters lost their DEFAULTS so
+>   every call site decides explicitly (compiler-enforced invariant, documented
+>   at the emitter). The universal audit probe: the op in a twice-called
+>   function + `assert False` (provable only if UNSAT). PLR-guardrail tradeoffs
+>   taken soundly: `re-ignorecase-dotall-flags` downgraded to KNOWNBUG (scoping
+>   the slice site costs regex-flags precision — a sound false alarm);
+>   `github_3553`'s historical sweep PASS was PROVEN vacuous (the old binary
+>   verifies it with `assert False` appended) and re-baselined. CORE pins:
+>   `string-{concat,of-int,of-float,strip,slice}-twice-called-function`.
+> - **safe_address_of** (`fd7824adb6`): a method call through a CLASS-LEVEL-
+>   annotated field reads the receiver via the shadow-fallback ternary; taking
+>   a plain address_of of that if_exprt crashed symex ("address_arithmetic:
+>   non-persistent array") — 8/51 benchmarks crashed, ONE signature. The helper
+>   distributes address-of over if_exprt arms (both genuine lvalues, preserving
+>   reference semantics), materialising a temp otherwise. CORE
+>   `class-attr-field-method-call`.
+> - **Handler-aware obligations (PLR §8.4)** (`fc21afef88`, `d97fe0dfde`):
+>   `exception_is_caught` now honors catch-alls (`except Exception` catches —
+>   the lint-style carve-out contradicted PLR); the not-subscriptable TypeError
+>   obligations raise catchably when an enclosing handler covers TypeError
+>   (definite property otherwise); and the call-argument tag obligation became
+>   a CONDITIONAL CATCHABLE TypeError at the binding + a GUARDED bind (unwrap
+>   on tag-match, nondet otherwise — never a silent pun). A pure guarded-nondet
+>   variant WITHOUT the exception was tried and REJECTED: it re-opened the 004
+>   false proof. CORE `typeerror-caught-by-handler`(+`-uncaught-definite`);
+>   pins `method-arg-tag-obligation`/`param-coercion-typeerror` updated to the
+>   exception-based property.
+> - **PEP 649 version-dependent annotations** (`418377d4af`): the AST payload
+>   carries `_python_version`; a >= 3.14 parser enables lazy (future_annotations)
+>   semantics automatically, <= 3.13 keeps the eager def-time NameError. Found
+>   via 26/51 corpus programs using unimported annotation names (vacuously
+>   SUCCESSFUL under --python-no-exception-checks). CORE
+>   `annotation-nameerror-eager-312`.
+> - **Dict[str, object] lowering** (`011b11b7b0`): non-"safe" dict value types
+>   lowered to python_int_type() — a dict modelled as an int (latent
+>   unsoundness + the dominant corpus FP cluster). Now dict[K, python_value]
+>   for safe keys, python_value otherwise; enabled by the Any-unbox model-bound
+>   assumption and the mutation-havoc moving to pending_post_checks. CORE
+>   `dict-object-value-annotation`.
+> - **Precision**: sys.argv modelled (nondet list[str]; guarded access precise,
+>   unguarded may-IndexError — CORE `sys-argv-guarded`/`-unguarded-oob`);
+>   module-attribute reads return non-constant module-global LVALUES; nondet
+>   stub initialisers register typed valueless globals; pv-CLASS `__getitem__`
+>   single-owner dispatch with shape-based key binding (CORE
+>   `pv-class-getitem-dispatch`), the dispatch serving as the fallback arm of
+>   both int- and string-key paths.
+> Remaining real-world residuals (tracked in the private findings repo): a
+> 4-FP **pv-provenance/iteration** family (a wholly-nondet python_value flowing
+> into the subscript tag obligation via pv-CLASS iteration; four `__iter__`
+> dispatch attempts failed to propagate element/length constraints and were
+> REVERTED — the principled fix is per-instance element provenance, the same
+> architectural family as the generator-object model, plan §1), two stub-heavy
+> timeouts, and MISS-by-unreachedness cases (a stub CONTRACT fires only if the
+> buggy method is called; whole-program semantics).
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
@@ -2269,6 +2341,7 @@ guards against new false proofs.
 | dict `del` through a call (c2) | `del p["x"]` inside `rm(p)` does not propagate the deletion to the caller`s dict, so a later `pt["x"]` misses the `KeyError` | **OPEN, deep**: dicts are by-reference for EXISTING-key value modifications but NOT for STRUCTURAL mutations — adding a key or deleting one does not cross the call boundary (keys/length arrays not shared); same representation limit as dict-value-byref | [dict-byref](python-frontend-dict-value-byref-plan.md) |
 | `del obj.attr` + `__getattr__` fallback (c4/laurel-006) | after `del self.x`, access falls to `__getattr__` returning a different type; the concretely-typed field could not hold it, so `del` havocked the slot to nondet (sound for a stale read, but it missed the cross-type `TypeError`) | **CLOSED 2026-06-29** (`getattr-after-del`): a field `del self.x`-ed in a method of a `__getattr__`-class is typed `python_value`, and `del` stores `__getattr__`'s result into the slot, so the cross-type use routes through the operand obligation and raises `TypeError`. The deletable-field scan is module-wide, so both `del self.x` (in a method) and a direct `del f.x` (external instance) are covered. Present-int read / del-then-reassign / non-deleted field / no-`__getattr__` class all correct. **Residual:** `del o.x` through an Any-boxed FUNCTION PARAMETER does not propagate (the del handler cannot resolve the param's class) -- the structural-mutation-through-a-call family (c2) | [plan §10](python-frontend-plan.md#descriptors) |
 | **Narrowing-invalidation cluster** (CLOSED 2026-06-28) | a value's runtime type changes via an effect cbmc does not model, then it is used at the stale type → CPython `TypeError`, cbmc verifies. Distinct roots (**not one fix**). **CLOSED:** `__setattr__`/`__getattribute__` (2026-06-25, over-approx to nondet `python_value`); **enum `.value` after a member retag** (2026-06-28: heterogeneous-enum value type is `python_value` + `.value` resolves on enum-typed variables AND fields, so the retagged value routes through the operand/tag obligations — `enum-value-after-mutation` is now CORE). **CLOSED 2026-06-28 (reference-semantics-for-instances):** context-manager `__enter__`/`__exit__` field mutation AND composition aliasing were the SAME *concrete-class-typed slot copies the instance* root, now fixed (instance fields are by-reference) (a `t: SomeClass` param/field is value-copied, so a mutation through it is invisible to the original; the Any-typed path preserves identity by-address). Also OPEN: inheritance+union virtual dispatch, same-expression **eval-order × union-retag** | partly **UNSOUND** (the reference-semantics false proofs remain), confined to advanced/dynamic features; the reference-semantics cases AND the eval-order case (`union-use-after-mutation-typeerror`, 2026-06-28: a side-effecting binop left operand is now sequenced before a right read so a same-expression union retag is observed) are now CORE. **Fully CLOSED (2026-06-28).** The *mirror* eval-order case (`x + g()` where the side-effecting operand is on the RIGHT and mutates a value read on the LEFT) is now also **CLOSED 2026-06-30** (`binop-evalorder-left-snapshot`; module-scope left snapshot — see the "binop eval-order MIRROR" row) | [plan §0](python-frontend-plan.md#false-proofs) |
+| pv-provenance / iteration (real-world residual) | a WHOLLY-NONDET `python_value` (e.g. the loop element of a pv-CLASS iteration over a stub response object) flowing into the subscript tag obligation false-alarms — the tag genuinely might be non-container. Four `__iter__`-dispatch attempts failed to propagate element/length constraints across the dispatched view and were reverted; the principled fix is PER-INSTANCE ELEMENT PROVENANCE, the same architectural family as the generator-object model. 4 boto3 benchmarks (ecs/ses/athena + the bedrock capacity bound) | [plan §1](python-frontend-plan.md#generators) |
 | Any/union used at a wrong type | a tagged-union/`Any` value used as a concrete type with a mismatched runtime tag now raises `TypeError` via **tag obligations** at the operator, subscript, and (provenance-gated) call-argument boundaries — was a silent wrong-field read. The remaining hole is the call-argument obligation only firing for **explicitly-annotated** scalar params (inferred/Any params excluded to avoid false alarms) | sound (closed for the three covered sites); see the tag-obligation table in [Type-coercion at boundaries](#any--union-tag-obligations-typeerror-on-a-wrong-runtime-tag) | [plan §0](python-frontend-plan.md#false-proofs) |
 | Definite integer overflow (default 64-bit) | the default 64-bit model silently **wrapped** on a statically-provable >64-bit result (`10**19 < 0`, `1<<70 == 0`) — a false proof. Now reports `python-model-bound` (assert+assume cut) on a DEFINITE overflow; a symbolic/computed overflow remains the documented 64-bit bound (use `--python-unbounded-ints`, now sound incl. shifts/bitwise) | sound (definite cases reported; symbolic = documented bound) | [plan §0](python-frontend-plan.md#false-proofs) |
 | Unknown annotation fallback | `convert_type_annotation` lowered an annotation it could not model (bare `range`/`tuple`, unmodeled builtin, unknown forward-ref) to `python_int_type()`, modeling an unknown value with concrete int semantics — a latent unsoundness that could mask a real bug | **CLOSED 2026-06-26**: unknown ⇒ `python_value` (Any/top), the sound over-approximation (sweep gained `ethereum_bug-fail`). Lock-in `check-annotations-unknown-is-any`. **Exception still open:** a dict with a non-"safe" value type (`dict[str, Any]`) still falls back to int — an opt-in `--python-check-annotations` false positive (not a false proof), blocked by a separate Any-valued-container capacity-model-bound issue; pinned `check-annotations-any-dict-knownbug` | [plan §9](python-frontend-plan.md#precision) |
@@ -2292,7 +2365,7 @@ genuinely-false negatives stay FAILED, default suite green). **Confirmed OPT-IN 
 | Generators | list-with-cursor model: inter-yield side-effect ordering is eager (not faithful); the *value sent in* via `gen.send(v)` is not passed into the pending `yield` expression (the priming-state TypeError IS modelled — see soundness/Generator semantics). **Consumption-state / identity is a known false-proof cluster, NOT a mere imprecision — see section A** (`for` after partial `next`, alias, container slot). (The earlier "module-global free vars in a generator `if`" and "cross-boundary list-shape" residuals are resolved.) | [plan §1](python-frontend-plan.md#generators) |
 | Closures | **escaping** closures over-approximate captured free vars to nondet (late binding `lambda: i` in a loop imprecise); non-escaping + `nonlocal` mutation + capture-through-param are correct | [plan §2](python-frontend-plan.md#closures) + [fat-closure deep-dive](python-frontend-fat-closure-plan.md) |
 | Strings (refined default) | ordering, substring `replace`, `split`, `casefold`/`title`, symbolic `count` — sound-but-imprecise; all precise (or precise-able) on the **native** backend opt-in | [strings plan](python-frontend-strings-plan.md#strings) |
-| Regex | symbolic-subject and negated-membership (`re4`/`re11`) imprecise/slow on refined; precise on native | [strings plan §4](python-frontend-strings-plan.md#regex) |
+| Regex | symbolic-subject and negated-membership (`re4`/`re11`) imprecise/slow on refined; precise on native. **2026-07-16:** the DOTALL/combined-flags precision (`re-ignorecase-dotall-flags`) is KNOWNBUG — scoping the subscript-slice string-emitter site (a soundness fix, see the UNSAT-vacuity note) costs it; re-promote when the re-intrinsics' string view stops depending on global emitter symbols | [strings plan §4](python-frontend-strings-plan.md#regex) |
 | Lists | symbolic-list precision cluster (`nondet_list*`, `list_extend*`, `list-sort*`) — spurious failures; `list.count(x) == N` over a concrete list is not proven (precision) | [plan §9](python-frontend-plan.md#precision) |
 | Tuples | fixed-tuple **slicing** `t[1:]` is now modelled exactly for constant bounds (step 1, negatives, `[::-1]`; `tuple-slice` CORE) — **was** mis-modelled (wrong `len`/index). Remaining: SYMBOLIC-bound or general-step tuple slices fall through (over-approx); a `tuple[int, ...]` variable-length sequence model (vs Any) is unbuilt — a precision item (the element value read from a boxed/variadic tuple is a sound nondet). **CLOSED (2026-07-10):** a `tuple[...]`-annotated OR plain **parameter** (a TUPLE-tagged python_value) is now correctly subscriptable — indexing/slicing no longer raises a spurious "not subscriptable" TypeError (`tuple-param-subscript-nofp` CORE); TUPLE was missing from the python_value subscriptable-tag set. `tuple.count`/`index` exact-value asserts not always proven | [plan §9](python-frontend-plan.md#precision) |
 | Complex | `complex_*` edge precision (binop promotion, builtins, conjugate, `cmath` edges) | [plan §9](python-frontend-plan.md#precision) |
