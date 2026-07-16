@@ -1202,8 +1202,7 @@ std::optional<exprt> python_convertert::try_string_method(
         symbol_table,
         pending_checks,
         loop_depth > 0,
-        // global (documented): see emit_string_function scope invariant.
-        std::string{});
+        current_function);
     }
     // Return nondet string with constraints for symbolic strings
     {
