@@ -1132,8 +1132,14 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         symbol_table,
         pending_checks,
         loop_depth > 0,
-        // global (documented): see emit_string_function scope invariant.
-        std::string{});
+        // Scoped (soundness outranks precision): with GLOBAL symbols this
+        // substring site is a live instance of the twice-called-function
+        // vacuity FALSE PROOF (the `slice` probe / CORE
+        // string-slice-twice-called-function). Scoping it costs the
+        // re.IGNORECASE|DOTALL flags precision (re-ignorecase-dotall-flags,
+        // downgraded to KNOWNBUG) -- a sound false alarm, the acceptable
+        // direction under the PLR guardrail.
+        current_function);
     }
 
     const auto &st = to_struct_type(value.type());
@@ -1681,8 +1687,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         symbol_table,
         pending_checks,
         loop_depth > 0,
-        // global (documented): see emit_string_function scope invariant.
-        std::string{});
+        current_function);
     }
     typet str_type = python_string_type();
     const auto &data_type = array_typet(

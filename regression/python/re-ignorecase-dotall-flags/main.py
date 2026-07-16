@@ -1,3 +1,9 @@
+# KNOWNBUG (precision, downgraded 2026-07-16): scoping the subscript-slice
+# string-emitter site (a soundness fix -- it was a live instance of the
+# twice-called-function UNSAT-vacuity FALSE PROOF, see
+# string-slice-twice-called-function) regressed the DOTALL/combined-flags
+# precision below to a sound false alarm. Re-promote once the re-intrinsics'
+# string view no longer depends on global emitter symbols.
 # re IGNORECASE / DOTALL flag support via the frontend call-site rewrite.
 # A constant `flags=` argument does not constant-propagate into the re stub
 # body, so the inline-flag prefix the stub would add was lost and the match
