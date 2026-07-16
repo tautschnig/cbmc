@@ -1,0 +1,8 @@
+CORE
+main.py
+--unwind 4 --no-unwinding-assertions
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+^SIGNAL=0$
+--
+--

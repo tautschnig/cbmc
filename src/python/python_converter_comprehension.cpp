@@ -219,6 +219,7 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       saved.swap(pending_checks);
       if(iter_val.type().id() == ID_pointer)
         iter_val = dereference_exprt{iter_val};
+
       // PLR §3.3.1: a comprehension over a class instance whose MRO defines
       // neither __iter__ nor __getitem__ is not iterable -> TypeError (mirrors
       // the for-loop check). Gated identically so a __getitem__-only sequence
@@ -243,6 +244,22 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
         {
           emit_conditional_exception(true_exprt{}, "TypeError");
         }
+      }
+      // Shared pv-iterable lowering (iterability obligation + identity-
+      // refined __iter__ dispatch) -- the same whole-group as the for-loop:
+      // a comprehension over an Any-held CLASS instance previously iterated
+      // the garbage list slot (wholly-nondet elements, false alarms) with NO
+      // iterability obligation (false proof for an Any-held int). Runs
+      // AFTER the provably-non-iterable-scalar check above: lowering
+      // replaces iter_val with the list view, which would MASK the
+      // constant-None detection (a regression the noniterable-comprehension
+      // test caught).
+      if(is_python_value_type(iter_val.type()))
+      {
+        code_blockt pv_header;
+        iter_val = lower_pv_iterable(iter_val, pv_header, get_location(expr));
+        for(auto &st : pv_header.statements())
+          iter_checks.push_back(std::move(st));
       }
       bool const_len = iter_val.id() == ID_struct &&
                        !iter_val.operands().empty() &&

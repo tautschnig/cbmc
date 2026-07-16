@@ -1950,9 +1950,19 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     // below assumed the LIST tag unconditionally, so e.g.
     // `def first(xs): return xs[0]` called as `first(5)` silently read
     // garbage instead of raising. Emit a tag obligation: the tag must be a
-    // container (STR/LIST/DICT) or CLASS (the instance may define
-    // __getitem__, dispatched on the concrete-struct path). NONE is already
-    // handled (TypeError) at the top of this function.
+    // container (STR/LIST/DICT) or a CLASS instance whose class actually
+    // defines __getitem__ -- dispatched on per-instance class identity
+    // (__class_tag through __class_ptr; see plan §1 per-instance
+    // provenance). A blanket CLASS disjunct was a FALSE PROOF: an instance
+    // of a class WITHOUT __getitem__ satisfied the obligation and silently
+    // took the garbage list-slot read, where CPython raises TypeError.
+    // NONE is already handled (TypeError) at the top of this function.
+    std::vector<std::string> subscript_owners;
+    for(const auto &p : class_types)
+      if(
+        symbol_table.lookup(irep_idt{"python::" + p.first + "::__getitem__"}) !=
+        nullptr)
+        subscript_owners.push_back(p.first);
     exprt subscriptable = or_exprt{
       or_exprt{
         python_value_is(value, python_type_tagt::STR),
@@ -1960,7 +1970,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       or_exprt{
         or_exprt{
           python_value_is(value, python_type_tagt::DICT),
-          python_value_is(value, python_type_tagt::CLASS)},
+          python_value_is_class_of(value, subscript_owners)},
         // PLR §6.10: a boxed tuple IS subscriptable (a plain/forward-ref-
         // annotated tuple param, or a variadic `tuple[int,...]`, flows here as
         // a TUPLE-tagged python_value). Omitting it raised a spurious
@@ -2020,12 +2030,29 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         {self_ptr, key_arg},
         gt.return_type(),
         get_location(expr)};
-      exprt res =
-        is_python_value_type(gt.return_type())
-          ? exprt{gi_call}
-          : exprt{make_python_value(python_type_tagt::CLASS, gi_call)};
+      // Materialise the call into a temp FIRST: a side_effect function call
+      // nested inside an if_exprt arm is never lowered by goto-convert (the
+      // mundane bug behind several reverted dispatch attempts) -- the ternary
+      // must select between SYMBOLS.
+      static unsigned gi_tmp_ctr = 0;
+      const std::string gtn = "__getitem_disp_" + std::to_string(gi_tmp_ctr++);
+      const irep_idt gtid{qualify_name(gtn)};
+      if(symbol_table.lookup(gtid) == nullptr)
+      {
+        symbolt ts{gtid, gt.return_type(), "python"};
+        ts.base_name = gtn;
+        ts.is_lvalue = true;
+        ts.is_state_var = true;
+        ts.is_static_lifetime = current_function.empty();
+        symbol_table.add(ts);
+      }
+      symbol_exprt gtsym = symbol_table.lookup_ref(gtid).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{gtsym, gi_call});
+      exprt res = is_python_value_type(gt.return_type())
+                    ? exprt{gtsym}
+                    : exprt{make_python_value(python_type_tagt::CLASS, gtsym)};
       return if_exprt{
-        python_value_is(value, python_type_tagt::CLASS),
+        python_value_is_class_of(value, gi_owners),
         std::move(res),
         std::move(fallback)};
     };

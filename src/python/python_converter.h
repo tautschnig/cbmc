@@ -450,6 +450,33 @@ private:
   std::map<std::string, struct_typet> class_types;
   std::map<std::string, int> class_tag_ids;
 
+  /// Per-instance class-identity provenance (see plan §1). A CLASS-tagged
+  /// python_value's opaque __class_ptr points at an instance struct whose
+  /// first component is __class_tag (int32), set at construction and kept by
+  /// boxing (the same field isinstance() dispatches on). This reads it back:
+  /// *(int32*)__class_ptr. Callers must guard with tag == CLASS.
+  exprt python_value_class_tag(const exprt &value) const;
+
+  /// tag == CLASS AND the instance's __class_tag matches one of \p owners
+  /// (class names). The identity conjunct makes dunder dispatch and
+  /// tag obligations SOUND: without it a CLASS-tagged instance of a class
+  /// WITHOUT the dunder would silently take the owner's path (false proof --
+  /// CPython raises TypeError). Owners without a registered tag id
+  /// contribute nothing (conservative: identity check fails).
+  exprt python_value_is_class_of(
+    const exprt &value,
+    const std::vector<std::string> &owners) const;
+
+  /// Lower a python_value ITERABLE for iteration contexts (for-loops and
+  /// comprehensions): emits the PLR §6.13 iterability tag obligation
+  /// (catchable per §8.4) and the identity-refined single-owner __iter__
+  /// dispatch into \p header (which the caller must emit BEFORE the loop),
+  /// returning the list[python_value] view to iterate.
+  exprt lower_pv_iterable(
+    const exprt &iterable,
+    code_blockt &header,
+    const source_locationt &loc);
+
   /// Map from class name to its base class names (for isinstance)
   std::map<std::string, std::vector<std::string>> class_bases;
   /// PLR §8.13: enum classes (a class deriving from enum.Enum, possibly
