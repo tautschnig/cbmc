@@ -1557,13 +1557,30 @@ skip_string_unroll:;
       // there is no self-iterator __next__ above; gated so a __getitem__-only
       // class (sequence protocol) or an __iter__ returning a separate iterator
       // object is NOT flagged (those fall through, modelled imprecisely).
+      const bool iter_invalid =
+        iter_protocol_of(bare) == iter_protocol_kindt::INVALID;
       if(
-        !class_mro_defines(bare, "__iter__") &&
-        !class_mro_defines(bare, "__getitem__"))
+        (!class_mro_defines(bare, "__iter__") &&
+         !class_mro_defines(bare, "__getitem__")) ||
+        // PLR §3.3.1 iterator protocol: an __iter__ provably returning a
+        // non-iterator raises "TypeError: iter() returned non-iterator"
+        // and SHADOWS the legacy __getitem__ protocol (CPython-verified).
+        // Without this the loop silently iterated the returned list value
+        // (a false proof).
+        iter_invalid)
       {
         source_locationt tloc = loc;
         tloc.set_property_class("type-error");
-        tloc.set_comment("object is not iterable");
+        tloc.set_comment(
+          iter_invalid ? "iter() returned non-iterator (TypeError)"
+                       : "object is not iterable");
+        // PLR §8.4: catchable when an enclosing handler covers TypeError.
+        if(exception_is_caught("TypeError"))
+        {
+          emit_conditional_exception(true_exprt{}, "TypeError");
+          flush_header_checks();
+          return finalize_for(code_skipt{});
+        }
         code_assertt te{false_exprt{}};
         te.add_source_location() = tloc;
         return finalize_for(std::move(te));
@@ -2396,9 +2413,19 @@ exprt python_convertert::lower_pv_iterable(
     const bool has_getitem =
       symbol_table.lookup(irep_idt{"python::" + p.first + "::__getitem__"}) !=
       nullptr;
-    if(has_iter)
+    // PLR §3.3.1 iterator protocol: an __iter__ classified INVALID
+    // (provably returns a non-iterator -- a literal list, a constant,
+    // `return self` without __next__) raises
+    // "TypeError: iter() returned non-iterator" and SHADOWS the legacy
+    // __getitem__ protocol (verified against CPython). Such a class is NOT
+    // iter-capable and must not take the dispatch path. VALID/UNKNOWN keep
+    // the previous behavior (UNKNOWN unflagged -- precision default).
+    const auto ipk = class_iter_protocol.find(p.first);
+    const bool iter_invalid = ipk != class_iter_protocol.end() &&
+                              ipk->second == iter_protocol_kindt::INVALID;
+    if(has_iter && !iter_invalid)
       it_owners.push_back(p.first);
-    if(has_iter || has_getitem)
+    if((has_iter && !iter_invalid) || (!has_iter && has_getitem))
       iter_capable.push_back(p.first);
   }
   // PLR §6.13: iterating a value whose runtime tag is not iterable
@@ -2504,6 +2531,34 @@ exprt python_convertert::lower_pv_iterable(
           header.add(code_frontend_assignt{
             member_exprt{vsym, "length", signedbv_typet{64}},
             member_exprt{tsym, "length", signedbv_typet{64}}});
+          // Per-instance ELEMENT provenance (phase 2): each in-bounds slot
+          // of the view is the WRAPPED dispatched element, not nondet --
+          // `total += v` over `__iter__ -> iter([1, 2])` now computes 3
+          // instead of nondet. Out-of-bounds slots stay nondet (never
+          // read: the loop is bounded by length).
+          {
+            // Both types are plain python_list structs: guaranteed by the
+            // is_python_list_type gate above (ID_struct only).
+            const auto &ret_st = to_struct_type(it_t.return_type());
+            const auto &src_arr_t =
+              to_array_type(ret_st.components()[1].type());
+            const auto &dst_st = to_struct_type(list_view.type());
+            const auto &dst_arr_t =
+              to_array_type(dst_st.components()[1].type());
+            member_exprt src_data{tsym, "data", src_arr_t};
+            member_exprt dst_data{vsym, "data", dst_arr_t};
+            member_exprt src_len{tsym, "length", signedbv_typet{64}};
+            for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; ++i)
+            {
+              exprt idx = from_integer(i, signedbv_typet{64});
+              exprt elem = index_exprt{src_data, idx};
+              exprt wrapped = wrap_value(elem);
+              code_frontend_assignt asg{
+                index_exprt{dst_data, idx}, std::move(wrapped)};
+              header.add(code_ifthenelset{
+                binary_relation_exprt{idx, ID_lt, src_len}, std::move(asg)});
+            }
+          }
           list_view = if_exprt{
             python_value_is_class_of(iterable, it_owners),
             vsym,
