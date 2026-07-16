@@ -870,10 +870,25 @@ void python_convertert::process_imported_module(
             target = &(*as_array(tgts).begin());
         }
         const jsont &value = json_member(stmt, "value");
+        // nondet_* intrinsic initializer (library stubs: `argv: list =
+        // nondet_list(4, nondet_str())`): register the symbol WITHOUT a value
+        // -- an uninitialised global is nondet, which is exactly the model.
+        // The declared/converted TYPE is what matters (a list struct makes
+        // `sys.argv[i]` subscriptable with proper bounds checks; the guard
+        // `len(sys.argv) == 2` then constrains the same symbol's length).
+        bool nondet_init = false;
+        if(is_node_type(value, "Call"))
+        {
+          const jsont &cf = json_member(value, "func");
+          if(
+            is_node_type(cf, "Name") &&
+            json_string(json_member(cf, "id")).rfind("nondet_", 0) == 0)
+            nondet_init = true;
+        }
         if(
           target != nullptr && is_node_type(*target, "Name") &&
           (is_node_type(value, "Constant") || is_node_type(value, "Dict") ||
-           is_node_type(value, "List")))
+           is_node_type(value, "List") || nondet_init))
         {
           std::string vname = json_string(json_member(*target, "id"));
           irep_idt vid{"python::" + vname};
@@ -887,7 +902,10 @@ void python_convertert::process_imported_module(
               vs.is_lvalue = true;
               vs.is_state_var = true;
               vs.is_static_lifetime = true;
-              vs.value = v;
+              // A nondet initializer registers the TYPE only; the global stays
+              // uninitialised (= nondet), the sound model.
+              if(!nondet_init)
+                vs.value = v;
               symbol_table.add(vs);
             }
           }

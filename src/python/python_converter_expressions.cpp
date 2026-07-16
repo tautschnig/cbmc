@@ -3266,6 +3266,32 @@ exprt python_convertert::convert_attribute(const jsont &expr)
       const symbolt *cs = symbol_table.lookup(irep_idt{"python::" + attr});
       if(cs != nullptr && cs->value.is_not_nil() && cs->value.is_constant())
         return cs->value;
+      // Non-constant module-level variable (e.g. `sys.argv`, a list struct):
+      // return the SYMBOL as an lvalue read -- len()/subscript then operate on
+      // the registered stub value instead of a nondet attribute (which raised
+      // spurious not-subscriptable TypeErrors on `sys.argv[1]`, 3 real-world
+      // benchmarks). Same python::<attr> keying (and the same main-module
+      // name-collision caveat) as the constant fold above.
+      if(
+        cs != nullptr && cs->is_lvalue && cs->is_state_var &&
+        cs->type.id() != ID_code)
+      {
+        // A nondet-initialised list-typed module global (sys.argv): assume the
+        // bounded-container model on its length at each read (intrinsic,
+        // inventory D -- the same assumption every nondet-list creation makes;
+        // an uninitialised global otherwise has an unconstrained length, and
+        // e.g. `len(sys.argv) >= 0` would spuriously fail).
+        if(is_python_list_type(cs->type))
+        {
+          const signedbv_typet i64{64};
+          member_exprt len{cs->symbol_expr(), "length", i64};
+          pending_checks.push_back(code_assumet{and_exprt{
+            binary_relation_exprt{len, ID_ge, from_integer(0, i64)},
+            binary_relation_exprt{
+              len, ID_le, from_integer(PYTHON_MAX_LIST_LENGTH, i64)}}});
+        }
+        return cs->symbol_expr();
+      }
     }
   }
 
