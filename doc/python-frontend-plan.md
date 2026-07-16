@@ -1772,10 +1772,25 @@ precision false-positive.
 > lesson is that dispatching the dunder is NOT enough — the ELEMENTS need a
 > provenance link back to the instance that produced them (the same
 > per-instance identity the generator cursor, the dict-value-byref plan, and
-> the fat-closure capture record all need). Any design here should solve the
-> shared root: a per-instance heap record carrying element type/tag bounds,
-> consulted by the subscript/iteration obligations. Until then the residuals
-> stay documented sound false alarms.
+> the fat-closure capture record all need).
+>
+> **PHASE 1 LANDED (`87fb98a4e5`, 2026-07-16 pm).** The identity carrier
+> already existed: every instance struct's `__class_tag` (which isinstance
+> dispatches on). Phase 1 stamps it at EVERY construction
+> (build_class_construction) and consults it via
+> `python_value_is_class_of` in: the pv-CLASS `__getitem__`/`__iter__`
+> dispatch guards, the subscript obligation's CLASS arm, and a NEW
+> PLR §6.13 iterability obligation (for-loops + comprehensions, catchable
+> per §8.4). Five false-proof classes closed (wrong-class dunder dispatch
+> ×2, no-iterability ×2 shapes, dropped for-header checks) and the boto3
+> iteration FP family resolved (ecs/ses CLEAN; athena → timeout, its
+> pv-SLICE `__getitem__` dispatch is the phase-2 item). The earlier reverted
+> attempts' root cause was mundane, not architectural: a side_effect call
+> nested in an if_exprt arm is never lowered, and convert_for dropped
+> pending_checks pushed after its pre_loop flush. REMAINING for phase 2+:
+> per-instance ELEMENT provenance (element type/tag bounds on the producing
+> instance — generator-object precision, pv-slice dispatch, dict-value-byref
+> unification).
 
 **Status: DONE for the modelled scope.** The **list-with-cursor** model is
 implemented (see the architecture doc's "Generator semantics" section):
