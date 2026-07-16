@@ -794,8 +794,8 @@ collect_param_names(const jsont &func_def)
   const exprt::operandst &extra_args,
   symbol_table_baset &symbol_table,
   std::vector<codet> &pending_checks,
-  bool in_loop = false,
-  const std::string &scope = std::string{})
+  bool in_loop,
+  const std::string &scope)
 {
   // Scope the result's output symbols to the enclosing function (when
   // known) and DECL them up-front, so each dynamic invocation gets a
@@ -823,7 +823,15 @@ collect_param_names(const jsont &func_def)
   // pointer havoc creates one fresh address-of object per call
   // per execution, which would cumulate above CBMC's 256-object
   // cap on string-heavy class re-instantiation tests
-  // (github_2992_lower) if applied unconditionally.
+  // (github_2992_lower) if applied unconditionally. NOTE: inside a FUNCTION
+  // (non-empty scope) no havoc is needed either -- make_nondet_string makes
+  // the output symbols function-LOCAL and DECLs them per invocation, so each
+  // dynamic call gets fresh instances. The critical invariant is that EVERY
+  // call site inside a function passes its scope: a scope-less call in a
+  // twice-called function produced conflicting constraints over one global
+  // symbol -> UNSAT -> every property vacuously SUCCESSFUL (a global false
+  // proof; the boto3 factory-raise vacuity). emit_string_function therefore
+  // takes in_loop/scope WITHOUT defaults, forcing call sites to decide.
   if(in_loop)
   {
     pending_checks.push_back(code_frontend_assignt{
@@ -929,8 +937,16 @@ collect_param_names(const jsont &func_def)
   std::vector<codet> &pending_checks)
 {
   constant_exprt lit_val{s, string_typet{}};
+  // A literal's solver constraints are IDENTICAL on every execution (constant
+  // content), so re-execution cannot conflict: global output symbols are safe
+  // here (in_loop=false, no scope).
   return emit_string_function(
-    ID_cprover_string_literal_func, {lit_val}, symbol_table, pending_checks);
+    ID_cprover_string_literal_func,
+    {lit_val},
+    symbol_table,
+    pending_checks,
+    false,
+    std::string{});
 }
 
 /// Build a struct_exprt representing an inline string literal with a

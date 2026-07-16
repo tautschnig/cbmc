@@ -3566,7 +3566,11 @@ std::optional<exprt> python_convertert::try_builtin_call(
           {as_i64},
           symbol_table,
           pending_checks,
-          loop_depth > 0);
+          loop_depth > 0,
+          // global (documented): see emit_string_function -- scoping these
+          // sites regressed refined-string precision (re-flags/github_2992);
+          // they are candidates for the per-site scope audit.
+          std::string{});
         auto ensure_fn = [&](const irep_idt &fid)
         {
           if(symbol_table.lookup(fid) == nullptr)
@@ -3611,7 +3615,11 @@ std::optional<exprt> python_convertert::try_builtin_call(
           {arg},
           symbol_table,
           pending_checks,
-          loop_depth > 0);
+          loop_depth > 0,
+          // global (documented): see emit_string_function -- scoping these
+          // sites regressed refined-string precision (re-flags/github_2992);
+          // they are candidates for the per-site scope audit.
+          std::string{});
         auto ensure_fn2 = [&](const irep_idt &fid)
         {
           if(symbol_table.lookup(fid) == nullptr)

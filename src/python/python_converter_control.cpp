@@ -1934,7 +1934,9 @@ skip_string_unroll:;
             {src_struct, start64, end64},
             symbol_table,
             pending_checks,
-            /*in_loop=*/true);
+            /*in_loop=*/true,
+            // global (documented): see emit_string_function scope invariant.
+            std::string{});
           // Move the new pending checks into body_block so they
           // execute inside the loop, before the loop_var assign.
           for(std::size_t k = pre_size; k < pending_checks.size(); ++k)

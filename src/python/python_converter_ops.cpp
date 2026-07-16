@@ -1069,7 +1069,8 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         {to_string_struct(left), to_string_struct(right)},
         symbol_table,
         pending_checks,
-        loop_depth > 0);
+        loop_depth > 0,
+        current_function);
     }
     typet str_type = python_string_type();
     const auto &data_type = array_typet(

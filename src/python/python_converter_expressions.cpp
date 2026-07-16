@@ -1131,7 +1131,9 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         {src_struct, lo_e, hi_e},
         symbol_table,
         pending_checks,
-        loop_depth > 0);
+        loop_depth > 0,
+        // global (documented): see emit_string_function scope invariant.
+        std::string{});
     }
 
     const auto &st = to_struct_type(value.type());
@@ -1678,7 +1680,9 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         {src_struct, start64, end64},
         symbol_table,
         pending_checks,
-        loop_depth > 0);
+        loop_depth > 0,
+        // global (documented): see emit_string_function scope invariant.
+        std::string{});
     }
     typet str_type = python_string_type();
     const auto &data_type = array_typet(

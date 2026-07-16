@@ -631,7 +631,9 @@ std::optional<exprt> python_convertert::try_string_method(
         {src},
         symbol_table,
         pending_checks,
-        loop_depth > 0);
+        loop_depth > 0,
+        // global (documented): see emit_string_function scope invariant.
+        std::string{});
     }
     const auto &data_type = array_typet(
       unsignedbv_typet{8},
@@ -1199,7 +1201,9 @@ std::optional<exprt> python_convertert::try_string_method(
         {src, from_integer(mode, signedbv_typet{32})},
         symbol_table,
         pending_checks,
-        loop_depth > 0);
+        loop_depth > 0,
+        // global (documented): see emit_string_function scope invariant.
+        std::string{});
     }
     // Return nondet string with constraints for symbolic strings
     {
@@ -1912,7 +1916,9 @@ std::optional<exprt> python_convertert::try_string_method(
             {as_i64},
             symbol_table,
             pending_checks,
-            loop_depth > 0);
+            loop_depth > 0,
+            // global (documented): see emit_string_function scope invariant.
+            std::string{});
           auto ensure_fn = [&](const irep_idt &fid)
           {
             if(symbol_table.lookup(fid) == nullptr)
