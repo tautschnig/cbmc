@@ -1,12 +1,20 @@
 # Python frontend: dict-VALUE-by-reference (mutable values mutated in place)
 
-Status: **PARTIALLY LANDED (2026-06-22).** Option 2 (lvalue value slots)
-implemented for **direct (int) keys**: `a[k].append(...)` and
-`setdefault(k, default).append(...)` now mutate the stored list/dict in
-place, with **0 sweep regressions**. Residuals: string-keyed dicts (kept
-read-only — the matched index there depends on a string-solver predicate),
-the `v = a[k]; v.append(...)` extraction-aliasing case (same root as the §0
-nested-list residual), and empty-`{}` value typing (`dict_setdefault_list`).
+Status: **LANDED for direct keys (2026-07-17, `f3031f680c`).** Option 2
+(lvalue value slots) implemented for direct **int AND string** keys:
+`a[k].append(...)` and `setdefault(k, default).append(...)` mutate the
+stored list/dict in place, with **0 sweep regressions**. The string-key
+cost concern did not materialise: the `found_idx` slot chain reuses the
+same `string_equal` predicates the value chain already carries. The
+subtle part was the constant-key FOLD: it handed mutators a constant
+snapshot of the tracked literal; a statement-level pre-scan
+(`invalidate_mutated_dict_literals`) erases the tracked literal before a
+`X[k].<mutator>(...)` statement converts, so reads keep full fold
+precision until the first mutation (guarding the fold itself regressed
+dict18/dict19/dict63 — wrong layer). Residuals: heterogeneous
+value-typed KEY dicts (copied chain + havoc), the `v = a[k];
+v.append(...)` extraction-aliasing case (same root as the §0 nested-list
+residual), and empty-`{}` value typing (`dict_setdefault_list`).
 Distinct from [§5 dict pass-by-reference](python-frontend-plan.md#dict-byref)
 (the *dict itself* as a by-reference parameter — RESOLVED).
 
