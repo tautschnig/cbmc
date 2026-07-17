@@ -1131,6 +1131,16 @@ private:
   /// pending_checks) so a later read is nondet rather than the stale
   /// pre-mutation value (which would false-prove). `subscript` is the receiver
   /// `d[key]` node. Returns true if a havoc was emitted.
+  /// Statement-level pre-scan (PLR §6.4/§3.1 dict-value-by-reference):
+  /// for every `X[k].<mutator>(...)` in \p stmt, erase X's tracked dict
+  /// literal BEFORE conversion, so the constant-key fold cannot hand the
+  /// mutator (or any later read) a stale constant SNAPSHOT of a mutable
+  /// container value. Reads keep full fold precision until the first
+  /// mutation; after it they read the runtime lvalue slot (which sees the
+  /// mutation). The receiver converts before the mutation is visible at
+  /// method-conversion time, hence a PRE-scan, not a method-time hook.
+  void invalidate_mutated_dict_literals(const jsont &stmt);
+
   bool invalidate_dict_value_on_mutation(
     const jsont &subscript,
     const std::string &method_name);

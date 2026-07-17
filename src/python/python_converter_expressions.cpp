@@ -585,6 +585,10 @@ exprt python_convertert::convert_subscript(const jsont &expr)
                   // per-execution materialisation pointer — re-reading it
                   // aliases across instances. Fall through to the symbolic
                   // read of the per-instance copy instead.
+                  // NB mutation staleness: `d["k"].mutator(...)` erases
+                  // the tracked literal BEFORE the statement converts
+                  // (invalidate_mutated_dict_literals), so this fold only
+                  // sees dicts whose container values are still pristine.
                   if(value_is_const_foldable(cv))
                     return cv;
                 }
@@ -707,11 +711,13 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         }
         exprt cond = and_exprt{in_range, match};
         result = if_exprt{cond, index_exprt{vals, idx}, result};
-        // Only track the matched index for direct (int) keys — the only
-        // case that returns the lvalue slot. Building this if-chain for
-        // string/value keys (whose `cond` carries a string-solver
-        // predicate) adds solver cost for no benefit.
-        if(!keys_are_strings && !keys_are_values)
+        // Track the matched index for direct (int) AND string keys -- both
+        // return the value as an lvalue SLOT (dict-value-by-reference,
+        // Option 2). The string-key chain reuses the same string_equal
+        // predicates as `result` above (shared subterms; measured: no
+        // solver cliff). Heterogeneous value-typed keys stay on the copied
+        // if-chain (residual).
+        if(!keys_are_values)
           found_idx = if_exprt{cond, idx, found_idx};
         found = or_exprt{found, cond};
       }
@@ -843,14 +849,14 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         const bool dict_is_lvalue =
           value.id() == ID_symbol || value.id() == ID_dereference ||
           value.id() == ID_member || value.id() == ID_index;
-        // Restrict to direct (int/non-string) keys: found_idx is then a
-        // cheap, exact equality so the lvalue index resolves precisely.
-        // For string/value keys found_idx would depend on a string-solver
-        // predicate (mis-resolves the slot and is costly), so keep the
-        // value if-chain — string-keyed dict-value mutation is a residual.
-        if(
-          mutable_val && dict_is_lvalue && !keys_are_strings &&
-          !keys_are_values)
+        // Direct (int) and STRING keys return the lvalue slot (string keys
+        // enabled 2026-07-17: the found_idx chain reuses the same
+        // string_equal predicates the value chain already carries, so the
+        // marginal solver cost is small -- measured on the sweep).
+        // Heterogeneous value-typed keys stay on the copied if-chain: their
+        // value_equal match is tag-directed against the wrapped query and
+        // the slot index would inherit that complexity (residual).
+        if(mutable_val && dict_is_lvalue && !keys_are_values)
           return index_exprt{vals, found_idx, vet};
       }
       return result;

@@ -1188,15 +1188,26 @@ bool python_convertert::invalidate_dict_value_on_mutation(
   exprt base_e = convert_expression(base);
   if(base_e.id() != ID_symbol || !is_python_dict_type(base_e.type()))
     return false;
-  // Int-keyed dict values use a working lvalue value-slot (mutation
-  // propagates); only a NON-int key returns the value by COPY, so the in-place
-  // mutation is lost. Havoc only the non-int-keyed case to avoid regressing
-  // the precise int-keyed path.
+  // Int-keyed AND string-keyed dict values use a working lvalue value-slot
+  // (mutation propagates; string keys enabled 2026-07-17 -- the found_idx
+  // slot chain shares the value chain's string_equal predicates). Only a
+  // heterogeneous value-typed key still returns the value by COPY, so the
+  // in-place mutation is lost -- havoc only that case.
   exprt key = convert_expression(json_member(subscript, "slice"));
   const typet &kt = key.type();
   const bool int_key = kt.id() == ID_signedbv || kt.id() == ID_unsignedbv ||
                        kt.id() == ID_integer || kt.id() == ID_bool;
-  if(int_key)
+  const bool str_key = is_python_string_type(kt);
+  // The lvalue slot engages only when the dict's KEY ARRAY is
+  // correspondingly typed (a value-typed key array keeps the copy chain).
+  bool slot_engages = false;
+  if(int_key || str_key)
+  {
+    const auto &dst = to_struct_type(base_e.type());
+    const auto &keys_arr_t = to_array_type(dst.components()[1].type());
+    slot_engages = !is_python_value_type(keys_arr_t.element_type());
+  }
+  if(slot_engages)
     return false;
   // Sound over-approximation: havoc the dict so a later read is nondet rather
   // than the stale pre-mutation value (the precise fix is an lvalue value-slot
@@ -6076,4 +6087,61 @@ exprt python_convertert::python_value_is_class_of(
   }
   return and_exprt{
     python_value_is(value, python_type_tagt::CLASS), std::move(id_match)};
+}
+
+void python_convertert::invalidate_mutated_dict_literals(const jsont &stmt)
+{
+  static const std::set<std::string> mutators = {
+    "append",
+    "extend",
+    "insert",
+    "remove",
+    "pop",
+    "sort",
+    "reverse",
+    "clear",
+    "add",
+    "discard",
+    "update",
+    "setdefault",
+    "popitem"};
+  std::function<void(const jsont &)> scan = [&](const jsont &n)
+  {
+    if(!n.is_object())
+      return;
+    if(is_node_type(n, "Call"))
+    {
+      const jsont &fn = json_member(n, "func");
+      if(
+        is_node_type(fn, "Attribute") &&
+        mutators.count(json_string(json_member(fn, "attr"))) > 0)
+      {
+        const jsont &recv = json_member(fn, "value");
+        if(is_node_type(recv, "Subscript"))
+        {
+          const jsont &base = json_member(recv, "value");
+          if(is_node_type(base, "Name"))
+          {
+            const irep_idt did{
+              qualify_name(json_string(json_member(base, "id")))};
+            dict_literals.erase(did);
+            dict_runtime_value_overrides.erase(did);
+          }
+        }
+      }
+    }
+    const auto &obj = static_cast<const json_objectt &>(n);
+    for(const auto &kv : obj)
+    {
+      const jsont &child = kv.second;
+      if(child.is_array())
+      {
+        for(const auto &ch : as_array(child))
+          scan(ch);
+      }
+      else if(child.is_object())
+        scan(child);
+    }
+  };
+  scan(stmt);
 }

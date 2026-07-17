@@ -31,6 +31,12 @@ codet python_convertert::convert_statement(const jsont &stmt)
   // Clear pending checks before converting this statement
   pending_checks.clear();
 
+  // Dict-value-by-reference: erase tracked literals for dicts whose
+  // container values this statement mutates in place (see the helper's
+  // comment; keeps the constant-key fold fully precise for reads while
+  // preventing stale-snapshot folds after mutation).
+  invalidate_mutated_dict_literals(stmt);
+
   codet result = code_skipt{};
 
   if(node_type == "AnnAssign")
