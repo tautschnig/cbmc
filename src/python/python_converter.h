@@ -523,6 +523,19 @@ private:
     code_blockt &header,
     const source_locationt &loc);
 
+  /// The DISPATCH half of lower_pv_iterable (no obligation): the
+  /// identity-refined single-owner __iter__ view of a CLASS-tagged
+  /// python_value, the raw list-slot deref otherwise. Used by BINDING
+  /// contexts (unwrap_value list-target): a `xs: list = <Any>` binding
+  /// does not raise in CPython, so no obligation is emitted; the dispatch
+  /// preserves the instance's identity/provenance across the coercion
+  /// boundary (bedrock: `return response.get(k, [])` under a
+  /// `-> List[...]` annotation previously collapsed to a nondet list).
+  exprt pv_class_iter_view(
+    const exprt &iterable,
+    code_blockt &header,
+    const source_locationt &loc);
+
   /// Map from class name to its base class names (for isinstance)
   std::map<std::string, std::vector<std::string>> class_bases;
   /// PLR §8.13: enum classes (a class deriving from enum.Enum, possibly

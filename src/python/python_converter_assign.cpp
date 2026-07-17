@@ -333,6 +333,31 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   {
     rhs = safe_zero(var_type);
   }
+  // Mirror the plain-assign pre-scan consult (PLR §3.2): under a NON-dict
+  // annotation (`providers: object = {}`), var_type doesn't pin the dict,
+  // and without this the `{}` kept its scalar default value type -- a later
+  // `providers[k] = []` PUNNED the list into an int slot (the dict-value
+  // member of the slot-pun family; items() then bound the value as int and
+  // the not-iterable obligation false-alarmed on a genuine runtime list).
+  // The pre-scan already inferred key/value types from the first store.
+  else if(
+    is_node_type(value, "Dict") && json_member(value, "keys").is_array() &&
+    as_array(json_member(value, "keys")).empty() &&
+    is_python_dict_type(rhs.type()) && !is_python_dict_type(var_type) &&
+    // ONLY a bare-Name annotation (`object` / `Any`): a Subscript or a
+    // string-form Constant annotation ("dict[str, int]") pins the type
+    // and must stay authoritative (overriding it silenced the
+    // --python-check-annotations dict-store mismatch property).
+    is_node_type(json_member(stmt, "annotation"), "Name") &&
+    !python_check_annotations)
+  {
+    auto di = empty_dict_inferred_types.find(irep_idt{symbol_id});
+    if(di != empty_dict_inferred_types.end())
+    {
+      rhs = safe_zero(python_dict_type(di->second.first, di->second.second));
+      var_type = rhs.type();
+    }
+  }
   // PLR §3.1: storage promotion for escaped mutables.
   // If this name's qualified form is in `escaped_mutables` (i.e. it
   // appears as a Name element of some List/Dict literal elsewhere)

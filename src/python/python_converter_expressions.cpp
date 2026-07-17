@@ -711,14 +711,14 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         }
         exprt cond = and_exprt{in_range, match};
         result = if_exprt{cond, index_exprt{vals, idx}, result};
-        // Track the matched index for direct (int) AND string keys -- both
-        // return the value as an lvalue SLOT (dict-value-by-reference,
-        // Option 2). The string-key chain reuses the same string_equal
-        // predicates as `result` above (shared subterms; measured: no
-        // solver cliff). Heterogeneous value-typed keys stay on the copied
-        // if-chain (residual).
-        if(!keys_are_values)
-          found_idx = if_exprt{cond, idx, found_idx};
+        // Track the matched index for ALL key kinds -- int, string, and
+        // heterogeneous value-typed keys all return the value as an lvalue
+        // SLOT (dict-value-by-reference, Option 2). Each kind's found_idx
+        // chain reuses the exact match predicates `result` above already
+        // carries (shared subterms; measured: no solver cliff -- string
+        // keys 2026-07-17 am, value keys pm, the bedrock providers[k]
+        // shape).
+        found_idx = if_exprt{cond, idx, found_idx};
         found = or_exprt{found, cond};
       }
       // KeyError if key not found — unless the dict has a
@@ -849,14 +849,15 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         const bool dict_is_lvalue =
           value.id() == ID_symbol || value.id() == ID_dereference ||
           value.id() == ID_member || value.id() == ID_index;
-        // Direct (int) and STRING keys return the lvalue slot (string keys
-        // enabled 2026-07-17: the found_idx chain reuses the same
-        // string_equal predicates the value chain already carries, so the
-        // marginal solver cost is small -- measured on the sweep).
-        // Heterogeneous value-typed keys stay on the copied if-chain: their
-        // value_equal match is tag-directed against the wrapped query and
-        // the slot index would inherit that complexity (residual).
-        if(mutable_val && dict_is_lvalue && !keys_are_values)
+        // ALL key kinds return the lvalue slot (int; string and
+        // heterogeneous value-typed keys enabled 2026-07-17: each
+        // found_idx chain reuses the match predicates the value chain
+        // already carries -- measured on the sweep, no cliff). The
+        // mutable_val gate also admits python_value slots: an Any-valued
+        // dict stores a wrapped LIST whose in-place mutators dispatch
+        // through the boxed pointer.
+        const bool pv_val = is_python_value_type(vet);
+        if((mutable_val || pv_val) && dict_is_lvalue)
           return index_exprt{vals, found_idx, vet};
       }
       return result;

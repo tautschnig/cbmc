@@ -1188,41 +1188,10 @@ bool python_convertert::invalidate_dict_value_on_mutation(
   exprt base_e = convert_expression(base);
   if(base_e.id() != ID_symbol || !is_python_dict_type(base_e.type()))
     return false;
-  // Int-keyed AND string-keyed dict values use a working lvalue value-slot
-  // (mutation propagates; string keys enabled 2026-07-17 -- the found_idx
-  // slot chain shares the value chain's string_equal predicates). Only a
-  // heterogeneous value-typed key still returns the value by COPY, so the
-  // in-place mutation is lost -- havoc only that case.
-  exprt key = convert_expression(json_member(subscript, "slice"));
-  const typet &kt = key.type();
-  const bool int_key = kt.id() == ID_signedbv || kt.id() == ID_unsignedbv ||
-                       kt.id() == ID_integer || kt.id() == ID_bool;
-  const bool str_key = is_python_string_type(kt);
-  // The lvalue slot engages only when the dict's KEY ARRAY is
-  // correspondingly typed (a value-typed key array keeps the copy chain).
-  bool slot_engages = false;
-  if(int_key || str_key)
-  {
-    const auto &dst = to_struct_type(base_e.type());
-    const auto &keys_arr_t = to_array_type(dst.components()[1].type());
-    slot_engages = !is_python_value_type(keys_arr_t.element_type());
-  }
-  if(slot_engages)
-    return false;
-  // Sound over-approximation: havoc the dict so a later read is nondet rather
-  // than the stale pre-mutation value (the precise fix is an lvalue value-slot
-  // for string keys -- see the dict-value-byref deep-dive). Queued AFTER the
-  // statement: the havoc models the post-mutation state, and prepending it
-  // (via pending_checks) landed it between the receiver's model-bound length
-  // assumption and the mutator's capacity assert, causing a spurious failure.
-  pending_post_checks.push_back(code_frontend_assignt{
-    base_e, side_effect_expr_nondett{base_e.type(), source_locationt{}}});
-  const irep_idt did = to_symbol_expr(base_e).get_identifier();
-  dict_literals.erase(did);
-  list_literals.erase(did);
-  dict_runtime_value_overrides.erase(did);
-  dict_guaranteed_keys.erase(did);
-  return true;
+  // ALL dict key kinds (int, string, heterogeneous value-typed) now use a
+  // working lvalue value-slot (mutation propagates -- see the subscript
+  // converter), so no compensating havoc is needed.
+  return false;
 }
 
 void python_convertert::collect_escaped_mutables(const jsont &body)
@@ -1868,13 +1837,37 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
             {
               typet kt = type_of_expr(json_member(t0, "slice"));
               typet vt = type_of_expr(value);
+              // Slot-pun family, dict-value member (PLR §3.2 Any-dominance):
+              // a CONTAINER first store (`d[k] = []` / `{}`) or an
+              // uninferable value must infer the value type as python_value
+              // (boxed, per-instance) -- a scalar default punned the stored
+              // list to an int slot (`providers[k] = []; providers[k]
+              // .append(m); ...items()` iterated an int: a false alarm on
+              // the not-iterable obligation AND a latent false-proof shape,
+              // the same root as the closed list-element / attr-field
+              // members). Scalar first stores keep their precise type.
+              // Mirrors the list rule below: NOT under
+              // --python-check-annotations (that mode keeps the concrete
+              // type so the store-mismatch is reported as a property).
               if(
-                !kt.id().empty() && kt.id() != ID_empty && !vt.id().empty() &&
-                vt.id() != ID_empty)
+                !python_check_annotations &&
+                (is_node_type(value, "List") || is_node_type(value, "Dict") ||
+                 is_node_type(value, "Set") ||
+                 is_node_type(value, "ListComp") ||
+                 is_node_type(value, "DictComp") || vt.id().empty() ||
+                 vt.id() == ID_empty))
               {
-                empty_dict_inferred_types[did] = {kt, vt};
-                pending_dict.erase(did);
+                vt = python_value_type();
               }
+              // An uninferable KEY expression (e.g. `k: Any = m.get(...)`;
+              // method-call types are beyond type_of_expr) likewise infers
+              // python_value: the value-domain key match (value_equal) is
+              // sound and slot-capable, whereas bailing left the scalar
+              // default -- the same pun (bedrock's providers[k] shape).
+              if(kt.id().empty() || kt.id() == ID_empty)
+                kt = python_value_type();
+              empty_dict_inferred_types[did] = {kt, vt};
+              pending_dict.erase(did);
             }
           }
         }
@@ -2628,7 +2621,64 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
   else if(is_python_string_type(target_type))
     return python_value_str(e);
   else if(is_python_list_type(target_type))
-    return python_value_list(e);
+  {
+    // Per-instance provenance at the pv->list BINDING boundary: dispatch a
+    // single-owner __iter__ for a CLASS-tagged value instead of derefing
+    // the (garbage) list slot -- `return response.get(k, [])` under a
+    // `-> List[...]` annotation previously collapsed the stub response
+    // object to a nondet list, and every downstream iteration
+    // false-alarmed (bedrock line 91). No obligation here: binding does
+    // not raise in CPython (lower_pv_iterable adds it for iteration).
+    code_blockt hdr;
+    exprt view = pv_class_iter_view(e, hdr, source_locationt{});
+    if(hdr.statements().empty())
+      return python_value_list(e); // no dispatch engaged: previous path
+    for(auto &st : hdr.statements())
+      pending_checks.push_back(std::move(st));
+    if(view.type() == target_type)
+      return view;
+    // Target element type differs from the view's (python_value):
+    // materialise a TARGET-typed temp with the dispatched LENGTH and
+    // per-slot element unwrap -- the stub-common length-0 case makes all
+    // downstream loops iterate zero times; a non-empty view unwraps each
+    // in-bounds element into the target element type (out-of-bounds slots
+    // stay nondet, never read).
+    static unsigned uw_view_ctr = 0;
+    const std::string tn = "__unwrap_view_" + std::to_string(uw_view_ctr++);
+    const irep_idt tid{qualify_name(tn)};
+    if(symbol_table.lookup(tid) == nullptr)
+    {
+      symbolt ts{tid, target_type, "python"};
+      ts.base_name = tn;
+      ts.is_lvalue = true;
+      ts.is_state_var = true;
+      ts.is_static_lifetime = current_function.empty();
+      symbol_table.add(ts);
+    }
+    symbol_exprt tsym2 = symbol_table.lookup_ref(tid).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{
+      tsym2, side_effect_expr_nondett{target_type, source_locationt{}}});
+    const signedbv_typet i64{64};
+    member_exprt vlen{view, "length", i64};
+    pending_checks.push_back(
+      code_frontend_assignt{member_exprt{tsym2, "length", i64}, vlen});
+    const auto &tgt_st = to_struct_type(target_type);
+    const auto &tgt_arr = to_array_type(tgt_st.components()[1].type());
+    const auto &view_st = to_struct_type(view.type());
+    const auto &view_arr = to_array_type(view_st.components()[1].type());
+    member_exprt tdata{tsym2, "data", tgt_arr};
+    member_exprt vdata{view, "data", view_arr};
+    for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; ++i)
+    {
+      exprt idx = from_integer(i, i64);
+      exprt elem =
+        unwrap_value(index_exprt{vdata, idx}, tgt_arr.element_type());
+      code_frontend_assignt asg{index_exprt{tdata, idx}, std::move(elem)};
+      pending_checks.push_back(code_ifthenelset{
+        binary_relation_exprt{idx, ID_lt, vlen}, std::move(asg)});
+    }
+    return tsym2;
+  }
   else if(is_python_dict_type(target_type))
   {
     // PLR §3.3.1: unwrap a dict stored via wrap_value.
@@ -4018,6 +4068,73 @@ exprt python_convertert::coerce_to_typed_slot(
 
   if(expr.type() == target_type)
     return expr;
+
+  // Class instance into a LIST-typed slot (PLR §3.3.1): the value converts
+  // through ITS OWN __iter__ (a `return response.get(k, [])` under a
+  // `-> List[...]` annotation flows the stub response object here;
+  // safe_typecast could only relabel/nondet it, severing provenance -- the
+  // bedrock family). Statically-known receiver class: dispatch is direct
+  // (no identity guard needed). VALID/UNKNOWN protocol only; an INVALID
+  // __iter__ falls through (the iteration sites raise the TypeError).
+  if(is_python_list_type(target_type) && expr.type().id() == ID_struct)
+  {
+    const std::string ctag = id2string(to_struct_type(expr.type()).get_tag());
+    if(ctag.substr(0, 13) == "python_class_")
+    {
+      const std::string bare = ctag.substr(13);
+      const symbolt *isym =
+        symbol_table.lookup(irep_idt{"python::" + bare + "::__iter__"});
+      if(
+        isym != nullptr && isym->type.id() == ID_code &&
+        iter_protocol_of(bare) != iter_protocol_kindt::INVALID)
+      {
+        const code_typet &it_t = to_code_type(isym->type);
+        if(is_python_list_type(it_t.return_type()))
+        {
+          // Materialise the receiver (an rvalue call result cannot be
+          // address-taken) and the dispatched call.
+          static unsigned cls2list_ctr = 0;
+          const std::string rn =
+            "__cls2list_recv_" + std::to_string(cls2list_ctr);
+          const std::string tn = "__cls2list_" + std::to_string(cls2list_ctr);
+          ++cls2list_ctr;
+          const irep_idt rid{qualify_name(rn)}, tid{qualify_name(tn)};
+          if(symbol_table.lookup(rid) == nullptr)
+          {
+            symbolt rs{rid, expr.type(), "python"};
+            rs.base_name = rn;
+            rs.is_lvalue = true;
+            rs.is_state_var = true;
+            rs.is_static_lifetime = current_function.empty();
+            symbol_table.add(rs);
+          }
+          if(symbol_table.lookup(tid) == nullptr)
+          {
+            symbolt ts{tid, it_t.return_type(), "python"};
+            ts.base_name = tn;
+            ts.is_lvalue = true;
+            ts.is_state_var = true;
+            ts.is_static_lifetime = current_function.empty();
+            symbol_table.add(ts);
+          }
+          symbol_exprt rsym = symbol_table.lookup_ref(rid).symbol_expr();
+          symbol_exprt tsym = symbol_table.lookup_ref(tid).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{rsym, expr});
+          side_effect_expr_function_callt icall{
+            isym->symbol_expr(),
+            {typecast_exprt{
+              address_of_exprt{rsym},
+              to_code_type(isym->type).parameters()[0].type()}},
+            it_t.return_type(),
+            source_locationt{}};
+          pending_checks.push_back(code_frontend_assignt{tsym, icall});
+          if(it_t.return_type() == target_type)
+            return tsym;
+          return safe_typecast(tsym, target_type);
+        }
+      }
+    }
+  }
 
   return safe_typecast(expr, target_type);
 }

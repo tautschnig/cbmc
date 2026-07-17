@@ -4847,6 +4847,17 @@ codet python_convertert::convert_class_def(const jsont &stmt)
 
           if(!skip_body && method_body_json.is_array())
           {
+            // Run the function-body pre-scans for METHODS too (whole-group:
+            // convert_function_def runs these for plain functions, but the
+            // ClassDef method path converts inline and skipped them --
+            // current_function is set above, so the scans key symbols with
+            // the correct method scope). Without the empty-dict scan a
+            // method-local `providers = {}` kept scalar value slots and a
+            // later `providers[k] = []` PUNNED the list (bedrock's shape:
+            // items() then bound the value as int and the not-iterable
+            // obligation false-alarmed).
+            collect_escaped_mutables(method_body_json);
+            collect_empty_list_inferred_types(method_body_json);
             for(const auto &s : as_array(method_body_json))
               method_body.add(convert_statement(s));
 

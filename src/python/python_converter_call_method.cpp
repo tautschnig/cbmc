@@ -2830,7 +2830,13 @@ std::optional<exprt> python_convertert::try_method_call(
         }
       }
 
-      if(obj_base_type.id() != ID_struct)
+      // NB the gate ALSO admits a plain-ID_struct python_value receiver:
+      // the tagged-union arrives as struct_tag through some paths and as
+      // the expanded struct through others (e.g. `r: Any = <stub call>`);
+      // only the former reached the virtual dispatch, so `r.get(...)` on
+      // the latter collapsed the whole call to nondet, severing provenance
+      // downstream (bedrock line 91).
+      if(obj_base_type.id() != ID_struct || is_python_value_type(obj_base_type))
       {
         // Tagged-union (python_value_type) values: route the
         // method call through __class_ptr with virtual
@@ -2846,10 +2852,7 @@ std::optional<exprt> python_convertert::try_method_call(
         // classes share the method name but aren't
         // subclass-related — matches Python semantics when the
         // caller has not narrowed via isinstance.
-        if(
-          obj_base_type.id() == ID_struct_tag &&
-          id2string(to_struct_tag_type(obj_base_type).get_identifier()) ==
-            std::string{PYTHON_VALUE_TAG})
+        if(is_python_value_type(obj_base_type))
         {
           // Collect classes that define method_name directly.
           std::vector<std::string> method_owners;
