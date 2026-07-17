@@ -1808,6 +1808,19 @@ precision false-positive.
 > false alarm), dict-value-byref per-instance identity, and UNKNOWN
 > `__iter__` returns (a may-raise under --python-raising-ops-check is the
 > natural home).
+>
+> **PHASE 3 (2026-07-17, `f3031f680c`): string-keyed dict-value mutation
+> landed** (see the [dict-value-byref plan](python-frontend-dict-value-byref-plan.md)
+> status note) — the lvalue value-slot now covers int AND string keys with
+> a statement-level fold invalidation. Probing found the other queue items
+> already adequate or evidence-thin: pv-slice element flow is precise;
+> UNKNOWN-`__iter__` is unflagged by design; generator func-consume is
+> SOUND (nondet cursor + may-StopIteration both callee- and caller-side —
+> re-verified) and its precise cursor-channel calling convention is
+> deferred: the sweep shows exactly ONE generator-related entry among 103
+> FAIL/DIFF residuals, so the complexity is not currently paid for.
+> Extraction aliasing (`v = d[k]; v.append(...)`) remains the §0
+> reference-semantics item.
 
 **Status: DONE for the modelled scope.** The **list-with-cursor** model is
 implemented (see the architecture doc's "Generator semantics" section):
