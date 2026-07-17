@@ -2392,6 +2392,10 @@ exprt python_convertert::lower_pv_iterable(
   code_blockt &header,
   const source_locationt &loc)
 {
+  // Iteration context: the PLR §6.13 iterability obligation (catchable per
+  // §8.4) PLUS the dispatch view. Binding contexts (unwrap_value) use
+  // pv_class_iter_view alone: a `xs: list = <Any>` binding does not raise
+  // in CPython -- only iterating does -- so the obligation belongs here.
   // pv-CLASS __iter__ dispatch (per-instance provenance, phase 1 -- see
   // plan §1): a class instance boxed in a python_value iterates via ITS
   // __iter__, not the list slot (garbage for a CLASS tag: the loop element
@@ -2473,6 +2477,26 @@ exprt python_convertert::lower_pv_iterable(
       te.add_source_location() = tloc;
       header.add(std::move(te));
     }
+  }
+  return pv_class_iter_view(iterable, header, loc);
+}
+
+exprt python_convertert::pv_class_iter_view(
+  const exprt &iterable,
+  code_blockt &header,
+  const source_locationt &loc)
+{
+  std::vector<std::string> it_owners;
+  for(const auto &p : class_types)
+  {
+    const bool has_iter =
+      symbol_table.lookup(irep_idt{"python::" + p.first + "::__iter__"}) !=
+      nullptr;
+    const auto ipk = class_iter_protocol.find(p.first);
+    const bool iter_invalid = ipk != class_iter_protocol.end() &&
+                              ipk->second == iter_protocol_kindt::INVALID;
+    if(has_iter && !iter_invalid)
+      it_owners.push_back(p.first);
   }
   exprt list_view = python_value_list(iterable);
   if(it_owners.size() == 1)
