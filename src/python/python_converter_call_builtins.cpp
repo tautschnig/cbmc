@@ -1027,6 +1027,49 @@ std::optional<exprt> python_convertert::try_builtin_call(
       static unsigned print_arg_ctr = 0;
       for(const auto &a : as_array(args))
       {
+        // Print-sink f-string ELISION (perf whole-group): a JoinedStr
+        // argument's VALUE is write-only (print returns None; nothing
+        // observes the built string), but the string-BUILDING intrinsics
+        // it expands to (concat/str()/format chains) dominate the string
+        // solver on print-heavy real-world code (aws_untagged: 23
+        // f-string prints inside nested loops -- 20 GB of refinement
+        // state; ~4x less without them). PLR-preserving: the EMBEDDED
+        // sub-expressions still convert (their subscript/call/raise
+        // checks fire exactly as before -- `print(f"{d['k']}")` must
+        // still report the KeyError); only the formatting/joining of the
+        // results is skipped.
+        if(is_node_type(a, "JoinedStr"))
+        {
+          const jsont &vals = json_member(a, "values");
+          if(vals.is_array())
+          {
+            for(const auto &part : as_array(vals))
+            {
+              if(!is_node_type(part, "FormattedValue"))
+                continue; // literal text: no checks to preserve
+              exprt pv = convert_expression(json_member(part, "value"));
+              if(pv.is_nil())
+                continue;
+              std::string tn = "__print_arg_" + std::to_string(print_arg_ctr++);
+              irep_idt tid{qualify_name(tn)};
+              if(symbol_table.lookup(tid) == nullptr)
+              {
+                symbolt ps{tid, pv.type(), "python"};
+                ps.base_name = tn;
+                ps.is_lvalue = true;
+                ps.is_state_var = true;
+                symbol_table.add(ps);
+              }
+              const symbolt &pts = symbol_table.lookup_ref(tid);
+              exprt pe = pts.symbol_expr();
+              if(pv.type() != pe.type())
+                pv = safe_typecast(pv, pe.type());
+              pending_checks.push_back(
+                code_frontend_assignt{to_symbol_expr(pe), pv});
+            }
+          }
+          continue;
+        }
         exprt v = convert_expression(a);
         if(v.is_nil())
           continue;

@@ -2991,6 +2991,81 @@ std::optional<exprt> python_convertert::try_method_call(
                 av = safe_typecast(av, mty.parameters()[pidx].type());
               mcall_args.push_back(std::move(av));
             }
+            // Bind KEYWORD arguments into the trailing **kwargs dict param
+            // (the boto3 stub shape: `def list_tags(self, **kwargs)`).
+            // The pv-receiver dispatch silently DROPPED keywords -- the
+            // call went out with too few arguments and the GOTO layer
+            // inserted a nondet for the kwargs param (and exposed a
+            // latent `l2_rename_rvalues nondet_symbol` symex crash on
+            // aws_untagged once the print-elision unmasked it). Mirrors
+            // the concrete path's unmatched->kwargs-dict packing.
+            {
+              const jsont &kws = json_member(expr, "keywords");
+              const auto &mparams2 = mty.parameters();
+              if(
+                kws.is_array() && !as_array(kws).empty() && !mparams2.empty() &&
+                is_python_dict_type(mparams2.back().type()) &&
+                mcall_args.size() < mparams2.size())
+              {
+                typet dt = mparams2.back().type();
+                const auto &dst = to_struct_type(dt);
+                const auto &kat = to_array_type(dst.components()[1].type());
+                const auto &vat = to_array_type(dst.components()[2].type());
+                exprt::operandst ks, vs;
+                std::size_t nkw = 0;
+                for(const auto &kw : as_array(kws))
+                {
+                  const std::string kn = json_string(json_member(kw, "arg"));
+                  if(kn.empty())
+                    continue; // **spread: keep the sound nondet default
+                  exprt kv = convert_expression(json_member(kw, "value"));
+                  if(kv.is_nil())
+                    continue;
+                  ks.push_back(python_string_literal(kn));
+                  if(is_python_value_type(vat.element_type()))
+                    vs.push_back(wrap_value(kv));
+                  else
+                    vs.push_back(coerce_element(kv, vat.element_type()));
+                  ++nkw;
+                }
+                while(ks.size() < PYTHON_MAX_DICT_SIZE)
+                {
+                  ks.push_back(safe_zero(kat.element_type()));
+                  vs.push_back(safe_zero(vat.element_type()));
+                }
+                // Fill any gap params before the kwargs slot with their
+                // defaults (append_method_defaults), then the dict.
+                append_method_defaults(cls_name, mty, mcall_args);
+                while(mcall_args.size() + 1 < mparams2.size())
+                  mcall_args.push_back(
+                    safe_zero(mparams2[mcall_args.size()].type()));
+                if(mcall_args.size() + 1 == mparams2.size())
+                  mcall_args.push_back(struct_exprt{
+                    {from_integer(
+                       static_cast<long long>(nkw), signedbv_typet{64}),
+                     array_exprt{std::move(ks), kat},
+                     array_exprt{std::move(vs), vat}},
+                    dt});
+              }
+              else if(
+                !mparams2.empty() &&
+                is_python_dict_type(mparams2.back().type()) &&
+                mcall_args.size() < mparams2.size())
+              {
+                // No keyword arguments: the **kwargs param is the EMPTY
+                // dict (CPython), never a nondet -- the GOTO layer's
+                // too-few-arguments nondet insertion both lost the
+                // "key not in kwargs" precision (required-kwarg contracts)
+                // and exposed a latent l2_rename_rvalues(nondet_symbol)
+                // symex crash on aws_untagged.
+                append_method_defaults(cls_name, mty, mcall_args);
+                while(mcall_args.size() + 1 < mparams2.size())
+                  mcall_args.push_back(
+                    safe_zero(mparams2[mcall_args.size()].type()));
+                if(mcall_args.size() + 1 == mparams2.size())
+                  mcall_args.push_back(safe_zero(mparams2.back().type()));
+              }
+            }
             append_method_defaults(cls_name, mty, mcall_args);
             return side_effect_expr_function_callt{
               msym->symbol_expr(),

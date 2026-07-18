@@ -4645,6 +4645,61 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   if(lhs.is_nil() || rhs.is_nil())
     return code_skipt{};
 
+  // Store-target assignability guard (robustness + soundness whole-group):
+  // a CHAINED pv subscript (`d['a']['b'] += 1` where the inner read is an
+  // unresolvable Any) lowers the target to a sound-nondet RVALUE -- emitting
+  // `ASSIGN <nondet> := ...` aborts symex (l2_rename_rvalues
+  // "case nondet_symbol not handled", hit on aws_untagged). Skipping the
+  // store would leave stale reads (a false-proof risk), so the sound
+  // fallback is to HAVOC the root container: the unlocatable slot's
+  // mutation lands SOMEWHERE in it.
+  {
+    std::function<bool(const exprt &)> assignable = [&](const exprt &e) -> bool
+    {
+      if(e.id() == ID_symbol)
+        return true;
+      if(e.id() == ID_member)
+        return assignable(to_member_expr(e).compound());
+      if(e.id() == ID_index)
+        return assignable(to_index_expr(e).array());
+      if(e.id() == ID_typecast)
+        return assignable(to_typecast_expr(e).op());
+      if(e.id() == ID_dereference)
+        return true; // pointer target: symex handles the deref
+      if(e.id() == ID_if)
+        return assignable(to_if_expr(e).true_case()) &&
+               assignable(to_if_expr(e).false_case());
+      return false; // side_effect/nondet/constant/...: not an lvalue
+    };
+    // The dict-subscript aug path builds a chained VALUE READ as `lhs`
+    // (legitimately not an lvalue) and performs its own store at the end
+    // of this function -- exempt.
+    if(!dict_subscript_aug && !assignable(lhs))
+    {
+      const jsont *root = &target;
+      while(is_node_type(*root, "Subscript") ||
+            is_node_type(*root, "Attribute"))
+        root = &json_member(*root, "value");
+      if(is_node_type(*root, "Name"))
+      {
+        exprt root_e = convert_name(*root);
+        if(!root_e.is_nil() && root_e.id() == ID_symbol)
+        {
+          code_blockt blk;
+          blk.add(code_frontend_assignt{
+            root_e,
+            side_effect_expr_nondett{root_e.type(), get_location(stmt)}});
+          invalidate_reassigned_symbol(to_symbol_expr(root_e).get_identifier());
+          return std::move(blk);
+        }
+      }
+      log_overapprox(
+        "unassignable augmented-assignment target -- effect dropped on a "
+        "non-Name root (sound only if the root is unread)");
+      return code_skipt{};
+    }
+  }
+
   std::string op = json_string(json_member(op_node, "_type"));
 
   // PLR §7.2.2 / §6.7: augmented assignment applies the binary operator, so an
