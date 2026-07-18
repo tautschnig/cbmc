@@ -856,9 +856,33 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         // mutable_val gate also admits python_value slots: an Any-valued
         // dict stores a wrapped LIST whose in-place mutators dispatch
         // through the boxed pointer.
+        // OBLIGATION-SUBTERM SHARING (2026-07-18): the matched index is
+        // MATERIALISED into a temp, so the (up to 16-way, string_equal-
+        // laden) selection chain occurs ONCE. Returning the raw chain
+        // duplicated it at every use of the slot expression -- a chained
+        // read's not-subscriptable obligation on aws_untagged repeated it
+        // ~8x per ASSERT, x loop unrolling: pure string-refinement solver
+        // load. index_exprt{vals, idx_sym} remains a genuine LVALUE, so
+        // in-place mutation through the slot is unaffected.
         const bool pv_val = is_python_value_type(vet);
         if((mutable_val || pv_val) && dict_is_lvalue)
-          return index_exprt{vals, found_idx, vet};
+        {
+          static unsigned dictidx_ctr = 0;
+          const std::string in = "__dictidx_" + std::to_string(dictidx_ctr++);
+          const irep_idt iid{qualify_name(in)};
+          if(symbol_table.lookup(iid) == nullptr)
+          {
+            symbolt is{iid, signedbv_typet{64}, "python"};
+            is.base_name = in;
+            is.is_lvalue = true;
+            is.is_state_var = true;
+            is.is_static_lifetime = current_function.empty();
+            symbol_table.add(is);
+          }
+          symbol_exprt idx_sym = symbol_table.lookup_ref(iid).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{idx_sym, found_idx});
+          return index_exprt{vals, idx_sym, vet};
+        }
       }
       return result;
     }
