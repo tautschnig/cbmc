@@ -1518,6 +1518,15 @@ std::optional<exprt> python_convertert::try_method_call(
         // direct function-call emission would bypass those.
         irep_idt func_id{"python::" + method_name};
         const symbolt *sym = symbol_table.lookup(func_id);
+
+        // Constant-directed dispatcher folding for MODULE functions
+        // (`boto3.client("mediaconvert")`): fold the literal-keyed call
+        // to the selected branch's construction instead of inlining the
+        // 31-way dispatcher chain (see dispatcher_summaryt).
+        if(
+          auto folded = try_dispatcher_fold(
+            id2string(func_id), args, expr, /*first_param_index=*/0))
+          return std::move(*folded);
         // PLR §3.3: 'module.ClassName(...)' constructs an
         // instance of ClassName. Detect this by looking up
         // ClassName in class_types and route to the same
@@ -2951,6 +2960,15 @@ std::optional<exprt> python_convertert::try_method_call(
             const std::string &cls_name = method_owners.front();
             const auto &cls_type = class_types.at(cls_name);
             irep_idt mid{"python::" + cls_name + "::" + method_name};
+
+            // Constant-directed dispatcher folding through the pv receiver
+            // (`self.session.client("ec2")` -- _Session.client forwards to
+            // the module dispatcher): the literal selects the branch at
+            // conversion time; the 31-way chain never symexes.
+            if(
+              auto folded = try_dispatcher_fold(
+                id2string(mid), args, expr, /*first_param_index=*/1))
+              return std::move(*folded);
             const symbolt *msym = symbol_table.lookup_ref(mid).name.empty()
                                     ? nullptr
                                     : &symbol_table.lookup_ref(mid);
@@ -3095,6 +3113,12 @@ std::optional<exprt> python_convertert::try_method_call(
         {
           irep_idt method_id{"python::" + class_name + "::" + method_name};
           const symbolt *method_sym = symbol_table.lookup(method_id);
+          // Constant-directed dispatcher folding for bound methods
+          // (e.g. session.client("ec2") -> the module client() chain).
+          if(
+            auto folded = try_dispatcher_fold(
+              id2string(method_id), args, expr, /*first_param_index=*/1))
+            return std::move(*folded);
           // Inheritance fallback: if the class doesn't define
           // the method itself, walk its C3 MRO to look for the
           // method on each ancestor in resolution order. The
@@ -3245,6 +3269,11 @@ std::optional<exprt> python_convertert::try_method_call(
         std::string class_name = tag.substr(13);
         irep_idt method_id{"python::" + class_name + "::" + method_name};
         const symbolt *method_sym = symbol_table.lookup(method_id);
+        // Constant-directed dispatcher folding for bound methods.
+        if(
+          auto folded = try_dispatcher_fold(
+            id2string(method_id), args, expr, /*first_param_index=*/1))
+          return std::move(*folded);
         // Inheritance fallback: walk MRO if not found on the
         // class itself (mirrors the resolution above for the
         // first dispatch path).

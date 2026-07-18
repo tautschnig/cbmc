@@ -489,6 +489,18 @@ exprt python_convertert::convert_user_call(
     symbol_id = irep_idt{"python::" + func_name};
     sym = symbol_table.lookup(symbol_id);
   }
+
+  // Constant-directed dispatcher folding: a literal-keyed call to a pure
+  // dispatcher (or its forwarder) folds to the selected branch's
+  // construction, eliminating the N-way branch-join at symex level (the
+  // boto3 client() chain: ~3x time / ~4x memory on the stub-heavy corpus).
+  if(sym != nullptr)
+  {
+    if(
+      auto folded = try_dispatcher_fold(
+        id2string(symbol_id), args, expr, /*first_param_index=*/0))
+      return std::move(*folded);
+  }
   // The former ad-hoc math-function block has been retired.
   // math.py declares each function with @c_intrinsic('name',
   // fold='op', domain='kind', range='kind').
