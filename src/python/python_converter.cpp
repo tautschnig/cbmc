@@ -1156,7 +1156,35 @@ bool python_convertert::invalidate_extracted_source_on_mutation(
     dict_runtime_value_overrides.erase(sid);
     dict_guaranteed_keys.erase(sid);
   }
+  // PLR object identity, SIBLING aliases: every OTHER extraction from the
+  // same source container may be the SAME object (`v1 = d[1]; v2 = d[1];
+  // v1.append(2)` -- CPython: len(v2) grows). Havocing only the source left
+  // v2 a stale by-value copy: a FALSE PROOF (probed). Havoc all sibling
+  // aliases of this source too (and the mutated alias itself stays as-is:
+  // its own mutation is applied to it directly by the method model).
+  havoc_sibling_extraction_aliases(
+    it->second, to_symbol_expr(obj).get_identifier());
   return true;
+}
+
+void python_convertert::havoc_sibling_extraction_aliases(
+  const exprt &source,
+  const irep_idt &except_id)
+{
+  for(const auto &entry : extracted_container_alias)
+  {
+    if(entry.first == except_id)
+      continue;
+    if(entry.second != source)
+      continue;
+    const symbolt *als = symbol_table.lookup(entry.first);
+    if(als == nullptr)
+      continue;
+    pending_checks.push_back(code_frontend_assignt{
+      als->symbol_expr(),
+      side_effect_expr_nondett{als->type, source_locationt{}}});
+    invalidate_reassigned_symbol(entry.first);
+  }
 }
 
 bool python_convertert::invalidate_dict_value_on_mutation(
@@ -1190,7 +1218,13 @@ bool python_convertert::invalidate_dict_value_on_mutation(
     return false;
   // ALL dict key kinds (int, string, heterogeneous value-typed) now use a
   // working lvalue value-slot (mutation propagates -- see the subscript
-  // converter), so no compensating havoc is needed.
+  // converter), so no compensating dict havoc is needed. But EXTRACTION
+  // ALIASES of this dict (`v = d[1]; d[1].append(2)` -- CPython: len(v)
+  // grows) are by-value copies that go STALE on the in-place slot
+  // mutation: havoc them (a false proof otherwise -- probed).
+  exprt base_e2 = convert_expression(base);
+  if(base_e2.id() == ID_symbol)
+    havoc_sibling_extraction_aliases(base_e2, irep_idt{});
   return false;
 }
 

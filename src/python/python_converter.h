@@ -1217,6 +1217,15 @@ private:
   bool invalidate_extracted_source_on_mutation(
     const exprt &obj,
     const std::string &method_name);
+
+  /// Havoc every extraction alias whose recorded source equals \p source,
+  /// except \p except_id (the alias being mutated directly). PLR object
+  /// identity: sibling extractions may be the SAME runtime object, so a
+  /// mutation through one makes every sibling's by-value copy stale (a
+  /// false proof if left readable).
+  void havoc_sibling_extraction_aliases(
+    const exprt &source,
+    const irep_idt &except_id);
   /// PLR object identity: a NON-int-keyed dict value (`d["k"]`) is returned by
   /// value (not a writable lvalue like int-keyed values), so an in-place
   /// mutation through `d["k"].mutator(...)` is lost. Havoc the dict (into
