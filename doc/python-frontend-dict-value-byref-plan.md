@@ -14,7 +14,11 @@ precision until the first mutation (guarding the fold itself regressed
 dict18/dict19/dict63 — wrong layer). Residuals: heterogeneous
 value-typed KEY dicts (copied chain + havoc), the `v = a[k];
 v.append(...)` extraction-aliasing case (same root as the §0 nested-list
-residual), and empty-`{}` value typing (`dict_setdefault_list`).
+residual -- **soundness closed 2026-07-18, `e82ae0505c`**: sibling
+extraction aliases and direct-slot mutations now HAVOC every tracked alias
+of the mutated source, closing two probed false proofs; PRECISION still
+needs reference semantics), and empty-`{}` value typing
+(`dict_setdefault_list`).
 Distinct from [§5 dict pass-by-reference](python-frontend-plan.md#dict-byref)
 (the *dict itself* as a by-reference parameter — RESOLVED).
 
