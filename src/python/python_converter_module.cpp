@@ -416,6 +416,12 @@ void python_convertert::process_imported_module(
       // module (so a bare reference is in-scope only if it was
       // actually imported).
       imported_module_defs.insert(fname);
+      // Constant-directed dispatcher folding: imported module functions
+      // register under their FLAT name (call resolution binds
+      // `boto3.client` to `python::client`) -- process_imported_module
+      // does not reuse convert_function_def, so register here too.
+      register_dispatcher_summary(
+        "python::" + fname, stmt, /*first_param_index=*/0);
       // PLR §8.7 / typing.overload: @overload-decorated defs are
       // type-only stubs (empty `...` bodies). Skip them so the real
       // implementation (same name, no @overload) is the one registered;

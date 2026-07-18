@@ -2570,10 +2570,10 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
         notequal_exprt{
           member_exprt{cplx_deref, "imag", double_type()},
           safe_zero(double_type())}}};
-    // CLASS tag → instance is truthy by default (PLR §6.10.1).
-    // Without __bool__/__len__ dunder support, treat the
-    // instance pointer as truthy when present (non-NULL).
-    exprt class_truthy = python_value_is(e, python_type_tagt::CLASS);
+    // CLASS tag: per-instance identity-dispatched truthiness (shared
+    // helper; a blanket always-truthy was a false proof -- see
+    // pv_class_truthiness).
+    exprt class_truthy = pv_class_truthiness(e);
     // TUPLE tag → truthy iff the tuple is non-empty. Its arity is not
     // recoverable from the opaque __class_ptr box, so use a SOUND nondet:
     // treating a boxed tuple as unconditionally truthy would be a FALSE PROOF
@@ -3070,11 +3070,17 @@ exprt python_convertert::python_truthiness(const exprt &e)
       notequal_exprt{
         member_exprt{python_value_list(e), "length", signedbv_typet{64}},
         from_integer(0, signedbv_typet{64})}};
-    // CLASS-tagged python_value: presence of class-instance is
-    // truthy by default (object instance with no __bool__/__len__
-    // is True per PLR). Conservative; per-class dispatch is done
-    // by callers when they have struct context.
-    auto class_truthy = python_value_is(e, python_type_tagt::CLASS);
+    // CLASS-tagged python_value: dispatch on the per-instance class
+    // identity (__class_tag) against the ClassDef-time truthiness
+    // classification (PLR §4.4: __bool__ over __len__; no dunder ->
+    // truthy). A blanket always-truthy was a FALSE PROOF (`_AnyDict`
+    // with __len__ -> 0 is FALSY in CPython, so `if response:` guards
+    // never run -- we executed them) and a path-explosion driver on the
+    // stub-heavy corpus. FALSY classes are excluded from the truthy
+    // disjunct; UNKNOWN classes contribute a nondet conjunct (sound in
+    // both directions); TRUTHY (or unclassified/foreign) instances keep
+    // the presence-is-truthy default via the residual arm.
+    exprt class_truthy = pv_class_truthiness(e);
     // COMPLEX-tagged python_value: dereference __class_ptr as a
     // python_complex struct and apply PLR §6.10.1: 0+0j is
     // falsy, anything else is truthy.
@@ -6261,4 +6267,38 @@ void python_convertert::invalidate_mutated_dict_literals(const jsont &stmt)
     }
   };
   scan(stmt);
+}
+
+exprt python_convertert::pv_class_truthiness(const exprt &e) const
+{
+  // PLR §4.4: __bool__ over __len__; an instance with neither is truthy.
+  // FALSY-classified classes are excluded from the truthy disjunct (the
+  // `_AnyDict.__len__ -> 0` stub shape made every `if response:` guard
+  // falsy in CPython while the old blanket-truthy model executed the
+  // branch -- a false proof AND a path-explosion driver); UNKNOWN
+  // classes contribute a nondet arm (sound in both directions); TRUTHY
+  // and unclassified instances keep presence-is-truthy.
+  std::vector<std::string> falsy_or_unknown;
+  exprt unknown_nondet_arm = false_exprt{};
+  for(const auto &entry : class_truthiness)
+  {
+    const std::string &cn = entry.first;
+    const truthiness_kindt k = truthiness_of(cn);
+    if(k == truthiness_kindt::TRUTHY)
+      continue;
+    falsy_or_unknown.push_back(cn);
+    if(k == truthiness_kindt::UNKNOWN)
+      unknown_nondet_arm = or_exprt{
+        std::move(unknown_nondet_arm),
+        and_exprt{
+          python_value_is_class_of(e, {cn}),
+          side_effect_expr_nondett{bool_typet{}, source_locationt{}}}};
+  }
+  if(falsy_or_unknown.empty())
+    return python_value_is(e, python_type_tagt::CLASS);
+  return or_exprt{
+    and_exprt{
+      python_value_is(e, python_type_tagt::CLASS),
+      not_exprt{python_value_is_class_of(e, falsy_or_unknown)}},
+    std::move(unknown_nondet_arm)};
 }

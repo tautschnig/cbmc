@@ -639,6 +639,85 @@ private:
   /// raises ValueError ('__len__() should return >= 0'). Constant-only, so no
   /// false positive on a symbolic/non-negative __len__.
   std::set<std::string> class_len_negative;
+
+  /// PLR §4.4 instance truthiness classification (syntactic, at ClassDef
+  /// registration). CPython: __bool__ wins over __len__; an instance with
+  /// NEITHER is always truthy. A class whose deciding dunder provably
+  /// returns a constant classifies as ALWAYS_TRUTHY / ALWAYS_FALSY
+  /// (`_AnyDict.__len__ -> 0` made every `if response:` guard falsy --
+  /// modelling it truthy was a FALSE PROOF and a path-explosion driver);
+  /// a non-constant deciding dunder classifies UNKNOWN (nondet truthiness,
+  /// sound in both directions). No dunder anywhere in the MRO: TRUTHY.
+  enum class truthiness_kindt
+  {
+    TRUTHY,
+    FALSY,
+    UNKNOWN,
+  };
+  std::map<std::string, truthiness_kindt> class_truthiness;
+
+  /// Constant-directed dispatcher folding (perf whole-group): a PURE
+  /// DISPATCHER is a function whose body is a chain of
+  /// `if <param> == "lit": return ClassName()` (docstrings allowed, an
+  /// optional trailing `assert False[, msg]` default), keyed by the
+  /// switch param's positional index. A FORWARDER is a function whose
+  /// body is a single `return g(<param>, ...)`. A call site whose switch
+  /// argument is a string LITERAL folds to the selected branch's
+  /// constructor (or the assert-False default), eliminating the N-way
+  /// branch-join that made symex merge N service-client states per call
+  /// (the boto3 client() chain: 31 branches, ~3x time / ~4x memory on
+  /// mediaconvert_manager). Semantics preserved: matching literal =
+  /// exactly the branch CPython takes; unmatched = the dispatcher's own
+  /// assert-False contract; non-literal args do NOT fold.
+  struct dispatcher_summaryt
+  {
+    std::size_t param_index = 0; // positional index incl. self for methods
+    std::map<std::string, std::string> branches; // literal -> class name
+    bool assert_false_default = false;
+    std::string forwards_to; // non-empty: FORWARDER to this func id
+  };
+  std::map<std::string, dispatcher_summaryt> dispatcher_summaries;
+
+  /// Detect the dispatcher/forwarder shape on \p fdef (a FunctionDef AST)
+  /// and record it under \p func_id. \p first_param_index is 1 for bound
+  /// methods (param 0 is self), 0 otherwise.
+  void register_dispatcher_summary(
+    const std::string &func_id,
+    const jsont &fdef,
+    std::size_t first_param_index);
+
+  /// Fold a call to \p func_id when a dispatcher summary applies and the
+  /// switch argument is a string literal. Returns the folded expression
+  /// (the selected class construction, or a nondet after emitting the
+  /// assert-False default) or nullopt when not foldable.
+  std::optional<exprt> try_dispatcher_fold(
+    const std::string &func_id,
+    const jsont &args,
+    const jsont &expr,
+    std::size_t first_param_index);
+
+  /// MRO-aware lookup of the instance-truthiness classification.
+  truthiness_kindt truthiness_of(const std::string &cls_name) const
+  {
+    auto it = class_truthiness.find(cls_name);
+    if(it != class_truthiness.end())
+      return it->second;
+    auto mit = class_mro.find(cls_name);
+    if(mit != class_mro.end())
+      for(const auto &anc : mit->second)
+      {
+        auto ait = class_truthiness.find(anc);
+        if(ait != class_truthiness.end())
+          return ait->second;
+      }
+    return truthiness_kindt::TRUTHY;
+  }
+
+  /// The CLASS arm of python_value truthiness (shared by the two truthiness
+  /// builders -- python_truthiness and unwrap_value's bool path): dispatches
+  /// per-instance class identity against the ClassDef-time classification.
+  /// See the comment at the python_truthiness use site.
+  exprt pv_class_truthiness(const exprt &e) const;
   std::map<std::string, std::set<std::string>> class_all_bare;
   std::map<std::string, std::set<std::string>>
     class_ctor_assigned; /// Per-class set of class-level attributes that were

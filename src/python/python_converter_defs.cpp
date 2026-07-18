@@ -813,6 +813,12 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   if(!current_function.empty())
     qualified_func_name = current_function + "::" + func_name;
 
+  // Constant-directed dispatcher folding: record the pure-dispatcher /
+  // forwarder shape (see dispatcher_summaryt) for literal-keyed call-site
+  // folding. Module/nested functions: no self param.
+  register_dispatcher_summary(
+    "python::" + qualified_func_name, stmt, /*first_param_index=*/0);
+
   // Build parameter list
   const jsont &args_node = json_member(stmt, "args");
   const jsont &params = json_member(args_node, "args");
@@ -3429,6 +3435,67 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   // constant (body is a single `return <neg const>`); len() on such an instance
   // raises ValueError. Constant-only -> no false positive on a symbolic or
   // non-negative __len__.
+  // PLR §4.4: classify instance truthiness from __bool__/__len__ (see
+  // truthiness_kindt). __bool__ wins over __len__ (CPython). A single
+  // constant return classifies definitively; anything else UNKNOWN.
+  // Idempotent per class.
+  if(body.is_array() && class_truthiness.count(class_name) == 0)
+  {
+    const jsont *bool_def = nullptr;
+    const jsont *len_def = nullptr;
+    for(const auto &item : as_array(body))
+    {
+      if(!is_node_type(item, "FunctionDef"))
+        continue;
+      const std::string mn = json_string(json_member(item, "name"));
+      if(mn == "__bool__")
+        bool_def = &item;
+      else if(mn == "__len__")
+        len_def = &item;
+    }
+    const jsont *decider = bool_def != nullptr ? bool_def : len_def;
+    if(decider != nullptr)
+    {
+      truthiness_kindt k = truthiness_kindt::UNKNOWN;
+      const jsont &db = json_member(*decider, "body");
+      // Single-statement `return <constant>` body (docstrings allowed
+      // before it) -- the common stub shape.
+      if(db.is_array())
+      {
+        const jsont *ret = nullptr;
+        bool other_stmt = false;
+        for(const auto &st : as_array(db))
+        {
+          if(is_node_type(st, "Return"))
+          {
+            if(ret != nullptr)
+              other_stmt = true;
+            ret = &st;
+          }
+          else if(!(is_node_type(st, "Expr") &&
+                    is_node_type(json_member(st, "value"), "Constant")))
+            other_stmt = true;
+        }
+        if(ret != nullptr && !other_stmt)
+        {
+          const jsont &rv = json_member(*ret, "value");
+          if(is_node_type(rv, "Constant"))
+          {
+            const jsont &cv = json_member(rv, "value");
+            if(cv.is_true())
+              k = truthiness_kindt::TRUTHY;
+            else if(cv.is_false())
+              k = truthiness_kindt::FALSY;
+            else if(cv.is_number())
+              k = (cv.value == "0" || cv.value == "0.0")
+                    ? truthiness_kindt::FALSY
+                    : truthiness_kindt::TRUTHY;
+          }
+        }
+      }
+      class_truthiness[class_name] = k;
+    }
+  }
   // PLR §3.3.1: classify the class's __iter__ against the iterator
   // protocol (see classify_iter_protocol). Idempotent per class.
   if(body.is_array() && class_iter_protocol.count(class_name) == 0)
@@ -3448,6 +3515,16 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     if(iter_def != nullptr)
       classify_iter_protocol(class_name, *iter_def, has_next_m);
   }
+
+  // Dispatcher-summary registration for METHODS (bound: param 0 is self).
+  if(body.is_array())
+    for(const auto &item : as_array(body))
+      if(is_node_type(item, "FunctionDef"))
+        register_dispatcher_summary(
+          "python::" + class_name +
+            "::" + json_string(json_member(item, "name")),
+          item,
+          /*first_param_index=*/1);
   if(body.is_array())
     for(const auto &item : as_array(body))
     {
@@ -5783,4 +5860,238 @@ void python_convertert::classify_iter_protocol(
     class_iter_protocol[cls_name] = iter_protocol_kindt::INVALID;
   else
     class_iter_protocol[cls_name] = iter_protocol_kindt::UNKNOWN;
+}
+
+void python_convertert::register_dispatcher_summary(
+  const std::string &func_id,
+  const jsont &fdef,
+  std::size_t first_param_index)
+{
+  if(dispatcher_summaries.count(func_id) > 0)
+    return;
+  const jsont &args_node = json_member(fdef, "args");
+  const jsont &params = json_member(args_node, "args");
+  if(!params.is_array() || as_array(params).size() <= first_param_index)
+    return;
+  const jsont &body = json_member(fdef, "body");
+  if(!body.is_array())
+    return;
+  std::vector<std::string> param_names;
+  for(const auto &p : as_array(params))
+    param_names.push_back(json_string(json_member(p, "arg")));
+
+  dispatcher_summaryt sum;
+  bool have_param = false;
+  bool saw_forwarder = false;
+  for(const auto &st : as_array(body))
+  {
+    // Docstring / bare-constant expression statements are ignored.
+    if(
+      is_node_type(st, "Expr") &&
+      is_node_type(json_member(st, "value"), "Constant"))
+      continue;
+    // Trailing `assert False[, msg]` -- the unknown-key default.
+    if(is_node_type(st, "Assert"))
+    {
+      const jsont &tv = json_member(st, "test");
+      if(is_node_type(tv, "Constant") && json_member(tv, "value").is_false())
+      {
+        sum.assert_false_default = true;
+        continue;
+      }
+      return;
+    }
+    // A `return <anything>` after the assert-False default is unreachable.
+    if(is_node_type(st, "Return") && sum.assert_false_default)
+      continue;
+    // FORWARDER: sole `return g(<param>, ...)`.
+    if(is_node_type(st, "Return") && !have_param && sum.branches.empty())
+    {
+      const jsont &rv = json_member(st, "value");
+      if(
+        is_node_type(rv, "Call") &&
+        is_node_type(json_member(rv, "func"), "Name"))
+      {
+        const jsont &cargs = json_member(rv, "args");
+        if(cargs.is_array() && !as_array(cargs).empty())
+        {
+          const jsont &a0 = *as_array(cargs).begin();
+          if(is_node_type(a0, "Name"))
+          {
+            const std::string an = json_string(json_member(a0, "id"));
+            for(std::size_t i = first_param_index; i < param_names.size(); ++i)
+            {
+              if(param_names[i] == an)
+              {
+                sum.param_index = i;
+                sum.forwards_to =
+                  json_string(json_member(json_member(rv, "func"), "id"));
+                saw_forwarder = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+      if(!saw_forwarder)
+        return;
+      continue;
+    }
+    // Chain link: `if <param> == "lit": return ClassName()`.
+    if(!is_node_type(st, "If") || saw_forwarder)
+      return;
+    const jsont &test = json_member(st, "test");
+    if(!is_node_type(test, "Compare"))
+      return;
+    const jsont &left = json_member(test, "left");
+    const jsont &ops = json_member(test, "ops");
+    const jsont &comps = json_member(test, "comparators");
+    if(
+      !is_node_type(left, "Name") || !ops.is_array() ||
+      as_array(ops).size() != 1 ||
+      !is_node_type(*as_array(ops).begin(), "Eq") || !comps.is_array() ||
+      as_array(comps).size() != 1)
+      return;
+    const jsont &lit = *as_array(comps).begin();
+    if(!is_node_type(lit, "Constant") || !json_member(lit, "value").is_string())
+      return;
+    const std::string pname = json_string(json_member(left, "id"));
+    std::size_t pidx = SIZE_MAX;
+    for(std::size_t i = first_param_index; i < param_names.size(); ++i)
+      if(param_names[i] == pname)
+      {
+        pidx = i;
+        break;
+      }
+    if(pidx == SIZE_MAX || (have_param && pidx != sum.param_index))
+      return;
+    sum.param_index = pidx;
+    have_param = true;
+    const jsont &ibody = json_member(st, "body");
+    const jsont &ielse = json_member(st, "orelse");
+    if(
+      !ibody.is_array() || as_array(ibody).size() != 1 ||
+      (ielse.is_array() && !as_array(ielse).empty()))
+      return;
+    const jsont &ret = *as_array(ibody).begin();
+    if(!is_node_type(ret, "Return"))
+      return;
+    const jsont &rv = json_member(ret, "value");
+    // Only a no-arg constructor call of a Name folds safely (no dependence
+    // on other params/locals; the class is resolved at FOLD time).
+    if(
+      !is_node_type(rv, "Call") ||
+      !is_node_type(json_member(rv, "func"), "Name"))
+      return;
+    const jsont &cargs = json_member(rv, "args");
+    if(cargs.is_array() && !as_array(cargs).empty())
+      return;
+    sum.branches[json_string(json_member(lit, "value"))] =
+      json_string(json_member(json_member(rv, "func"), "id"));
+  }
+  const bool is_dispatcher = !sum.branches.empty() && sum.assert_false_default;
+  if(is_dispatcher || saw_forwarder)
+    dispatcher_summaries[func_id] = sum;
+}
+
+std::optional<exprt> python_convertert::try_dispatcher_fold(
+  const std::string &func_id,
+  const jsont &args,
+  const jsont &expr,
+  std::size_t first_param_index)
+{
+  if(getenv("CBMC_NO_DISPFOLD") != nullptr)
+    return std::nullopt;
+  auto it = dispatcher_summaries.find(func_id);
+  if(it == dispatcher_summaries.end())
+    return std::nullopt;
+  const dispatcher_summaryt *sum = &it->second;
+  std::size_t args_index = sum->param_index - first_param_index;
+  // Follow a FORWARDER one level (e.g. _Session.client -> module client):
+  // the forwarder passes its switch param as the inner call's FIRST arg,
+  // so the OUTER literal at args_index selects in the INNER's branches.
+  if(!sum->forwards_to.empty())
+  {
+    auto iit = dispatcher_summaries.find("python::" + sum->forwards_to);
+    if(iit == dispatcher_summaries.end() || !iit->second.forwards_to.empty())
+      return std::nullopt;
+    sum = &iit->second;
+  }
+  if(!args.is_array() || as_array(args).size() <= args_index)
+    return std::nullopt;
+  auto ait = as_array(args).begin();
+  std::advance(ait, args_index);
+  const jsont &sw = *ait;
+  if(!is_node_type(sw, "Constant") || !json_member(sw, "value").is_string())
+    return std::nullopt;
+  const std::string key = json_string(json_member(sw, "value"));
+  auto bit = sum->branches.find(key);
+  if(bit == sum->branches.end())
+  {
+    // The dispatcher's own default: `assert False` (its unknown-key
+    // contract). Preserve it as a definite property at the call site.
+    if(!sum->assert_false_default)
+      return std::nullopt;
+    source_locationt aloc = get_location(expr);
+    aloc.set_property_class("assertion");
+    aloc.set_comment("dispatcher default reached (assert False)");
+    code_assertt af{false_exprt{}};
+    af.add_source_location() = aloc;
+    pending_checks.push_back(std::move(af));
+    return exprt{
+      side_effect_expr_nondett{python_value_type(), get_location(expr)}};
+  }
+  const std::string &cls = bit->second;
+  if(class_types.count(cls) == 0)
+    return std::nullopt;
+  // Materialise the selected branch's construction -- exactly what the
+  // inline `ClassName()` expression path does.
+  const struct_typet &cls_type = class_types.at(cls);
+  static unsigned dispfold_ctr = 0;
+  const std::string tn =
+    "__dispfold_" + cls + "_" + std::to_string(dispfold_ctr++);
+  const irep_idt tid{qualify_name(tn)};
+  if(symbol_table.lookup(tid) == nullptr)
+  {
+    symbolt ts{tid, cls_type, "python"};
+    ts.base_name = tn;
+    ts.is_lvalue = true;
+    ts.is_state_var = true;
+    // STATIC: the folded result is BOXED (a pv holding &temp), and the
+    // fold may run inside a method (self.client = boto3.client("ecs")) --
+    // a frame-local temp would dangle after the method returns. A static
+    // per-site instance matches the non-folded semantics (the dispatcher's
+    // own return-materialisation temp is per-callee storage).
+    ts.is_static_lifetime = true;
+    symbol_table.add(ts);
+  }
+  const symbolt &tsym = symbol_table.lookup_ref(tid);
+  // Class-level defaults, then construction (__init__ / dataclass /
+  // __class_tag stamp) -- mirrors the ctor-expression path.
+  const irep_idt class_obj_id{"python::" + cls};
+  const symbolt *class_obj = symbol_table.lookup(class_obj_id);
+  if(class_obj != nullptr && !class_obj->value.is_nil())
+    pending_checks.push_back(
+      code_frontend_assignt{tsym.symbol_expr(), class_obj->symbol_expr()});
+  // The selected branch is a NO-ARG `ClassName()` (enforced at
+  // registration): bind the ctor with an EMPTY synthetic call node so
+  // __init__ params take their DEFAULTS. Passing the OUTER dispatcher
+  // call here bound its args ("ecs", region_name=...) to __init__ -- a
+  // semantic change that regressed ecs_utils.
+  static const jsont empty_call = []()
+  {
+    json_objectt o;
+    o["args"] = json_arrayt{};
+    o["keywords"] = json_arrayt{};
+    return jsont{o};
+  }();
+  for(auto &st : build_class_construction(
+        cls, tsym.symbol_expr(), empty_call, get_location(expr)))
+    pending_checks.push_back(std::move(st));
+  // Preserve the dispatcher's TYPE CONTRACT: it returns `-> Any` (a boxed
+  // python_value), so callers must see the same shape -- returning the raw
+  // class struct changed downstream field/receiver typing and regressed
+  // ecs_utils (the fold must be a pure PERF transform, invisible to
+  // semantics).
+  return exprt{make_python_value(python_type_tagt::CLASS, tsym.symbol_expr())};
 }
