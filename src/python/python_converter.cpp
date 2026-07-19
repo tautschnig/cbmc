@@ -1108,6 +1108,90 @@ void python_convertert::note_mutable_extraction(
     is_python_list_type(ct) || is_python_dict_type(ct) ||
     is_python_set_type(ct) || is_python_value_type(ct))
     extracted_container_alias[lhs_id] = container;
+
+  // §0 write-through recording (spike doc §14b): the dict subscript's
+  // lvalue slot with a MATERIALISED index temp is a re-emittable anchor.
+  // Record it only for a non-escaped dict source (escape = unseen
+  // structural mutation would make the write-through a FALSE WRITE).
+  extracted_slot_alias.erase(lhs_id);
+  const irep_idt src_id = to_symbol_expr(container).get_identifier();
+  if(
+    rhs.id() == ID_index && is_python_dict_type(ct) &&
+    escaped_mutables.count(src_id) == 0)
+  {
+    const auto &ix = to_index_expr(rhs);
+    if(
+      ix.index().id() == ID_symbol && ix.array().id() == ID_member &&
+      to_member_expr(ix.array()).get_component_name() == "values" &&
+      to_member_expr(ix.array()).compound() == container)
+    {
+      extracted_slot_alias[lhs_id] =
+        slot_aliast{rhs, src_id, json_string(json_member(cont, "id"))};
+    }
+  }
+}
+
+void python_convertert::demote_slot_aliases_for_statement(const jsont &stmt)
+{
+  if(extracted_slot_alias.empty())
+    return;
+  const std::string nt = json_string(json_member(stmt, "_type"));
+  // Control flow: conversion order stops matching runtime order (branch
+  // joins, loop back-edges converting once) -- clear everything. Loops
+  // stay precise WITHIN one body conversion because the extraction
+  // statement re-assigns the index temp on each runtime execution.
+  static const std::set<std::string> control{
+    "If",
+    "For",
+    "AsyncFor",
+    "While",
+    "Try",
+    "With",
+    "AsyncWith",
+    "FunctionDef",
+    "AsyncFunctionDef",
+    "ClassDef",
+    "Match"};
+  if(control.count(nt) > 0)
+  {
+    extracted_slot_alias.clear();
+    return;
+  }
+  // Collect every Name mentioned in the statement.
+  std::set<std::string> names;
+  std::function<void(const jsont &)> scan = [&](const jsont &n)
+  {
+    if(!n.is_object())
+      return;
+    if(is_node_type(n, "Name"))
+    {
+      names.insert(json_string(json_member(n, "id")));
+      return;
+    }
+    const auto &obj = static_cast<const json_objectt &>(n);
+    for(const auto &kv : obj)
+    {
+      const jsont &child = kv.second;
+      if(child.is_array())
+      {
+        for(const auto &c : as_array(child))
+          scan(c);
+      }
+      else if(child.is_object())
+        scan(child);
+    }
+  };
+  scan(stmt);
+  // Demote every alias whose SOURCE dict is mentioned: any touch of the
+  // dict (store, del, pop, aliasing assign, call argument, even a read --
+  // conservative) may invalidate the recorded slot index or the aliasing.
+  for(auto it = extracted_slot_alias.begin(); it != extracted_slot_alias.end();)
+  {
+    if(names.count(it->second.source_name) > 0)
+      it = extracted_slot_alias.erase(it);
+    else
+      ++it;
+  }
 }
 
 bool python_convertert::invalidate_extracted_source_on_mutation(
@@ -1133,10 +1217,35 @@ bool python_convertert::invalidate_extracted_source_on_mutation(
     return false;
   if(obj.id() != ID_symbol)
     return false;
-  auto it =
-    extracted_container_alias.find(to_symbol_expr(obj).get_identifier());
+  const irep_idt obj_id = to_symbol_expr(obj).get_identifier();
+  auto it = extracted_container_alias.find(obj_id);
   if(it == extracted_container_alias.end())
     return false;
+  // §0 write-through (spike doc §14b): a still-valid slot alias writes the
+  // mutated value BACK THROUGH the materialised slot (pending_post_checks:
+  // after the mutation statement) instead of havocing the source --
+  // `v = d[1]; v.append(2); len(d[1])` is now PRECISE. Demotion (any
+  // statement touching the dict, control flow, escape) erased the entry,
+  // in which case the sound havoc below applies. Sibling aliases and the
+  // constant-fold maps are handled identically on both paths (the fold
+  // would otherwise serve the pre-mutation snapshot).
+  auto sit = extracted_slot_alias.find(obj_id);
+  if(sit != extracted_slot_alias.end())
+  {
+    exprt wb = obj;
+    const typet &et = sit->second.slot.type();
+    if(wb.type() != et)
+      wb = is_python_value_type(et) ? wrap_value(wb) : coerce_element(wb, et);
+    pending_post_checks.push_back(
+      code_frontend_assignt{sit->second.slot, std::move(wb)});
+    const irep_idt sid = sit->second.source_id;
+    dict_literals.erase(sid);
+    list_literals.erase(sid);
+    dict_runtime_value_overrides.erase(sid);
+    dict_guaranteed_keys.erase(sid);
+    havoc_sibling_extraction_aliases(it->second, obj_id);
+    return true;
+  }
   // PLR reference semantics: `obj` is the same object as the source slot, so
   // mutating it may change the source container. We store nested elements by
   // value (no aliasing), so over-approximate soundly by havocing the source —

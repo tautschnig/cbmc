@@ -1205,6 +1205,29 @@ private:
   /// reference semantics for mutable objects (heap-allocate + alias by
   /// pointer); this guard keeps the model sound until that lands.
   std::map<irep_idt, exprt> extracted_container_alias;
+
+  /// §0 slot-alias WRITE-THROUGH (spike doc §14b): `v = d[k]` records the
+  /// MATERIALISED lvalue slot (values[__dictidx_N]) alongside the havoc
+  /// alias, so a later in-place mutation of v can write back through the
+  /// slot (precise) instead of havocing the source. SOUNDNESS-SENSITIVE:
+  /// the slot index is computed at extraction, so the entry must be
+  /// DEMOTED (erased -- falling back to the sound havoc) before ANY
+  /// statement that could disturb the source dict or the aliasing:
+  /// any statement mentioning the source Name, and every control-flow
+  /// statement (see demote_slot_aliases_for_statement). Sources in
+  /// escaped_mutables are never recorded (unseen mutation).
+  struct slot_aliast
+  {
+    exprt slot;         // index_exprt{member(values), idx_sym} -- an lvalue
+    irep_idt source_id; // the dict symbol
+    std::string source_name; // bare name for the AST mentions-scan
+  };
+  std::map<irep_idt, slot_aliast> extracted_slot_alias;
+
+  /// Statement-level demotion pre-scan for the write-through map (see
+  /// slot_aliast): erases entries whose source name is MENTIONED anywhere
+  /// in \p stmt, and clears the whole map for control-flow statements.
+  void demote_slot_aliases_for_statement(const jsont &stmt);
   /// Record `lhs = <subscript of container>` when the result is (or may be) a
   /// mutable container. `rhs` is the converted RHS, `value` the RHS AST node.
   void note_mutable_extraction(
