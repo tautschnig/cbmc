@@ -661,6 +661,36 @@ std::optional<exprt> python_convertert::try_list_method(
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
+      // MATERIALISE a non-symbol argument (PLR §6.2 evaluation-once +
+      // whole-group perf): the per-slot copy loop below uses `arg` ~35
+      // times (16 element reads + lengths + guard); embedding a CALL
+      // expression executed the callee once PER USE -- semantically wrong
+      // for a side-effecting argument and the root of a 486x loop-unwind
+      // blowup on aws_untagged (`all_resources.extend(self.get_ec2_
+      // instances())` emitted 144 calls).
+      if(
+        arg.id() != ID_symbol && arg.id() != ID_dereference && !arg.is_nil() &&
+        // Only the LIST branch multiplies the arg; the string branch folds
+        // a compile-time constant (a temp would hide it from
+        // extract_string_value -- regressed list_extend5).
+        is_python_list_type(arg.type()))
+      {
+        static unsigned ext_arg_ctr = 0;
+        const std::string tn = "__extend_arg_" + std::to_string(ext_arg_ctr++);
+        const irep_idt tid{qualify_name(tn)};
+        if(symbol_table.lookup(tid) == nullptr)
+        {
+          symbolt ts{tid, arg.type(), "python"};
+          ts.base_name = tn;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          ts.is_static_lifetime = current_function.empty();
+          symbol_table.add(ts);
+        }
+        symbol_exprt tsym = symbol_table.lookup_ref(tid).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{tsym, arg});
+        arg = tsym;
+      }
       if(is_python_list_type(arg.type()))
       {
         member_exprt arg_len{arg, "length", signedbv_typet{64}};
