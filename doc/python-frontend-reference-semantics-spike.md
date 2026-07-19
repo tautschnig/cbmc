@@ -503,3 +503,75 @@ by-value A/B sweep unchanged (PASS 2715, **0 regressions**). The
 mutation (append/extend/insert/subscript-assign storing a value whose type
 differs from the list's inferred element type) is the general pattern; `append`
 and subscript-assign already coerce, `extend` was the gap.
+
+## 14. In-depth design review — 2026-07-19 (slot-alias write-through; evidence verdict: defer)
+
+The 2026-07-18/19 session changed the §0 landscape in three ways, reviewed
+here in depth.
+
+### 14a. The soundness floor is now in place (default mode)
+
+Two probed FALSE PROOFS in the by-value default were closed by
+`havoc_sibling_extraction_aliases` (`e82ae0505c`): mutating through one
+extraction alias havocs every *other* tracked alias of the same source (and
+the source), on both the alias-mutation and direct-slot-mutation paths. The
+default is now sound-but-imprecise across the WHOLE extraction group; every
+remaining §0 item is precision-only.
+
+### 14b. A third design point: conversion-time slot-alias WRITE-THROUGH
+
+The dict-subscript lvalue slot now MATERIALISES its matched index into a
+stable temp (`__dictidx_N`, commit `e82ae0505c`). That gives extraction a
+re-emittable anchor that did not exist before:
+
+    v = d[k]          # records: alias v  ->  slot d.values[__dictidx_N]
+    v.append(x)       # mutate v precisely, then WRITE THROUGH:
+                      #   d.values[__dictidx_N] := v   (pending_post_checks)
+                      # siblings of v still havoc (they are separate copies)
+
+Unlike true reference semantics this uses NO runtime pointers, so the §12
+equality cost wall does not apply: `d == d2` remains the cheap by-value
+struct compare. It would make the x3 shape (`v = d[1]; v.append(2);
+assert len(d[1]) == 2`) precise.
+
+**Soundness obligations (the reason this is NOT landed now).** The slot
+anchor `__dictidx_N` is assigned once, at extraction. A write-through is
+sound ONLY while the index still designates the same slot:
+
+1. Structural dict mutations between extraction and write-through
+   (`pop`/`del`/`clear`, plus any `d[k2] = v2` insertion that APPENDS)
+   can re-arrange or extend `values[]` -- a stale-index write would corrupt
+   a DIFFERENT slot: an unsoundness, strictly worse than today's havoc.
+   Every such site must DEMOTE the slot alias back to havoc-on-mutation.
+2. `d` escaping (function arg, container store, closure capture) allows
+   unseen structural mutation: restrict to non-`escaped_mutables` sources.
+3. Branch joins: the alias map is conversion-time; an extraction inside one
+   arm must not survive the join (the tracking_snapshott discipline; note
+   `extracted_container_alias` is currently NOT snapshot-merged -- it relies
+   on note_mutable_extraction's per-assignment erase, which is sound for
+   havoc semantics but NOT for write-through).
+4. Loops: an extraction inside a loop re-binds the same `__dictidx_N` temp
+   per iteration -- write-through remains correct only because the temp is
+   re-assigned before each use; re-verify under `--unwind`.
+
+The demotion discipline is the established invalidation-driver pattern
+(invalidate_reassigned_symbol / the statement pre-scans), so the machinery
+fits the architecture -- but each missed demotion site is a POTENTIAL FALSE
+WRITE, making this a soundness-sensitive change that needs its own
+validation-gated phase with hazard pinning (reassign/insert/pop/sort suite
+extended with interleaved-store shapes).
+
+### 14c. Evidence verdict (2026-07-19): DEFER implementation
+
+Demand measurement across both corpora, current binaries:
+- ESBMC sweep: 103 FAIL/DIFF residuals, **0** extraction-aliasing related
+  (name scan + manual inspection of the list).
+- Real-world suite: FP 0 / CLEAN 38 -- no extraction-aliasing false alarms.
+- The x3 probe is the only known imprecise case, and it is a synthetic.
+
+Per the evidence-first discipline (cf. the deferred generator channel, also
+re-verified at 1/103 this week): the write-through design is RECORDED as the
+preferred §0 precision step -- strictly cheaper than reference semantics, no
+equality wall, machinery matches the invalidation-driver architecture -- but
+implementation waits for a real program that needs it. If the corpus grows
+extraction-aliasing false alarms, start at 14b with the hazard suite first.
