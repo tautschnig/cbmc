@@ -2944,10 +2944,12 @@ std::optional<exprt> python_convertert::try_method_call(
               // PLR §3.6: a None default for a python_string param binds
               // as the length-0 empty-string marker, not a nondet int.
               if(is_python_none_constant(dv) && is_python_string_type(pt))
-                dv = struct_exprt{
-                  {from_integer(0, signedbv_typet{64}),
-                   null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
-                  python_string_type()};
+                dv = python_string_literal(""); // backend-aware empty-string
+              // marker: the refined {len, ptr} struct_exprt typed
+              // python_string_type() was MALFORMED under the native
+              // backend (a struct expr typed smt_string -- symex
+              // assign_from_struct precondition abort; the str=None
+              // default-binding family, 3 sites)
               else if(dv.type() != pt)
                 dv = safe_typecast(dv, pt);
               mcall_args.push_back(std::move(dv));

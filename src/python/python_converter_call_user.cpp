@@ -1272,10 +1272,13 @@ exprt python_convertert::convert_user_call(
           is_python_value_type(arguments[i].type()) &&
           is_python_string_type(params[i].type()))
         {
-          arguments[i] = struct_exprt{
-            {from_integer(0, signedbv_typet{64}),
-             null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
-            python_string_type()};
+          arguments[i] =
+            python_string_literal(""); // backend-aware empty-string
+          // marker: the refined {len, ptr} struct_exprt typed
+          // python_string_type() was MALFORMED under the native
+          // backend (a struct expr typed smt_string -- symex
+          // assign_from_struct precondition abort; the str=None
+          // default-binding family, 3 sites)
         }
         // Class reference: struct default → pointer param
         if(
@@ -1325,10 +1328,13 @@ exprt python_convertert::convert_user_call(
             is_python_none_constant(arguments[i]) &&
             is_python_string_type(params[i].type()))
           {
-            arguments[i] = struct_exprt{
-              {from_integer(0, signedbv_typet{64}),
-               null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
-              python_string_type()};
+            arguments[i] =
+              python_string_literal(""); // backend-aware empty-string
+            // marker: the refined {len, ptr} struct_exprt typed
+            // python_string_type() was MALFORMED under the native
+            // backend (a struct expr typed smt_string -- symex
+            // assign_from_struct precondition abort; the str=None
+            // default-binding family, 3 sites)
           }
           if(
             params[i].type().id() == ID_pointer &&
