@@ -575,3 +575,21 @@ preferred §0 precision step -- strictly cheaper than reference semantics, no
 equality wall, machinery matches the invalidation-driver architecture -- but
 implementation waits for a real program that needs it. If the corpus grows
 extraction-aliasing false alarms, start at 14b with the hazard suite first.
+
+## 15. Write-through LANDED for the safe slice — 2026-07-19 (`caf9de4050`)
+
+§14b was implemented the same day after the demand question was superseded
+by a cheap, hazard-gated scope: straight-line, non-escaped, int-keyed dict
+extraction. The hazard suite (h1-h9 + negations; CORE
+`extraction-slot-write-through` + `extraction-slot-demotion-hazards`)
+verifies: the precision target passes; same-key overwrite, new-key insert,
+pop, escape, and branch-join all DEMOTE to the sound havoc (wrong-value
+asserts unprovable); the full validation battery is green (suite 994,
+sweep 2721/0, oracle 0-NEW, both gates, corpus unchanged).
+
+Residual precision (documented): STRING-keyed extraction still folds --
+the constant-key fold serves the container value for read precision
+(dict18/19) before the slot form is seen, so no slot alias is recorded;
+resolving the tension needs assignment-context awareness at the fold site.
+List-element extraction (`r = c[i]`) is the next natural slice (same
+machinery; the list subscript already returns the data[i] lvalue).

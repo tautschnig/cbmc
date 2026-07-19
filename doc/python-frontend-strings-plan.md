@@ -485,3 +485,29 @@ priority than the regex items; recorded so it is not mistaken for soundness.
 
 ---
 
+## Native backend: class-struct str FIELDS must be boxed (2026-07-19, backtraced)
+
+The remaining 7-corpus-program TOERR family under `--python-smt-strings
+--smt2 --cvc5` has ONE representation-level root, established by debug-build
+backtrace (`unpack_struct` at lower_byte_operators.cpp:720 via
+`smt2_convt::lower_byte_operators` -- SSA conversion, not symex):
+
+- `python_value.__str` is boxed (fixed-width pointer -- the Plan A "string
+  boxing" invariant), but CLASS STRUCT str fields (`self.region_name: str`)
+  remain INLINE `smt_string` members;
+- every generic identity/tag read through the opaque `__class_ptr`
+  (`*(int32*)ptr` -- isinstance, the per-instance provenance dispatch
+  guards, truthiness) byte-extracts the pointed struct; a variable-width
+  member makes `unpack_struct` abort.
+
+Two earlier same-family sites were fixed 2026-07-19 (kwargs-dict KEY packing
+`690d05b9a0`, 39->7 TOERRs; the None-for-str refined marker `5c1d9a0f8e`).
+The remaining fix is the representation completion: under the native
+backend, box str-typed CLASS FIELDS behind `python_boxed_string_ptr_type()`
+exactly like `python_value.__str` (touch points: the class struct builder in
+convert_class_def, field read/write coercion, ctor init, shadow fields).
+A field-boxing pass at the struct-definition locus + boxing-aware
+member access mirrors the existing `coerce_element`/`box_string_for_storage`
+choke points, so the change is architectural but bounded. Until then the
+native backend remains regression-suite-validated; corpus-readiness needs
+this piece (7/51 programs).
