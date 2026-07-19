@@ -37,6 +37,10 @@ codet python_convertert::convert_statement(const jsont &stmt)
   // preventing stale-snapshot folds after mutation).
   invalidate_mutated_dict_literals(stmt);
 
+  // §0 write-through: demote slot aliases this statement could disturb
+  // (BEFORE conversion -- a demoted alias falls back to sound havoc).
+  demote_slot_aliases_for_statement(stmt);
+
   codet result = code_skipt{};
 
   if(node_type == "AnnAssign")
