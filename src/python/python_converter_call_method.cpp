@@ -3021,7 +3021,12 @@ std::optional<exprt> python_convertert::try_method_call(
                   exprt kv = convert_expression(json_member(kw, "value"));
                   if(kv.is_nil())
                     continue;
-                  ks.push_back(python_string_literal(kn));
+                  // coerce_element boxes the key under the native
+                  // SMT-String backend (a raw string struct in a
+                  // boxed-key-typed array crashed simplify_rec's type
+                  // postcondition -- 39/51 corpus TOERRs).
+                  ks.push_back(coerce_element(
+                    python_string_literal(kn), kat.element_type()));
                   if(is_python_value_type(vat.element_type()))
                     vs.push_back(wrap_value(kv));
                   else
@@ -3836,7 +3841,10 @@ std::optional<exprt> python_convertert::try_method_call(
               exprt::operandst ks, vs;
               for(const auto &[n, v] : unmatched)
               {
-                ks.push_back(python_string_literal(n));
+                // coerce_element boxes the key under the native
+                // SMT-String backend (see the pv-dispatch packing site).
+                ks.push_back(
+                  coerce_element(python_string_literal(n), kat.element_type()));
                 if(is_python_value_type(vat.element_type()))
                   vs.push_back(wrap_value(v));
                 else
