@@ -74,6 +74,30 @@ inline typet python_string_type()
   return struct_tag_typet{PYTHON_STRING_TAG};
 }
 
+/// Native SMT-String backend, STRING-ID HANDLE (strings plan, 2026-07-20):
+/// the fixed-width in-aggregate representation of a str value. A handle is
+/// a plain signedbv[64] whose STRING denotation is `(strtab h)` -- an
+/// uninterpreted function bv64 -> String declared solver-side. Aggregates
+/// stay fixed-width (byte-imaging an int is always well-defined, and the
+/// solver-side association survives struct copies), which is what pointer
+/// boxing could NOT deliver (an unresolved deref byte-extracts the pointed
+/// variable-width string). The ID_C_ flag is an irept COMMENT: the handle
+/// type compares EQUAL to signedbv[64] everywhere (no type-mismatch
+/// ripples); the choke points (attribute read/write) read the flag off the
+/// declared STRUCT COMPONENT type, which is stable.
+inline typet python_string_handle_type()
+{
+  signedbv_typet t{64};
+  t.set(ID_C_python_string_handle, true);
+  return t;
+}
+
+inline bool is_python_string_handle_type(const typet &t)
+{
+  return t.id() == ID_signedbv && to_signedbv_type(t).get_width() == 64 &&
+         t.get_bool(ID_C_python_string_handle);
+}
+
 inline struct_typet python_string_struct_def()
 {
   struct_typet::componentst components;

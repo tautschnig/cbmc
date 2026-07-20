@@ -4415,6 +4415,14 @@ exprt python_convertert::coerce_assign_rhs(
   const exprt &rhs,
   const typet &lhs_type)
 {
+  // Native backend string-id handles: a str value assigned into a HANDLE
+  // slot (a boxed-in-aggregate string -- see python_string_handle_type)
+  // allocates a handle whose strtab image is the value.
+  if(
+    python_smt_string_native_flag() && is_python_string_handle_type(lhs_type) &&
+    is_python_string_type(rhs.type()))
+    return string_to_handle(rhs);
+
   return coerce_to_typed_slot(rhs, lhs_type);
 }
 
@@ -6508,4 +6516,52 @@ exprt python_convertert::pv_class_truthiness(const exprt &e) const
       python_value_is(e, python_type_tagt::CLASS),
       not_exprt{python_value_is_class_of(e, falsy_or_unknown)}},
     std::move(unknown_nondet_arm)};
+}
+
+symbol_exprt python_convertert::strtab_symbol()
+{
+  const irep_idt id{"python::__cbmc_strtab"};
+  if(symbol_table.lookup(id) == nullptr)
+  {
+    mathematical_function_typet ft{{signedbv_typet{64}}, smt_string_typet{}};
+    symbolt s{id, ft, "python"};
+    s.base_name = "__cbmc_strtab";
+    s.is_lvalue = false;
+    s.is_state_var = false;
+    s.is_static_lifetime = true;
+    symbol_table.add(s);
+  }
+  return symbol_table.lookup_ref(id).symbol_expr();
+}
+
+exprt python_convertert::string_handle_to_string(const exprt &handle)
+{
+  return function_application_exprt{strtab_symbol(), {handle}};
+}
+
+exprt python_convertert::string_to_handle(const exprt &str)
+{
+  static unsigned strh_ctr = 0;
+  const std::string hn = "__strh_" + std::to_string(strh_ctr++);
+  const irep_idt hid{qualify_name(hn)};
+  if(symbol_table.lookup(hid) == nullptr)
+  {
+    symbolt hs{hid, python_string_handle_type(), "python"};
+    hs.base_name = hn;
+    hs.is_lvalue = true;
+    hs.is_state_var = true;
+    hs.is_static_lifetime = current_function.empty();
+    symbol_table.add(hs);
+  }
+  symbol_exprt h = symbol_table.lookup_ref(hid).symbol_expr();
+  // The handle VALUE is irrelevant (only its strtab image matters); leave
+  // it nondet and constrain the image. Two allocations of equal strings
+  // may get different handles -- string EQUALITY goes through strtab, and
+  // Python `is` identity on strings is not modelled (PLR: unspecified for
+  // computed strings).
+  pending_checks.push_back(code_frontend_assignt{
+    h, side_effect_expr_nondett{h.type(), source_locationt{}}});
+  code_assumet asm_eq{equal_exprt{string_handle_to_string(h), str}};
+  pending_checks.push_back(std::move(asm_eq));
+  return std::move(h);
 }

@@ -3255,6 +3255,32 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   for(auto &c : components)
     tagged_components.push_back(std::move(c));
 
+  // Native SMT-String backend: str fields become STRING-ID HANDLES
+  // (fixed-width; see python_string_handle_type). An inline smt_string
+  // member made the struct variable-width and aborted smt2 SSA conversion
+  // on every byte-granular identity read (unpack_struct); POINTER boxing
+  // merely moved the byte-extraction to the pointed string (bv_to_expr,
+  // reverted 2026-07-20). Reads map h -> strtab(h) at the
+  // convert_attribute choke point; writes allocate handles in
+  // coerce_assign_rhs.
+  // EXEMPT frontend-library classes (src/python/library/...): their str
+  // fields carry a BACKEND CONTRACT -- e.g. re.Pattern.pattern must be a
+  // conversion-time-recoverable String constant for smt2's regex lowering
+  // (constant propagation cannot see through the strtab UF). Library
+  // structs are converter-controlled and never flow through the
+  // byte-imaged identity reads that motivated handles (their receivers
+  // are typed, not Any) -- the corpus crashes were all USER classes.
+  const bool is_library_class =
+    filename.find("/src/python/library/") != std::string::npos;
+  if(python_smt_string_native_flag() && !is_library_class)
+  {
+    for(auto &c : tagged_components)
+    {
+      if(c.type().id() == ID_smt_string)
+        c.type() = python_string_handle_type();
+    }
+  }
+
   // PLR §7.5/§6.10: for each attribute `del`-eted somewhere in the program AND
   // declared on this class, add a per-instance `__present_<attr>` bool flag
   // (mirrors the ripple-safe `__shadow_` bool field). A store sets it true, a

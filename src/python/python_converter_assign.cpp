@@ -3625,7 +3625,12 @@ codet python_convertert::convert_assign(const jsont &stmt)
                   typed_rhs = safe_zero(lhs.type());
               }
               if(typed_rhs.type() != lhs.type())
-                typed_rhs = safe_typecast(typed_rhs, lhs.type());
+              {
+                // coerce_assign_rhs handles the representation-sensitive
+                // cases (native string-id HANDLE fields; boxed slots) and
+                // falls back to safe_typecast itself.
+                typed_rhs = coerce_assign_rhs(typed_rhs, lhs.type());
+              }
               code_frontend_assignt assign{lhs, typed_rhs};
               assign.add_source_location() = loc;
               block.add(std::move(assign));
@@ -3678,7 +3683,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
                 typed_rhs = safe_zero(lhs.type());
             }
             if(typed_rhs.type() != lhs.type())
-              typed_rhs = safe_typecast(typed_rhs, lhs.type());
+              typed_rhs = coerce_assign_rhs(typed_rhs, lhs.type());
             code_frontend_assignt assign{lhs, typed_rhs};
             assign.add_source_location() = loc;
             block.add(std::move(assign));
@@ -3715,7 +3720,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
             member_exprt lhs{deref, attr, field_type};
             exprt typed_rhs = rhs;
             if(typed_rhs.type() != lhs.type())
-              typed_rhs = safe_typecast(typed_rhs, lhs.type());
+              typed_rhs = coerce_assign_rhs(typed_rhs, lhs.type());
             code_frontend_assignt assign{lhs, typed_rhs};
             assign.add_source_location() = loc;
             block.add(std::move(assign));
