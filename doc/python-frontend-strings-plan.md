@@ -531,6 +531,25 @@ in rough order of promise:
 3. suppress byte-granular identity reads (the *(int32*)__class_ptr
    family) in favour of field-precise struct-typed derefs -- helps only
    when value sets resolve, as the revert showed.
-Until one lands, the native backend remains regression-suite-validated;
-corpus-readiness stays blocked on 4-7 of 51 programs (unpack_struct /
-bv_to_expr family).
+**2026-07-20 pm: candidate 1 SPIKED GREEN for class fields
+(`894514d30d`).** The string-id handle needed ZERO backend changes:
+strtab is an ordinary mathematical-function symbol (find_symbols declares
+the UF, the generic function-application path applies it, convert_type
+already handles the String codomain). Class str fields are handles; reads
+map h -> strtab(h) at the convert_attribute choke point; writes allocate
+fresh handles with ASSUME strtab(h) == value in coerce_assign_rhs.
+Frontend-LIBRARY classes are exempt (re.Pattern.pattern carries a backend
+contract: the smt2 regex lowering recovers the pattern by constant
+propagation, which the UF blocks). Native corpus TOERRs 7 -> 4 with the
+regex-native suite GREEN (pointer boxing had broken it).
+
+REMAINING (the container-element completion, same design, next locus):
+`python_dict_type` boxes KEYS but takes VALUES raw, and `python_list_type`
+elements are inline -- `dict[str, str]` values / `list[str]` elements
+still make those aggregates variable-width (the last 4 corpus TOERRs,
+ddmin-confirmed). The handle representation extends naturally: str-typed
+container element/value types become handle types at the two type-builder
+loci, with read/write choke points at subscript/iteration element access
+(coerce_element already centralises the write side). Effort: comparable
+to the class-field slice; the risk is enumerated read paths (subscript
+fold, chain reads, iteration views).
