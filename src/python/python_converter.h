@@ -1975,6 +1975,17 @@ private:
   exprt convert_tuple(const jsont &expr);
   exprt convert_list(const jsont &expr);
   exprt convert_attribute(const jsont &expr);
+  exprt convert_attribute_impl(const jsont &expr);
+
+  /// Native backend string-id handles (strings plan 2026-07-20): the
+  /// solver-side string table `strtab : bv64 -> String` (an uninterpreted
+  /// function; find_symbols declares it, the generic function-application
+  /// path applies it -- ZERO backend changes). A handle h read back as a
+  /// string is `strtab(h)`; allocating a handle for string s is a fresh
+  /// symbol h with ASSUME strtab(h) == s.
+  symbol_exprt strtab_symbol();
+  exprt string_handle_to_string(const exprt &handle);
+  exprt string_to_handle(const exprt &str);
   exprt convert_dict(const jsont &expr);
 
   /// Build a python_dict value from (key,value) pairs: element-type

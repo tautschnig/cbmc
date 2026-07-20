@@ -3217,6 +3217,17 @@ exprt python_convertert::emit_getattr_fallback(
 // "An attribute reference is a primary followed by a period and a name."
 exprt python_convertert::convert_attribute(const jsont &expr)
 {
+  // Native backend string-id handles: a read of a HANDLE-typed field
+  // denotes the string strtab(h). One choke point instead of ~20 member
+  // construction sites.
+  exprt r = convert_attribute_impl(expr);
+  if(python_smt_string_native_flag() && is_python_string_handle_type(r.type()))
+    return string_handle_to_string(r);
+  return r;
+}
+
+exprt python_convertert::convert_attribute_impl(const jsont &expr)
+{
   std::string attr = json_string(json_member(expr, "attr"));
 
   // PLR §8.13: enum member `.value` / `.name`.
