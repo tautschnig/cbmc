@@ -508,6 +508,29 @@ exactly like `python_value.__str` (touch points: the class struct builder in
 convert_class_def, field read/write coercion, ctor init, shadow fields).
 A field-boxing pass at the struct-definition locus + boxing-aware
 member access mirrors the existing `coerce_element`/`box_string_for_storage`
-choke points, so the change is architectural but bounded. Until then the
-native backend remains regression-suite-validated; corpus-readiness needs
-this piece (7/51 programs).
+choke points, so the change is architectural but bounded.
+
+**2026-07-20 verdict: pointer boxing is NOT sufficient (implemented,
+measured, REVERTED).** Boxing str fields behind typed pointers (struct
+builder rewrite + convert_attribute deref wrapper + coerce_assign_rhs
+boxing + static class-default anchoring) took the corpus from 7 to 4
+TOERRs -- but broke 4 regex-native CORE tests: when the value set cannot
+resolve a boxed-field deref field-precisely, byte lowering byte-extracts
+the POINTED smt_string instead (`bv_to_expr` abort at
+lower_byte_operators.cpp:403) -- the pointer transform MOVES the
+variable-width byte-extraction, it does not eliminate it. The honest
+requirement for native corpus-readiness is a FIXED-WIDTH string
+representation reachable without byte-imaging on ALL paths. Candidates,
+in rough order of promise:
+1. a solver-side STRING-ID HANDLE (int32 index into a solver-managed
+   string table) as the universal in-aggregate representation -- fully
+   fixed-width, no pointers, no derefs; smt2_conv maps handle ops to
+   String terms (a Plan-A extension at the backend boundary);
+2. core-CBMC: teach lower_byte_operators to treat smt_string as an
+   opaque fixed-width token (requires backend agreement on width);
+3. suppress byte-granular identity reads (the *(int32*)__class_ptr
+   family) in favour of field-precise struct-typed derefs -- helps only
+   when value sets resolve, as the revert showed.
+Until one lands, the native backend remains regression-suite-validated;
+corpus-readiness stays blocked on 4-7 of 51 programs (unpack_struct /
+bv_to_expr family).
