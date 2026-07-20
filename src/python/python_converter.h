@@ -1219,8 +1219,13 @@ private:
   struct slot_aliast
   {
     exprt slot;         // index_exprt{member(values), idx_sym} -- an lvalue
+                        // (nil for the KEY form below)
     irep_idt source_id; // the dict symbol
     std::string source_name; // bare name for the AST mentions-scan
+    // KEY form (string-keyed fold extraction): the subscript FOLDED to the
+    // tracked literal's value, so no slot expression exists; the
+    // write-through emits a key-match store instead. Empty = slot form.
+    std::string key;
   };
   std::map<irep_idt, slot_aliast> extracted_slot_alias;
 
