@@ -1126,7 +1126,25 @@ void python_convertert::note_mutable_extraction(
       to_member_expr(ix.array()).compound() == container)
     {
       extracted_slot_alias[lhs_id] =
-        slot_aliast{rhs, src_id, json_string(json_member(cont, "id"))};
+        slot_aliast{rhs, src_id, json_string(json_member(cont, "id")), ""};
+    }
+  }
+  // KEY form: a STRING-keyed extraction whose subscript FOLDED to the
+  // tracked literal's container value (read precision, dict18/19) has no
+  // slot expression -- record the constant key instead; the write-through
+  // emits a key-match store. Same demotion discipline as the slot form.
+  else if(
+    is_python_dict_type(ct) && escaped_mutables.count(src_id) == 0 &&
+    (is_python_list_type(rhs.type()) || is_python_dict_type(rhs.type())))
+  {
+    const jsont &sl = json_member(value, "slice");
+    if(is_node_type(sl, "Constant") && json_member(sl, "value").is_string())
+    {
+      extracted_slot_alias[lhs_id] = slot_aliast{
+        nil_exprt{},
+        src_id,
+        json_string(json_member(cont, "id")),
+        json_string(json_member(sl, "value"))};
     }
   }
 }
@@ -1230,7 +1248,53 @@ bool python_convertert::invalidate_extracted_source_on_mutation(
   // constant-fold maps are handled identically on both paths (the fold
   // would otherwise serve the pre-mutation snapshot).
   auto sit = extracted_slot_alias.find(obj_id);
-  if(sit != extracted_slot_alias.end())
+  if(sit != extracted_slot_alias.end() && sit->second.slot.is_nil())
+  {
+    // KEY-form write-through (string-keyed fold extraction): no slot
+    // expression was recorded (the read folded for precision), so emit a
+    // key-match store. The key chain is computed against the PRE-statement
+    // keys (a value mutation never changes the key array; structural
+    // changes demoted the alias), the store lands AFTER the statement.
+    const symbolt *dsym = symbol_table.lookup(sit->second.source_id);
+    if(dsym != nullptr && is_python_dict_type(dsym->type))
+    {
+      const exprt dict = dsym->symbol_expr();
+      const auto &dst = to_struct_type(dsym->type);
+      const auto &keys_t = to_array_type(dst.components()[1].type());
+      const auto &vals_t = to_array_type(dst.components()[2].type());
+      const signedbv_typet i64{64};
+      member_exprt klen{dict, "length", i64};
+      member_exprt keys{dict, "keys", keys_t};
+      member_exprt vals{dict, "values", vals_t};
+      exprt key_lit = python_string_literal(sit->second.key);
+      exprt found_idx = from_integer(0, i64);
+      for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
+      {
+        exprt idx = from_integer(i, i64);
+        exprt key_i = python_dict_unbox_key(index_exprt{keys, idx});
+        if(key_i.type() != key_lit.type())
+          key_i = safe_typecast(key_i, key_lit.type());
+        exprt match = string_equal(key_i, key_lit);
+        exprt cond =
+          and_exprt{binary_relation_exprt{idx, ID_lt, klen}, std::move(match)};
+        found_idx = if_exprt{std::move(cond), idx, found_idx};
+      }
+      exprt wb = obj;
+      const typet &et = vals_t.element_type();
+      if(wb.type() != et)
+        wb = is_python_value_type(et) ? wrap_value(wb) : coerce_element(wb, et);
+      pending_post_checks.push_back(code_frontend_assignt{
+        index_exprt{vals, std::move(found_idx), et}, std::move(wb)});
+      const irep_idt sid = sit->second.source_id;
+      dict_literals.erase(sid);
+      list_literals.erase(sid);
+      dict_runtime_value_overrides.erase(sid);
+      dict_guaranteed_keys.erase(sid);
+      havoc_sibling_extraction_aliases(it->second, obj_id);
+      return true;
+    }
+  }
+  if(sit != extracted_slot_alias.end() && !sit->second.slot.is_nil())
   {
     exprt wb = obj;
     const typet &et = sit->second.slot.type();
