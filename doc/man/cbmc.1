@@ -188,6 +188,75 @@ NULL in a recursively nondet initialized struct
 .TP
 \fB\-\-function\fR name
 set main function name
+.SS "Python frontend options:"
+.TP
+\fB\-\-python\-max\-list\-length\fR N
+model lists and dicts with capacity N (default 16)
+.TP
+\fB\-\-python\-max\-string\-length\fR N
+bound the modelled string length to N
+.TP
+\fB\-\-python\-unbounded\-ints\fR
+use arbitrary\-precision integer semantics; requires an SMT backend
+(e.g. \fB\-\-cvc5\fR)
+.TP
+\fB\-\-python\-smt\-strings\fR
+use the native SMT\-LIB String backend for str values; requires
+\fB\-\-cvc5\fR or \fB\-\-z3\fR
+.TP
+\fB\-\-python\-strict\fR
+enable the static\-strictness option family
+(\fB\-\-python\-check\-annotations\fR,
+\fB\-\-python\-missing\-return\-check\fR,
+\fB\-\-python\-required\-kwarg\-checks\fR,
+\fB\-\-python\-check\-typeddict\-fields\fR,
+\fB\-\-python\-check\-any\-arg\-attrs\fR,
+\fB\-\-python\-check\-iter\-none\fR) in one switch
+.TP
+\fB\-\-python\-check\-annotations\fR
+report values, returns, and arguments that do not match their declared
+type annotations
+.TP
+\fB\-\-python\-missing\-return\-check\fR
+report a reachable implicit fall\-through of a function whose return
+annotation is not None
+.TP
+\fB\-\-python\-required\-kwarg\-checks\fR
+report missing Required[...] TypedDict keys at call sites
+.TP
+\fB\-\-python\-check\-typeddict\-fields\fR
+report unknown keys when constructing a TypedDict
+.TP
+\fB\-\-python\-check\-any\-arg\-attrs\fR
+report attribute accesses on Any\-typed arguments that no known class
+supports
+.TP
+\fB\-\-python\-check\-iter\-none\fR
+report iteration over a possibly\-None value
+.TP
+\fB\-\-python\-raising\-ops\-check\fR
+model possibly\-raising operations (int()/float() of non\-constant
+strings, os.* file operations, ...) as may\-raise instead of silently
+succeeding
+.TP
+\fB\-\-python\-no\-exception\-checks\fR
+do not report uncaught\-exception properties
+.TP
+\fB\-\-python\-no\-body\-check\fR
+report calls to functions without a modelled body
+.TP
+\fB\-\-python\-strict\-warnings\fR
+treat front\-end conversion warnings as errors
+.TP
+\fB\-\-python\-lazy\-stubs\fR
+suppress missing\-method checks for stub\-like classes
+.TP
+\fB\-\-python\-use\-stdlib\-source\fR
+prefer the real CPython standard\-library source over the bundled models
+where available
+.TP
+\fB\-\-python\-ref\-mutables\fR
+(experimental) reference semantics for nested mutable containers
 .SS "Platform options:"
 .TP
 \fB\-\-arch\fR \fIarch\fR
