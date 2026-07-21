@@ -1732,6 +1732,13 @@ skip_string_unroll:;
     const auto &data_type =
       to_array_type(to_struct_type(iterable.type()).components()[1].type());
     elem_type = data_type.element_type();
+    // Native string-id handles: the loop VARIABLE holds the string
+    // DENOTATION (the bind unwraps strtab(h)), so its type is smt_string
+    // even though the slot type is the bv64 handle.
+    if(
+      python_smt_string_native_flag() &&
+      is_python_string_handle_type(elem_type))
+      elem_type = smt_string_typet{};
   }
   else
     elem_type =
@@ -1830,6 +1837,12 @@ skip_string_unroll:;
       ? exprt{side_effect_expr_nondett{smt_string_typet{}, get_location(stmt)}}
       : (is_string ? exprt(dereference_exprt{plus_exprt{data, idx_var}})
                    : exprt(index_exprt{data, idx_var}));
+  // Native string-id handles: iterating a list[str] binds strtab(h), so
+  // the loop variable is a STRING (uses of it never see the handle).
+  if(
+    python_smt_string_native_flag() &&
+    is_python_string_handle_type(elem_val.type()))
+    elem_val = string_handle_to_string(elem_val);
 
   // Handle tuple unpacking: for a, b in list_of_tuples
   if(is_node_type(target, "Tuple") && is_list)
