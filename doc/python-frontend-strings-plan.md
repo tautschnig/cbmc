@@ -558,13 +558,27 @@ history). The unified requirement is a representation INVARIANT:
 > are the uniform in-aggregate representation; the UF machinery needs
 > zero backend changes (spiked green for str class fields, 894514d30d).
 
-REMAINING (the container-element completion, same design, next locus):
-`python_dict_type` boxes KEYS but takes VALUES raw, and `python_list_type`
-elements are inline -- `dict[str, str]` values / `list[str]` elements
-still make those aggregates variable-width (the last 4 corpus TOERRs,
-ddmin-confirmed). The handle representation extends naturally: str-typed
-container element/value types become handle types at the two type-builder
-loci, with read/write choke points at subscript/iteration element access
-(coerce_element already centralises the write side). Effort: comparable
-to the class-field slice; the risk is enumerated read paths (subscript
-fold, chain reads, iteration views).
+**CLOSE-OUT 2026-07-21 (`81b3c5c7fd`).** Handles vs pointers, settled: a
+pointer's denotation goes through the MEMORY MODEL (unresolved derefs
+byte-image the pointed variable-width object); a handle's denotation is a
+pure UF application over its VALUE -- nothing to resolve, provenance-free,
+survives byte copying. Pointers buy aliasing (needed for mutables);
+strings/mathematical ints are immutable values -> handles.
+
+Landed: dict KEYS (pointer box -> handles) and dict VALUES
+(python_dict_type enforces the invariant; coerce_element write choke
+point; rvalue-dispatch + loop-bind read unwraps); inttab for
+--python-unbounded-ints (__int_val member + both readers + wrap/defaults;
+exact big-int round-trips CORE-pinned -- the integer* box hit the same
+unpack_struct family, probe-confirmed).
+
+Deliberately NOT handle-ized (backend INTRINSIC CONTRACTS, each found by
+CORE regressions): the pv __str payload (smt2 regex lowering recovers
+string CONSTANTS syntactically -- UFs block constant propagation) and
+list[str] ELEMENTS (findall/split DELIVER String results into list slots
+backend-side). The remaining 4 native corpus TOERRs are this list
+residual; lifting it requires the delivery sites to allocate handles (a
+backend-side change), or an intrinsic-aware element representation --
+recorded as the native backend's final corpus-readiness item. First
+unbounded-ints corpus baseline: 10 TOERR (entangled with refined-string
+issues; experimental config).
