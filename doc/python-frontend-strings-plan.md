@@ -576,9 +576,24 @@ Deliberately NOT handle-ized (backend INTRINSIC CONTRACTS, each found by
 CORE regressions): the pv __str payload (smt2 regex lowering recovers
 string CONSTANTS syntactically -- UFs block constant propagation) and
 list[str] ELEMENTS (findall/split DELIVER String results into list slots
-backend-side). The remaining 4 native corpus TOERRs are this list
-residual; lifting it requires the delivery sites to allocate handles (a
-backend-side change), or an intrinsic-aware element representation --
-recorded as the native backend's final corpus-readiness item. First
+backend-side). **2026-07-21 pm (`14981b1b15`, `856675967a`): list[str] elements LANDED
+as handles** after three diagnosis rounds (recorded at python_list_type):
+the "intrinsic delivery" theory was wrong (findall/split build lists in
+Python stub code); the real blockers were handle-blind list-element
+COMPARISONS (strtab-aware equality branch), a second append emitter
+bypassing coerce_element, mixed-representation construction (zero-fill
+with the raw element type; the string-method list builders pushing raw
+literals), and loop variables typed as the slot instead of the
+denotation. The coerce_element CONTEXT RULE (str -> any bv64 element
+slot = handle) backs up the fragile comment-flag recognition.
+
+The remaining 4 native corpus TOERRs are now solely the pv __str POINTER
+member, locked by the smt2 regex constant-recovery contract (the regex
+lowering recovers pattern/subject constants syntactically; both a UF
+handle and an unresolvable pointer defeat it). The one remaining,
+precisely-scoped native item: strtab-aware constant recovery in
+smt2_conv (follow `strtab(h)` applications whose h has a unique
+definitional ASSUME) -- a small backend extension, after which __str can
+become a handle and the corpus TOERRs should reach zero. First
 unbounded-ints corpus baseline: 10 TOERR (entangled with refined-string
 issues; experimental config).
