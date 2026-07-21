@@ -1095,6 +1095,15 @@ void python_convertert::process_imported_module(
 
 bool python_convertert::convert()
 {
+  // Native backend: ensure the strtab UF symbol exists up-front --
+  // python_dict_unbox_key (a free function) references it by fixed name
+  // for HANDLE keys, so the symbol-table entry must exist even when no
+  // handle-allocation site ran first.
+  if(python_smt_string_native_flag())
+    strtab_symbol();
+  if(python_unbounded_ints_flag())
+    inttab_symbol();
+
   const jsont &body = json_member(parse_tree.ast_json, "body");
 
   // PLR §4.2.1: the authoritative over-inclusive set of names bound

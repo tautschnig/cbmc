@@ -22,6 +22,8 @@
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
 #include <util/ieee_float.h>
+#include <util/mathematical_expr.h>
+#include <util/mathematical_types.h>
 #include <util/pointer_expr.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
@@ -112,8 +114,11 @@ inline pointer_typet python_boxed_int_ptr_type()
 /// silently truncate to 64 bits when a value is wrapped into the tagged union.
 inline typet python_value_int_member_type()
 {
+  // Unbounded: an INT-ID HANDLE (see python_int_handle_type) -- the
+  // integer* box byte-extracted the pointed mathematical integer when
+  // value sets failed to resolve (same family as string pointer boxing).
   if(python_unbounded_ints_flag())
-    return python_boxed_int_ptr_type();
+    return python_int_handle_type();
   return signedbv_typet{64};
 }
 
@@ -189,7 +194,7 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
 
   exprt tag_expr = from_integer(static_cast<int>(tag), signedbv_typet{32});
   exprt int_val = python_unbounded_ints_flag()
-                    ? exprt{null_pointer_exprt{python_boxed_int_ptr_type()}}
+                    ? exprt{from_integer(0, python_int_handle_type())}
                     : exprt{from_integer(0, signedbv_typet{64})};
   exprt float_val =
     ieee_floatt{
@@ -216,10 +221,12 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
   case python_type_tagt::INT:
     // Unbounded ("int boxing"): the wrap site passes &heap_integer, stored
     // directly as a typed integer* (no deref — python_value stays fixed-width).
+    // Unbounded: the wrap site passes the HANDLE (int_to_handle); store
+    // it directly.
     if(python_unbounded_ints_flag())
-      int_val = value.type().id() == ID_pointer
-                  ? typecast_exprt{value, python_boxed_int_ptr_type()}
-                  : exprt{address_of_exprt{value}};
+      int_val = is_python_int_handle_type(value.type())
+                  ? value
+                  : typecast_exprt{value, python_int_handle_type()};
     else
       int_val = value.type().id() == ID_signedbv
                   ? value
@@ -324,11 +331,17 @@ inline member_exprt python_value_tag(const exprt &value)
 /// Extract the int field from a tagged-union value.
 inline exprt python_value_int(const exprt &value)
 {
-  // Unbounded ("int boxing"): __int_val is a typed integer*; dereference it to
-  // get the heap mathematical integer. Otherwise it is the inline int64.
+  // Unbounded: __int_val is an INT-ID HANDLE; the denotation is inttab(h)
+  // (an uninterpreted bv64 -> Int function; the converter guarantees the
+  // symbol-table entry via inttab_symbol()). Otherwise the inline int64.
   if(python_unbounded_ints_flag())
-    return dereference_exprt{
-      member_exprt{value, "__int_val", python_boxed_int_ptr_type()}};
+  {
+    return function_application_exprt{
+      symbol_exprt{
+        "python::__cbmc_inttab",
+        mathematical_function_typet{{signedbv_typet{64}}, integer_typet{}}},
+      {member_exprt{value, "__int_val", python_int_handle_type()}}};
+  }
   return member_exprt{value, "__int_val", signedbv_typet{64}};
 }
 
@@ -349,6 +362,14 @@ inline exprt python_value_str(const exprt &value)
 {
   // Native ("string boxing"): __str is a typed string*; dereference it to get
   // the heap smt_string. Refined: __str is the inline string struct.
+  //
+  // NB (2026-07-21): migrating __str to a string-id HANDLE was attempted and
+  // REVERTED: the pv string payload feeds the smt2 regex/string intrinsic
+  // lowering, which recovers string CONSTANTS syntactically -- a strtab UF
+  // application blocks that recovery (4 regex-native CORE regressions),
+  // exactly the library-class contract. Payloads consumed by backend
+  // intrinsics need constant-propagation-visible representations; handles
+  // fit aggregates whose strings are only read/compared/measured.
   if(python_smt_string_native_flag())
     return dereference_exprt{
       member_exprt{value, "__str", python_boxed_string_ptr_type()}};
@@ -422,9 +443,16 @@ make_python_closure(const exprt &fn_index_stored, const exprt &record_ptr)
 /// Extract the fn-registry index from a fat-closure value.
 inline exprt python_value_closure_fn(const exprt &value)
 {
+  // Unbounded: __int_val is an INT-ID HANDLE; the closure fn identity is
+  // inttab(h) (see python_value_int).
   if(python_unbounded_ints_flag())
-    return dereference_exprt{
-      member_exprt{value, "__int_val", python_boxed_int_ptr_type()}};
+  {
+    return function_application_exprt{
+      symbol_exprt{
+        "python::__cbmc_inttab",
+        mathematical_function_typet{{signedbv_typet{64}}, integer_typet{}}},
+      {member_exprt{value, "__int_val", python_int_handle_type()}}};
+  }
   return member_exprt{value, "__int_val", signedbv_typet{64}};
 }
 

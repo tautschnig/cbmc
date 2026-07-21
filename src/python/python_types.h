@@ -24,6 +24,7 @@
 #include <util/bitvector_types.h>
 #include <util/cprover_prefix.h>
 #include <util/mathematical_expr.h>
+#include <util/mathematical_types.h>
 #include <util/pointer_expr.h>
 #include <util/refined_string_type.h>
 #include <util/std_types.h>
@@ -96,6 +97,27 @@ inline bool is_python_string_handle_type(const typet &t)
 {
   return t.id() == ID_signedbv && to_signedbv_type(t).get_width() == 64 &&
          t.get_bool(ID_C_python_string_handle);
+}
+
+/// Unbounded-ints INT-ID HANDLE (the strtab pattern for mathematical
+/// integers): fixed-width in-aggregate/in-union representation denoting
+/// `inttab(h)` -- an uninterpreted bv64 -> Int function. The integer* box
+/// carried the pointer weakness (unresolved deref byte-extracts the
+/// variable-width pointed integer -- probe-confirmed same unpack_struct
+/// family). Unlike the pv __str payload (regex intrinsics recover string
+/// CONSTANTS syntactically, blocking UFs), integer payloads feed
+/// ARITHMETIC, which accepts any Int term.
+inline typet python_int_handle_type()
+{
+  signedbv_typet t{64};
+  t.set(ID_C_python_int_handle, true);
+  return t;
+}
+
+inline bool is_python_int_handle_type(const typet &t)
+{
+  return t.id() == ID_signedbv && to_signedbv_type(t).get_width() == 64 &&
+         t.get_bool(ID_C_python_int_handle);
 }
 
 inline struct_typet python_string_struct_def()
@@ -219,6 +241,8 @@ inline bool is_boxed_dict_key_type(const typet &elem_type)
 /// is_python_string_type(...) key-type checks keep working unchanged).
 inline typet python_dict_logical_key_type(const typet &keys_elem_type)
 {
+  if(is_python_string_handle_type(keys_elem_type))
+    return smt_string_typet{};
   if(is_boxed_dict_key_type(keys_elem_type))
     return to_pointer_type(keys_elem_type).base_type();
   return keys_elem_type;
@@ -229,6 +253,17 @@ inline typet python_dict_logical_key_type(const typet &keys_elem_type)
 /// string-typed key as before.
 inline exprt python_dict_unbox_key(const exprt &key_elem)
 {
+  // HANDLE key: the denotation is strtab(h). The strtab symbol has a
+  // fixed identity; the converter guarantees its symbol-table entry
+  // whenever handles exist (strtab_symbol()).
+  if(is_python_string_handle_type(key_elem.type()))
+  {
+    return function_application_exprt{
+      symbol_exprt{
+        "python::__cbmc_strtab",
+        mathematical_function_typet{{signedbv_typet{64}}, smt_string_typet{}}},
+      {key_elem}};
+  }
   if(is_boxed_dict_key_type(key_elem.type()))
     return dereference_exprt{key_elem};
   return key_elem;
@@ -245,10 +280,18 @@ python_dict_type(const typet &key_type, const typet &value_type)
     array_typet{
       python_dict_key_elem_type(key_type),
       from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}});
+  // Representation invariant (strings plan 2026-07-21): no variable-width
+  // type in any aggregate -- an inline smt_string VALUE made dict[str, str]
+  // variable-width and aborted smt2 byte-lowering on identity reads.
+  // Values become string-id HANDLES under the native backend (keys are
+  // boxed by python_dict_key_elem_type above).
+  const typet stored_value_type =
+    value_type.id() == ID_smt_string ? python_string_handle_type() : value_type;
   components.push_back(struct_typet::componentt{
     "values",
     array_typet{
-      value_type, from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}});
+      stored_value_type,
+      from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}});
   struct_typet result{components};
   result.set_tag("python_dict_array");
   return result;
@@ -258,6 +301,14 @@ python_dict_type(const typet &key_type, const typet &value_type)
 /// This is a struct { int64 length; T data[MAX_LIST_LENGTH]; }
 inline struct_typet python_list_type(const typet &element_type)
 {
+  // NB list[str] elements deliberately stay INLINE smt_string under the
+  // native backend (NOT handles): the regex intrinsics (findall/split)
+  // DELIVER String results into list slots backend-side, and a handle slot
+  // breaks that delivery contract (regex-*-precise-native regressions) --
+  // the same constant/delivery contract as re.Pattern.pattern. The
+  // variable-width exposure is limited to lists REACHED by byte-granular
+  // identity reads, which the corpus TOERRs (ddmin) did NOT implicate;
+  // if that changes, the delivery sites must allocate handles.
   struct_typet::componentst components;
 
   struct_typet::componentt length{"length", signedbv_typet{64}};

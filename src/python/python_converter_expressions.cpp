@@ -4008,7 +4008,13 @@ exprt python_convertert::box_int_for_storage(const exprt &int_value)
   exprt v = int_value;
   if(v.type().id() != ID_integer)
     v = typecast_exprt{v, integer_typet{}};
-  return allocate_boxed_leaf(v, integer_typet{});
+  // INT-ID HANDLE (2026-07-21): the integer* box byte-extracted the pointed
+  // mathematical integer when value sets failed to resolve (the same
+  // unpack_struct family as string pointer boxing, probe-confirmed on
+  // apigateway under --python-unbounded-ints --smt2). Arithmetic accepts
+  // any Int term, so the inttab UF has no constant-recovery contract
+  // (unlike the pv __str payload feeding the regex intrinsics).
+  return int_to_handle(v);
 }
 
 // PLR §3: the canonical hash/equality key of a CONSTANT container key/element,
@@ -4141,12 +4147,20 @@ exprt python_convertert::build_dict_value(
     if(k.type() != key_type)
       k = is_python_value_type(key_type) ? wrap_value(k)
                                          : safe_typecast(k, key_type);
-    key_elems.push_back(box_string_for_storage(k));
+    // coerce_element allocates HANDLE keys under the native backend
+    // (pointer key boxing carried the unresolved-deref weakness).
+    key_elems.push_back(
+      k.type() != keys_elem_type ? coerce_element(k, keys_elem_type) : k);
   }
   while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
     key_elems.push_back(safe_zero(keys_elem_type));
 
-  // Build values array
+  // Build values array. The STORED element type comes from the dict
+  // type's values array (python_dict_type enforces the representation
+  // invariant: str values become string-id handles under the native
+  // backend), so route each value through coerce_element -- the single
+  // write choke point that allocates handles / boxes as needed.
+  const typet &vals_elem_type = vals_arr_type.element_type();
   exprt::operandst val_elems;
   for(const auto &p : pairs)
   {
@@ -4154,10 +4168,12 @@ exprt python_convertert::build_dict_value(
     if(v.type() != val_type)
       v = is_python_value_type(val_type) ? wrap_value(v)
                                          : safe_typecast(v, val_type);
+    if(v.type() != vals_elem_type)
+      v = coerce_element(v, vals_elem_type);
     val_elems.push_back(v);
   }
   while(val_elems.size() < PYTHON_MAX_DICT_SIZE)
-    val_elems.push_back(safe_zero(val_type));
+    val_elems.push_back(safe_zero(vals_elem_type));
 
   exprt length =
     from_integer(static_cast<long long>(pairs.size()), signedbv_typet{64});

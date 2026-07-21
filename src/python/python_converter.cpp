@@ -4441,6 +4441,14 @@ exprt python_convertert::coerce_element(
   // materialised behind a typed pointer (covers all dict key-store sites).
   if(is_boxed_dict_key_type(element_type) && is_python_string_type(elem.type()))
     return box_string_for_storage(elem);
+  // Native string-id handles: a str value stored into a HANDLE element/
+  // value slot (dict values, list elements -- the aggregate constructors
+  // enforce the representation invariant) allocates a handle.
+  if(
+    python_smt_string_native_flag() &&
+    is_python_string_handle_type(element_type) &&
+    is_python_string_type(elem.type()))
+    return string_to_handle(elem);
   return coerce_to_typed_slot(elem, element_type);
 }
 
@@ -5659,7 +5667,17 @@ exprt python_convertert::convert_expression(const jsont &expr)
   else if(node_type == "IfExp")
     result = convert_if_exp(expr);
   else if(node_type == "Subscript")
+  {
     result = convert_subscript(expr);
+    // Native string-id handles: an ELEMENT READ of a handle slot denotes
+    // strtab(h). Unwrapped HERE (the rvalue dispatch) and NOT inside
+    // convert_subscript: assignment paths call convert_subscript directly
+    // for their store TARGET, which must stay a raw lvalue slot.
+    if(
+      python_smt_string_native_flag() &&
+      is_python_string_handle_type(result.type()))
+      result = string_handle_to_string(result);
+  }
   else if(node_type == "Tuple")
     result = convert_tuple(expr);
   else if(node_type == "List")
@@ -6563,5 +6581,43 @@ exprt python_convertert::string_to_handle(const exprt &str)
     h, side_effect_expr_nondett{h.type(), source_locationt{}}});
   code_assumet asm_eq{equal_exprt{string_handle_to_string(h), str}};
   pending_checks.push_back(std::move(asm_eq));
+  return std::move(h);
+}
+
+symbol_exprt python_convertert::inttab_symbol()
+{
+  const irep_idt id{"python::__cbmc_inttab"};
+  if(symbol_table.lookup(id) == nullptr)
+  {
+    mathematical_function_typet ft{{signedbv_typet{64}}, integer_typet{}};
+    symbolt s{id, ft, "python"};
+    s.base_name = "__cbmc_inttab";
+    s.is_lvalue = false;
+    s.is_state_var = false;
+    s.is_static_lifetime = true;
+    symbol_table.add(s);
+  }
+  return symbol_table.lookup_ref(id).symbol_expr();
+}
+
+exprt python_convertert::int_to_handle(const exprt &val)
+{
+  static unsigned inth_ctr = 0;
+  const std::string hn = "__inth_" + std::to_string(inth_ctr++);
+  const irep_idt hid{qualify_name(hn)};
+  if(symbol_table.lookup(hid) == nullptr)
+  {
+    symbolt hs{hid, python_int_handle_type(), "python"};
+    hs.base_name = hn;
+    hs.is_lvalue = true;
+    hs.is_state_var = true;
+    hs.is_static_lifetime = current_function.empty();
+    symbol_table.add(hs);
+  }
+  symbol_exprt h = symbol_table.lookup_ref(hid).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{
+    h, side_effect_expr_nondett{h.type(), source_locationt{}}});
+  pending_checks.push_back(code_assumet{
+    equal_exprt{function_application_exprt{inttab_symbol(), {h}}, val}});
   return std::move(h);
 }
