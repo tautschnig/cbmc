@@ -1986,6 +1986,11 @@ private:
   symbol_exprt strtab_symbol();
   exprt string_handle_to_string(const exprt &handle);
   exprt string_to_handle(const exprt &str);
+
+  /// The inttab analogue for --python-unbounded-ints (see
+  /// python_int_handle_type).
+  symbol_exprt inttab_symbol();
+  exprt int_to_handle(const exprt &val);
   exprt convert_dict(const jsont &expr);
 
   /// Build a python_dict value from (key,value) pairs: element-type
