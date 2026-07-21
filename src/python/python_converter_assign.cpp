@@ -268,8 +268,14 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
         const auto &new_data_type =
           to_array_type(new_list_type.components()[1].type());
         exprt::operandst zeros;
+        // Zero-fill with the CONSTRUCTED element type, not the raw recorded
+        // one: python_list_type maps smt_string elements to string-id
+        // HANDLES under the native backend, and safe_zero(smt_string) is a
+        // NONDET (variable-width) -- the mismatch left a handle-typed array
+        // holding smt_string nondets (the byte-lowering abort on the
+        // annotated-empty-list shape).
         for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
-          zeros.push_back(safe_zero(new_elem_t));
+          zeros.push_back(safe_zero(new_data_type.element_type()));
         array_exprt new_data{std::move(zeros), new_data_type};
         rhs = struct_exprt{
           {from_integer(0, signedbv_typet{64}), new_data}, new_list_type};

@@ -4443,11 +4443,17 @@ exprt python_convertert::coerce_element(
     return box_string_for_storage(elem);
   // Native string-id handles: a str value stored into a HANDLE element/
   // value slot (dict values, list elements -- the aggregate constructors
-  // enforce the representation invariant) allocates a handle.
+  // enforce the representation invariant) allocates a handle. The
+  // CONTEXT rule (str -> any bv64 slot) backs up the comment-flag
+  // recognition: the ID_C_ flag is dropped by some type-rebuilding paths
+  // (observed: the annotated-empty-list element type reaching append),
+  // and under the native backend the ONLY meaning of storing a string
+  // into a 64-bit integer slot is a handle.
   if(
-    python_smt_string_native_flag() &&
-    is_python_string_handle_type(element_type) &&
-    is_python_string_type(elem.type()))
+    python_smt_string_native_flag() && is_python_string_type(elem.type()) &&
+    (is_python_string_handle_type(element_type) ||
+     (element_type.id() == ID_signedbv &&
+      to_signedbv_type(element_type).get_width() == 64)))
     return string_to_handle(elem);
   return coerce_to_typed_slot(elem, element_type);
 }

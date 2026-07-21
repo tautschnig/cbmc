@@ -664,7 +664,16 @@ exprt python_convertert::convert_compare(const jsont &expr)
         const exprt l_el = index_exprt{lda, idx};
         const exprt r_el = index_exprt{rda, idx};
         exprt el_eq;
-        if(is_python_string_type(el_t))
+        if(is_python_string_handle_type(el_t))
+        {
+          // HANDLE elements compare by their strtab DENOTATION (String
+          // equality) -- comparing handle bits wrongly proved `!=` for
+          // equal strings allocated separately.
+          el_eq = equal_exprt{
+            python_string_handle_denotation(l_el),
+            python_string_handle_denotation(r_el)};
+        }
+        else if(is_python_string_type(el_t))
         {
           // String elements compare by CONTENT, not (length, data_ptr) --
           // a runtime-built "a" and a literal "a" have different pointers.

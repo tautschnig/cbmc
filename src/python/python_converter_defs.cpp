@@ -5654,11 +5654,15 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
             // sets the right __tag and underlying field so
             // numbers.data[k].__int_val (etc.) are observable
             // after the append. The naive typecast would zero
-            // every field.
+            // every field. coerce_element additionally allocates
+            // string-id HANDLES under the native backend (this
+            // SECOND append emitter bypassed it and typecast a
+            // string constant into the handle slot -- the
+            // annotated-empty-list crash).
             if(is_python_value_type(data_type.element_type()))
               val = wrap_value(val);
             else
-              val = typecast_exprt{val, data_type.element_type()};
+              val = coerce_element(val, data_type.element_type());
           }
 
           code_blockt block;
