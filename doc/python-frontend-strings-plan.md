@@ -543,6 +543,21 @@ contract: the smt2 regex lowering recovers the pattern by constant
 propagation, which the UF blocks). Native corpus TOERRs 7 -> 4 with the
 regex-native suite GREEN (pointer boxing had broken it).
 
+**2026-07-21: the invariant GENERALISES beyond strings (user-observed,
+probe-confirmed).** `--python-unbounded-ints` has the SAME latent family:
+the boxed `integer*` payload points at a variable-width mathematical
+integer, and `apigateway_key_manager --python-unbounded-ints --smt2
+--cvc5` aborts in the SAME `unpack_struct` invariant (small probes pass
+because their value sets resolve the derefs -- exactly the string
+history). The unified requirement is a representation INVARIANT:
+
+> **No variable-width type (smt_string, mathematical integer) may appear
+> in any aggregate or behind any pointer that byte-granular accesses can
+> reach.** Fixed-width HANDLES + a solver-side denotation table
+> (`strtab : bv64 -> String`, and analogously `inttab : bv64 -> Int`)
+> are the uniform in-aggregate representation; the UF machinery needs
+> zero backend changes (spiked green for str class fields, 894514d30d).
+
 REMAINING (the container-element completion, same design, next locus):
 `python_dict_type` boxes KEYS but takes VALUES raw, and `python_list_type`
 elements are inline -- `dict[str, str]` values / `list[str]` elements
