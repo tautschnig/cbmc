@@ -2316,6 +2316,13 @@ exprt python_convertert::convert_list(const jsont &expr)
   const std::size_t list_array_size =
     std::max<std::size_t>(PYTHON_MAX_LIST_LENGTH, elements.size());
   struct_typet list_type = python_list_type(elem_type);
+  // The STORED element type comes from the constructed list type --
+  // python_list_type enforces the representation invariant (str elements
+  // become string-id HANDLES under the native backend), so the literal's
+  // data array and zero padding must use it, and elements route through
+  // coerce_element (the write choke point that allocates handles).
+  const typet stored_elem_type =
+    to_array_type(list_type.components()[1].type()).element_type();
   // Rebuild the struct's array-typed 'data' component to match the
   // actual literal size. python_list_type always returns the struct
   // with the default max length, so override the data component's
@@ -2324,10 +2331,10 @@ exprt python_convertert::convert_list(const jsont &expr)
     auto &comps = list_type.components();
     if(comps.size() == 2)
       comps[1].type() = array_typet{
-        elem_type, from_integer(list_array_size, signedbv_typet{64})};
+        stored_elem_type, from_integer(list_array_size, signedbv_typet{64})};
   }
   array_typet data_type{
-    elem_type, from_integer(list_array_size, signedbv_typet{64})};
+    stored_elem_type, from_integer(list_array_size, signedbv_typet{64})};
 
   // Build data array: elements followed by zeros
   exprt::operandst data_elems;
@@ -2335,12 +2342,12 @@ exprt python_convertert::convert_list(const jsont &expr)
   {
     if(is_heterogeneous)
       e = wrap_value(e);
-    else if(e.type() != elem_type)
-      e = typecast_exprt{e, elem_type};
+    else if(e.type() != stored_elem_type)
+      e = coerce_element(e, stored_elem_type);
     data_elems.push_back(e);
   }
   while(data_elems.size() < list_array_size)
-    data_elems.push_back(safe_zero(elem_type));
+    data_elems.push_back(safe_zero(stored_elem_type));
 
   array_exprt data{std::move(data_elems), data_type};
   exprt length =

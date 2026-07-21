@@ -120,6 +120,19 @@ inline bool is_python_int_handle_type(const typet &t)
          t.get_bool(ID_C_python_int_handle);
 }
 
+/// The String denotation of a string-id handle: strtab(h). A free-function
+/// twin of python_convertert::string_handle_to_string for sites without
+/// converter access (the converter seeds the strtab symbol-table entry at
+/// conversion start whenever the native backend is active).
+inline exprt python_string_handle_denotation(const exprt &handle)
+{
+  return function_application_exprt{
+    symbol_exprt{
+      "python::__cbmc_strtab",
+      mathematical_function_typet{{signedbv_typet{64}}, smt_string_typet{}}},
+    {handle}};
+}
+
 inline struct_typet python_string_struct_def()
 {
   struct_typet::componentst components;
@@ -299,16 +312,20 @@ python_dict_type(const typet &key_type, const typet &value_type)
 
 /// Return the CBMC type used to represent Python list[T].
 /// This is a struct { int64 length; T data[MAX_LIST_LENGTH]; }
-inline struct_typet python_list_type(const typet &element_type)
+inline struct_typet python_list_type(const typet &element_type_in)
 {
-  // NB list[str] elements deliberately stay INLINE smt_string under the
-  // native backend (NOT handles): the regex intrinsics (findall/split)
-  // DELIVER String results into list slots backend-side, and a handle slot
-  // breaks that delivery contract (regex-*-precise-native regressions) --
-  // the same constant/delivery contract as re.Pattern.pattern. The
-  // variable-width exposure is limited to lists REACHED by byte-granular
-  // identity reads, which the corpus TOERRs (ddmin) did NOT implicate;
-  // if that changes, the delivery sites must allocate handles.
+  // Representation invariant: list[str] elements are string-id HANDLES
+  // under the native backend. Three diagnosis rounds to get here:
+  // (1) "regex intrinsics deliver into list slots" -- WRONG (findall/
+  // split build their lists in Python stub code via append);
+  // (2) handle-blind list-element COMPARISONS -- real, fixed by the
+  // strtab-aware equality branch in convert_compare;
+  // (3) a SECOND append emitter (python_converter_defs.cpp fast path)
+  // typecast the value instead of coerce_element -- real, fixed by
+  // routing it through the write choke point.
+  const typet element_type = element_type_in.id() == ID_smt_string
+                               ? python_string_handle_type()
+                               : element_type_in;
   struct_typet::componentst components;
 
   struct_typet::componentt length{"length", signedbv_typet{64}};
