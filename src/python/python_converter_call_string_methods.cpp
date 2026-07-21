@@ -99,7 +99,8 @@ std::optional<exprt> python_convertert::try_string_method(
         to_array_type(to_struct_type(list_type).components()[1].type());
       exprt::operandst list_elems;
       for(const auto &p : parts)
-        list_elems.push_back(coerce_element(python_string_literal(p), data_type.element_type()));
+        list_elems.push_back(
+          coerce_element(python_string_literal(p), data_type.element_type()));
       while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
         list_elems.push_back(safe_zero(data_type.element_type()));
       return struct_exprt{
@@ -175,7 +176,8 @@ std::optional<exprt> python_convertert::try_string_method(
           to_array_type(to_struct_type(list_type).components()[1].type());
         exprt::operandst list_elems;
         for(const auto &p : parts)
-          list_elems.push_back(coerce_element(python_string_literal(p), data_type.element_type()));
+          list_elems.push_back(
+            coerce_element(python_string_literal(p), data_type.element_type()));
         while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
           list_elems.push_back(safe_zero(data_type.element_type()));
         return struct_exprt{
@@ -238,7 +240,8 @@ std::optional<exprt> python_convertert::try_string_method(
           to_array_type(to_struct_type(list_type).components()[1].type());
         exprt::operandst list_elems;
         for(const auto &p : parts)
-          list_elems.push_back(coerce_element(python_string_literal(p), data_type.element_type()));
+          list_elems.push_back(
+            coerce_element(python_string_literal(p), data_type.element_type()));
         while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
           list_elems.push_back(safe_zero(data_type.element_type()));
         return struct_exprt{
@@ -310,7 +313,8 @@ std::optional<exprt> python_convertert::try_string_method(
             exprt::operandst list_elems;
             for(const auto &part : parts)
             {
-              list_elems.push_back(coerce_element(python_string_literal(part), data_type.element_type()));
+              list_elems.push_back(coerce_element(
+                python_string_literal(part), data_type.element_type()));
             }
             while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
               list_elems.push_back(safe_zero(data_type.element_type()));
