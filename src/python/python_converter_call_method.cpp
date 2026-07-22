@@ -2525,6 +2525,25 @@ std::optional<exprt> python_convertert::try_method_call(
       {
         return obj;
       }
+      // PLR §6.3.1: a method not among int's finite attribute set raises
+      // AttributeError. int has NO user-extensible attributes, so an
+      // unrecognised name on a PROVABLE scalar int receiver (a literal or
+      // a constant-folded symbol -- mirrors the attribute-read guard in
+      // convert_attribute_impl; an UNTRACKED int-typed symbol may be a
+      // stub return the frontend defaulted to int, so it is spared) is a
+      // definite AttributeError (ESBMC github_5904_attributeerror_call).
+      {
+        bool provable_scalar = obj.is_constant();
+        if(!provable_scalar && obj.id() == ID_symbol)
+          provable_scalar =
+            float_constants.count(to_symbol_expr(obj).get_identifier()) > 0;
+        if(provable_scalar)
+        {
+          emit_conditional_exception(true_exprt{}, "AttributeError");
+          return side_effect_expr_nondett{
+            python_int_type(), get_location(expr)};
+        }
+      }
     }
 
     // Native SMT-String back-end (Plan A): smt_string is not a struct/

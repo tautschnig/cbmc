@@ -3524,8 +3524,18 @@ exprt python_convertert::convert_attribute_impl(const jsont &expr)
       "is_integer",
       "hex",
       "fromhex"};
+    // A receiver is a PROVABLE scalar int/float when it is a literal OR a
+    // symbol we have folded to a constant value (float_constants). The
+    // latter extends the check to `x = 5; x.foo` (ESBMC
+    // github_5904_attributeerror_{access,call}_fail) while still sparing
+    // an UNTRACKED numeric-typed symbol -- a stub return the frontend
+    // defaulted to int -- from a false positive.
+    bool provable_scalar = value.is_constant();
+    if(!provable_scalar && value.id() == ID_symbol)
+      provable_scalar =
+        float_constants.count(to_symbol_expr(value).get_identifier()) > 0;
     if(
-      numeric && value.is_constant() && !is_dunder &&
+      numeric && provable_scalar && !is_dunder &&
       numeric_attrs.count(attr) == 0)
     {
       emit_conditional_exception(true_exprt{}, "AttributeError");
