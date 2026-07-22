@@ -258,6 +258,14 @@ exprt python_convertert::convert_name(const jsont &expr)
     return true_exprt{};
   else if(id == "__name__")
     return python_string_literal("__main__");
+  // PLR: __file__ is the module's path -- a str, NEVER None. The exact
+  // path is environment-dependent, so model it as a fixed non-empty
+  // string constant (its VALUE is rarely asserted; what matters is that
+  // `__file__ is None` / `is not None` and truthiness are correct --
+  // ESBMC github_4662_fail asserted `__file__ is None`, which must be
+  // False). A symbolic nondet string would lose the `is None` precision.
+  else if(id == "__file__")
+    return python_string_literal("main.py");
 
   // PLR §7.5: reading a name that was `del`-eted (and not since reassigned)
   // raises NameError. Guard on the name's `<qname>$deleted` flag — only names

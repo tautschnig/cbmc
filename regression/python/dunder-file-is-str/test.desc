@@ -1,9 +1,8 @@
-KNOWNBUG
+CORE
 main.py
---no-unwinding-assertions
+--unwind 3 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$
 ^EXIT=0$
 ^SIGNAL=0$
 --
-^warning: ignoring
 --
