@@ -1812,6 +1812,27 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
           from_integer(1, left.type()),
           from_integer(0, left.type())}};
     }
+    // Mathematical integers (--python-unbounded-ints): SMT-LIB Int
+    // division is EUCLIDEAN (remainder always >= 0), Python floor
+    // division rounds toward -infinity (PLR §6.7); they differ for a
+    // NEGATIVE divisor with a nonzero remainder (7 // -2: Euclidean -3,
+    // Python -4) -- falling through to div_exprt was a value
+    // miscomputation (a latent false-proof vector). Construct the
+    // floored quotient from the floored remainder via EXACT division
+    // (b divides a - r_f, and all division semantics agree on exact
+    // division): r_f = (b < 0 && r_e != 0) ? r_e + b : r_e;
+    // q_f = (a - r_f) / b.
+    if(left.type().id() == ID_integer && right.type().id() == ID_integer)
+    {
+      const exprt r_e = euclidean_mod_exprt{left, right};
+      const exprt zero = from_integer(0, integer_typet{});
+      exprt r_f = if_exprt{
+        and_exprt{
+          binary_relation_exprt{right, ID_lt, zero}, notequal_exprt{r_e, zero}},
+        plus_exprt{r_e, right},
+        r_e};
+      return div_exprt{minus_exprt{left, std::move(r_f)}, right};
+    }
     // PLR §6.7: float floor division is floor(left / right) (the result is a
     // float). Without the floor this returned plain true division
     // (`7.0 // 2.0 == 3.5` instead of `3.0`) -- a correctness false proof.
@@ -1922,6 +1943,22 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         minus_exprt{truncated, double_to_floatbv(1.0)},
         truncated};
       return minus_exprt{fl, mult_exprt{floored, fr}};
+    }
+    // Mathematical integers (--python-unbounded-ints): Python modulo
+    // takes the DIVISOR's sign (PLR §6.7); SMT-LIB's Int mod is
+    // Euclidean (always >= 0). Correct for a negative divisor:
+    // r_f = (b < 0 && r_e != 0) ? r_e + b : r_e. Falling through to
+    // nondet made every `a % b` unconstrained under the flag (spurious
+    // failures AND both-ways branching).
+    if(left.type().id() == ID_integer && right.type().id() == ID_integer)
+    {
+      const exprt r_e = euclidean_mod_exprt{left, right};
+      const exprt zero = from_integer(0, integer_typet{});
+      return if_exprt{
+        and_exprt{
+          binary_relation_exprt{right, ID_lt, zero}, notequal_exprt{r_e, zero}},
+        plus_exprt{r_e, right},
+        r_e};
     }
     // Non-integer types: return nondet
     return side_effect_expr_nondett{python_int_type(), source_locationt{}};

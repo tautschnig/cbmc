@@ -311,6 +311,20 @@ inline exprt python_dict_unbox_key(const exprt &key_elem)
   return key_elem;
 }
 
+/// Lift container METADATA (an i64 length member) into the Python-int
+/// domain of an index expression when the two differ:
+/// --python-unbounded-ints makes Python ints integer_typet while
+/// structural metadata stays signedbv[64] (the documented invariant at
+/// python_list_type). Adjustments/comparisons must be built over
+/// agreeing types (a mixed-type if_exprt aborts symex renaming); the
+/// i64 -> integer direction is always value-exact, so lifting is sound.
+inline exprt python_lift_to_index_domain(exprt e, const typet &idx_type)
+{
+  if(e.type() != idx_type)
+    return typecast_exprt{std::move(e), idx_type};
+  return e;
+}
+
 /// struct { int64 length; key_type keys[N]; value_type values[N]; }
 inline struct_typet
 python_dict_type(const typet &key_type, const typet &value_type)

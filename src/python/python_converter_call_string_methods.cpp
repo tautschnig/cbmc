@@ -347,7 +347,7 @@ std::optional<exprt> python_convertert::try_string_method(
       const symbol_exprt sym = symbol_table.lookup_ref(id).symbol_expr();
       pending_checks.push_back(code_frontend_assignt{
         sym, side_effect_expr_nondett{list_type, get_location(expr)}});
-      const member_exprt len{sym, "length", python_int_type()};
+      const member_exprt len{sym, "length", signedbv_typet{64}};
       // Sound bounds on the (otherwise unconstrained) segment count:
       //  * with an explicit separator, split always returns >= 1 element
       //    (even "".split(",") == ['']); whitespace mode may return [] (count
@@ -359,9 +359,9 @@ std::optional<exprt> python_convertert::try_string_method(
       //  * the list capacity bound (PYTHON_MAX_LIST_LENGTH) is retained.
       exprt::operandst bounds;
       bounds.push_back(binary_relation_exprt{
-        len, ID_ge, from_integer(whitespace_mode ? 0 : 1, python_int_type())});
+        len, ID_ge, from_integer(whitespace_mode ? 0 : 1, len.type())});
       bounds.push_back(binary_relation_exprt{
-        len, ID_le, from_integer(PYTHON_MAX_LIST_LENGTH, python_int_type())});
+        len, ID_le, from_integer(PYTHON_MAX_LIST_LENGTH, len.type())});
       if(obj.type().id() == ID_smt_string)
         bounds.push_back(binary_relation_exprt{
           len,

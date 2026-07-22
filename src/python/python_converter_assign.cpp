@@ -3466,18 +3466,22 @@ codet python_convertert::convert_assign(const jsont &stmt)
         // convert_subscript — without this the write path
         // silently wrote into the size-64 backing array and
         // missed the runtime error (a false negative).
+        // Lift the i64 length into the index's Python-int domain
+        // (integer under --python-unbounded-ints); a mixed-type
+        // adjustment if_exprt aborts symex renaming.
+        const exprt length_d = python_lift_to_index_domain(length, idx.type());
         exprt eff_idx = idx;
         if(idx.is_constant())
         {
           mp_integer iv;
           if(!to_integer(to_constant_expr(idx), iv) && iv < 0)
-            eff_idx = plus_exprt{length, idx};
+            eff_idx = plus_exprt{length_d, idx};
         }
         else
         {
           eff_idx = if_exprt{
             binary_relation_exprt{idx, ID_lt, safe_zero(idx.type())},
-            plus_exprt{length, idx},
+            plus_exprt{length_d, idx},
             idx};
         }
         {

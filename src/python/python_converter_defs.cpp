@@ -5644,7 +5644,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
           const auto &data_type = to_array_type(list_st.components()[1].type());
 
           // lst.data[lst.length] = val
-          member_exprt length{obj, "length", python_int_type()};
+          member_exprt length{obj, "length", signedbv_typet{64}};
           member_exprt data{obj, "data", data_type};
           index_exprt slot{data, length};
 
@@ -5673,7 +5673,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
 
           // lst.length += 1
           code_frontend_assignt inc_len{
-            length, plus_exprt{length, from_integer(1, python_int_type())}};
+            length, plus_exprt{length, from_integer(1, signedbv_typet{64})}};
           inc_len.add_source_location() = loc;
           block.add(std::move(inc_len));
 
@@ -5696,7 +5696,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
           source_locationt loc = get_location(stmt);
           const auto &list_st = to_struct_type(obj.type());
           const auto &data_type = to_array_type(list_st.components()[1].type());
-          member_exprt length{obj, "length", python_int_type()};
+          member_exprt length{obj, "length", signedbv_typet{64}};
           member_exprt data{obj, "data", data_type};
           if(idx_expr.type() != python_int_type())
             idx_expr = safe_typecast(idx_expr, python_int_type());
@@ -5751,7 +5751,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
           }
           block.add(code_frontend_assignt{index_exprt{data, ins_idx}, val});
           block.add(code_frontend_assignt{
-            length, plus_exprt{length, from_integer(1, python_int_type())}});
+            length, plus_exprt{length, from_integer(1, signedbv_typet{64})}});
           return std::move(block);
         }
       }
