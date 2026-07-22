@@ -3224,7 +3224,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
           code_blockt append;
           emit_capacity_guard(append, length, PYTHON_MAX_DICT_SIZE);
           append.add(code_frontend_assignt{
-            index_exprt{keys_arr, length}, box_string_for_storage(typed_key)});
+            index_exprt{keys_arr, length},
+            coerce_element(
+              typed_key, to_array_type(keys_arr.type()).element_type())});
           append.add(
             code_frontend_assignt{index_exprt{vals_arr, length}, typed_val});
           append.add(code_frontend_assignt{

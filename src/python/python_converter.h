@@ -1986,11 +1986,15 @@ private:
   symbol_exprt strtab_symbol();
   exprt string_handle_to_string(const exprt &handle);
   exprt string_to_handle(const exprt &str);
+  void emit_strtab_axiom(const exprt &h, const exprt &str);
 
   /// The inttab analogue for --python-unbounded-ints (see
   /// python_int_handle_type).
   symbol_exprt inttab_symbol();
   exprt int_to_handle(const exprt &val);
+
+  /// Constant-string intern table (see string_to_handle): text -> handle id.
+  std::map<std::string, long long> string_intern_ids;
   exprt convert_dict(const jsont &expr);
 
   /// Build a python_dict value from (key,value) pairs: element-type

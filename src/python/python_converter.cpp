@@ -3608,8 +3608,7 @@ exprt python_convertert::wrap_value(const exprt &e)
     // Refined: __str is inline, so just pass the value (make_python_value stores
     // it directly — value semantics, no aliasing).
     if(python_smt_string_native_flag())
-      return make_python_value(
-        python_type_tagt::STR, allocate_boxed_leaf(e, python_string_type()));
+      return make_python_value(python_type_tagt::STR, string_to_handle(e));
     return make_python_value(python_type_tagt::STR, e);
   }
 
@@ -4441,6 +4440,21 @@ exprt python_convertert::coerce_element(
   // materialised behind a typed pointer (covers all dict key-store sites).
   if(is_boxed_dict_key_type(element_type) && is_python_string_type(elem.type()))
     return box_string_for_storage(elem);
+  // A python_value flowing into a STRING-shaped slot (boxed key, handle,
+  // or plain string) unwraps through its STRING denotation. Without this,
+  // coerce_to_typed_slot pattern-matches the slot's machine type and
+  // extracts __int_val for bv64 slots -- comparing an int payload against
+  // string keys (the csv `_dialects.pop(name, None)` crash: `name` was a
+  // pv). Same choke-point discipline as the str->bv64 handle rule below;
+  // covers get/pop/setdefault/subscript key coercions in one place.
+  if(is_python_value_type(elem.type()))
+  {
+    const bool string_slot = is_boxed_dict_key_type(element_type) ||
+                             is_python_string_handle_type(element_type) ||
+                             is_python_string_type(element_type);
+    if(string_slot)
+      return coerce_element(python_value_str(elem), element_type);
+  }
   // Native string-id handles: a str value stored into a HANDLE element/
   // value slot (dict values, list elements -- the aggregate constructors
   // enforce the representation invariant) allocates a handle. The
@@ -6560,11 +6574,81 @@ symbol_exprt python_convertert::strtab_symbol()
 
 exprt python_convertert::string_handle_to_string(const exprt &handle)
 {
-  return function_application_exprt{strtab_symbol(), {handle}};
+  strtab_symbol(); // ensure the symbol-table entry exists
+  // Folds interned-constant handles to the string constant (see the
+  // denotation helper); UF application otherwise.
+  return python_string_handle_denotation(handle);
 }
 
 exprt python_convertert::string_to_handle(const exprt &str)
 {
+  // Representation guard: the strtab axiom's rhs must be a PLAIN
+  // smt_string-sorted term. Two leak shapes are excluded:
+  // - bytes values / legacy refined-string structs (a bytes-returning
+  //   stub method stored into a str slot -- io.read via nondet_bytes());
+  // - the refined->String BRIDGE struct `{length, address_of(data[0])}`
+  //   typed smt_string: legal only as an INTRINSIC argument (the smt2
+  //   lowering bridges it); inside a goto assignment the value-set
+  //   walker visits the ID_struct constructor (it contains an address)
+  //   and aborts on its non-struct type (s3_to_dynamodb).
+  // Allocate a handle with an UNCONSTRAINED image instead: strtab(h) is
+  // then an arbitrary string -- a sound over-approximation.
+  if(str.type().id() != ID_smt_string || str.id() == ID_struct)
+  {
+    static unsigned strh_u_ctr = 0;
+    const std::string hn = "__strh_u_" + std::to_string(strh_u_ctr++);
+    const irep_idt hid{qualify_name(hn)};
+    if(symbol_table.lookup(hid) == nullptr)
+    {
+      symbolt hs{hid, python_string_handle_type(), "python"};
+      hs.base_name = hn;
+      hs.is_lvalue = true;
+      hs.is_state_var = true;
+      hs.is_static_lifetime = current_function.empty();
+      symbol_table.add(hs);
+    }
+    symbol_exprt h = symbol_table.lookup_ref(hid).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{
+      h, side_effect_expr_nondett{h.type(), source_locationt{}}});
+    return std::move(h);
+  }
+  // CONSTANT strings intern to a DETERMINISTIC handle id with a
+  // namespace-visible definition symbol (python::__strconst_<id>, value =
+  // the constant). This is what makes the backend's strtab-aware constant
+  // RECOVERY work (smt2_convt::try_extract_string_literal follows
+  // strtab(<const id>) through the intern symbol): the regex/string
+  // intrinsic lowerings keep their compile-time precision for constant
+  // operands that flow through handles (e.g. the pv __str payload). The
+  // global ASSUME strtab(id) == "<const>" (emitted once per intern) keeps
+  // general solver-level String reasoning consistent. Equal constants
+  // share one id, so `is`-style handle equality on equal literals also
+  // holds -- consistent with CPython's small-literal interning latitude.
+  if(str.id() == ID_constant && str.type().id() == ID_smt_string)
+  {
+    const std::string text = id2string(to_constant_expr(str).get_value());
+    auto it = string_intern_ids.find(text);
+    if(it != string_intern_ids.end())
+      return from_integer(it->second, python_string_handle_type());
+    const long long id = static_cast<long long>(string_intern_ids.size()) + 1;
+    string_intern_ids[text] = id;
+    python_string_intern_reverse()[id] = text;
+    const irep_idt cs_id{"python::__strconst_" + std::to_string(id)};
+    if(symbol_table.lookup(cs_id) == nullptr)
+    {
+      symbolt cs{cs_id, smt_string_typet{}, "python"};
+      cs.base_name = id2string(cs_id);
+      cs.is_static_lifetime = true;
+      cs.value = str;
+      symbol_table.add(cs);
+    }
+    exprt h = from_integer(id, python_string_handle_type());
+    // The definitional ASSUME must use the RAW UF application: the folding
+    // denotation would reduce it to "s" == "s" (vacuous, dropped), leaving
+    // SYMBOLIC reads of the same handle without the axiom (the split-test
+    // regression: `xs[0] == "a"` compared an unconstrained strtab(1)).
+    emit_strtab_axiom(h, str);
+    return h;
+  }
   static unsigned strh_ctr = 0;
   const std::string hn = "__strh_" + std::to_string(strh_ctr++);
   const irep_idt hid{qualify_name(hn)};
@@ -6585,9 +6669,38 @@ exprt python_convertert::string_to_handle(const exprt &str)
   // computed strings).
   pending_checks.push_back(code_frontend_assignt{
     h, side_effect_expr_nondett{h.type(), source_locationt{}}});
-  code_assumet asm_eq{equal_exprt{string_handle_to_string(h), str}};
-  pending_checks.push_back(std::move(asm_eq));
+  emit_strtab_axiom(h, str);
   return std::move(h);
+}
+
+/// Emit the handle-allocation axiom `strtab(h) == str` as a ghost-Bool
+/// ASSIGNMENT followed by an assume of the ghost. The assignment form
+/// matters for the backend's strtab-aware constant recovery: the SSA
+/// conversion order is assignments FIRST, assumptions later
+/// (symex_target_equation::convert_without_assertions), so an axiom
+/// emitted only as an assume is recorded AFTER the string intrinsics
+/// that need it have already converted. As an assignment, set_to records
+/// the definitional equality in program order. Uses the RAW UF
+/// application (the folding denotation would reduce interned-constant
+/// axioms to a vacuous "s" == "s").
+void python_convertert::emit_strtab_axiom(const exprt &h, const exprt &str)
+{
+  static unsigned strdef_ctr = 0;
+  const std::string gn = "__strdef_" + std::to_string(strdef_ctr++);
+  const irep_idt gid{qualify_name(gn)};
+  if(symbol_table.lookup(gid) == nullptr)
+  {
+    symbolt gs{gid, bool_typet{}, "python"};
+    gs.base_name = gn;
+    gs.is_lvalue = true;
+    gs.is_state_var = true;
+    gs.is_static_lifetime = current_function.empty();
+    symbol_table.add(gs);
+  }
+  symbol_exprt g = symbol_table.lookup_ref(gid).symbol_expr();
+  equal_exprt ax{function_application_exprt{strtab_symbol(), {h}}, str};
+  pending_checks.push_back(code_frontend_assignt{g, std::move(ax)});
+  pending_checks.push_back(code_assumet{g});
 }
 
 symbol_exprt python_convertert::inttab_symbol()

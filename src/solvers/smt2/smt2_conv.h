@@ -98,6 +98,47 @@ public:
   }
 
 protected:
+  /// Recover a compile-time string constant from \p e: a native smt_string
+  /// constant, a refined-string struct `{len, address_of(index(array, 0))}`,
+  /// a `str.++` concatenation of recoverable operands, or -- the Python
+  /// front-end's string-id handles -- a `__cbmc_strtab(<constant id>)`
+  /// application, resolved through the INTERN SYMBOL
+  /// `python::__strconst_<id>` registered by the front-end (its value is
+  /// the smt_string constant). Returns nullopt for anything symbolic; the
+  /// callers (regex/string intrinsic lowerings) then degrade to a sound
+  /// nondet. Shared by the convert_expr regex lowering and the find_symbols
+  /// re_group decomposition (previously two duplicated lambdas).
+  std::optional<std::string>
+  try_extract_string_literal(const exprt &e, unsigned depth = 0) const;
+  std::optional<exprt> try_resolve_constant_handle(const exprt &e) const;
+
+  /// Definitional assumes over the Python string-id table: set_to sees
+  /// `strtab(h) == <String expr>` (the front-end's handle-allocation
+  /// axiom); recording h -> rhs lets try_extract_string_literal recover
+  /// strtab(h) even for NONDET handles (class str fields) by lazily
+  /// chasing the rhs. Only the FIRST definition per handle expression is
+  /// kept; a second, different one demotes the entry to nil (recovery
+  /// then fails -- sound: callers degrade to nondet).
+  /// Keyed by symbol identifier / constant handle id rather than exprt:
+  /// the handle type carries an ID_C_ comment flag that is present or
+  /// absent depending on which path rebuilt the type, and full-irept
+  /// comparison would spuriously miss.
+  std::map<irep_idt, exprt> strtab_sym_defs;
+  std::map<mp_integer, exprt> strtab_const_defs;
+
+  /// Recover the constant text of `strtab(<harg>)`: consult strtab_defs
+  /// at each chase step, follow recorded bv64 SSA definitions, resolve
+  /// interned-constant ids through the front-end's intern symbols, and
+  /// require branch agreement on merge ternaries. Depth-capped.
+  std::optional<std::string>
+  try_recover_strtab(const exprt &harg, unsigned depth) const;
+
+  /// String-typed SSA symbol definitions recorded by set_to (symbol == rhs
+  /// equalities), letting try_extract_string_literal chase constants
+  /// through intermediate SSA symbols (assignments convert in step order,
+  /// so definitions precede uses).
+  std::map<irep_idt, exprt> string_symbol_defs;
+
   const namespacet &ns;
   std::ostream &out;
   std::string benchmark, notes, logic;

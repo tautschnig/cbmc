@@ -3263,16 +3263,16 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   // reverted 2026-07-20). Reads map h -> strtab(h) at the
   // convert_attribute choke point; writes allocate handles in
   // coerce_assign_rhs.
-  // EXEMPT frontend-library classes (src/python/library/...): their str
-  // fields carry a BACKEND CONTRACT -- e.g. re.Pattern.pattern must be a
-  // conversion-time-recoverable String constant for smt2's regex lowering
-  // (constant propagation cannot see through the strtab UF). Library
-  // structs are converter-controlled and never flow through the
-  // byte-imaged identity reads that motivated handles (their receivers
-  // are typed, not Any) -- the corpus crashes were all USER classes.
-  const bool is_library_class =
-    filename.find("/src/python/library/") != std::string::npos;
-  if(python_smt_string_native_flag() && !is_library_class)
+  // ALL classes (2026-07-21): the frontend-library exemption is LIFTED.
+  // It existed because the smt2 regex lowering recovered constants
+  // syntactically (re.Pattern.pattern had to stay a raw String constant);
+  // smt2_convt::try_extract_string_literal now follows strtab(<const id>)
+  // through the intern symbols, so the recovery contract holds for
+  // handles. Keeping raw smt_string fields in ANY class violates the
+  // fixed-width representation invariant: a library instance reached
+  // through an unresolved value-set deref is byte-imaged like any other
+  // (observed: the logging stub's Logger under apigateway_key_manager).
+  if(python_smt_string_native_flag())
   {
     for(auto &c : tagged_components)
     {

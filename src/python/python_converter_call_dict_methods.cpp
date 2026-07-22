@@ -461,7 +461,9 @@ std::optional<exprt> python_convertert::try_dict_method(
             }
             code_blockt append;
             append.add(code_frontend_assignt{
-              index_exprt{dst_keys, dst_len}, box_string_for_storage(k)});
+              index_exprt{dst_keys, dst_len},
+              coerce_element(
+                k, to_array_type(dst_keys.type()).element_type())});
             append.add(
               code_frontend_assignt{index_exprt{dst_vals, dst_len}, v});
             append.add(code_frontend_assignt{

@@ -11,8 +11,6 @@ Author: Daniel Kroening, kroening@kroening.com
 /// \file
 /// SMT Backend
 
-#include "smt2_conv.h"
-
 #include <util/algebraic_number.h>
 #include <util/arith_tools.h>
 #include <util/bitvector_expr.h>
@@ -38,6 +36,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/std_expr.h>
 #include <util/string2int.h>
 #include <util/string_constant.h>
+#include <util/symbol.h>
 #include <util/threeval.h>
 
 #include <solvers/flattening/boolbv_width.h>
@@ -46,6 +45,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <solvers/prop/literal_expr.h>
 #include <solvers/strings/python_regex_to_smt.h>
 
+#include "smt2_conv.h"
 #include "smt2_tokenizer.h"
 
 #include <cstdint>
@@ -144,6 +144,199 @@ smt2_convt::smt2_convt(
 std::string smt2_convt::decision_procedure_text() const
 {
   return "SMT2";
+}
+
+/// Chase \p e (a bv64 handle expression) to a CONSTANT handle id through
+/// recorded SSA symbol definitions and agreeing merge ternaries. Used by
+/// try_extract_string_literal to resolve strtab(<SSA symbol>) operands.
+std::optional<exprt>
+smt2_convt::try_resolve_constant_handle(const exprt &e) const
+{
+  if(e.is_constant())
+    return e;
+  if(e.id() == ID_symbol)
+  {
+    auto it = string_symbol_defs.find(to_symbol_expr(e).get_identifier());
+    if(it != string_symbol_defs.end())
+      return try_resolve_constant_handle(it->second);
+    return std::nullopt;
+  }
+  if(e.id() == ID_if)
+  {
+    const auto &ie = to_if_expr(e);
+    auto a = try_resolve_constant_handle(ie.true_case());
+    auto b = try_resolve_constant_handle(ie.false_case());
+    if(a.has_value() && b.has_value() && *a == *b)
+      return a;
+    return std::nullopt;
+  }
+  if(e.id() == ID_typecast)
+    return try_resolve_constant_handle(to_typecast_expr(e).op());
+  return std::nullopt;
+}
+
+std::optional<std::string>
+smt2_convt::try_recover_strtab(const exprt &harg, unsigned depth) const
+{
+  if(depth > 32)
+    return std::nullopt;
+  // Definitional-assume image at THIS step (covers nondet handles
+  // constrained by a single strtab axiom, e.g. class str fields whose
+  // value is a constant assigned once): lazily chase the recorded rhs.
+  if(harg.id() == ID_symbol)
+  {
+    auto dit = strtab_sym_defs.find(to_symbol_expr(harg).get_identifier());
+    if(dit != strtab_sym_defs.end())
+    {
+      if(dit->second.is_nil())
+        return std::nullopt; // conflicting definitions
+      return try_extract_string_literal(dit->second, depth + 1);
+    }
+  }
+  if(harg.is_constant())
+  {
+    mp_integer hv;
+    if(!to_integer(to_constant_expr(harg), hv))
+    {
+      auto dit = strtab_const_defs.find(hv);
+      if(dit != strtab_const_defs.end())
+      {
+        if(dit->second.is_nil())
+          return std::nullopt;
+        return try_extract_string_literal(dit->second, depth + 1);
+      }
+    }
+  }
+  // Interned constant id: resolve through the front-end's intern symbol.
+  if(harg.is_constant())
+  {
+    mp_integer id_val;
+    if(!to_integer(to_constant_expr(harg), id_val))
+    {
+      const symbolt *cs = nullptr;
+      if(
+        !ns.lookup(
+          irep_idt{"python::__strconst_" + integer2string(id_val)}, cs) &&
+        cs != nullptr && cs->value.id() == ID_constant &&
+        cs->value.type().id() == ID_smt_string)
+        return id2string(to_constant_expr(cs->value).get_value());
+    }
+    return std::nullopt;
+  }
+  // SSA symbol: follow its recorded definition one step.
+  if(harg.id() == ID_symbol)
+  {
+    auto it = string_symbol_defs.find(to_symbol_expr(harg).get_identifier());
+    if(it != string_symbol_defs.end())
+      return try_recover_strtab(it->second, depth + 1);
+    return std::nullopt;
+  }
+  // Merge ternary: require branch agreement.
+  if(harg.id() == ID_if)
+  {
+    const auto &ie = to_if_expr(harg);
+    auto a = try_recover_strtab(ie.true_case(), depth + 1);
+    auto b = try_recover_strtab(ie.false_case(), depth + 1);
+    if(a.has_value() && b.has_value() && *a == *b)
+      return a;
+    return std::nullopt;
+  }
+  if(harg.id() == ID_typecast)
+    return try_recover_strtab(to_typecast_expr(harg).op(), depth + 1);
+  return std::nullopt;
+}
+
+std::optional<std::string>
+smt2_convt::try_extract_string_literal(const exprt &e, unsigned depth) const
+{
+  // Shared cap with try_recover_strtab: the two recurse into each other
+  // (a strtab axiom's rhs may itself be a recorded definition mentioning
+  // strtab), and recording BOTH orientations of definitional equalities
+  // can create benign cycles; the cap turns them into recovery failure.
+  if(depth > 64)
+    return std::nullopt;
+  // Native SMT-String constant: the text is the constant value.
+  if(e.id() == ID_constant && e.type().id() == ID_smt_string)
+    return id2string(to_constant_expr(e).get_value());
+  // SSA symbol: chase its recorded definition (definitions precede uses
+  // in assignment conversion order; SSA is acyclic). Applies to
+  // String-typed symbols AND bv64 handle symbols (see resolve_handle_id).
+  if(
+    e.id() == ID_symbol &&
+    (e.type().id() == ID_smt_string || e.type().id() == ID_signedbv))
+  {
+    auto it = string_symbol_defs.find(to_symbol_expr(e).get_identifier());
+    if(it != string_symbol_defs.end())
+      return try_extract_string_literal(it->second, depth + 1);
+    return std::nullopt;
+  }
+  // Guarded unwrap / merge ternaries: recover when BOTH branches agree
+  // (e.g. the pv guarded-unwrap `tag==STR ? strtab(h) : nondet` folds to
+  // the true branch when only one side is recoverable AND the other is a
+  // nondet fallback -- NOT safe in general, so require agreement).
+  if(e.id() == ID_if)
+  {
+    const auto &ie = to_if_expr(e);
+    auto a = try_extract_string_literal(ie.true_case(), depth + 1);
+    auto b = try_extract_string_literal(ie.false_case(), depth + 1);
+    if(a.has_value() && b.has_value() && *a == *b)
+      return a;
+    return std::nullopt;
+  }
+  if(e.id() == ID_function_application)
+  {
+    const auto &fa = to_function_application_expr(e);
+    if(fa.function().id() == ID_symbol)
+    {
+      const irep_idt fn = to_symbol_expr(fa.function()).get_identifier();
+      // str.++ of recoverable operands (front-ends build patterns by
+      // concatenation, e.g. prepending an inline-flag group "(?i)").
+      if(fn == ID_cprover_string_smt_strcat_func && fa.arguments().size() == 2)
+      {
+        auto a = try_extract_string_literal(fa.arguments()[0], depth + 1);
+        auto b = try_extract_string_literal(fa.arguments()[1], depth + 1);
+        if(a.has_value() && b.has_value())
+          return *a + *b;
+        return std::nullopt;
+      }
+      // Python string-id handle: strtab(<constant id>) resolves through
+      // the intern symbol the front-end registers for CONSTANT strings.
+      // (A nondet handle -- a runtime-built string -- has no intern
+      // symbol and correctly stays unrecoverable.)
+      if(fn == "python::__cbmc_strtab" && fa.arguments().size() == 1)
+        return try_recover_strtab(fa.arguments()[0], depth + 1);
+      return std::nullopt;
+    }
+    return std::nullopt;
+  }
+  // Refined-string struct: {length, address_of(index(array_literal, 0))}.
+  if(
+    e.id() != ID_struct || e.operands().size() != 2 ||
+    !e.operands()[0].is_constant())
+    return std::nullopt;
+  mp_integer slen;
+  if(to_integer(to_constant_expr(e.operands()[0]), slen))
+    return std::nullopt;
+  const exprt &data = e.operands()[1];
+  const exprt *arr = nullptr;
+  if(
+    data.id() == ID_address_of && data.operands().size() == 1 &&
+    data.operands()[0].id() == ID_index)
+    arr = &data.operands()[0].operands()[0];
+  if(arr == nullptr || arr->id() != ID_array)
+    return std::nullopt;
+  std::string s;
+  for(mp_integer i = 0; i < slen; ++i)
+  {
+    std::size_t idx = i.to_ulong();
+    if(idx >= arr->operands().size() || !arr->operands()[idx].is_constant())
+      return std::nullopt;
+    mp_integer ch;
+    if(to_integer(to_constant_expr(arr->operands()[idx]), ch))
+      return std::nullopt;
+    s += static_cast<char>(ch.to_ulong());
+  }
+  return s;
 }
 
 void smt2_convt::print_assignment(std::ostream &os) const
@@ -3127,69 +3320,10 @@ void smt2_convt::convert_expr(const exprt &expr)
         if(width == 0)
           width = 8;
 
-        // Helper: extract a constant-string payload from an smt_string
-        // constant, a refined-string struct_exprt of the form
-        //   { length_const, address_of(index(array_literal, 0)) },
-        // or a str.++ (cprover_string_smt_strcat_func) of such operands. The
-        // last case lets the front-end build a pattern by concatenation (e.g.
-        // prepending an inline-flag group "(?i)") while the back-end still
-        // recovers the constant text -- it remains pure string handling, with
-        // no language-specific knowledge.
-        std::function<std::optional<std::string>(const exprt &)>
-          extract_literal =
-            [&extract_literal](const exprt &e) -> std::optional<std::string>
-        {
-          // Native SMT-String back-end: the pattern/subject is a constant of
-          // smt_string type, carrying its text directly as the constant value.
-          if(e.id() == ID_constant && e.type().id() == ID_smt_string)
-            return id2string(to_constant_expr(e).get_value());
-          if(e.id() == ID_function_application)
-          {
-            const auto &fa = to_function_application_expr(e);
-            if(
-              fa.function().id() == ID_symbol &&
-              to_symbol_expr(fa.function()).get_identifier() ==
-                ID_cprover_string_smt_strcat_func &&
-              fa.arguments().size() == 2)
-            {
-              auto a = extract_literal(fa.arguments()[0]);
-              auto b = extract_literal(fa.arguments()[1]);
-              if(a.has_value() && b.has_value())
-                return *a + *b;
-              return std::nullopt;
-            }
-            return std::nullopt;
-          }
-          if(
-            e.id() != ID_struct || e.operands().size() != 2 ||
-            !e.operands()[0].is_constant())
-            return std::nullopt;
-          mp_integer slen;
-          if(to_integer(to_constant_expr(e.operands()[0]), slen))
-            return std::nullopt;
-          const exprt &data = e.operands()[1];
-          const exprt *arr = nullptr;
-          if(
-            data.id() == ID_address_of && data.operands().size() == 1 &&
-            data.operands()[0].id() == ID_index)
-            arr = &data.operands()[0].operands()[0];
-          if(arr == nullptr || arr->id() != ID_array)
-            return std::nullopt;
-          std::string s;
-          for(mp_integer i = 0; i < slen; ++i)
-          {
-            std::size_t idx = i.to_ulong();
-            if(
-              idx >= arr->operands().size() ||
-              !arr->operands()[idx].is_constant())
-              return std::nullopt;
-            mp_integer ch;
-            if(to_integer(to_constant_expr(arr->operands()[idx]), ch))
-              return std::nullopt;
-            s += static_cast<char>(ch.to_ulong());
-          }
-          return s;
-        };
+        // Constant-string recovery: shared member helper (also resolves
+        // the Python string-id handles via their intern symbols).
+        auto extract_literal = [this](const exprt &e)
+        { return try_extract_string_literal(e); };
 
         // Helper: SMT-LIB 2.6 string-literal escaping. The only
         // special character is the double quote, which is written
@@ -6126,6 +6260,63 @@ void smt2_convt::set_to(const exprt &expr, bool value)
       return;
     }
 
+    // Python string-id handles: record definitional strtab axioms for
+    // constant recovery. The front-end emits them as ghost-Bool
+    // ASSIGNMENTS `__strdef_N := (strtab(h) == rhs)` so they convert in
+    // program order (assignments precede assumptions in SSA conversion);
+    // unwrap that form, then match `strtab(h) == rhs` in either
+    // orientation.
+    // ONLY the ghost form is definitional: recording from ordinary SSA
+    // equalities (e.g. `pat#1 == strtab(h)`, a forward DEFINITION of
+    // pat#1) would install the reverse edge h -> pat#1 and create chase
+    // cycles (pat#1's own definition mentions strtab(h)).
+    const bool is_strtab_ghost =
+      equal_expr.rhs().id() == ID_equal && equal_expr.lhs().id() == ID_symbol &&
+      equal_expr.lhs().is_boolean() &&
+      id2string(to_symbol_expr(equal_expr.lhs()).get_identifier())
+          .find("__strdef_") != std::string::npos;
+    for(int side = 0; is_strtab_ghost && side < 2; side++)
+    {
+      const equal_exprt &axiom_eq = to_equal_expr(equal_expr.rhs());
+      const exprt &fa_side = side == 0 ? axiom_eq.lhs() : axiom_eq.rhs();
+      const exprt &c_side = side == 0 ? axiom_eq.rhs() : axiom_eq.lhs();
+      if(
+        fa_side.id() == ID_function_application &&
+        c_side.type().id() == ID_smt_string)
+      {
+        const auto &fa = to_function_application_expr(fa_side);
+        if(
+          fa.function().id() == ID_symbol &&
+          to_symbol_expr(fa.function()).get_identifier() ==
+            "python::__cbmc_strtab" &&
+          fa.arguments().size() == 1)
+        {
+          const exprt &harg = fa.arguments()[0];
+          if(harg.id() == ID_symbol)
+          {
+            const irep_idt hid = to_symbol_expr(harg).get_identifier();
+            auto it = strtab_sym_defs.find(hid);
+            if(it == strtab_sym_defs.end())
+          strtab_sym_defs.emplace(hid, c_side);
+            else if(it->second != c_side)
+          it->second = nil_exprt{}; // conflicting definitions: demote
+          }
+          else if(harg.is_constant())
+          {
+            mp_integer hv;
+            if(!to_integer(to_constant_expr(harg), hv))
+            {
+          auto it = strtab_const_defs.find(hv);
+          if(it == strtab_const_defs.end())
+                strtab_const_defs.emplace(hv, c_side);
+          else if(it->second != c_side)
+                it->second = nil_exprt{};
+            }
+          }
+        }
+      }
+    }
+
     if(equal_expr.lhs().id()==ID_symbol)
     {
       const irep_idt &identifier=
@@ -6138,6 +6329,18 @@ void smt2_convt::set_to(const exprt &expr, bool value)
         auto id_entry = identifier_map.insert(
           {identifier, identifiert{equal_expr.lhs().type(), false}});
         CHECK_RETURN(id_entry.second);
+
+        // Record symbol definitions for constant recovery
+        // (try_extract_string_literal chases SSA symbols through these).
+        // Both String-typed symbols and 64-bit bitvector ones: the Python
+        // front-end's string-id HANDLES are bv64, and an intrinsic operand
+        // is then strtab(<bv64 SSA symbol>) whose argument must be chased
+        // to the interned-constant handle id.
+        if(
+          equal_expr.lhs().type().id() == ID_smt_string ||
+          (equal_expr.lhs().type().id() == ID_signedbv &&
+           to_signedbv_type(equal_expr.lhs().type()).get_width() == 64))
+          string_symbol_defs.emplace(identifier, equal_expr.rhs());
 
         find_symbols(id_entry.first->second.type);
         exprt prepared_rhs = prepare_for_convert_expr(equal_expr.rhs());
@@ -6870,30 +7073,10 @@ void smt2_convt::find_symbols(const exprt &expr)
       // un-segmentable structure, or an out-of-range n declares a fresh nondet
       // String instead, keeping the result sound.
       const auto &args = to_function_application_expr(expr).arguments();
-      // Constant-string extractor for the pattern (native smt_string constant
-      // or a str.++ of such), mirroring convert_expr's extract_literal.
-      std::function<std::optional<std::string>(const exprt &)> lit =
-        [&lit](const exprt &e) -> std::optional<std::string>
-      {
-        if(e.id() == ID_constant && e.type().id() == ID_smt_string)
-          return id2string(to_constant_expr(e).get_value());
-        if(e.id() == ID_function_application)
-        {
-          const auto &fa = to_function_application_expr(e);
-          if(
-            fa.function().id() == ID_symbol &&
-            to_symbol_expr(fa.function()).get_identifier() ==
-              ID_cprover_string_smt_strcat_func &&
-            fa.arguments().size() == 2)
-          {
-            auto a = lit(fa.arguments()[0]);
-            auto b = lit(fa.arguments()[1]);
-            if(a.has_value() && b.has_value())
-              return *a + *b;
-          }
-        }
-        return std::nullopt;
-      };
+      // Constant-string recovery: the shared member helper (also resolves
+      // the Python string-id handles via their intern symbols).
+      auto lit = [this](const exprt &e)
+      { return try_extract_string_literal(e); };
       // SMT-LIB 2.6 string-literal escaping (printable ASCII only).
       auto esc = [](const std::string &s) -> std::optional<std::string>
       {
