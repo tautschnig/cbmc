@@ -1047,27 +1047,24 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       {
         std::string s = sv.value();
         int len = static_cast<int>(s.size());
-        if(is_reverse)
+        // `is_reverse` (step == -1) is only a FULL reversal when BOTH
+        // bounds are omitted (`s[::-1]`). With explicit bounds, e.g.
+        // `s[5:0:-1]`, CPython walks start..stop+1 downward and STOPS
+        // before stop -- returning the reversal ignored the bounds
+        // (ESBMC str_slice_negative_step_fail: "abcdef"[5:0:-1] is
+        // "fedcb", not "fedcba"). Route bounded negative steps through
+        // the general path below.
+        const bool bare_reverse =
+          is_reverse && lower_json.is_null() && upper_json.is_null();
+        if(bare_reverse)
         {
           std::string rev(s.rbegin(), s.rend());
           return python_string_literal(rev);
         }
         else
         {
-          int lo =
-            lower_json.is_null()
-              ? 0
-              : static_cast<int>(
-                  try_eval_double(convert_expression(lower_json)).value_or(0));
-          int hi =
-            upper_json.is_null()
-              ? len
-              : static_cast<int>(try_eval_double(convert_expression(upper_json))
-                                   .value_or(len));
-          // PLR §6.3.3: optional step. The is_reverse branch
-          // above handles step=-1; here we handle other
-          // constant steps (positive only — negative-step !=
-          // -1 is rare and would need a different traversal).
+          // PLR §6.3.3: optional step (default 1). Read it first --
+          // the default START/STOP depend on its sign.
           int step = 1;
           if(!step_json.is_null())
           {
@@ -1075,27 +1072,46 @@ exprt python_convertert::convert_subscript(const jsont &expr)
             if(sv_step.has_value())
               step = static_cast<int>(*sv_step);
           }
-          if(lo < 0)
-            lo += len;
-          if(hi < 0)
-            hi += len;
-          if(lo < 0)
-            lo = 0;
-          if(hi > len)
-            hi = len;
-          if(lo >= hi || step == 0)
+          if(step == 0)
             return python_string_literal("");
+          // PLR §6.3.3 default bounds are step-sign-dependent: forward
+          // start=0/stop=len; backward start=len-1/stop=-1 (before the
+          // first element).
+          int lo =
+            lower_json.is_null()
+              ? (step > 0 ? 0 : len - 1)
+              : static_cast<int>(
+                  try_eval_double(convert_expression(lower_json)).value_or(0));
+          int hi =
+            upper_json.is_null()
+              ? (step > 0 ? len : -1)
+              : static_cast<int>(try_eval_double(convert_expression(upper_json))
+                                   .value_or(len));
+          if(lo < 0 && !(upper_json.is_null() && step < 0 && false))
+            lo += len;
+          // stop wraps too, but the omitted backward default (-1) is a
+          // SENTINEL "before index 0", not len-1 -- keep it as -1.
+          const bool hi_is_backward_default = upper_json.is_null() && step < 0;
+          if(hi < 0 && !hi_is_backward_default)
+            hi += len;
           if(step > 0)
           {
+            if(lo < 0)
+              lo = 0;
+            if(hi > len)
+              hi = len;
+            if(lo >= hi)
+              return python_string_literal("");
             std::string r;
             for(int i = lo; i < hi; i += step)
               r += s[i];
             return python_string_literal(r);
           }
-          // step < 0 (and not -1): walk in reverse with stride.
+          // step < 0: walk downward, STOP before `hi` (exclusive).
+          if(lo > len - 1)
+            lo = len - 1;
           std::string r;
-          int start = hi - 1;
-          for(int i = start; i >= lo; i += step)
+          for(int i = lo; i > hi && i >= 0; i += step)
             r += s[i];
           return python_string_literal(r);
         }

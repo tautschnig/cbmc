@@ -3600,23 +3600,19 @@ std::optional<exprt> python_convertert::try_builtin_call(
         {
           double d = ev.value();
           std::string s;
+          // An integer-typed operand routed here (rare) prints without a
+          // decimal point; a genuine FLOAT uses CPython's repr
+          // (py_float_repr) -- the previous 6-digit ostream path both
+          // truncated precision (str(0.1234567) -> "0.123457") and
+          // dropped the ".0" on whole floats (str(1.0) -> "1"), WRONG
+          // constants that could be asserted (a false proof).
           if(
             d == std::floor(d) && std::abs(d) < 1e15 &&
             (arg.type().id() == ID_signedbv || arg.type().id() == ID_integer ||
              (arg.id() == ID_symbol && arg.type().id() != ID_floatbv)))
             s = std::to_string(static_cast<long long>(d));
           else
-          {
-            std::ostringstream oss;
-            oss << d;
-            s = oss.str();
-            // Python-style: remove trailing zeros after decimal
-            if(s.find('.') != std::string::npos)
-            {
-              while(s.size() > 1 && s.back() == '0' && s[s.size() - 2] != '.')
-                s.pop_back();
-            }
-          }
+            s = py_float_repr(d);
           return python_string_literal(s);
         }
       }
@@ -3630,20 +3626,12 @@ std::optional<exprt> python_convertert::try_builtin_call(
           return python_string_literal(s);
         }
       }
-      // str(float_constant)
+      // str(float_constant): CPython repr (see py_float_repr).
       if(arg.is_constant() && arg.type().id() == ID_floatbv)
       {
-        ieee_floatt fv{
-          ieee_float_spect::double_precision(),
-          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        fv.from_expr(to_constant_expr(arg));
-        std::string s = fv.to_ansi_c_string();
-        if(s.find(".") != std::string::npos)
-        {
-          while(s.size() > 1 && s.back() == '0' && s[s.size() - 2] != '.')
-            s.pop_back();
-        }
-        return python_string_literal(s);
+        auto fev = try_eval_double(arg);
+        if(fev.has_value())
+          return python_string_literal(py_float_repr(*fev));
       }
       // Symbolic int: emit cprover_string_of_int_func so the
       // solver knows the result's content and length

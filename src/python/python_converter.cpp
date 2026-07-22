@@ -6462,6 +6462,16 @@ exprt python_convertert::convert_expression(const jsont &expr)
         }
         else if(inner.type().id() == ID_floatbv)
         {
+          // CONSTANT float: fold to CPython repr (py_float_repr) -- precise
+          // AND correct (a wrong fold would be a false proof; the shared
+          // helper matches CPython bit-for-bit). Backend-independent.
+          if(auto fev = try_eval_double(inner);
+             fev.has_value() && inner.is_constant())
+          {
+            parts.push_back(python_string_literal(py_float_repr(*fev)));
+            part_len.push_back(std::nullopt);
+            continue;
+          }
           if(use_smt_string_native)
           {
             // No SMT primitive for str(float); sound nondet SMT String.

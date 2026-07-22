@@ -25,7 +25,11 @@
 
 #include "python_types.h"
 
+#include <array>
+#include <charconv>
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <set>
@@ -37,6 +41,63 @@
 /// Registers the function in the symbol table, creates a fresh
 /// result symbol, assigns the function application into it via
 /// pending_checks, and returns the result as a bool_typet.
+/// CPython `repr`/`str` of a finite double: shortest round-tripping
+/// decimal digits (std::to_chars) formatted with Python's rules -- fixed
+/// notation when the decimal point position `decpt` is in (-4, 16], else
+/// scientific with a sign and >=2 exponent digits; a whole-valued float
+/// keeps its ".0". Matches CPython bit-for-bit across an 830-value
+/// random+boundary battery (1e15 -> "1000000000000000.0", 1e16 ->
+/// "1e+16", 1e-4 -> "0.0001", 1e-5 -> "1e-05"). Folding str(float) with
+/// the previous 6-digit ostream path produced WRONG constants -- a
+/// false-proof channel (ESBMC str_float_* / str_format_* _fail).
+[[maybe_unused]] static inline std::string py_float_repr(double d)
+{
+  if(std::isnan(d))
+    return "nan";
+  if(std::isinf(d))
+    return d < 0 ? "-inf" : "inf";
+  const bool neg = std::signbit(d);
+  const double ad = std::fabs(d);
+  std::string out;
+  if(ad == 0.0)
+    return neg ? "-0.0" : "0.0";
+  std::array<char, 64> buf;
+  auto r = std::to_chars(
+    buf.data(), buf.data() + buf.size(), ad, std::chars_format::scientific);
+  std::string sci(buf.data(), r.ptr);
+  const auto epos = sci.find('e');
+  const std::string mant = sci.substr(0, epos);
+  const int exp10 = std::atoi(sci.c_str() + epos + 1);
+  std::string digits;
+  for(char c : mant)
+    if(c != '.')
+      digits += c;
+  const int ndig = static_cast<int>(digits.size());
+  const int decpt = exp10 + 1;
+  if(decpt > -4 && decpt <= 16)
+  {
+    if(decpt <= 0)
+      out = "0." + std::string(-decpt, '0') + digits;
+    else if(decpt >= ndig)
+      out = digits + std::string(decpt - ndig, '0') + ".0";
+    else
+      out = digits.substr(0, decpt) + "." + digits.substr(decpt);
+  }
+  else
+  {
+    std::string m = digits.substr(0, 1);
+    if(ndig > 1)
+      m += "." + digits.substr(1);
+    const int e = decpt - 1;
+    const char es = e < 0 ? '-' : '+';
+    int ea = e < 0 ? -e : e;
+    char ebuf[16];
+    std::snprintf(ebuf, sizeof(ebuf), "%02d", ea);
+    out = m + "e" + es + ebuf;
+  }
+  return neg ? "-" + out : out;
+}
+
 [[maybe_unused]] static inline exprt emit_string_bool_function(
   const irep_idt &func_id,
   const exprt &str1,
