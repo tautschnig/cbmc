@@ -1129,6 +1129,27 @@ void python_convertert::note_mutable_extraction(
         slot_aliast{rhs, src_id, json_string(json_member(cont, "id")), ""};
     }
   }
+  // LIST-element slot form: `r = g[i]` returns the data[i] lvalue; a
+  // CONSTANT index is re-emittable verbatim (no dependency that a later
+  // statement could move without mentioning `g` -- reorderings
+  // (insert/pop/sort/...) all mention the source and demote). A SYMBOLIC
+  // index is NOT recorded: the index variable could be reassigned by a
+  // statement that never mentions the source, and the re-emitted slot
+  // would address a different element (a false write).
+  else if(
+    rhs.id() == ID_index && is_python_list_type(ct) &&
+    escaped_mutables.count(src_id) == 0)
+  {
+    const auto &ix = to_index_expr(rhs);
+    if(
+      ix.index().is_constant() && ix.array().id() == ID_member &&
+      to_member_expr(ix.array()).get_component_name() == "data" &&
+      to_member_expr(ix.array()).compound() == container)
+    {
+      extracted_slot_alias[lhs_id] =
+        slot_aliast{rhs, src_id, json_string(json_member(cont, "id")), ""};
+    }
+  }
   // KEY form: a STRING-keyed extraction whose subscript FOLDED to the
   // tracked literal's container value (read precision, dict18/19) has no
   // slot expression -- record the constant key instead; the write-through
@@ -1146,6 +1167,71 @@ void python_convertert::note_mutable_extraction(
         json_string(json_member(cont, "id")),
         json_string(json_member(sl, "value"))};
     }
+  }
+}
+
+/// Statement-level pre-scan for the NON-METHOD in-place mutation channels
+/// through a tracked extraction alias (PLR §6.2.1/§6.5.3): an augmented
+/// assign whose target is the alias, a subscript store into it, or a
+/// `del` of one of its elements. Mutator METHOD calls are handled at the
+/// call site (invalidate_extracted_source_on_mutation); these three
+/// convert without a method name and previously bypassed invalidation
+/// entirely -- a false-proof class (`v = d[1]; v += [5]; len(d[1])`
+/// proved the STALE length). Runs BEFORE the statement converts (the
+/// alias records are still intact); the write-back lands AFTER it
+/// (pending_post_checks), so it stores the post-mutation value.
+void python_convertert::handle_alias_mutation_channels(const jsont &stmt)
+{
+  if(extracted_container_alias.empty())
+    return;
+  const std::string nt = json_string(json_member(stmt, "_type"));
+  std::vector<const jsont *> alias_names;
+  auto add_if_name = [&](const jsont &n)
+  {
+    if(is_node_type(n, "Name"))
+      alias_names.push_back(&n);
+  };
+  if(nt == "AugAssign")
+  {
+    // In-place for mutable containers; for scalars the aug-assign REBINDS
+    // and note_mutable_extraction erases the alias on the rebind path --
+    // but a pv-typed alias may be either, so treat a tracked target as a
+    // potential mutation (write-through if the slot alias survived, else
+    // the sound havoc).
+    add_if_name(json_member(stmt, "target"));
+  }
+  else if(nt == "Assign")
+  {
+    const jsont &targets = json_member(stmt, "targets");
+    if(targets.is_array())
+    {
+      for(const auto &t : as_array(targets))
+      {
+        if(is_node_type(t, "Subscript"))
+          add_if_name(json_member(t, "value"));
+      }
+    }
+  }
+  else if(nt == "Delete")
+  {
+    const jsont &targets = json_member(stmt, "targets");
+    if(targets.is_array())
+    {
+      for(const auto &t : as_array(targets))
+      {
+        if(is_node_type(t, "Subscript"))
+          add_if_name(json_member(t, "value"));
+      }
+    }
+  }
+  for(const jsont *n : alias_names)
+  {
+    const irep_idt id{qualify_name(json_string(json_member(*n, "id")))};
+    if(extracted_container_alias.count(id) == 0)
+      continue;
+    const symbolt *sym = symbol_table.lookup(id);
+    if(sym != nullptr)
+      invalidate_extracted_alias_inplace_mutation(sym->symbol_expr());
   }
 }
 
@@ -1235,7 +1321,22 @@ bool python_convertert::invalidate_extracted_source_on_mutation(
     return false;
   if(obj.id() != ID_symbol)
     return false;
-  const irep_idt obj_id = to_symbol_expr(obj).get_identifier();
+  return invalidate_extracted_alias_inplace_mutation(to_symbol_expr(obj));
+}
+
+/// The channel-agnostic core of extraction-alias invalidation: \p obj (the
+/// extracted alias) is being mutated IN PLACE by the statement currently
+/// converting -- through a mutator METHOD, an augmented assign
+/// (`v += [x]`, PLR §6.2.1 in-place for mutable sequences), a subscript
+/// STORE (`v[i] = x`), or `del v[i]`. Keying the invalidation on mutator
+/// method names only was a FALSE-PROOF class (the other three channels
+/// left the source container stale). Writes the post-statement value back
+/// through a still-valid §0 slot alias (precise), else havocs the source
+/// and every sibling alias (sound floor).
+bool python_convertert::invalidate_extracted_alias_inplace_mutation(
+  const symbol_exprt &obj)
+{
+  const irep_idt obj_id = obj.get_identifier();
   auto it = extracted_container_alias.find(obj_id);
   if(it == extracted_container_alias.end())
     return false;
@@ -1282,7 +1383,21 @@ bool python_convertert::invalidate_extracted_source_on_mutation(
       exprt wb = obj;
       const typet &et = vals_t.element_type();
       if(wb.type() != et)
+      {
+        // The coercion may MATERIALISE a canonical copy of `obj` (e.g.
+        // wrap_value's __list_val_N snapshot) via pending_checks -- which
+        // flush BEFORE the mutating statement, so the snapshot would miss
+        // the mutation (a false proof: the write-back stored the stale
+        // pre-mutation value). Splice any checks the coercion emits into
+        // pending_post_checks AHEAD of the slot store, so the snapshot is
+        // taken from the post-mutation value.
+        const std::size_t pre = pending_checks.size();
         wb = is_python_value_type(et) ? wrap_value(wb) : coerce_element(wb, et);
+        for(std::size_t k = pre; k < pending_checks.size(); k++)
+          pending_post_checks.push_back(std::move(pending_checks[k]));
+        pending_checks.erase(
+          pending_checks.begin() + pre, pending_checks.end());
+      }
       pending_post_checks.push_back(code_frontend_assignt{
         index_exprt{vals, std::move(found_idx), et}, std::move(wb)});
       const irep_idt sid = sit->second.source_id;
@@ -1299,7 +1414,15 @@ bool python_convertert::invalidate_extracted_source_on_mutation(
     exprt wb = obj;
     const typet &et = sit->second.slot.type();
     if(wb.type() != et)
+    {
+      // See the KEY-form arm: splice coercion-materialised checks into
+      // the post-statement queue so snapshots see the mutated value.
+      const std::size_t pre = pending_checks.size();
       wb = is_python_value_type(et) ? wrap_value(wb) : coerce_element(wb, et);
+      for(std::size_t k = pre; k < pending_checks.size(); k++)
+        pending_post_checks.push_back(std::move(pending_checks[k]));
+      pending_checks.erase(pending_checks.begin() + pre, pending_checks.end());
+    }
     pending_post_checks.push_back(
       code_frontend_assignt{sit->second.slot, std::move(wb)});
     const irep_idt sid = sit->second.source_id;

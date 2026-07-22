@@ -1250,6 +1250,8 @@ private:
   bool invalidate_extracted_source_on_mutation(
     const exprt &obj,
     const std::string &method_name);
+  bool invalidate_extracted_alias_inplace_mutation(const symbol_exprt &obj);
+  void handle_alias_mutation_channels(const jsont &stmt);
 
   /// Havoc every extraction alias whose recorded source equals \p source,
   /// except \p except_id (the alias being mutated directly). PLR object
