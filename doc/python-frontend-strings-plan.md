@@ -596,7 +596,16 @@ smt2_conv (follow `strtab(h)` applications whose h has a unique
 definitional ASSUME) -- a small backend extension, after which __str can
 become a handle and the corpus TOERRs should reach zero. First
 unbounded-ints corpus baseline: 10 TOERR (entangled with refined-string
-issues; experimental config).
+issues; experimental config). **2026-07-22 (`1a6a6d247d`): hardening
+round one** -- PLR §6.7 integer mod/floordiv were WRONG (nondet mod;
+Euclidean floordiv), Int->FP typecast missing (smt2), and the
+structural-metadata invariant (i64 lengths vs integer_typet values)
+violated at ~14 sites; corpus (unbounded+native) 11 -> 8 TOERR, FP 0.
+Remaining recorded: 8 TOERRs (apigateway/aws_untagged/clear_duplicate/
+kinesis/mediaconvert/sagemaker/setup_cloudformation/websocket -- byte-ops
+720 + smt2 equal/typecast signatures), the negative-index STORE
+IndexError formula, and symbolic-index string-element reads (per-property
+solver ERROR shapes). Same audit recipe, further sites.
 
 **2026-07-22 (`c0d0469211`, `7f3c0adbf3`): DONE -- native corpus
 CORPUS-READY at 0 TOERRs** (CLEAN 38 / TP 8 / FP 0 / TIMEOUT 1, full
