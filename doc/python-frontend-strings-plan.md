@@ -597,3 +597,22 @@ definitional ASSUME) -- a small backend extension, after which __str can
 become a handle and the corpus TOERRs should reach zero. First
 unbounded-ints corpus baseline: 10 TOERR (entangled with refined-string
 issues; experimental config).
+
+**2026-07-22 (`c0d0469211`, `7f3c0adbf3`): DONE -- native corpus
+CORPUS-READY at 0 TOERRs** (CLEAN 38 / TP 8 / FP 0 / TIMEOUT 1, full
+default-mode parity; the timeout is the known SAT-bound aws_untagged).
+strtab-aware recovery landed as scoped (shared
+`try_extract_string_literal` + stepwise `try_recover_strtab`; ghost-Bool
+ASSIGNMENT axioms because SSA conversion order is assignments-first;
+ghost-form-only recording to avoid reverse-edge chase cycles; keying by
+identifier/handle-id because the ID_C_ comment flag varies). It
+discharged the regex contract, so BOTH deferred migrations completed:
+pv __str -> handle AND dict keys pointer-box -> handle (the pointer box
+was itself byte-imaged through unresolved value-set derefs), plus the
+library-class exemption lift. Guards: string_to_handle rejects
+non-smt_string payloads (bytes / bridge structs -> unconstrained image,
+sound); coerce_element unwraps pv through the string denotation for
+string-shaped slots; parameters re-annotated in the body REBIND instead
+of retyping in place (call-contract). Recorded residuals: interproc
+dict.pop membership precision under native (sound direction);
+unbounded-ints experimental config unchanged.
