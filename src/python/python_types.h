@@ -123,6 +123,19 @@ inline bool is_python_int_handle_type(const typet &t)
          t.get_bool(ID_C_python_int_handle);
 }
 
+/// The Int denotation of an int-id handle: inttab(h) (the uninterpreted
+/// bv64 -> Int table; the converter guarantees the symbol-table entry
+/// via inttab_symbol()). The read-side choke point for handle-typed int
+/// slots (class fields under --python-unbounded-ints).
+inline exprt python_int_handle_denotation(const exprt &handle)
+{
+  return function_application_exprt{
+    symbol_exprt{
+      "python::__cbmc_inttab",
+      mathematical_function_typet{{signedbv_typet{64}}, integer_typet{}}},
+    {handle}};
+}
+
 /// The String denotation of a string-id handle: strtab(h). A free-function
 /// twin of python_convertert::string_handle_to_string for sites without
 /// converter access (the converter seeds the strtab symbol-table entry at

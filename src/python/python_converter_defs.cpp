@@ -3281,6 +3281,22 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     }
   }
 
+  // The INT twin under --python-unbounded-ints: an inline integer_typet
+  // field makes the class struct variable-width (unpack_struct abort on
+  // byte-imaged identity reads -- e.g. the boto3 `exceptions` class
+  // attribute, whose inferred field type defaults to int). Same handle
+  // design: reads take inttab(h) at the convert_attribute choke point;
+  // writes allocate via int_to_handle in coerce_assign_rhs. Full
+  // precision is preserved through the Int table.
+  if(python_unbounded_ints_flag())
+  {
+    for(auto &c : tagged_components)
+    {
+      if(c.type().id() == ID_integer)
+        c.type() = python_int_handle_type();
+    }
+  }
+
   // PLR §7.5/§6.10: for each attribute `del`-eted somewhere in the program AND
   // declared on this class, add a per-instance `__present_<attr>` bool flag
   // (mirrors the ripple-safe `__shadow_` bool field). A store sets it true, a

@@ -2861,7 +2861,15 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
         python_value_bool(e), from_integer(0, signedbv_typet{32})}};
     exprt int_true = and_exprt{
       python_value_is(e, python_type_tagt::INT),
-      notequal_exprt{python_value_int(e), from_integer(0, signedbv_typet{64})}};
+      [&]
+      {
+        // Type the literal by the DENOTATION (integer under
+        // --python-unbounded-ints, i64 otherwise): a mixed-type
+        // comparison aborts the smt2 conversion.
+        exprt iv = python_value_int(e);
+        exprt z = from_integer(0, iv.type());
+        return notequal_exprt{std::move(iv), std::move(z)};
+      }()};
     exprt float_true = and_exprt{
       python_value_is(e, python_type_tagt::FLOAT),
       notequal_exprt{python_value_float(e), safe_zero(double_type())}};
@@ -3381,12 +3389,17 @@ exprt python_convertert::python_truthiness(const exprt &e)
         python_value_bool(e), from_integer(0, signedbv_typet{32})}};
     auto int_truthy = and_exprt{
       python_value_is(e, python_type_tagt::INT),
-      and_exprt{
-        notequal_exprt{
-          python_value_int(e), from_integer(0, signedbv_typet{64})},
-        notequal_exprt{
-          python_value_int(e),
-          from_integer(none_sentinel, signedbv_typet{64})}}};
+      [&]
+      {
+        // Literals typed by the DENOTATION (integer under
+        // --python-unbounded-ints, i64 otherwise).
+        exprt iv = python_value_int(e);
+        const typet it_ = iv.type();
+        return and_exprt{
+          notequal_exprt{iv, from_integer(0, it_)},
+          notequal_exprt{
+            python_value_int(e), from_integer(none_sentinel, it_)}};
+      }()};
     auto float_truthy = and_exprt{
       python_value_is(e, python_type_tagt::FLOAT),
       notequal_exprt{python_value_float(e), safe_zero(double_type())}};
@@ -4544,6 +4557,21 @@ exprt python_convertert::coerce_assign_rhs(
     python_smt_string_native_flag() && is_python_string_handle_type(lhs_type) &&
     is_python_string_type(rhs.type()))
     return string_to_handle(rhs);
+
+  // Int-id handles: an int value assigned into a HANDLE-typed int slot
+  // (class fields under --python-unbounded-ints) allocates a handle
+  // whose inttab image is the value (full precision through the Int
+  // table).
+  if(
+    python_unbounded_ints_flag() && is_python_int_handle_type(lhs_type) &&
+    (rhs.type().id() == ID_integer || rhs.type().id() == ID_signedbv ||
+     rhs.type().id() == ID_bool))
+  {
+    exprt v = rhs;
+    if(v.type().id() != ID_integer)
+      v = typecast_exprt{v, integer_typet{}};
+    return int_to_handle(v);
+  }
 
   return coerce_to_typed_slot(rhs, lhs_type);
 }

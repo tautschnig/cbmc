@@ -3233,6 +3233,10 @@ exprt python_convertert::convert_attribute(const jsont &expr)
   exprt r = convert_attribute_impl(expr);
   if(python_smt_string_native_flag() && is_python_string_handle_type(r.type()))
     return string_handle_to_string(r);
+  // Int-id handles (--python-unbounded-ints): a handle-typed int field
+  // denotes inttab(h) -- same choke point as strings.
+  if(python_unbounded_ints_flag() && is_python_int_handle_type(r.type()))
+    return python_int_handle_denotation(r);
   return r;
 }
 
