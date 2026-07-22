@@ -1316,7 +1316,13 @@ TIMEOUT is the SAT-bound `aws_untagged`, identical in both) — closing the
 instance-truthiness false-proof class, the extraction-aliasing soundness
 residual (havoc floor + §0 write-through precision), an `extend()` PLR §6.2
 evaluation-once semantics bug, and four native crash classes; parameters
-re-annotated in the body now REBIND instead of mutating the call contract. Two standing soundness-
+re-annotated in the body now REBIND instead of mutating the call contract.
+The 2026-07-22 pm rounds (see that note) closed the extraction-alias
+MUTATION-CHANNEL false-proof class (aug-assign / subscript-store / del
+through an extracted alias bypassed invalidation), landed the LIST-element
+§0 write-through, fixed two PLR §6.7 unbounded-int VALUE bugs (nondet mod,
+Euclidean floordiv), and took the corpus to MISS 1 / TP 11 (stub contracts
++ the --python-check-missing-methods strict-family flag). Two standing soundness-
 regression gates run after every change: the **oracle 0-NEW gate** (real-world
 corpus) and the **PLR-fuzz 0-NEW gate** (template + randomized PLR-tagged programs
 vs a committed baseline of **0** false-proof labels — see Sweep rounds 4–8). **The
@@ -1699,6 +1705,35 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > interprocedural `dict.pop` key-membership through a pv-typed key parameter
 > (sound direction — spurious FAILED, never a proof;
 > `native-dict-pop-interproc-knownbug`).
+
+> **Continuation (2026-07-22 pm) — MISS study, mutation channels, unbounded
+> ints.** Three follow-on rounds:
+> - **Corpus MISS study**: the four missed bugs decompose into
+>   stub-contract completeness (CloudWatch dimensions, S3Vectors required
+>   kwargs — benchmark-repo contracts, both fire as properties through the
+>   benchmarks' generic handlers), the NEW static-strictness flag
+>   `--python-check-missing-methods` (`f8af85294a`: un-gates the
+>   missing-method attribute-error property from PLR §8.4
+>   handler-awareness — the rds `create_dbinstance` typo swallowed by
+>   `except Exception`; in `--python-strict`), and ONE intrinsic remainder
+>   (apigateway: the buggy method is unreached from `__main__` —
+>   whole-program semantics). Corpus MISS 4 → 1, TP 8 → 11, FP 0.
+> - **Extraction-alias mutation channels** (`56b9253d8a`): in-place
+>   mutation flows through FOUR channels (methods, `v += [x]`,
+>   `v[i] = x`, `del v[i]`); keying invalidation on mutator method names
+>   only was a FALSE-PROOF class (stale `len(d[1])` proved after
+>   aug-assign/subscript-store/del through the alias). Channel-agnostic
+>   core + statement-level pre-scan; the LIST-element §0 slot form landed
+>   (constant index — `r = g[0]; r.append(5)` precise), and a LATENT
+>   false proof in both existing write-through arms was caught by the
+>   pinning suite (pv-slot wrap_value snapshots materialised
+>   PRE-statement; now spliced into the post-statement queue).
+> - **Unbounded-ints hardening** (`1a6a6d247d`): PLR §6.7 integer `%` was
+>   NONDET and `//` EUCLIDEAN (both value-semantics bugs; four sign
+>   quadrants pinned), Int→FP typecast added to the smt2 backend, and the
+>   structural-metadata invariant (i64 lengths/counters vs integer
+>   values) enforced at ~14 sites. Unbounded+native corpus 11 → 8 TOERR /
+>   FP 0; the remainder is recorded in the strings plan.
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator

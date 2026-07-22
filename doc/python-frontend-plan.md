@@ -1827,7 +1827,11 @@ precision false-positive.
 > write through the extraction alias precisely (`extracted_slot_alias`,
 > demotion discipline + hazard suite); the non-re-addressable remainder
 > keeps the sound havoc floor (`e82ae0505c` sibling invalidation). The
-> natural next slice is the LIST-element extraction write-through.
+> LIST-element slice LANDED 2026-07-22 (`56b9253d8a`, constant-index
+> slot form) together with the mutation-CHANNEL whole-group fix
+> (aug-assign / subscript-store / del through an alias now invalidate:
+> they previously bypassed the method-name-keyed driver -- a false-proof
+> class).
 
 **Status: DONE for the modelled scope.** The **list-with-cursor** model is
 implemented (see the architecture doc's "Generator semantics" section):
