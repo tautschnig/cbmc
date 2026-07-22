@@ -4661,9 +4661,15 @@ std::optional<exprt> python_convertert::try_builtin_call(
             exprt is_none_tag = python_value_is(obj, python_type_tagt::NONE);
             exprt is_int_sentinel = and_exprt{
               python_value_is(obj, python_type_tagt::INT),
-              equal_exprt{
-                python_value_int(obj),
-                from_integer(python_none_sentinel_int(), signedbv_typet{64})}};
+              [&]
+              {
+                // Literal typed by the denotation (integer under
+                // --python-unbounded-ints).
+                exprt iv = python_value_int(obj);
+                exprt sent =
+                  from_integer(python_none_sentinel_int(), iv.type());
+                return equal_exprt{std::move(iv), std::move(sent)};
+              }()};
             return or_exprt{std::move(is_none_tag), std::move(is_int_sentinel)};
           }
           if(obj.type().id() == ID_signedbv)

@@ -3918,7 +3918,20 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
         out << "(_ bv" << i << " " << to_width << ")";
       }
       else
-        SMT2_TODO("can't convert non-constant integer to bitvector");
+      {
+        // ((_ int2bv w) x) is the SMT-LIB-adjacent Int->BV conversion
+        // supported by both cvc5 and Z3 (this code path already requires
+        // an SMT solver). Semantics: x mod 2^w -- exactly CBMC's typecast
+        // semantics for mathematical-integer-to-bitvector, so the
+        // lowering is faithful; callers are responsible for
+        // range-guarding where wrapping would be unwanted (e.g. the
+        // Python frontend bounds-checks indices in the Int domain before
+        // narrowing). Previously aborted ("can't convert non-constant
+        // integer to bitvector").
+        out << "((_ int2bv " << to_width << ") ";
+        convert_expr(src);
+        out << ')';
+      }
     }
     else if(
       src_type.id() == ID_struct ||

@@ -3493,7 +3493,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
           {
             exprt in_range = and_exprt{
               binary_relation_exprt{eff_idx, ID_ge, safe_zero(eff_idx.type())},
-              binary_relation_exprt{eff_idx, ID_lt, length}};
+              // length_d: the domain-lifted length (the raw i64 member
+              // would mix types under --python-unbounded-ints).
+              binary_relation_exprt{eff_idx, ID_lt, length_d}};
             exprt out_of_range = not_exprt{in_range};
             block.add(code_frontend_assignt{
               exc_sym->symbol_expr(),

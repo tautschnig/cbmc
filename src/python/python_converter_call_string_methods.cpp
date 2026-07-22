@@ -366,9 +366,16 @@ std::optional<exprt> python_convertert::try_string_method(
         bounds.push_back(binary_relation_exprt{
           len,
           ID_le,
-          plus_exprt{
-            native_or_member_string_length(obj),
-            from_integer(1, python_int_type())}});
+          [&]
+          {
+            // Metadata arithmetic in the length expression's OWN type
+            // (i64): a python_int_type() literal diverges to integer
+            // under --python-unbounded-ints and emits a bare Int inside
+            // a bvadd (cvc5 parse error).
+            exprt sl = native_or_member_string_length(obj);
+            exprt one = from_integer(1, sl.type());
+            return plus_exprt{std::move(sl), std::move(one)};
+          }()});
       pending_checks.push_back(code_assumet{conjunction(bounds)});
       return std::move(sym);
     }
@@ -2423,9 +2430,13 @@ std::optional<exprt> python_convertert::try_string_method(
         tv, side_effect_expr_nondett{python_int_type(), get_location(expr)}});
       // Native-safe length: smt_string has no "length" member, so use the
       // representation-neutral helper (str.len under native).
+      // Bounds live in the RESULT's Python-int domain (tv is a
+      // Python-visible value): lift the length into it
+      // (i64 -> integer is exact under --python-unbounded-ints).
       exprt slen = native_or_member_string_length(obj);
-      if(slen.type() != signedbv_typet{64})
+      if(slen.type() != signedbv_typet{64} && slen.type() != tv.type())
         slen = safe_typecast(slen, signedbv_typet{64});
+      slen = python_lift_to_index_domain(std::move(slen), tv.type());
       if(method_name == "count")
         pending_checks.push_back(code_assumet{and_exprt{
           binary_relation_exprt{tv, ID_ge, from_integer(0, python_int_type())},
