@@ -601,11 +601,16 @@ round one** -- PLR §6.7 integer mod/floordiv were WRONG (nondet mod;
 Euclidean floordiv), Int->FP typecast missing (smt2), and the
 structural-metadata invariant (i64 lengths vs integer_typet values)
 violated at ~14 sites; corpus (unbounded+native) 11 -> 8 TOERR, FP 0.
-Remaining recorded: 8 TOERRs (apigateway/aws_untagged/clear_duplicate/
-kinesis/mediaconvert/sagemaker/setup_cloudformation/websocket -- byte-ops
-720 + smt2 equal/typecast signatures), the negative-index STORE
-IndexError formula, and symbolic-index string-element reads (per-property
-solver ERROR shapes). Same audit recipe, further sites.
+**Round two (`a72ed6b568`) closed nearly all of it by the same groups:
+8 -> 1 TOERR (CLEAN 38 / TP 10 / MISS 1 / FP 0)** -- class INT fields
+became int-id handles (the int twin of the string-field transform; same
+three choke points), pv-int comparison literals are typed by the inttab
+DENOTATION, the smt2 backend gained non-constant Int->BV narrowing
+(int2bv), and index formulas are domain-consistent
+(python_lift_to_index_domain at the store bounds and the
+split/count/find bounds). Remaining recorded: list[int]/dict[.,int]
+container ELEMENTS inline (the int half of the container-element handle
+completion -- aws_untagged's last TOERR) and sagemaker solver-time.
 
 **2026-07-22 (`c0d0469211`, `7f3c0adbf3`): DONE -- native corpus
 CORPUS-READY at 0 TOERRs** (CLEAN 38 / TP 8 / FP 0 / TIMEOUT 1, full
