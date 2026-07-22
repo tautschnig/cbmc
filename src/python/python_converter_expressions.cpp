@@ -1526,7 +1526,8 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         idx64};
       return string_substr(value, adj, from_integer(1, signedbv_typet{64}));
     }
-    member_exprt length{value, "length", python_int_type()};
+    exprt length = python_lift_to_index_domain(
+      member_exprt{value, "length", signedbv_typet{64}}, slice.type());
     // PLR §6.3.3: negative indices count from the end
     exprt adjusted_idx = if_exprt{
       binary_relation_exprt{slice, ID_lt, from_integer(0, slice.type())},
@@ -1735,7 +1736,8 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       chars.push_back(from_integer(0, unsignedbv_typet{8}));
 
     array_exprt data_expr{std::move(chars), data_type};
-    exprt length_expr = from_integer(1, python_int_type());
+    // i64: structural metadata (see python_list_type's invariant note).
+    exprt length_expr = from_integer(1, signedbv_typet{64});
 
     struct_exprt result{{length_expr, data_expr}, str_type};
     return std::move(result);
@@ -1773,7 +1775,8 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       }
       return from_integer(0, python_int_type());
     }
-    member_exprt length{value, "length", python_int_type()};
+    exprt length = python_lift_to_index_domain(
+      member_exprt{value, "length", signedbv_typet{64}}, slice.type());
 
     // PLR §6.3.2: Subscriptions — negative indices count from the end.
     // Handle negative indices: lst[-1] → lst[len-1]

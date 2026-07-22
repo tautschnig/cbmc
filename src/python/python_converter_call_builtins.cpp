@@ -350,7 +350,9 @@ std::optional<exprt> python_convertert::try_builtin_call(
         irep_idt ci{cq};
         if(symbol_table.lookup(ci) == nullptr)
         {
-          symbolt cs{ci, python_int_type(), "python"};
+          // i64: structural metadata (a filtered-copy counter assigned
+          // into the length member; see python_list_type's invariant).
+          symbolt cs{ci, signedbv_typet{64}, "python"};
           cs.base_name = cn;
           cs.is_lvalue = true;
           cs.is_state_var = true;
@@ -358,7 +360,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
         }
         symbol_exprt cnt = symbol_table.lookup_ref(ci).symbol_expr();
         pending_checks.push_back(
-          code_frontend_assignt{cnt, from_integer(0, python_int_type())});
+          code_frontend_assignt{cnt, from_integer(0, signedbv_typet{64})});
 
         for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
         {
@@ -377,10 +379,10 @@ std::optional<exprt> python_convertert::try_builtin_call(
             code_blockt{
               {code_frontend_assignt{index_exprt{dst_data, cnt}, elem},
                code_frontend_assignt{
-                 cnt, plus_exprt{cnt, from_integer(1, python_int_type())}}}}});
+                 cnt, plus_exprt{cnt, from_integer(1, signedbv_typet{64})}}}}});
         }
         pending_checks.push_back(code_frontend_assignt{
-          member_exprt{tmp, "length", python_int_type()}, cnt});
+          member_exprt{tmp, "length", signedbv_typet{64}}, cnt});
         return std::move(tmp);
       }
       if(is_python_list_type(list_arg.type()))
@@ -657,7 +659,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
           return result;
         }
         if(is_python_list_type(arg.type()) || is_python_dict_type(arg.type()))
-          return member_exprt{arg, "length", python_int_type()};
+          return member_exprt{arg, "length", signedbv_typet{64}};
 
         // Tuple: number of components
         if(is_python_tuple_type(arg.type()))
@@ -681,7 +683,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
           if(str_len.type() != python_int_type())
             str_len = safe_typecast(str_len, python_int_type());
           exprt list_len =
-            member_exprt{python_value_list(arg), "length", python_int_type()};
+            member_exprt{python_value_list(arg), "length", signedbv_typet{64}};
           // DICT tag: the pointed-to dict struct has .length at
           // offset 0 (signedbv[64]). CLASS tag: the pointed-to
           // class instance has __class_tag (signedbv[32]) at

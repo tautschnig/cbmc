@@ -4296,6 +4296,19 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
       else
         convert_expr(src);
     }
+    else if(src_type.id() == ID_integer && use_FPA_theory)
+    {
+      // Mathematical integer to FP: SMT-LIB provides no direct Int->FP
+      // conversion, but ((_ to_fp e s) RNE <Real>) accepts a Real term
+      // and to_real embeds Int in Real exactly. Rounding to nearest/even
+      // matches the front-ends' int->float semantics (e.g. the Python
+      // frontend's --python-unbounded-ints true division, which
+      // previously aborted here).
+      out << "((_ to_fp " << dest_floatbv_type.get_e() << " "
+          << dest_floatbv_type.get_f() + 1 << ") RNE (to_real ";
+      convert_expr(src);
+      out << "))";
+    }
     else
       UNEXPECTEDCASE("Unknown typecast "+src_type.id_string()+" -> float");
   }
