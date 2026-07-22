@@ -902,7 +902,11 @@ std::optional<exprt> python_convertert::try_string_method(
           int pad = width - static_cast<int>(s.size());
           if(method_name == "center")
           {
-            int left_pad = pad / 2;
+            // CPython str.center: the EXTRA pad goes LEFT when both the
+            // margin and the width are odd (marg & width & 1), not right
+            // (ESBMC str_center_odd_padding_fail: "ab".center(7,"-") is
+            // "---ab--", 3 left / 2 right).
+            int left_pad = pad / 2 + (pad & width & 1);
             int right_pad = pad - left_pad;
             result =
               std::string(left_pad, fill) + s + std::string(right_pad, fill);
@@ -1877,16 +1881,26 @@ std::optional<exprt> python_convertert::try_string_method(
               if(fv.has_value())
               {
                 double d = fv.value();
-                if(fmt_spec.empty() || fmt_spec == "d" || fmt_spec == "n")
+                const bool arg_is_float =
+                  arg_exprs[use_idx].type().id() == ID_floatbv;
+                if(fmt_spec == "d" || fmt_spec == "n")
                 {
-                  if(d == std::floor(d) && std::abs(d) < 1e15)
+                  // explicit integer presentation
+                  result += std::to_string(static_cast<long long>(d));
+                }
+                else if(fmt_spec.empty())
+                {
+                  // default format == str(): a FLOAT arg uses CPython
+                  // repr (py_float_repr) -- the ostream path dropped the
+                  // ".0" ("{}".format(1.0) -> "1") and truncated
+                  // precision ("{}".format(1.23456789) -> "1.23457"),
+                  // WRONG constants (false proofs; ESBMC str_format_*).
+                  if(arg_is_float)
+                    result += py_float_repr(d);
+                  else if(d == std::floor(d) && std::abs(d) < 1e15)
                     result += std::to_string(static_cast<long long>(d));
                   else
-                  {
-                    std::ostringstream oss;
-                    oss << d;
-                    result += oss.str();
-                  }
+                    result += py_float_repr(d);
                 }
                 else if(fmt_spec[0] == '.')
                 {
