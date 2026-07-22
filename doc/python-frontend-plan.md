@@ -3699,6 +3699,53 @@ instance — all SUCCESSFUL).
 
 ---
 
+## ESBMC-suite refresh worklist (2026-07-22, updated clone)
+
+The upstream suite grew 2832 -> 4079 runnable tests (many adversarial,
+converted from ESBMC's own bug reports). Standing after the fold-shape
+round (`6cef6e1ae8`): **3538 PASS / 417 DIFF / 107 FAIL / 5 TOERR /
+0 CRASH**. PLR is the correctness guideline, NOT the suite's
+expectations: every danger-direction DIFF (test expects FAILED, we prove
+SUCCESSFUL) was run under CPython; the ~5 where CPython exits clean or
+the harness needs ESBMC intrinsics (`counter_most_common`, `import esbmc`,
+`__ESBMC_unreachable`, `nondet_float` harness) are EXPECTATION ARTIFACTS
+-- we are right per PLR and they stay DIFF by design.
+
+CLOSED this round: the ignored-argument fold family (12+ CPython-
+confirmed false proofs; the fold_covers_call_shape rule), the min/max
+nil-tail statement-dropping vacuity, dict.fromkeys' empty-expr crash.
+
+REMAINING danger-direction items (~40 genuine, CPython-confirmed false
+proofs; grouped by root, largest first -- each needs a fix or a pinned
+KNOWNBUG):
+1. **str formatting value bugs** (7): `str(1.0)` / f-string float repr
+   (shortest-repr, whole-number, precision-loss, negative-whole forms),
+   `center()` odd padding (left-heavy vs right-heavy), negative-step
+   slices `s[5:0:-1]`.
+2. **Aliasing channels** (3): `m = l or [9]` (boolop result aliases l),
+   `(m := l)` walrus alias, swap-through-subscript evaluation order
+   `a[0], a[1] = a[1], a[0]` (github_4792).
+3. **Exception semantics** (5): AttributeError on int-receiver method
+   call/access (github_5904 x2), StopIteration from an exhausted
+   range iterator via explicit `__iter__`/`next` (range_iter_protocol),
+   threading unlock-unheld RuntimeError (github_4581), `__file__`
+   binding (github_4662).
+4. **Iteration/control semantics** (4): `for u, v in d` over tuple KEYS
+   (dict_tuple_key_for_iter -- iterates keys, not items),
+   for/range/continue accumulation (for_range_continue), generator
+   next-in-while (generator_next_in_while), truncated-loop
+   reachability (esbmc-unreachable-truncated-loop).
+5. **Module value bugs** (5): cmath polar/rect signed-zero semantics
+   (x3), Decimal("0") truthiness (decimal7), float1.
+6. **github_* legacy cluster** (~16): pre-existing triaged residuals
+   (2892, 2993_2, 3001, 3647_15, 3836, 4342 variants, 4747 class-attr
+   default, 4984 modstub, 5955 pair, ...) -- re-triage against the
+   pre-update knownbug ledger before working.
+Also: 107 FAILs (sound-direction, precision) and 7 TIMEOUTs unmined for
+whole-group roots.
+
+---
+
 ## Tracking conventions
 
 When picking up an item: update its **Status** line (add the in-progress
