@@ -853,7 +853,36 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     (sym.type.id() == ID_signedbv || sym.type.id() == ID_floatbv ||
      sym.type.id() == ID_bool || is_python_string_type(sym.type)))
   {
-    symbol_table.get_writeable_ref(symbol_id).type = python_value_type();
+    // A PARAMETER's symbol type is part of the function's call
+    // contract: mutating it in place makes every call site's argument
+    // ill-typed (symex "parameter type mismatch" -- setup_cloudformation:
+    // `def m(account_id: str)` whose body re-annotates
+    // `account_id: Any = ...`). Rebind through variable_versions
+    // instead, exactly like the import-shadow machinery above: later
+    // reads resolve to the fresh pv-typed symbol, the parameter keeps
+    // its declared type, and the runtime tag is still preserved.
+    if(sym.is_parameter)
+    {
+      unsigned &ver = version_counters[qualified_name];
+      ver++;
+      const std::string versioned_name =
+        qualified_name + "__v" + std::to_string(ver);
+      const irep_idt versioned_id{versioned_name};
+      if(symbol_table.lookup(versioned_id) == nullptr)
+      {
+        symbolt new_symbol{versioned_id, python_value_type(), "python"};
+        new_symbol.base_name = var_name + "__v" + std::to_string(ver);
+        new_symbol.location = loc;
+        new_symbol.is_lvalue = true;
+        new_symbol.is_state_var = true;
+        symbol_table.add(new_symbol);
+      }
+      variable_versions[qualified_name] = versioned_id;
+      symbol_id = versioned_id;
+      qualified_name = versioned_name;
+    }
+    else
+      symbol_table.get_writeable_ref(symbol_id).type = python_value_type();
   }
 
   const symbolt &sym2 = symbol_table.lookup_ref(symbol_id);
