@@ -1071,6 +1071,39 @@ void python_convertert::note_mutable_extraction(
   // This assignment is not (or no longer) a mutable extraction by default.
   extracted_container_alias.erase(lhs_id);
 
+  // Conditional-alias shapes: `m = l or <default>` / `m = l and x` (BoolOp)
+  // yield the SAME OBJECT as a mutable Name operand on the selected branch
+  // (PLR §6.11: and/or return an operand, not a fresh bool). Binding by
+  // VALUE was a false proof -- a later `m.append(x)` did not propagate to
+  // `l` (ESBMC github_5955_alias_boolop_fail). Record the (single) mutable
+  // Name operand as an extraction alias so an in-place mutation of `m`
+  // HAVOCS it (sound over-approximation via the mutation-channel machinery;
+  // precise pointer-aliasing would need per-branch truthiness). A ternary
+  // with two distinct mutable operands is left as a documented residual
+  // (the havoc map holds one source).
+  if(is_node_type(value, "BoolOp"))
+  {
+    const jsont &vals = json_member(value, "values");
+    std::vector<const jsont *> mut_names;
+    if(vals.is_array())
+      for(const auto &v : as_array(vals))
+        if(is_node_type(v, "Name"))
+        {
+          exprt e = convert_expression(v);
+          if(
+            e.id() == ID_symbol &&
+            (is_python_list_type(e.type()) || is_python_dict_type(e.type()) ||
+             is_python_set_type(e.type())))
+            mut_names.push_back(&v);
+        }
+    if(mut_names.size() == 1)
+    {
+      exprt src = convert_expression(*mut_names.front());
+      extracted_container_alias[lhs_id] = src;
+    }
+    return;
+  }
+
   if(!is_node_type(value, "Subscript"))
     return;
 
@@ -6056,6 +6089,16 @@ exprt python_convertert::convert_expression(const jsont &expr)
       }
       const symbolt &target_sym = symbol_table.lookup_ref(sym_id);
       exprt target_expr = target_sym.symbol_expr();
+      // PLR §6.12: `(m := l)` binds m to the SAME OBJECT as the mutable
+      // Name l; a value copy was a false proof (a later `m.append(x)` did
+      // not reach l -- ESBMC github_5955_alias_walrus_fail). Record the
+      // extraction alias so an in-place mutation of m havocs l (sound;
+      // mirrors the BoolOp shape in note_mutable_extraction).
+      if(
+        is_node_type(value, "Name") && rhs.id() == ID_symbol &&
+        (is_python_list_type(rhs.type()) || is_python_dict_type(rhs.type()) ||
+         is_python_set_type(rhs.type())))
+        extracted_container_alias[sym_id] = rhs;
       // Harmonise types: if the target symbol exists with a different
       // type we typecast the rhs rather than overwriting the symbol.
       if(rhs.type() != target_expr.type())
