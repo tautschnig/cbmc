@@ -30,6 +30,9 @@
 #include <util/std_types.h>
 #include <util/string_expr.h>
 
+#include <map>
+#include <string>
+
 /// Maximum length for Python strings in verification.
 /// Can be overridden with --python-max-string-length.
 #define PYTHON_STRING_TAG "tag-__CPROVER_refined_string_type"
@@ -124,8 +127,36 @@ inline bool is_python_int_handle_type(const typet &t)
 /// twin of python_convertert::string_handle_to_string for sites without
 /// converter access (the converter seeds the strtab symbol-table entry at
 /// conversion start whenever the native backend is active).
+/// Reverse intern table (id -> constant text), mirrored from the
+/// converter's string_to_handle interning. Global by the same convention
+/// as the backend-kind flags: free functions (python_value_str, the
+/// denotation below) need it without converter access.
+inline std::map<long long, std::string> &python_string_intern_reverse()
+{
+  static std::map<long long, std::string> m;
+  return m;
+}
+
 inline exprt python_string_handle_denotation(const exprt &handle)
 {
+  // CONSTANT-FOLD an interned handle's denotation to the string constant
+  // itself: a strtab(<const>) UF application is NOT a constant, so symex
+  // constant propagation cannot carry it into the regex/string intrinsic
+  // operands (the smt2 lowering then loses compile-time precision). The
+  // global ASSUME strtab(id) == "<const>" makes the fold sound (same
+  // value); the smt2-side recovery (try_extract_string_literal) remains
+  // for handle constants that only appear after simplification.
+  if(handle.is_constant())
+  {
+    mp_integer id_val;
+    if(!to_integer(to_constant_expr(handle), id_val))
+    {
+      auto &rev = python_string_intern_reverse();
+      auto it = rev.find(id_val.to_long());
+      if(it != rev.end())
+        return constant_exprt{irep_idt{it->second}, smt_string_typet{}};
+    }
+  }
   return function_application_exprt{
     symbol_exprt{
       "python::__cbmc_strtab",
@@ -238,8 +269,16 @@ inline bool is_python_set_type(const typet &type)
 /// keys (int, python_value, ...) and the refined back-end are unchanged.
 inline typet python_dict_key_elem_type(const typet &key_type)
 {
+  // Native: string keys are STRING-ID HANDLES (2026-07-21, completing the
+  // representation invariant). The earlier POINTER box kept keys
+  // fixed-width in the dict struct itself, but the pointed smt_string is
+  // still byte-imaged whenever the key pointer enters an unresolved
+  // value-set deref (observed: a nondet str parameter's truthiness deref
+  // enumerating the key heap objects -- byte_extract of the pointed
+  // string, the apigateway unpack_rec abort). A handle has no pointee:
+  // nothing byte-granular is ever reachable from it.
   if(python_smt_string_native_flag() && is_python_string_type(key_type))
-    return pointer_typet{key_type, 64};
+    return python_string_handle_type();
   return key_type;
 }
 

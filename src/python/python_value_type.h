@@ -127,8 +127,15 @@ inline typet python_value_int_member_type()
 /// struct on the refined back-end.
 inline typet python_value_str_member_type()
 {
+  // Native backend: the __str payload is a STRING-ID HANDLE. The earlier
+  // attempt was reverted because the smt2 regex lowering recovers string
+  // CONSTANTS syntactically and a UF blocked it; the backend now has
+  // strtab-aware recovery (smt2_convt::try_extract_string_literal follows
+  // strtab(<const id>) through the front-end's intern symbols), so the
+  // contract holds and python_value becomes fully fixed-width with no
+  // byte-reachable pointer (the last native TOERR family).
   if(python_smt_string_native_flag())
-    return python_boxed_string_ptr_type();
+    return python_string_handle_type();
   return python_string_type();
 }
 
@@ -208,7 +215,7 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
   // would re-introduce a variable-width member into the byte-imaged skeleton).
   exprt str_val =
     python_smt_string_native_flag()
-      ? exprt{null_pointer_exprt{python_boxed_string_ptr_type()}}
+      ? exprt{from_integer(0, python_string_handle_type())}
       : exprt{struct_exprt{
           {from_integer(0, signedbv_typet{64}),
            null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
@@ -244,10 +251,12 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
     // Native ("string boxing"): wrap_value passes &heap_smt_string, which we
     // store directly as a typed string* (no deref — keeping python_value
     // fixed-width). Refined: deref a pointer arg / store the inline string.
+    // Native: the wrap site passes the HANDLE (string_to_handle); store
+    // it directly.
     if(python_smt_string_native_flag())
-      str_val = value.type().id() == ID_pointer
-                  ? typecast_exprt{value, python_boxed_string_ptr_type()}
-                  : exprt{address_of_exprt{value}};
+      str_val = is_python_string_handle_type(value.type())
+                  ? value
+                  : typecast_exprt{value, python_string_handle_type()};
     else
       str_val = value.type().id() == ID_pointer
                   ? exprt{dereference_exprt{value}}
@@ -360,19 +369,15 @@ inline member_exprt python_value_bool(const exprt &value)
 /// Extract the (inline) string from a tagged-union value.
 inline exprt python_value_str(const exprt &value)
 {
-  // Native ("string boxing"): __str is a typed string*; dereference it to get
-  // the heap smt_string. Refined: __str is the inline string struct.
-  //
-  // NB (2026-07-21): migrating __str to a string-id HANDLE was attempted and
-  // REVERTED: the pv string payload feeds the smt2 regex/string intrinsic
-  // lowering, which recovers string CONSTANTS syntactically -- a strtab UF
-  // application blocks that recovery (4 regex-native CORE regressions),
-  // exactly the library-class contract. Payloads consumed by backend
-  // intrinsics need constant-propagation-visible representations; handles
-  // fit aggregates whose strings are only read/compared/measured.
+  // Native: __str is a string-id HANDLE; the denotation is strtab(h).
+  // Constant payloads stay recoverable by the smt2 intrinsic lowerings
+  // via the intern symbols (try_extract_string_literal). Refined: __str
+  // is the inline string struct.
   if(python_smt_string_native_flag())
-    return dereference_exprt{
-      member_exprt{value, "__str", python_boxed_string_ptr_type()}};
+  {
+    return python_string_handle_denotation(
+      member_exprt{value, "__str", python_string_handle_type()});
+  }
   return member_exprt{value, "__str", python_string_type()};
 }
 
@@ -422,7 +427,7 @@ make_python_closure(const exprt &fn_index_stored, const exprt &record_ptr)
   exprt bool_val = from_integer(0, signedbv_typet{32});
   exprt str_val =
     python_smt_string_native_flag()
-      ? exprt{null_pointer_exprt{python_boxed_string_ptr_type()}}
+      ? exprt{from_integer(0, python_string_handle_type())}
       : exprt{struct_exprt{
           {from_integer(0, signedbv_typet{64}),
            null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
