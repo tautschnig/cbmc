@@ -3994,15 +3994,6 @@ exprt python_convertert::allocate_boxed_leaf(
   return std::move(ptr);
 }
 
-exprt python_convertert::box_string_for_storage(const exprt &str_value)
-{
-  if(
-    !python_smt_string_native_flag() ||
-    !is_python_string_type(str_value.type()))
-    return str_value;
-  return allocate_boxed_leaf(str_value, python_string_type());
-}
-
 exprt python_convertert::box_int_for_storage(const exprt &int_value)
 {
   if(!unbounded_ints)
@@ -4142,8 +4133,9 @@ exprt python_convertert::build_dict_value(
   struct_typet dict_type = python_dict_type(key_type, val_type);
   const auto &keys_arr_type = to_array_type(dict_type.components()[1].type());
   const auto &vals_arr_type = to_array_type(dict_type.components()[2].type());
-  // On native, string keys are boxed: the array element is a string*, so each
-  // key must be materialised behind a pointer (and padding is a null string*).
+  // On native, string keys are string-id HANDLES (bv64): coerce_element
+  // allocates/interns each stored key (padding is handle 0, whose strtab
+  // image is unconstrained but never key-matched: reads are length-guarded).
   const typet &keys_elem_type = keys_arr_type.element_type();
 
   // Build keys array

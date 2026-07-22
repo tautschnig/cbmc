@@ -1173,7 +1173,12 @@ exprt python_convertert::convert_user_call(
       exprt::operandst key_elems, val_elems;
       for(const auto &[name, val] : unmatched_kw)
       {
-        key_elems.push_back(python_string_literal(name));
+        // coerce_element interns the key to a string-id handle under the
+        // native SMT-String backend (a raw smt_string in the handle-typed
+        // keys array crashed simplify_rec's type postcondition -- the same
+        // family as the method-path kwargs site, found by doc review).
+        key_elems.push_back(coerce_element(
+          python_string_literal(name), keys_arr_type.element_type()));
         if(is_python_value_type(vals_arr_type.element_type()))
           val_elems.push_back(wrap_value(val));
         else

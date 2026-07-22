@@ -2201,12 +2201,6 @@ private:
   /// Wrap a concrete typed value into a tagged-union value.
   exprt wrap_value(const exprt &e);
 
-  /// Native string-boxing for dict keys: materialise a string value into a
-  /// heap smt_string symbol and return its typed address (string*), so it can
-  /// be stored fixed-width inside a byte-imaged dict struct. On the refined
-  /// back-end or for a non-string value, returns the value unchanged.
-  exprt box_string_for_storage(const exprt &str_value);
-
   /// Materialise `value` into a FRESH per-execution heap object (via a dynamic
   /// `ID_allocate`) and return a typed pointer to it. Unlike a static symbol,
   /// each runtime execution of the construction site gets a distinct object,

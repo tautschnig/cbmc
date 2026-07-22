@@ -3191,7 +3191,7 @@ exprt python_convertert::string_substr(
 
 exprt python_convertert::string_equal(const exprt &a_in, const exprt &b_in)
 {
-  // Native dict-key boxing: a stored key may be a string* box; unbox it.
+  // Native: a stored key may be a string-id HANDLE; take its denotation.
   exprt a = python_dict_unbox_key(a_in);
   exprt b = python_dict_unbox_key(b_in);
   if(a.type().id() == ID_smt_string && b.type().id() == ID_smt_string)
@@ -3602,11 +3602,11 @@ exprt python_convertert::wrap_value(const exprt &e)
     tag = python_type_tagt::BOOL;
   else if(is_python_string_type(e.type()))
   {
-    // Native ("string boxing"): allocate a FRESH per-execution smt_string and
-    // store its pointer, so a string wrapped into python_value by a construction
-    // site reached more than once (function return / loop) does not alias.
-    // Refined: __str is inline, so just pass the value (make_python_value stores
-    // it directly — value semantics, no aliasing).
+    // Native: the __str payload is a string-id HANDLE (constants intern;
+    // computed strings get a fresh handle + strtab axiom), so a string
+    // wrapped into python_value by a construction site reached more than
+    // once (function return / loop) does not alias. Refined: __str is
+    // inline (value semantics, no aliasing).
     if(python_smt_string_native_flag())
       return make_python_value(python_type_tagt::STR, string_to_handle(e));
     return make_python_value(python_type_tagt::STR, e);
@@ -4436,11 +4436,7 @@ exprt python_convertert::coerce_element(
   const exprt &elem,
   const typet &element_type)
 {
-  // Native dict-key boxing: a string going into a boxed-key slot is
-  // materialised behind a typed pointer (covers all dict key-store sites).
-  if(is_boxed_dict_key_type(element_type) && is_python_string_type(elem.type()))
-    return box_string_for_storage(elem);
-  // A python_value flowing into a STRING-shaped slot (boxed key, handle,
+  // A python_value flowing into a STRING-shaped slot (handle,
   // or plain string) unwraps through its STRING denotation. Without this,
   // coerce_to_typed_slot pattern-matches the slot's machine type and
   // extracts __int_val for bv64 slots -- comparing an int payload against
@@ -4449,8 +4445,7 @@ exprt python_convertert::coerce_element(
   // covers get/pop/setdefault/subscript key coercions in one place.
   if(is_python_value_type(elem.type()))
   {
-    const bool string_slot = is_boxed_dict_key_type(element_type) ||
-                             is_python_string_handle_type(element_type) ||
+    const bool string_slot = is_python_string_handle_type(element_type) ||
                              is_python_string_type(element_type);
     if(string_slot)
       return coerce_element(python_value_str(elem), element_type);

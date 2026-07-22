@@ -1,0 +1,8 @@
+KNOWNBUG
+main.py
+--unwind 4 --no-unwinding-assertions --python-smt-strings --smt2 --cvc5
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+^SIGNAL=0$
+--
+--

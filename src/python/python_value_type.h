@@ -92,13 +92,6 @@ inline struct_tag_typet python_value_type()
   return struct_tag_typet{PYTHON_VALUE_TAG};
 }
 
-/// Fixed-width pointer type used to box a heap smt_string on the native
-/// SMT-String back-end (see python_value_struct_def's __str member).
-inline pointer_typet python_boxed_string_ptr_type()
-{
-  return pointer_typet{python_string_type(), 64};
-}
-
 /// Fixed-width pointer type used to box a heap mathematical integer under
 /// --python-unbounded-ints (see python_value_struct_def's __int_val member).
 inline pointer_typet python_boxed_int_ptr_type()
@@ -122,9 +115,9 @@ inline typet python_value_int_member_type()
   return signedbv_typet{64};
 }
 
-/// Type of python_value's __str member: a typed pointer to a heap smt_string
-/// on the native SMT-String back-end ("string boxing"), or the inline string
-/// struct on the refined back-end.
+/// Type of python_value's __str member: a string-id HANDLE (bv64,
+/// denotation strtab(h)) on the native SMT-String back-end, or the inline
+/// refined-string struct on the refined back-end.
 inline typet python_value_str_member_type()
 {
   // Native backend: the __str payload is a STRING-ID HANDLE. The earlier
@@ -151,17 +144,18 @@ inline struct_typet python_value_struct_def()
   components.push_back(struct_typet::componentt{"__float_val", double_type()});
   components.push_back(
     struct_typet::componentt{"__bool_val", signedbv_typet{32}});
-  // Inline refined string OR, on the native SMT-String back-end, a typed
-  // pointer to a heap smt_string ("string boxing"). Rationale: on native,
+  // Inline refined string (fixed-width struct) by default OR, on the native
+  // SMT-String back-end, a STRING-ID HANDLE (bv64; denotation strtab(h) --
+  // see python_string_handle_type). Rationale: on native,
   // python_string_type() is the variable-width `smt_string` sort; storing it
   // inline makes python_value itself variable-width, so any byte-imaged
-  // aggregate of python_value (e.g. an untyped dict's value array) hits
-  // CBMC's unpack_struct "non-constant-width member must come last" invariant
-  // and aborts. Boxing the string behind a fixed-width typed pointer keeps the
-  // byte-imaged skeleton all-fixed-width (byte_extract stays valid), while the
-  // actual smt_string is only ever touched through a clean typed dereference,
-  // never byte-imaged. On the refined back-end the string is a fixed-width
-  // struct, so it stays inline (the historical perf choice is preserved).
+  // aggregate of python_value hits CBMC's unpack_struct "non-constant-width
+  // member must come last" invariant and aborts. A POINTER box (the interim
+  // design) kept the skeleton fixed-width but an unresolved value-set deref
+  // byte-extracted the POINTED smt_string -- the same abort one level down
+  // (disproven 2026-07-20). A handle has no pointee; the backend recovers
+  // constant payloads through the strtab indirection
+  // (smt2_convt::try_extract_string_literal).
   components.push_back(
     struct_typet::componentt{"__str", python_value_str_member_type()});
   // List values use an opaque pointer (like __class_ptr) — typed
@@ -209,10 +203,10 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
       ieee_floatt::rounding_modet::ROUND_TO_EVEN}
       .to_expr();
   exprt bool_val = from_integer(0, signedbv_typet{32});
-  // Inline empty string (the default __str). Native SMT-String back-end
-  // (Plan A): __str is a typed pointer to a heap smt_string ("string
-  // boxing"), so the default is a null string* (no inline smt_string, which
-  // would re-introduce a variable-width member into the byte-imaged skeleton).
+  // Default __str: the empty refined string inline, or -- native
+  // SMT-String back-end -- handle 0 (strtab(0) is an unconstrained string;
+  // the tag governs which member is read, so the default is never
+  // observed as a value).
   exprt str_val =
     python_smt_string_native_flag()
       ? exprt{from_integer(0, python_string_handle_type())}
@@ -226,10 +220,8 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
   switch(tag)
   {
   case python_type_tagt::INT:
-    // Unbounded ("int boxing"): the wrap site passes &heap_integer, stored
-    // directly as a typed integer* (no deref — python_value stays fixed-width).
-    // Unbounded: the wrap site passes the HANDLE (int_to_handle); store
-    // it directly.
+    // Unbounded: the wrap site passes an INT-ID HANDLE (int_to_handle);
+    // store it directly (python_value stays fixed-width).
     if(python_unbounded_ints_flag())
       int_val = is_python_int_handle_type(value.type())
                   ? value
@@ -248,11 +240,9 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
                  : value;
     break;
   case python_type_tagt::STR:
-    // Native ("string boxing"): wrap_value passes &heap_smt_string, which we
-    // store directly as a typed string* (no deref — keeping python_value
-    // fixed-width). Refined: deref a pointer arg / store the inline string.
-    // Native: the wrap site passes the HANDLE (string_to_handle); store
-    // it directly.
+    // Native: the wrap site passes a STRING-ID HANDLE (string_to_handle);
+    // store it directly (python_value stays fixed-width). Refined: deref a
+    // pointer arg / store the inline string.
     if(python_smt_string_native_flag())
       str_val = is_python_string_handle_type(value.type())
                   ? value
