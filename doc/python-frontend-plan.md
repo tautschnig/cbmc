@@ -287,8 +287,10 @@ robustness, then capability; difficulty is noted where high.
 >   struct, not `smt_string`) and `re.sub`'s precise lowering is gated on
 >   native. Closed the `re.sub`-on-refined core and every nondet-string
 >   fallback that reached the refined solver.
->   (Latent, native-only, no corpus instance: `smt_string` members in
->   byte-operated structs — [#native-byte-ops](python-frontend-strings-plan.md#native-byte-ops); lower.)
+>   (The then-latent native `smt_string`-members-in-byte-operated-structs
+>   family was later closed wholesale by the string-id handle
+>   representation + strtab-aware recovery, 2026-07-20/22 — the native
+>   backend is corpus-ready at full parity; see the strings plan.)
 > - **Tier 1 — symex-bound timeout cluster. PARTIAL: default list capacity
 >   lowered 64->16 (2026-06-17, `0bea6f8e75`).** The cluster (`dict65`,
 >   `github_3684`, `list31`, `github_3626`, `github_3667_2`) is dominated by
@@ -1819,8 +1821,13 @@ precision false-positive.
 > re-verified) and its precise cursor-channel calling convention is
 > deferred: the sweep shows exactly ONE generator-related entry among 103
 > FAIL/DIFF residuals, so the complexity is not currently paid for.
-> Extraction aliasing (`v = d[k]; v.append(...)`) remains the §0
-> reference-semantics item.
+> Extraction aliasing (`v = d[k]; v.append(...)`) was subsequently CLOSED
+> for the re-addressable slots (2026-07-19/20, `caf9de4050` +
+> `dbc270f39f`): int-keyed dict-value slots and constant STRING keys
+> write through the extraction alias precisely (`extracted_slot_alias`,
+> demotion discipline + hazard suite); the non-re-addressable remainder
+> keeps the sound havoc floor (`e82ae0505c` sibling invalidation). The
+> natural next slice is the LIST-element extraction write-through.
 
 **Status: DONE for the modelled scope.** The **list-with-cursor** model is
 implemented (see the architecture doc's "Generator semantics" section):

@@ -141,6 +141,11 @@ content rather than opaquely emitting symbolic operations.
 | `dict_runtime_value_overrides` | (dict-symbol-id, key-repr) → exprt | per-key value | dict subscript-assign with type mismatch |
 | `dict_literal_value_categories` | symbol id | `map<key-repr, "str"\|"int"\|...>` | dict literal assignment |
 | `dict_literal_value_string_consts` | symbol id | `map<key-repr, std::string>` | dict literal with constant string values |
+| `extracted_container_alias` | alias symbol id | source container `exprt` | mutable extraction `r = c[i]` / `v = d[k]` — the SOUNDNESS floor: an in-place mutation of `r` havocs the source (and, via `havoc_sibling_extraction_aliases`, every sibling alias of the same source) |
+| `extracted_slot_alias` | alias symbol id | `slot_aliast{slot, source, name, key}` | the §0 PRECISION layer over the havoc floor: when the extraction slot is re-addressable (int-keyed dict value slot, or a constant STRING key — `key` non-empty, slot nil), an in-place mutation WRITES THROUGH to the source slot instead of havocing (`invalidate_extracted_source_on_mutation`); any statement that could move the slot demotes to the havoc floor (`demote_slot_aliases_for_statement`) |
+| `string_intern_ids` | constant string | handle id (`long long`) | native backend: `string_to_handle` interning (deterministic ids; definition symbols `python::__strconst_<id>` feed the backend's constant recovery) |
+| `dispatcher_summaries` | function/method id | `dispatcher_summaryt{param_index, literal→class branches, …}` | ClassDef / FunctionDef registration of pure literal-dispatch chains (`if p == "lit": return C()`); `try_dispatcher_fold` folds a literal-keyed call at conversion time (the boto3 31-way client() chain) |
+| `class_tag_ids` / `class_truthiness` / `class_iter_protocol` | class name | tag int / `__bool__`/`__len__` classification / iterator-protocol validity | ClassDef analysis; drives identity-refined pv-CLASS dispatch, PLR §4.4 truthiness, and the §6.13 iterability obligation |
 
 ### Invalidation
 
@@ -177,6 +182,18 @@ or downgraded. The main invalidation drivers:
   literal/constant maps. Without this, a constant tracked
   before the loop would incorrectly fold against
   loop-modified values.
+
+- **Extraction-alias invalidation** — `invalidate_extracted_source_on_mutation`
+  (called from the mutation choke points): a mutation THROUGH an extraction
+  alias either **writes through** to the recorded source slot (precise §0 path,
+  int-keyed slot or KEY form for constant string keys — the key-match store is
+  built over the PRE-statement key array, sound because value mutations never
+  change keys and structural changes demote) or **havocs** the source container
+  and every sibling alias (`havoc_sibling_extraction_aliases`). `demote_slot_
+  aliases_for_statement` runs per statement (right after
+  `invalidate_mutated_dict_literals`, the statement-level pre-scan that drops
+  dict-literal folds whose container the statement mutates); control-flow
+  statements clear the slot-alias map entirely.
 
 - **Subscript-assign invalidation** in
   `convert_assign` — when a non-constant subscript-assign
@@ -255,10 +272,10 @@ Python's runtime types. All defined in `python_types.h` /
 
 | Python type | CBMC type | Layout |
 |---|---|---|
-| `int` | `signedbv_typet{64}`, or `integer_typet` under `--python-unbounded-ints` | 64-bit signed by default. Under unbounded ints, `integer_typet` (arbitrary precision) is used inline in typed positions; an int **wrapped into `python_value`** is boxed behind a fresh per-instance `integer*` (full precision, no aliasing) — see [Leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) |
+| `int` | `signedbv_typet{64}`, or `integer_typet` under `--python-unbounded-ints` | 64-bit signed by default. Under unbounded ints, `integer_typet` (arbitrary precision) is used inline in typed positions; an int **wrapped into `python_value`** is an **int-id handle** (`inttab(h)` denotation, full precision, no aliasing) — see [Handles](#non-fixed-width-values-in-byte-imaged-aggregates-solver-side-handles) |
 | `float` | `floatbv_typet` (double) | IEEE 754 double-precision |
 | `bool` | `bool_typet{}` | CBMC bool |
-| `str` | `python_string_type()` — the refined-string `struct_tag_typet` by default, or the native `smt_string` sort under `--python-smt-strings` | refinement-string struct `{ length, data: char* }` (fixed-width) by default; the native `smt_string` sort is **variable-width**, so a `str` stored inside a byte-imaged aggregate (`python_value.__str`, dict string keys) is **boxed** behind a typed `string*` pointer — see [Leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) |
+| `str` | `python_string_type()` — the refined-string `struct_tag_typet` by default, or the native `smt_string` sort under `--python-smt-strings` | refinement-string struct `{ length, data: char* }` (fixed-width) by default; the native `smt_string` sort is **variable-width**, so a `str` stored inside ANY aggregate (`python_value.__str`, class fields, dict keys **and** values, list elements) is a fixed-width **string-id handle** whose denotation is `strtab(h)` — see [Handles](#non-fixed-width-values-in-byte-imaged-aggregates-solver-side-handles) |
 | `bytes` | `python_list_type(unsignedbv_typet{8})` | list[uint8] |
 | `list[T]` | `python_list_type(T)` | `struct { int64 length; T data[PYTHON_MAX_LIST_LENGTH]; }` |
 | `dict[K, V]` | `python_dict_type(K, V)` | `struct { int64 length; K keys[PYTHON_MAX_DICT_SIZE]; V values[PYTHON_MAX_DICT_SIZE]; }`. On the native string backend a **string** key element is boxed (`string*[]`) via `python_dict_key_elem_type` so the struct stays byte-imageable |
@@ -296,7 +313,7 @@ methods** (`box_bound_method`, capturing `self`); `dispatch_closure_value`
 calls the right target, prepending `self` for the bound-method entries
 recorded in `bound_method_closures`.
 
-### Leaf boxing: non-fixed-width values in byte-imaged aggregates
+### Non-fixed-width values in byte-imaged aggregates: solver-side handles
 
 CBMC's byte-operator lowering (`byte_extract` / `unpack_struct` in
 `lower_byte_operators.cpp`) lays a struct out at fixed byte offsets and
@@ -304,7 +321,8 @@ CBMC's byte-operator lowering (`byte_extract` / `unpack_struct` in
 struct is byte-extracted whenever it is read back through an opaque
 pointer cast (`*(cast(__class_ptr, DictStruct*))`) — which is exactly how
 nested containers stored in `python_value.__class_ptr` / `__list_ptr` are
-unwrapped. Two value representations are **non-fixed-width**:
+unwrapped, and how `__class_tag` identity reads image whole instances.
+Two value representations are **non-fixed-width**:
 
 - the native `smt_string` sort (`--python-smt-strings`), and
 - the mathematical `integer_typet` (`--python-unbounded-ints`).
@@ -315,55 +333,76 @@ crash class), and for ints additionally **truncates** silently to 64
 bits when wrapped into the union (`2**64+5` → `5`, unsound). `byte_extract`
 is fundamentally incompatible with both sorts.
 
-The fix is uniform **leaf boxing**: a non-fixed-width leaf that would sit
-inside a byte-imaged aggregate is stored behind a fixed-width **typed
-pointer** to a heap object; the byte-imaged skeleton stays all-fixed-width
-(so `byte_extract` is valid) and the actual `smt_string` / `integer` is
-only ever touched through a clean typed dereference, never byte-imaged.
-Applied at:
+**The representation invariant (2026-07-20/22): no variable-width type in
+any aggregate, and no byte-reachable pointee either.** The design is a
+solver-side value table — a **handle**:
 
-| leaf | field / slot | boxed type | gate | helpers |
-|---|---|---|---|---|
-| `str` | `python_value.__str` | `string*` | `python_smt_string_native_flag()` | `python_boxed_string_ptr_type`, `python_value_str_member_type`, `box_string_for_storage` |
-| `str` | dict string **keys** | `string*[]` | same | `python_dict_key_elem_type`, `python_dict_logical_key_type`, `python_dict_unbox_key` |
-| `int` | `python_value.__int_val` (incl. the `CLOSURE` fn-index) | `integer*` | `python_unbounded_ints_flag()` | `python_boxed_int_ptr_type`, `python_value_int_member_type`, `box_int_for_storage` |
+- a `str` in an aggregate slot is a plain `signedbv[64]` **string-id
+  handle** `h` whose denotation is `strtab(h)`, where
+  `python::__cbmc_strtab : bv64 → String` is an ordinary uninterpreted
+  function (declared by `find_symbols`, applied by the generic
+  function-application path — zero smt2 backend changes for the
+  representation itself);
+- an unbounded `int` wrapped into `python_value` is likewise an
+  **int-id handle** with denotation `inttab(h)`
+  (`python::__cbmc_inttab : bv64 → Int`).
 
-Writes materialise the leaf into a **fresh per-execution heap object** (a
-dynamic `ID_allocate`, via `allocate_boxed_leaf`, mirroring the closure
-capture-record allocation) and store the resulting pointer; reads dereference
-(centralised in `python_value_str` / `python_value_int` / `string_equal` and
-per-site `python_dict_unbox_key`). Per-instance allocation is **required for
-soundness**: a static per-call-site symbol would be shared across every runtime
-instance of a construction site (a function returning the container, a loop), so
-the boxed leaves would alias and earlier instances would observe a later one's
-value (a false proof). Each `ID_allocate` execution yields a distinct object and
-the container copies the pointer *value* at construction, so instances stay
-independent.
+Byte-imaging a handle is always well-defined (it is an int), the
+solver-side association survives struct copies, and — decisively — a
+handle has **no pointee**: nothing byte-granular is reachable from it.
+Two intermediate designs were implemented, measured, and rejected:
+**inline** storage (variable-width abort above) and **pointer boxing**
+(fixed-width struct, but an unresolved value-set dereference
+byte-extracts the POINTED variable-width value — the same abort moved
+one level down; disproven twice, on `python_value.__str` and on dict
+keys). Handle slots:
 
-Per-instance allocation alone is **not sufficient**: a tracked dict literal that
-embeds a boxed leaf records the per-execution materialisation *pointer symbol*,
-and the dict-subscript **constant-fold** would re-read that symbol at a later
-program point — observing another instance's value (a deterministic false
-proof). The const-fold therefore skips any value embedding a boxed-leaf pointer
-(`contains_boxed_leaf_pointer`), falling through to the symbolic dict read,
-which uses the per-instance value symex copied at construction. (Re-reading a
-tracked dict-literal value that embeds *any* per-execution symbol is unsound in
-general, independent of leaf type.)
+| leaf | slots | helpers |
+|---|---|---|
+| `str` (native) | `python_value.__str`, class `str` fields, dict keys, dict values, `list[str]` elements, kwargs-dict packing | `python_string_handle_type` (comment-flagged bv64), `string_to_handle` / `emit_strtab_axiom`, `python_string_handle_denotation`, `python_dict_unbox_key`, `coerce_element` (the write-side choke point) |
+| `int` (unbounded) | `python_value.__int_val` (incl. the `CLOSURE` fn-index) | `python_int_handle_type`, `int_to_handle` (`box_int_for_storage`), `python_value_int` |
 
-With both pieces — per-instance allocation **and** the const-fold guard —
-boxing is sound **and** precise for `str` (native) **and** `int` (unbounded):
-a wrapped unbounded int keeps full precision (`2**64+5` is preserved, not
-truncated) and does not alias across instances. Typed int containers
-(`dict[int,int]` / `list[int]`) are unaffected — they store `integer_typet`
-inline at full precision, never wrapped.
+**Allocation & axioms.** `string_to_handle` INTERNS constant strings to
+deterministic ids with a namespace-visible definition symbol
+(`python::__strconst_<id>`, value = the constant; equal constants share
+one id). A non-constant string gets a fresh nondet handle. Either way
+the definitional axiom `strtab(h) == value` is emitted as a ghost-Bool
+**assignment** `__strdef_N := (strtab(h) == v)` followed by
+`assume __strdef_N` — the assignment form matters because SSA conversion
+is assignments-first, assumptions-later, and the backend's constant
+recovery must see definitions before the intrinsics that consume them.
+A **representation guard** keeps axioms well-sorted: a non-`smt_string`
+payload flowing into a handle slot (a `bytes` value, or a
+refined→String bridge struct) allocates a handle with an
+**unconstrained** image — a sound over-approximation.
 
-Every transform is a **type-driven / flag-gated no-op** on the other
-back-end, so the default int64 / refined-string representations are
-byte-identical (the full local suite is a 0-regression guard). Each value
-type keeps the SAME boxing pattern, so a future non-fixed-width leaf is a
-type-swap, not a re-architecture. Detailed rationale and the option
-analysis (boxing vs. reordering vs. mutually-recursive datatypes) live in
-the [strings plan](python-frontend-strings-plan.md#strings).
+**Backend constant recovery** (`smt2_convt::try_extract_string_literal`
++ `try_recover_strtab`): the smt2 string/regex intrinsic lowerings
+recover compile-time string constants THROUGH the handle indirection —
+chasing recorded SSA symbol definitions (`string_symbol_defs`,
+`set_to`), ghost-form strtab axioms (keyed by symbol identifier /
+handle id, since the handle type's `ID_C_` comment flag varies by
+construction path), interned-constant ids via the `__strconst_` symbols,
+and merge ternaries under branch agreement; depth-capped, failure
+degrades to the pre-existing sound nondet fallbacks. This recovery is
+what discharged the last intrinsic contract (`re.Pattern.pattern` must
+be conversion-time recoverable) and allowed EVERY aggregate `str` slot —
+including the frontend-library classes originally exempted — to become
+a handle. The `inttab` UF needs no recovery contract (arithmetic accepts
+any `Int` term).
+
+**Identity semantics.** Two allocations of equal strings may or may not
+share a handle (constants intern, computed strings do not): `==` always
+goes through the `strtab` image, and `is` identity on computed strings
+is unspecified in the modelled subset (consistent with CPython's
+interning latitude).
+
+**What remains of per-instance heap boxing:** the `allocate_boxed_leaf`
+machinery is still the per-instance allocation channel for
+`--python-ref-mutables` nested-list references and closure capture
+records — reference (pointer) semantics is the point there, so
+byte-imaging concerns do not apply (those pointers live behind the
+opaque `__list_ptr`/`__class_ptr` members, never inline).
 
 ### Per-class structs
 
@@ -834,11 +873,22 @@ There are **two string back-ends** (see the
 [strings & regex plan](python-frontend-strings-plan.md#strings)):
 the **refined-string** backend is the no-external-solver **default**;
 the **native SMT-LIB `String`** backend (`--python-smt-strings` with
-`--cvc5`/`--z3`) is **complete** (Plan A, 2026-06-12) and is the precise
-option for the cases at the refined ceiling (ordering, symbol-operand
-membership, slice/replace). The two share the `cprover_string_*`
-intrinsic vocabulary; `--python-smt-strings` lowers them to native
-`str.*` terms, the default lowers them through the refinement solver.
+`--cvc5`/`--z3`) is **complete** (Plan A, 2026-06-12) and — since
+2026-07-22 — **corpus-ready at full default-mode parity** (51-benchmark
+suite: CLEAN 38 / TP 8 / FP 0 / TOERR 0). It is the precise option for
+the cases at the refined ceiling (ordering, symbol-operand membership,
+slice/replace). The two share the `cprover_string_*` intrinsic
+vocabulary; `--python-smt-strings` lowers them to native `str.*` terms,
+the default lowers them through the refinement solver.
+
+Under the native backend, a `str` stored in any aggregate is a
+[string-id handle](#non-fixed-width-values-in-byte-imaged-aggregates-solver-side-handles)
+(`strtab(h)`), and the smt2 lowerings recover compile-time constants
+**through** the handle indirection (`try_extract_string_literal` /
+`try_recover_strtab` in `smt2_conv.cpp`) — so intrinsics whose precision
+depends on a constant operand (the regex family, in particular) keep
+their conversion-time folding even when the constant travelled through a
+class field, dict slot, or pv `__str` payload.
 
 For string operations the frontend doesn't constant-fold, we route
 (on the default backend) through CBMC's refinement-string solver:
@@ -875,8 +925,12 @@ substantially slower.
 `re` is modelled by a shallow library stub plus `__cbmc_re_*`
 SMT intrinsics, with a call-site `regex-no-match` check that
 flags statically-impossible matches. The layering invariant is
-that the **frontend emits refined-string arguments and the
-back-end is responsible for bridging them to SMT `String`**.
+that the **frontend emits string-typed arguments (refined structs on the
+default backend; `smt_string` terms / handle denotations on native) and
+the back-end is responsible for bridging them to SMT `String` and for
+recovering constant patterns/subjects** — including through the native
+string-id handle indirection (strtab-aware recovery, 2026-07-22), which
+is what allows `re.Pattern.pattern` itself to live in a handle field.
 Precise symbolic-subject matching needs that bridge, which the
 **native SMT-String backend** (`--python-smt-strings`) provides;
 on the default refined backend a negated regex match in
@@ -943,7 +997,7 @@ reads it returns nondet, not 5 — a separate item.)
 
 | Flag | Default | Effect |
 |------|---|---|
-| `--python-unbounded-ints` | off | Use CBMC bignums (`integer_typet`) instead of int64; requires an SMT solver (e.g. `--cvc5` / `--z3`) — a warning is emitted if none is selected. Ints are full-precision, including when wrapped into `python_value` ([per-instance leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates)) |
+| `--python-unbounded-ints` | off | Use CBMC bignums (`integer_typet`) instead of int64; requires an SMT solver (e.g. `--cvc5` / `--z3`) — a warning is emitted if none is selected. Ints are full-precision, including when wrapped into `python_value` ([int-id handles](#non-fixed-width-values-in-byte-imaged-aggregates-solver-side-handles)) |
 | `--python-no-exception-checks` | off | Suppress automatic `assert ¬__exception_active` after each statement |
 | `--python-check-annotations` | off | Emit `annotation-mismatch` properties where a declared annotation and the actual value/return/argument type are incompatible: AnnAssign RHS, reassignment after an AnnAssign, return slot, `list[T].append/insert` of an incompatible literal/name, and (provenance-gated) call arguments. Includes class-vs-class via MRO and `Union[...]` member checking. Sound when it runs (earlier CBMC-core blockers resolved); opt-in because it enforces *static* annotations, so it reports the irreducible class of real mismatches Python runs anyway (`n: int = "x"` never used as int) |
 | `--python-strict` | off | Opt-in convenience **preset** enabling the static-strictness family (mypy-style) in one switch: `--python-check-annotations`, `--python-missing-return-check`, `--python-required-kwarg-checks`, `--python-check-typeddict-fields`, `--python-check-any-arg-attrs`, `--python-check-iter-none`. Additive (no default-semantics change); does **not** imply `--python-raising-ops-check` (a separate runtime-exception-soundness axis) |
@@ -953,7 +1007,7 @@ reads it returns nondet, not 5 — a separate item.)
 | `--python-check-typeddict-fields` | off | Field-type checks on PEP 448 `**kwargs` spreads |
 | `--python-lazy-stubs` | off | Skip method bodies in imported stubs; signatures-only |
 | `--python-raising-ops-check` | off | Model operations that *can* raise but whose success can't be proved (`int(str)`→`ValueError`, `os.*`→`OSError`, `re` non-str pattern→`TypeError`) as **may-raise**, instead of silently succeeding. Opt-in soundness; the default favours precision. Uses the declarative `@may_raise('Exc')` library decorator. |
-| `--python-smt-strings` | off | Represent `str` with the native SMT-LIB String sort instead of refinement-strings. Requires an SMT String solver (`--cvc5`/`--z3`). Strings stored in byte-imaged aggregates (`python_value.__str`, dict keys) are [boxed](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) behind a `string*` |
+| `--python-smt-strings` | off | Represent `str` with the native SMT-LIB String sort instead of refinement-strings. Requires an SMT String solver (`--cvc5`/`--z3`). A `str` stored in ANY aggregate (`python_value.__str`, class fields, dict keys/values, list elements) is a fixed-width [string-id handle](#non-fixed-width-values-in-byte-imaged-aggregates-solver-side-handles) with denotation `strtab(h)`; the backend recovers constants through the indirection. **Corpus-ready (2026-07-22): full default-mode parity on the 51-benchmark suite** (CLEAN 38 / TP 8 / FP 0 / TOERR 0) |
 
 ## Type-coercion at boundaries (PLR §3.2)
 
@@ -1238,7 +1292,7 @@ soundness, imprecision, performance, intrinsic.
 
 ### A. Soundness (false proofs / latent unsoundness / deliberate tradeoffs)
 
-**CURRENT STATE (2026-07-16) — read this first; the dated notes below are a
+**CURRENT STATE (2026-07-22) — read this first; the dated notes below are a
 chronological changelog.** The differential oracle (external CPython-semantics
 corpus, default config) tracks **0 known false proofs**, plus **3 intrinsic /
 out-of-subset residuals** (the annotation-laundering pair `004` call-arg +
@@ -1255,7 +1309,14 @@ class** (string-emitter output symbols shared across re-executions poisoned the
 whole formula — six vectors fixed, one historical sweep PASS proven vacuous and
 re-baselined), fixed a symex CRASH class, made TypeError/AttributeError
 obligations handler-aware per PLR §8.4, and added PEP 649 version-dependent
-annotation semantics. Two standing soundness-
+annotation semantics. The 2026-07-17→22 continuation (see that note) took the
+real-world suite to **CLEAN 38 / TP 8 / FP 0** in BOTH string backends — the
+default and, at full parity, the native SMT-String backend (0 TOERRs; the one
+TIMEOUT is the SAT-bound `aws_untagged`, identical in both) — closing the
+instance-truthiness false-proof class, the extraction-aliasing soundness
+residual (havoc floor + §0 write-through precision), an `extend()` PLR §6.2
+evaluation-once semantics bug, and four native crash classes; parameters
+re-annotated in the body now REBIND instead of mutating the call contract. Two standing soundness-
 regression gates run after every change: the **oracle 0-NEW gate** (real-world
 corpus) and the **PLR-fuzz 0-NEW gate** (template + randomized PLR-tagged programs
 vs a committed baseline of **0** false-proof labels — see Sweep rounds 4–8). **The
@@ -1585,6 +1646,59 @@ earlier are now all **closed** — see Sweep rounds 4–7.)
 > architectural family as the generator-object model, plan §1), two stub-heavy
 > timeouts, and MISS-by-unreachedness cases (a stub CONTRACT fires only if the
 > buggy method is called; whole-program semantics).
+
+> **Continuation (2026-07-17 → 2026-07-22) — corpus zero-FP + the native-backend
+> handle arc.** The campaign's second half took the suite to
+> **CLEAN 38 / TP 8 / FP 0 / TOERR 0 / TIMEOUT 1** on the DEFAULT backend and —
+> new — to the **identical numbers on the native SMT-String backend**
+> (corpus-ready, 2026-07-22). Soundness-relevant closures, chronological:
+> - **Instance truthiness through the Any channel** (`51d2849468`): a pv-CLASS
+>   value in boolean context was blanket-truthy — a FALSE PROOF when `__bool__`/
+>   `__len__` says otherwise (and a path-explosion driver). `__bool__`/`__len__`
+>   are classified at ClassDef (`class_truthiness`) and identity-dispatched
+>   (`pv_class_truthiness`) in BOTH truthiness builders.
+> - **Extraction-aliasing soundness** (`e82ae0505c`): mutation through one
+>   extraction alias now havocs the source AND every sibling alias
+>   (`havoc_sibling_extraction_aliases`) — two probed false proofs closed. On
+>   top of that floor, **§0 write-through precision** landed for re-addressable
+>   slots: int-keyed dict-value slots (`caf9de4050`) and constant STRING keys
+>   (KEY form, `dbc270f39f`) — `v = d["a"]; v.append(x)` now updates `d["a"]`
+>   precisely; hazards (same-key overwrite, new-key insert, stale negation)
+>   pinned; anything non-re-addressable demotes to the sound havoc.
+> - **`extend()` evaluation-once** (`5af9bbed62`): `xs.extend(f())` embedded the
+>   call per copy slot — a PLR §6.2 SEMANTICS bug (a side-effecting argument ran
+>   N times) and the dominant formula blowup in `aws_untagged` (4.2M → 211K
+>   steps). Non-symbol list arguments materialise once (`__extend_arg_N`).
+> - **The native handle arc** (`894514d30d` → `c0d0469211`; see
+>   [Handles](#non-fixed-width-values-in-byte-imaged-aggregates-solver-side-handles)):
+>   every aggregate `str`/unbounded-`int` slot became a solver-side handle after
+>   POINTER boxing was disproven twice (an unresolved value-set deref
+>   byte-extracts the pointee — `bv_to_expr` / `unpack_rec` aborts). En route,
+>   four distinct native CRASH classes closed, each CORE-pinned: dict-key
+>   pointer boxes byte-imaged through value-set derefs (apigateway); a pv key
+>   coerced through `__int_val` into a string-key comparison (csv
+>   `_dialects.pop` — the pv→string-slot rule in `coerce_element`); a `bytes`
+>   payload emitted a sort-mismatched strtab axiom (s3_to_dynamodb — the
+>   representation guard); and a **parameter re-annotated to `Any` in the body
+>   was retyped IN PLACE**, breaking the call contract at every call site
+>   (setup_cloudformation; parameters now REBIND via `variable_versions`,
+>   `7f3c0adbf3` — the in-place widening remains for non-parameters).
+> - Backend **strtab-aware constant recovery** (`c0d0469211`) discharged the
+>   regex intrinsic contract through the handle indirection (mechanics in the
+>   Handles section: ghost-assignment axioms for SSA ordering, ghost-form-only
+>   recording against chase cycles, identifier keying).
+> A doc-review hardening round (2026-07-22 pm) then closed four more
+> raw-string aggregate sites the corpus never reached (free-function
+> `**kwargs` packing, the `dict(a=1)` constructor, two sentinel-dict
+> builders) and made list/set string MEMBERSHIP read elements through the
+> strtab denotation (raw handle bits wrongly refuted `"a" in ["a","b"]`) —
+> each CORE-pinned; the superseded pointer-boxing machinery was removed.
+> Verified deferrals re-confirmed during the arc: the generator-object channel
+> is still exactly 1 of 103 sweep residuals; `aws_untagged` is genuine SAT
+> hardness (lean formula, Minisat 66%). New recorded native-only imprecision:
+> interprocedural `dict.pop` key-membership through a pv-typed key parameter
+> (sound direction — spurious FAILED, never a proof;
+> `native-dict-pop-interproc-knownbug`).
 
 > **Proactive-sweep finding (2026-06-30):** a targeted adversarial sweep of
 > under-tested corners (beyond the oracle corpus) found a **generator
@@ -1929,7 +2043,8 @@ referenced twice in a lowering (tag predicate + payload unwrap, or a
 membership container) re-evaluated a side-effecting call, diverging the
 two copies → false proof; fixed by materialising such an operand **once**
 in `python_converter_compare.cpp`; and (ii) the **leaf-boxing aliasing**
-class — the string/int [leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates)
+class — the string/int leaf boxing (historical; since superseded by
+[solver-side handles](#non-fixed-width-values-in-byte-imaged-aggregates-solver-side-handles))
 first materialised each boxed leaf into a *static per-call-site symbol*, so a
 container built more than once (function return / loop) aliased its leaves
 across instances (a false proof in the equality direction, and it superseded
@@ -2341,13 +2456,13 @@ guards against new false proofs.
 | dict `del` through a call (c2) | `del p["x"]` inside `rm(p)` does not propagate the deletion to the caller`s dict, so a later `pt["x"]` misses the `KeyError` | **OPEN, deep**: dicts are by-reference for EXISTING-key value modifications but NOT for STRUCTURAL mutations — adding a key or deleting one does not cross the call boundary (keys/length arrays not shared); same representation limit as dict-value-byref | [dict-byref](python-frontend-dict-value-byref-plan.md) |
 | `del obj.attr` + `__getattr__` fallback (c4/laurel-006) | after `del self.x`, access falls to `__getattr__` returning a different type; the concretely-typed field could not hold it, so `del` havocked the slot to nondet (sound for a stale read, but it missed the cross-type `TypeError`) | **CLOSED 2026-06-29** (`getattr-after-del`): a field `del self.x`-ed in a method of a `__getattr__`-class is typed `python_value`, and `del` stores `__getattr__`'s result into the slot, so the cross-type use routes through the operand obligation and raises `TypeError`. The deletable-field scan is module-wide, so both `del self.x` (in a method) and a direct `del f.x` (external instance) are covered. Present-int read / del-then-reassign / non-deleted field / no-`__getattr__` class all correct. **Residual:** `del o.x` through an Any-boxed FUNCTION PARAMETER does not propagate (the del handler cannot resolve the param's class) -- the structural-mutation-through-a-call family (c2) | [plan §10](python-frontend-plan.md#descriptors) |
 | **Narrowing-invalidation cluster** (CLOSED 2026-06-28) | a value's runtime type changes via an effect cbmc does not model, then it is used at the stale type → CPython `TypeError`, cbmc verifies. Distinct roots (**not one fix**). **CLOSED:** `__setattr__`/`__getattribute__` (2026-06-25, over-approx to nondet `python_value`); **enum `.value` after a member retag** (2026-06-28: heterogeneous-enum value type is `python_value` + `.value` resolves on enum-typed variables AND fields, so the retagged value routes through the operand/tag obligations — `enum-value-after-mutation` is now CORE). **CLOSED 2026-06-28 (reference-semantics-for-instances):** context-manager `__enter__`/`__exit__` field mutation AND composition aliasing were the SAME *concrete-class-typed slot copies the instance* root, now fixed (instance fields are by-reference) (a `t: SomeClass` param/field is value-copied, so a mutation through it is invisible to the original; the Any-typed path preserves identity by-address). Also OPEN: inheritance+union virtual dispatch, same-expression **eval-order × union-retag** | partly **UNSOUND** (the reference-semantics false proofs remain), confined to advanced/dynamic features; the reference-semantics cases AND the eval-order case (`union-use-after-mutation-typeerror`, 2026-06-28: a side-effecting binop left operand is now sequenced before a right read so a same-expression union retag is observed) are now CORE. **Fully CLOSED (2026-06-28).** The *mirror* eval-order case (`x + g()` where the side-effecting operand is on the RIGHT and mutates a value read on the LEFT) is now also **CLOSED 2026-06-30** (`binop-evalorder-left-snapshot`; module-scope left snapshot — see the "binop eval-order MIRROR" row) | [plan §0](python-frontend-plan.md#false-proofs) |
-| pv-provenance / iteration | **PHASE 1 LANDED** (`87fb98a4e5`): per-instance CLASS IDENTITY (`__class_tag` stamped at every construction, read through the boxed `__class_ptr`) now refines the pv-CLASS `__getitem__`/`__iter__` dispatch guards, the subscript obligation's CLASS arm, and a NEW PLR §6.13 iterability obligation (for-loops + comprehensions, catchable per §8.4) — closing five false-proof classes (wrong-class dunder dispatch, missing iterability obligation, dropped for-loop HEADER checks incl. `range(xs[5])`) and resolving the boto3 iteration FP family (ecs/ses CLEAN; athena → solver-timeout, its pv-SLICE dispatch is phase 2). **PHASE 2 LANDED** (`6ca71f6636`): the iterator-protocol validity of `__iter__` is classified syntactically and enforced everywhere (a non-iterator return raises TypeError and shadows `__getitem__` — two more false-proof classes closed), and dispatched-view elements carry their concrete WRAPPED values through the Any channel. **PHASE 3 (`f3031f680c`)**: string/value-keyed dict-value in-place mutation via the lvalue slot + statement-level fold invalidation. **2026-07-17 (`a2f495d7cb`): the real-world benchmark FP count reached ZERO** — four more whole-groups: dict-value slot-pun Any-dominance at the FIRST STORE (container/uninferable values and keys infer python_value; not under check-annotations); ClassDef METHOD bodies now run the function-body pre-scans (they silently skipped escaped-mutables + empty-list/dict inference); the defaults-aware pv-receiver virtual method dispatch admits BOTH python_value forms (plain-struct receivers bypassed it — `r.get(...)` on Any collapsed to nondet); and a class→list annotation coercion dispatches the instance's own `__iter__` (safe_typecast severed provenance). **2026-07-18 (`51d2849468`)**: the timeout study found the "timeouts" were OOMs and one masked a live FP — closed by TWO more whole-groups: PLR §4.4 instance TRUTHINESS through the Any channel (`__bool__`/`__len__` classified at ClassDef, identity-dispatched; blanket-truthy CLASS was a false proof AND a path-explosion driver — athena 232s-FAILED → 2s CLEAN) and constant-directed DISPATCHER FOLDING (a literal-keyed call to a pure `if p == "lit": return C()` chain folds at conversion time; the boto3 31-way client() chain made mediaconvert OOM at 8.5 GB → 49s/<1 GB TP). Suite: CLEAN 38 / TP 8 / FP 0 / TIMEOUT 1 (aws_untagged: solver-bound residual, completes as TP at ~7.5 min/24 GiB). **2026-07-18 pm (`dc11d4fa03`)**: three more whole-groups from the aws_untagged solver study — print-sink f-string ELISION (embedded-expression checks preserved; 20 GB → 5 GB refinement state), pv-dispatch KEYWORD binding into the trailing `**kwargs` dict (previously dropped → nondet param), and an aug-assign store-target ASSIGNABILITY guard (an unassignable chained-pv target HAVOCS the root container instead of emitting `ASSIGN <nondet> := …`, which aborted symex — a latent crash). aws_untagged remains the one timeout: solver-bound on 16-way string-equality if-chains in string-keyed dict obligations × unrolling (the precisely-characterised core-CBMC item). **2026-07-18 eve (`e82ae0505c`)**: extraction-aliasing SOUNDNESS closed (sibling aliases + direct-slot mutations havoc every tracked alias of the mutated source — two probed false proofs; precision still needs §0 reference semantics); dict-slot matched-index MATERIALISED (obligation-subterm sharing — the 16-way string_equal chain occurs once, not once per use); cvc5 evaluated (refined: exact parity; NATIVE strings: 39/51 core-invariant TOERRs — not corpus-ready). **2026-07-19 (`690d05b9a0`, `5af9bbed62`)**: native-strings corpus TOERRs 39 → 7 (kwargs-dict KEY boxing at both packing sites; residual = 3 core signatures, minimized, same raw-string-where-boxed-pointer-belongs family); the aws_untagged "solver" residual was substantially a FRONTEND blowup — `extend(<call>)` embedded the argument expression per copy slot (144 emitted calls for one source call, a PLR §6.2 evaluation-once SEMANTICS bug + 4.2M→211K-step formula reduction); what remains is genuine SAT hardness (Minisat 66% of a lean formula; cvc5/slice-formula also exceed budgets). Re-verified deferrals: `--python-ref-mutables` does NOT cover dict-extraction precision (x3 probe still alarms — §0 stays a design item, soundness floor in place); generator channel still exactly 1 of 103 sweep residuals. Remaining: §0 reference-semantics precision, generator-object precision, native-strings residual (3 signatures), aws_untagged SAT hardness | [plan §1](python-frontend-plan.md#generators) |
+| pv-provenance / iteration | **PHASE 1 LANDED** (`87fb98a4e5`): per-instance CLASS IDENTITY (`__class_tag` stamped at every construction, read through the boxed `__class_ptr`) now refines the pv-CLASS `__getitem__`/`__iter__` dispatch guards, the subscript obligation's CLASS arm, and a NEW PLR §6.13 iterability obligation (for-loops + comprehensions, catchable per §8.4) — closing five false-proof classes (wrong-class dunder dispatch, missing iterability obligation, dropped for-loop HEADER checks incl. `range(xs[5])`) and resolving the boto3 iteration FP family (ecs/ses CLEAN; athena → solver-timeout, its pv-SLICE dispatch is phase 2). **PHASE 2 LANDED** (`6ca71f6636`): the iterator-protocol validity of `__iter__` is classified syntactically and enforced everywhere (a non-iterator return raises TypeError and shadows `__getitem__` — two more false-proof classes closed), and dispatched-view elements carry their concrete WRAPPED values through the Any channel. **PHASE 3 (`f3031f680c`)**: string/value-keyed dict-value in-place mutation via the lvalue slot + statement-level fold invalidation. **2026-07-17 (`a2f495d7cb`): the real-world benchmark FP count reached ZERO** — four more whole-groups: dict-value slot-pun Any-dominance at the FIRST STORE (container/uninferable values and keys infer python_value; not under check-annotations); ClassDef METHOD bodies now run the function-body pre-scans (they silently skipped escaped-mutables + empty-list/dict inference); the defaults-aware pv-receiver virtual method dispatch admits BOTH python_value forms (plain-struct receivers bypassed it — `r.get(...)` on Any collapsed to nondet); and a class→list annotation coercion dispatches the instance's own `__iter__` (safe_typecast severed provenance). **2026-07-18 (`51d2849468`)**: the timeout study found the "timeouts" were OOMs and one masked a live FP — closed by TWO more whole-groups: PLR §4.4 instance TRUTHINESS through the Any channel (`__bool__`/`__len__` classified at ClassDef, identity-dispatched; blanket-truthy CLASS was a false proof AND a path-explosion driver — athena 232s-FAILED → 2s CLEAN) and constant-directed DISPATCHER FOLDING (a literal-keyed call to a pure `if p == "lit": return C()` chain folds at conversion time; the boto3 31-way client() chain made mediaconvert OOM at 8.5 GB → 49s/<1 GB TP). Suite: CLEAN 38 / TP 8 / FP 0 / TIMEOUT 1 (aws_untagged: solver-bound residual, completes as TP at ~7.5 min/24 GiB). **2026-07-18 pm (`dc11d4fa03`)**: three more whole-groups from the aws_untagged solver study — print-sink f-string ELISION (embedded-expression checks preserved; 20 GB → 5 GB refinement state), pv-dispatch KEYWORD binding into the trailing `**kwargs` dict (previously dropped → nondet param), and an aug-assign store-target ASSIGNABILITY guard (an unassignable chained-pv target HAVOCS the root container instead of emitting `ASSIGN <nondet> := …`, which aborted symex — a latent crash). aws_untagged remains the one timeout: solver-bound on 16-way string-equality if-chains in string-keyed dict obligations × unrolling (the precisely-characterised core-CBMC item). **2026-07-18 eve (`e82ae0505c`)**: extraction-aliasing SOUNDNESS closed (sibling aliases + direct-slot mutations havoc every tracked alias of the mutated source — two probed false proofs; precision still needs §0 reference semantics); dict-slot matched-index MATERIALISED (obligation-subterm sharing — the 16-way string_equal chain occurs once, not once per use); cvc5 evaluated (refined: exact parity; NATIVE strings: 39/51 core-invariant TOERRs — not corpus-ready). **2026-07-19 (`690d05b9a0`, `5af9bbed62`)**: native-strings corpus TOERRs 39 → 7 (kwargs-dict KEY boxing at both packing sites; residual = 3 core signatures, minimized, same raw-string-where-boxed-pointer-belongs family); the aws_untagged "solver" residual was substantially a FRONTEND blowup — `extend(<call>)` embedded the argument expression per copy slot (144 emitted calls for one source call, a PLR §6.2 evaluation-once SEMANTICS bug + 4.2M→211K-step formula reduction); what remains is genuine SAT hardness (Minisat 66% of a lean formula; cvc5/slice-formula also exceed budgets). Re-verified deferrals: `--python-ref-mutables` does NOT cover dict-extraction precision (x3 probe still alarms); generator channel still exactly 1 of 103 sweep residuals. **2026-07-19/20 (`caf9de4050`, `dbc270f39f`): §0 write-through LANDED for the re-addressable slots** — int-keyed dict-value slots AND constant string keys (KEY form) mutate through the extraction alias precisely (hazard suite pinned); the non-re-addressable remainder demotes to the sound havoc floor. **2026-07-20/22: the native-strings residual is CLOSED** (string-id handles + strtab recovery; corpus parity — see the 2026-07-17→22 continuation note). Remaining: generator-object precision (1/103), aws_untagged SAT hardness (core-solver), list-element extraction write-through (the natural next §0 slice) | [plan §1](python-frontend-plan.md#generators) |
 | Any/union used at a wrong type | a tagged-union/`Any` value used as a concrete type with a mismatched runtime tag now raises `TypeError` via **tag obligations** at the operator, subscript, and (provenance-gated) call-argument boundaries — was a silent wrong-field read. The remaining hole is the call-argument obligation only firing for **explicitly-annotated** scalar params (inferred/Any params excluded to avoid false alarms) | sound (closed for the three covered sites); see the tag-obligation table in [Type-coercion at boundaries](#any--union-tag-obligations-typeerror-on-a-wrong-runtime-tag) | [plan §0](python-frontend-plan.md#false-proofs) |
 | Definite integer overflow (default 64-bit) | the default 64-bit model silently **wrapped** on a statically-provable >64-bit result (`10**19 < 0`, `1<<70 == 0`) — a false proof. Now reports `python-model-bound` (assert+assume cut) on a DEFINITE overflow; a symbolic/computed overflow remains the documented 64-bit bound (use `--python-unbounded-ints`, now sound incl. shifts/bitwise) | sound (definite cases reported; symbolic = documented bound) | [plan §0](python-frontend-plan.md#false-proofs) |
 | Unknown annotation fallback | `convert_type_annotation` lowered an annotation it could not model (bare `range`/`tuple`, unmodeled builtin, unknown forward-ref) to `python_int_type()`, modeling an unknown value with concrete int semantics — a latent unsoundness that could mask a real bug | **CLOSED 2026-06-26**: unknown ⇒ `python_value` (Any/top), the sound over-approximation (sweep gained `ethereum_bug-fail`). Lock-in `check-annotations-unknown-is-any`. **Exception still open:** a dict with a non-"safe" value type (`dict[str, Any]`) still falls back to int — an opt-in `--python-check-annotations` false positive (not a false proof), blocked by a separate Any-valued-container capacity-model-bound issue; pinned `check-annotations-any-dict-knownbug` | [plan §9](python-frontend-plan.md#precision) |
 <!-- 2026-06-26: the blocker is the SYMBOLIC-KEY dict precision cluster, not a standalone capacity bug -- an Any dict value makes d.get(k,...) a nondet key, so a later d2[key].append(...) over-approximates and fires a spurious python-model-bound (github_3684 class). -->
 | Class-instance identity / aliasing | a class instance was value-semantics (struct copy) at a top-level `b = a` assignment, so a mutation through one alias was invisible to the other. Distinct from the list/dict case, which already aliased (the `alias_targets` pointer mechanism). | **CLOSED 2026-06-28** (reference-semantics-for-instances, Phases 1-3): instances are by-reference at returns, local aliases, and fields -- so return-flow, local alias `b=a`, AND composition/field store all preserve identity. `instance-return-aliasing`, `instance-aliasing`, `instance-field-aliasing`, `shared-object-aliasing`, `context-manager-enter-mutation` are all CORE. **Extended (a2):** an ANNOTATED alias `r: C = o` now pointer-promotes too (`convert_ann_assign`), and an lvalue instance crossing an Any/`python_value` boundary preserves identity by `address_of` for ALL lvalue forms (symbol / dereference / member / index), not just a plain symbol — so `f(r)` where `r=o` no longer passes a throwaway copy (`instance-annotated-alias-call`; closes a2_narrowing_alias). Soundness: a FRESH construction stays owned/by-value (distinct, no over-aliasing). The deep-composition `==` perf cliff did NOT materialise, so this is default-on (unlike container ref-semantics) | [instance ref-semantics plan](python-frontend-instance-reference-semantics-plan.md) + [plan §0](python-frontend-plan.md#false-proofs) |
-| Nested mutable-element aliasing | anonymous nested-mutable list/dict elements stored by value; the replication / self-append / new-container channels are **guarded** (report `python-model-bound`). **Direct** nested mutation works (`c[i].append(...)` for lists, and int-keyed dict values via lvalue value slots). **Extraction-then-mutate** (`r=c[i]; r.append(...)` / `v=a[k]; v.append(...)`) is **guarded** in the default config (2026-06-24): the extracted variable is recorded (`extracted_container_alias`) and, on a subsequent in-place mutation, the source container is havoced + dropped from the const-fold maps (sound over-approximation). **For LISTS, the principled whole-group fix is now implemented behind opt-in `--python-ref-mutables`** (2026-06-24): nested list elements are heap-allocated per instance and aliased by pointer (`make_python_value(LIST, allocate_boxed_leaf(rebuild_list_as_pv(e)))`), so extraction / multi-instance / reorder / membership / nested value reads / 3-deep composition are **precise**; under the flag the havoc guard is skipped for wrapped references. | sound for the CONTAINER-ELEMENT aliasing channels (guarded). **The distinct
+| Nested mutable-element aliasing | anonymous nested-mutable list/dict elements stored by value; the replication / self-append / new-container channels are **guarded** (report `python-model-bound`). **Direct** nested mutation works (`c[i].append(...)` for lists, and int-keyed dict values via lvalue value slots). **Extraction-then-mutate** (`r=c[i]; r.append(...)` / `v=a[k]; v.append(...)`) is layered (2026-07-19/20): for DICT values with an int-keyed slot or a constant STRING key, the mutation **writes through** to the source slot — fully precise (`extracted_slot_alias`, §0; `extraction-write-through` / `extraction-key-write-through` CORE); everything else keeps the 2026-06-24 sound guard — the extracted variable is recorded (`extracted_container_alias`) and a subsequent in-place mutation havocs the source container AND every sibling alias of it (+ drops the const-fold maps). **For LISTS, the principled whole-group fix is now implemented behind opt-in `--python-ref-mutables`** (2026-06-24): nested list elements are heap-allocated per instance and aliased by pointer (`make_python_value(LIST, allocate_boxed_leaf(rebuild_list_as_pv(e)))`), so extraction / multi-instance / reorder / membership / nested value reads / 3-deep composition are **precise**; under the flag the havoc guard is skipped for wrapped references. | sound for the CONTAINER-ELEMENT aliasing channels (guarded). **The distinct
 object-identity-via-COMPOSITION channel** (one object referenced by two
 attributes, mutated through one and read through the other) **is now CLOSED**
 (`shared-object-aliasing`, CORE — fixed by reference-semantics-for-instances,
@@ -2374,8 +2489,9 @@ genuinely-false negatives stay FAILED, default suite green). **Confirmed OPT-IN 
 | Contracts | multi-level Liskov; strict-C3 mixin precedence; async | [plan §11](python-frontend-plan.md#icontract) |
 | Higher-order | **bound methods as runtime values** (container-/conditional-/return-flowed, `m=obj.f`) now work (2026-06-22); container-/attribute-stored & composed *closures* remain (capture-through-param works); **~0 corpus value** | [plan §12](python-frontend-plan.md#higher-order) + [fat-closure](python-frontend-fat-closure-plan.md) |
 | dict / cross-module | global-dict-literal mutation across modules is fixed; **`**d` unpack of a *mutated* global dict** and **non-dict cross-module globals** remain (rare) | [plan §5](python-frontend-plan.md#dict-byref) |
-| dict symbolic-key / value-mutation cluster | **Characterized 2026-06-26 as MULTI-root, not one fix.** (a) symbolic-key *build* then constant-key *read* and missing-key KeyError detection already work (`d[k]=v` in a `.items()` loop, read `d["const"]`); (b) **FIXED**: an int/bool-keyed *constant re-store* read a stale value (`d={1:10}; d[1]=20; d[1]` folded to 10 — the dict_literals const-fold key-array is string-keyed), now drops the const-fold for that dict so the read uses the updated runtime array (`dict-int-key-restore`); (c) **OPEN (dict-value-by-reference)**: a dict-VALUE list/dict mutated in place (`d[k]=[]; d[k].append(x)`) does not propagate — the subscript-read value is a copy (only the int-literal value happens to alias via the lvalue slot); (d) **OPEN (symbolic-key over-approx)**: a genuinely symbolic/nondet key read over-approximates → spurious `python-model-bound` / `KeyError`. (c)+(d) are deep (per-instance value identity / symbolic dict modelling), not point fixes. **(e) CLOSED 2026-06-29 (`get`/`pop`/`setdefault` default type):** the `default` was coerced to the dict value type, losing its real type (`{}.get("k","s")` → int) — now the result is `value_type \| type(default)` (absent key ⇒ default in its own type; setdefault widens the empty-dict value type via inference). Moved to the soundness table (closes ty-005) | [plan §9](python-frontend-plan.md#precision) + [dict-value-byref](python-frontend-dict-value-byref-plan.md) |
-| dict (untyped nested, unbounded ints) | values read out of an *untyped* nested dict iterated symbolically are over-approximated to nondet (sum-bound unprovable); orthogonal to leaf boxing | [plan §9](python-frontend-plan.md#precision) |
+| dict symbolic-key / value-mutation cluster | **Characterized 2026-06-26 as MULTI-root, not one fix.** (a) symbolic-key *build* then constant-key *read* and missing-key KeyError detection already work (`d[k]=v` in a `.items()` loop, read `d["const"]`); (b) **FIXED**: an int/bool-keyed *constant re-store* read a stale value (`d={1:10}; d[1]=20; d[1]` folded to 10 — the dict_literals const-fold key-array is string-keyed), now drops the const-fold for that dict so the read uses the updated runtime array (`dict-int-key-restore`); (c) **LARGELY CLOSED (dict-value-by-reference)**: direct in-place mutation `d[k].append(x)` propagates via the lvalue value slot (all key kinds, 2026-07-13..17), and EXTRACTION-then-mutate (`v=d[k]; v.append(x)`) writes through for int-keyed slots and constant string keys (§0, 2026-07-19/20); the residual is extraction via a non-constant key (sound havoc guard); (d) **OPEN (symbolic-key over-approx)**: a genuinely symbolic/nondet key read over-approximates → spurious `python-model-bound` / `KeyError`. (c)+(d) are deep (per-instance value identity / symbolic dict modelling), not point fixes. **(e) CLOSED 2026-06-29 (`get`/`pop`/`setdefault` default type):** the `default` was coerced to the dict value type, losing its real type (`{}.get("k","s")` → int) — now the result is `value_type \| type(default)` (absent key ⇒ default in its own type; setdefault widens the empty-dict value type via inference). Moved to the soundness table (closes ty-005) | [plan §9](python-frontend-plan.md#precision) + [dict-value-byref](python-frontend-dict-value-byref-plan.md) |
+| dict (untyped nested, unbounded ints) | values read out of an *untyped* nested dict iterated symbolically are over-approximated to nondet (sum-bound unprovable); orthogonal to the handle representation | [plan §9](python-frontend-plan.md#precision) |
+| dict.pop interprocedural (native only) | `def drop(d, key): d.pop(key, None)` — key-membership updates through a pv-typed key PARAMETER do not propagate to the caller's dict on the native backend (default backend precise); sound direction (spurious FAILED). Pinned `native-dict-pop-interproc-knownbug` | [strings plan](python-frontend-strings-plan.md#strings) |
 | Modules | `cmath`, fuller `os`/`time`/`datetime`/`json`/`dataclasses`/`collections` not modelled (nondet) | [plan §6](python-frontend-plan.md#modules) |
 | Annotation checks (`--python-check-annotations`) | Opt-in, not default-on. The earlier two CBMC-core crash blockers are **resolved** (2026-06-26) and the checker-bug false positives are minimized (provenance-gating; unknown⇒Any). **Coverage extended (2026-06-29)** to the container-element boundary (`xs.append(v)` incl. a call arg `xs.append(src())`, via the callee`s static return type) and the dict-value-store boundary (`d[k]=v`); both flag-gated. **Precision improved (2026-06-29):** an Any-like (`python_value`) union component now satisfies the union (a list IS a `Sequence[str]`), and the element/dict-store checks are provenance-gated on EXPLICIT container annotations (not inferred `[]`/`{}`). It stays opt-in for a *semantic* reason: **default-on was MEASURED (2026-06-29) at ~1.25% spurious failures** (34/2718 sweep regressions, dominated by the irreducible class — real annotation mismatches the flag is designed to catch that are not runtime errors, e.g. `x: int = b.f()` where `f()->str` but the value is used as str) **and DECLINED**; default-on needs **use-site misuse gating**. Shipped as the `--python-strict` preset. Remaining checker FP: Any-valued dict (`check-annotations-any-dict-knownbug`) | [plan §7](python-frontend-plan.md#check-annotations) |
 
@@ -2392,7 +2508,7 @@ genuinely-false negatives stay FAILED, default suite green). **Confirmed OPT-IN 
 | `python_value` | field-by-field SSA expansion cost for symex-bound benchmarks | [plan §8](python-frontend-plan.md#performance) |
 | Signature axioms | kwarg-check axiom volume | [plan §8](python-frontend-plan.md#performance) |
 | Core hot path | `irept::operator==`; the TIMEOUT corpus tests | [plan §8](python-frontend-plan.md#performance) + [perf deep-dive](architectural/python-perf-analysis.md) |
-| Default-backend string refinement | the nested-container TIMEOUTs (`github_3683`, `redundancy`, …) are dominated by the **default refined-string** refinement loop, not the shared container struct — the **native** SMT-String backend dispatches them ~15× faster and correctly (`github_3683`: 9 s vs. timeout). The `github_3684`-class **native crash** that previously blocked recommending native for nested string/int dicts is **fixed** by [leaf boxing](#leaf-boxing-non-fixed-width-values-in-byte-imaged-aggregates) | [strings plan](python-frontend-strings-plan.md#strings) |
+| Default-backend string refinement | the nested-container TIMEOUTs (`github_3683`, `redundancy`, …) are dominated by the **default refined-string** refinement loop, not the shared container struct — the **native** SMT-String backend dispatches them ~15× faster and correctly (`github_3683`: 9 s vs. timeout). The `github_3684`-class **native crash** family that previously blocked recommending native is **CLOSED** by [solver-side handles](#non-fixed-width-values-in-byte-imaged-aggregates-solver-side-handles): the native backend is **corpus-ready at full default-mode parity** (2026-07-22, CLEAN 38 / TP 8 / FP 0 / TOERR 0 / TIMEOUT 1 — the timeout is the SAT-bound `aws_untagged`, identical to default) | [strings plan](python-frontend-strings-plan.md#strings) |
 
 ### D. Intrinsic / by-design (not bugs)
 
@@ -2449,6 +2565,7 @@ these is a *soundness* hole — all are sound over-approximations or cosmetics):
 | New boundary call site (call / assign / return) | Use `coerce_call_argument`, `coerce_assign_rhs`, or `coerce_return_value` instead of `safe_typecast` | The boundary helpers apply PLR §3.2 None-marker adaptations; raw `safe_typecast` would emit NULL-deref for typed-None — see the "Type-coercion at boundaries" section above |
 | New class-constructor call site | Call `build_class_construction(class_name, self_lvalue, call_ast, loc)` and add the returned statements | The unified chokepoint: emits the `__init__` call (MRO walk + arg conversion + kwarg matching + default padding + boundary coercion via `build_class_init_call`), OR the synthesised `@dataclass` field binding when there is no explicit `__init__`. Used by all four construction sites (assignment, expression, return, with) |
 | New PLR adaptation for typed slots (e.g. `Optional[list]` marker) | `coerce_to_typed_slot` in `python_converter.cpp` | All four boundary helpers (call/assign/return/element) delegate here, so the rule applies everywhere uniformly |
+| New aggregate slot that can hold a `str` (native backend) | Route the STORE through `coerce_element` (or `string_to_handle` directly); never push a raw `smt_string`/`python_string_literal` into a handle-typed array | Under `--python-smt-strings` every aggregate `str` slot is a string-id handle; a raw string in a handle-typed array is ill-typed (simplify/symex aborts). READS take the denotation (`python_string_handle_denotation` / `python_dict_unbox_key`). See the Handles section |
 
 ## Tips for new contributors
 
