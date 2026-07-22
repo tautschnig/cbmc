@@ -2657,7 +2657,14 @@ std::optional<exprt> python_convertert::try_builtin_call(
   // PLib builtins: sorted(iterable) — return sorted copy
   else if(func_name == "sorted")
   {
-    if(args.is_array() && !as_array(args).empty())
+    // Fold-soundness rule: the body models reverse= and two narrow key=
+    // shapes (subscript-index / attribute); any OTHER keyword falls to
+    // the nondet fallback here, and an UNRECOGNISED key= shape falls
+    // back inside the body (sorted(xs, key=lambda v: -v) used to fold
+    // ascending -- a false proof).
+    if(
+      args.is_array() && !as_array(args).empty() &&
+      fold_covers_call_shape(expr, 1, {"key", "reverse"}))
     {
       exprt arg = convert_expression(*as_array(args).begin());
       // PLR §6.10.1: sorting a list whose CONSTANT elements span 2+ distinct
@@ -2691,19 +2698,19 @@ std::optional<exprt> python_convertert::try_builtin_call(
       long long sorted_key_index = -1;
       // key=lambda o: o.attr — sort by an object attribute.
       std::string sorted_key_attr;
-      // key=lambda is not yet modelled — the lambda body
-      // would need per-element evaluation. We accept the
-      // argument silently but ignore it. The caller gets
-      // a list with the same elements as the input but in
-      // the default ordering (which may not match Python
-      // semantics when key= is supplied — documented as
-      // limitation).
+      // An UNRECOGNISED key= shape must NOT be silently ignored (the
+      // default ordering is then wrong -- a false proof); it degrades to
+      // the nondet fallback below.
+      bool sorted_key_present = false;
+      bool sorted_key_len = false;
       const jsont &sorted_kw = json_member(expr, "keywords");
       if(sorted_kw.is_array())
       {
         for(const auto &k : as_array(sorted_kw))
         {
           std::string kn = json_string(json_member(k, "arg"));
+          if(kn == "key")
+            sorted_key_present = true;
           if(kn == "reverse")
           {
             exprt kv = convert_expression(json_member(k, "value"));
@@ -2717,6 +2724,12 @@ std::optional<exprt> python_convertert::try_builtin_call(
             //          body=Subscript(Name('x'),
             //                         Constant(N)))
             const jsont &kv_node = json_member(k, "value");
+            // key=len over constant strings: sort by code-point length
+            // (stable, so equal lengths keep input order -- CPython).
+            if(
+              is_node_type(kv_node, "Name") &&
+              json_string(json_member(kv_node, "id")) == "len")
+              sorted_key_len = true;
             if(is_node_type(kv_node, "Lambda"))
             {
               const jsont &body = json_member(kv_node, "body");
@@ -2749,9 +2762,20 @@ std::optional<exprt> python_convertert::try_builtin_call(
           }
         }
       }
+      if(
+        sorted_key_present && sorted_key_index < 0 && sorted_key_attr.empty() &&
+        !sorted_key_len)
+      {
+        // key= present but not one of the two modelled shapes.
+        return side_effect_expr_nondett{
+          is_python_list_type(arg.type())
+            ? arg.type()
+            : python_list_type(python_value_type()),
+          get_location(expr)};
+      }
       // sorted(<str>) sorts the string's CODE POINTS into a list of
       // single-character strings (UTF-8 byte order == code-point order).
-      if(sorted_key_index < 0 && sorted_key_attr.empty())
+      if(sorted_key_index < 0 && sorted_key_attr.empty() && !sorted_key_len)
       {
         auto sv = extract_string_value(arg);
         if(sv.has_value() && !is_python_list_type(arg.type()))
@@ -2845,6 +2869,25 @@ std::optional<exprt> python_convertert::try_builtin_call(
                 std::size_t fi = static_cast<std::size_t>(sorted_key_index);
                 if(fi < est.components().size() && fi < raw_e.operands().size())
                   sort_key_e = raw_e.operands()[fi];
+              }
+              if(sorted_key_len)
+              {
+                auto sv = extract_string_value(raw_e);
+                if(!sv.has_value())
+                {
+                  all_const_int = false;
+                  all_const_str = false;
+                  break;
+                }
+                // Code-point count (PLR §3.6), matching len().
+                long long cps = 0;
+                for(std::size_t ci = 0; ci < sv->size(); ci++)
+                {
+                  const unsigned char b = static_cast<unsigned char>((*sv)[ci]);
+                  if(b < 0x80 || b >= 0xC0)
+                    cps++;
+                }
+                sort_key_e = from_integer(cps, signedbv_typet{64});
               }
               const exprt &e = sort_key_e;
               if(all_const_int)
@@ -3098,7 +3141,13 @@ std::optional<exprt> python_convertert::try_builtin_call(
   // PLib builtins: sum(iterable) — sum of elements
   else if(func_name == "sum")
   {
-    if(args.is_array() && !as_array(args).empty())
+    // PLR: sum(iterable, /, start=0). The fold below models the ITERABLE
+    // only; the start value is added to the result afterwards. A keyword
+    // (start=...) or **spread is not folded (fold-soundness rule:
+    // sum([1,2,3], 10) folded to 6 -- a false proof).
+    if(
+      args.is_array() && !as_array(args).empty() &&
+      fold_covers_call_shape(expr, 2))
     {
       const jsont &sum_arg_ast = *as_array(args).begin();
       exprt arg = convert_expression(sum_arg_ast);
@@ -3156,8 +3205,23 @@ std::optional<exprt> python_convertert::try_builtin_call(
           symbol_table.add(tmp_sym);
         }
         symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
-        pending_checks.push_back(
-          code_frontend_assignt{tmp, from_integer(0, acc_type)});
+        // PLR: the accumulator seeds with the START argument (2nd
+        // positional; default 0). Non-numeric start degrades to nondet.
+        exprt seed = from_integer(0, acc_type);
+        if(as_array(args).size() >= 2)
+        {
+          exprt st = convert_expression(*std::next(as_array(args).begin()));
+          if(
+            st.is_nil() ||
+            (st.type().id() != ID_signedbv && st.type().id() != ID_integer &&
+             st.type().id() != ID_floatbv && st.type().id() != ID_bool))
+          {
+            return side_effect_expr_nondett{
+              python_int_type(), get_location(expr)};
+          }
+          seed = st.type() == acc_type ? st : safe_typecast(st, acc_type);
+        }
+        pending_checks.push_back(code_frontend_assignt{tmp, std::move(seed)});
         for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
         {
           exprt idx = from_integer(i, signedbv_typet{64});
@@ -5150,8 +5214,234 @@ std::optional<exprt> python_convertert::try_builtin_call(
   // min(), max()
   else if(func_name == "min" || func_name == "max")
   {
-    if(args.is_array() && !as_array(args).empty())
+    // Fold-soundness rule: key= is handled EXPLICITLY by the keyed
+    // constant fold just below (recognised shapes fold; anything else
+    // degrades to nondet -- never silently ignored: max(xs, key=abs)
+    // used to fold to the plain max, a false proof). Other keywords
+    // (default=) fall to the nondet fallback here.
+    if(
+      args.is_array() && !as_array(args).empty() &&
+      fold_covers_call_shape(expr, SIZE_MAX, {"key"}))
     {
+      // key= handling: a CONVERSION-TIME keyed fold over a constant
+      // literal sequence, for the recognisable key shapes (abs, len,
+      // lambda p: p[N]). Anything else with key= present degrades to
+      // NONDET below -- silently ignoring the key was a false-proof
+      // class (max([1,-5,3], key=abs) folded to 3; CPython: -5).
+      {
+        const jsont &mm_kw = json_member(expr, "keywords");
+        bool key_present = false;
+        std::string key_builtin;  // "abs" / "len"
+        long long key_index = -1; // lambda p: p[N]
+        if(mm_kw.is_array())
+        {
+          for(const auto &k : as_array(mm_kw))
+          {
+            if(json_string(json_member(k, "arg")) != "key")
+              continue;
+            key_present = true;
+            const jsont &kv = json_member(k, "value");
+            if(is_node_type(kv, "Name"))
+              key_builtin = json_string(json_member(kv, "id"));
+            else if(is_node_type(kv, "Lambda"))
+            {
+              const jsont &body = json_member(kv, "body");
+              if(is_node_type(body, "Subscript"))
+              {
+                const jsont &sl = json_member(body, "slice");
+                if(is_node_type(sl, "Constant"))
+                {
+                  const jsont &v = json_member(sl, "value");
+                  if(v.is_number())
+                  {
+                    try
+                    {
+                      key_index = std::stoll(v.value);
+                    }
+                    catch(...)
+                    {
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        if(key_present)
+        {
+          exprt arg = convert_expression(*as_array(args).begin());
+          // Resolve a Name-bound literal.
+          if(arg.id() == ID_symbol)
+          {
+            auto lit = list_literals.find(to_symbol_expr(arg).get_identifier());
+            if(lit != list_literals.end())
+              arg = lit->second;
+            else
+            {
+              auto tl =
+                tuple_literals.find(to_symbol_expr(arg).get_identifier());
+              if(tl != tuple_literals.end())
+                arg = tl->second;
+            }
+          }
+          // Structural p[N] access on a LITERAL element: a {len, data}
+          // list struct reads data[N]; any other struct (tuple structs
+          // are anonymous inline structs -- no python_tuple tag survives
+          // element storage) reads operand N directly.
+          auto keyed_subterm =
+            [&](const exprt &e, long long n) -> std::optional<exprt>
+          {
+            if(e.id() != ID_struct)
+              return std::nullopt;
+            if(
+              is_python_list_type(e.type()) && e.operands().size() >= 2 &&
+              e.operands()[1].id() == ID_array)
+            {
+              const auto &ops = e.operands()[1].operands();
+              if(n < (long long)ops.size())
+                return ops[n];
+              return std::nullopt;
+            }
+            if(n < (long long)e.operands().size())
+              return e.operands()[n];
+            return std::nullopt;
+          };
+          // The keyed comparand of element e, as a double (numeric keys)
+          // or a string (string keys); nullopt = not foldable.
+          auto keyed_num = [&](const exprt &e) -> std::optional<double>
+          {
+            if(key_builtin == "abs")
+            {
+              auto v = try_eval_double(e);
+              if(v.has_value())
+                return std::fabs(*v);
+              return std::nullopt;
+            }
+            if(key_builtin == "len")
+            {
+              auto sv = extract_string_value(e);
+              if(sv.has_value())
+                return static_cast<double>(sv->size());
+              if(
+                (is_python_list_type(e.type()) ||
+                 is_python_tuple_type(e.type())) &&
+                e.id() == ID_struct && !e.operands().empty() &&
+                e.operands()[0].is_constant())
+              {
+                auto lv = try_eval_double(e.operands()[0]);
+                if(lv.has_value())
+                  return lv;
+              }
+              return std::nullopt;
+            }
+            if(key_index >= 0)
+            {
+              auto sub = keyed_subterm(e, key_index);
+              if(sub.has_value())
+                return try_eval_double(*sub);
+              return std::nullopt;
+            }
+            return std::nullopt;
+          };
+          auto keyed_str = [&](const exprt &e) -> std::optional<std::string>
+          {
+            if(key_index < 0)
+              return std::nullopt;
+            auto sub = keyed_subterm(e, key_index);
+            if(sub.has_value())
+              return extract_string_value(*sub);
+            return std::nullopt;
+          };
+          // Collect the elements of a LITERAL sequence.
+          std::vector<exprt> elems;
+          bool have_elems = false;
+          if(
+            is_python_list_type(arg.type()) && arg.id() == ID_struct &&
+            arg.operands().size() >= 2 && arg.operands()[0].is_constant())
+          {
+            mp_integer n;
+            if(
+              !to_integer(to_constant_expr(arg.operands()[0]), n) && n > 0 &&
+              arg.operands()[1].id() == ID_array)
+            {
+              const auto &ops = arg.operands()[1].operands();
+              for(mp_integer i = 0; i < n && i < (long long)ops.size(); ++i)
+                elems.push_back(ops[i.to_long()]);
+              have_elems = !elems.empty();
+            }
+          }
+          else if(is_python_tuple_type(arg.type()) && arg.id() == ID_struct)
+          {
+            for(const auto &op : arg.operands())
+              elems.push_back(op);
+            have_elems = !elems.empty();
+          }
+          if(have_elems)
+          {
+            // Try numeric keys first, then string keys; PLR §5.2.3:
+            // ties keep the FIRST extremal element.
+            std::optional<std::size_t> best;
+            bool ok = true;
+            {
+              std::vector<double> kd;
+              for(const auto &e : elems)
+              {
+                auto v = keyed_num(e);
+                if(!v.has_value())
+                {
+                  ok = false;
+                  break;
+                }
+                kd.push_back(*v);
+              }
+              if(ok)
+              {
+                std::size_t bi = 0;
+                for(std::size_t i = 1; i < kd.size(); i++)
+                {
+                  const bool better =
+                    func_name == "min" ? kd[i] < kd[bi] : kd[i] > kd[bi];
+                  if(better)
+                    bi = i;
+                }
+                best = bi;
+              }
+            }
+            if(!best.has_value())
+            {
+              std::vector<std::string> ks;
+              bool oks = true;
+              for(const auto &e : elems)
+              {
+                auto v = keyed_str(e);
+                if(!v.has_value())
+                {
+                  oks = false;
+                  break;
+                }
+                ks.push_back(*v);
+              }
+              if(oks)
+              {
+                std::size_t bi = 0;
+                for(std::size_t i = 1; i < ks.size(); i++)
+                {
+                  const bool better =
+                    func_name == "min" ? ks[i] < ks[bi] : ks[i] > ks[bi];
+                  if(better)
+                    bi = i;
+                }
+                best = bi;
+              }
+            }
+            if(best.has_value())
+              return elems[*best];
+          }
+          // key= present but not foldable: nondet (never ignore the key).
+          return side_effect_expr_nondett{
+            python_value_type(), get_location(expr)};
+        }
+      }
       // Helper: classify a type as numeric (int / float) — anything
       // else (string structs, list structs, python_value tagged
       // unions, etc.) is left to the existing fallback paths so we
@@ -5188,6 +5478,94 @@ std::optional<exprt> python_convertert::try_builtin_call(
             emit_conditional_exception(true_exprt{}, "TypeError");
             return side_effect_expr_nondett{
               python_value_type(), get_location(expr)};
+          }
+        }
+        // Constant-STRING sequence: lexicographic min/max at conversion
+        // time (PLR §6.10.1 string ordering). Previously these fell to
+        // the nil tail and the enclosing assert was silently DROPPED
+        // (max(['a','b','c']) == 'c' passed vacuously); the honest fold
+        // proves it, and symbolic string elements stay nondet.
+        {
+          exprt seq = arg;
+          if(seq.id() == ID_symbol)
+          {
+            auto lit = list_literals.find(to_symbol_expr(seq).get_identifier());
+            if(lit != list_literals.end())
+              seq = lit->second;
+            else
+            {
+              auto tl =
+                tuple_literals.find(to_symbol_expr(seq).get_identifier());
+              if(tl != tuple_literals.end())
+                seq = tl->second;
+            }
+          }
+          std::vector<exprt> selems;
+          // min/max over a constant STRING iterates its CODE POINTS
+          // (PLR §3.6): elements are the single-character strings.
+          {
+            auto sv = extract_string_value(seq);
+            if(sv.has_value() && !is_python_list_type(seq.type()))
+            {
+              const std::string &sc = *sv;
+              for(std::size_t ci = 0; ci < sc.size();)
+              {
+                const unsigned char b = static_cast<unsigned char>(sc[ci]);
+                std::size_t clen = 1;
+                if(b >= 0xF0)
+                  clen = 4;
+                else if(b >= 0xE0)
+                  clen = 3;
+                else if(b >= 0xC0)
+                  clen = 2;
+                selems.push_back(python_string_literal(sc.substr(ci, clen)));
+                ci += clen;
+              }
+            }
+          }
+          if(
+            selems.empty() && is_python_list_type(seq.type()) &&
+            seq.id() == ID_struct && seq.operands().size() >= 2 &&
+            seq.operands()[0].is_constant() &&
+            seq.operands()[1].id() == ID_array)
+          {
+            mp_integer n;
+            if(!to_integer(to_constant_expr(seq.operands()[0]), n) && n > 0)
+            {
+              const auto &ops = seq.operands()[1].operands();
+              for(mp_integer i = 0; i < n && i < (long long)ops.size(); ++i)
+                selems.push_back(ops[i.to_long()]);
+            }
+          }
+          else if(is_python_tuple_type(seq.type()) && seq.id() == ID_struct)
+            for(const auto &op : seq.operands())
+              selems.push_back(op);
+          if(!selems.empty())
+          {
+            std::vector<std::string> vals;
+            bool all_str = true;
+            for(const auto &e : selems)
+            {
+              auto sv = extract_string_value(e);
+              if(!sv.has_value())
+              {
+                all_str = false;
+                break;
+              }
+              vals.push_back(*sv);
+            }
+            if(all_str)
+            {
+              std::size_t bi = 0;
+              for(std::size_t i = 1; i < vals.size(); i++)
+              {
+                const bool better =
+                  func_name == "min" ? vals[i] < vals[bi] : vals[i] > vals[bi];
+                if(better)
+                  bi = i;
+              }
+              return python_string_literal(vals[bi]);
+            }
           }
         }
         // Tuple-argument form: walk the struct.s components in
@@ -5582,7 +5960,12 @@ std::optional<exprt> python_convertert::try_builtin_call(
         }
       }
     }
-    return nil_exprt{};
+    // Unmatched / keyworded shapes: a NONDET result, never nil -- a nil
+    // expr propagates into the enclosing statement and the statement is
+    // silently DROPPED (an `assert max(...) == 3` vanished entirely: an
+    // under-approximation false-proof channel, found when the key= gate
+    // exposed this tail).
+    return side_effect_expr_nondett{python_value_type(), get_location(expr)};
   }
 
   return std::nullopt;

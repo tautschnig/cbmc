@@ -295,6 +295,24 @@ std::optional<exprt> python_convertert::try_list_method(
 
   if(method_name == "sort")
   {
+    // Fold-soundness rule: sort(reverse=True) / sort(key=...) change the
+    // ORDER; both the constant fold and the bubble sort below model the
+    // plain form only (xs.sort(reverse=True) sorted ascending -- a false
+    // proof). A keyworded call HAVOCS the list: sound, and the length is
+    // preserved by re-asserting it below.
+    if(!fold_covers_call_shape(expr, 0))
+    {
+      // Havoc the DATA array (length unchanged: sort permutes) and drop
+      // the tracked literal so no stale fold survives.
+      const auto &list_st = to_struct_type(obj_base_type);
+      const auto &data_type = to_array_type(list_st.components()[1].type());
+      member_exprt data{obj, "data", data_type};
+      pending_checks.push_back(code_frontend_assignt{
+        data, side_effect_expr_nondett{data.type(), get_location(expr)}});
+      if(obj.id() == ID_symbol)
+        list_literals.erase(to_symbol_expr(obj).get_identifier());
+      return python_none_value();
+    }
     // PLR §6.10: when the list is a known literal whose
     // elements are all constant ints or constant strings,
     // sort at conversion time and rewrite the list. Avoids
@@ -606,6 +624,32 @@ std::optional<exprt> python_convertert::try_list_method(
   // PLib stdtypes: list.index(value) — return index of first occurrence
   if(method_name == "index")
   {
+    // Fold-soundness rule: index(x, start[, end]) searches a SUBRANGE;
+    // both paths below model the full-list search only
+    // ([1,2,1,2].index(2, 2) folded to 1 -- a false proof). The ranged
+    // form degrades to a nondet result plus a MAY-raise ValueError
+    // (PLR §6.3: raises when absent from the subrange -- which we
+    // cannot decide here, so both outcomes stay reachable; sound in
+    // both directions).
+    if(!fold_covers_call_shape(expr, 1))
+    {
+      static unsigned idx_nd_ctr = 0;
+      const std::string gn = "__idx_nd_" + std::to_string(idx_nd_ctr++);
+      const irep_idt gid{qualify_name(gn)};
+      if(symbol_table.lookup(gid) == nullptr)
+      {
+        symbolt gs{gid, bool_typet{}, "python"};
+        gs.base_name = gn;
+        gs.is_lvalue = true;
+        gs.is_state_var = true;
+        symbol_table.add(gs);
+      }
+      symbol_exprt g = symbol_table.lookup_ref(gid).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{
+        g, side_effect_expr_nondett{bool_typet{}, get_location(expr)}});
+      emit_conditional_exception(g, "ValueError");
+      return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+    }
     if(args.is_array() && !as_array(args).empty())
     {
       exprt search = convert_expression(*as_array(args).begin());
