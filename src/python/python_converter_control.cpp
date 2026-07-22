@@ -673,14 +673,22 @@ codet python_convertert::convert_for(const jsont &stmt)
           body_block.add(convert_statement(s));
         loop_depth--;
       }
-      body_block.add(
-        code_frontend_assignt{loop_sym, plus_exprt{loop_sym, new_step}});
       mp_integer ns_val;
       to_integer(to_constant_expr(new_step), ns_val);
       exprt cond = ns_val < 0
                      ? binary_relation_exprt{loop_sym, ID_gt, new_stop}
                      : binary_relation_exprt{loop_sym, ID_lt, new_stop};
-      code_whilet while_stmt{cond, std::move(body_block)};
+      // C-style for, NOT while+tail-increment: `continue` must jump to
+      // the INCREMENT (PLR §8.3 -- the next loop iteration), and the
+      // while encoding's continue re-tested the condition with the
+      // induction variable unchanged: an INFINITE goto loop, silently
+      // truncated under --no-unwinding-assertions into VACUOUS proofs
+      // (the whole for+continue family; ESBMC for_range_continue_fail).
+      code_fort while_stmt{
+        nil_exprt{},
+        cond,
+        side_effect_expr_assignt{loop_sym, plus_exprt{loop_sym, new_step}, loc},
+        std::move(body_block)};
       while_stmt.add_source_location() = loc;
       code_blockt result;
       result.add(std::move(init));
@@ -769,7 +777,6 @@ codet python_convertert::convert_for(const jsont &stmt)
         body_block.add(convert_statement(s));
       loop_depth--;
     }
-    body_block.add(code_frontend_assignt{loop_sym, plus_exprt{loop_sym, step}});
 
     // Condition: step > 0 ? i < stop : i > stop
     exprt cond;
@@ -790,7 +797,13 @@ codet python_convertert::convert_for(const jsont &stmt)
         binary_relation_exprt{loop_sym, ID_gt, stop}};
     }
 
-    code_whilet while_stmt{cond, std::move(body_block)};
+    // C-style for (see the constant-range variant's note: continue must
+    // reach the increment).
+    code_fort while_stmt{
+      nil_exprt{},
+      cond,
+      side_effect_expr_assignt{loop_sym, plus_exprt{loop_sym, step}, loc},
+      std::move(body_block)};
     while_stmt.add_source_location() = loc;
 
     code_blockt result;
@@ -1375,6 +1388,62 @@ skip_string_unroll:;
       key_val = safe_typecast(key_val, loop_var.type());
     body_block.add(code_frontend_assignt{loop_var, key_val});
 
+    // PLR §8.3: `for u, v in d` iterates the KEYS; a Tuple target
+    // unpacks each (tuple) key into the element names. Without this the
+    // element names stayed unconverted and every body statement using
+    // them was silently DROPPED -- `for u, v in d: total += u + v`
+    // proved total == 0 (a vacuity false proof; ESBMC
+    // dict_tuple_key_for_iter_fail, CPython-confirmed). Mirrors the
+    // list-branch unpack; the key tuple is an anonymous inline struct,
+    // so fields are _0/_1/... components.
+    if(is_node_type(target, "Tuple"))
+    {
+      const jsont &t_elts = json_member(target, "elts");
+      if(t_elts.is_array())
+      {
+        std::size_t tidx = 0;
+        for(const auto &elt : as_array(t_elts))
+        {
+          if(is_node_type(elt, "Name"))
+          {
+            const std::string en = json_string(json_member(elt, "id"));
+            const irep_idt eid{qualify_name(en)};
+            const std::string field = "_" + std::to_string(tidx);
+            typet et = python_int_type();
+            if(
+              loop_var.type().id() == ID_struct &&
+              to_struct_type(loop_var.type()).has_component(field))
+              et = to_struct_type(loop_var.type()).get_component(field).type();
+            if(symbol_table.lookup(eid) == nullptr)
+            {
+              symbolt es{eid, et, "python"};
+              es.base_name = en;
+              es.is_lvalue = true;
+              es.is_state_var = true;
+              symbol_table.add(es);
+            }
+            symbol_exprt ev = symbol_table.lookup_ref(eid).symbol_expr();
+            if(
+              loop_var.type().id() == ID_struct &&
+              to_struct_type(loop_var.type()).has_component(field))
+            {
+              exprt fv = member_exprt{loop_var, field, et};
+              if(fv.type() != ev.type())
+                fv = safe_typecast(fv, ev.type());
+              body_block.add(code_frontend_assignt{ev, fv});
+            }
+            else
+            {
+              // Key shape unknown: a sound nondet binding (never drop).
+              body_block.add(code_frontend_assignt{
+                ev, side_effect_expr_nondett{ev.type(), loc}});
+            }
+          }
+          tidx++;
+        }
+      }
+    }
+
     const jsont &body_stmts = json_member(stmt, "body");
     if(body_stmts.is_array())
     {
@@ -1384,8 +1453,6 @@ skip_string_unroll:;
         body_block.add(convert_statement(s));
       loop_depth--;
     }
-    body_block.add(code_frontend_assignt{
-      idx_var, plus_exprt{idx_var, from_integer(1, signedbv_typet{64})}});
 
     // Bound the iteration by the model's max dict size in addition to the
     // (possibly symbolic) length, so the loop is *statically* bounded even
@@ -1400,8 +1467,14 @@ skip_string_unroll:;
         idx_var,
         ID_lt,
         from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}};
-    code_whilet while_stmt{
-      cm_bound(idx_var, default_bound), std::move(body_block)};
+    // C-style for (see the constant-range variant's note: continue must
+    // reach the increment).
+    code_fort while_stmt{
+      nil_exprt{},
+      cm_bound(idx_var, default_bound),
+      side_effect_expr_assignt{
+        idx_var, plus_exprt{idx_var, from_integer(1, signedbv_typet{64})}, loc},
+      std::move(body_block)};
     result.add(std::move(while_stmt));
     return finalize_for(std::move(result));
   }
@@ -2018,12 +2091,13 @@ skip_string_unroll:;
     loop_depth--;
   }
 
-  // __idx += 1
-  body_block.add(code_frontend_assignt{
-    idx_var, plus_exprt{idx_var, from_integer(1, int_type)}});
-
-  code_whilet while_stmt{
+  // C-style for with `__idx += 1` as the ITER expression (see the
+  // constant-range variant's note: continue must reach the increment).
+  code_fort while_stmt{
+    nil_exprt{},
     cm_bound(idx_var, binary_relation_exprt{idx_var, ID_lt, length}),
+    side_effect_expr_assignt{
+      idx_var, plus_exprt{idx_var, from_integer(1, int_type)}, loc},
     std::move(body_block)};
   while_stmt.add_source_location() = loc;
   result.add(std::move(while_stmt));

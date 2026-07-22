@@ -2570,6 +2570,44 @@ codet python_convertert::convert_assign(const jsont &stmt)
               }
             }
           }
+          else if(
+            is_node_type(elt, "Subscript") || is_node_type(elt, "Attribute"))
+          {
+            // PLR §7.2: `a[i], a[j] = a[j], a[i]` -- the RHS tuple was
+            // already snapshotted into `src`, so evaluation order is
+            // correct; the SUBSCRIPT/ATTRIBUTE element targets were
+            // simply DROPPED here (only Name/Tuple were handled), so the
+            // swap never stored and `a` was unchanged (a false proof:
+            // ESBMC github_4792_fail). Materialise the snapshot field
+            // into a temp and re-emit a single-target Assign through the
+            // full subscript/attribute store machinery (bounds
+            // obligations, dict keys, negative indices).
+            static unsigned sf_ctr = 0;
+            const std::string tn = "__unpack_fld_" + std::to_string(sf_ctr++);
+            const irep_idt tid{qualify_name(tn)};
+            if(symbol_table.lookup(tid) == nullptr)
+            {
+              symbolt fs{tid, field_type, "python"};
+              fs.base_name = tn;
+              fs.location = loc;
+              fs.is_lvalue = true;
+              fs.is_state_var = true;
+              fs.is_static_lifetime = current_function.empty();
+              symbol_table.add(fs);
+            }
+            block.add(code_frontend_assignt{
+              symbol_table.lookup_ref(tid).symbol_expr(), field_expr});
+            json_objectt name_node;
+            name_node["_type"] = json_stringt("Name");
+            name_node["id"] = json_stringt(tn);
+            jsont assign_node = stmt;
+            json_objectt &an = to_json_object(assign_node);
+            json_arrayt tgt;
+            tgt.push_back(elt);
+            an["targets"] = tgt;
+            an["value"] = name_node;
+            block.add(convert_assign(assign_node));
+          }
           else
           {
             // Simple Name target
