@@ -3751,8 +3751,29 @@ KNOWNBUG):
    (2892, 2993_2, 3001, 3647_15, 3836, 4342 variants, 4747 class-attr
    default, 4984 modstub, 5955 pair, ...) -- re-triage against the
    pre-update knownbug ledger before working.
-Also: 107 FAILs (sound-direction, precision) and 7 TIMEOUTs unmined for
-whole-group roots.
+Also: 7 TIMEOUTs unmined. **The 107 FAILs were characterised
+(2026-07-22) and are NOT a precision worklist**: 79 expect ESBMC's exact
+error-message strings (`ERROR: TypeError: ...`), ~25 expect ESBMC's
+`Properties: N verified` / coverage output, and the remainder (e.g.
+github_3642_7 -- a buggy method in an UNCALLED function) are ESBMC's
+static whole-function analysis of unreachable code. In every sampled
+case CBMC is PLR-correct (we detect the real error / the dead code
+genuinely does not run); the mismatch is tool-output alignment, not a
+semantic gap. No action -- matching another tool's wording is outside
+the PLR-correctness mandate.
+
+Deferred soundness residual (scoped 2026-07-22): **None-ordering on a
+SYMBOL** -- `x = None; x < 0` should raise TypeError (PLR §6.10.1) but
+proves vacuously, because a None-valued symbol carries the pv-NONE
+struct in its ASSIGN, not in its symbol value, so orderable_category_of
+sees only the symbol (category 0). Inline `None < 0` IS caught. This is
+the root of the missing-return_* danger cluster (fall-through returns
+None, then `None < 0` downstream). The fix needs reliable None-symbol
+value tracking (the symbol's `value` field is empty today); a
+none_constants side-set was prototyped but the multiple plain-assign
+paths made it fragile -- deferred to a focused None-representation pass.
+The `--python-missing-return-check` opt-in flag already flags these at
+the definition site.
 
 ---
 
