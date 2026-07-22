@@ -616,3 +616,22 @@ string-shaped slots; parameters re-annotated in the body REBIND instead
 of retyping in place (call-contract). Recorded residuals: interproc
 dict.pop membership precision under native (sound direction);
 unbounded-ints experimental config unchanged.
+
+**2026-07-22 pm (doc-review hardening round):** a full documentation/code
+review of the handle representation found and closed FOUR more raw-string
+aggregate sites the corpus never reached, plus one precision gap -- each
+CORE-pinned: (1) free-function `**kwargs` packing pushed raw
+`python_string_literal` keys into the handle-typed keys array (the
+free-function twin of the method-path fix; simplify_rec postcondition
+crash -- `native-strings-kwargs-freefn`); (2) the `dict(a=1)` constructor
+kwargs builder, same shape; (3) two sentinel-dict builders
+(`function_returned_dict_keys`) in the assign paths; (4) list/set STRING
+MEMBERSHIP compared raw handle bits -- `"a" in ["a","b"]` was wrongly
+refutable; elements are now read through the strtab denotation
+(`native-strings-list-membership`; sets are list-backed so one scan
+covers both). Superseded pointer-boxing machinery removed
+(`python_boxed_string_ptr_type`, `box_string_for_storage`,
+`is_boxed_dict_key_type` + dead branches); stale boxing-era comments
+rewritten to the handle design. Recorded native-only imprecision (sound
+direction): interprocedural `dict.pop` key-membership through a pv-typed
+key parameter (`native-dict-pop-interproc-knownbug`).

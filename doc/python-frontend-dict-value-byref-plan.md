@@ -12,13 +12,23 @@ snapshot of the tracked literal; a statement-level pre-scan
 `X[k].<mutator>(...)` statement converts, so reads keep full fold
 precision until the first mutation (guarding the fold itself regressed
 dict18/dict19/dict63 — wrong layer). Residuals: heterogeneous
-value-typed KEY dicts (copied chain + havoc), the `v = a[k];
-v.append(...)` extraction-aliasing case (same root as the §0 nested-list
-residual -- **soundness closed 2026-07-18, `e82ae0505c`**: sibling
-extraction aliases and direct-slot mutations now HAVOC every tracked alias
-of the mutated source, closing two probed false proofs; PRECISION still
-needs reference semantics), and empty-`{}` value typing
-(`dict_setdefault_list`).
+value-typed KEY dicts (copied chain + havoc), and empty-`{}` value typing
+(`dict_setdefault_list`). The `v = a[k]; v.append(...)`
+extraction-aliasing case is **CLOSED for dict slots** (soundness
+2026-07-18, `e82ae0505c` — sibling aliases + direct-slot mutations havoc
+every tracked alias; precision 2026-07-19/20, `caf9de4050` +
+`dbc270f39f` — §0 write-through: the alias records the re-addressable
+slot (int-keyed index, or the constant STRING key when the read folded)
+and an in-place mutation WRITES THROUGH to it, with every hazard channel
+demoting to the sound havoc; hazard suite pinned:
+`extraction-write-through` / `extraction-key-write-through` CORE). NOTE
+this is NOT slot-aliasing (rejected below, still rejected): the alias is
+a conversion-time record used only while no hazard statement intervenes —
+subscript-assign, insert/pop/sort/reverse/del, rebind, control flow, or
+any statement mentioning the source demotes; the object-identity
+divergence cases therefore keep the havoc semantics. The LIST-element
+analogue (`r = g[0]; r.append(5)`) remains open (same machinery, next
+slice).
 Distinct from [§5 dict pass-by-reference](python-frontend-plan.md#dict-byref)
 (the *dict itself* as a by-reference parameter — RESOLVED).
 
