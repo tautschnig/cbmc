@@ -2733,6 +2733,97 @@ codet python_convertert::convert_assign(const jsont &stmt)
         }
         continue;
       }
+      // Sound floor: RHS is a python_value (Any / a TUPLE-tagged field like
+      // `t.shape`) whose concrete arity/fields we cannot resolve here. The
+      // concrete-tuple/list branches above did not fire, so WITHOUT this the
+      // targets get NO assignment and the whole statement (plus any later
+      // assertion using the names) is silently DROPPED -- a vacuity false
+      // proof (ESBMC github_4515_attr_fail: `M, N = t.shape; assert M == 99`
+      // proved). Bind each Name target to a sound nondet value so the assert
+      // is a spurious FAIL, never a vacuous proof. (Precise pv-tuple unwrap
+      // -- reading the element values through the stored tuple -- is a
+      // recorded follow-up.)
+      if(elts.is_array() && is_python_value_type(rhs.type()))
+      {
+        // Precise path: the RHS is a call to a function with a tracked
+        // CONSTANT tuple return literal (function_returned_literal) --
+        // unpack from THAT concrete tuple so `fp, fq = pair()` stays
+        // precise despite the `-> tuple` return-type pv erasure.
+        if(is_node_type(value, "Call"))
+        {
+          const jsont &fnode = json_member(value, "func");
+          std::string callee;
+          if(is_node_type(fnode, "Name"))
+            callee = json_string(json_member(fnode, "id"));
+          auto fl_it = callee.empty() ? function_returned_literal.end()
+                                      : function_returned_literal.find(callee);
+          auto rc_it = function_return_count.find(callee);
+          if(
+            fl_it != function_returned_literal.end() &&
+            rc_it != function_return_count.end() && rc_it->second == 1 &&
+            fl_it->second.id() == ID_struct &&
+            is_python_tuple_type(fl_it->second.type()))
+          {
+            const exprt lit = fl_it->second;
+            const auto &tst = to_struct_type(lit.type());
+            std::size_t li = 0;
+            bool ok = true;
+            for(const auto &elt : as_array(elts))
+            {
+              const std::string field = "_" + std::to_string(li);
+              if(!is_node_type(elt, "Name") || !tst.has_component(field))
+              {
+                ok = false;
+                break;
+              }
+              const std::string en = json_string(json_member(elt, "id"));
+              const irep_idt eid{qualify_name(en)};
+              const typet ft = tst.get_component(field).type();
+              if(symbol_table.lookup(eid) == nullptr)
+              {
+                symbolt es{eid, ft, "python"};
+                es.base_name = en;
+                es.location = loc;
+                es.is_lvalue = true;
+                es.is_state_var = true;
+                es.is_static_lifetime = current_function.empty();
+                symbol_table.add(es);
+              }
+              else
+                symbol_table.get_writeable_ref(eid).type = ft;
+              block.add(code_frontend_assignt{
+                symbol_table.lookup_ref(eid).symbol_expr(),
+                member_exprt{lit, field, ft}});
+              ++li;
+            }
+            if(ok && li == as_array(elts).size())
+              continue;
+          }
+        }
+        for(const auto &elt : as_array(elts))
+        {
+          if(!is_node_type(elt, "Name"))
+            continue;
+          const std::string en = json_string(json_member(elt, "id"));
+          if(en.empty())
+            continue;
+          const irep_idt eid{qualify_name(en)};
+          if(symbol_table.lookup(eid) == nullptr)
+          {
+            symbolt es{eid, python_value_type(), "python"};
+            es.base_name = en;
+            es.location = loc;
+            es.is_lvalue = true;
+            es.is_state_var = true;
+            es.is_static_lifetime = current_function.empty();
+            symbol_table.add(es);
+          }
+          block.add(code_frontend_assignt{
+            symbol_table.lookup_ref(eid).symbol_expr(),
+            side_effect_expr_nondett{symbol_table.lookup_ref(eid).type, loc}});
+        }
+        continue;
+      }
     }
 
     // Handle subscript assignment: lst[i] = value
