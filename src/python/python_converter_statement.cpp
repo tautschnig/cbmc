@@ -41,6 +41,12 @@ codet python_convertert::convert_statement(const jsont &stmt)
   // (BEFORE conversion -- a demoted alias falls back to sound havoc).
   demote_slot_aliases_for_statement(stmt);
 
+  // Extraction-alias in-place mutation through the NON-METHOD channels
+  // (aug-assign / subscript store / del): write through or havoc the
+  // source BEFORE the alias records are erased by the statement's own
+  // (re)assignment handling.
+  handle_alias_mutation_channels(stmt);
+
   codet result = code_skipt{};
 
   if(node_type == "AnnAssign")
