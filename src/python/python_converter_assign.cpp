@@ -1072,7 +1072,10 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
             exprt::operandst key_elems, val_elems;
             for(const auto &k : ki->second)
             {
-              key_elems.push_back(python_string_literal(k));
+              // Native: intern the key to a string-id handle (raw
+              // smt_string in a handle-typed array is ill-typed).
+              key_elems.push_back(coerce_element(
+                python_string_literal(k), keys_type.element_type()));
               val_elems.push_back(safe_zero(vals_type.element_type()));
             }
             while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
@@ -4312,7 +4315,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
               exprt::operandst key_elems, val_elems;
               for(const auto &k : ki->second)
               {
-                key_elems.push_back(python_string_literal(k));
+                // Native: intern the key to a string-id handle.
+                key_elems.push_back(coerce_element(
+                  python_string_literal(k), keys_type.element_type()));
                 val_elems.push_back(safe_zero(vals_type.element_type()));
               }
               while(key_elems.size() < PYTHON_MAX_DICT_SIZE)

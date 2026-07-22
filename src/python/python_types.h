@@ -282,27 +282,19 @@ inline typet python_dict_key_elem_type(const typet &key_type)
   return key_type;
 }
 
-/// True if `elem_type` is a boxed dict string key (native pointer-to-string).
-inline bool is_boxed_dict_key_type(const typet &elem_type)
-{
-  return elem_type.id() == ID_pointer &&
-         is_python_string_type(to_pointer_type(elem_type).base_type());
-}
-
-/// Logical key type seeing THROUGH the native string box (so callers'
-/// is_python_string_type(...) key-type checks keep working unchanged).
+/// Logical key type seeing THROUGH the native string-id handle (so
+/// callers' is_python_string_type(...) key-type checks keep working
+/// unchanged).
 inline typet python_dict_logical_key_type(const typet &keys_elem_type)
 {
   if(is_python_string_handle_type(keys_elem_type))
     return smt_string_typet{};
-  if(is_boxed_dict_key_type(keys_elem_type))
-    return to_pointer_type(keys_elem_type).base_type();
   return keys_elem_type;
 }
 
-/// Read+unbox a key element: dereference the box on native, identity otherwise.
-/// Use at every dict keys[i] READ site so the rest of the code sees a
-/// string-typed key as before.
+/// Read a key element through the handle indirection on native (the
+/// denotation strtab(h)), identity otherwise. Use at every dict keys[i]
+/// READ site so the rest of the code sees a string-typed key as before.
 inline exprt python_dict_unbox_key(const exprt &key_elem)
 {
   // HANDLE key: the denotation is strtab(h). The strtab symbol has a
@@ -316,8 +308,6 @@ inline exprt python_dict_unbox_key(const exprt &key_elem)
         mathematical_function_typet{{signedbv_typet{64}}, smt_string_typet{}}},
       {key_elem}};
   }
-  if(is_boxed_dict_key_type(key_elem.type()))
-    return dereference_exprt{key_elem};
   return key_elem;
 }
 

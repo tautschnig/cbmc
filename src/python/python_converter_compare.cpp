@@ -2675,8 +2675,15 @@ exprt python_convertert::convert_compare(const jsont &expr)
         // Use the string solver's content-equality for membership so
         // 'str(1) in [str(0), str(1), str(2)]' resolves correctly even
         // when the elements were constructed at runtime.
+        // Native string-id handles: a list[str] element is a bv64 handle
+        // whose string denotation is strtab(h) -- read elements through
+        // the denotation so membership compares string VALUES (the raw
+        // handle bits would wrongly refute `"a" in ["a"]` when the
+        // interned probe and a runtime-built element differ as handles).
+        const bool handle_elems =
+          is_python_string_handle_type(data_type.element_type());
         bool list_of_strings =
-          is_python_string_type(data_type.element_type()) &&
+          (is_python_string_type(data_type.element_type()) || handle_elems) &&
           is_python_string_type(item.type());
 
         // Build disjunction for up to PYTHON_MAX_LIST_LENGTH elements
@@ -2686,6 +2693,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
         {
           exprt idx = from_integer(i, signedbv_typet{64});
           exprt elem = index_exprt{data, idx};
+          if(handle_elems)
+            elem = python_string_handle_denotation(elem);
           exprt match;
           // PLR §6.13: 'None in xs' for typed-element xs
           // recognises the per-element-type None marker
@@ -2963,8 +2972,9 @@ exprt python_convertert::convert_compare(const jsont &expr)
           is_python_string_type(item.type()) ||
           extract_string_value(item).has_value())
         {
-          // Reconstruct a python_string-typed expression for
-          // the container (boxed string* on native, inline on refined).
+          // Reconstruct a python_string-typed expression for the
+          // container (the strtab denotation of the __str handle on
+          // native, the inline struct on refined).
           exprt str_val = python_value_str(container);
           exprt key_item = item;
           if(!is_python_string_type(key_item.type()))

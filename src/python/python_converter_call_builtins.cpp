@@ -2046,7 +2046,10 @@ std::optional<exprt> python_convertert::try_builtin_call(
       {
         std::string kname = json_string(json_member(kw, "arg"));
         exprt kval = convert_expression(json_member(kw, "value"));
-        keys.push_back(python_string_literal(kname));
+        // Native: intern the key to a string-id handle (the dict()
+        // constructor's kwargs twin of the call-site packing fix).
+        keys.push_back(coerce_element(
+          python_string_literal(kname), keys_arr_type.element_type()));
         if(kval.type() != vals_arr_type.element_type())
           kval = coerce_element(kval, vals_arr_type.element_type());
         vals.push_back(kval);
