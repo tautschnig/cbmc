@@ -123,10 +123,42 @@ std::optional<exprt> python_convertert::try_set_method(
   {
     if(!args.is_array() || as_array(args).empty())
       return obj;
+    // PLR §6.10.2: these methods are VARIADIC (a.union(b, c, ...));
+    // folding only the first argument dropped the rest
+    // ({1}.union({2}, {3}) proved 3 absent -- a false proof). Fold the
+    // arguments left-to-right; a non-set argument degrades the whole
+    // result to nondet as before.
     exprt other = convert_expression(*as_array(args).begin());
     if(!is_python_set_type(other.type()))
       return side_effect_expr_nondett{python_set_type(), get_location(expr)};
     exprt rbm = arg_bitmap(other);
+    for(auto ait = std::next(as_array(args).begin());
+        ait != as_array(args).end();
+        ++ait)
+    {
+      exprt more = convert_expression(*ait);
+      if(!is_python_set_type(more.type()))
+        return side_effect_expr_nondett{python_set_type(), get_location(expr)};
+      exprt mbm = arg_bitmap(more);
+      if(
+        method_name == "union" || method_name == "update" ||
+        method_name == "difference")
+      {
+        // union: a | b | c. difference: a - b - c == a & ~(b | c), so
+        // the ARGUMENT bitmaps accumulate by OR in both cases (the
+        // and-not is applied once below).
+        rbm = bitor_exprt{std::move(rbm), std::move(mbm)};
+      }
+      else if(method_name == "intersection")
+        rbm = bitand_exprt{std::move(rbm), std::move(mbm)};
+      else
+      {
+        // symmetric_difference is unary in CPython (2+ args raise
+        // TypeError); degrade to nondet.
+        return side_effect_expr_nondett{python_set_type(), get_location(expr)};
+      }
+    }
+
     exprt new_bm;
     if(method_name == "union")
       new_bm = bitor_exprt{bm, rbm};

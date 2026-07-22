@@ -1975,7 +1975,12 @@ std::optional<exprt> python_convertert::try_string_method(
   // cprover_string_is_prefix_func / is_suffix_func.
   if(
     (method_name == "startswith" || method_name == "endswith") &&
-    args.is_array() && !as_array(args).empty())
+    args.is_array() && !as_array(args).empty() &&
+    // Fold-soundness rule: the start/end POSITION arguments restrict the
+    // window ("abcabc".startswith("ab", 1) folded to the plain prefix
+    // test -- a false proof). Positioned calls fall through to the
+    // nondet tail of the predicate dispatcher.
+    fold_covers_call_shape(expr, 1))
   {
     exprt prefix = convert_expression(*as_array(args).begin());
     auto obj_sv = extract_string_value(obj);
@@ -2166,7 +2171,8 @@ std::optional<exprt> python_convertert::try_string_method(
     // Use solver for startswith/endswith on non-constant strings
     if(
       (method_name == "startswith" || method_name == "endswith") &&
-      args.is_array() && !as_array(args).empty())
+      args.is_array() && !as_array(args).empty() &&
+      fold_covers_call_shape(expr, 1)) // see the constant handler's note
     {
       exprt prefix = convert_expression(*as_array(args).begin());
       if(is_python_string_type(prefix.type()))

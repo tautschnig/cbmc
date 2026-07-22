@@ -1992,6 +1992,20 @@ private:
   /// symbol h with ASSUME strtab(h) == s.
   symbol_exprt strtab_symbol();
   exprt string_handle_to_string(const exprt &handle);
+  /// PLR fold-soundness rule: a conversion-time FOLD of a builtin/method
+  /// call may only fire when it models EVERY argument the call passes.
+  /// Returns true when the call carries at most \p max_positional
+  /// positional arguments and no keywords beyond \p allowed_keywords --
+  /// otherwise the fold site must fall through to its sound nondet /
+  /// symbolic fallback. Ignoring an unconsumed argument was a FALSE-PROOF
+  /// class (sum(xs, start), sort(reverse=), min/max/sorted(key=),
+  /// index(x, start), startswith(p, pos), set.union(a, b) all folded the
+  /// argument-less semantics; ESBMC-suite adversarial tests, CPython-
+  /// confirmed).
+  bool fold_covers_call_shape(
+    const jsont &call,
+    std::size_t max_positional,
+    const std::set<std::string> &allowed_keywords = {});
   exprt string_to_handle(const exprt &str);
   void emit_strtab_axiom(const exprt &h, const exprt &str);
 

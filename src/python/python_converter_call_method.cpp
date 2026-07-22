@@ -367,7 +367,11 @@ std::optional<exprt> python_convertert::try_method_call(
         auto a_end = as_array(args).end();
         if(it != a_end && is_node_type(*it, "List"))
         {
-          exprt value;
+          // nil_exprt, NOT a default-constructed exprt: the latter has an
+          // EMPTY id, is_nil() is false, and the empty expr would flow
+          // into the dict pairs (a boolbv "empty type" abort -- the
+          // dict.fromkeys default-value path).
+          exprt value = nil_exprt{};
           auto vit = std::next(it);
           if(vit != a_end)
             value = convert_expression(*vit);

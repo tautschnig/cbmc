@@ -6886,3 +6886,27 @@ exprt python_convertert::int_to_handle(const exprt &val)
     equal_exprt{function_application_exprt{inttab_symbol(), {h}}, val}});
   return std::move(h);
 }
+
+bool python_convertert::fold_covers_call_shape(
+  const jsont &call,
+  std::size_t max_positional,
+  const std::set<std::string> &allowed_keywords)
+{
+  const jsont &args = json_member(call, "args");
+  if(args.is_array() && as_array(args).size() > max_positional)
+    return false;
+  const jsont &kws = json_member(call, "keywords");
+  if(kws.is_array())
+  {
+    for(const auto &kw : as_array(kws))
+    {
+      const jsont &arg = json_member(kw, "arg");
+      // A **spread (arg == null) is never covered by a fold.
+      if(!arg.is_string())
+        return false;
+      if(allowed_keywords.count(json_string(arg)) == 0)
+        return false;
+    }
+  }
+  return true;
+}
