@@ -3711,12 +3711,22 @@ the harness needs ESBMC intrinsics (`counter_most_common`, `import esbmc`,
 `__ESBMC_unreachable`, `nondet_float` harness) are EXPECTATION ARTIFACTS
 -- we are right per PLR and they stay DIFF by design.
 
-CLOSED this round: the ignored-argument fold family (12+ CPython-
-confirmed false proofs; the fold_covers_call_shape rule), the min/max
-nil-tail statement-dropping vacuity, dict.fromkeys' empty-expr crash.
+CLOSED so far: the ignored-argument fold family (fold_covers_call_shape),
+the min/max nil-tail vacuity, dict.fromkeys' empty-expr crash; then the
+2026-07-22 pm danger round (`389a0b3011`, `29d0cf35b7`, `86453feb36`) --
+`continue`-in-for (all four variants -> code_fort; was vacuous
+truncation), `for u,v in d` tuple-key unpack, conditional mutable
+aliasing (`m = l or [...]` / `(m := l)` -> extraction-alias havoc),
+tuple-target subscript swap, int-receiver AttributeError (access +
+call), and the float-repr / center / negative-slice value folds
+(py_float_repr matches CPython bit-for-bit). IMPORTANT triage
+correction: the sweep runs at --unwind 10, so some danger DIFFs are
+loop-unwinding TRUNCATION, not soundness bugs -- always re-check a
+danger candidate at --unwind 32 before treating it as a false proof
+(this dropped the genuine count 66 -> 45 -> ~33).
 
-REMAINING danger-direction items (~40 genuine, CPython-confirmed false
-proofs; grouped by root, largest first -- each needs a fix or a pinned
+REMAINING danger-direction items (~33 genuine at --unwind 32,
+CPython-confirmed; grouped by root, largest first -- each needs a fix or a pinned
 KNOWNBUG):
 1. **str formatting value bugs** (7): `str(1.0)` / f-string float repr
    (shortest-repr, whole-number, precision-loss, negative-whole forms),
