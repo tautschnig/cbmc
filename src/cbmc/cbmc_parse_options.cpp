@@ -227,6 +227,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   const bool python_strict = cmdline.isset("python-strict");
   if(cmdline.isset("python-required-kwarg-checks") || python_strict)
     options.set_option("python-required-kwarg-checks", true);
+  if(cmdline.isset("python-check-missing-methods") || python_strict)
+    options.set_option("python-check-missing-methods", true);
   if(cmdline.isset("python-check-typeddict-fields") || python_strict)
     options.set_option("python-check-typeddict-fields", true);
   if(cmdline.isset("python-check-annotations") || python_strict)
@@ -1188,6 +1190,9 @@ void cbmc_parse_optionst::help()
     " fall-through of non-None-annotated functions\n"
     " {y--python-required-kwarg-checks} \t report missing Required[...]"
     " TypedDict keys at call sites\n"
+    " {y--python-check-missing-methods} \t report a call to a method not"
+    " declared on the receiver's class even when an enclosing handler would"
+    " catch the AttributeError (static strictness; part of --python-strict)\n"
     " {y--python-check-typeddict-fields} \t report unknown keys when"
     " constructing a TypedDict\n"
     " {y--python-check-any-arg-attrs} \t report attribute accesses on"

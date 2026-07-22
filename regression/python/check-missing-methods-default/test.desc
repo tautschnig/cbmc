@@ -1,0 +1,9 @@
+CORE
+main.py
+--unwind 3 --no-unwinding-assertions
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+^SIGNAL=0$
+--
+missing method
+--

@@ -1,0 +1,9 @@
+CORE
+main.py
+--unwind 3 --no-unwinding-assertions --python-check-missing-methods
+^\[attribute-error\.\d+\].*missing method Client::create_dbinstance: FAILURE$
+^VERIFICATION FAILED$
+^EXIT=10$
+^SIGNAL=0$
+--
+--

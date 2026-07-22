@@ -82,6 +82,7 @@ class optionst;
   "(python-no-exception-checks)" \
   "(python-raising-ops-check)" \
   "(python-required-kwarg-checks)" \
+  "(python-check-missing-methods)" \
   "(python-check-typeddict-fields)" \
   "(python-check-annotations)" \
   "(python-check-any-arg-attrs)" \

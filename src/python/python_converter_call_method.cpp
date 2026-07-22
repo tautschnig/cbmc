@@ -3324,7 +3324,17 @@ std::optional<exprt> python_convertert::try_method_call(
               // the class but body not yet processed) and for
               // boto3 BaseClient inherited methods, since both are
               // false-positive sources for the static check.
-              if(!exception_is_caught("AttributeError"))
+              // --python-check-missing-methods (static-strictness family,
+              // in --python-strict): flag the missing method EVEN when an
+              // enclosing handler catches the AttributeError. Default mode
+              // stays PLR §8.4-faithful (a caught AttributeError is real
+              // control flow -- try/except probing is a Python idiom); the
+              // strict mode reports the mypy-style static diagnostic (the
+              // rds_instance_creator create_dbinstance typo, swallowed by
+              // its generic `except Exception` handler).
+              if(
+                python_check_missing_methods ||
+                !exception_is_caught("AttributeError"))
               {
                 source_locationt aloc = get_location(expr);
                 aloc.set_property_class("attribute-error");

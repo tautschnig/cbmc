@@ -97,6 +97,7 @@ protected:
   bool python_lazy_stubs = false;
   bool python_no_exception_checks = false;
   bool python_required_kwarg_checks = false;
+  bool python_check_missing_methods = false;
   bool python_check_typeddict_fields = false;
   bool python_check_annotations = false;
   /// When true, at each call site `f(args)` where `f`'s parameter

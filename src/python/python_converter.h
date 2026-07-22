@@ -298,6 +298,10 @@ public:
     python_no_exception_checks = v;
   }
 
+  void set_python_check_missing_methods(bool v)
+  {
+    python_check_missing_methods = v;
+  }
   void set_python_required_kwarg_checks(bool v)
   {
     python_required_kwarg_checks = v;
@@ -361,6 +365,7 @@ private:
   /// Enable for benchmark suites that use only explicit
   /// 'key=value' kwargs.
   bool python_required_kwarg_checks = false;
+  bool python_check_missing_methods = false;
   /// Emit 'type-error' property checks at PEP 448 dict-spread
   /// call sites when the spread dict's literal value for a key
   /// has a static type that's incompatible with the
