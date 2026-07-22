@@ -211,7 +211,8 @@ enable the static\-strictness option family
 \fB\-\-python\-required\-kwarg\-checks\fR,
 \fB\-\-python\-check\-typeddict\-fields\fR,
 \fB\-\-python\-check\-any\-arg\-attrs\fR,
-\fB\-\-python\-check\-iter\-none\fR) in one switch
+\fB\-\-python\-check\-iter\-none\fR,
+\fB\-\-python\-check\-missing\-methods\fR) in one switch
 .TP
 \fB\-\-python\-check\-annotations\fR
 report values, returns, and arguments that do not match their declared
@@ -233,6 +234,10 @@ supports
 .TP
 \fB\-\-python\-check\-iter\-none\fR
 report iteration over a possibly\-None value
+.TP
+\fB\-\-python\-check\-missing\-methods\fR
+report a call to a method not declared on the receiver's class even when
+an enclosing handler would catch the AttributeError (static strictness)
 .TP
 \fB\-\-python\-raising\-ops\-check\fR
 model possibly\-raising operations (int()/float() of non\-constant

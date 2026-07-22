@@ -58,6 +58,8 @@ void python_languaget::set_language_options(
     options.get_bool_option("python-no-exception-checks");
   python_required_kwarg_checks =
     options.get_bool_option("python-required-kwarg-checks");
+  python_check_missing_methods =
+    options.get_bool_option("python-check-missing-methods");
   python_check_typeddict_fields =
     options.get_bool_option("python-check-typeddict-fields");
   python_check_annotations =
@@ -391,6 +393,7 @@ bool python_languaget::typecheck(
   converter.set_python_lazy_stubs(python_lazy_stubs);
   converter.set_python_no_exception_checks(python_no_exception_checks);
   converter.set_python_required_kwarg_checks(python_required_kwarg_checks);
+  converter.set_python_check_missing_methods(python_check_missing_methods);
   converter.set_python_check_typeddict_fields(python_check_typeddict_fields);
   converter.set_python_check_annotations(python_check_annotations);
   converter.set_python_check_any_arg_attrs(python_check_any_arg_attrs);
