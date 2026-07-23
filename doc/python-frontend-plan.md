@@ -3758,10 +3758,20 @@ KNOWNBUG):
    NO consumption cursor, so `next()` past end does not raise) needs the
    generator-cursor machinery extended to explicit list iterators
    (bounded, cross-cutting iter/next/assign).
-6. **github_* legacy cluster** (~16): pre-existing triaged residuals
-   (2892, 2993_2, 3001, 3647_15, 3836, 4342 variants, 4747 class-attr
-   default, 4984 modstub, 5955 pair, ...) -- re-triage against the
-   pre-update knownbug ledger before working.
+6. **github_* legacy cluster** -- RE-TRIAGED 2026-07-23 (CPython +
+   unwind-32). SPLIT: (a) EXPECTATION ARTIFACTS, PLR-correct (CPython
+   exits clean, or esbmc-harness/modstub imports): github_2993_2,
+   4356_counter_most_common, 4807, 5658 (clean runs); github_4629(_unwind)
+   (`import esbmc`), 4984 (`from modstub import C`). Not our bugs.
+   (b) GENUINE, deep-rooted: github_3001 (missing method on a pv-CLASS
+   UNION receiver -- `f=create(0)` returns Foo|Bar Any, `f.bar()` is
+   AttributeError only on the Foo arm; needs provenance-refined
+   missing-method obligation that OBLIGATES arms whose owner lacks the
+   method, extending the per-instance-provenance dispatch); github_3836
+   (recursion + empty-list IndexError -- unwind/recursion depth);
+   github_4747 (class-attr default assertion). These are the
+   per-instance-provenance / recursion families -- recorded, not point
+   fixes.
 Also: 7 TIMEOUTs unmined. **The 107 FAILs were characterised
 (2026-07-22) and are NOT a precision worklist**: 79 expect ESBMC's exact
 error-message strings (`ERROR: TypeError: ...`), ~25 expect ESBMC's
