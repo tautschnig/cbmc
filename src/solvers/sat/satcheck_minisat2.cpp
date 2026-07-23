@@ -147,23 +147,9 @@ void satcheck_minisat2_baset<T>::lcnf(const bvt &bv)
         return;
       else if(!literal.is_false())
       {
-        if(literal.var_no() >= (unsigned)solver->nVars())
-        {
-          // The literal references a variable we haven't allocated
-          // yet. Historically this aborted CBMC with an invariant.
-          // For complex bit-blasting flows that bypass new_variable
-          // (for example, the Python frontend's wide struct equalities
-          // hitting the prop_conv_solver cache out-of-order), the
-          // literal is intended as a fresh, unconstrained Boolean
-          // variable. Allocate it lazily here. This is sound for
-          // verification: the new variable is unconstrained, so the
-          // clause it's in remains as a constraint over a free
-          // variable.
-          while((unsigned)solver->nVars() <= literal.var_no())
-            solver->newVar();
-          if((unsigned)solver->nVars() > _no_variables)
-            _no_variables = (unsigned)solver->nVars();
-        }
+        INVARIANT(
+          literal.var_no() < (unsigned)solver->nVars(),
+          "variable not added yet");
       }
     }
 
