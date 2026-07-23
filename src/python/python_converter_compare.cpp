@@ -488,6 +488,18 @@ exprt python_convertert::convert_compare(const jsont &expr)
                            ot.id() == ID_floatbv || ot.id() == ID_bool;
       if(other_numeric)
       {
+        // PLR §6.10.1: ordering a number against None raises TypeError.
+        // A python_value operand may carry the NONE tag at runtime (e.g.
+        // a value returned via a function fall-through / `return None`
+        // into a widened int|None slot -- the missing-return_* cluster).
+        // to_float_numeric would read its __int_val (the None SENTINEL)
+        // and compare numerically -- a false proof. Emit a runtime
+        // TypeError obligation guarded on the tag being NONE: sound (the
+        // None path raises), catchable (PLR §8.4), and FALSE when the
+        // value is not None, so no false positive on the numeric path.
+        const exprt &pv = left_is_pv ? current_left : right;
+        emit_conditional_exception(
+          python_value_is(pv, python_type_tagt::NONE), "TypeError");
         if(left_is_pv)
         {
           current_left = to_float_numeric(current_left);
