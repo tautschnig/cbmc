@@ -893,11 +893,10 @@ void goto_convertt::convert_assign(
       "function_call sideeffect takes two operands",
       rhs.find_source_location());
 
-    Forall_operands(it, rhs)
-    {
-      side_effects.add(clean_expr(*it, mode));
-      dest.destructive_append(side_effects.side_effects);
-    }
+    auto &rhs_call = to_side_effect_expr_function_call(rhs);
+    side_effects.add(clean_function_call_operands(
+      rhs_call.function(), rhs_call.arguments(), mode));
+    dest.destructive_append(side_effects.side_effects);
 
     do_function_call(
       lhs,
@@ -1416,7 +1415,7 @@ void goto_convertt::convert_switch(
     convert(copy_value, side_effects.side_effects, mode);
 
     argument = new_symbol.symbol_expr();
-    side_effects.add_temporary(to_symbol_expr(argument).get_identifier());
+    side_effects.add_temporary(to_symbol_expr(argument).identifier());
   }
 
   // save break/default/cases targets
@@ -2183,7 +2182,7 @@ irep_idt goto_convertt::make_temp_symbol(
 
   expr = new_symbol.symbol_expr();
 
-  return to_symbol_expr(expr).get_identifier();
+  return to_symbol_expr(expr).identifier();
 }
 
 void goto_convert(

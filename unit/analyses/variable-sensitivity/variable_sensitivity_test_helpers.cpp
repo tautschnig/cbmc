@@ -11,9 +11,7 @@
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/mathematical_types.h>
-#include <util/namespace.h>
 #include <util/string_utils.h>
-#include <util/symbol_table.h>
 
 #include <analyses/variable-sensitivity/abstract_environment.h>
 #include <analyses/variable-sensitivity/constant_abstract_value.h>
@@ -21,10 +19,11 @@
 #include <analyses/variable-sensitivity/value_set_abstract_object.h>
 #include <analyses/variable-sensitivity/variable_sensitivity_domain.h>
 #include <ansi-c/ansi_c_language.h>
+#include <testing-utils/empty_namespace.h>
 #include <testing-utils/use_catch.h>
 
 std::shared_ptr<const constant_abstract_valuet>
-make_constant(exprt val, abstract_environmentt &env, namespacet &ns)
+make_constant(exprt val, abstract_environmentt &env, const namespacet &ns)
 {
   return std::make_shared<constant_abstract_valuet>(val, env, ns);
 }
@@ -45,7 +44,7 @@ std::shared_ptr<const interval_abstract_valuet> make_interval(
   const exprt &vall,
   const exprt &valh,
   abstract_environmentt &env,
-  namespacet &ns)
+  const namespacet &ns)
 {
   auto interval = constant_interval_exprt(vall, valh);
   return make_interval(interval, env, ns);
@@ -54,14 +53,14 @@ std::shared_ptr<const interval_abstract_valuet> make_interval(
 std::shared_ptr<const interval_abstract_valuet> make_interval(
   const binary_relation_exprt &val,
   abstract_environmentt &env,
-  namespacet &ns)
+  const namespacet &ns)
 {
   return std::make_shared<interval_abstract_valuet>(val, env, ns);
 }
 std::shared_ptr<const interval_abstract_valuet> make_interval(
   const constant_interval_exprt &val,
   abstract_environmentt &env,
-  namespacet &ns)
+  const namespacet &ns)
 {
   return std::make_shared<interval_abstract_valuet>(val, env, ns);
 }
@@ -79,7 +78,7 @@ std::shared_ptr<const interval_abstract_valuet> make_bottom_interval()
 }
 
 std::shared_ptr<const value_set_abstract_objectt>
-make_value_set(exprt val, abstract_environmentt &env, namespacet &ns)
+make_value_set(exprt val, abstract_environmentt &env, const namespacet &ns)
 {
   auto vals = std::vector<exprt>{val};
   return make_value_set(vals, env, ns);
@@ -88,7 +87,7 @@ make_value_set(exprt val, abstract_environmentt &env, namespacet &ns)
 std::shared_ptr<const value_set_abstract_objectt> make_value_set(
   const std::vector<exprt> &vals,
   abstract_environmentt &env,
-  namespacet &ns)
+  const namespacet &ns)
 {
   auto initial_values = abstract_object_sett{};
   for(auto v : vals)
@@ -182,12 +181,10 @@ std::string expr_to_str(const exprt &expr)
   if(expr.id() == ID_min_value)
     return "min";
 
-  auto st = symbol_tablet{};
-  auto ns = namespacet{st};
   auto expr_str = std::string{};
 
   auto lang = new_ansi_c_language();
-  lang->from_expr(expr, expr_str, ns);
+  lang->from_expr(expr, expr_str, empty_namespace);
 
   return expr_str;
 }
@@ -298,7 +295,7 @@ void EXPECT_INDEX(
   int index,
   int expected,
   abstract_environmentt &environment,
-  namespacet &ns)
+  const namespacet &ns)
 {
   auto type = signedbv_typet(32);
   auto index_expr = index_exprt(
@@ -319,7 +316,7 @@ void EXPECT_INDEX(
   int index,
   std::vector<int> expected,
   abstract_environmentt &environment,
-  namespacet &ns)
+  const namespacet &ns)
 {
   auto type = signedbv_typet(32);
   auto index_expr = index_exprt(
@@ -341,7 +338,7 @@ void EXPECT_INDEX_TOP(
   std::shared_ptr<const abstract_objectt> &result,
   int index,
   abstract_environmentt &environment,
-  namespacet &ns)
+  const namespacet &ns)
 {
   auto type = signedbv_typet(32);
   auto index_expr = index_exprt(
@@ -510,7 +507,7 @@ std::shared_ptr<const abstract_objectt> add(
   const abstract_object_pointert &op1,
   const abstract_object_pointert &op2,
   abstract_environmentt &environment,
-  namespacet &ns)
+  const namespacet &ns)
 {
   auto op1_sym = symbol_exprt("op1", op1->type());
   auto op2_sym = symbol_exprt("op2", op2->type());
@@ -526,7 +523,7 @@ std::shared_ptr<const constant_abstract_valuet> add_as_constant(
   const abstract_object_pointert &op1,
   const abstract_object_pointert &op2,
   abstract_environmentt &environment,
-  namespacet &ns)
+  const namespacet &ns)
 {
   auto result = add(op1, op2, environment, ns);
   auto cv = as_constant(result);
@@ -540,7 +537,7 @@ std::shared_ptr<const interval_abstract_valuet> add_as_interval(
   const abstract_object_pointert &op1,
   const abstract_object_pointert &op2,
   abstract_environmentt &environment,
-  namespacet &ns)
+  const namespacet &ns)
 {
   auto result = add(op1, op2, environment, ns);
   auto i = as_interval(result);
@@ -554,7 +551,7 @@ std::shared_ptr<const value_set_abstract_objectt> add_as_value_set(
   const abstract_object_pointert &op1,
   const abstract_object_pointert &op2,
   abstract_environmentt &environment,
-  namespacet &ns)
+  const namespacet &ns)
 {
   auto result = add(op1, op2, environment, ns);
   auto vs = as_value_set(result);
@@ -569,7 +566,7 @@ std::shared_ptr<const value_set_abstract_objectt> add_as_value_set(
   const abstract_object_pointert &op2,
   const abstract_object_pointert &op3,
   abstract_environmentt &environment,
-  namespacet &ns)
+  const namespacet &ns)
 {
   auto op1_sym = symbol_exprt("op1", op1->type());
   auto op2_sym = symbol_exprt("op2", op2->type());

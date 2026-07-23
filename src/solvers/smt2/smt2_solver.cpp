@@ -83,7 +83,7 @@ void smt2_solvert::expand_function_applications(exprt &expr)
     if(app.function().id() == ID_symbol)
     {
       // look up the symbol
-      auto identifier = to_symbol_expr(app.function()).get_identifier();
+      auto identifier = to_symbol_expr(app.function()).identifier();
       auto f_it = id_map.find(identifier);
 
       if(f_it != id_map.end())
@@ -231,7 +231,7 @@ void smt2_solvert::setup_commands()
         if(op.id() != ID_symbol)
           throw error("get-value expects symbol");
 
-        const auto &identifier = to_symbol_expr(op).get_identifier();
+        const auto &identifier = to_symbol_expr(op).identifier();
 
         const auto id_map_it = id_map.find(identifier);
 
@@ -260,12 +260,13 @@ void smt2_solvert::setup_commands()
       std::cout << ")\n";
     };
 
-    commands["echo"] = [this]() {
-      if(next_token() != smt2_tokenizert::STRING_LITERAL)
+    commands["echo"] = [this]()
+    {
+      auto str_token = next_token();
+      if(str_token != smt2_tokenizert::STRING_LITERAL)
         throw error("expected string literal");
 
-      std::cout << smt2_format(constant_exprt(
-                     smt2_tokenizer.get_buffer(), string_typet()))
+      std::cout << smt2_format(constant_exprt(str_token.text, string_typet()))
                 << '\n';
     };
 

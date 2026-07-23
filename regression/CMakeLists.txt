@@ -10,7 +10,39 @@ macro(add_test_pl_profile name cmdline flag profile)
         LABELS "${profile};CBMC"
         TIMEOUT 1200
     )
+    # Determine the log file name and register it for cmake clean.
+    set(_test_pl_flags ${flag} ${ARGN})
+    list(FIND _test_pl_flags "-s" _s_index)
+    if(_s_index GREATER -1)
+        math(EXPR _s_value_index "${_s_index} + 1")
+        list(GET _test_pl_flags ${_s_value_index} _log_suffix)
+        set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY
+            ADDITIONAL_CLEAN_FILES "${CMAKE_CURRENT_SOURCE_DIR}/tests-${_log_suffix}.log")
+    else()
+        set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY
+            ADDITIONAL_CLEAN_FILES "${CMAKE_CURRENT_SOURCE_DIR}/tests.log")
+    endif()
 endmacro(add_test_pl_profile)
+
+# Register a test.pl profile split into <shard_count> shards (see test.pl's
+# --shard option) so a long-running suite runs as several parallel ctest
+# entries instead of one indivisible test. <base_flags> are the test.pl flags
+# shared by all shards (excluding -s and --shard, which are appended per
+# shard); each shard is named "<name>-<i>", logs to "<log_suffix>-<i>" and is
+# given the supplied TIMEOUT.
+function(add_sharded_test_pl_profile
+         name cmdline base_flags profile log_suffix shard_count timeout)
+    foreach(shard RANGE 1 ${shard_count})
+        add_test_pl_profile(
+            "${name}-${shard}"
+            "${cmdline}"
+            "${base_flags};--shard;${shard}/${shard_count};-s;${log_suffix}-${shard}"
+            "${profile}"
+        )
+        set_tests_properties("${name}-${shard}-${profile}" PROPERTIES
+            TIMEOUT ${timeout})
+    endforeach()
+endfunction(add_sharded_test_pl_profile)
 
 macro(add_test_pl_tests cmdline)
     get_filename_component(TEST_DIR_NAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
@@ -103,3 +135,4 @@ if(WITH_MEMORY_ANALYZER)
   add_subdirectory(memory-analyzer)
   add_subdirectory(extract_type_header)
 endif()
+

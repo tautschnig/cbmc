@@ -9,10 +9,10 @@
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/namespace.h>
-#include <util/symbol_table.h>
 
 #include <analyses/variable-sensitivity/abstract_environment.h>
 #include <analyses/variable-sensitivity/variable_sensitivity_object_factory.h>
+#include <testing-utils/empty_namespace.h>
 
 // NOLINTNEXTLINE(whitespace/line_length)
 #include <analyses/variable-sensitivity/constant_abstract_value.h> // IWYU pragma: keep
@@ -28,7 +28,7 @@ exprt binary_expression(
   const abstract_object_pointert &op1,
   const abstract_object_pointert &op2,
   abstract_environmentt &environment,
-  namespacet &ns)
+  const namespacet &ns)
 {
   auto op1_sym = symbol_exprt("op1", op1->type());
   auto op2_sym = symbol_exprt("op2", op2->type());
@@ -105,7 +105,7 @@ public:
     }
   }
 
-  assume_testert(abstract_environmentt &env, namespacet &n)
+  assume_testert(abstract_environmentt &env, const namespacet &n)
     : environment(env), ns(n)
   {
   }
@@ -155,7 +155,7 @@ private:
   const typet type = signedbv_typet(32);
 
   abstract_environmentt &environment;
-  namespacet &ns;
+  const namespacet &ns;
 };
 
 SCENARIO(
@@ -170,8 +170,7 @@ SCENARIO(
     variable_sensitivity_object_factoryt::configured_with(config);
   abstract_environmentt environment{object_factory};
   environment.make_top();
-  symbol_tablet symbol_table;
-  namespacet ns(symbol_table);
+  const namespacet &ns = empty_namespace;
 
   assume_testert assumeTester(environment, ns);
 

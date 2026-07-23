@@ -636,7 +636,7 @@ void java_bytecode_parsert::get_annotation_value_class_refs(const exprt &value)
 {
   if(const auto &symbol_expr = expr_try_dynamic_cast<symbol_exprt>(value))
   {
-    const irep_idt &value_id = symbol_expr->get_identifier();
+    const irep_idt &value_id = symbol_expr->identifier();
     get_class_refs_rec(*java_type_from_string(id2string(value_id)));
   }
   else if(const auto &array_expr = expr_try_dynamic_cast<array_exprt>(value))
@@ -2101,13 +2101,11 @@ void java_bytecode_parsert::read_bootstrapmethods_entry()
 
     log.debug()
       << "lambda function reference "
-      << id2string(
-           lambda_method_handle->get_method_descriptor().base_method_name())
-      << " in class \"" << parse_tree.parsed_class.name << "\""
-      << "\n  interface type is "
-      << id2string(pool_entry(interface_type_argument.ref1).s)
-      << "\n  method type is "
-      << id2string(pool_entry(method_type_argument.ref1).s) << messaget::eom;
+      << lambda_method_handle->get_method_descriptor().base_method_name()
+      << " in class " << messaget::quote_begin << parse_tree.parsed_class.name
+      << messaget::quote_end << "\n  interface type is "
+      << pool_entry(interface_type_argument.ref1).s << "\n  method type is "
+      << pool_entry(method_type_argument.ref1).s << messaget::eom;
     parse_tree.parsed_class.add_method_handle(
       bootstrap_method_index, *lambda_method_handle);
   }

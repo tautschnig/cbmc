@@ -36,16 +36,22 @@ gdb_value_extractort::memory_scopet::memory_scopet(
   const memory_addresst &begin,
   const mp_integer &byte_size,
   const irep_idt &name)
-  : begin_int(safe_string2size_t(begin.address_string, 0)),
+  : // the address is given in hex, starting with 0x....
+    begin_int(
+      safe_string2size_t(std::string_view{begin.address_string}.substr(2), 16)),
     byte_size(byte_size),
     name(name)
 {
+  PRECONDITION(begin.address_string.substr(0, 2) == "0x");
 }
 
 size_t gdb_value_extractort::memory_scopet::address2size_t(
   const memory_addresst &point) const
 {
-  return safe_string2size_t(point.address_string, 0);
+  // the address is given in hex, starting with 0x....
+  PRECONDITION(point.address_string.substr(0, 2) == "0x");
+  return safe_string2size_t(
+    std::string_view{point.address_string}.substr(2), 16);
 }
 
 mp_integer gdb_value_extractort::memory_scopet::distance(
@@ -193,7 +199,7 @@ symbol_tablet gdb_value_extractort::get_snapshot_as_symbol_table()
   for(const auto &pair : assignments)
   {
     const symbol_exprt &symbol_expr = to_symbol_expr(pair.first);
-    const irep_idt id = symbol_expr.get_identifier();
+    const irep_idt id = symbol_expr.identifier();
 
     INVARIANT(symbol_table.has_symbol(id), "symbol must exist in symbol table");
 
@@ -455,8 +461,8 @@ exprt gdb_value_extractort::get_non_char_pointer_value(
       return known_value;
     if(known_value.is_not_nil() && known_value.type() != expected_type)
     {
-      return symbol_exprt{to_symbol_expr(known_value).get_identifier(),
-                          expected_type};
+      return symbol_exprt{
+        to_symbol_expr(known_value).identifier(), expected_type};
     }
     return known_value;
   }

@@ -8,19 +8,19 @@
 
 #include <util/arith_tools.h>
 #include <util/mathematical_types.h>
-#include <util/symbol_table.h>
 
 #include <analyses/variable-sensitivity/abstract_environment.h>
 #include <analyses/variable-sensitivity/abstract_object.h>
 #include <analyses/variable-sensitivity/context_abstract_object.h>
 #include <analyses/variable-sensitivity/full_array_abstract_object.h>
 #include <analyses/variable-sensitivity/variable_sensitivity_object_factory.h>
+#include <testing-utils/empty_namespace.h>
 #include <testing-utils/use_catch.h>
 
 void test_array(
   std::vector<int> contents,
   abstract_environmentt &environment,
-  namespacet &ns);
+  const namespacet &ns);
 
 const auto TOP = -99;
 
@@ -33,8 +33,7 @@ SCENARIO(
       vsd_configt::constant_domain())};
   environment.make_top(); // Domains are bottom on construction
 
-  symbol_tablet symbol_table;
-  namespacet ns{symbol_table};
+  const namespacet &ns = empty_namespace;
 
   GIVEN("An array of {1, 2, 3}")
   {
@@ -53,13 +52,13 @@ SCENARIO(
 exprt make_array(
   std::vector<int> contents,
   abstract_environmentt &environment,
-  namespacet &ns);
+  const namespacet &ns);
 
 exprt fetch_element(
   int index,
   exprt &array,
   abstract_environmentt &environment,
-  namespacet &ns);
+  const namespacet &ns);
 
 exprt integer_expression(int i);
 exprt top_expression();
@@ -67,7 +66,7 @@ exprt top_expression();
 void test_array(
   std::vector<int> values,
   abstract_environmentt &environment,
-  namespacet &ns)
+  const namespacet &ns)
 {
   auto array = make_array(values, environment, ns);
 
@@ -107,7 +106,7 @@ exprt fetch_element(
   int index,
   exprt &array,
   abstract_environmentt &environment,
-  namespacet &ns)
+  const namespacet &ns)
 {
   auto index_expression =
     index_exprt(array, from_integer(index, integer_typet()));
@@ -129,7 +128,7 @@ exprt fetch_element(
 exprt make_array(
   std::vector<int> contents,
   abstract_environmentt &environment,
-  namespacet &ns)
+  const namespacet &ns)
 {
   const array_typet array_type(
     integer_typet(), from_integer(contents.size(), integer_typet()));
