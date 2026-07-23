@@ -2336,7 +2336,12 @@ std::optional<exprt> python_convertert::try_method_call(
     // Method call: obj.method(args)
     exprt obj = convert_expression(json_member(func, "value"));
     if(obj.is_nil())
-      return nil_exprt{};
+    {
+      // Receiver failed to convert: sound NONDET, not nil (an engaged
+      // optional holding nil drops the enclosing statement -- the
+      // vacuity anti-pattern; see scripts/lint_python_frontend.py).
+      return side_effect_expr_nondett{python_value_type(), get_location(expr)};
+    }
 
     // PLR §3.1/§3.3: an Any (python_value) receiver of an unambiguous built-in
     // container method is a list/dict shared by reference -- unwrap it to the

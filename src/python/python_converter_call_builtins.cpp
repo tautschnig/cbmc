@@ -5874,7 +5874,15 @@ std::optional<exprt> python_convertert::try_builtin_call(
         {
           exprt e = convert_expression(a);
           if(e.is_nil())
-            return nil_exprt{};
+          {
+            // An operand failed to convert: return a sound NONDET value,
+            // not nil -- an engaged optional holding nil is treated as
+            // "handled" by the caller and would DROP the enclosing
+            // statement (the vacuity anti-pattern; see
+            // scripts/lint_python_frontend.py).
+            return side_effect_expr_nondett{
+              python_value_type(), get_location(expr)};
+          }
           // Evaluate-once: elems are duplicated across the pairwise-comparison
           // fold (and the 2-arg fallback below reuses them), so a side-effecting
           // call operand must run exactly once (`min(o.bump(), 5)`).

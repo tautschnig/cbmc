@@ -2604,6 +2604,19 @@ these is a *soundness* hole — all are sound over-approximations or cosmetics):
 
 ## Tips for new contributors
 
+Run **`scripts/lint_python_frontend.py`** before committing frontend changes
+(and in the standing gate). It statically flags the two recurring
+FALSE-PROOF anti-patterns the 2026-07 campaigns kept surfacing by
+invariant-reading rather than fuzzing: (1) a raw `python_string_literal`
+pushed into a dict *keys* array without `coerce_element` (ill-typed under the
+native string-id-handle backend); (2) `return nil_exprt{}` from a `try_*`
+optional-returning helper whose caller uses the engaged-optional convention
+(`if(auto r = try_...) return *r;`) — an engaged optional holding nil is
+treated as "handled" and silently DROPS the enclosing statement, a vacuity
+false proof. Prefer `std::nullopt` (unhandled) or a typed
+`side_effect_expr_nondett` (a real value) over a bare nil.
+
+
 - **Read `python_converter.h` first.** Most of the
   state lives there as members. The header is the
   authoritative summary of "what does the converter know
