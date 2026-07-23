@@ -88,16 +88,9 @@ void boolbv_mapt::set_literals(
 
     for(const auto &literal : literals)
     {
-      // Defensively allocate any out-of-range variables. The
-      // historical INVARIANT here aborted CBMC; in practice the
-      // out-of-range case is reached when a complex bit-blasting
-      // flow produces literals out of order with the prop layer's
-      // variable count (notably in the Python frontend's wide
-      // dict-of-string equalities). Allocating extra unconstrained
-      // variables is sound: the literal in the map then references
-      // a free Boolean.
-      while(!literal.is_constant() && literal.var_no() >= prop.no_variables())
-        prop.new_variable();
+      INVARIANT(
+        literal.is_constant() || literal.var_no() < prop.no_variables(),
+        "variable number of non-constant literals shall be within bounds");
     }
 
     map_entry.literal_map = literals;
