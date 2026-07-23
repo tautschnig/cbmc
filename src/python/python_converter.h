@@ -1196,6 +1196,15 @@ private:
   /// Populated by collect_escaped_mutables (a pre-scan over the
   /// module body / function body before convert_module_body runs).
   std::set<irep_idt> escaped_mutables;
+  /// Symbols PROVABLY bound to None -- populated at the note_mutable_
+  /// extraction chokepoint (both plain- and ann-assign) and cleared on any
+  /// rebind (invalidate_reassigned_symbol). A None-valued SYMBOL carries the
+  /// pv-NONE struct only in its ASSIGN, not in its symbol value, so a use
+  /// site sees just the symbol; this set lets orderable_category_of flag
+  /// `x = None; x < 0` as a TypeError (PLR §6.10.1) instead of proving it
+  /// vacuously. Conservative: cleared on ANY rebind, so a branch-merged
+  /// None-or-other symbol is never flagged (no false positive).
+  std::set<irep_idt> none_constants;
   void collect_escaped_mutables(const jsont &body);
 
   /// Extraction-then-mutate soundness (PLR reference semantics): when a MUTABLE

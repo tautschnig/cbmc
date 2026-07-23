@@ -3077,6 +3077,13 @@ int python_convertert::orderable_category_of(const exprt &e)
     return 2; // str
   if(is_python_none_constant(e))
     return 7; // None: orderable with nothing
+  // A SYMBOL provably bound to None (none_constants): the pv-NONE struct
+  // lives in the ASSIGN, not the symbol, so an ordering comparison sees
+  // only the symbol. PLR §6.10.1.
+  if(
+    e.id() == ID_symbol &&
+    none_constants.count(to_symbol_expr(e).get_identifier()) > 0)
+    return 7;
   if(is_python_list_type(t))
     return 3;
   if(is_python_tuple_type(t))

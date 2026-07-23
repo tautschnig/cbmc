@@ -1071,6 +1071,15 @@ void python_convertert::note_mutable_extraction(
   // This assignment is not (or no longer) a mutable extraction by default.
   extracted_container_alias.erase(lhs_id);
 
+  // Provable-None binding tracking (shared plain-/ann-assign chokepoint):
+  // record a `= None` binding so a later ordering comparison on this
+  // symbol is a TypeError; any other RHS clears it (rebinds also clear via
+  // invalidate_reassigned_symbol).
+  if(is_python_none_constant(rhs))
+    none_constants.insert(lhs_id);
+  else
+    none_constants.erase(lhs_id);
+
   // Conditional-alias shapes: `m = l or <default>` / `m = l and x` (BoolOp)
   // yield the SAME OBJECT as a mutable Name operand on the selected branch
   // (PLR §6.11: and/or return an operand, not a fresh bool). Binding by
@@ -3986,6 +3995,7 @@ void python_convertert::invalidate_reassigned_symbol(const irep_idt &sym)
   invalidate_list_literals_referencing(sym);
   float_constants.erase(sym);
   string_constants.erase(sym);
+  none_constants.erase(sym);
 }
 
 exprt python_convertert::value_equal(const exprt &a, const exprt &b)
