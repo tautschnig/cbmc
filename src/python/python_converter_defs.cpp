@@ -6046,8 +6046,6 @@ std::optional<exprt> python_convertert::try_dispatcher_fold(
   const jsont &expr,
   std::size_t first_param_index)
 {
-  if(getenv("CBMC_NO_DISPFOLD") != nullptr)
-    return std::nullopt;
   auto it = dispatcher_summaries.find(func_id);
   if(it == dispatcher_summaries.end())
     return std::nullopt;
