@@ -116,17 +116,7 @@ exprt pointer_logict::pointer_expr(
   }
   auto deep_object_opt =
     get_subexpression_at_offset(object_expr, pointer.offset, subtype, ns);
-  if(!deep_object_opt.has_value())
-  {
-    // Counterexample model parsing is best-effort: when the byte offset
-    // cannot be resolved to a sub-object (e.g. the object embeds a
-    // non-byte-addressable value such as an SMT String), fall back to the
-    // address of the whole object instead of aborting. The reported pointer
-    // value is approximate, but the verification verdict does not depend on
-    // this reconstruction.
-    return typecast_exprt::conditional_cast(
-      address_of_exprt(object_expr), type);
-  }
+  CHECK_RETURN(deep_object_opt.has_value());
   exprt deep_object = deep_object_opt.value();
   simplify(deep_object, ns);
   if(
