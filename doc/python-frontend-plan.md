@@ -3783,18 +3783,34 @@ genuinely does not run); the mismatch is tool-output alignment, not a
 semantic gap. No action -- matching another tool's wording is outside
 the PLR-correctness mandate.
 
-Soundness residual (PARTIALLY closed 2026-07-23, `f9d9fa0e6a`):
-**None-ordering on a SYMBOL** -- `x = None; x < 0` NOW raises TypeError (PLR §6.10.1) but
-proves vacuously, because a None-valued symbol carries the pv-NONE
-struct in its ASSIGN, not in its symbol value, so orderable_category_of
-sees only the symbol (category 0). Inline `None < 0` IS caught. This is
-the root of the missing-return_* danger cluster (fall-through returns
-None, then `None < 0` downstream). The fix needs reliable None-symbol
-value tracking (the symbol's `value` field is empty today); a
-none_constants side-set was prototyped but the multiple plain-assign
-paths made it fragile -- deferred to a focused None-representation pass.
-The `--python-missing-return-check` opt-in flag already flags these at
-the definition site.
+**None-ordering (PLR §6.10.1) -- two faces, both CLOSED 2026-07-23; a
+third, the PARAMETER boundary, remains.**
+- **SYMBOL face CLOSED (`f9d9fa0e6a`):** `x = None; x < 0` raises
+  TypeError. A None-valued symbol carries the pv-NONE struct in its
+  ASSIGN, not in its symbol `value`, so `orderable_category_of` saw only
+  the symbol (category 0). Fixed with the `none_constants` symbol set,
+  populated at the shared `note_mutable_extraction` chokepoint (both
+  plain- and ann-assign) and cleared on ANY rebind
+  (`invalidate_reassigned_symbol`); `orderable_category_of` maps a member
+  to category 7 (None). FP-clean (branch-merge / rebind / `==` / `is`
+  guarded). CORE: `none-symbol-ordering-fail/-ok`.
+- **pv-OPERAND face CLOSED (`ca247b69cf`):** when None reaches an ordering
+  comparison AS a python_value (e.g. a value returned via a fall-through /
+  `return None` into a widened `int | None` slot, used directly in
+  `r < 0`), the pv-numeric path read its `__int_val` (the None SENTINEL)
+  and compared numerically. A runtime TypeError obligation guarded on the
+  operand's NONE tag now fires there -- catchable (§8.4), FALSE when not
+  None (no FP). CORE: `pv-none-ordering-fail/-ok`.
+- **PARAMETER-boundary face -- RESIDUAL (the missing-return_* cluster):**
+  a fall-through / `return None` into an `int`-annotated slot emits the
+  int SENTINEL, and when that flows on as a call ARGUMENT bound to an
+  `int`-typed PARAMETER, `param < 0` is a numeric compare on the sentinel
+  (no pv-NONE tag to catch). Closing this needs None-PRESERVATION across
+  the argument→int-slot coercion -- the same **None-through-typed-slot
+  representation pass** as the return slot (make the coercion carry a
+  pv-NONE / a None-aware slot rather than the sentinel). Sound direction
+  is unaffected (false PROOF only); `--python-missing-return-check` flags
+  the definition site today.
 
 ---
 
