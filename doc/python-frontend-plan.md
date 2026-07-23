@@ -3746,7 +3746,18 @@ KNOWNBUG):
    next-in-while (generator_next_in_while), truncated-loop
    reachability (esbmc-unreachable-truncated-loop).
 5. **Module value bugs** (5): cmath polar/rect signed-zero semantics
-   (x3), Decimal("0") truthiness (decimal7), float1.
+   (x3), Decimal("0") truthiness (decimal7), float1. threading
+   Lock.release-unheld CLOSED (`05458f24a3`). Decimal("0") truthiness
+   is DEEPER than a stub __bool__: the `Decimal("5")` construction fold
+   does not fire for the `from decimal import Decimal` shape (the
+   binding gets the class object, __class_tag 11), so a stub __bool__
+   reads a nondet _int and regresses TRUTHY-Decimal precision -- needs
+   the construction fold + a precise truthiness dispatch first (a
+   Decimal-model pass; reverted the __bool__ probe). range explicit-
+   iterator StopIteration (`iter(list)` returns the list identity with
+   NO consumption cursor, so `next()` past end does not raise) needs the
+   generator-cursor machinery extended to explicit list iterators
+   (bounded, cross-cutting iter/next/assign).
 6. **github_* legacy cluster** (~16): pre-existing triaged residuals
    (2892, 2993_2, 3001, 3647_15, 3836, 4342 variants, 4747 class-attr
    default, 4984 modstub, 5955 pair, ...) -- re-triage against the
@@ -3762,8 +3773,8 @@ genuinely does not run); the mismatch is tool-output alignment, not a
 semantic gap. No action -- matching another tool's wording is outside
 the PLR-correctness mandate.
 
-Deferred soundness residual (scoped 2026-07-22): **None-ordering on a
-SYMBOL** -- `x = None; x < 0` should raise TypeError (PLR §6.10.1) but
+Soundness residual (PARTIALLY closed 2026-07-23, `f9d9fa0e6a`):
+**None-ordering on a SYMBOL** -- `x = None; x < 0` NOW raises TypeError (PLR §6.10.1) but
 proves vacuously, because a None-valued symbol carries the pv-NONE
 struct in its ASSIGN, not in its symbol value, so orderable_category_of
 sees only the symbol (category 0). Inline `None < 0` IS caught. This is
