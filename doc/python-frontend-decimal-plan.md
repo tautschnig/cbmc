@@ -146,3 +146,20 @@ python suites green, ESBMC sweep vs baseline (no regressions),
 - **Rejected:** normalise to a single fixed scale `10^-K` — simpler
   equality/add, but destroys the preserved `_exp`/`_int` that `decimal`
   and `decimal4` assert.
+
+## 9. Known residual — construction fold vs the `from decimal import` shape
+
+`bool(Decimal("0"))` must be `False` (PLR: a zero Decimal is falsy), but
+the default proves `assert not Decimal("0")` FAILED. The literal-parsing
+fold (`build_decimal_literal`, §4) that would give the constructed value
+its `_int = 0` does **not** fire for the `from decimal import Decimal`
+binding shape: the name `Decimal` binds the imported CLASS object
+(`__class_tag 11`), so the call is dispatched as a generic pv-CLASS
+construction and `__bool__` reads a **nondet** `_int`. A probe that added
+`__bool__` to the stub regressed truthy Decimals (the nondet `_int` reads
+both ways), confirming the real fix is a **Decimal-model pass**: make the
+`Decimal(<literal>)` construction fold fire through the imported-name
+binding (recover the class from the binding's `__class_tag 11`, then route
+to `build_decimal_literal`), so the constructed value carries its exact
+parts and `__bool__`/comparisons read them. Sound direction unaffected
+(false PROOF residual). Tracked as the P3-adjacent construction item.
