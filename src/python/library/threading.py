@@ -69,6 +69,10 @@ class Lock:
         return True
 
     def release(self) -> None:
+        # PLR / CPython: releasing an UNLOCKED lock raises RuntimeError
+        # ('release unlocked lock') -- ESBMC github_4581_unlock_unheld.
+        if not self._locked:
+            raise RuntimeError("release unlocked lock")
         self._locked = False
 
     def locked(self) -> bool:
