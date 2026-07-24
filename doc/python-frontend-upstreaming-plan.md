@@ -640,3 +640,55 @@ Net this session: concat + length converged and their parallel surface retired
 (`smt_strcat` id + branch; length branch); the convergeability criterion above
 now tells us which remaining ops are per-op-retirable (none cleanly) vs gated on
 the sort retirement (all of them).
+
+## Milestone #1 — smt_string sort retirement: BLOCKED (the sort is a discriminator, not a duplicate) (2026-07-24)
+
+Spiked the sort retirement by renaming `smt_string_typet`→`string_typet` and
+`ID_smt_string`→`ID_string` across all ~116 src sites. The rename **builds
+clean and the native/cvc5 corpus stays 50/50, the refined suite / C strings /
+[strings] unit / jbmc-strings / sweep are all 0-regression** — BUT the
+`smt2_convt string and regex operator lowering` unit test **fails 15/30**
+(initially missed behind a blank-tail artifact; caught on re-run).
+
+**Root cause — the sort is the Python-vs-Strata discriminator.** The shared
+encoder's `operands_native` gate *excludes* the Python-native string sort so
+those applications fall through to the Python-specific handler (which
+bit-encodes results and lowers the non-generic ops `from_int`/`from_code`/
+`to_code`/`re_ws`/`re_group`/`re_sub`/`match`/…). Strata emits its String
+operands as the upstream `ID_string`, which the gate treats as *native* → the
+generic `str.*` lowering. These are DISTINCT sorts on purpose: the distinctness
+is exactly what lets one shared encoder serve both front-ends. The rename
+conflates them — `operands_native` then excludes `ID_string`, so Strata's
+`ID_string` operands (the unit test) are wrongly routed to the Python handler.
+So `smt_string_typet` is **not** a redundant duplicate of `string_typet`; it is
+a functional discriminator.
+
+**The dependency is reversed.** The sort cannot be retired *first* to "unlock"
+the op convergence; rather, the op convergence (Python fully adopting the
+generic convention) must come *first*:
+1. Direction-B ALL result-typed native ops (equal/contains/prefix/suffix,
+   substr, index_of — native Bool/Int + boundary typecast) so they lower via
+   the generic encoder like Strata;
+2. keep the Python handler for the genuinely-non-generic ops, dispatched by
+   `fn_id` **regardless of operand sort** (so it no longer needs the sort as a
+   discriminator);
+3. keep the refined-struct branches (the sound SMT2 fallback);
+4. ONLY THEN drop the `operands_native` sort exclusion and unify the sort
+   (`smt_string`→`string`), since Python and Strata would by then share one
+   convention.
+
+But step 1 is the bool-query convergence that is itself blocked (the handler
+branches are shared with the refined-struct SMT2 fallback — see the previous
+section). So the clean end-state requires either (a) making refined-string ops
+under an SMT2 backend always go through `--refine-strings` (so those intrinsics
+never reach smt2_conv and the branches become deletable), or (b) a per-front-end
+tag on the application (not the sort) to distinguish Python from Strata. Both
+are substantial, separate designs.
+
+**Net:** the sort retirement is a real, larger design problem, not a mechanical
+rename — the rename is behaviour-preserving for Python but breaks the
+Strata/generic contract the shared encoder must also honour. Reverted; the
+clean landed wins remain concat + length. The two truly-retirable ops were
+retirable precisely because their refined paths don't emit the intrinsic;
+everything else is gated on resolving the refined-SMT2-fallback / Python-vs-
+Strata-discriminator coupling above.
