@@ -106,6 +106,21 @@
   std::vector<codet> &pending_checks)
 {
   const typet c_bool = c_bool_typet(8);
+  // Direction B: for native SMT String operands the boolean queries (equal,
+  // contains, is_prefix, is_suffix) lower to a native SMT Bool via the shared
+  // encoder; declare the intrinsic with a native bool result and assign it into
+  // the c_bool result symbol through a typecast, so convert_typecast supplies
+  // the (ite <bool> bv1 bv0). Refined struct operands keep the c_bool
+  // convention (handled by the struct-operand structural fallback in
+  // smt2_conv) -- an operand-type decision, not a front-end one.
+  const bool native_bool_query = str1.type().id() == ID_smt_string &&
+                                 str2.type().id() == ID_smt_string &&
+                                 (func_id == ID_cprover_string_equal_func ||
+                                  func_id == ID_cprover_string_contains_func ||
+                                  func_id == ID_cprover_string_is_prefix_func ||
+                                  func_id == ID_cprover_string_is_suffix_func);
+  const typet app_result_type =
+    native_bool_query ? typet{bool_typet{}} : typet{c_bool};
   irep_idt sym_id{func_id};
   if(symbol_table.lookup(sym_id) == nullptr)
   {
@@ -114,7 +129,7 @@
     arg_types.push_back(str2.type());
     symbolt fs{
       sym_id,
-      mathematical_function_typet(std::move(arg_types), c_bool),
+      mathematical_function_typet(std::move(arg_types), app_result_type),
       "python"};
     fs.base_name = id2string(func_id);
     symbol_table.add(fs);
@@ -122,7 +137,7 @@
 
   function_application_exprt app(
     symbol_table.lookup_ref(sym_id).symbol_expr(), {str1, str2});
-  app.type() = c_bool;
+  app.type() = app_result_type;
 
   // Use pending_checks.size() and symbol_table.symbols.size() as
   // monotonic uniquifiers — different translation units would
@@ -139,8 +154,11 @@
     rs.is_state_var = true;
     symbol_table.add(rs);
   }
-  pending_checks.push_back(
-    code_frontend_assignt{symbol_table.lookup_ref(rc_id).symbol_expr(), app});
+  exprt assigned = native_bool_query
+                     ? exprt{typecast_exprt{std::move(app), c_bool}}
+                     : exprt{std::move(app)};
+  pending_checks.push_back(code_frontend_assignt{
+    symbol_table.lookup_ref(rc_id).symbol_expr(), std::move(assigned)});
 
   return typecast_exprt(
     symbol_table.lookup_ref(rc_id).symbol_expr(), bool_typet());
