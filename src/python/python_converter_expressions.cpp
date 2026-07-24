@@ -3236,13 +3236,21 @@ exprt python_convertert::emit_getattr_fallback(
   exprt self = self_ptr;
   if(!mty.parameters().empty() && self.type() != mty.parameters()[0].type())
     self = typecast_exprt{self, mty.parameters()[0].type()};
+  // Box the attribute-name argument to the callee's declared parameter type
+  // (typically python_value): __getattr__(self, name) expects a boxed value,
+  // not a raw refined-string. Passing the unboxed string relied on symex
+  // typecasting refined_string -> python_value (different layouts), which is
+  // unsound if the name is used as a python_value.
+  exprt name_arg = python_string_literal(attr);
+  if(
+    mty.parameters().size() >= 2 &&
+    is_python_value_type(mty.parameters()[1].type()) &&
+    !is_python_value_type(name_arg.type()))
+    name_arg = wrap_value(name_arg);
   pending_checks.push_back(code_frontend_assignt{
     tv,
     side_effect_expr_function_callt{
-      msym->symbol_expr(),
-      {self, python_string_literal(attr)},
-      mty.return_type(),
-      loc}});
+      msym->symbol_expr(), {self, name_arg}, mty.return_type(), loc}});
   return std::move(tv);
 }
 
