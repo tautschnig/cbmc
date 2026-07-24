@@ -295,3 +295,54 @@ Verified: Bucket A (1–4) builds `cbmc`+`unit` standalone on `origin/develop`
 whitespace. No Bucket-C core band-aid remains in the history. Bucket-A PR
 branches (`python-upstream-01..04`) are unchanged and still valid (those four
 files did not change this session).
+
+## Bucket-B scrutiny — the wider-use (generic / JBMC) angle (2026-07-24, session 4)
+
+Applied Bucket-C rigor to the non-src/python changes, plus the opposite angle:
+is each change actually of WIDER use (generic CBMC / JBMC-Java) rather than
+Python-only? The `src/solvers/strings/*` refined-string solver is SHARED with
+JBMC, so it is the prime candidate.
+
+**Finding: a large share of the `src/solvers/strings/*` changes are GENERIC
+string-solver bug fixes of wider use — Python merely EXPOSED them.** Reframe
+these as generic, land-first improvements (not Python-coupled). Validated
+watertight and JBMC-/C-safe:
+
+- **`cannot_be_neg` namespace fix** (`string_constraint.{cpp,h}` + the `ns`
+  plumbing through `string_constraint_generator_{comparison,indexof,testing}`,
+  `string_format_builtin_function`, `string_builtin_function.h`): the bound
+  non-negativity check built a **fresh EMPTY `symbol_tablet`/`namespacet`** and
+  solved against it — objectively wrong (symbol/type lookups during the check
+  see nothing). Thread the real `ns` through. Generic correctness fix.
+- **`get_string_expr` robustness** (`string_dependencies.cpp`): replaced
+  `expr_checked_cast<struct_exprt>` + `of_argument` (crashes on a non-struct
+  refined-string) with `get_string_expr`. Generic robustness.
+- **handle()-path string-builtin axioms** (`string_refinement.cpp`
+  `convert_rest`/`set_to` override + `is_cprover_string_application` over the
+  FULL generic `cprover_string_*` id set incl. Java-only ids like `of_long`,
+  `code_point_at`, `trim`): interpreted string built-ins consumed via CBMC's
+  `handle()` path (a boolean/value context) never reached `set_to()`, so their
+  axioms were never generated. Generic solver-pipeline fix.
+
+**Validation (watertight, all green):**
+- jbmc-strings regression: **all successful** (87 skipped) — built jbmc from
+  this branch (`WITH_JBMC=ON`, build-jbmc/). The shared changes do NOT regress
+  Java string verification.
+- regression/strings (C, refined-string): all successful (21 skipped).
+- `[strings]` unit: 388 assertions pass.
+- Python: full suite green, sweep 0 regressions.
+
+**Genuinely Python-specific (stay Bucket B):** `add_axioms_for_python_strip`
+(Python `strip` ≠ Java `trim`; `string_constraint_generator_transformation` +
+`_main` + `string_constraint_generator.h` decl); the `smt2_conv` Python
+`re.*`/`smt_*` handler; `python_regex_to_smt`; `smt_string_typet`
+(`std_types.h`) + `smt_string` irep ids + `boolbv_width` smt_string + the
+`arith_tools`/`expr_initializer` smt_string/struct bits; `register_python_
+language`; `--python-*` options; `goto_symex` `resolve_python_string_content`
+(Part B, python-gated). `refined_string_type.h` struct_tag recognition is
+generic-safe robustness (Python-motivated; Java's struct form still matches).
+
+**Still to finish:** a hunk-level split of `string_constraint_generator_main.cpp`
+(mixes generic `ns` threading + the interpreted-ids sync with the python_strip
+dispatch) and confirmation that `string_refinement.cpp`'s 4 python touches are
+separable from its generic body.
