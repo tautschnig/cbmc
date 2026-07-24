@@ -287,8 +287,11 @@ smt2_convt::try_extract_string_literal(const exprt &e, unsigned depth) const
     {
       const irep_idt fn = to_symbol_expr(fa.function()).get_identifier();
       // str.++ of recoverable operands (front-ends build patterns by
-      // concatenation, e.g. prepending an inline-flag group "(?i)").
-      if(fn == ID_cprover_string_smt_strcat_func && fa.arguments().size() == 2)
+      // concatenation, e.g. prepending an inline-flag group "(?i)"). The
+      // native Python string backend emits the GENERIC value-returning 2-arg
+      // concat id here (the 4-arg refined form is a different, ceremonial
+      // convention and is excluded by the arity check).
+      if(fn == ID_cprover_string_concat_func && fa.arguments().size() == 2)
       {
         auto a = try_extract_string_literal(fa.arguments()[0], depth + 1);
         auto b = try_extract_string_literal(fa.arguments()[1], depth + 1);
@@ -3015,8 +3018,22 @@ void smt2_convt::convert_expr(const exprt &expr)
                    a.type().id() == ID_smt_string;
           });
 
+        // Native SMT string concatenation (Python --python-smt-strings)
+        // reaches the shared encoder as a value-returning 2-arg concat over
+        // smt_string operands: lower it here to (str.++ a b), identical to the
+        // retired Python-specific smt_strcat branch. Safe for smt_string
+        // because concat's result sort is String either way (no bool/int
+        // bitvector-encoding mismatch that the Python predicate/query handlers
+        // below rely on).
+        const bool concat_smt_string =
+          fn_id == ID_cprover_string_concat_func && args.size() == 2 &&
+          std::all_of(
+            args.begin(),
+            args.end(),
+            [](const exprt &a) { return a.type().id() == ID_smt_string; });
+
         if(
-          operands_native &&
+          (operands_native || concat_smt_string) &&
           (!smt_name.empty() || is_startswith || is_endswith || is_is_empty ||
            is_regex_loop || is_index_of))
         {
@@ -3340,16 +3357,9 @@ void smt2_convt::convert_expr(const exprt &expr)
       // Native SMT-String producing ops (Plan A): return an SMT String.
       // Operands are already SMT String (smt_string); results carry their own
       // length, so slice/replace need no res_len truncation (unlike the
-      // byte-array+str hybrid).
-      if(fn_id == ID_cprover_string_smt_strcat_func && args.size() == 2)
-      {
-        out << "(str.++ ";
-        emit_smt_string(args[0]);
-        out << " ";
-        emit_smt_string(args[1]);
-        out << ")";
-        return;
-      }
+      // byte-array+str hybrid). NOTE: concatenation is no longer here -- it is
+      // emitted as the generic value-returning cprover_string_concat_func and
+      // lowered by the shared upstream SMT-LIB encoder above.
       if(fn_id == ID_cprover_string_smt_strsub_func && args.size() == 3)
       {
         out << "(str.substr ";

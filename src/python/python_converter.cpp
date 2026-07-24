@@ -3286,9 +3286,14 @@ exprt python_convertert::string_struct_view(const exprt &s)
 
 exprt python_convertert::string_concat(const exprt &a, const exprt &b)
 {
-  if(a.type().id() == ID_smt_string || b.type().id() == ID_smt_string)
+  if(a.type().id() == ID_smt_string && b.type().id() == ID_smt_string)
+    // Native SMT strings concatenate via the GENERIC value-returning concat
+    // id, lowered by the shared upstream SMT-LIB encoder to (str.++ a b).
+    // (Formerly a Python-specific cprover_string_smt_strcat_func lowered by a
+    // parallel smt2_conv branch; retired in favour of the shared facility --
+    // the lowering is identical for native String operands.)
     return native_string_app(
-      ID_cprover_string_smt_strcat_func,
+      ID_cprover_string_concat_func,
       {a.type(), b.type()},
       {a, b},
       smt_string_typet{});
