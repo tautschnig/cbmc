@@ -184,3 +184,52 @@ type consistency; assignment unbox/normalise) are the correct next steps to
 retire commits 5 and 6 entirely; each needs the full suite + sweep gate.
 `upstreaming-linear` must be re-derived once these land (its commits 5/6 still
 carry the pre-investigation band-aids).
+
+## Bucket-C follow-up: whole-group frontend fixes (2026-07-24, session 2)
+
+**Group 1 — dunder-dispatch unboxed args (symex_function_call band-aid): DONE
+(`7df818d567b`).** Root cause: synthetic dunder/protocol dispatch calls
+(__call__, __contains__, __setitem__, ...) bypass convert_call's argument
+coercion and hand unboxed values (int, python_tuple) to python_value
+parameters; goto-symex then byte-extracted/typecast them into the python_value
+slot (a byte reinterpret that yields a garbage __tag — a latent PLR soundness
+hole). Whole-group fix: a shared `coerce_call_args(callee_type, args)` helper
+(mirrors convert_call: wrap_value into a python_value param, else
+safe_typecast) applied at the dispatch sites; the goto-symex struct/struct_tag
+typecast is removed. Full suite green; ESBMC sweep 0 regressions + 3
+improvements (callable_instance / contains_dunder / ord_split_element DIFF→PASS).
+
+**Groups 2 & 3 — return-value + assignment desync (symex_set_return_value /
+symex_assign band-aids): DIAGNOSED as a shared architectural issue, deferred.**
+These are NOT independent mis-typed sites; they share one root: **a value's
+symbol type is finalised/widened by a post-conversion pass AFTER the body
+expression was already emitted and coerced**, leaving the body expression
+desynced from the final symbol type. Instrumented evidence:
+- `Range3.__next__`: at `convert_return`, `ret_val` is python_value while the
+  declared return is `int` (`-> int`); `convert_return` (control.cpp ~2443)
+  then WIDENS the function's return type to python_value to match — but with
+  `__next__`'s multiple exits (`return v` + `raise StopIteration`) the passes
+  leave one exit typed differently from the finalised return symbol, which
+  symex_set_return_value then casts (int↔python_value — a reinterpret, not a
+  box: the concerning case).
+- `Service.get_items -> List[Dict[str,Any]]`: returns `response["Items"]` off an
+  `object`; the returned struct's tag differs from the annotation's list struct
+  (a genuine dynamic-typing return), handled today by the symex cast.
+- `lambda-object-param-dispatch`: assigns a python_value to a
+  `python_class_P`-typed lvalue (needs an UNBOX / unwrap_value, not a
+  reinterpret typecast).
+- `python-library-wave9`: assigns a `struct` to a `struct_tag` of the SAME
+  class (a benign representational mismatch; a follow-tag normalisation, and
+  the current cast is sound for this one).
+
+The architecturally correct whole-group fix is a **type-finalisation change**:
+either finalise return/variable symbol types BEFORE converting the body (so
+`convert_return` / the assignment path coerce to the final type), or run a
+single post-conversion pass that re-coerces every `return` operand and
+assignment RHS to its final symbol type via the boundary helpers (wrap_value /
+unwrap_value / safe_typecast). Rushing per-site coercions here is unsafe for
+PLR (a wrong box-vs-reinterpret-vs-unbox choice is exactly how a false proof is
+introduced), so the two symex band-aids are RETAINED pending that refactor.
+Both are triggered by only 2 tests each; the int↔python_value and
+python_value↔class casts are the ones to convert to real box/unbox once the
+type-finalisation ordering is fixed.
