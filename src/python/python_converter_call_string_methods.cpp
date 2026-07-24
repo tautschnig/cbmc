@@ -1153,7 +1153,7 @@ std::optional<exprt> python_convertert::try_string_method(
       {
         function_application_exprt app{
           reg(
-            ID_cprover_string_smt_strcat_func,
+            ID_cprover_string_concat_func,
             {a.type(), b.type()},
             smt_string_typet{}),
           {a, b}};
