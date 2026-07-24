@@ -3168,20 +3168,22 @@ exprt python_convertert::native_or_member_string_length(const exprt &s)
 {
   if(s.type().id() == ID_smt_string)
   {
+    // Direction B: declare the GENERIC length intrinsic with its native Int
+    // result and typecast to i64; the shared encoder emits (str.len s) [Int]
+    // and convert_typecast supplies the int2bv (net SMT identical to the
+    // retired Python-specific length branch, no encoder-side Python logic).
     const irep_idt fn{ID_cprover_string_length_func};
     if(symbol_table.lookup(fn) == nullptr)
     {
       symbolt fs{
-        fn,
-        mathematical_function_typet({s.type()}, signedbv_typet{64}),
-        "python"};
+        fn, mathematical_function_typet({s.type()}, integer_typet{}), "python"};
       fs.base_name = id2string(fn);
       symbol_table.add(fs);
     }
     function_application_exprt app{
       symbol_table.lookup_ref(fn).symbol_expr(), {s}};
-    app.type() = signedbv_typet{64};
-    return std::move(app);
+    app.type() = integer_typet{};
+    return typecast_exprt{std::move(app), signedbv_typet{64}};
   }
   return member_exprt{s, "length", signedbv_typet{64}};
 }

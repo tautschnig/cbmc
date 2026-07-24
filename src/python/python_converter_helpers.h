@@ -958,13 +958,25 @@ collect_param_names(const jsont &func_def)
   std::vector<codet> &pending_checks)
 {
   const typet int_type = signedbv_typet{64};
+  // Direction B (native SMT-String backend): length lowers to the native-Int
+  // (str.len s) via the shared upstream encoder. Declare the intrinsic with
+  // its NATIVE Int result and assign it into the i64 result symbol through a
+  // typecast, so the universal convert_typecast supplies the int2bv. Refined
+  // struct operands keep the bit-vector convention -- the SAT string solver
+  // PRECONDITIONs on the bit-vector length_type and cannot take a native Int.
+  // (A run is backend-uniform, so the shared fn symbol's signature is
+  // consistent within a run.)
+  const bool native_length = str.type().id() == ID_smt_string &&
+                             func_id == ID_cprover_string_length_func;
+  const typet app_result_type =
+    native_length ? typet{integer_typet{}} : int_type;
   irep_idt sym_id{func_id};
   if(symbol_table.lookup(sym_id) == nullptr)
   {
     std::vector<typet> arg_types{str.type()};
     symbolt fs{
       sym_id,
-      mathematical_function_typet(std::move(arg_types), int_type),
+      mathematical_function_typet(std::move(arg_types), app_result_type),
       "python"};
     fs.base_name = id2string(func_id);
     symbol_table.add(fs);
@@ -972,7 +984,7 @@ collect_param_names(const jsont &func_def)
 
   function_application_exprt app(
     symbol_table.lookup_ref(sym_id).symbol_expr(), {str});
-  app.type() = int_type;
+  app.type() = app_result_type;
 
   std::size_t ctr = symbol_table.symbols.size();
   std::string rc_name = "__str_int_" + std::to_string(ctr);
@@ -985,8 +997,10 @@ collect_param_names(const jsont &func_def)
     rs.is_state_var = true;
     symbol_table.add(rs);
   }
-  pending_checks.push_back(
-    code_frontend_assignt{symbol_table.lookup_ref(rc_id).symbol_expr(), app});
+  exprt assigned = native_length ? exprt{typecast_exprt{app, int_type}}
+                                 : exprt{std::move(app)};
+  pending_checks.push_back(code_frontend_assignt{
+    symbol_table.lookup_ref(rc_id).symbol_expr(), std::move(assigned)});
   return symbol_table.lookup_ref(rc_id).symbol_expr();
 }
 
