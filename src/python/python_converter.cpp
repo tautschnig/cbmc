@@ -3575,8 +3575,7 @@ exprt python_convertert::python_truthiness(const exprt &e)
           to_code_type(lsym->type).return_type(),
           source_locationt{}};
         return notequal_exprt{
-          std::move(call),
-          from_integer(0, to_code_type(lsym->type).return_type())};
+          std::move(call), safe_zero(to_code_type(lsym->type).return_type())};
       }
     }
     // No dunder available — class instances default to truthy.

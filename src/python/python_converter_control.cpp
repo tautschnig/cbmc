@@ -2368,7 +2368,7 @@ codet python_convertert::convert_return(const jsont &stmt)
         to_code_type(func_sym->type).return_type().id() != ID_empty)
       {
         return code_frontend_returnt{
-          from_integer(0, to_code_type(func_sym->type).return_type())};
+          safe_zero(to_code_type(func_sym->type).return_type())};
       }
     }
     return code_frontend_returnt{};

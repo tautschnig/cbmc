@@ -2613,7 +2613,7 @@ exprt python_convertert::emit_descriptor_get(
   }
   if(mty.parameters().size() >= 3)
     args.push_back(
-      from_integer(python_none_sentinel_int(), mty.parameters()[2].type()));
+      coerce_to_typed_slot(python_none_value(), mty.parameters()[2].type()));
   pending_checks.push_back(code_frontend_assignt{
     tv,
     side_effect_expr_function_callt{
