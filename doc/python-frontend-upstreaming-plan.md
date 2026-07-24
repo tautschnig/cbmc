@@ -154,3 +154,33 @@ Then land the frontend itself in reviewable slices, each with its own
 - **Root-cause the two INVARIANT relaxations** (satcheck / boolbv_map) before
   offering them — they likely share one cause in the wide-struct-equality
   bit-blasting path.
+
+## Bucket-C "kept" items — architectural root-cause investigation (2026-07-24)
+
+The two Bucket-C items retained as "needed" (commits 5 and 6) were interrogated
+in depth: are they fixing the problem at the right place, or recovering in
+shared CBMC core from an ill-typed expression produced by the Python frontend?
+Method: instrument each core site to capture the exact type mismatch + origin,
+then trace to the frontend construction. **Finding: all four are band-aids in
+shared core for frontend-produced ill-typed expressions.** Map + status:
+
+| Core band-aid | Trigger(s) | Frontend root cause | Status |
+|---|---|---|---|
+| `simplify_member` DATA_INVARIANT relax | `ord_split_element*` | `ord()` built an ARRAY-typed `.data` member access over the string struct's POINTER `data` field | **FIXED at source** (`ord` reads `*(data+0)`); band-aid removed; `ord_split_element` DIFF→PASS |
+| `symex_function_call` struct/struct_tag typecast | `plain-missing-attr-nofp` (`__getattr__`), **and** `callable_instance`, `contains_dunder`, `github_*_setitem`, `github_4572` (`__call__`/`__contains__`/`__setitem__`) | synthetic dunder-dispatch call sites pass UNBOXED args (refined_string / scalar) to python_value parameters | **PARTIAL**: `__getattr__` name now boxed (`wrap_value`); band-aid RETAINED for the other dispatch sites (removing it regresses them to TOERR). Full fix = box args at every dunder-dispatch site |
+| `symex_set_return_value` conditional_cast | `dunder-iter-next-setitem` (`Range3.__next__`: signedbv→struct_tag), `crash-return-type-mismatch` (`Service.get_items`: struct→struct) | the function's code_typet return type (→ return symbol = python_value) disagrees with `convert_return`'s annotation-driven coercion target (`-> int`), so the body returns an int the symbol can't hold | **band-aid RETAINED** (root fix = make the return-symbol type and the coercion target consistent; box the returned value to the code_typet return type) |
+| `symex_assign` type-mismatch conditional_cast | `lambda-object-param-dispatch` (python_value→python_class_P: an UNBOX), `python-library-wave9` (struct vs struct_tag of the same class: representational) | assignment sites don't unbox a python_value to the concrete class lvalue / don't normalise struct vs struct_tag | **band-aid RETAINED** (root fix = unwrap/coerce rhs to the lvalue type at the frontend assignment; normalise struct/struct_tag) |
+| `resolve_python_string_content` (goto_symex Part B) | `string-produced-subscript` (+ others) | — | **KEEP**: a legitimate, gated (language==python) string-backend materialisation hook, not an invariant relaxation |
+
+Landed root-cause fixes (on `cbmc-on-esbmc-python`): `b554fba5c5c` (ord) and
+`91ace9fc012` (getattr name boxing). Full `regression/python` green; ESBMC
+sweep 0 regressions + 1 improvement (`ord_split_element` DIFF→PASS).
+
+Lesson recorded: the `symex_function_call` band-aid covers a WHOLE CLASS of
+dunder-dispatch sites; a per-site fix must be validated against the ESBMC sweep
+(not just `regression/python`) before removing the band-aid. The remaining
+root-cause fixes (dunder-arg boxing across all dispatch sites; return-symbol
+type consistency; assignment unbox/normalise) are the correct next steps to
+retire commits 5 and 6 entirely; each needs the full suite + sweep gate.
+`upstreaming-linear` must be re-derived once these land (its commits 5/6 still
+carry the pre-investigation band-aids).
