@@ -1,3 +1,4 @@
+#include <functional>
 /// Python to GOTO converter — module-level handlers:
 /// convert_module_body, process_imported_module, the
 /// top-level convert() pass driver.
@@ -3136,5 +3137,46 @@ bool python_convertert::convert()
     symbol_table.add(memory_symbol);
   }
 
+  finalise_slot_types();
+
   return false;
+}
+
+void python_convertert::finalise_slot_types()
+{
+  // Collect function symbol ids first (safe_typecast never adds code symbols,
+  // but iterate a fixed snapshot regardless).
+  std::vector<irep_idt> fn_ids;
+  for(const auto &named : symbol_table.symbols)
+    if(named.second.type.id() == ID_code && named.second.value.is_not_nil())
+      fn_ids.push_back(named.first);
+
+  for(const irep_idt &fid : fn_ids)
+  {
+    symbolt &fsym = symbol_table.get_writeable_ref(fid);
+    const typet ret_type = to_code_type(fsym.type).return_type();
+    std::function<void(exprt &)> walk = [&](exprt &e)
+    {
+      if(e.id() == ID_code)
+      {
+        codet &c = to_code(e);
+        const irep_idt &stmt = c.get_statement();
+        if(stmt == ID_assign && c.operands().size() == 2)
+        {
+          if(c.op0().type() != c.op1().type())
+            c.op1() = safe_typecast(c.op1(), c.op0().type());
+        }
+        else if(stmt == ID_return && c.operands().size() == 1)
+        {
+          if(
+            c.op0().is_not_nil() && ret_type.id() != ID_empty &&
+            c.op0().type() != ret_type)
+            c.op0() = safe_typecast(c.op0(), ret_type);
+        }
+      }
+      for(exprt &op : e.operands())
+        walk(op);
+    };
+    walk(fsym.value);
+  }
 }
