@@ -32,6 +32,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "symex_assign.h"
 
 #include <climits>
+#include <iostream>
 
 void goto_symext::do_simplify(exprt &expr, const value_sett &value_set)
 {
@@ -48,13 +49,6 @@ void goto_symext::symex_assign(
 {
   exprt lhs = clean_expr(o_lhs, state, true);
   exprt rhs = clean_expr(o_rhs, state, false);
-
-  // Handle type mismatches from dynamically-typed languages (Python)
-  // where variables can be assigned values of different types.
-  if(lhs.type() != rhs.type())
-  {
-    rhs = typecast_exprt::conditional_cast(rhs, lhs.type());
-  }
 
   DATA_INVARIANT_WITH_DIAGNOSTICS(
     lhs.type() == rhs.type(),

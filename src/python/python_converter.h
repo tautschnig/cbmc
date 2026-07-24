@@ -2527,6 +2527,18 @@ private:
   /// Safe typecast: handles tagged unions, struct-to-scalar, and other
   /// cases that would crash with a raw typecast_exprt.
   exprt safe_typecast(const exprt &e, const typet &target);
+  /// Type-finalisation pass (run at the end of convert()). Some symbol types
+  /// (function return types, variable/field types) are finalised or widened
+  /// AFTER their bodies were converted, leaving individual assignments and
+  /// return statements desynced from the final slot type (e.g. a scalar
+  /// stored into a widened python_value slot, a python_value read into a
+  /// concrete class slot, or a struct into its struct_tag). Rather than let
+  /// goto-symex reinterpret the bytes, walk every ID_code body and coerce each
+  /// assignment RHS to its LHS type and each return value to the function's
+  /// return type via safe_typecast (correct box/unbox/typecast). Whole-group
+  /// and PLR-sound; replaces the goto-symex assignment/return type-mismatch
+  /// band-aids.
+  void finalise_slot_types();
 
   /// Coerce a single call argument to a declared parameter type.
   ///
