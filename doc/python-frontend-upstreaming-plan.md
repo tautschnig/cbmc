@@ -371,3 +371,67 @@ separable from its generic body.
 - `cbmc_languages.cpp` `register_python_language`; `cbmc_parse_options.{cpp,h}` `--python-*` options; `goto_check_c` python-mode allowance.
 
 Next: review (C) for items that are CURRENTLY Python-specific but could be generalised (e.g. the `smt_string` native sort and the `smt2_conv` string helpers as a reusable SMT-LIB-String facility; `python_regex_to_smt` as a generic regex-syntax→RegLan translator).
+
+## Category-C generalisation review (2026-07-24, session 4)
+
+For each "stays Bucket B" item: can it be GENERALISED (serve JBMC/other
+frontends), or can small frontend PRE-WORK let a generic facility do the rest?
+PLR soundness and the whole-group lens applied. Prioritised by value/effort.
+
+### 1. The `smt_string` native sort + `smt2_conv` Python handler — the ONE whole-group opportunity (LARGE, high value)
+Architecture today has THREE string paths: (a) refined-string SAT solver
+(default Python AND JBMC — the shared generic facility); (b) upstream's new
+`cprover_string_*` → SMT-LIB `str.*` lowering in smt2_conv (generic, z3/cvc5);
+(c) Python's `smt_string` sort + 7 `smt_*` intrinsics under `--python-smt-strings`
+(Plan A). **(b) and (c) are both "native SMT-LIB strings" by different means —
+(c) is a Python-PARALLEL reimplementation of (b).**
+- **Generalisation:** retire (c) by having the frontend emit standard
+  `cprover_string_*` (it already does in default mode; 24 generic ids) and rely
+  on (b)'s SMT-LIB lowering under z3/cvc5. Pre-work is frontend-side (drop the
+  `smt_*` emission + the `smt_string` sort); the remainder is DONE by the
+  generic facility.
+- **Gap to fill in the generic facility (WIDER USE — benefits Strata + any
+  SMT-LIB-string frontend):** upstream's (b) currently lowers only a subset;
+  the 7 `smt_*` ops (smt_strcat/strsub/strreplace/from_int/from_code/to_code/
+  re_ws) + `of_int`/`of_double`/`parse_int`/case/strip have no SMT-LIB lowering
+  yet. Adding them to smt2_conv's `flat_string_ops`/regex map generalises (b).
+- **Effort/risk:** LARGE and carefully-gated — (c) reached Plan-A precision/perf
+  that (b) ("less tested") must match before retiring (c). Recommend as a
+  dedicated milestone, validated against the native corpus + jbmc-strings.
+  Net win: one generic SMT-LIB-string facility instead of a Python-parallel one.
+
+### 2. `add_axioms_for_python_strip` — generalise to a parameterised strip (MODERATE)
+It differs from the generic Java `add_axioms_for_trim` in exactly two
+parameterisable ways: the whitespace PREDICATE (Python: 0x20 + 0x09–0x0d; Java
+trim: ≤0x20) and a SIDE-MODE (both / lstrip / rstrip). So Python strip is a
+generalisation of Java trim. **Recommend** a generic
+`add_axioms_for_strip(str, res, char_predicate, strip_front, strip_back)` with
+Java `trim` = strip(≤0x20, both) and Python whitespace-strip = strip(py_ws,
+mode). Wider use (adds lstrip/rstrip + configurable predicate to the shared
+solver). Low-moderate effort; touches the Java trim path so gate on
+jbmc-strings.
+
+### 3. `python_regex_to_smt` — generalise to a regex-dialect → RegLan translator (MEDIUM)
+The translator core (char classes, quantifiers, groups, anchors → SMT RegLan
+ops) is largely dialect-agnostic; only the surface syntax + the Python `re.*`
+MATCH semantics (match/search/fullmatch/group positions) are Python-specific.
+**Recommend** factoring the syntax→RegLan core into a generic facility
+parameterised by dialect (Python `re`, Java `Pattern`, …), keeping the Python
+`re.*` semantic layer thin on top. Medium effort; genuinely reusable.
+
+### 4. NOT generalisable (keep Python-specific by design)
+- `goto_symex` Part B `resolve_python_string_content`: explicitly documented as
+  HARMFUL for JBMC's refinement-constrained char[]; language-gated on purpose.
+- `register_python_language`, `--python-*` options: they ARE the frontend
+  registration/config — inherently Python.
+- `smt_string` init/width (`expr_initializer`, `boolbv_width`) + ids: only
+  meaningful while (c) exists; they disappear WITH the item-1 retirement.
+
+### Recommendation summary
+The highest-value architectural move is **item 1** (retire the parallel
+`smt_string` backend by generalising upstream's SMT-LIB-string facility and
+having the frontend emit `cprover_string_*`), which is a whole-group win but a
+large, precision-gated milestone. **Items 2 and 3** are bounded, genuinely-
+reusable generalisations that can land independently (gated on jbmc-strings).
+None should be rushed: each touches shared solver code where a wrong axiom is a
+soundness risk.
