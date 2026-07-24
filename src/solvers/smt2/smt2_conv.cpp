@@ -3018,22 +3018,28 @@ void smt2_convt::convert_expr(const exprt &expr)
                    a.type().id() == ID_smt_string;
           });
 
-        // Native SMT string concatenation (Python --python-smt-strings)
-        // reaches the shared encoder as a value-returning 2-arg concat over
-        // smt_string operands: lower it here to (str.++ a b), identical to the
-        // retired Python-specific smt_strcat branch. Safe for smt_string
-        // because concat's result sort is String either way (no bool/int
-        // bitvector-encoding mismatch that the Python predicate/query handlers
-        // below rely on).
-        const bool concat_smt_string =
-          fn_id == ID_cprover_string_concat_func && args.size() == 2 &&
-          std::all_of(
+        // Native Python string ops (--python-smt-strings) reach the shared
+        // encoder over smt_string operands. The ops here have been *converged*
+        // onto the generic facility (Direction B): the front-end declares the
+        // intrinsic with its NATIVE result type (String for concat, Int for
+        // length) and wraps it in a typecast to Python's bitvector type, so the
+        // encoder emits the plain str.* term and the universal convert_typecast
+        // bridges the representations (int2bv / bv2nat / ite). The result-type
+        // check is the discriminator vs the refined signedbv convention.
+        //   concat [String result] -> (str.++ a b)
+        //   length [Int result]    -> (str.len s)
+        const bool smt_string_converged =
+          ((fn_id == ID_cprover_string_concat_func &&
+            expr.type().id() == ID_smt_string) ||
+           (fn_id == ID_cprover_string_length_func &&
+            expr.type().id() == ID_integer)) &&
+          std::any_of(
             args.begin(),
             args.end(),
             [](const exprt &a) { return a.type().id() == ID_smt_string; });
 
         if(
-          (operands_native || concat_smt_string) &&
+          (operands_native || smt_string_converged) &&
           (!smt_name.empty() || is_startswith || is_endswith || is_is_empty ||
            is_regex_loop || is_index_of))
         {
@@ -3307,23 +3313,11 @@ void smt2_convt::convert_expr(const exprt &expr)
         out << "(_ bv0 " << width << ")";
         return;
       }
-      // cprover_string_length_func(s) → (str.len s)
-      // str.len returns an SMT Int; convert to the result bit-vector width.
-      if(fn_id == ID_cprover_string_length_func && args.size() == 1)
-      {
-        std::size_t width = boolbv_width(expr.type());
-        if(width == 0)
-          width = 64;
-        if(reachable(args[0]))
-        {
-          out << "((_ int2bv " << width << ") (str.len ";
-          emit_smt_string(args[0]);
-          out << "))";
-          return;
-        }
-        out << "(_ bv0 " << width << ")";
-        return;
-      }
+      // cprover_string_length_func over smt_string is handled by the shared
+      // encoder above (converged, Direction B): the front-end declares it
+      // integer-typed and wraps it in a typecast, so the encoder emits
+      // (str.len s) [Int] and convert_typecast applies the int2bv. No
+      // Python-specific length lowering remains here.
       // cprover_string_index_of_func(hay, needle[, from]) → (str.indexof ...)
       // str.indexof returns -1 when not found, matching Python find/index.
       if(
