@@ -692,3 +692,48 @@ clean landed wins remain concat + length. The two truly-retirable ops were
 retirable precisely because their refined paths don't emit the intrinsic;
 everything else is gated on resolving the refined-SMT2-fallback / Python-vs-
 Strata-discriminator coupling above.
+
+## Milestone #1 — operand-SORT dispatch landed; sort retirement's last blocker isolated (2026-07-24)
+
+Acting on the principle "the back-end must not branch on which front-end
+produced the expression", reworked the encoder's dispatch (commit
+`aa420e01e6d`):
+
+- `operands_native` now excludes ONLY refined strings (struct / struct_tag).
+  Both the upstream `string_typet` (ID_string, Strata) and the Python native
+  sort (ID_smt_string) are the SMT String sort, so both route to the generic
+  `str.*` lowering uniformly. The dispatch is on operand SORT (String vs
+  refined-struct), never on the front-end. The per-op `smt_string`
+  result-type predicate is gone.
+- The result convention (Python bit-vectors vs native SMT Bool/Int) is
+  reconciled by the FRONT-END via boundary typecasts (Direction B):
+  `emit_string_bool_function` (equal/contains/is_prefix/is_suffix → native
+  Bool) and `index_of` (native Int result + Int `from`).
+- The Python handler's equal/contains/prefix/suffix branches now serve ONLY
+  refined struct operands (the sound SMT2 structural fallback), reached by
+  operand type. This is what the bool-query batch needed: NOT deleting the
+  branches (which broke refined), but letting String operands route past them.
+
+All gates green: native/cvc5 corpus 50/50; smt2_convt unit 57; [strings] 388;
+the refined-struct-under-SMT2 tests (`int-unbounded-box-*`) SUCCESSFUL; full
+regression/python green; regression/strings green; jbmc-strings green; sweep
+0-reg. This converged equal/contains/is_prefix/is_suffix/index_of onto the
+generic encoder for native operands (which the earlier batch could not do), and
+removed the front-end discriminator from the op lowering.
+
+### Sort retirement — retried, one blocker remains (also a back-end/front-end coupling)
+With the op-lowering discriminator gone, re-attempted the
+`smt_string_typet`→`string_typet` rename. Native corpus stays 50/50, but the
+`smt2_convt` unit test regresses (14/29) — root cause isolated: `find_symbols`
+emits a **Python-specific soundness bound** `(assert (< (str.len s) 2^63))` for
+every String-sorted symbol, gated on the sort. It exists because Python reads
+`len` as `int2bv(str.len s)` over a bit-vector (Strata uses native Int, needs no
+such bound). Renaming applies it to Strata's `ID_string` symbols too → extra
+assertions → the exact-match unit test fails. This is the SAME class of smell
+(back-end emitting a front-end-specific constraint), just at symbol-declaration
+rather than op-lowering. To retire the sort it must move to the FRONT-END (a
+per-native-string-symbol `assume len < 2^63`, like `bounded_nondet_string`
+already does for some sites) so `find_symbols` stops gating on the sort. That is
+a soundness-sensitive move (must cover every native string symbol to preserve
+the int2bv-faithfulness the bound guarantees) and is the isolated next step.
+Reverted the rename; the op-SORT dispatch (the core fix) is landed.
