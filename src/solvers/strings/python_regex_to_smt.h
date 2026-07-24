@@ -64,6 +64,23 @@ struct python_regex_segmentt
 /// SMT translator cannot handle (the fragment is left unconstrained, i.e. an
 /// over-approximation); the bail conditions above are only those that would
 /// make the linear concatenation model itself unsound.
+/// Character-class definitions (as SMT-LIB RegLan terms) for a regex dialect.
+/// The recursive-descent translator is dialect-agnostic apart from these
+/// escape-class expansions; parameterising them lets the same translator serve
+/// ASCII regex today and (e.g.) a Unicode dialect later. `\\D`/`\\S`/`\\W`
+/// are derived as `(re.diff re.allchar <class>)`.
+struct regex_char_classest
+{
+  std::string digit;      ///< \\d
+  std::string whitespace; ///< \\s
+  std::string word;       ///< \\w
+};
+
+/// The standard ASCII regex character classes (Python `re` / Java `Pattern`
+/// without UNICODE flags / PCRE default): \\d=[0-9], \\s=[ \\t\\n\\r\\f\\v],
+/// \\w=[A-Za-z0-9_].
+regex_char_classest ascii_regex_char_classes();
+
 std::optional<std::vector<python_regex_segmentt>>
 python_regex_segment_groups(const std::string &pattern);
 

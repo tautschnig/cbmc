@@ -19,11 +19,29 @@ namespace
 {
 /// Hand-written recursive-descent translator from a Python
 /// regex string to an SMT-LIB 2.6 regex term.
+regex_char_classest ascii_regex_char_classes()
+{
+  regex_char_classest c;
+  c.digit = "(re.range \"0\" \"9\")";
+  c.whitespace =
+    "(re.union (str.to_re \" \") (str.to_re \"\\u{9}\") "
+    "(str.to_re \"\\u{a}\") (str.to_re \"\\u{d}\") "
+    "(str.to_re \"\\u{c}\") (str.to_re \"\\u{b}\"))";
+  c.word =
+    "(re.union (re.range \"A\" \"Z\") (re.range \"a\" \"z\") "
+    "(re.range \"0\" \"9\") (str.to_re \"_\"))";
+  return c;
+}
+
 class translator
 {
 public:
-  translator(const std::string &p, bool ic = false, bool da = false)
-    : pattern(p), ignorecase(ic), dotall(da)
+  translator(
+    const std::string &p,
+    bool ic = false,
+    bool da = false,
+    regex_char_classest cc = ascii_regex_char_classes())
+    : pattern(p), ignorecase(ic), dotall(da), classes(std::move(cc))
   {
   }
 
@@ -45,6 +63,7 @@ private:
   const std::string &pattern;
   const bool ignorecase = false;
   const bool dotall = false;
+  const regex_char_classest classes;
   std::size_t pos = 0;
 
   // -- low-level helpers --
@@ -369,34 +388,23 @@ private:
     switch(c)
     {
     case 'd':
-      return std::string{"(re.range \"0\" \"9\")"};
+      return classes.digit;
     case 'D':
       // Single non-digit character: allchar minus the digit range.
       // (re.comp ...) would be unsound — its language includes "" and
       // multi-character strings, but \D matches exactly one character.
-      return std::string{"(re.diff re.allchar (re.range \"0\" \"9\"))"};
+      return std::string{"(re.diff re.allchar "} + classes.digit + ")";
     case 's':
       // Whitespace: [ \t\n\r\f\v]. Control characters use \u{hex}
       // (SMT-LIB has no \t / \n escapes — "\t" would be backslash-t).
-      return std::string{
-        "(re.union (str.to_re \" \") (str.to_re \"\\u{9}\") "
-        "(str.to_re \"\\u{a}\") (str.to_re \"\\u{d}\") "
-        "(str.to_re \"\\u{c}\") (str.to_re \"\\u{b}\"))"};
+      return classes.whitespace;
     case 'S':
-      return std::string{
-        "(re.diff re.allchar (re.union (str.to_re \" \") "
-        "(str.to_re \"\\u{9}\") (str.to_re \"\\u{a}\") (str.to_re \"\\u{d}\") "
-        "(str.to_re \"\\u{c}\") (str.to_re \"\\u{b}\")))"};
+      return std::string{"(re.diff re.allchar "} + classes.whitespace + ")";
     case 'w':
       // Word: [A-Za-z0-9_]
-      return std::string{
-        "(re.union (re.range \"A\" \"Z\") (re.range \"a\" \"z\") "
-        "(re.range \"0\" \"9\") (str.to_re \"_\"))"};
+      return classes.word;
     case 'W':
-      return std::string{
-        "(re.diff re.allchar (re.union (re.range \"A\" \"Z\") "
-        "(re.range \"a\" \"z\") (re.range \"0\" \"9\") "
-        "(str.to_re \"_\")))"};
+      return std::string{"(re.diff re.allchar "} + classes.word + ")";
     case 'n':
       return std::string{"(str.to_re \"\\u{a}\")"};
     case 't':
