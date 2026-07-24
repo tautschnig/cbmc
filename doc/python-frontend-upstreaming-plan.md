@@ -542,3 +542,55 @@ The `cprover_string_substring_func` entry restored to the generic encoder map in
 Strata convention is `(start, end)` → `(str.substr s a (- b a))`. It is
 unexercised today (Python uses `smt_strsub`; no Strata substring test), but must
 be reconciled when substr converges.
+
+## Milestone #1 — convention-reconciliation stage: direction decided (2026-07-24)
+
+The remaining ops differ from the generic encoder by calling convention
+(Python bitvector ints / bitvector-encoded bools / replace-all vs the generic
+native SMT Int / Bool / first-replace). Two ways to bridge:
+
+- **Direction A (encoder-side):** teach the shared encoder to detect bitvector
+  operands / result-types and insert `bv2nat` / `int2bv` / `(ite … bv1 bv0)`
+  itself. Rejected: pollutes the shared (Strata-facing) encoder with
+  Python-specific bitvector logic.
+- **Direction B (boundary typecasts) — CHOSEN, more general.** The front-end
+  emits the generic intrinsic with its NATIVE SMT type (String / Int / Bool)
+  and wraps it in an ordinary `typecast_exprt` to/from Python's bitvector type.
+  The encoder stays pristine (native `str.*` terms, exactly as Strata uses it),
+  and CBMC's **existing universal `convert_typecast`** performs every
+  conversion. Verified all four directions already exist in `smt2_conv`:
+  bitvector→Int `bv2nat` (signed-aware, ~4542-4565); Int→bitvector `int2bv`
+  (~4149); Bool→bitvector `(ite src bv1 bv0)` (~4090); bitvector→Bool
+  `(not (= src 0))` (~3925). So a converged op is: front-end declares the
+  intrinsic natively + typecast; encoder emits the plain `str.*`; typecast
+  bridges. The conversions live in ONE boundary layer, reusing universal
+  machinery.
+
+**End-to-end validation (length, then reverted):** routing native `len` as
+`typecast(cprover_string_length_func(s):Int, i64)` produced *exactly*
+`((_ int2bv 64) (str.len s))` — identical to the retired handler branch — and
+the native corpus stayed 50/50 once the encoder convergence was gated on the
+**result type** (only natively-typed apps route to the generic encoder).
+
+**Whole-group blocker discovered (why length was NOT committed):** unlike
+concat (2 contained emitters, fully retired), `length`/`equal`/etc. are emitted
+in TWO conventions — the representation-neutral primitives (`native_or_member_
+string_length`, `string_equal`, …) AND ~9 raw `emit_string_function(…length…)`
+call sites that declare a **signedbv** result. Converging only the primitive
+leaves the raw-emitter convention behind, so the Python handler branch cannot
+retire — the change becomes net-negative churn (extra gate complexity, nothing
+removed). The **prerequisite** (the actual whole-group fix, and the Plan-A
+doc's own standing recommendation) is: **funnel ALL native string-op emissions
+through the representation-neutral primitives**, so each op has ONE emission
+convention. Then Direction-B-converting the primitive converges the op AND
+retires its handler branch mechanically. Risk to weigh: several of those raw
+emitters are on the refined (default) path (struct operands), where the
+primitive returns a direct `.length` member access rather than the
+`emit_string_function` intrinsic — equivalent for a refined struct but on the
+high-stakes default path, so the funnelling must be validated per-site against
+the full refined suite + jbmc + sweep.
+
+**Next concrete step:** the emitter-funnelling refactor (route the raw
+`emit_string_function` string-op sites through the primitives), then converge
+length/equal/contains/index_of via Direction B one op at a time, each retiring
+its handler branch, gated on the full corpus + suites + sweep.
