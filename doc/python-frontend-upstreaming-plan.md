@@ -346,3 +346,28 @@ generic-safe robustness (Python-motivated; Java's struct form still matches).
 (mixes generic `ns` threading + the interpreted-ids sync with the python_strip
 dispatch) and confirmation that `string_refinement.cpp`'s 4 python touches are
 separable from its generic body.
+
+## Refined Bucket-B classification (2026-07-24, session 4, task 3 complete)
+
+### (A) GENERIC / wider-use — reframe as LAND-FIRST (JBMC-safe: jbmc-strings + regression/strings + [strings] unit + Python all green)
+- `string_constraint.{cpp,h}` + `ns` plumbing (`string_constraint_generator_{comparison,indexof,testing}`, `string_format_builtin_function.cpp`, `string_builtin_function.h`) — `cannot_be_neg` empty-namespace bug fix.
+- `string_dependencies.cpp` — `get_string_expr` robustness (drop `expr_checked_cast<struct_exprt>`).
+- `string_refinement.cpp` — handle()-path string-builtin dependency-graph fix over the FULL generic `cprover_string_*` id set (a few python touches to hunk-split out).
+- `array_pool.cpp` — associate re-insertion robustness for multiply-inlined bodies (generic; any frontend).
+- `string_builtin_function.cpp`, `string_concatenation_builtin_function.cpp`, `string_insertion_builtin_function.cpp` — `get_string_expr` + `ns` threading.
+- `refined_string_type.h` — struct_tag recognition (generic-safe; Java struct form still matches; minor: substring match, prefer exact).
+- (already Bucket A) `irep.cpp` SHARING, `ieee_float.{h,cpp}`, `goto-symex/slice.cpp`, `simplify_expr.cpp`.
+- CLI extras `--overflow-check`/`--no-slice-formula` (goto_check_c.h, bmc_util.h) — generic, extract from the cbmc_parse_options python bundle.
+
+### (B) BAND-AID → root-cause fix at the frontend + REVERT (Bucket-C-style; NOT stays-Bucket-B)
+- `arith_tools.cpp` — `from_integer(int, struct)` relaxes a core `PRECONDITION(false)`. Confirmed a band-aid: frontend callers misuse `from_integer` on struct/python_value types — `from_integer(none_sentinel, python_value)` (custom-descriptor) should be `python_none_value()`, and `from_integer(0, <python_class_*>)` (python_converter.cpp:3579 return-compare; decimal-p3, numeric-model-soundness) should be `safe_zero`/a proper comparison. Needed by 7 tests today; fix the callers, then restore the PRECONDITION. (Also re-audit python_converter.cpp:3400/3443 None-into-struct sites.)
+
+### (C) GENUINELY PYTHON-SPECIFIC — STAYS BUCKET B (ships with the frontend)
+- `add_axioms_for_python_strip` (`string_constraint_generator_transformation.cpp` + `_main.cpp` dispatch + `string_constraint_generator.h` decl) — Python `strip` ≠ Java `trim`.
+- `smt2_conv.{cpp,h}` — Python `re.*` / `smt_*` convert_expr handler (parts MAY be generalisable as reusable SMT-string helpers — flagged for the generalisation review).
+- `python_regex_to_smt.{cpp,h}` — Python-regex-syntax → SMT translator.
+- `std_types.h` `smt_string_typet`; `irep_ids.def` python + smt_string ids; `boolbv_width.cpp` smt_string width; `expr_initializer.cpp` smt_string init — the Plan-A native SMT-string sort.
+- `goto_symex.{cpp,h}` Part B `resolve_python_string_content` — EXPLICITLY `language_mode=="python"`-gated and documented as HARMFUL for JBMC's refinement-constrained char[]; not generalisable by design.
+- `cbmc_languages.cpp` `register_python_language`; `cbmc_parse_options.{cpp,h}` `--python-*` options; `goto_check_c` python-mode allowance.
+
+Next: review (C) for items that are CURRENTLY Python-specific but could be generalised (e.g. the `smt_string` native sort and the `smt2_conv` string helpers as a reusable SMT-LIB-String facility; `python_regex_to_smt` as a generic regex-syntax→RegLan translator).
