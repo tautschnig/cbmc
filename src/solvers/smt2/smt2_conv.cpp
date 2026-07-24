@@ -2968,6 +2968,13 @@ void smt2_convt::convert_expr(const exprt &expr)
         static const std::map<irep_idt, std::string> upstream_flat_string_ops =
           {{ID_cprover_string_char_at_func, "str.at"},
            {ID_cprover_string_replace_func, "str.replace"},
+           {ID_cprover_string_concat_func, "str.++"},
+           {ID_cprover_string_length_func, "str.len"},
+           {ID_cprover_string_substring_func, "str.substr"},
+           {ID_cprover_string_contains_func, "str.contains"},
+           {ID_cprover_string_is_prefix_func, "str.prefixof"},
+           {ID_cprover_string_is_suffix_func, "str.suffixof"},
+           {ID_cprover_string_equal_func, "="},
            {ID_cprover_string_to_regex_func, "str.to_re"},
            {ID_cprover_string_in_regex_func, "str.in_re"},
            {ID_cprover_regex_range_func, "re.range"},
@@ -2992,10 +2999,26 @@ void smt2_convt::convert_expr(const exprt &expr)
         const bool is_endswith = fn_id == ID_cprover_string_endswith_func;
         const bool is_is_empty = fn_id == ID_cprover_string_is_empty_func;
         const bool is_regex_loop = fn_id == ID_cprover_regex_loop_func;
+        const bool is_index_of = fn_id == ID_cprover_string_index_of_func;
+
+        // Lower to the SMT-LIB theory of strings only for SMT-LIB-native
+        // operands. Python's refined-string (struct) / smt_string operands are
+        // handled by the Python-specific handlers below, so skip to them here
+        // rather than shadowing (or unsoundly reinterpreting) them.
+        const bool operands_native = std::none_of(
+          args.begin(),
+          args.end(),
+          [](const exprt &a)
+          {
+            return a.type().id() == ID_struct ||
+                   a.type().id() == ID_struct_tag ||
+                   a.type().id() == ID_smt_string;
+          });
 
         if(
-          !smt_name.empty() || is_startswith || is_endswith || is_is_empty ||
-          is_regex_loop)
+          operands_native &&
+          (!smt_name.empty() || is_startswith || is_endswith || is_is_empty ||
+           is_regex_loop || is_index_of))
         {
           // Soundness guard: this native lowering expects SMT-LIB-native
           // operands. The same ids are also used with the refined-string
@@ -3039,6 +3062,21 @@ void smt2_convt::convert_expr(const exprt &expr)
               numeric_cast_v<mp_integer>(to_constant_expr(args[2]));
             out << "((_ re.loop " << lo << ' ' << hi << ") ";
             convert_expr(args[0]);
+            out << ')';
+          }
+          else if(is_index_of)
+          {
+            // str.indexof takes three operands; default the start offset to 0.
+            PRECONDITION(args.size() == 2 || args.size() == 3);
+            out << "(str.indexof ";
+            convert_expr(args[0]);
+            out << ' ';
+            convert_expr(args[1]);
+            out << ' ';
+            if(args.size() == 3)
+              convert_expr(args[2]);
+            else
+              out << '0';
             out << ')';
           }
           else if(args.empty())
