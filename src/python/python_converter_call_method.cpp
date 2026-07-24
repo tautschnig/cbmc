@@ -50,6 +50,25 @@
 #include <sstream>
 #include <string>
 
+void python_convertert::coerce_call_args(
+  const typet &callee_type,
+  exprt::operandst &args)
+{
+  if(callee_type.id() != ID_code)
+    return;
+  const auto &params = to_code_type(callee_type).parameters();
+  for(std::size_t i = 0; i < args.size() && i < params.size(); ++i)
+  {
+    const typet &pt = params[i].type();
+    if(args[i].type() == pt)
+      continue;
+    if(is_python_value_type(pt) && !is_python_value_type(args[i].type()))
+      args[i] = wrap_value(args[i]);
+    else
+      args[i] = safe_typecast(args[i], pt);
+  }
+}
+
 exprt python_convertert::safe_address_of(
   const exprt &e,
   const source_locationt &loc)

@@ -91,9 +91,7 @@ void goto_symext::parameter_assignments(
            parameter_type.id() == ID_bool ||
            parameter_type.id() == ID_pointer ||
            parameter_type.id() == ID_union ||
-           parameter_type.id() == ID_union_tag ||
-           parameter_type.id() == ID_struct ||
-           parameter_type.id() == ID_struct_tag) &&
+           parameter_type.id() == ID_union_tag) &&
           (rhs_type.id() == ID_signedbv ||
            rhs_type.id() == ID_unsignedbv ||
            rhs_type.id() == ID_c_bit_field ||
@@ -101,24 +99,11 @@ void goto_symext::parameter_assignments(
            rhs_type.id() == ID_bool ||
            rhs_type.id() == ID_pointer ||
            rhs_type.id() == ID_union ||
-           rhs_type.id() == ID_union_tag ||
-           rhs_type.id() == ID_struct ||
-           rhs_type.id() == ID_struct_tag))
+           rhs_type.id() == ID_union_tag))
         // clang-format on
         {
-          // For struct/struct_tag mismatches, use typecast (same layout)
-          if(
-            (parameter_type.id() == ID_struct ||
-             parameter_type.id() == ID_struct_tag) &&
-            (rhs_type.id() == ID_struct || rhs_type.id() == ID_struct_tag))
-          {
-            rhs = typecast_exprt(rhs, parameter_type);
-          }
-          else
-          {
-            rhs = make_byte_extract(
-              rhs, from_integer(0, c_index_type()), parameter_type);
-          }
+          rhs = make_byte_extract(
+            rhs, from_integer(0, c_index_type()), parameter_type);
         }
         else
         {

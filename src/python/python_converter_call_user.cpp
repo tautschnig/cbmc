@@ -573,6 +573,7 @@ exprt python_convertert::convert_user_call(
               for(const auto &arg : as_array(args))
                 call_args.push_back(convert_expression(arg));
             }
+            coerce_call_args(cs->type, call_args);
             return side_effect_expr_function_callt{
               cs->symbol_expr(),
               std::move(call_args),
