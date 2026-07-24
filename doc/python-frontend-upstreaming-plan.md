@@ -594,3 +594,49 @@ the full refined suite + jbmc + sweep.
 `emit_string_function` string-op sites through the primitives), then converge
 length/equal/contains/index_of via Direction B one op at a time, each retiring
 its handler branch, gated on the full corpus + suites + sweep.
+
+## Milestone #1 — bool-query batch: revealed the convergeability criterion (2026-07-24)
+
+Attempted to converge the bool queries (equal/contains/is_prefix/is_suffix) via
+Direction B (make emit_string_bool_function declare a native Bool result +
+typecast; add them to the encoder's converged predicate; delete their handler
+branches). Native corpus stayed green, BUT deleting the branches regressed two
+`--cvc5 --python-unbounded-ints` tests (`int-unbounded-box-*`). Root cause:
+those run the **refined** string representation under an **SMT2** backend, where
+string `==`/`in` are NOT refined away (no SAT refinement) and reach smt2_conv as
+`cprover_string_equal/contains_func` over refined **structs** — the handler
+branches are their **sound structural fallback** (length+pointer compare;
+sound, may wrong-fail, never wrong-pass). So those branches are shared with the
+refined path and cannot be deleted. Reverted the whole bool-query change.
+
+**Convergeability criterion (the whole-group rule).** A per-op Python handler
+branch is *retirable now* iff the REFINED path does not emit that intrinsic to
+smt2_conv:
+- **concat** — retirable: refined concat is the distinct 4-arg ceremonial form
+  (kept), native was the 2-arg value form (retired). DONE.
+- **length** — retirable: refined length uses a direct `.length` **member
+  access** (no intrinsic reaches smt2_conv), native was the intrinsic (retired).
+  DONE.
+- **equal/contains/is_prefix/is_suffix** — NOT retirable per-op: refined-struct
+  under SMT2 emits the intrinsic and relies on the branch as its sound
+  structural fallback. Routing only native to the generic encoder would keep
+  the branch (no reduction) and merely split native from refined — churn.
+- **substr/replace** — same class (refined emits the intrinsic; plus the
+  convention/`replace_all` differences noted earlier).
+
+**Consequence — the next lever is the smt_string SORT retirement, not more
+per-op work.** The remaining ops converge *naturally* once native leaf strings
+stop being the Python-specific `smt_string` sort (`ID_smt_string`) and become
+the upstream `string_typet` (`ID_string`): the encoder's `operands_native`
+path already accepts `ID_string` (it only excludes struct/struct_tag/smt_string),
+so ALL native string ops would route to the generic encoder in one move, and the
+Python handler branches would remain solely as the refined-struct SMT2 fallback.
+Direction-B result typecasts (validated for length) remain the mechanism for the
+Bool/Int result-encoding at the boundary. Note this sort flip is the larger
+migration previously assessed (the in-aggregate `strtab` handle machinery is
+orthogonal and stays); it should be its own validation-gated effort.
+
+Net this session: concat + length converged and their parallel surface retired
+(`smt_strcat` id + branch; length branch); the convergeability criterion above
+now tells us which remaining ops are per-op-retirable (none cleanly) vs gated on
+the sort retirement (all of them).
