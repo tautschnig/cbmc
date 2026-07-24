@@ -119,11 +119,10 @@ simplify_exprt::simplify_member(const member_exprt &expr)
       DATA_INVARIANT(
         op.operands().size() > number,
         "struct expression must have sufficiently many operands");
-      if(op.operands()[number].type() == expr.type())
-        return op.operands()[number];
-      // Type mismatch (e.g., from typecast of dynamically-typed struct)
-      // — return with typecast instead of crashing
-      return typecast_exprt(op.operands()[number], expr.type());
+      DATA_INVARIANT(
+        op.operands()[number].type() == expr.type(),
+        "member expression type must match component type");
+      return op.operands()[number];
     }
   }
   else if(op.id()==ID_byte_extract_little_endian ||

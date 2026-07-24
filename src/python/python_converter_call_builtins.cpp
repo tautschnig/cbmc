@@ -1507,13 +1507,16 @@ std::optional<exprt> python_convertert::try_builtin_call(
           app.type() = python_int_type();
           return std::move(app);
         }
-        const auto &data_type = array_typet(
-          unsignedbv_typet{8},
-          from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-        member_exprt data{arg, "data", data_type};
-        return safe_typecast(
-          index_exprt{data, from_integer(0, signedbv_typet{64})},
-          python_int_type());
+        // The string struct's "data" component is a char pointer (see
+        // python_string_struct_def), so read the first byte via *(data + 0).
+        // An array-typed member access here would be ill-typed and trip
+        // simplify_member's component-type DATA_INVARIANT. Mirrors the is*()
+        // first-byte read in python_converter_call_string_methods.
+        member_exprt data_ptr{
+          arg, "data", pointer_typet{unsignedbv_typet{8}, 64}};
+        exprt byte0 = dereference_exprt{
+          plus_exprt{data_ptr, from_integer(0, signedbv_typet{64})}};
+        return safe_typecast(byte0, python_int_type());
       }
     }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
