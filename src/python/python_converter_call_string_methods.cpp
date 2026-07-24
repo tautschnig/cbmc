@@ -2378,13 +2378,22 @@ std::optional<exprt> python_convertert::try_string_method(
           const exprt hay = as_str_struct(obj);
           const exprt ndl = as_str_struct(needle);
           const typet int_type = signedbv_typet{64};
+          // Direction B (native SMT String): index_of lowers via the shared
+          // encoder to (str.indexof hay ndl from) with a native Int result and
+          // an Int `from` position. Typecast the i64 position in and the Int
+          // result out; convert_typecast supplies bv2nat / int2bv. Refined
+          // struct operands keep the bit-vector convention.
+          const bool native_iof = obj.type().id() == ID_smt_string;
+          const typet app_type = native_iof ? typet{integer_typet{}} : int_type;
+          const exprt from_arg =
+            native_iof ? exprt{typecast_exprt{from, integer_typet{}}} : from;
           // index_of takes (hay, ndl, from); last_index_of takes (hay, ndl)
           // and defaults its upper bound to |hay| (whole-string backward).
           const irep_idt fn =
             is_forward ? irep_idt{ID_cprover_string_index_of_func}
                        : irep_idt{ID_cprover_string_last_index_of_func};
           exprt::operandst call_args = is_forward
-                                         ? exprt::operandst{hay, ndl, from}
+                                         ? exprt::operandst{hay, ndl, from_arg}
                                          : exprt::operandst{hay, ndl};
           if(symbol_table.lookup(fn) == nullptr)
           {
@@ -2394,14 +2403,14 @@ std::optional<exprt> python_convertert::try_string_method(
               ats.push_back(a.type());
             symbolt fs{
               fn,
-              mathematical_function_typet(std::move(ats), int_type),
+              mathematical_function_typet(std::move(ats), app_type),
               "python"};
             fs.base_name = id2string(fn);
             symbol_table.add(fs);
           }
           function_application_exprt app{
             symbol_table.lookup_ref(fn).symbol_expr(), std::move(call_args)};
-          app.type() = int_type;
+          app.type() = app_type;
           static unsigned iof_ctr = 0;
           const irep_idt rid{"python::__index_of_" + std::to_string(iof_ctr++)};
           if(symbol_table.lookup(rid) == nullptr)
@@ -2413,7 +2422,9 @@ std::optional<exprt> python_convertert::try_string_method(
             symbol_table.add(rs);
           }
           const symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
-          pending_checks.push_back(code_frontend_assignt{res, app});
+          pending_checks.push_back(code_frontend_assignt{
+            res,
+            native_iof ? exprt{typecast_exprt{app, int_type}} : exprt{app}});
           if(method_name == "index" || method_name == "rindex")
           {
             // str.index/str.rindex raise ValueError when the substring is

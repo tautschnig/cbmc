@@ -3004,42 +3004,26 @@ void smt2_convt::convert_expr(const exprt &expr)
         const bool is_regex_loop = fn_id == ID_cprover_regex_loop_func;
         const bool is_index_of = fn_id == ID_cprover_string_index_of_func;
 
-        // Lower to the SMT-LIB theory of strings only for SMT-LIB-native
-        // operands. Python's refined-string (struct) / smt_string operands are
-        // handled by the Python-specific handlers below, so skip to them here
-        // rather than shadowing (or unsoundly reinterpreting) them.
+        // Lower to the SMT-LIB theory of strings for SMT-LIB String operands.
+        // The discriminator is the OPERAND SORT, not the front-end: both the
+        // upstream string_typet (ID_string, e.g. Strata) and the Python native
+        // string sort (ID_smt_string) are the SMT String sort (convert_type
+        // maps both to "String"), so both are "native" here. Only refined
+        // strings (struct / struct_tag, consumed by the SAT string solver or
+        // the structural fallback below) are excluded -- an operand-type
+        // decision, not a front-end one. The result convention (native SMT
+        // Bool/Int vs Python's bit-vectors) is reconciled by the FRONT-END via
+        // boundary typecasts (Direction B), so the encoder always emits the
+        // plain native str.* term and the universal convert_typecast bridges.
         const bool operands_native = std::none_of(
           args.begin(),
           args.end(),
-          [](const exprt &a)
-          {
-            return a.type().id() == ID_struct ||
-                   a.type().id() == ID_struct_tag ||
-                   a.type().id() == ID_smt_string;
+          [](const exprt &a) {
+            return a.type().id() == ID_struct || a.type().id() == ID_struct_tag;
           });
 
-        // Native Python string ops (--python-smt-strings) reach the shared
-        // encoder over smt_string operands. The ops here have been *converged*
-        // onto the generic facility (Direction B): the front-end declares the
-        // intrinsic with its NATIVE result type (String for concat, Int for
-        // length) and wraps it in a typecast to Python's bitvector type, so the
-        // encoder emits the plain str.* term and the universal convert_typecast
-        // bridges the representations (int2bv / bv2nat / ite). The result-type
-        // check is the discriminator vs the refined signedbv convention.
-        //   concat [String result] -> (str.++ a b)
-        //   length [Int result]    -> (str.len s)
-        const bool smt_string_converged =
-          ((fn_id == ID_cprover_string_concat_func &&
-            expr.type().id() == ID_smt_string) ||
-           (fn_id == ID_cprover_string_length_func &&
-            expr.type().id() == ID_integer)) &&
-          std::any_of(
-            args.begin(),
-            args.end(),
-            [](const exprt &a) { return a.type().id() == ID_smt_string; });
-
         if(
-          (operands_native || smt_string_converged) &&
+          operands_native &&
           (!smt_name.empty() || is_startswith || is_endswith || is_is_empty ||
            is_regex_loop || is_index_of))
         {
