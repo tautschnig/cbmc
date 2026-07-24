@@ -270,3 +270,28 @@ all dunder-dispatch args boxed (coerce_call_args); assignment/return desync
 fixed (finalise_slot_types). No goto-symex/core invariant relaxation from the
 Bucket-C set remains. `upstreaming-linear` must be re-derived to fold in this
 session's frontend fixes.
+
+## upstreaming-linear RE-DERIVED (2026-07-24, session 3)
+
+After Bucket-C was fully retired, `upstreaming-linear` was rebuilt from
+`origin/develop` (content-based, guaranteeing tree convergence to
+`cbmc-on-esbmc-python`). It is now **9 commits** (down from 13 — the two
+Bucket-C core commits are gone, since those band-aid files are pristine
+upstream again):
+
+1. util/irep: O(1) SHARING fast-path for irept::compare        (Bucket A)
+2. util: IEEE-754 sign-aware expression builders               (Bucket A)
+3. goto-symex/slice: don't slice string-refinement intrinsics  (Bucket A)
+4. util/simplify_expr: guard string simplifiers                (Bucket A)
+5. solvers/util: Python SMT-LIB string/regex backend + types   (Bucket B)
+6. cbmc/goto-symex: string-content hook, registration, CLI     (Bucket B)
+7. python: the front-end (incl. ord/getattr/coerce_call_args/finalise_slot_types)
+8. python: regression + unit + fuzz + lint + sweep tooling
+9. doc + wiring: architecture/plans, stdlib harness, CI, gitignore, registration
+
+Verified: Bucket A (1–4) builds `cbmc`+`unit` standalone on `origin/develop`
+(`[ieee_float]` 124 assertions); the full branch builds; tree is identical to
+`cbmc-on-esbmc-python` except the intentionally-dropped `union_find_replace.cpp`
+whitespace. No Bucket-C core band-aid remains in the history. Bucket-A PR
+branches (`python-upstream-01..04`) are unchanged and still valid (those four
+files did not change this session).
