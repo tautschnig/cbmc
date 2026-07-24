@@ -2965,9 +2965,12 @@ codet python_convertert::convert_assign(const jsont &stmt)
                 exprt slice = convert_expression(json_member(target, "slice"));
                 if(!slice.is_nil())
                 {
+                  exprt::operandst setitem_args{
+                    address_of_exprt{obj_probe}, slice, rhs};
+                  coerce_call_args(ss->type, setitem_args);
                   side_effect_expr_function_callt call{
                     ss->symbol_expr(),
-                    {address_of_exprt{obj_probe}, slice, rhs},
+                    std::move(setitem_args),
                     empty_typet{},
                     loc};
                   block.add(code_expressiont{std::move(call)});

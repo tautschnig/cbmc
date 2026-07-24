@@ -2555,9 +2555,12 @@ exprt python_convertert::convert_compare(const jsont &expr)
             const symbolt *cs = symbol_table.lookup(irep_idt{prefix});
             if(cs != nullptr)
             {
+              exprt::operandst contains_args{
+                address_of_exprt{container}, item};
+              coerce_call_args(cs->type, contains_args);
               side_effect_expr_function_callt call{
                 cs->symbol_expr(),
-                {address_of_exprt{container}, item},
+                std::move(contains_args),
                 bool_typet{},
                 source_locationt{}};
               cmp = (op == "In") ? exprt{call} : exprt{not_exprt{call}};

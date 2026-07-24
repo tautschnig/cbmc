@@ -2230,6 +2230,16 @@ private:
 
   /// Wrap a concrete typed value into a tagged-union value.
   exprt wrap_value(const exprt &e);
+  /// Coerce a dispatch call's arguments to the callee's declared parameter
+  /// types: box a non-python_value argument into a python_value parameter
+  /// (wrap_value), otherwise safe_typecast. Synthetic dunder / protocol
+  /// dispatch calls (__call__, __contains__, __setitem__, ...) bypass the
+  /// normal convert_call argument coercion; without this they hand an
+  /// unboxed value (int, tuple, ...) to a python_value parameter, which then
+  /// relied on symex reinterpreting the bytes -- unsound if the callee reads
+  /// the argument as a value. Mirrors the normal call path's coercion.
+  void coerce_call_args(const typet &callee_type, exprt::operandst &args);
+
 
   /// Materialise `value` into a FRESH per-execution heap object (via a dynamic
   /// `ID_allocate`) and return a typed pointer to it. Unlike a static symbol,
