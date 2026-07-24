@@ -478,3 +478,67 @@ Operational note recorded: the ESBMC sweep MUST be given an absolute `--cbmc`
 path (workers cd into test dirs; a relative path yields a bogus all-ERROR
 result); and test.pl gives spurious mass-failures if run concurrently with a
 build (re-run settled).
+
+## Milestone #1 (retire the parallel smt_string backend) — spike + stage 1 (2026-07-24)
+
+### Whole-group root (confirmed by spike)
+The native Python string backend (`--python-smt-strings`, Plan A) is a *parallel*
+SMT-LIB-string facility: its own sort (`smt_string_typet`/`ID_smt_string`), its
+own value-returning intrinsics (`cprover_string_smt_{strcat,strsub,strreplace,
+from_int,from_code,to_code,re_ws}_func`), and its own ~65-site `smt2_conv`
+handler branch. It exists because it was built *before* the develop
+reconciliation brought upstream's generic `ID_string`→`String` +
+`cprover_string_*`→`str.*` encoder into the tree. Every apparent point fix (the
+smt2_conv handler, `boolbv_width`/`expr_initializer`/model-extraction
+`smt_string` cases, the ~37 frontend `ID_smt_string` sites) is a symptom of that
+one root. The convergence lever is small because the frontend already funnels
+native string ops through a handful of primitives (`string_concat`/`string_substr`/
+`string_equal`/`native_or_member_string_length`/`python_string_literal` +
+`native_string_app`).
+
+### Baseline (precision bar)
+Native/cvc5 corpus = 50 tests (`grep -l 'python-smt-strings\|cvc5'`), all pass.
+Every convergence stage must keep this green (plus jbmc-strings, regression/
+strings, [strings]+smt2_conv unit, full regression/python, ESBMC sweep).
+
+### Stage 1 — DONE (`1ea3c156718`): concat
+`cprover_string_smt_strcat_func` was a pure duplicate of the generic
+`cprover_string_concat_func` → `(str.++ a b)` (identical lowering for native
+String operands). Retired it: `string_concat()` + the strip-reconstruction
+helper now emit the generic id; the shared encoder lowers a 2-arg concat over
+`smt_string` operands (gated so refined/struct + the Python predicate/query
+handlers are untouched); `try_extract_string_literal` recovers regex patterns
+from the generic 2-arg concat. All gates green, sweep 0-reg.
+
+### Why substr/replace/queries are NOT simple reroutes — the convention split
+The remaining ops differ from the generic facility by **calling convention**,
+which is the deeper whole-group issue (PLR-correctness-critical; naive routing
+would be a bug or unsound):
+- **`smt_strsub`** passes **bitvector** `(offset, len)` and wraps with `bv2nat`;
+  the generic `cprover_string_substring_func` convention is **native SMT Int**
+  `(start, end)` → `(str.substr s a (- b a))`. Different arg type AND different
+  3rd-arg meaning.
+- **`smt_strreplace`** is `str.replace_all` (Python replaces **all**); the
+  generic `cprover_string_replace_func` map entry is `str.replace` (**first**
+  only). Routing naively would be **unsound**.
+- **Predicate/query ops** (`contains`/`prefix`/`suffix`/`equal`/`length`/
+  `index_of`): the Python handler **bit-encodes** results (`(ite (str.…) bv1
+  bv0)`, `int2bv` for lengths) because Python `bool`/`int` are bitvectors,
+  whereas the generic encoder returns native SMT `Bool`/`Int`.
+
+So the single whole-group root for the *remaining* convergence is:
+**Python-native uses fixed-width bitvector ints / bitvector-encoded bools /
+replace-all, while the generic encoder uses native SMT Int / Bool / first-
+replace.** Closing it is a deliberate stage — either teach the generic encoder
+to accept bitvector position args (bv2nat) and bitvector-encode Bool/Int results
+under a Python-operand discriminator, or add generic value-returning
+`replace_all` / offset-len `substr` facilities (wider-use, benefiting Strata) —
+NOT a per-op reroute. concat converged precisely because it has NO convention
+difference (String→String, string operands).
+
+### Latent note (pre-existing, flagged)
+The `cprover_string_substring_func` entry restored to the generic encoder map in
+`182d62224b3` emits a FLAT `(str.substr s a b)`; per the Phase-2 design the
+Strata convention is `(start, end)` → `(str.substr s a (- b a))`. It is
+unexercised today (Python uses `smt_strsub`; no Strata substring test), but must
+be reconciled when substr converges.
