@@ -182,13 +182,6 @@ constant_exprt from_integer(
   {
     return constant_exprt(integer2string(int_value), type);
   }
-  else if(type_id == ID_struct || type_id == ID_struct_tag)
-  {
-    // Python tagged unions and list/dict structs may reach here
-    // via CBMC's internal simplification or initialization paths.
-    // Return a zero constant that the solver can handle.
-    return constant_exprt{integer2string(int_value), type};
-  }
   else
     PRECONDITION(false);
 }
