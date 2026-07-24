@@ -233,3 +233,40 @@ introduced), so the two symex band-aids are RETAINED pending that refactor.
 Both are triggered by only 2 tests each; the int↔python_value and
 python_value↔class casts are the ones to convert to real box/unbox once the
 type-finalisation ordering is fixed.
+
+## Type-finalisation refactor — DONE (2026-07-24, session 3, `6434ae08cac`)
+
+Retired the last two Bucket-C band-aids (symex_assign type-mismatch cast +
+symex_set_return_value cast). Investigated both candidate designs:
+
+- **Approach A — finalise symbol types BEFORE body conversion.** Rejected: a
+  massive reorder of the conversion driver (return types are widened by
+  mid-conversion logic in convert_return and post-conversion re-inference), AND
+  it would not even remove the value-flow coercions — e.g. a python_value read
+  into a concrete-class slot needs an actual UNBOX regardless of when the type
+  is known.
+- **Approach B — a post-conversion re-coercion pass.** Chosen. `convert()` ends
+  with `finalise_slot_types()`, which walks every ID_code body and coerces each
+  assignment RHS to its LHS type and each return value to the function's return
+  type via `safe_typecast` (unwrap python_value→concrete, wrap
+  concrete→python_value, sound scalar/struct casts otherwise). This is the
+  frontend, Python-semantic-correct equivalent of the central symex chokepoint
+  the band-aids occupied, and it is whole-group (covers all assignments/returns,
+  present and future).
+
+Key implementation note: the pass MUST run at the frontend codet level at the
+end of `convert()` (after all type widening) — an equivalent coercion placed
+earlier, or a blanket cast in goto-symex, is wrong. `safe_typecast`'s box/unbox
+is what makes it PLR-sound (the band-aids' raw typecast reinterpreted bytes).
+
+Validated: the three trigger tests (dunder-iter-next-setitem,
+lambda-object-param-dispatch, python-library-wave9) pass with BOTH band-aids
+removed; full regression/python green; ESBMC sweep 0 regressions; oracle 0-NEW;
+both fuzz gates OK.
+
+**Bucket-C is now fully retired**: SAT-literal + pointer_logic patches deleted
+as dead code (invariants restored); ord ill-typed access fixed; __getattr__ and
+all dunder-dispatch args boxed (coerce_call_args); assignment/return desync
+fixed (finalise_slot_types). No goto-symex/core invariant relaxation from the
+Bucket-C set remains. `upstreaming-linear` must be re-derived to fold in this
+session's frontend fixes.
