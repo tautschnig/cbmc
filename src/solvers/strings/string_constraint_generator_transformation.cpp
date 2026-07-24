@@ -187,80 +187,20 @@ string_constraint_generatort::add_axioms_for_trim(
   const function_application_exprt &f)
 {
   PRECONDITION(f.arguments().size() == 3);
-  string_constraintst constraints;
   const array_string_exprt &str = get_string_expr(array_pool, f.arguments()[2]);
   const array_string_exprt &res =
     array_pool.find(f.arguments()[1], f.arguments()[0]);
-  const typet &index_type = str.length_type();
   const typet &char_type = to_type_with_subtype(str.content().type()).subtype();
-  const symbol_exprt idx = fresh_symbol("index_trim", index_type);
   const exprt space_char = from_integer(' ', char_type);
-
-  // Axiom 1.
-  constraints.existential.push_back(greater_or_equal_to(
-    array_pool.get_or_create_length(str),
-    plus_exprt(idx, array_pool.get_or_create_length(res))));
-
-  binary_relation_exprt a2(idx, ID_ge, from_integer(0, index_type));
-  constraints.existential.push_back(a2);
-
-  const exprt a3 =
-    greater_or_equal_to(array_pool.get_or_create_length(str), idx);
-  constraints.existential.push_back(a3);
-
-  const exprt a4 = greater_or_equal_to(
-    array_pool.get_or_create_length(res), from_integer(0, index_type));
-  constraints.existential.push_back(a4);
-
-  const exprt a5 = less_than_or_equal_to(
-    array_pool.get_or_create_length(res), array_pool.get_or_create_length(str));
-  constraints.existential.push_back(a5);
-
-  symbol_exprt n = fresh_symbol("QA_index_trim", index_type);
-  binary_relation_exprt non_print(str[n], ID_le, space_char);
-  string_constraintt a6(
-    n, zero_if_negative(idx), non_print, ns, message_handler);
-  constraints.universal.push_back(a6);
-
-  // Axiom 7.
-  constraints.universal.push_back([&] {
-    const symbol_exprt n2 = fresh_symbol("QA_index_trim2", index_type);
-    const minus_exprt bound(
-      minus_exprt(array_pool.get_or_create_length(str), idx),
-      array_pool.get_or_create_length(res));
-    const binary_relation_exprt eqn2(
-      str[plus_exprt(
-        idx, plus_exprt(array_pool.get_or_create_length(res), n2))],
-      ID_le,
-      space_char);
-    return string_constraintt(
-      n2, zero_if_negative(bound), eqn2, ns, message_handler);
-  }());
-
-  symbol_exprt n3 = fresh_symbol("QA_index_trim3", index_type);
-  equal_exprt eqn3(res[n3], str[plus_exprt(n3, idx)]);
-  string_constraintt a8(
-    n3,
-    zero_if_negative(array_pool.get_or_create_length(res)),
-    eqn3,
-    ns,
-    message_handler);
-  constraints.universal.push_back(a8);
-
-  // Axiom 9.
-  constraints.existential.push_back([&] {
-    const plus_exprt index_before(
-      idx,
-      minus_exprt(
-        array_pool.get_or_create_length(res), from_integer(1, index_type)));
-    const binary_relation_exprt no_space_before(
-      str[index_before], ID_gt, space_char);
-    return or_exprt(
-      equal_exprt(idx, array_pool.get_or_create_length(str)),
-      and_exprt(
-        binary_relation_exprt(str[idx], ID_gt, space_char), no_space_before));
-  }());
-  return {from_integer(0, f.type()), constraints};
+  // Java trim: strip characters <= ' ' from both ends.
+  return add_axioms_for_strip(
+    str,
+    res,
+    [&](const exprt &c) -> exprt
+    { return binary_relation_exprt(c, ID_le, space_char); },
+    true,
+    true,
+    f.type());
 }
 
 /// Add axioms for Python str.strip / lstrip / rstrip (whitespace form).
@@ -279,36 +219,49 @@ string_constraint_generatort::add_axioms_for_python_strip(
   const function_application_exprt &f)
 {
   PRECONDITION(f.arguments().size() == 4);
-  string_constraintst constraints;
   const array_string_exprt &str = get_string_expr(array_pool, f.arguments()[2]);
   const array_string_exprt &res =
     array_pool.find(f.arguments()[1], f.arguments()[0]);
-  const typet &index_type = str.length_type();
   const typet &char_type = to_type_with_subtype(str.content().type()).subtype();
-
-  // mode: 0 = both (strip), 1 = left (lstrip), 2 = right (rstrip).
   const mp_integer mode =
     numeric_cast_v<mp_integer>(to_constant_expr(f.arguments()[3]));
   const bool strip_front = (mode == 0 || mode == 1);
   const bool strip_back = (mode == 0 || mode == 2);
+  // Python whitespace: space or 0x09..0x0d (\t \n \v \f \r).
+  return add_axioms_for_strip(
+    str,
+    res,
+    [&](const exprt &c) -> exprt
+    {
+      return or_exprt(
+        equal_exprt(c, from_integer(0x20, char_type)),
+        and_exprt(
+          binary_relation_exprt(c, ID_ge, from_integer(0x09, char_type)),
+          binary_relation_exprt(c, ID_le, from_integer(0x0d, char_type))));
+    },
+    strip_front,
+    strip_back,
+    f.type());
+}
 
-  // idx is the number of characters removed from the front.
+/// Generic parameterised strip (shared by Java trim and Python strip): remove
+/// a maximal run of `is_strippable` characters from the front (if
+/// `strip_front`) and/or back (if `strip_back`) of `str`, producing `res`.
+std::pair<exprt, string_constraintst>
+string_constraint_generatort::add_axioms_for_strip(
+  const array_string_exprt &str,
+  const array_string_exprt &res,
+  const std::function<exprt(const exprt &)> &is_strippable,
+  bool strip_front,
+  bool strip_back,
+  const typet &result_type)
+{
+  string_constraintst constraints;
+  const typet &index_type = str.length_type();
   const symbol_exprt idx = fresh_symbol("index_strip", index_type);
-
-  // Python whitespace predicate.
-  auto is_py_ws = [&](const exprt &c) -> exprt
-  {
-    return or_exprt(
-      equal_exprt(c, from_integer(0x20, char_type)),
-      and_exprt(
-        binary_relation_exprt(c, ID_ge, from_integer(0x09, char_type)),
-        binary_relation_exprt(c, ID_le, from_integer(0x0d, char_type))));
-  };
-
   const exprt str_len = array_pool.get_or_create_length(str);
   const exprt res_len = array_pool.get_or_create_length(res);
 
-  // Basic bounds: 0 <= idx, idx + |res| <= |str|, 0 <= |res| <= |str|.
   constraints.existential.push_back(
     greater_or_equal_to(str_len, plus_exprt(idx, res_len)));
   constraints.existential.push_back(
@@ -318,7 +271,6 @@ string_constraint_generatort::add_axioms_for_python_strip(
     greater_or_equal_to(res_len, from_integer(0, index_type)));
   constraints.existential.push_back(less_than_or_equal_to(res_len, str_len));
 
-  // When a side is not stripped, pin the corresponding boundary.
   if(!strip_front)
     constraints.existential.push_back(
       equal_exprt(idx, from_integer(0, index_type)));
@@ -336,15 +288,14 @@ string_constraint_generatort::add_axioms_for_python_strip(
       ns,
       message_handler));
   }
-
-  // Removed front characters [0, idx) are whitespace.
+  // Removed front characters [0, idx) are strippable.
   if(strip_front)
   {
     const symbol_exprt n = fresh_symbol("QA_strip_front", index_type);
     constraints.universal.push_back(string_constraintt(
-      n, zero_if_negative(idx), is_py_ws(str[n]), ns, message_handler));
+      n, zero_if_negative(idx), is_strippable(str[n]), ns, message_handler));
   }
-  // Removed trailing characters [idx+|res|, |str|) are whitespace.
+  // Removed trailing characters [idx+|res|, |str|) are strippable.
   if(strip_back)
   {
     const symbol_exprt n = fresh_symbol("QA_strip_back", index_type);
@@ -352,27 +303,27 @@ string_constraint_generatort::add_axioms_for_python_strip(
     constraints.universal.push_back(string_constraintt(
       n,
       zero_if_negative(bound),
-      is_py_ws(str[plus_exprt(idx, plus_exprt(res_len, n))]),
+      is_strippable(str[plus_exprt(idx, plus_exprt(res_len, n))]),
       ns,
       message_handler));
   }
 
   // Maximality: either the result is empty (idx == |str|), or the kept
-  // boundary characters are non-whitespace (so we stripped *all* leading /
-  // trailing whitespace).
-  exprt non_ws = static_cast<exprt>(true_exprt{});
+  // boundary characters are non-strippable (so all leading/trailing
+  // strippable characters were removed).
+  exprt non_strip = static_cast<exprt>(true_exprt{});
   if(strip_front)
-    non_ws = and_exprt(non_ws, not_exprt(is_py_ws(str[idx])));
+    non_strip = and_exprt(non_strip, not_exprt(is_strippable(str[idx])));
   if(strip_back)
   {
     const exprt last =
       minus_exprt(plus_exprt(idx, res_len), from_integer(1, index_type));
-    non_ws = and_exprt(non_ws, not_exprt(is_py_ws(str[last])));
+    non_strip = and_exprt(non_strip, not_exprt(is_strippable(str[last])));
   }
   constraints.existential.push_back(
-    or_exprt(equal_exprt(idx, str_len), non_ws));
+    or_exprt(equal_exprt(idx, str_len), non_strip));
 
-  return {from_integer(0, f.type()), std::move(constraints)};
+  return {from_integer(0, result_type), std::move(constraints)};
 }
 
 /// Convert two expressions to pair of chars

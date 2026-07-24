@@ -20,8 +20,6 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 #ifndef CPROVER_SOLVERS_REFINEMENT_STRING_CONSTRAINT_GENERATOR_H
 #define CPROVER_SOLVERS_REFINEMENT_STRING_CONSTRAINT_GENERATOR_H
 
-#include <limits>
-#include <solvers/strings/string_constraint.h>
 #include <util/constexpr.def>
 #include <util/deprecate.h>
 #include <util/namespace.h>
@@ -29,7 +27,12 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 #include <util/replace_expr.h>
 #include <util/string_expr.h>
 
+#include <solvers/strings/string_constraint.h>
+
 #include "array_pool.h"
+
+#include <functional>
+#include <limits>
 
 class function_application_exprt;
 
@@ -265,6 +268,21 @@ public:
 
   std::pair<exprt, string_constraintst>
   add_axioms_for_python_strip(const function_application_exprt &f);
+
+  /// Generic strip: remove a maximal run of \p is_strippable characters from
+  /// the front (if \p strip_front) and/or back (if \p strip_back) of \p str,
+  /// producing \p res. Parameterised over the strippable-character predicate
+  /// and the two sides, this subsumes Java `trim` (predicate c <= ' ', both
+  /// sides) and Python `strip`/`lstrip`/`rstrip` (a whitespace predicate and a
+  /// side mode). \p is_strippable maps a character expression to a bool
+  /// expression that holds iff the character may be stripped.
+  std::pair<exprt, string_constraintst> add_axioms_for_strip(
+    const array_string_exprt &str,
+    const array_string_exprt &res,
+    const std::function<exprt(const exprt &)> &is_strippable,
+    bool strip_front,
+    bool strip_back,
+    const typet &result_type);
 
   std::pair<exprt, string_constraintst> add_axioms_for_code_point(
     const array_string_exprt &res,
