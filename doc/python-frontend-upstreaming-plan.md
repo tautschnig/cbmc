@@ -435,3 +435,46 @@ large, precision-gated milestone. **Items 2 and 3** are bounded, genuinely-
 reusable generalisations that can land independently (gated on jbmc-strings).
 None should be rushed: each touches shared solver code where a wrong axiom is a
 soundness risk.
+
+## Category-C generalisations — implementation (2026-07-24, session 5)
+
+- **#2 strip — DONE (`6e4b7310d4c`).** Shared `add_axioms_for_strip(str, res,
+  is_strippable, strip_front, strip_back, result_type)`; Java `trim` and Python
+  `strip`/`lstrip`/`rstrip` are thin wrappers. Behaviour-preserving; JBMC-safe
+  (jbmc-strings green), regression/strings green, [strings] unit 388, Python
+  suite green, sweep 0-reg.
+- **#3 regex — DONE (`f266c4a017e`).** `regex_char_classest` +
+  `ascii_regex_char_classes()`; the translator is now dialect-parameterised
+  (ASCII default; a Unicode/other dialect can plug in). Behaviour-preserving;
+  Python regex tests + suite + sweep green.
+- **Reconciliation-regression fix (`182d62224b3`).** Surfaced while running the
+  full unit suite for #3: the develop merge had scoped the shared string ops
+  out of upstream's `smt2_conv` encoder, breaking the `smt2_convt string and
+  regex operator lowering` unit test. Restored them gated on SMT-LIB-native
+  operands (Python's struct/smt_string operands skip to the Python handler);
+  added the `str.indexof` default-offset special. Unit 57 assertions pass;
+  jbmc-strings/regression-strings/[strings]/python-suite/sweep all green. This
+  makes the generic SMT-LIB-string facility correct again — the foundation for
+  #1.
+
+### #1 (retire the parallel `smt_string` backend) — assessment: a large,
+precision-gated milestone; NOT to be rushed
+The generic SMT-LIB-string facility (upstream's `cprover_string_*` → `str.*`
+encoder) is now correct for native operands (the fix above). But retiring
+Python's `smt_string` sort means representing native Python strings as the
+SMT-LIB `String` sort (ID_string) throughout `python_value` / list / dict /
+call boundaries and emitting standard `cprover_string_*` — i.e. the "native
+string type-flip" that was ALREADY attempted and abandoned as too hard (the
+dropped WIP stash reached 107→37 TOERRs before being superseded by the
+`smt_string`-handle Plan A, which then reached full precision/parity). There is
+no safe bounded increment: the 7 `smt_*` intrinsics operate on `smt_string`
+operands, so retiring any requires the type-migration. Rushing it risks both
+PLR soundness (string-encoding changes → potential false proofs) and the
+Plan-A precision. **Recommendation:** treat as a dedicated, precision-gated
+milestone (native corpus + jbmc-strings + sweep), with the generic-encoder
+foundation now in place. Not attempted in this session.
+
+Operational note recorded: the ESBMC sweep MUST be given an absolute `--cbmc`
+path (workers cd into test dirs; a relative path yields a bogus all-ERROR
+result); and test.pl gives spurious mass-failures if run concurrently with a
+build (re-run settled).
