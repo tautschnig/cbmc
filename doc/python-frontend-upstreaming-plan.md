@@ -737,3 +737,41 @@ already does for some sites) so `find_symbols` stops gating on the sort. That is
 a soundness-sensitive move (must cover every native string symbol to preserve
 the int2bv-faithfulness the bound guarantees) and is the isolated next step.
 Reverted the rename; the op-SORT dispatch (the core fix) is landed.
+
+## Milestone #1 — smt_string sort RETIRED (2026-07-27)
+
+The len bound was moved to the front-end (`8e828c2d1e4`): the len primitives
+(`native_or_member_string_length` / `emit_string_int_function`) now emit
+`assume(str.len s < 2^63)` at the len read (sound: str.len is deterministic, one
+assume constrains it globally; only emitted where the front-end reads len via
+int2bv), and `find_symbols` no longer branches on the string sort. Validated
+(native 50/50, `len(nondet)>=0` SUCCESSFUL / `==k` cleanly FAILED, suites +
+sweep 0-reg).
+
+That was the last back-end sort-gating. With it gone, `smt_string_typet` was
+retired (`3b2f7b69d61`): renamed to `string_typet` / `ID_smt_string`→`ID_string`
+across front-end + shared back-end; deleted the class, the irep id, and the
+duplicate `convert_type`/`convert_constant` branches. **There is now ONE SMT
+String sort.** All gates green.
+
+### Milestone #1 outcome
+The parallel Python SMT-string backend is substantially retired / unified onto
+the shared SMT-LIB-string facility, in landed, individually-validated steps:
+- `smt_strcat` id + branch retired; concat → generic `cprover_string_concat`.
+- length branch retired; len → generic, Direction B (native Int + typecast).
+- equal/contains/is_prefix/is_suffix/index_of converged onto the generic encoder
+  via operand-SORT dispatch (the encoder stopped branching on the front-end).
+- native-string len soundness bound moved to the front-end.
+- `smt_string_typet` sort retired; unified on upstream `string_typet`.
+
+The guiding architectural principle throughout (per review): the back-end
+dispatches on the SORT of the operand (String vs refined-struct), never on which
+front-end produced it; the front-end reconciles its bit-vector conventions via
+boundary typecasts (Direction B) reusing the universal `convert_typecast`.
+
+Residual (documented, gated on operand type / fn_id, NOT front-end): the Python
+handler still lowers the genuinely-Python ops (from_int/from_code/to_code/re_ws
+and the regex family) by fn_id, and the equal/contains/prefix/suffix structural
+fallback serves refined struct operands under an SMT2 backend. These are
+semantic dispatches, not front-end coupling, and can be generalised into the
+shared encoder later as wider-use work (of_int/replace_all/etc.).
