@@ -63,7 +63,7 @@ std::optional<exprt> python_convertert::try_nondet_call(
           // lowered with smt_string operands directly (str.in_re), so pass
           // the string through rather than wrapping it in a {length,data}
           // struct (which is malformed for smt_string).
-          if(s.type().id() == ID_smt_string)
+          if(s.type().id() == ID_string)
             return s;
           if(s.id() == ID_struct && s.operands().size() == 2)
             return s;
@@ -135,7 +135,7 @@ std::optional<exprt> python_convertert::try_nondet_call(
         // precise on the default backend without --python-smt-strings.
         auto to_str = [](const exprt &s) -> exprt
         {
-          if(s.type().id() == ID_smt_string)
+          if(s.type().id() == ID_string)
             return s;
           if(s.id() == ID_struct && s.operands().size() == 2)
             return s;
@@ -213,7 +213,7 @@ std::optional<exprt> python_convertert::try_nondet_call(
           ID_cprover_string_re_sub_func,
           {pattern.type(), repl.type(), subject.type()},
           {pattern, repl, subject},
-          smt_string_typet{});
+          string_typet{});
         if(n == 3)
           return precise;
         // A bounded count (count != 0) is outside the precise model
@@ -244,7 +244,7 @@ std::optional<exprt> python_convertert::try_nondet_call(
       {
         auto to_str = [](const exprt &s) -> exprt
         {
-          if(s.type().id() == ID_smt_string)
+          if(s.type().id() == ID_string)
             return s;
           if(s.id() == ID_struct && s.operands().size() == 2)
             return s;
@@ -302,7 +302,7 @@ std::optional<exprt> python_convertert::try_nondet_call(
           ID_cprover_string_re_group_func,
           {pattern.type(), text.type(), signedbv_typet{64}},
           {pattern, text, safe_typecast(n, signedbv_typet{64})},
-          smt_string_typet{});
+          string_typet{});
       }
     }
     // Fallback: a sound nondet string in the ACTIVE representation. Delegating

@@ -1332,7 +1332,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
         {
           symbolt fs{
             fn,
-            mathematical_function_typet({integer_typet{}}, smt_string_typet{}),
+            mathematical_function_typet({integer_typet{}}, string_typet{}),
             "python"};
           fs.base_name = id2string(fn);
           symbol_table.add(fs);
@@ -1340,7 +1340,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
         function_application_exprt app{
           symbol_table.lookup_ref(fn).symbol_expr(),
           {typecast_exprt{code_point, integer_typet{}}}};
-        app.type() = smt_string_typet{};
+        app.type() = string_typet{};
         return std::move(app);
       }
       const auto &data_type = array_typet(
@@ -1489,7 +1489,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
           return from_integer(cp, python_int_type());
         }
         // Symbolic: return first byte
-        if(use_smt_string_native && arg.type().id() == ID_smt_string)
+        if(use_smt_string_native && arg.type().id() == ID_string)
         {
           // Native: ord(s) = cprover_string_smt_to_code_func(s) (str.to_code).
           const irep_idt fn{ID_cprover_string_smt_to_code_func};
@@ -3653,7 +3653,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
           {
             symbolt fs{
               fn,
-              mathematical_function_typet({integer_typet{}}, smt_string_typet{}),
+              mathematical_function_typet({integer_typet{}}, string_typet{}),
               "python"};
             fs.base_name = id2string(fn);
             symbol_table.add(fs);
@@ -3661,7 +3661,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
           function_application_exprt app{
             symbol_table.lookup_ref(fn).symbol_expr(),
             {typecast_exprt{as_i64, integer_typet{}}}};
-          app.type() = smt_string_typet{};
+          app.type() = string_typet{};
           return std::move(app);
         }
         exprt result = emit_string_function(

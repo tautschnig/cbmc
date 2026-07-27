@@ -679,7 +679,7 @@ python_convertert::extract_string_value(const exprt &e) const
 {
   // Native SMT-String constant: the value is carried directly as the
   // constant's id (e.g. constant_exprt{"inf", smt_string}).
-  if(e.id() == ID_constant && e.type().id() == ID_smt_string)
+  if(e.id() == ID_constant && e.type().id() == ID_string)
     return id2string(to_constant_expr(e).get_value());
   // Direct struct literal
   if(
@@ -890,7 +890,7 @@ exprt python_convertert::python_string_literal(const std::string &s)
   // Native SMT-String back-end (Plan A): an opaque SMT String constant whose
   // smt2_conv lowering produces the SMT-LIB literal "...".
   if(use_smt_string_native)
-    return constant_exprt{irep_idt{s}, smt_string_typet{}};
+    return constant_exprt{irep_idt{s}, string_typet{}};
   // Refined-string back-end: the struct-exprt shape is
   // what every downstream site already expects. For the
   // SMT-string back-end this will emit an
@@ -3166,7 +3166,7 @@ exprt python_convertert::rebuild_list_as_pv(const exprt &list_expr)
 /// list of false values.
 exprt python_convertert::native_or_member_string_length(const exprt &s)
 {
-  if(s.type().id() == ID_smt_string)
+  if(s.type().id() == ID_string)
   {
     // Direction B: declare the GENERIC length intrinsic with its native Int
     // result and typecast to i64; the shared encoder emits (str.len s) [Int]
@@ -3245,15 +3245,15 @@ exprt python_convertert::bounded_nondet_string(const source_locationt &loc)
   const irep_idt id{qualify_name(nm)};
   if(symbol_table.lookup(id) == nullptr)
   {
-    symbolt s{id, smt_string_typet{}, "python"};
+    symbolt s{id, string_typet{}, "python"};
     s.base_name = nm;
     s.is_lvalue = true;
     s.is_state_var = true;
     symbol_table.add(s);
   }
   const symbol_exprt sym = symbol_table.lookup_ref(id).symbol_expr();
-  pending_checks.push_back(code_frontend_assignt{
-    sym, side_effect_expr_nondett{smt_string_typet{}, loc}});
+  pending_checks.push_back(
+    code_frontend_assignt{sym, side_effect_expr_nondett{string_typet{}, loc}});
   // Constrain length to [0, PYTHON_MAX_STRING_LENGTH]. The lower bound rules
   // out the spurious negative (int2bv-wrapped) length models; the upper bound
   // matches the refined backend.
@@ -3297,7 +3297,7 @@ exprt python_convertert::string_struct_view(const exprt &s)
 
 exprt python_convertert::string_concat(const exprt &a, const exprt &b)
 {
-  if(a.type().id() == ID_smt_string && b.type().id() == ID_smt_string)
+  if(a.type().id() == ID_string && b.type().id() == ID_string)
     // Native SMT strings concatenate via the GENERIC value-returning concat
     // id, lowered by the shared upstream SMT-LIB encoder to (str.++ a b).
     // (Formerly a Python-specific cprover_string_smt_strcat_func lowered by a
@@ -3307,7 +3307,7 @@ exprt python_convertert::string_concat(const exprt &a, const exprt &b)
       ID_cprover_string_concat_func,
       {a.type(), b.type()},
       {a, b},
-      smt_string_typet{});
+      string_typet{});
   return emit_string_function(
     ID_cprover_string_concat_func,
     {string_struct_view(a), string_struct_view(b)},
@@ -3334,21 +3334,21 @@ exprt python_convertert::bind_string_length_hint(
   // over r discharge by congruence against the hint. Sound: under the
   // per-string `str.len < 2^63` bound (emitted in smt2_conv) the hint is
   // implied by `r == produced`, so it adds no models.
-  PRECONDITION(produced.type().id() == ID_smt_string);
+  PRECONDITION(produced.type().id() == ID_string);
   static unsigned strlen_hint_ctr = 0;
   const std::string nm = "__strlen_hint_" + std::to_string(strlen_hint_ctr++);
   const irep_idt id{qualify_name(nm)};
   if(symbol_table.lookup(id) == nullptr)
   {
-    symbolt sy{id, smt_string_typet{}, "python"};
+    symbolt sy{id, string_typet{}, "python"};
     sy.base_name = nm;
     sy.is_lvalue = true;
     sy.is_state_var = true;
     symbol_table.add(sy);
   }
   const symbol_exprt r = symbol_table.lookup_ref(id).symbol_expr();
-  pending_checks.push_back(code_frontend_assignt{
-    r, side_effect_expr_nondett{smt_string_typet{}, loc}});
+  pending_checks.push_back(
+    code_frontend_assignt{r, side_effect_expr_nondett{string_typet{}, loc}});
   pending_checks.push_back(code_assumet{equal_exprt{r, produced}});
   pending_checks.push_back(
     code_assumet{equal_exprt{native_or_member_string_length(r), length_hint}});
@@ -3363,12 +3363,12 @@ exprt python_convertert::string_substr(
   const signedbv_typet i64{64};
   const exprt start64 = start.type() == i64 ? start : safe_typecast(start, i64);
   const exprt len64 = len.type() == i64 ? len : safe_typecast(len, i64);
-  if(s.type().id() == ID_smt_string)
+  if(s.type().id() == ID_string)
     return native_string_app(
       ID_cprover_string_smt_strsub_func,
       {s.type(), i64, i64},
       {s, start64, len64},
-      smt_string_typet{});
+      string_typet{});
   return emit_string_function(
     ID_cprover_string_substring_func,
     {string_struct_view(s), start64, plus_exprt{start64, len64}},
@@ -3383,7 +3383,7 @@ exprt python_convertert::string_equal(const exprt &a_in, const exprt &b_in)
   // Native: a stored key may be a string-id HANDLE; take its denotation.
   exprt a = python_dict_unbox_key(a_in);
   exprt b = python_dict_unbox_key(b_in);
-  if(a.type().id() == ID_smt_string && b.type().id() == ID_smt_string)
+  if(a.type().id() == ID_string && b.type().id() == ID_string)
     return equal_exprt{a, b};
   exprt r = emit_string_bool_function(
     ID_cprover_string_equal_func,
@@ -6470,7 +6470,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
               ID_cprover_string_smt_from_int_func,
               {integer_typet{}},
               {typecast_exprt{i64, integer_typet{}}},
-              smt_string_typet{}));
+              string_typet{}));
           }
           else
           {
@@ -6548,7 +6548,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
           const irep_idt id{qualify_name(nm)};
           if(symbol_table.lookup(id) == nullptr)
           {
-            symbolt s{id, smt_string_typet{}, "python"};
+            symbolt s{id, string_typet{}, "python"};
             s.base_name = nm;
             s.is_lvalue = true;
             s.is_state_var = true;
@@ -6556,8 +6556,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
           }
           const symbol_exprt sym = symbol_table.lookup_ref(id).symbol_expr();
           pending_checks.push_back(code_frontend_assignt{
-            sym,
-            side_effect_expr_nondett{smt_string_typet{}, get_location(expr)}});
+            sym, side_effect_expr_nondett{string_typet{}, get_location(expr)}});
           pending_checks.push_back(code_assumet{equal_exprt{
             native_or_member_string_length(sym),
             from_integer(total, signedbv_typet{64})}});
@@ -6570,7 +6569,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
         // Native back-end: attach an exact length hint (sum of the part
         // lengths) so a len() relation over the f-string result is decidable
         // without int2bv-over-sum reasoning (which times out).
-        if(use_smt_string_native && acc.type().id() == ID_smt_string)
+        if(use_smt_string_native && acc.type().id() == ID_string)
         {
           exprt total_len = native_or_member_string_length(parts[0]);
           for(std::size_t i = 1; i < parts.size(); i++)
@@ -6785,7 +6784,7 @@ symbol_exprt python_convertert::strtab_symbol()
   const irep_idt id{"python::__cbmc_strtab"};
   if(symbol_table.lookup(id) == nullptr)
   {
-    mathematical_function_typet ft{{signedbv_typet{64}}, smt_string_typet{}};
+    mathematical_function_typet ft{{signedbv_typet{64}}, string_typet{}};
     symbolt s{id, ft, "python"};
     s.base_name = "__cbmc_strtab";
     s.is_lvalue = false;
@@ -6817,7 +6816,7 @@ exprt python_convertert::string_to_handle(const exprt &str)
   //   and aborts on its non-struct type (s3_to_dynamodb).
   // Allocate a handle with an UNCONSTRAINED image instead: strtab(h) is
   // then an arbitrary string -- a sound over-approximation.
-  if(str.type().id() != ID_smt_string || str.id() == ID_struct)
+  if(str.type().id() != ID_string || str.id() == ID_struct)
   {
     static unsigned strh_u_ctr = 0;
     const std::string hn = "__strh_u_" + std::to_string(strh_u_ctr++);
@@ -6847,7 +6846,7 @@ exprt python_convertert::string_to_handle(const exprt &str)
   // general solver-level String reasoning consistent. Equal constants
   // share one id, so `is`-style handle equality on equal literals also
   // holds -- consistent with CPython's small-literal interning latitude.
-  if(str.id() == ID_constant && str.type().id() == ID_smt_string)
+  if(str.id() == ID_constant && str.type().id() == ID_string)
   {
     const std::string text = id2string(to_constant_expr(str).get_value());
     auto it = string_intern_ids.find(text);
@@ -6859,7 +6858,7 @@ exprt python_convertert::string_to_handle(const exprt &str)
     const irep_idt cs_id{"python::__strconst_" + std::to_string(id)};
     if(symbol_table.lookup(cs_id) == nullptr)
     {
-      symbolt cs{cs_id, smt_string_typet{}, "python"};
+      symbolt cs{cs_id, string_typet{}, "python"};
       cs.base_name = id2string(cs_id);
       cs.is_static_lifetime = true;
       cs.value = str;

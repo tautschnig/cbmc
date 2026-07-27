@@ -1811,7 +1811,7 @@ skip_string_unroll:;
     if(
       python_smt_string_native_flag() &&
       is_python_string_handle_type(elem_type))
-      elem_type = smt_string_typet{};
+      elem_type = string_typet{};
   }
   else
     elem_type =
@@ -1851,7 +1851,7 @@ skip_string_unroll:;
   symbol_exprt idx_var = symbol_table.lookup_ref(idx_id).symbol_expr();
 
   const bool native_str_iter =
-    use_smt_string_native && is_string && iterable.type().id() == ID_smt_string;
+    use_smt_string_native && is_string && iterable.type().id() == ID_string;
   exprt length =
     native_str_iter
       ? safe_typecast(native_or_member_string_length(iterable), int_type)
@@ -1907,7 +1907,7 @@ skip_string_unroll:;
   // iteration this placeholder is overwritten by the str.substr branch below.
   exprt elem_val =
     native_str_iter
-      ? exprt{side_effect_expr_nondett{smt_string_typet{}, get_location(stmt)}}
+      ? exprt{side_effect_expr_nondett{string_typet{}, get_location(stmt)}}
       : (is_string ? exprt(dereference_exprt{plus_exprt{data, idx_var}})
                    : exprt(index_exprt{data, idx_var}));
   // Native string-id handles: iterating a list[str] binds strtab(h), so

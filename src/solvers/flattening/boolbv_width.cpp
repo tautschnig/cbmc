@@ -214,7 +214,7 @@ const boolbv_widtht::entryt &boolbv_widtht::get_entry(const typet &type) const
     // shouldn't fail in get_entry
     cache_entry = defined_entryt{1};
   }
-  else if(type_id == ID_smt_string)
+  else if(type_id == ID_string)
   {
     // Native SMT String (Python frontend): no fixed bit-width. Under
     // use_datatypes the value is an SMT String datatype and a width is only

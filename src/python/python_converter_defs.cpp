@@ -3276,7 +3276,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   {
     for(auto &c : tagged_components)
     {
-      if(c.type().id() == ID_smt_string)
+      if(c.type().id() == ID_string)
         c.type() = python_string_handle_type();
     }
   }

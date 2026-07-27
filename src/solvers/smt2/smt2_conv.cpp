@@ -215,7 +215,7 @@ smt2_convt::try_recover_strtab(const exprt &harg, unsigned depth) const
         !ns.lookup(
           irep_idt{"python::__strconst_" + integer2string(id_val)}, cs) &&
         cs != nullptr && cs->value.id() == ID_constant &&
-        cs->value.type().id() == ID_smt_string)
+        cs->value.type().id() == ID_string)
         return id2string(to_constant_expr(cs->value).get_value());
     }
     return std::nullopt;
@@ -253,14 +253,14 @@ smt2_convt::try_extract_string_literal(const exprt &e, unsigned depth) const
   if(depth > 64)
     return std::nullopt;
   // Native SMT-String constant: the text is the constant value.
-  if(e.id() == ID_constant && e.type().id() == ID_smt_string)
+  if(e.id() == ID_constant && e.type().id() == ID_string)
     return id2string(to_constant_expr(e).get_value());
   // SSA symbol: chase its recorded definition (definitions precede uses
   // in assignment conversion order; SSA is acyclic). Applies to
   // String-typed symbols AND bv64 handle symbols (see resolve_handle_id).
   if(
     e.id() == ID_symbol &&
-    (e.type().id() == ID_smt_string || e.type().id() == ID_signedbv))
+    (e.type().id() == ID_string || e.type().id() == ID_signedbv))
   {
     auto it = string_symbol_defs.find(to_symbol_expr(e).get_identifier());
     if(it != string_symbol_defs.end())
@@ -913,7 +913,7 @@ smt2_convt::parse_struct(const irept &src, const struct_typet &type)
           // (notably an SMT-LIB String / smt_string field of a Python
           // string / Match / tagged-union struct) needs its own default:
           // the empty string. Without this, parsing such a model crashes.
-          if(c.type().id() == ID_smt_string)
+          if(c.type().id() == ID_string)
             result.operands()[i] = constant_exprt{irep_idt{}, c.type()};
           else
             result.operands()[i] = from_integer(0, c.type());
@@ -1003,13 +1003,13 @@ exprt smt2_convt::parse_rec(const irept &src, const typet &type)
     else if(src.id()==ID_0 || src.id()==ID_false)
       return false_exprt();
   }
-  else if(type.id() == ID_smt_string)
+  else if(type.id() == ID_string)
   {
     // SMT-LIB String model value (Plan A): the tokenizer stores the
     // de-quoted string content in the irep id, so surface it as an
     // smt_string constant for the trace. (CVC5 \u{XX} escapes for
     // non-printable bytes are not decoded here -- rare in traces.)
-    return constant_exprt{src.id(), smt_string_typet{}};
+    return constant_exprt{src.id(), string_typet{}};
   }
   else if(type.id()==ID_pointer)
   {
@@ -3007,7 +3007,7 @@ void smt2_convt::convert_expr(const exprt &expr)
         // Lower to the SMT-LIB theory of strings for SMT-LIB String operands.
         // The discriminator is the OPERAND SORT, not the front-end: both the
         // upstream string_typet (ID_string, e.g. Strata) and the Python native
-        // string sort (ID_smt_string) are the SMT String sort (convert_type
+        // string sort (ID_string) are the SMT String sort (convert_type
         // maps both to "String"), so both are "native" here. Only refined
         // strings (struct / struct_tag, consumed by the SAT string solver or
         // the structural fallback below) are excluded -- an operand-type
@@ -3132,7 +3132,7 @@ void smt2_convt::convert_expr(const exprt &expr)
       {
         // Native SMT String operand (Plan A): already an SMT-LIB String;
         // emit it directly.
-        if(e.type().id() == ID_smt_string)
+        if(e.type().id() == ID_string)
         {
           convert_expr(e);
           return true;
@@ -3165,7 +3165,7 @@ void smt2_convt::convert_expr(const exprt &expr)
       // emit_smt_string can build an SMT String term from it.
       auto reachable = [&](const exprt &e)
       {
-        return e.type().id() == ID_smt_string ||
+        return e.type().id() == ID_string ||
                (e.id() == ID_struct && e.operands().size() == 2 &&
                 e.operands()[1].id() == ID_address_of);
       };
@@ -3507,7 +3507,7 @@ void smt2_convt::convert_expr(const exprt &expr)
             repl_smt = smt_escape_printable_ascii(*repl);
           if(
             body.has_value() && flen.has_value() && *flen >= 1 &&
-            repl_smt.has_value() && args[2].type().id() == ID_smt_string)
+            repl_smt.has_value() && args[2].type().id() == ID_string)
           {
             out << "(str.replace_re_all ";
             emit_smt_string(args[2]);
@@ -3680,7 +3680,7 @@ void smt2_convt::convert_expr(const exprt &expr)
         // subject is already an SMT String, so match it directly against the
         // regex -- no refined byte-array bridge needed. This is precise even
         // for a symbolic subject (the str.in_re is decided by the solver).
-        if(args[1].type().id() == ID_smt_string)
+        if(args[1].type().id() == ID_string)
         {
           out << "(ite (str.in_re ";
           emit_smt_string(args[1]);
@@ -3890,7 +3890,7 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
   // below. (Identity smt_string->smt_string was handled above.)
   if(
     src_type.id() != dest_type.id() &&
-    (src_type.id() == ID_smt_string || dest_type.id() == ID_smt_string))
+    (src_type.id() == ID_string || dest_type.id() == ID_string))
   {
     auto it = defined_expressions.find(expr);
     if(it != defined_expressions.end())
@@ -4937,29 +4937,7 @@ void smt2_convt::convert_constant(const constant_exprt &expr)
 {
   const typet &expr_type=expr.type();
 
-  if(expr_type.id() == ID_smt_string)
-  {
-    // Python SMT-String back-end: emit an SMT-LIB String literal. The
-    // constant's value holds the raw string bytes. SMT-LIB escapes a double
-    // quote by doubling it; other bytes (incl. NUL and non-printables) use
-    // the \u{XX} escape.
-    const std::string s = id2string(expr.get_value());
-    out << '"';
-    for(unsigned char c : s)
-    {
-      if(c == '"')
-        out << "\"\"";
-      else if(c >= 0x20 && c < 0x7f)
-        out << static_cast<char>(c);
-      else
-      {
-        out << "\\u{" << std::hex << static_cast<unsigned>(c) << std::dec
-            << '}';
-      }
-    }
-    out << '"';
-  }
-  else if(
+  if(
     expr_type.id() == ID_unsignedbv || expr_type.id() == ID_signedbv ||
     expr_type.id() == ID_bv || expr_type.id() == ID_c_enum ||
     expr_type.id() == ID_c_enum_tag || expr_type.id() == ID_c_bool ||
@@ -6596,7 +6574,7 @@ void smt2_convt::set_to(const exprt &expr, bool value)
       const exprt &c_side = side == 0 ? axiom_eq.rhs() : axiom_eq.lhs();
       if(
         fa_side.id() == ID_function_application &&
-        c_side.type().id() == ID_smt_string)
+        c_side.type().id() == ID_string)
       {
         const auto &fa = to_function_application_expr(fa_side);
         if(
@@ -6651,7 +6629,7 @@ void smt2_convt::set_to(const exprt &expr, bool value)
         // is then strtab(<bv64 SSA symbol>) whose argument must be chased
         // to the interned-constant handle id.
         if(
-          equal_expr.lhs().type().id() == ID_smt_string ||
+          equal_expr.lhs().type().id() == ID_string ||
           (equal_expr.lhs().type().id() == ID_signedbv &&
            to_signedbv_type(equal_expr.lhs().type()).get_width() == 64))
           string_symbol_defs.emplace(identifier, equal_expr.rhs());
@@ -7323,8 +7301,8 @@ void smt2_convt::find_symbols(const exprt &expr)
     expr.id() == ID_typecast &&
     to_typecast_expr(expr).op().type().id() !=
       to_typecast_expr(expr).type().id() &&
-    (to_typecast_expr(expr).op().type().id() == ID_smt_string ||
-     to_typecast_expr(expr).type().id() == ID_smt_string))
+    (to_typecast_expr(expr).op().type().id() == ID_string ||
+     to_typecast_expr(expr).type().id() == ID_string))
   {
     // A typecast with an SMT String on exactly one side (the other a
     // different sort) has no bit-level lowering -- convert_typecast would hit
@@ -7793,12 +7771,7 @@ bool smt2_convt::use_array_theory(const exprt &expr)
 
 void smt2_convt::convert_type(const typet &type)
 {
-  if(type.id() == ID_smt_string)
-  {
-    // Python SMT-String back-end: native SMT-LIB String sort (Plan A).
-    out << "String";
-  }
-  else if(type.id() == ID_array)
+  if(type.id() == ID_array)
   {
     const array_typet &array_type = to_array_type(type);
 

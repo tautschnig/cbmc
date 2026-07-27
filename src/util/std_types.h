@@ -919,27 +919,6 @@ inline bool can_cast_type<string_typet>(const typet &type)
   return type.id() == ID_string;
 }
 
-/// \brief A native SMT-LIB `String` sort, used by the Python SMT-String
-/// back-end (`--python-smt-strings`). Unlike the refined-string struct
-/// `{length, char*}`, a value of this type is an opaque string handle that
-/// `smt2_conv` lowers directly to the SMT-LIB `String` sort, so every string
-/// operation becomes a native `str.*` term whose result carries its own
-/// length. See doc/architectural/python-string-phase2-backend-abstraction.md
-/// (Plan A).
-class smt_string_typet : public typet
-{
-public:
-  smt_string_typet() : typet(ID_smt_string)
-  {
-  }
-};
-
-template <>
-inline bool can_cast_type<smt_string_typet>(const typet &type)
-{
-  return type.id() == ID_smt_string;
-}
-
 /// \brief Cast a typet to a \ref string_typet
 ///
 /// This is an unchecked conversion. \a type must be known to be \ref

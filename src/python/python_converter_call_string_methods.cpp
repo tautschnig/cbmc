@@ -362,7 +362,7 @@ std::optional<exprt> python_convertert::try_string_method(
         len, ID_ge, from_integer(whitespace_mode ? 0 : 1, len.type())});
       bounds.push_back(binary_relation_exprt{
         len, ID_le, from_integer(PYTHON_MAX_LIST_LENGTH, len.type())});
-      if(obj.type().id() == ID_smt_string)
+      if(obj.type().id() == ID_string)
         bounds.push_back(binary_relation_exprt{
           len,
           ID_le,
@@ -401,7 +401,7 @@ std::optional<exprt> python_convertert::try_string_method(
   [[maybe_unused]] auto build_length_preserving =
     [&](const std::function<exprt(std::size_t)> &mapped_char) -> exprt
   {
-    exprt concat = constant_exprt{irep_idt{""}, smt_string_typet{}};
+    exprt concat = constant_exprt{irep_idt{""}, string_typet{}};
     for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
       concat = string_concat(concat, mapped_char(i));
 
@@ -410,7 +410,7 @@ std::optional<exprt> python_convertert::try_string_method(
     const irep_idt id{qualify_name(nm)};
     if(symbol_table.lookup(id) == nullptr)
     {
-      symbolt sy{id, smt_string_typet{}, "python"};
+      symbolt sy{id, string_typet{}, "python"};
       sy.base_name = nm;
       sy.is_lvalue = true;
       sy.is_state_var = true;
@@ -418,7 +418,7 @@ std::optional<exprt> python_convertert::try_string_method(
     }
     const symbol_exprt r = symbol_table.lookup_ref(id).symbol_expr();
     pending_checks.push_back(code_frontend_assignt{
-      r, side_effect_expr_nondett{smt_string_typet{}, get_location(expr)}});
+      r, side_effect_expr_nondett{string_typet{}, get_location(expr)}});
     // r is exactly the concatenated result (content definition) ...
     pending_checks.push_back(code_assumet{equal_exprt{r, concat}});
     // ... and its length equals the input's (length hint for len() queries).
@@ -428,7 +428,7 @@ std::optional<exprt> python_convertert::try_string_method(
   };
 
   if(
-    obj.type().id() == ID_smt_string &&
+    obj.type().id() == ID_string &&
     (method_name == "upper" || method_name == "lower" ||
      method_name == "casefold" || method_name == "swapcase"))
   {
@@ -447,7 +447,7 @@ std::optional<exprt> python_convertert::try_string_method(
         exprt ch =
           string_substr(obj, from_integer(i, i64), from_integer(1, i64));
         exprt code = native_string_app(
-          ID_cprover_string_smt_to_code_func, {smt_string_typet{}}, {ch}, i32);
+          ID_cprover_string_smt_to_code_func, {string_typet{}}, {ch}, i32);
         exprt mapped = code;
         if(to_upper)
           mapped = if_exprt{
@@ -467,7 +467,7 @@ std::optional<exprt> python_convertert::try_string_method(
           ID_cprover_string_smt_from_code_func,
           {integer_typet{}},
           {typecast_exprt{mapped, integer_typet{}}},
-          smt_string_typet{});
+          string_typet{});
       });
   }
 
@@ -477,7 +477,7 @@ std::optional<exprt> python_convertert::try_string_method(
   // (a position whose predecessor is not an ASCII letter) and lower-cases the
   // rest. ASCII only; non-letters pass through.
   if(
-    obj.type().id() == ID_smt_string &&
+    obj.type().id() == ID_string &&
     (method_name == "capitalize" || method_name == "title"))
   {
     const bool is_title = (method_name == "title");
@@ -505,7 +505,7 @@ std::optional<exprt> python_convertert::try_string_method(
         exprt ch =
           string_substr(obj, from_integer(i, i64), from_integer(1, i64));
         exprt code = native_string_app(
-          ID_cprover_string_smt_to_code_func, {smt_string_typet{}}, {ch}, i32);
+          ID_cprover_string_smt_to_code_func, {string_typet{}}, {ch}, i32);
         exprt mapped;
         if(i == 0)
           mapped = upper_map(code); // start of string is always a word start
@@ -517,10 +517,7 @@ std::optional<exprt> python_convertert::try_string_method(
           exprt prev =
             string_substr(obj, from_integer(i - 1, i64), from_integer(1, i64));
           exprt prev_code = native_string_app(
-            ID_cprover_string_smt_to_code_func,
-            {smt_string_typet{}},
-            {prev},
-            i32);
+            ID_cprover_string_smt_to_code_func, {string_typet{}}, {prev}, i32);
           exprt prev_is_alpha = or_exprt{
             in_range(prev_code, 'a', 'z'), in_range(prev_code, 'A', 'Z')};
           mapped = if_exprt{
@@ -530,7 +527,7 @@ std::optional<exprt> python_convertert::try_string_method(
           ID_cprover_string_smt_from_code_func,
           {integer_typet{}},
           {typecast_exprt{mapped, integer_typet{}}},
-          smt_string_typet{});
+          string_typet{});
       });
   }
 
@@ -1046,7 +1043,7 @@ std::optional<exprt> python_convertert::try_string_method(
           std::string nm =
             "__smt_stripc_" + std::to_string(symbol_table.symbols.size());
           irep_idt id{qualify_name(nm)};
-          symbolt sy{id, smt_string_typet{}, "python"};
+          symbolt sy{id, string_typet{}, "python"};
           sy.base_name = nm;
           sy.is_lvalue = true;
           sy.is_state_var = true;
@@ -1054,7 +1051,7 @@ std::optional<exprt> python_convertert::try_string_method(
           return symbol_table.lookup_ref(id).symbol_expr();
         };
         auto pat = [](const std::string &p) -> exprt {
-          return constant_exprt{irep_idt{p}, smt_string_typet{}};
+          return constant_exprt{irep_idt{p}, string_typet{}};
         };
         // all_in(x): x is entirely composed of `chars` (fullmatch [chars]*).
         auto all_in = [&](const exprt &x) -> exprt
@@ -1128,7 +1125,7 @@ std::optional<exprt> python_convertert::try_string_method(
         std::string nm =
           "__smt_strip_" + std::to_string(symbol_table.symbols.size());
         irep_idt id{qualify_name(nm)};
-        symbolt s{id, smt_string_typet{}, "python"};
+        symbolt s{id, string_typet{}, "python"};
         s.base_name = nm;
         s.is_lvalue = true;
         s.is_state_var = true;
@@ -1155,9 +1152,9 @@ std::optional<exprt> python_convertert::try_string_method(
           reg(
             ID_cprover_string_concat_func,
             {a.type(), b.type()},
-            smt_string_typet{}),
+            string_typet{}),
           {a, b}};
-        app.type() = smt_string_typet{};
+        app.type() = string_typet{};
         return std::move(app);
       };
       // re_ws(x, mode): mode 0 = x all whitespace; 1 = starts with ws;
@@ -1385,7 +1382,7 @@ std::optional<exprt> python_convertert::try_string_method(
           pending_checks.push_back(code_frontend_assignt{
             r, side_effect_expr_nondett{rt, get_location(expr)}});
           const signedbv_typet i64{64};
-          if(rt.id() == ID_smt_string)
+          if(rt.id() == ID_string)
           {
             // Native: len() routes through cprover_string_length_func.
             const exprt rl = native_or_member_string_length(r);
@@ -1432,14 +1429,14 @@ std::optional<exprt> python_convertert::try_string_method(
           std::vector<typet> ats{obj.type(), old_expr.type(), new_expr.type()};
           symbolt fs{
             fn,
-            mathematical_function_typet(std::move(ats), smt_string_typet{}),
+            mathematical_function_typet(std::move(ats), string_typet{}),
             "python"};
           fs.base_name = id2string(fn);
           symbol_table.add(fs);
         }
         function_application_exprt app{
           symbol_table.lookup_ref(fn).symbol_expr(), {obj, old_expr, new_expr}};
-        app.type() = smt_string_typet{};
+        app.type() = string_typet{};
 
         // Length hint: str.replace_all changes the length by
         // (len(new) - len(old)) per replaced occurrence. The exact result
@@ -1458,7 +1455,7 @@ std::optional<exprt> python_convertert::try_string_method(
           const irep_idt rid{qualify_name(nm)};
           if(symbol_table.lookup(rid) == nullptr)
           {
-            symbolt sy{rid, smt_string_typet{}, "python"};
+            symbolt sy{rid, string_typet{}, "python"};
             sy.base_name = nm;
             sy.is_lvalue = true;
             sy.is_state_var = true;
@@ -1466,8 +1463,7 @@ std::optional<exprt> python_convertert::try_string_method(
           }
           const symbol_exprt r = symbol_table.lookup_ref(rid).symbol_expr();
           pending_checks.push_back(code_frontend_assignt{
-            r,
-            side_effect_expr_nondett{smt_string_typet{}, get_location(expr)}});
+            r, side_effect_expr_nondett{string_typet{}, get_location(expr)}});
           pending_checks.push_back(code_assumet{equal_exprt{r, app}});
           const exprt rl = native_or_member_string_length(r);
           const exprt ol = native_or_member_string_length(obj);
@@ -2361,12 +2357,12 @@ std::optional<exprt> python_convertert::try_string_method(
                 // no str.last_indexof), so the precise backward path is refined
                 // only; a native smt_string rfind/rindex falls to the sound
                 // nondet below.
-                obj.type().id() != ID_smt_string));
+                obj.type().id() != ID_string));
         if(precise_ok)
         {
           auto as_str_struct = [](const exprt &s) -> exprt
           {
-            if(s.type().id() == ID_smt_string)
+            if(s.type().id() == ID_string)
               return s;
             if(s.id() == ID_struct && s.operands().size() == 2)
               return s;
@@ -2383,7 +2379,7 @@ std::optional<exprt> python_convertert::try_string_method(
           // an Int `from` position. Typecast the i64 position in and the Int
           // result out; convert_typecast supplies bv2nat / int2bv. Refined
           // struct operands keep the bit-vector convention.
-          const bool native_iof = obj.type().id() == ID_smt_string;
+          const bool native_iof = obj.type().id() == ID_string;
           const typet app_type = native_iof ? typet{integer_typet{}} : int_type;
           const exprt from_arg =
             native_iof ? exprt{typecast_exprt{from, integer_typet{}}} : from;

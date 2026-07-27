@@ -2105,9 +2105,7 @@ exprt python_convertert::convert_user_call(
           }
         }
 
-        if(
-          use_smt_string_native &&
-          arguments[i].type().id() == ID_smt_string)
+        if(use_smt_string_native && arguments[i].type().id() == ID_string)
         {
           // No char* view of an SMT String; the C intrinsic is a stub, so
           // pass a sound nondet char* (it is not dereferenced by the stub).
