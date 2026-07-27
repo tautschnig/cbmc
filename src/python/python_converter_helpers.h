@@ -1015,6 +1015,12 @@ collect_param_names(const jsont &func_def)
     rs.is_state_var = true;
     symbol_table.add(rs);
   }
+  // Soundness (front-end): bound the native Int length below 2^63 so the i64
+  // int2bv read is faithful (see native_or_member_string_length). Only for the
+  // native length op; str.len is deterministic so one assume suffices globally.
+  if(native_length)
+    pending_checks.push_back(code_assumet{binary_relation_exprt{
+      app, ID_lt, from_integer(mp_integer{1} << 63, integer_typet{})}});
   exprt assigned = native_length ? exprt{typecast_exprt{app, int_type}}
                                  : exprt{std::move(app)};
   pending_checks.push_back(code_frontend_assignt{
