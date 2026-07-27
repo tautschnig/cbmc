@@ -3183,6 +3183,15 @@ exprt python_convertert::native_or_member_string_length(const exprt &s)
     function_application_exprt app{
       symbol_table.lookup_ref(fn).symbol_expr(), {s}};
     app.type() = integer_typet{};
+    // Soundness (front-end): len() reads the Int str.len(s) as int2bv into i64
+    // (via the typecast below). Bound it below 2^63 so that read is faithful
+    // (no modular wrap to a spurious astronomically-long string in a
+    // counterexample model). str.len(s) is deterministic, so one assume
+    // constrains it globally. This belongs in the front-end -- which chose the
+    // int2bv-over-bit-vector representation of len -- not the back-end (which
+    // previously emitted it per String symbol, gated on the sort).
+    pending_checks.push_back(code_assumet{binary_relation_exprt{
+      app, ID_lt, from_integer(mp_integer{1} << 63, integer_typet{})}});
     return typecast_exprt{std::move(app), signedbv_typet{64}};
   }
   return member_exprt{s, "length", signedbv_typet{64}};

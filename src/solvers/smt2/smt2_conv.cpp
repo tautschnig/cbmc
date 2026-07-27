@@ -6963,24 +6963,11 @@ void smt2_convt::find_symbols(const exprt &expr)
 
       out << ")" << "\n";
 
-      if(expr.type().id() == ID_smt_string)
-      {
-        // Native SMT-String back-end: the string length is read back as
-        // `((_ int2bv 64) (str.len s))`, but `str.len` is an unbounded
-        // non-negative SMT Int and `int2bv` reduces modulo 2^64. Without a
-        // bound the solver may satisfy a length constraint such as
-        // `int2bv(str.len s) == 0` with `str.len s == 2^64` (a multiple of
-        // the modulus), yielding a spurious model with an astronomically
-        // long string that exceeds the solver's string-model length cap and
-        // breaks value parsing (observed as `s == ""` reporting a verification
-        // ERROR). Bounding the actual length below 2^63 keeps the int2bv
-        // conversion faithful (top bit clear, signed value == true length)
-        // for every native string at once. The bound is far beyond any
-        // bounded-model length, so it never excludes a real counterexample.
-        out << "(assert (< (str.len " << smt2_identifier
-            << ") 9223372036854775808))"
-            << "\n";
-      }
+      // NOTE: the native-string length soundness bound (str.len s < 2^63,
+      // keeping the int2bv read of len faithful) is emitted by the FRONT-END
+      // at the len read (python_convertert::native_or_member_string_length /
+      // emit_string_int_function), not here -- so this pass does not branch on
+      // the string sort / front-end.
 
       // We need an additional constraint for range-typed symbols,
       // or otherwise we get satisfying assignments with values
