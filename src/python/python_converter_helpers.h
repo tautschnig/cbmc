@@ -113,8 +113,8 @@
   // the (ite <bool> bv1 bv0). Refined struct operands keep the c_bool
   // convention (handled by the struct-operand structural fallback in
   // smt2_conv) -- an operand-type decision, not a front-end one.
-  const bool native_bool_query = str1.type().id() == ID_smt_string &&
-                                 str2.type().id() == ID_smt_string &&
+  const bool native_bool_query = str1.type().id() == ID_string &&
+                                 str2.type().id() == ID_string &&
                                  (func_id == ID_cprover_string_equal_func ||
                                   func_id == ID_cprover_string_contains_func ||
                                   func_id == ID_cprover_string_is_prefix_func ||
@@ -984,8 +984,8 @@ collect_param_names(const jsont &func_def)
   // PRECONDITIONs on the bit-vector length_type and cannot take a native Int.
   // (A run is backend-uniform, so the shared fn symbol's signature is
   // consistent within a run.)
-  const bool native_length = str.type().id() == ID_smt_string &&
-                             func_id == ID_cprover_string_length_func;
+  const bool native_length =
+    str.type().id() == ID_string && func_id == ID_cprover_string_length_func;
   const typet app_result_type =
     native_length ? typet{integer_typet{}} : int_type;
   irep_idt sym_id{func_id};
@@ -1057,7 +1057,7 @@ collect_param_names(const jsont &func_def)
   // data} struct. (Producing a struct_exprt with smt_string type here is
   // malformed and crashes downstream assignment/typecast handling.)
   if(python_smt_string_native_flag())
-    return constant_exprt{irep_idt{s}, smt_string_typet{}};
+    return constant_exprt{irep_idt{s}, string_typet{}};
   exprt::operandst chars;
   for(char c : s)
     chars.push_back(

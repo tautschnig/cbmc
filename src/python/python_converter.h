@@ -279,7 +279,7 @@ public:
   }
 
   /// Select the native SMT-String representation (--python-smt-strings,
-  /// Plan A): strings are smt_string_typet (the SMT-LIB String sort) rather
+  /// Plan A): strings are string_typet (the SMT-LIB String sort) rather
   /// than the refined {length,char*} struct. Requires an SMT String solver
   /// (--cvc5/--z3).
   void set_use_smt_string_native(bool v)

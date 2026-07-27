@@ -244,19 +244,18 @@ exprt python_convertert::convert_compare(const jsont &expr)
       exprt str_tag_pred = nil_exprt{};
       if(op == "Eq" || op == "NotEq")
       {
-        if(is_python_value_type(L.type()) && R.type().id() == ID_smt_string)
+        if(is_python_value_type(L.type()) && R.type().id() == ID_string)
         {
           str_tag_pred = python_value_is(L, python_type_tagt::STR);
           L = python_value_str(L);
         }
-        else if(
-          is_python_value_type(R.type()) && L.type().id() == ID_smt_string)
+        else if(is_python_value_type(R.type()) && L.type().id() == ID_string)
         {
           str_tag_pred = python_value_is(R, python_type_tagt::STR);
           R = python_value_str(R);
         }
       }
-      if(L.type().id() == ID_smt_string && R.type().id() == ID_smt_string)
+      if(L.type().id() == ID_string && R.type().id() == ID_string)
       {
         exprt c;
         if(op == "Eq")

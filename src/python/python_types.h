@@ -70,11 +70,11 @@ inline bool &python_unbounded_ints_flag()
 
 /// Return the CBMC type used to represent Python str.
 /// Default: a struct { signedbv[64] length; unsignedbv[8] data[N]; }.
-/// Native SMT-String backend: the SMT `String` sort (smt_string_typet).
+/// Native SMT-String backend: the SMT `String` sort (string_typet).
 inline typet python_string_type()
 {
   if(python_smt_string_native_flag())
-    return smt_string_typet{};
+    return string_typet{};
   return struct_tag_typet{PYTHON_STRING_TAG};
 }
 
@@ -167,13 +167,13 @@ inline exprt python_string_handle_denotation(const exprt &handle)
       auto &rev = python_string_intern_reverse();
       auto it = rev.find(id_val.to_long());
       if(it != rev.end())
-        return constant_exprt{irep_idt{it->second}, smt_string_typet{}};
+        return constant_exprt{irep_idt{it->second}, string_typet{}};
     }
   }
   return function_application_exprt{
     symbol_exprt{
       "python::__cbmc_strtab",
-      mathematical_function_typet{{signedbv_typet{64}}, smt_string_typet{}}},
+      mathematical_function_typet{{signedbv_typet{64}}, string_typet{}}},
     {handle}};
 }
 
@@ -193,7 +193,7 @@ inline bool is_python_string_type(const typet &type)
 {
   // Native SMT-String back-end (Plan A): a string value is the SMT String
   // sort rather than the refined struct.
-  if(type.id() == ID_smt_string)
+  if(type.id() == ID_string)
     return true;
   if(type.id() == ID_struct_tag)
     return to_struct_tag_type(type).get_identifier() == PYTHON_STRING_TAG;
@@ -301,7 +301,7 @@ inline typet python_dict_key_elem_type(const typet &key_type)
 inline typet python_dict_logical_key_type(const typet &keys_elem_type)
 {
   if(is_python_string_handle_type(keys_elem_type))
-    return smt_string_typet{};
+    return string_typet{};
   return keys_elem_type;
 }
 
@@ -318,7 +318,7 @@ inline exprt python_dict_unbox_key(const exprt &key_elem)
     return function_application_exprt{
       symbol_exprt{
         "python::__cbmc_strtab",
-        mathematical_function_typet{{signedbv_typet{64}}, smt_string_typet{}}},
+        mathematical_function_typet{{signedbv_typet{64}}, string_typet{}}},
       {key_elem}};
   }
   return key_elem;
@@ -355,7 +355,7 @@ python_dict_type(const typet &key_type, const typet &value_type)
   // Values become string-id HANDLES under the native backend (keys are
   // boxed by python_dict_key_elem_type above).
   const typet stored_value_type =
-    value_type.id() == ID_smt_string ? python_string_handle_type() : value_type;
+    value_type.id() == ID_string ? python_string_handle_type() : value_type;
   components.push_back(struct_typet::componentt{
     "values",
     array_typet{
@@ -379,7 +379,7 @@ inline struct_typet python_list_type(const typet &element_type_in)
   // (3) a SECOND append emitter (python_converter_defs.cpp fast path)
   // typecast the value instead of coerce_element -- real, fixed by
   // routing it through the write choke point.
-  const typet element_type = element_type_in.id() == ID_smt_string
+  const typet element_type = element_type_in.id() == ID_string
                                ? python_string_handle_type()
                                : element_type_in;
   struct_typet::componentst components;

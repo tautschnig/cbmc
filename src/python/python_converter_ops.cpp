@@ -1165,11 +1165,11 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     // Native SMT-String back-end: a (possibly symbolic) string times a
     // compile-time constant n is n native concats. Symbolic n is nonlinear in
     // length and left to the fall-through nondet.
-    if(str_op.type().id() == ID_smt_string && nv.has_value())
+    if(str_op.type().id() == ID_string && nv.has_value())
     {
       const long long n = static_cast<long long>(nv.value());
       if(n <= 0)
-        return constant_exprt{irep_idt{""}, smt_string_typet{}};
+        return constant_exprt{irep_idt{""}, string_typet{}};
       if(n <= static_cast<long long>(PYTHON_MAX_STRING_LENGTH))
       {
         exprt result = str_op;

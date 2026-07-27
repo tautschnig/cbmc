@@ -2447,7 +2447,7 @@ std::optional<exprt> python_convertert::try_method_call(
           to_array_type(to_struct_type(t).components()[1].type())
               .element_type() == unsignedbv_typet{8};
         const bool is_str_recv =
-          is_python_string_type(t) || t.id() == ID_smt_string;
+          is_python_string_type(t) || t.id() == ID_string;
         const bool is_dict_recv = is_python_dict_type(t);
         const bool is_set_recv = is_python_set_type(t);
         const bool is_tuple_recv = is_python_tuple_type(t);
@@ -2576,7 +2576,7 @@ std::optional<exprt> python_convertert::try_method_call(
     // others (upper/lower/strip/split/count/... — no SMT-LIB String
     // primitive) would otherwise hit struct member access and crash, so they
     // return a sound nondet SMT String over-approximation.
-    if(obj_base_type.id() == ID_smt_string)
+    if(obj_base_type.id() == ID_string)
     {
       static const std::set<std::string> native_supported = {
         "upper",

@@ -4951,8 +4951,8 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     // they aren't already in struct form, and havocs SSA outputs
     // when called from inside a loop body.
     if(
-      use_smt_string_native && lhs.type().id() == ID_smt_string &&
-      rhs.type().id() == ID_smt_string)
+      use_smt_string_native && lhs.type().id() == ID_string &&
+      rhs.type().id() == ID_string)
     {
       // Native SMT-String back-end: s += t  ->  s = str.++(s, t).
       if(lhs.id() == ID_symbol)

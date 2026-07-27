@@ -74,7 +74,7 @@ std::optional<exprt> expr_initializert::expr_initializer_rec(
     result.add_source_location()=source_location;
     return result;
   }
-  else if(type_id == ID_smt_string)
+  else if(type_id == ID_string)
   {
     // Native SMT-String values: zero-initialise to the empty string,
     // nondet-initialise to a fresh nondet String.
