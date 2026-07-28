@@ -3359,6 +3359,7 @@ void smt2_convt::convert_expr(const exprt &expr)
         (fn_id == ID_cprover_string_match_func ||
          fn_id == ID_cprover_string_search_func ||
          fn_id == ID_cprover_string_fullmatch_func ||
+         fn_id == ID_cprover_string_java_matches_func ||
          fn_id == ID_cprover_string_re_sub_func ||
          fn_id == ID_cprover_string_re_pos_start_func ||
          fn_id == ID_cprover_string_re_pos_end_func) &&
@@ -3551,7 +3552,18 @@ void smt2_convt::convert_expr(const exprt &expr)
         std::optional<std::string> smt_re;
         if(pattern_text.has_value())
         {
-          if(fn_id == ID_cprover_string_fullmatch_func)
+          if(fn_id == ID_cprover_string_java_matches_func)
+          {
+            // A JAVA pattern translated with the Python-dialect translator:
+            // only sound on the Python/Java COMMON CORE; anything divergent
+            // (class intersection, \p, \Q, possessive quantifiers, ...)
+            // falls back to the sound nondet.
+            if(!regex_in_python_java_common_core(*pattern_text))
+              smt_re = std::nullopt;
+            else
+              smt_re = python_regex_to_smt_fullmatch(*pattern_text);
+          }
+          else if(fn_id == ID_cprover_string_fullmatch_func)
             smt_re = python_regex_to_smt_fullmatch(*pattern_text);
           else if(fn_id == ID_cprover_string_match_func)
             smt_re = python_regex_to_smt_match(*pattern_text);
@@ -7280,7 +7292,8 @@ void smt2_convt::find_symbols(const exprt &expr)
     else if(
       (fid == ID_cprover_string_match_func ||
        fid == ID_cprover_string_search_func ||
-       fid == ID_cprover_string_fullmatch_func) &&
+       fid == ID_cprover_string_fullmatch_func ||
+       fid == ID_cprover_string_java_matches_func) &&
       defined_expressions.find(expr) == defined_expressions.end())
     {
       std::size_t width = boolbv_width(expr.type());

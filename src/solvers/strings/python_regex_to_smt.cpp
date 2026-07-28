@@ -2100,3 +2100,92 @@ std::optional<std::string> python_regex_sub(
     out.append(subject, (std::size_t)pos, std::string::npos);
   return out;
 }
+
+bool regex_in_python_java_common_core(const std::string &pattern)
+{
+  // Conservative lexical scan: accept only constructs both dialects parse
+  // identically; reject (return false) anything Java-divergent or unclear.
+  // The translator itself then decides translatability within the core.
+  for(std::size_t i = 0; i < pattern.size(); ++i)
+  {
+    const char c = pattern[i];
+    if(c == '\\')
+    {
+      if(i + 1 >= pattern.size())
+        return false;
+      const char e = pattern[++i];
+      // Shared escapes: char classes, the common control chars, and
+      // punctuation literals. NOTE deliberate exclusions -- \v (single char
+      // 0x0b in Python, vertical-whitespace CLASS in Java), \h/\H, \R, \z,
+      // \Q/\E, \p/\P, \b/\B/\A/\Z (assertions; translator rejects anyway),
+      // \0..\9 (backreferences / octal).
+      static const std::string shared_escapes = "dDsSwWtnrf";
+      if(shared_escapes.find(e) != std::string::npos)
+        continue;
+      if(std::isalnum(static_cast<unsigned char>(e)))
+        return false;
+      continue; // escaped punctuation: literal in both dialects
+    }
+    if(c == '[')
+    {
+      // Scan the class body: reject Java's && intersection and any nested
+      // class opener; allow shared escapes and ranges.
+      ++i;
+      if(i < pattern.size() && pattern[i] == '^')
+        ++i;
+      if(i < pattern.size() && pattern[i] == ']')
+        ++i; // leading ] is a literal in both dialects
+      bool closed = false;
+      for(; i < pattern.size(); ++i)
+      {
+        if(pattern[i] == '\\' && i + 1 < pattern.size())
+        {
+          ++i;
+          continue;
+        }
+        if(pattern[i] == ']')
+        {
+          closed = true;
+          break;
+        }
+        if(pattern[i] == '&' && i + 1 < pattern.size() && pattern[i + 1] == '&')
+          return false; // Java class intersection; literal &s in Python
+        if(pattern[i] == '[')
+          return false; // Java nested class ([a[b]]); literal [ in Python
+      }
+      if(!closed)
+        return false;
+      continue;
+    }
+    if(c == '*' || c == '+' || c == '?')
+    {
+      // Possessive quantifiers (*+, ++, ?+, {m,n}+) are Java-only and change
+      // the matched LANGUAGE; a following '+' must be rejected. (A following
+      // '?' -- lazy -- is shared and language-preserving.)
+      if(i + 1 < pattern.size() && pattern[i + 1] == '+')
+        return false;
+      continue;
+    }
+    if(c == '}')
+    {
+      if(i + 1 < pattern.size() && pattern[i + 1] == '+')
+        return false; // {m,n}+ possessive
+      continue;
+    }
+    if(c == '(')
+    {
+      // Groups: plain and (?: (?= (?! etc. -- the translator handles or
+      // rejects those uniformly; but Java's (?< named groups vs Python's
+      // (?P< differ in SYNTAX (both would mis-parse the other's), so reject
+      // any (?P or (?< here.
+      if(i + 2 < pattern.size() && pattern[i + 1] == '?')
+      {
+        const char g = pattern[i + 2];
+        if(g == 'P' || g == '<')
+          return false;
+      }
+      continue;
+    }
+  }
+  return true;
+}

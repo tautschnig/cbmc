@@ -273,7 +273,8 @@ string_constraint_generatort::add_axioms_for_function_application(
     return add_axioms_for_contains(expr);
   else if(
     id == ID_cprover_string_match_func || id == ID_cprover_string_search_func ||
-    id == ID_cprover_string_fullmatch_func)
+    id == ID_cprover_string_fullmatch_func ||
+    id == ID_cprover_string_java_matches_func)
   {
     // Python-re Wave 2 intrinsics. The refine-strings backend has no regex
     // axioms (the SMT2 --cvc5 path intercepts these in smt2_conv.cpp and emits
@@ -293,10 +294,18 @@ string_constraint_generatort::add_axioms_for_function_application(
         python_regex_match_kindt kind = python_regex_match_kindt::MATCH;
         if(id == ID_cprover_string_search_func)
           kind = python_regex_match_kindt::SEARCH;
-        else if(id == ID_cprover_string_fullmatch_func)
+        else if(
+          id == ID_cprover_string_fullmatch_func ||
+          id == ID_cprover_string_java_matches_func)
           kind = python_regex_match_kindt::FULLMATCH;
+        // A Java pattern evaluated with the Python-dialect matcher is only
+        // sound on the Python/Java common core (see
+        // regex_in_python_java_common_core).
         const std::optional<bool> decided =
-          python_regex_match(*pat, *subj, kind);
+          (id == ID_cprover_string_java_matches_func &&
+           !regex_in_python_java_common_core(*pat))
+            ? std::nullopt
+            : python_regex_match(*pat, *subj, kind);
         if(decided.has_value())
           return {from_integer(*decided ? 1 : 0, expr.type()), {}};
       }

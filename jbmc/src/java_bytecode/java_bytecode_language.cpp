@@ -143,7 +143,15 @@ java_bytecode_language_optionst::java_bytecode_language_optionst(
 {
   assume_inputs_non_null =
     options.get_bool_option("java-assume-inputs-non-null");
-  string_refinement_enabled = options.get_bool_option("refine-strings");
+  // Emit the string-solver intrinsics whenever a decision procedure capable
+  // of consuming them is selected: the string refinement (the default), or an
+  // SMT2 back-end (--z3 / --cvc5 / --smt2, which lower cprover_string_* /
+  // regex intrinsics natively -- e.g. String.matches via the SMT string
+  // theory). Without this, --no-refine-strings would leave the java-models
+  // bytecode (sound nondet) in place and an SMT2 solver would never see the
+  // string operations.
+  string_refinement_enabled = options.get_bool_option("refine-strings") ||
+                              options.get_bool_option("smt2");
   throw_runtime_exceptions =
     options.get_bool_option("throw-runtime-exceptions");
   assert_uncaught_exceptions =

@@ -99,6 +99,18 @@ python_regex_segment_groups(const std::string &pattern);
 std::optional<std::string>
 python_regex_to_smt_fullmatch(const std::string &pattern);
 
+/// True when \p pattern uses only the Perl-derived COMMON CORE on which the
+/// Python and Java regex dialects agree (literals, ., [...] classes without
+/// Java's && intersection, groups, alternation, greedy/lazy quantifiers,
+/// {m,n}, ^/$, and the shared escapes \d\D\s\S\w\W \t\n\r\f and punctuation
+/// literals). False for any construct whose SEMANTICS or PARSE differs
+/// between the dialects (Java: [a&&b] intersection, \p{...}/\P{...},
+/// \Q...\E quoting, \v/\V vertical-whitespace classes, \h/\H, \R, \z, \G,
+/// possessive quantifiers) -- a caller translating a JAVA pattern with the
+/// (Python-dialect) translator must reject those rather than silently
+/// mis-model them.
+bool regex_in_python_java_common_core(const std::string &pattern);
+
 /// Convenience: return the SMT-LIB regex term equivalent to
 /// Python's ``re.match(pattern, s)`` semantics (start-anchored,
 /// end-unanchored).

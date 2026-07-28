@@ -325,6 +325,12 @@ private:
     const java_method_typet &type,
     const source_locationt &loc,
     symbol_table_baset &symbol_table);
+
+  code_blockt make_matches_function_from_call(
+    const irep_idt &function_id,
+    const java_method_typet &type,
+    const source_locationt &loc,
+    symbol_table_baset &symbol_table);
 };
 
 exprt make_nondet_infinite_char_array(
