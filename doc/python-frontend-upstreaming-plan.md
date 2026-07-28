@@ -844,3 +844,30 @@ Remaining opportunities (not scheduled): Pattern.matches/compile static forms,
 Java-dialect regex_char_classest instantiation (UNICODE_CHARACTER_CLASS), and
 the native-String-sort representation for Java strings under SMT2 (the object-
 model question from the earlier Java-migration assessment still applies).
+
+## Java regex: dialect semantics, Java-only syntax, Pattern/Matcher (2026-07-28)
+
+- **`7c90d3b25b3`** dialect-correct `.` and `\s`: fixed a live PLR false proof
+  (Python `\s` missing `\x1c-\x1f` within ASCII) and split the shared classes
+  per dialect (Java `.` excludes 5 line terminators; Java's regex `\s` is
+  `[ \t\n\x0B\f\r]` -- a THIRD whitespace set, distinct from Python's `\s`
+  and from Character.isWhitespace). regex_char_classest gained dot_excluded;
+  the concrete byte matcher is dialect-parameterised.
+- **`6609b0c647f`** Java-only syntax lowered to the common core, JLS-exactly:
+  `\Q...\E`, `\p{POSIX}` classes, `[a&&b]` intersection + nested-class unions
+  via a (set, complemented) ASCII algebra (complements stay symbolic so
+  non-ASCII behaviour is exact). All cases differentially validated against a
+  real JVM; a real emitter bug (ranges over escaped endpoints) was caught by
+  the differential probes.
+- **`b3741695cbf`** Pattern/Matcher: the model (SUBMODULE commit `9bfe328` on
+  branch regex-matcher-model -- local only, needs its own upstream PR) stores
+  (pattern, flags, text) and delegates to the intercepted machinery with two
+  JLS-faithful staleness flags (region vs find-position). New java_find /
+  java_looking_at solver ids (search/anchored-match kinds; trailing-`$`
+  rejected for partial kinds -- Java's before-final-terminator rule). Also
+  removed the old model's vacuity-inducing "pattern has no metacharacters"
+  assume. compile-with-flags != 0 falls back to nondet.
+
+All gates green throughout (jbmc-strings incl. new StringMatches.dialect/
+javaSyntax + PatternMatcher tests, [strings] 388, python suites, native
+corpus, sweep 0 changes).
