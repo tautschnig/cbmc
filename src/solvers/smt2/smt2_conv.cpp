@@ -3561,7 +3561,7 @@ void smt2_convt::convert_expr(const exprt &expr)
             if(!regex_in_python_java_common_core(*pattern_text))
               smt_re = std::nullopt;
             else
-              smt_re = python_regex_to_smt_fullmatch(*pattern_text);
+              smt_re = java_regex_to_smt_fullmatch(*pattern_text);
           }
           else if(fn_id == ID_cprover_string_fullmatch_func)
             smt_re = python_regex_to_smt_fullmatch(*pattern_text);

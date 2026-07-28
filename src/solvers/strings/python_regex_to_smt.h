@@ -74,12 +74,27 @@ struct regex_char_classest
   std::string digit;      ///< \\d
   std::string whitespace; ///< \\s
   std::string word;       ///< \\w
+  /// The characters `.` does NOT match (without DOTALL), as a RegLan term.
+  std::string dot_excluded;
 };
 
-/// The standard ASCII regex character classes (Python `re` / Java `Pattern`
-/// without UNICODE flags / PCRE default): \\d=[0-9], \\s=[ \\t\\n\\r\\f\\v],
-/// \\w=[A-Za-z0-9_].
-regex_char_classest ascii_regex_char_classes();
+/// Python `re` character classes, restricted to the code points below 0x80
+/// that the byte-oriented string model represents exactly. Per the Python
+/// Language Reference, \\s is the Unicode whitespace set -- within ASCII that
+/// is [\\t\\n\\v\\f\\r\\x1c-\\x1f ] (NOTE: includes the separators
+/// \\x1c-\\x1f, unlike Java's \\s); \\d=[0-9], \\w=[A-Za-z0-9_] on ASCII.
+/// Code points >= 0x80 (U+0085, U+00A0, Arabic-Indic digits, ...) are
+/// multi-byte in the UTF-8 byte model and remain out of scope (documented
+/// model boundary). `.` excludes only \\n.
+regex_char_classest python_regex_char_classes();
+
+/// Java `java.util.regex.Pattern` character classes (no UNICODE_CHARACTER_
+/// CLASS flag): per the Pattern javadoc \\d=[0-9], \\s=[ \\t\\n\\x0B\\f\\r]
+/// (NO \\x1c-\\x1f -- differs from BOTH Python's \\s and Java's own
+/// Character.isWhitespace), \\w=[a-zA-Z_0-9]. `.` excludes the Java line
+/// terminators \\n \\r \\u0085 \\u2028 \\u2029 (exact here: JBMC chars are
+/// UTF-16 code units, 1:1 for the BMP).
+regex_char_classest java_regex_char_classes();
 
 std::optional<std::vector<python_regex_segmentt>>
 python_regex_segment_groups(const std::string &pattern);
@@ -98,6 +113,16 @@ python_regex_segment_groups(const std::string &pattern);
 /// ``(re.++ (re.* re.allchar) <term> (re.* re.allchar))``.
 std::optional<std::string>
 python_regex_to_smt_fullmatch(const std::string &pattern);
+
+/// Java-dialect translation of \p pattern (java.util.regex semantics) to an
+/// SMT-LIB regex term with String.matches / Matcher.matches (full-match)
+/// anchoring. Callers must ALSO gate on
+/// regex_in_python_java_common_core(pattern): the shared parser only accepts
+/// syntax both dialects parse identically, and this entry supplies the
+/// Java-dialect SEMANTICS for the constructs whose meaning diverges within
+/// that core (`.` line terminators, \\s).
+std::optional<std::string>
+java_regex_to_smt_fullmatch(const std::string &pattern);
 
 /// True when \p pattern uses only the Perl-derived COMMON CORE on which the
 /// Python and Java regex dialects agree (literals, ., [...] classes without
@@ -181,10 +206,19 @@ enum class python_regex_match_kindt
 /// match is chosen, not WHETHER one exists). Used to make the default backend
 /// return `Match()`/`None` precisely for literal/known-structure regexes
 /// without an SMT String solver.
+/// Regex dialect for the concrete byte matcher: affects `.`'s excluded line
+/// terminators and the \\s class (within ASCII, the matcher's domain).
+enum class regex_dialectt
+{
+  python,
+  java
+};
+
 std::optional<bool> python_regex_match(
   const std::string &pattern,
   const std::string &subject,
-  python_regex_match_kindt kind);
+  python_regex_match_kindt kind,
+  regex_dialectt dialect = regex_dialectt::python);
 
 /// Leftmost match of `pattern` in `subject` at or after offset `from`, for a
 /// CONSTANT pattern and subject. Returns the `{start, end}` byte offsets

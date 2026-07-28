@@ -17,6 +17,17 @@ public class StringMatches
     assert s.matches("a*+");
   }
 
+  // Java-dialect semantics (java.util.regex, differing from Python's re):
+  // '.' excludes \r; \s excludes \u001C-\u001F.
+  public static void dialect()
+  {
+    String s = "a\rb";
+    assert !s.matches("a.b");
+    String w = "\u001C";
+    assert !w.matches("\\s");
+    assert " ".matches("\\s");
+  }
+
   // Symbolic subject constrained by the regex (SMT2 back-ends only): the
   // regex [0-9]+ implies nonemptiness.
   public static void symbolic(String s)

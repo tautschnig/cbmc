@@ -301,11 +301,14 @@ string_constraint_generatort::add_axioms_for_function_application(
         // A Java pattern evaluated with the Python-dialect matcher is only
         // sound on the Python/Java common core (see
         // regex_in_python_java_common_core).
+        const regex_dialectt dialect = id == ID_cprover_string_java_matches_func
+                                         ? regex_dialectt::java
+                                         : regex_dialectt::python;
         const std::optional<bool> decided =
           (id == ID_cprover_string_java_matches_func &&
            !regex_in_python_java_common_core(*pat))
             ? std::nullopt
-            : python_regex_match(*pat, *subj, kind);
+            : python_regex_match(*pat, *subj, kind, dialect);
         if(decided.has_value())
           return {from_integer(*decided ? 1 : 0, expr.type()), {}};
       }

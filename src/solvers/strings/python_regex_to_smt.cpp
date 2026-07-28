@@ -15,23 +15,52 @@ Author: Wave 2 of Python re support.
 #include <sstream>
 #include <vector>
 
+regex_char_classest python_regex_char_classes()
+{
+  regex_char_classest c;
+  c.digit = "(re.range \"0\" \"9\")";
+  // PLR: \s is the Unicode whitespace set; within ASCII (the byte model's
+  // exact domain) that is \t \n \v \f \r and \x1c-\x20 (FS GS RS US space --
+  // verified against CPython; note \x1c-\x1f, which Java's \s lacks).
+  // Code points >= 0x80 are multi-byte in the UTF-8 byte model (documented
+  // model boundary).
+  c.whitespace =
+    "(re.union (re.range \"\\u{9}\" \"\\u{d}\") "
+    "(re.range \"\\u{1c}\" \"\\u{20}\"))";
+  c.word =
+    "(re.union (re.range \"A\" \"Z\") (re.range \"a\" \"z\") "
+    "(re.range \"0\" \"9\") (str.to_re \"_\"))";
+  // PLR: '.' (without re.DOTALL) matches anything except \n.
+  c.dot_excluded = "(str.to_re \"\\u{a}\")";
+  return c;
+}
+
+regex_char_classest java_regex_char_classes()
+{
+  regex_char_classest c;
+  // java.util.regex.Pattern javadoc (no UNICODE_CHARACTER_CLASS):
+  c.digit = "(re.range \"0\" \"9\")";
+  // \s = [ \t\n\x0B\f\r] -- does NOT include \x1c-\x1f (differs from both
+  // Python's \s and Java's own Character.isWhitespace).
+  c.whitespace =
+    "(re.union (re.range \"\\u{9}\" \"\\u{d}\") "
+    "(str.to_re \" \"))";
+  c.word =
+    "(re.union (re.range \"A\" \"Z\") (re.range \"a\" \"z\") "
+    "(re.range \"0\" \"9\") (str.to_re \"_\"))";
+  // '.' (without DOTALL) excludes the Java line terminators
+  // \n \r \u0085 \u2028 \u2029 (exact: JBMC chars are UTF-16 code units).
+  c.dot_excluded =
+    "(re.union (re.range \"\\u{a}\" \"\\u{a}\") (str.to_re \"\\u{d}\") "
+    "(str.to_re \"\\u{85}\") (str.to_re \"\\u{2028}\") "
+    "(str.to_re \"\\u{2029}\"))";
+  return c;
+}
+
 namespace
 {
 /// Hand-written recursive-descent translator from a Python
 /// regex string to an SMT-LIB 2.6 regex term.
-regex_char_classest ascii_regex_char_classes()
-{
-  regex_char_classest c;
-  c.digit = "(re.range \"0\" \"9\")";
-  c.whitespace =
-    "(re.union (str.to_re \" \") (str.to_re \"\\u{9}\") "
-    "(str.to_re \"\\u{a}\") (str.to_re \"\\u{d}\") "
-    "(str.to_re \"\\u{c}\") (str.to_re \"\\u{b}\"))";
-  c.word =
-    "(re.union (re.range \"A\" \"Z\") (re.range \"a\" \"z\") "
-    "(re.range \"0\" \"9\") (str.to_re \"_\"))";
-  return c;
-}
 
 class translator
 {
@@ -40,7 +69,7 @@ public:
     const std::string &p,
     bool ic = false,
     bool da = false,
-    regex_char_classest cc = ascii_regex_char_classes())
+    regex_char_classest cc = python_regex_char_classes())
     : pattern(p), ignorecase(ic), dotall(da), classes(std::move(cc))
   {
   }
@@ -350,13 +379,13 @@ private:
     if(c == '.')
     {
       ++pos;
-      // Python '.' (without re.DOTALL / inline (?s)) matches any character
-      // EXCEPT a newline. SMT 're.allchar' includes '\n', so subtract it;
-      // using 're.allchar' here would be unsound (over-matching across
-      // lines). SMT-LIB encodes the newline code point as \u{a}.
+      // '.' (without DOTALL) matches any character except the dialect's
+      // line terminators (Python: \n; Java: \n \r \u0085 \u2028 \u2029).
+      // Using bare 're.allchar' would be unsound (over-matching across
+      // lines).
       if(dotall)
         return std::string{"re.allchar"};
-      return std::string{"(re.diff re.allchar (str.to_re \"\\u{a}\"))"};
+      return std::string{"(re.diff re.allchar "} + classes.dot_excluded + ")";
     }
 
     if(c == '^' || c == '$')
@@ -899,8 +928,10 @@ strip_inline_flags(const std::string &p, bool &ignorecase, bool &dotall)
 /// Translate a pattern to the SMT regex for the whole subject string
 /// under the given match semantics. Returns nullopt for unsupported
 /// patterns (caller falls back to a sound nondet model).
-std::optional<std::string>
-translate(const std::string &pattern, match_kind kind)
+std::optional<std::string> translate(
+  const std::string &pattern,
+  match_kind kind,
+  regex_char_classest classes = python_regex_char_classes())
 {
   bool ignorecase = false, dotall = false;
   auto core_in = strip_inline_flags(pattern, ignorecase, dotall);
@@ -910,7 +941,7 @@ translate(const std::string &pattern, match_kind kind)
   bool had_start, had_end;
   std::string core;
   strip_anchors(*core_in, had_start, had_end, core);
-  translator t{core, ignorecase, dotall};
+  translator t{core, ignorecase, dotall, std::move(classes)};
   auto body = t.parse_top();
   if(!body.has_value())
     return std::nullopt;
@@ -954,6 +985,15 @@ std::optional<std::string>
 python_regex_to_smt_fullmatch(const std::string &pattern)
 {
   return translate(pattern, match_kind::fullmatch);
+}
+
+std::optional<std::string>
+java_regex_to_smt_fullmatch(const std::string &pattern)
+{
+  // Java-dialect SEMANTICS (dot line terminators, \s) within the shared
+  // parser; callers must also gate on regex_in_python_java_common_core so
+  // only identically-PARSED syntax reaches this.
+  return translate(pattern, match_kind::fullmatch, java_regex_char_classes());
 }
 
 std::optional<std::string> python_regex_to_smt_match(const std::string &pattern)
@@ -1458,8 +1498,12 @@ struct mnode
 class re_match_parser
 {
 public:
-  re_match_parser(const std::string &p, bool ic = false, bool da = false)
-    : pat(p), ignorecase(ic), dotall(da)
+  re_match_parser(
+    const std::string &p,
+    bool ic = false,
+    bool da = false,
+    regex_dialectt dl = regex_dialectt::python)
+    : pat(p), ignorecase(ic), dotall(da), dialect(dl)
   {
   }
 
@@ -1478,6 +1522,7 @@ private:
   bool failed = false;
   const bool ignorecase = false;
   const bool dotall = false;
+  const regex_dialectt dialect = regex_dialectt::python;
 
   bool eof() const
   {
@@ -1629,6 +1674,16 @@ private:
     if(c == '.')
     {
       ++pos;
+      if(dialect == regex_dialectt::java && !dotall)
+      {
+        // Java '.' excludes \n \r (\u0085/\u2028/\u2029 are outside the
+        // byte matcher's ASCII domain); Python's ANY excludes only \n.
+        mnodep n = make(mnode::CLASS);
+        n->negated = true;
+        n->ranges.emplace_back('\n', '\n');
+        n->ranges.emplace_back('\r', '\r');
+        return n;
+      }
       return make(mnode::ANY);
     }
     if(c == '(')
@@ -1679,7 +1734,8 @@ private:
   // class to `out`. Returns false for an unknown class letter.
   static bool class_ranges_for(
     char letter,
-    std::vector<std::pair<unsigned char, unsigned char>> &out)
+    std::vector<std::pair<unsigned char, unsigned char>> &out,
+    regex_dialectt dl = regex_dialectt::python)
   {
     switch(letter)
     {
@@ -1696,12 +1752,13 @@ private:
       return true;
     case 's':
     case 'S':
+      // \t \n \v \f \r and space in both dialects...
+      out.emplace_back(0x09, 0x0d);
       out.emplace_back(' ', ' ');
-      out.emplace_back('\t', '\t');
-      out.emplace_back('\n', '\n');
-      out.emplace_back('\r', '\r');
-      out.emplace_back('\f', '\f');
-      out.emplace_back('\v', '\v');
+      // ...plus, in Python only, \x1c-\x1f (FS GS RS US: CPython's Unicode
+      // whitespace within ASCII; Java's Pattern \s excludes them).
+      if(dl == regex_dialectt::python)
+        out.emplace_back(0x1c, 0x1f);
       return true;
     default:
       return false;
@@ -1762,7 +1819,7 @@ private:
     }
     const char e = pat[pos++];
     std::vector<std::pair<unsigned char, unsigned char>> r;
-    if(class_ranges_for(e, r))
+    if(class_ranges_for(e, r, dialect))
     {
       mnodep n = make(mnode::CLASS);
       n->ranges = std::move(r);
@@ -1805,7 +1862,7 @@ private:
         }
         const char e = pat[pos++];
         std::vector<std::pair<unsigned char, unsigned char>> sub;
-        if(class_ranges_for(e, sub))
+        if(class_ranges_for(e, sub, dialect))
         {
           // A class shorthand inside [...] (e.g. [\d.]). Negated shorthands
           // inside a class are not handled precisely -> bail.
@@ -1981,7 +2038,8 @@ static bool re_seq(
 std::optional<bool> python_regex_match(
   const std::string &pattern,
   const std::string &subject,
-  python_regex_match_kindt kind)
+  python_regex_match_kindt kind,
+  regex_dialectt dialect)
 {
   // Multiline `^`/`$`/`.` edge cases are not modelled: bail on a newline in
   // the subject so the matcher's single-line anchoring stays exact.
@@ -1998,7 +2056,7 @@ std::optional<bool> python_regex_match(
   if(!core.has_value())
     return std::nullopt;
 
-  re_match_parser parser{*core, ignorecase, dotall};
+  re_match_parser parser{*core, ignorecase, dotall, dialect};
   const mnodep ast = parser.parse();
   if(!ast)
     return std::nullopt;
