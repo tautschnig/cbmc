@@ -775,3 +775,37 @@ and the regex family) by fn_id, and the equal/contains/prefix/suffix structural
 fallback serves refined struct operands under an SMT2 backend. These are
 semantic dispatches, not front-end coupling, and can be generalised into the
 shared encoder later as wider-use work (of_int/replace_all/etc.).
+
+## Milestone #1 — smt_* intrinsic family generalised; milestone closed (2026-07-27)
+
+`e4fe6e1edab`: the six Python-specific `cprover_string_smt_*` ids are gone.
+- `smt_strsub` → the existing generic `substring` (flat `(str.substr s o l)`;
+  positions via an unsigned-bv hop so the encoder emits plain `bv2nat` — the
+  signed conversion nested in `str.substr` positions is a cvc5 perf cliff,
+  observed as a hang; front-end clamps positions non-negative).
+- `smt_strreplace` → NEW generic `replace_all` → `str.replace_all` (wider-use).
+- `smt_from_code`/`smt_to_code` → NEW generic `from_code`/`to_code` (chr/ord),
+  Direction-B Int results.
+- `smt_from_int` → NEW generic `from_int` + the sign handling COMPOSED in the
+  front-end from generic ops.
+- `smt_re_ws` → deleted; strip composes Python-whitespace regex membership from
+  the generic regex vocabulary (PLR: \x01 kept, unlike Java trim — probed).
+
+Two TYPE-based whole-group fixes surfaced by this work (both latent for any
+front-end):
+- `find_symbols` no longer declares UFs whose signature involves RegLan (not a
+  first-class SMT-LIB sort; cvc5 rejects — the regex intrinsics are lowered
+  inline). Latent Strata bug: the unit test never runs a solver.
+- goto-symex side-effect const-prop skips value-returning (String-typed)
+  applications (no output args; the refined handlers PRECONDITION on them).
+
+**Milestone #1 final state:** ONE SMT String sort; ONE generic
+`cprover_string_*`/`cprover_regex_*` vocabulary lowered by the shared encoder
+for all String-sorted operands; Direction-B boundary typecasts reconcile
+Python's bit-vector conventions; the Python-specific smt2_conv handler retains
+ONLY (a) the refined-struct structural fallback (equal/contains/prefix/suffix
+under SMT2, dispatched on operand type) and (b) the regex-match decomposition
+family (match/search/fullmatch/re_sub/re_group/re_pos — semantic ops with
+capture-group/fallback logic, dispatched by fn_id). All gates green
+(native 50/50, smt2_convt 57, [strings] 388, python suite, C strings,
+jbmc-strings, sweep 0-reg).
