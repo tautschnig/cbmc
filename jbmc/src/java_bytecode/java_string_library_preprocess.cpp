@@ -1859,6 +1859,18 @@ void java_string_library_preprocesst::initialize_conversion_table()
     return make_matches_function_from_call(
       function_id, type, loc, symbol_table);
   };
+  // java.util.regex.Matcher model hooks: the model's find()/lookingAt()
+  // delegate to these static (pattern, text) predicates, which map directly
+  // onto the Java-dialect regex solver functions (already in the intrinsic
+  // (pattern, subject) argument order).
+  cprover_equivalent_to_java_function
+    ["java::java.util.regex.Matcher.cproverFind:"
+     "(Ljava/lang/String;Ljava/lang/String;)Z"] =
+      ID_cprover_string_java_find_func;
+  cprover_equivalent_to_java_function
+    ["java::java.util.regex.Matcher.cproverLookingAt:"
+     "(Ljava/lang/String;Ljava/lang/String;)Z"] =
+      ID_cprover_string_java_looking_at_func;
 
   // StringBuilder library
   conversion_table

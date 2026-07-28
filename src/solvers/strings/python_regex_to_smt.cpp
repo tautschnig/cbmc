@@ -2707,5 +2707,51 @@ std::optional<bool> java_regex_match(
     return std::nullopt;
   if(!regex_in_python_java_common_core(*lowered))
     return std::nullopt;
+  // Partial-match kinds: Java's trailing-'$' before-final-terminator rule is
+  // not reproduced -- reject (fullmatch is unaffected).
+  if(
+    kind != python_regex_match_kindt::FULLMATCH && !lowered->empty() &&
+    lowered->back() == '$')
+    return std::nullopt;
   return python_regex_match(*lowered, subject, kind, regex_dialectt::java);
+}
+
+namespace
+{
+/// True when the pattern ends with an UNESCAPED '$' (Java's
+/// before-final-terminator rule diverges from Python's for partial-match
+/// kinds; see the header).
+bool has_unescaped_trailing_dollar(const std::string &p)
+{
+  if(p.empty() || p.back() != '$')
+    return false;
+  std::size_t backslashes = 0;
+  for(std::size_t i = p.size() - 1; i-- > 0 && p[i] == '\\';)
+    ++backslashes;
+  return backslashes % 2 == 0;
+}
+
+std::optional<std::string>
+java_partial_kind(const std::string &pattern, match_kind kind)
+{
+  const auto lowered = java_regex_preprocess(pattern);
+  if(!lowered.has_value())
+    return std::nullopt;
+  if(!regex_in_python_java_common_core(*lowered))
+    return std::nullopt;
+  if(has_unescaped_trailing_dollar(*lowered))
+    return std::nullopt;
+  return translate(*lowered, kind, java_regex_char_classes());
+}
+} // namespace
+
+std::optional<std::string>
+java_regex_to_smt_looking_at(const std::string &pattern)
+{
+  return java_partial_kind(pattern, match_kind::match);
+}
+
+std::optional<std::string> java_regex_to_smt_find(const std::string &pattern)
+{
+  return java_partial_kind(pattern, match_kind::search);
 }
