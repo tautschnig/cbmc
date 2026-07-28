@@ -61,6 +61,12 @@ struct symex_configt final
   ///   Used in goto_symext::dereference_rec
   bool cache_dereferences;
 
+  /// \brief True when the formula goes to an SMT2 back-end with the string
+  /// refinement disabled: string-intrinsic operands can then be materialised
+  /// for the SMT string theory without conflicting with refinement-associated
+  /// content (see goto_symext::resolve_python_string_content).
+  bool smt2_strings_without_refinement;
+
   /// \brief Construct a symex_configt using options specified in an
   /// \ref optionst
   explicit symex_configt(const optionst &options);

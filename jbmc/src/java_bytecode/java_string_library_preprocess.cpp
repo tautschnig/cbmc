@@ -1329,6 +1329,45 @@ code_blockt java_string_library_preprocesst::make_strip_function_from_call(
   return code;
 }
 
+/// Provide code for String.matches(String regex). Calls the shared regex
+/// full-match solver function (ID_cprover_string_fullmatch_func, also used by
+/// Python's re.fullmatch), whose convention is (pattern, subject) -- i.e. the
+/// REVERSE of the Java receiver/argument order, so the operands are swapped
+/// here. Precise for constant, translatable patterns under an SMT string
+/// solver; a sound nondet over-approximation otherwise (symbolic patterns,
+/// untranslatable constructs, or the SAT string solver, which folds only
+/// constant subjects).
+/// \param function_id: name of the Java method being replaced
+/// \param type: type of the function
+/// \param loc: location in the source
+/// \param symbol_table: symbol table
+/// \return Code corresponding to:
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// return cprover_string_fullmatch(regex, this)
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+code_blockt java_string_library_preprocesst::make_matches_function_from_call(
+  const irep_idt &function_id,
+  const java_method_typet &type,
+  const source_locationt &loc,
+  symbol_table_baset &symbol_table)
+{
+  code_blockt code;
+  exprt::operandst args =
+    process_parameters(type.parameters(), loc, function_id, symbol_table, code);
+  // args = {this (subject), regex (pattern)}; the intrinsic convention is
+  // (pattern, subject).
+  PRECONDITION(args.size() == 2);
+  std::swap(args[0], args[1]);
+  code.add(
+    code_return_function_application(
+      ID_cprover_string_java_matches_func,
+      args,
+      type.return_type(),
+      symbol_table),
+    loc);
+  return code;
+}
+
 /// Generates code for a function which copies a string object to a new string
 /// object.
 /// \param type: type of the function
@@ -1805,6 +1844,21 @@ void java_string_library_preprocesst::initialize_conversion_table()
         mode, function_id, type, loc, symbol_table);
     };
   }
+  // String.matches(regex): full-match against the regex, via the shared
+  // fullmatch solver function (operand order swapped to the intrinsic's
+  // (pattern, subject) convention). Precise for constant translatable
+  // patterns under an SMT string solver; sound nondet otherwise.
+  conversion_table["java::java.lang.String.matches:(Ljava/lang/String;)Z"] =
+    [this](
+      const java_method_typet &type,
+      const source_locationt &loc,
+      const irep_idt &function_id,
+      symbol_table_baset &symbol_table,
+      message_handlert &)
+  {
+    return make_matches_function_from_call(
+      function_id, type, loc, symbol_table);
+  };
 
   // StringBuilder library
   conversion_table

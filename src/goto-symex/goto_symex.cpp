@@ -123,12 +123,18 @@ void goto_symext::symex_assign(
 
     // String backend (choice B): canonicalise cprover_string comparison
     // content pointers to their backing array object so the refinement
-    // reasons over real, constrained content. Currently Python-specific: the
-    // materialisation is only valid for symex-resolved leaf content (Python's
-    // chr symbol arrays); it is harmful for refinement-constrained associated
-    // content (e.g. JBMC's char[]), which has no clean symex-side condition,
-    // so this stays gated while phase-2 backing (below) is language-agnostic.
-    if(language_mode == "python" && rhs.id() == ID_function_application)
+    // reasons over real, constrained content. Gating: Python always (the
+    // materialisation is valid for symex-resolved leaf content, e.g. Python's
+    // chr symbol arrays, and feeds array_pool's literal fast path); other
+    // languages (Java) ONLY under an SMT2 back-end with the string refinement
+    // disabled -- materialisation is harmful for refinement-constrained
+    // associated content (JBMC's char[]), but with the refinement off the
+    // operands go to the SMT string theory, which needs the literal form
+    // (e.g. String.matches -> str.in_re pattern/subject recovery).
+    if(
+      (language_mode == "python" ||
+       symex_config.smt2_strings_without_refinement) &&
+      rhs.id() == ID_function_application)
       resolve_python_string_content(to_function_application_expr(rhs), state);
 
     // Try to constant propagate potential side effects of the assignment, when
