@@ -9,6 +9,7 @@ Author: Wave 2 of Python re support.
 
 #include "python_regex_to_smt.h"
 
+#include <bitset>
 #include <cctype>
 #include <functional>
 #include <memory>
@@ -985,15 +986,6 @@ std::optional<std::string>
 python_regex_to_smt_fullmatch(const std::string &pattern)
 {
   return translate(pattern, match_kind::fullmatch);
-}
-
-std::optional<std::string>
-java_regex_to_smt_fullmatch(const std::string &pattern)
-{
-  // Java-dialect SEMANTICS (dot line terminators, \s) within the shared
-  // parser; callers must also gate on regex_in_python_java_common_core so
-  // only identically-PARSED syntax reaches this.
-  return translate(pattern, match_kind::fullmatch, java_regex_char_classes());
 }
 
 std::optional<std::string> python_regex_to_smt_match(const std::string &pattern)
@@ -2246,4 +2238,474 @@ bool regex_in_python_java_common_core(const std::string &pattern)
     }
   }
   return true;
+}
+
+// --- Java-only regex syntax lowering (JLS / java.util.regex Pattern) ---
+
+namespace
+{
+/// A (possibly complemented) set of ASCII characters. The complement is kept
+/// SYMBOLIC (over the full character domain), never flattened to ASCII, so
+/// emitted classes behave JLS-exactly on non-ASCII characters too.
+struct java_class_sett
+{
+  std::bitset<128> chars;
+  bool complemented = false;
+};
+
+/// Union: A ∪ B (De Morgan over the complement flags).
+java_class_sett jcs_union(const java_class_sett &a, const java_class_sett &b)
+{
+  if(!a.complemented && !b.complemented)
+    return {a.chars | b.chars, false};
+  if(a.complemented && b.complemented)
+    return {a.chars & b.chars, true};
+  const auto &comp = a.complemented ? a : b;
+  const auto &pos = a.complemented ? b : a;
+  // comp(C) ∪ P = comp(C \ P)
+  return {comp.chars & ~pos.chars, true};
+}
+
+/// Intersection: A ∩ B.
+java_class_sett
+jcs_intersect(const java_class_sett &a, const java_class_sett &b)
+{
+  if(!a.complemented && !b.complemented)
+    return {a.chars & b.chars, false};
+  if(a.complemented && b.complemented)
+    return {a.chars | b.chars, true};
+  const auto &comp = a.complemented ? a : b;
+  const auto &pos = a.complemented ? b : a;
+  // P ∩ comp(C) = P \ C
+  return {pos.chars & ~comp.chars, false};
+}
+
+void jcs_add_range(java_class_sett &s, unsigned char lo, unsigned char hi)
+{
+  for(unsigned c = lo; c <= hi && c < 128; ++c)
+    s.chars.set(c);
+}
+
+/// The US-ASCII POSIX classes of java.util.regex.Pattern (javadoc-exact).
+std::optional<java_class_sett> java_posix_class(const std::string &name)
+{
+  java_class_sett s;
+  if(name == "Lower")
+    jcs_add_range(s, 'a', 'z');
+  else if(name == "Upper")
+    jcs_add_range(s, 'A', 'Z');
+  else if(name == "ASCII")
+    jcs_add_range(s, 0x00, 0x7f);
+  else if(name == "Alpha")
+  {
+    jcs_add_range(s, 'a', 'z');
+    jcs_add_range(s, 'A', 'Z');
+  }
+  else if(name == "Digit")
+    jcs_add_range(s, '0', '9');
+  else if(name == "Alnum")
+  {
+    jcs_add_range(s, 'a', 'z');
+    jcs_add_range(s, 'A', 'Z');
+    jcs_add_range(s, '0', '9');
+  }
+  else if(name == "Punct")
+  {
+    for(unsigned char c : std::string{"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"})
+      s.chars.set(c);
+  }
+  else if(name == "Graph")
+    jcs_add_range(s, 0x21, 0x7e);
+  else if(name == "Print")
+    jcs_add_range(s, 0x20, 0x7e);
+  else if(name == "Blank")
+  {
+    s.chars.set(' ');
+    s.chars.set('\t');
+  }
+  else if(name == "Cntrl")
+  {
+    jcs_add_range(s, 0x00, 0x1f);
+    s.chars.set(0x7f);
+  }
+  else if(name == "XDigit")
+  {
+    jcs_add_range(s, '0', '9');
+    jcs_add_range(s, 'a', 'f');
+    jcs_add_range(s, 'A', 'F');
+  }
+  else if(name == "Space")
+  {
+    // [ \t\n\x0B\f\r] -- Java's \s (NOT Python's; no \x1c-\x1f).
+    jcs_add_range(s, 0x09, 0x0d);
+    s.chars.set(' ');
+  }
+  else
+    return std::nullopt; // Unicode scripts/blocks/categories: not lowered
+  return s;
+}
+
+/// The Java \d \s \w shorthand sets (and complements), ASCII per javadoc.
+std::optional<java_class_sett> java_escape_class_set(char letter)
+{
+  java_class_sett s;
+  switch(std::tolower(static_cast<unsigned char>(letter)))
+  {
+  case 'd':
+    jcs_add_range(s, '0', '9');
+    break;
+  case 's':
+    jcs_add_range(s, 0x09, 0x0d);
+    s.chars.set(' ');
+    break;
+  case 'w':
+    jcs_add_range(s, 'a', 'z');
+    jcs_add_range(s, 'A', 'Z');
+    jcs_add_range(s, '0', '9');
+    s.chars.set('_');
+    break;
+  default:
+    return std::nullopt;
+  }
+  if(std::isupper(static_cast<unsigned char>(letter)))
+    s.complemented = true;
+  return s;
+}
+
+/// Parse a Java character class from `p` starting just past '[', computing
+/// its (possibly complemented) ASCII set. Handles Java's nested-class unions
+/// ([a-d[m-p]]), && intersection ([a-z&&[^bc]]), \p{...} items and the
+/// shorthand escapes. Returns nullopt (not lowerable) on anything else.
+/// `pos` is left just past the closing ']'.
+std::optional<java_class_sett>
+parse_java_class(const std::string &p, std::size_t &pos)
+{
+  java_class_sett result; // union accumulator for the current operand
+  bool have_operand = false;
+  std::optional<java_class_sett> intersection; // across '&&'
+  bool negated = false;
+  if(pos < p.size() && p[pos] == '^')
+  {
+    negated = true;
+    ++pos;
+  }
+  auto flush_operand = [&]()
+  {
+    intersection = intersection ? jcs_intersect(*intersection, result) : result;
+    result = java_class_sett{};
+    have_operand = false;
+  };
+  // A single literal item (possibly an escape); nullopt = not-a-literal.
+  auto parse_literal = [&]() -> std::optional<unsigned char>
+  {
+    const char c = p[pos];
+    if(c == '\\')
+    {
+      if(pos + 1 >= p.size())
+        return std::nullopt;
+      const char e = p[pos + 1];
+      switch(e)
+      {
+      case 't':
+        pos += 2;
+        return '\t';
+      case 'n':
+        pos += 2;
+        return '\n';
+      case 'r':
+        pos += 2;
+        return '\r';
+      case 'f':
+        pos += 2;
+        return '\f';
+      case '0':
+        return std::nullopt; // octal: not lowered
+      default:
+        if(std::isalnum(static_cast<unsigned char>(e)))
+          return std::nullopt; // shorthand/unknown: handled elsewhere
+        pos += 2;
+        return static_cast<unsigned char>(e); // escaped punctuation
+      }
+    }
+    if(static_cast<unsigned char>(c) > 127)
+      return std::nullopt;
+    ++pos;
+    return static_cast<unsigned char>(c);
+  };
+  while(pos < p.size() && p[pos] != ']')
+  {
+    // '&&' intersection separator.
+    if(p[pos] == '&' && pos + 1 < p.size() && p[pos + 1] == '&')
+    {
+      if(negated)
+        return std::nullopt; // [^...&&...]: precedence subtle; not lowered
+      if(!have_operand)
+        return std::nullopt;
+      flush_operand();
+      pos += 2;
+      // '&&[' + class operand
+      continue;
+    }
+    // Nested class: union member (or the operand after '&&').
+    if(p[pos] == '[')
+    {
+      ++pos;
+      auto inner = parse_java_class(p, pos);
+      if(!inner.has_value())
+        return std::nullopt;
+      result = have_operand ? jcs_union(result, *inner) : *inner;
+      have_operand = true;
+      continue;
+    }
+    // \p{...} / \P{...} and shorthand class escapes.
+    if(p[pos] == '\\' && pos + 1 < p.size())
+    {
+      const char e = p[pos + 1];
+      if(e == 'p' || e == 'P')
+      {
+        if(pos + 2 >= p.size() || p[pos + 2] != '{')
+          return std::nullopt;
+        const std::size_t close = p.find('}', pos + 3);
+        if(close == std::string::npos)
+          return std::nullopt;
+        auto cls = java_posix_class(p.substr(pos + 3, close - pos - 3));
+        if(!cls.has_value())
+          return std::nullopt;
+        if(e == 'P')
+          cls->complemented = !cls->complemented;
+        result = have_operand ? jcs_union(result, *cls) : *cls;
+        have_operand = true;
+        pos = close + 1;
+        continue;
+      }
+      if(
+        std::isalpha(static_cast<unsigned char>(e)) && e != 't' && e != 'n' &&
+        e != 'r' && e != 'f')
+      {
+        auto cls = java_escape_class_set(e);
+        if(!cls.has_value())
+          return std::nullopt;
+        result = have_operand ? jcs_union(result, *cls) : *cls;
+        have_operand = true;
+        pos += 2;
+        continue;
+      }
+    }
+    // Literal (or range).
+    auto lo = parse_literal();
+    if(!lo.has_value())
+      return std::nullopt;
+    java_class_sett item;
+    if(
+      pos < p.size() && p[pos] == '-' && pos + 1 < p.size() &&
+      p[pos + 1] != ']')
+    {
+      ++pos;
+      auto hi = parse_literal();
+      if(!hi.has_value() || *hi < *lo)
+        return std::nullopt;
+      jcs_add_range(item, *lo, *hi);
+    }
+    else
+      item.chars.set(*lo);
+    result = have_operand ? jcs_union(result, item) : item;
+    have_operand = true;
+  }
+  if(pos >= p.size())
+    return std::nullopt; // unterminated
+  ++pos;                 // consume ']'
+  if(!have_operand)
+    return std::nullopt;
+  flush_operand();
+  java_class_sett out = *intersection;
+  if(negated)
+    out.complemented = !out.complemented;
+  return out;
+}
+
+/// Emit a computed class in common-core syntax. Members are emitted as
+/// coalesced ranges; metacharacters are backslash-escaped.
+std::string emit_java_class(const java_class_sett &s)
+{
+  auto is_special = [](unsigned char c)
+  {
+    static const std::string specials = "\\]^-[&";
+    return specials.find(static_cast<char>(c)) != std::string::npos;
+  };
+  auto emit_char = [&](std::string &out, unsigned char c)
+  {
+    if(is_special(c))
+      out += '\\';
+    out += static_cast<char>(c);
+  };
+  std::string out = s.complemented ? "[^" : "[";
+  unsigned c = 0;
+  while(c < 128)
+  {
+    if(!s.chars.test(c))
+    {
+      ++c;
+      continue;
+    }
+    unsigned d = c;
+    while(d + 1 < 128 && s.chars.test(d + 1))
+      ++d;
+    // The shared class parser ranges only between PLAIN literals: emit
+    // special characters as escaped singletons and shrink the range past
+    // them (class member order is irrelevant).
+    while(c <= d && is_special(static_cast<unsigned char>(c)))
+    {
+      emit_char(out, static_cast<unsigned char>(c));
+      ++c;
+    }
+    unsigned e = d;
+    while(e >= c && e > 0 && is_special(static_cast<unsigned char>(e)))
+    {
+      emit_char(out, static_cast<unsigned char>(e));
+      --e;
+    }
+    if(c <= e)
+    {
+      emit_char(out, static_cast<unsigned char>(c));
+      if(e > c + 1)
+        out += '-';
+      if(e > c)
+        emit_char(out, static_cast<unsigned char>(e));
+    }
+    c = d + 1;
+  }
+  out += ']';
+  return out;
+}
+} // namespace
+
+std::optional<std::string> java_regex_preprocess(const std::string &pattern)
+{
+  std::string out;
+  std::size_t i = 0;
+  while(i < pattern.size())
+  {
+    const char c = pattern[i];
+    if(c == '\\' && i + 1 < pattern.size())
+    {
+      const char e = pattern[i + 1];
+      if(e == 'Q')
+      {
+        // \Q...\E: everything up to \E is literal (JLS quoting).
+        std::size_t j = i + 2;
+        while(j + 1 < pattern.size() &&
+              !(pattern[j] == '\\' && pattern[j + 1] == 'E'))
+          ++j;
+        if(j + 1 >= pattern.size())
+          return std::nullopt; // unterminated \Q
+        for(std::size_t k = i + 2; k < j; ++k)
+        {
+          const unsigned char q = static_cast<unsigned char>(pattern[k]);
+          if(q > 127)
+            return std::nullopt;
+          if(!std::isalnum(q))
+            out += '\\';
+          out += static_cast<char>(q);
+        }
+        i = j + 2;
+        continue;
+      }
+      if(e == 'p' || e == 'P')
+      {
+        if(i + 2 >= pattern.size() || pattern[i + 2] != '{')
+          return std::nullopt;
+        const std::size_t close = pattern.find('}', i + 3);
+        if(close == std::string::npos)
+          return std::nullopt;
+        auto cls = java_posix_class(pattern.substr(i + 3, close - i - 3));
+        if(!cls.has_value())
+          return std::nullopt;
+        if(e == 'P')
+          cls->complemented = !cls->complemented;
+        out += emit_java_class(*cls);
+        i = close + 1;
+        continue;
+      }
+      out += c;
+      out += e;
+      i += 2;
+      continue;
+    }
+    if(c == '[')
+    {
+      // Scan the class (nesting-aware) to see if it uses Java-only features;
+      // pass it through verbatim otherwise (the shared parser handles it).
+      std::size_t j = i + 1;
+      int depth = 1;
+      bool java_only = false;
+      if(j < pattern.size() && pattern[j] == '^')
+        ++j;
+      if(j < pattern.size() && pattern[j] == ']')
+        ++j; // leading ] literal
+      for(; j < pattern.size() && depth > 0; ++j)
+      {
+        if(pattern[j] == '\\' && j + 1 < pattern.size())
+        {
+          if(pattern[j + 1] == 'p' || pattern[j + 1] == 'P')
+            java_only = true;
+          ++j;
+          continue;
+        }
+        if(pattern[j] == '[')
+        {
+          ++depth;
+          java_only = true;
+        }
+        else if(pattern[j] == ']')
+          --depth;
+        else if(
+          pattern[j] == '&' && j + 1 < pattern.size() && pattern[j + 1] == '&')
+          java_only = true;
+      }
+      if(depth != 0)
+        return std::nullopt; // unterminated class
+      if(!java_only)
+      {
+        out += pattern.substr(i, j - i);
+        i = j;
+        continue;
+      }
+      std::size_t pos = i + 1;
+      auto cls = parse_java_class(pattern, pos);
+      if(!cls.has_value())
+        return std::nullopt;
+      out += emit_java_class(*cls);
+      i = pos;
+      continue;
+    }
+    out += c;
+    ++i;
+  }
+  return out;
+}
+
+std::optional<std::string>
+java_regex_to_smt_fullmatch(const std::string &pattern)
+{
+  // Lower Java-only syntax, then gate on the common core (identical PARSE),
+  // then translate with the Java-dialect SEMANTICS (dot terminators, \s).
+  const auto lowered = java_regex_preprocess(pattern);
+  if(!lowered.has_value())
+    return std::nullopt;
+  if(!regex_in_python_java_common_core(*lowered))
+    return std::nullopt;
+  return translate(*lowered, match_kind::fullmatch, java_regex_char_classes());
+}
+
+std::optional<bool> java_regex_match(
+  const std::string &pattern,
+  const std::string &subject,
+  python_regex_match_kindt kind)
+{
+  const auto lowered = java_regex_preprocess(pattern);
+  if(!lowered.has_value())
+    return std::nullopt;
+  if(!regex_in_python_java_common_core(*lowered))
+    return std::nullopt;
+  return python_regex_match(*lowered, subject, kind, regex_dialectt::java);
 }
