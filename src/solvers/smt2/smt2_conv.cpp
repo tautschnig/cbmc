@@ -3554,14 +3554,10 @@ void smt2_convt::convert_expr(const exprt &expr)
         {
           if(fn_id == ID_cprover_string_java_matches_func)
           {
-            // A JAVA pattern translated with the Python-dialect translator:
-            // only sound on the Python/Java COMMON CORE; anything divergent
-            // (class intersection, \p, \Q, possessive quantifiers, ...)
-            // falls back to the sound nondet.
-            if(!regex_in_python_java_common_core(*pattern_text))
-              smt_re = std::nullopt;
-            else
-              smt_re = java_regex_to_smt_fullmatch(*pattern_text);
+            // Java dialect: lowers Java-only syntax (\Q, \p{...}, class
+            // intersection), gates on the common core, translates with
+            // java.util.regex semantics; nullopt -> sound nondet.
+            smt_re = java_regex_to_smt_fullmatch(*pattern_text);
           }
           else if(fn_id == ID_cprover_string_fullmatch_func)
             smt_re = python_regex_to_smt_fullmatch(*pattern_text);

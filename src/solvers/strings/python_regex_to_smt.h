@@ -124,6 +124,16 @@ python_regex_to_smt_fullmatch(const std::string &pattern);
 std::optional<std::string>
 java_regex_to_smt_fullmatch(const std::string &pattern);
 
+/// Lower Java-only regex syntax to the Python/Java common core:
+/// \\Q...\\E quoting becomes escaped literals; \\p{...}/\\P{...} POSIX
+/// classes (US-ASCII by definition, per the Pattern javadoc) and character
+/// classes using Java's && intersection / nested-class unions are COMPUTED
+/// over an ASCII set algebra and re-emitted as plain classes. Complemented
+/// sets stay complemented ([^...]) so behaviour on non-ASCII characters
+/// remains JLS-exact. Returns nullopt for anything not exactly lowerable
+/// (callers fall back to the sound nondet).
+std::optional<std::string> java_regex_preprocess(const std::string &pattern);
+
 /// True when \p pattern uses only the Perl-derived COMMON CORE on which the
 /// Python and Java regex dialects agree (literals, ., [...] classes without
 /// Java's && intersection, groups, alternation, greedy/lazy quantifiers,
@@ -219,6 +229,15 @@ std::optional<bool> python_regex_match(
   const std::string &subject,
   python_regex_match_kindt kind,
   regex_dialectt dialect = regex_dialectt::python);
+
+/// Decide a CONSTANT Java-dialect match exactly (java.util.regex semantics):
+/// preprocesses Java-only syntax, gates on the common core, then runs the
+/// dialect-parameterised concrete matcher. nullopt = undecided (sound
+/// nondet).
+std::optional<bool> java_regex_match(
+  const std::string &pattern,
+  const std::string &subject,
+  python_regex_match_kindt kind);
 
 /// Leftmost match of `pattern` in `subject` at or after offset `from`, for a
 /// CONSTANT pattern and subject. Returns the `{start, end}` byte offsets
