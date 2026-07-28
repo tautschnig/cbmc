@@ -446,8 +446,13 @@ std::optional<exprt> python_convertert::try_string_method(
       {
         exprt ch =
           string_substr(obj, from_integer(i, i64), from_integer(1, i64));
-        exprt code = native_string_app(
-          ID_cprover_string_smt_to_code_func, {string_typet{}}, {ch}, i32);
+        exprt code = exprt{typecast_exprt{
+          native_string_app(
+            ID_cprover_string_to_code_func,
+            {string_typet{}},
+            {ch},
+            integer_typet{}),
+          i32}};
         exprt mapped = code;
         if(to_upper)
           mapped = if_exprt{
@@ -464,7 +469,7 @@ std::optional<exprt> python_convertert::try_string_method(
             plus_exprt{code, from_integer(32, i32)},
             mapped};
         return native_string_app(
-          ID_cprover_string_smt_from_code_func,
+          ID_cprover_string_from_code_func,
           {integer_typet{}},
           {typecast_exprt{mapped, integer_typet{}}},
           string_typet{});
@@ -504,8 +509,13 @@ std::optional<exprt> python_convertert::try_string_method(
       {
         exprt ch =
           string_substr(obj, from_integer(i, i64), from_integer(1, i64));
-        exprt code = native_string_app(
-          ID_cprover_string_smt_to_code_func, {string_typet{}}, {ch}, i32);
+        exprt code = exprt{typecast_exprt{
+          native_string_app(
+            ID_cprover_string_to_code_func,
+            {string_typet{}},
+            {ch},
+            integer_typet{}),
+          i32}};
         exprt mapped;
         if(i == 0)
           mapped = upper_map(code); // start of string is always a word start
@@ -516,15 +526,20 @@ std::optional<exprt> python_convertert::try_string_method(
           // title: word start iff the previous character is not an ASCII letter.
           exprt prev =
             string_substr(obj, from_integer(i - 1, i64), from_integer(1, i64));
-          exprt prev_code = native_string_app(
-            ID_cprover_string_smt_to_code_func, {string_typet{}}, {prev}, i32);
+          exprt prev_code = exprt{typecast_exprt{
+            native_string_app(
+              ID_cprover_string_to_code_func,
+              {string_typet{}},
+              {prev},
+              integer_typet{}),
+            i32}};
           exprt prev_is_alpha = or_exprt{
             in_range(prev_code, 'a', 'z'), in_range(prev_code, 'A', 'Z')};
           mapped = if_exprt{
             not_exprt{prev_is_alpha}, upper_map(code), lower_map(code)};
         }
         return native_string_app(
-          ID_cprover_string_smt_from_code_func,
+          ID_cprover_string_from_code_func,
           {integer_typet{}},
           {typecast_exprt{mapped, integer_typet{}}},
           string_typet{});
@@ -1158,14 +1173,71 @@ std::optional<exprt> python_convertert::try_string_method(
         return std::move(app);
       };
       // re_ws(x, mode): mode 0 = x all whitespace; 1 = starts with ws;
-      // 2 = ends with ws.
-      auto re_ws = [&](const exprt &x, int mode) -> exprt
+      // 2 = ends with ws. Composed from the GENERIC regex vocabulary the
+      // shared encoder lowers (str.to_re / re.union / re.* / re.++ /
+      // re.allchar / str.in_re) -- no Python-specific back-end op. WS is the
+      // Python whitespace set {\t \n \v \f \r space} (PLR str.strip), which
+      // deliberately KEEPS other control bytes (unlike Java trim).
+      const typet regex_type{ID_regex};
+      auto re_app = [&](
+                      const irep_idt &fn,
+                      std::vector<typet> ats,
+                      exprt::operandst as,
+                      const typet &ret) -> exprt
       {
         function_application_exprt app{
-          reg(ID_cprover_string_smt_re_ws_func, {x.type(), i64}, bt),
-          {x, from_integer(mode, i64)}};
-        app.type() = bt;
-        return notequal_exprt{std::move(app), from_integer(0, bt)};
+          reg(fn, std::move(ats), ret), std::move(as)};
+        app.type() = ret;
+        return std::move(app);
+      };
+      auto ws_regex = [&]() -> exprt
+      {
+        exprt::operandst chars;
+        std::vector<typet> ats;
+        for(const char *c : {"\t", "\n", "\x0b", "\x0c", "\r", " "})
+        {
+          chars.push_back(re_app(
+            ID_cprover_string_to_regex_func,
+            {string_typet{}},
+            {constant_exprt{c, string_typet{}}},
+            regex_type));
+          ats.push_back(regex_type);
+        }
+        return re_app(
+          ID_cprover_regex_union_func,
+          std::move(ats),
+          std::move(chars),
+          regex_type);
+      };
+      auto re_ws = [&](const exprt &x, int mode) -> exprt
+      {
+        const exprt ws = ws_regex();
+        const exprt any_star = re_app(
+          ID_cprover_regex_star_func,
+          {regex_type},
+          {re_app(ID_cprover_regex_allchar_func, {}, {}, regex_type)},
+          regex_type);
+        exprt re;
+        if(mode == 1)
+          re = re_app(
+            ID_cprover_regex_concat_func,
+            {regex_type, regex_type},
+            {ws, any_star},
+            regex_type);
+        else if(mode == 2)
+          re = re_app(
+            ID_cprover_regex_concat_func,
+            {regex_type, regex_type},
+            {any_star, ws},
+            regex_type);
+        else
+          re =
+            re_app(ID_cprover_regex_star_func, {regex_type}, {ws}, regex_type);
+        return re_app(
+          ID_cprover_string_in_regex_func,
+          {x.type(), regex_type},
+          {x, re},
+          bool_typet{});
       };
       symbol_exprt r = mk();
       exprt recon = r;
@@ -1423,7 +1495,7 @@ std::optional<exprt> python_convertert::try_string_method(
         is_python_string_type(old_expr.type()) &&
         is_python_string_type(new_expr.type()))
       {
-        const irep_idt fn{ID_cprover_string_smt_strreplace_func};
+        const irep_idt fn{ID_cprover_string_replace_all_func};
         if(symbol_table.lookup(fn) == nullptr)
         {
           std::vector<typet> ats{obj.type(), old_expr.type(), new_expr.type()};

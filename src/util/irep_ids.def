@@ -679,12 +679,10 @@ IREP_ID_ONE(cprover_string_index_of_from_func)
 IREP_ID_ONE(cprover_string_split_func)
 IREP_ID_TWO(C_python_string_handle, #python_string_handle)
 IREP_ID_TWO(C_python_int_handle, #python_int_handle)
-IREP_ID_ONE(cprover_string_smt_strsub_func)
-IREP_ID_ONE(cprover_string_smt_strreplace_func)
-IREP_ID_ONE(cprover_string_smt_re_ws_func)
-IREP_ID_ONE(cprover_string_smt_from_int_func)
-IREP_ID_ONE(cprover_string_smt_from_code_func)
-IREP_ID_ONE(cprover_string_smt_to_code_func)
+IREP_ID_ONE(cprover_string_replace_all_func)
+IREP_ID_ONE(cprover_string_from_int_func)
+IREP_ID_ONE(cprover_string_from_code_func)
+IREP_ID_ONE(cprover_string_to_code_func)
 // Regex operators for the SMT-LIB theory-of-strings back-end. A front-end
 // (e.g. Strata) emits these over SMT-LIB-native String/RegLan operands; they
 // lower directly to the SMT-LIB regex operators in smt2_conv. They have no

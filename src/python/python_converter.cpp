@@ -3355,6 +3355,31 @@ exprt python_convertert::bind_string_length_hint(
   return std::move(r);
 }
 
+/// Native SMT String str(n): compose sign handling over the GENERIC
+/// from_int id (SMT-LIB str.from_int is defined only for naturals; negatives
+/// yield ""): n < 0 ? "-" ++ from_int(-n) : from_int(n). Pure composition of
+/// generic intrinsics -- no Python-specific back-end lowering.
+exprt python_convertert::native_string_of_int(const exprt &n_in)
+{
+  const exprt n = n_in.type().id() == ID_integer
+                    ? n_in
+                    : exprt{typecast_exprt{n_in, integer_typet{}}};
+  auto from_int_app = [&](const exprt &v) -> exprt
+  {
+    return native_string_app(
+      ID_cprover_string_from_int_func, {integer_typet{}}, {v}, string_typet{});
+  };
+  const exprt neg_str = native_string_app(
+    ID_cprover_string_concat_func,
+    {string_typet{}, string_typet{}},
+    {constant_exprt{"-", string_typet{}}, from_int_app(unary_minus_exprt{n})},
+    string_typet{});
+  return if_exprt{
+    binary_relation_exprt{n, ID_lt, from_integer(0, integer_typet{})},
+    neg_str,
+    from_int_app(n)};
+}
+
 exprt python_convertert::string_substr(
   const exprt &s,
   const exprt &start,
@@ -3364,11 +3389,25 @@ exprt python_convertert::string_substr(
   const exprt start64 = start.type() == i64 ? start : safe_typecast(start, i64);
   const exprt len64 = len.type() == i64 ? len : safe_typecast(len, i64);
   if(s.type().id() == ID_string)
+  {
+    // Native SMT String: emit the GENERIC substring id; the shared encoder
+    // lowers it flat to (str.substr s offset len) -- SMT-LIB's exact contract,
+    // which is also Python's (offset, len) convention. Positions are native
+    // Int (Direction B). The callers clamp positions non-negative, so hop
+    // through unsigned bv64 first: convert_typecast then emits the plain
+    // (bv2nat x) -- the signed form's negative-case let/ite chains nested in
+    // str.substr positions are a cvc5 performance cliff (observed hang).
+    auto to_int = [](const exprt &e) -> exprt
+    {
+      return typecast_exprt{
+        typecast_exprt{e, unsignedbv_typet{64}}, integer_typet{}};
+    };
     return native_string_app(
-      ID_cprover_string_smt_strsub_func,
-      {s.type(), i64, i64},
-      {s, start64, len64},
+      ID_cprover_string_substring_func,
+      {s.type(), integer_typet{}, integer_typet{}},
+      {s, to_int(start64), to_int(len64)},
       string_typet{});
+  }
   return emit_string_function(
     ID_cprover_string_substring_func,
     {string_struct_view(s), start64, plus_exprt{start64, len64}},
@@ -6463,14 +6502,9 @@ exprt python_convertert::convert_expression(const jsont &expr)
                         : safe_typecast(inner, signedbv_typet{64});
           if(use_smt_string_native)
           {
-            // Native: str(n) = cprover_string_smt_from_int_func(n) → an SMT
-            // String (str.from_int with sign handling). Pass a mathematical
-            // integer so the lowering's str.from_int/</- operate on SMT Int.
-            parts.push_back(native_string_app(
-              ID_cprover_string_smt_from_int_func,
-              {integer_typet{}},
-              {typecast_exprt{i64, integer_typet{}}},
-              string_typet{}));
+            // Native: str(n) composes sign handling over the GENERIC from_int
+            // id (see native_string_of_int).
+            parts.push_back(native_string_of_int(i64));
           }
           else
           {
