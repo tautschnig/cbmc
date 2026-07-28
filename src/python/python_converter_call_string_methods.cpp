@@ -813,7 +813,7 @@ std::optional<exprt> python_convertert::try_string_method(
         method_name == "strip" || method_name == "lstrip" ||
         method_name == "rstrip")
       {
-        std::string chars_to_strip = " \t\n\r\f\v";
+        std::string chars_to_strip = " \t\n\r\f\v\x1c\x1d\x1e\x1f";
         if(args.is_array() && !as_array(args).empty())
         {
           auto cv =
@@ -1176,7 +1176,8 @@ std::optional<exprt> python_convertert::try_string_method(
       // 2 = ends with ws. Composed from the GENERIC regex vocabulary the
       // shared encoder lowers (str.to_re / re.union / re.* / re.++ /
       // re.allchar / str.in_re) -- no Python-specific back-end op. WS is the
-      // Python whitespace set {\t \n \v \f \r space} (PLR str.strip), which
+      // ASCII-range whitespace set {\t \n \v \f \r \x1c \x1d \x1e \x1f space}
+      // (CPython str.isspace()/strip(); 0x1c-0x1f are FS GS RS US), which
       // deliberately KEEPS other control bytes (unlike Java trim).
       const typet regex_type{ID_regex};
       auto re_app = [&](
@@ -1192,21 +1193,21 @@ std::optional<exprt> python_convertert::try_string_method(
       };
       auto ws_regex = [&]() -> exprt
       {
-        exprt::operandst chars;
-        std::vector<typet> ats;
-        for(const char *c : {"\t", "\n", "\x0b", "\x0c", "\r", " "})
+        // Two contiguous ranges: 0x09..0x0d and 0x1c..0x20 (see the refined
+        // predicate in add_axioms_for_python_strip).
+        auto range = [&](char lo, char hi) -> exprt
         {
-          chars.push_back(re_app(
-            ID_cprover_string_to_regex_func,
-            {string_typet{}},
-            {constant_exprt{c, string_typet{}}},
-            regex_type));
-          ats.push_back(regex_type);
-        }
+          return re_app(
+            ID_cprover_regex_range_func,
+            {string_typet{}, string_typet{}},
+            {constant_exprt{std::string(1, lo), string_typet{}},
+             constant_exprt{std::string(1, hi), string_typet{}}},
+            regex_type);
+        };
         return re_app(
           ID_cprover_regex_union_func,
-          std::move(ats),
-          std::move(chars),
+          {regex_type, regex_type},
+          {range('\x09', '\x0d'), range('\x1c', '\x20')},
           regex_type);
       };
       auto re_ws = [&](const exprt &x, int mode) -> exprt
@@ -2131,7 +2132,9 @@ std::optional<exprt> python_convertert::try_string_method(
         else if(method_name == "islower")
           result = result && (!std::isalpha(uc) || std::islower(uc));
         else if(method_name == "isspace")
-          result = result && std::isspace(uc);
+          // CPython str.isspace() also counts \x1c-\x1f (FS GS RS US), which
+          // C-locale std::isspace does not.
+          result = result && (std::isspace(uc) || (uc >= 0x1c && uc <= 0x1f));
         else if(method_name == "isascii")
           result = result && (uc < 128);
       }

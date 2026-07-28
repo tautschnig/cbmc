@@ -205,10 +205,11 @@ string_constraint_generatort::add_axioms_for_trim(
 
 /// Add axioms for Python str.strip / lstrip / rstrip (whitespace form).
 ///
-/// Like add_axioms_for_trim, but uses the *Python* whitespace predicate
-/// `c == 0x20 || (0x09 <= c <= 0x0d)` (space, \t, \n, \v, \f, \r) rather than
-/// Java's `c <= 0x20` (which would unsoundly strip other control bytes), and
-/// supports one-sided stripping via a constant mode argument.
+/// Like add_axioms_for_trim, but uses the ASCII-range *whitespace* predicate
+/// `c == 0x20 || (0x09 <= c <= 0x0d) || (0x1c <= c <= 0x1f)` -- shared by
+/// CPython's str.strip() and Java 11's String.strip() -- rather than
+/// Java trim's `c <= 0x20` (which would unsoundly strip other control bytes),
+/// and supports one-sided stripping via a constant mode argument.
 ///
 /// \param f: function application with arguments: result length, result
 ///   content pointer, input refined_string, and a constant mode
@@ -227,17 +228,24 @@ string_constraint_generatort::add_axioms_for_python_strip(
     numeric_cast_v<mp_integer>(to_constant_expr(f.arguments()[3]));
   const bool strip_front = (mode == 0 || mode == 1);
   const bool strip_back = (mode == 0 || mode == 2);
-  // Python whitespace: space or 0x09..0x0d (\t \n \v \f \r).
+  // Whitespace: 0x09..0x0d (\t \n \v \f \r) or 0x1c..0x20 (FS GS RS US
+  // space) -- CPython's str.isspace()/strip() and Java's
+  // Character.isWhitespace/String.strip() agree on exactly this ASCII-range
+  // set. Two contiguous ranges keep the refinement's per-character
+  // instantiation small. Code points >= 0x80 (U+0085, U+00A0) are multi-byte
+  // in the UTF-8 byte model and out of scope here.
   return add_axioms_for_strip(
     str,
     res,
     [&](const exprt &c) -> exprt
     {
       return or_exprt(
-        equal_exprt(c, from_integer(0x20, char_type)),
         and_exprt(
           binary_relation_exprt(c, ID_ge, from_integer(0x09, char_type)),
-          binary_relation_exprt(c, ID_le, from_integer(0x0d, char_type))));
+          binary_relation_exprt(c, ID_le, from_integer(0x0d, char_type))),
+        and_exprt(
+          binary_relation_exprt(c, ID_ge, from_integer(0x1c, char_type)),
+          binary_relation_exprt(c, ID_le, from_integer(0x20, char_type))));
     },
     strip_front,
     strip_back,
