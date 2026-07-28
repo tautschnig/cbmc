@@ -933,3 +933,25 @@ gate remains, documented). Structure as before (backend support → symex hook
   translator; 12 is where the shared regex machinery lands.
 - Wave 4 rebases on whatever of Waves 1–3 has landed; every piece it needs
   that lands earlier shrinks it.
+
+## Wave-2 branches PREPARED (2026-07-28)
+
+- `python-upstream-05-smt2-reglan-declarations` (+1): find_symbols RegLan-UF
+  fix, with a NEW full-output unit test (the existing get_assert helper
+  strips pre-assert output, which is why the bug was never caught; the test
+  fails without the fix).
+- `python-upstream-06-symex-value-returning-strings` (+1): type-based guard;
+  regression/strings green on-branch.
+- `python-upstream-07-smt2-generic-string-ops` (+1): replace_all/from_code/
+  to_code/from_int ids + map entries + unit coverage (65 assertions).
+- `python-upstream-08-strings-parameterised-strip` (+1): trim -> thin wrapper
+  over the generic add_axioms_for_strip. Adapted to develop's
+  string_constraintt ctors (the ns-threading is a separate Bucket-B
+  land-first item). [strings] unit + regression/strings + jbmc-strings green
+  on-branch.
+
+RE-PACKAGING NOTE: planned Wave-2 item 9 (whitespace-set corrections) has NO
+standalone develop-applicable content -- it only touches the mode-
+parameterised strip axiom and Python-side folds, which don't exist on
+pristine develop. It folds into the Wave-3 Java-strip PR (where the
+whitespace-strip axiom first lands, with the corrected {09-0d,1c-20} set).
