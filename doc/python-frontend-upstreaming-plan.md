@@ -871,3 +871,65 @@ model question from the earlier Java-migration assessment still applies).
 All gates green throughout (jbmc-strings incl. new StringMatches.dialect/
 javaSyntax + PatternMatcher tests, [strings] 388, python suites, native
 corpus, sweep 0 changes).
+
+## UPDATED PR-series packaging plan (2026-07-28) — post-milestone
+
+Supersedes the "Python PR stack" section above where they conflict. The
+milestone work (one String sort, generic encoder vocabulary, dialect-
+parameterised regex, JBMC regex/strip features) both shrank the Python-coupled
+surface and created NEW independently-valuable material. Proposed series:
+
+### Wave 1 — ready now (branches exist, origin/develop+1 each, build standalone)
+1. `python-upstream-01-irep-compare-sharing`
+2. `python-upstream-02-ieee-sign-builders`
+3. `python-upstream-03-slice-string-intrinsics`
+4. `python-upstream-04-simplify-string-guards`
+
+### Wave 2 — new standalone generic PRs (to be cut from the arc's commits;
+each is small, Python-independent, and fixes/serves shared infrastructure)
+5. **smt2 find_symbols: no UF declarations with RegLan in the signature**
+   (latent bug for ANY front-end emitting the regex intrinsics; cvc5 rejects
+   RegLan as a UF domain sort). From `e4fe6e1edab`.
+6. **goto-symex: skip side-effect const-prop for value-returning (String-
+   typed) string applications** (the refined-convention handlers PRECONDITION
+   on output arguments). From `e4fe6e1edab`.
+7. **smt2: generic string-op lowerings replace_all / from_code / to_code /
+   from_int + unit-test coverage** (wider-use SMT-LIB primitives; includes the
+   ids). From `e4fe6e1edab` + `186f103797a`.
+8. **strings: parameterised strip facility** (Java trim becomes a thin
+   wrapper; enables per-dialect whitespace predicates). From `6e4b7310d4c`.
+9. **strings: whitespace-set corrections** (strip/isspace ASCII-range set
+   incl. \x1c-\x1f; PLR- and Character.isWhitespace-verified). Solver portion
+   of `b7cdbe49f3f`. Depends on 8.
+
+### Wave 3 — JBMC feature PRs (upstream-attractive; carry the shared regex
+machinery WITHOUT the Python front-end)
+10. **JBMC: Java 11 String.strip/stripLeading/stripTrailing** (`2d4cca91f9a`).
+    Depends on 8+9 and the strip axiom (mode-parameterised
+    cprover_string_strip_func — extract from the Python-coupled commit; it is
+    JBMC-valuable independently).
+11. **java-models-library PR** (submodule `9bfe328`, branch
+    regex-matcher-model): Pattern/Matcher model. MUST land before 12's
+    gitlink.
+12. **JBMC: regex support** — String.matches + Pattern/Matcher +
+    java_find/java_looking_at, carrying the (now dialect-parameterised)
+    regex→RegLan translator, the smt2 regex-family lowering, the Java-syntax
+    preprocessor, and the strings-under-SMT2 enablers (emission gate + symex
+    materialisation flag). From `0bcccff684d`+`598e6e254fa`+`6609b0c647f`+
+    `b3741695cbf`. Consider renaming python_regex_to_smt → regex_to_smt in
+    this PR (it is a generic dialect-parameterised translator now); the
+    Python front-end then arrives as just another dialect client.
+
+### Wave 4 — the Python front-end stack (what remains coupled)
+The milestone shrank this: no smt_string sort, no parallel smt2 handler ops,
+no Python-specific find_symbols/goto-symex gating (the materialiser's Python
+gate remains, documented). Structure as before (backend support → symex hook
+→ frontend → tests → docs), re-derived in `upstreaming-linear`.
+
+### Ordering constraints
+- 5–9 are independent of each other except 9-after-8; all independent of
+  Wave 1.
+- 10 needs 8+9; 12 needs 5 (RegLan declarations), 11 (models), and the
+  translator; 12 is where the shared regex machinery lands.
+- Wave 4 rebases on whatever of Waves 1–3 has landed; every piece it needs
+  that lands earlier shrinks it.
