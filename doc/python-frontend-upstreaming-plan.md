@@ -966,3 +966,15 @@ axiom with the corrected {09-0d,1c-20} set); (c) JBMC regex support (String.
 matches / Matcher, the dialect translator -- consider the regex_to_smt
 rename), whose main-repo commit bumps the submodule gitlink and so lands
 after (a).
+
+## Status (2026-07-28, evening): models-library PR created
+
+The java-models-library Pattern/Matcher PR is up (branch regex-matcher-model
+in the user's clone, master+1 `deabf32`; conflicts vs master's newer
+cproverIsPlainString refactor resolved toward the delegation semantics;
+mvn-built and functionally validated against our jbmc). In flight: Wave 1
+(4 PRs), Wave 2 (4 PRs), models-library (1 PR). Wave-3 jbmc branches (Java
+strip family; JBMC regex support incl. the submodule-pin bump) are next to
+prepare; both stack on Wave-2's 08 / the models PR, so they should be cut
+once those land (or as explicitly-stacked draft PRs if earlier visibility
+is wanted).
