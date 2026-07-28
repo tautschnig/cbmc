@@ -134,6 +134,16 @@ java_regex_to_smt_fullmatch(const std::string &pattern);
 /// (callers fall back to the sound nondet).
 std::optional<std::string> java_regex_preprocess(const std::string &pattern);
 
+/// Java-dialect Matcher.lookingAt (anchored at the start only) and
+/// Matcher.find (unanchored search) translations. Patterns with a trailing
+/// unescaped '$' are rejected for these kinds: Java's '$' matches before a
+/// FINAL LINE TERMINATOR (\n, \r\n, ...), a rule the translator's
+/// non-MULTILINE anchoring does not reproduce for partial matches
+/// (fullmatch is unaffected: both dialects require the entire input).
+std::optional<std::string>
+java_regex_to_smt_looking_at(const std::string &pattern);
+std::optional<std::string> java_regex_to_smt_find(const std::string &pattern);
+
 /// True when \p pattern uses only the Perl-derived COMMON CORE on which the
 /// Python and Java regex dialects agree (literals, ., [...] classes without
 /// Java's && intersection, groups, alternation, greedy/lazy quantifiers,

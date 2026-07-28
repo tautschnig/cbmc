@@ -274,7 +274,9 @@ string_constraint_generatort::add_axioms_for_function_application(
   else if(
     id == ID_cprover_string_match_func || id == ID_cprover_string_search_func ||
     id == ID_cprover_string_fullmatch_func ||
-    id == ID_cprover_string_java_matches_func)
+    id == ID_cprover_string_java_matches_func ||
+    id == ID_cprover_string_java_find_func ||
+    id == ID_cprover_string_java_looking_at_func)
   {
     // Python-re Wave 2 intrinsics. The refine-strings backend has no regex
     // axioms (the SMT2 --cvc5 path intercepts these in smt2_conv.cpp and emits
@@ -292,19 +294,24 @@ string_constraint_generatort::add_axioms_for_function_application(
       if(pat.has_value() && subj.has_value())
       {
         python_regex_match_kindt kind = python_regex_match_kindt::MATCH;
-        if(id == ID_cprover_string_search_func)
+        if(
+          id == ID_cprover_string_search_func ||
+          id == ID_cprover_string_java_find_func)
           kind = python_regex_match_kindt::SEARCH;
         else if(
           id == ID_cprover_string_fullmatch_func ||
           id == ID_cprover_string_java_matches_func)
           kind = python_regex_match_kindt::FULLMATCH;
+        // (java_looking_at keeps MATCH.)
         // Java patterns go through java_regex_match (lowers Java-only
         // syntax, gates on the common core, evaluates with java.util.regex
         // semantics); Python patterns use the Python-dialect matcher.
+        const bool is_java = id == ID_cprover_string_java_matches_func ||
+                             id == ID_cprover_string_java_find_func ||
+                             id == ID_cprover_string_java_looking_at_func;
         const std::optional<bool> decided =
-          id == ID_cprover_string_java_matches_func
-            ? java_regex_match(*pat, *subj, kind)
-            : python_regex_match(*pat, *subj, kind);
+          is_java ? java_regex_match(*pat, *subj, kind)
+                  : python_regex_match(*pat, *subj, kind);
         if(decided.has_value())
           return {from_integer(*decided ? 1 : 0, expr.type()), {}};
       }

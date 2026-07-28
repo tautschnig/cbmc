@@ -3360,6 +3360,8 @@ void smt2_convt::convert_expr(const exprt &expr)
          fn_id == ID_cprover_string_search_func ||
          fn_id == ID_cprover_string_fullmatch_func ||
          fn_id == ID_cprover_string_java_matches_func ||
+         fn_id == ID_cprover_string_java_find_func ||
+         fn_id == ID_cprover_string_java_looking_at_func ||
          fn_id == ID_cprover_string_re_sub_func ||
          fn_id == ID_cprover_string_re_pos_start_func ||
          fn_id == ID_cprover_string_re_pos_end_func) &&
@@ -3559,6 +3561,10 @@ void smt2_convt::convert_expr(const exprt &expr)
             // java.util.regex semantics; nullopt -> sound nondet.
             smt_re = java_regex_to_smt_fullmatch(*pattern_text);
           }
+          else if(fn_id == ID_cprover_string_java_find_func)
+            smt_re = java_regex_to_smt_find(*pattern_text);
+          else if(fn_id == ID_cprover_string_java_looking_at_func)
+            smt_re = java_regex_to_smt_looking_at(*pattern_text);
           else if(fn_id == ID_cprover_string_fullmatch_func)
             smt_re = python_regex_to_smt_fullmatch(*pattern_text);
           else if(fn_id == ID_cprover_string_match_func)
@@ -7289,7 +7295,9 @@ void smt2_convt::find_symbols(const exprt &expr)
       (fid == ID_cprover_string_match_func ||
        fid == ID_cprover_string_search_func ||
        fid == ID_cprover_string_fullmatch_func ||
-       fid == ID_cprover_string_java_matches_func) &&
+       fid == ID_cprover_string_java_matches_func ||
+       fid == ID_cprover_string_java_find_func ||
+       fid == ID_cprover_string_java_looking_at_func) &&
       defined_expressions.find(expr) == defined_expressions.end())
     {
       std::size_t width = boolbv_width(expr.type());
