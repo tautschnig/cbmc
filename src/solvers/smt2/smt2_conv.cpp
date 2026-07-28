@@ -2971,6 +2971,10 @@ void smt2_convt::convert_expr(const exprt &expr)
         static const std::map<irep_idt, std::string> upstream_flat_string_ops =
           {{ID_cprover_string_char_at_func, "str.at"},
            {ID_cprover_string_replace_func, "str.replace"},
+           {ID_cprover_string_replace_all_func, "str.replace_all"},
+           {ID_cprover_string_from_code_func, "str.from_code"},
+           {ID_cprover_string_to_code_func, "str.to_code"},
+           {ID_cprover_string_from_int_func, "str.from_int"},
            {ID_cprover_string_concat_func, "str.++"},
            {ID_cprover_string_length_func, "str.len"},
            {ID_cprover_string_substring_func, "str.substr"},
@@ -3338,102 +3342,11 @@ void smt2_convt::convert_expr(const exprt &expr)
       // byte-array+str hybrid). NOTE: concatenation is no longer here -- it is
       // emitted as the generic value-returning cprover_string_concat_func and
       // lowered by the shared upstream SMT-LIB encoder above.
-      if(fn_id == ID_cprover_string_smt_strsub_func && args.size() == 3)
-      {
-        out << "(str.substr ";
-        emit_smt_string(args[0]);
-        out << " (bv2nat ";
-        convert_expr(args[1]);
-        out << ") (bv2nat ";
-        convert_expr(args[2]);
-        out << "))";
-        return;
-      }
-      if(fn_id == ID_cprover_string_smt_strreplace_func && args.size() == 3)
-      {
-        out << "(str.replace_all ";
-        emit_smt_string(args[0]);
-        out << " ";
-        emit_smt_string(args[1]);
-        out << " ";
-        emit_smt_string(args[2]);
-        out << ")";
-        return;
-      }
-      // cprover_string_smt_from_int_func(n) -> SMT String: str(n) for a
-      // signed integer. SMT-LIB str.from_int is defined only for naturals
-      // (negatives yield ""), so handle the sign explicitly:
-      //   n < 0 ? "-" ++ str.from_int(-n) : str.from_int(n).
-      if(fn_id == ID_cprover_string_smt_from_int_func && args.size() == 1)
-      {
-        out << "(ite (< ";
-        convert_expr(args[0]);
-        out << " 0) (str.++ \"-\" (str.from_int (- ";
-        convert_expr(args[0]);
-        out << "))) (str.from_int ";
-        convert_expr(args[0]);
-        out << "))";
-        return;
-      }
-      // cprover_string_smt_from_code_func(n) -> SMT String: the single-char
-      // string for code point n (Python chr(n)). args[0] is a mathematical
-      // integer.
-      if(fn_id == ID_cprover_string_smt_from_code_func && args.size() == 1)
-      {
-        out << "(str.from_code ";
-        convert_expr(args[0]);
-        out << ")";
-        return;
-      }
-      // cprover_string_smt_to_code_func(s) -> int: the code point of the
-      // single-char string s (Python ord(s)); str.to_code yields an SMT Int,
-      // converted to the result bit-vector width.
-      if(fn_id == ID_cprover_string_smt_to_code_func && args.size() == 1)
-      {
-        std::size_t width = boolbv_width(expr.type());
-        if(width == 0)
-          width = 32;
-        out << "((_ int2bv " << width << ") (str.to_code ";
-        emit_smt_string(args[0]);
-        out << "))";
-        return;
-      }
-      // cprover_string_smt_re_ws_func(x, mode) -> boolean. Whitespace regex
-      // membership used to encode strip/lstrip/rstrip natively (Plan A):
-      //   mode 0: x in (re.* WS)        -- x is all whitespace
-      //   mode 1: x in (WS ++ re.all*)  -- x starts with whitespace
-      //   mode 2: x in (re.all* ++ WS)  -- x ends with whitespace
-      // WS = Python whitespace set {\t\n\v\f\r space}. Using regex membership
-      // (rather than str.at at a symbolic index) keeps the trailing-boundary
-      // maximality check tractable for CVC5.
-      if(fn_id == ID_cprover_string_smt_re_ws_func && args.size() == 2)
-      {
-        std::size_t width = boolbv_width(expr.type());
-        if(width == 0)
-          width = 8;
-        mp_integer mode = 0;
-        to_integer(to_constant_expr(args[1]), mode);
-        const char *ws =
-          "(re.union (str.to_re \"\\u{9}\") (str.to_re \"\\u{a}\") "
-          "(str.to_re \"\\u{b}\") (str.to_re \"\\u{c}\") (str.to_re "
-          "\"\\u{d}\") (str.to_re \" \"))";
-        if(reachable(args[0]))
-        {
-          out << "(ite (str.in_re ";
-          emit_smt_string(args[0]);
-          out << " ";
-          if(mode == 1)
-            out << "(re.++ " << ws << " (re.* re.allchar))";
-          else if(mode == 2)
-            out << "(re.++ (re.* re.allchar) " << ws << ")";
-          else
-            out << "(re.* " << ws << ")";
-          out << ") (_ bv1 " << width << ") (_ bv0 " << width << "))";
-          return;
-        }
-        out << "(_ bv0 " << width << ")";
-        return;
-      }
+      // Native substring/slice lowers via the GENERIC substring id (flat
+      // (str.substr s offset len), the shared encoder above).
+      // from_code (chr) and to_code (ord) lower via the GENERIC map above
+      // (str.from_code / str.to_code); Direction B typecasts reconcile the
+      // Int result at the front-end.
       // Wave 2 of Python re support: intercept calls carrying a
       // compile-time-constant pattern and lower to SMT-LIB
       // (str.in_re subject <regex>). If the pattern cannot be
@@ -6908,6 +6821,23 @@ void smt2_convt::find_symbols(const exprt &expr)
 
     if(id_entry.second)
     {
+      // A function symbol whose signature involves RegLan cannot be declared
+      // as a UF: SMT-LIB's RegLan is not a first-class sort (cvc5: "expected
+      // first-class sort as domain sort"). Such applications (the
+      // cprover_regex_* / to_regex / in_regex intrinsic family) are lowered
+      // inline by convert_expr, so the declaration is not needed -- a
+      // SORT-based decision, independent of any front-end.
+      if(expr.type().id() == ID_mathematical_function)
+      {
+        const auto &mf = to_mathematical_function_type(expr.type());
+        auto is_regex = [](const typet &t) { return t.id() == ID_regex; };
+        if(
+          is_regex(mf.codomain()) ||
+          std::any_of(mf.domain().begin(), mf.domain().end(), is_regex))
+        {
+          return;
+        }
+      }
       std::string smt2_identifier=convert_identifier(identifier);
       smt2_identifiers.insert(smt2_identifier);
 

@@ -2512,6 +2512,7 @@ private:
 
   /// Substring s[start : start+len] (returns a string).
   exprt string_substr(const exprt &s, const exprt &start, const exprt &len);
+  exprt native_string_of_int(const exprt &n);
 
   /// Content equality a == b (returns bool).
   exprt string_equal(const exprt &a, const exprt &b);

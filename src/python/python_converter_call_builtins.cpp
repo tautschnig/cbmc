@@ -1327,7 +1327,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
       {
         // Native: chr(n) = cprover_string_smt_from_code_func(n) (str.from_code),
         // the single-char SMT String for code point n.
-        const irep_idt fn{ID_cprover_string_smt_from_code_func};
+        const irep_idt fn{ID_cprover_string_from_code_func};
         if(symbol_table.lookup(fn) == nullptr)
         {
           symbolt fs{
@@ -1491,21 +1491,22 @@ std::optional<exprt> python_convertert::try_builtin_call(
         // Symbolic: return first byte
         if(use_smt_string_native && arg.type().id() == ID_string)
         {
-          // Native: ord(s) = cprover_string_smt_to_code_func(s) (str.to_code).
-          const irep_idt fn{ID_cprover_string_smt_to_code_func};
+          // Native: ord(s) lowers via the GENERIC to_code id to (str.to_code s)
+          // [Int]; Direction B typecasts to the Python int type.
+          const irep_idt fn{ID_cprover_string_to_code_func};
           if(symbol_table.lookup(fn) == nullptr)
           {
             symbolt fs{
               fn,
-              mathematical_function_typet({arg.type()}, python_int_type()),
+              mathematical_function_typet({arg.type()}, integer_typet{}),
               "python"};
             fs.base_name = id2string(fn);
             symbol_table.add(fs);
           }
           function_application_exprt app{
             symbol_table.lookup_ref(fn).symbol_expr(), {arg}};
-          app.type() = python_int_type();
-          return std::move(app);
+          app.type() = integer_typet{};
+          return typecast_exprt{std::move(app), python_int_type()};
         }
         // The string struct's "data" component is a char pointer (see
         // python_string_struct_def), so read the first byte via *(data + 0).
@@ -3646,23 +3647,9 @@ std::optional<exprt> python_convertert::try_builtin_call(
                          : safe_typecast(arg, signedbv_typet{64});
         if(use_smt_string_native)
         {
-          // Native: str(n) = cprover_string_smt_from_int_func(n) (str.from_int
-          // with sign handling), an SMT String.
-          const irep_idt fn{ID_cprover_string_smt_from_int_func};
-          if(symbol_table.lookup(fn) == nullptr)
-          {
-            symbolt fs{
-              fn,
-              mathematical_function_typet({integer_typet{}}, string_typet{}),
-              "python"};
-            fs.base_name = id2string(fn);
-            symbol_table.add(fs);
-          }
-          function_application_exprt app{
-            symbol_table.lookup_ref(fn).symbol_expr(),
-            {typecast_exprt{as_i64, integer_typet{}}}};
-          app.type() = string_typet{};
-          return std::move(app);
+          // Native: str(n) composes sign handling over the GENERIC from_int
+          // id (see native_string_of_int).
+          return native_string_of_int(as_i64);
         }
         exprt result = emit_string_function(
           ID_cprover_string_of_int_func,

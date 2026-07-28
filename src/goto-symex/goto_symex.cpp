@@ -320,6 +320,16 @@ bool goto_symext::constant_propagate_assignment_with_side_effects(
 
     if(f_l1.function().id() == ID_symbol)
     {
+      // Value-returning string intrinsics (SMT String-sorted result, e.g. the
+      // native Python backend's generic substring/concat/replace_all forms)
+      // carry no output (length, content) arguments -- the side-effects this
+      // machinery propagates do not exist for them, and the handlers below
+      // PRECONDITION on the output-argument convention. A TYPE-based
+      // decision: the refined convention's applications have a bit-vector
+      // return-code type, never String.
+      if(f_l1.type().id() == ID_string)
+        return false;
+
       const irep_idt &func_id = to_symbol_expr(f_l1.function()).identifier();
 
       // String-producing intrinsics whose first two arguments are the output
