@@ -809,3 +809,38 @@ family (match/search/fullmatch/re_sub/re_group/re_pos — semantic ops with
 capture-group/fallback logic, dispatched by fn_id). All gates green
 (native 50/50, smt2_convt 57, [strings] 388, python suite, C strings,
 jbmc-strings, sweep 0-reg).
+
+## Java front-end benefits from the string/regex unification (2026-07-28)
+
+Follow-on from milestone #1, demonstrating the shared facilities' wider use:
+
+- **Whitespace-set soundness fix (`b7cdbe49f3f`).** CPython's str.strip()/
+  isspace() include \x1c-\x1f (verified against CPython); the modelled set
+  {09-0d, 20} was a false-proof class. Corrected to two contiguous ranges
+  {09-0d, 1c-20} in the refined axiom, the native regex encoding (re.range),
+  and the constant folds. Java's Character.isWhitespace agrees on exactly this
+  ASCII-range set, so the predicate is shared. Sweep: `string-rstrip-nondet`
+  PASS->TOERR is a CORRECTED FALSE PROOF (the ESBMC test's property is
+  factually wrong for CPython; ESBMC passes it only by sharing the
+  incomplete-set bug).
+- **Java 11 String.strip/stripLeading/stripTrailing (`76eaf3053f0`, amended).**
+  Thin wrappers over the shared parameterised strip facility
+  (cprover_string_strip_func + mode). New jbmc-strings/StringStrip tests incl.
+  the strip-vs-trim semantic pin (\x1b kept by strip, removed by trim).
+- **String.matches + strings under SMT2 (`2afc9bc2959`).** Three semantic
+  enablers: intrinsics emitted whenever refinement OR an SMT2 back-end is
+  selected; the symex string-content materialisation extended to any language
+  under SMT2-without-refinement (new symex_configt flag); a NEW
+  cprover_string_java_matches_func intrinsic gated on
+  regex_in_python_java_common_core() -- the conservative dialect guard that
+  keeps a Java pattern sound under the Python-dialect translator (rejects
+  [a&&b], \p, \Q, possessive quantifiers, etc. -> sound nondet). Constant
+  matches now decide exactly on the DEFAULT backend; symbolic subjects are
+  regex-constrained under --z3/--cvc5 --no-refine-strings (0.2s for the
+  [0-9]+ nonemptiness implication -- beyond the SAT refinement); no false
+  proofs (possessive/intersection probes stay FAILED; vacuity ruled out).
+
+Remaining opportunities (not scheduled): Pattern.matches/compile static forms,
+Java-dialect regex_char_classest instantiation (UNICODE_CHARACTER_CLASS), and
+the native-String-sort representation for Java strings under SMT2 (the object-
+model question from the earlier Java-migration assessment still applies).
