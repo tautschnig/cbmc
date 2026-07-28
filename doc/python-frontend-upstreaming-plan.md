@@ -955,3 +955,14 @@ standalone develop-applicable content -- it only touches the mode-
 parameterised strip axiom and Python-side folds, which don't exist on
 pristine develop. It folds into the Wave-3 Java-strip PR (where the
 whitespace-strip axiom first lands, with the corrected {09-0d,1c-20} set).
+
+## Status update (2026-07-28): Waves 1+2 are in PR
+
+Wave-1 (01-04) and Wave-2 (05-08) branches have all been turned into PRs by
+the maintainer. Wave-3 next: (a) the java-models-library Pattern/Matcher PR
+(submodule branch regex-matcher-model, commit 9bfe328) MUST go first; (b)
+Java 11 strip family (needs 08 + the mode-parameterised whitespace-strip
+axiom with the corrected {09-0d,1c-20} set); (c) JBMC regex support (String.
+matches / Matcher, the dialect translator -- consider the regex_to_smt
+rename), whose main-repo commit bumps the submodule gitlink and so lands
+after (a).
