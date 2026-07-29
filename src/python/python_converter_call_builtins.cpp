@@ -3945,22 +3945,35 @@ std::optional<exprt> python_convertert::try_builtin_call(
               exprt result = (func_name == "all") ? exprt{true_exprt{}}
                                                   : exprt{false_exprt{}};
 
+              static unsigned genexp_unroll_ctr = 0;
               for(const auto &val_json : as_array(*elts_json))
               {
                 exprt val = convert_expression(val_json);
+                // Bind the generator variable BY ASSIGNMENT for this
+                // element: retype the symbol to the element's type,
+                // emit `var = val` as a pending check, and convert the
+                // body with the symbol in scope. The previous
+                // post-conversion raw substitution could not retype an
+                // already-built expression (a str element compared
+                // against an Any-typed outer variable produced
+                // ill-typed equalities that reached the solver as
+                // invariant failures), and it missed occurrences of
+                // the symbol inside auxiliary statements the body
+                // conversion emits (e.g. string-solver applications),
+                // which then read a stale or garbage binding.
+                //
+                // Each element's contribution is captured in a fresh
+                // bool temporary assigned IMMEDIATELY after the
+                // binding, because the accumulated result expression is
+                // only evaluated once at the end — reading `var` there
+                // would see the LAST element's binding for every
+                // disjunct (a false-proof bug caught by ground-truth
+                // probes during development).
+                symbol_table.get_writeable_ref(iter_sym_id).type = val.type();
+                symbol_exprt var_sym =
+                  symbol_table.lookup_ref(iter_sym_id).symbol_expr();
+                pending_checks.push_back(code_frontend_assignt{var_sym, val});
                 exprt elt_expr = convert_expression(elt);
-                // Substitute iter_var with concrete value
-                std::function<void(exprt &)> subst = [&](exprt &e)
-                {
-                  if(
-                    e.id() == ID_symbol &&
-                    to_symbol_expr(e).get_identifier() == iter_sym_id)
-                    e = val;
-                  else
-                    for(auto &op : e.operands())
-                      subst(op);
-                };
-                subst(elt_expr);
 
                 if(elt_expr.type() != bool_typet{})
                   elt_expr = typecast_exprt{elt_expr, bool_typet{}};
@@ -3975,28 +3988,37 @@ std::optional<exprt> python_convertert::try_builtin_call(
                   for(const auto &if_node : as_array(gen_ifs))
                   {
                     exprt fp = convert_expression(if_node);
-                    std::function<void(exprt &)> fsubst = [&](exprt &e)
-                    {
-                      if(
-                        e.id() == ID_symbol &&
-                        to_symbol_expr(e).get_identifier() == iter_sym_id)
-                        e = val;
-                      else
-                        for(auto &op : e.operands())
-                          fsubst(op);
-                    };
-                    fsubst(fp);
+                    if(fp.is_nil())
+                      continue;
                     if(fp.type() != bool_typet{})
                       fp = safe_typecast(fp, bool_typet{});
                     filter_pred = and_exprt{filter_pred, fp};
                   }
                 }
 
+                // Fresh per-element temporary, assigned while this
+                // element's binding is live.
+                irep_idt tmp_id{qualify_name(
+                  "__genexp_elt_" + std::to_string(genexp_unroll_ctr++))};
+                symbolt tmp_sym{tmp_id, bool_typet{}, "python"};
+                tmp_sym.base_name = tmp_id;
+                tmp_sym.is_lvalue = true;
+                tmp_sym.is_state_var = true;
+                tmp_sym.is_static_lifetime = current_function.empty();
+                symbol_table.add(tmp_sym);
+                symbol_exprt tmp_expr =
+                  symbol_table.lookup_ref(tmp_id).symbol_expr();
+                exprt contribution =
+                  (func_name == "all")
+                    ? exprt{or_exprt{not_exprt{filter_pred}, elt_expr}}
+                    : exprt{and_exprt{filter_pred, elt_expr}};
+                pending_checks.push_back(
+                  code_frontend_assignt{tmp_expr, contribution});
+
                 if(func_name == "all")
-                  result = and_exprt{
-                    result, or_exprt{not_exprt{filter_pred}, elt_expr}};
+                  result = and_exprt{result, tmp_expr};
                 else
-                  result = or_exprt{result, and_exprt{filter_pred, elt_expr}};
+                  result = or_exprt{result, tmp_expr};
               }
               return result;
             }

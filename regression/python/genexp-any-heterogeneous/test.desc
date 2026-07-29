@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 8 --no-unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The direct() asserts pin the unrolled any/all semantics (CPython ground
+truth); any_typed() pins the no-crash behaviour for heterogeneous
+comparisons (previously an invariant failure in convert_equality).
