@@ -4337,11 +4337,114 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
     return python_truthiness(e);
 
   // List/dict type coercion: list[float] → list[int] etc.
-  // The struct layout is the same (length + data array), only element type differs.
+  // A raw typecast is only well-formed when the flattened widths agree,
+  // i.e. when the ELEMENT types match. With differing element types
+  // (e.g. list[int64] vs list[python_value]) the bit-level layouts
+  // differ, and the reinterpreting cast handed the SAT back-end
+  // mismatched-width bitvectors (garbage literals — an invariant
+  // failure in lcnf, found by the AWS code-action corpus sweep via
+  // `[] if c else <pv-list>` ternaries).
   if(
     (is_python_list_type(e.type()) && is_python_list_type(target)) ||
     (is_python_dict_type(e.type()) && is_python_dict_type(target)))
-    return typecast_exprt{e, target};
+  {
+    auto element_types_match = [](const typet &a, const typet &b)
+    {
+      const auto &ast = to_struct_type(a);
+      const auto &bst = to_struct_type(b);
+      if(ast.components().size() != bst.components().size())
+        return false;
+      for(std::size_t i = 0; i < ast.components().size(); i++)
+        if(ast.components()[i].type() != bst.components()[i].type())
+          return false;
+      return true;
+    };
+    if(element_types_match(e.type(), target))
+      return typecast_exprt{e, target};
+    // Value-widening: rebuild element-wise into the tagged union.
+    if(is_python_list_type(target))
+    {
+      const auto &tgt_data =
+        to_array_type(to_struct_type(target).components()[1].type());
+      if(is_python_value_type(tgt_data.element_type()))
+      {
+        exprt rebuilt = rebuild_list_as_pv(e);
+        if(rebuilt.type() == target)
+          return rebuilt;
+      }
+      // General element-wise rebuild preserving the LENGTH: coerce each
+      // slot into the target element type through coerce_element (the
+      // shared write choke point). Bit-preservation mattered in practice:
+      // `return r.get(k, [])` under a List[...] annotation flows an empty
+      // list[int64] into a list[dict]-typed slot, and a nondet fallback
+      // here loses length==0 (regression caught by
+      // class-to-list-annotation-coercion).
+      const typet &tgt_elem = tgt_data.element_type();
+      mp_integer cap_i;
+      if(
+        tgt_data.size().is_constant() &&
+        !to_integer(to_constant_expr(tgt_data.size()), cap_i))
+      {
+        const std::size_t cap = static_cast<std::size_t>(cap_i.to_long());
+        const auto &src_data =
+          to_array_type(to_struct_type(e.type()).components()[1].type());
+        exprt::operandst elems;
+        exprt src_len;
+        if(
+          e.id() == ID_struct && e.operands().size() == 2 &&
+          e.operands()[1].id() == ID_array)
+        {
+          src_len = e.operands()[0];
+          for(const auto &op : e.operands()[1].operands())
+          {
+            if(elems.size() >= cap)
+              break;
+            elems.push_back(coerce_element(op, tgt_elem));
+          }
+        }
+        else
+        {
+          src_len = member_exprt{e, "length", signedbv_typet{64}};
+          member_exprt sdata{e, "data", src_data};
+          mp_integer scap_i{0};
+          if(
+            src_data.size().is_constant() &&
+            !to_integer(to_constant_expr(src_data.size()), scap_i))
+          {
+            const std::size_t n =
+              std::min(cap, static_cast<std::size_t>(scap_i.to_long()));
+            for(std::size_t i = 0; i < n; i++)
+              elems.push_back(coerce_element(
+                index_exprt{sdata, from_integer(i, signedbv_typet{64})},
+                tgt_elem));
+          }
+        }
+        if(!src_len.is_nil())
+        {
+          bool well_typed = true;
+          for(const auto &el : elems)
+            if(el.type() != tgt_elem)
+              well_typed = false;
+          if(well_typed)
+          {
+            while(elems.size() < cap)
+              elems.push_back(safe_zero(tgt_elem));
+            return struct_exprt{
+              {src_len,
+               array_exprt{
+                 std::move(elems), array_typet{tgt_elem, tgt_data.size()}}},
+              target};
+          }
+        }
+      }
+    }
+    // No sound reinterpretation exists: over-approximate with a nondet
+    // of the target type rather than emit an ill-typed cast.
+    log_overapprox(
+      "container coercion with incompatible element layout — "
+      "returning nondet");
+    return side_effect_expr_nondett{target, e.source_location()};
+  }
 
   // Struct-to-scalar: a concrete class instance coerced to a
   // numeric target is always non-None. Return 0 instead of the
