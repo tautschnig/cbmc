@@ -9,6 +9,8 @@
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
 #include <util/json.h>
+#include <util/namespace.h>
+#include <util/simplify_expr.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/symbol.h>
@@ -1074,12 +1076,16 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
   // falls back to a nondet dict over-approximation.
   struct gen_info
   {
-    std::string var_name;
+    // Plain-Name target: one name. Tuple-of-Names target (PLR §6.2.6:
+    // `{k: v for k, v in pairs}` destructures each element): one name
+    // per position.
+    std::vector<std::string> var_names;
     // Either a list of jsont pointers from a literal [ ... ] or a
     // list of pre-computed integer values from a range().
     std::vector<const jsont *> json_values;
     std::vector<mp_integer> int_values;
     bool is_range = false;
+    bool tuple_target = false;
   };
   std::vector<gen_info> gens;
 
@@ -1143,7 +1149,44 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
   {
     const jsont &gen_iter = json_member(gen, "iter");
     gen_info gi;
-    gi.var_name = json_string(json_member(json_member(gen, "target"), "id"));
+    const jsont &target = json_member(gen, "target");
+    if(is_node_type(target, "Name"))
+      gi.var_names.push_back(json_string(json_member(target, "id")));
+    else if(is_node_type(target, "Tuple"))
+    {
+      // PLR §6.2.6 / §7.2: a tuple target destructures each element.
+      // Support the flat Tuple-of-Names form; anything else (nested
+      // tuples, starred targets) falls back to the sound nondet dict.
+      const jsont &t_elts = json_member(target, "elts");
+      bool all_names = t_elts.is_array() && !as_array(t_elts).empty();
+      if(t_elts.is_array())
+        for(const auto &te : as_array(t_elts))
+        {
+          if(is_node_type(te, "Name"))
+            gi.var_names.push_back(json_string(json_member(te, "id")));
+          else
+            all_names = false;
+        }
+      if(!all_names)
+      {
+        log_overapprox(
+          "dict comprehension with unsupported target shape: "
+          "using nondet dict");
+        return side_effect_expr_nondett{
+          python_dict_type(python_value_type(), python_value_type()),
+          source_locationt{}};
+      }
+      gi.tuple_target = true;
+    }
+    else
+    {
+      log_overapprox(
+        "dict comprehension with unsupported target shape: "
+        "using nondet dict");
+      return side_effect_expr_nondett{
+        python_dict_type(python_value_type(), python_value_type()),
+        source_locationt{}};
+    }
     std::vector<mp_integer> r_values;
     if(is_node_type(gen_iter, "List"))
     {
@@ -1156,6 +1199,17 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
     }
     else if(try_range(gen_iter, r_values))
     {
+      if(gi.tuple_target)
+      {
+        // PLR §7.2: destructuring an int raises TypeError; don't
+        // mis-bind — fall back soundly.
+        log_overapprox(
+          "dict comprehension tuple target over range(): "
+          "using nondet dict");
+        return side_effect_expr_nondett{
+          python_dict_type(python_value_type(), python_value_type()),
+          source_locationt{}};
+      }
       gi.is_range = true;
       gi.int_values = std::move(r_values);
     }
@@ -1173,15 +1227,18 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
   // Register iteration-variable symbols.
   for(auto &gi : gens)
   {
-    std::string qname = qualify_name(gi.var_name);
-    irep_idt sym_id{qname};
-    if(symbol_table.lookup(sym_id) == nullptr)
+    for(const auto &vn : gi.var_names)
     {
-      symbolt sym{sym_id, python_int_type(), "python"};
-      sym.base_name = gi.var_name;
-      sym.is_lvalue = true;
-      sym.is_state_var = true;
-      symbol_table.add(sym);
+      std::string qname = qualify_name(vn);
+      irep_idt sym_id{qname};
+      if(symbol_table.lookup(sym_id) == nullptr)
+      {
+        symbolt sym{sym_id, python_int_type(), "python"};
+        sym.base_name = vn;
+        sym.is_lvalue = true;
+        sym.is_state_var = true;
+        symbol_table.add(sym);
+      }
     }
   }
 
@@ -1209,12 +1266,43 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
     std::vector<std::pair<irep_idt, exprt>> bindings;
     for(std::size_t g = 0; g < gens.size(); g++)
     {
-      exprt v;
       if(gens[g].is_range)
-        v = from_integer(gens[g].int_values[combo[g]], python_int_type());
+      {
+        bindings.push_back(
+          {irep_idt{qualify_name(gens[g].var_names.front())},
+           from_integer(gens[g].int_values[combo[g]], python_int_type())});
+      }
+      else if(!gens[g].tuple_target)
+      {
+        bindings.push_back(
+          {irep_idt{qualify_name(gens[g].var_names.front())},
+           convert_expression(*gens[g].json_values[combo[g]])});
+      }
       else
-        v = convert_expression(*gens[g].json_values[combo[g]]);
-      bindings.push_back({irep_idt{qualify_name(gens[g].var_name)}, v});
+      {
+        // Tuple target: the element must be a literal Tuple of the
+        // same arity (PLR §7.2 raises ValueError on arity mismatch
+        // and TypeError on non-iterables; those shapes fall back to
+        // the sound nondet dict rather than mis-binding).
+        const jsont &ev = *gens[g].json_values[combo[g]];
+        const jsont &ev_elts = json_member(ev, "elts");
+        if(
+          !is_node_type(ev, "Tuple") || !ev_elts.is_array() ||
+          as_array(ev_elts).size() != gens[g].var_names.size())
+        {
+          log_overapprox(
+            "dict comprehension tuple target over a non-tuple or "
+            "arity-mismatched element: using nondet dict");
+          return side_effect_expr_nondett{
+            python_dict_type(python_value_type(), python_value_type()),
+            source_locationt{}};
+        }
+        std::size_t vi = 0;
+        for(const auto &ee : as_array(ev_elts))
+          bindings.push_back(
+            {irep_idt{qualify_name(gens[g].var_names[vi++])},
+             convert_expression(ee)});
+      }
     }
 
     std::function<void(exprt &)> subst = [&](exprt &e)
@@ -1241,11 +1329,25 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
         {
           exprt cond = convert_expression(cond_json);
           subst(cond);
+          simplify(cond, namespacet{symbol_table});
           // Constant-fold obvious cases.
           if(cond.is_false())
           {
             passes = false;
             break;
+          }
+          if(!cond.is_true())
+          {
+            // Symbolic filter: not decidable during the unroll.
+            // Treating it as true produced definite-wrong dict
+            // contents (the same disease the list-comp unroll had);
+            // over-approximate soundly instead.
+            log_overapprox(
+              "dict comprehension with non-constant filter: "
+              "using nondet dict");
+            return side_effect_expr_nondett{
+              python_dict_type(python_value_type(), python_value_type()),
+              source_locationt{}};
           }
         }
       }
