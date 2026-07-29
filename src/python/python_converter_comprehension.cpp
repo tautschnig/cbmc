@@ -670,6 +670,12 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
 
   // Evaluate elt for each combination
   exprt::operandst elements;
+  // A filter clause that does not constant-evaluate cannot be decided
+  // during unrolling; detect it and bail out to an exact loop lowering
+  // (or a sound over-approximation) below. Snapshot pending_checks so
+  // the abandoned partial unroll's side-effect checks are rolled back.
+  bool symbolic_filter = false;
+  const std::size_t pc_snapshot = pending_checks.size();
   for(const auto &combo : combos)
   {
     // Convert each iteration variable's value
@@ -682,6 +688,23 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       else
         val = gens[g].const_values[combo[g]];
       bindings.push_back({irep_idt{qualify_name(gens[g].var_name)}, val});
+    }
+
+    // Bind types and string-constant values for THIS combination BEFORE
+    // converting the element/filters: the iteration symbols are created
+    // above with a placeholder int type, so conversion-time folds and
+    // coercions otherwise see wrongly-typed operands (e.g. a
+    // `'s' in x` filter folded against an int-typed symbol to a
+    // definite-wrong constant, emptying or overfilling the result —
+    // caught by ground-truth probes).
+    for(const auto &[sym_id, val] : bindings)
+    {
+      symbol_table.get_writeable_ref(sym_id).type = val.type();
+      auto sv = extract_string_value(val);
+      if(sv.has_value())
+        string_constants[sym_id] = sv.value();
+      else
+        string_constants.erase(sym_id);
     }
 
     // Evaluate elt and substitute
@@ -814,9 +837,22 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
           exprt simplified = try_eval(cond_expr);
           if(simplified.is_false())
             passes_filter = false;
+          else if(!simplified.is_true())
+          {
+            // Symbolic filter: neither provably true nor false at
+            // conversion time. The unroll previously INCLUDED such
+            // elements unconditionally, producing definite-wrong list
+            // contents in both directions (false failures and false
+            // proofs of len()/content properties). Bail out to the
+            // loop lowering below.
+            symbolic_filter = true;
+            passes_filter = false;
+          }
         }
       }
     }
+    if(symbolic_filter)
+      break;
     if(!passes_filter)
       continue;
     // PLR §6.2.7: if the element expression is `str(<iter-var>)`,
@@ -869,10 +905,115 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
     elements.push_back(elt_expr);
   }
 
+  // Clear the per-combination string-constant bindings of the
+  // iteration variables (they are conversion-scope only).
+  for(const auto &gi : gens)
+    string_constants.erase(irep_idt{qualify_name(gi.var_name)});
+
   // Clear the comprehension late-binding redirect now that all element
   // closures have been converted (they have baked in the unique symbol).
   for(const auto &k : comp_redirect_keys)
     comprehension_var_redirect.erase(k);
+
+  if(symbolic_filter)
+  {
+    // Roll back checks emitted by the abandoned partial unroll.
+    pending_checks.erase(
+      pending_checks.begin() + pc_snapshot, pending_checks.end());
+    const source_locationt loc = get_location(expr);
+    // Exact route for the single-generator case: materialize the
+    // iterable as a list value and lower to a real filtered loop
+    // (emit_listcomp_loop evaluates the filter per iteration).
+    if(gens.size() == 1)
+    {
+      const jsont &gen0 = *as_array(generators).begin();
+      const jsont &gen0_iter = json_member(gen0, "iter");
+      exprt iter_val = convert_expression(gen0_iter);
+      if(
+        (iter_val.is_nil() || !is_python_list_type(iter_val.type())) &&
+        !gens[0].const_values.empty())
+      {
+        // range() with constant bounds: build the list struct from the
+        // enumerated values (homogeneous ints).
+        const typet et = gens[0].const_values.front().type();
+        struct_typet lt = python_list_type(et);
+        const typet stored_et =
+          to_array_type(lt.components()[1].type()).element_type();
+        const std::size_t cap = std::max<std::size_t>(
+          PYTHON_MAX_LIST_LENGTH, gens[0].const_values.size());
+        array_typet dt{stored_et, from_integer(cap, signedbv_typet{64})};
+        {
+          auto &comps = lt.components();
+          if(comps.size() == 2)
+            comps[1].type() = dt;
+        }
+        exprt::operandst data_elems;
+        bool homogeneous = true;
+        for(const auto &cv : gens[0].const_values)
+        {
+          if(cv.type() != stored_et)
+          {
+            homogeneous = false;
+            break;
+          }
+          data_elems.push_back(cv);
+        }
+        if(homogeneous)
+        {
+          while(data_elems.size() < cap)
+            data_elems.push_back(safe_zero(stored_et));
+          iter_val = struct_exprt{
+            {from_integer(
+               static_cast<long long>(gens[0].const_values.size()),
+               signedbv_typet{64}),
+             array_exprt{std::move(data_elems), dt}},
+            lt};
+        }
+      }
+      if(!iter_val.is_nil() && is_python_list_type(iter_val.type()))
+      {
+        exprt r = emit_listcomp_loop(
+          elt, gens[0].var_name, iter_val, json_member(gen0, "ifs"), loc);
+        if(!r.is_nil())
+          return r;
+        pending_checks.erase(
+          pending_checks.begin() + pc_snapshot, pending_checks.end());
+      }
+    }
+    // Sound over-approximation for the remaining shapes (multiple
+    // generators, or an iterable emit_listcomp_loop cannot take):
+    // nondet data with 0 <= length <= unfiltered-combination count.
+    // Imprecise but never definite-wrong, unlike the previous
+    // include-unconditionally behaviour.
+    typet et = python_int_type();
+    struct_typet lt = python_list_type(et);
+    static unsigned sf_ctr = 0;
+    irep_idt tid{qualify_name("__symfilter_comp_" + std::to_string(sf_ctr++))};
+    if(symbol_table.lookup(tid) == nullptr)
+    {
+      symbolt ts{tid, lt, "python"};
+      ts.base_name = id2string(tid);
+      ts.is_lvalue = true;
+      ts.is_state_var = true;
+      ts.is_static_lifetime = current_function.empty();
+      symbol_table.add(ts);
+    }
+    symbol_exprt tmp = symbol_table.lookup_ref(tid).symbol_expr();
+    pending_checks.push_back(
+      code_frontend_assignt{tmp, side_effect_expr_nondett{lt, loc}});
+    member_exprt len_m{tmp, "length", signedbv_typet{64}};
+    exprt zero = from_integer(0, signedbv_typet{64});
+    exprt nmax = from_integer(
+      static_cast<long long>(
+        std::min<std::size_t>(combos.size(), PYTHON_MAX_LIST_LENGTH)),
+      signedbv_typet{64});
+    code_assumet a{and_exprt{
+      binary_relation_exprt{len_m, ID_ge, zero},
+      binary_relation_exprt{len_m, ID_le, nmax}}};
+    a.add_source_location() = loc;
+    pending_checks.push_back(std::move(a));
+    return std::move(tmp);
+  }
 
   if(elements.empty())
   {
