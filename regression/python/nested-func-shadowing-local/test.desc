@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6 --no-unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+got signedbv
+--
+CPython ground truth: both functions run clean; inner assignments bind
+locals, enclosing values are unchanged.

@@ -1571,6 +1571,23 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         }
         std::set<std::string> refs;
         collect_name_refs(json_member(s, "body"), refs);
+        // PLR §4.2.1: "If a name is bound in a block, it is a local
+        // variable of that block, unless declared as nonlocal or
+        // global." A name ASSIGNED anywhere in the nested function is
+        // therefore local there — NOT a free variable — regardless of
+        // any same-named variable in the enclosing scope. Capturing it
+        // by value smuggled the enclosing variable in as a parameter:
+        // with mismatched types this reached symex as an ill-typed
+        // parameter assignment ("got signedbv / expected struct" on the
+        // AWS corpus, where both scopes bind `result`), and even with
+        // matching types it wrongly seeded the local with the outer
+        // value where CPython gives UnboundLocalError.
+        std::set<std::string> nested_assigned;
+        {
+          std::set<std::string> na_excluded, na_non_plain;
+          collect_assigned_locals(
+            json_member(s, "body"), nested_assigned, na_excluded, na_non_plain);
+        }
         std::vector<std::tuple<std::string, std::string, typet>> captures;
         for(const auto &ref : refs)
         {
@@ -1578,6 +1595,8 @@ codet python_convertert::convert_function_def(const jsont &stmt)
             continue;
           if(nested_nonlocal_global.count(ref))
             continue; // handled by qualify_name redirect at use site
+          if(nested_assigned.count(ref))
+            continue; // bound in the nested block -> local there (§4.2.1)
           // Find the variable's symbol and type
           std::string var_id = "python::" + qualified_func_name + "::" + ref;
           const symbolt *var_sym = symbol_table.lookup(irep_idt{var_id});
