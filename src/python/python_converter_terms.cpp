@@ -393,6 +393,28 @@ exprt python_convertert::convert_name(const jsont &expr)
   {
     irep_idt global_id{"python::" + id};
     sym = symbol_table.lookup(global_id);
+    // Root B (import scoping, PLR §4.2 / §7.11): a name READ that
+    // resolves in the flat python:: table ONLY because some module's
+    // stub defines it (imported_module_defs) — while the name itself
+    // was never imported (`from datetime import datetime` binds ONLY
+    // `datetime`; reading `timezone` is a NameError CPython raises) —
+    // must not silently resolve to the leaked module-level symbol.
+    // Mirrors the existing bare-CALL check in convert_call_user; same
+    // gates (main-module code only, disabled under import-*).
+    if(sym != nullptr && !saw_import_star)
+    {
+      const std::string cf_root2 =
+        current_function.substr(0, current_function.find("::"));
+      if(
+        (current_function.empty() || main_module_defs.count(cf_root2) > 0) &&
+        imported_module_defs.count(id) > 0 &&
+        explicitly_imported_names.count(id) == 0 &&
+        main_module_defs.count(id) == 0 && all_bound_names.count(id) == 0)
+      {
+        emit_conditional_exception(true_exprt{}, "NameError");
+        return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+      }
+    }
   }
   if(sym == nullptr)
   {
@@ -456,8 +478,13 @@ exprt python_convertert::convert_name(const jsont &expr)
     //  * skipped under `from X import *` (names not enumerable);
     //  * the Python builtin functions / constants below may be referenced
     //    as bare values (`sorted(xs, key=len)`, `x is None`, `__name__`).
+    // Nested functions carry a qualified current_function
+    // ("outer::inner"); their code is still main-module code when the
+    // ROOT of the chain is a main-module definition.
+    const std::string cf_root =
+      current_function.substr(0, current_function.find("::"));
     const bool in_main_module =
-      current_function.empty() || main_module_defs.count(current_function) > 0;
+      current_function.empty() || main_module_defs.count(cf_root) > 0;
     if(
       !saw_import_star && in_main_module && all_bound_names.count(id) == 0 &&
       !is_python_builtin_name(id))

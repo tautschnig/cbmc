@@ -853,6 +853,14 @@ void python_convertert::process_imported_module(
     {
       // Process class definition from the module
       convert_class_def(stmt);
+      // Root B (import scoping, PLR §4.2 / §7.11): record that this
+      // CLASS name comes from an imported module's stub. Like the
+      // function registrations above, the flat `python::<name>`
+      // class-object symbol must not make a bare read of the name
+      // resolve when the importer never bound it (`from datetime
+      // import datetime` binds only `datetime`; reading `timezone`
+      // is a NameError CPython raises).
+      imported_module_defs.insert(json_string(json_member(stmt, "name")));
     }
     else if(is_node_type(stmt, "Assign") || is_node_type(stmt, "AnnAssign"))
     {
@@ -3039,6 +3047,21 @@ bool python_convertert::convert()
   // Sub-pass 1c: convert function bodies (signatures already registered)
   if(body.is_array())
   {
+    // Register main-module def/class names BEFORE converting any body:
+    // the undefined-name NameError check (convert_name / call
+    // conversion) gates on `current_function` being a main-module
+    // definition, and pass 2 — which also inserts these — runs only
+    // AFTER this sub-pass, so the gate never fired for code inside
+    // functions (undefined names silently became nondet: a soundness
+    // gap found by the AWS corpus ground-truth comparison).
+    for(const auto &stmt : as_array(body))
+    {
+      if(
+        is_node_type(stmt, "FunctionDef") ||
+        is_node_type(stmt, "AsyncFunctionDef") ||
+        is_node_type(stmt, "ClassDef"))
+        main_module_defs.insert(json_string(json_member(stmt, "name")));
+    }
     for(const auto &stmt : as_array(body))
     {
       if((is_node_type(stmt, "FunctionDef") ||
