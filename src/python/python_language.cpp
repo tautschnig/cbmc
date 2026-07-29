@@ -124,8 +124,14 @@ void python_languaget::set_language_options(
   " return str(o)\n" \
   "def bn(t):\n" \
   " s=set()\n" \
+  " ct=set()\n" \
   " for n in ast.walk(t):\n" \
-  "  if isinstance(n,ast.Name) and isinstance(n.ctx,ast.Store):s.add(n.id)\n" \
+  "  if isinstance(n,(ast.ListComp,ast.SetComp,ast.DictComp,ast.GeneratorExp)):\n" \
+  "   for g in n.generators:\n" \
+  "    for x in ast.walk(g.target):\n" \
+  "     if isinstance(x,ast.Name):ct.add(id(x))\n" \
+  " for n in ast.walk(t):\n" \
+  "  if isinstance(n,ast.Name) and isinstance(n.ctx,ast.Store) and id(n) not in ct:s.add(n.id)\n" \
   "  elif isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)):s.add(n.name)\n" \
   "  elif isinstance(n,ast.arg):s.add(n.arg)\n" \
   "  elif isinstance(n,ast.ExceptHandler):\n" \

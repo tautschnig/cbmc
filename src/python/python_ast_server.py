@@ -148,12 +148,30 @@ def parse_file(path):
 def _collect_bound_names(tree):
     """All names bound anywhere in `tree`, across every scope and binding
     form (PLR §4.2.1). Used as a conservative 'is this name bound at all?'
-    oracle for NameError detection."""
+    oracle for NameError detection.
+
+    Comprehension/generator-expression TARGET occurrences do not count:
+    PLR §6.2.4 gives each comprehension "a separate implicitly nested
+    scope", so its targets are invisible to all surrounding code (reading
+    one outside is a NameError CPython actually raises). A name that is
+    additionally bound by any non-comprehension binder still counts, and
+    a walrus inside a comprehension binds in the enclosing scope
+    (PEP 572), counting through its own Store occurrence."""
     names = set()
+
+    comp_types = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+    comp_target_nodes = set()
+    for n in ast.walk(tree):
+        if isinstance(n, comp_types):
+            for gen in n.generators:
+                for t in ast.walk(gen.target):
+                    if isinstance(t, ast.Name):
+                        comp_target_nodes.add(id(t))
 
     class _V(ast.NodeVisitor):
         def visit_Name(self, node):
-            if isinstance(node.ctx, ast.Store):
+            if isinstance(node.ctx, ast.Store) and \
+                    id(node) not in comp_target_nodes:
                 names.add(node.id)
             self.generic_visit(node)
 
