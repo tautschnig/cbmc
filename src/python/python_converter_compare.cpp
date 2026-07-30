@@ -396,7 +396,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
     // and other types are left to the existing paths (sound).
     if(ordered_op)
     {
-      auto ord_cat = [this](const typet &t) -> int
+      auto ord_cat = [](const typet &t) -> int
       {
         if(
           t.id() == ID_signedbv || t.id() == ID_unsignedbv ||

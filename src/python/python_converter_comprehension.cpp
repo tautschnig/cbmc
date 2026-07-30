@@ -711,12 +711,17 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
 
     // Evaluate elt and substitute
     exprt elt_expr = convert_expression(elt);
-    for(const auto &[sym_id, val] : bindings)
+    for(const auto &binding : bindings)
     {
+      // Named locals rather than a structured binding: capturing a
+      // structured binding in a lambda is a C++20 extension AppleClang
+      // rejects under -Werror in this C++17 build.
+      const irep_idt &b_sym = binding.first;
+      const exprt &b_val = binding.second;
       std::function<void(exprt &)> subst = [&](exprt &e)
       {
-        if(e.id() == ID_symbol && to_symbol_expr(e).get_identifier() == sym_id)
-          e = val;
+        if(e.id() == ID_symbol && to_symbol_expr(e).get_identifier() == b_sym)
+          e = b_val;
         else
           for(auto &op : e.operands())
             subst(op);
@@ -734,14 +739,18 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
         for(const auto &cond_json : as_array(ifs))
         {
           exprt cond_expr = convert_expression(cond_json);
-          for(const auto &[sym_id, val] : bindings)
+          for(const auto &binding : bindings)
           {
+            // Named locals: capturing a structured binding is a C++20
+            // extension (see the elt-substitution loop above).
+            const irep_idt &b_sym = binding.first;
+            const exprt &b_val = binding.second;
             std::function<void(exprt &)> subst2 = [&](exprt &e)
             {
               if(
                 e.id() == ID_symbol &&
-                to_symbol_expr(e).get_identifier() == sym_id)
-                e = val;
+                to_symbol_expr(e).get_identifier() == b_sym)
+                e = b_val;
               else
                 for(auto &op : e.operands())
                   subst2(op);
