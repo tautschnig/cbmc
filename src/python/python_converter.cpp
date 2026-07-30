@@ -3895,6 +3895,44 @@ exprt python_convertert::wrap_value(const exprt &e)
     e.type().id() == ID_struct && !is_python_string_type(e.type()) &&
     !is_python_list_type(e.type()))
   {
+    // PLR §3.2: canonicalize a string-keyed dict to
+    // dict[python_string, python_value] BEFORE boxing. Every consumer
+    // of a DICT-tagged python_value (subscript read, In/NotIn key
+    // membership, len) casts __class_ptr to that canonical layout; a
+    // concrete dict[str, str] boxed as-is was silently misread through
+    // the pun (a dict crossing a call boundary lost all its values).
+    exprt to_box = e;
+    if(is_python_dict_type(e.type()))
+    {
+      const auto &src_st = to_struct_type(e.type());
+      const typet &src_keys_t = src_st.components()[1].type();
+      const typet &src_vals_t = src_st.components()[2].type();
+      const typet &key_elem_t = to_array_type(src_keys_t).element_type();
+      const typet canon =
+        python_dict_type(python_string_type(), python_value_type());
+      if(e.type() != canon && is_python_string_type(key_elem_t))
+      {
+        const auto &canon_st = to_struct_type(canon);
+        member_exprt src_len{e, "length", signedbv_typet{64}};
+        member_exprt src_keys{e, "keys", src_keys_t};
+        member_exprt src_vals{e, "values", src_vals_t};
+        exprt::operandst keys, vals;
+        for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+        {
+          const exprt idx = from_integer(i, signedbv_typet{64});
+          keys.push_back(index_exprt{src_keys, idx});
+          vals.push_back(wrap_value(index_exprt{src_vals, idx}));
+        }
+        to_box = struct_exprt{
+          {src_len,
+           array_exprt{
+             std::move(keys), to_array_type(canon_st.components()[1].type())},
+           array_exprt{
+             std::move(vals), to_array_type(canon_st.components()[2].type())}},
+          canon};
+      }
+    }
+    const exprt &boxee = to_box;
     // We need a persistent pointer target. Materialise the struct
     // into a static-lifetime symbol so address_of yields a valid
     // pointer across statement boundaries.
@@ -3905,14 +3943,15 @@ exprt python_convertert::wrap_value(const exprt &e)
     irep_idt tmp_id{tmp_qname};
     if(symbol_table.lookup(tmp_id) == nullptr)
     {
-      symbolt tmp_sym{tmp_id, e.type(), "python"};
+      symbolt tmp_sym{tmp_id, boxee.type(), "python"};
       tmp_sym.base_name = tmp_name;
       tmp_sym.is_lvalue = true;
       tmp_sym.is_state_var = true;
       symbol_table.add(tmp_sym);
     }
     const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
-    pending_checks.push_back(code_frontend_assignt{tmp_sym.symbol_expr(), e});
+    pending_checks.push_back(
+      code_frontend_assignt{tmp_sym.symbol_expr(), boxee});
     // Ensure the materialised copy carries a valid __class_tag.
     // The 'return ClassName(args)' path doesn't explicitly set
     // __class_tag on the return-tmp before the wrap, so we
