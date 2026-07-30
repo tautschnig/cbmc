@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6 --no-unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+python-not-encoded
+--
+CPython ground truth: all asserts pass. The negative twin
+(object-sentinel-fail) guards against vacuity.

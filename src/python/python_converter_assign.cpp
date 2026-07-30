@@ -2536,6 +2536,51 @@ codet python_convertert::convert_assign(const jsont &stmt)
           if(is_node_type(elt, "Tuple") || is_node_type(elt, "List"))
           {
             const jsont &sub_elts = json_member(elt, "elts");
+            // PLR §7.2.1 one level deep, LIST-typed field: bind each
+            // Name sub-target to data[i]. Previously only tuple-typed
+            // fields recursed; `(a, b), [c, d] = (t, lst)` left c/d
+            // unbound (their reads were unresolved names — a
+            // silent-drop false proof before asserts were made
+            // fail-closed).
+            if(sub_elts.is_array() && is_python_list_type(field_type))
+            {
+              const auto &fl_st = to_struct_type(field_type);
+              const auto &fl_data_t =
+                to_array_type(fl_st.components()[1].type());
+              const typet &fl_elem_t = fl_data_t.element_type();
+              member_exprt fl_data{field_expr, "data", fl_data_t};
+              std::size_t sub_idx = 0;
+              for(const auto &sub_elt : as_array(sub_elts))
+              {
+                if(is_node_type(sub_elt, "Name"))
+                {
+                  std::string name = json_string(json_member(sub_elt, "id"));
+                  if(!name.empty())
+                  {
+                    irep_idt sym_id{qualify_name(name)};
+                    if(symbol_table.lookup(sym_id) == nullptr)
+                    {
+                      symbolt new_sym{sym_id, fl_elem_t, "python"};
+                      new_sym.base_name = name;
+                      new_sym.location = loc;
+                      new_sym.is_lvalue = true;
+                      new_sym.is_state_var = true;
+                      new_sym.is_static_lifetime = current_function.empty();
+                      symbol_table.add(new_sym);
+                    }
+                    else
+                      symbol_table.get_writeable_ref(sym_id).type = fl_elem_t;
+                    block.add(code_frontend_assignt{
+                      symbol_table.lookup_ref(sym_id).symbol_expr(),
+                      index_exprt{
+                        fl_data, from_integer(sub_idx, signedbv_typet{64})}});
+                  }
+                }
+                sub_idx++;
+              }
+              idx++;
+              continue;
+            }
             if(sub_elts.is_array() && is_python_tuple_type(field_type))
             {
               const auto &sub_st = to_struct_type(field_type);
@@ -2647,6 +2692,77 @@ codet python_convertert::convert_assign(const jsont &stmt)
       // length-equality assumption when the list isn't known
       // to be the right size). Recursive unpacking of nested
       // tuple/list targets is supported one level deep.
+      if(elts.is_array() && is_python_string_type(rhs.type()))
+      {
+        // PLR §7.2.1: a str is a sequence, so `c, d = "xy"` unpacks
+        // into 1-char strings (ValueError on arity mismatch).
+        // Previously this shape fell through undropped: the targets
+        // stayed unbound and every later read was an unresolved name
+        // (with fail-closed asserts, a definite failure; before that,
+        // a silent-drop false proof).
+        auto sv = extract_string_value(rhs);
+        if(!sv.has_value() && rhs.id() == ID_symbol)
+        {
+          auto sc_it =
+            string_constants.find(to_symbol_expr(rhs).get_identifier());
+          if(sc_it != string_constants.end())
+            sv = sc_it->second;
+        }
+        bool all_names = true;
+        for(const auto &elt : as_array(elts))
+          if(!is_node_type(elt, "Name"))
+            all_names = false;
+        if(all_names)
+        {
+          if(sv.has_value() && sv.value().size() != as_array(elts).size())
+          {
+            // Constant arity mismatch: CPython raises ValueError
+            // ('too many values to unpack' / 'not enough values').
+            emit_conditional_exception(true_exprt{}, "ValueError");
+            continue;
+          }
+          std::size_t ci = 0;
+          for(const auto &elt : as_array(elts))
+          {
+            const std::string en = json_string(json_member(elt, "id"));
+            if(en.empty())
+              continue;
+            const irep_idt eid{qualify_name(en)};
+            if(symbol_table.lookup(eid) == nullptr)
+            {
+              symbolt es{eid, python_string_type(), "python"};
+              es.base_name = en;
+              es.location = loc;
+              es.is_lvalue = true;
+              es.is_state_var = true;
+              es.is_static_lifetime = current_function.empty();
+              symbol_table.add(es);
+            }
+            else
+              symbol_table.get_writeable_ref(eid).type = python_string_type();
+            exprt val;
+            if(sv.has_value())
+            {
+              val = python_string_literal(std::string(1, sv.value()[ci]));
+              string_constants[eid] = std::string(1, sv.value()[ci]);
+            }
+            else
+            {
+              // Symbolic string: bind a nondet 1-char-shaped string
+              // (sound value over-approximation; the arity ValueError
+              // of a symbolic-length string is not modelled here).
+              log_overapprox(
+                "unpacking a non-constant str: nondet target values");
+              val = side_effect_expr_nondett{python_string_type(), loc};
+              string_constants.erase(eid);
+            }
+            block.add(code_frontend_assignt{
+              symbol_table.lookup_ref(eid).symbol_expr(), std::move(val)});
+            ++ci;
+          }
+          continue;
+        }
+      }
       if(elts.is_array() && is_python_list_type(rhs.type()))
       {
         const auto &list_st = to_struct_type(rhs.type());

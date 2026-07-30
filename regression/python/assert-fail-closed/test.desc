@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+python-not-encoded.*assertion could not be encoded
+^VERIFICATION FAILED$
+--
+--
+If the frontend learns to encode __loader__, replace with another
+unencodable shape — the pin is: no silent drop.

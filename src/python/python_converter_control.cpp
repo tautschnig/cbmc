@@ -29,7 +29,23 @@ codet python_convertert::convert_assert(const jsont &stmt)
 {
   exprt test = convert_expression(json_member(stmt, "test"));
   if(test.is_nil())
-    return code_skipt{};
+  {
+    // Fail-closed (PLR §7.3: the assert statement evaluates its
+    // condition — an assertion the front-end cannot encode must never
+    // be silently dropped, or VERIFICATION SUCCESSFUL means "I didn't
+    // encode your assertion" (a false-proof class reported against
+    // real sentinel-pattern code). Emit a definite-failure property
+    // carrying its own property class so it is distinguishable from a
+    // genuine assertion violation.
+    source_locationt loc = get_location(stmt);
+    loc.set_property_class("python-not-encoded");
+    loc.set_comment(
+      "assertion could not be encoded (unresolved name or unsupported "
+      "construct)");
+    code_assertt assertion{false_exprt{}};
+    assertion.add_source_location() = loc;
+    return std::move(assertion);
+  }
 
   // Ensure the test is boolean
   if(test.type() != bool_typet{})
