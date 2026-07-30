@@ -166,9 +166,32 @@ std::optional<exprt> python_convertert::try_dict_method(
       {
         exprt idx = from_integer(i, signedbv_typet{64});
         exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-        exprt match = equal_exprt{
-          python_dict_unbox_key(index_exprt{keys, idx}),
-          python_dict_unbox_key(key_expr)};
+        exprt key_at = python_dict_unbox_key(index_exprt{keys, idx});
+        exprt key_probe = python_dict_unbox_key(key_expr);
+        exprt match;
+        if(
+          is_python_string_type(key_at.type()) &&
+          is_python_string_type(key_probe.type()))
+        {
+          // PLR §6.4.6: string keys compare by CONTENT. The raw
+          // struct equality below compares the refined-string DATA
+          // POINTER, so a key that reached this dict through a
+          // return/call boundary (a rebuilt literal — fresh backing
+          // array) never matched its own probe and get() silently
+          // returned the default.
+          match = emit_string_bool_function(
+            ID_cprover_string_equal_func,
+            key_at,
+            key_probe,
+            symbol_table,
+            pending_checks);
+          if(match.type() != bool_typet{})
+            match = typecast_exprt{std::move(match), bool_typet{}};
+        }
+        else
+        {
+          match = equal_exprt{key_at, key_probe};
+        }
         result =
           if_exprt{and_exprt{in_range, match}, index_exprt{vals, idx}, result};
       }

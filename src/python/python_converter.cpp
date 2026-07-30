@@ -4477,6 +4477,95 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
         }
       }
     }
+    // Dict analogue of the list rebuild: coerce keys and values
+    // slot-wise into the target key/value element types, preserving
+    // the LENGTH. Bit-preservation matters for the ubiquitous
+    // stub shape `return {} / return {'K': v}` under a `-> dict`
+    // annotation: the two return literals have different concrete
+    // layouts, and the nondet fallback here destroyed the non-empty
+    // return's values (every poll-loop postcondition became
+    // unprovable — the wait-until-ACTIVE demo shape).
+    if(is_python_dict_type(target))
+    {
+      const auto &tgt_st = to_struct_type(target);
+      const auto &tgt_keys_arr = to_array_type(tgt_st.components()[1].type());
+      const auto &tgt_vals_arr = to_array_type(tgt_st.components()[2].type());
+      const typet &tgt_key = tgt_keys_arr.element_type();
+      const typet &tgt_val = tgt_vals_arr.element_type();
+      mp_integer cap_i;
+      if(
+        tgt_keys_arr.size().is_constant() &&
+        !to_integer(to_constant_expr(tgt_keys_arr.size()), cap_i))
+      {
+        const std::size_t cap = static_cast<std::size_t>(cap_i.to_long());
+        exprt::operandst keys, vals;
+        exprt src_len = nil_exprt{};
+        if(
+          e.id() == ID_struct && e.operands().size() == 3 &&
+          e.operands()[1].id() == ID_array && e.operands()[2].id() == ID_array)
+        {
+          src_len = e.operands()[0];
+          const auto &src_keys = e.operands()[1].operands();
+          const auto &src_vals = e.operands()[2].operands();
+          for(std::size_t i = 0;
+              i < std::min(src_keys.size(), src_vals.size()) && i < cap;
+              i++)
+          {
+            keys.push_back(coerce_element(src_keys[i], tgt_key));
+            vals.push_back(coerce_element(src_vals[i], tgt_val));
+          }
+        }
+        else
+        {
+          const auto &src_st = to_struct_type(e.type());
+          const auto &src_keys_arr =
+            to_array_type(src_st.components()[1].type());
+          const auto &src_vals_arr =
+            to_array_type(src_st.components()[2].type());
+          src_len = member_exprt{e, "length", signedbv_typet{64}};
+          member_exprt skeys{e, "keys", src_keys_arr};
+          member_exprt svals{e, "values", src_vals_arr};
+          mp_integer scap_i{0};
+          if(
+            src_keys_arr.size().is_constant() &&
+            !to_integer(to_constant_expr(src_keys_arr.size()), scap_i))
+          {
+            const std::size_t n =
+              std::min(cap, static_cast<std::size_t>(scap_i.to_long()));
+            for(std::size_t i = 0; i < n; i++)
+            {
+              const exprt idx = from_integer(i, signedbv_typet{64});
+              keys.push_back(coerce_element(index_exprt{skeys, idx}, tgt_key));
+              vals.push_back(coerce_element(index_exprt{svals, idx}, tgt_val));
+            }
+          }
+        }
+        if(!src_len.is_nil())
+        {
+          bool well_typed = true;
+          for(const auto &el : keys)
+            if(el.type() != tgt_key)
+              well_typed = false;
+          for(const auto &el : vals)
+            if(el.type() != tgt_val)
+              well_typed = false;
+          if(well_typed)
+          {
+            while(keys.size() < cap)
+              keys.push_back(safe_zero(tgt_key));
+            while(vals.size() < cap)
+              vals.push_back(safe_zero(tgt_val));
+            return struct_exprt{
+              {src_len,
+               array_exprt{
+                 std::move(keys), array_typet{tgt_key, tgt_keys_arr.size()}},
+               array_exprt{
+                 std::move(vals), array_typet{tgt_val, tgt_vals_arr.size()}}},
+              target};
+          }
+        }
+      }
+    }
     // No sound reinterpretation exists: over-approximate with a nondet
     // of the target type rather than emit an ill-typed cast.
     log_overapprox(
