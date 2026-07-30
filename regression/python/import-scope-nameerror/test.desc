@@ -1,3 +1,5 @@
 CORE
 main.py
 ^VERIFICATION FAILED$
+^EXIT=6$
+^SIGNAL=0$

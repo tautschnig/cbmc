@@ -2,6 +2,7 @@ CORE
 main.py
 --unwind 12
 ^EXIT=10$
+^SIGNAL=0$
 ^\[python-model-bound\.\d+\].*container capacity exceeded \(verifier model bound\): FAILURE$
 ^VERIFICATION FAILED$
 --

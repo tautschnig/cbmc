@@ -1,6 +1,8 @@
 CORE
 main.py
 
+^EXIT=10$
+^SIGNAL=0$
 ^VERIFICATION FAILED$
 ^SIGNAL=0$
 --

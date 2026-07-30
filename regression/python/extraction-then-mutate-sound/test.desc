@@ -2,4 +2,5 @@ CORE
 main.py
 --unwind 5
 ^EXIT=10$
+^SIGNAL=0$
 ^VERIFICATION FAILED$
