@@ -89,7 +89,7 @@ exprt python_convertert::python_value_structural_eq(
       const member_exprt lda{ll, "data", ld};
       const member_exprt rda{rl, "data", ld};
       exprt all = equal_exprt{llen, rlen};
-      for(int i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+      for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
       {
         const exprt idx = from_integer(i, signedbv_typet{64});
         const exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
@@ -622,7 +622,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
         const member_exprt lda{current_left, "data", lda_t};
         const member_exprt rda{right, "data", rda_t};
         exprt all = equal_exprt{llen, rlen};
-        for(int i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+        for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
         {
           const exprt idx = from_integer(i, signedbv_typet{64});
           const exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
@@ -668,7 +668,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
       const member_exprt lda{current_left, "data", lda_t};
       const member_exprt rda{right, "data", lda_t};
       exprt all = equal_exprt{llen, rlen};
-      for(int i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+      for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
       {
         const exprt idx = from_integer(i, signedbv_typet{64});
         const exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
@@ -871,7 +871,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
           else if(re.id() == ID_floatbv)
             target = re;
           exprt all_equal = equal_exprt{llen, rlen};
-          for(int i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+          for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
           {
             exprt idx = from_integer(i, signedbv_typet{64});
             exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
@@ -1581,7 +1581,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
           member_exprt lda{current_left, "data", ldata};
           member_exprt rda{right, "data", rdata};
           exprt all_equal = equal_exprt{llen, rlen};
-          for(int i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+          for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
           {
             exprt idx = from_integer(i, signedbv_typet{64});
             exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
@@ -1806,7 +1806,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
           member_exprt lda{current_left, "data", dt};
           member_exprt rda{right, "data", dt};
           exprt all_equal = equal_exprt{llen, rlen};
-          for(int i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+          for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
           {
             exprt idx = from_integer(i, signedbv_typet{64});
             exprt in_range = binary_relation_exprt{idx, ID_lt, llen};

@@ -2438,7 +2438,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
                 binary_relation_exprt{new_len, ID_lt, zero64}, zero64, new_len};
               // Build elems: rhs_data[star_idx + i] if i < length_rest
               exprt::operandst elems;
-              for(int k = 0; k < PYTHON_MAX_LIST_LENGTH; ++k)
+              for(std::size_t k = 0; k < PYTHON_MAX_LIST_LENGTH; ++k)
               {
                 exprt k_e = from_integer(k, signedbv_typet{64});
                 exprt src_idx = plus_exprt{
@@ -4916,7 +4916,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
         member_exprt klen{dict_aug_container, "length", signedbv_typet{64}};
         member_exprt karr{dict_aug_container, "keys", ktype};
         exprt present = false_exprt{};
-        for(int i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+        for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
         {
           exprt idx = from_integer(i, signedbv_typet{64});
           exprt ki = python_dict_unbox_key(index_exprt{karr, idx});

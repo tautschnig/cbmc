@@ -682,7 +682,7 @@ std::optional<exprt> python_convertert::try_list_method(
       if(search.type() != data_type.element_type())
         search = coerce_element(search, data_type.element_type());
       exprt count = from_integer(0, python_int_type());
-      for(int i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+      for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
       {
         exprt idx = from_integer(i, signedbv_typet{64});
         exprt match = and_exprt{
