@@ -1509,6 +1509,25 @@ private:
   /// overwhelm the string refinement solver.
   std::map<std::string, std::vector<std::string>> typed_dict_required;
 
+  /// Map from qualified function name to the TypedDict CLASS whose
+  /// name annotates the function's return type (directly or as a
+  /// PEP 484 forward-ref string). PEP 589: a TypedDict IS a plain
+  /// dict at runtime, so such a function's return slot is the
+  /// canonical string-keyed dict layout, and a body-less stub
+  /// (`...`) returns a dict with EXACTLY the declared keys and
+  /// nondet values — `resp['DeclaredKey']` reads an unconstrained
+  /// value while `resp['Undeclared']` raises KeyError (previously
+  /// the return was an unconstrained value / a class struct, so
+  /// misspelled-key reads verified silently — the ErgoSmithySDK
+  /// stub report).
+  std::map<std::string, std::string> function_return_typeddict;
+
+  /// TypedDict field names in declaration order, for the CLASS form
+  /// (`class R(TypedDict): k: str`). The functional form populates
+  /// typed_dict_required in convert_module instead. Used to
+  /// synthesize stub returns (see function_return_typeddict).
+  std::map<std::string, std::vector<std::string>> typeddict_class_fields;
+
   /// Map from TypedDict name to a per-field declared type. Each
   /// field is recorded as one of {"str", "int", "float", "bool",
   /// "list", "dict", "set", "bytes"} — the underlying Python

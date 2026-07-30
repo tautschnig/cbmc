@@ -1155,6 +1155,41 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   if(!returns.is_null())
   {
     return_type = convert_type_annotation(returns);
+    // PEP 589: a TypedDict is a plain dict at RUNTIME — a function
+    // annotated to return one (by name or PEP 484 forward-ref
+    // string) returns a string-keyed DICT, not a class instance.
+    // Model the return slot as the canonical dict layout and record
+    // the TypedDict so a body-less stub's fall-through synthesizes a
+    // dict with exactly the declared keys (nondet values): declared-
+    // key reads are unconstrained, undeclared-key reads raise
+    // KeyError. Previously the slot was the class STRUCT: subscripts
+    // on it were mismodelled, and on older revisions the value was
+    // fully unconstrained, so misspelled response keys (e.g.
+    // stage['InvokeUrl']) verified silently.
+    {
+      std::string td_name;
+      if(is_node_type(returns, "Name"))
+        td_name = json_string(json_member(returns, "id"));
+      else if(is_node_type(returns, "Constant"))
+      {
+        const jsont &rv = json_member(returns, "value");
+        if(rv.is_string())
+          td_name = rv.value;
+      }
+      if(!td_name.empty())
+      {
+        auto bit = class_bases.find(td_name);
+        if(
+          bit != class_bases.end() &&
+          std::find(bit->second.begin(), bit->second.end(), "TypedDict") !=
+            bit->second.end())
+        {
+          return_type =
+            python_dict_type(python_string_type(), python_value_type());
+          function_return_typeddict[qualified_func_name] = td_name;
+        }
+      }
+    }
     // Only register for missing-return checks when the
     // declared return type is NOT None. A function annotated
     // '-> None' legitimately falls through without returning
@@ -1924,7 +1959,60 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         return_type = updated_rt;
     }
     exprt none_expr;
-    if(is_python_value_type(return_type))
+    // PEP 589 stub returns: a function annotated to return a
+    // TypedDict whose body reaches the implicit fall-through (the
+    // ErgoSmithySDK `...`-body stub shape) returns a dict with
+    // EXACTLY the declared keys and nondet values — the honest
+    // model of "returns SOME value of the annotated shape". A
+    // None-sentinel return here would coerce to a garbage dict.
+    auto td_it = function_return_typeddict.find(qualified_func_name);
+    if(
+      td_it != function_return_typeddict.end() &&
+      is_python_dict_type(return_type))
+    {
+      const auto &canon_st = to_struct_type(return_type);
+      const auto &keys_arr = to_array_type(canon_st.components()[1].type());
+      const auto &vals_arr = to_array_type(canon_st.components()[2].type());
+      std::vector<std::string> fields;
+      auto fit = typeddict_class_fields.find(td_it->second);
+      if(fit != typeddict_class_fields.end())
+        fields = fit->second;
+      const std::size_t n =
+        std::min(fields.size(), static_cast<std::size_t>(PYTHON_MAX_DICT_SIZE));
+      exprt::operandst keys, vals;
+      for(std::size_t i = 0; i < n; i++)
+      {
+        keys.push_back(build_string_struct(fields[i]));
+        // Nondet value, materialised to a temp so the aggregate
+        // stays constant-foldable at the key positions.
+        static unsigned td_nd_ctr = 0;
+        const std::string ndn = "__td_stub_val_" + std::to_string(td_nd_ctr++);
+        const irep_idt ndid{qualify_name(ndn)};
+        if(symbol_table.lookup(ndid) == nullptr)
+        {
+          symbolt ts{ndid, python_value_type(), "python"};
+          ts.base_name = ndn;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          symbol_table.add(ts);
+        }
+        symbol_exprt ndsym = symbol_table.lookup_ref(ndid).symbol_expr();
+        body_block.add(code_frontend_assignt{
+          ndsym, side_effect_expr_nondett{python_value_type(), loc}});
+        vals.push_back(std::move(ndsym));
+      }
+      while(keys.size() < static_cast<std::size_t>(PYTHON_MAX_DICT_SIZE))
+      {
+        keys.push_back(safe_zero(keys_arr.element_type()));
+        vals.push_back(safe_zero(vals_arr.element_type()));
+      }
+      none_expr = struct_exprt{
+        {from_integer(n, signedbv_typet{64}),
+         array_exprt{std::move(keys), keys_arr},
+         array_exprt{std::move(vals), vals_arr}},
+        return_type};
+    }
+    else if(is_python_value_type(return_type))
       none_expr = python_none_value();
     else
     {
@@ -3746,6 +3834,33 @@ codet python_convertert::convert_class_def(const jsont &stmt)
       if(is_node_type(base, "Name"))
         class_bases[class_name].push_back(json_string(json_member(base, "id")));
     }
+  }
+
+  // PEP 589 class-form TypedDict: record the declared field names in
+  // declaration order (AnnAssign entries in the class body). Used to
+  // synthesize the dict-shaped return of body-less stubs annotated
+  // `-> 'ThisTypedDict'` (see function_return_typeddict).
+  if(
+    typeddict_class_fields.count(class_name) == 0 &&
+    std::find(
+      class_bases[class_name].begin(),
+      class_bases[class_name].end(),
+      "TypedDict") != class_bases[class_name].end())
+  {
+    const jsont &td_body = json_member(stmt, "body");
+    std::vector<std::string> fields;
+    if(td_body.is_array())
+    {
+      for(const auto &s : as_array(td_body))
+      {
+        if(!is_node_type(s, "AnnAssign"))
+          continue;
+        const jsont &t = json_member(s, "target");
+        if(is_node_type(t, "Name"))
+          fields.push_back(json_string(json_member(t, "id")));
+      }
+    }
+    typeddict_class_fields[class_name] = std::move(fields);
   }
 
   // PLR §3.3.2.1: compute C3 linearization MRO for this class.
