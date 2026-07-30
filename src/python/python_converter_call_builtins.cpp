@@ -562,6 +562,31 @@ std::optional<exprt> python_convertert::try_builtin_call(
     }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
+  else if(func_name == "object")
+  {
+    // PLR §3.1: `object()` creates a new featureless object; "every
+    // object has an identity ... 'is' compares the identity of two
+    // objects". The dominant verification-relevant use is the sentinel
+    // pattern (`_MISSING = object()` compared with `is`/`is not`).
+    // Model each call SITE as a fresh constant from a reserved
+    // sentinel range adjacent to the None/NotImplemented/Ellipsis
+    // sentinels: distinct sites compare non-identical, the same
+    // sentinel flowing through data (dict.get default, parameter)
+    // compares identical, and the value is non-None and truthy.
+    // Previously object() fell through to the unknown-call path, whose
+    // dropped assignment turned every read of the target into an
+    // unresolved name (a silent-drop false-proof vector), and whose
+    // nondet placeholder could collide with the None sentinel (a false
+    // alarm on `x is not None`).
+    //
+    // Known imprecision: a single call site executed repeatedly (e.g.
+    // `[object() for ...]`) yields the SAME sentinel for all
+    // executions, over-equating identities CPython distinguishes.
+    static unsigned object_sentinel_ctr = 0;
+    return from_integer(
+      python_none_sentinel_int() + 16 + (object_sentinel_ctr++),
+      python_int_type());
+  }
   else if(func_name == "id")
   {
     // Built-in id(): return a deterministic identity. For an

@@ -2302,6 +2302,14 @@ bool python_convertert::convert()
                         callee == "nondet_int" ||
                         callee == "__VERIFIER_nondet_int")
                         var_type = python_int_type();
+                      else if(callee == "object")
+                        // The object() sentinel model returns a
+                        // reserved int-typed constant (see the builtin
+                        // conversion); pre-register so pass-1c function
+                        // bodies resolve module-level sentinels like
+                        // `_MISSING = object()` (PLR §3.1 identity
+                        // pattern).
+                        var_type = python_int_type();
                       else if(
                         callee == "nondet_float" ||
                         callee == "__VERIFIER_nondet_float")
