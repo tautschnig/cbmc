@@ -37,15 +37,45 @@
 /// Can be overridden with --python-max-string-length.
 #define PYTHON_STRING_TAG "tag-__CPROVER_refined_string_type"
 
-#ifndef PYTHON_MAX_STRING_LENGTH
-#  define PYTHON_MAX_STRING_LENGTH 64
+// The capacity limits below are RUNTIME-configurable (set from
+// --python-max-string-length / --python-max-list-length /
+// --python-max-dict-size in python_languaget::set_language_options —
+// they used to be compile-time-only, which silently ignored the
+// documented flags). A -DPYTHON_MAX_STRING_LENGTH=N style compile-time
+// override still works: it seeds the default of the runtime setting.
+#ifdef PYTHON_MAX_STRING_LENGTH
+#  define PYTHON_MAX_STRING_LENGTH_DEFAULT PYTHON_MAX_STRING_LENGTH
+#  undef PYTHON_MAX_STRING_LENGTH
+#else
+#  define PYTHON_MAX_STRING_LENGTH_DEFAULT 64
 #endif
+
+/// Process-wide setting: the maximum modelled Python string length.
+inline std::size_t &python_max_string_length_config()
+{
+  static std::size_t value = PYTHON_MAX_STRING_LENGTH_DEFAULT;
+  return value;
+}
+
+#define PYTHON_MAX_STRING_LENGTH (python_max_string_length_config())
 
 /// Maximum length for Python lists in verification.
 /// Can be overridden with --python-max-list-length.
-#ifndef PYTHON_MAX_LIST_LENGTH
-#  define PYTHON_MAX_LIST_LENGTH 16
+#ifdef PYTHON_MAX_LIST_LENGTH
+#  define PYTHON_MAX_LIST_LENGTH_DEFAULT PYTHON_MAX_LIST_LENGTH
+#  undef PYTHON_MAX_LIST_LENGTH
+#else
+#  define PYTHON_MAX_LIST_LENGTH_DEFAULT 16
 #endif
+
+/// Process-wide setting: the maximum modelled Python list length.
+inline std::size_t &python_max_list_length_config()
+{
+  static std::size_t value = PYTHON_MAX_LIST_LENGTH_DEFAULT;
+  return value;
+}
+
+#define PYTHON_MAX_LIST_LENGTH (python_max_list_length_config())
 
 /// Process-wide flag: when true (set by the Python converter under
 /// --python-smt-strings), Python `str` is represented as the native
@@ -270,7 +300,23 @@ inline bool is_python_set_type(const typet &type)
   return to_struct_type(type).get_tag() == "python_set";
 }
 
-#define PYTHON_MAX_DICT_SIZE 16
+/// Maximum number of dict slots in verification.
+/// Can be overridden with --python-max-dict-size.
+#ifdef PYTHON_MAX_DICT_SIZE
+#  define PYTHON_MAX_DICT_SIZE_DEFAULT PYTHON_MAX_DICT_SIZE
+#  undef PYTHON_MAX_DICT_SIZE
+#else
+#  define PYTHON_MAX_DICT_SIZE_DEFAULT 16
+#endif
+
+/// Process-wide setting: the maximum modelled Python dict size.
+inline std::size_t &python_max_dict_size_config()
+{
+  static std::size_t value = PYTHON_MAX_DICT_SIZE_DEFAULT;
+  return value;
+}
+
+#define PYTHON_MAX_DICT_SIZE (python_max_dict_size_config())
 
 /// Return the CBMC type for an array-based Python dict.
 /// On the native SMT-String back-end, a dict's string KEYS are boxed behind a

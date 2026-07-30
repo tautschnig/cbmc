@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 24 --no-unwinding-assertions --python-max-list-length 32
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+python-model-bound.*FAILURE
+--
+Without the flag both functions fail with python-model-bound at 16
+(the loud fail-closed capacity property). The bound properties may
+appear as SUCCESS here; only a FAILURE is forbidden.

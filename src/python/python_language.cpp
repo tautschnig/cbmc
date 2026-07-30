@@ -76,10 +76,23 @@ void python_languaget::set_language_options(
                          : python_string_kindt::refined;
   std::string max_str = options.get_option("python-max-string-length");
   if(!max_str.empty())
+  {
     max_string_length = std::stoul(max_str);
+    // Propagate into the process-wide setting the converter's type
+    // factories read. The member alone was parsed-but-never-read: the
+    // documented flag silently did nothing and recompiling with
+    // -DPYTHON_MAX_STRING_LENGTH was the only working override.
+    python_max_string_length_config() = max_string_length;
+  }
   std::string max_lst = options.get_option("python-max-list-length");
   if(!max_lst.empty())
+  {
     max_list_length = std::stoul(max_lst);
+    python_max_list_length_config() = max_list_length;
+    // Per the documented help text, this flag sizes list AND dict
+    // capacity.
+    python_max_dict_size_config() = max_list_length;
+  }
 }
 
 /// The Python code that converts a .py file to a JSON AST.
