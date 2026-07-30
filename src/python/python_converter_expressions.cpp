@@ -361,7 +361,7 @@ exprt python_convertert::convert_if_exp(const jsont &expr)
   // else 1' silently widening the int 1 to 1.0.
   if(body.type() != orelse.type())
   {
-    auto category = [this](const typet &t) -> int
+    auto category = [](const typet &t) -> int
     {
       // Numeric category (int / float / bool) — typecast-OK.
       if(

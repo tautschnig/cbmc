@@ -913,7 +913,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     // rather than coercing through an incompatible slot (which yields a
     // value-losing nondet). Restricted to scalar/string on both sides so
     // container/class/unsupported-op results still coerce as before.
-    auto simple_value_type = [this](const typet &t)
+    auto simple_value_type = [](const typet &t)
     {
       return t.id() == ID_signedbv || t.id() == ID_unsignedbv ||
              t.id() == ID_integer || t.id() == ID_floatbv ||
@@ -3364,7 +3364,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
               to_array_type(cs.components()[1].type()).element_type();
             const typet cv =
               to_array_type(cs.components()[2].type()).element_type();
-            auto storable = [this](const typet &t)
+            auto storable = [](const typet &t)
             {
               return t.id() == ID_signedbv || t.id() == ID_integer ||
                      t.id() == ID_floatbv || t.id() == ID_bool ||
