@@ -1770,20 +1770,75 @@ bool python_convertert::convert()
     // Collect param annotations to determine which params are
     // unannotated for each known function.
     std::map<std::string, std::vector<bool>> func_param_unannotated;
+    // Annotation-distrust track (PLR §3.1): the ANNOTATED type of each
+    // param position, for both module-level functions (call args align
+    // with def args) and classes (a `C(...)` call's args align with
+    // C.__init__'s args AFTER self). A call-site argument whose
+    // statically-known type contradicts the annotation records the
+    // position in violated_annotation_params.
+    std::map<std::string, std::vector<typet>> func_param_annotation;
+    auto collect_annotations =
+      [&](const std::string &fn_name, const jsont &fn_args)
+    {
+      const jsont &params = json_member(fn_args, "args");
+      if(!params.is_array())
+        return;
+      auto &flags = func_param_unannotated[fn_name];
+      auto &anns = func_param_annotation[fn_name];
+      for(const auto &p : as_array(params))
+      {
+        const jsont &pa = json_member(p, "annotation");
+        flags.push_back(pa.is_null());
+        typet at;
+        if(!pa.is_null() && is_node_type(pa, "Name"))
+        {
+          const std::string an = json_string(json_member(pa, "id"));
+          if(an == "int")
+            at = python_int_type();
+          else if(an == "float")
+            at = double_type();
+          else if(an == "bool")
+            at = bool_typet{};
+          else if(an == "str")
+            at = python_string_type();
+        }
+        anns.push_back(at); // empty typet = no scalar annotation
+      }
+    };
     for(const auto &stmt : as_array(body))
     {
       if(
-        !is_node_type(stmt, "FunctionDef") &&
-        !is_node_type(stmt, "AsyncFunctionDef"))
-        continue;
-      std::string fn_name = json_string(json_member(stmt, "name"));
-      const jsont &fn_args = json_member(stmt, "args");
-      const jsont &params = json_member(fn_args, "args");
-      if(!params.is_array())
-        continue;
-      auto &flags = func_param_unannotated[fn_name];
-      for(const auto &p : as_array(params))
-        flags.push_back(json_member(p, "annotation").is_null());
+        is_node_type(stmt, "FunctionDef") ||
+        is_node_type(stmt, "AsyncFunctionDef"))
+      {
+        collect_annotations(
+          json_string(json_member(stmt, "name")), json_member(stmt, "args"));
+      }
+      else if(is_node_type(stmt, "ClassDef"))
+      {
+        // Class constructor: `C(args...)` binds to __init__(self, ...).
+        const jsont &cbody = json_member(stmt, "body");
+        if(!cbody.is_array())
+          continue;
+        for(const auto &m : as_array(cbody))
+        {
+          if(
+            !is_node_type(m, "FunctionDef") ||
+            json_string(json_member(m, "name")) != "__init__")
+            continue;
+          const std::string key =
+            json_string(json_member(stmt, "name")) + "::__init__";
+          collect_annotations(key, json_member(m, "args"));
+          // Drop the leading `self` so positions align with call args.
+          auto &flags = func_param_unannotated[key];
+          auto &anns = func_param_annotation[key];
+          if(!flags.empty())
+            flags.erase(flags.begin());
+          if(!anns.empty())
+            anns.erase(anns.begin());
+          break;
+        }
+      }
     }
     // Infer arg types per call site.
     auto infer_arg_type = [&](const jsont &arg) -> typet
@@ -1833,12 +1888,19 @@ bool python_convertert::convert()
       if(!is_node_type(fn, "Name"))
         return;
       std::string callee = json_string(json_member(fn, "id"));
+      // Constructor call: positions align with __init__ minus self.
+      if(
+        func_param_unannotated.find(callee) == func_param_unannotated.end() &&
+        func_param_unannotated.find(callee + "::__init__") !=
+          func_param_unannotated.end())
+        callee += "::__init__";
       auto fp_it = func_param_unannotated.find(callee);
       if(fp_it == func_param_unannotated.end())
         return;
       const jsont &cargs = json_member(n, "args");
       if(!cargs.is_array())
         return;
+      const auto ann_it = func_param_annotation.find(callee);
       std::size_t i = 0;
       for(const auto &a : as_array(cargs))
       {
@@ -1859,6 +1921,28 @@ bool python_convertert::convert()
               m.erase(e);
             }
           }
+        }
+        // Annotation-distrust (PLR §3.1): an ANNOTATED scalar param
+        // called with a statically-typed argument of a DIFFERENT
+        // scalar category is a runtime-legal call CPython executes
+        // (annotations are not enforced); punning the value into the
+        // annotated representation produced wrong verdicts (false
+        // alarm `R(1)` with `kind: str` on the default backend, an
+        // invariant abort on the native one). Numeric-category pairs
+        // (int/bool/float) inter-convert soundly and stay precise.
+        if(
+          ann_it != func_param_annotation.end() && i < ann_it->second.size() &&
+          !ann_it->second[i].id().empty())
+        {
+          const typet inferred = infer_arg_type(a);
+          const auto numeric = [&](const typet &t) {
+            return t == python_int_type() || t == double_type() ||
+                   t == bool_typet{};
+          };
+          if(
+            !inferred.id().empty() && inferred != ann_it->second[i] &&
+            !(numeric(inferred) && numeric(ann_it->second[i])))
+            violated_annotation_params[callee].insert(i);
         }
         ++i;
       }

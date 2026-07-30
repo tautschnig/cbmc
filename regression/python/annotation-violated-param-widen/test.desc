@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 4 --no-unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Invariant check failed
+--
+CPython ground truth: both asserts pass (int equality; str equality).
