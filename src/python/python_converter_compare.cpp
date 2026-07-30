@@ -573,8 +573,40 @@ exprt python_convertert::convert_compare(const jsont &expr)
       is_python_value_type(current_left.type()) &&
       !is_python_value_type(right.type()))
     {
-      // For "x in lst": unwrap x but keep lst
-      current_left = unwrap_value(current_left, right.type());
+      // For "x in c": the needle must be unwrapped to c's ELEMENT
+      // type, never to c's own type — unwrapping a STR-tagged value
+      // "to a list" dereferences __list_ptr (garbage for a string)
+      // and refuted membership of any string that flowed through an
+      // untyped parameter. For string-element and value-element
+      // containers keep the needle WRAPPED: the membership scans
+      // dispatch on the runtime tag (value_equal /
+      // python_value_structural_eq) and compare content correctly.
+      if(op == "In" || op == "NotIn")
+      {
+        std::optional<typet> elem_target;
+        if(
+          is_python_list_type(right.type()) ||
+          is_python_set_type(right.type()) ||
+          is_python_tuple_type(right.type()))
+        {
+          const auto &st = to_struct_type(right.type());
+          if(st.components().size() >= 2)
+          {
+            const typet &et =
+              to_array_type(st.components()[1].type()).element_type();
+            if(
+              !is_python_string_type(et) && !is_python_value_type(et) &&
+              et.id() != ID_struct && et.id() != ID_struct_tag)
+              elem_target = et;
+          }
+        }
+        else if(is_python_string_type(right.type()))
+          elem_target = python_string_type();
+        if(elem_target.has_value())
+          current_left = unwrap_value(current_left, elem_target.value());
+      }
+      else
+        current_left = unwrap_value(current_left, right.type());
     }
     (void)tag_of; // unused for now; reserved for future cross-type compares
 
@@ -2769,6 +2801,20 @@ exprt python_convertert::convert_compare(const jsont &expr)
               match = equal_exprt{current_left, elem};
             }
           }
+          else if(
+            is_python_value_type(current_left.type()) &&
+            !is_python_value_type(elem.type()))
+          {
+            // PLR §6.10.1: a tagged-union needle against a TYPED
+            // element must compare by VALUE, not by representation.
+            // safe_typecast would unwrap the needle to the element
+            // type (e.g. read __int_val bits against a string
+            // struct) or compare a fresh string handle against an
+            // interned one — both wrongly refute membership of a
+            // string that flowed through an untyped parameter.
+            // Wrap the element and dispatch on the runtime tag.
+            match = value_equal(current_left, wrap_value(elem));
+          }
           else
           {
             // Ensure types match for equality comparison
@@ -2943,15 +2989,27 @@ exprt python_convertert::convert_compare(const jsont &expr)
             exprt idx = from_integer(i, signedbv_typet{64});
             exprt in_range = binary_relation_exprt{idx, ID_lt, list_len};
             exprt elem = index_exprt{list_data, idx};
-            exprt unwrapped = unwrap_value(elem, current_left.type());
-            exprt cmp_left = current_left;
-            if(is_python_value_type(cmp_left.type()))
-              cmp_left = unwrap_value(cmp_left, python_int_type());
-            if(is_python_value_type(unwrapped.type()))
-              unwrapped = unwrap_value(unwrapped, cmp_left.type());
-            if(cmp_left.type() != unwrapped.type())
-              unwrapped = safe_typecast(unwrapped, cmp_left.type());
-            exprt match = equal_exprt{cmp_left, unwrapped};
+            exprt match;
+            if(is_python_value_type(elem.type()))
+            {
+              // PLR §6.10.1: tag-dispatched VALUE equality. The
+              // previous unwrap-both-sides-to-int comparison
+              // misjudged string elements in both directions
+              // (raw handle bits / truncated struct reads).
+              match = value_equal(wrap_value(current_left), elem);
+            }
+            else
+            {
+              exprt unwrapped = unwrap_value(elem, current_left.type());
+              exprt cmp_left = current_left;
+              if(is_python_value_type(cmp_left.type()))
+                cmp_left = unwrap_value(cmp_left, python_int_type());
+              if(is_python_value_type(unwrapped.type()))
+                unwrapped = unwrap_value(unwrapped, cmp_left.type());
+              if(cmp_left.type() != unwrapped.type())
+                unwrapped = safe_typecast(unwrapped, cmp_left.type());
+              match = equal_exprt{cmp_left, unwrapped};
+            }
             list_scan = or_exprt{list_scan, and_exprt{in_range, match}};
           }
         }

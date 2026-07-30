@@ -2666,6 +2666,74 @@ std::optional<exprt> python_convertert::try_method_call(
           return std::move(*r);
       }
 
+      // PLR §6.4.6: dict methods on a BOXED dict (a python_value with
+      // the DICT tag — the shape of any dict that crossed an untyped
+      // call boundary, e.g. `def f(params): params.get('Bucket')`).
+      // wrap_value canonicalizes boxed string-keyed dicts to
+      // dict[str, python_value], so __class_ptr can be dereferenced at
+      // that layout and dispatched to the SAME concrete-dict handler.
+      // Previously this fell through to an opaque nondet: every value
+      // read from a dict parameter was lost (vacuous downstream
+      // checks). Read-only methods only — mutations through the box
+      // would need write-back and stay conservative.
+      if(
+        is_python_value_type(obj_base_type) &&
+        (method_name == "get" || method_name == "keys" ||
+         method_name == "values" || method_name == "items" ||
+         method_name == "copy"))
+      {
+        // If ANY user class defines a method of this name, the pv may
+        // be a CLASS-tagged instance of it — defer to the class-method
+        // dispatch below (which resolves per-instance via __class_ptr)
+        // rather than shadowing it with the dict route.
+        bool user_class_defines = false;
+        for(const auto &p : class_types)
+          if(
+            symbol_table.lookup(
+              irep_idt{"python::" + p.first + "::" + method_name}) != nullptr)
+          {
+            user_class_defines = true;
+            break;
+          }
+        if(!user_class_defines)
+        {
+          const typet canon =
+            python_dict_type(python_string_type(), python_value_type());
+          dereference_exprt unboxed{typecast_exprt{
+            python_value_class_ptr(obj), pointer_typet{canon, 64}}};
+          if(auto r = try_dict_method(expr, unboxed, canon, method_name, args))
+          {
+            // Sound only when the runtime tag IS DICT; otherwise keep the
+            // previous opaque nondet result.
+            exprt res = std::move(*r);
+            if(!is_python_value_type(res.type()))
+              res = wrap_value(res);
+            // Materialise: side-effect results nested in if_exprt arms are
+            // not lowered by goto-convert.
+            static unsigned bd_tmp_ctr = 0;
+            const std::string bdn =
+              "__boxdict_res_" + std::to_string(bd_tmp_ctr++);
+            const irep_idt bdid{qualify_name(bdn)};
+            if(symbol_table.lookup(bdid) == nullptr)
+            {
+              symbolt ts{bdid, python_value_type(), "python"};
+              ts.base_name = bdn;
+              ts.is_lvalue = true;
+              ts.is_state_var = true;
+              ts.is_static_lifetime = current_function.empty();
+              symbol_table.add(ts);
+            }
+            symbol_exprt bdsym = symbol_table.lookup_ref(bdid).symbol_expr();
+            pending_checks.push_back(code_frontend_assignt{bdsym, res});
+            return exprt{if_exprt{
+              python_value_is(obj, python_type_tagt::DICT),
+              bdsym,
+              side_effect_expr_nondett{
+                python_value_type(), get_location(expr)}}};
+          }
+        }
+      }
+
       // Python set methods. Extracted to
       // python_converter_call_set_methods.cpp for clarity.
       if(is_python_set_type(obj_base_type))

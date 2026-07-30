@@ -2127,11 +2127,83 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           class_getitem_or_nondet()};
       }
     }
+    // PLR §6.3.2: string key on a python_value with the DICT tag — read
+    // the value slot precisely. The boxed dict travels as __class_ptr →
+    // dict[str, python_value] (the same layout the In/NotIn membership
+    // dispatch assumes). Previously this fell through to the sound
+    // nondet, so ANY read from a dict that crossed a call boundary
+    // (`def f(params): params["Bucket"]` — the boto3 stub shape) lost
+    // the value: every downstream comparison became vacuous. Scan the
+    // keys under the length guard and select the matching value; a
+    // missing key stays the sound nondet (KeyError modelling of boxed
+    // dicts is a follow-up).
+    {
+      exprt key_item = slice;
+      if(!is_python_string_type(key_item.type()))
+      {
+        if(is_python_value_type(key_item.type()))
+          key_item = unwrap_value(key_item, python_string_type());
+        else
+        {
+          auto sv = extract_string_value(key_item);
+          if(sv.has_value())
+            key_item = build_string_struct(sv.value());
+        }
+      }
+      if(is_python_string_type(key_item.type()))
+      {
+        struct_typet dict_st_layout =
+          python_dict_type(python_string_type(), python_value_type());
+        pointer_typet dict_ptr_type{dict_st_layout, 64};
+        exprt class_ptr = python_value_class_ptr(value);
+        dereference_exprt dict_val{typecast_exprt{class_ptr, dict_ptr_type}};
+        member_exprt dict_len{dict_val, "length", signedbv_typet{64}};
+        const auto &dict_comps = to_struct_type(dict_st_layout).components();
+        member_exprt dict_keys{dict_val, "keys", dict_comps[1].type()};
+        member_exprt dict_vals{dict_val, "values", dict_comps[2].type()};
+        exprt result{
+          side_effect_expr_nondett{python_value_type(), get_location(expr)}};
+        // Materialise the nondet fallback into a temp so it appears once.
+        static unsigned dr_tmp_ctr = 0;
+        const std::string drn = "__dictread_nd_" + std::to_string(dr_tmp_ctr++);
+        const irep_idt drid{qualify_name(drn)};
+        if(symbol_table.lookup(drid) == nullptr)
+        {
+          symbolt ts{drid, python_value_type(), "python"};
+          ts.base_name = drn;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          ts.is_static_lifetime = current_function.empty();
+          symbol_table.add(ts);
+        }
+        symbol_exprt drsym = symbol_table.lookup_ref(drid).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{drsym, result});
+        exprt selected{drsym};
+        for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+        {
+          exprt idx = from_integer(i, signedbv_typet{64});
+          exprt in_range = binary_relation_exprt{idx, ID_lt, dict_len};
+          exprt key_at = python_dict_unbox_key(index_exprt{dict_keys, idx});
+          exprt key_eq = emit_string_bool_function(
+            ID_cprover_string_equal_func,
+            key_at,
+            key_item,
+            symbol_table,
+            pending_checks);
+          if(key_eq.type() != bool_typet{})
+            key_eq = typecast_exprt{std::move(key_eq), bool_typet{}};
+          selected = if_exprt{
+            and_exprt{in_range, key_eq},
+            index_exprt{dict_vals, idx},
+            std::move(selected)};
+        }
+        return if_exprt{
+          python_value_is(value, python_type_tagt::DICT),
+          std::move(selected),
+          class_getitem_or_nondet()};
+      }
+    }
     return class_getitem_or_nondet();
-    // (unreachable fall-through retained for documentation)
-    // String key on a python_value (DICT tag) is not yet resolved to a
-    // precise value here; fall through to the sound nondet python_value
-    // over-approximation below rather than mis-indexing a list.
   }
 
   // PLR §6.3.2: subscripting a value of a concrete non-subscriptable scalar
