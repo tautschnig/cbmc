@@ -2168,13 +2168,24 @@ bool python_convertert::convert()
                       // Infer element type from first constant
                       typet elem_type = python_int_type();
                       bool mixed_types = false;
+                      // A BYTES constant serializes as b'..' / b".." in
+                      // the AST JSON; a plain str constant is the raw
+                      // text. Checking only value[0] != 'b' misreads
+                      // ordinary strings that happen to start with a
+                      // 'b' (e.g. "backup-...") as bytes, degrading the
+                      // pre-registered element type and PUNNING the
+                      // layout against the pass-2 assignment.
+                      const auto is_bytes_repr = [](const std::string &v) {
+                        return v.size() >= 2 && v[0] == 'b' &&
+                               (v[1] == '\'' || v[1] == '"');
+                      };
                       if(elts.is_array() && !as_array(elts).empty())
                       {
                         const jsont &first = *as_array(elts).begin();
                         const jsont &fv = json_member(first, "value");
                         bool first_is_str = fv.is_string() &&
                                             !fv.value.empty() &&
-                                            fv.value[0] != 'b';
+                                            !is_bytes_repr(fv.value);
                         bool first_is_num = fv.is_number();
                         if(first_is_str)
                           elem_type = python_string_type();
@@ -2191,7 +2202,7 @@ bool python_convertert::convert()
                         {
                           const jsont &ev = json_member(e, "value");
                           bool is_str = ev.is_string() && !ev.value.empty() &&
-                                        ev.value[0] != 'b';
+                                        !is_bytes_repr(ev.value);
                           if(first_is_str != is_str)
                             mixed_types = true;
                         }
