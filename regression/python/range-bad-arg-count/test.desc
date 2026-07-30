@@ -1,6 +1,8 @@
 CORE
 main.py
 --unwind 3
+^EXIT=10$
+^SIGNAL=0$
 ^\[exception.*uncaught exception: FAILURE$
 ^VERIFICATION FAILED$
 --

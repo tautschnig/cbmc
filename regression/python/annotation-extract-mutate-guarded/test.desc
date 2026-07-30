@@ -2,5 +2,6 @@ CORE
 main.py
 --unwind 6
 ^EXIT=10$
+^SIGNAL=0$
 ^VERIFICATION FAILED$
 --

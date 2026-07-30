@@ -2,5 +2,6 @@ CORE
 main.py
 --python-check-annotations --unwind 6
 ^EXIT=10$
+^SIGNAL=0$
 ^VERIFICATION FAILED$
 --

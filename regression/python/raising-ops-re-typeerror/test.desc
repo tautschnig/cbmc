@@ -1,4 +1,6 @@
 CORE
 main.py
 --python-raising-ops-check
+^EXIT=10$
+^SIGNAL=0$
 ^VERIFICATION FAILED$

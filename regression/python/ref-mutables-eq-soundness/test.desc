@@ -2,5 +2,6 @@ CORE
 main.py
 --python-ref-mutables --unwind 6
 ^EXIT=10$
+^SIGNAL=0$
 ^VERIFICATION FAILED$
 --

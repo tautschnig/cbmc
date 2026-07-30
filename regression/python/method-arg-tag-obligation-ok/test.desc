@@ -3,5 +3,6 @@ main.py
 --unwind 6
 ^VERIFICATION SUCCESSFUL$
 ^EXIT=0$
+^SIGNAL=0$
 --
 ^\[python-type-error\.\d+\].*: FAILURE$

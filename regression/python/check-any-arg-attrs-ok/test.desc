@@ -3,5 +3,6 @@ main.py
 --python-check-any-arg-attrs --unwind 5 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$
 ^EXIT=0$
+^SIGNAL=0$
 --
 ^\[attribute-error
