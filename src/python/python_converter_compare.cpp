@@ -2012,6 +2012,15 @@ exprt python_convertert::convert_compare(const jsont &expr)
             materialise_if_needed(right);
             auto to_str = [](const exprt &s) -> exprt
             {
+              // Native SMT String operands pass through unchanged: the
+              // {length, data} struct view below is the refined-string
+              // representation, and member_exprt over the ID_string
+              // sort is ill-formed (an invariant abort found via
+              // `<str field> == <int>` on the native backend).
+              // emit_string_bool_function dispatches native operands
+              // directly.
+              if(s.type().id() == ID_string)
+                return s;
               if(s.id() == ID_struct && s.operands().size() == 2)
                 return s;
               return struct_exprt(
@@ -2276,6 +2285,15 @@ exprt python_convertert::convert_compare(const jsont &expr)
           {
             auto to_str = [](const exprt &s) -> exprt
             {
+              // Native SMT String operands pass through unchanged: the
+              // {length, data} struct view below is the refined-string
+              // representation, and member_exprt over the ID_string
+              // sort is ill-formed (an invariant abort found via
+              // `<str field> == <int>` on the native backend).
+              // emit_string_bool_function dispatches native operands
+              // directly.
+              if(s.type().id() == ID_string)
+                return s;
               if(s.id() == ID_struct && s.operands().size() == 2)
                 return s;
               return struct_exprt(

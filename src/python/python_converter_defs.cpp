@@ -844,6 +844,30 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     typet param_type = annotation.is_null()
                          ? python_value_type()
                          : convert_type_annotation(annotation);
+    // PLR §3.1 annotation-distrust (parameter member of the slot-pun /
+    // Any-dominance family): a scalar-annotated param that some
+    // call site provably violates (pass 0.28) is widened to
+    // python_value, so the runtime-legal mismatched value keeps its
+    // tag instead of being punned into the annotated representation
+    // (wrong verdicts / a native-backend abort on `R(1)` with
+    // `kind: str`). Under --python-check-annotations the concrete type
+    // is kept so the mismatch is reported as a property instead.
+    if(!annotation.is_null() && !python_check_annotations)
+    {
+      const bool is_ctor_key = qualified_func_name.size() > 10 &&
+                               qualified_func_name.rfind("::__init__") ==
+                                 qualified_func_name.size() - 10;
+      auto v_it = violated_annotation_params.find(qualified_func_name);
+      if(v_it != violated_annotation_params.end())
+      {
+        // Constructor keys record call-arg positions EXCLUDING self.
+        const std::size_t adj = is_ctor_key ? 1 : 0;
+        if(
+          param_idx_in_args >= adj &&
+          v_it->second.count(param_idx_in_args - adj) > 0)
+          param_type = python_value_type();
+      }
+    }
     // PLR §3.1: when the parameter is unannotated, look up
     // the type inferred from call-site arguments (Pass 0.28).
     // A unique inferred type across all callers is treated as
@@ -2602,6 +2626,75 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   }
 
   // Scan class body for class-level attributes (AnnAssign outside methods)
+  // PLR §3.1 annotation-distrust, class-level-annotation member: a field
+  // declared `x: T` at class level and initialised by a plain
+  // `self.x = <param>` in __init__ where the PARAM's annotation is
+  // provably violated at a call site (pass 0.28) must widen to
+  // python_value alongside the param — otherwise the field store puns
+  // the mismatched runtime value into T (`kind: str` + `R(1)` compared
+  // ints as string handles: a wrong verdict on the default backend and
+  // an invariant abort on the native one).
+  std::set<std::string> attrs_fed_by_violated;
+  if(!python_check_annotations && body.is_array())
+  {
+    auto v_it = violated_annotation_params.find(class_name + "::__init__");
+    if(v_it != violated_annotation_params.end())
+    {
+      for(const auto &item : as_array(body))
+      {
+        if(
+          !is_node_type(item, "FunctionDef") ||
+          json_string(json_member(item, "name")) != "__init__")
+          continue;
+        // Param name -> call-arg position (excluding self).
+        std::map<std::string, std::size_t> param_pos;
+        const jsont &iargs = json_member(json_member(item, "args"), "args");
+        if(iargs.is_array())
+        {
+          std::size_t pi = 0;
+          for(const auto &p : as_array(iargs))
+          {
+            if(pi > 0)
+              param_pos[json_string(json_member(p, "arg"))] = pi - 1;
+            ++pi;
+          }
+        }
+        const jsont &ibody = json_member(item, "body");
+        if(!ibody.is_array())
+          break;
+        for(const auto &s : as_array(ibody))
+        {
+          const jsont *tgt = nullptr;
+          const jsont *val = nullptr;
+          if(is_node_type(s, "Assign"))
+          {
+            const jsont &tgts = json_member(s, "targets");
+            if(tgts.is_array() && as_array(tgts).size() == 1)
+              tgt = &*as_array(tgts).begin();
+            val = &json_member(s, "value");
+          }
+          else if(is_node_type(s, "AnnAssign"))
+          {
+            tgt = &json_member(s, "target");
+            val = &json_member(s, "value");
+          }
+          if(
+            tgt == nullptr || val == nullptr ||
+            !is_node_type(*tgt, "Attribute") ||
+            !is_node_type(json_member(*tgt, "value"), "Name") ||
+            json_string(json_member(json_member(*tgt, "value"), "id")) !=
+              "self" ||
+            !is_node_type(*val, "Name"))
+            continue;
+          auto pp = param_pos.find(json_string(json_member(*val, "id")));
+          if(pp != param_pos.end() && v_it->second.count(pp->second) > 0)
+            attrs_fed_by_violated.insert(
+              json_string(json_member(*tgt, "attr")));
+        }
+        break;
+      }
+    }
+  }
   if(body.is_array())
   {
     for(const auto &item : as_array(body))
@@ -2623,6 +2716,8 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           {
             typet attr_type =
               convert_type_annotation(json_member(item, "annotation"));
+            if(attrs_fed_by_violated.count(attr_name) > 0)
+              attr_type = python_value_type();
             components.push_back(
               struct_typet::componentt{attr_name, attr_type});
             // PLR §9.4: track this as a class-level attribute
@@ -2996,14 +3091,32 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                 const jsont &margs = json_member(*method_node, "args");
                 const jsont &params = json_member(margs, "args");
                 if(params.is_array())
+                {
+                  std::size_t p_idx = 0;
                   for(const auto &p : as_array(params))
+                  {
                     if(json_string(json_member(p, "arg")) == vn)
                     {
                       const jsont &pa = json_member(p, "annotation");
                       if(!pa.is_null())
                         vt = convert_type_annotation(pa);
+                      // PLR §3.1 annotation-distrust: if this __init__
+                      // param's annotation is provably violated at some
+                      // call site (pass 0.28), its declared type is not
+                      // trustworthy — treat as Any so the FIELD widens
+                      // too (`self.kind = kind` with a violated
+                      // `kind: str` must not pin the field to str).
+                      auto v_it = violated_annotation_params.find(
+                        class_name + "::__init__");
+                      if(
+                        v_it != violated_annotation_params.end() &&
+                        p_idx >= 1 && v_it->second.count(p_idx - 1) > 0)
+                        vt = std::nullopt;
                       break;
                     }
+                    ++p_idx;
+                  }
+                }
               }
               // Only widen for a store form we actually resolved (Constant /
               // Name param). Other RHS forms keep the annotation (conservative
@@ -4127,9 +4240,11 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         code_typet::parameterst parameters;
 
         // Helper: add a (pos-only or regular) parameter to this method.
+        std::size_t method_param_pos = 0;
         auto add_method_param = [&](const jsont &param)
         {
           std::string param_name = json_string(json_member(param, "arg"));
+          const std::size_t this_param_pos = method_param_pos++;
           // For @staticmethod, the first parameter is an ordinary
           // parameter, not 'self' — we still bind it.
           // For @classmethod, bind 'cls' so the body can reference it.
@@ -4146,6 +4261,24 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             param_type = annotation.is_null()
                            ? python_value_type()
                            : convert_type_annotation(annotation);
+            // PLR §3.1 annotation-distrust (parameter member of the
+            // slot-pun / Any-dominance family, method edition): an
+            // __init__ param whose annotation is provably violated at
+            // a constructor call site (pass 0.28) widens to
+            // python_value so the runtime-legal mismatched value keeps
+            // its tag (see add_positional in convert_function_def for
+            // the free-function edition and rationale).
+            if(
+              !annotation.is_null() && !python_check_annotations &&
+              method_name == "__init__" && this_param_pos >= 1)
+            {
+              auto v_it =
+                violated_annotation_params.find(class_name + "::__init__");
+              if(
+                v_it != violated_annotation_params.end() &&
+                v_it->second.count(this_param_pos - 1) > 0)
+                param_type = python_value_type();
+            }
             // PLR §3.1: genuine class instances are passed by
             // reference (matching the free-function path) so mutations
             // to the parameter propagate to the caller. TypedDict

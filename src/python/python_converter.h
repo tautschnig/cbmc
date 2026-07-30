@@ -1044,6 +1044,18 @@ private:
   /// fallback when the parameter has no annotation, in
   /// place of the default `python_value_type()`.
   std::map<std::string, std::map<std::size_t, typet>> inferred_param_types;
+  /// Pass 0.28 annotation-distrust track (PLR §3.1: "no type checking
+  /// happens at runtime" — an annotation never constrains the value
+  /// actually passed). Parameter positions whose ANNOTATION is
+  /// provably violated by at least one statically-typed call-site
+  /// argument (e.g. `kind: str` called with `R(1)`). Such a slot is
+  /// widened to python_value at function-conversion time so the
+  /// mismatched value keeps its runtime tag instead of being punned
+  /// into the annotated representation (the parameter member of the
+  /// slot-pun / Any-dominance family: dict values, list elements and
+  /// class fields already widen this way). Keyed like
+  /// inferred_param_types: bare callee name -> arg positions.
+  std::map<std::string, std::set<std::size_t>> violated_annotation_params;
   /// Symbol identifiers whose declared annotation was
   /// `Optional[T]` (or any union including `None`). The
   /// declared type collapses to T (since None is encoded as
