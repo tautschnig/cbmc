@@ -2697,10 +2697,8 @@ std::optional<exprt> python_convertert::try_method_call(
           }
         if(!user_class_defines)
         {
-          const typet canon =
-            python_dict_type(python_string_type(), python_value_type());
-          dereference_exprt unboxed{typecast_exprt{
-            python_value_class_ptr(obj), pointer_typet{canon, 64}}};
+          const typet canon = canonical_str_dict_type();
+          dereference_exprt unboxed = boxed_dict_deref(obj);
           if(auto r = try_dict_method(expr, unboxed, canon, method_name, args))
           {
             // Sound only when the runtime tag IS DICT; otherwise keep the

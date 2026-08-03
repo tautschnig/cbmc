@@ -2152,8 +2152,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       }
       if(is_python_string_type(key_item.type()))
       {
-        struct_typet dict_st_layout =
-          python_dict_type(python_string_type(), python_value_type());
+        const typet dict_st_layout = canonical_str_dict_type();
         pointer_typet dict_ptr_type{dict_st_layout, 64};
         exprt class_ptr = python_value_class_ptr(value);
         dereference_exprt dict_val{typecast_exprt{class_ptr, dict_ptr_type}};

@@ -3544,8 +3544,7 @@ exprt python_convertert::python_truthiness(const exprt &e)
           safe_zero(double_type())}}}};
     // DICT-tagged python_value: __class_ptr points at a dict; deref
     // and read length. Use canonical dict[str, python_value] type.
-    typet dict_type =
-      python_dict_type(python_string_type(), python_value_type());
+    typet dict_type = canonical_str_dict_type();
     pointer_typet dict_ptr_type{dict_type, 64};
     dereference_exprt dict_deref{
       typecast_exprt{python_value_class_ptr(e), dict_ptr_type}, dict_type};
@@ -3718,8 +3717,7 @@ exprt python_convertert::unwrap_any_container_receiver(
       set_type};
   }
 
-  const typet dict_type =
-    python_dict_type(python_string_type(), python_value_type());
+  const typet dict_type = canonical_str_dict_type();
   return dereference_exprt{
     typecast_exprt{python_value_class_ptr(obj), pointer_typet{dict_type, 64}},
     dict_type};
@@ -3793,8 +3791,7 @@ std::optional<exprt> python_convertert::dispatch_any_container_method_by_tag(
   const typet list_type = python_list_type(python_value_type());
   run_branch(python_value_list(obj), list_type, python_type_tagt::LIST);
 
-  const typet dict_type =
-    python_dict_type(python_string_type(), python_value_type());
+  const typet dict_type = canonical_str_dict_type();
   const exprt dict_view = dereference_exprt{
     typecast_exprt{python_value_class_ptr(obj), pointer_typet{dict_type, 64}},
     dict_type};
@@ -3908,8 +3905,7 @@ exprt python_convertert::wrap_value(const exprt &e)
       const typet &src_keys_t = src_st.components()[1].type();
       const typet &src_vals_t = src_st.components()[2].type();
       const typet &key_elem_t = to_array_type(src_keys_t).element_type();
-      const typet canon =
-        python_dict_type(python_string_type(), python_value_type());
+      const typet canon = canonical_str_dict_type();
       if(e.type() != canon && is_python_string_type(key_elem_t))
       {
         const auto &canon_st = to_struct_type(canon);

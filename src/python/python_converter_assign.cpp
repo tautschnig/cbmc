@@ -3196,16 +3196,16 @@ codet python_convertert::convert_assign(const jsont &stmt)
               for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
               {
                 exprt idx = from_integer(i, signedbv_typet{64});
-                exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-                exprt match = equal_exprt{
-                  python_dict_unbox_key(index_exprt{keys_arr, idx}),
-                  python_dict_unbox_key(typed_key)};
+                std::vector<codet> eq_seq;
+                exprt match =
+                  dict_slot_match(keys_arr, length, i, typed_key, &eq_seq);
+                for(auto &c : eq_seq)
+                  block.add(std::move(c));
                 code_blockt upd;
                 upd.add(
                   code_frontend_assignt{index_exprt{vals_arr, idx}, typed_rhs});
                 upd.add(code_frontend_assignt{found, true_exprt{}});
-                block.add(
-                  code_ifthenelset{and_exprt{in_range, match}, std::move(upd)});
+                block.add(code_ifthenelset{match, std::move(upd)});
               }
               code_blockt append;
               emit_capacity_guard(append, length, PYTHON_MAX_DICT_SIZE);
@@ -3263,12 +3263,13 @@ codet python_convertert::convert_assign(const jsont &stmt)
             for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
             {
               exprt idx = from_integer(i, signedbv_typet{64});
-              exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-              exprt match = equal_exprt{
-                python_dict_unbox_key(index_exprt{keys_arr, idx}),
-                python_dict_unbox_key(outer_typed_key)};
+              std::vector<codet> eq_seq;
+              exprt match =
+                dict_slot_match(keys_arr, length, i, outer_typed_key, &eq_seq);
+              for(auto &c : eq_seq)
+                block.add(std::move(c));
               block.add(code_ifthenelset{
-                and_exprt{in_range, match},
+                match,
                 code_frontend_assignt{index_exprt{vals_arr, idx}, outer_rhs}});
             }
           }
@@ -3491,15 +3492,16 @@ codet python_convertert::convert_assign(const jsont &stmt)
           for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
           {
             exprt idx = from_integer(i, signedbv_typet{64});
-            exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-            exprt match = equal_exprt{
-              python_dict_unbox_key(index_exprt{keys_arr, idx}), typed_key};
+            std::vector<codet> eq_seq;
+            exprt match =
+              dict_slot_match(keys_arr, length, i, typed_key, &eq_seq);
+            for(auto &c : eq_seq)
+              block.add(std::move(c));
             code_blockt update;
             update.add(
               code_frontend_assignt{index_exprt{vals_arr, idx}, typed_val});
             update.add(code_frontend_assignt{found, true_exprt{}});
-            block.add(
-              code_ifthenelset{and_exprt{in_range, match}, std::move(update)});
+            block.add(code_ifthenelset{match, std::move(update)});
           }
           code_blockt append;
           emit_capacity_guard(append, length, PYTHON_MAX_DICT_SIZE);
@@ -3688,12 +3690,17 @@ codet python_convertert::convert_assign(const jsont &stmt)
           for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
           {
             exprt idx = from_integer(i, signedbv_typet{64});
-            exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-            exprt match = equal_exprt{
-              python_dict_unbox_key(index_exprt{keys_arr, idx}),
-              python_dict_unbox_key(typed_key)};
+            std::vector<codet> eq_seq;
+            exprt match = dict_slot_match(
+              keys_arr,
+              length,
+              static_cast<std::size_t>(i),
+              typed_key,
+              &eq_seq);
+            for(auto &c : eq_seq)
+              block.add(std::move(c));
             block.add(code_ifthenelset{
-              and_exprt{in_range, match},
+              match,
               code_frontend_assignt{index_exprt{vals_arr, idx}, typed_val}});
           }
           continue;
@@ -4884,14 +4891,9 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
       {
         exprt idx = from_integer(i, signedbv_typet{64});
-        exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-        exprt key_i = python_dict_unbox_key(index_exprt{keys_arr, idx});
-        exprt key_q = python_dict_unbox_key(key_expr);
-        if(key_i.type() != key_q.type())
-          key_i = safe_typecast(key_i, key_q.type());
-        exprt match = equal_exprt{key_i, key_q};
-        result = if_exprt{
-          and_exprt{in_range, match}, index_exprt{vals_arr, idx}, result};
+        exprt match = dict_slot_match(
+          keys_arr, length, static_cast<std::size_t>(i), key_expr);
+        result = if_exprt{match, index_exprt{vals_arr, idx}, result};
       }
       lhs = std::move(result);
       dict_subscript_aug = true;
@@ -4918,15 +4920,8 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
         exprt present = false_exprt{};
         for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
         {
-          exprt idx = from_integer(i, signedbv_typet{64});
-          exprt ki = python_dict_unbox_key(index_exprt{karr, idx});
-          exprt kq = python_dict_unbox_key(dict_aug_key);
-          if(ki.type() != kq.type())
-            ki = safe_typecast(ki, kq.type());
-          present = or_exprt{
-            present,
-            and_exprt{
-              binary_relation_exprt{idx, ID_lt, klen}, equal_exprt{ki, kq}}};
+          present =
+            or_exprt{present, dict_slot_match(karr, klen, i, dict_aug_key)};
         }
         emit_conditional_exception(not_exprt{std::move(present)}, "KeyError");
       }
@@ -5851,16 +5846,15 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
     {
       exprt idx = from_integer(i, signedbv_typet{64});
-      exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-      exprt match = equal_exprt{
-        python_dict_unbox_key(index_exprt{keys_arr, idx}),
-        python_dict_unbox_key(dict_aug_key)};
+      std::vector<codet> eq_seq;
+      exprt match = dict_slot_match(keys_arr, length, i, dict_aug_key, &eq_seq);
+      for(auto &c : eq_seq)
+        block.add(std::move(c));
       code_blockt update;
       update.add(
         code_frontend_assignt{index_exprt{vals_arr, idx}, typed_new_val});
       update.add(code_frontend_assignt{found, true_exprt{}});
-      block.add(
-        code_ifthenelset{and_exprt{in_range, match}, std::move(update)});
+      block.add(code_ifthenelset{match, std::move(update)});
     }
     // defaultdict semantics: append (key, new_val) when missing.
     code_blockt append;
