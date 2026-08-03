@@ -1071,7 +1071,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   {
     kwargs_name = json_string(json_member(kwarg, "arg"));
     function_has_kwargs.insert(irep_idt{"python::" + qualified_func_name});
-    typet kw_type = python_dict_type(python_string_type(), python_value_type());
+    typet kw_type = canonical_str_dict_type();
     code_typet::parametert p{kw_type};
     p.set_identifier("python::" + qualified_func_name + "::" + kwargs_name);
     p.set_base_name(kwargs_name);
@@ -1184,8 +1184,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
           std::find(bit->second.begin(), bit->second.end(), "TypedDict") !=
             bit->second.end())
         {
-          return_type =
-            python_dict_type(python_string_type(), python_value_type());
+          return_type = canonical_str_dict_type();
           function_return_typeddict[qualified_func_name] = td_name;
         }
       }
@@ -4560,8 +4559,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         {
           std::string kw_name = json_string(json_member(kwarg_m, "arg"));
           function_has_kwargs.insert(method_key);
-          typet kw_type =
-            python_dict_type(python_string_type(), python_value_type());
+          typet kw_type = canonical_str_dict_type();
           code_typet::parametert p{kw_type};
           p.set_identifier(
             "python::" + class_name + "::" + method_name + "::" + kw_name);

@@ -143,11 +143,21 @@ side — a refined-struct view built over an `ID_string` operand.)
 
 ## 4. Phasing (validation-gated, mirroring the strings plan)
 
-- **P0 — vocabulary.** Introduce `cprover_list_*`/`cprover_dict_*`
-  applications and route the EXISTING bounded lowering through them
-  (tree-identical verdicts on the full regression suite: pure
-  refactor, no flag). This is the choke-point consolidation and pays
-  for itself in either outcome.
+- **P0 — vocabulary.** *(LANDED, 2026-08: `python_container_ops.cpp`.)*
+  The per-slot key/element comparison is consolidated into
+  `container_slot_equal` / `dict_slot_match` (plus
+  `canonical_str_dict_type` / `boxed_dict_deref` for the boxed-dict
+  layout), and all scan sites route through them. The consolidation
+  immediately paid for itself: seven mutate-side copies (setdefault,
+  pop, del, dict subscript write, list index/count/remove) had
+  diverged to raw pointer key equality and falsely refuted any
+  runtime-built needle (pinned by `container-runtime-needle`). The
+  helpers take an explicit statement SINK so write-side scan loops
+  sequence the string-solver equality snapshots with their local
+  mutations. The C++-helper form (not yet function applications) was
+  chosen so the SAT backend is untouched; P1 re-targets the helper
+  BODIES to `cprover_list_*`/`cprover_dict_*` applications under the
+  flag, call sites unchanged.
 - **P1 — lists under the flag.** Array-backed lists for scalar and
   pv elements; append/index/len/eq/in/slice-with-foldable-bounds.
   Gate: the pinning subset of `regression/python` (list semantics

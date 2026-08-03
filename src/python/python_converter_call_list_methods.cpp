@@ -661,7 +661,7 @@ std::optional<exprt> python_convertert::try_list_method(
       {
         exprt idx = from_integer(i, signedbv_typet{64});
         exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-        exprt match = equal_exprt{index_exprt{data, idx}, search};
+        exprt match = container_slot_equal(index_exprt{data, idx}, search);
         result = if_exprt{and_exprt{in_range, match}, idx, result};
       }
       // PLR list.index: raise ValueError when the value is absent.
@@ -687,7 +687,7 @@ std::optional<exprt> python_convertert::try_list_method(
         exprt idx = from_integer(i, signedbv_typet{64});
         exprt match = and_exprt{
           binary_relation_exprt{idx, ID_lt, length},
-          equal_exprt{index_exprt{data, idx}, search}};
+          container_slot_equal(index_exprt{data, idx}, search)};
         count = plus_exprt{
           count,
           if_exprt{
@@ -845,7 +845,7 @@ std::optional<exprt> python_convertert::try_list_method(
         exprt idx = from_integer(i, signedbv_typet{64});
         exprt next = from_integer(i + 1, signedbv_typet{64});
         exprt in_bounds = binary_relation_exprt{idx, ID_lt, length};
-        exprt is_match = equal_exprt{index_exprt{data, idx}, val};
+        exprt is_match = container_slot_equal(index_exprt{data, idx}, val);
         // If not found yet and matches, set found
         code_blockt on_match;
         on_match.add(code_frontend_assignt{found, true_exprt{}});

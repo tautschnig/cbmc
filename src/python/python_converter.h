@@ -2451,6 +2451,60 @@ private:
   /// equality does not apply.
   exprt value_equal(const exprt &a, const exprt &b);
 
+  /// P0 vocabulary of the unbounded-containers plan
+  /// (doc/python-frontend-unbounded-containers-plan.md): the
+  /// choke-point container operations every bounded scan routes
+  /// through. P1 re-targets these to cprover_list_* /
+  /// cprover_dict_* function applications under
+  /// --python-smt-containers; until then they emit the existing
+  /// bounded encoding — from ONE place.
+  ///
+  /// Content-correct equality between two container SLOT values
+  /// (dict keys or list elements), PLR §6.10.1: strings compare
+  /// by CONTENT via the string solver (raw struct equality
+  /// compares the refined-string data POINTER and wrongly
+  /// refutes any needle built at runtime); tagged unions
+  /// dispatch on the runtime tag via value_equal; scalars use
+  /// plain equality. This was open-coded divergently at ten+
+  /// sites; the pointer-equality copies (setdefault/pop/del/
+  /// subscript-write/index/count/remove) were false-alarm bugs.
+  ///
+  /// \p sink receives the statements that MATERIALIZE the
+  /// equality (the string solver's __str_eq snapshot
+  /// assignment). Pass the enclosing statement block when the
+  /// comparison is evaluated inside a code sequence built
+  /// locally (write-side scan loops): the snapshot must read
+  /// the operands at their in-sequence values, not at
+  /// pending_checks flush time (an eager snapshot of a temp
+  /// populated later in the same sequence reads garbage —
+  /// caught by nested-container-writes). nullptr = the default
+  /// pending_checks (read-expression contexts).
+  exprt container_slot_equal(
+    const exprt &a,
+    const exprt &b,
+    std::vector<codet> *sink = nullptr);
+
+  /// Guarded per-slot key match for a bounded dict scan:
+  /// (i < length) AND container_slot_equal(unbox(keys[i]),
+  /// unbox(probe)). The single spelling of the dict-lookup step
+  /// used by get/setdefault/pop/del/subscript/membership.
+  exprt dict_slot_match(
+    const exprt &keys_array,
+    const exprt &length,
+    std::size_t i,
+    const exprt &key_probe,
+    std::vector<codet> *sink = nullptr);
+
+  /// The canonical layout every BOXED dict (a python_value with
+  /// the DICT tag) is stored and read at:
+  /// dict[python_string, python_value]. One spelling, shared by
+  /// wrap_value's canonicalization and all __class_ptr readers.
+  typet canonical_str_dict_type() const;
+
+  /// Dereference a DICT-tagged python_value's __class_ptr at the
+  /// canonical layout.
+  dereference_exprt boxed_dict_deref(const exprt &boxed) const;
+
   /// Erase any cached list_literals entry whose stored struct references the
   /// symbol `sym`. Called when `sym` is (re)assigned: a cached list built from
   /// `sym` (`xs = xs + [b]`) becomes STALE once `sym` changes (`b = ...`), and

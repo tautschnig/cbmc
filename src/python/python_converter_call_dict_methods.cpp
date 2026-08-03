@@ -150,12 +150,9 @@ std::optional<exprt> python_convertert::try_dict_method(
         for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
         {
           exprt idx = from_integer(i, signedbv_typet{64});
-          exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-          exprt match = equal_exprt{
-            python_dict_unbox_key(index_exprt{keys, idx}),
-            python_dict_unbox_key(key_expr)};
           result = if_exprt{
-            and_exprt{in_range, match},
+            dict_slot_match(
+              keys, length, static_cast<std::size_t>(i), key_expr),
             wrap_value(index_exprt{vals, idx}),
             result};
         }
@@ -165,35 +162,10 @@ std::optional<exprt> python_convertert::try_dict_method(
       for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
       {
         exprt idx = from_integer(i, signedbv_typet{64});
-        exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-        exprt key_at = python_dict_unbox_key(index_exprt{keys, idx});
-        exprt key_probe = python_dict_unbox_key(key_expr);
-        exprt match;
-        if(
-          is_python_string_type(key_at.type()) &&
-          is_python_string_type(key_probe.type()))
-        {
-          // PLR §6.4.6: string keys compare by CONTENT. The raw
-          // struct equality below compares the refined-string DATA
-          // POINTER, so a key that reached this dict through a
-          // return/call boundary (a rebuilt literal — fresh backing
-          // array) never matched its own probe and get() silently
-          // returned the default.
-          match = emit_string_bool_function(
-            ID_cprover_string_equal_func,
-            key_at,
-            key_probe,
-            symbol_table,
-            pending_checks);
-          if(match.type() != bool_typet{})
-            match = typecast_exprt{std::move(match), bool_typet{}};
-        }
-        else
-        {
-          match = equal_exprt{key_at, key_probe};
-        }
-        result =
-          if_exprt{and_exprt{in_range, match}, index_exprt{vals, idx}, result};
+        result = if_exprt{
+          dict_slot_match(keys, length, static_cast<std::size_t>(i), key_expr),
+          index_exprt{vals, idx},
+          result};
       }
       return result;
     }
@@ -472,15 +444,11 @@ std::optional<exprt> python_convertert::try_dict_method(
             for(std::size_t si = 0; si < PYTHON_MAX_DICT_SIZE; si++)
             {
               exprt sidx = from_integer(si, signedbv_typet{64});
-              exprt in_range = binary_relation_exprt{sidx, ID_lt, dst_len};
-              exprt match = equal_exprt{
-                python_dict_unbox_key(index_exprt{dst_keys, sidx}),
-                python_dict_unbox_key(k)};
               code_blockt upd;
               upd.add(code_frontend_assignt{index_exprt{dst_vals, sidx}, v});
               upd.add(code_frontend_assignt{found, true_exprt{}});
-              pending_checks.push_back(
-                code_ifthenelset{and_exprt{in_range, match}, std::move(upd)});
+              pending_checks.push_back(code_ifthenelset{
+                dict_slot_match(dst_keys, dst_len, si, k), std::move(upd)});
             }
             code_blockt append;
             append.add(code_frontend_assignt{
@@ -594,16 +562,12 @@ std::optional<exprt> python_convertert::try_dict_method(
     for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
     {
       exprt idx = from_integer(i, signedbv_typet{64});
-      exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-      exprt match = equal_exprt{
-        python_dict_unbox_key(index_exprt{keys_arr, idx}),
-        python_dict_unbox_key(key_expr)};
+      exprt match = dict_slot_match(keys_arr, length, i, key_expr);
       code_blockt update;
       update.add(code_frontend_assignt{found, true_exprt{}});
       update.add(code_frontend_assignt{result, index_exprt{vals_arr, idx}});
       update.add(code_frontend_assignt{slot_idx, idx});
-      pending_checks.push_back(
-        code_ifthenelset{and_exprt{in_range, match}, std::move(update)});
+      pending_checks.push_back(code_ifthenelset{match, std::move(update)});
     }
     // If not found, append (key, default) and set length+=1.
     code_blockt append;
@@ -715,10 +679,7 @@ std::optional<exprt> python_convertert::try_dict_method(
     for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
     {
       exprt idx = from_integer(i, signedbv_typet{64});
-      exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-      exprt match = equal_exprt{
-        python_dict_unbox_key(index_exprt{keys_arr, idx}),
-        python_dict_unbox_key(key_expr)};
+      exprt match = dict_slot_match(keys_arr, length, i, key_expr);
       code_blockt update;
       update.add(code_frontend_assignt{found, true_exprt{}});
       update.add(code_frontend_assignt{
@@ -737,8 +698,7 @@ std::optional<exprt> python_convertert::try_dict_method(
       }
       update.add(code_frontend_assignt{
         length, minus_exprt{length, from_integer(1, signedbv_typet{64})}});
-      pending_checks.push_back(
-        code_ifthenelset{and_exprt{in_range, match}, std::move(update)});
+      pending_checks.push_back(code_ifthenelset{match, std::move(update)});
     }
     // KeyError when not found and no default given.
     if(!has_default)

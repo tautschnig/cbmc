@@ -513,12 +513,14 @@ codet python_convertert::convert_statement(const jsont &stmt)
               {
                 exprt idx = from_integer(i, signedbv_typet{64});
                 exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-                exprt match = equal_exprt{
-                  python_dict_unbox_key(index_exprt{keys_arr, idx}),
-                  python_dict_unbox_key(key)};
+                std::vector<codet> eq_seq;
+                exprt match =
+                  dict_slot_match(keys_arr, length, i, key, &eq_seq);
+                for(auto &c : eq_seq)
+                  del_block.add(std::move(c));
                 // Set found on match
                 del_block.add(code_ifthenelset{
-                  and_exprt{in_range, and_exprt{not_exprt{found}, match}},
+                  and_exprt{match, not_exprt{found}},
                   code_frontend_assignt{found, true_exprt{}}});
                 // If found, shift left
                 exprt next = from_integer(i + 1, signedbv_typet{64});
