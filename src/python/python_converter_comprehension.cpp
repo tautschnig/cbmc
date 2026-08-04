@@ -337,9 +337,9 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
               const exprt &data_arr = list_struct.operands()[1];
               for(mp_integer i = 0; i < len; ++i)
               {
-                auto idx = i.to_ulong();
-                if(idx < data_arr.operands().size())
-                  gi.const_values.push_back(data_arr.operands()[idx]);
+                auto el = list_literal_element(data_arr, i.to_ulong());
+                if(el.has_value())
+                  gi.const_values.push_back(std::move(*el));
               }
             }
           }
@@ -564,9 +564,9 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
           const exprt &data_arr = iter_val.operands()[1];
           for(mp_integer i = 0; i < len; ++i)
           {
-            auto idx = i.to_ulong();
-            if(idx < data_arr.operands().size())
-              gi.const_values.push_back(data_arr.operands()[idx]);
+            auto el = list_literal_element(data_arr, i.to_ulong());
+            if(el.has_value())
+              gi.const_values.push_back(std::move(*el));
           }
           extracted = true;
         }
@@ -1035,22 +1035,18 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
     // [x for x in []] == [0, 1, 4, 9].
     typet elem_type = python_int_type();
     struct_typet list_type = python_list_type(elem_type);
-    array_typet data_type{
-      elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})};
+    const auto &data_type = to_array_type(list_type.components()[1].type());
     exprt::operandst zeros;
-    while(zeros.size() < PYTHON_MAX_LIST_LENGTH)
-      zeros.push_back(safe_zero(elem_type));
     return struct_exprt{
       {from_integer(0, signedbv_typet{64}),
-       array_exprt{std::move(zeros), data_type}},
+       build_list_data(std::move(zeros), data_type)},
       list_type};
   }
 
   // Build the result list
   typet elem_type = elements[0].type();
   struct_typet list_type = python_list_type(elem_type);
-  array_typet data_type{
-    elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})};
+  const auto &data_type = to_array_type(list_type.components()[1].type());
 
   exprt::operandst data_elems;
   for(auto &e : elements)
@@ -1058,10 +1054,8 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
     e = coerce_element(e, elem_type);
     data_elems.push_back(e);
   }
-  while(data_elems.size() < PYTHON_MAX_LIST_LENGTH)
-    data_elems.push_back(safe_zero(elem_type));
 
-  array_exprt data{std::move(data_elems), data_type};
+  exprt data = build_list_data(std::move(data_elems), data_type);
   exprt length =
     from_integer(static_cast<long long>(elements.size()), signedbv_typet{64});
 

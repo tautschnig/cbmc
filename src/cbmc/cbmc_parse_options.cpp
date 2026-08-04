@@ -180,6 +180,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-use-stdlib-source", true);
   if(cmdline.isset("python-smt-strings"))
     options.set_option("python-smt-strings", true);
+  if(cmdline.isset("python-smt-containers"))
+    options.set_option("python-smt-containers", true);
   {
     // Both --python-smt-strings (native SMT-LIB String sort) and
     // --python-unbounded-ints (mathematical integer_typet) introduce
@@ -1185,6 +1187,8 @@ void cbmc_parse_optionst::help()
     " {uN}\n"
     " {y--python-unbounded-ints} \t arbitrary-precision int semantics"
     " (requires an SMT backend, e.g. {y--cvc5})\n"
+    " {y--python-smt-containers} \t unbounded (infinite-array) lists"
+    " (P1: core ops; see doc/python-frontend-unbounded-containers-plan.md)\n"
     " {y--python-smt-strings} \t native SMT-LIB String backend for str"
     " (requires {y--cvc5} or {y--z3})\n"
     " {y--python-strict} \t enable the static-strictness family below in one"

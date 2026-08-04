@@ -86,6 +86,7 @@ exprt python_convertert::python_value_structural_eq(
       const auto &ld = to_array_type(lst.components()[1].type());
       const member_exprt llen{ll, "length", signedbv_typet{64}};
       const member_exprt rlen{rl, "length", signedbv_typet{64}};
+      emit_scan_bound_guard(llen, source_locationt{});
       const member_exprt lda{ll, "data", ld};
       const member_exprt rda{rl, "data", ld};
       exprt all = equal_exprt{llen, rlen};
@@ -1124,25 +1125,14 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // value/tag of a boxed python_value element (mixed literals box).
       {
         auto const_elems =
-          [](const exprt &lst) -> std::optional<std::vector<exprt>>
+          [this](const exprt &lst) -> std::optional<std::vector<exprt>>
         {
-          if(
-            lst.id() != ID_struct || lst.operands().size() < 2 ||
-            !lst.operands()[0].is_constant() ||
-            lst.operands()[1].id() != ID_array)
+          // Decodes both literal shapes (bounded array literal and the
+          // --python-smt-containers store-chain).
+          auto leading = list_literal_leading(lst);
+          if(!leading.has_value())
             return std::nullopt;
-          mp_integer n;
-          if(to_integer(to_constant_expr(lst.operands()[0]), n))
-            return std::nullopt;
-          std::vector<exprt> es;
-          const exprt &data = lst.operands()[1];
-          for(mp_integer i = 0; i < n; ++i)
-          {
-            if(i.to_long() >= (long)data.operands().size())
-              return std::nullopt;
-            es.push_back(data.operands()[i.to_long()]);
-          }
-          return es;
+          return std::vector<exprt>{leading->begin(), leading->end()};
         };
         // Normalized order-key for a constant element: "n:<int>" for an
         // integer/bool (boxed or not) or "s:<bytes>" for a str; nullopt when it
@@ -2752,6 +2742,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
 
         // Build disjunction for up to PYTHON_MAX_LIST_LENGTH elements
         // guarded by index < length
+        emit_scan_bound_guard(length, source_locationt{});
         exprt in_expr = false_exprt{};
         for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
         {
@@ -2984,6 +2975,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
           const auto &data_type = to_array_type(list_st.components()[1].type());
           member_exprt list_len{list_val, "length", signedbv_typet{64}};
           member_exprt list_data{list_val, "data", data_type};
+          emit_scan_bound_guard(list_len, source_locationt{});
           for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
           {
             exprt idx = from_integer(i, signedbv_typet{64});

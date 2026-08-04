@@ -1315,20 +1315,30 @@ exprt python_convertert::convert_subscript(const jsont &expr)
             const exprt &data = lst->operands()[1];
             const auto &dt =
               to_array_type(to_struct_type(lst->type()).components()[1].type());
-            const exprt pad = safe_zero(dt.element_type());
+            auto dsize = list_literal_data_size(data);
+            bool all_ok = dsize.has_value();
             exprt::operandst res;
-            res.reserve(PYTHON_MAX_LIST_LENGTH);
-            for(std::size_t j = 0; j < PYTHON_MAX_LIST_LENGTH; ++j)
+            for(std::size_t j = 0; all_ok && j < idxs.size(); ++j)
             {
-              if(j < idxs.size() && idxs[j] < (long long)data.operands().size())
-                res.push_back(data.operands()[idxs[j]]);
+              if(idxs[j] < static_cast<long long>(*dsize))
+              {
+                auto el =
+                  list_literal_element(data, static_cast<std::size_t>(idxs[j]));
+                if(el.has_value())
+                  res.push_back(std::move(*el));
+                else
+                  all_ok = false;
+              }
               else
-                res.push_back(pad);
+                all_ok = false;
             }
-            return struct_exprt{
-              {from_integer((long long)idxs.size(), signedbv_typet{64}),
-               array_exprt{std::move(res), dt}},
-              lst->type()};
+            if(all_ok)
+            {
+              return struct_exprt{
+                {from_integer((long long)idxs.size(), signedbv_typet{64}),
+                 build_list_data(std::move(res), dt)},
+                lst->type()};
+            }
           }
         }
       }
@@ -1374,8 +1384,16 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     std::size_t max_len = is_python_string_type(value.type())
                             ? PYTHON_MAX_STRING_LENGTH
                             : PYTHON_MAX_LIST_LENGTH;
-    array_typet result_data_type{
-      elem_type, from_integer(max_len, signedbv_typet{64})};
+    // The result's data array must match python_list_type's layout —
+    // INFINITE under --python-smt-containers (an inline bounded
+    // array type would pun against every list slot the result flows
+    // into). The COPY the runtime path performs stays bounded by
+    // max_len either way; under the flag that bound is enforced
+    // fail-closed at the slice (see below).
+    const array_typet result_data_type =
+      is_python_string_type(value.type())
+        ? array_typet{elem_type, from_integer(max_len, signedbv_typet{64})}
+        : to_array_type(python_list_type(elem_type).components()[1].type());
 
     // Constant-fold the slice when the source resolves to a CONSTANT list and
     // the bounds are default/literal -> emit a CONSTANT struct so a following
@@ -1443,20 +1461,30 @@ exprt python_convertert::convert_subscript(const jsont &expr)
             for(long long i = start; i > stop; i += k)
               idxs.push_back(i);
           const exprt &cdata = cl->operands()[1];
-          const long long ndata = (long long)cdata.operands().size();
+          auto csize = list_literal_data_size(cdata);
+          bool call_ok = csize.has_value();
           exprt::operandst el;
-          el.reserve(max_len);
-          for(std::size_t i = 0; i < max_len; i++)
+          for(std::size_t i = 0; call_ok && i < idxs.size(); i++)
           {
-            if(i < idxs.size() && idxs[i] >= 0 && idxs[i] < ndata)
-              el.push_back(cdata.operands()[idxs[i]]);
+            if(idxs[i] >= 0 && idxs[i] < static_cast<long long>(*csize))
+            {
+              auto elem =
+                list_literal_element(cdata, static_cast<std::size_t>(idxs[i]));
+              if(elem.has_value())
+                el.push_back(std::move(*elem));
+              else
+                call_ok = false;
+            }
             else
               el.push_back(safe_zero(elem_type));
           }
-          return struct_exprt{
-            {from_integer((long long)idxs.size(), signedbv_typet{64}),
-             array_exprt{std::move(el), result_data_type}},
-            st};
+          if(call_ok)
+          {
+            return struct_exprt{
+              {from_integer((long long)idxs.size(), signedbv_typet{64}),
+               build_list_data(std::move(el), result_data_type)},
+              st};
+          }
         }
       }
     }
@@ -1488,7 +1516,22 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         if_exprt{in_slice, src_elem, safe_zero(elem_type)});
     }
 
-    array_exprt result_data{std::move(result_elems), result_data_type};
+    // The runtime slice is a bounded COPY (max_len generated reads).
+    // Under --python-smt-containers the list itself is unbounded, so
+    // a longer slice must fail CLOSED (python-model-bound at this
+    // slice) rather than silently truncate. Bounded model: max_len
+    // equals the array capacity, so the guard is subsumed by the
+    // existing capacity model.
+    if(python_smt_containers_flag())
+    {
+      emit_count_capacity_guard(
+        pending_checks,
+        new_length,
+        static_cast<long>(max_len),
+        get_location(expr));
+    }
+    exprt result_data =
+      build_list_data(std::move(result_elems), result_data_type);
     return struct_exprt{{new_length, result_data}, st};
   }
 
@@ -2376,13 +2419,9 @@ exprt python_convertert::convert_list(const jsont &expr)
     // diverge under --python-unbounded-ints (integer_typet) and break
     // the struct-assignment type check.
     exprt length = from_integer(0, signedbv_typet{64});
-    array_typet data_type{
-      python_int_type(),
-      from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})};
+    const auto &data_type = to_array_type(list_type.components()[1].type());
     exprt::operandst zeros;
-    for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
-      zeros.push_back(from_integer(0, python_int_type()));
-    array_exprt data{std::move(zeros), data_type};
+    exprt data = build_list_data(std::move(zeros), data_type);
     return struct_exprt{{length, data}, list_type};
   }
 
@@ -2416,15 +2455,17 @@ exprt python_convertert::convert_list(const jsont &expr)
   // Rebuild the struct's array-typed 'data' component to match the
   // actual literal size. python_list_type always returns the struct
   // with the default max length, so override the data component's
-  // array type here.
+  // array type here. (--python-smt-containers: the data array is
+  // INFINITE — no growth needed, any literal length fits the
+  // canonical type.)
+  if(!python_smt_containers_flag())
   {
     auto &comps = list_type.components();
     if(comps.size() == 2)
       comps[1].type() = array_typet{
         stored_elem_type, from_integer(list_array_size, signedbv_typet{64})};
   }
-  array_typet data_type{
-    stored_elem_type, from_integer(list_array_size, signedbv_typet{64})};
+  const array_typet data_type = to_array_type(list_type.components()[1].type());
 
   // Build data array: elements followed by zeros
   exprt::operandst data_elems;
@@ -2436,10 +2477,10 @@ exprt python_convertert::convert_list(const jsont &expr)
       e = coerce_element(e, stored_elem_type);
     data_elems.push_back(e);
   }
-  while(data_elems.size() < list_array_size)
+  while(!python_smt_containers_flag() && data_elems.size() < list_array_size)
     data_elems.push_back(safe_zero(stored_elem_type));
 
-  array_exprt data{std::move(data_elems), data_type};
+  exprt data = build_list_data(std::move(data_elems), data_type);
   exprt length =
     from_integer(static_cast<long long>(elements.size()), signedbv_typet{64});
 

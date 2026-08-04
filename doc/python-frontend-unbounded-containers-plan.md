@@ -158,11 +158,32 @@ side — a refined-struct view built over an `ID_string` operand.)
   chosen so the SAT backend is untouched; P1 re-targets the helper
   BODIES to `cprover_list_*`/`cprover_dict_*` applications under the
   flag, call sites unchanged.
-- **P1 — lists under the flag.** Array-backed lists for scalar and
-  pv elements; append/index/len/eq/in/slice-with-foldable-bounds.
-  Gate: the pinning subset of `regression/python` (list semantics
-  tests) passes under the flag with z3 AND cvc5; the AWS-corpus
-  `python-model-bound` failures re-verify without bound properties.
+- **P1 — lists under the flag.** *(LANDED, 2026-08.)* Implemented
+  with an INFINITE data array (`{length: i64, data: elem[inf]}`) —
+  the machinery CBMC already has for C dynamic objects — rather than
+  new solver vocabulary: symex and both backends handle it, so
+  index/append/len/iteration/comprehension/slice/sort/eq flow through
+  the existing lowering with the capacity guards suppressed
+  (length-indexed stores are exact at any length). Construction is
+  consolidated behind `build_list_data`/`build_list_value`;
+  fold-layer literal reads go through the shape-agnostic
+  `list_literal_element`/`list_literal_leading` decoders (a bounded
+  array literal or the flag's store-chain). Operations that still
+  scan a bounded prefix (sum/min/max, membership, structural ==,
+  by-ref copy rebuilds, extend/concat/repetition producers) FAIL
+  CLOSED via `emit_scan_bound_guard` / the retained count guards —
+  python-model-bound at the use site, never silent truncation.
+  Container retype-on-reassign VERSIONS the binding under the flag
+  (the in-place symbol mutation emitted ill-typed GOTO that only
+  boolbv leniency tolerated). Gate results: the 53-test list family
+  runs under the flag with 51 verdict-identical (the 2 differences:
+  the capacity-bound test — no capacity exists — and a both-verdicts
+  desc); probes green on SAT, SMT2/z3 AND cvc5; >16-element
+  comprehensions/appends verify with no bound properties. Pinned by
+  smt-containers-core / -fail-closed / -indexerror. Backlog:
+  length-driven copies for the producer family (extend/concat/
+  repetition beyond the scan), quantified equality for
+  beyond-the-scan `==`.
 - **P2 — dicts + order overlay.** The four-component dict; KeyError
   precision probes (absent vs None-valued); insertion-order pinning
   tests ported from the bounded model.

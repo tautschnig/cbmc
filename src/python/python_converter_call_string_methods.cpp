@@ -101,11 +101,9 @@ std::optional<exprt> python_convertert::try_string_method(
       for(const auto &p : parts)
         list_elems.push_back(
           coerce_element(python_string_literal(p), data_type.element_type()));
-      while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
-        list_elems.push_back(safe_zero(data_type.element_type()));
       return struct_exprt{
         {from_integer(static_cast<long long>(parts.size()), python_int_type()),
-         array_exprt{std::move(list_elems), data_type}},
+         build_list_data(std::move(list_elems), data_type)},
         list_type};
     }
   }
@@ -178,12 +176,10 @@ std::optional<exprt> python_convertert::try_string_method(
         for(const auto &p : parts)
           list_elems.push_back(
             coerce_element(python_string_literal(p), data_type.element_type()));
-        while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
-          list_elems.push_back(safe_zero(data_type.element_type()));
         return struct_exprt{
           {from_integer(
              static_cast<long long>(parts.size()), python_int_type()),
-           array_exprt{std::move(list_elems), data_type}},
+           build_list_data(std::move(list_elems), data_type)},
           list_type};
       }
     }
@@ -242,12 +238,10 @@ std::optional<exprt> python_convertert::try_string_method(
         for(const auto &p : parts)
           list_elems.push_back(
             coerce_element(python_string_literal(p), data_type.element_type()));
-        while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
-          list_elems.push_back(safe_zero(data_type.element_type()));
         return struct_exprt{
           {from_integer(
              static_cast<long long>(parts.size()), python_int_type()),
-           array_exprt{std::move(list_elems), data_type}},
+           build_list_data(std::move(list_elems), data_type)},
           list_type};
       }
     }
@@ -316,12 +310,11 @@ std::optional<exprt> python_convertert::try_string_method(
               list_elems.push_back(coerce_element(
                 python_string_literal(part), data_type.element_type()));
             }
-            while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
-              list_elems.push_back(safe_zero(data_type.element_type()));
             exprt len_expr = from_integer(
               static_cast<long long>(parts.size()), python_int_type());
             return struct_exprt{
-              {len_expr, array_exprt{std::move(list_elems), list_data_type}},
+              {len_expr,
+               build_list_data(std::move(list_elems), list_data_type)},
               list_type};
           }
         }

@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 40 --no-unwinding-assertions --python-smt-containers
+^EXIT=10$
+^SIGNAL=0$
+python-model-bound.*operation scans a bounded prefix
+^VERIFICATION FAILED$
+--
+--
+When sum() learns length-driven accumulation the guard (and this
+test) moves with it.

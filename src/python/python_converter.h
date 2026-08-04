@@ -2505,6 +2505,66 @@ private:
   /// canonical layout.
   dereference_exprt boxed_dict_deref(const exprt &boxed) const;
 
+  /// Build a list DATA array from concrete leading elements (the
+  /// construction choke point, P1a). Bounded model: a padded
+  /// array_exprt of PYTHON_MAX_LIST_LENGTH slots (exactly the shape
+  /// every site open-coded). --python-smt-containers: an array_of
+  /// base with a store (with_exprt) per element — an infinite array
+  /// has no literal form. Elements must already have the slot type
+  /// (call coerce_element first).
+  exprt
+  build_list_data(exprt::operandst elements, const typet &element_type) const;
+
+  /// Overload taking the site's existing data-array type (which is
+  /// python_list_type(...)'s data component — INFINITE under the
+  /// flag). Bounded: pads with safe_zero to the array size and
+  /// builds the literal. Flag: array_of + per-element stores.
+  exprt build_list_data(
+    exprt::operandst elements,
+    const array_typet &data_array) const;
+
+  /// Build a complete list VALUE {length, data} of
+  /// python_list_type(element_type) from concrete leading elements.
+  exprt
+  build_list_value(exprt::operandst elements, const typet &element_type) const;
+
+  /// Decode element \p i of a list DATA value built by
+  /// build_list_data — the fold-layer read choke point. Handles BOTH
+  /// shapes: a bounded array literal (array_exprt: positional
+  /// operand) and the flag's store-chain (with_exprt over
+  /// array_of_exprt: walk the stores for a constant index match,
+  /// falling through to the base default). nullopt when the shape or
+  /// the index cannot be decoded statically — callers must treat
+  /// that as "not a fold candidate", NEVER read operands()
+  /// positionally themselves (a with-chain's operands are
+  /// [base, index, value, ...] — a positional read is garbage).
+  std::optional<exprt>
+  list_literal_element(const exprt &data, std::size_t i) const;
+
+  /// Number of leading slots statically decodable from a list DATA
+  /// value (array literal: operand count; store-chain: highest
+  /// constant store index + 1).
+  std::optional<std::size_t> list_literal_data_size(const exprt &data) const;
+
+  /// Decode the LENGTH leading elements of a constant list VALUE
+  /// (struct {length, data}). nullopt when the length is not a
+  /// constant or the data cannot be decoded (see
+  /// list_literal_element) — fold call sites must fall through to
+  /// their runtime path then.
+  std::optional<exprt::operandst>
+  list_literal_leading(const exprt &list_value) const;
+
+  /// P1c fail-closed scan bound: under --python-smt-containers, an
+  /// operation that still scans only the first
+  /// PYTHON_MAX_LIST_LENGTH slots of an (unbounded) list is SOUND
+  /// only for lists no longer than the scan. Emit a
+  /// python-model-bound obligation (assert+assume length <= cap) at
+  /// the USE site so a longer list is reported and cut, never
+  /// silently mis-evaluated (PLR: a wrong sum/membership verdict is
+  /// a false proof). No-op without the flag (the capacity model
+  /// already bounds every list) and no-op for non-list containers.
+  void emit_scan_bound_guard(const exprt &length, const source_locationt &loc);
+
   /// Erase any cached list_literals entry whose stored struct references the
   /// symbol `sym`. Called when `sym` is (re)assigned: a cached list built from
   /// `sym` (`xs = xs + [b]`) becomes STALE once `sym` changes (`b = ...`), and

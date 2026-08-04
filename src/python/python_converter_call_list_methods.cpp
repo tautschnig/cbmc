@@ -350,15 +350,15 @@ std::optional<exprt> python_convertert::try_list_method(
         bool all_const_numeric = true;
         for(mp_integer i = 0; i < lv; ++i)
         {
-          auto idx = i.to_ulong();
-          if(idx >= data_arr.operands().size())
+          auto decoded = list_literal_element(data_arr, i.to_ulong());
+          if(!decoded.has_value())
           {
             all_const_int = false;
             all_const_str = false;
             all_const_numeric = false;
             break;
           }
-          const exprt &e = data_arr.operands()[idx];
+          const exprt e = std::move(*decoded);
           if(all_const_int)
           {
             if(!e.is_constant() || e.type().id() != ID_signedbv)

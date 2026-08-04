@@ -1045,12 +1045,11 @@ exprt python_convertert::convert_user_call(
           elems.push_back(arg);
         }
         std::size_t n_packed = elems.size();
-        while(elems.size() < PYTHON_MAX_LIST_LENGTH)
-          elems.push_back(safe_zero(data_type.element_type()));
         exprt length =
           from_integer(static_cast<long long>(n_packed), signedbv_typet{64});
         exprt packed = struct_exprt{
-          {length, array_exprt{std::move(elems), data_type}}, va_param_type};
+          {length, build_list_data(std::move(elems), data_type)},
+          va_param_type};
         arguments.resize(va_idx);
         arguments.push_back(std::move(packed));
         // Pad to params.size() so kwarg loop can index kwonly slots.
@@ -1456,12 +1455,11 @@ exprt python_convertert::convert_user_call(
           elems.push_back(arg);
         }
         std::size_t n_packed = elems.size();
-        while(elems.size() < PYTHON_MAX_LIST_LENGTH)
-          elems.push_back(safe_zero(data_type.element_type()));
         exprt length =
           from_integer(static_cast<long long>(n_packed), signedbv_typet{64});
         exprt packed = struct_exprt{
-          {length, array_exprt{std::move(elems), data_type}}, last_param_type};
+          {length, build_list_data(std::move(elems), data_type)},
+          last_param_type};
         arguments.resize(n_regular);
         arguments.push_back(std::move(packed));
       }
@@ -1482,11 +1480,10 @@ exprt python_convertert::convert_user_call(
           const auto &list_st = to_struct_type(va_param_type);
           const auto &data_type = to_array_type(list_st.components()[1].type());
           exprt::operandst elems;
-          while(elems.size() < PYTHON_MAX_LIST_LENGTH)
-            elems.push_back(safe_zero(data_type.element_type()));
           exprt length = from_integer(0LL, signedbv_typet{64});
           exprt packed = struct_exprt{
-            {length, array_exprt{std::move(elems), data_type}}, va_param_type};
+            {length, build_list_data(std::move(elems), data_type)},
+            va_param_type};
           while(arguments.size() < va_idx)
             arguments.push_back(nil_exprt{});
           if(arguments.size() == va_idx)
