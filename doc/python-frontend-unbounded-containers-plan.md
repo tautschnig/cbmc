@@ -193,6 +193,18 @@ side — a refined-struct view built over an `ID_string` operand.)
 
 ## 5. Risks and open questions
 
+- **Measured (2026-08-04): symex, not the solver, was the first wall.**
+  Profiling `pyhard_exercise` showed 42 % of symex cycles in
+  `get_fresh_aux_symbol` → `next_unused_suffix` — QUADRATIC aux-symbol
+  minting (a from-zero linear probe per fresh name), driven by
+  `value_set_dereference` failure-value minting on the front-end's
+  boxed-value pointer derefs. Fixed upstream (PR #9083, cherry-picked
+  here): `symbol_table_baset` now keeps the per-prefix resume hint that
+  `symbol_table_buildert` pioneered (symex: 600 s+ DNF → 210 s
+  complete). The post-fix profile puts field-sensitivity renaming at
+  ~62 % — the direct target of this proposal's opaque-array dict values
+  (P2): one array value instead of 16+16 renamed slots per dict. The
+  full bounded-vs-array benchmark study remains gated on P2.
 - **Quantifiers.** Element-wise `==` and iteration aggregates
   introduce ∀ over Int ranges. z3/cvc5 handle bounded-range
   quantifiers over arrays well, but combined with the String sort +
