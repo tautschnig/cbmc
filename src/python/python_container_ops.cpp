@@ -101,3 +101,169 @@ dereference_exprt python_convertert::boxed_dict_deref(const exprt &boxed) const
     python_value_class_ptr(boxed),
     pointer_typet{canonical_str_dict_type(), 64}}};
 }
+
+exprt python_convertert::build_list_data(
+  exprt::operandst elements,
+  const array_typet &data_array) const
+{
+  const typet &slot_type = data_array.element_type();
+  if(python_smt_containers_flag())
+  {
+    exprt data = array_of_exprt{safe_zero(slot_type), data_array};
+    for(std::size_t i = 0; i < elements.size(); i++)
+    {
+      data = with_exprt{
+        std::move(data),
+        from_integer(i, signedbv_typet{64}),
+        std::move(elements[i])};
+    }
+    return data;
+  }
+  // Pad/trim to the array type's OWN declared size (a literal larger
+  // than PYTHON_MAX_LIST_LENGTH gets a grown array type — e.g.
+  // stdlib __all__ lists; see convert_list).
+  std::size_t cap = PYTHON_MAX_LIST_LENGTH;
+  mp_integer size_val;
+  if(
+    data_array.size().is_constant() &&
+    !to_integer(to_constant_expr(data_array.size()), size_val))
+    cap = static_cast<std::size_t>(size_val.to_ulong());
+  while(elements.size() < cap)
+    elements.push_back(safe_zero(slot_type));
+  if(elements.size() > cap)
+    elements.resize(cap);
+  return array_exprt{std::move(elements), data_array};
+}
+
+exprt python_convertert::build_list_data(
+  exprt::operandst elements,
+  const typet &element_type) const
+{
+  const typet list_type = python_list_type(element_type);
+  // python_list_type may rewrite the element type (str -> handle on
+  // the native string backend); honor the SLOT type it chose.
+  const auto &data_array =
+    to_array_type(to_struct_type(list_type).components()[1].type());
+  const typet &slot_type = data_array.element_type();
+
+  (void)slot_type;
+  return build_list_data(std::move(elements), data_array);
+}
+
+exprt python_convertert::build_list_value(
+  exprt::operandst elements,
+  const typet &element_type) const
+{
+  const std::size_t n = elements.size();
+  const typet list_type = python_list_type(element_type);
+  exprt data = build_list_data(std::move(elements), element_type);
+  return struct_exprt{
+    {from_integer(n, signedbv_typet{64}), std::move(data)}, list_type};
+}
+
+std::optional<exprt>
+python_convertert::list_literal_element(const exprt &data, std::size_t i) const
+{
+  if(data.id() == ID_array)
+  {
+    if(i < data.operands().size())
+      return data.operands()[i];
+    return {};
+  }
+  // Store chain: newest store wins — walk outside-in.
+  const exprt *e = &data;
+  while(e->id() == ID_with)
+  {
+    const auto &w = to_with_expr(*e);
+    // with_exprt supports multi-update (where/value pairs); ours are
+    // built pairwise, but decode the general form.
+    for(std::size_t k = 1; k + 1 < e->operands().size(); k += 2)
+    {
+      const exprt &where = e->operands()[k];
+      mp_integer idx_val;
+      if(where.is_constant() && !to_integer(to_constant_expr(where), idx_val))
+      {
+        if(idx_val == static_cast<long long>(i))
+          return e->operands()[k + 1];
+      }
+      else
+        return {}; // symbolic store index — cannot decode statically
+    }
+    e = &w.old();
+  }
+  if(e->id() == ID_array_of)
+    return to_array_of_expr(*e).what();
+  return {};
+}
+
+std::optional<std::size_t>
+python_convertert::list_literal_data_size(const exprt &data) const
+{
+  if(data.id() == ID_array)
+    return data.operands().size();
+  std::size_t max_idx = 0;
+  bool any = false;
+  const exprt *e = &data;
+  while(e->id() == ID_with)
+  {
+    const auto &w = to_with_expr(*e);
+    for(std::size_t k = 1; k + 1 < e->operands().size(); k += 2)
+    {
+      const exprt &where = e->operands()[k];
+      mp_integer idx_val;
+      if(!where.is_constant() || to_integer(to_constant_expr(where), idx_val))
+        return {};
+      const std::size_t iv = static_cast<std::size_t>(idx_val.to_ulong());
+      max_idx = std::max(max_idx, iv + 1);
+      any = true;
+    }
+    e = &w.old();
+  }
+  if(e->id() == ID_array_of)
+    return any ? std::optional<std::size_t>{max_idx}
+               : std::optional<std::size_t>{0};
+  return {};
+}
+
+void python_convertert::emit_scan_bound_guard(
+  const exprt &length,
+  const source_locationt &loc)
+{
+  if(!python_smt_containers_flag())
+    return;
+  binary_relation_exprt in_bounds{
+    length, ID_le, from_integer(PYTHON_MAX_LIST_LENGTH, length.type())};
+  source_locationt aloc = loc;
+  aloc.set_property_class("python-model-bound");
+  aloc.set_comment(
+    "operation scans a bounded prefix (verifier model bound; "
+    "--python-smt-containers P1 covers index/append/len/slice)");
+  code_assertt bound_assert{in_bounds};
+  bound_assert.add_source_location() = aloc;
+  pending_checks.push_back(std::move(bound_assert));
+  code_assumet bound_assume{in_bounds};
+  bound_assume.add_source_location() = loc;
+  pending_checks.push_back(std::move(bound_assume));
+}
+
+std::optional<exprt::operandst>
+python_convertert::list_literal_leading(const exprt &list_value) const
+{
+  if(list_value.id() != ID_struct || list_value.operands().size() < 2)
+    return {};
+  const exprt &len = list_value.operands()[0];
+  mp_integer len_val;
+  if(!len.is_constant() || to_integer(to_constant_expr(len), len_val))
+    return {};
+  const exprt &data = list_value.operands()[1];
+  exprt::operandst out;
+  const std::size_t n = static_cast<std::size_t>(len_val.to_ulong());
+  for(std::size_t i = 0; i < n; i++)
+  {
+    auto el = list_literal_element(data, i);
+    if(!el.has_value())
+      return {};
+    out.push_back(std::move(*el));
+  }
+  return out;
+}

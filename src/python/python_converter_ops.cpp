@@ -1427,55 +1427,38 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       }
       return std::nullopt;
     };
-    auto is_const_struct = [](const exprt &s)
-    {
-      return s.operands().size() >= 2 && s.operands()[0].is_constant() &&
-             s.operands()[1].id() == ID_array;
-    };
     std::optional<exprt> lco = resolve_const_list(left);
     std::optional<exprt> rco = resolve_const_list(right);
-    if(lco && rco && is_const_struct(*lco) && is_const_struct(*rco))
+    if(lco && rco)
     {
-      mp_integer nl, nr;
-      if(
-        !to_integer(to_constant_expr(lco->operands()[0]), nl) &&
-        !to_integer(to_constant_expr(rco->operands()[0]), nr) && nl >= 0 &&
-        nr >= 0 && nl + nr <= (long)PYTHON_MAX_LIST_LENGTH)
+      exprt lc = *lco, rc = *rco;
+      // Promote to a common element type when they differ.
+      if(lc.type() != rc.type())
       {
-        exprt lc = *lco, rc = *rco;
-        // Promote to a common element type when they differ.
-        if(lc.type() != rc.type())
+        lc = rebuild_list_as_pv(lc);
+        rc = rebuild_list_as_pv(rc);
+      }
+      if(lc.type() == rc.type())
+      {
+        // Decode both literals shape-agnostically (bounded array
+        // literal or the flag's store-chain).
+        auto lel = list_literal_leading(lc);
+        auto rel = list_literal_leading(rc);
+        if(
+          lel.has_value() && rel.has_value() &&
+          (python_smt_containers_flag() ||
+           lel->size() + rel->size() <=
+             static_cast<std::size_t>(PYTHON_MAX_LIST_LENGTH)))
         {
-          lc = rebuild_list_as_pv(lc);
-          rc = rebuild_list_as_pv(rc);
-        }
-        if(lc.type() == rc.type() && is_const_struct(lc) && is_const_struct(rc))
-        {
-          const exprt &ld = lc.operands()[1];
-          const exprt &rd = rc.operands()[1];
           const auto &mdt =
             to_array_type(to_struct_type(lc.type()).components()[1].type());
-          if(
-            ld.operands().size() == PYTHON_MAX_LIST_LENGTH &&
-            rd.operands().size() == PYTHON_MAX_LIST_LENGTH)
-          {
-            const long nll = nl.to_long(), nrl = nr.to_long();
-            exprt::operandst merged;
-            merged.reserve(PYTHON_MAX_LIST_LENGTH);
-            for(long k = 0; k < (long)PYTHON_MAX_LIST_LENGTH; ++k)
-            {
-              if(k < nll)
-                merged.push_back(ld.operands()[k]);
-              else if(k < nll + nrl)
-                merged.push_back(rd.operands()[k - nll]);
-              else
-                merged.push_back(ld.operands()[k]); // unread padding
-            }
-            array_exprt merged_data{std::move(merged), mdt};
-            return struct_exprt{
-              {from_integer(nl + nr, signedbv_typet{64}), merged_data},
-              lc.type()};
-          }
+          const std::size_t n = lel->size() + rel->size();
+          exprt::operandst merged = std::move(*lel);
+          for(auto &e : *rel)
+            merged.push_back(std::move(e));
+          exprt merged_data = build_list_data(std::move(merged), mdt);
+          return struct_exprt{
+            {from_integer(n, signedbv_typet{64}), merged_data}, lc.type()};
         }
       }
     }

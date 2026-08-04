@@ -3130,19 +3130,29 @@ exprt python_convertert::rebuild_list_as_pv(const exprt &list_expr)
   // already-stored value, fall back to indexing into the data array.
   exprt::operandst wrapped_elems;
   exprt src_len;
-  if(
-    list_expr.id() == ID_struct && list_expr.operands().size() == 2 &&
-    list_expr.operands()[1].id() == ID_array)
+  // Literal DATA decodes through list_literal_element so the flag's
+  // store-chain shape folds exactly like the bounded array literal.
+  std::optional<std::size_t> lit_data_n;
+  if(list_expr.id() == ID_struct && list_expr.operands().size() == 2)
+    lit_data_n = list_literal_data_size(list_expr.operands()[1]);
+  if(lit_data_n.has_value())
   {
     src_len = list_expr.operands()[0];
     const exprt &data_arr = list_expr.operands()[1];
-    for(const auto &op : data_arr.operands())
-      wrapped_elems.push_back(wrap_value(op));
+    for(std::size_t i = 0; i < *lit_data_n; i++)
+    {
+      auto el = list_literal_element(data_arr, i);
+      if(!el.has_value())
+        break;
+      wrapped_elems.push_back(wrap_value(std::move(*el)));
+    }
   }
   else
   {
     src_len = member_exprt{list_expr, "length", signedbv_typet{64}};
     member_exprt src_data{list_expr, "data", src_data_type};
+    // Bounded COPY of an unbounded list: fail closed past the scan.
+    emit_scan_bound_guard(src_len, source_locationt{});
     for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
     {
       exprt elem = index_exprt{src_data, from_integer(i, signedbv_typet{64})};
@@ -3150,14 +3160,12 @@ exprt python_convertert::rebuild_list_as_pv(const exprt &list_expr)
     }
   }
   // Pad with safe_zero(python_value) so the array size matches.
-  while(wrapped_elems.size() < PYTHON_MAX_LIST_LENGTH)
-    wrapped_elems.push_back(safe_zero(python_value_type()));
   // Trim if the source had a non-default array size larger than max.
   if(wrapped_elems.size() > PYTHON_MAX_LIST_LENGTH)
     wrapped_elems.resize(PYTHON_MAX_LIST_LENGTH);
 
   return struct_exprt{
-    {src_len, array_exprt{std::move(wrapped_elems), pv_data_type}},
+    {src_len, build_list_data(std::move(wrapped_elems), pv_data_type)},
     pv_list_type};
 }
 
@@ -4255,17 +4263,27 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
           comps.push_back(sa);
           continue;
         }
+        // Bounded COPY: under --python-smt-containers the array size
+        // is infinite; rebuild the scan prefix and fail closed on
+        // longer lists (the length member is component 0).
+        std::size_t rebuild_cap = PYTHON_MAX_LIST_LENGTH;
         mp_integer asz;
-        to_integer(to_constant_expr(dst_at.size()), asz);
+        if(
+          dst_at.size().is_constant() &&
+          !to_integer(to_constant_expr(dst_at.size()), asz))
+          rebuild_cap = numeric_cast_v<std::size_t>(asz);
+        else
+          emit_scan_bound_guard(
+            member_exprt{e, "length", signedbv_typet{64}}, source_locationt{});
         exprt::operandst elems;
-        for(std::size_t k = 0; k < numeric_cast_v<std::size_t>(asz); k++)
+        for(std::size_t k = 0; k < rebuild_cap; k++)
         {
           exprt el = index_exprt{sa, from_integer(k, signedbv_typet{64})};
           elems.push_back(
             widened(c) ? wrap_value(el)
                        : safe_typecast(el, dst_at.element_type()));
         }
-        comps.push_back(array_exprt{std::move(elems), dst_at});
+        comps.push_back(build_list_data(std::move(elems), dst_at));
       }
       exprt promoted = struct_exprt{std::move(comps), p_base};
       static unsigned cp_ctr = 0;
@@ -4292,9 +4310,15 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
           member_exprt ba{bsym, dst_st.components()[c].get_name(), dst_at};
           member_exprt ta{e, src_st.components()[c].get_name(), src_at};
           const typet et = src_at.element_type();
+          std::size_t wb_cap = PYTHON_MAX_LIST_LENGTH;
           mp_integer asz;
-          to_integer(to_constant_expr(dst_at.size()), asz);
-          for(std::size_t k = 0; k < numeric_cast_v<std::size_t>(asz); k++)
+          if(
+            dst_at.size().is_constant() &&
+            !to_integer(to_constant_expr(dst_at.size()), asz))
+            wb_cap = numeric_cast_v<std::size_t>(asz);
+          // (the promote loop above already emitted the fail-closed
+          // scan guard for the non-constant/infinite case)
+          for(std::size_t k = 0; k < wb_cap; k++)
           {
             exprt idx = from_integer(k, signedbv_typet{64});
             exprt src_el = index_exprt{ba, idx};
@@ -4948,6 +4972,15 @@ void python_convertert::emit_capacity_guard(
   long cap,
   const source_locationt &loc)
 {
+  // P1 (--python-smt-containers): infinite-array lists have no
+  // capacity to guard. Dict guards stay until P2 — dict callers pass
+  // PYTHON_MAX_DICT_SIZE and dicts keep the bounded arrays, so the
+  // guard is suppressed only for list-cap callers.
+  if(
+    python_smt_containers_flag() &&
+    cap == static_cast<long>(PYTHON_MAX_LIST_LENGTH))
+    return;
+
   binary_relation_exprt in_bounds{
     length, ID_lt, from_integer(cap, length.type())};
   source_locationt aloc = loc;
@@ -4967,6 +5000,17 @@ void python_convertert::emit_count_capacity_guard(
   long cap,
   const source_locationt &loc)
 {
+  // NOTE (--python-smt-containers): this guard is NOT suppressed for
+  // infinite-array lists. Its callers are producers with bounded COPY
+  // LOOPS (extend, concatenation, repetition, slice assignment): the
+  // loop writes at most `cap` slots regardless of the data array's
+  // size, so a longer result would be silently TRUNCATED — the guard
+  // keeps that fail-closed (python-model-bound at the producing
+  // operation) until each producer is converted to length-driven
+  // copying (P1 backlog). The append/subscript guards, whose stores
+  // are length-indexed and exact on infinite arrays, ARE suppressed
+  // (see emit_capacity_guard / emit_index_capacity_guard).
+
   // count <= cap: a resulting length of exactly `cap` fills indices
   // 0..cap-1 (valid); cap+1 would overflow the modelled data array.
   binary_relation_exprt in_bounds{
@@ -5088,6 +5132,12 @@ void python_convertert::emit_index_capacity_guard(
   long cap,
   const source_locationt &loc)
 {
+  // P1 (--python-smt-containers): infinite-array lists have no
+  // capacity to guard (see emit_capacity_guard).
+  if(
+    python_smt_containers_flag() &&
+    cap == static_cast<long>(PYTHON_MAX_LIST_LENGTH))
+    return;
   // Fire ONLY for a valid Python index that exceeds the modelled array:
   //   (idx < length) ==> (idx < cap)
   // An idx >= length is a normal IndexError (handled separately, the access is
@@ -5455,11 +5505,9 @@ python_convertert::build_class_init_call(
           elems.push_back(std::move(a));
         }
         const std::size_t n_packed = elems.size();
-        while(elems.size() < PYTHON_MAX_LIST_LENGTH)
-          elems.push_back(safe_zero(data_type.element_type()));
         exprt packed = struct_exprt{
           {from_integer(static_cast<long long>(n_packed), signedbv_typet{64}),
-           array_exprt{std::move(elems), data_type}},
+           build_list_data(std::move(elems), data_type)},
           va_param_type};
         init_args.resize(va_idx);
         init_args.push_back(std::move(packed));
@@ -5636,16 +5684,24 @@ exprt python_convertert::safe_zero(const typet &type) const
     {
       if(comp.type().id() == ID_array)
       {
-        // Zero-fill the array
+        // Zero-fill the array. An INFINITE data array
+        // (--python-smt-containers) has no literal form: array_of.
         const auto &arr_type = to_array_type(comp.type());
-        exprt::operandst elems;
         mp_integer size;
-        if(!to_integer(to_constant_expr(arr_type.size()), size))
+        if(
+          arr_type.size().is_constant() &&
+          !to_integer(to_constant_expr(arr_type.size()), size))
         {
+          exprt::operandst elems;
           for(mp_integer i = 0; i < size; ++i)
             elems.push_back(safe_zero(arr_type.element_type()));
+          fields.push_back(array_exprt{std::move(elems), arr_type});
         }
-        fields.push_back(array_exprt{std::move(elems), arr_type});
+        else
+        {
+          fields.push_back(
+            array_of_exprt{safe_zero(arr_type.element_type()), arr_type});
+        }
       }
       else
         fields.push_back(safe_zero(comp.type()));
@@ -5657,6 +5713,8 @@ exprt python_convertert::safe_zero(const typet &type) const
   if(type.id() == ID_array)
   {
     const auto &arr_type = to_array_type(type);
+    if(!arr_type.size().is_constant())
+      return array_of_exprt{safe_zero(arr_type.element_type()), arr_type};
     exprt::operandst elems;
     mp_integer size;
     if(!to_integer(to_constant_expr(arr_type.size()), size))
@@ -6300,11 +6358,9 @@ exprt python_convertert::convert_expression(const jsont &expr)
           exprt::operandst ops;
           for(auto &e : uniq)
             ops.push_back(as_str ? e : wrap_value(e));
-          while(ops.size() < PYTHON_MAX_LIST_LENGTH)
-            ops.push_back(safe_zero(elem_t));
           struct_exprt se{
             {from_integer((long)uniq.size(), signedbv_typet{64}),
-             array_exprt{std::move(ops), data_t}},
+             build_list_data(std::move(ops), data_t)},
             list_t};
           // PLR §3.2: tag as set-semantic (order-insensitive multiset).
           se.set("#python_set_semantic", "1");

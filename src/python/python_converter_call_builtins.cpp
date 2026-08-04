@@ -126,19 +126,17 @@ bool python_convertert::constant_list_orderable_conflict(const exprt &arg)
     if(it != list_literals.end())
       lst = &it->second;
   }
-  if(!(is_python_list_type(lst->type()) && lst->id() == ID_struct &&
-       lst->operands().size() >= 2 && lst->operands()[0].is_constant() &&
-       lst->operands()[1].id() == ID_array))
+  if(!(is_python_list_type(lst->type()) && lst->id() == ID_struct))
     return false;
-  mp_integer n;
-  if(to_integer(to_constant_expr(lst->operands()[0]), n))
+  // Decodes both literal shapes (bounded array literal and the
+  // --python-smt-containers store-chain).
+  auto elems = list_literal_leading(*lst);
+  if(!elems.has_value())
     return false;
-  const exprt &data = lst->operands()[1];
   int seen = 0;
-  for(mp_integer i = 0; i < n && i.to_long() < (long)data.operands().size();
-      ++i)
+  for(const auto &e : *elems)
   {
-    const int c = orderable_category_of(data.operands()[i.to_long()]);
+    const int c = orderable_category_of(e);
     if(c != 0)
       seen |= (1 << c);
   }
@@ -2963,11 +2961,9 @@ std::optional<exprt> python_convertert::try_builtin_call(
               exprt::operandst sorted_elems;
               for(const auto &p : int_pairs)
                 sorted_elems.push_back(p.second);
-              while(sorted_elems.size() < PYTHON_MAX_LIST_LENGTH)
-                sorted_elems.push_back(safe_zero(data_type.element_type()));
               return struct_exprt{
                 {lit->operands()[0],
-                 array_exprt{std::move(sorted_elems), data_type}},
+                 build_list_data(std::move(sorted_elems), data_type)},
                 arg.type()};
             }
             // PLR §6.10: when all elements are constant strings,
@@ -2994,11 +2990,9 @@ std::optional<exprt> python_convertert::try_builtin_call(
               exprt::operandst sorted_elems;
               for(const auto &p : str_pairs)
                 sorted_elems.push_back(p.second);
-              while(sorted_elems.size() < PYTHON_MAX_LIST_LENGTH)
-                sorted_elems.push_back(safe_zero(data_type.element_type()));
               return struct_exprt{
                 {lit->operands()[0],
-                 array_exprt{std::move(sorted_elems), data_type}},
+                 build_list_data(std::move(sorted_elems), data_type)},
                 arg.type()};
             }
           }
@@ -3107,10 +3101,8 @@ std::optional<exprt> python_convertert::try_builtin_call(
         // trailing zeros at struct-equality time.
         {
           exprt::operandst zeros;
-          while(zeros.size() < PYTHON_MAX_LIST_LENGTH)
-            zeros.push_back(safe_zero(sdata_type.element_type()));
           pending_checks.push_back(code_frontend_assignt{
-            sdata, array_exprt{std::move(zeros), sdata_type}});
+            sdata, build_list_data(std::move(zeros), sdata_type)});
         }
         pending_checks.push_back(
           code_frontend_assignt{slength, from_integer(0, signedbv_typet{64})});
@@ -3193,6 +3185,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
         const auto &data_type = to_array_type(list_st.components()[1].type());
         member_exprt length{arg, "length", signedbv_typet{64}};
         member_exprt data{arg, "data", data_type};
+        emit_scan_bound_guard(length, get_location(expr));
 
         // PLR §6.10: sum() starts at 0 and adds each element, so a concretely
         // non-numeric element type (str/list/...) raises TypeError
@@ -3334,10 +3327,8 @@ std::optional<exprt> python_convertert::try_builtin_call(
       // zeros at struct-equality time.
       {
         exprt::operandst zeros;
-        while(zeros.size() < PYTHON_MAX_LIST_LENGTH)
-          zeros.push_back(safe_zero(data_type.element_type()));
         pending_checks.push_back(code_frontend_assignt{
-          data, array_exprt{std::move(zeros), data_type}});
+          data, build_list_data(std::move(zeros), data_type)});
       }
 
       // Fill: data[i] = start + i * step for i in 0..MAX
@@ -5318,13 +5309,12 @@ std::optional<exprt> python_convertert::try_builtin_call(
           {
             if(e.id() != ID_struct)
               return std::nullopt;
-            if(
-              is_python_list_type(e.type()) && e.operands().size() >= 2 &&
-              e.operands()[1].id() == ID_array)
+            if(is_python_list_type(e.type()) && e.operands().size() >= 2)
             {
-              const auto &ops = e.operands()[1].operands();
-              if(n < (long long)ops.size())
-                return ops[n];
+              auto el = list_literal_element(
+                e.operands()[1], static_cast<std::size_t>(n));
+              if(el.has_value())
+                return *el;
               return std::nullopt;
             }
             if(n < (long long)e.operands().size())
@@ -5385,13 +5375,15 @@ std::optional<exprt> python_convertert::try_builtin_call(
             arg.operands().size() >= 2 && arg.operands()[0].is_constant())
           {
             mp_integer n;
-            if(
-              !to_integer(to_constant_expr(arg.operands()[0]), n) && n > 0 &&
-              arg.operands()[1].id() == ID_array)
+            if(!to_integer(to_constant_expr(arg.operands()[0]), n) && n > 0)
             {
-              const auto &ops = arg.operands()[1].operands();
-              for(mp_integer i = 0; i < n && i < (long long)ops.size(); ++i)
-                elems.push_back(ops[i.to_long()]);
+              for(mp_integer i = 0; i < n; ++i)
+              {
+                auto el = list_literal_element(arg.operands()[1], i.to_ulong());
+                if(!el.has_value())
+                  break;
+                elems.push_back(std::move(*el));
+              }
               have_elems = !elems.empty();
             }
           }
@@ -5557,9 +5549,13 @@ std::optional<exprt> python_convertert::try_builtin_call(
             mp_integer n;
             if(!to_integer(to_constant_expr(seq.operands()[0]), n) && n > 0)
             {
-              const auto &ops = seq.operands()[1].operands();
-              for(mp_integer i = 0; i < n && i < (long long)ops.size(); ++i)
-                selems.push_back(ops[i.to_long()]);
+              for(mp_integer i = 0; i < n; ++i)
+              {
+                auto el = list_literal_element(seq.operands()[1], i.to_ulong());
+                if(!el.has_value())
+                  break;
+                selems.push_back(std::move(*el));
+              }
             }
           }
           else if(is_python_tuple_type(seq.type()) && seq.id() == ID_struct)
@@ -5882,6 +5878,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
                 pending_checks.push_back(code_frontend_assignt{acc, e0});
               }
               // For i in 1..MAX, if i < length, update acc.
+              emit_scan_bound_guard(llen, get_location(expr));
               for(std::size_t i = 1; i < PYTHON_MAX_LIST_LENGTH; i++)
               {
                 exprt idx = from_integer(i, signedbv_typet{64});

@@ -176,15 +176,13 @@ exprt python_convertert::convert_constant(const jsont &expr)
       exprt::operandst elems;
       for(unsigned char b : bytes)
         elems.push_back(from_integer(b, u8));
-      while(elems.size() < PYTHON_MAX_LIST_LENGTH)
-        elems.push_back(from_integer(0, u8));
       // Structural metadata is ALWAYS signedbv[64] (the container structs
       // declare i64 lengths); python_int_type() would diverge under
       // --python-unbounded-ints (integer_typet) and break the
       // struct-assignment type check (the io/BytesIO b"" default crash).
       return struct_exprt{
         {from_integer(static_cast<long long>(bytes.size()), signedbv_typet{64}),
-         array_exprt{std::move(elems), data_type}},
+         build_list_data(std::move(elems), data_type)},
         lt};
     }
 

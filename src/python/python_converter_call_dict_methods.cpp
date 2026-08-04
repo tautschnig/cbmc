@@ -201,11 +201,9 @@ std::optional<exprt> python_convertert::try_dict_method(
       exprt::operandst elems;
       for(const auto &k : dict_val->operands()[1].operands())
         elems.push_back(python_dict_unbox_key(k));
-      while(elems.size() < PYTHON_MAX_LIST_LENGTH)
-        elems.push_back(safe_zero(key_type));
       return struct_exprt{
         {dict_val->operands()[0],
-         array_exprt{std::move(elems), list_data_type}},
+         build_list_data(std::move(elems), list_data_type)},
         list_type};
     }
     // d.keys() → list of d.keys[0..d.length-1]
@@ -215,10 +213,8 @@ std::optional<exprt> python_convertert::try_dict_method(
     for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
       elems.push_back(python_dict_unbox_key(
         index_exprt{keys, from_integer(i, signedbv_typet{64})}));
-    while(elems.size() < PYTHON_MAX_LIST_LENGTH)
-      elems.push_back(safe_zero(key_type));
     return struct_exprt{
-      {length, array_exprt{std::move(elems), list_data_type}}, list_type};
+      {length, build_list_data(std::move(elems), list_data_type)}, list_type};
   }
   if(method_name == "values")
   {
@@ -246,11 +242,9 @@ std::optional<exprt> python_convertert::try_dict_method(
       exprt::operandst elems;
       for(const auto &v : dict_val->operands()[2].operands())
         elems.push_back(v);
-      while(elems.size() < PYTHON_MAX_LIST_LENGTH)
-        elems.push_back(safe_zero(val_type));
       return struct_exprt{
         {dict_val->operands()[0],
-         array_exprt{std::move(elems), list_data_type}},
+         build_list_data(std::move(elems), list_data_type)},
         list_type};
     }
     member_exprt length{obj, "length", signedbv_typet{64}};
@@ -258,10 +252,8 @@ std::optional<exprt> python_convertert::try_dict_method(
     exprt::operandst elems;
     for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
       elems.push_back(index_exprt{vals, from_integer(i, signedbv_typet{64})});
-    while(elems.size() < PYTHON_MAX_LIST_LENGTH)
-      elems.push_back(safe_zero(val_type));
     return struct_exprt{
-      {length, array_exprt{std::move(elems), list_data_type}}, list_type};
+      {length, build_list_data(std::move(elems), list_data_type)}, list_type};
   }
   if(method_name == "items")
   {
@@ -310,11 +302,9 @@ std::optional<exprt> python_convertert::try_dict_method(
           elems.push_back(struct_exprt{
             {src_keys.operands()[idx], src_vals.operands()[idx]}, tuple_t});
         }
-        while(elems.size() < PYTHON_MAX_LIST_LENGTH)
-          elems.push_back(safe_zero(tuple_t));
         return struct_exprt{
           {dict_val->operands()[0],
-           array_exprt{std::move(elems), list_data_type}},
+           build_list_data(std::move(elems), list_data_type)},
           list_t};
       }
     }

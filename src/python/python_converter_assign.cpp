@@ -229,9 +229,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
       const auto &new_data_type =
         to_array_type(new_list_type.components()[1].type());
       exprt::operandst zeros;
-      for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
-        zeros.push_back(safe_zero(ann_elem));
-      array_exprt new_data{std::move(zeros), new_data_type};
+      exprt new_data = build_list_data(std::move(zeros), new_data_type);
       rhs = struct_exprt{
         {from_integer(0, signedbv_typet{64}), new_data}, new_list_type};
     }
@@ -274,9 +272,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
         // NONDET (variable-width) -- the mismatch left a handle-typed array
         // holding smt_string nondets (the byte-lowering abort on the
         // annotated-empty-list shape).
-        for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
-          zeros.push_back(safe_zero(new_data_type.element_type()));
-        array_exprt new_data{std::move(zeros), new_data_type};
+        exprt new_data = build_list_data(std::move(zeros), new_data_type);
         rhs = struct_exprt{
           {from_integer(0, signedbv_typet{64}), new_data}, new_list_type};
         // Refresh the symbol's type to match the rebuilt list.
@@ -1845,9 +1841,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
       const auto &new_data_type =
         to_array_type(new_list_type.components()[1].type());
       exprt::operandst zeros;
-      for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
-        zeros.push_back(safe_zero(new_elem_t));
-      array_exprt new_data{std::move(zeros), new_data_type};
+      exprt new_data = build_list_data(std::move(zeros), new_data_type);
       rhs = struct_exprt{
         {from_integer(0, signedbv_typet{64}), new_data}, new_list_type};
     }
@@ -4211,6 +4205,34 @@ codet python_convertert::convert_assign(const jsont &stmt)
           is_python_list_type(rhs.type()) || is_python_tuple_type(rhs.type()) ||
           is_python_dict_type(rhs.type()) || is_python_set_type(rhs.type()))
         {
+          if(python_smt_containers_flag())
+          {
+            // In-place symbol retype leaves earlier emitted assigns
+            // at the old type; infinite-array values hit the symex
+            // type invariant (boolbv tolerated the pun). Version the
+            // binding instead — same mechanics as the class-instance
+            // branch above.
+            unsigned &ver = version_counters[qualified_name];
+            ver++;
+            std::string versioned_name =
+              qualified_name + "__v" + std::to_string(ver);
+            irep_idt versioned_id{versioned_name};
+            symbolt new_symbol{versioned_id, rhs.type(), "python"};
+            new_symbol.base_name = var_name + "__v" + std::to_string(ver);
+            new_symbol.location = loc;
+            new_symbol.is_lvalue = true;
+            new_symbol.is_state_var = true;
+            new_symbol.is_static_lifetime = current_function.empty();
+            symbol_table.add(new_symbol);
+            variable_versions[qualified_name] = versioned_id;
+            const symbolt &new_sym = symbol_table.lookup_ref(versioned_id);
+            if(rhs.id() == ID_struct && is_python_list_type(rhs.type()))
+              list_literals[versioned_id] = rhs;
+            code_frontend_assignt assign{new_sym.symbol_expr(), rhs};
+            assign.add_source_location() = loc;
+            block.add(std::move(assign));
+            continue;
+          }
           symbol_table.get_writeable_ref(existing->name).type = rhs.type();
         }
         else
@@ -4341,7 +4363,40 @@ codet python_convertert::convert_assign(const jsont &stmt)
       if(
         is_python_list_type(rt2) || is_python_dict_type(rt2) ||
         is_python_tuple_type(rt2) || is_python_set_type(rt2))
+      {
+        if(python_smt_containers_flag())
+        {
+          // In-place symbol retype leaves the EARLIER emitted assigns
+          // referencing the symbol at its old type — boolbv tolerates
+          // the pun, but infinite-array values hit the symex
+          // rhs.type()==lhs.type() invariant. Mint a fresh versioned
+          // binding instead (the straight-line versioning path the
+          // scalar retype already uses); convert_name resolves
+          // subsequent reads through variable_versions.
+          const std::string qualified_name = id2string(symbol_id);
+          unsigned &ver = version_counters[qualified_name];
+          ver++;
+          const std::string versioned_name =
+            qualified_name + "__v" + std::to_string(ver);
+          irep_idt versioned_id{versioned_name};
+          symbolt new_symbol{versioned_id, rt2, "python"};
+          new_symbol.base_name = versioned_name;
+          new_symbol.location = loc;
+          new_symbol.is_lvalue = true;
+          new_symbol.is_state_var = true;
+          new_symbol.is_static_lifetime = current_function.empty();
+          symbol_table.add(new_symbol);
+          variable_versions[qualified_name] = versioned_id;
+          const symbolt &new_sym = symbol_table.lookup_ref(versioned_id);
+          if(typed_rhs.id() == ID_struct && is_python_list_type(rt2))
+            list_literals[versioned_id] = typed_rhs;
+          code_frontend_assignt assign{new_sym.symbol_expr(), typed_rhs};
+          assign.add_source_location() = loc;
+          block.add(std::move(assign));
+          continue;
+        }
         symbol_table.get_writeable_ref(symbol_id).type = rt2;
+      }
       else
         typed_rhs = safe_typecast(typed_rhs, sym.type);
     }

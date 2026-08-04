@@ -561,12 +561,10 @@ irep_idt python_convertert::setup_generator_result(
     {
       const auto &data_t = to_array_type(rt.components()[1].type());
       exprt::operandst zero_elems;
-      while(zero_elems.size() < PYTHON_MAX_LIST_LENGTH)
-        zero_elems.push_back(safe_zero(data_t.element_type()));
       body_block.add(code_frontend_assignt{
         member_exprt{
           symbol_table.lookup_ref(gen_result_id).symbol_expr(), "data", data_t},
-        array_exprt{std::move(zero_elems), data_t}});
+        build_list_data(std::move(zero_elems), data_t)});
     }
   }
   return gen_result_id;

@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 40 --no-unwinding-assertions --python-smt-containers
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+model-bound.*FAILURE
+--
+No model-bound property FIRES for the core ops (append/index/len/
+comprehension/slice/sort past the old 16 cap). Discharged scan-bound
+obligations (the == scan) may appear as SUCCESS lines; only a FAILURE
+is forbidden.

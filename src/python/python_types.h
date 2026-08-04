@@ -27,6 +27,7 @@
 #include <util/mathematical_types.h>
 #include <util/pointer_expr.h>
 #include <util/refined_string_type.h>
+#include <util/std_expr.h>
 #include <util/std_types.h>
 #include <util/string_expr.h>
 
@@ -80,6 +81,20 @@ inline std::size_t &python_max_list_length_config()
 /// Process-wide flag: when true (set by the Python converter under
 /// --python-smt-strings), Python `str` is represented as the native
 /// SMT String sort rather than the refined-string struct.
+/// P1 of doc/python-frontend-unbounded-containers-plan.md:
+/// --python-smt-containers models lists with an INFINITE data array
+/// ({length: i64, data: elem[inf]}) instead of the bounded
+/// elem[PYTHON_MAX_LIST_LENGTH]: no capacity guards, index/append/len/
+/// iteration exact at any length. Operations that still scan a
+/// bounded prefix emit a fail-closed python-model-bound obligation at
+/// the USE site (never silent truncation). Same function-static
+/// pattern as python_smt_string_native_flag.
+inline bool &python_smt_containers_flag()
+{
+  static bool value = false;
+  return value;
+}
+
 inline bool &python_smt_string_native_flag()
 {
   static bool flag = false;
@@ -433,10 +448,15 @@ inline struct_typet python_list_type(const typet &element_type_in)
   struct_typet::componentt length{"length", signedbv_typet{64}};
   components.push_back(length);
 
+  // P1 (--python-smt-containers): the data array is INFINITE — no
+  // capacity, no model bound on the core ops. Bounded otherwise.
   struct_typet::componentt data{
     "data",
     array_typet{
-      element_type, from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})}};
+      element_type,
+      python_smt_containers_flag()
+        ? exprt{infinity_exprt{signedbv_typet{64}}}
+        : exprt{from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})}}};
   components.push_back(data);
 
   struct_typet result{components};

@@ -134,6 +134,7 @@ protected:
   python_string_kindt python_string_kind = python_string_kindt::refined;
   std::size_t max_string_length = PYTHON_MAX_STRING_LENGTH;
   std::size_t max_list_length = PYTHON_MAX_LIST_LENGTH;
+  bool python_smt_containers = false;
 
   /// Search paths for module resolution (from PYTHONPATH + source dir).
   std::vector<std::string> python_paths;
