@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 8 --no-unwinding-assertions --python-smt-containers --python-max-dict-size 32 --smt2
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+model-bound.*FAILURE
+--
+The same program WITHOUT --python-max-dict-size 32 fails closed with
+python-model-bound (checked by the probe matrix; a second desc per
+flag set is not supported by test.pl).

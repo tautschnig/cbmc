@@ -5945,7 +5945,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
           }
 
           code_blockt block;
-          emit_capacity_guard(block, length, PYTHON_MAX_LIST_LENGTH, loc);
+          emit_capacity_guard(block, length, PYTHON_MAX_LIST_LENGTH, loc, true);
           code_frontend_assignt store{slot, val};
           store.add_source_location() = loc;
           block.add(std::move(store));
@@ -6015,7 +6015,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
           }
           symbol_exprt ins_idx = symbol_table.lookup_ref(tid).symbol_expr();
           code_blockt block;
-          emit_capacity_guard(block, length, PYTHON_MAX_LIST_LENGTH, loc);
+          emit_capacity_guard(block, length, PYTHON_MAX_LIST_LENGTH, loc, true);
           block.add(code_frontend_assignt{ins_idx, std::move(clamped)});
           for(int i = PYTHON_MAX_LIST_LENGTH - 1; i >= 1; i--)
           {

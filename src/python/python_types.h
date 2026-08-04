@@ -403,13 +403,24 @@ inline exprt python_lift_to_index_domain(exprt e, const typet &idx_type)
 inline struct_typet
 python_dict_type(const typet &key_type, const typet &value_type)
 {
+  // P2 (--python-smt-containers): the keys/values arrays are INFINITE,
+  // exactly like the list data array (P1). The dict VALUE is then three
+  // symex components (length + two opaque arrays) instead of
+  // 1 + 2*PYTHON_MAX_DICT_SIZE renamed slots — the field-sensitivity
+  // width measured at ~62 % of symex on dict-heavy inputs, and the
+  // reason raising --python-max-dict-size no longer multiplies symex
+  // cost. The keys array IS the insertion order (PLR §3.7), preserved
+  // by construction in both models; lookup scans stay bounded by
+  // PYTHON_MAX_DICT_SIZE and FAIL CLOSED past it (emit_scan_bound_guard
+  // at the scan sites).
+  const exprt array_size =
+    python_smt_containers_flag()
+      ? exprt{infinity_exprt{signedbv_typet{64}}}
+      : exprt{from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})};
   struct_typet::componentst components;
   components.push_back(struct_typet::componentt{"length", signedbv_typet{64}});
   components.push_back(struct_typet::componentt{
-    "keys",
-    array_typet{
-      python_dict_key_elem_type(key_type),
-      from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}});
+    "keys", array_typet{python_dict_key_elem_type(key_type), array_size}});
   // Representation invariant (strings plan 2026-07-21): no variable-width
   // type in any aggregate -- an inline smt_string VALUE made dict[str, str]
   // variable-width and aborted smt2 byte-lowering on identity reads.
@@ -418,10 +429,7 @@ python_dict_type(const typet &key_type, const typet &value_type)
   const typet stored_value_type =
     value_type.id() == ID_string ? python_string_handle_type() : value_type;
   components.push_back(struct_typet::componentt{
-    "values",
-    array_typet{
-      stored_value_type,
-      from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}});
+    "values", array_typet{stored_value_type, array_size}});
   struct_typet result{components};
   result.set_tag("python_dict_array");
   return result;

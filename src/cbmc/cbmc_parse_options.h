@@ -73,6 +73,7 @@ class optionst;
   "(python-unbounded-ints)" \
   "(python-max-string-length):" \
   "(python-max-list-length):" \
+  "(python-max-dict-size):" \
   "(python-ref-mutables)" \
   "(python-no-body-check)" \
   "(python-strict-warnings)" \

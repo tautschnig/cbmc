@@ -184,9 +184,40 @@ side — a refined-struct view built over an `ID_string` operand.)
   length-driven copies for the producer family (extend/concat/
   repetition beyond the scan), quantified equality for
   beyond-the-scan `==`.
-- **P2 — dicts + order overlay.** The four-component dict; KeyError
-  precision probes (absent vs None-valued); insertion-order pinning
-  tests ported from the bounded model.
+- **P2 — dicts.** *(LANDED, 2026-08.)* Implemented as the P1
+  analogue, not the four-component overlay: the existing
+  {length, keys[], values[]} layout with INFINITE arrays under the
+  flag. The keys array IS the insertion order (PLR §3.7) — preserved
+  by construction, including through mutation — so no separate
+  overlay is needed; KeyError vs None-valued keys keep bounded-model
+  precision. Every key lookup scans a bounded prefix and FAILS CLOSED
+  past it, via a single guard in dict_slot_match (the P0 choke point:
+  one edit covers get/setdefault/pop/del/subscript/membership/
+  update). The scan cap is now runtime-configurable
+  (--python-max-dict-size, previously slaved to
+  --python-max-list-length) and — the point of the exercise — raising
+  it no longer multiplies symex width: the dict value is 3 components
+  regardless of cap instead of 1 + 2*cap renamed slots. Measured on
+  pyhard_exercise: symex 210 s -> 30 s under
+  --python-smt-containers --python-smt-strings --z3 (was 600 s+ DNF
+  before the suffix-cache fix; the three fixes compound). Dict fold
+  readers were converted to a shape-agnostic dict_literal_leading
+  decoder (get/membership/keys/values/items/update/int-key subscript);
+  dict_literals cache surgery on subscript-assign is replaced by
+  cache erasure under the flag (positional surgery corrupts store-
+  chains); keys() adapts handle keys to handle slots
+  (dict_key_for_slot — the pre-existing keys()-under-native-strings
+  crash). Capacity guards: list appends suppress by an EXPLICIT
+  parameter (never by cap-value comparison — the caps are
+  independently configurable and may coincide); dict appends KEEP
+  their guard as the write-side twin of the scan bound. Requires an
+  SMT2 solver (warning wired, like --python-smt-strings). Gates: the
+  60-test dict family runs 53/60 verdict-identical under the flag —
+  the 7 differences are 2 solver timeouts and 5 loud failures
+  (solver sort errors), ALL in dicts nested inside containers
+  crossing call boundaries (P3 scope: nesting via handles); nothing
+  fails silently. Pinned by smt-containers-dict / -dict-fail /
+  -dict-cap. Full bounded suite verdict-identical.
 - **P3 — nesting via handles**, then the perf study: pyhard_exercise
   and the corpus timeout tail as the benchmark set, capacity-64
   bounded model as the baseline.

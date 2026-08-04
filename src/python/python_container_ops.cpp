@@ -83,6 +83,22 @@ exprt python_convertert::dict_slot_match(
   const exprt &key_probe,
   std::vector<codet> *sink)
 {
+  // P2 fail-closed scan bound, emitted ONCE per scan (at slot 0):
+  // under --python-smt-containers the dict's arrays are infinite, but
+  // every key lookup visits only the first PYTHON_MAX_DICT_SIZE slots
+  // — a longer dict must be reported (python-model-bound) and cut,
+  // never silently mis-looked-up (PLR §6.4.6: lookup is total over
+  // the dict's keys). Placing the guard in the ONE lookup step every
+  // routed scan shares covers get/setdefault/pop/del/subscript/
+  // membership/update in one edit.
+  if(i == 0)
+  {
+    emit_scan_bound_guard(
+      length,
+      source_locationt{},
+      static_cast<long>(PYTHON_MAX_DICT_SIZE),
+      sink);
+  }
   const exprt idx = from_integer(i, signedbv_typet{64});
   const exprt in_range = binary_relation_exprt{idx, ID_lt, length};
   exprt key_at = python_dict_unbox_key(index_exprt{keys_array, idx});
@@ -227,23 +243,29 @@ python_convertert::list_literal_data_size(const exprt &data) const
 
 void python_convertert::emit_scan_bound_guard(
   const exprt &length,
-  const source_locationt &loc)
+  const source_locationt &loc,
+  long cap,
+  std::vector<codet> *sink)
 {
   if(!python_smt_containers_flag())
     return;
+  if(cap < 0)
+    cap = static_cast<long>(PYTHON_MAX_LIST_LENGTH);
+  std::vector<codet> &out = sink != nullptr ? *sink : pending_checks;
   binary_relation_exprt in_bounds{
-    length, ID_le, from_integer(PYTHON_MAX_LIST_LENGTH, length.type())};
+    length, ID_le, from_integer(cap, length.type())};
   source_locationt aloc = loc;
   aloc.set_property_class("python-model-bound");
   aloc.set_comment(
     "operation scans a bounded prefix (verifier model bound; "
-    "--python-smt-containers P1 covers index/append/len/slice)");
+    "--python-smt-containers exact ops: list index/append/len/slice, "
+    "dict insertion order/len)");
   code_assertt bound_assert{in_bounds};
   bound_assert.add_source_location() = aloc;
-  pending_checks.push_back(std::move(bound_assert));
+  out.push_back(std::move(bound_assert));
   code_assumet bound_assume{in_bounds};
   bound_assume.add_source_location() = loc;
-  pending_checks.push_back(std::move(bound_assume));
+  out.push_back(std::move(bound_assume));
 }
 
 std::optional<exprt::operandst>
@@ -266,4 +288,47 @@ python_convertert::list_literal_leading(const exprt &list_value) const
     out.push_back(std::move(*el));
   }
   return out;
+}
+
+std::optional<std::vector<std::pair<exprt, exprt>>>
+python_convertert::dict_literal_leading(const exprt &dict_value) const
+{
+  if(dict_value.id() != ID_struct || dict_value.operands().size() < 3)
+    return {};
+  const exprt &len = dict_value.operands()[0];
+  mp_integer len_val;
+  if(!len.is_constant() || to_integer(to_constant_expr(len), len_val))
+    return {};
+  const exprt &keys = dict_value.operands()[1];
+  const exprt &vals = dict_value.operands()[2];
+  std::vector<std::pair<exprt, exprt>> out;
+  const std::size_t n = static_cast<std::size_t>(len_val.to_ulong());
+  for(std::size_t i = 0; i < n; i++)
+  {
+    auto k = list_literal_element(keys, i);
+    auto v = list_literal_element(vals, i);
+    if(!k.has_value() || !v.has_value())
+      return {};
+    out.emplace_back(std::move(*k), std::move(*v));
+  }
+  return out;
+}
+
+exprt python_convertert::dict_key_for_slot(
+  const exprt &key_elem,
+  const typet &slot_type) const
+{
+  if(
+    is_python_string_handle_type(key_elem.type()) &&
+    is_python_string_handle_type(slot_type))
+    return key_elem;
+  exprt unboxed = python_dict_unbox_key(key_elem);
+  if(unboxed.type() != slot_type && slot_type.id() != ID_empty)
+  {
+    // Value-preserving adaptation for remaining mismatches (e.g. a
+    // refined-string key into a python_value slot) — never a raw pun.
+    return const_cast<python_convertert *>(this)->coerce_element(
+      unboxed, slot_type);
+  }
+  return unboxed;
 }

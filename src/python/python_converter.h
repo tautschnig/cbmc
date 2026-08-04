@@ -2554,6 +2554,25 @@ private:
   std::optional<exprt::operandst>
   list_literal_leading(const exprt &list_value) const;
 
+  /// Decode the LENGTH leading (key, value) pairs of a constant dict
+  /// VALUE (struct {length, keys, values}). Shape-agnostic like
+  /// list_literal_leading (bounded array literals or the flag's
+  /// store-chains); nullopt when not statically decodable — fold
+  /// sites must fall through to their runtime scan, NEVER read
+  /// operands() positionally (a store-chain's operands are
+  /// [base, index, value, ...]).
+  std::optional<std::vector<std::pair<exprt, exprt>>>
+  dict_literal_leading(const exprt &dict_value) const;
+
+  /// Adapt a dict KEY element to a destination slot type: a native
+  /// string-id HANDLE key stays a handle when the slot is
+  /// handle-typed (list[str] slots under --python-smt-strings), and
+  /// unboxes to its strtab denotation otherwise. Unboxing
+  /// unconditionally stored String-sorted denotations into bv64
+  /// handle slots (an SMT sort mismatch — the keys()-after-mutation
+  /// crash class).
+  exprt dict_key_for_slot(const exprt &key_elem, const typet &slot_type) const;
+
   /// P1c fail-closed scan bound: under --python-smt-containers, an
   /// operation that still scans only the first
   /// PYTHON_MAX_LIST_LENGTH slots of an (unbounded) list is SOUND
@@ -2563,7 +2582,11 @@ private:
   /// silently mis-evaluated (PLR: a wrong sum/membership verdict is
   /// a false proof). No-op without the flag (the capacity model
   /// already bounds every list) and no-op for non-list containers.
-  void emit_scan_bound_guard(const exprt &length, const source_locationt &loc);
+  void emit_scan_bound_guard(
+    const exprt &length,
+    const source_locationt &loc,
+    long cap = -1,
+    std::vector<codet> *sink = nullptr);
 
   /// Erase any cached list_literals entry whose stored struct references the
   /// symbol `sym`. Called when `sym` is (re)assigned: a cached list built from
@@ -2765,11 +2788,19 @@ private:
   /// assume then cuts that path so no corrupt-state execution is
   /// explored. Sound: a beyond-capacity execution is reported or cut,
   /// never silently trusted.
+  /// \p unbounded_write: the guarded store is length-indexed into a
+  /// LIST data array, which is INFINITE under --python-smt-containers
+  /// — nothing to guard there (suppressed). Dict appends must KEEP
+  /// their guard even under the flag: every dict lookup scans a
+  /// bounded prefix, so an append past the scan bound would make keys
+  /// invisible to lookups (duplicate-key inserts, missed hits) — the
+  /// write-side twin of emit_scan_bound_guard.
   void emit_capacity_guard(
     code_blockt &block,
     const exprt &length,
     long cap,
-    const source_locationt &loc = source_locationt{});
+    const source_locationt &loc = source_locationt{},
+    bool unbounded_write = false);
 
   /// Container-PRODUCER capacity guard. Push assert(count <= cap) +
   /// assume(count <= cap) into `checks` where `count` is the element COUNT

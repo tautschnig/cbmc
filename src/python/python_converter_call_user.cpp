@@ -1194,8 +1194,8 @@ exprt python_convertert::convert_user_call(
         static_cast<long long>(unmatched_kw.size()), signedbv_typet{64});
       arguments[kwargs_idx] = struct_exprt{
         {length,
-         array_exprt{std::move(key_elems), keys_arr_type},
-         array_exprt{std::move(val_elems), vals_arr_type}},
+         build_list_data(std::move(key_elems), keys_arr_type),
+         build_list_data(std::move(val_elems), vals_arr_type)},
         dict_type};
     }
   }

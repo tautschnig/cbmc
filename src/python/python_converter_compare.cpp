@@ -3104,30 +3104,34 @@ exprt python_convertert::convert_compare(const jsont &expr)
           if(it != dict_literals.end())
             dict_val = &it->second;
         }
+        std::optional<std::vector<std::pair<exprt, exprt>>> in_entries;
         if(
           !keys_are_values && key_str.has_value() &&
-          !python_smt_string_native_flag() && dict_val->id() == ID_struct &&
-          dict_val->operands().size() >= 2 &&
-          dict_val->operands()[0].is_constant())
+          !python_smt_string_native_flag() && dict_val->id() == ID_struct)
+          in_entries = dict_literal_leading(*dict_val);
+        if(in_entries.has_value())
         {
-          mp_integer len_val;
-          if(!to_integer(to_constant_expr(dict_val->operands()[0]), len_val))
+          // Shape-agnostic decode (array literal or the
+          // --python-smt-containers store-chain); a non-decodable
+          // shape falls to the symbolic scan below.
+          bool found = false;
+          bool all_const = true;
+          for(const auto &kv_pair : *in_entries)
           {
-            const exprt &keys_arr = dict_val->operands()[1];
-            bool found = false;
-            for(mp_integer i = 0; i < len_val; ++i)
+            auto kv = extract_string_value(kv_pair.first);
+            if(!kv.has_value())
             {
-              auto idx = i.to_ulong();
-              if(idx < keys_arr.operands().size())
-              {
-                auto kv = extract_string_value(keys_arr.operands()[idx]);
-                if(kv.has_value() && kv.value() == key_str.value())
-                {
-                  found = true;
-                  break;
-                }
-              }
+              all_const = false;
+              break;
             }
+            if(kv.value() == key_str.value())
+            {
+              found = true;
+              break;
+            }
+          }
+          if(found || all_const)
+          {
             cmp = (op == "In")
                     ? (found ? exprt{true_exprt{}} : exprt{false_exprt{}})
                     : (found ? exprt{false_exprt{}} : exprt{true_exprt{}});

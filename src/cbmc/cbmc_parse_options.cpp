@@ -170,6 +170,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("python-max-list-length"))
     options.set_option(
       "python-max-list-length", cmdline.get_value("python-max-list-length"));
+  if(cmdline.isset("python-max-dict-size"))
+    options.set_option(
+      "python-max-dict-size", cmdline.get_value("python-max-dict-size"));
   if(cmdline.isset("python-no-body-check"))
     options.set_option("python-no-body-check", true);
   if(cmdline.isset("python-raising-ops-check"))
@@ -182,6 +185,16 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-smt-strings", true);
   if(cmdline.isset("python-smt-containers"))
     options.set_option("python-smt-containers", true);
+  if(
+    cmdline.isset("python-smt-containers") && !cmdline.isset("smt2") &&
+    !cmdline.isset("z3") && !cmdline.isset("cvc5") && !cmdline.isset("cvc4"))
+  {
+    log.warning()
+      << "--python-smt-containers models containers with infinite arrays, "
+      << "which the SAT bit-blaster cannot represent faithfully for dict "
+      << "scans: pass --smt2, --z3 or --cvc5. Without one, results are "
+      << "unreliable." << messaget::eom;
+  }
   {
     // Both --python-smt-strings (native SMT-LIB String sort) and
     // --python-unbounded-ints (mathematical integer_typet) introduce
@@ -1181,6 +1194,8 @@ void cbmc_parse_optionst::help()
     HELP_FUNCTIONS
     "\n"
     "Python frontend options:\n"
+    " {y--python-max-dict-size} {uN} \t model dicts with {uN} slots"
+    " (defaults to the list capacity)\n"
     " {y--python-max-list-length} {uN} \t model lists/dicts with capacity {uN}"
     " (default 16)\n"
     " {y--python-max-string-length} {uN} \t bound modelled string length to"
