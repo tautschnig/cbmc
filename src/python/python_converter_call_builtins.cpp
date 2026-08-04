@@ -297,7 +297,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
         exprt zip_len =
           if_exprt{binary_relation_exprt{len_a, ID_lt, len_b}, len_a, len_b};
         return struct_exprt{
-          {zip_len, array_exprt{std::move(elems), res_data_t}},
+          {zip_len, build_list_data(std::move(elems), res_data_t)},
           result_list_type};
       }
     }
@@ -2092,8 +2092,8 @@ std::optional<exprt> python_convertert::try_builtin_call(
         {from_integer(
            static_cast<long long>(as_array(keywords).size()),
            python_int_type()),
-         array_exprt{std::move(keys), keys_arr_type},
-         array_exprt{std::move(vals), vals_arr_type}},
+         build_list_data(std::move(keys), keys_arr_type),
+         build_list_data(std::move(vals), vals_arr_type)},
         dict_type};
     }
     // dict() with no args — empty dict
@@ -2466,7 +2466,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
                     rev.push_back(safe_zero(cdt.element_type()));
                 }
                 return struct_exprt{
-                  {cl->operands()[0], array_exprt{std::move(rev), cdt}},
+                  {cl->operands()[0], build_list_data(std::move(rev), cdt)},
                   cl->type()};
               }
             }
@@ -2488,7 +2488,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
               safe_zero(ldata_t.element_type())});
           }
           return struct_exprt{
-            {alen, array_exprt{std::move(rev), ldata_t}}, arg.type()};
+            {alen, build_list_data(std::move(rev), ldata_t)}, arg.type()};
         }
         return arg;
       }
@@ -2531,7 +2531,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
           elems.push_back(safe_zero(elem_type));
         return struct_exprt{
           {from_integer(static_cast<long long>(n), signedbv_typet{64}),
-           array_exprt{std::move(elems), data_type}},
+           build_list_data(std::move(elems), data_type)},
           list_type};
       }
       // list(<str>) / reversed(<str>) iterate the string's CODE POINTS,
@@ -2576,7 +2576,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
         return struct_exprt{
           {from_integer(
              static_cast<long long>(chars.size()), signedbv_typet{64}),
-           array_exprt{std::move(data_elems), data_type}},
+           build_list_data(std::move(data_elems), data_type)},
           list_type};
       }
     }
@@ -2674,7 +2674,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
             tuple_type});
         }
         return struct_exprt{
-          {length, array_exprt{std::move(elems), result_data_type}},
+          {length, build_list_data(std::move(elems), result_data_type)},
           result_list_type};
       }
     }
@@ -2845,7 +2845,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
           return struct_exprt{
             {from_integer(
                static_cast<long long>(chars.size()), signedbv_typet{64}),
-             array_exprt{std::move(data_elems), data_type}},
+             build_list_data(std::move(data_elems), data_type)},
             list_type};
         }
       }

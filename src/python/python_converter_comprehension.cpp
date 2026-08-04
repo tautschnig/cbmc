@@ -125,7 +125,7 @@ exprt python_convertert::emit_listcomp_loop(
     for(auto &s : cond_checks)
       body.add(std::move(s));
     code_blockt store;
-    emit_capacity_guard(store, ni, PYTHON_MAX_LIST_LENGTH, loc);
+    emit_capacity_guard(store, ni, PYTHON_MAX_LIST_LENGTH, loc, true);
     exprt sval =
       (elt_val.type() != et_out) ? safe_typecast(elt_val, et_out) : elt_val;
     store.add(code_frontend_assignt{index_exprt{res_data, ni}, sval});
@@ -977,7 +977,7 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
             {from_integer(
                static_cast<long long>(gens[0].const_values.size()),
                signedbv_typet{64}),
-             array_exprt{std::move(data_elems), dt}},
+             build_list_data(std::move(data_elems), dt)},
             lt};
         }
       }
@@ -1442,17 +1442,13 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
     key_elems.push_back(p.first);
     val_elems.push_back(p.second);
   }
-  while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
-    key_elems.push_back(safe_zero(key_type));
-  while(val_elems.size() < PYTHON_MAX_DICT_SIZE)
-    val_elems.push_back(safe_zero(val_type));
 
   exprt length =
     from_integer(static_cast<long long>(pairs.size()), signedbv_typet{64});
 
   return struct_exprt{
     {length,
-     array_exprt{std::move(key_elems), keys_arr_type},
-     array_exprt{std::move(val_elems), vals_arr_type}},
+     build_list_data(std::move(key_elems), keys_arr_type),
+     build_list_data(std::move(val_elems), vals_arr_type)},
     dict_type};
 }

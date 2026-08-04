@@ -111,24 +111,18 @@ std::optional<exprt> python_convertert::try_dict_method(
           if(it != dict_literals.end())
             dict_val = &it->second;
         }
-        if(
-          dict_val != nullptr && dict_val->operands().size() >= 3 &&
-          dict_val->operands()[0].is_constant())
+        if(dict_val != nullptr)
         {
-          mp_integer len_val;
-          if(!to_integer(to_constant_expr(dict_val->operands()[0]), len_val))
+          // Shape-agnostic decode (bounded array literal or the
+          // --python-smt-containers store-chain).
+          auto entries = dict_literal_leading(*dict_val);
+          if(entries.has_value())
           {
-            const exprt &keys_arr = dict_val->operands()[1];
-            const exprt &vals_arr = dict_val->operands()[2];
-            for(mp_integer i = 0; i < len_val; ++i)
+            for(const auto &kv_pair : *entries)
             {
-              auto idx = i.to_ulong();
-              if(idx < keys_arr.operands().size())
-              {
-                auto kv = extract_string_value(keys_arr.operands()[idx]);
-                if(kv.has_value() && kv.value() == key_str.value())
-                  return vals_arr.operands()[idx];
-              }
+              auto kv = extract_string_value(kv_pair.first);
+              if(kv.has_value() && kv.value() == key_str.value())
+                return kv_pair.second;
             }
             // Key not present in the literal: the result is exactly the
             // default, in its own type (PLR §6.4.6) -- not coerced to the
@@ -194,25 +188,32 @@ std::optional<exprt> python_convertert::try_dict_method(
     struct_typet list_type = python_list_type(key_type);
     const auto &list_data_type =
       to_array_type(list_type.components()[1].type());
-    if(
-      dict_val != nullptr && dict_val->operands().size() >= 3 &&
-      dict_val->operands()[0].is_constant())
+    if(dict_val != nullptr)
     {
-      exprt::operandst elems;
-      for(const auto &k : dict_val->operands()[1].operands())
-        elems.push_back(python_dict_unbox_key(k));
-      return struct_exprt{
-        {dict_val->operands()[0],
-         build_list_data(std::move(elems), list_data_type)},
-        list_type};
+      auto entries = dict_literal_leading(*dict_val);
+      if(entries.has_value())
+      {
+        exprt::operandst elems;
+        for(const auto &kv_pair : *entries)
+          elems.push_back(
+            dict_key_for_slot(kv_pair.first, list_data_type.element_type()));
+        return struct_exprt{
+          {dict_val->operands()[0],
+           build_list_data(std::move(elems), list_data_type)},
+          list_type};
+      }
     }
     // d.keys() → list of d.keys[0..d.length-1]
     member_exprt length{obj, "length", signedbv_typet{64}};
     member_exprt keys{obj, "keys", keys_type};
+    // Bounded copy of a (possibly unbounded) dict: fail closed.
+    emit_scan_bound_guard(
+      length, source_locationt{}, static_cast<long>(PYTHON_MAX_DICT_SIZE));
     exprt::operandst elems;
     for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
-      elems.push_back(python_dict_unbox_key(
-        index_exprt{keys, from_integer(i, signedbv_typet{64})}));
+      elems.push_back(dict_key_for_slot(
+        index_exprt{keys, from_integer(i, signedbv_typet{64})},
+        list_data_type.element_type()));
     return struct_exprt{
       {length, build_list_data(std::move(elems), list_data_type)}, list_type};
   }
@@ -235,13 +236,15 @@ std::optional<exprt> python_convertert::try_dict_method(
     struct_typet list_type = python_list_type(val_type);
     const auto &list_data_type =
       to_array_type(list_type.components()[1].type());
-    if(
-      dict_val != nullptr && dict_val->operands().size() >= 3 &&
-      dict_val->operands()[0].is_constant())
+    auto val_entries =
+      dict_val != nullptr
+        ? dict_literal_leading(*dict_val)
+        : std::optional<std::vector<std::pair<exprt, exprt>>>{};
+    if(val_entries.has_value())
     {
       exprt::operandst elems;
-      for(const auto &v : dict_val->operands()[2].operands())
-        elems.push_back(v);
+      for(const auto &kv_pair : *val_entries)
+        elems.push_back(kv_pair.second);
       return struct_exprt{
         {dict_val->operands()[0],
          build_list_data(std::move(elems), list_data_type)},
@@ -272,41 +275,30 @@ std::optional<exprt> python_convertert::try_dict_method(
       if(it != dict_literals.end())
         dict_val = &it->second;
     }
-    if(
-      dict_val != nullptr && dict_val->operands().size() >= 3 &&
-      dict_val->operands()[0].is_constant())
+    auto item_entries =
+      dict_val != nullptr
+        ? dict_literal_leading(*dict_val)
+        : std::optional<std::vector<std::pair<exprt, exprt>>>{};
+    if(item_entries.has_value())
     {
-      mp_integer lv;
-      if(!to_integer(to_constant_expr(dict_val->operands()[0]), lv))
+      const auto &dict_st = to_struct_type(obj_base_type);
+      const auto &keys_type = to_array_type(dict_st.components()[1].type());
+      const auto &vals_type = to_array_type(dict_st.components()[2].type());
+      const typet key_t = keys_type.element_type();
+      const typet val_t = vals_type.element_type();
+      struct_typet tuple_t = python_tuple_type({key_t, val_t});
+      tuple_t.set_tag("python_tuple");
+      struct_typet list_t = python_list_type(tuple_t);
+      const auto &list_data_type = to_array_type(list_t.components()[1].type());
+      exprt::operandst elems;
+      for(const auto &kv_pair : *item_entries)
       {
-        const auto &dict_st = to_struct_type(obj_base_type);
-        const auto &keys_type = to_array_type(dict_st.components()[1].type());
-        const auto &vals_type = to_array_type(dict_st.components()[2].type());
-        const typet key_t = keys_type.element_type();
-        const typet val_t = vals_type.element_type();
-        struct_typet tuple_t = python_tuple_type({key_t, val_t});
-        tuple_t.set_tag("python_tuple");
-        struct_typet list_t = python_list_type(tuple_t);
-        const auto &list_data_type =
-          to_array_type(list_t.components()[1].type());
-        const exprt &src_keys = dict_val->operands()[1];
-        const exprt &src_vals = dict_val->operands()[2];
-        exprt::operandst elems;
-        for(mp_integer i = 0; i < lv; ++i)
-        {
-          auto idx = i.to_ulong();
-          if(
-            idx >= src_keys.operands().size() ||
-            idx >= src_vals.operands().size())
-            break;
-          elems.push_back(struct_exprt{
-            {src_keys.operands()[idx], src_vals.operands()[idx]}, tuple_t});
-        }
-        return struct_exprt{
-          {dict_val->operands()[0],
-           build_list_data(std::move(elems), list_data_type)},
-          list_t};
+        elems.push_back(struct_exprt{{kv_pair.first, kv_pair.second}, tuple_t});
       }
+      return struct_exprt{
+        {dict_val->operands()[0],
+         build_list_data(std::move(elems), list_data_type)},
+        list_t};
     }
     // Returns list of tuples — for non-literal dicts,
     // construct a list whose i-th element is the tuple
@@ -379,12 +371,12 @@ std::optional<exprt> python_convertert::try_dict_method(
         if(it != dict_literals.end())
           olit = &it->second;
       }
-      if(
-        olit != nullptr && olit->operands().size() >= 3 &&
-        olit->operands()[0].is_constant() && is_python_dict_type(obj.type()))
+      auto upd_entries =
+        olit != nullptr && is_python_dict_type(obj.type())
+          ? dict_literal_leading(*olit)
+          : std::optional<std::vector<std::pair<exprt, exprt>>>{};
+      if(upd_entries.has_value())
       {
-        mp_integer olen;
-        if(!to_integer(to_constant_expr(olit->operands()[0]), olen))
         {
           // Invalidate dict_literals tracking on obj so
           // subsequent d["key"] lookups read from the
@@ -398,17 +390,10 @@ std::optional<exprt> python_convertert::try_dict_method(
           member_exprt dst_len{obj, "length", signedbv_typet{64}};
           member_exprt dst_keys{obj, "keys", keys_type};
           member_exprt dst_vals{obj, "values", vals_type};
-          const exprt &src_keys = olit->operands()[1];
-          const exprt &src_vals = olit->operands()[2];
-          for(mp_integer i = 0; i < olen; ++i)
+          for(auto &kv_pair : *upd_entries)
           {
-            auto idx = i.to_ulong();
-            if(
-              idx >= src_keys.operands().size() ||
-              idx >= src_vals.operands().size())
-              break;
-            exprt k = src_keys.operands()[idx];
-            exprt v = src_vals.operands()[idx];
+            exprt k = kv_pair.first;
+            exprt v = kv_pair.second;
             if(k.type() != keys_type.element_type())
               k = coerce_element(k, keys_type.element_type());
             if(v.type() != vals_type.element_type())

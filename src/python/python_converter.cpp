@@ -4970,15 +4970,15 @@ void python_convertert::emit_capacity_guard(
   code_blockt &block,
   const exprt &length,
   long cap,
-  const source_locationt &loc)
+  const source_locationt &loc,
+  bool unbounded_write)
 {
-  // P1 (--python-smt-containers): infinite-array lists have no
-  // capacity to guard. Dict guards stay until P2 — dict callers pass
-  // PYTHON_MAX_DICT_SIZE and dicts keep the bounded arrays, so the
-  // guard is suppressed only for list-cap callers.
-  if(
-    python_smt_containers_flag() &&
-    cap == static_cast<long>(PYTHON_MAX_LIST_LENGTH))
+  // P1/P2 (--python-smt-containers): a length-indexed store into an
+  // infinite LIST data array has no capacity to guard. Dict appends
+  // keep the guard (see the declaration) — keyed on the caller's
+  // explicit parameter, NOT on the cap value: the list and dict caps
+  // are independently configurable and may coincide.
+  if(python_smt_containers_flag() && unbounded_write)
     return;
 
   binary_relation_exprt in_bounds{
@@ -5133,10 +5133,11 @@ void python_convertert::emit_index_capacity_guard(
   const source_locationt &loc)
 {
   // P1 (--python-smt-containers): infinite-array lists have no
-  // capacity to guard (see emit_capacity_guard).
-  if(
-    python_smt_containers_flag() &&
-    cap == static_cast<long>(PYTHON_MAX_LIST_LENGTH))
+  // capacity to guard (see emit_capacity_guard). The only caller is
+  // the LIST subscript read/write path, so suppression under the flag
+  // is unconditional — NOT keyed on the cap value (the list and dict
+  // caps are independently configurable and may coincide).
+  if(python_smt_containers_flag())
     return;
   // Fire ONLY for a valid Python index that exceeds the modelled array:
   //   (idx < length) ==> (idx < cap)

@@ -618,34 +618,26 @@ exprt python_convertert::convert_subscript(const jsont &expr)
             if(it != dict_literals.end())
               dict_val = &it->second;
           }
-          if(
-            dict_val != nullptr && dict_val->operands().size() >= 3 &&
-            dict_val->operands()[0].is_constant())
+          auto ik_entries =
+            dict_val != nullptr
+              ? dict_literal_leading(*dict_val)
+              : std::optional<std::vector<std::pair<exprt, exprt>>>{};
+          if(ik_entries.has_value())
           {
-            mp_integer len_val;
-            if(!to_integer(to_constant_expr(dict_val->operands()[0]), len_val))
+            for(const auto &kv_pair : *ik_entries)
             {
-              const exprt &keys_arr = dict_val->operands()[1];
-              const exprt &vals_arr = dict_val->operands()[2];
-              for(mp_integer i = 0; i < len_val; ++i)
+              const exprt &k = kv_pair.first;
+              if(k.is_constant())
               {
-                auto idx = i.to_ulong();
-                if(idx < keys_arr.operands().size())
+                mp_integer kv;
+                if(!to_integer(to_constant_expr(k), kv) && kv == slice_iv)
                 {
-                  const exprt &k = keys_arr.operands()[idx];
-                  if(k.is_constant())
-                  {
-                    mp_integer kv;
-                    if(!to_integer(to_constant_expr(k), kv) && kv == slice_iv)
-                    {
-                      const exprt &cv = vals_arr.operands()[idx];
-                      if(
-                        !is_python_list_type(cv.type()) &&
-                        !is_python_dict_type(cv.type()) &&
-                        value_is_const_foldable(cv))
-                        return cv;
-                    }
-                  }
+                  const exprt &cv = kv_pair.second;
+                  if(
+                    !is_python_list_type(cv.type()) &&
+                    !is_python_dict_type(cv.type()) &&
+                    value_is_const_foldable(cv))
+                    return cv;
                 }
               }
             }
@@ -4311,8 +4303,6 @@ exprt python_convertert::build_dict_value(
     key_elems.push_back(
       k.type() != keys_elem_type ? coerce_element(k, keys_elem_type) : k);
   }
-  while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
-    key_elems.push_back(safe_zero(keys_elem_type));
 
   // Build values array. The STORED element type comes from the dict
   // type's values array (python_dict_type enforces the representation
@@ -4331,8 +4321,6 @@ exprt python_convertert::build_dict_value(
       v = coerce_element(v, vals_elem_type);
     val_elems.push_back(v);
   }
-  while(val_elems.size() < PYTHON_MAX_DICT_SIZE)
-    val_elems.push_back(safe_zero(vals_elem_type));
 
   exprt length =
     from_integer(static_cast<long long>(pairs.size()), signedbv_typet{64});
@@ -4350,8 +4338,8 @@ exprt python_convertert::build_dict_value(
 
   return struct_exprt{
     {length,
-     array_exprt{std::move(key_elems), keys_arr_type},
-     array_exprt{std::move(val_elems), vals_arr_type}},
+     build_list_data(std::move(key_elems), keys_arr_type),
+     build_list_data(std::move(val_elems), vals_arr_type)},
     dict_type};
 }
 

@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 8 --no-unwinding-assertions --python-smt-containers --smt2
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+model-bound.*FAILURE
+--
+Core dict semantics under the flag: no model-bound FAILURE for dicts
+within the scan cap; discharged scan obligations may appear as
+SUCCESS lines.

@@ -94,6 +94,10 @@ void python_languaget::set_language_options(
     // capacity.
     python_max_dict_size_config() = max_list_length;
   }
+  // The dedicated dict-size flag wins over the list-length coupling.
+  std::string max_dict = options.get_option("python-max-dict-size");
+  if(!max_dict.empty())
+    python_max_dict_size_config() = std::stoul(max_dict);
 }
 
 /// The Python code that converts a .py file to a JSON AST.

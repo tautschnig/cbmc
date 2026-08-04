@@ -310,7 +310,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
           wrapped.push_back(safe_zero(python_value_type()));
       }
       rhs = struct_exprt{
-        {rhs.operands()[0], array_exprt{std::move(wrapped), new_data_type}},
+        {rhs.operands()[0], build_list_data(std::move(wrapped), new_data_type)},
         new_list_type};
       symbol_table.get_writeable_ref(symbol_id).type = new_list_type;
     }
@@ -778,7 +778,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
           promoted.push_back(safe_zero(dst_data_t.element_type()));
       }
       rhs = struct_exprt{
-        {rhs.operands()[0], array_exprt{std::move(promoted), dst_data_t}},
+        {rhs.operands()[0], build_list_data(std::move(promoted), dst_data_t)},
         sym.type};
     }
     else
@@ -809,7 +809,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
         promoted.push_back(wrap_value(index_exprt{src_data, idx}));
       }
       rhs = struct_exprt{
-        {src_len, array_exprt{std::move(promoted), dst_data_t}}, sym.type};
+        {src_len, build_list_data(std::move(promoted), dst_data_t)}, sym.type};
     }
   }
   if(
@@ -1083,8 +1083,8 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
               static_cast<long long>(ki->second.size()), signedbv_typet{64});
             dict_literals[symbol_id] = struct_exprt{
               {length,
-               array_exprt{std::move(key_elems), keys_type},
-               array_exprt{std::move(val_elems), vals_type}},
+               build_list_data(std::move(key_elems), keys_type),
+               build_list_data(std::move(val_elems), vals_type)},
               rhs.type()};
           }
           else
@@ -1879,7 +1879,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
           wrapped.push_back(safe_zero(python_value_type()));
       }
       rhs = struct_exprt{
-        {rhs.operands()[0], array_exprt{std::move(wrapped), new_data_type}},
+        {rhs.operands()[0], build_list_data(std::move(wrapped), new_data_type)},
         new_list_type};
     }
   }
@@ -2445,7 +2445,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
                 elems.push_back(std::move(el));
               }
               exprt rest_val = struct_exprt{
-                {len_clamped, array_exprt{std::move(elems), rest_data_t}},
+                {len_clamped, build_list_data(std::move(elems), rest_data_t)},
                 rest_list_t};
               block.add(code_frontend_assignt{rsym.symbol_expr(), rest_val});
             }
@@ -3546,7 +3546,17 @@ codet python_convertert::convert_assign(const jsont &stmt)
             {
               irep_idt obj_id = to_symbol_expr(obj).get_identifier();
               auto dli = dict_literals.find(obj_id);
-              if(dli != dict_literals.end())
+              if(dli != dict_literals.end() && python_smt_containers_flag())
+              {
+                // The cached literal's keys/values are STORE-CHAINS
+                // under --python-smt-containers; the positional
+                // operand surgery below would corrupt them (a
+                // with-chain's operands are [base, index, value]).
+                // Dropping the cache entry is sound: consumers fall
+                // back to the runtime scan.
+                dict_literals.erase(dli);
+              }
+              else if(dli != dict_literals.end())
               {
                 // Append key to the literal's key array; grow length.
                 exprt &dlit = dli->second;
@@ -4645,8 +4655,8 @@ codet python_convertert::convert_assign(const jsont &stmt)
                 static_cast<long long>(ki->second.size()), signedbv_typet{64});
               dict_literals[sym.name] = struct_exprt{
                 {length,
-                 array_exprt{std::move(key_elems), keys_type},
-                 array_exprt{std::move(val_elems), vals_type}},
+                 build_list_data(std::move(key_elems), keys_type),
+                 build_list_data(std::move(val_elems), vals_type)},
                 typed_rhs.type()};
             }
             else
@@ -5359,7 +5369,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
           index_exprt{right_data, minus_exprt{idx, left_len}}});
       }
       new_rhs = struct_exprt{
-        {new_len, array_exprt{std::move(chars), data_type}}, str_type};
+        {new_len, build_list_data(std::move(chars), data_type)}, str_type};
     }
     else if(op == "Add" && is_python_list_type(lhs.type()))
     {
@@ -5381,7 +5391,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
           index_exprt{right_data, minus_exprt{idx, left_len}}});
       }
       new_rhs = struct_exprt{
-        {new_len, array_exprt{std::move(elems), data_type}}, lhs.type()};
+        {new_len, build_list_data(std::move(elems), data_type)}, lhs.type()};
     }
     else
     {
