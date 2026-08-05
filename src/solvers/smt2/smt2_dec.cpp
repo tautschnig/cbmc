@@ -88,8 +88,14 @@ decision_proceduret::resultt smt2_dect::dec_solve(const exprt &assumption)
     break;
 
   case solvert::CVC5:
+    // --arrays-exp enables constant arrays (STORE_ALL), which the
+    // conversion emits for array_of expressions.
     argv = {
-      solver_binary_name("cvc5"), "--lang", "smtlib", temp_file_problem()};
+      solver_binary_name("cvc5"),
+      "--lang",
+      "smtlib",
+      "--arrays-exp",
+      temp_file_problem()};
     break;
 
   case solvert::MATHSAT:
