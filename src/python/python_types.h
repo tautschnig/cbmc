@@ -426,8 +426,19 @@ python_dict_type(const typet &key_type, const typet &value_type)
   // variable-width and aborted smt2 byte-lowering on identity reads.
   // Values become string-id HANDLES under the native backend (keys are
   // boxed by python_dict_key_elem_type above).
+  // P3: container VALUE types box like list elements (see
+  // python_list_type). Container KEYS need no case: lists/dicts are
+  // unhashable (PLR §3.2 hashability), so dict[list, ...] cannot
+  // exist.
+  const bool box_container_value =
+    python_smt_containers_flag() && value_type.id() == ID_struct &&
+    (to_struct_type(value_type).get_tag() == "python_list" ||
+     is_python_dict_type(value_type));
   const typet stored_value_type =
-    value_type.id() == ID_string ? python_string_handle_type() : value_type;
+    box_container_value
+      ? typet{struct_tag_typet{"tag-python_value"}}
+      : (value_type.id() == ID_string ? python_string_handle_type()
+                                      : value_type);
   components.push_back(struct_typet::componentt{
     "values", array_typet{stored_value_type, array_size}});
   struct_typet result{components};
@@ -448,9 +459,25 @@ inline struct_typet python_list_type(const typet &element_type_in)
   // (3) a SECOND append emitter (python_converter_defs.cpp fast path)
   // typecast the value instead of coerce_element -- real, fixed by
   // routing it through the write choke point.
-  const typet element_type = element_type_in.id() == ID_string
-                               ? python_string_handle_type()
-                               : element_type_in;
+  // P3 (--python-smt-containers): a CONTAINER element type is boxed —
+  // the slot holds a python_value whose __class_ptr/__list_ptr points
+  // at the nested container (the same handle discipline native strings
+  // use, realised with the existing boxed-value machinery). An inline
+  // container struct would nest infinite arrays inside the data array:
+  // byte-lowering has no width for it, and the whole-struct copies it
+  // forces are exactly the COPY semantics PLR §3.1 forbids for nested
+  // mutables (a dict read from a list is the object, not a copy).
+  // Literal displays already box; this makes the ANNOTATED types
+  // (List[Dict[...]], list[list[int]]) agree.
+  const bool box_container_elem =
+    python_smt_containers_flag() && element_type_in.id() == ID_struct &&
+    (to_struct_type(element_type_in).get_tag() == "python_list" ||
+     is_python_dict_type(element_type_in));
+  const typet element_type =
+    box_container_elem
+      ? typet{struct_tag_typet{"tag-python_value"}}
+      : (element_type_in.id() == ID_string ? python_string_handle_type()
+                                           : element_type_in);
   struct_typet::componentst components;
 
   struct_typet::componentt length{"length", signedbv_typet{64}};

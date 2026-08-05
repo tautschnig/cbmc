@@ -224,9 +224,33 @@ side — a refined-struct view built over an `ID_string` operand.)
   crossing call boundaries (P3 scope: nesting via handles); nothing
   fails silently. Pinned by smt-containers-dict / -dict-fail /
   -dict-cap. Full bounded suite verdict-identical.
-- **P3 — nesting via handles**, then the perf study: pyhard_exercise
-  and the corpus timeout tail as the benchmark set, capacity-64
-  bounded model as the baseline.
+- **P3a — nesting via the boxed-value handles.** *(LANDED, 2026-08.)*
+  Not the listtab/dicttab UF design (mutation cannot live behind an
+  immutable denotation function): under the flag, a CONTAINER-typed
+  element/value slot is a boxed python_value — the existing
+  __class_ptr/__list_ptr pointers ARE the handles, and CBMC-native
+  pointers support in-place mutation, which PLR §3.1 requires for
+  nested mutables (a dict read from a list is the object). One edit
+  in each type constructor (python_list_type / python_dict_type)
+  aligned the ANNOTATED nested types (List[Dict[...]]) with the
+  literal displays, which already boxed; the P0–P2 boxed machinery
+  (canonical layout, boxed get/subscript, decoders) covers the rest.
+  `del`/mutation THROUGH an untyped parameter dispatches the boxed
+  view by subscript type (a string key can only subscript a dict).
+  Combined list+dict+nested differential: 109/115 verdict-identical.
+  Residuals, all LOUD (crash or false alarm, never a silent proof):
+  byte-imaging of an unresolved boxed-dict pointee under
+  --python-smt-strings (unpack_struct has no width for infinite
+  arrays — needs a sound byte_extract-to-unconstrained lowering in
+  smt2, or deref precision); a raw struct typecast in nested
+  dict[str, dict[str, int]] annotation coercion (typecast8); and the
+  PRE-EXISTING dict-value-by-reference identity family (new-key
+  subscript-write through untyped params with readback — also fails
+  on the bounded model; see python-frontend-dict-byref-plan.md).
+- **The perf study**: pyhard_exercise and the corpus timeout tail as
+  the benchmark set, capacity-64 bounded model as the baseline. The
+  symex side is measured (211 s -> 30 s, see above); the SOLVER phase
+  is the open wall.
 
 ## 5. Risks and open questions
 
