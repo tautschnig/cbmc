@@ -238,15 +238,19 @@ side — a refined-struct view built over an `ID_string` operand.)
   `del`/mutation THROUGH an untyped parameter dispatches the boxed
   view by subscript type (a string key can only subscript a dict).
   Combined list+dict+nested differential: 109/115 verdict-identical.
-  Residuals, all LOUD (crash or false alarm, never a silent proof):
-  byte-imaging of an unresolved boxed-dict pointee under
-  --python-smt-strings (unpack_struct has no width for infinite
-  arrays — needs a sound byte_extract-to-unconstrained lowering in
-  smt2, or deref precision); a raw struct typecast in nested
-  dict[str, dict[str, int]] annotation coercion (typecast8); and the
-  PRE-EXISTING dict-value-by-reference identity family (new-key
-  subscript-write through untyped params with readback — also fails
-  on the bounded model; see python-frontend-dict-byref-plan.md).
+  Residuals RESOLVED (2026-08-05): both crash classes shared ONE
+  root — the unresolved-dereference byte-memory fallbacks
+  (value_set_dereference) byte-imaged / scalar-typecast types with
+  no byte layout; they now refuse non-byte-imageable types
+  (non-trailing unbounded member — trailing FAM/VLA stays supported,
+  union17) and fall through to the failure value, a fresh TYPED
+  unconstrained symbol (sound). The false-alarm family's root was a
+  replace-only boxed-write arm: d[k] = v through a box now INSERTS
+  absent keys (PLR §6.4.6), and since a boxed COPY carries the same
+  __class_ptr, iteration-variable mutation propagates (PLR §3.1).
+  Remaining, all loud: cvc5's const-array-of-nondet strictness under
+  native strings (z3 handles it); one knownbug retaining its
+  bounded-only verdict. Combined differential 118/123.
 - **The perf study**: pyhard_exercise and the corpus timeout tail as
   the benchmark set, capacity-64 bounded model as the baseline. The
   symex side is measured (211 s -> 30 s, see above); the SOLVER phase
