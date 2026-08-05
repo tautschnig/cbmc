@@ -38,6 +38,36 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <deque>
 
+/// True when \p type cannot be byte-imaged at all: a struct (possibly
+/// nested) with a non-constant-width member in a NON-FINAL position.
+/// This matches the invariant of the byte-operator lowering
+/// (unpack_struct): a single TRAILING flexible member is supported
+/// (C99 flexible array members, VLAs in unions), but an unbounded
+/// member followed by further members has no byte layout -- e.g. the
+/// infinite-array container representations, where refusing the byte
+/// memory model lets the dereference fall through to the failure
+/// value (a fresh TYPED unconstrained symbol, a sound
+/// over-approximation of an unresolved dereference).
+static bool
+has_non_trailing_unbounded_member(const typet &type, const namespacet &ns)
+{
+  const typet &followed =
+    type.id() == ID_struct_tag ? ns.follow_tag(to_struct_tag_type(type)) : type;
+  if(followed.id() != ID_struct)
+    return false;
+  const auto &components = to_struct_type(followed).components();
+  for(auto it = components.begin(); it != components.end(); ++it)
+  {
+    if(has_non_trailing_unbounded_member(it->type(), ns))
+      return true;
+    if(
+      std::next(it) != components.end() &&
+      !pointer_offset_size(it->type(), ns).has_value())
+      return true;
+  }
+  return false;
+}
+
 /// Returns true if \p expr is complicated enough that a local definition (using
 /// a let expression) is preferable to repeating it, potentially many times.
 /// Of course this is just a heuristic -- currently we allow any expression that
@@ -559,6 +589,12 @@ value_set_dereferencet::valuet value_set_dereferencet::build_reference_to(
       if(config.ansi_c.endianness==configt::ansi_ct::endiannesst::NO_ENDIANNESS)
         return {};
 
+      // No byte image exists for a struct with a non-trailing
+      // unbounded member (see memory_model_bytes); fall through to
+      // the failure value.
+      if(has_non_trailing_unbounded_member(dereference_type, ns))
+        return {};
+
       valuet result;
       result.value = make_byte_extract(
         symbol_expr, pointer_offset(pointer_expr), dereference_type);
@@ -762,6 +798,14 @@ bool value_set_dereferencet::memory_model_bytes(
 
   // We simply refuse to convert to/from code.
   if(from_type.id()==ID_code || to_type.id()==ID_code)
+    return false;
+
+  // A struct with a non-constant-width member in a non-final position
+  // has no byte image (see has_non_trailing_unbounded_member); a
+  // TRAILING flexible member stays supported (C99 FAM, VLA-in-union).
+  if(has_non_trailing_unbounded_member(to_type, ns))
+    return false;
+  if(has_non_trailing_unbounded_member(from_type, ns))
     return false;
 
   // We won't do this without a commitment to an endianness.
