@@ -5669,6 +5669,13 @@ exprt python_convertert::safe_zero(const typet &type) const
     return from_integer(0, type);
   if(type.id() == ID_bool)
     return false_exprt{};
+  // Native SMT String sort (--python-smt-strings): the zero value is
+  // the empty string. Falling through to the nondet fallback would
+  // put a nondet inside array_of bases (e.g. the items() tuple-list
+  // default), which cvc5 rejects: ((as const ...) val) requires a
+  // constant VALUE argument.
+  if(type.id() == ID_string)
+    return constant_exprt{irep_idt{""}, type};
   if(type.id() == ID_floatbv)
   {
     ieee_floatt zero{
