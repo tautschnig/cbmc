@@ -10,6 +10,7 @@
 #include <util/c_types.h>
 #include <util/json.h>
 #include <util/namespace.h>
+#include <util/replace_expr.h>
 #include <util/simplify_expr.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
@@ -101,12 +102,64 @@ exprt python_convertert::emit_listcomp_loop(
   symbol_exprt result = mk("__listcomp_", list_type);
   symbol_exprt si = mk("__listcomp_i_", len_t);
   symbol_exprt ni = mk("__listcomp_n_", len_t);
-  lc_ctr++;
 
   member_exprt iter_len{iter_list, "length", len_t};
   member_exprt iter_data{iter_list, "data", idata_t};
   member_exprt res_len{result, "length", len_t};
   member_exprt res_data{result, "data", rdata_t};
+
+  // Closed-form MAP encoding (--python-smt-containers): a
+  // filter-free single-generator comprehension whose element
+  // expression is PURE (its conversion emitted no checks: no
+  // may-raise operations, no side-effecting calls) is a MAP --
+  // result.length == iter.length and
+  // result.data == (lambda j. elt[var := iter.data[j]]),
+  // expressed with array_comprehension_exprt. This is EXACT at any
+  // (symbolic) length: no loop, no unwinding, no capacity bound --
+  // the loop lowering below would need iter.length unwindings and
+  // silently truncates a symbolic-length iterable at the unwind
+  // bound (an unwinding-assertion failure / false alarm). The
+  // backends handle it as (lambda ...) (z3) or a universally
+  // quantified array axiom (generic smt2, cvc5); the simplifier
+  // folds constant-index reads by substitution, so concrete tests
+  // keep folding at symex time.
+  if(
+    python_smt_containers_flag() && cond == true_exprt{} &&
+    elt_checks.empty() && cond_checks.empty())
+  {
+    static unsigned cf_ctr = 0;
+    const std::string jn = "__comp_j_" + std::to_string(cf_ctr++);
+    const irep_idt jid{qualify_name(jn)};
+    if(symbol_table.lookup(jid) == nullptr)
+    {
+      // The bound variable must be a REGISTERED symbol: symex renames
+      // binder and body occurrences consistently through the L0/L1/L2
+      // levels (the same route the C frontend's quantifier bound
+      // variables take), and renaming requires table presence.
+      symbolt js{jid, len_t, "python"};
+      js.base_name = jn;
+      js.is_lvalue = true;
+      js.is_state_var = true;
+      js.is_static_lifetime = current_function.empty();
+      symbol_table.add(js);
+    }
+    const symbol_exprt j = symbol_table.lookup_ref(jid).symbol_expr();
+    exprt slot = index_exprt{iter_data, j};
+    exprt bound =
+      (slot.type() != elem_in_t) ? safe_typecast(slot, elem_in_t) : slot;
+    exprt body = elt_val;
+    replace_expr(var, bound, body);
+    if(body.type() != et_out)
+      body = safe_typecast(body, et_out);
+    lc_ctr++;
+    pending_checks.push_back(code_frontend_assignt{
+      result,
+      struct_exprt{
+        {iter_len, array_comprehension_exprt{j, std::move(body), rdata_t}},
+        list_type}});
+    return std::move(result);
+  }
+  lc_ctr++;
 
   pending_checks.push_back(code_frontend_assignt{result, safe_zero(list_type)});
   pending_checks.push_back(code_frontend_assignt{si, from_integer(0, len_t)});

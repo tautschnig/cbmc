@@ -1,0 +1,9 @@
+CORE
+main.py
+--unwind 6 --python-smt-containers --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+NOTE: no --no-unwinding-assertions -- the closed form needs no unwinding.

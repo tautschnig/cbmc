@@ -918,6 +918,7 @@ The architecture reference, two forward-looking plans, the user guide, and a few
 - [doc/python-frontend-plan.md](doc/python-frontend-plan.md) - **The** forward-looking backlog for everything **except** strings: every gap/PLR deviation as a concrete plan or explicit "no plan yet" (soundness, generators, closures, dict-by-ref, modules, check-annotations blockers, performance, precision clusters, descriptors, icontract, higher-order, async, residuals).
 - [doc/python-frontend-strings-plan.md](doc/python-frontend-strings-plan.md) - **The** plan for all `str`/`bytes`/`re` work: native SMT-String backend status (complete), refined-string ceilings, regex, and the residual-gaps table.
 - [doc/python-frontend-unbounded-containers-plan.md](doc/python-frontend-unbounded-containers-plan.md) - Proposal: SMT-array-backed unbounded lists/dicts (the containers analogue of the native-strings backend), with the capacity-model cost measurements and the PLR order/KeyError/aliasing constraints.
+- [doc/python-frontend-comprehension-closedform-plan.md](doc/python-frontend-comprehension-closedform-plan.md) - Closed-form (no-unwind) comprehension encoding under `--python-smt-containers`: the landed map subset via `array_comprehension_exprt`, backend support matrix, and the aggregate/filter/dict taxonomy with soundness gates.
 - [doc/python-verification-guide.md](doc/python-verification-guide.md) - User-facing guide for verifying Python programs.
 
 Linked deep-dives (referenced from the two docs above):
