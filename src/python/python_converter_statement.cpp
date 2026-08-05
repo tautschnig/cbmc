@@ -406,12 +406,34 @@ codet python_convertert::convert_statement(const jsont &stmt)
         if(is_node_type(target, "Subscript"))
         {
           exprt obj = convert_expression(json_member(target, "value"));
-          // Unwrap a by-reference container (a python_value carrying
-          // __list_ptr) to the shared list lvalue, so `del l[i]` through a
-          // function parameter shifts the CALLER's list (mirrors how
-          // append/sort reach the container via unwrap_any_container_receiver).
+          // Unwrap a by-reference container (a boxed python_value) to
+          // the SHARED lvalue, so `del c[k]` through a function
+          // parameter mutates the CALLER's container (PLR §3.1).
+          // Dispatch the view on the SUBSCRIPT's type: a string key can
+          // only subscript a dict (a list index is an int, PLR §6.3.2),
+          // so deref __class_ptr at the canonical dict layout;
+          // otherwise keep the historical list view. The previous
+          // unconditional LIST view read a boxed DICT at list layout —
+          // `del p["x"]` compared a string key with bvsge (an
+          // ill-sorted term the solver rejected).
           if(!obj.is_nil() && is_python_value_type(obj.type()))
-            obj = python_value_list(obj);
+          {
+            const jsont &del_slice = json_member(target, "slice");
+            bool string_key = false;
+            if(is_node_type(del_slice, "Constant"))
+            {
+              const jsont &sv = json_member(del_slice, "value");
+              string_key = sv.is_string();
+            }
+            else
+            {
+              exprt probe = convert_expression(del_slice);
+              string_key =
+                !probe.is_nil() && is_python_string_type(probe.type());
+            }
+            obj = string_key ? exprt{boxed_dict_deref(obj)}
+                             : exprt{python_value_list(obj)};
+          }
           // PLR §3.3.1: del obj[k] requires __delitem__. A concrete class whose
           // MRO defines none does not support item deletion -> TypeError.
           if(concrete_class_lacks_dunder(obj.type(), "__delitem__"))
