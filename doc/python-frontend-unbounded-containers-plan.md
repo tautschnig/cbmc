@@ -198,9 +198,15 @@ side — a refined-struct view built over an `ID_string` operand.)
   --python-max-list-length) and — the point of the exercise — raising
   it no longer multiplies symex width: the dict value is 3 components
   regardless of cap instead of 1 + 2*cap renamed slots. Measured on
-  pyhard_exercise: symex 210 s -> 30 s under
-  --python-smt-containers --python-smt-strings --z3 (was 600 s+ DNF
-  before the suffix-cache fix; the three fixes compound). Dict fold
+  pyhard_exercise (per-flag isolation, --unwind 16): SYMEX is
+  211 s on the bounded default (SAT; 600 s+ DNF before the
+  suffix-cache fix), 162 s bounded + --python-smt-strings --z3, and
+  30 s with --python-smt-containers added — the containers flag
+  contributes ~5x on top of native strings, confirming the
+  field-sensitivity attribution. The SOLVER phase does not yet
+  complete in ANY configuration (25 min budget): the plan's
+  "solver time is not free" risk is now the active wall, and the
+  benchmark study's next target. Dict fold
   readers were converted to a shape-agnostic dict_literal_leading
   decoder (get/membership/keys/values/items/update/int-key subscript);
   dict_literals cache surgery on subscript-assign is replaced by
