@@ -1769,8 +1769,7 @@ exprt python_convertert::convert_user_call(
           if(boxee.id() != ID_symbol && boxee.id() != ID_member)
           {
             static unsigned set_arg_ctr = 0;
-            const std::string nm =
-              "__set_arg_" + std::to_string(set_arg_ctr++);
+            const std::string nm = "__set_arg_" + std::to_string(set_arg_ctr++);
             const irep_idt tmp_id{qualify_name(nm)};
             if(symbol_table.lookup(tmp_id) == nullptr)
             {
@@ -1785,8 +1784,8 @@ exprt python_convertert::convert_user_call(
             pending_checks.push_back(code_frontend_assignt{tmp, boxee});
             boxee = tmp;
           }
-          arguments[i] = make_python_value(
-            python_type_tagt::SET, address_of_exprt{boxee});
+          arguments[i] =
+            make_python_value(python_type_tagt::SET, address_of_exprt{boxee});
         }
         else
           arguments[i] = coerce_call_argument(
