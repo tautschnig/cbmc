@@ -373,6 +373,16 @@ side — a refined-struct view built over an `ID_string` operand.)
     verdict-identical (two intended, two knownbugs) — the safe_zero
     string fix also cleared dict-native-string-key-box under cvc5.
 
+### 4.3 Comprehensions: closed-form map encoding (2026-08-05)
+
+  Comprehension loops were the re-entry point for boundedness under
+  the flag (symbolic-length iterables truncate at the unwind bound).
+  The map subset now lowers to `array_comprehension_exprt` — exact at
+  any symbolic length, no unwinding. Analysis, backend matrix, subset
+  taxonomy (map / aggregates / filter / dict), soundness gates and
+  phasing: see
+  [python-frontend-comprehension-closedform-plan.md](python-frontend-comprehension-closedform-plan.md).
+
 ## 5. Risks and open questions
 
 - **Measured (2026-08-04): symex, not the solver, was the first wall.**

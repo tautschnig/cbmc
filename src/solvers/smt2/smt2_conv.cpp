@@ -6968,14 +6968,24 @@ void smt2_convt::find_symbols(const exprt &expr)
         convert_expr(array_comprehension.arg());
         out << " ";
         convert_type(array_size.type());
-        out << ")) (=> (and (bvule (_ bv0 " << boolbv_width(array_size.type())
-            << ") ";
-        convert_expr(array_comprehension.arg());
-        out << ") (bvult ";
-        convert_expr(array_comprehension.arg());
-        out << " ";
-        convert_expr(array_size);
-        out << ")) (= (select " << id << " ";
+        // An array of non-constant (e.g. infinite) size has no
+        // meaningful in-bounds range: quantify over the whole index
+        // domain, which matches the lambda semantics.
+        if(array_size.id() == ID_infinity)
+        {
+          out << ")) (= (select " << id << " ";
+        }
+        else
+        {
+          out << ")) (=> (and (bvule (_ bv0 " << boolbv_width(array_size.type())
+              << ") ";
+          convert_expr(array_comprehension.arg());
+          out << ") (bvult ";
+          convert_expr(array_comprehension.arg());
+          out << " ";
+          convert_expr(array_size);
+          out << ")) (= (select " << id << " ";
+        }
         convert_expr(array_comprehension.arg());
         out << ") ";
         if(array_type.element_type().id() == ID_bool && !use_array_of_bool)
@@ -6988,7 +6998,10 @@ void smt2_convt::find_symbols(const exprt &expr)
         {
           convert_expr(array_comprehension.body());
         }
-        out << "))))\n";
+        if(array_size.id() == ID_infinity)
+          out << ")))\n";
+        else
+          out << "))))\n";
 
         defined_expressions[expr] = id;
       }

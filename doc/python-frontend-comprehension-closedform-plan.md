@@ -1,0 +1,122 @@
+# Closed-form comprehensions (no-unwind encoding)
+
+Status: **P1 landed** (map subset, spike-validated 2026-08-05).
+Owner doc for the comprehension arm of
+[python-frontend-unbounded-containers-plan.md](python-frontend-unbounded-containers-plan.md).
+
+## 1. Problem
+
+Comprehensions lower to GOTO loops (`emit_listcomp_loop`: scan the
+iterable, filter, store, count). Under `--python-smt-containers`
+container lengths are SYMBOLIC, so these loops are unbounded: any
+`--unwind K` yields an unwinding-assertion failure (loud) or, with
+`--no-unwinding-assertions`, silent truncation at K elements — the
+boundedness the containers flag exists to remove re-enters through
+every comprehension. Demonstrated: `[x * 2 for x in fetch()]` fails
+`.unwind.0` at any bound before the fix.
+
+## 2. Backend support matrix (measured, this tree)
+
+| construct | z3 (`--z3`) | cvc5 (`--cvc5`) | generic `--smt2` | boolbv/SAT |
+|---|---|---|---|---|
+| `array_comprehension_exprt`, infinite size | `(lambda …)` — proofs, counterexamples, models through the lambda all work (4.8.12 and 4.13.4) | ∀-axiom form; **proof direction works**, counterexample direction may return `unknown` (loud ERROR, never a false proof) | ∀-axiom, same as cvc5; z3 as the actual solver discharges both directions | `convert_array_comprehension` exists but requires a CONSTANT size — not applicable to infinite arrays (containers flag implies smt2 anyway) |
+| `index(comprehension, i)` at symex | folded by the simplifier via substitution (`simplify_expr_array.cpp`) — concrete tests keep folding, no solver load added | same | same | same |
+| symex renaming of the binding | bound var must be a REGISTERED symbol (L0 lookup); binder+body rename consistently — same route as C-frontend quantifiers | | | |
+| composition (map of map), store-over-comprehension | proven at both the SMT level (hand probes) and end-to-end | | | |
+
+Two enabling fixes landed with the spike:
+- smt2 ∀-axiom emission crashed on `convert_expr(infinity)` for
+  infinite-size comprehension types; it now quantifies over the whole
+  index domain (= the lambda semantics) when the size is
+  `ID_infinity`.
+- the frontend registers the bound variable in the symbol table
+  (symex L0 requirement).
+
+## 3. Subset taxonomy
+
+**Tier 1 — MAP (landed).** `[elt(x) for x in xs]`, single generator,
+no filters, `elt` PURE. Closed form:
+`{length: xs.length, data: array_comprehension j. elt[x := xs.data[j]]}`.
+Exact at any length; composes; concrete cases fold at symex.
+Purity gate (conservative, syntactic): the element conversion emitted
+NO pending statements — rejects may-raise operations (division,
+subscript with checks), side-effecting or user calls, anything that
+needs a per-iteration guard. Ineligible comprehensions fall through
+to the loop lowering unchanged (loud under unwinding assertions).
+
+**Tier 2 — quantified AGGREGATES (planned).** `all(p(x) for x in xs)`
+→ `∀ j ∈ [0, len): p(data[j])`; `any(...)` → ∃. Assertion-position
+`all`/`any` are the natural first target (symex already supports
+∀/∃ in assert/assume with the smt2 backend; `--python-assume-inputs`
+precedent). Value-position needs the boolean materialized — still
+closed-form. `in` over a comprehension result: already scan-based;
+compose the map body into the scan needle instead of materializing.
+
+**Tier 3 — FILTER (no closed form; do not attempt).**
+`[x for x in xs if p(x)]` is a COMPACTION: `result[j]` is the j-th
+element satisfying p — inherently sequential (prefix counting), not
+expressible as an index-wise lambda. Options, in preference order:
+(a) keep the loop (bounded producers stay exact; symbolic-length
+falls to the unwinding assertion — loud); (b) axiomatize the length
+only (`0 ≤ len(result) ≤ len(xs)`) plus a ∀ "every element satisfies
+p ∧ came from xs" — a sound OVER-approximation of reads that loses
+order/multiplicity; behind a sub-flag if ever. len-only properties
+(`len([... if p]) == count`) additionally need a sum — out of scope.
+
+**Tier 4 — DICT/SET comprehensions (blocked on semantics).**
+`{k(x): v(x) for x in xs}`: duplicate keys collapse (last wins), so
+`length` is the number of DISTINCT keys and the value at k is the
+LAST x with k(x)=k — both inherently sequential. The injective
+special case (`enumerate`-style keys) is closed-form but detecting
+injectivity soundly is the hard part. Set comprehensions have the
+same distinctness problem. Keep loops.
+
+**Generator expressions** consumed by an aggregate = Tier 2. A
+genexp materialized into a list = Tier 1 if map-only.
+
+## 4. Soundness constraints
+
+- **Purity is the load-bearing gate**: an element expression that can
+  raise must NOT be hoisted into a term (the loop emits its guards
+  per-iteration; a term evaluates them nowhere). The empty-
+  pending-checks test is exactly "the converter needed no statement
+  context", which is the honest syntactic under-approximation of
+  purity. Anything rejected keeps today's semantics.
+- **Order**: a map is index-wise; PLR order is preserved by
+  construction. (Filters/dicts are where order costs — excluded.)
+- **Exceptions**: the comprehension site itself cannot raise in the
+  map subset (subscripting data[j] on the infinite array has no
+  bounds property; length is copied, not scanned — no
+  python-model-bound guard needed).
+- **cvc5 incompleteness** (∀+arrays, counterexample direction) is
+  LOUD (`unknown` → ERROR verdict), never silent.
+
+## 5. Phasing
+
+- **P1 (landed)**: map subset behind `--python-smt-containers`;
+  smt2 infinity-axiom fix; bound-var registration; tests
+  (`smt-containers-comp-closedform{,-fail}`: symbolic length,
+  element property, composition, concrete folding, symbolic range,
+  boxed-element identity map; twin runs WITH unwinding assertions).
+- **P2**: assertion-position `all`/`any` genexp aggregates → ∀/∃
+  (quantifier emission in the python frontend; gate on the same
+  purity test; validate counterexample direction per solver).
+- **P3**: value-position aggregates; `in`-over-comprehension fusion;
+  map over `enumerate`/`zip` (index-wise, still closed-form).
+- **P4 (only if demanded)**: filter length-bounds axiomatization
+  behind a sub-flag; dict-comprehension injective special case.
+
+## 6. Spike evidence (2026-08-05)
+
+- SMT-level: lambda and ∀-axiom forms of `ys = map(2·, xs)` prove
+  `ys[i] = 2·xs[i]` under symbolic `len` on z3 4.8/4.13 and cvc5
+  1.2.1 (incl. sat-direction model through the lambda on z3; store-
+  over-lambda; lambda-of-lambda composition).
+- End-to-end (`--unwind 6`, unwinding assertions ON): symbolic-length
+  len/element/composition properties prove on all three backend
+  configs; wrong-value twin FAILS on z3/generic, ERRORs (unknown) on
+  cvc5; concrete comprehensions still fold; `range(n)` with symbolic
+  n proves; identity map over boxed nested-container elements proves.
+- Gates: full python suite green; comprehension+containers
+  differential 67/70 (three pre-known diffs, all documented);
+  C-frontend Quantifiers-* spot suite green.
