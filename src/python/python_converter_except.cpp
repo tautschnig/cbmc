@@ -972,25 +972,6 @@ codet python_convertert::convert_try(const jsont &stmt)
   // so we can test the pre-handler state.
   const jsont &orelse = json_member(stmt, "orelse");
   bool has_else = orelse.is_array() && !as_array(orelse).empty();
-  exprt exc_before =
-    exc_sym != nullptr ? exprt{exc_sym->symbol_expr()} : exprt{};
-  if(has_else && exc_sym != nullptr)
-  {
-    static unsigned try_else_ctr = 0;
-    std::string tn = "__try_exc_before_" + std::to_string(try_else_ctr++);
-    std::string tq = qualify_name(tn);
-    irep_idt tid{tq};
-    if(symbol_table.lookup(tid) == nullptr)
-    {
-      symbolt ts{tid, bool_typet{}, "python"};
-      ts.base_name = tn;
-      ts.is_lvalue = true;
-      ts.is_state_var = true;
-      symbol_table.add(ts);
-    }
-    exc_before = symbol_table.lookup_ref(tid).symbol_expr();
-    block.add(code_frontend_assignt{exc_before, exc_sym->symbol_expr()});
-  }
 
   if(handlers.is_array() && !as_array(handlers).empty() && exc_sym != nullptr)
   {
@@ -1156,17 +1137,29 @@ codet python_convertert::convert_try(const jsont &stmt)
         condition, std::move(except_block), std::move(handler_chain)};
     }
 
-    block.add(std::move(handler_chain));
-
-    // PLR §8.4: else runs iff no exception was raised in try
-    // body. Use the snapshot captured before handler_chain.
-    if(has_else)
+    // PLR §8.4: else runs iff no exception was raised in the try
+    // body. Encode it as the ELSE ARM of the handler dispatch --
+    // `if exc: handler_chain else: else_body` -- rather than
+    // snapshotting the pre-handler flag into a separate boolean:
+    // the snapshot copy kept two exception-state lineages alive per
+    // loop iteration and defeated symex constant propagation (a
+    // measured 6x SSA blowup and a solver-phase wall on the
+    // retry-loop benchmark). A raise inside the else body is NOT
+    // caught by this try's handlers in either encoding (the body
+    // sets __exception_active and the per-statement weave
+    // propagates it).
+    if(has_else && exc_sym != nullptr)
     {
       code_blockt else_block;
       for(const auto &s : as_array(orelse))
         else_block.add(convert_statement(s));
-      block.add(code_ifthenelset{not_exprt{exc_before}, std::move(else_block)});
+      block.add(code_ifthenelset{
+        exc_sym->symbol_expr(),
+        std::move(handler_chain),
+        std::move(else_block)});
     }
+    else
+      block.add(std::move(handler_chain));
   }
   else
   {
