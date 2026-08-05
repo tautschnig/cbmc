@@ -333,6 +333,46 @@ side — a refined-struct view built over an `ID_string` operand.)
     cluster (see instance-reference-semantics plan), surfaced only
     under per-property decomposition.
 
+### 4.2 Outcome: the wall is FIXED (2026-08-05, same day)
+
+  Four frontend fixes fell out of the characterization, each
+  CPython-validated with minimal twins:
+
+  1. **try/else re-encoding** (the wall itself): else body becomes
+     the else ARM of the handler dispatch; no snapshot boolean. The
+     hour-plus property: 5 s. Everything else: 26 s -> 5 s base.
+  2. **Boxed-set membership** (a false-alarm family): the In tag
+     chain gained its missing SET arm (bitmap through __class_ptr)
+     and rvalue set arguments (ternaries) are materialized before
+     SET-tagged boxing.
+  3. **Per-instance heap boxing** (a FALSE-PROOF family): boxing a
+     class instance used a per-syntactic-site STATIC temp, so
+     loop-appended instances all aliased the LAST one
+     (fleet[0].rid == last_rid VERIFIED, CPython raises).
+     ID_allocate per boxing (mirroring closure capture records)
+     gives each instance its own dynamic object.
+  4. **Boxed-arg -> pointer-class param binding** (garbage reads):
+     the struct->pointer bridge required raw ID_struct, so a boxed
+     list element bound to `res: Resource` punned __int_val into
+     the pointer; now __class_ptr is passed (PLR 3.1 mutation
+     visibility included).
+
+  End state on pyhard (97 properties, --unwind 16):
+  - bounded+refined: full monolithic run 17 s END-TO-END (was: DNF
+    at 25+ min), 16 loud findings — the four remaining counting
+    false alarms trace to pyhard's OWN annotation lie
+    (Resource.kind: str holding ints, reproduced minimally; the
+    annotation-trust boundary, see the plans doc), plus documented
+    unbound-local / model-bound / context-manager items.
+  - containers+native: every property solves individually (46-74 s,
+    ~45 s of it symex); only the 97-in-one-query run exceeds 30 min
+    (linear accumulation, not the old single-property
+    non-termination). Per-property decomposition is the practical
+    configuration here pending the P2 perf work.
+  - Combined container differential after the fixes: 128/132
+    verdict-identical (two intended, two knownbugs) — the safe_zero
+    string fix also cleared dict-native-string-key-box under cvc5.
+
 ## 5. Risks and open questions
 
 - **Measured (2026-08-04): symex, not the solver, was the first wall.**
