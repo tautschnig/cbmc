@@ -321,6 +321,9 @@ std::optional<exprt> python_convertert::try_dict_method(
       member_exprt obj_vals{obj, "values", vals_type};
       member_exprt obj_len{obj, "length", signedbv_typet{64}};
 
+      // Bounded copy of a (possibly unbounded) dict: fail closed.
+      emit_scan_bound_guard(
+        obj_len, source_locationt{}, static_cast<long>(PYTHON_MAX_DICT_SIZE));
       exprt::operandst elems;
       for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; ++i)
       {
@@ -331,7 +334,7 @@ std::optional<exprt> python_convertert::try_dict_method(
           tuple_t});
       }
       return struct_exprt{
-        {obj_len, array_exprt{std::move(elems), list_data_type}}, list_t};
+        {obj_len, build_list_data(std::move(elems), list_data_type)}, list_t};
     }
   }
   if(method_name == "clear")
