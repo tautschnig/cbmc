@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 8 --no-unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+a BOXED argument (list element) bound to a pointer-to-class param passes
+the box's __class_ptr (not a punned scalar slot): reads deliver the real
+fields and callee mutations reach the stored object.
