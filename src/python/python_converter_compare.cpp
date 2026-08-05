@@ -3078,13 +3078,64 @@ exprt python_convertert::convert_compare(const jsont &expr)
         exprt tag_dict = python_value_is(container, python_type_tagt::DICT);
         exprt tag_str = python_value_is(container, python_type_tagt::STR);
         exprt tag_list = python_value_is(container, python_type_tagt::LIST);
+        // SET branch -- sets are boxed by-reference via __class_ptr
+        // with the SET tag (mirroring dicts); dereference the payload
+        // and reuse the bitmap membership test. Only an int needle
+        // has a precise bit position (same collision argument as the
+        // concrete set arm); a non-int needle gets a sound nondet.
+        // Previously there was NO set arm, so `x in s` through a
+        // boxed set fell through to the tag chain's `false` --
+        // underapproximating membership (the retry-loop counter
+        // false-alarm family: `rid in remaining` never throttles).
+        exprt tag_set = python_value_is(container, python_type_tagt::SET);
+        exprt set_test;
+        {
+          const typet &nit = current_left.type();
+          const bool int_needle = nit.id() == ID_signedbv ||
+                                  nit.id() == ID_unsignedbv ||
+                                  nit.id() == ID_bool || nit.id() == ID_integer;
+          if(int_needle)
+          {
+            dereference_exprt set_val{typecast_exprt{
+              python_value_class_ptr(container),
+              pointer_typet{python_set_type(), 64}}};
+            member_exprt bm{set_val, "bitmap", unsignedbv_typet{64}};
+            exprt shifted_item = current_left;
+            if(shifted_item.type() != signedbv_typet{64})
+              shifted_item = safe_typecast(shifted_item, signedbv_typet{64});
+            exprt bit = bitand_exprt{
+              lshr_exprt{
+                bm, typecast_exprt{shifted_item, unsignedbv_typet{64}}},
+              from_integer(1, unsignedbv_typet{64})};
+            set_test =
+              notequal_exprt{bit, from_integer(0, unsignedbv_typet{64})};
+          }
+          else
+          {
+            static unsigned set_in_nd_pv = 0;
+            const irep_idt nd_id{
+              qualify_name("__set_in_nd_pv_" + std::to_string(set_in_nd_pv++))};
+            if(symbol_table.lookup(nd_id) == nullptr)
+            {
+              symbolt nds{nd_id, bool_typet{}, "python"};
+              nds.base_name = id2string(nd_id);
+              nds.is_lvalue = true;
+              nds.is_state_var = true;
+              symbol_table.add(nds);
+            }
+            set_test = symbol_table.lookup_ref(nd_id).symbol_expr();
+          }
+        }
         exprt in_expr = if_exprt{
           tag_dict,
           dict_membership,
           if_exprt{
             tag_str,
             str_contains,
-            if_exprt{tag_list, list_scan, exprt{false_exprt{}}}}};
+            if_exprt{
+              tag_list,
+              list_scan,
+              if_exprt{tag_set, set_test, exprt{false_exprt{}}}}}};
         cmp = (op == "In") ? in_expr : not_exprt{in_expr};
       }
       else if(is_python_dict_type(container.type()))

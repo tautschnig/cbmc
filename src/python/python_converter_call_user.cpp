@@ -1515,7 +1515,24 @@ exprt python_convertert::convert_user_call(
       // bridged with a final typecast on the address_of, matching
       // the existing safe_typecast struct->pointer path that
       // CBMC's symex chases through dereferences.
+      // A BOXED argument (python_value: a list element, an untyped
+      // local, a ternary) bound to a pointer-to-class parameter:
+      // the box already holds the object's address in __class_ptr;
+      // pass THAT pointer (cast to the param's pointee) so the
+      // callee reads/mutates the same object (PLR 3.1). Previously
+      // this fell through to the scalar coercion, which punned the
+      // box's __int_val slot into the pointer -- reads through the
+      // param delivered garbage (e.g. summing res.rid over a list
+      // of instances).
       if(
+        params[i].type().id() == ID_pointer &&
+        is_python_value_type(arguments[i].type()) &&
+        to_pointer_type(params[i].type()).base_type().id() == ID_struct)
+      {
+        arguments[i] = typecast_exprt{
+          python_value_class_ptr(arguments[i]), params[i].type()};
+      }
+      else if(
         params[i].type().id() == ID_pointer &&
         arguments[i].type().id() == ID_struct &&
         to_pointer_type(params[i].type()).base_type().id() == ID_struct)
@@ -1735,14 +1752,41 @@ exprt python_convertert::convert_user_call(
         }
         else if(
           is_python_value_type(params[i].type()) &&
-          arguments[i].id() == ID_symbol &&
           is_python_set_type(arguments[i].type()))
         {
           // A set is an element-type-agnostic fixed struct (bitmap), so it
           // needs no promotion: share the caller's object directly by address
           // (SET tag) so the callee's mutators propagate without a write-back.
+          // A non-lvalue set expression (a ternary like
+          // `fail if flag else set()`, a call result) has no address;
+          // materialize it into a temp first. The temp is a COPY, but a
+          // rvalue set has no aliasing observer, so by-reference sharing
+          // is not required for it. Previously non-symbol sets fell
+          // through to the generic coercion, which boxed them WITHOUT
+          // the SET tag/payload -- membership through the box then
+          // underapproximated (`x in s` false) or misread garbage.
+          exprt boxee = arguments[i];
+          if(boxee.id() != ID_symbol && boxee.id() != ID_member)
+          {
+            static unsigned set_arg_ctr = 0;
+            const std::string nm =
+              "__set_arg_" + std::to_string(set_arg_ctr++);
+            const irep_idt tmp_id{qualify_name(nm)};
+            if(symbol_table.lookup(tmp_id) == nullptr)
+            {
+              symbolt ts{tmp_id, boxee.type(), "python"};
+              ts.base_name = nm;
+              ts.is_lvalue = true;
+              ts.is_state_var = true;
+              symbol_table.add(ts);
+            }
+            const symbol_exprt tmp =
+              symbol_table.lookup_ref(tmp_id).symbol_expr();
+            pending_checks.push_back(code_frontend_assignt{tmp, boxee});
+            boxee = tmp;
+          }
           arguments[i] = make_python_value(
-            python_type_tagt::SET, address_of_exprt{arguments[i]});
+            python_type_tagt::SET, address_of_exprt{boxee});
         }
         else
           arguments[i] = coerce_call_argument(
