@@ -3673,12 +3673,8 @@ codet python_convertert::convert_assign(const jsont &stmt)
         // Canonical dict type is `dict[refined_string, python_value]`.
         if(string_key)
         {
-          typet dict_type =
-            python_dict_type(python_string_type(), python_value_type());
-          exprt class_ptr = python_value_class_ptr(obj);
-          pointer_typet dict_ptr_type{dict_type, 64};
-          dereference_exprt dict_val{
-            typecast_exprt{class_ptr, dict_ptr_type}, dict_type};
+          const typet dict_type = canonical_str_dict_type();
+          dereference_exprt dict_val = boxed_dict_deref(obj);
           const auto &dict_st = to_struct_type(dict_type);
           const auto &keys_type = to_array_type(dict_st.components()[1].type());
           const auto &vals_type = to_array_type(dict_st.components()[2].type());
@@ -3691,6 +3687,25 @@ codet python_convertert::convert_assign(const jsont &stmt)
           exprt typed_val = rhs;
           if(typed_val.type() != vals_type.element_type())
             typed_val = wrap_value(typed_val);
+          // PLR §6.4.6: d[k] = v REPLACES a present key and INSERTS an
+          // absent one. This arm was replace-only: a new key written
+          // through the box silently vanished (readback KeyError — the
+          // untyped-param / iteration-variable false-alarm family,
+          // shared with the bounded model).
+          static unsigned bx_fnd = 0;
+          const std::string fn = "__boxwr_fnd_" + std::to_string(bx_fnd++);
+          const irep_idt fi{qualify_name(fn)};
+          if(symbol_table.lookup(fi) == nullptr)
+          {
+            symbolt fs{fi, bool_typet{}, "python"};
+            fs.base_name = fn;
+            fs.is_lvalue = true;
+            fs.is_state_var = true;
+            fs.is_static_lifetime = current_function.empty();
+            symbol_table.add(fs);
+          }
+          symbol_exprt found = symbol_table.lookup_ref(fi).symbol_expr();
+          block.add(code_frontend_assignt{found, false_exprt{}});
           for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
           {
             exprt idx = from_integer(i, signedbv_typet{64});
@@ -3703,10 +3718,21 @@ codet python_convertert::convert_assign(const jsont &stmt)
               &eq_seq);
             for(auto &c : eq_seq)
               block.add(std::move(c));
-            block.add(code_ifthenelset{
-              match,
-              code_frontend_assignt{index_exprt{vals_arr, idx}, typed_val}});
+            code_blockt upd;
+            upd.add(
+              code_frontend_assignt{index_exprt{vals_arr, idx}, typed_val});
+            upd.add(code_frontend_assignt{found, true_exprt{}});
+            block.add(code_ifthenelset{match, std::move(upd)});
           }
+          code_blockt append;
+          emit_capacity_guard(append, length, PYTHON_MAX_DICT_SIZE, loc);
+          append.add(
+            code_frontend_assignt{index_exprt{keys_arr, length}, typed_key});
+          append.add(
+            code_frontend_assignt{index_exprt{vals_arr, length}, typed_val});
+          append.add(code_frontend_assignt{
+            length, plus_exprt{length, from_integer(1, signedbv_typet{64})}});
+          block.add(code_ifthenelset{not_exprt{found}, std::move(append)});
           continue;
         }
       }
