@@ -256,6 +256,71 @@ side — a refined-struct view built over an `ID_string` operand.)
   symex side is measured (211 s -> 30 s, see above); the SOLVER phase
   is the open wall.
 
+### 4.1 The solver-phase wall, characterized (2026-08-05)
+
+  Grounded findings on `pyhard_exercise` (--unwind 16, containers +
+  native strings unless noted):
+
+  - **The formula**: ONE monolithic check-sat, 97 properties, 80 MB,
+    44,918 asserts, ~50 K define-funs. Theory mix is NOT the
+    suspect: zero fp terms in the hot cone, 586 stores, 3.5 K strtab
+    UF applications, String equalities inlined (no str.* at all).
+    --slice-formula removes nothing (everything is in the cone).
+  - **Per-property decomposition localizes the wall**: 20 of 27 user
+    assertions are solver-trivial (26 s end-to-end, of which ~25 s
+    is symex). Seven (assertions 4/5/6/8/9/10/13 — all in the
+    retry-loop cone) wall INDIVIDUALLY: the single-property
+    assertion.4 slice is 57 MB (vs 26 KB for its neighbor
+    assertion.3) and defeats z3 4.8.12, z3 4.13.4 and cvc5 1.2.1
+    alike at 60 min direct-solve. z3 4.13.4's statistics at soft
+    timeout show NO search stats after 900 s — it never exits
+    preprocessing/bit-blasting (245 G allocations, 5.6 GB); cvc5
+    grows to 15 GB. Not a search blowup: a formula-construction one.
+  - **Root cause isolated by program surgery**: replacing ONLY the
+    try/except in the retry loop with equivalent if/else control
+    flow (same loops, same closure, same pow assertion, same calls,
+    CPython-verified) drops assertion.4 from >3600 s to 28 s
+    end-to-end. The wall is the exception-machinery encoding woven
+    through a 4-deep loop nest (12-element builder x 3 pages x 11
+    items x 4 retries): per-statement `__exception_active` guards
+    compose with `__try_exc_before` snapshots (191 SSA versions,
+    345 K occurrences in the a4 slice = 90 % of its definitions)
+    into path-condition products that never fold, because instance
+    reads through boxed pv dispatch stay symbolic at symex time even
+    though the program is fully concrete. Unwind sensitivity
+    confirms superlinearity: u=8 -> 864 SSA steps, u=12 -> 1,216,
+    u=16 -> 155,751 (the fleet-builder loop needs 13, gating
+    feasibility of everything downstream).
+  - **Config isolation**: the wall reproduces in ALL four
+    bounded/array x refined/native configurations — it predates and
+    is independent of --python-smt-containers.
+  - **Fix direction (whole-group)**: make the CONCRETE program fold.
+    Two candidate seams, in value order: (a) symex-time constant
+    folding of class-tag / __class_ptr dispatch (the ite chains over
+    tag constants that keep every downstream read symbolic), (b)
+    exception-flag folding — after a call whose callee provably
+    cannot raise (or whose raise-set is statically empty),
+    `__exception_active` is constant-false and the guard weave
+    should vanish. (b) is the direct hit on the isolated root.
+  - **z3 vs cvc5**: on everything tractable the two are within noise
+    of each other (26 s vs 26 s on pyhard tractable properties;
+    0.2-1.1 s on the container family, cvc5 2x faster on the nested
+    test). cvc5 needed two fixes to run at all: --arrays-exp on the
+    command line (STORE_ALL) and a constant zero for the String sort
+    in safe_zero (cvc5 rejects nondet inside `(as const ...)`); both
+    landed. On the walled properties neither solver is better —
+    same non-termination, so backend choice is NOT a lever here.
+  - **Incremental backend blocked**: --incremental-smt2-solver
+    routes python string intrinsics into the refined-strings solver
+    (string_constraint_generator: unknown symbol __cbmc_strtab) —
+    an integration gap; native strings currently require the legacy
+    smt2_dec path.
+  - Bonus finding: the monolithic run masked a FALSE ALARM —
+    assertion.3 (`span.depth == 1` after `with span:`) fails; this
+    is the documented context-manager arm of the instance-identity
+    cluster (see instance-reference-semantics plan), surfaced only
+    under per-property decomposition.
+
 ## 5. Risks and open questions
 
 - **Measured (2026-08-04): symex, not the solver, was the first wall.**
