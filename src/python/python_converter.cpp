@@ -36,6 +36,7 @@
 #include <util/mathematical_expr.h>
 #include <util/mathematical_types.h>
 #include <util/pointer_expr.h>
+#include <util/pointer_offset_size.h>
 #include <util/simplify_expr.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
@@ -3937,25 +3938,42 @@ exprt python_convertert::wrap_value(const exprt &e)
       }
     }
     const exprt &boxee = to_box;
-    // We need a persistent pointer target. Materialise the struct
-    // into a static-lifetime symbol so address_of yields a valid
-    // pointer across statement boundaries.
+    // We need a persistent pointer target. HEAP-allocate a fresh
+    // record per boxing (mirroring the closure capture records):
+    // symex mints a distinct dynamic_object per unwound iteration,
+    // so each boxed instance keeps its own identity. The previous
+    // per-syntactic-site STATIC temp was reassigned on every loop
+    // iteration, so `while ...: xs.append(R(n))` made every list
+    // slot alias the LAST instance -- a FALSE PROOF
+    // (fleet[0].rid == last_rid verified; CPython disagrees).
     static unsigned class_wrap_counter = 0;
     std::string tmp_name =
       "__class_val_" + std::to_string(class_wrap_counter++);
     std::string tmp_qname = qualify_name(tmp_name);
     irep_idt tmp_id{tmp_qname};
+    const pointer_typet box_ptr_type{boxee.type(), 64};
     if(symbol_table.lookup(tmp_id) == nullptr)
     {
-      symbolt tmp_sym{tmp_id, boxee.type(), "python"};
+      symbolt tmp_sym{tmp_id, box_ptr_type, "python"};
       tmp_sym.base_name = tmp_name;
       tmp_sym.is_lvalue = true;
       tmp_sym.is_state_var = true;
       symbol_table.add(tmp_sym);
     }
-    const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
-    pending_checks.push_back(
-      code_frontend_assignt{tmp_sym.symbol_expr(), boxee});
+    const symbolt &tmp_ptr_sym = symbol_table.lookup_ref(tmp_id);
+    {
+      namespacet ns{symbol_table};
+      exprt size = from_integer(
+        pointer_offset_size(boxee.type(), ns).value_or(8), size_type());
+      side_effect_exprt alloc{
+        ID_allocate, {size, false_exprt{}}, box_ptr_type, source_locationt{}};
+      pending_checks.push_back(
+        code_frontend_assignt{tmp_ptr_sym.symbol_expr(), alloc});
+      pending_checks.push_back(code_frontend_assignt{
+        dereference_exprt{tmp_ptr_sym.symbol_expr()}, boxee});
+    }
+    // Shim so the re-tagging code below keeps reading naturally.
+    const dereference_exprt boxed_obj{tmp_ptr_sym.symbol_expr()};
     // Ensure the materialised copy carries a valid __class_tag.
     // The 'return ClassName(args)' path doesn't explicitly set
     // __class_tag on the return-tmp before the wrap, so we
@@ -3972,7 +3990,7 @@ exprt python_convertert::wrap_value(const exprt &e)
     if(is_python_dict_type(e.type()))
     {
       return make_python_value(
-        python_type_tagt::DICT, address_of_exprt{tmp_sym.symbol_expr()});
+        python_type_tagt::DICT, tmp_ptr_sym.symbol_expr());
     }
     // python_set struct: use SET tag (not CLASS) so len() / truthiness /
     // unwrap_value and the Any-receiver method dispatch dereference it as a
@@ -3980,14 +3998,14 @@ exprt python_convertert::wrap_value(const exprt &e)
     if(is_python_set_type(e.type()))
     {
       return make_python_value(
-        python_type_tagt::SET, address_of_exprt{tmp_sym.symbol_expr()});
+        python_type_tagt::SET, tmp_ptr_sym.symbol_expr());
     }
     // python_tuple struct: use TUPLE tag (not CLASS) so isinstance(x, tuple),
     // truthiness (empty tuple is falsy) and comparison treat it as a tuple.
     if(is_python_tuple_type(e.type()))
     {
       return make_python_value(
-        python_type_tagt::TUPLE, address_of_exprt{tmp_sym.symbol_expr()});
+        python_type_tagt::TUPLE, tmp_ptr_sym.symbol_expr());
     }
     // python_complex struct: use COMPLEX tag (not CLASS).
     // Lets python_truthiness / unwrap_value dereference and
@@ -3995,7 +4013,7 @@ exprt python_convertert::wrap_value(const exprt &e)
     if(stag == "python_complex")
     {
       return make_python_value(
-        python_type_tagt::COMPLEX, address_of_exprt{tmp_sym.symbol_expr()});
+        python_type_tagt::COMPLEX, tmp_ptr_sym.symbol_expr());
     }
     if(stag.compare(0, prefix.size(), prefix) == 0)
     {
@@ -4004,13 +4022,12 @@ exprt python_convertert::wrap_value(const exprt &e)
       if(ti != class_tag_ids.end())
       {
         pending_checks.push_back(code_frontend_assignt{
-          member_exprt{
-            tmp_sym.symbol_expr(), "__class_tag", signedbv_typet{32}},
+          member_exprt{boxed_obj, "__class_tag", signedbv_typet{32}},
           from_integer(ti->second, signedbv_typet{32})});
       }
     }
     return make_python_value(
-      python_type_tagt::CLASS, address_of_exprt{tmp_sym.symbol_expr()});
+      python_type_tagt::CLASS, tmp_ptr_sym.symbol_expr());
   }
 
   // Unbounded ("int boxing"): an int value is materialised behind an
