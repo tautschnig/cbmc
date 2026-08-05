@@ -294,14 +294,26 @@ side — a refined-struct view built over an `ID_string` operand.)
   - **Config isolation**: the wall reproduces in ALL four
     bounded/array x refined/native configurations — it predates and
     is independent of --python-smt-containers.
-  - **Fix direction (whole-group)**: make the CONCRETE program fold.
-    Two candidate seams, in value order: (a) symex-time constant
-    folding of class-tag / __class_ptr dispatch (the ite chains over
-    tag constants that keep every downstream read symbolic), (b)
-    exception-flag folding — after a call whose callee provably
-    cannot raise (or whose raise-set is statically empty),
-    `__exception_active` is constant-false and the guard weave
-    should vanish. (b) is the direct hit on the isolated root.
+  - **Fix direction (whole-group), sharpened by three more
+    surgeries**: the wall is specifically the try/ELSE snapshot
+    encoding, and it is a SYMEX-phase phenomenon.
+    (1) Keeping try/except but moving the else body into the try
+    tail: 5 s (vs >3600 s). (2) Keeping try/else but replacing
+    `break` with a loop flag: still walls — the break is innocent.
+    (3) Capping the retry loop at its semantic depth (unwindset 4):
+    still walls — not an iteration-count problem. The GOTO programs
+    of the walled and fast variants are the SAME SIZE (612
+    instructions at unwind 2); the 6x SSA expansion (155,751 vs
+    26,251 steps for the identical property) happens during
+    symbolic execution: the `__try_exc_before_N = __exception_active`
+    snapshot plus the `if not __try_exc_before_N:` guard defeats the
+    constant propagation that the direct per-statement
+    `!__exception_active` weave enjoys, keeping both exception-state
+    lineages (pre- and post-handler) alive per iteration. The fix
+    seam is therefore symex-side constant propagation through the
+    snapshot copy (or a frontend else-encoding that reuses the
+    post-handler state instead of a snapshot where provably
+    equivalent), NOT solver options, NOT unwind tuning.
   - **z3 vs cvc5**: on everything tractable the two are within noise
     of each other (26 s vs 26 s on pyhard tractable properties;
     0.2-1.1 s on the container family, cvc5 2x faster on the nested
