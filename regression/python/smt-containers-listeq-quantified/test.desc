@@ -1,0 +1,9 @@
+CORE
+main.py
+--unwind 6 --python-smt-containers --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+list == at symbolic length = len-equal AND forall j: elem-eq (PLR 6.10.1), composed with the closed-form map.

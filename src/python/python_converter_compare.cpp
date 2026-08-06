@@ -903,13 +903,13 @@ exprt python_convertert::convert_compare(const jsont &expr)
             target = le;
           else if(re.id() == ID_floatbv)
             target = re;
-          exprt all_equal = equal_exprt{llen, rlen};
-          for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+          // ONE spelling of the per-index element equality, shared
+          // by the bounded fold and the quantified closed form.
+          auto build_elem_eq = [&](const exprt &idx) -> exprt
           {
-            exprt idx = from_integer(i, signedbv_typet{64});
-            exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
             exprt l_el = index_exprt{lda, idx, le};
             exprt r_el = index_exprt{rda, idx, re};
+
             if(is_python_value_type(le) && !is_python_value_type(target))
               l_el = unwrap_value(l_el, target);
             else if(l_el.type() != target)
@@ -941,9 +941,51 @@ exprt python_convertert::convert_compare(const jsont &expr)
             }
             else
               el_eq = equal_exprt{l_el, r_el};
-            // out-of-range index trivially holds
-            all_equal =
-              and_exprt{all_equal, or_exprt{not_exprt{in_range}, el_eq}};
+            return el_eq;
+          };
+
+          exprt all_equal = equal_exprt{llen, rlen};
+
+          // Closed-form list equality (comprehension-closedform
+          // plan, Tier 3; --python-smt-containers):
+          // xs == ys is len(xs) == len(ys) and forall j in
+          // [0,len): xs[j] == ys[j] (PLR 6.10.1 sequence
+          // comparison) -- EXACT at any symbolic length; the
+          // bounded fold below covers 64 slots. Same empirical
+          // purity gate as membership: the element equality must
+          // build WITHOUT emitting auxiliary statements
+          // (refined-strings content equality does; native-strings
+          // and scalar equalities are pure terms).
+          bool quantified_eq = false;
+          if(python_smt_containers_flag())
+          {
+            const std::size_t pc_before = pending_checks.size();
+            symbol_exprt qj = fresh_bound_index("__eq_j_");
+            exprt q_el_eq = build_elem_eq(qj);
+            if(
+              pending_checks.size() == pc_before && !q_el_eq.is_nil() &&
+              quantifier_safe_term(q_el_eq))
+            {
+              all_equal = and_exprt{
+                std::move(all_equal),
+                forall_in_range(qj, llen, std::move(q_el_eq))};
+              quantified_eq = true;
+            }
+            else
+              pending_checks.erase(
+                pending_checks.begin() + pc_before, pending_checks.end());
+          }
+          if(!quantified_eq)
+          {
+            for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+            {
+              exprt idx = from_integer(i, signedbv_typet{64});
+              exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
+              exprt el_eq = build_elem_eq(idx);
+              // out-of-range index trivially holds
+              all_equal =
+                and_exprt{all_equal, or_exprt{not_exprt{in_range}, el_eq}};
+            }
           }
           // Tunnel the bridged comparison through the rest of the
           // pipeline by replacing both operands with concrete
@@ -2742,15 +2784,15 @@ exprt python_convertert::convert_compare(const jsont &expr)
 
         // Build disjunction for up to PYTHON_MAX_LIST_LENGTH elements
         // guarded by index < length
-        emit_scan_bound_guard(length, source_locationt{});
-        exprt in_expr = false_exprt{};
-        for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+        // ONE spelling of the per-element membership match (the P0
+        // choke-point discipline), shared by the bounded scan and the
+        // quantified closed form below.
+        auto build_elem_match = [&](exprt elem) -> exprt
         {
-          exprt idx = from_integer(i, signedbv_typet{64});
-          exprt elem = index_exprt{data, idx};
           if(handle_elems)
             elem = python_string_handle_denotation(elem);
           exprt match;
+
           // PLR §6.13: 'None in xs' for typed-element xs
           // recognises the per-element-type None marker
           // emitted by coerce_element. Without this, the
@@ -2827,6 +2869,43 @@ exprt python_convertert::convert_compare(const jsont &expr)
               match = equal_exprt{current_left, elem};
             }
           }
+          return match;
+        };
+
+        // Closed-form membership (comprehension-closedform plan,
+        // Tier 3; --python-smt-containers): x in xs is
+        // exists j in [0,len): match(data[j]) -- EXACT at any
+        // symbolic length; the bounded scan below covers 64 slots
+        // behind a fail-closed guard. Same empirical purity gate as
+        // the genexp/map closed forms: build the match for the
+        // QUANTIFIED element and require that no auxiliary
+        // statements were emitted (a refined-strings content match
+        // registers string-solver applications -- those cannot live
+        // under a binder; native-strings matches are pure strtab/
+        // scalar terms). Impure matches keep the bounded lowering.
+        if(python_smt_containers_flag())
+        {
+          const std::size_t pc_before = pending_checks.size();
+          symbol_exprt qj = fresh_bound_index("__in_j_");
+          exprt qmatch = build_elem_match(index_exprt{data, qj});
+          if(
+            pending_checks.size() == pc_before && !qmatch.is_nil() &&
+            quantifier_safe_term(qmatch))
+          {
+            exprt found = exists_in_range(qj, length, std::move(qmatch));
+            cmp = (op == "In") ? found : exprt{not_exprt{found}};
+            goto done_cmp;
+          }
+          pending_checks.erase(
+            pending_checks.begin() + pc_before, pending_checks.end());
+        }
+
+        emit_scan_bound_guard(length, source_locationt{});
+        exprt in_expr = false_exprt{};
+        for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+        {
+          exprt idx = from_integer(i, signedbv_typet{64});
+          exprt match = build_elem_match(index_exprt{data, idx});
           exprt in_range = binary_relation_exprt{idx, ID_lt, length};
           in_expr = or_exprt{in_expr, and_exprt{in_range, match}};
         }

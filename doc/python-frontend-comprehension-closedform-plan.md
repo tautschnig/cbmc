@@ -1,6 +1,7 @@
 # Closed-form comprehensions (no-unwind encoding)
 
-Status: **P1 landed** (map subset, spike-validated 2026-08-05).
+Status: **P1 + P2/P3 landed** (map subset; quantified genexp
+aggregates; quantified membership and list equality — 2026-08-05).
 Owner doc for the comprehension arm of
 [python-frontend-unbounded-containers-plan.md](python-frontend-unbounded-containers-plan.md).
 
@@ -44,7 +45,7 @@ subscript with checks), side-effecting or user calls, anything that
 needs a per-iteration guard. Ineligible comprehensions fall through
 to the loop lowering unchanged (loud under unwinding assertions).
 
-**Tier 2 — quantified AGGREGATES (planned).** `all(p(x) for x in xs)`
+**Tier 2 — quantified AGGREGATES (LANDED).** `all(p(x) for x in xs)`
 → `∀ j ∈ [0, len): p(data[j])`; `any(...)` → ∃. Assertion-position
 `all`/`any` are the natural first target (symex already supports
 ∀/∃ in assert/assume with the smt2 backend; `--python-assume-inputs`
@@ -90,6 +91,45 @@ genexp materialized into a list = Tier 1 if map-only.
   python-model-bound guard needed).
 - **cvc5 incompleteness** (∀+arrays, counterexample direction) is
   LOUD (`unknown` → ERROR verdict), never silent.
+
+### 3.1 The architectural seam (landed with Tier 2/3)
+
+Every member of the family is the same shape: a BOUNDED SCAN over an
+iteration range that a quantifier lifts exactly. The shared seam
+(python_container_ops.cpp):
+
+- `make_iteration_view(iterable)` -> {length, data, elem(j)} for a
+  (possibly boxed) list under the flag;
+- `fresh_bound_index` (symbol-table-registered bound vars, the symex
+  L0 requirement);
+- `forall_in_range` / `exists_in_range` (PLR-shaped: vacuous True
+  for `all(())`, vacuous False for `any(())` / `x in []`);
+- `quantifier_safe_term(e)`: the SOUNDNESS gate. Two conditions,
+  applied at every lift site: (1) the trial conversion emitted no
+  auxiliary statements (the empirical purity gate: no may-raise
+  operations, no side-effecting or user calls -- per PLR 6.10.1 an
+  Any-element ordering can raise TypeError and short-circuiting
+  makes that ORDER-OBSERVABLE, so Any-element genexps correctly keep
+  the bounded lowering); (2) no refined-string solver applications
+  under the binder (the string-refinement solver is not
+  quantifier-aware; a bound index inside cprover_string_* risks
+  wrong axiom instantiation -- observed as a solver hang. Native
+  SMT-strings terms quantify soundly).
+
+Consumers wired through the seam: genexp `all`/`any` (assertion and
+value position, filters as implication/conjunction), `x in xs` /
+`not in` (the per-element match extracted into ONE builder shared by
+the bounded scan and the exists-form -- the P0 choke-point
+discipline), and list `==`/`!=` (len-equal AND forall elem-eq). The
+lifted forms need NO scan-bound guard: python-model-bound properties
+disappear exactly where the op became exact.
+
+Not lifted (measured/argued): `sum`/`count`/`index`/`min`/`max`
+(sequential or witness+bound pairs -- P3 candidates; `index` needs a
+first-occurrence minimality forall, min/max need a witness exists
+PLUS a bound forall and the empty-iterable ValueError guard),
+refined-strings content matches (gate above), dict/set comprehension
+(distinctness).
 
 ## 5. Phasing
 

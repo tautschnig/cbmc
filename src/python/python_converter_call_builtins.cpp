@@ -21,6 +21,7 @@
 #include <util/mathematical_expr.h>
 #include <util/mathematical_types.h>
 #include <util/pointer_expr.h>
+#include <util/replace_expr.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
@@ -4037,6 +4038,82 @@ std::optional<exprt> python_convertert::try_builtin_call(
                   result = or_exprt{result, tmp_expr};
               }
               return result;
+            }
+
+            // Closed-form quantified lowering (comprehension-
+            // closedform plan, Tier 2; --python-smt-containers):
+            // all(p(x) for x in xs [if q(x)]) == forall j in
+            // [0,len): q(data[j]) => p(data[j]); any == exists j:
+            // q(data[j]) and p(data[j]). EXACT at any symbolic
+            // length (the bounded scan below truncates at 16), and
+            // PLR 5.6's empty-iterable values fall out vacuously
+            // (all(()) is True, any(()) is False). Short-circuiting
+            // is unobservable under the purity gate: the predicate
+            // and filters must convert WITHOUT emitting statements
+            // (no may-raise ops, no side-effecting or user calls) --
+            // impure genexps keep the bounded lowering, whose
+            // per-element checks stay range-guarded.
+            if(!iterable.is_nil())
+            {
+              auto view = make_iteration_view(iterable);
+              if(view.has_value())
+              {
+                std::string qname = qualify_name(iter_var);
+                irep_idt iter_sym_id{qname};
+                if(symbol_table.lookup(iter_sym_id) == nullptr)
+                {
+                  symbolt sym{iter_sym_id, view->element_type, "python"};
+                  sym.base_name = iter_var;
+                  sym.is_lvalue = true;
+                  sym.is_state_var = true;
+                  symbol_table.add(sym);
+                }
+                else
+                {
+                  symbol_table.get_writeable_ref(iter_sym_id).type =
+                    view->element_type;
+                }
+                symbol_exprt var_sym =
+                  symbol_table.lookup_ref(iter_sym_id).symbol_expr();
+                const std::size_t pc_before = pending_checks.size();
+                exprt pred = convert_expression(elt);
+                exprt filter = true_exprt{};
+                if(gen_ifs.is_array())
+                  for(const auto &if_node : as_array(gen_ifs))
+                  {
+                    exprt fp = convert_expression(if_node);
+                    if(fp.is_nil())
+                      continue;
+                    if(fp.type() != bool_typet{})
+                      fp = safe_typecast(fp, bool_typet{});
+                    filter = and_exprt{filter, fp};
+                  }
+                if(
+                  pending_checks.size() == pc_before && !pred.is_nil() &&
+                  quantifier_safe_term(pred) && quantifier_safe_term(filter))
+                {
+                  if(pred.type() != bool_typet{})
+                    pred = safe_typecast(pred, bool_typet{});
+                  symbol_exprt j = fresh_bound_index("__genexp_j_");
+                  exprt elem = view->elem(j);
+                  replace_expr(var_sym, elem, pred);
+                  replace_expr(var_sym, elem, filter);
+                  if(func_name == "all")
+                    return forall_in_range(
+                      j,
+                      view->length,
+                      implies_exprt{std::move(filter), std::move(pred)});
+                  return exists_in_range(
+                    j,
+                    view->length,
+                    and_exprt{std::move(filter), std::move(pred)});
+                }
+                // impure: discard the trial conversion's checks and
+                // fall through to the bounded lowering, which will
+                // re-convert with per-element guards.
+                pending_checks.erase(
+                  pending_checks.begin() + pc_before, pending_checks.end());
+              }
             }
 
             // Variable iterable: iterate over list data array

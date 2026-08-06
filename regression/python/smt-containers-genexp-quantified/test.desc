@@ -1,0 +1,9 @@
+CORE
+main.py
+--unwind 6 --python-smt-containers --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+all()/any() over pure genexps lower to forall/exists via the shared iteration-view seam: exact at symbolic length (runs WITH unwinding assertions), PLR 5.6 vacuous truth on empty, filters as implication/conjunction.
