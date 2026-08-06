@@ -488,6 +488,12 @@ codet python_convertert::convert_with(const jsont &stmt)
           // expressions whose static type doesn't reveal a CM
           // protocol).
           exprt ctx = convert_expression(ctx_expr);
+          // By-reference manager: dereference before tag sniffing
+          // (see the non-as site).
+          if(
+            !ctx.is_nil() && ctx.type().id() == ID_pointer &&
+            to_pointer_type(ctx.type()).base_type().id() != ID_empty)
+            ctx = dereference_exprt{ctx};
           if(!ctx.is_nil())
           {
             // Determine the class tag of ctx (if any) to look
@@ -528,31 +534,42 @@ codet python_convertert::convert_with(const jsont &stmt)
                 new_sym.is_state_var = true;
                 symbol_table.add(new_sym);
               }
-              // Materialise ctx into a temp so we can pass its
-              // address to __enter__.
-              static unsigned with_mgr_ctr2 = 0;
-              std::string mgr_name =
-                "__with_mgr_e_" + std::to_string(with_mgr_ctr2++);
-              std::string mgr_qname = qualify_name(mgr_name);
-              irep_idt mgr_id{mgr_qname};
-              if(symbol_table.lookup(mgr_id) == nullptr)
+              // PLR 3.1: an LVALUE context expression binds by
+              // reference (see the non-as site); only rvalues get a
+              // materializing temp.
+              exprt mgr_lv;
+              if(
+                ctx.id() == ID_symbol || ctx.id() == ID_member ||
+                ctx.id() == ID_dereference || ctx.id() == ID_index)
               {
-                symbolt mgr_sym{mgr_id, ctx.type(), "python"};
-                mgr_sym.base_name = mgr_name;
-                mgr_sym.is_lvalue = true;
-                mgr_sym.is_state_var = true;
-                symbol_table.add(mgr_sym);
+                mgr_lv = ctx;
               }
-              const symbolt &mgr = symbol_table.lookup_ref(mgr_id);
-              block.add(code_frontend_assignt{mgr.symbol_expr(), ctx});
+              else
+              {
+                static unsigned with_mgr_ctr2 = 0;
+                std::string mgr_name =
+                  "__with_mgr_e_" + std::to_string(with_mgr_ctr2++);
+                std::string mgr_qname = qualify_name(mgr_name);
+                irep_idt mgr_id{mgr_qname};
+                if(symbol_table.lookup(mgr_id) == nullptr)
+                {
+                  symbolt mgr_sym{mgr_id, ctx.type(), "python"};
+                  mgr_sym.base_name = mgr_name;
+                  mgr_sym.is_lvalue = true;
+                  mgr_sym.is_state_var = true;
+                  symbol_table.add(mgr_sym);
+                }
+                mgr_lv = symbol_table.lookup_ref(mgr_id).symbol_expr();
+                block.add(code_frontend_assignt{mgr_lv, ctx});
+              }
               if(
                 symbol_table.lookup("python::" + cls_name + "::__exit__") !=
                 nullptr)
-                with_managers.push_back({mgr.symbol_expr(), cls_name});
+                with_managers.push_back({mgr_lv, cls_name});
               const symbolt &v_sym = symbol_table.lookup_ref(sym_id);
               if(et.return_type().id() == ID_empty)
               {
-                exprt::operandst eargs{address_of_exprt{mgr.symbol_expr()}};
+                exprt::operandst eargs{address_of_exprt{mgr_lv}};
                 side_effect_expr_function_callt call{
                   enter_sym->symbol_expr(),
                   std::move(eargs),
@@ -561,12 +578,11 @@ codet python_convertert::convert_with(const jsont &stmt)
                 block.add(code_expressiont{call});
                 // Without a return value, fall back to binding v
                 // to the manager itself.
-                block.add(code_frontend_assignt{
-                  v_sym.symbol_expr(), mgr.symbol_expr()});
+                block.add(code_frontend_assignt{v_sym.symbol_expr(), mgr_lv});
               }
               else
               {
-                exprt::operandst eargs{address_of_exprt{mgr.symbol_expr()}};
+                exprt::operandst eargs{address_of_exprt{mgr_lv}};
                 side_effect_expr_function_callt call{
                   enter_sym->symbol_expr(),
                   std::move(eargs),
@@ -637,6 +653,16 @@ codet python_convertert::convert_with(const jsont &stmt)
         else
         {
           exprt ctx = convert_expression(ctx_expr);
+          // A by-reference manager (a function parameter, self):
+          // pointer-to-struct. Dereference so the tag sniffing below
+          // sees the class -- previously the protocol was SILENTLY
+          // DROPPED for these (no __enter__/__exit__ at all: a
+          // missed-mutation false proof, and __exit__-on-return
+          // never ran).
+          if(
+            ctx.type().id() == ID_pointer &&
+            to_pointer_type(ctx.type()).base_type().id() != ID_empty)
+            ctx = dereference_exprt{ctx};
           if(ctx.type().id() == ID_struct)
           {
             std::string tag = id2string(to_struct_type(ctx.type()).get_tag());
@@ -654,19 +680,40 @@ codet python_convertert::convert_with(const jsont &stmt)
           }
           if(!cls_name.empty() && !ctx.is_nil())
           {
-            static unsigned with_mgr_ne = 0;
-            std::string mn = "__with_mgr_ne_" + std::to_string(with_mgr_ne++);
-            irep_idt mid{qualify_name(mn)};
-            if(symbol_table.lookup(mid) == nullptr)
+            // PLR 3.1 (the instance-reference-semantics plan's
+            // context-manager arm): `with span:` runs __enter__/
+            // __exit__ on THE OBJECT span names -- copying it into
+            // a temp made the dunders mutate the copy, so
+            // `span.depth == 1` inside the body false-alarmed. An
+            // LVALUE context expression binds by reference (exactly
+            // like a method receiver); only an RVALUE (a call
+            // result already handled above, a ternary) needs the
+            // materializing temp, and a fresh rvalue has no
+            // aliasing observer.
+            if(
+              ctx.id() == ID_symbol || ctx.id() == ID_member ||
+              ctx.id() == ID_dereference || ctx.id() == ID_index)
             {
-              symbolt ms{mid, ctx.type(), "python"};
-              ms.base_name = mn;
-              ms.is_lvalue = true;
-              ms.is_state_var = true;
-              symbol_table.add(ms);
+              // symbol / field / by-ref parameter (a dereference) /
+              // container element -- all lvalues.
+              mgr_expr = ctx;
             }
-            mgr_expr = symbol_table.lookup_ref(mid).symbol_expr();
-            block.add(code_frontend_assignt{mgr_expr, ctx});
+            else
+            {
+              static unsigned with_mgr_ne = 0;
+              std::string mn = "__with_mgr_ne_" + std::to_string(with_mgr_ne++);
+              irep_idt mid{qualify_name(mn)};
+              if(symbol_table.lookup(mid) == nullptr)
+              {
+                symbolt ms{mid, ctx.type(), "python"};
+                ms.base_name = mn;
+                ms.is_lvalue = true;
+                ms.is_state_var = true;
+                symbol_table.add(ms);
+              }
+              mgr_expr = symbol_table.lookup_ref(mid).symbol_expr();
+              block.add(code_frontend_assignt{mgr_expr, ctx});
+            }
           }
         }
         if(!cls_name.empty() && !mgr_expr.is_nil())
@@ -808,7 +855,17 @@ codet python_convertert::convert_with(const jsont &stmt)
   // body. Inline a copy before each return/break/continue (like the
   // finally lowering in convert_try), then append for the
   // normal-fallthrough and raise paths.
-  std::function<void(codet &)> inline_exit = [&](codet &c) -> void
+  // PLR 8.5: __exit__ runs when control LEAVES THE WITH SUITE. A
+  // `return` leaves it from any depth; a `break`/`continue` leaves
+  // it only when its binding loop encloses the `with` -- one nested
+  // inside a loop WITHIN the with body transfers control inside the
+  // suite and must NOT run __exit__ (prepending it there
+  // over-decremented `with span:` depth counters on every loop
+  // continue/break: span.depth == 0 after the block false-alarmed,
+  // pyhard's reconciliation asserts). Track relative loop depth and
+  // prepend for break/continue only at depth 0.
+  std::function<void(codet &, unsigned)> inline_exit =
+    [&](codet &c, unsigned loop_depth) -> void
   {
     for(auto &op : c.operands())
     {
@@ -816,19 +873,23 @@ codet python_convertert::convert_with(const jsont &stmt)
         continue;
       codet &inner = static_cast<codet &>(op);
       const irep_idt &st = inner.get_statement();
-      if(st == ID_return || st == ID_break || st == ID_continue)
+      if(
+        st == ID_return ||
+        ((st == ID_break || st == ID_continue) && loop_depth == 0))
       {
         code_blockt blk;
         blk.append(exit_code);
         blk.add(static_cast<const codet &>(inner));
         op = std::move(blk);
       }
+      else if(st == ID_while || st == ID_for || st == ID_dowhile)
+        inline_exit(inner, loop_depth + 1);
       else
-        inline_exit(inner);
+        inline_exit(inner, loop_depth);
     }
   };
   if(!exit_code.statements().empty())
-    inline_exit(block);
+    inline_exit(block, 0);
   block.append(exit_code);
 
   // If the exception was not suppressed and there is no enclosing try,
