@@ -1,7 +1,9 @@
 # Closed-form comprehensions (no-unwind encoding)
 
-Status: **P1 + P2/P3 landed** (map subset; quantified genexp
-aggregates; quantified membership and list equality — 2026-08-05).
+Status: **P1–P3 landed** (map subset; quantified genexp aggregates;
+quantified membership, list equality, list.index and min/max —
+2026-08-06). Open: enumerate/zip closed-form producers (loud false
+alarm today), filter axiomatization (P4, only if demanded).
 Owner doc for the comprehension arm of
 [python-frontend-unbounded-containers-plan.md](python-frontend-unbounded-containers-plan.md).
 
@@ -124,12 +126,32 @@ discipline), and list `==`/`!=` (len-equal AND forall elem-eq). The
 lifted forms need NO scan-bound guard: python-model-bound properties
 disappear exactly where the op became exact.
 
-Not lifted (measured/argued): `sum`/`count`/`index`/`min`/`max`
-(sequential or witness+bound pairs -- P3 candidates; `index` needs a
-first-occurrence minimality forall, min/max need a witness exists
-PLUS a bound forall and the empty-iterable ValueError guard),
+`index` and `min`/`max` are LANDED via the witness pattern
+(`mint_witness_symbol` + guarded assume; the guard is the
+feasibility condition -- found / non-empty -- so the PLR
+raise-instead-of-value cases leave the witness unconstrained and
+the assume never prunes feasible paths). index carries the PLR 6.3
+first-occurrence minimality forall and a CATCHABLE ValueError;
+min/max are INT-ONLY (an IEEE NaN element falsifies the
+forall-bound while CPython ignores/propagates NaN by position --
+floats keep the bounded reduction) and their empty-sequence
+ValueError became catchable per PLR 8.4 (it was a bare add_check
+property that try/except could not intercept -- both configurations
+fixed). `in`-over-comprehension fusion needed NO code:
+exists-over-lambda composes (probe-validated).
+
+A z3 model-extraction wall was fixed in smt2_conv on the way: the
+macro finder inlines `(assert (= b <quantified>))` definitions and
+`get-value` then returns unevaluated quantified terms for every
+dependent symbol (VERIFICATION ERROR in the falsification direction
+of anything in a witness assume's cone). Quantified Boolean
+definitions are now emitted as implication pairs -- semantically
+identical, not macro-shaped, constants under get-value.
+
+Still not lifted: `sum`/`count` (genuinely sequential),
 refined-strings content matches (gate above), dict/set comprehension
-(distinctness).
+(distinctness), enumerate/zip producers (open; today a comprehension
+over enumerate() is a loud false alarm under the flag).
 
 ## 5. Phasing
 
