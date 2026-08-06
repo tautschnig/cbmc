@@ -23,7 +23,9 @@
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/expr.h>
+#include <util/expr_util.h>
 #include <util/floatbv_expr.h>
+#include <util/mathematical_expr.h>
 #include <util/pointer_expr.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
@@ -331,4 +333,99 @@ exprt python_convertert::dict_key_for_slot(
       unboxed, slot_type);
   }
   return unboxed;
+}
+
+// --- Closed-form iteration (comprehension-closedform plan, Tier 2+) ---
+//
+// ONE seam for every construct that consumes "each element of an
+// iterable" in a boolean/aggregate position: genexp all()/any(),
+// sequence membership, list equality. Each was (or would be) a
+// separate bounded scan with a fail-closed python-model-bound guard
+// under --python-smt-containers; a quantifier over the index range
+// is EXACT at any symbolic length, and empty ranges give the PLR
+// vacuous values for free (all([]) is True = vacuous forall,
+// any([]) is False = vacuous exists, x in [] is False).
+
+std::optional<python_convertert::iteration_viewt>
+python_convertert::make_iteration_view(const exprt &iterable)
+{
+  if(!python_smt_containers_flag())
+    return {};
+  exprt cont = iterable;
+  // A boxed list (python_value with a LIST payload): read the slot.
+  if(is_python_value_type(cont.type()))
+  {
+    exprt lv = python_value_list(cont);
+    if(!is_python_list_type(lv.type()))
+      return {};
+    cont = std::move(lv);
+  }
+  if(!is_python_list_type(cont.type()))
+    return {};
+  const auto &st = to_struct_type(cont.type());
+  const auto &data_t = to_array_type(st.components()[1].type());
+  iteration_viewt view;
+  view.length = member_exprt{cont, "length", signedbv_typet{64}};
+  view.data = member_exprt{cont, "data", data_t};
+  view.element_type = data_t.element_type();
+  return view;
+}
+
+symbol_exprt python_convertert::fresh_bound_index(const std::string &stem)
+{
+  static unsigned bound_ctr = 0;
+  const std::string nm = stem + std::to_string(bound_ctr++);
+  const irep_idt id{qualify_name(nm)};
+  if(symbol_table.lookup(id) == nullptr)
+  {
+    // Symex L0 renaming requires bound variables to be registered
+    // symbols (binder and body rename consistently -- the same route
+    // C-frontend quantifiers and the Tier-1 comprehension take).
+    symbolt s{id, signedbv_typet{64}, "python"};
+    s.base_name = nm;
+    s.is_lvalue = true;
+    s.is_state_var = true;
+    s.is_static_lifetime = current_function.empty();
+    symbol_table.add(s);
+  }
+  return symbol_table.lookup_ref(id).symbol_expr();
+}
+
+exprt python_convertert::forall_in_range(
+  const symbol_exprt &j,
+  const exprt &length,
+  exprt pred)
+{
+  const exprt lo = from_integer(0, j.type());
+  and_exprt range{
+    binary_relation_exprt{lo, ID_le, j},
+    binary_relation_exprt{j, ID_lt, length}};
+  return forall_exprt{j, implies_exprt{std::move(range), std::move(pred)}};
+}
+
+exprt python_convertert::exists_in_range(
+  const symbol_exprt &j,
+  const exprt &length,
+  exprt pred)
+{
+  const exprt lo = from_integer(0, j.type());
+  and_exprt range{
+    binary_relation_exprt{lo, ID_le, j},
+    binary_relation_exprt{j, ID_lt, length}};
+  return exists_exprt{j, and_exprt{std::move(range), std::move(pred)}};
+}
+
+bool python_convertert::quantifier_safe_term(const exprt &e) const
+{
+  // A term placed under a forall/exists binder must be a pure SMT
+  // term. Refined-string function applications (cprover_string_*)
+  // are NOT: the string-refinement solver instantiates their axioms
+  // outside any binder scope and is not quantifier-aware -- a bound
+  // index inside such an application risks wrong axiom
+  // instantiation, not just slowness. Under the native SMT-strings
+  // backend string equalities lower to String-sort terms and strtab
+  // UF applications, which quantify soundly.
+  if(python_smt_string_native_flag())
+    return true;
+  return !has_subexpr(e, ID_function_application);
 }
