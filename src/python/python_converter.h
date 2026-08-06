@@ -2488,6 +2488,37 @@ private:
   /// (i < length) AND container_slot_equal(unbox(keys[i]),
   /// unbox(probe)). The single spelling of the dict-lookup step
   /// used by get/setdefault/pop/del/subscript/membership.
+  /// Closed-form iteration seam (comprehension-closedform plan,
+  /// Tier 2+): a {length, data, element_type} view of an iterable
+  /// under --python-smt-containers, consumed by the quantified
+  /// lowerings of genexp all()/any(), sequence membership and list
+  /// equality. Returns nullopt when the flag is off or the iterable
+  /// is not (or does not box) a list -- callers keep their bounded
+  /// lowering.
+  struct iteration_viewt
+  {
+    exprt length;
+    exprt data;
+    typet element_type;
+    exprt elem(const exprt &j) const
+    {
+      return index_exprt{data, j};
+    }
+  };
+  std::optional<iteration_viewt> make_iteration_view(const exprt &iterable);
+  /// Fresh, symbol-table-registered 64-bit bound variable (symex L0
+  /// requires registration; shared by all quantified lowerings).
+  symbol_exprt fresh_bound_index(const std::string &stem);
+  /// PLR-shaped bounded-range quantifiers: forall yields the vacuous
+  /// True on empty ranges (all([]) per PLR 5.6), exists the vacuous
+  /// False (any([]) / `x in []`).
+  /// True when \p e may be placed under a quantifier binder: pure
+  /// SMT terms only (refined-string solver applications are not
+  /// quantifier-aware; native-strings terms are).
+  bool quantifier_safe_term(const exprt &e) const;
+  exprt forall_in_range(const symbol_exprt &j, const exprt &length, exprt pred);
+  exprt exists_in_range(const symbol_exprt &j, const exprt &length, exprt pred);
+
   exprt dict_slot_match(
     const exprt &keys_array,
     const exprt &length,

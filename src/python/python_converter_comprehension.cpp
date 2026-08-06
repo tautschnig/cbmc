@@ -125,7 +125,7 @@ exprt python_convertert::emit_listcomp_loop(
   // keep folding at symex time.
   if(
     python_smt_containers_flag() && cond == true_exprt{} &&
-    elt_checks.empty() && cond_checks.empty())
+    elt_checks.empty() && cond_checks.empty() && quantifier_safe_term(elt_val))
   {
     static unsigned cf_ctr = 0;
     const std::string jn = "__comp_j_" + std::to_string(cf_ctr++);
