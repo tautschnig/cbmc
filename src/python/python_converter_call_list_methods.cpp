@@ -655,6 +655,51 @@ std::optional<exprt> python_convertert::try_list_method(
       exprt search = convert_expression(*as_array(args).begin());
       if(search.type() != data_type.element_type())
         search = coerce_element(search, data_type.element_type());
+
+      // Closed-form index (comprehension-closedform plan, P3;
+      // --python-smt-containers): PLR list.index returns the FIRST
+      // occurrence, ValueError when absent. Encode with the witness
+      // pattern: found := exists j: match(j); k a fresh witness with
+      // assume(found => 0 <= k < len AND match(k) AND
+      // forall j in [0,k): NOT match(j)) -- the first-occurrence
+      // minimality; ValueError on NOT found. Exact at any symbolic
+      // length (the ite chain below covers 64 slots). Same purity /
+      // quantifier-safety gate as the other lifts: the per-slot
+      // match must be a pure term.
+      if(python_smt_containers_flag())
+      {
+        const std::size_t pc_before = pending_checks.size();
+        symbol_exprt qj = fresh_bound_index("__idx_j_");
+        exprt qmatch = container_slot_equal(index_exprt{data, qj}, search);
+        if(
+          pending_checks.size() == pc_before && !qmatch.is_nil() &&
+          quantifier_safe_term(qmatch))
+        {
+          exprt found = exists_in_range(qj, length, qmatch);
+          const typet k_t = signedbv_typet{64};
+          symbol_exprt k = mint_witness_symbol("__idx_k_", k_t);
+          exprt k_match = container_slot_equal(index_exprt{data, k}, search);
+          symbol_exprt pj = fresh_bound_index("__idx_p_");
+          exprt k_min = forall_in_range(
+            pj,
+            k,
+            not_exprt{container_slot_equal(index_exprt{data, pj}, search)});
+          exprt k_constraints = and_exprt{
+            binary_relation_exprt{from_integer(0, k_t), ID_le, k},
+            binary_relation_exprt{k, ID_lt, length},
+            std::move(k_match),
+            std::move(k_min)};
+          pending_checks.push_back(
+            code_assumet{implies_exprt{found, std::move(k_constraints)}});
+          emit_conditional_exception(not_exprt{found}, "ValueError");
+          if(k.type() != python_int_type())
+            return typecast_exprt{k, python_int_type()};
+          return std::move(k);
+        }
+        pending_checks.erase(
+          pending_checks.begin() + pc_before, pending_checks.end());
+      }
+
       // Build if-then-else chain: check from end to start
       exprt result = from_integer(-1, python_int_type()); // not found
       for(int i = PYTHON_MAX_LIST_LENGTH - 1; i >= 0; i--)

@@ -5753,14 +5753,17 @@ std::optional<exprt> python_convertert::try_builtin_call(
           // member, so it works for both literal-empty lists like
           // \`max([])\` and runtime-empty lists.
           {
+            // PLR 8.4: the empty-sequence ValueError is CATCHABLE
+            // (`try: max([]) except ValueError:` must catch). The
+            // previous add_check emitted a bare property that
+            // try/except could not intercept; the conditional-
+            // exception channel keeps it loud when uncaught and
+            // catchable when handled.
             member_exprt list_length{arg, "length", signedbv_typet{64}};
-            add_check(
+            emit_conditional_exception(
               binary_relation_exprt{
-                list_length, ID_gt, from_integer(0, signedbv_typet{64})},
-              "exception",
-              std::string{"ValueError: "} + func_name +
-                "() arg is an empty sequence",
-              get_location(expr));
+                list_length, ID_le, from_integer(0, signedbv_typet{64})},
+              "ValueError");
           }
           // Constant-list fast path (numeric or value-tagged).
           const exprt *list_val = nullptr;
@@ -5918,6 +5921,50 @@ std::optional<exprt> python_convertert::try_builtin_call(
           // updates. This handles min(args) / max(args) where args
           // is a *args list of python_value, the typical case in
           // user-defined varargs functions.
+          // Closed-form min/max (comprehension-closedform plan, P3;
+          // --python-smt-containers): the witness pattern -- a fresh
+          // m with assume(len > 0 =>
+          //   (exists j: data[j] == m) AND (forall j: data[j] <= m))
+          // (>= for min). Exact at any symbolic length; the empty-
+          // sequence ValueError is already emitted above. INTEGER
+          // elements only: for floats, `forall j: data[j] <= m` is
+          // FALSE when any element is NaN (IEEE: NaN comparisons are
+          // unordered), while CPython's min/max IGNORE or PROPAGATE
+          // NaN depending on its position -- the quantified encoding
+          // would raise a spurious unsatisfiable-assume (vacuous
+          // proofs). Floats keep the bounded reduction below.
+          if(python_smt_containers_flag() && is_python_list_type(arg.type()))
+          {
+            const auto &st_q = to_struct_type(arg.type());
+            const auto &data_t_q = to_array_type(st_q.components()[1].type());
+            if(
+              data_t_q.element_type().id() == ID_signedbv ||
+              data_t_q.element_type().id() == ID_unsignedbv)
+            {
+              const typet &et = data_t_q.element_type();
+              member_exprt d_q{arg, "data", data_t_q};
+              member_exprt l_q{arg, "length", signedbv_typet{64}};
+              symbol_exprt m = mint_witness_symbol("__mm_w_", et);
+              symbol_exprt wj = fresh_bound_index("__mm_j_");
+              exprt witness =
+                exists_in_range(wj, l_q, equal_exprt{index_exprt{d_q, wj}, m});
+              symbol_exprt bj = fresh_bound_index("__mm_b_");
+              const irep_idt bound_op = (func_name == "min") ? ID_ge : ID_le;
+              exprt bound = forall_in_range(
+                bj,
+                l_q,
+                binary_relation_exprt{index_exprt{d_q, bj}, bound_op, m});
+              exprt nonempty = binary_relation_exprt{
+                l_q, ID_gt, from_integer(0, signedbv_typet{64})};
+              pending_checks.push_back(code_assumet{implies_exprt{
+                std::move(nonempty),
+                and_exprt{std::move(witness), std::move(bound)}}});
+              if(m.type() != python_int_type())
+                return typecast_exprt{m, python_int_type()};
+              return std::move(m);
+            }
+          }
+
           if(is_python_list_type(arg.type()))
           {
             const auto &list_st_mm = to_struct_type(arg.type());
