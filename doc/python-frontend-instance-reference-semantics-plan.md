@@ -429,3 +429,26 @@ break/continue -- all CPython-validated). The context-manager arm no
 longer motivates the phased by-reference representation change; the
 remaining drivers are local-alias `b = a`, composition field stores,
 and return-flow (see the phase table above).
+
+
+## Status update (2026-08-06): Phase 4 LANDED (opt-in, --python-ref-instances)
+
+The heap-boxing identity fix (2026-08-05: boxed class instances
+allocate a per-instance heap record via ID_allocate -- originally for
+the loop-append aliasing false proof) made Phase 4 nearly free: the
+existing wrap/box machinery IS the element-as-heap-pointer
+representation the plan specified. Under the flag, a list display
+holding class-instance elements boxes each element
+(make_python_value CLASS over the heap record) and the element type
+widens to python_value; iteration, subscript-attribute access and
+extract-then-mutate all reach the stored object through __class_ptr,
+and loop-appended elements keep per-instance identity via the same
+mechanism.
+
+Validated (all CPython-twinned): 087/099 witness shapes prove
+(iterate-mutate, subscript-store, extract-mutate, loop-append);
+distinct elements stay distinct (no over-aliasing); a false
+post-mutation assert FAILs; flag-off default bit-identical (suite
+green); the full instance-* family is verdict-identical under the
+flag (14/14). The == precision cost stays as documented (boxed
+elements compare by tag/value_equal, opt-in accepted).

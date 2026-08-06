@@ -89,6 +89,12 @@ inline std::size_t &python_max_list_length_config()
 /// bounded prefix emit a fail-closed python-model-bound obligation at
 /// the USE site (never silent truncation). Same function-static
 /// pattern as python_smt_string_native_flag.
+inline bool &python_ref_instances_flag()
+{
+  static bool flag = false;
+  return flag;
+}
+
 inline bool &python_smt_containers_flag()
 {
   static bool value = false;
