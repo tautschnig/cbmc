@@ -187,13 +187,24 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-smt-containers", true);
   if(
     cmdline.isset("python-smt-containers") && !cmdline.isset("smt2") &&
-    !cmdline.isset("z3") && !cmdline.isset("cvc5") && !cmdline.isset("cvc4"))
+    !cmdline.isset("z3") && !cmdline.isset("cvc5") && !cmdline.isset("cvc4") &&
+    !cmdline.isset("outfile"))
   {
-    log.warning()
-      << "--python-smt-containers models containers with infinite arrays, "
-      << "which the SAT bit-blaster cannot represent faithfully for dict "
-      << "scans: pass --smt2, --z3 or --cvc5. Without one, results are "
-      << "unreliable." << messaget::eom;
+    // A hard error, not a warning: the flag's infinite-array
+    // representation has no bit-blastable width (boolbv_width
+    // invariant), and its closed-form container operations emit
+    // forall/exists over SYMBOLIC ranges, which the SAT backend's
+    // eager instantiation (constant bounds only) cannot expand --
+    // its fallback introduces a fresh unconstrained literal, i.e.
+    // potentially WRONG verdicts rather than a crash. --outfile
+    // (SMT2 dump) counts as an SMT backend for inspection
+    // workflows.
+    throw invalid_command_line_argument_exceptiont{
+      "requires an SMT backend: the flag models containers with infinite "
+      "arrays and quantified operations that the SAT bit-blaster cannot "
+      "represent",
+      "--python-smt-containers",
+      "pass --smt2, --z3 or --cvc5 (or --outfile for SMT2 dumps)"};
   }
   {
     // Both --python-smt-strings (native SMT-LIB String sort) and

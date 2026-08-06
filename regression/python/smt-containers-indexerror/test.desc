@@ -1,6 +1,6 @@
 CORE
 main.py
---python-smt-containers
+--python-smt-containers --smt2
 ^EXIT=10$
 ^SIGNAL=0$
 ^VERIFICATION FAILED$
