@@ -2516,6 +2516,13 @@ private:
   /// SMT terms only (refined-string solver applications are not
   /// quantifier-aware; native-strings terms are).
   bool quantifier_safe_term(const exprt &e) const;
+  /// Witness pattern (index / min / max): fresh nondet-initialized
+  /// symbol; the caller assumes its defining constraints guarded by
+  /// the feasibility condition (PLR raise-instead-of-value cases keep
+  /// the witness unconstrained). Constraints must be satisfiable
+  /// whenever the guard holds.
+  symbol_exprt
+  mint_witness_symbol(const std::string &stem, const typet &result_type);
   exprt forall_in_range(const symbol_exprt &j, const exprt &length, exprt pred);
   exprt exists_in_range(const symbol_exprt &j, const exprt &length, exprt pred);
 

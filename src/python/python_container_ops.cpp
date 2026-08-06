@@ -429,3 +429,35 @@ bool python_convertert::quantifier_safe_term(const exprt &e) const
     return true;
   return !has_subexpr(e, ID_function_application);
 }
+
+symbol_exprt python_convertert::mint_witness_symbol(
+  const std::string &stem,
+  const typet &result_type)
+{
+  // The witness pattern shared by list.index (first-occurrence
+  // minimality) and min/max (extremum): mint a fresh nondet-
+  // initialized result symbol; the caller then ASSUMEs its defining
+  // constraints, GUARDED (assume(guard => constraints)) so an
+  // empty/absent case -- which per PLR raises instead of producing
+  // a value -- cannot over-constrain the path. Callers must ensure
+  // the constraints are SATISFIABLE whenever the guard holds (the
+  // first occurrence exists whenever some occurrence does; an
+  // extremum exists whenever the sequence is non-empty), so the
+  // assume never prunes feasible paths.
+  static unsigned witness_ctr = 0;
+  const std::string nm = stem + std::to_string(witness_ctr++);
+  const irep_idt id{qualify_name(nm)};
+  if(symbol_table.lookup(id) == nullptr)
+  {
+    symbolt s{id, result_type, "python"};
+    s.base_name = nm;
+    s.is_lvalue = true;
+    s.is_state_var = true;
+    s.is_static_lifetime = current_function.empty();
+    symbol_table.add(s);
+  }
+  const symbol_exprt w = symbol_table.lookup_ref(id).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{
+    w, side_effect_expr_nondett{result_type, source_locationt{}}});
+  return w;
+}
