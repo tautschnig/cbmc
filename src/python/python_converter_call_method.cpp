@@ -464,7 +464,10 @@ std::optional<exprt> python_convertert::try_method_call(
             const typet i64 = python_int_type();
             const std::size_t buf_len =
               std::max<std::size_t>(PYTHON_MAX_LIST_LENGTH, n_len);
-            array_typet data_t{u8, from_integer(buf_len, i64)};
+            // Array sizes are representation-typed (signedbv[64]),
+            // not python-int (integer under --python-unbounded-ints
+            // has no width for the layout machinery).
+            array_typet data_t{u8, from_integer(buf_len, signedbv_typet{64})};
 
             // For big-endian: data[i] = (x >> ((n-1-i)*8)) & 0xff
             // For little-endian: data[i] = (x >> (i*8)) & 0xff
@@ -547,7 +550,14 @@ std::optional<exprt> python_convertert::try_method_call(
           }
 
           const typet i64 = python_int_type();
-          member_exprt b_length{b, "length", i64};
+          // The length MEMBER is the representation's signedbv[64]
+          // regardless of --python-unbounded-ints (reading it as
+          // integer_typet built an ill-typed member that crashed
+          // simplify_member); comparisons against it use the same
+          // type, while the accumulated VALUE stays python-int
+          // (from_bytes of 16 bytes exceeds 64 bits under the flag).
+          const typet len_t = signedbv_typet{64};
+          member_exprt b_length{b, "length", len_t};
           const auto &lt = to_struct_type(b.type());
           typet data_arr_type;
           for(const auto &c : lt.components())
@@ -570,7 +580,7 @@ std::optional<exprt> python_convertert::try_method_call(
               exprt byte = typecast_exprt{index_exprt{b_data, idx}, i64};
               exprt new_result = plus_exprt{result, mult_exprt{byte, power}};
               exprt cond =
-                binary_relation_exprt{b_length, ID_gt, from_integer(i, i64)};
+                binary_relation_exprt{b_length, ID_gt, from_integer(i, len_t)};
               result = if_exprt{cond, new_result, result};
               power = mult_exprt{power, from_integer(256, i64)};
             }
@@ -586,7 +596,7 @@ std::optional<exprt> python_convertert::try_method_call(
               exprt new_result =
                 plus_exprt{mult_exprt{result, from_integer(256, i64)}, byte};
               exprt cond =
-                binary_relation_exprt{b_length, ID_gt, from_integer(i, i64)};
+                binary_relation_exprt{b_length, ID_gt, from_integer(i, len_t)};
               result = if_exprt{cond, new_result, result};
             }
           }
@@ -599,14 +609,15 @@ std::optional<exprt> python_convertert::try_method_call(
           {
             // Compute 2^(length*8) as a chain: power = 1, mul by
             // 256 'length' times.
-            exprt total_bits = mult_exprt{b_length, from_integer(8, i64)};
+            exprt total_bits =
+              mult_exprt{typecast_exprt{b_length, i64}, from_integer(8, i64)};
             (void)total_bits;
             // Build a per-length chain: if length == k, sub_amount = 256^k
             exprt sub_amount = from_integer(0, i64);
             exprt power = from_integer(1, i64);
             for(std::size_t k = 0; k <= max_bytes; k++)
             {
-              exprt match = equal_exprt{b_length, from_integer(k, i64)};
+              exprt match = equal_exprt{b_length, from_integer(k, len_t)};
               sub_amount = if_exprt{match, power, sub_amount};
               power = mult_exprt{power, from_integer(256, i64)};
             }
@@ -624,7 +635,7 @@ std::optional<exprt> python_convertert::try_method_call(
               bitand_exprt{msb_byte, from_integer(0x80, i64)},
               from_integer(0, i64)};
             exprt has_bytes =
-              binary_relation_exprt{b_length, ID_gt, from_integer(0, i64)};
+              binary_relation_exprt{b_length, ID_gt, from_integer(0, len_t)};
             exprt is_neg = and_exprt{has_bytes, sign_bit_set};
             // result = is_neg ? result - sub_amount : result
             result = if_exprt{is_neg, minus_exprt{result, sub_amount}, result};

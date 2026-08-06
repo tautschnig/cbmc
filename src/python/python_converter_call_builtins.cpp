@@ -683,7 +683,19 @@ std::optional<exprt> python_convertert::try_builtin_call(
           return result;
         }
         if(is_python_list_type(arg.type()) || is_python_dict_type(arg.type()))
-          return member_exprt{arg, "length", signedbv_typet{64}};
+        {
+          // The length member is the representation's signedbv[64];
+          // len() returns a PYTHON int. Under --python-unbounded-ints
+          // those differ (mathematical integer_typet) -- returning
+          // the raw member built ill-typed mixed arithmetic
+          // downstream (cursor + len(xs[a:b]) crashed the
+          // simplifier's type postcondition). Identity under the
+          // bounded model.
+          exprt len_m = member_exprt{arg, "length", signedbv_typet{64}};
+          if(len_m.type() != python_int_type())
+            len_m = safe_typecast(std::move(len_m), python_int_type());
+          return len_m;
+        }
 
         // Tuple: number of components
         if(is_python_tuple_type(arg.type()))

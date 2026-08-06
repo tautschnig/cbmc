@@ -1665,7 +1665,9 @@ codet python_convertert::convert_function_def(const jsont &stmt)
               if(id2string(p.get_base_name()) == ref)
               {
                 captures.push_back(
-                  {id2string(p.get_identifier()), ref, p.type()});
+                  {id2string(p.get_identifier()),
+                   ref,
+                   closure_capture_slot_type(p.type())});
                 found = true;
                 break;
               }
@@ -1699,7 +1701,8 @@ codet python_convertert::convert_function_def(const jsont &stmt)
                 new_sym.is_state_var = true;
                 symbol_table.add(new_sym);
               }
-              captures.push_back({var_id, ref, var_type});
+              captures.push_back(
+                {var_id, ref, closure_capture_slot_type(var_type)});
             }
           }
           else

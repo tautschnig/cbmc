@@ -124,6 +124,22 @@ std::size_t python_convertert::register_closure(const irep_idt &lambda_id)
   return closure_registry.size() - 1;
 }
 
+typet python_convertert::closure_capture_slot_type(const typet &t) const
+{
+  // --python-unbounded-ints: a mathematical-integer capture has no
+  // byte width -- the capture record is heap-ALLOCATED (needs a
+  // size) and field-sensitivity computes member offsets, so an
+  // integer_typet slot crashes both. Captures are stored in the
+  // flag's usual 64-bit representation (the int2bv convention used
+  // at every other narrowing boundary); normalizing HERE, at
+  // registration, keeps every consumer consistent (the record type,
+  // the callee's capture parameters, the dispatch's member reads
+  // and the call-site snapshots all derive from closure_captures).
+  if(t.id() == ID_integer)
+    return signedbv_typet{64};
+  return t;
+}
+
 struct_typet python_convertert::closure_record_type(const irep_idt &lambda_id)
 {
   struct_typet::componentst comps;
@@ -174,16 +190,17 @@ exprt python_convertert::box_closure(
     out.push_back(code_frontend_assignt{field, val});
   }
   int closure_idx = static_cast<int>(register_closure(lambda_id));
-  // The closure fn-index must stay PRECISE (it selects the dispatch target).
-  // box_int_for_storage over-approximates int VALUES to nondet, so box the
-  // index directly: it is a compile-time constant, so even if the boxed object
-  // aliases across closure instances every instance holds the SAME index —
-  // aliasing is harmless here.
+  // The closure fn-index must stay PRECISE (it selects the dispatch
+  // target). Under --python-unbounded-ints the __int_val slot is an
+  // INT-ID HANDLE (the 2026-07-21 migration); the previous
+  // allocate_boxed_leaf pointer box predates it and stored a
+  // pointer-typed field into the handle-typed slot -- an ill-typed
+  // struct literal that crashed symex's assign_from_struct.
+  // int_to_handle is exact here: the inttab equality pins the
+  // handle's image to the constant index.
   exprt fn_stored =
-    unbounded_ints
-      ? allocate_boxed_leaf(
-          from_integer(closure_idx, integer_typet{}), integer_typet{})
-      : exprt{from_integer(closure_idx, signedbv_typet{64})};
+    unbounded_ints ? int_to_handle(from_integer(closure_idx, integer_typet{}))
+                   : exprt{from_integer(closure_idx, signedbv_typet{64})};
   return make_python_closure(fn_stored, rec_ptr);
 }
 
