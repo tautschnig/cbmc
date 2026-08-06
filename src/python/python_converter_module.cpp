@@ -1840,9 +1840,75 @@ bool python_convertert::convert()
         }
       }
     }
-    // Infer arg types per call site.
-    auto infer_arg_type = [&](const jsont &arg) -> typet
+    // Infer arg types per call site. COMPOSITIONAL over the
+    // value-producing expression forms (annotation-distrust member:
+    // pyhard's `R(n, 0 if n % 3 == 0 else 1)` hid the int behind a
+    // ternary, so the `kind: str` violation went undetected and the
+    // field pun survived): a ternary/boolean-or infers when both
+    // arms agree; unary +/- passes the operand through.
+    // Name agree-rule: every Assign to a name seen during the walk
+    // records its RHS's inferred type; a name whose assignments all
+    // agree infers that type, any conflict or un-inferable RHS makes
+    // it unknown (flow-insensitive, sound for the DISTRUST purpose:
+    // a false 'violated' would only widen a slot -- never a pun).
+    // TWO consumers with different soundness envelopes share this
+    // inference: (a) the unannotated-param INFERENCE (assigns a
+    // CONCRETE type -- an over-eager guess changes semantics, e.g.
+    // a set-typed param loses the pv-boxed by-reference mutation
+    // discipline), and (b) the annotation-DISTRUST check (only ever
+    // WIDENS a slot to python_value -- monotone-safe). Name
+    // resolution and the compositional forms below are enabled for
+    // (b) only; (a) keeps the original conservative shapes.
+    std::map<std::string, typet> name_agreed;
+    std::set<std::string> name_conflict;
+    std::function<typet(const jsont &, bool)> infer_arg_rec =
+      [&](const jsont &arg, bool for_distrust) -> typet
     {
+      if(is_node_type(arg, "Name"))
+      {
+        if(!for_distrust)
+          return typet{};
+        const std::string nm = json_string(json_member(arg, "id"));
+        if(name_conflict.count(nm))
+          return typet{};
+        auto it = name_agreed.find(nm);
+        return it != name_agreed.end() ? it->second : typet{};
+      }
+      if(is_node_type(arg, "IfExp"))
+      {
+        typet a = infer_arg_rec(json_member(arg, "body"), for_distrust);
+        typet b = infer_arg_rec(json_member(arg, "orelse"), for_distrust);
+        if(!a.id().empty() && a == b)
+          return a;
+        return typet{};
+      }
+      if(is_node_type(arg, "BoolOp"))
+      {
+        const jsont &vals = json_member(arg, "values");
+        typet agreed_t;
+        if(vals.is_array())
+          for(const auto &v : as_array(vals))
+          {
+            typet t = infer_arg_rec(v, for_distrust);
+            if(t.id().empty())
+              return typet{};
+            if(agreed_t.id().empty())
+              agreed_t = t;
+            else if(agreed_t != t)
+              return typet{};
+          }
+        return agreed_t;
+      }
+      if(is_node_type(arg, "UnaryOp"))
+      {
+        const std::string op =
+          json_string(json_member(json_member(arg, "op"), "_type"));
+        if(op == "USub" || op == "UAdd")
+          return infer_arg_rec(json_member(arg, "operand"), for_distrust);
+        if(op == "Not")
+          return bool_typet{};
+        return typet{};
+      }
       if(is_node_type(arg, "Constant"))
       {
         const jsont &v = json_member(arg, "value");
@@ -1876,6 +1942,10 @@ bool python_convertert::convert()
       // Cannot infer.
       return typet{};
     };
+    auto infer_arg_type = [&](const jsont &arg) -> typet
+    { return infer_arg_rec(arg, false); };
+    auto infer_arg_distrust = [&](const jsont &arg) -> typet
+    { return infer_arg_rec(arg, true); };
     // Per-function: per-param-index inferred type so far,
     // and a flag if conflicting types were observed.
     std::map<std::string, std::map<std::size_t, typet>> agreed;
@@ -1934,7 +2004,7 @@ bool python_convertert::convert()
           ann_it != func_param_annotation.end() && i < ann_it->second.size() &&
           !ann_it->second[i].id().empty())
         {
-          const typet inferred = infer_arg_type(a);
+          const typet inferred = infer_arg_distrust(a);
           const auto numeric = [&](const typet &t) {
             return t == python_int_type() || t == double_type() ||
                    t == bool_typet{};
@@ -2001,11 +2071,55 @@ bool python_convertert::convert()
       for(const auto &s : as_array(b))
       {
         if(is_node_type(s, "Assign"))
+        {
+          // Feed the Name agree-rule (single Name targets only).
+          const jsont &tgts = json_member(s, "targets");
+          if(tgts.is_array() && as_array(tgts).size() == 1)
+          {
+            const jsont &t0 = *as_array(tgts).begin();
+            if(is_node_type(t0, "Name"))
+            {
+              const std::string nm = json_string(json_member(t0, "id"));
+              if(!name_conflict.count(nm))
+              {
+                typet rt = infer_arg_rec(json_member(s, "value"), true);
+                auto it = name_agreed.find(nm);
+                if(rt.id().empty())
+                {
+                  name_conflict.insert(nm);
+                  if(it != name_agreed.end())
+                    name_agreed.erase(it);
+                }
+                else if(it == name_agreed.end())
+                  name_agreed[nm] = rt;
+                else if(it->second != rt)
+                {
+                  name_conflict.insert(nm);
+                  name_agreed.erase(it);
+                }
+              }
+            }
+          }
           walk_expr(json_member(s, "value"));
+        }
         else if(is_node_type(s, "AnnAssign"))
           walk_expr(json_member(s, "value"));
         else if(is_node_type(s, "AugAssign"))
+        {
+          // A += / /= etc. can CHANGE a name's type (n /= 2 makes n
+          // float); poison the name rather than guess -- a wrong
+          // agreed type would flow into the unannotated-param
+          // INFERENCE (a pun risk), unlike the distrust direction
+          // which only ever widens.
+          const jsont &at = json_member(s, "target");
+          if(is_node_type(at, "Name"))
+          {
+            const std::string nm = json_string(json_member(at, "id"));
+            name_conflict.insert(nm);
+            name_agreed.erase(nm);
+          }
           walk_expr(json_member(s, "value"));
+        }
         else if(is_node_type(s, "Return"))
           walk_expr(json_member(s, "value"));
         else if(is_node_type(s, "Expr"))
@@ -2024,6 +2138,45 @@ bool python_convertert::convert()
         {
           if(is_node_type(s, "If") || is_node_type(s, "While"))
             walk_expr(json_member(s, "test"));
+          // For-loop / with-as bindings: poison the bound names (the
+          // element/enter types are not tracked here).
+          if(is_node_type(s, "For"))
+          {
+            const jsont &ft = json_member(s, "target");
+            std::function<void(const jsont &)> poison =
+              [&](const jsont &t) -> void
+            {
+              if(is_node_type(t, "Name"))
+              {
+                const std::string nm = json_string(json_member(t, "id"));
+                name_conflict.insert(nm);
+                name_agreed.erase(nm);
+              }
+              else if(is_node_type(t, "Tuple"))
+              {
+                const jsont &es = json_member(t, "elts");
+                if(es.is_array())
+                  for(const auto &e : as_array(es))
+                    poison(e);
+              }
+            };
+            poison(ft);
+          }
+          if(is_node_type(s, "With"))
+          {
+            const jsont &witems = json_member(s, "items");
+            if(witems.is_array())
+              for(const auto &wi : as_array(witems))
+              {
+                const jsont &ov = json_member(wi, "optional_vars");
+                if(is_node_type(ov, "Name"))
+                {
+                  const std::string nm = json_string(json_member(ov, "id"));
+                  name_conflict.insert(nm);
+                  name_agreed.erase(nm);
+                }
+              }
+          }
           walk_body(json_member(s, "body"));
           walk_body(json_member(s, "orelse"));
           walk_body(json_member(s, "finalbody"));
