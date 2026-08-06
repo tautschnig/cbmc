@@ -399,3 +399,33 @@ lens (that lens closed del_in_closure via the existing deleted-flag). Findings:
   [dict-value-byref plan](python-frontend-dict-value-byref-plan.md).
 - Backlog entry + the 2026-06-26/28 investigation notes:
   [python-frontend-plan.md §0](python-frontend-plan.md#false-proofs).
+
+
+## Status update (2026-08-06): context-manager arm CLOSED
+
+The `with` machinery's false-alarm family had TWO roots, both fixed
+without the general by-reference representation change:
+
+1. **Manager identity**: `with span:` / `with span as s:` copied the
+   manager into a `__with_mgr_*` temp; `__enter__`/`__exit__` mutated
+   the copy (`span.depth == 1` false-alarmed). LVALUE context
+   expressions (symbol / field / by-ref param via dereference /
+   container element) now bind by reference, exactly like method
+   receivers; only rvalues (constructor calls, which are fresh
+   objects) keep the materializing temp. By-ref params were
+   additionally SILENTLY DROPPING the protocol (pointer type defeated
+   the tag sniffing -- no __enter__/__exit__ at all, a missed-mutation
+   false proof); they now dereference first.
+
+2. **Loop-control over-exit** (PLR 8.5): `__exit__` was prepended to
+   EVERY break/continue in the with body -- but one bound to a loop
+   INSIDE the with does not leave the with suite. The inlining is now
+   loop-depth-aware. This was pyhard's `span.depth == 0` failure (the
+   retry loop's continue decremented depth once per iteration).
+
+Pinned by `context-manager-identity{,-fail}` (identity through `as`,
+exception-path __exit__, by-ref-param managers, nested-loop
+break/continue -- all CPython-validated). The context-manager arm no
+longer motivates the phased by-reference representation change; the
+remaining drivers are local-alias `b = a`, composition field stores,
+and return-flow (see the phase table above).

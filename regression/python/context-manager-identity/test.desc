@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 8 --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 8.5 + 3.1: `with span:` / `with span as s:` bind the manager BY
+REFERENCE (lvalue context exprs incl. by-ref params via deref);
+__enter__/__exit__ mutate the named object (s IS span); __exit__ runs
+on the exception path; break/continue bound to a loop INSIDE the with
+do not run __exit__.
