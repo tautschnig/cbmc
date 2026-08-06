@@ -4673,6 +4673,35 @@ void smt2_convt::convert_floatbv_typecast(const floatbv_typecast_exprt &expr)
         src, ns.follow_tag(to_c_enum_tag_type(src_type)).underlying_type());
       convert_floatbv_typecast(tmp);
     }
+    else if(src_type.id() == ID_integer)
+    {
+      // Mathematical Int to float. With the FPA theory,
+      // ((_ to_fp e s) RM <Real>) accepts a Real term and to_real
+      // embeds Int exactly -- precise at any magnitude. Without it
+      // (bit-blasted floats), chain through a 64-bit signed
+      // bitvector -- ((_ int2bv 64)) then the existing bit-blasted
+      // signedbv conversion -- with the usual int2bv wrap-at-2^63
+      // caveat (front-ends range-guard where wrapping matters, e.g.
+      // the Python frontend's model-bound property).
+      const floatbv_typet &dst = to_floatbv_type(dest_type);
+      if(use_FPA_theory)
+      {
+        out << "((_ to_fp " << dst.get_e() << " " << dst.get_f() + 1 << ") ";
+        convert_rounding_mode_FPA(expr.op1());
+        out << " (to_real ";
+        convert_expr(src);
+        out << "))";
+      }
+      else
+      {
+        // unreachable in practice: prepare_for_convert_expr chains
+        // Int operands through signedbv64 for non-FPA flavors; kept
+        // as a safety net for direct convert_expr callers.
+        floatbv_typecast_exprt tmp = expr;
+        tmp.op() = typecast_exprt(src, signedbv_typet{64});
+        convert_floatbv_typecast(tmp);
+      }
+    }
     else
       UNEXPECTEDCASE(
         "TODO typecast11 "+src_type.id_string()+" -> "+dest_type.id_string());
@@ -6799,6 +6828,25 @@ exprt smt2_convt::prepare_for_convert_expr(const exprt &expr)
       it != itend;) // no ++it
   {
     if(
+      !use_FPA_theory && it->id() == ID_floatbv_typecast &&
+      to_floatbv_typecast_expr(*it).op().type().id() == ID_integer &&
+      it->type().id() == ID_floatbv)
+    {
+      // Mathematical Int to float without the FPA theory: the
+      // bit-blast lowering (float_bv, reached both via the
+      // define-fun registration in find_symbols and via
+      // convert_floatbv) has no Int arm. Chain the OPERAND through
+      // a 64-bit signed bitvector -- ((_ int2bv 64)) -- so every
+      // downstream consumer sees the supported signedbv->float
+      // conversion. Usual int2bv wrap-at-2^63 caveat: front-ends
+      // range-guard where wrapping matters (the Python frontend's
+      // model-bound property).
+      auto tc = to_floatbv_typecast_expr(*it);
+      tc.op() = typecast_exprt{tc.op(), signedbv_typet{64}};
+      it.mutate() = tc;
+      // reconsider the rewritten node's children
+    }
+    else if(
       auto prophecy_r_or_w_ok =
         expr_try_dynamic_cast<prophecy_r_or_w_ok_exprt>(*it))
     {
