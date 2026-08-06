@@ -383,6 +383,29 @@ side — a refined-struct view built over an `ID_string` operand.)
   phasing: see
   [python-frontend-comprehension-closedform-plan.md](python-frontend-comprehension-closedform-plan.md).
 
+### 4.4 Composition with --python-unbounded-ints (2026-08-06)
+
+  Measured: the two flags COMPOSE exactly. Closed-form maps,
+  quantified all()/membership/list-== and the witness index all
+  verify over symbolic-length lists of MATHEMATICAL integers
+  (10**27-scale element properties prove, twins fail correctly, no
+  python-model-bound properties fire). Sort-wise the composition is
+  (Array (_ BitVec 64) Int) -- bv indices, Int elements -- which z3
+  handles including under the quantified lowerings.
+
+  One intersection blocker, PRE-EXISTING to the unbounded-ints flag
+  (not a containers composition gap): the `**` operator's
+  variable-exponent lowering unifies its ite arms through FLOAT
+  typecasts, which the smt2 backend cannot convert for mathematical
+  ints (convert_typecast precondition; `2 ** n` crashes under the
+  flag even standalone, and pyhard's backoff closure hits a
+  simplifier type postcondition through the same chain). A proper
+  fix wants a pv-unified or exact-Int pow lowering under the flag --
+  z3's native (^ Int Int) was probed and reasons too weakly (unknown
+  on 4-case bounded exponents), so the ±16-arm exact-int chain with
+  wrapped float arms is the plausible design. Deferred as its own
+  work item; pinned loud (crash, never a wrong verdict).
+
 ## 5. Risks and open questions
 
 - **Measured (2026-08-04): symex, not the solver, was the first wall.**
