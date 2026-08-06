@@ -2418,6 +2418,42 @@ exprt python_convertert::convert_list(const jsont &expr)
   }
 
   typet elem_type = elements[0].type();
+  // --python-ref-instances (instance plan Phase 4): class-instance
+  // elements are BOXED (make_python_value CLASS over a per-instance
+  // HEAP record -- wrap_value heap-allocates since the loop-append
+  // identity fix), so extraction / iteration / subscript-attribute
+  // access all alias the STORED object (PLR 3.1: containers hold
+  // references; `for t in tasks: t.x = 1` mutates the elements).
+  // Opt-in: boxed elements make list == compare by identity-tag
+  // (the nested-container == precision cost documented in the
+  // plan's perf re-spike).
+  if(python_ref_instances_flag())
+  {
+    bool any_instance = false;
+    for(const auto &e : elements)
+    {
+      std::string tag;
+      if(e.type().id() == ID_struct)
+        tag = id2string(to_struct_type(e.type()).get_tag());
+      else if(e.type().id() == ID_struct_tag)
+        tag = id2string(to_struct_tag_type(e.type()).get_identifier());
+      if(
+        tag.rfind("python_class_", 0) == 0 ||
+        tag.rfind("tag-python_class_", 0) == 0)
+      {
+        any_instance = true;
+        break;
+      }
+    }
+    if(any_instance)
+    {
+      for(auto &e : elements)
+        if(!is_python_value_type(e.type()))
+          e = wrap_value(e);
+      elem_type = python_value_type();
+    }
+  }
+
   // Check for mixed types — use tagged union for heterogeneous lists
   bool is_heterogeneous = false;
   for(const auto &e : elements)
