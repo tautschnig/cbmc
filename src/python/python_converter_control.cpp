@@ -1030,6 +1030,11 @@ codet python_convertert::convert_for(const jsont &stmt)
     pending_checks.clear();
     pre_loop.add(code_frontend_assignt{
       symbol_table.lookup_ref(ti).symbol_expr(), iterable});
+    // Keep literal provenance across the materialization: the
+    // tuple-literal unroll below (and any other literal consumer)
+    // resolves symbols through the literal-tracking maps.
+    if(is_python_tuple_type(iterable.type()) && iterable.id() == ID_struct)
+      tuple_literals[ti] = iterable;
     iterable = symbol_table.lookup_ref(ti).symbol_expr();
   }
   // PLR §4.1: \`for x in xs\` where xs is python_value (e.g. an
@@ -1345,6 +1350,96 @@ codet python_convertert::convert_for(const jsont &stmt)
     }
   }
 skip_string_unroll:;
+
+  // PLR 8.3: `for x in (a, b, c)` -- iteration over a CONSTANT-ARITY
+  // tuple literal unrolls the body once per field (mirroring the
+  // string unroll above). Previously tuple iterables fell to the
+  // nondet fallback: the loop variable was a single nondet
+  // assignment, so every derived count/sum false-alarmed
+  // (pyhard's expected_retries derivation). Elements may be
+  // heterogeneous: the loop variable is retyped per iteration.
+  // Bodies with break/continue keep the fallback (loud).
+  if(is_python_tuple_type(iterable.type()) && !is_node_type(target, "Tuple"))
+  {
+    const exprt *tuple_val = nullptr;
+    if(iterable.id() == ID_struct)
+      tuple_val = &iterable;
+    else if(iterable.id() == ID_symbol)
+    {
+      auto tl = tuple_literals.find(to_symbol_expr(iterable).get_identifier());
+      if(tl != tuple_literals.end())
+        tuple_val = &tl->second;
+    }
+    std::function<bool(const jsont &)> has_bc = [&](const jsont &n) -> bool
+    {
+      if(n.is_array())
+      {
+        for(const auto &e : as_array(n))
+          if(has_bc(e))
+            return true;
+        return false;
+      }
+      if(!n.is_object())
+        return false;
+      if(is_node_type(n, "Break") || is_node_type(n, "Continue"))
+        return true;
+      if(
+        is_node_type(n, "For") || is_node_type(n, "While") ||
+        is_node_type(n, "AsyncFor"))
+        return false;
+      const auto &obj = static_cast<const json_objectt &>(n);
+      for(const auto &kv : obj)
+      {
+        if(
+          kv.first == "_type" || kv.first == "lineno" ||
+          kv.first == "col_offset" || kv.first == "end_lineno" ||
+          kv.first == "end_col_offset")
+          continue;
+        if(has_bc(kv.second))
+          return true;
+      }
+      return false;
+    };
+    const jsont &tb = json_member(stmt, "body");
+    if(
+      tuple_val != nullptr && tuple_val->id() == ID_struct &&
+      !(tb.is_array() && has_bc(tb)))
+    {
+      irep_idt var_id_t{qualified_name};
+      code_blockt unrolled;
+      for(auto &pc : pre_loop.statements())
+        unrolled.add(std::move(pc));
+      pre_loop = code_blockt{};
+      for(const exprt &field : tuple_val->operands())
+      {
+        if(symbol_table.lookup(var_id_t) == nullptr)
+        {
+          symbolt new_sym{var_id_t, field.type(), "python"};
+          new_sym.base_name = var_name;
+          new_sym.location = loc;
+          new_sym.is_lvalue = true;
+          new_sym.is_state_var = true;
+          symbol_table.add(new_sym);
+        }
+        else
+          symbol_table.get_writeable_ref(var_id_t).type = field.type();
+        symbol_exprt lv = symbol_table.lookup_ref(var_id_t).symbol_expr();
+        unrolled.add(code_frontend_assignt{lv, field});
+        if(tb.is_array())
+        {
+          loop_depth++;
+          for(const auto &st : as_array(tb))
+            unrolled.add(convert_statement(st));
+          loop_depth--;
+        }
+      }
+      const jsont &orelse_t = json_member(stmt, "orelse");
+      if(orelse_t.is_array())
+        for(const auto &st : as_array(orelse_t))
+          unrolled.add(convert_statement(st));
+      return finalize_for(std::move(unrolled));
+    }
+  }
 
   bool is_list = is_python_list_type(iterable.type());
   bool is_string = is_python_string_type(iterable.type());
