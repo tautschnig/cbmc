@@ -1,0 +1,9 @@
+CORE
+main.py
+--unwind 6 --python-smt-containers --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+x in xs at symbolic length = exists j: match(data[j]) through the shared per-element match builder (no scan-bound guard needed: the op is exact).
