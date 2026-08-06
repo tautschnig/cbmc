@@ -2493,6 +2493,44 @@ std::optional<exprt> python_convertert::try_builtin_call(
         }
         return arg;
       }
+      // list(<dict>) / reversed(<dict>): PLR 6.2.5 + 4.7 -- iterating
+      // a dict yields its KEYS in insertion order, which the
+      // array-based dict representation preserves positionally.
+      // Previously this fell to the nondet fallback (even
+      // len(list(d)) was unknown -- pyhard's key-order
+      // reconciliation false-alarmed). The result list shares the
+      // dict's length and reads keys[i] through the logical-key
+      // unbox (native string handles become denotations).
+      if(is_python_dict_type(arg.type()) && func_name == "list")
+      {
+        const auto &dict_st = to_struct_type(arg.type());
+        const auto &keys_t = to_array_type(dict_st.components()[1].type());
+        const typet elem_t =
+          python_dict_logical_key_type(keys_t.element_type());
+        member_exprt dlen{arg, "length", signedbv_typet{64}};
+        member_exprt dkeys{arg, "keys", keys_t};
+        struct_typet list_type = python_list_type(elem_t);
+        const typet stored_t =
+          to_array_type(list_type.components()[1].type()).element_type();
+        const array_typet data_t =
+          to_array_type(list_type.components()[1].type());
+        exprt::operandst elems;
+        const std::size_t cap = PYTHON_MAX_LIST_LENGTH;
+        if(!python_smt_containers_flag())
+          emit_scan_bound_guard(dlen, get_location(expr));
+        for(std::size_t i = 0; i < cap; i++)
+        {
+          exprt idx = from_integer(i, signedbv_typet{64});
+          exprt in_range = binary_relation_exprt{idx, ID_lt, dlen};
+          exprt key = python_dict_unbox_key(index_exprt{dkeys, idx});
+          if(key.type() != stored_t)
+            key = coerce_element(key, stored_t);
+          elems.push_back(if_exprt{in_range, key, safe_zero(stored_t)});
+        }
+        return struct_exprt{
+          {dlen, build_list_data(std::move(elems), data_t)}, list_type};
+      }
+
       // list(<tuple>) / reversed(<tuple>): materialise a list from the tuple's
       // fields (PLR §6.2.5 — a tuple is an iterable). Without this the call
       // fell through to a nondet list (so even len() was unknown). The element
