@@ -1214,15 +1214,27 @@ literalt smt2_convt::convert(const exprt &expr)
   // other literal kinds, only "|B###|"
 
   // Z3 refuses get-value when a defined symbol contains a quantifier.
+  // A `declare-fun` + `assert (= ...)` is not enough: Z3's macro
+  // finder turns the equality back into a macro and get-value again
+  // returns the unevaluated quantified term (observed: a witness-
+  // pattern assume made every downstream guard's model value
+  // symbolic, D_ERROR). Emitting the definition as a PAIR OF
+  // IMPLICATIONS is semantically identical but not macro-shaped, and
+  // get-value then returns constants.
   if(has_quantifier(prepared_expr))
   {
     out << "(declare-fun ";
     convert_literal(l);
     out << " () Bool)\n";
-    out << "(assert (= ";
+    out << "(assert (=> ";
     convert_literal(l);
     out << ' ';
     convert_expr(prepared_expr);
+    out << "))\n";
+    out << "(assert (=> ";
+    convert_expr(prepared_expr);
+    out << ' ';
+    convert_literal(l);
     out << "))\n";
   }
   else
@@ -6621,6 +6633,25 @@ void smt2_convt::set_to(const exprt &expr, bool value)
           convert_expr(prepared_rhs);
           out << ')' << ')' << '\n';
         }
+        else if(equal_expr.lhs().is_boolean() && has_quantifier(prepared_rhs))
+        {
+          // A Boolean symbol defined equal to a quantified formula:
+          // both `define-fun` and `declare-fun + assert (= ...)`
+          // make Z3's macro finder inline the quantifier into every
+          // use, and `get-value` on any dependent symbol then
+          // returns the unevaluated term instead of a constant
+          // (D_ERROR at model extraction; observed with the
+          // witness-pattern assumes of the quantified container
+          // ops). A pair of implications is semantically identical
+          // but not macro-shaped.
+          out << "(declare-fun " << smt2_identifier << " () Bool)\n";
+          out << "(assert (=> " << smt2_identifier << ' ';
+          emit_definition_body();
+          out << "))\n";
+          out << "(assert (=> ";
+          emit_definition_body();
+          out << ' ' << smt2_identifier << "))\n";
+        }
         else if(use_lambda_for_array)
         {
           // The body emitted below may contain a `(lambda ...)` from
@@ -6661,6 +6692,34 @@ void smt2_convt::set_to(const exprt &expr, bool value)
   out << "; CONV: "
       << format(expr) << "\n";
 #endif
+
+  // A top-level `(assert (= b <quantified>))` with Boolean operands is
+  // macro-shaped: Z3's macro finder inlines it into every use and
+  // `get-value` on dependent symbols then returns the unevaluated
+  // quantified term instead of a constant (D_ERROR at model
+  // extraction; observed with the witness-pattern assumes of the
+  // quantified container ops). Emit a pair of implications instead --
+  // semantically identical, not macro-shaped.
+  if(
+    value && prepared_expr.id() == ID_equal &&
+    to_equal_expr(prepared_expr).lhs().is_boolean() &&
+    defined_expressions.find(expr) == defined_expressions.end() &&
+    has_quantifier(prepared_expr))
+  {
+    const auto &eq = to_equal_expr(prepared_expr);
+    out << "; set_to true (boolean equality with quantifier)\n";
+    out << "(assert (=> ";
+    convert_expr(eq.lhs());
+    out << ' ';
+    convert_expr(eq.rhs());
+    out << "))\n";
+    out << "(assert (=> ";
+    convert_expr(eq.rhs());
+    out << ' ';
+    convert_expr(eq.lhs());
+    out << "))\n";
+    return;
+  }
 
   out << "; set_to " << (value?"true":"false") << "\n"
       << "(assert ";
