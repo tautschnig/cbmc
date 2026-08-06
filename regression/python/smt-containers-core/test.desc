@@ -1,6 +1,6 @@
 CORE
 main.py
---unwind 40 --no-unwinding-assertions --python-smt-containers
+--unwind 40 --no-unwinding-assertions --python-smt-containers --smt2
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
