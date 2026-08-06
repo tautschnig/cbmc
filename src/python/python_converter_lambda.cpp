@@ -334,14 +334,14 @@ exprt python_convertert::convert_lambda(const jsont &expr)
     if(outer_sym == nullptr)
       continue;
     // Add as extra parameter
-    code_typet::parametert p{outer_sym->type};
+    code_typet::parametert p{closure_capture_slot_type(outer_sym->type)};
     std::string cap_id = "python::" + lambda_name + "::" + ref;
     p.set_identifier(cap_id);
     p.set_base_name(ref);
     parameters.push_back(p);
     // Record capture for call-site argument passing
     closure_captures["python::" + lambda_name].push_back(
-      {outer_id, ref, outer_sym->type});
+      {outer_id, ref, closure_capture_slot_type(outer_sym->type)});
   }
 
   for(const auto &p : parameters)

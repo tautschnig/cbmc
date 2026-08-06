@@ -940,6 +940,9 @@ private:
   std::size_t register_closure(const irep_idt &lambda_id);
   /// The per-instance capture-record struct type for `lambda_id`, built
   /// from its closure_captures (one field per captured free variable).
+  /// Capture-slot storage type: mathematical ints store as 64-bit
+  /// (see the definition for the rationale).
+  typet closure_capture_slot_type(const typet &t) const;
   struct_typet closure_record_type(const irep_idt &lambda_id);
   /// Box a closure: allocate a heap capture record, fill it from
   /// `capture_values` (aligned with closure_captures[lambda_id]), and

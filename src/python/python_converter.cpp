@@ -4030,6 +4030,36 @@ exprt python_convertert::wrap_value(const exprt &e)
       python_type_tagt::CLASS, tmp_ptr_sym.symbol_expr());
   }
 
+  // A FUNCTION value (a lambda/def symbol reaching a generic wrap
+  // site, e.g. a list-element store): route through the closure
+  // boxing -- the CLOSURE convention stores the registered fn-index
+  // (+ capture record), NOT the code symbol. The INT default below
+  // used to swallow these; under --python-unbounded-ints the int
+  // boxing then cast code -> Int, which the SMT backend rejects
+  // (loud crash), and under the bounded model it punned the symbol
+  // bits (silent). Capture-carrying closures need call-site capture
+  // VALUES this context does not have: box a captureless closure
+  // precisely, over-approximate the rest as a nondet CLOSURE-tagged
+  // value (loud: any dispatch on it yields nondet, and the purity
+  // gates of the quantified lowerings reject the pending emission).
+  if(e.type().id() == ID_code && e.id() == ID_symbol)
+  {
+    const irep_idt fid = to_symbol_expr(e).get_identifier();
+    auto cap_it = closure_captures.find(id2string(fid));
+    if(cap_it == closure_captures.end() || cap_it->second.empty())
+    {
+      std::vector<codet> box_stmts;
+      exprt boxed = box_closure(fid, {}, box_stmts, source_locationt{});
+      for(auto &st : box_stmts)
+        pending_checks.push_back(std::move(st));
+      return boxed;
+    }
+    log_overapprox(
+      "capture-carrying function value wrapped outside a call context "
+      "-- nondet closure");
+    return side_effect_expr_nondett{python_value_type(), source_locationt{}};
+  }
+
   // Unbounded ("int boxing"): an int value is materialised behind an
   // integer* so python_value stays fixed-width and keeps full precision.
   if(tag == python_type_tagt::INT && unbounded_ints)

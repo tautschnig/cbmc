@@ -1963,10 +1963,17 @@ skip_string_unroll:;
 
   const bool native_str_iter =
     use_smt_string_native && is_string && iterable.type().id() == ID_string;
+  // The length MEMBER is the representation's signedbv[64]; under
+  // --python-unbounded-ints int_type is integer_typet and reading the
+  // member AS integer built an ill-typed member_exprt (crashed
+  // simplify_member via field sensitivity). Read with the member's
+  // real type, then coerce to the loop-index domain.
   exprt length =
     native_str_iter
       ? safe_typecast(native_or_member_string_length(iterable), int_type)
-      : exprt(member_exprt{iterable, "length", int_type});
+      : exprt(member_exprt{iterable, "length", signedbv_typet{64}});
+  if(length.type() != int_type)
+    length = safe_typecast(length, int_type);
   typet data_field_type;
   if(is_python_string_type(iterable.type()))
     data_field_type = pointer_typet(unsignedbv_typet{8}, 64);

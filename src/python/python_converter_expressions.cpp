@@ -4192,6 +4192,15 @@ exprt python_convertert::box_int_for_storage(const exprt &int_value)
   // a wrapped unbounded int keeps FULL PRECISION and does not alias across
   // instances of the same construction site.
   exprt v = int_value;
+  // A non-numeric value here is a ROUTING bug in the caller (e.g. a
+  // code-typed closure that should have taken the CLOSURE boxing);
+  // casting it to Int would only crash later in the SMT backend with
+  // a far-away diagnostic.
+  INVARIANT(
+    v.type().id() == ID_integer || v.type().id() == ID_signedbv ||
+      v.type().id() == ID_unsignedbv || v.type().id() == ID_bool ||
+      v.type().id() == ID_c_bool,
+    "box_int_for_storage expects a numeric value, got " + v.type().id_string());
   if(v.type().id() != ID_integer)
     v = typecast_exprt{v, integer_typet{}};
   // INT-ID HANDLE (2026-07-21): the integer* box byte-extracted the pointed
