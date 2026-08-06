@@ -150,8 +150,15 @@ identical, not macro-shaped, constants under get-value.
 
 Still not lifted: `sum`/`count` (genuinely sequential),
 refined-strings content matches (gate above), dict/set comprehension
-(distinctness), enumerate/zip producers (open; today a comprehension
-over enumerate() is a loud false alarm under the flag).
+(distinctness), enumerate/zip producer
+comprehensions are LANDED as MULTI-SOURCE MAPS: a tuple-unpacking
+comprehension over enumerate()/zip() never materializes tuples --
+each unpacked name substitutes its index-wise source expression
+(enumerate start offset rides along; zip length is min per PLR 5.8).
+Genexp all()/any() over enumerate/zip remains on the bounded path
+(loud fail-closed exceptions, probe-verified -- never silent-wrong);
+tuple-ELEMENT comprehensions ([t for t in enumerate(xs)]) keep the
+loop lowering (real tuple lists).
 
 ## 5. Phasing
 
