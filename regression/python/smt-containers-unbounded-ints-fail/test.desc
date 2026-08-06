@@ -1,0 +1,8 @@
+CORE
+main.py
+--unwind 6 --python-unbounded-ints --python-smt-containers --z3
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--

@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 6 --python-unbounded-ints --python-smt-containers --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Composition of --python-unbounded-ints with --python-smt-containers:
+closed-form maps / quantified all() / membership / witness index over
+symbolic-length lists of MATHEMATICAL integers (values beyond 64 bits
+are exact; no python-model-bound property fires).
