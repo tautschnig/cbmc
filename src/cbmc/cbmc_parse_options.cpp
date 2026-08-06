@@ -229,6 +229,20 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
            "sort and results are unreliable."
         << messaget::eom;
     }
+    if(
+      cmdline.isset("python-smt-strings") &&
+      cmdline.isset("incremental-smt2-solver"))
+    {
+      // The incremental SMT2 back-end's typed AST has no String
+      // sort and no uninterpreted-function application (the native
+      // backend's __cbmc_strtab), so the run would die on an
+      // unimplemented-conversion invariant; reject cleanly.
+      throw invalid_command_line_argument_exceptiont{
+        "the native SMT String backend is not yet supported by the "
+        "incremental SMT2 back-end",
+        "--python-smt-strings",
+        "use --z3 or --cvc5 (the legacy SMT2 back-end)"};
+    }
     if(cmdline.isset("python-unbounded-ints") && !any_smt_solver)
     {
       log.warning()
@@ -291,7 +305,17 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
         options.set_option("pointer-primitive-check", false);
       if(!cmdline.isset("undefined-shift-check"))
         options.set_option("undefined-shift-check", false);
-      if(!cmdline.isset("z3") && !cmdline.isset("smt2") && !cmdline.isset("cvc5"))
+      // The refined-string solver is a SAT-side procedure; every
+      // SMT2 back-end (legacy or incremental) handles strings via
+      // the SMT-LIB string theory / the native-strings lowering
+      // instead. The incremental back-end was missing from this
+      // list, so .py inputs defaulted refine-strings ON and the
+      // solver factory's refine-strings precedence routed the run
+      // into string_refinementt -- which crashes on the native
+      // backend's __cbmc_strtab intrinsics.
+      if(
+        !cmdline.isset("z3") && !cmdline.isset("smt2") &&
+        !cmdline.isset("cvc5") && !cmdline.isset("incremental-smt2-solver"))
         options.set_option("refine-strings", true);
       // Cross-function Any-erasure detection: catches calls to a
       // method on an Any-typed parameter when the caller's
