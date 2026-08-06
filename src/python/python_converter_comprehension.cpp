@@ -259,6 +259,161 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       is_node_type(gen_iter, "Name") &&
       list_literals.count(
         irep_idt{qualify_name(json_string(json_member(gen_iter, "id")))}) > 0;
+    // Closed-form PRODUCERS (comprehension-closedform plan, P3
+    // residual; --python-smt-containers): a filter-free
+    // tuple-unpacking comprehension over enumerate()/zip() is a
+    // MULTI-SOURCE MAP -- no tuple is ever materialized, each
+    // unpacked name is substituted with its index-wise source
+    // expression:
+    //   [body for i, v in enumerate(xs, start)]
+    //     -> {len(xs), array_comprehension j. body[i := j+start,
+    //                                             v := xs.data[j]]}
+    //   [body for x, y in zip(a, b)]
+    //     -> {min(la, lb), array_comprehension j. body[x := a.data[j],
+    //                                                  y := b.data[j]]}
+    // (zip stops at the shortest input per PLR 5.8 -- the min length
+    // is exact, and enumerate's start offset rides along.) The same
+    // purity gate as the other closed forms; ineligible shapes keep
+    // the existing lowering.
+    const jsont &gen_ifs_cf = json_member(gen, "ifs");
+    const bool no_filters_cf =
+      !gen_ifs_cf.is_array() || as_array(gen_ifs_cf).empty();
+    if(
+      python_smt_containers_flag() && no_filters_cf &&
+      is_node_type(target, "Tuple") && is_node_type(gen_iter, "Call") &&
+      is_node_type(json_member(gen_iter, "func"), "Name"))
+    {
+      const std::string fn =
+        json_string(json_member(json_member(gen_iter, "func"), "id"));
+      const jsont &telts = json_member(target, "elts");
+      std::vector<std::string> names;
+      if(telts.is_array())
+        for(const auto &t : as_array(telts))
+        {
+          if(!is_node_type(t, "Name"))
+          {
+            names.clear();
+            break;
+          }
+          names.push_back(json_string(json_member(t, "id")));
+        }
+      const jsont &cargs = json_member(gen_iter, "args");
+      const std::size_t n_args = cargs.is_array() ? as_array(cargs).size() : 0;
+      const bool is_enum =
+        fn == "enumerate" && names.size() == 2 && (n_args == 1 || n_args == 2);
+      const bool is_zip =
+        fn == "zip" && names.size() == n_args && (n_args == 2 || n_args == 3);
+      if(is_enum || is_zip)
+      {
+        // Convert the sources; every source must yield an iteration
+        // view (a list, possibly boxed).
+        std::vector<codet> saved_cf;
+        saved_cf.swap(pending_checks);
+        std::vector<iteration_viewt> views;
+        exprt start_ofs = from_integer(0, signedbv_typet{64});
+        bool ok = true;
+        auto it_arg = as_array(cargs).begin();
+        const std::size_t n_sources = is_enum ? 1 : n_args;
+        for(std::size_t k = 0; k < n_sources && ok; ++k, ++it_arg)
+        {
+          exprt src = convert_expression(*it_arg);
+          auto v = make_iteration_view(src);
+          if(v.has_value())
+            views.push_back(std::move(*v));
+          else
+            ok = false;
+        }
+        if(is_enum && ok && n_args == 2)
+        {
+          exprt se = convert_expression(*it_arg);
+          if(se.type() != signedbv_typet{64})
+            se = safe_typecast(se, signedbv_typet{64});
+          start_ofs = std::move(se);
+        }
+        // The source conversions themselves must be pure, too.
+        ok = ok && pending_checks.empty();
+        if(ok)
+        {
+          // Bind the unpacked names: enumerate -> (int64, elem);
+          // zip -> one name per source element type.
+          std::vector<symbol_exprt> name_syms;
+          for(std::size_t k = 0; k < names.size(); ++k)
+          {
+            const typet nt = (is_enum && k == 0)
+                               ? typet{signedbv_typet{64}}
+                               : views[is_enum ? 0 : k].element_type;
+            irep_idt nid{qualify_name(names[k])};
+            if(symbol_table.lookup(nid) == nullptr)
+            {
+              symbolt ns_{nid, nt, "python"};
+              ns_.base_name = names[k];
+              ns_.is_lvalue = true;
+              ns_.is_state_var = true;
+              ns_.is_static_lifetime = current_function.empty();
+              symbol_table.add(ns_);
+            }
+            else
+              symbol_table.get_writeable_ref(nid).type = nt;
+            name_syms.push_back(symbol_table.lookup_ref(nid).symbol_expr());
+          }
+          exprt elt_val_cf = convert_expression(elt);
+          if(
+            pending_checks.empty() && !elt_val_cf.is_nil() &&
+            quantifier_safe_term(elt_val_cf))
+          {
+            symbol_exprt j = fresh_bound_index("__prod_j_");
+            if(is_enum)
+            {
+              exprt iv = plus_exprt{j, start_ofs};
+              replace_expr(name_syms[0], iv, elt_val_cf);
+              replace_expr(name_syms[1], views[0].elem(j), elt_val_cf);
+            }
+            else
+            {
+              for(std::size_t k = 0; k < names.size(); ++k)
+                replace_expr(name_syms[k], views[k].elem(j), elt_val_cf);
+            }
+            exprt length = views[0].length;
+            for(std::size_t k = 1; k < views.size(); ++k)
+              length = if_exprt{
+                binary_relation_exprt{views[k].length, ID_lt, length},
+                views[k].length,
+                length};
+            const typet et_out_cf = elt_val_cf.type();
+            struct_typet lt_cf = python_list_type(et_out_cf);
+            const array_typet &rd_cf =
+              to_array_type(lt_cf.components()[1].type());
+            saved_cf.swap(pending_checks);
+            static unsigned prod_ctr = 0;
+            irep_idt rid{
+              qualify_name("__prodcomp_" + std::to_string(prod_ctr++))};
+            if(symbol_table.lookup(rid) == nullptr)
+            {
+              symbolt rs{rid, lt_cf, "python"};
+              rs.base_name = id2string(rid);
+              rs.is_lvalue = true;
+              rs.is_state_var = true;
+              rs.is_static_lifetime = current_function.empty();
+              symbol_table.add(rs);
+            }
+            symbol_exprt result_cf = symbol_table.lookup_ref(rid).symbol_expr();
+            pending_checks.push_back(code_frontend_assignt{
+              result_cf,
+              struct_exprt{
+                {std::move(length),
+                 array_comprehension_exprt{j, std::move(elt_val_cf), rd_cf}},
+                lt_cf}});
+            return std::move(result_cf);
+          }
+        }
+        // ineligible: discard trial conversions, restore, fall through
+        pending_checks.clear();
+        saved_cf.swap(pending_checks);
+      }
+      else
+        (void)0;
+    }
+
     if(
       is_node_type(target, "Name") && !is_node_type(gen_iter, "List") &&
       !is_range_call && !is_tracked_name)

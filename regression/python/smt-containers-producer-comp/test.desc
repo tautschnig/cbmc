@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6 --python-smt-containers --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+enumerate/zip comprehensions as multi-source maps: no tuple
+materialization, exact at symbolic length (runs WITH unwinding
+assertions); enumerate start offset; zip min-length (PLR 5.8).
