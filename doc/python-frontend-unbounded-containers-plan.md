@@ -595,3 +595,27 @@ CPython divergence needs eq-equal objects with inconsistent hashes
 (kept apart by CPython, merged by any equality-keyed model) -- that
 shape is rejected by the same guard because such keys are class
 instances.
+
+
+## User-__eq__ dispatch tier + SoA for-loops (2026-08-07 late)
+
+The audit's follow-up landed. Class-keyed dicts classify three ways
+at build_dict_value: __eq__ without __hash__ -> TypeError
+(unhashable, PLR 3.3); __eq__ + __hash__ -> the DISPATCH tier
+(statement-level scans with a materialised __eq__ call per slot --
+construction dedup is the replace-or-insert store semantics;
+lookups honor user equality; the identity short-circuit is a sound
+nondet when the probe could alias); default equality -> still
+rejected (by-value keys lose identity; a first-class object
+identity -- the ref-instances plan -- would lift this).
+Quantified encodings remain closed to class keys by construction.
+
+k5's residual is NOT an equality gap: methods whose receiver is not
+literally named 'self' lose attribute binding (~20 sites key on the
+name; pinned method-self-name-knownbug; whole-group fix = a
+per-method receiver name recorded at def conversion).
+
+SoA follow-up: check-only for-loops over SoA lists compose the
+representative lift with the row-index binding. Remaining SoA
+scope unchanged (NotRequired presence arrays, nested fields, xs[i]
+row views, merge-safe provenance).
