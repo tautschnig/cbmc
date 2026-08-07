@@ -949,10 +949,39 @@ codet python_convertert::convert_for(const jsont &stmt)
   // Loop bound for a watched dict: iterate snapshot+1 times (the +1 runs the
   // terminal __next__ size check) while staying statically bounded by the
   // model's max dict size.
+  exprt failclosed_bound_len = nil_exprt{};
   auto cm_bound = [&](const exprt &idx, const exprt &orig) -> exprt
   {
     if(!cm_dict)
+    {
+      // Fail-closed loop bound (--python-smt-containers): a for-loop
+      // over a SYMBOLIC-length container has no static trip count and
+      // symex unwinds forever -- silently, before any property exists
+      // (the perf-study corpus wall; same root as the comprehension
+      // fallback, this is the plain-for lowering site: study
+      // ex3/ex4). Conjoin a hard bound and report the truncation via
+      // the scan-bound guard, so the run terminates LOUDLY. Concrete
+      // lengths fold the conjunct away; the guard assert folds to
+      // true for lengths within the model bound.
+      if(
+        python_smt_containers_flag() && orig.id() == ID_lt &&
+        orig.operands().size() == 2 && !orig.operands()[1].is_constant())
+      {
+        // The truncation-report guard is emitted by the CALL SITE
+        // into the loop's own block (right before the loop, after
+        // the iterable's materialising assignments -- via pending it
+        // ran BEFORE them and read an unconstrained length,
+        // false-alarming on concrete literals).
+        failclosed_bound_len = orig.operands()[1];
+        return and_exprt{
+          orig,
+          binary_relation_exprt{
+            idx,
+            ID_lt,
+            from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})}};
+      }
       return orig;
+    }
     return and_exprt{
       binary_relation_exprt{
         idx,
@@ -2211,9 +2240,26 @@ skip_string_unroll:;
 
   // C-style for with `__idx += 1` as the ITER expression (see the
   // constant-range variant's note: continue must reach the increment).
+  exprt for_cond =
+    cm_bound(idx_var, binary_relation_exprt{idx_var, ID_lt, length});
+  // Fail-closed truncation report (see cm_bound): emitted HERE, after
+  // the iterable's materialising assignments already in `result`, so
+  // the guard reads the actual length (via pending it ran before them
+  // and false-alarmed on concrete list literals).
+  if(failclosed_bound_len.is_not_nil())
+  {
+    std::vector<codet> guard_stmts;
+    emit_scan_bound_guard(
+      failclosed_bound_len,
+      loc,
+      static_cast<long>(PYTHON_MAX_LIST_LENGTH),
+      &guard_stmts);
+    for(auto &g : guard_stmts)
+      result.add(std::move(g));
+  }
   code_fort while_stmt{
     nil_exprt{},
-    cm_bound(idx_var, binary_relation_exprt{idx_var, ID_lt, length}),
+    std::move(for_cond),
     side_effect_expr_assignt{
       idx_var, plus_exprt{idx_var, from_integer(1, int_type)}, loc},
     std::move(body_block)};
