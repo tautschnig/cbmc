@@ -1462,6 +1462,28 @@ bool python_convertert::convert()
           class_types[name] = placeholder;
           class_tag_ids[name] = static_cast<int>(class_tag_ids.size()) + 1;
         }
+        // Record the BASES here too: convert_type_annotation's PEP 589
+        // TypedDict resolution (annotation -> canonical dict layout)
+        // keys on class_bases, and Pass 0 (module-global AnnAssign
+        // registration, below) resolves annotations BEFORE
+        // convert_class_def runs. Without this, `cfg: Cfg = {...}` at
+        // module level registered the global with the class STRUCT --
+        // the dict literal then coerced to nondet (value dropped) and
+        // every field read false-alarmed.
+        if(class_bases.find(name) == class_bases.end())
+        {
+          const jsont &bases = json_member(stmt, "bases");
+          if(bases.is_array())
+            for(const auto &base : as_array(bases))
+            {
+              if(is_node_type(base, "Name"))
+                class_bases[name].push_back(
+                  json_string(json_member(base, "id")));
+              else if(is_node_type(base, "Attribute"))
+                class_bases[name].push_back(
+                  json_string(json_member(base, "attr")));
+            }
+        }
       }
       // PLR §22.7.1: typing.NewType callable aliases. Scan for
       // module-level 'X = NewType(...)' / 'X = t.NewType(...)' /

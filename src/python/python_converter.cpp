@@ -6173,6 +6173,26 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     auto vit = enum_value_type.find(type_name);
     return vit != enum_value_type.end() ? vit->second : python_int_type();
   }
+  // PEP 589: a TypedDict is a plain dict at RUNTIME. Resolve the
+  // annotation to the canonical string-keyed dict layout HERE (the
+  // single annotation seam) so every position agrees — bare returns
+  // (which had a local special case), List[TD] element types,
+  // parameters, locals, nested containers. With the class STRUCT the
+  // value was subscript-mismodelled everywhere except the
+  // specially-cased return slot (perf-study d4: List[App] elements).
+  // Keyed on class_bases (not class_types: TypedDict class defs are
+  // recorded there before/independently of struct registration).
+  else if(
+    [&]
+    {
+      auto tdb = class_bases.find(type_name);
+      return tdb != class_bases.end() &&
+             std::find(tdb->second.begin(), tdb->second.end(), "TypedDict") !=
+               tdb->second.end();
+    }())
+  {
+    return canonical_str_dict_type();
+  }
   else if(class_types.count(type_name))
   {
     // A "pure" subclass of int/bool (no own instance attributes) IS that
