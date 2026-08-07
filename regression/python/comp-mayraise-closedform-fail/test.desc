@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 20 --no-unwinding-assertions --python-smt-containers --z3
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Filtered comprehension over symbolic length: bounded fallback with the
+fail-closed model-bound guard -- terminates loudly instead of hanging.
