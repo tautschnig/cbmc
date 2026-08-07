@@ -190,6 +190,10 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   // guard and cbmc proved the stale container (annotation-extract-mutate-bypass).
   note_mutable_extraction(symbol_id, rhs, value);
 
+  // SPIKE structure-of-arrays provenance (shared recorder with the
+  // plain-assign path).
+  record_soa_provenance(symbol_id, value);
+
   // enum-member-variable tracking (mirror convert_assign): an annotated
   // `s: E = E.M` (or any `s = E.M`) records s so `s.value` resolves precisely.
   {
@@ -1654,10 +1658,12 @@ codet python_convertert::convert_assign(const jsont &stmt)
     {
       const jsont &t0 = *as_array(targets_n).begin();
       if(is_node_type(t0, "Name"))
-        note_mutable_extraction(
-          irep_idt{qualify_name(json_string(json_member(t0, "id")))},
-          rhs,
-          value);
+      {
+        const irep_idt tid0{qualify_name(json_string(json_member(t0, "id")))};
+        note_mutable_extraction(tid0, rhs, value);
+        // SPIKE structure-of-arrays provenance.
+        record_soa_provenance(tid0, value);
+      }
     }
   }
 

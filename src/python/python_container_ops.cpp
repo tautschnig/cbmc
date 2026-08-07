@@ -108,6 +108,232 @@ exprt python_convertert::dict_slot_match(
   return and_exprt{in_range, container_slot_equal(key_at, probe, sink)};
 }
 
+/// SPIKE structure-of-arrays provenance recorder: at a single-Name
+/// binding, remember (a) `resp = f()` where f returns a TypedDict
+/// (var -> TD name), and (b) `apps = resp['field']` where resp's TD
+/// declares field as List[TD-SoA-eligible] (var -> element TD). The
+/// comprehension-iterable hook derefs such a variable's pv box to
+/// the SoA type. Reassignment to any other shape CLEARS the entries
+/// (stale provenance would re-type a rebound variable).
+void python_convertert::record_soa_provenance(
+  const irep_idt &target_id,
+  const jsont &value)
+{
+  var_typeddict.erase(target_id);
+  var_soa_elem.erase(target_id);
+  if(!python_smt_containers_flag())
+    return;
+  if(is_node_type(value, "Call"))
+  {
+    const jsont &fn = json_member(value, "func");
+    if(is_node_type(fn, "Name"))
+    {
+      auto it =
+        function_return_typeddict.find(json_string(json_member(fn, "id")));
+      if(it != function_return_typeddict.end())
+        var_typeddict[target_id] = it->second;
+    }
+    return;
+  }
+  if(is_node_type(value, "Subscript"))
+  {
+    const jsont &sv = json_member(value, "value");
+    const jsont &sl = json_member(value, "slice");
+    if(
+      is_node_type(sv, "Name") && is_node_type(sl, "Constant") &&
+      json_member(sl, "value").is_string())
+    {
+      auto vt = var_typeddict.find(
+        irep_idt{qualify_name(json_string(json_member(sv, "id")))});
+      if(vt != var_typeddict.end())
+      {
+        auto fle = typed_dict_field_list_elem.find(vt->second);
+        if(fle != typed_dict_field_list_elem.end())
+        {
+          auto fe = fle->second.find(json_member(sl, "value").value);
+          if(fe != fle->second.end() && soa_eligible_td(fe->second))
+            var_soa_elem[target_id] = fe->second;
+        }
+      }
+    }
+  }
+}
+
+exprt python_convertert::td_field_read_memo(
+  const jsont &subscript_node,
+  const typet &soa_type)
+{
+  const jsont &sv = json_member(subscript_node, "value");
+  const jsont &sl = json_member(subscript_node, "slice");
+  if(
+    !is_node_type(sv, "Name") || !is_node_type(sl, "Constant") ||
+    !json_member(sl, "value").is_string())
+    return nil_exprt{};
+  const std::string key = qualify_name(json_string(json_member(sv, "id"))) +
+                          "." + json_member(sl, "value").value;
+  auto it = td_field_read_cache.find(key);
+  if(it != td_field_read_cache.end())
+    return it->second;
+  exprt read = convert_expression(subscript_node);
+  if(read.is_nil() || !is_python_value_type(read.type()))
+    return nil_exprt{};
+  // Materialise the DEREFERENCED SoA value ONCE (a whole-struct
+  // copy, like any dict-struct assignment). The pointer travelled
+  // through the dict's INFINITE values array, where value-set
+  // precision cannot resolve it uniquely -- two derefs of the
+  // SYNTACTICALLY IDENTICAL expression produced fresh failure
+  // objects, so even len(resp['f']) == len(resp['f']) was
+  // unprovable. One copy shared by every read makes them equal by
+  // construction. SOUND for the READ-ONLY consumers wired to this
+  // memo (comprehension iterables, len); the cache is cleared on
+  // dict stores. In-place MUTATION of the field through other paths
+  // (resp['f'].append) must not use the memo -- those paths do not.
+  dereference_exprt soa_obj{
+    typecast_exprt{python_value_class_ptr(read), pointer_typet{soa_type, 64}}};
+  static unsigned tdr_ctr = 0;
+  const std::string tn = "__td_soa_" + std::to_string(tdr_ctr++);
+  const irep_idt tid{qualify_name(tn)};
+  if(symbol_table.lookup(tid) == nullptr)
+  {
+    symbolt ts{tid, soa_type, "python"};
+    ts.base_name = tn;
+    ts.is_lvalue = true;
+    ts.is_state_var = true;
+    ts.is_static_lifetime = current_function.empty();
+    symbol_table.add(ts);
+  }
+  symbol_exprt tsym = symbol_table.lookup_ref(tid).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{tsym, std::move(soa_obj)});
+  // The copy's length inherits the representation invariant.
+  pending_checks.push_back(code_assumet{binary_relation_exprt{
+    member_exprt{tsym, "length", signedbv_typet{64}},
+    ID_ge,
+    from_integer(0, signedbv_typet{64})}});
+  td_field_read_cache.emplace(key, tsym);
+  return tsym;
+}
+
+/// Memoized SoA materialisation for a NAME bound to a boxed SoA
+/// value (`apps = resp['f']`): every consumer (comprehension
+/// iterable, len) must read ONE dereferenced copy -- independent
+/// derefs of even the same pv expression yield unrelated failure
+/// objects through the infinite-array value set (see
+/// td_field_read_memo).
+exprt python_convertert::soa_value_of_name(
+  const irep_idt &name_id,
+  const typet &soa_type)
+{
+  const std::string key = "name:" + id2string(name_id);
+  auto it = td_field_read_cache.find(key);
+  if(it != td_field_read_cache.end())
+    return it->second;
+  const symbolt *vs = symbol_table.lookup(name_id);
+  if(vs == nullptr || !is_python_value_type(vs->type))
+    return nil_exprt{};
+  dereference_exprt soa_obj{typecast_exprt{
+    python_value_class_ptr(vs->symbol_expr()), pointer_typet{soa_type, 64}}};
+  static unsigned soan_ctr = 0;
+  const std::string tn = "__soa_of_" + std::to_string(soan_ctr++);
+  const irep_idt tid{qualify_name(tn)};
+  if(symbol_table.lookup(tid) == nullptr)
+  {
+    symbolt ts{tid, soa_type, "python"};
+    ts.base_name = tn;
+    ts.is_lvalue = true;
+    ts.is_state_var = true;
+    ts.is_static_lifetime = current_function.empty();
+    symbol_table.add(ts);
+  }
+  symbol_exprt tsym = symbol_table.lookup_ref(tid).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{tsym, std::move(soa_obj)});
+  pending_checks.push_back(code_assumet{binary_relation_exprt{
+    member_exprt{tsym, "length", signedbv_typet{64}},
+    ID_ge,
+    from_integer(0, signedbv_typet{64})}});
+  td_field_read_cache.emplace(key, tsym);
+  return tsym;
+}
+
+bool python_convertert::soa_eligible_td(const std::string &td_name) const
+{
+  auto tdb = class_bases.find(td_name);
+  const bool is_td =
+    tdb != class_bases.end() &&
+    std::find(tdb->second.begin(), tdb->second.end(), "TypedDict") !=
+      tdb->second.end();
+  if(!is_td)
+    return false;
+  auto tff = typeddict_class_fields.find(td_name);
+  auto tft = typed_dict_field_types.find(td_name);
+  if(
+    tff == typeddict_class_fields.end() || tff->second.empty() ||
+    tft == typed_dict_field_types.end())
+    return false;
+  for(const auto &f : tff->second)
+  {
+    auto ft = tft->second.find(f);
+    if(
+      ft == tft->second.end() ||
+      (ft->second != "str" && ft->second != "int" && ft->second != "bool" &&
+       ft->second != "float"))
+      return false;
+  }
+  auto opt = typeddict_optional_fields.find(td_name);
+  if(opt != typeddict_optional_fields.end() && !opt->second.empty())
+    return false;
+  return true;
+}
+
+typet python_convertert::soa_list_type(const std::string &td_name)
+{
+  // Field CATEGORIES come from the same map the TypedDict stub
+  // synthesis uses; only known scalar categories qualify (a nested
+  // container field would re-introduce boxing -- the caller gates).
+  struct_typet::componentst comps;
+  comps.push_back(struct_typet::componentt{"length", signedbv_typet{64}});
+  const auto &fields = typeddict_class_fields.at(td_name);
+  const auto &ftypes = typed_dict_field_types.at(td_name);
+  for(const auto &f : fields)
+  {
+    const std::string &cat = ftypes.at(f);
+    typet et;
+    if(cat == "str")
+      et = python_smt_string_native_flag() ? typet{python_string_handle_type()}
+                                           : typet{python_string_type()};
+    else if(cat == "int")
+      et = python_int_type();
+    else if(cat == "bool")
+      et = bool_typet{};
+    else if(cat == "float")
+      et = double_type();
+    else
+      et = python_value_type();
+    comps.push_back(struct_typet::componentt{
+      f + "_data", array_typet{et, exprt{infinity_exprt{signedbv_typet{64}}}}});
+  }
+  struct_typet result{comps};
+  result.set_tag("python_soa_list_" + td_name);
+  return std::move(result);
+}
+
+bool python_convertert::is_soa_list_type(const typet &t) const
+{
+  return t.id() == ID_struct &&
+         id2string(to_struct_type(t).get_tag()).rfind("python_soa_list_", 0) ==
+           0;
+}
+
+exprt python_convertert::soa_field_data(
+  const exprt &soa_value,
+  const std::string &field)
+{
+  const auto &st = to_struct_type(soa_value.type());
+  const std::string comp = field + "_data";
+  if(!st.has_component(comp))
+    return nil_exprt{};
+  return member_exprt{soa_value, comp, st.get_component(comp).type()};
+}
+
 typet python_convertert::canonical_str_dict_type() const
 {
   return python_dict_type(python_string_type(), python_value_type());
@@ -535,6 +761,10 @@ void python_convertert::emit_dict_store(
   const exprt &typed_val,
   const source_locationt &loc)
 {
+  // Any dict store invalidates the TypedDict-field read memo
+  // (conservative: the memo only serves the SoA provenance hooks).
+  td_field_read_cache.clear();
+
   const typet len_t = signedbv_typet{64};
   // Fresh found flag (shared by both encodings).
   static unsigned ds_ctr = 0;

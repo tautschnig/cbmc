@@ -2580,6 +2580,66 @@ private:
     const exprt &key,
     std::function<exprt(const exprt &)> matcher = nullptr);
 
+  /// SPIKE (structure-of-arrays for List[TypedDict], containers plan
+  /// doc): a List[TD] whose fields all have KNOWN scalar categories
+  /// is represented as parallel per-field INFINITE arrays
+  ///   struct python_soa_list_<TD> { length; <f>_data[INF]... }
+  /// instead of a list of pv BOXES. A ROW of such a list is not a
+  /// value -- it is an INDEX: the comprehension binds the loop
+  /// variable as a signedbv[64] index and `a['f']` resolves to
+  /// `f_data[a]`, so the body is a PURE term (the KeyError vanishes
+  /// for declared fields) and the closed-form/quantified machinery
+  /// composes verbatim. Soundness gate: the row variable must never
+  /// ESCAPE as a value (any non-subscript use bails out of the SoA
+  /// path -- enforced at the comprehension conversion via
+  /// soa_row_bindings).
+  typet soa_list_type(const std::string &td_name);
+  /// True when td_name is a TypedDict whose fields are all REQUIRED
+  /// with known scalar categories (the SoA eligibility gate).
+  bool soa_eligible_td(const std::string &td_name) const;
+
+  /// Element-TypedDict of a List[TD] FIELD of a TypedDict:
+  /// outer TD name -> field -> element TD name. Drives the boxed-SoA
+  /// stub synthesis and the comprehension-iterable provenance.
+  std::map<std::string, std::map<std::string, std::string>>
+    typed_dict_field_list_elem;
+
+  /// Conversion-time provenance: variable -> TypedDict name (bound
+  /// from a call whose return is that TypedDict).
+  std::map<irep_idt, std::string> var_typeddict;
+  /// Variable -> element TD of the SoA list it was bound to (from
+  /// `apps = resp['apps']` where resp's field is List[TD]).
+  std::map<irep_idt, std::string> var_soa_elem;
+  void record_soa_provenance(const irep_idt &target_id, const jsont &value);
+
+  /// Memo for TypedDict-field VALUE reads (symbol id + "." + field ->
+  /// the temp holding the read's result). Re-converting `resp['f']`
+  /// mints a fresh lookup WITNESS each time, and the equality of two
+  /// independent first-match witnesses over the same arrays exceeds
+  /// both solvers' quantifier instantiation (repro.py's len(ids) ==
+  /// len(resp['apps'])). One materialisation shared by every use of
+  /// the same read makes the equality syntactic. CONSERVATIVELY
+  /// cleared on any dict store (emit_dict_store) and on rebinds.
+  std::map<std::string, symbol_exprt> td_field_read_cache;
+  /// Convert-and-memoize a TypedDict-field read for the SoA
+  /// provenance hooks; returns the cached temp on repeat use.
+  exprt td_field_read_memo(const jsont &subscript_node, const typet &soa_type);
+  exprt soa_value_of_name(const irep_idt &name_id, const typet &soa_type);
+  exprt try_soa_map(
+    const jsont &elt,
+    const std::string &var_name,
+    const exprt &iter_val,
+    const jsont &ifs,
+    const source_locationt &loc);
+  bool is_soa_list_type(const typet &t) const;
+  /// Per-field data member of an SoA list value.
+  exprt soa_field_data(const exprt &soa_value, const std::string &field);
+
+  /// Conversion-time row bindings: comprehension variable symbol id
+  /// -> the owning SoA list EXPRESSION. While bound, the variable is
+  /// index-typed and subscripts resolve through the owner.
+  std::map<irep_idt, exprt> soa_row_bindings;
+
   /// d[k] = v as one choke point: REPLACE the present key's value,
   /// INSERT an absent key (PLR 6.4.6, last-writer-wins with
   /// insertion order preserved). Under --python-smt-containers with

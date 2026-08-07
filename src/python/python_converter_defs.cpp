@@ -2057,9 +2057,27 @@ codet python_convertert::convert_function_def(const jsont &stmt)
                 // pointer and every downstream subscript/iteration
                 // still false-alarmed.
                 const bool is_list = fldt->second == "list";
+                // SPIKE structure-of-arrays: a List[TD] field with
+                // an SoA-eligible element TypedDict boxes an SoA
+                // heap object (per-field parallel arrays) -- the
+                // comprehension-iterable provenance then derefs to
+                // the SoA type and the row-index machinery applies.
+                std::string soa_elem_td;
+                if(is_list && python_smt_containers_flag())
+                {
+                  auto fle = typed_dict_field_list_elem.find(td_it->second);
+                  if(fle != typed_dict_field_list_elem.end())
+                  {
+                    auto fe = fle->second.find(fname);
+                    if(fe != fle->second.end() && soa_eligible_td(fe->second))
+                      soa_elem_td = fe->second;
+                  }
+                }
                 const typet cont_t =
-                  is_list ? typet{python_list_type(python_value_type())}
-                          : typet{canonical_str_dict_type()};
+                  !soa_elem_td.empty()
+                    ? soa_list_type(soa_elem_td)
+                    : (is_list ? typet{python_list_type(python_value_type())}
+                               : typet{canonical_str_dict_type()});
                 static unsigned td_cont_ctr = 0;
                 const std::string hn =
                   "__td_stub_cont_" + std::to_string(td_cont_ctr++);
@@ -2081,8 +2099,17 @@ codet python_convertert::convert_function_def(const jsont &stmt)
                   ID_allocate, {hsize, false_exprt{}}, hpt, loc};
                 body_block.add(code_frontend_assignt{hptr, halloc});
                 dereference_exprt hobj{hptr};
-                body_block.add(code_frontend_assignt{
-                  hobj, side_effect_expr_nondett{cont_t, loc}});
+                // Member-WISE nondet (not whole-struct): symex lowers
+                // the latter to datatype-sorted projections whose
+                // datatype/array/UF mix pushes Z3 to 'unknown' on SAT
+                // queries carrying quantified witnesses (the
+                // stub-container lesson).
+                for(const auto &hcomp : to_struct_type(cont_t).components())
+                {
+                  body_block.add(code_frontend_assignt{
+                    member_exprt{hobj, hcomp.get_name(), hcomp.type()},
+                    side_effect_expr_nondett{hcomp.type(), loc}});
+                }
                 member_exprt hlen{hobj, "length", signedbv_typet{64}};
                 body_block.add(code_assumet{binary_relation_exprt{
                   hlen, ID_ge, from_integer(0, signedbv_typet{64})}});
@@ -2180,7 +2207,8 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       none_expr = td_sym;
     }
     else if(
-      is_python_list_type(return_type) || is_python_dict_type(return_type))
+      is_python_list_type(return_type) || is_python_dict_type(return_type) ||
+      is_soa_list_type(return_type))
     {
       // Container-annotated stub fall-through: the honest model is
       // "SOME container of the annotated shape" -- a fresh nondet
@@ -4134,6 +4162,51 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         }
         if(is_optional)
           optional.insert(fname);
+        // Field CATEGORY (the same vocabulary the functional-form
+        // scan records): the bare annotation Name, or the slice of
+        // a Required/NotRequired wrapper. Drives the stub-value
+        // shape constraints and the SoA eligibility gate.
+        {
+          const jsont *cat_node = &ann;
+          if(is_node_type(ann, "Subscript"))
+          {
+            const jsont &wv = json_member(ann, "value");
+            std::string wrapper;
+            if(is_node_type(wv, "Name"))
+              wrapper = json_string(json_member(wv, "id"));
+            else if(is_node_type(wv, "Attribute"))
+              wrapper = json_string(json_member(wv, "attr"));
+            if(wrapper == "NotRequired" || wrapper == "Required")
+              cat_node = &json_member(ann, "slice");
+          }
+          std::string cat;
+          if(is_node_type(*cat_node, "Name"))
+            cat = json_string(json_member(*cat_node, "id"));
+          else if(is_node_type(*cat_node, "Subscript"))
+          {
+            const jsont &cv = json_member(*cat_node, "value");
+            if(is_node_type(cv, "Name"))
+              cat = json_string(json_member(cv, "id"));
+          }
+          if(cat == "List")
+            cat = "list";
+          else if(cat == "Dict")
+            cat = "dict";
+          else if(cat == "Set")
+            cat = "set";
+          if(!cat.empty())
+            typed_dict_field_types[class_name][fname] = cat;
+          // list FIELD with a Name element annotation: record the
+          // element TD (List[App] -> "App") for the SoA provenance
+          // chain (boxed-SoA stub target + comprehension iterable).
+          if(cat == "list" && is_node_type(*cat_node, "Subscript"))
+          {
+            const jsont &esl = json_member(*cat_node, "slice");
+            if(is_node_type(esl, "Name"))
+              typed_dict_field_list_elem[class_name][fname] =
+                json_string(json_member(esl, "id"));
+          }
+        }
       }
     }
     typeddict_class_fields[class_name] = std::move(fields);
@@ -5911,6 +5984,18 @@ codet python_convertert::convert_class_def(const jsont &stmt)
 
 codet python_convertert::convert_expr_stmt(const jsont &stmt)
 {
+  // SPIKE structure-of-arrays: statement-level method calls
+  // (apps.append(...)) dispatch HERE, not through convert_call --
+  // clear the TypedDict-field read memo so no consumer reuses a
+  // stale materialised copy after an in-place mutation (a
+  // demonstrated FALSE PROOF: len(apps) == n after append).
+  if(
+    !td_field_read_cache.empty() &&
+    is_node_type(json_member(stmt, "value"), "Call"))
+  {
+    td_field_read_cache.clear();
+  }
+
   // Expression statement (e.g., function call as statement)
   const jsont &value = json_member(stmt, "value");
 

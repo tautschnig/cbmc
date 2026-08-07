@@ -426,6 +426,46 @@ exprt python_convertert::convert_if_exp(const jsont &expr)
 // "The primary must evaluate to an object that supports subscription."
 exprt python_convertert::convert_subscript(const jsont &expr)
 {
+  // SPIKE structure-of-arrays: `a['f']` where `a` is a bound SoA ROW
+  // (an INDEX into per-field parallel arrays -- see soa_row_bindings)
+  // resolves to `f_data[a]`: a pure array select, no box, no deref,
+  // and NO KeyError obligation -- the field is DECLARED on the
+  // TypedDict, so every row has it (PLR 6.10.1: only ABSENT keys
+  // raise; an SoA list only exists for all-required TypedDicts).
+  // An unknown field name falls through to the generic path (which
+  // will loudly reject the row's index type -- the escape gate).
+  {
+    const jsont &val_n = json_member(expr, "value");
+    if(is_node_type(val_n, "Name") && !soa_row_bindings.empty())
+    {
+      const irep_idt vid{qualify_name(json_string(json_member(val_n, "id")))};
+      auto rb = soa_row_bindings.find(vid);
+      if(rb != soa_row_bindings.end())
+      {
+        const jsont &sl = json_member(expr, "slice");
+        if(is_node_type(sl, "Constant"))
+        {
+          const jsont &sv = json_member(sl, "value");
+          if(sv.is_string())
+          {
+            exprt fd = soa_field_data(rb->second, sv.value);
+            if(fd.is_not_nil())
+            {
+              const symbolt *vs = symbol_table.lookup(vid);
+              if(vs != nullptr)
+              {
+                exprt sel = index_exprt{fd, vs->symbol_expr()};
+                // Handle-typed slots read back as strings.
+                if(is_python_string_handle_type(sel.type()))
+                  return string_handle_to_string(sel);
+                return sel;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
   exprt value = convert_expression(json_member(expr, "value"));
 
   if(value.is_nil())
