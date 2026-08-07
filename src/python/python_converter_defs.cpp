@@ -1979,26 +1979,32 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         fields = fit->second;
       const std::size_t n =
         std::min(fields.size(), static_cast<std::size_t>(PYTHON_MAX_DICT_SIZE));
-      exprt::operandst keys, vals;
-      const typet keys_elem_t = keys_arr.element_type();
-      // coerce_element (native handle allocation) and the container
-      // synthesis below emit auxiliary statements via
-      // pending_checks; capture them into THIS function's body --
-      // dropped or misplaced, the key handles would have no strtab
-      // image and the key's presence would be unprovable (loud
-      // KeyError on every field read).
-      std::vector<codet> saved_pending_td;
-      saved_pending_td.swap(pending_checks);
+      // PEP 589 requiredness (perf-study t5): REQUIRED fields form
+      // the constant prefix; each OPTIONAL field (NotRequired /
+      // total=False) is CONDITIONALLY appended under a fresh nondet
+      // Boolean, so the stub models every subset of optional keys --
+      // an unguarded read of an optional key keeps its KeyError
+      // obligation, a membership-guarded read proves. Declaration
+      // order within each group is preserved (one of the orders a
+      // conforming producer could have used).
+      const std::set<std::string> *opt_set = nullptr;
+      {
+        auto oit = typeddict_optional_fields.find(td_it->second);
+        if(oit != typeddict_optional_fields.end())
+          opt_set = &oit->second;
+      }
+      std::vector<std::string> req_fields, opt_fields;
       for(std::size_t i = 0; i < n; i++)
       {
-        // Route through coerce_element: under the native-strings
-        // backend the keys slot is a string-id HANDLE (bv64), and
-        // pushing a raw string struct/constant built an ill-typed
-        // store that crashed the simplifier's type postcondition
-        // when a comprehension iterated the returned dict's list
-        // value (perf-study d1_bindname).
-        keys.push_back(
-          coerce_element(build_string_struct(fields[i]), keys_elem_t));
+        if(opt_set != nullptr && opt_set->count(fields[i]) > 0)
+          opt_fields.push_back(fields[i]);
+        else
+          req_fields.push_back(fields[i]);
+      }
+      // Per-field nondet VALUE of the annotated shape (tag-
+      // constrained scalar / real boxed container).
+      auto synth_field_value = [&](const std::string &fname) -> symbol_exprt
+      {
         // Nondet value, materialised to a temp so the aggregate
         // stays constant-foldable at the key positions.
         static unsigned td_nd_ctr = 0;
@@ -2028,7 +2034,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
           auto tdft = typed_dict_field_types.find(td_it->second);
           if(tdft != typed_dict_field_types.end())
           {
-            auto fldt = tdft->second.find(fields[i]);
+            auto fldt = tdft->second.find(fname);
             if(fldt != tdft->second.end())
             {
               static const std::map<std::string, python_type_tagt> cat2tag = {
@@ -2089,22 +2095,89 @@ codet python_convertert::convert_function_def(const jsont &stmt)
             }
           }
         }
-        vals.push_back(std::move(ndsym));
-      }
-      for(auto &pc : pending_checks)
-        body_block.add(std::move(pc));
-      pending_checks.clear();
+        return ndsym;
+      };
+      exprt::operandst keys, vals;
+      const typet keys_elem_t = keys_arr.element_type();
+      // coerce_element (native handle allocation) and the container
+      // synthesis emit auxiliary statements via pending_checks;
+      // capture them into THIS function's body -- dropped or
+      // misplaced, the key handles would have no strtab image and
+      // the key's presence would be unprovable (loud KeyError on
+      // every field read).
+      std::vector<codet> saved_pending_td;
       saved_pending_td.swap(pending_checks);
+      for(const std::string &fname : req_fields)
+      {
+        // Route through coerce_element: under the native-strings
+        // backend the keys slot is a string-id HANDLE (bv64), and
+        // pushing a raw string struct/constant built an ill-typed
+        // store that crashed the simplifier's type postcondition
+        // when a comprehension iterated the returned dict's list
+        // value (perf-study d1_bindname).
+        keys.push_back(coerce_element(build_string_struct(fname), keys_elem_t));
+        vals.push_back(synth_field_value(fname));
+      }
+      const std::size_t n_req = req_fields.size();
       while(keys.size() < static_cast<std::size_t>(PYTHON_MAX_DICT_SIZE))
       {
         keys.push_back(safe_zero(keys_arr.element_type()));
         vals.push_back(safe_zero(vals_arr.element_type()));
       }
-      none_expr = struct_exprt{
-        {from_integer(n, signedbv_typet{64}),
-         array_exprt{std::move(keys), keys_arr},
-         array_exprt{std::move(vals), vals_arr}},
-        return_type};
+      // Materialise into a symbol so the optional appends below have
+      // an lvalue to mutate.
+      static unsigned td_ret_ctr = 0;
+      const std::string tdn = "__td_stub_ret_" + std::to_string(td_ret_ctr++);
+      const irep_idt tdid{qualify_name(tdn)};
+      if(symbol_table.lookup(tdid) == nullptr)
+      {
+        symbolt tds{tdid, return_type, "python"};
+        tds.base_name = tdn;
+        tds.is_lvalue = true;
+        tds.is_state_var = true;
+        symbol_table.add(tds);
+      }
+      symbol_exprt td_sym = symbol_table.lookup_ref(tdid).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{
+        td_sym,
+        struct_exprt{
+          {from_integer(n_req, signedbv_typet{64}),
+           array_exprt{std::move(keys), keys_arr},
+           array_exprt{std::move(vals), vals_arr}},
+          return_type}});
+      member_exprt td_len{td_sym, "length", signedbv_typet{64}};
+      member_exprt td_keys{td_sym, "keys", keys_arr};
+      member_exprt td_vals{td_sym, "values", vals_arr};
+      for(const std::string &fname : opt_fields)
+      {
+        exprt key_h = coerce_element(build_string_struct(fname), keys_elem_t);
+        symbol_exprt vsym = synth_field_value(fname);
+        static unsigned td_opt_ctr = 0;
+        const std::string pn = "__td_opt_" + std::to_string(td_opt_ctr++);
+        const irep_idt pid{qualify_name(pn)};
+        if(symbol_table.lookup(pid) == nullptr)
+        {
+          symbolt ps{pid, bool_typet{}, "python"};
+          ps.base_name = pn;
+          ps.is_lvalue = true;
+          ps.is_state_var = true;
+          symbol_table.add(ps);
+        }
+        symbol_exprt present = symbol_table.lookup_ref(pid).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{
+          present, side_effect_expr_nondett{bool_typet{}, loc}});
+        code_blockt app;
+        app.add(code_frontend_assignt{index_exprt{td_keys, td_len}, key_h});
+        app.add(code_frontend_assignt{index_exprt{td_vals, td_len}, vsym});
+        app.add(code_frontend_assignt{
+          td_len, plus_exprt{td_len, from_integer(1, signedbv_typet{64})}});
+        pending_checks.push_back(code_ifthenelset{present, std::move(app)});
+      }
+      for(auto &pc : pending_checks)
+        body_block.add(std::move(pc));
+      pending_checks.clear();
+      saved_pending_td.swap(pending_checks);
+      none_expr = td_sym;
     }
     else if(
       is_python_list_type(return_type) || is_python_dict_type(return_type))
@@ -4013,7 +4086,26 @@ codet python_convertert::convert_class_def(const jsont &stmt)
       "TypedDict") != class_bases[class_name].end())
   {
     const jsont &td_body = json_member(stmt, "body");
+    // PEP 589 requiredness: `total=False` flips the per-field default
+    // to optional; NotRequired[T] / Required[T] wrappers override it
+    // per field. An OPTIONAL key may be ABSENT from a conforming
+    // dict, so a stub return must model absence (KeyError obligation
+    // on unguarded reads -- perf-study t5).
+    bool td_total = true;
+    {
+      const jsont &kws = json_member(stmt, "keywords");
+      if(kws.is_array())
+        for(const auto &kw : as_array(kws))
+        {
+          if(
+            json_string(json_member(kw, "arg")) == "total" &&
+            is_node_type(json_member(kw, "value"), "Constant") &&
+            json_member(json_member(kw, "value"), "value").is_false())
+            td_total = false;
+        }
+    }
     std::vector<std::string> fields;
+    std::set<std::string> optional;
     if(td_body.is_array())
     {
       for(const auto &s : as_array(td_body))
@@ -4021,11 +4113,31 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         if(!is_node_type(s, "AnnAssign"))
           continue;
         const jsont &t = json_member(s, "target");
-        if(is_node_type(t, "Name"))
-          fields.push_back(json_string(json_member(t, "id")));
+        if(!is_node_type(t, "Name"))
+          continue;
+        const std::string fname = json_string(json_member(t, "id"));
+        fields.push_back(fname);
+        bool is_optional = !td_total;
+        const jsont &ann = json_member(s, "annotation");
+        if(is_node_type(ann, "Subscript"))
+        {
+          const jsont &wv = json_member(ann, "value");
+          std::string wrapper;
+          if(is_node_type(wv, "Name"))
+            wrapper = json_string(json_member(wv, "id"));
+          else if(is_node_type(wv, "Attribute"))
+            wrapper = json_string(json_member(wv, "attr"));
+          if(wrapper == "NotRequired")
+            is_optional = true;
+          else if(wrapper == "Required")
+            is_optional = false;
+        }
+        if(is_optional)
+          optional.insert(fname);
       }
     }
     typeddict_class_fields[class_name] = std::move(fields);
+    typeddict_optional_fields[class_name] = std::move(optional);
   }
 
   // PLR §3.3.2.1: compute C3 linearization MRO for this class.
