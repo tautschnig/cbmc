@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 8 --python-smt-containers --python-smt-strings --z3
+^EXIT=10$
+^SIGNAL=0$
+^\[python-model-limitation\.\d+\].*FAILURE$
+^VERIFICATION FAILED$
+--
+--
+The un-deduped length must NOT prove; the model-limitation property
+reports the rejection.

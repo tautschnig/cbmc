@@ -254,6 +254,47 @@ exprt python_convertert::soa_value_of_name(
   return tsym;
 }
 
+bool python_convertert::python_eq_is_structural(const typet &t) const
+{
+  const irep_idt &tid = t.id();
+  if(
+    tid == ID_signedbv || tid == ID_unsignedbv || tid == ID_integer ||
+    tid == ID_floatbv || tid == ID_bool || tid == ID_string)
+    return true;
+  if(is_python_string_type(t) || is_python_string_handle_type(t))
+    return true;
+  // Tuples: structural iff every component is.
+  if(is_python_tuple_type(t))
+  {
+    for(const auto &c : to_struct_type(t).components())
+      if(!python_eq_is_structural(c.type()))
+        return false;
+    return true;
+  }
+  // Class instances (identity / user __eq__), python_value (may hold
+  // one), lists/dicts/sets (may contain one; also Python compares
+  // them element-wise through the same rules): NOT structural.
+  return false;
+}
+
+void python_convertert::emit_eq_semantics_guard(
+  const source_locationt &loc,
+  const std::string &context)
+{
+  source_locationt aloc = loc;
+  aloc.set_property_class("python-model-limitation");
+  aloc.set_comment(
+    context +
+    " equality uses Python object semantics (identity / user __eq__), "
+    "which this model compares structurally: rejected (fail-closed)");
+  code_assertt guard{false_exprt{}};
+  guard.add_source_location() = aloc;
+  pending_checks.push_back(std::move(guard));
+  code_assumet cut{false_exprt{}};
+  cut.add_source_location() = loc;
+  pending_checks.push_back(std::move(cut));
+}
+
 bool python_convertert::soa_eligible_td(const std::string &td_name) const
 {
   auto tdb = class_bases.find(td_name);

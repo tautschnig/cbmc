@@ -4296,6 +4296,33 @@ exprt python_convertert::build_dict_value(
   std::vector<std::pair<exprt, exprt>> pairs,
   const source_locationt &loc)
 {
+  // Python-equality soundness guard (PLR 6.10.1, the __eq__ audit):
+  // every equality this constructor and its consumers apply --
+  // conversion-time dedup, lookup folds, runtime scans, quantified
+  // witnesses -- is STRUCTURAL/denotational. Python's key equality
+  // for CLASS instances is IDENTITY by default and user __eq__ when
+  // defined; both diverge from structural in BOTH directions
+  // (missing dedup let len(d) == 3 falsely prove where CPython has
+  // 2; a structural lookup match falsely proved no-KeyError where
+  // CPython raises). REJECT the program loudly instead of modelling
+  // it wrong: a definite property + a cut, the fail-closed
+  // convention.
+  // python_value keys are EXEMPT: their runtime comparator
+  // (value_equal) is tag-aware -- structural for the fixed-eq scalar
+  // tags, sound-NONDET for CLASS/container tags -- and the
+  // conversion-time dedup cannot merge them (canonical_key sees
+  // constants only; per-instance wraps have distinct trees). The
+  // guard targets DIRECT class-typed keys, whose folds and scans
+  // compared structurally.
+  for(const auto &p : pairs)
+    if(
+      !python_eq_is_structural(p.first.type()) &&
+      !is_python_value_type(p.first.type()))
+    {
+      emit_eq_semantics_guard(loc, "dict key");
+      break;
+    }
+
   // De-dup equal constant keys (keep last value).
   {
     // PLR §3: coalesce keys equal under Python equality via the unified
