@@ -2598,6 +2598,20 @@ private:
   /// with known scalar categories (the SoA eligibility gate).
   bool soa_eligible_td(const std::string &td_name) const;
 
+  /// True when Python's == on values of this type coincides with the
+  /// model's structural/denotational equality: the fixed-eq builtins
+  /// (int/float/bool/str and their sentinels/handles). FALSE for
+  /// class instances (Python: identity by default, user __eq__ when
+  /// defined) and for anything that may hold one (python_value,
+  /// containers) -- every equality-consuming encoding must reject or
+  /// fall back for those (the __eq__ soundness audit).
+  bool python_eq_is_structural(const typet &t) const;
+  /// Fail-closed rejection for equality-semantics gaps: a definite
+  /// python-model-limitation property + cut.
+  void emit_eq_semantics_guard(
+    const source_locationt &loc,
+    const std::string &context);
+
   /// Element-TypedDict of a List[TD] FIELD of a TypedDict:
   /// outer TD name -> field -> element TD name. Drives the boxed-SoA
   /// stub synthesis and the comprehension-iterable provenance.

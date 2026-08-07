@@ -2714,6 +2714,28 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // x in lst → disjunction: lst.data[0]==x or lst.data[1]==x or ...
       else if(is_python_list_type(container.type()))
       {
+        // Python-equality soundness guard (the __eq__ audit): `x in
+        // lst` applies == pairwise (PLR 6.10.2 with the identity
+        // short-circuit). For CLASS-instance items/elements every
+        // encoding here -- the constant fold below (which matched
+        // constructor TREES: C(1) in [C(1)] falsely proved where
+        // CPython's identity-eq says False), the runtime scans, the
+        // quantified lifts -- compares structurally. Reject loudly.
+        {
+        const typet &lelem =
+          to_array_type(to_struct_type(container.type()).components()[1].type())
+            .element_type();
+        // python_value items/elements are exempt (tag-aware
+        // value_equal: sound-nondet for class tags; no
+        // conversion-time fold can match per-instance wraps).
+        if(
+          (!python_eq_is_structural(item.type()) &&
+           !is_python_value_type(item.type())) ||
+          (!python_eq_is_structural(lelem) && !is_python_value_type(lelem)))
+        {
+          emit_eq_semantics_guard(get_location(expr), "list membership");
+        }
+        }
         // Constant-string optimization: resolve at conversion time
         auto item_str = extract_string_value(item);
         if(

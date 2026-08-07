@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 8 --python-smt-containers --python-smt-strings --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^\[python-model-limitation
+--
+The negative pattern pins the guard NOT firing for builtin keys.
