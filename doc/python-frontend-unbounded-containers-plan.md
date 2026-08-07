@@ -566,3 +566,32 @@ Spike SCOPE (the follow-up items for productisation):
 - the row-index pun is per-comprehension; a first-class ROW VIEW
   value (SoA pointer + index pair) would extend it to general
   bindings (r = xs[i]; r['f']).
+
+
+## The __eq__/__hash__ soundness audit (2026-08-07 night)
+
+Question settled: do the loop-free encodings bake in "eq is
+structural equality"? The QUANTIFIED encodings were protected (their
+gates bail to sound-nondet comparators for class tags), but the
+shared CONVERSION-TIME folds were not -- and the bounded loops used
+the same comparators, so this was never a loop-free-vs-loop
+difference. Four false proofs demonstrated and killed (commit
+'reject structural-equality gaps'): un-deduped definite lengths for
+custom-__eq__ keys, lookup/membership constant folds matching
+constructor TREES (identical trees are identical values for
+builtins, distinct INSTANCES for classes -- Python default eq is
+IDENTITY).
+
+Doctrine going forward: python_eq_is_structural is THE predicate --
+any new equality-consuming encoding (dedup, folds, scans, witnesses,
+future sort/min/max keys) must consult it and reject or fall back to
+tag-aware/nondet comparison when false. Follow-up (not started):
+model user-__eq__ dispatch (a call per comparison -- viable in the
+bounded scans, NOT under quantifiers; identity-eq for the default
+case could be modeled precisely via object identity when
+per-instance provenance is available). __hash__ is deliberately NOT
+modeled: our containers are equality-keyed; the only observable
+CPython divergence needs eq-equal objects with inconsistent hashes
+(kept apart by CPython, merged by any equality-keyed model) -- that
+shape is rejected by the same guard because such keys are class
+instances.
