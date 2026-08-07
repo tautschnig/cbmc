@@ -1721,6 +1721,21 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
       // lost its dedup semantics (perf-study k1).
       const irep_idt nid{
         qualify_name(json_string(json_member(gen_iter, "id")))};
+      // AST provenance first: enumerate the bound List literal's
+      // ELEMENT NODES exactly like the inline form (covers tuples of
+      // class instances -- the user-__eq__ dictcomp, k5).
+      auto ast_it = name_list_ast.find(nid);
+      if(ast_it != name_list_ast.end())
+      {
+        const jsont &lits = json_member(*ast_it->second, "elts");
+        if(lits.is_array())
+        {
+          for(const auto &e : as_array(lits))
+            gi.json_values.push_back(&e);
+          gens.push_back(std::move(gi));
+          continue;
+        }
+      }
       auto ll = list_literals.find(nid);
       bool resolved = false;
       if(ll != list_literals.end() && ll->second.id() == ID_struct)

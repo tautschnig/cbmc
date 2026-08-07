@@ -31,6 +31,8 @@
 #include <util/std_expr.h>
 #include <util/std_types.h>
 
+#include <goto-programs/goto_instruction_code.h>
+
 #include "python_converter.h"
 #include "python_converter_helpers.h"
 #include "python_types.h"
@@ -121,6 +123,9 @@ void python_convertert::record_soa_provenance(
 {
   var_typeddict.erase(target_id);
   var_soa_elem.erase(target_id);
+  name_list_ast.erase(target_id);
+  if(is_node_type(value, "List"))
+    name_list_ast[target_id] = &value;
   if(!python_smt_containers_flag())
     return;
   if(is_node_type(value, "Call"))
@@ -252,6 +257,240 @@ exprt python_convertert::soa_value_of_name(
     from_integer(0, signedbv_typet{64})}});
   td_field_read_cache.emplace(key, tsym);
   return tsym;
+}
+
+exprt python_convertert::build_dict_value_user_eq(
+  std::vector<std::pair<exprt, exprt>> pairs,
+  const std::string &key_cls,
+  const source_locationt &loc)
+{
+  // Heterogeneous values wrap; keys keep the class struct type.
+  const typet key_t = pairs.front().first.type();
+  typet val_t = pairs.front().second.type();
+  for(std::size_t i = 1; i < pairs.size(); i++)
+    if(pairs[i].second.type() != val_t)
+    {
+      val_t = python_value_type();
+      break;
+    }
+  struct_typet dict_t = python_dict_type(key_t, val_t);
+  const auto &keys_at = to_array_type(dict_t.components()[1].type());
+  const auto &vals_at = to_array_type(dict_t.components()[2].type());
+  static unsigned ue_ctr = 0;
+  const std::string dn = "__ue_dict_" + std::to_string(ue_ctr++);
+  const irep_idt did{qualify_name(dn)};
+  if(symbol_table.lookup(did) == nullptr)
+  {
+    symbolt ds{did, dict_t, "python"};
+    ds.base_name = dn;
+    ds.is_lvalue = true;
+    ds.is_state_var = true;
+    ds.is_static_lifetime = current_function.empty();
+    symbol_table.add(ds);
+  }
+  symbol_exprt d = symbol_table.lookup_ref(did).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{d, safe_zero(dict_t)});
+  member_exprt dlen{d, "length", signedbv_typet{64}};
+  member_exprt dkeys{d, "keys", keys_at};
+  member_exprt dvals{d, "values", vals_at};
+  const std::size_t n = pairs.size();
+  for(std::size_t i = 0; i < n; i++)
+  {
+    exprt k = pairs[i].first;
+    exprt v = pairs[i].second;
+    if(v.type() != vals_at.element_type())
+      v = is_python_value_type(vals_at.element_type())
+            ? wrap_value(v)
+            : coerce_element(v, vals_at.element_type());
+    // Materialise the probe key once (it is both compared and
+    // possibly stored).
+    static unsigned uek_ctr = 0;
+    const std::string kn = "__ue_key_" + std::to_string(uek_ctr++);
+    const irep_idt kid{qualify_name(kn)};
+    if(symbol_table.lookup(kid) == nullptr)
+    {
+      symbolt ks{kid, key_t, "python"};
+      ks.base_name = kn;
+      ks.is_lvalue = true;
+      ks.is_state_var = true;
+      ks.is_static_lifetime = current_function.empty();
+      symbol_table.add(ks);
+    }
+    symbol_exprt ksym = symbol_table.lookup_ref(kid).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{ksym, k});
+    // found flag
+    static unsigned uef_ctr = 0;
+    const std::string fn2 = "__ue_fnd_" + std::to_string(uef_ctr++);
+    const irep_idt fid{qualify_name(fn2)};
+    if(symbol_table.lookup(fid) == nullptr)
+    {
+      symbolt fs{fid, bool_typet{}, "python"};
+      fs.base_name = fn2;
+      fs.is_lvalue = true;
+      fs.is_state_var = true;
+      fs.is_static_lifetime = current_function.empty();
+      symbol_table.add(fs);
+    }
+    symbol_exprt fnd = symbol_table.lookup_ref(fid).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{fnd, false_exprt{}});
+    // Per-slot __eq__ scan over slots that can be occupied at this
+    // point (< i). CPython invocation-count/order under hashing is
+    // unspecified; the store dedup uses only the RESULTS. The probe
+    // is a FRESH object display element only when it is a
+    // constructor call; the materialised copy is fresh here by
+    // construction of the display/comprehension enumeration, so the
+    // identity disjunct is off.
+    for(std::size_t s2 = 0; s2 < i; s2++)
+    {
+      const exprt idx = from_integer(s2, signedbv_typet{64});
+      exprt in_range = binary_relation_exprt{idx, ID_lt, dlen};
+      std::vector<codet> eq_stmts;
+      exprt m = emit_user_eq_match(
+        key_cls, index_exprt{dkeys, idx}, ksym, true, eq_stmts, loc);
+      if(m.is_nil())
+        return safe_zero(dict_t); // no __eq__ symbol: bail safe
+      // The call must only run for occupied slots (its own body may
+      // have obligations): guard the WHOLE per-slot block.
+      code_blockt slotb;
+      for(auto &st : eq_stmts)
+        slotb.add(std::move(st));
+      code_blockt upd;
+      upd.add(code_frontend_assignt{index_exprt{dvals, idx}, v});
+      upd.add(code_frontend_assignt{fnd, true_exprt{}});
+      slotb.add(code_ifthenelset{and_exprt{not_exprt{fnd}, m}, std::move(upd)});
+      pending_checks.push_back(
+        code_ifthenelset{std::move(in_range), std::move(slotb)});
+    }
+    code_blockt app;
+    app.add(code_frontend_assignt{index_exprt{dkeys, dlen}, ksym});
+    app.add(code_frontend_assignt{index_exprt{dvals, dlen}, v});
+    app.add(code_frontend_assignt{
+      dlen, plus_exprt{dlen, from_integer(1, signedbv_typet{64})}});
+    pending_checks.push_back(code_ifthenelset{not_exprt{fnd}, std::move(app)});
+  }
+  return std::move(d);
+}
+
+std::string python_convertert::class_name_of_type(const typet &t) const
+{
+  std::string tag;
+  if(t.id() == ID_struct)
+    tag = id2string(to_struct_type(t).get_tag());
+  else if(t.id() == ID_struct_tag)
+    tag = id2string(to_struct_tag_type(t).get_identifier());
+  if(tag.rfind("tag-", 0) == 0)
+    tag = tag.substr(4);
+  if(tag.rfind("python_class_", 0) == 0)
+    return tag.substr(13);
+  return std::string{};
+}
+
+bool python_convertert::class_defines_eq(const std::string &cls)
+{
+  return class_mro_defines(cls, "__eq__");
+}
+
+bool python_convertert::class_defines_hash(const std::string &cls)
+{
+  return class_mro_defines(cls, "__hash__");
+}
+
+exprt python_convertert::emit_user_eq_match(
+  const std::string &cls,
+  const exprt &stored,
+  const exprt &probe,
+  bool probe_is_fresh_object,
+  std::vector<codet> &sink,
+  const source_locationt &loc)
+{
+  const symbolt *eq_sym = nullptr;
+  for(const std::string &cand :
+      {"python::" + cls + "::__eq__",
+       "python::python_class_" + cls + "::__eq__"})
+  {
+    eq_sym = symbol_table.lookup(irep_idt{cand});
+    if(eq_sym != nullptr)
+      break;
+  }
+  if(eq_sym == nullptr || eq_sym->type.id() != ID_code)
+    return nil_exprt{};
+  const code_typet &ct = to_code_type(eq_sym->type);
+  // ALWAYS materialise the stored key into a temp and pass its
+  // address: a pointer INTO an infinite-array element (address_of
+  // keys[i]) has no representable offset in the pointer encoding
+  // (pointer_logic abort). A copy suffices for __eq__'s READS;
+  // an __eq__ that mutates self is pathological and its effect on
+  // the stored key is not modeled (documented).
+  exprt self_arg = stored;
+  {
+    static unsigned eqs_ctr = 0;
+    const std::string sn = "__eq_self_" + std::to_string(eqs_ctr++);
+    const irep_idt sid{qualify_name(sn)};
+    if(symbol_table.lookup(sid) == nullptr)
+    {
+      symbolt ss{sid, self_arg.type(), "python"};
+      ss.base_name = sn;
+      ss.is_lvalue = true;
+      ss.is_state_var = true;
+      ss.is_static_lifetime = current_function.empty();
+      symbol_table.add(ss);
+    }
+    symbol_exprt ssym = symbol_table.lookup_ref(sid).symbol_expr();
+    sink.push_back(code_frontend_assignt{ssym, self_arg});
+    self_arg = ssym;
+  }
+  exprt::operandst eq_args{address_of_exprt{self_arg}, probe};
+  coerce_call_args(eq_sym->type, eq_args);
+  // Materialise the call result (calls cannot sit in expressions).
+  static unsigned eqr_ctr = 0;
+  const std::string rn = "__eq_res_" + std::to_string(eqr_ctr++);
+  const irep_idt rid{qualify_name(rn)};
+  const typet rt = ct.return_type().id() == ID_empty ? typet{python_int_type()}
+                                                     : ct.return_type();
+  if(symbol_table.lookup(rid) == nullptr)
+  {
+    symbolt rs{rid, rt, "python"};
+    rs.base_name = rn;
+    rs.is_lvalue = true;
+    rs.is_state_var = true;
+    rs.is_static_lifetime = current_function.empty();
+    symbol_table.add(rs);
+  }
+  symbol_exprt rsym = symbol_table.lookup_ref(rid).symbol_expr();
+  code_function_callt call{
+    rsym,
+    eq_sym->symbol_expr(),
+    code_function_callt::argumentst{eq_args.begin(), eq_args.end()}};
+  call.add_source_location() = loc;
+  sink.push_back(std::move(call));
+  exprt match = python_truthiness(rsym);
+  if(match.type() != bool_typet{})
+    match = typecast_exprt{std::move(match), bool_typet{}};
+  // CPython's identity short-circuit (`stored is probe or eq`): with
+  // BY-VALUE key storage object identity is unrepresentable, so a
+  // probe that could alias a stored key contributes a sound NONDET
+  // disjunct (both outcomes explored). A FRESH object (a constructor
+  // call at the probe site) can alias nothing.
+  if(!probe_is_fresh_object)
+  {
+    static unsigned eqi_ctr = 0;
+    const std::string in_ = "__eq_id_" + std::to_string(eqi_ctr++);
+    const irep_idt iid{qualify_name(in_)};
+    if(symbol_table.lookup(iid) == nullptr)
+    {
+      symbolt is_{iid, bool_typet{}, "python"};
+      is_.base_name = in_;
+      is_.is_lvalue = true;
+      is_.is_state_var = true;
+      is_.is_static_lifetime = current_function.empty();
+      symbol_table.add(is_);
+    }
+    symbol_exprt isym = symbol_table.lookup_ref(iid).symbol_expr();
+    sink.push_back(
+      code_frontend_assignt{isym, side_effect_expr_nondett{bool_typet{}, loc}});
+    match = or_exprt{std::move(match), isym};
+  }
+  return match;
 }
 
 bool python_convertert::python_eq_is_structural(const typet &t) const

@@ -698,6 +698,92 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       // the contents match. Use the string solver for content
       // equality so dict comprehensions like {str(i): v for ...}
       // can be looked up via d["0"].
+      // User-__eq__ dispatch tier (the loop-based fallback the
+      // quantified encodings cannot host): CLASS-typed key slots
+      // whose class defines __eq__ + __hash__ scan with a
+      // MATERIALISED __eq__ call per slot (statements via
+      // pending_checks), honoring Python's key equality. Classes
+      // without __eq__ (identity) reject fail-closed -- by-value
+      // storage loses object identity. The probe is fresh iff the
+      // slice AST is a constructor Call.
+      {
+        const std::string kcls = class_name_of_type(keys_type.element_type());
+        if(!kcls.empty())
+        {
+          if(!class_defines_eq(kcls))
+            emit_eq_semantics_guard(get_location(expr), "dict key lookup");
+          else
+          {
+            const jsont &sl_ast = json_member(expr, "slice");
+            const bool probe_fresh = is_node_type(sl_ast, "Call");
+            static unsigned uel_ctr = 0;
+            const std::string base = std::to_string(uel_ctr++);
+            auto mk_sym = [&](const std::string &st, const typet &t)
+            {
+              const irep_idt id{qualify_name("__uel_" + st + "_" + base)};
+              if(symbol_table.lookup(id) == nullptr)
+              {
+                symbolt sy{id, t, "python"};
+                sy.base_name = "__uel_" + st + "_" + base;
+                sy.is_lvalue = true;
+                sy.is_state_var = true;
+                sy.is_static_lifetime = current_function.empty();
+                symbol_table.add(sy);
+              }
+              return symbol_table.lookup_ref(id).symbol_expr();
+            };
+            symbol_exprt probe = mk_sym("k", keys_type.element_type());
+            exprt slice_k = slice;
+            if(slice_k.type() != keys_type.element_type())
+              slice_k = safe_typecast(slice_k, keys_type.element_type());
+            pending_checks.push_back(code_frontend_assignt{probe, slice_k});
+            symbol_exprt fnd = mk_sym("f", bool_typet{});
+            symbol_exprt res = mk_sym("r", vals_type.element_type());
+            symbol_exprt ridx = mk_sym("i", signedbv_typet{64});
+            pending_checks.push_back(code_frontend_assignt{fnd, false_exprt{}});
+            pending_checks.push_back(
+              code_frontend_assignt{res, safe_zero(vals_type.element_type())});
+            pending_checks.push_back(
+              code_frontend_assignt{ridx, from_integer(0, signedbv_typet{64})});
+            emit_scan_bound_guard(
+              length,
+              get_location(expr),
+              static_cast<long>(PYTHON_MAX_DICT_SIZE));
+            for(std::size_t i = 0;
+                i < static_cast<std::size_t>(PYTHON_MAX_DICT_SIZE);
+                i++)
+            {
+              exprt idx = from_integer(i, signedbv_typet{64});
+              exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+              std::vector<codet> eq_stmts;
+              exprt m2 = emit_user_eq_match(
+                kcls,
+                index_exprt{keys, idx},
+                probe,
+                probe_fresh,
+                eq_stmts,
+                get_location(expr));
+              if(m2.is_nil())
+                break;
+              code_blockt slotb;
+              for(auto &st : eq_stmts)
+                slotb.add(std::move(st));
+              code_blockt upd;
+              upd.add(code_frontend_assignt{res, index_exprt{vals, idx}});
+              upd.add(code_frontend_assignt{ridx, idx});
+              upd.add(code_frontend_assignt{fnd, true_exprt{}});
+              slotb.add(code_ifthenelset{
+                and_exprt{not_exprt{fnd}, m2}, std::move(upd)});
+              pending_checks.push_back(
+                code_ifthenelset{std::move(in_range), std::move(slotb)});
+            }
+            // KeyError on miss (PLR 6.10.1) via the exception
+            // machinery.
+            emit_conditional_exception(not_exprt{fnd}, "KeyError");
+            return std::move(res);
+          }
+        }
+      }
       // Single choke point for key comparison: the quantified
       // witness and the bounded-scan fallback share one matcher so
       // the encodings cannot drift (see dict_key_matcher).
@@ -4311,17 +4397,68 @@ exprt python_convertert::build_dict_value(
   // (value_equal) is tag-aware -- structural for the fixed-eq scalar
   // tags, sound-NONDET for CLASS/container tags -- and the
   // conversion-time dedup cannot merge them (canonical_key sees
-  // constants only; per-instance wraps have distinct trees). The
-  // guard targets DIRECT class-typed keys, whose folds and scans
-  // compared structurally.
-  for(const auto &p : pairs)
-    if(
-      !python_eq_is_structural(p.first.type()) &&
-      !is_python_value_type(p.first.type()))
+  // constants only; per-instance wraps have distinct trees). DIRECT
+  // class-typed keys classify three ways (PLR 3.3 / 6.2.7):
+  // - __eq__ WITHOUT __hash__: CPython sets __hash__ = None, the
+  //   instance is UNHASHABLE -- key insertion raises TypeError.
+  // - __eq__ AND __hash__: the user-eq dispatch tier -- runtime
+  //   construction through a per-slot __eq__ CALL scan (dedup IS
+  //   the replace-or-insert store semantics: key object + position
+  //   from the FIRST occurrence, value from the LAST). Repeated
+  //   SYNTACTICALLY IDENTICAL key expressions are rejected: the
+  //   same OBJECT stored twice dedups by IDENTITY in CPython even
+  //   when __eq__(x, x) is False, which by-value storage cannot
+  //   model.
+  // - default equality (identity): rejected -- by-value keys lose
+  //   object identity.
+  {
+    std::string key_cls;
+    for(const auto &p : pairs)
     {
-      emit_eq_semantics_guard(loc, "dict key");
-      break;
+      const std::string c = class_name_of_type(p.first.type());
+      if(!c.empty())
+      {
+        key_cls = c;
+        break;
+      }
     }
+    if(!key_cls.empty())
+    {
+      if(class_defines_eq(key_cls) && !class_defines_hash(key_cls))
+      {
+        // PLR 3.3: unhashable type -- TypeError at construction.
+        emit_conditional_exception(true_exprt{}, "TypeError");
+        return safe_zero(
+          python_dict_type(pairs.front().first.type(), python_value_type()));
+      }
+      if(class_defines_eq(key_cls))
+      {
+        for(std::size_t a = 0; a < pairs.size(); a++)
+          for(std::size_t b = a + 1; b < pairs.size(); b++)
+            if(
+              pairs[a].first.id() == ID_symbol &&
+              pairs[a].first == pairs[b].first)
+            {
+              emit_eq_semantics_guard(
+                loc, "repeated identical dict-key object");
+              break;
+            }
+        return build_dict_value_user_eq(std::move(pairs), key_cls, loc);
+      }
+      emit_eq_semantics_guard(loc, "dict key");
+    }
+    else
+    {
+      for(const auto &p : pairs)
+        if(
+          !python_eq_is_structural(p.first.type()) &&
+          !is_python_value_type(p.first.type()))
+        {
+          emit_eq_semantics_guard(loc, "dict key");
+          break;
+        }
+    }
+  }
 
   // De-dup equal constant keys (keep last value).
   {

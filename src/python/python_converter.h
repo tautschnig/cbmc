@@ -2606,6 +2606,38 @@ private:
   /// containers) -- every equality-consuming encoding must reject or
   /// fall back for those (the __eq__ soundness audit).
   bool python_eq_is_structural(const typet &t) const;
+  /// Bare class name when t is a python_class_* struct (else empty).
+  std::string class_name_of_type(const typet &t) const;
+  /// The user-__eq__ dispatch tier (the loop-based fallback the
+  /// quantified encodings cannot host): true when cls defines
+  /// __eq__ in its MRO.
+  bool class_defines_eq(const std::string &cls);
+  bool class_defines_hash(const std::string &cls);
+  /// Emit (as STATEMENTS into sink) a materialised match predicate
+  /// for `stored == probe` via the class's __eq__:
+  ///   call t := cls.__eq__(&stored, probe-coerced)
+  ///   match := truthiness(t) [ || identity-nondet ]
+  /// The identity disjunct models CPython's `is` short-circuit
+  /// (PLR 6.10.2): by-value storage loses object identity, so when
+  /// the probe COULD alias a stored key (it is not a fresh
+  /// constructor call) the possibility is a sound nondet. Returns
+  /// the match symbol (bool), or nil when cls has no __eq__.
+  /// Runtime dict construction for user-__eq__ class keys: unrolled
+  /// replace-or-insert with a materialised __eq__ call per occupied
+  /// slot. n^2/2 calls for n pairs -- displays/comps have small
+  /// concrete n. Returns the dict SYMBOL (statements via
+  /// pending_checks).
+  exprt build_dict_value_user_eq(
+    std::vector<std::pair<exprt, exprt>> pairs,
+    const std::string &key_cls,
+    const source_locationt &loc);
+  exprt emit_user_eq_match(
+    const std::string &cls,
+    const exprt &stored,
+    const exprt &probe,
+    bool probe_is_fresh_object,
+    std::vector<codet> &sink,
+    const source_locationt &loc);
   /// Fail-closed rejection for equality-semantics gaps: a definite
   /// python-model-limitation property + cut.
   void emit_eq_semantics_guard(
@@ -2625,6 +2657,15 @@ private:
   /// `apps = resp['apps']` where resp's field is List[TD]).
   std::map<irep_idt, std::string> var_soa_elem;
   void record_soa_provenance(const irep_idt &target_id, const jsont &value);
+
+  /// AST provenance for single-Name list-literal bindings
+  /// (`pairs = [...]`): variable -> the List AST node. Lets the
+  /// comprehension converters enumerate a Name iterable exactly like
+  /// the inline literal (needed when elements are non-scalar --
+  /// tuples of class instances -- which the converted-expr tracking
+  /// cannot re-enumerate). Cleared on rebind (same discipline as
+  /// var_typeddict).
+  std::map<irep_idt, const jsont *> name_list_ast;
 
   /// Memo for TypedDict-field VALUE reads (symbol id + "." + field ->
   /// the temp holding the read's result). Re-converting `resp['f']`
