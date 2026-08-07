@@ -558,16 +558,38 @@ std::optional<exprt> python_convertert::try_dict_method(
     pending_checks.push_back(code_frontend_assignt{found, false_exprt{}});
     pending_checks.push_back(code_frontend_assignt{result, default_val});
     pending_checks.push_back(code_frontend_assignt{slot_idx, length});
-    for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+    // Quantified witness lift (--python-smt-containers): the shared
+    // lookup encoding (see dict_lookup_witness_members), complete at
+    // every length; the bounded scan below is the ineligible-key
+    // fallback. The append arm is length-indexed into the infinite
+    // arrays -- capacity-free under the flag.
+    bool sd_lifted = false;
+    if(python_smt_containers_flag())
     {
-      exprt idx = from_integer(i, signedbv_typet{64});
-      exprt match = dict_slot_match(keys_arr, length, i, key_expr);
-      code_blockt update;
-      update.add(code_frontend_assignt{found, true_exprt{}});
-      update.add(code_frontend_assignt{result, index_exprt{vals_arr, idx}});
-      update.add(code_frontend_assignt{slot_idx, idx});
-      pending_checks.push_back(code_ifthenelset{match, std::move(update)});
+      auto lifted = dict_lookup_witness_members(keys_arr, length, key_expr);
+      if(lifted.found.is_not_nil())
+      {
+        code_blockt update;
+        update.add(code_frontend_assignt{found, true_exprt{}});
+        update.add(
+          code_frontend_assignt{result, index_exprt{vals_arr, lifted.index}});
+        update.add(code_frontend_assignt{slot_idx, lifted.index});
+        pending_checks.push_back(
+          code_ifthenelset{lifted.found, std::move(update)});
+        sd_lifted = true;
+      }
     }
+    if(!sd_lifted)
+      for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+      {
+        exprt idx = from_integer(i, signedbv_typet{64});
+        exprt match = dict_slot_match(keys_arr, length, i, key_expr);
+        code_blockt update;
+        update.add(code_frontend_assignt{found, true_exprt{}});
+        update.add(code_frontend_assignt{result, index_exprt{vals_arr, idx}});
+        update.add(code_frontend_assignt{slot_idx, idx});
+        pending_checks.push_back(code_ifthenelset{match, std::move(update)});
+      }
     // If not found, append (key, default) and set length+=1.
     code_blockt append;
     append.add(code_frontend_assignt{index_exprt{keys_arr, length}, key_expr});
@@ -674,31 +696,88 @@ std::optional<exprt> python_convertert::try_dict_method(
     pending_checks.push_back(code_frontend_assignt{found, false_exprt{}});
     pending_checks.push_back(code_frontend_assignt{
       result, default_differs ? wrap_value(raw_default) : default_val});
-    // Find and remove (compact by shifting).
-    for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+    // Quantified witness lift (--python-smt-containers): the shared
+    // lookup encoding plus an EXACT quantified compaction -- the
+    // removal shift is a lambda-array (array_comprehension) that
+    // preserves insertion order at any length (PLR 3.7+ order):
+    //   keys' := lambda q. q < w ? keys[q] : keys[q+1]
+    // The bounded find-and-shift below stays as the ineligible-key
+    // fallback.
+    bool pop_lifted = false;
+    if(python_smt_containers_flag())
     {
-      exprt idx = from_integer(i, signedbv_typet{64});
-      exprt match = dict_slot_match(keys_arr, length, i, key_expr);
-      code_blockt update;
-      update.add(code_frontend_assignt{found, true_exprt{}});
-      update.add(code_frontend_assignt{
-        result,
-        default_differs ? wrap_value(index_exprt{vals_arr, idx})
-                        : static_cast<exprt>(index_exprt{vals_arr, idx})});
-      // Shift remaining entries down to compact.
-      for(std::size_t j = i; j + 1 < PYTHON_MAX_DICT_SIZE; j++)
+      auto lifted = dict_lookup_witness_members(keys_arr, length, key_expr);
+      if(lifted.found.is_not_nil())
       {
-        exprt jdx = from_integer(j, signedbv_typet{64});
-        exprt jdx1 = from_integer(j + 1, signedbv_typet{64});
+        code_blockt update;
+        update.add(code_frontend_assignt{found, true_exprt{}});
         update.add(code_frontend_assignt{
-          index_exprt{keys_arr, jdx}, index_exprt{keys_arr, jdx1}});
+          result,
+          default_differs
+            ? wrap_value(index_exprt{vals_arr, lifted.index})
+            : static_cast<exprt>(index_exprt{vals_arr, lifted.index})});
+        const typet len_t = signedbv_typet{64};
+        static unsigned pop_q_ctr = 0;
+        const std::string qn = "__pop_q_" + std::to_string(pop_q_ctr++);
+        const irep_idt qid{qualify_name(qn)};
+        if(symbol_table.lookup(qid) == nullptr)
+        {
+          symbolt qs{qid, len_t, "python"};
+          qs.base_name = qn;
+          qs.is_lvalue = true;
+          qs.is_state_var = true;
+          qs.is_static_lifetime = current_function.empty();
+          symbol_table.add(qs);
+        }
+        const symbol_exprt q = symbol_table.lookup_ref(qid).symbol_expr();
+        exprt q1 = plus_exprt{q, from_integer(1, len_t)};
+        exprt before_w = binary_relation_exprt{q, ID_lt, lifted.index};
         update.add(code_frontend_assignt{
-          index_exprt{vals_arr, jdx}, index_exprt{vals_arr, jdx1}});
+          keys_arr,
+          array_comprehension_exprt{
+            q,
+            if_exprt{
+              before_w, index_exprt{keys_arr, q}, index_exprt{keys_arr, q1}},
+            keys_type}});
+        update.add(code_frontend_assignt{
+          vals_arr,
+          array_comprehension_exprt{
+            q,
+            if_exprt{
+              before_w, index_exprt{vals_arr, q}, index_exprt{vals_arr, q1}},
+            vals_type}});
+        update.add(code_frontend_assignt{
+          length, minus_exprt{length, from_integer(1, len_t)}});
+        pending_checks.push_back(
+          code_ifthenelset{lifted.found, std::move(update)});
+        pop_lifted = true;
       }
-      update.add(code_frontend_assignt{
-        length, minus_exprt{length, from_integer(1, signedbv_typet{64})}});
-      pending_checks.push_back(code_ifthenelset{match, std::move(update)});
     }
+    if(!pop_lifted)
+      for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+      {
+        exprt idx = from_integer(i, signedbv_typet{64});
+        exprt match = dict_slot_match(keys_arr, length, i, key_expr);
+        code_blockt update;
+        update.add(code_frontend_assignt{found, true_exprt{}});
+        update.add(code_frontend_assignt{
+          result,
+          default_differs ? wrap_value(index_exprt{vals_arr, idx})
+                          : static_cast<exprt>(index_exprt{vals_arr, idx})});
+        // Shift remaining entries down to compact.
+        for(std::size_t j = i; j + 1 < PYTHON_MAX_DICT_SIZE; j++)
+        {
+          exprt jdx = from_integer(j, signedbv_typet{64});
+          exprt jdx1 = from_integer(j + 1, signedbv_typet{64});
+          update.add(code_frontend_assignt{
+            index_exprt{keys_arr, jdx}, index_exprt{keys_arr, jdx1}});
+          update.add(code_frontend_assignt{
+            index_exprt{vals_arr, jdx}, index_exprt{vals_arr, jdx1}});
+        }
+        update.add(code_frontend_assignt{
+          length, minus_exprt{length, from_integer(1, signedbv_typet{64})}});
+        pending_checks.push_back(code_ifthenelset{match, std::move(update)});
+      }
     // KeyError when not found and no default given.
     if(!has_default)
     {
