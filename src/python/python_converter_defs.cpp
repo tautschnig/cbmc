@@ -2144,6 +2144,37 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       member_exprt clen{csym, "length", signedbv_typet{64}};
       body_block.add(code_assumet{binary_relation_exprt{
         clen, ID_ge, from_integer(0, signedbv_typet{64})}});
+      // Dict WELL-FORMEDNESS invariant: keys are UNIQUE (a Python
+      // dict cannot contain a key twice). Without it, an arbitrary
+      // dict model may hold duplicates, so removing the witness
+      // occurrence (d.pop) leaves another copy and `'k' not in d`
+      // after pop is unprovable -- an honest failure of an UNREAL
+      // model. Two-binder forall over distinct in-range slots, keys
+      // compared by the same matcher the lookups use.
+      if(python_smt_containers_flag() && is_python_dict_type(return_type))
+      {
+        const auto &stub_st = to_struct_type(return_type);
+        const auto &stub_keys_t = to_array_type(stub_st.components()[1].type());
+        member_exprt stub_keys{csym, "keys", stub_keys_t};
+        const typet len_t = signedbv_typet{64};
+        symbol_exprt u1 = fresh_bound_index("__dq_a_");
+        symbol_exprt u2 = fresh_bound_index("__dq_b_");
+        exprt k1 = python_dict_unbox_key(index_exprt{stub_keys, u1});
+        exprt k2 = python_dict_unbox_key(index_exprt{stub_keys, u2});
+        if(quantifier_safe_term(k1))
+        {
+          exprt distinct_in_range = and_exprt{
+            binary_relation_exprt{from_integer(0, len_t), ID_le, u1},
+            binary_relation_exprt{u1, ID_lt, u2},
+            binary_relation_exprt{u2, ID_lt, clen}};
+          body_block.add(code_assumet{forall_exprt{
+            u1,
+            forall_exprt{
+              u2,
+              implies_exprt{
+                std::move(distinct_in_range), notequal_exprt{k1, k2}}}}});
+        }
+      }
       none_expr = csym;
     }
     else if(is_python_value_type(return_type))
