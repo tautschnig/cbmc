@@ -427,6 +427,161 @@ codet python_convertert::convert_for(const jsont &stmt)
   source_locationt loc = get_location(stmt);
   typet int_type = python_int_type();
 
+  // Representative lift for CHECK-ONLY loop bodies
+  // (--python-smt-containers): `for v in <seq>: assert P(v)` over a
+  // symbolic-length sequence is a UNIVERSALLY QUANTIFIED obligation,
+  // not a loop -- run the asserts ONCE at a fresh nondeterministic
+  // in-range index (an obligation proved at an arbitrary index holds
+  // at every index; stronger than K unrolled copies, complete at any
+  // length, and it sidesteps the bounded fallback's per-iteration
+  // SSA growth -- the perf-study ex3/ex4 cost wall). Guarded by
+  // sequence non-emptiness (PLR 6.2.4: an empty sequence never runs
+  // the body). Gate: plain-Name target, non-empty body consisting
+  // ONLY of Assert statements (no stores, no control flow, no
+  // raises), no orelse. Applies to list iterables and 1-2-argument
+  // range() calls; everything else falls through to the loop
+  // lowerings below.
+  if(python_smt_containers_flag() && is_node_type(target, "Name"))
+  {
+    const jsont &body_n = json_member(stmt, "body");
+    const jsont &orelse_n = json_member(stmt, "orelse");
+    bool checks_only = body_n.is_array() && !as_array(body_n).empty() &&
+                       (!orelse_n.is_array() || as_array(orelse_n).empty());
+    if(checks_only)
+      for(const auto &bs : as_array(body_n))
+        if(!is_node_type(bs, "Assert"))
+        {
+          checks_only = false;
+          break;
+        }
+    if(checks_only)
+    {
+      const typet len_t = signedbv_typet{64};
+      exprt lo = nil_exprt{}, hi = nil_exprt{};
+      exprt bind_seq = nil_exprt{}; // list data member, or nil for range
+      // range(stop) / range(start, stop)
+      if(
+        is_node_type(iter, "Call") &&
+        is_node_type(json_member(iter, "func"), "Name") &&
+        json_string(json_member(json_member(iter, "func"), "id")) == "range")
+      {
+        const jsont &rargs = json_member(iter, "args");
+        if(
+          rargs.is_array() && !as_array(rargs).empty() &&
+          as_array(rargs).size() <= 2)
+        {
+          auto it = as_array(rargs).begin();
+          exprt a0 = convert_expression(*it);
+          if(as_array(rargs).size() == 1)
+          {
+            lo = from_integer(0, len_t);
+            hi = std::move(a0);
+          }
+          else
+          {
+            ++it;
+            lo = std::move(a0);
+            hi = convert_expression(*it);
+          }
+          if(lo.is_not_nil() && hi.is_not_nil())
+          {
+            if(lo.type() != len_t)
+              lo = safe_typecast(lo, len_t);
+            if(hi.type() != len_t)
+              hi = safe_typecast(hi, len_t);
+          }
+          else
+            lo = hi = nil_exprt{};
+        }
+      }
+      else
+      {
+        exprt seq = convert_expression(iter);
+        if(!seq.is_nil() && is_python_list_type(seq.type()))
+        {
+          const auto &lst = to_struct_type(seq.type());
+          lo = from_integer(0, len_t);
+          hi = member_exprt{seq, "length", len_t};
+          bind_seq = member_exprt{seq, "data", lst.components()[1].type()};
+        }
+      }
+      if(hi.is_not_nil())
+      {
+        code_blockt result_blk;
+        // Fresh representative index.
+        static unsigned forrep_ctr = 0;
+        const std::string jn = "__forrep_j_" + std::to_string(forrep_ctr++);
+        const irep_idt jid{qualify_name(jn)};
+        if(symbol_table.lookup(jid) == nullptr)
+        {
+          symbolt js{jid, len_t, "python"};
+          js.base_name = jn;
+          js.is_lvalue = true;
+          js.is_state_var = true;
+          js.is_static_lifetime = current_function.empty();
+          symbol_table.add(js);
+        }
+        symbol_exprt j = symbol_table.lookup_ref(jid).symbol_expr();
+        result_blk.add(
+          code_frontend_assignt{j, side_effect_expr_nondett{len_t, loc}});
+        exprt nonempty = binary_relation_exprt{lo, ID_lt, hi};
+        result_blk.add(code_assumet{implies_exprt{
+          nonempty,
+          and_exprt{
+            binary_relation_exprt{lo, ID_le, j},
+            binary_relation_exprt{j, ID_lt, hi}}}});
+        // Loop-variable symbol: bind to the representative element.
+        const std::string vname = json_string(json_member(target, "id"));
+        const irep_idt vid{qualify_name(vname)};
+        exprt bound_val = bind_seq.is_nil()
+                            ? (python_int_type() == len_t
+                                 ? exprt{j}
+                                 : exprt{safe_typecast(j, python_int_type())})
+                            : exprt{index_exprt{bind_seq, j}};
+        if(symbol_table.lookup(vid) == nullptr)
+        {
+          symbolt vs{vid, bound_val.type(), "python"};
+          vs.base_name = vname;
+          vs.is_lvalue = true;
+          vs.is_state_var = true;
+          vs.is_static_lifetime = current_function.empty();
+          symbol_table.add(vs);
+        }
+        else
+          symbol_table.get_writeable_ref(vid).type = bound_val.type();
+        symbol_exprt v = symbol_table.lookup_ref(vid).symbol_expr();
+        // Representative body: bind, then the asserts (checks their
+        // conversions emit land inside the guard too).
+        code_blockt rep_body;
+        rep_body.add(code_frontend_assignt{v, bound_val});
+        std::vector<codet> saved_pc;
+        saved_pc.swap(pending_checks);
+        for(const auto &bs : as_array(body_n))
+          rep_body.add(convert_statement(bs));
+        for(auto &pc : pending_checks)
+          rep_body.add(std::move(pc));
+        pending_checks.clear();
+        saved_pc.swap(pending_checks);
+        result_blk.add(
+          code_ifthenelset{std::move(nonempty), std::move(rep_body)});
+        // PLR 8.3: after the loop the variable stays bound to the
+        // LAST element (when the sequence was non-empty).
+        exprt last_val =
+          bind_seq.is_nil()
+            ? exprt{safe_typecast(
+                minus_exprt{hi, from_integer(1, len_t)}, v.type())}
+            : exprt{
+                index_exprt{bind_seq, minus_exprt{hi, from_integer(1, len_t)}}};
+        code_blockt last_blk;
+        last_blk.add(code_frontend_assignt{v, std::move(last_val)});
+        result_blk.add(code_ifthenelset{
+          binary_relation_exprt{lo, ID_lt, hi}, std::move(last_blk)});
+        result_blk.add_source_location() = loc;
+        return std::move(result_blk);
+      }
+    }
+  }
+
   // PLR §8.3: the loop variable(s) are (re)assigned each iteration, so
   // invalidate their tracking -- else `b = 1; for b in [3]: pass; t[b]` folds
   // t[b] on the stale b=1 (found by proactively probing the reassignment
