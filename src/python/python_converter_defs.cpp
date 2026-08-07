@@ -2129,8 +2129,18 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         symbol_table.add(cs);
       }
       symbol_exprt csym = symbol_table.lookup_ref(cid).symbol_expr();
-      body_block.add(code_frontend_assignt{
-        csym, side_effect_expr_nondett{return_type, loc}});
+      // Member-WISE nondet, not a whole-struct nondet: symex turns
+      // the latter into projections of a datatype-sorted nondet
+      // constant (struct.0.keys |nondet0|), and that datatype/array/
+      // UF mix pushes Z3's model search to 'unknown' on SAT queries
+      // that also carry the quantified lookup witness. Per-member
+      // nondets keep the arrays plain array-sorted terms.
+      for(const auto &comp : to_struct_type(return_type).components())
+      {
+        body_block.add(code_frontend_assignt{
+          member_exprt{csym, comp.get_name(), comp.type()},
+          side_effect_expr_nondett{comp.type(), loc}});
+      }
       member_exprt clen{csym, "length", signedbv_typet{64}};
       body_block.add(code_assumet{binary_relation_exprt{
         clen, ID_ge, from_integer(0, signedbv_typet{64})}});
