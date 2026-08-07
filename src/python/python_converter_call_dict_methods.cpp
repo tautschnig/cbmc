@@ -138,6 +138,27 @@ std::optional<exprt> python_convertert::try_dict_method(
       // matched value's when present and the default's when absent, so a later
       // type-restricting use observes the absent-key (default) possibility
       // (PLR-sound -- the absent case is real for a non-constant key).
+      // Quantified witness lift (--python-smt-containers): complete
+      // at every length, replacing the bounded scans below (which
+      // stay as the ineligible-key fallback). Uses dict_key_matcher
+      // -- the same matcher as the subscript lookup -- so get and
+      // d[k] can never disagree on presence. (dict_slot_match's
+      // container_slot_equal comparator materialises temps through
+      // pending_checks for some key kinds, which the eligibility
+      // gate rejects.)
+      {
+        auto lifted = dict_lookup_witness_members(keys, length, key_expr);
+        if(lifted.found.is_not_nil())
+        {
+          if(default_differs)
+            return if_exprt{
+              lifted.found,
+              wrap_value(index_exprt{vals, lifted.index}),
+              wrap_value(raw_default)};
+          return if_exprt{
+            lifted.found, exprt{index_exprt{vals, lifted.index}}, default_val};
+        }
+      }
       if(default_differs)
       {
         exprt result = wrap_value(raw_default);

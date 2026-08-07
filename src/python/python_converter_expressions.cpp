@@ -658,94 +658,19 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       // the contents match. Use the string solver for content
       // equality so dict comprehensions like {str(i): v for ...}
       // can be looked up via d["0"].
-      bool keys_are_strings = is_python_string_type(
-        python_dict_logical_key_type(keys_type.element_type()));
-      // PLR §6.10.1: value-typed (heterogeneous) keys cannot be matched
-      // by a declared-type-gated equality — a str key would compare via
-      // struct data-pointer (always miss) and a non-str key's unwrapped
-      // __int_val could spuriously equal an int query. Compare in the
-      // value domain (tag-aware) against the wrapped query instead.
-      bool keys_are_values = is_python_value_type(keys_type.element_type());
-      // Wrap the query once (not per key): value_equal compares it
-      // against each value-typed key in the value domain.
-      exprt wrapped_slice = keys_are_values ? wrap_value(slice) : slice;
+      // Single choke point for key comparison: the quantified
+      // witness and the bounded-scan fallback share one matcher so
+      // the encodings cannot drift (see dict_key_matcher).
+      auto key_match_at = dict_key_matcher(keys, slice);
 
-      // Per-slot key match as a function of a (possibly bound) index
-      // expression -- shared between the quantified lift and the
-      // bounded scan below so the two encodings cannot drift.
-      auto key_match_at = [&](const exprt &idx_e) -> exprt
-      {
-        exprt key_i = python_dict_unbox_key(index_exprt{keys, idx_e});
-        if(keys_are_values)
-          return value_equal(key_i, wrapped_slice);
-        if(keys_are_strings && is_python_string_type(slice.type()))
-        {
-          if(key_i.type() != slice.type())
-            key_i = safe_typecast(key_i, slice.type());
-          return string_equal(key_i, slice);
-        }
-        if(key_i.type() != slice.type())
-          key_i = safe_typecast(key_i, slice.type());
-        return equal_exprt{key_i, slice};
-      };
-
-      exprt lifted_result = nil_exprt{};
-      exprt lifted_found = nil_exprt{};
-      exprt lifted_idx = nil_exprt{};
       // Quantified witness lift (--python-smt-containers): the dict
       // STORAGE is unbounded (infinite keys/values arrays) but this
       // lookup was a 16-slot ite chain -- entries past the model
       // bound were unreachable (perf-study finding: storage
-      // unbounded, lookup bounded). Encode exactly instead:
-      //   found := exists j in [0,len). keys[j] == k
-      //   w a fresh witness with
-      //     assume(found => 0 <= w < len && match(w) &&
-      //            forall p in [0,w). !match(p))   [first occurrence,
-      //            mirroring the ite chain's lowest-index-wins]
-      //     assume(!found => w == 0)
-      //   result := values[w]
-      // Complete at every length. Same gates as the landed
-      // list.index lift: the match term must be quantifier-safe and
-      // its construction side-effect-free.
-      if(python_smt_containers_flag())
-      {
-        const std::size_t pc_before = pending_checks.size();
-        symbol_exprt qj = fresh_bound_index("__dk_j_");
-        exprt qmatch = key_match_at(qj);
-        if(
-          pending_checks.size() == pc_before && !qmatch.is_nil() &&
-          quantifier_safe_term(qmatch))
-        {
-          const typet w_t = signedbv_typet{64};
-          // First-match-or-len witness: a single forall assume, no
-          // exists, no iff -- quantifiers stay OUT of defined
-          // Boolean literals, so counterexample model queries see
-          // only constants (the raw exists in a value position made
-          // the SMT2 model parser fail with "returned non-constant
-          // value" -- the q9 class). The constraints FORCE
-          //   w < len  iff  the key is present:
-          // present at j and w == len would violate the forall;
-          // absent and w < len would violate match(w).
-          symbol_exprt w = mint_witness_symbol("__dk_w_", w_t);
-          symbol_exprt pj = fresh_bound_index("__dk_p_");
-          exprt w_min = forall_in_range(pj, w, not_exprt{key_match_at(pj)});
-          exprt in_len = binary_relation_exprt{w, ID_lt, length};
-          pending_checks.push_back(code_assumet{and_exprt{
-            binary_relation_exprt{from_integer(0, w_t), ID_le, w},
-            binary_relation_exprt{w, ID_le, length},
-            std::move(w_min),
-            implies_exprt{in_len, key_match_at(w)}}});
-          lifted_found = in_len;
-          lifted_result = if_exprt{
-            in_len,
-            exprt{index_exprt{vals, w}},
-            safe_zero(vals_type.element_type())};
-          lifted_idx = std::move(w);
-        }
-        else
-          pending_checks.erase(
-            pending_checks.begin() + pc_before, pending_checks.end());
-      }
+      // unbounded, lookup bounded). dict_lookup_witness emits the
+      // first-match-or-len witness (complete at every length);
+      // found is a plain comparison, safe in value positions.
+      auto lifted = dict_lookup_witness(value, slice);
 
       // Scan: result = values[i] where keys[i] == slice
       exprt result =
@@ -755,37 +680,21 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       // nesting) — used to return the value as an lvalue SLOT for
       // mutable-container values (dict-value-by-reference, Option 2).
       exprt found_idx = from_integer(0, signedbv_typet{64});
-      if(lifted_found.is_not_nil())
+      if(lifted.found.is_not_nil())
       {
-        result = std::move(lifted_result);
-        found = std::move(lifted_found);
-        found_idx = std::move(lifted_idx);
+        result = if_exprt{
+          lifted.found,
+          exprt{index_exprt{vals, lifted.index}},
+          safe_zero(vals_type.element_type())};
+        found = lifted.found;
+        found_idx = lifted.index;
       }
       else
         for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
         {
           exprt idx = from_integer(i, signedbv_typet{64});
           exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-          exprt key_i = python_dict_unbox_key(index_exprt{keys, idx});
-          exprt match;
-          if(keys_are_values)
-          {
-            match = value_equal(key_i, wrapped_slice);
-          }
-          else if(keys_are_strings && is_python_string_type(slice.type()))
-          {
-            if(key_i.type() != slice.type())
-              key_i = safe_typecast(key_i, slice.type());
-            // Representation-neutral string content equality.
-            match = string_equal(key_i, slice);
-          }
-          else
-          {
-            if(key_i.type() != slice.type())
-              key_i = safe_typecast(key_i, slice.type());
-            match = equal_exprt{key_i, slice};
-          }
-          exprt cond = and_exprt{in_range, match};
+          exprt cond = and_exprt{in_range, key_match_at(idx)};
           result = if_exprt{cond, index_exprt{vals, idx}, result};
           // Track the matched index for ALL key kinds -- int, string, and
           // heterogeneous value-typed keys all return the value as an lvalue

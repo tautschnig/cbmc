@@ -7208,7 +7208,21 @@ exprt python_convertert::string_to_handle(const exprt &str)
   //   and aborts on its non-struct type (s3_to_dynamodb).
   // Allocate a handle with an UNCONSTRAINED image instead: strtab(h) is
   // then an arbitrary string -- a sound over-approximation.
-  if(str.type().id() != ID_string || str.id() == ID_struct)
+  // A python_string STRUCT carrying an extractable CONSTANT falls
+  // through to the constant-intern arm below (deterministic handle +
+  // global strtab axiom) by rebuilding it as a String-sort constant.
+  // Routing it to the unconstrained arm made strtab(h) ARBITRARY, so
+  // a site that pre-coerces its probe to a handle (d.get) could
+  // "find" the key under any image the solver liked -- disagreeing
+  // with the membership lift's literal comparison (get_absent).
+  exprt str_c = str;
+  if(str_c.id() == ID_struct && is_python_string_type(str_c.type()))
+  {
+    auto sv = extract_string_value(str_c);
+    if(sv.has_value())
+      str_c = constant_exprt{sv.value(), string_typet{}};
+  }
+  if(str_c.type().id() != ID_string || str_c.id() == ID_struct)
   {
     static unsigned strh_u_ctr = 0;
     const std::string hn = "__strh_u_" + std::to_string(strh_u_ctr++);
@@ -7238,9 +7252,9 @@ exprt python_convertert::string_to_handle(const exprt &str)
   // general solver-level String reasoning consistent. Equal constants
   // share one id, so `is`-style handle equality on equal literals also
   // holds -- consistent with CPython's small-literal interning latitude.
-  if(str.id() == ID_constant && str.type().id() == ID_string)
+  if(str_c.id() == ID_constant && str_c.type().id() == ID_string)
   {
-    const std::string text = id2string(to_constant_expr(str).get_value());
+    const std::string text = id2string(to_constant_expr(str_c).get_value());
     auto it = string_intern_ids.find(text);
     if(it != string_intern_ids.end())
       return from_integer(it->second, python_string_handle_type());
@@ -7253,7 +7267,7 @@ exprt python_convertert::string_to_handle(const exprt &str)
       symbolt cs{cs_id, string_typet{}, "python"};
       cs.base_name = id2string(cs_id);
       cs.is_static_lifetime = true;
-      cs.value = str;
+      cs.value = str_c;
       symbol_table.add(cs);
     }
     exprt h = from_integer(id, python_string_handle_type());
@@ -7261,7 +7275,7 @@ exprt python_convertert::string_to_handle(const exprt &str)
     // denotation would reduce it to "s" == "s" (vacuous, dropped), leaving
     // SYMBOLIC reads of the same handle without the axiom (the split-test
     // regression: `xs[0] == "a"` compared an unconstrained strtab(1)).
-    emit_strtab_axiom(h, str);
+    emit_strtab_axiom(h, str_c);
     return h;
   }
   static unsigned strh_ctr = 0;
