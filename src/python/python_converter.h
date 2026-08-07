@@ -2529,6 +2529,49 @@ private:
   exprt forall_in_range(const symbol_exprt &j, const exprt &length, exprt pred);
   exprt exists_in_range(const symbol_exprt &j, const exprt &length, exprt pred);
 
+  /// Per-slot key equality for a dict's keys array, dispatching on the
+  /// key representation (value-typed / string / plain) exactly like the
+  /// subscript scan. `keys` is the keys MEMBER expression; the returned
+  /// callable maps an index expression to the match predicate for that
+  /// slot. The single choke point for key comparison: the quantified
+  /// witness and every bounded scan must use the same matcher so the
+  /// encodings cannot drift.
+  std::function<exprt(const exprt &)>
+  dict_key_matcher(const exprt &keys, const exprt &key);
+
+  /// Quantified first-match-or-len witness for a dict-key lookup under
+  /// --python-smt-containers (complete at every length, unlike the
+  /// bounded scans). Emits ONE forall assume constraining a fresh
+  /// witness index w:
+  ///   0 <= w <= len && forall p in [0,w). !match(p)
+  ///                 && (w < len ==> match(w))
+  /// which forces (w < len) <=> key-present. No exists and no iff:
+  /// quantifiers must stay out of defined Boolean literals and value
+  /// positions or counterexample model queries fail (the q9 class).
+  /// Returns {found, index} with found == (w < len) a plain
+  /// comparison; found is nil when ineligible (flag off, match term
+  /// not quantifier-safe, or its construction emitted checks).
+  struct dict_witness_resultt
+  {
+    exprt found = nil_exprt{};
+    exprt index = nil_exprt{};
+  };
+  dict_witness_resultt
+  dict_lookup_witness(const exprt &dict_value, const exprt &key);
+
+  /// Members-level variant for call sites that already hold the keys /
+  /// length member expressions (the dict-method family). `matcher`
+  /// lets a family keep its exact slot comparator (the method scans
+  /// compare via dict_slot_match/container_slot_equal, the subscript
+  /// scan via dict_key_matcher) so the witness can never disagree
+  /// with the site's own bounded fallback; empty selects
+  /// dict_key_matcher(keys, key).
+  dict_witness_resultt dict_lookup_witness_members(
+    const exprt &keys,
+    const exprt &length,
+    const exprt &key,
+    std::function<exprt(const exprt &)> matcher = nullptr);
+
   exprt dict_slot_match(
     const exprt &keys_array,
     const exprt &length,

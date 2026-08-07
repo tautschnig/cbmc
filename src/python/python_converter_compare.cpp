@@ -3281,37 +3281,56 @@ exprt python_convertert::convert_compare(const jsont &expr)
           exprt wrapped_item = is_python_value_type(keys_type.element_type())
                                  ? wrap_value(item)
                                  : item;
-          exprt in_expr = false_exprt{};
-          for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+          // Quantified witness lift (--python-smt-containers):
+          // membership must share the subscript/get lookup's ONE
+          // encoding (dict_lookup_witness_members) -- with membership
+          // still a bounded scan, `'k' in d` could report ABSENT
+          // while the complete lookup finds the key beyond the scan
+          // bound, so a membership-guarded read false-alarmed. found
+          // is a plain w < len comparison, usable directly here.
           {
-            exprt idx = from_integer(i, signedbv_typet{64});
-            exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-            exprt key_i = python_dict_unbox_key(index_exprt{keys, idx});
-            exprt match;
-            if(is_python_value_type(key_i.type()))
+            auto lifted = dict_lookup_witness_members(keys, length, item);
+            if(lifted.found.is_not_nil())
             {
-              // Value-typed (heterogeneous) keys: compare in the
-              // value domain (tag-aware), mirroring the subscript
-              // read. PLR §6.10.1.
-              match = value_equal(key_i, wrapped_item);
+              cmp =
+                (op == "In") ? lifted.found : exprt{not_exprt{lifted.found}};
+              goto dict_in_done;
             }
-            else if(
-              is_python_string_type(item.type()) &&
-              is_python_string_type(key_i.type()))
-            {
-              // Representation-neutral string content equality.
-              match = string_equal(item, key_i);
-            }
-            else
-            {
-              if(item.type() == key_i.type())
-                match = equal_exprt{item, key_i};
-              else
-                match = false_exprt{}; // type mismatch → not equal
-            }
-            in_expr = or_exprt{in_expr, and_exprt{in_range, match}};
           }
-          cmp = (op == "In") ? in_expr : not_exprt{in_expr};
+          {
+            exprt in_expr = false_exprt{};
+            for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+            {
+              exprt idx = from_integer(i, signedbv_typet{64});
+              exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+              exprt key_i = python_dict_unbox_key(index_exprt{keys, idx});
+              exprt match;
+              if(is_python_value_type(key_i.type()))
+              {
+                // Value-typed (heterogeneous) keys: compare in the
+                // value domain (tag-aware), mirroring the subscript
+                // read. PLR §6.10.1.
+                match = value_equal(key_i, wrapped_item);
+              }
+              else if(
+                is_python_string_type(item.type()) &&
+                is_python_string_type(key_i.type()))
+              {
+                // Representation-neutral string content equality.
+                match = string_equal(item, key_i);
+              }
+              else
+              {
+                if(item.type() == key_i.type())
+                  match = equal_exprt{item, key_i};
+                else
+                  match = false_exprt{}; // type mismatch → not equal
+              }
+              in_expr = or_exprt{in_expr, and_exprt{in_range, match}};
+            }
+            cmp = (op == "In") ? in_expr : not_exprt{in_expr};
+          }
+        dict_in_done:;
         }
       }
       else if(is_python_tuple_type(container.type()))

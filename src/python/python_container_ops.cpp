@@ -415,6 +415,117 @@ exprt python_convertert::exists_in_range(
   return exists_exprt{j, and_exprt{std::move(range), std::move(pred)}};
 }
 
+std::function<exprt(const exprt &)>
+python_convertert::dict_key_matcher(const exprt &keys, const exprt &key)
+{
+  const auto &keys_arr = to_array_type(keys.type());
+  const bool keys_are_strings = is_python_string_type(
+    python_dict_logical_key_type(keys_arr.element_type()));
+  const bool keys_are_values = is_python_value_type(keys_arr.element_type());
+  const bool slots_are_handles =
+    is_python_string_handle_type(keys_arr.element_type());
+  // Wrap the query once (not per slot): value_equal compares it
+  // against each value-typed key in the value domain.
+  const exprt wrapped_key = keys_are_values ? wrap_value(key) : key;
+  return [this,
+          keys,
+          key,
+          wrapped_key,
+          keys_are_strings,
+          keys_are_values,
+          slots_are_handles](const exprt &idx_e) -> exprt
+  {
+    exprt key_i = python_dict_unbox_key(index_exprt{keys, idx_e});
+    if(keys_are_values)
+      return value_equal(key_i, wrapped_key);
+    // HANDLE probe against handle slots: compare by strtab DENOTATION
+    // (String equality), never by handle identity -- string_to_handle
+    // mints a FRESH handle per allocation, so two handles for equal
+    // strings need not be bit-equal, and the fallback String->bv64
+    // typecast severed the value entirely (a nondet under the binder,
+    // which the quantifier-safety gate then rejected -- observed at
+    // the d.get() site, which pre-coerces its probe to a handle).
+    if(slots_are_handles && is_python_string_handle_type(key.type()))
+      return equal_exprt{key_i, python_dict_unbox_key(key)};
+    if(keys_are_strings && is_python_string_type(key.type()))
+    {
+      if(key_i.type() != key.type())
+        key_i = safe_typecast(key_i, key.type());
+      return string_equal(key_i, key);
+    }
+    if(key_i.type() != key.type())
+      key_i = safe_typecast(key_i, key.type());
+    // Float keys compare IEEE-wise (parity with container_slot_equal,
+    // the bounded scans' comparator).
+    if(key_i.type().id() == ID_floatbv)
+      return exprt{ieee_float_equal_exprt{key_i, key}};
+    return equal_exprt{key_i, key};
+  };
+}
+
+python_convertert::dict_witness_resultt python_convertert::dict_lookup_witness(
+  const exprt &dict_value,
+  const exprt &key)
+{
+  const auto &dict_st = to_struct_type(dict_value.type());
+  const auto &keys_type = to_array_type(dict_st.components()[1].type());
+  member_exprt length{dict_value, "length", signedbv_typet{64}};
+  member_exprt keys{dict_value, "keys", keys_type};
+  return dict_lookup_witness_members(keys, length, key);
+}
+
+python_convertert::dict_witness_resultt
+python_convertert::dict_lookup_witness_members(
+  const exprt &keys,
+  const exprt &length,
+  const exprt &key,
+  std::function<exprt(const exprt &)> matcher)
+{
+  dict_witness_resultt r;
+  if(!python_smt_containers_flag())
+    return r;
+  // Materialise an effectful key (embedded nondet / call result /
+  // string-op side effect) into a temp: the match term is replicated
+  // under a forall binder, where side effects are forbidden
+  // (goto-convert aborts) and re-evaluation would be wrong anyway.
+  exprt key_v = key;
+  if(has_subexpr(key_v, ID_side_effect))
+  {
+    symbol_exprt tmp = mint_witness_symbol("__dk_key_", key_v.type());
+    pending_checks.push_back(code_frontend_assignt{tmp, key_v});
+    key_v = tmp;
+  }
+  auto match_at = matcher ? std::move(matcher) : dict_key_matcher(keys, key_v);
+
+  // Eligibility: the match term must be quantifier-safe and its
+  // construction side-effect-free (same gates as the list.index lift).
+  const std::size_t pc_before = pending_checks.size();
+  symbol_exprt qj = fresh_bound_index("__dk_j_");
+  exprt qmatch = match_at(qj);
+  if(
+    pending_checks.size() != pc_before || qmatch.is_nil() ||
+    !quantifier_safe_term(qmatch))
+  {
+    pending_checks.erase(
+      pending_checks.begin() + pc_before, pending_checks.end());
+    return r;
+  }
+
+  const typet w_t = signedbv_typet{64};
+  symbol_exprt w = mint_witness_symbol("__dk_w_", w_t);
+  symbol_exprt pj = fresh_bound_index("__dk_p_");
+  exprt w_min = forall_in_range(pj, w, not_exprt{match_at(pj)});
+  exprt in_len = binary_relation_exprt{w, ID_lt, length};
+  pending_checks.push_back(code_assumet{and_exprt{
+    binary_relation_exprt{from_integer(0, w_t), ID_le, w},
+    binary_relation_exprt{w, ID_le, length},
+    std::move(w_min),
+    implies_exprt{in_len, match_at(w)}}});
+  r.found = std::move(in_len);
+  r.index = std::move(w);
+  return r;
+}
+
 bool python_convertert::quantifier_safe_term(const exprt &e) const
 {
   // A term placed under a forall/exists binder must be a pure SMT
@@ -425,6 +536,13 @@ bool python_convertert::quantifier_safe_term(const exprt &e) const
   // instantiation, not just slowness. Under the native SMT-strings
   // backend string equalities lower to String-sort terms and strtab
   // UF applications, which quantify soundly.
+  // Side effects (nondet, function calls, allocations) can never
+  // appear under a binder: goto-convert's clean_expr enforces
+  // "quantifier must not contain side effects" with an invariant
+  // abort. Callers materialise effectful operands into temps first
+  // (see dict_lookup_witness_members); this is the backstop.
+  if(has_subexpr(e, ID_side_effect))
+    return false;
   if(python_smt_string_native_flag())
     return true;
   return !has_subexpr(e, ID_function_application);
