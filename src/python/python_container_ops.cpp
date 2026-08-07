@@ -526,6 +526,89 @@ python_convertert::dict_lookup_witness_members(
   return r;
 }
 
+void python_convertert::emit_dict_store(
+  code_blockt &block,
+  const exprt &keys_arr,
+  const exprt &vals_arr,
+  const exprt &length,
+  const exprt &typed_key,
+  const exprt &typed_val,
+  const source_locationt &loc)
+{
+  const typet len_t = signedbv_typet{64};
+  // Fresh found flag (shared by both encodings).
+  static unsigned ds_ctr = 0;
+  const std::string fn = "__dstore_fnd_" + std::to_string(ds_ctr++);
+  const irep_idt fi{qualify_name(fn)};
+  if(symbol_table.lookup(fi) == nullptr)
+  {
+    symbolt fs{fi, bool_typet{}, "python"};
+    fs.base_name = fn;
+    fs.is_lvalue = true;
+    fs.is_state_var = true;
+    fs.is_static_lifetime = current_function.empty();
+    symbol_table.add(fs);
+  }
+  symbol_exprt found = symbol_table.lookup_ref(fi).symbol_expr();
+
+  bool lifted_ok = false;
+  if(python_smt_containers_flag())
+  {
+    // The witness's defining assume must be a STATEMENT in `block`
+    // (not a pending check hoisted before the enclosing statement):
+    // the constraint refers to the CURRENT keys/length, which earlier
+    // statements in this very block may have just written.
+    const std::size_t pc_before = pending_checks.size();
+    auto lifted = dict_lookup_witness_members(keys_arr, length, typed_key);
+    if(lifted.found.is_not_nil())
+    {
+      for(std::size_t k = pc_before; k < pending_checks.size(); ++k)
+        block.add(std::move(pending_checks[k]));
+      pending_checks.erase(
+        pending_checks.begin() + pc_before, pending_checks.end());
+      block.add(code_frontend_assignt{found, lifted.found});
+      code_blockt replace;
+      replace.add(
+        code_frontend_assignt{index_exprt{vals_arr, lifted.index}, typed_val});
+      block.add(code_ifthenelset{lifted.found, std::move(replace)});
+      lifted_ok = true;
+    }
+    else
+      pending_checks.erase(
+        pending_checks.begin() + pc_before, pending_checks.end());
+  }
+  if(!lifted_ok)
+  {
+    block.add(code_frontend_assignt{found, false_exprt{}});
+    for(std::size_t i = 0; i < static_cast<std::size_t>(PYTHON_MAX_DICT_SIZE);
+        i++)
+    {
+      exprt idx = from_integer(i, len_t);
+      std::vector<codet> eq_seq;
+      exprt match = dict_slot_match(keys_arr, length, i, typed_key, &eq_seq);
+      for(auto &c : eq_seq)
+        block.add(std::move(c));
+      code_blockt update;
+      update.add(code_frontend_assignt{index_exprt{vals_arr, idx}, typed_val});
+      update.add(code_frontend_assignt{found, true_exprt{}});
+      block.add(code_ifthenelset{std::move(match), std::move(update)});
+    }
+  }
+  // INSERT arm. With the witness encoding the length-indexed store
+  // into the INFINITE arrays needs no capacity guard; the bounded
+  // fallback keeps the fail-closed cut.
+  code_blockt append;
+  if(!lifted_ok)
+    emit_capacity_guard(append, length, PYTHON_MAX_DICT_SIZE, loc);
+  append.add(code_frontend_assignt{
+    index_exprt{keys_arr, length},
+    coerce_element(typed_key, to_array_type(keys_arr.type()).element_type())});
+  append.add(code_frontend_assignt{index_exprt{vals_arr, length}, typed_val});
+  append.add(
+    code_frontend_assignt{length, plus_exprt{length, from_integer(1, len_t)}});
+  block.add(code_ifthenelset{not_exprt{found}, std::move(append)});
+}
+
 bool python_convertert::quantifier_safe_term(const exprt &e) const
 {
   // A term placed under a forall/exists binder must be a pure SMT

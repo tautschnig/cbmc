@@ -2572,6 +2572,23 @@ private:
     const exprt &key,
     std::function<exprt(const exprt &)> matcher = nullptr);
 
+  /// d[k] = v as one choke point: REPLACE the present key's value,
+  /// INSERT an absent key (PLR 6.4.6, last-writer-wins with
+  /// insertion order preserved). Under --python-smt-containers with
+  /// an eligible key this is the quantified witness (complete at any
+  /// length) and the insert is capacity-FREE (length-indexed store
+  /// into the infinite arrays); otherwise the bounded scan-replace +
+  /// capacity-guarded append. Returns the emitted statements via
+  /// `block`.
+  void emit_dict_store(
+    code_blockt &block,
+    const exprt &keys_arr,
+    const exprt &vals_arr,
+    const exprt &length,
+    const exprt &typed_key,
+    const exprt &typed_val,
+    const source_locationt &loc);
+
   exprt dict_slot_match(
     const exprt &keys_array,
     const exprt &length,
