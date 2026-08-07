@@ -448,3 +448,44 @@ side — a refined-struct view built over an `ID_string` operand.)
 | symex whole-struct renaming | grows with N | Int + Array values, constant width |
 | dict-key string scans feeding the refinement loop | quadratic-ish | `select` on Key sort; no refinement loop under native strings |
 | `member_exprt` mixing crash class | choke-point discipline (fixed) | same discipline, one more sort |
+
+
+## Dict-family witness consolidation (2026-08-07)
+
+The dict key-lookup family now has ONE encoding under
+`--python-smt-containers` (this was previously six independent
+bounded scans that could disagree with each other):
+
+- `dict_key_matcher` (python_container_ops.cpp): THE per-slot key
+  comparator (value-domain / string-content / handle-DENOTATION /
+  IEEE-float). Handle probes compare by strtab image, never handle
+  identity.
+- `dict_lookup_witness[_members]`: the first-match-or-len witness --
+  one forall assume, `found := w < len` a plain comparison. No
+  exists, no iff (both break SAT-direction model queries).
+- `emit_dict_store`: replace-or-insert choke point; the insert is a
+  capacity-free length-indexed store into the infinite arrays.
+
+Wired at: subscript read, `in`/`not in`, `get`, `setdefault`, `pop`
+(with an exact lambda-array compaction preserving insertion order),
+`d[k] = v` (plain / boxed / aug-assign), and dict literals of any
+size (the over-capacity construction cut is bounded-mode-only now).
+Stub dicts carry the key-UNIQUENESS well-formedness invariant, and
+TypedDict stub returns model PEP 589 requiredness (optional keys
+present in an arbitrary subset -- KeyError obligations on unguarded
+reads).
+
+**Solver ceilings (all encodings verified correct; these are
+trigger-inference limits, the :pattern item):**
+- Several same-key witnesses in one query (membership + get +
+  subscript + get) can push Z3 past practical time; individual
+  guards and all failure twins verify in seconds.
+- The pop removal-completeness entailment ('k' not in d after pop:
+  uniqueness + only-w-matched => no other occurrence) exceeds Z3's
+  trigger inference but cvc5 proves it in 2s (pinned as a cvc5 CORE
+  test smt-containers-dict-pop-removed-cvc5).
+- 17+ membership conjuncts time out on both solvers.
+
+Emitting `:pattern` annotations from the frontend (natural trigger:
+`(select keys j)` / the strtab application) is the highest-value
+next step for this family.
