@@ -282,3 +282,16 @@ REMAINING, by class:
   (a check-only loop body is a forall obligation) would collapse
   ex4's second loop exactly like the comprehension case; :pattern
   triggers remain the solver-side lever.
+
+
+## 9. Scorecard update (2026-08-07 evening)
+
+k1/k2 flip to SUCCESSFUL (clash semantics: dictcomp through
+build_dict_value, setcomp bitmap dedup, Name-iterable literal
+resolution). 19/26 now behave correctly (was 17). ex4's check loop
+takes the new for-loop representative lift (symex milliseconds; its
+residual wall is the SOLVER-side provenance entailment). Remaining:
+the boxed-source class (d1/d4/repro.py -> structure-of-arrays
+design, pinned as smt-containers-boxed-source-knownbug), k5 (user
+__eq__ dispatch in dedup), ex2/ex7 result-shape assertions on the
+bounded fallback, ex1/ex5/ex6 in-solver ceilings (:pattern item).

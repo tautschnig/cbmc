@@ -489,3 +489,41 @@ trigger-inference limits, the :pattern item):**
 Emitting `:pattern` annotations from the frontend (natural trigger:
 `(select keys j)` / the strtab application) is the highest-value
 next step for this family.
+
+
+## Structure-of-arrays for List[TypedDict] (design, not started)
+
+The one remaining perf-study class (d1/d4/repro.py -- the boto3
+response shape `[a['appId'] for a in resp['apps']]`) is blocked on
+REPRESENTATION, not encoding: List[TD] elements are pv BOXES (an
+inline dict struct would nest infinite arrays -- no byte-lowering
+width), per-element heap targets cannot be allocated for unbounded
+length, and aliasing every element to one representative object
+would prove FALSE equalities (ids[0] == ids[1]).
+
+The study's own C validation of the representative+lift used flat
+PER-FIELD arrays (`xs_data[j]` holding the field value directly) --
+i.e. it presumes a structure-of-arrays representation:
+
+  List[TD] with known fields f1..fn
+    -> struct { length; f1_data[INF]; ...; fn_data[INF] }
+  a = xs[j]; a['fi']   ->  fi_data[j]     (no pointer, no deref)
+
+Everything downstream then composes with the machinery that already
+landed: comprehension bodies over `a['fi']` become PURE terms
+(closed-form maps -- no representative needed for the KeyError,
+which vanishes for declared fields), quantified per-field shape
+assumes replace the per-element heap synthesis, and NotRequired
+presence becomes a per-field presence BITMAP array. Main work
+items: the annotation seam (List[TD] -> SoA struct), stub
+synthesis, subscript routing through the row view (`a` bound at
+index j is not a first-class value; `a['fi']` must resolve to
+fi_data[j] -- the binding needs conversion-time bookkeeping, the
+same discipline as the comprehension's bound-variable substitution),
+and aliasing rules (SoA lists are by-value CONTAINERS of scalars,
+so PLR 3.1 reference semantics apply at the LIST level, not the
+row level -- a row is a VIEW, and mutating xs[j]['fi'] writes
+fi_data[j]).
+
+Pinned: smt-containers-boxed-source-knownbug (flips when this
+lands).
