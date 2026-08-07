@@ -527,3 +527,42 @@ fi_data[j]).
 
 Pinned: smt-containers-boxed-source-knownbug (flips when this
 lands).
+
+
+## SoA spike results (2026-08-07 evening -- LANDED as a gated spike)
+
+The structure-of-arrays representation validated end-to-end: the
+study's flagship class (repro.py, d1_bindname, d4_two_stage) all
+VERIFY in <=1s, and ex1/ex3/ex5/ex6 drop from TIMEOUT to fast loud
+verdicts. Design confirmations and the two findings that shaped it:
+
+1. ROW = INDEX is the load-bearing idea and it composes: binding the
+   comprehension variable as a signedbv[64] index makes a['f'] a
+   pure select, the KeyError vanishes for declared fields, and the
+   existing closed-form map applies verbatim. The OCCURS-CHECK
+   escape gate is MANDATORY: an escaping row puns its index as the
+   element value (demonstrated false proof, pinned in
+   smt-containers-soa-escape-fail).
+2. Value-set opacity of the infinite values array is the second
+   wall behind the boxed representation (independent of shapes):
+   two derefs of the SAME pointer expression read through it as
+   unrelated failure objects, and two independent lookup witnesses
+   of one key exceed solver quantifier budgets. ONE materialised
+   copy per read region (td_field_read_memo / soa_value_of_name)
+   resolves both; the copy must be invalidated at every possibly-
+   mutating call (demonstrated stale-copy false proof, pinned in
+   smt-containers-soa-stale-fail).
+
+Spike SCOPE (the follow-up items for productisation):
+- eligibility = all-required scalar-category fields; NotRequired
+  needs per-field presence arrays; nested container fields need
+  recursion or fallback;
+- consumers wired: comprehension iterable (Name + inline
+  subscript), len(); NOT yet: for-loops over SoA, xs[i] row reads
+  outside comprehensions, membership, negative-index/slice ops;
+- provenance is conversion-time (var_typeddict/var_soa_elem
+  recorded at single-Name assigns; cleared on rebind) -- sound but
+  loses precision through control-flow merges;
+- the row-index pun is per-comprehension; a first-class ROW VIEW
+  value (SoA pointer + index pair) would extend it to general
+  bindings (r = xs[i]; r['f']).
