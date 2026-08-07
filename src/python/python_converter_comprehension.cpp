@@ -123,6 +123,64 @@ exprt python_convertert::emit_listcomp_loop(
   // quantified array axiom (generic smt2, cvc5); the simplifier
   // folds constant-index reads by substitution, so concrete tests
   // keep folding at symex time.
+  // Representative+lift (perf-study 5b, validated there against
+  // this backend): a filter-free comprehension whose element VALUE
+  // is a pure term but whose conversion emitted CHECKS (a may-raise
+  // body like `a['appId']` -- the KeyError obligation) still gets
+  // the exact closed form. The checks run ONCE at a fresh
+  // NONDETERMINISTIC index j with the loop variable bound to
+  // data[j]: an obligation proved at an arbitrary index holds for
+  // every index (universal generalization), and is STRONGER than K
+  // unrolled copies -- complete at every length. Guarded by len > 0
+  // so an empty source has no obligations (PLR 6.2.4: the body
+  // never evaluates). The raised-exception SET is over-approximated
+  // when different elements would raise different exceptions (the
+  // model explores each; the program raises the first) -- sound,
+  // loud in the worst case. Without this, may-raise bodies fell to
+  // the loop lowering, which under the flag is the fail-closed
+  // bounded scan (and before that, a silent symex hang -- the
+  // study's corpus wall).
+  if(
+    python_smt_containers_flag() && cond == true_exprt{} &&
+    cond_checks.empty() && quantifier_safe_term(elt_val) && !elt_checks.empty())
+  {
+    static unsigned rep_ctr = 0;
+    const std::string jn = "__rep_j_" + std::to_string(rep_ctr++);
+    const irep_idt jid{qualify_name(jn)};
+    if(symbol_table.lookup(jid) == nullptr)
+    {
+      symbolt js{jid, len_t, "python"};
+      js.base_name = jn;
+      js.is_lvalue = true;
+      js.is_state_var = true;
+      js.is_static_lifetime = current_function.empty();
+      symbol_table.add(js);
+    }
+    const symbol_exprt j = symbol_table.lookup_ref(jid).symbol_expr();
+    pending_checks.push_back(
+      code_frontend_assignt{j, side_effect_expr_nondett{len_t, loc}});
+    exprt nonempty =
+      binary_relation_exprt{iter_len, ID_gt, from_integer(0, len_t)};
+    pending_checks.push_back(code_assumet{implies_exprt{
+      nonempty,
+      and_exprt{
+        binary_relation_exprt{from_integer(0, len_t), ID_le, j},
+        binary_relation_exprt{j, ID_lt, iter_len}}}});
+    exprt rep_slot = index_exprt{iter_data, j};
+    exprt rep_bound = (rep_slot.type() != elem_in_t)
+                        ? safe_typecast(rep_slot, elem_in_t)
+                        : rep_slot;
+    code_blockt rep_checks;
+    rep_checks.add(code_frontend_assignt{var, std::move(rep_bound)});
+    for(auto &c : elt_checks)
+      rep_checks.add(std::move(c));
+    pending_checks.push_back(
+      code_ifthenelset{std::move(nonempty), std::move(rep_checks)});
+    elt_checks.clear();
+    // fall through to the closed-form map below (its gate now sees
+    // empty elt_checks)
+  }
+
   if(
     python_smt_containers_flag() && cond == true_exprt{} &&
     elt_checks.empty() && cond_checks.empty() && quantifier_safe_term(elt_val))
@@ -191,8 +249,25 @@ exprt python_convertert::emit_listcomp_loop(
       body.add(code_ifthenelset{cond, std::move(store)});
     body.add(code_frontend_assignt{si, plus_exprt{si, from_integer(1, len_t)}});
   }
-  pending_checks.push_back(
-    code_whilet{binary_relation_exprt{si, ID_lt, iter_len}, std::move(body)});
+  exprt loop_cond = binary_relation_exprt{si, ID_lt, iter_len};
+  if(python_smt_containers_flag())
+  {
+    // Ineligible comprehension (filtered / impure body) over a
+    // SYMBOLIC-length iterable: the loop has no static trip count
+    // and symex unwinds forever -- silently, with no property and
+    // no formula (the perf-study's corpus wall: --program-only
+    // hangs before SSA). Apply the flag's fail-closed convention:
+    // a loud python-model-bound guard plus a hard loop bound, so
+    // symex terminates and the truncation is REPORTED instead of
+    // hanging. Closed-form-eligible comprehensions never reach
+    // this loop; concrete lengths fold the guard away.
+    emit_scan_bound_guard(iter_len, loc);
+    loop_cond = and_exprt{
+      std::move(loop_cond),
+      binary_relation_exprt{
+        si, ID_lt, from_integer(PYTHON_MAX_LIST_LENGTH, len_t)}};
+  }
+  pending_checks.push_back(code_whilet{std::move(loop_cond), std::move(body)});
   pending_checks.push_back(code_frontend_assignt{res_len, ni});
   return std::move(result);
 }

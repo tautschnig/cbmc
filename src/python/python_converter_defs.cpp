@@ -1980,9 +1980,25 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       const std::size_t n =
         std::min(fields.size(), static_cast<std::size_t>(PYTHON_MAX_DICT_SIZE));
       exprt::operandst keys, vals;
+      const typet keys_elem_t = keys_arr.element_type();
+      // coerce_element (native handle allocation) and the container
+      // synthesis below emit auxiliary statements via
+      // pending_checks; capture them into THIS function's body --
+      // dropped or misplaced, the key handles would have no strtab
+      // image and the key's presence would be unprovable (loud
+      // KeyError on every field read).
+      std::vector<codet> saved_pending_td;
+      saved_pending_td.swap(pending_checks);
       for(std::size_t i = 0; i < n; i++)
       {
-        keys.push_back(build_string_struct(fields[i]));
+        // Route through coerce_element: under the native-strings
+        // backend the keys slot is a string-id HANDLE (bv64), and
+        // pushing a raw string struct/constant built an ill-typed
+        // store that crashed the simplifier's type postcondition
+        // when a comprehension iterated the returned dict's list
+        // value (perf-study d1_bindname).
+        keys.push_back(
+          coerce_element(build_string_struct(fields[i]), keys_elem_t));
         // Nondet value, materialised to a temp so the aggregate
         // stays constant-foldable at the key positions.
         static unsigned td_nd_ctr = 0;
@@ -1999,8 +2015,86 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         symbol_exprt ndsym = symbol_table.lookup_ref(ndid).symbol_expr();
         body_block.add(code_frontend_assignt{
           ndsym, side_effect_expr_nondett{python_value_type(), loc}});
+        // Constrain the nondet value's TAG from the field's declared
+        // category: 'SOME value of the annotated shape', not 'any
+        // value at all'. Without this, reading a List[...] field
+        // from a stub-returned TypedDict yielded a value that might
+        // not be a list -- every downstream subscript/iteration
+        // false-alarmed (perf-study d1_bindname: 'object is not
+        // subscriptable' on an annotated list field). Only tag-level
+        // (the payload stays nondet); unknown categories stay
+        // unconstrained.
+        {
+          auto tdft = typed_dict_field_types.find(td_it->second);
+          if(tdft != typed_dict_field_types.end())
+          {
+            auto fldt = tdft->second.find(fields[i]);
+            if(fldt != tdft->second.end())
+            {
+              static const std::map<std::string, python_type_tagt> cat2tag = {
+                {"str", python_type_tagt::STR},
+                {"int", python_type_tagt::INT},
+                {"bool", python_type_tagt::BOOL},
+                {"float", python_type_tagt::FLOAT}};
+              auto c2t = cat2tag.find(fldt->second);
+              if(c2t != cat2tag.end())
+              {
+                body_block.add(
+                  code_assumet{python_value_is(ndsym, c2t->second)});
+              }
+              else if(fldt->second == "list" || fldt->second == "dict")
+              {
+                // A container field needs a REAL boxed object (the
+                // box dereferences __class_ptr): a fresh heap
+                // container, nondet content, well-formed length.
+                // A merely tag-constrained nondet pv has a garbage
+                // pointer and every downstream subscript/iteration
+                // still false-alarmed.
+                const bool is_list = fldt->second == "list";
+                const typet cont_t =
+                  is_list ? typet{python_list_type(python_value_type())}
+                          : typet{canonical_str_dict_type()};
+                static unsigned td_cont_ctr = 0;
+                const std::string hn =
+                  "__td_stub_cont_" + std::to_string(td_cont_ctr++);
+                const irep_idt hid{qualify_name(hn)};
+                const pointer_typet hpt{cont_t, 64};
+                if(symbol_table.lookup(hid) == nullptr)
+                {
+                  symbolt hs{hid, hpt, "python"};
+                  hs.base_name = hn;
+                  hs.is_lvalue = true;
+                  hs.is_state_var = true;
+                  symbol_table.add(hs);
+                }
+                symbol_exprt hptr = symbol_table.lookup_ref(hid).symbol_expr();
+                namespacet ns_td{symbol_table};
+                exprt hsize = from_integer(
+                  pointer_offset_size(cont_t, ns_td).value_or(8), size_type());
+                side_effect_exprt halloc{
+                  ID_allocate, {hsize, false_exprt{}}, hpt, loc};
+                body_block.add(code_frontend_assignt{hptr, halloc});
+                dereference_exprt hobj{hptr};
+                body_block.add(code_frontend_assignt{
+                  hobj, side_effect_expr_nondett{cont_t, loc}});
+                member_exprt hlen{hobj, "length", signedbv_typet{64}};
+                body_block.add(code_assumet{binary_relation_exprt{
+                  hlen, ID_ge, from_integer(0, signedbv_typet{64})}});
+                body_block.add(code_frontend_assignt{
+                  ndsym,
+                  make_python_value(
+                    is_list ? python_type_tagt::LIST : python_type_tagt::DICT,
+                    hptr)});
+              }
+            }
+          }
+        }
         vals.push_back(std::move(ndsym));
       }
+      for(auto &pc : pending_checks)
+        body_block.add(std::move(pc));
+      pending_checks.clear();
+      saved_pending_td.swap(pending_checks);
       while(keys.size() < static_cast<std::size_t>(PYTHON_MAX_DICT_SIZE))
       {
         keys.push_back(safe_zero(keys_arr.element_type()));
@@ -2011,6 +2105,36 @@ codet python_convertert::convert_function_def(const jsont &stmt)
          array_exprt{std::move(keys), keys_arr},
          array_exprt{std::move(vals), vals_arr}},
         return_type};
+    }
+    else if(
+      is_python_list_type(return_type) || is_python_dict_type(return_type))
+    {
+      // Container-annotated stub fall-through: the honest model is
+      // "SOME container of the annotated shape" -- a fresh nondet
+      // container with a WELL-FORMED length. The none-sentinel
+      // coercion below produced a fully unconstrained struct whose
+      // length could be NEGATIVE, so even `len(x) >= 0` (a Python
+      // tautology) FAILED, and every `0 <= j < len` quantifier
+      // guard was vacuously true on that path (perf-study finding
+      // t4_neglen).
+      static unsigned cont_stub_ctr = 0;
+      const std::string cn = "__stub_cont_" + std::to_string(cont_stub_ctr++);
+      const irep_idt cid{qualify_name(cn)};
+      if(symbol_table.lookup(cid) == nullptr)
+      {
+        symbolt cs{cid, return_type, "python"};
+        cs.base_name = cn;
+        cs.is_lvalue = true;
+        cs.is_state_var = true;
+        symbol_table.add(cs);
+      }
+      symbol_exprt csym = symbol_table.lookup_ref(cid).symbol_expr();
+      body_block.add(code_frontend_assignt{
+        csym, side_effect_expr_nondett{return_type, loc}});
+      member_exprt clen{csym, "length", signedbv_typet{64}};
+      body_block.add(code_assumet{binary_relation_exprt{
+        clen, ID_ge, from_integer(0, signedbv_typet{64})}});
+      none_expr = csym;
     }
     else if(is_python_value_type(return_type))
       none_expr = python_none_value();
