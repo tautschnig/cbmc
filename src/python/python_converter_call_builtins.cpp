@@ -733,7 +733,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
               typecast_exprt{python_value_class_ptr(arg), len_ptr_type},
               signedbv_typet{64}},
             python_int_type()};
-          return if_exprt{
+          exprt pv_len = if_exprt{
             python_value_is(arg, python_type_tagt::STR),
             str_len,
             if_exprt{
@@ -744,6 +744,35 @@ std::optional<exprt> python_convertert::try_builtin_call(
                 dict_len,
                 side_effect_expr_nondett{
                   python_int_type(), source_locationt{}}}}};
+          // Representation invariant, reasserted at the boxed READ
+          // boundary: len() is NEVER negative (PLR 6.10 -- CPython
+          // even raises for a negative __len__), and every
+          // constructed container keeps length >= 0. When value-set
+          // precision loses the heap object behind the box, the
+          // dereference contributes a junk arm whose length is
+          // unconstrained INCLUDING negative -- len(x) >= 0 (a
+          // Python tautology) then FAILS (perf-study u2_srclen), and
+          // every 0 <= j < len quantifier guard is vacuous on that
+          // path. Materialise + assume: sound (no real value can
+          // violate it), precision-restoring for the junk arm only.
+          static unsigned pvlen_ctr = 0;
+          const std::string pln = "__pv_len_" + std::to_string(pvlen_ctr++);
+          const irep_idt plid{qualify_name(pln)};
+          if(symbol_table.lookup(plid) == nullptr)
+          {
+            symbolt pls{plid, python_int_type(), "python"};
+            pls.base_name = pln;
+            pls.is_lvalue = true;
+            pls.is_state_var = true;
+            pls.is_static_lifetime = current_function.empty();
+            symbol_table.add(pls);
+          }
+          symbol_exprt plsym = symbol_table.lookup_ref(plid).symbol_expr();
+          pending_checks.push_back(
+            code_frontend_assignt{plsym, std::move(pv_len)});
+          pending_checks.push_back(code_assumet{binary_relation_exprt{
+            plsym, ID_ge, from_integer(0, python_int_type())}});
+          return std::move(plsym);
         }
       }
     }

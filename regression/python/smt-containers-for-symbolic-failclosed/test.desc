@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 70 --no-unwinding-assertions --python-smt-containers --z3
+^EXIT=10$
+^SIGNAL=0$
+^\[python-model-bound\.\d+\].*FAILURE$
+^VERIFICATION FAILED$
+--
+--
+The loop terminates (bounded) and the truncation is REPORTED --
+previously symex unwound forever with no property and no formula.
