@@ -4364,8 +4364,14 @@ exprt python_convertert::build_dict_value(
     from_integer(static_cast<long long>(pairs.size()), signedbv_typet{64});
 
   // Over-capacity dict: bounded scans miss entries beyond the cap, so
-  // report python-model-bound + cut at construction.
-  if(pairs.size() > static_cast<std::size_t>(PYTHON_MAX_DICT_SIZE))
+  // report python-model-bound + cut at construction. NOT under
+  // --python-smt-containers: the with-chain stores every literal
+  // entry into the infinite arrays exactly, and lookups go through
+  // the quantified witness (complete at any length) -- a 20-key
+  // literal is fully representable.
+  if(
+    !python_smt_containers_flag() &&
+    pairs.size() > static_cast<std::size_t>(PYTHON_MAX_DICT_SIZE))
   {
     emit_count_capacity_guard(
       pending_checks, length, PYTHON_MAX_DICT_SIZE, loc);

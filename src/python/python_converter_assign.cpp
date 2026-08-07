@@ -3469,45 +3469,10 @@ codet python_convertert::convert_assign(const jsont &stmt)
           exprt typed_val = rhs;
           if(typed_val.type() != vals_type.element_type())
             typed_val = coerce_element(typed_val, vals_type.element_type());
-          static unsigned dict_assign_ctr = 0;
-          std::string fn = "__dict_found_" + std::to_string(dict_assign_ctr++);
-          std::string fq = qualify_name(fn);
-          irep_idt fi{fq};
-          if(symbol_table.lookup(fi) == nullptr)
-          {
-            symbolt fs{fi, bool_typet{}, "python"};
-            fs.base_name = fn;
-            fs.is_lvalue = true;
-            fs.is_state_var = true;
-            symbol_table.add(fs);
-          }
-          symbol_exprt found = symbol_table.lookup_ref(fi).symbol_expr();
-          block.add(code_frontend_assignt{found, false_exprt{}});
-          for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
-          {
-            exprt idx = from_integer(i, signedbv_typet{64});
-            std::vector<codet> eq_seq;
-            exprt match =
-              dict_slot_match(keys_arr, length, i, typed_key, &eq_seq);
-            for(auto &c : eq_seq)
-              block.add(std::move(c));
-            code_blockt update;
-            update.add(
-              code_frontend_assignt{index_exprt{vals_arr, idx}, typed_val});
-            update.add(code_frontend_assignt{found, true_exprt{}});
-            block.add(code_ifthenelset{match, std::move(update)});
-          }
-          code_blockt append;
-          emit_capacity_guard(append, length, PYTHON_MAX_DICT_SIZE);
-          append.add(code_frontend_assignt{
-            index_exprt{keys_arr, length},
-            coerce_element(
-              typed_key, to_array_type(keys_arr.type()).element_type())});
-          append.add(
-            code_frontend_assignt{index_exprt{vals_arr, length}, typed_val});
-          append.add(code_frontend_assignt{
-            length, plus_exprt{length, from_integer(1, signedbv_typet{64})}});
-          block.add(code_ifthenelset{not_exprt{found}, std::move(append)});
+          // Replace-or-insert through the store choke point (witness
+          // under --python-smt-containers, bounded scan otherwise).
+          emit_dict_store(
+            block, keys_arr, vals_arr, length, typed_key, typed_val, loc);
 
           // Variable (non-constant) key store: the key-set / values cannot be
           // tracked statically, so DROP the dict_literals snapshot -- later
@@ -3692,47 +3657,10 @@ codet python_convertert::convert_assign(const jsont &stmt)
           // through the box silently vanished (readback KeyError — the
           // untyped-param / iteration-variable false-alarm family,
           // shared with the bounded model).
-          static unsigned bx_fnd = 0;
-          const std::string fn = "__boxwr_fnd_" + std::to_string(bx_fnd++);
-          const irep_idt fi{qualify_name(fn)};
-          if(symbol_table.lookup(fi) == nullptr)
-          {
-            symbolt fs{fi, bool_typet{}, "python"};
-            fs.base_name = fn;
-            fs.is_lvalue = true;
-            fs.is_state_var = true;
-            fs.is_static_lifetime = current_function.empty();
-            symbol_table.add(fs);
-          }
-          symbol_exprt found = symbol_table.lookup_ref(fi).symbol_expr();
-          block.add(code_frontend_assignt{found, false_exprt{}});
-          for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
-          {
-            exprt idx = from_integer(i, signedbv_typet{64});
-            std::vector<codet> eq_seq;
-            exprt match = dict_slot_match(
-              keys_arr,
-              length,
-              static_cast<std::size_t>(i),
-              typed_key,
-              &eq_seq);
-            for(auto &c : eq_seq)
-              block.add(std::move(c));
-            code_blockt upd;
-            upd.add(
-              code_frontend_assignt{index_exprt{vals_arr, idx}, typed_val});
-            upd.add(code_frontend_assignt{found, true_exprt{}});
-            block.add(code_ifthenelset{match, std::move(upd)});
-          }
-          code_blockt append;
-          emit_capacity_guard(append, length, PYTHON_MAX_DICT_SIZE, loc);
-          append.add(
-            code_frontend_assignt{index_exprt{keys_arr, length}, typed_key});
-          append.add(
-            code_frontend_assignt{index_exprt{vals_arr, length}, typed_val});
-          append.add(code_frontend_assignt{
-            length, plus_exprt{length, from_integer(1, signedbv_typet{64})}});
-          block.add(code_ifthenelset{not_exprt{found}, std::move(append)});
+          // Replace-or-insert through the store choke point (witness
+          // under --python-smt-containers, bounded scan otherwise).
+          emit_dict_store(
+            block, keys_arr, vals_arr, length, typed_key, typed_val, loc);
           continue;
         }
       }
@@ -5920,43 +5848,12 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     if(typed_new_val.type() != vals_type.element_type())
       typed_new_val = coerce_element(typed_new_val, vals_type.element_type());
 
-    static unsigned dict_aug_ctr = 0;
-    std::string fn = "__dict_aug_found_" + std::to_string(dict_aug_ctr++);
-    std::string fq = qualify_name(fn);
-    irep_idt fi{fq};
-    if(symbol_table.lookup(fi) == nullptr)
-    {
-      symbolt fs{fi, bool_typet{}, "python"};
-      fs.base_name = fn;
-      fs.is_lvalue = true;
-      fs.is_state_var = true;
-      symbol_table.add(fs);
-    }
-    symbol_exprt found = symbol_table.lookup_ref(fi).symbol_expr();
-    block.add(code_frontend_assignt{found, false_exprt{}});
-    for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
-    {
-      exprt idx = from_integer(i, signedbv_typet{64});
-      std::vector<codet> eq_seq;
-      exprt match = dict_slot_match(keys_arr, length, i, dict_aug_key, &eq_seq);
-      for(auto &c : eq_seq)
-        block.add(std::move(c));
-      code_blockt update;
-      update.add(
-        code_frontend_assignt{index_exprt{vals_arr, idx}, typed_new_val});
-      update.add(code_frontend_assignt{found, true_exprt{}});
-      block.add(code_ifthenelset{match, std::move(update)});
-    }
-    // defaultdict semantics: append (key, new_val) when missing.
-    code_blockt append;
-    emit_capacity_guard(append, length, PYTHON_MAX_DICT_SIZE);
-    append.add(
-      code_frontend_assignt{index_exprt{keys_arr, length}, dict_aug_key});
-    append.add(
-      code_frontend_assignt{index_exprt{vals_arr, length}, typed_new_val});
-    append.add(code_frontend_assignt{
-      length, plus_exprt{length, from_integer(1, signedbv_typet{64})}});
-    block.add(code_ifthenelset{not_exprt{found}, std::move(append)});
+    // Replace-or-insert through the store choke point (witness under
+    // --python-smt-containers, bounded scan otherwise). The insert
+    // arm realises defaultdict auto-insert; for a regular dict the
+    // KeyError guard above already fired on the read half.
+    emit_dict_store(
+      block, keys_arr, vals_arr, length, dict_aug_key, typed_new_val, loc);
     block.add_source_location() = loc;
     return std::move(block);
   }
