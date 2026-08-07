@@ -6466,6 +6466,51 @@ exprt python_convertert::convert_expression(const jsont &expr)
   else if(node_type == "GeneratorExp" || node_type == "SetComp")
   {
     result = convert_list_comp(expr);
+    // PLR 6.2.6 set-display semantics for a CONCRETE SetComp result:
+    // duplicates DEDUP (first occurrence's object retained, later
+    // equal elements dropped) -- routing through convert_list_comp
+    // alone kept them ({x for x in [1, 2, 1]} had len 3 where Python
+    // has 2; perf-study k2). Constant-int elements take the bitmap
+    // model (bit-OR dedups; slot order is HASH-determined there, NOT
+    // insertion order -- matching Python, where small-int sets
+    // iterate in value order). Non-constant / non-int results keep
+    // the list-backed model unchanged (set ops on it dedup via the
+    // multiset paths).
+    if(
+      node_type == "SetComp" && result.id() == ID_struct &&
+      is_python_list_type(result.type()))
+    {
+      auto entries = list_literal_leading(result);
+      if(entries.has_value())
+      {
+        std::set<unsigned long long> bits;
+        bool all_small_int = !entries->empty();
+        for(const exprt &e : *entries)
+        {
+          mp_integer v;
+          if(
+            !e.is_constant() || e.type().id() != ID_signedbv ||
+            to_integer(to_constant_expr(e), v) || v < 0 || v >= 64)
+          {
+            all_small_int = false;
+            break;
+          }
+          bits.insert(numeric_cast_v<unsigned long long>(v));
+        }
+        if(all_small_int)
+        {
+          unsigned long long bitmap_ull = 0;
+          for(unsigned long long b : bits)
+            bitmap_ull |= 1ULL << b;
+          const mp_integer bitmap{bitmap_ull};
+          const std::size_t popcount = bits.size();
+          result = struct_exprt{
+            {from_integer(bitmap, unsignedbv_typet{64}),
+             from_integer(popcount, signedbv_typet{64})},
+            python_set_type()};
+        }
+      }
+    }
   }
   // PLR §6.2.7: dict comprehension. Built on top of the same
   // generator/unrolling logic as list comprehensions but emits a

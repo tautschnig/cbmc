@@ -1499,6 +1499,58 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
       gi.is_range = true;
       gi.int_values = std::move(r_values);
     }
+    else if(is_node_type(gen_iter, "Name"))
+    {
+      // A Name bound to a TRACKED list literal (`src = [1, 2, 1];
+      // {k: k * 10 for k in src}`) enumerates exactly like the
+      // inline literal -- previously this fell to the nondet-dict
+      // over-approximation, so even the CONCRETE duplicate-key case
+      // lost its dedup semantics (perf-study k1).
+      const irep_idt nid{
+        qualify_name(json_string(json_member(gen_iter, "id")))};
+      auto ll = list_literals.find(nid);
+      bool resolved = false;
+      if(ll != list_literals.end() && ll->second.id() == ID_struct)
+      {
+        auto entries = list_literal_leading(ll->second);
+        if(entries.has_value())
+        {
+          bool all_const = true;
+          for(const exprt &e : *entries)
+            if(!e.is_constant())
+              all_const = false;
+          if(all_const)
+          {
+            for(const exprt &e : *entries)
+            {
+              mp_integer iv;
+              if(
+                e.type().id() == ID_signedbv &&
+                !to_integer(to_constant_expr(e), iv))
+                gi.int_values.push_back(iv);
+              else
+              {
+                gi.int_values.clear();
+                break;
+              }
+            }
+            if(gi.int_values.size() == entries->size())
+            {
+              gi.is_range = true; // reuse the pre-evaluated-ints path
+              resolved = true;
+            }
+          }
+        }
+      }
+      if(!resolved)
+      {
+        log_overapprox(
+          "dict comprehension with non-literal iterable: using nondet dict");
+        return side_effect_expr_nondett{
+          python_dict_type(python_value_type(), python_value_type()),
+          source_locationt{}};
+      }
+    }
     else
     {
       log_overapprox(
@@ -1708,30 +1760,12 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
     pairs.emplace_back(std::move(k), std::move(v));
   }
 
-  // Choose key/value types from the first pair (fall back to generic).
-  typet key_type =
-    pairs.empty() ? python_string_type() : pairs.front().first.type();
-  typet val_type =
-    pairs.empty() ? python_int_type() : pairs.front().second.type();
-  struct_typet dict_type = python_dict_type(key_type, val_type);
-  const auto &keys_arr_type = to_array_type(dict_type.components()[1].type());
-  const auto &vals_arr_type = to_array_type(dict_type.components()[2].type());
-
-  exprt::operandst key_elems, val_elems;
-  for(auto &p : pairs)
-  {
-    p.first = coerce_element(p.first, key_type);
-    p.second = coerce_element(p.second, val_type);
-    key_elems.push_back(p.first);
-    val_elems.push_back(p.second);
-  }
-
-  exprt length =
-    from_integer(static_cast<long long>(pairs.size()), signedbv_typet{64});
-
-  return struct_exprt{
-    {length,
-     build_list_data(std::move(key_elems), keys_arr_type),
-     build_list_data(std::move(val_elems), vals_arr_type)},
-    dict_type};
+  // Assemble through build_dict_value -- the ONE dict constructor.
+  // It implements Python's clash rule for duplicate keys (PLR 6.2.7,
+  // verified on CPython: KEY object and insertion POSITION from the
+  // FIRST occurrence, VALUE from the LAST), which this enumerated
+  // path previously skipped -- {k: k * 10 for k in [1, 2, 1]} kept 3
+  // entries where Python has 2 (perf-study k1), and len()/iteration
+  // over the result were wrong.
+  return build_dict_value(std::move(pairs), get_location(expr));
 }
