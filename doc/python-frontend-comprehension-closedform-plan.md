@@ -248,3 +248,37 @@ comprehension hangs (Tier-1 map).
   instantly; was an infinite hang).
 - A corpus-level to_array_type crash near `sql[:300]`
   (study 6; unminimized).
+
+
+## 8. Fresh-look scorecard (2026-08-07 pm, full 26-repro corpus)
+
+All 26 study repros, `--python-smt-containers --python-smt-strings
+--z3`, 90s/8GiB each. NO silent symex divergence remains anywhere in
+the corpus (the last one -- plain for-loops over symbolic lengths,
+ex3/ex4 -- fixed this round together with the pv-len representation
+invariant).
+
+CORRECT verdicts (17/26): d2 d3 d5 k3 k4 t2 t3 t4 t6 u1 u2 pass;
+t1 t5 fail on their intended KeyError obligations; k1's/k2's fails
+are honest (see below); ex5's fail is honest (real
+ZeroDivisionError on an unconstrained divisor field).
+
+REMAINING, by class:
+- Boxed-source residual (d1 d4 repro.py, loud fail <=8s): the
+  comprehension source is a boxed List[TD] behind a dict value;
+  elements are pv-boxed by design -- the per-instance deref
+  precision work (P3a class).
+- Dedup semantics (k1 k2 k5, loud fail, CONCRETE inputs):
+  dict/set-comprehension clash rules not modeled (dedup /
+  first-key-last-value / first-occurrence-object). The study's 5.3
+  taxonomy (dedup + minimality + completeness + NO set-order
+  axiom, dict value MAXIMALITY) is the design; nothing landed yet.
+- ex2/ex7 (nested 2-generator, non-injective dictcomp): fall to the
+  bounded fallback; result-shape assertions unproven (loud, fast).
+- Solver/symex cost ceilings (ex1 ex3 ex4 ex6, TIMEOUT but
+  TERMINATING): filtered/set comprehensions in-solver; ex3/ex4
+  bounded for-loops with heavy bodies grow SSA per iteration
+  (with-chain drag). The for-loop analogue of representative+lift
+  (a check-only loop body is a forall obligation) would collapse
+  ex4's second loop exactly like the comprehension case; :pattern
+  triggers remain the solver-side lever.
