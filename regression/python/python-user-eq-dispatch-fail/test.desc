@@ -1,0 +1,8 @@
+CORE
+main.py
+--unwind 8 --python-smt-containers --python-smt-strings --z3
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--

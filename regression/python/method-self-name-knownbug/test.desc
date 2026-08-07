@@ -1,0 +1,16 @@
+KNOWNBUG
+main.py
+--z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 3.3: the instance receiver is the FIRST positional parameter,
+whatever its name; ~20 converter sites key on the literal name
+'self' (instance-attribute registration in __init__, bound-method
+calling convention, shadow tracking), so a method using `s` loses
+attribute binding entirely. Whole-group fix: a per-method
+receiver-name (set at def conversion) replacing the literal
+comparisons. Found via the k5 __eq__ dispatch work (its class used
+`s`).
