@@ -459,6 +459,7 @@ codet python_convertert::convert_for(const jsont &stmt)
       const typet len_t = signedbv_typet{64};
       exprt lo = nil_exprt{}, hi = nil_exprt{};
       exprt bind_seq = nil_exprt{}; // list data member, or nil for range
+      exprt soa_row_owner = nil_exprt{}; // SoA list: var IS the index
       // range(stop) / range(start, stop)
       if(
         is_node_type(iter, "Call") &&
@@ -504,6 +505,17 @@ codet python_convertert::convert_for(const jsont &stmt)
           hi = member_exprt{seq, "length", len_t};
           bind_seq = member_exprt{seq, "data", lst.components()[1].type()};
         }
+        // SPIKE structure-of-arrays: a check-only for-loop over an
+        // SoA list composes the representative lift with the
+        // ROW-INDEX binding -- the loop variable IS the index, and
+        // the body's a['f'] subscripts resolve through
+        // soa_row_bindings during conversion.
+        else if(!seq.is_nil() && is_soa_list_type(seq.type()))
+        {
+          lo = from_integer(0, len_t);
+          hi = member_exprt{seq, "length", len_t};
+          soa_row_owner = seq;
+        }
       }
       if(hi.is_not_nil())
       {
@@ -533,11 +545,12 @@ codet python_convertert::convert_for(const jsont &stmt)
         // Loop-variable symbol: bind to the representative element.
         const std::string vname = json_string(json_member(target, "id"));
         const irep_idt vid{qualify_name(vname)};
-        exprt bound_val = bind_seq.is_nil()
-                            ? (python_int_type() == len_t
-                                 ? exprt{j}
-                                 : exprt{safe_typecast(j, python_int_type())})
-                            : exprt{index_exprt{bind_seq, j}};
+        exprt bound_val =
+          bind_seq.is_nil()
+            ? (soa_row_owner.is_not_nil() || python_int_type() == len_t
+                 ? exprt{j}
+                 : exprt{safe_typecast(j, python_int_type())})
+            : exprt{index_exprt{bind_seq, j}};
         if(symbol_table.lookup(vid) == nullptr)
         {
           symbolt vs{vid, bound_val.type(), "python"};
@@ -554,6 +567,8 @@ codet python_convertert::convert_for(const jsont &stmt)
         // conversions emit land inside the guard too).
         code_blockt rep_body;
         rep_body.add(code_frontend_assignt{v, bound_val});
+        if(soa_row_owner.is_not_nil())
+          soa_row_bindings[vid] = soa_row_owner;
         std::vector<codet> saved_pc;
         saved_pc.swap(pending_checks);
         for(const auto &bs : as_array(body_n))
@@ -562,6 +577,8 @@ codet python_convertert::convert_for(const jsont &stmt)
           rep_body.add(std::move(pc));
         pending_checks.clear();
         saved_pc.swap(pending_checks);
+        if(soa_row_owner.is_not_nil())
+          soa_row_bindings.erase(vid);
         result_blk.add(
           code_ifthenelset{std::move(nonempty), std::move(rep_body)});
         // PLR 8.3: after the loop the variable stays bound to the
