@@ -1550,6 +1550,14 @@ private:
   std::map<std::string, std::map<std::string, std::string>>
     typed_dict_field_types;
 
+  /// PEP 589 requiredness for CLASS-form TypedDicts: the per-class
+  /// set of OPTIONAL field names (NotRequired[...] wrappers, or all
+  /// fields under total=False unless Required[...]). An optional key
+  /// may be absent from a conforming dict; the stub-return synthesis
+  /// models that absence so unguarded reads carry their KeyError
+  /// obligation (perf-study t5).
+  std::map<std::string, std::set<std::string>> typeddict_optional_fields;
+
   /// Map from fully-qualified method symbol id (e.g.
   /// "python::S3::copy_object") to the TypedDict name that
   /// annotates its **kwargs parameter via Unpack[...].
