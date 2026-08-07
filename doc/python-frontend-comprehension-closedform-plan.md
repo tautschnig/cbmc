@@ -189,3 +189,62 @@ loop lowering (real tuple lists).
 - Gates: full python suite green; comprehension+containers
   differential 67/70 (three pre-known diffs, all documented);
   C-frontend Quantifiers-* spot suite green.
+
+
+## 7. Perf-study intake (2026-08-07, ~/cbmc-perf-study)
+
+The study ran the code-action corpus under containers+native-strings
+and diagnosed the wall as SYMEX NON-TERMINATION (comprehension loops
+with symbolic trip counts), not solver cost. Re-baselined against
+this tree and consumed:
+
+**Fixed here** (commit "consume the perf-study findings"): the
+silent symex hang (ineligible comprehensions now bounded+loud under
+the flag), stub-container negative lengths (t4_neglen), the
+TypedDict-stub ill-typed key store (d1 crash), typed/boxed TypedDict
+stub fields, and the study's 5b representative+lift scheme for
+may-raise comprehension bodies (validated by the study against this
+backend; implemented as a pre-pass to the Tier-1 map: checks run
+once at a nondet in-range index, values keep the exact
+array_comprehension).
+
+**Already fixed before intake**: its q9 two-quantified-assume
+model-parse bug (the implication-pair emission); pure-body
+comprehension hangs (Tier-1 map).
+
+**Adopted as design constraints, not yet implemented:**
+- smt2_conv emits NO :pattern annotations on quantifiers; the
+  frontend's quantified assumes have natural triggers
+  (select(data, j)) and nesting multiplies quantifier count.
+  Cheap, targeted, worth doing when depth > 1 shows up.
+- Dict KEY LOOKUP under the flag is still the 16-slot fail-closed
+  scan (storage unbounded, lookup bounded); a quantified presence
+  predicate is the same lift as the landed membership one.
+- TypedDict NotRequired presence obligations are parsed but not
+  enforced on subscript reads (study t5/t6: identical property
+  lists); the required-key data currently drives call-site kwarg
+  checks only.
+- SET slot order is HASH-determined, not insertion order
+  (list({3,1,2}) == [1,2,3]) -- any future set closed-form gets
+  dedup+minimality+completeness and NO order axiom; dicts keep
+  monotonicity (3.7+ guarantee) and the value witness needs
+  MAXIMALITY for last-writer-wins.
+- Vacuity discipline for quantified encodings: infinite-array
+  GLOBALS zero-initialize and can contradict assumed foralls
+  (everything proves, incl. assert(0)); regression tests for
+  quantified encodings should carry an assert(0) vacuity probe.
+- Benchmark reporting: the runtime distribution under the flag was
+  BIMODAL (finish fast or never); report survival/censoring rates
+  split by hang phase alongside percentiles over finished runs.
+
+**Remaining loud residuals** (pinned):
+- stub-typeddict-value-len-knownbug: len() of a container value
+  read from a stub TypedDict -- the boxed value's deref loses the
+  heap object through the infinite values array (the P3a
+  deref-precision class).
+- The study's d1/d4 element-SHAPE layer: List[App] elements are not
+  yet constrained App-shaped, so the representative's KeyError
+  obligation is honestly unprovable (loud FAILED, terminates
+  instantly; was an infinite hang).
+- A corpus-level to_array_type crash near `sql[:300]`
+  (study 6; unminimized).
