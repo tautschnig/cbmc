@@ -611,6 +611,64 @@ std::optional<exprt> python_convertert::try_builtin_call(
     // PLib builtins: len(s) returns the length of s
     if(args.is_array() && !as_array(args).empty())
     {
+      // SPIKE structure-of-arrays provenance: len() of a value the
+      // provenance chain knows to be a BOXED SoA list (a Name bound
+      // from a List[TD-SoA] dict field, or the inline
+      // resp['field'] subscript) reads the SoA length through the
+      // TYPED deref -- the generic pv-len arm casts the box target
+      // to the python_list layout, and the mistyped pointer aborted
+      // the pointer encoding (perf-study repro.py tail).
+      if(python_smt_containers_flag())
+      {
+        const jsont &a0 = *as_array(args).begin();
+        std::string soa_td;
+        if(is_node_type(a0, "Name"))
+        {
+          auto se = var_soa_elem.find(
+            irep_idt{qualify_name(json_string(json_member(a0, "id")))});
+          if(se != var_soa_elem.end())
+            soa_td = se->second;
+        }
+        else if(is_node_type(a0, "Subscript"))
+        {
+          const jsont &sv = json_member(a0, "value");
+          const jsont &sl = json_member(a0, "slice");
+          if(
+            is_node_type(sv, "Name") && is_node_type(sl, "Constant") &&
+            json_member(sl, "value").is_string())
+          {
+            auto vt = var_typeddict.find(
+              irep_idt{qualify_name(json_string(json_member(sv, "id")))});
+            if(vt != var_typeddict.end())
+            {
+              auto fle = typed_dict_field_list_elem.find(vt->second);
+              if(fle != typed_dict_field_list_elem.end())
+              {
+                auto fe = fle->second.find(json_member(sl, "value").value);
+                if(fe != fle->second.end() && soa_eligible_td(fe->second))
+                  soa_td = fe->second;
+              }
+            }
+          }
+        }
+        if(!soa_td.empty())
+        {
+          const typet soat = soa_list_type(soa_td);
+          exprt soa_val = nil_exprt{};
+          if(is_node_type(a0, "Subscript"))
+            soa_val = td_field_read_memo(a0, soat);
+          else if(is_node_type(a0, "Name"))
+            soa_val = soa_value_of_name(
+              irep_idt{qualify_name(json_string(json_member(a0, "id")))}, soat);
+          if(soa_val.is_not_nil())
+          {
+            exprt len_m = member_exprt{soa_val, "length", signedbv_typet{64}};
+            if(len_m.type() != python_int_type())
+              len_m = safe_typecast(std::move(len_m), python_int_type());
+            return len_m;
+          }
+        }
+      }
       exprt arg = convert_expression(*as_array(args).begin());
       if(!arg.is_nil())
       {
@@ -682,7 +740,9 @@ std::optional<exprt> python_convertert::try_builtin_call(
             result = safe_typecast(result, python_int_type());
           return result;
         }
-        if(is_python_list_type(arg.type()) || is_python_dict_type(arg.type()))
+        if(
+          is_python_list_type(arg.type()) || is_python_dict_type(arg.type()) ||
+          is_soa_list_type(arg.type()))
         {
           // The length member is the representation's signedbv[64];
           // len() returns a PYTHON int. Under --python-unbounded-ints

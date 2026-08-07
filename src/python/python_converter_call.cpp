@@ -347,6 +347,24 @@ exprt python_convertert::dispatch_closure_value(
 // empty series of arguments."
 exprt python_convertert::convert_call(const jsont &expr)
 {
+  // SPIKE structure-of-arrays: a call may mutate a dict/list the
+  // TypedDict-field read memo has materialised a copy of (method
+  // calls like apps.append(...) mutate the boxed target in place;
+  // user calls may do so transitively). A stale copy is a FALSE
+  // PROOF (demonstrated: len(apps) == n after append verified), so
+  // invalidate conservatively at every call EXCEPT the read-only
+  // builtins the memo exists to serve (len -- itself a Call; without
+  // the exemption the memo could never survive to its second use).
+  if(!td_field_read_cache.empty())
+  {
+    const jsont &inv_fn = json_member(expr, "func");
+    const bool read_only_builtin =
+      is_node_type(inv_fn, "Name") &&
+      json_string(json_member(inv_fn, "id")) == "len";
+    if(!read_only_builtin)
+      td_field_read_cache.clear();
+  }
+
   const jsont &func = json_member(expr, "func");
   const jsont &args = json_member(expr, "args");
 

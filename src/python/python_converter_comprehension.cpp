@@ -8,6 +8,7 @@
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
+#include <util/expr_util.h>
 #include <util/json.h>
 #include <util/namespace.h>
 #include <util/replace_expr.h>
@@ -274,6 +275,134 @@ exprt python_convertert::emit_listcomp_loop(
 
 // "A comprehension consists of a single expression followed by at least
 // one for clause and zero or more for or if clauses."
+/// SPIKE structure-of-arrays closed-form map (see soa_list_type):
+/// a filter-free single-generator comprehension over an SoA list.
+/// Returns nil when inapplicable or when the body escapes the
+/// row-index binding (the caller falls through to its own path).
+exprt python_convertert::try_soa_map(
+  const jsont &elt,
+  const std::string &var_name,
+  const exprt &iter_val,
+  const jsont &ifs,
+  const source_locationt &loc)
+{
+  // SPIKE structure-of-arrays: a filter-free comprehension over
+  // an SoA list binds the loop variable as a ROW INDEX
+  // (soa_row_bindings); `a['f']` in the body converts to
+  // `f_data[a]` -- a PURE term, so the exact closed-form map
+  // applies with the standard substitution a := j. Filters and
+  // bodies that use the row in any other way (escape) fall
+  // through to the sound over-approximation below, loudly.
+  if(
+    !iter_val.is_nil() && is_soa_list_type(iter_val.type()) &&
+    (!ifs.is_array() || as_array(ifs).empty()))
+  {
+    const typet len_t = signedbv_typet{64};
+    const irep_idt var_id{qualify_name(var_name)};
+    if(symbol_table.lookup(var_id) == nullptr)
+    {
+      symbolt vs{var_id, len_t, "python"};
+      vs.base_name = var_name;
+      vs.is_lvalue = true;
+      vs.is_state_var = true;
+      vs.is_static_lifetime = current_function.empty();
+      symbol_table.add(vs);
+    }
+    else
+      symbol_table.get_writeable_ref(var_id).type = len_t;
+    symbol_exprt var = symbol_table.lookup_ref(var_id).symbol_expr();
+    soa_row_bindings[var_id] = iter_val;
+    const std::size_t pc_before2 = pending_checks.size();
+    exprt elt_val = convert_expression(elt);
+    soa_row_bindings.erase(var_id);
+    // ESCAPE GATE: the row variable is an INDEX pun -- sound
+    // ONLY while every occurrence is as the index of a select
+    // into THIS SoA list's field arrays (the subscript hook's
+    // output shape). A surviving BARE occurrence (identity body
+    // `[a for a in xs]`, comparison, call argument) would leak
+    // the index as the element VALUE -- a demonstrated FALSE
+    // PROOF (rows[0] == 0 verified). Occurs-check: strip the
+    // legal f_data[var] selects, then reject if var still
+    // occurs.
+    auto row_escapes = [&](const exprt &e) -> bool
+    {
+      std::function<bool(const exprt &)> walk = [&](const exprt &n) -> bool
+      {
+        if(n == var)
+          return true; // bare occurrence
+        if(n.id() == ID_index)
+        {
+          const auto &ix = to_index_expr(n);
+          // A select of a member of the bound SoA value with
+          // the row var as index is the LEGAL shape; don't
+          // descend into its index operand.
+          if(
+            ix.index() == var && ix.array().id() == ID_member &&
+            to_member_expr(ix.array()).compound() == iter_val)
+            return walk(ix.array());
+        }
+        for(const auto &op : n.operands())
+          if(walk(op))
+            return true;
+        return false;
+      };
+      return walk(e);
+    };
+    const bool clean = pending_checks.size() == pc_before2 &&
+                       !elt_val.is_nil() && quantifier_safe_term(elt_val) &&
+                       !has_subexpr(elt_val, ID_side_effect) &&
+                       !row_escapes(elt_val);
+    if(clean)
+    {
+      typet et_out = elt_val.type();
+      struct_typet out_lt = python_list_type(et_out);
+      const array_typet &out_dt = to_array_type(out_lt.components()[1].type());
+      member_exprt src_len{iter_val, "length", len_t};
+      static unsigned soa_cf_ctr = 0;
+      const std::string jn2 = "__soa_map_j_" + std::to_string(soa_cf_ctr);
+      const irep_idt jid2{qualify_name(jn2)};
+      if(symbol_table.lookup(jid2) == nullptr)
+      {
+        symbolt js{jid2, len_t, "python"};
+        js.base_name = jn2;
+        js.is_lvalue = true;
+        js.is_state_var = true;
+        js.is_static_lifetime = current_function.empty();
+        symbol_table.add(js);
+      }
+      const symbol_exprt j2 = symbol_table.lookup_ref(jid2).symbol_expr();
+      exprt body = elt_val;
+      replace_expr(var, j2, body);
+      if(body.type() != out_dt.element_type())
+        body = coerce_element(body, out_dt.element_type());
+      const std::string rn2 = "__soa_map_" + std::to_string(soa_cf_ctr++);
+      const irep_idt rid2{qualify_name(rn2)};
+      if(symbol_table.lookup(rid2) == nullptr)
+      {
+        symbolt rs{rid2, out_lt, "python"};
+        rs.base_name = rn2;
+        rs.is_lvalue = true;
+        rs.is_state_var = true;
+        rs.is_static_lifetime = current_function.empty();
+        symbol_table.add(rs);
+      }
+      symbol_exprt res2 = symbol_table.lookup_ref(rid2).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{
+        res2,
+        struct_exprt{
+          {src_len, array_comprehension_exprt{j2, std::move(body), out_dt}},
+          out_lt}});
+      return std::move(res2);
+    }
+    pending_checks.erase(
+      pending_checks.begin() + pc_before2, pending_checks.end());
+    log_overapprox(
+      "SoA comprehension body escapes the row-index binding: "
+      "using nondet list");
+  }
+  return nil_exprt{};
+}
+
 exprt python_convertert::convert_list_comp(const jsont &expr)
 {
   const jsont &elt = json_member(expr, "elt");
@@ -539,6 +668,70 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       // replaces iter_val with the list view, which would MASK the
       // constant-None detection (a regression the noniterable-comprehension
       // test caught).
+      // SPIKE structure-of-arrays provenance: an iterable Name bound
+      // to a List[TD-SoA] dict FIELD (apps = resp['apps']) holds a
+      // pv BOX whose target is an SoA heap object (see the TypedDict
+      // stub synthesis) -- deref through the box at the SoA type so
+      // the row-index machinery applies. Falls through to the
+      // generic pv lowering when no provenance exists.
+      if(python_smt_containers_flag() && is_python_value_type(iter_val.type()))
+      {
+        std::string soa_td;
+        const jsont &it_n = json_member(gen, "iter");
+        if(is_node_type(it_n, "Name"))
+        {
+          auto se = var_soa_elem.find(
+            irep_idt{qualify_name(json_string(json_member(it_n, "id")))});
+          if(se != var_soa_elem.end())
+            soa_td = se->second;
+        }
+        else if(is_node_type(it_n, "Subscript"))
+        {
+          // Inline `for a in resp['field']` (no intermediate
+          // binding): the same provenance chain, resolved directly.
+          const jsont &sv = json_member(it_n, "value");
+          const jsont &sl = json_member(it_n, "slice");
+          if(
+            is_node_type(sv, "Name") && is_node_type(sl, "Constant") &&
+            json_member(sl, "value").is_string())
+          {
+            auto vt = var_typeddict.find(
+              irep_idt{qualify_name(json_string(json_member(sv, "id")))});
+            if(vt != var_typeddict.end())
+            {
+              auto fle = typed_dict_field_list_elem.find(vt->second);
+              if(fle != typed_dict_field_list_elem.end())
+              {
+                auto fe = fle->second.find(json_member(sl, "value").value);
+                if(fe != fle->second.end() && soa_eligible_td(fe->second))
+                  soa_td = fe->second;
+              }
+            }
+          }
+        }
+        if(!soa_td.empty())
+        {
+          const typet soat = soa_list_type(soa_td);
+          // MEMOIZED materialisation of the dereferenced SoA value
+          // (shared with len() and any other read of this field):
+          // independent derefs through the infinite values array
+          // yield unrelated failure objects, and independent lookup
+          // witnesses are not provably equal within solver
+          // quantifier budgets.
+          exprt memo = nil_exprt{};
+          if(is_node_type(it_n, "Subscript"))
+            memo = td_field_read_memo(it_n, soat);
+          else if(is_node_type(it_n, "Name"))
+            memo = soa_value_of_name(
+              irep_idt{qualify_name(json_string(json_member(it_n, "id")))},
+              soat);
+          if(memo.is_not_nil())
+            iter_val = memo;
+          else
+            iter_val = dereference_exprt{typecast_exprt{
+              python_value_class_ptr(iter_val), pointer_typet{soat, 64}}};
+        }
+      }
       if(is_python_value_type(iter_val.type()))
       {
         code_blockt pv_header;
@@ -549,6 +742,19 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       bool const_len = iter_val.id() == ID_struct &&
                        !iter_val.operands().empty() &&
                        iter_val.operands()[0].is_constant();
+      if(!iter_val.is_nil() && is_soa_list_type(iter_val.type()))
+      {
+        for(auto &c : iter_checks)
+          pending_checks.push_back(std::move(c));
+        exprt r = try_soa_map(
+          elt,
+          json_string(json_member(target, "id")),
+          iter_val,
+          json_member(gen, "ifs"),
+          get_location(expr));
+        if(!r.is_nil())
+          return r;
+      }
       if(
         !iter_val.is_nil() && is_python_list_type(iter_val.type()) &&
         !const_len)
@@ -1263,6 +1469,13 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
              build_list_data(std::move(data_elems), dt)},
             lt};
         }
+      }
+      if(!iter_val.is_nil() && is_soa_list_type(iter_val.type()))
+      {
+        exprt r = try_soa_map(
+          elt, gens[0].var_name, iter_val, json_member(gen0, "ifs"), loc);
+        if(!r.is_nil())
+          return r;
       }
       if(!iter_val.is_nil() && is_python_list_type(iter_val.type()))
       {

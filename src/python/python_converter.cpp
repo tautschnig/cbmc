@@ -5824,6 +5824,22 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
       base = json_string(json_member(val_node, "id"));
     if(base == "list" || base == "List")
     {
+      // SPIKE structure-of-arrays: List[TD] where TD is a TypedDict
+      // with fully-known SCALAR field categories lowers to parallel
+      // per-field infinite arrays under --python-smt-containers (see
+      // soa_list_type). Boxed pv elements cannot be shape-
+      // constrained at unbounded length; the SoA representation
+      // makes `a['f']` a pure per-field array read.
+      if(python_smt_containers_flag())
+      {
+        const jsont &sl = json_member(annotation, "slice");
+        if(is_node_type(sl, "Name"))
+        {
+          const std::string tdn = json_string(json_member(sl, "id"));
+          if(soa_eligible_td(tdn))
+            return soa_list_type(tdn);
+        }
+      }
       // Extract element type from the slice
       typet elem_type =
         convert_type_annotation(json_member(annotation, "slice"));
