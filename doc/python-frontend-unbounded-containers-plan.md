@@ -619,3 +619,35 @@ SoA follow-up: check-only for-loops over SoA lists compose the
 representative lift with the row-index binding. Remaining SoA
 scope unchanged (NotRequired presence arrays, nested fields, xs[i]
 row views, merge-safe provenance).
+
+
+## Receiver-name fix, SoA productisation, identity-eq assessment
+## (2026-08-08 batch)
+
+- The method-self-name family is FIXED at its root: receiver typing
+  is positional, body/AST scans use receiver_name_of_def, call-site
+  method-ness consults method_receiver_param (instance methods only
+  -- classmethods excluded). Free-function 'self'-named params are
+  ordinary and now correctly pass by reference. Tuple-target
+  attribute assigns register element-wise. k5's clash-semantics
+  core verifies end-to-end.
+- SoA: chained row-field reads xs[i]['f'] (IndexError obligation),
+  loud bare-row rejection, and NotRequired per-row presence arrays
+  (KeyError obligation on unguarded optional reads) landed.
+  Remaining: persistent row-view bindings (r = xs[i]), exact
+  optional-field comprehensions (presence check at the
+  representative), nested container fields, merge-safe provenance.
+
+**Identity-eq assessment (settled for now):** default-equality
+class keys stay REJECTED. Identity of by-value instances is
+unrepresentable -- every store copies, so `d[k]` with k naming the
+inserted object cannot be linked to the stored copy. Two sound
+routes exist: (a) the ref-instances plan (instances behind pointers
+end-to-end) makes identity POINTER equality -- the right fix, big
+prerequisite; (b) a narrow conversion-time tier (same-Name
+same-binding tracking: d built with key Name k, looked up with k
+unrebound) is implementable but carries exactly the stale-tracking
+false-proof risk class this week's audits kept killing (rebinds,
+aliasing, mutation through calls all invalidate it); if attempted
+it must reuse the td_field_read_cache invalidation discipline
+(clear at every possibly-mutating call). Not started.
