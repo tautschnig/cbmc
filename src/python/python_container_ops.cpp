@@ -577,9 +577,7 @@ bool python_convertert::soa_eligible_td(const std::string &td_name) const
        ft->second != "float"))
       return false;
   }
-  auto opt = typeddict_optional_fields.find(td_name);
-  if(opt != typeddict_optional_fields.end() && !opt->second.empty())
-    return false;
+  // Optional fields are supported via per-row presence arrays.
   return true;
 }
 
@@ -592,6 +590,12 @@ typet python_convertert::soa_list_type(const std::string &td_name)
   comps.push_back(struct_typet::componentt{"length", signedbv_typet{64}});
   const auto &fields = typeddict_class_fields.at(td_name);
   const auto &ftypes = typed_dict_field_types.at(td_name);
+  const std::set<std::string> *opt_fields = nullptr;
+  {
+    auto oit = typeddict_optional_fields.find(td_name);
+    if(oit != typeddict_optional_fields.end())
+      opt_fields = &oit->second;
+  }
   for(const auto &f : fields)
   {
     const std::string &cat = ftypes.at(f);
@@ -609,6 +613,13 @@ typet python_convertert::soa_list_type(const std::string &td_name)
       et = python_value_type();
     comps.push_back(struct_typet::componentt{
       f + "_data", array_typet{et, exprt{infinity_exprt{signedbv_typet{64}}}}});
+    // PEP 589 requiredness: an OPTIONAL field (NotRequired /
+    // total=False) gets a parallel per-row PRESENCE array; reads
+    // carry a KeyError obligation guarded by it.
+    if(opt_fields != nullptr && opt_fields->count(f) > 0)
+      comps.push_back(struct_typet::componentt{
+        f + "_present",
+        array_typet{bool_typet{}, exprt{infinity_exprt{signedbv_typet{64}}}}});
   }
   struct_typet result{comps};
   result.set_tag("python_soa_list_" + td_name);
