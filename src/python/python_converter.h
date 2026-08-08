@@ -2606,6 +2606,30 @@ private:
   /// containers) -- every equality-consuming encoding must reject or
   /// fall back for those (the __eq__ soundness audit).
   bool python_eq_is_structural(const typet &t) const;
+  /// PLR 3.3: the instance RECEIVER of a method is its FIRST
+  /// positional parameter, whatever its name -- `self` is a
+  /// convention, not syntax. These helpers replace the ~20 literal
+  /// "self" comparisons that lost attribute binding for any other
+  /// receiver name (found via k5, whose class used `s`).
+  /// AST-level: the receiver name of a method def node (first arg
+  /// name; empty for @staticmethod or no-arg defs). Usable in
+  /// pre-pass scans that walk class bodies.
+  std::string receiver_name_of_def(const jsont &funcdef) const;
+  /// The receiver name of the method whose body is currently being
+  /// converted ("self" outside method bodies -- free functions have
+  /// no receiver and the default keeps non-method comparisons
+  /// behaving as before).
+  std::string current_receiver_name = "self";
+  /// Qualified method id ("Class::method") -> receiver parameter
+  /// name. Presence in this map IS the method-ness signal for call
+  /// sites (name-free; a free function with a class-typed or even
+  /// 'self'-named first parameter is not in it).
+  std::map<std::string, std::string> method_receiver_param;
+  bool is_receiver_name(const std::string &name) const
+  {
+    return name == current_receiver_name;
+  }
+
   /// Bare class name when t is a python_class_* struct (else empty).
   std::string class_name_of_type(const typet &t) const;
   /// The user-__eq__ dispatch tier (the loop-based fallback the

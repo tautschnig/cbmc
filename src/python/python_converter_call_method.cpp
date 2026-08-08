@@ -3538,11 +3538,18 @@ std::optional<exprt> python_convertert::try_method_call(
           // its instance as the first positional arg. A classmethod (first
           // param `cls`) still receives the class via the receiver, so it must
           // keep the prepend.
-          const std::string first_param_name =
-            has_self ? id2string(method_type.parameters()[0].get_base_name())
-                     : std::string{};
+          // Instance-method-ness comes from the receiver map
+          // (method-self-name family: `def m(s)` is an instance
+          // method; the literal-'self' check missed it).
+          bool callee_is_instance_method = false;
+          {
+            std::string qn3 = id2string(method_sym->name);
+            if(qn3.rfind("python::", 0) == 0)
+              qn3 = qn3.substr(8);
+            callee_is_instance_method = method_receiver_param.count(qn3) > 0;
+          }
           const bool is_unbound_class_call =
-            recv_is_class && first_param_name == "self";
+            recv_is_class && callee_is_instance_method;
           if(has_self && !is_unbound_class_call)
           {
             if(obj.type().id() == ID_pointer)

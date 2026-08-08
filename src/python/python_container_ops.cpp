@@ -371,6 +371,25 @@ exprt python_convertert::build_dict_value_user_eq(
   return std::move(d);
 }
 
+std::string python_convertert::receiver_name_of_def(const jsont &funcdef) const
+{
+  // @staticmethod has NO receiver.
+  const jsont &decos = json_member(funcdef, "decorator_list");
+  if(decos.is_array())
+    for(const auto &d : as_array(decos))
+    {
+      if(
+        is_node_type(d, "Name") &&
+        json_string(json_member(d, "id")) == "staticmethod")
+        return std::string{};
+    }
+  const jsont &args = json_member(funcdef, "args");
+  const jsont &pos = json_member(args, "args");
+  if(!pos.is_array() || as_array(pos).empty())
+    return std::string{};
+  return json_string(json_member(*as_array(pos).begin(), "arg"));
+}
+
 std::string python_convertert::class_name_of_type(const typet &t) const
 {
   std::string tag;
