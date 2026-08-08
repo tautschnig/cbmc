@@ -454,6 +454,22 @@ exprt python_convertert::convert_subscript(const jsont &expr)
               const symbolt *vs = symbol_table.lookup(vid);
               if(vs != nullptr)
               {
+                // PEP 589 optional field: emit the presence-guarded
+                // KeyError obligation. Inside a comprehension the
+                // pending check makes the body IMPURE, so the
+                // closed-form gate rejects and the loud fallback
+                // applies -- sound; the exact treatment (checks at
+                // the representative) is recorded follow-up.
+                const auto &ost = to_struct_type(rb->second.type());
+                const std::string pcomp2 = sv.value + "_present";
+                if(ost.has_component(pcomp2))
+                {
+                  member_exprt parr2{
+                    rb->second, pcomp2, ost.get_component(pcomp2).type()};
+                  emit_conditional_exception(
+                    not_exprt{index_exprt{parr2, vs->symbol_expr()}},
+                    "KeyError");
+                }
                 exprt sel = index_exprt{fd, vs->symbol_expr()};
                 // Handle-typed slots read back as strings.
                 if(is_python_string_handle_type(sel.type()))
@@ -466,10 +482,85 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       }
     }
   }
+  // SPIKE structure-of-arrays row views. The SAFE consumers of a
+  // row xs[i] are (a) the chained field read xs[i]['f'] -- resolved
+  // here to f_data[i] directly, (b) the Name binding r = xs[i]
+  // (intercepted at the assign converters). Any OTHER use of xs[i]
+  // would leak the row's INDEX as a value (the demonstrated pun
+  // false-proof class), so it rejects fail-closed below after the
+  // value converts to an SoA type.
+  {
+    const jsont &val_n = json_member(expr, "value");
+    const jsont &sl_n = json_member(expr, "slice");
+    if(
+      python_smt_containers_flag() && is_node_type(val_n, "Subscript") &&
+      is_node_type(sl_n, "Constant") &&
+      json_member(sl_n, "value").is_string() &&
+      is_node_type(json_member(val_n, "value"), "Name"))
+    {
+      const irep_idt base_id{qualify_name(
+        json_string(json_member(json_member(val_n, "value"), "id")))};
+      const symbolt *base_sym = symbol_table.lookup(base_id);
+      if(base_sym != nullptr && is_soa_list_type(base_sym->type))
+      {
+        const std::string fld = json_member(sl_n, "value").value;
+        exprt fd = soa_field_data(base_sym->symbol_expr(), fld);
+        if(fd.is_not_nil())
+        {
+          exprt idx = convert_expression(json_member(val_n, "slice"));
+          if(!idx.is_nil())
+          {
+            if(idx.type() != signedbv_typet{64})
+              idx = safe_typecast(idx, signedbv_typet{64});
+            // PLR 6.10.2: IndexError obligation on the row read.
+            member_exprt blen{
+              base_sym->symbol_expr(), "length", signedbv_typet{64}};
+            emit_conditional_exception(
+              not_exprt{and_exprt{
+                binary_relation_exprt{
+                  from_integer(0, signedbv_typet{64}), ID_le, idx},
+                binary_relation_exprt{idx, ID_lt, blen}}},
+              "IndexError");
+            // PEP 589: an OPTIONAL field may be absent from this
+            // row -- KeyError obligation guarded by the presence
+            // array (perf-study t5, SoA edition).
+            {
+              const auto &bst = to_struct_type(base_sym->type);
+              const std::string pcomp = fld + "_present";
+              if(bst.has_component(pcomp))
+              {
+                member_exprt parr{
+                  base_sym->symbol_expr(),
+                  pcomp,
+                  bst.get_component(pcomp).type()};
+                emit_conditional_exception(
+                  not_exprt{index_exprt{parr, idx}}, "KeyError");
+              }
+            }
+            exprt sel = index_exprt{fd, idx};
+            if(is_python_string_handle_type(sel.type()))
+              return string_handle_to_string(sel);
+            return sel;
+          }
+        }
+      }
+    }
+  }
   exprt value = convert_expression(json_member(expr, "value"));
 
   if(value.is_nil())
     return nil_exprt{};
+
+  // SPIKE structure-of-arrays: a BARE xs[i] row read outside the
+  // safe consumers (the chained field read arm above; the
+  // r = xs[i] binding at the assign converters) has no value
+  // representation -- reject loudly rather than pun the index (the
+  // demonstrated false-proof class).
+  if(is_soa_list_type(value.type()))
+  {
+    emit_eq_semantics_guard(get_location(expr), "SoA row used as a value");
+    return side_effect_expr_nondett{python_value_type(), get_location(expr)};
+  }
 
   // PLR §6.10: 'TypeError: 'NoneType' object is not
   // subscriptable'. Subscripting None raises TypeError. Set
