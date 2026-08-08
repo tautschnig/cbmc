@@ -223,9 +223,13 @@ python_convertert::infer_return_type_from_body(
               }
             }
             // `return self` → the enclosing class (builder pattern).
+            // The receiver is parameters[0]'s name, whatever it is
+            // (method-self-name family).
             if(
               !enclosing_class.empty() && is_node_type(rv, "Name") &&
-              json_string(json_member(rv, "id")) == "self" &&
+              !parameters.empty() &&
+              json_string(json_member(rv, "id")) ==
+                id2string(parameters[0].get_base_name()) &&
               class_types.count(enclosing_class))
             {
               typet this_type = class_types[enclosing_class];
@@ -910,12 +914,16 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       }
     }
 
-    // PLR §4.2.1: Class instances are passed by reference.
+    // PLR §4.2.1: Class instances are passed by reference. This is
+    // the FREE-FUNCTION path (methods build their receiver
+    // positionally in convert_class_def): a parameter named 'self'
+    // here is an ORDINARY parameter and wraps like any other --
+    // the previous name-keyed exclusion was a receiver-name
+    // confusion (the method-self-name family).
     if(
       param_type.id() == ID_struct &&
       id2string(to_struct_type(param_type).get_tag()).find("python_class_") !=
-        std::string::npos &&
-      param_name != "self")
+        std::string::npos)
     {
       param_type = pointer_type(param_type);
     }
@@ -936,9 +944,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     // packed/freshly-built at the call site, so by-value vs
     // by-reference is moot, and pointer-wrapping them would
     // break the existing pack/unpack logic.
-    if(
-      param_name != "self" &&
-      (is_python_list_type(param_type) || is_python_dict_type(param_type)))
+    if(is_python_list_type(param_type) || is_python_dict_type(param_type))
     {
       param_type = pointer_type(param_type);
     }
@@ -3037,7 +3043,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             !is_node_type(*tgt, "Attribute") ||
             !is_node_type(json_member(*tgt, "value"), "Name") ||
             json_string(json_member(json_member(*tgt, "value"), "id")) !=
-              "self" ||
+              receiver_name_of_def(item) ||
             !is_node_type(*val, "Name"))
             continue;
           auto pp = param_pos.find(json_string(json_member(*val, "id")));
@@ -3379,6 +3385,11 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   };
   for(const jsont *method_node : methods_to_scan)
   {
+    // PLR 3.3: attribute assignments register through the method's
+    // RECEIVER name (first positional parameter), not the literal
+    // 'self' -- `def __init__(s, n): s.n = n` lost every attribute
+    // (method-self-name bug).
+    const std::string scan_recv = receiver_name_of_def(*method_node);
     const jsont &init_body = json_member(*method_node, "body");
     if(init_body.is_array())
     {
@@ -3393,7 +3404,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           const jsont &target_value = json_member(target, "value");
           if(
             !is_node_type(target_value, "Name") ||
-            json_string(json_member(target_value, "id")) != "self")
+            json_string(json_member(target_value, "id")) != scan_recv)
             continue;
 
           std::string attr_name = json_string(json_member(target, "attr"));
@@ -3518,12 +3529,42 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         if(!targets.is_array() || as_array(targets).empty())
           continue;
         const jsont &target = *as_array(targets).begin();
+        // PLR 7.2: a TUPLE target destructures element-wise --
+        // `s.n, s.tag = n, tag` declares BOTH attributes. Register
+        // each receiver-attribute element as python_value (the safe
+        // untyped default; per-element RHS type inference is not
+        // attempted). Previously the scan required a direct
+        // Attribute target and the whole statement was skipped
+        // (k5's compact __init__ lost every attribute).
+        if(is_node_type(target, "Tuple"))
+        {
+          const jsont &telts = json_member(target, "elts");
+          if(telts.is_array())
+            for(const auto &te : as_array(telts))
+            {
+              if(!is_node_type(te, "Attribute"))
+                continue;
+              const jsont &tev = json_member(te, "value");
+              if(
+                !is_node_type(tev, "Name") ||
+                json_string(json_member(tev, "id")) != scan_recv)
+                continue;
+              std::string tattr = json_string(json_member(te, "attr"));
+              typet tat = python_value_type();
+              if(ext_store_punned(tattr, tat))
+                tat = python_value_type();
+              getattr_deletable_override(tattr, tat);
+              if(declared_fields.insert(tattr).second)
+                components.push_back(struct_typet::componentt{tattr, tat});
+            }
+          continue;
+        }
         if(!is_node_type(target, "Attribute"))
           continue;
         const jsont &target_value = json_member(target, "value");
         if(
           !is_node_type(target_value, "Name") ||
-          json_string(json_member(target_value, "id")) != "self")
+          json_string(json_member(target_value, "id")) != scan_recv)
           continue;
 
         std::string attr_name = json_string(json_member(target, "attr"));
@@ -3843,6 +3884,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           json_string(json_member(item, "name")) == "__init__")
         {
           has_init = true;
+          const std::string init_recv = receiver_name_of_def(item);
           const jsont &ib = json_member(item, "body");
           if(ib.is_array())
             for(const auto &s : as_array(ib))
@@ -3859,7 +3901,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                 tgt != nullptr && is_node_type(*tgt, "Attribute") &&
                 is_node_type(json_member(*tgt, "value"), "Name") &&
                 json_string(json_member(json_member(*tgt, "value"), "id")) ==
-                  "self")
+                  init_recv)
                 own_def.insert(json_string(json_member(*tgt, "attr")));
               // super().__init__(...) call as an expression statement.
               const jsont &sv =
@@ -4716,10 +4758,22 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           // (Previously we skipped it, which caused 'Unknown variable:
           // cls' whenever the body actually used it.)
           typet param_type;
-          if(param_name == "self" && !is_staticmethod)
+          // PLR 3.3: the RECEIVER is the FIRST positional parameter
+          // of a non-static method, WHATEVER its name ('self' is a
+          // convention). Keying on the literal name lost attribute
+          // binding entirely for `def get(s): return s.n`
+          // (method-self-name bug, found via k5).
+          if(this_param_pos == 0 && !is_staticmethod)
+          {
             param_type = pointer_typet{class_type, config.ansi_c.pointer_width};
-          else if(param_name == "cls" && is_classmethod)
-            param_type = pointer_typet{class_type, config.ansi_c.pointer_width};
+            // Instance methods only: classmethods receive the CLASS
+            // (cls) -- a different calling convention the map's
+            // consumers (unbound-call prepend, implicit-receiver
+            // signature validation, hof dispatch) must not conflate.
+            if(!is_classmethod)
+              method_receiver_param[class_name + "::" + method_name] =
+                param_name;
+          }
           else
           {
             const jsont &annotation = json_member(param, "annotation");

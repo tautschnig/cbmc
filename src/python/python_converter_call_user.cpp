@@ -68,10 +68,19 @@ bool python_convertert::try_monomorphise_call(
   const code_typet hof_type = to_code_type(hof_sym.type);
   const source_locationt hof_loc = hof_sym.location;
   const auto &hparams = hof_type.parameters();
-  // Methods (first param `self`) dispatch differently; free
-  // functions only here.
-  if(!hparams.empty() && id2string(hparams[0].get_base_name()) == "self")
-    return false;
+  // Methods dispatch differently; free functions only here.
+  // Method-ness comes from the recorded receiver map keyed by the
+  // qualified "Class::method" id (method-self-name family: the old
+  // literal-'self' first-param check missed `def m(s)` methods and
+  // misfired on free functions with a 'self'-named param).
+  {
+    std::string qn = id2string(hof_sym.name);
+    if(qn.rfind("python::", 0) == 0)
+      qn = qn.substr(8);
+    if(method_receiver_param.count(qn) > 0)
+      return false;
+  }
+  (void)hparams;
 
   // Locate the function's FunctionDef AST (top level, or nested one
   // level inside another function/class). We need its body to
@@ -1008,9 +1017,11 @@ exprt python_convertert::convert_user_call(
   // leading `self` parameter as implicitly provided to avoid a spurious
   // "missing self".
   {
-    std::size_t implicit_self =
-      (!params.empty() && id2string(params[0].get_base_name()) == "self") ? 1
-                                                                          : 0;
+    std::string qn2 = id2string(sym->name);
+    if(qn2.rfind("python::", 0) == 0)
+      qn2 = qn2.substr(8);
+    const std::size_t implicit_self =
+      method_receiver_param.count(qn2) > 0 ? 1 : 0;
     validate_call_signature(sym->name, expr, args, implicit_self);
   }
 

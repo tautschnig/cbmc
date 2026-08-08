@@ -743,9 +743,9 @@ void python_convertert::process_imported_module(
                                           : convert_type_annotation(ann);
               // PLR §3.1: mutable containers are passed by reference.
               // Mirror convert_function_def's add_positional.
-              if(
-                pname != "self" &&
-                (is_python_list_type(ptype) || is_python_dict_type(ptype)))
+              // Free-function path: a parameter named 'self' is
+              // ordinary (method-self-name family).
+              if(is_python_list_type(ptype) || is_python_dict_type(ptype))
               {
                 ptype = pointer_type(ptype);
               }
@@ -2779,6 +2779,10 @@ bool python_convertert::convert()
             is_node_type(item, "AsyncFunctionDef"))
             method_order.push_back(json_string(json_member(item, "name")));
         }
+        // Receiver name of the method currently being walked (set
+        // per class item below): `s.helper()` forward-references
+        // exactly like `self.helper()` (method-self-name family).
+        std::string fwd_scan_recv = "self";
         std::function<bool(const jsont &, const std::set<std::string> &)>
           calls_later =
             [&](const jsont &node, const std::set<std::string> &later) -> bool
@@ -2793,7 +2797,7 @@ bool python_convertert::convert()
               const jsont &obj = json_member(fn, "value");
               if(
                 is_node_type(obj, "Name") &&
-                json_string(json_member(obj, "id")) == "self")
+                json_string(json_member(obj, "id")) == fwd_scan_recv)
               {
                 std::string name = json_string(json_member(fn, "attr"));
                 if(later.count(name))
@@ -2848,6 +2852,7 @@ bool python_convertert::convert()
           }
           if(later.empty())
             continue;
+          fwd_scan_recv = receiver_name_of_def(item);
           const jsont &mbody = json_member(item, "body");
           if(mbody.is_array())
           {
@@ -2934,8 +2939,12 @@ bool python_convertert::convert()
             for(const auto &p : as_array(params_arr))
             {
               const std::string pn = json_string(json_member(p, "arg"));
-              const bool is_self = first && pn == "self";
+              // The FIRST positional parameter is the receiver
+              // whatever its name (method-self-name family); this
+              // scan only sees METHOD defs.
+              const bool is_self = first;
               first = false;
+              (void)pn;
               if(!is_self && json_member(p, "annotation").is_null())
                 generic_params.insert(pn);
             }
