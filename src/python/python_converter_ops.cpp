@@ -231,6 +231,27 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         symbol_table.add(s);
       }
       const symbol_exprt lsym = symbol_table.lookup_ref(tid).symbol_expr();
+      // Propagate constant tracking from the snapshotted symbol to
+      // the temp: the temp holds exactly the PRE-call value the
+      // tracking maps describe (the right's side effects may stale
+      // the ORIGINAL name's entries, but not this copy). Without
+      // this, the snapshot orphaned the trackers and the complex-
+      // pow constant fold (and float folds) silently degraded to
+      // nondet -- `z ** complex(0, 1)` lost its closed form
+      // whenever the exponent was an inline call.
+      if(left.id() == ID_symbol)
+      {
+        const irep_idt src = to_symbol_expr(left).get_identifier();
+        auto cli = complex_literals.find(src);
+        if(cli != complex_literals.end())
+          complex_literals[tid] = cli->second;
+        auto fci = float_constants.find(src);
+        if(fci != float_constants.end())
+          float_constants[tid] = fci->second;
+        auto sci = string_constants.find(src);
+        if(sci != string_constants.end())
+          string_constants[tid] = sci->second;
+      }
       pending_checks.push_back(code_frontend_assignt{lsym, left});
       left = lsym;
     }
