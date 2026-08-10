@@ -355,14 +355,24 @@ exprt python_convertert::convert_call(const jsont &expr)
   // invalidate conservatively at every call EXCEPT the read-only
   // builtins the memo exists to serve (len -- itself a Call; without
   // the exemption the memo could never survive to its second use).
-  if(!td_field_read_cache.empty())
+  if(!td_field_read_cache.empty() || !soa_row_view_names.empty())
   {
     const jsont &inv_fn = json_member(expr, "func");
     const bool read_only_builtin =
       is_node_type(inv_fn, "Name") &&
       json_string(json_member(inv_fn, "id")) == "len";
     if(!read_only_builtin)
+    {
       td_field_read_cache.clear();
+      // Row-view bindings freeze an index into the owner's arrays;
+      // the same mutations that stale the memo stale the views.
+      // Erase the BINDING only: the NAME stays in the guard set, so
+      // ANY later use of the dead view stays loud (erasing the name
+      // too would let a bare use pun the index into a value -- e.g.
+      // as a call argument converted after this entry-invalidation).
+      for(const auto &rv : soa_row_view_names)
+        soa_row_bindings.erase(rv);
+    }
   }
 
   const jsont &func = json_member(expr, "func");

@@ -1736,6 +1736,103 @@ codet python_convertert::convert_assign(const jsont &stmt)
     }
   }
 
+  // SPIKE structure-of-arrays row-view binding: `r = xs[i]` where
+  // xs is an SoA list binds r as a ROW INDEX into xs's parallel
+  // field arrays (the exact shape comprehension variables already
+  // use -- soa_row_bindings): `r['f']` resolves to `f_data[r]`,
+  // one array select, no materialized row. The index is FROZEN at
+  // bind time (r is a fresh i64 assigned the normalized index), so
+  // a later `i = i + 1` does not shift the view -- PLR 3.1: r
+  // references the OBJECT, not the expression. Bare-Name escapes
+  // of r loud-reject at convert_name (the index-pun false-proof
+  // class); stores into xs and opaque calls erase the binding
+  // fail-closed alongside the read memo.
+  {
+    const jsont &targets_n = json_member(stmt, "targets");
+    if(
+      python_smt_containers_flag() && targets_n.is_array() &&
+      as_array(targets_n).size() == 1 && is_node_type(value, "Subscript") &&
+      is_node_type(json_member(value, "value"), "Name"))
+    {
+      const jsont &t0 = *as_array(targets_n).begin();
+      const jsont &sl = json_member(value, "slice");
+      const bool str_const_slice =
+        is_node_type(sl, "Constant") && json_member(sl, "value").is_string();
+      if(
+        is_node_type(t0, "Name") && !str_const_slice &&
+        !is_node_type(sl, "Slice"))
+      {
+        const irep_idt base_id{qualify_name(
+          json_string(json_member(json_member(value, "value"), "id")))};
+        const symbolt *base_sym = symbol_table.lookup(base_id);
+        if(base_sym != nullptr && is_soa_list_type(base_sym->type))
+        {
+          exprt idx = convert_expression(sl);
+          if(!idx.is_nil())
+          {
+            const typet len_t = signedbv_typet{64};
+            if(idx.type() != len_t)
+              idx = safe_typecast(idx, len_t);
+            member_exprt blen{base_sym->symbol_expr(), "length", len_t};
+            // PLR 6.10.2: negative index counts from the end;
+            // normalize BEFORE the bounds obligation.
+            if_exprt nidx{
+              binary_relation_exprt{idx, ID_lt, from_integer(0, len_t)},
+              plus_exprt{idx, blen},
+              idx};
+            emit_conditional_exception(
+              not_exprt{and_exprt{
+                binary_relation_exprt{from_integer(0, len_t), ID_le, nidx},
+                binary_relation_exprt{nidx, ID_lt, blen}}},
+              "IndexError");
+            const irep_idt rid{
+              qualify_name(json_string(json_member(t0, "id")))};
+            if(symbol_table.lookup(rid) == nullptr)
+            {
+              symbolt rs{rid, len_t, "python"};
+              rs.base_name = json_string(json_member(t0, "id"));
+              rs.is_lvalue = true;
+              rs.is_state_var = true;
+              rs.is_static_lifetime = current_function.empty();
+              symbol_table.add(rs);
+            }
+            else
+              symbol_table.get_writeable_ref(rid).type = len_t;
+            soa_row_bindings[rid] = base_sym->symbol_expr();
+            soa_row_view_names.insert(rid);
+            alias_targets.erase(rid);
+            invalidate_reassigned_symbol(rid);
+            code_frontend_assignt fa{
+              symbol_table.lookup_ref(rid).symbol_expr(), nidx};
+            fa.add_source_location() = loc;
+            return std::move(fa);
+          }
+        }
+      }
+    }
+  }
+
+  // A row-view NAME reassigned to anything else is a fresh
+  // variable (PLR 4.2: rebinding): drop both the binding and the
+  // guard-set entry BEFORE converting the RHS, so the new value
+  // flows unguarded. (The RHS itself may still read the OLD view
+  // -- then the guard has already fired during its conversion.)
+  {
+    const jsont &targets_rv = json_member(stmt, "targets");
+    if(
+      !soa_row_view_names.empty() && targets_rv.is_array() &&
+      as_array(targets_rv).size() == 1)
+    {
+      const jsont &t0rv = *as_array(targets_rv).begin();
+      if(is_node_type(t0rv, "Name"))
+      {
+        const irep_idt rvid{qualify_name(json_string(json_member(t0rv, "id")))};
+        if(soa_row_view_names.erase(rvid) > 0)
+          soa_row_bindings.erase(rvid);
+      }
+    }
+  }
+
   exprt rhs = convert_expression(value);
   if(rhs.is_nil())
     return code_skipt{};
