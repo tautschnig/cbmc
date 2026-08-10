@@ -6427,6 +6427,42 @@ exprt python_convertert::convert_expression(const jsont &expr)
           {
             ++total;
             exprt ce = convert_expression(elt);
+            // --python-ref-instances identity SETS: a heap-instance
+            // element (converted *ptr) stores its POINTER -- set
+            // membership and dedup then follow object IDENTITY,
+            // which IS the semantics for default-equality classes
+            // (PLR 6.2.6 / 6.10.1). Duplicate same-object elements
+            // dedup by exact-expression equality below (same
+            // symbol); classes with custom __eq__ or non-ref shapes
+            // reject via the eq-semantics guard.
+            if(!class_name_of_type(ce.type()).empty())
+            {
+              const std::string ecls = class_name_of_type(ce.type());
+              if(
+                python_ref_instances_flag() && !class_defines_eq(ecls) &&
+                ce.id() == ID_dereference &&
+                ce.operands()[0].id() == ID_symbol &&
+                ref_instance_locals.count(
+                  to_symbol_expr(ce.operands()[0]).get_identifier()) > 0)
+              {
+                ce = ce.operands()[0];
+                // exact-expr dedup: same pointer symbol = same
+                // object (identity dedup).
+                bool dup = false;
+                for(const auto &u : uniq)
+                  if(u == ce)
+                  {
+                    dup = true;
+                    break;
+                  }
+                if(dup)
+                  continue;
+              }
+              else
+              {
+                emit_eq_semantics_guard(get_location(expr), "set element");
+              }
+            }
             if(!is_python_string_type(ce.type()))
               all_string = false;
             std::optional<std::string> ck = canonical_key(ce);
@@ -6451,13 +6487,28 @@ exprt python_convertert::convert_expression(const jsont &expr)
           // a str element type when every element is a string (unchanged), else
           // use the universal python_value element type (wrap each element).
           const bool as_str = all_string;
-          typet elem_t = as_str ? python_string_type() : python_value_type();
+          // --python-ref-instances identity sets: ALL elements
+          // identity POINTERS -> a pointer-element list (identity
+          // membership/dedup). wrap_value would PUN the pointer into
+          // an INT-tagged python_value.
+          bool all_ptr = !uniq.empty();
+          for(const auto &e : uniq)
+            if(
+              e.type().id() != ID_pointer ||
+              class_name_of_type(to_pointer_type(e.type()).base_type()).empty())
+            {
+              all_ptr = false;
+              break;
+            }
+          typet elem_t = as_str ? typet{python_string_type()}
+                                : (all_ptr ? uniq.front().type()
+                                           : typet{python_value_type()});
           typet list_t = python_list_type(elem_t);
           const auto &list_st = to_struct_type(list_t);
           const auto &data_t = to_array_type(list_st.components()[1].type());
           exprt::operandst ops;
           for(auto &e : uniq)
-            ops.push_back(as_str ? e : wrap_value(e));
+            ops.push_back((as_str || all_ptr) ? e : wrap_value(e));
           struct_exprt se{
             {from_integer((long)uniq.size(), signedbv_typet{64}),
              build_list_data(std::move(ops), data_t)},

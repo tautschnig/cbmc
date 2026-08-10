@@ -179,6 +179,95 @@ exprt python_convertert::python_value_structural_eq(
   return and_exprt{same_tag, std::move(val_eq)};
 }
 
+/// Shared identity evaluation for `is` / `is not` on class
+/// instances (PLR 6.10.3). Returns nil when either operand is not
+/// an instance shape, or when both are by-value locals with
+/// distinct canonicals (the caller's alias-chain constant applies).
+exprt python_convertert::try_instance_identity(
+  const exprt &current_left,
+  const exprt &right,
+  const source_locationt &loc)
+{
+  // An instance operand is EITHER a (deref'd) class struct OR
+  // a bare instance-POINTER symbol (a by-ref param / self,
+  // which convert_name leaves underef'd in value positions).
+  auto inst_ptr_of = [this](const exprt &e) -> exprt
+  {
+    if(
+      e.id() == ID_dereference && e.operands().size() == 1 &&
+      e.operands()[0].id() == ID_symbol)
+      return e.operands()[0];
+    if(
+      e.id() == ID_symbol && e.type().id() == ID_pointer &&
+      !class_name_of_type(to_pointer_type(e.type()).base_type()).empty())
+      return e;
+    return nil_exprt{};
+  };
+  const bool left_is_instance =
+    !class_name_of_type(current_left.type()).empty() ||
+    inst_ptr_of(current_left).is_not_nil();
+  const bool right_is_instance = !class_name_of_type(right.type()).empty() ||
+                                 inst_ptr_of(right).is_not_nil();
+  if(left_is_instance && right_is_instance)
+  {
+    // Tier 1: the alias chain is DEFINITIONAL -- `b = a`
+    // records b's canonical source, so equal canonicals are
+    // the same object regardless of representation (a
+    // promoted alias converts as a POINTER deref, which the
+    // pointer tiers below would have judged nondet).
+    auto is_canon = [this](irep_idt id) -> irep_idt
+    {
+      auto it = alias_targets.find(id);
+      while(it != alias_targets.end())
+      {
+        id = it->second;
+        it = alias_targets.find(id);
+      }
+      return id;
+    };
+    auto is_raw_id = [&](const exprt &e) -> irep_idt
+    {
+      if(e.id() == ID_symbol)
+        return to_symbol_expr(e).get_identifier();
+      if(
+        e.id() == ID_dereference && e.operands().size() == 1 &&
+        e.operands()[0].id() == ID_symbol)
+        return to_symbol_expr(e.operands()[0]).get_identifier();
+      return irep_idt{};
+    };
+    const irep_idt lid0 = is_raw_id(current_left);
+    const irep_idt rid0 = is_raw_id(right);
+    if(!lid0.empty() && !rid0.empty() && is_canon(lid0) == is_canon(rid0))
+    {
+      return true_exprt{};
+    }
+    exprt lptr = inst_ptr_of(current_left);
+    exprt rptr = inst_ptr_of(right);
+    const bool lp = lptr.is_not_nil();
+    const bool rp = rptr.is_not_nil();
+    // Tier 2: both by-reference (deref'd ref-locals/aliases OR
+    // bare pointer params/self) -- POINTER equality is exact
+    // identity (correct for f(a, a) receiver aliasing, and for
+    // a ref-LOCAL compared against a by-ref PARAM).
+    if(lp && rp)
+    {
+      if(lptr.type() != rptr.type())
+        rptr = typecast_exprt{rptr, lptr.type()};
+      return equal_exprt{std::move(lptr), std::move(rptr)};
+    }
+    // Tier 3: mixed pointer-vs-by-value with DISTINCT
+    // canonicals -- statically unknowable, sound NONDET.
+    if(lp != rp)
+    {
+      log_overapprox(
+        "'is' between a by-reference and a by-value instance "
+        "binding: nondeterministic");
+      return side_effect_expr_nondett{bool_typet{}, loc};
+    }
+  }
+  return nil_exprt{};
+}
+
 exprt python_convertert::convert_compare(const jsont &expr)
 {
   exprt left = convert_expression(json_member(expr, "left"));
@@ -2725,6 +2814,20 @@ exprt python_convertert::convert_compare(const jsont &expr)
             to_array_type(
               to_struct_type(container.type()).components()[1].type())
               .element_type();
+          // --python-ref-instances identity elements: pointer-typed
+          // slots compare identities; strip the probe's deref first
+          // (also keeps the eq-guard below from misfiring -- the
+          // pointer IS structurally comparable).
+          if(
+            lelem.id() == ID_pointer && item.id() == ID_dereference &&
+            item.operands()[0].type() == lelem)
+          {
+            item = item.operands()[0];
+            // build_elem_match compares via current_left -- strip it
+            // too, or the scan derefs both sides back to VALUE
+            // equality (equal-fielded distinct objects matched).
+            current_left = item;
+          }
           // python_value items/elements are exempt (tag-aware
           // value_equal: sound-nondet for class tags; no
           // conversion-time fold can match per-instance wraps).
@@ -3521,70 +3624,22 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // pointer-vs-local is statically unknowable -- a sound NONDET
       // (both outcomes explored, never a definite wrong answer).
       {
+        // Identity tiers shared with IsNot (try_instance_identity):
+        // alias-chain definitional TRUE, pointer equality for
+        // by-reference operands, sound nondet for mixed shapes.
+        {
+          exprt idcmp =
+            try_instance_identity(current_left, right, get_location(expr));
+          if(idcmp.is_not_nil())
+          {
+            cmp = std::move(idcmp);
+            goto done_cmp;
+          }
+        }
         const bool left_is_instance =
           !class_name_of_type(current_left.type()).empty();
         const bool right_is_instance =
           !class_name_of_type(right.type()).empty();
-        if(left_is_instance && right_is_instance)
-        {
-          // Tier 1: the alias chain is DEFINITIONAL -- `b = a`
-          // records b's canonical source, so equal canonicals are
-          // the same object regardless of representation (a
-          // promoted alias converts as a POINTER deref, which the
-          // pointer tiers below would have judged nondet).
-          auto is_canon = [this](irep_idt id) -> irep_idt
-          {
-            auto it = alias_targets.find(id);
-            while(it != alias_targets.end())
-            {
-              id = it->second;
-              it = alias_targets.find(id);
-            }
-            return id;
-          };
-          auto is_raw_id = [&](const exprt &e) -> irep_idt
-          {
-            if(e.id() == ID_symbol)
-              return to_symbol_expr(e).get_identifier();
-            if(
-              e.id() == ID_dereference && e.operands().size() == 1 &&
-              e.operands()[0].id() == ID_symbol)
-              return to_symbol_expr(e.operands()[0]).get_identifier();
-            return irep_idt{};
-          };
-          const irep_idt lid0 = is_raw_id(current_left);
-          const irep_idt rid0 = is_raw_id(right);
-          if(!lid0.empty() && !rid0.empty() && is_canon(lid0) == is_canon(rid0))
-          {
-            cmp = true_exprt{};
-            goto done_cmp;
-          }
-          const bool lp = current_left.id() == ID_dereference &&
-                          current_left.operands()[0].id() == ID_symbol;
-          const bool rp = right.id() == ID_dereference &&
-                          right.operands()[0].id() == ID_symbol;
-          // Tier 2: both by-reference -- POINTER equality is exact
-          // identity (correct for f(a, a) receiver aliasing).
-          if(lp && rp)
-          {
-            exprt lptr = current_left.operands()[0];
-            exprt rptr = right.operands()[0];
-            if(lptr.type() != rptr.type())
-              rptr = typecast_exprt{rptr, lptr.type()};
-            cmp = equal_exprt{std::move(lptr), std::move(rptr)};
-            goto done_cmp;
-          }
-          // Tier 3: mixed pointer-vs-by-value with DISTINCT
-          // canonicals -- statically unknowable, sound NONDET.
-          if(lp != rp)
-          {
-            log_overapprox(
-              "'is' between a by-reference and a by-value instance "
-              "binding: nondeterministic");
-            cmp = side_effect_expr_nondett{bool_typet{}, get_location(expr)};
-            goto done_cmp;
-          }
-        }
         if(
           (left_is_instance && right_is_instance) ||
           ((is_python_list_type(current_left.type()) ||
@@ -3650,6 +3705,19 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else if(op == "IsNot")
     {
+      // PLR 6.10.3: `is not` on class instances = NOT the shared
+      // identity tiers (try_instance_identity) -- previously this
+      // arm fell through to VALUE inequality for instances (the
+      // same false-proof family as the Is arm).
+      {
+        exprt idcmp =
+          try_instance_identity(current_left, right, get_location(expr));
+        if(idcmp.is_not_nil())
+        {
+          cmp = not_exprt{std::move(idcmp)};
+          goto done_cmp;
+        }
+      }
       // PLR §6.10.3: "x is not None" checks tag != NONE
       if(
         is_python_value_type(current_left.type()) &&
