@@ -521,6 +521,14 @@ bool python_convertert::python_eq_is_structural(const typet &t) const
     return true;
   if(is_python_string_type(t) || is_python_string_handle_type(t))
     return true;
+  // --python-ref-instances identity keys: a pointer to a class
+  // instance IS the object's identity token -- bit equality is
+  // exactly Python's `is`, which IS the key equality for
+  // default-equality classes (PLR 6.10.1).
+  if(
+    t.id() == ID_pointer &&
+    !class_name_of_type(to_pointer_type(t).base_type()).empty())
+    return true;
   // Tuples: structural iff every component is.
   if(is_python_tuple_type(t))
   {
@@ -955,6 +963,24 @@ std::function<exprt(const exprt &)>
 python_convertert::dict_key_matcher(const exprt &keys, const exprt &key)
 {
   const auto &keys_arr = to_array_type(keys.type());
+  // --python-ref-instances identity keys: pointer-typed key slots
+  // compare by POINTER equality (identity); a probe converted as
+  // *ptr strips to the pointer. Pure terms -- the witness composes.
+  if(keys_arr.element_type().id() == ID_pointer)
+  {
+    exprt probe = key;
+    if(
+      probe.id() == ID_dereference &&
+      probe.operands()[0].type() == keys_arr.element_type())
+      probe = probe.operands()[0];
+    return [probe, keys](const exprt &idx_e) -> exprt
+    {
+      exprt key_i = index_exprt{keys, idx_e};
+      if(key_i.type() != probe.type())
+        return false_exprt{}; // type mismatch: never identical
+      return equal_exprt{std::move(key_i), probe};
+    };
+  }
   const bool keys_are_strings = is_python_string_type(
     python_dict_logical_key_type(keys_arr.element_type()));
   const bool keys_are_values = is_python_value_type(keys_arr.element_type());

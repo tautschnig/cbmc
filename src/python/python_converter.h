@@ -2625,6 +2625,15 @@ private:
   /// sites (name-free; a free function with a class-typed or even
   /// 'self'-named first parameter is not in it).
   std::map<std::string, std::string> method_receiver_param;
+
+  /// --python-ref-instances spike: locals bound by CONSTRUCTION to a
+  /// heap-allocated instance (pointer-to-class type; deref at use
+  /// like promoted aliases). Address = object identity: rebinding
+  /// allocates FRESH (the old object stays live -- exactly Python's
+  /// semantics), so `is`, identity-keyed dicts, and aliasing all
+  /// read off the pointer. NOT in alias_targets (a self-referential
+  /// entry would cycle the canonical walk).
+  std::set<irep_idt> ref_instance_locals;
   bool is_receiver_name(const std::string &name) const
   {
     return name == current_receiver_name;

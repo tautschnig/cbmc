@@ -516,7 +516,10 @@ exprt python_convertert::convert_name(const jsont &expr)
      // pointer or a by-ref instance PARAM (pointer-to-instance but NOT an
      // alias) is untouched -- those are dereferenced at the attribute-access
      // sites, not here.
-     (is_instance_pointer(sym->type) && alias_targets.count(irep_idt{qname}))))
+     (is_instance_pointer(sym->type) &&
+      (alias_targets.count(irep_idt{qname}) ||
+       // --python-ref-instances: heap-constructed instance locals.
+       ref_instance_locals.count(irep_idt{qname})))))
   {
     return dereference_exprt{sym->symbol_expr()};
   }

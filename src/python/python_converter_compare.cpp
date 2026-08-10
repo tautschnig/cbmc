@@ -3554,9 +3554,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
           };
           const irep_idt lid0 = is_raw_id(current_left);
           const irep_idt rid0 = is_raw_id(right);
-          if(
-            !lid0.empty() && !rid0.empty() &&
-            is_canon(lid0) == is_canon(rid0))
+          if(!lid0.empty() && !rid0.empty() && is_canon(lid0) == is_canon(rid0))
           {
             cmp = true_exprt{};
             goto done_cmp;

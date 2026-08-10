@@ -4982,6 +4982,15 @@ exprt python_convertert::coerce_element(
   const exprt &elem,
   const typet &element_type)
 {
+  // --python-ref-instances identity keys: a heap-instance value
+  // (converted as *ptr) flowing into a POINTER-typed slot passes the
+  // POINTER -- the object's identity token (dict keys under the
+  // default-equality identity tier).
+  if(
+    element_type.id() == ID_pointer && elem.id() == ID_dereference &&
+    elem.operands()[0].type() == element_type)
+    return elem.operands()[0];
+
   // A python_value flowing into a STRING-shaped slot (handle,
   // or plain string) unwraps through its STRING denotation. Without this,
   // coerce_to_typed_slot pattern-matches the slot's machine type and

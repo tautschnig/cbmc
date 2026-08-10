@@ -4513,6 +4513,47 @@ exprt python_convertert::build_dict_value(
         break;
       }
     }
+    // --python-ref-instances: DEFAULT-equality class keys under the
+    // flag use IDENTITY = POINTER equality. A key that converts as
+    // the dereference of a heap-instance pointer stores the POINTER
+    // (the object's identity token): lookups compare pointers -- a
+    // PURE term, so the bounded scans, the dedup, and even the
+    // quantified witness compose natively. Rebinding hazards are
+    // gone by construction (rebinding allocates FRESH storage).
+    // Classes WITH __eq__ keep the user-eq dispatch tier below
+    // (PLR 6.10.1: __eq__ overrides identity).
+    if(
+      python_ref_instances_flag() && !key_cls.empty() &&
+      !class_defines_eq(key_cls))
+    {
+      bool all_identity = true;
+      for(auto &p : pairs)
+      {
+        if(
+          p.first.id() == ID_dereference &&
+          p.first.operands()[0].id() == ID_symbol &&
+          ref_instance_locals.count(
+            to_symbol_expr(p.first.operands()[0]).get_identifier()) > 0)
+        {
+          p.first = p.first.operands()[0]; // the pointer IS the key
+        }
+        else
+        {
+          all_identity = false;
+          break;
+        }
+      }
+      if(all_identity)
+      {
+        // The generic constructor path below now sees pointer-typed
+        // keys: plain equality (= identity), canonical_key cannot
+        // merge them (non-constants), the scans compare bits.
+        key_cls.clear();
+      }
+      else
+        emit_eq_semantics_guard(
+          loc, "dict key (identity requires a bound instance)");
+    }
     if(!key_cls.empty())
     {
       if(class_defines_eq(key_cls) && !class_defines_hash(key_cls))
