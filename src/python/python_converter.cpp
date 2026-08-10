@@ -7386,8 +7386,7 @@ exprt python_convertert::string_to_handle(const exprt &str)
       // else-path, so d.get('k') "found" a key the membership said
       // was absent (get_consist, unmasked when :pattern emission
       // made the query terminate). Duplicate assumes are harmless.
-      exprt h_cached =
-        from_integer(it->second, python_string_handle_type());
+      exprt h_cached = from_integer(it->second, python_string_handle_type());
       emit_strtab_axiom(h_cached, str_c);
       return h_cached;
     }
