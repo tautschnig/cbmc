@@ -651,3 +651,26 @@ false-proof risk class this week's audits kept killing (rebinds,
 aliasing, mutation through calls all invalidate it); if attempted
 it must reuse the td_field_read_cache invalidation discipline
 (clear at every possibly-mutating call). Not started.
+
+
+## :pattern trigger spike (2026-08-10): NOT LANDED, verdict recorded
+
+Tried both carriers: a frontend #trigger irep attribute (REJECTED --
+an attribute-held term bypasses symex SSA renaming; the L0 symbols
+crashed smt2_conv's identifier map) and solver-side derivation in
+smt2_conv (the first select indexed by a bound variable, emitted as
+`(! body :pattern (select))` -- syntactically clean, semantics-free).
+
+Empirical verdict on the recorded ceilings: NET WASH. deep17
+(17 stacked membership conjuncts) fell TIMEOUT -> SUCCESSFUL 20s,
+and get_consist terminated (loud) -- but pop/setdefault mutation
+sequences regressed SOLVED -> unknown: a :pattern RESTRICTS
+instantiation to E-matching hits, and Z3's default MBQI-style
+saturation was exactly what solved the mutation chains
+(smt.mbqi=true does not recover it). Blanket emission trades one
+ceiling for another; landing it requires SELECTIVE emission (e.g.
+only on membership-shaped exists, or a per-quantifier frontend
+choice carried INSIDE the formula, not as an attribute), plus the
+cvc5 story re-checked per shape. The revert keeps today's
+behaviour; the derivation patch is trivially reconstructible from
+this record.
