@@ -19,35 +19,15 @@ class OrderedDict(dict):
         return None
 
 
-class defaultdict(dict):
-    """Dict with a default-factory fallback. The real CPython
-    implementation calls ``default_factory()`` on a missing key; for
-    verification we model it as: reads of missing keys return a
-    nondet value of the factory's return type (or nondet int when
-    the factory is unknown)."""
-
-    default_factory = None
-
-    def __init__(self, default_factory=None, *args, **kwargs):
-        self.default_factory = default_factory
-
-    def __missing__(self, key):
-        # When default_factory is int, missing keys map to 0.
-        # When default_factory is list, missing keys map to [].
-        # For arbitrary factories, return None.
-        if self.default_factory is int:
-            return 0
-        if self.default_factory is float:
-            return 0.0
-        if self.default_factory is list:
-            return []
-        if self.default_factory is set:
-            return set()
-        if self.default_factory is dict:
-            return {}
-        if self.default_factory is str:
-            return ""
-        return None
+# NOTE: `defaultdict` is intentionally NOT modelled here. The
+# frontend has an INTRINSIC defaultdict/Counter-factory model
+# (typed factory-zeros on missing-key reads, real dict storage --
+# see defaultdict_factories in the converter); a Python-level
+# `class defaultdict(dict)` SHADOWS that intrinsic (class
+# construction wins over the builtins arm) while providing NO
+# storage or __getitem__ -- reads raised TypeError and the
+# factory-zero semantics (PLR 8.5) silently vanished (the
+# python-defaultdict-counter regression).
 
 
 class Counter(dict):

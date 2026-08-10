@@ -4777,6 +4777,21 @@ codet python_convertert::convert_assign(const jsont &stmt)
     }
     if(is_python_dict_type(typed_rhs.type()))
     {
+      // PLR 8.5: consume the defaultdict-factory hint stashed by
+      // convert_call. This seam previously existed ONLY in
+      // convert_ann_assign -- a PLAIN `d = defaultdict(int)` never
+      // registered the factory, so missing-key reads raised
+      // KeyError instead of returning the factory zero (the
+      // python-defaultdict-counter regression, unmasked when the
+      // library model's storage-less defaultdict class was
+      // removed).
+      if(!pending_defaultdict_factory.empty())
+      {
+        defaultdict_factories[sym.name] = pending_defaultdict_factory;
+        pending_defaultdict_factory.clear();
+      }
+      else
+        defaultdict_factories.erase(sym.name);
       if(typed_rhs.id() == ID_struct)
       {
         dict_literals[sym.name] = typed_rhs;
