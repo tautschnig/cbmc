@@ -13,6 +13,10 @@ c = Counter([1, 2, 3])
 d = defaultdict(int)
 d2 = defaultdict(list)
 
-# Default None-sentinel for unknown factory.
+# No factory: behaves like a plain dict for explicit writes.
+# (CPython: defaultdict().__missing__('x') RAISES KeyError -- the
+# previous `is None` assertion here matched a removed library-model
+# artifact, not Python.)
 d3 = defaultdict()
-assert d3.__missing__("x") is None
+d3["a"] = 42
+assert d3["a"] == 42

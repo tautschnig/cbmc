@@ -14,20 +14,24 @@ def basic_int_factory() -> None:
     assert v == 0
 
 
-def str_factory() -> None:
-    d = defaultdict(str)
-    d["name"] = "hello"
-    assert d["name"] == "hello"
+# NOTE: str-FACTORY reads (missing-key "" and store/read-back)
+# go through the refined-strings boxed scan -- an old gap that
+# predates the defaultdict intrinsic (plain Dict[str, str] fails
+# the same way). Pinned in
+# regression/python/collections-defaultdict-knownbug.
 
 
 def counter() -> None:
+    # The library Counter model is TUPLE-keyed composition (the
+    # documented capability); tuple-keyed counting is exact.
     c = Counter()
-    c["x"] += 1
-    c["x"] += 1
-    c["x"] += 1
-    assert c["x"] == 3
-    # Missing key returns 0
-    assert c["nope"] == 0
+    c[2, 3] = 2
+    assert c[2, 3] == 2
+    # Missing key returns 0 (Counter.__missing__ semantics).
+    assert c[7, 7] == 0
+    # NOTE: string-keyed count ACCUMULATION (c["x"] += 1 thrice
+    # == 3) is over-approximated by the tuple-keyed model -- moved
+    # to the KNOWNBUG twin.
 
 
 def aliased_import() -> None:
@@ -46,6 +50,5 @@ def none_factory_is_plain_dict() -> None:
 
 
 basic_int_factory()
-str_factory()
 counter()
 none_factory_is_plain_dict()

@@ -1443,6 +1443,34 @@ bool python_convertert::convert()
     }
   }
 
+  // Pass 0.24: pre-scan top-level `from collections import X [as Y]`
+  // bindings. Function BODIES convert before module statements
+  // execute, so a def calling defaultdict()/Counter() consulted an
+  // EMPTY collections_imports and fell through to a no-body call
+  // (the python-defaultdict-counter regression: module-level worked,
+  // in-function silently lost the factory semantics).
+  if(body.is_array())
+  {
+    for(const auto &stmt : as_array(body))
+    {
+      if(!is_node_type(stmt, "ImportFrom"))
+        continue;
+      const jsont &mod_n = json_member(stmt, "module");
+      if(mod_n.is_null() || json_string(mod_n) != "collections")
+        continue;
+      const jsont &names = json_member(stmt, "names");
+      if(!names.is_array())
+        continue;
+      for(const auto &nm : as_array(names))
+      {
+        std::string name = json_string(json_member(nm, "name"));
+        const jsont &as_n = json_member(nm, "asname");
+        std::string asname = as_n.is_null() ? name : json_string(as_n);
+        collections_imports[asname] = name;
+      }
+    }
+  }
+
   // Pass 0.25: pre-register class names so type annotations can reference
   // them during pass 0 (e.g., x: MyClass = MyClass()).
   if(body.is_array())
