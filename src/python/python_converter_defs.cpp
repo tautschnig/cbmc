@@ -1210,6 +1210,70 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     }
     if(!is_none_annotation)
       annotated_return_functions.insert(qualified_func_name);
+    // --python-ref-instances: provable-freshness scan. Every Return
+    // value a direct constructor call of ONE class => the result is
+    // a fresh object on every path (see function_returns_fresh).
+    if(python_ref_instances_flag())
+    {
+      std::string fresh_cls;
+      bool all_fresh = false;
+      std::function<void(const jsont &)> scan_rets = [&](const jsont &b) -> void
+      {
+        if(!b.is_array())
+          return;
+        for(const auto &st : as_array(b))
+        {
+          if(is_node_type(st, "Return"))
+          {
+            const jsont &rv = json_member(st, "value");
+            std::string c;
+            if(
+              is_node_type(rv, "Call") &&
+              is_node_type(json_member(rv, "func"), "Name"))
+            {
+              const std::string cn =
+                json_string(json_member(json_member(rv, "func"), "id"));
+              if(class_types.count(cn))
+                c = cn;
+            }
+            if(c.empty() || (!fresh_cls.empty() && fresh_cls != c))
+            {
+              fresh_cls.clear();
+              all_fresh = false;
+              return;
+            }
+            fresh_cls = c;
+            all_fresh = true;
+          }
+          for(const char *k : {"body", "orelse", "finalbody"})
+          {
+            const jsont &sub = json_member(st, k);
+            if(sub.is_array())
+              scan_rets(sub);
+          }
+          const jsont &handlers = json_member(st, "handlers");
+          if(handlers.is_array())
+            for(const auto &h : as_array(handlers))
+              scan_rets(json_member(h, "body"));
+        }
+      };
+      scan_rets(json_member(stmt, "body"));
+      // The IMPLICIT fall-through returns None -- re-boxing a
+      // None-coerced value would hide the None behind a "valid"
+      // object pointer (a `k is None` false proof). Conservative
+      // no-fall-through gate: the last top-level body statement must
+      // itself be a Return (conditional EARLY returns stay fresh;
+      // a trailing if-return shape disqualifies).
+      if(all_fresh && !fresh_cls.empty())
+      {
+        const jsont &fb = json_member(stmt, "body");
+        const bool ends_with_return =
+          fb.is_array() && !as_array(fb).empty() &&
+          is_node_type(*std::prev(as_array(fb).end()), "Return");
+        if(ends_with_return)
+          function_returns_fresh[qualified_func_name] = fresh_cls;
+      }
+    }
     // If the annotation is a concrete (non-python_value) type but some return
     // path GENUINELY yields a python_value VALUE (`return <union/Any param>`),
     // WIDEN the return slot to python_value. Otherwise that path's python_value

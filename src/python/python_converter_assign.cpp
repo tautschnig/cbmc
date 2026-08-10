@@ -1755,6 +1755,54 @@ codet python_convertert::convert_assign(const jsont &stmt)
         note_mutable_extraction(tid0, rhs, value);
         // SPIKE structure-of-arrays provenance.
         record_soa_provenance(tid0, value);
+        // --python-ref-instances return-flow identity: the RHS is a
+        // call to a PROVABLY-FRESH factory (every return a direct
+        // constructor call) returning a class struct -- re-box the
+        // result into heap identity storage and bind the target as
+        // a pointer local. Sound exactly because the callee's own
+        // object is unobservable (no reference escapes); functions
+        // returning params/fields are NOT in the map and keep the
+        // by-value copy (their identity story needs the callee-side
+        // pointer return, recorded follow-up).
+        if(
+          python_ref_instances_flag() && is_node_type(value, "Call") &&
+          is_node_type(json_member(value, "func"), "Name") &&
+          !class_name_of_type(rhs.type()).empty())
+        {
+          auto fr = function_returns_fresh.find(
+            json_string(json_member(json_member(value, "func"), "id")));
+          if(
+            fr != function_returns_fresh.end() &&
+            fr->second == class_name_of_type(rhs.type()))
+          {
+            const pointer_typet ptr_t{rhs.type(), 64};
+            if(symbol_table.lookup(tid0) == nullptr)
+            {
+              symbolt bs{tid0, ptr_t, "python"};
+              bs.base_name = json_string(json_member(t0, "id"));
+              bs.is_lvalue = true;
+              bs.is_state_var = true;
+              bs.is_static_lifetime = current_function.empty();
+              symbol_table.add(bs);
+            }
+            else
+              symbol_table.get_writeable_ref(tid0).type = ptr_t;
+            ref_instance_locals.insert(tid0);
+            alias_targets.erase(tid0);
+            invalidate_reassigned_symbol(tid0);
+            symbol_exprt psym = symbol_table.lookup_ref(tid0).symbol_expr();
+            namespacet ns_rf{symbol_table};
+            exprt osize = from_integer(
+              pointer_offset_size(rhs.type(), ns_rf).value_or(16), size_type());
+            side_effect_exprt oalloc{
+              ID_allocate, {osize, false_exprt{}}, ptr_t, loc};
+            code_blockt blk;
+            blk.add(code_frontend_assignt{psym, std::move(oalloc)});
+            blk.add(code_frontend_assignt{dereference_exprt{psym}, rhs});
+            blk.add_source_location() = loc;
+            return std::move(blk);
+          }
+        }
       }
     }
   }

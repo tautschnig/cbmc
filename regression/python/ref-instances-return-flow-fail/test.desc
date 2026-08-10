@@ -1,0 +1,8 @@
+CORE
+main.py
+--z3 --python-ref-instances
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--

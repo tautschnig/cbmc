@@ -2606,6 +2606,13 @@ private:
   /// containers) -- every equality-consuming encoding must reject or
   /// fall back for those (the __eq__ soundness audit).
   bool python_eq_is_structural(const typet &t) const;
+  /// Shared `is`/`is not` identity tiers for class instances
+  /// (alias-chain / pointer equality / sound nondet); nil when
+  /// inapplicable.
+  exprt try_instance_identity(
+    const exprt &current_left,
+    const exprt &right,
+    const source_locationt &loc);
   /// PLR 3.3: the instance RECEIVER of a method is its FIRST
   /// positional parameter, whatever its name -- `self` is a
   /// convention, not syntax. These helpers replace the ~20 literal
@@ -2634,6 +2641,15 @@ private:
   /// read off the pointer. NOT in alias_targets (a self-referential
   /// entry would cycle the canonical walk).
   std::set<irep_idt> ref_instance_locals;
+  /// Functions whose EVERY return statement is a direct constructor
+  /// call `return C(...)` (AST-scanned at def conversion): their
+  /// results are provably FRESH objects, so the caller may re-box
+  /// them into heap identity storage under --python-ref-instances
+  /// (the callee's own object is unobservable -- no reference
+  /// escapes -- so the re-box preserves ALL observable identity
+  /// facts; a function returning a param/field/alias is NOT fresh
+  /// and must not be re-boxed, else f(v) is v would break).
+  std::map<std::string, std::string> function_returns_fresh;
   bool is_receiver_name(const std::string &name) const
   {
     return name == current_receiver_name;
