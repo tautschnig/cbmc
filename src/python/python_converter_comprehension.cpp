@@ -311,10 +311,19 @@ exprt python_convertert::try_soa_map(
     else
       symbol_table.get_writeable_ref(var_id).type = len_t;
     symbol_exprt var = symbol_table.lookup_ref(var_id).symbol_expr();
+    // A PERSISTENT row view (r = xs[i]) may share the variable
+    // name; save and restore it around the comprehension binding.
+    std::optional<exprt> saved_rv;
+    auto srv_it = soa_row_bindings.find(var_id);
+    if(srv_it != soa_row_bindings.end())
+      saved_rv = srv_it->second;
     soa_row_bindings[var_id] = iter_val;
     const std::size_t pc_before2 = pending_checks.size();
     exprt elt_val = convert_expression(elt);
-    soa_row_bindings.erase(var_id);
+    if(saved_rv.has_value())
+      soa_row_bindings[var_id] = *saved_rv;
+    else
+      soa_row_bindings.erase(var_id);
     // ESCAPE GATE: the row variable is an INDEX pun -- sound
     // ONLY while every occurrence is as the index of a select
     // into THIS SoA list's field arrays (the subscript hook's

@@ -6200,6 +6200,14 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
     is_node_type(json_member(stmt, "value"), "Call"))
   {
     td_field_read_cache.clear();
+    // Row-view bindings freeze an index into the owner's arrays;
+    // the same mutations that stale the memo stale the views.
+    // Erase the BINDING only: the NAME stays in the guard set, so
+    // ANY later use of the dead view stays loud (erasing the name
+    // too would let a bare use pun the index into a value -- e.g.
+    // as a call argument converted after this entry-invalidation).
+    for(const auto &rv : soa_row_view_names)
+      soa_row_bindings.erase(rv);
   }
 
   // Expression statement (e.g., function call as statement)

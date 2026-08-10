@@ -524,5 +524,24 @@ exprt python_convertert::convert_name(const jsont &expr)
     return dereference_exprt{sym->symbol_expr()};
   }
 
+  // SPIKE structure-of-arrays row views: a BARE read of a
+  // row-view name (`r = xs[i]` binding) outside the subscript
+  // hook would leak the row INDEX as the element VALUE (the
+  // demonstrated pun false-proof class: rows[0] == 0 "verified").
+  // The subscript hook consumes r via soa_row_bindings BEFORE
+  // name conversion, so reaching here IS the escape. Fail closed.
+  if(soa_row_view_names.count(irep_idt{qname}))
+  {
+    source_locationt aloc = get_location(expr);
+    aloc.set_property_class("python-model-limitation");
+    aloc.set_comment(
+      "SoA row view '" + id +
+      "' used outside a field subscript (r['f']): not encoded, "
+      "rejected (fail-closed)");
+    code_assertt guard{false_exprt{}};
+    guard.add_source_location() = aloc;
+    pending_checks.push_back(std::move(guard));
+  }
+
   return sym->symbol_expr();
 }

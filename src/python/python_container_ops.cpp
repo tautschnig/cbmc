@@ -1100,6 +1100,14 @@ void python_convertert::emit_dict_store(
   // Any dict store invalidates the TypedDict-field read memo
   // (conservative: the memo only serves the SoA provenance hooks).
   td_field_read_cache.clear();
+  // Row-view bindings freeze an index into the owner's arrays;
+  // the same mutations that stale the memo stale the views.
+  // Erase the BINDING only: the NAME stays in the guard set, so
+  // ANY later use of the dead view stays loud (erasing the name
+  // too would let a bare use pun the index into a value -- e.g.
+  // as a call argument converted after this entry-invalidation).
+  for(const auto &rv : soa_row_view_names)
+    soa_row_bindings.erase(rv);
 
   const typet len_t = signedbv_typet{64};
   // Fresh found flag (shared by both encodings).

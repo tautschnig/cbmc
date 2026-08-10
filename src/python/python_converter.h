@@ -2747,6 +2747,12 @@ private:
   /// -> the owning SoA list EXPRESSION. While bound, the variable is
   /// index-typed and subscripts resolve through the owner.
   std::map<irep_idt, exprt> soa_row_bindings;
+  /// Row-view NAMES bound by `r = xs[i]` (a subset of
+  /// soa_row_bindings' keys): a BARE read of such a name outside
+  /// the subscript hook is the index-pun escape -- loud-rejected
+  /// at convert_name. Comprehension row vars are NOT in this set
+  /// (their occurs-check gate covers escapes).
+  std::set<irep_idt> soa_row_view_names;
 
   /// d[k] = v as one choke point: REPLACE the present key's value,
   /// INSERT an absent key (PLR 6.4.6, last-writer-wins with
