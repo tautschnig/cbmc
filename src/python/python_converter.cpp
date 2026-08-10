@@ -7378,7 +7378,19 @@ exprt python_convertert::string_to_handle(const exprt &str)
     const std::string text = id2string(to_constant_expr(str_c).get_value());
     auto it = string_intern_ids.find(text);
     if(it != string_intern_ids.end())
-      return from_integer(it->second, python_string_handle_type());
+    {
+      // Re-emit the definitional axiom at EVERY use: the emission
+      // lands in the CURRENT statement's path, and a once-only
+      // axiom cached from a use inside one branch left the OTHER
+      // branch's reads unconstrained -- strtab(id) was "" on the
+      // else-path, so d.get('k') "found" a key the membership said
+      // was absent (get_consist, unmasked when :pattern emission
+      // made the query terminate). Duplicate assumes are harmless.
+      exprt h_cached =
+        from_integer(it->second, python_string_handle_type());
+      emit_strtab_axiom(h_cached, str_c);
+      return h_cached;
+    }
     const long long id = static_cast<long long>(string_intern_ids.size()) + 1;
     string_intern_ids[text] = id;
     python_string_intern_reverse()[id] = text;
