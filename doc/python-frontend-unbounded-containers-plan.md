@@ -703,3 +703,30 @@ returning params/fields need the return-slot representation change
 index binding + escape guard + rebind/merge discipline) are
 DEFERRED to a fresh session -- both need unhurried multi-site
 surgery; design notes stand in the respective plan sections.
+
+
+## SoA row-view bindings LANDED (2026-08-10)
+
+`r = xs[i]` binds r as a persistent ROW INDEX (the comprehension
+shape made statement-durable): frozen normalized index at bind time
+(negative indices per PLR 6.10.2), field reads through the existing
+subscript hook, bare-use escapes loud-fail at convert_name, and the
+memo invalidation choke points erase the BINDING while KEEPING the
+name guarded (a dead view stays loud; rebinding clears both).
+Remaining SoA items: nested container fields, exact optional-field
+comprehensions (presence at the representative), merge-safe
+provenance.
+
+## regression/cbmc python-* root-cause batch (2026-08-10)
+
+All four inherited failures resolved: two were CPython-FALSE test
+expectations (27**(2/3) != 9.0; all(1 % x) over a list containing 1
+-- cbmc's FAILED verdicts were correct); python-defaultdict-counter
+was the 06-01 library-model defaultdict class shadowing the
+intrinsic (removed; plain-assign consume seam + Pass 0.24 import
+pre-scan added; residual str-value read-back and string-keyed
+Counter accumulation pinned in collections-defaultdict-knownbug);
+python-complex-pow was the PLR 6.16 binop LHS snapshot orphaning
+constant tracking (entries now propagate to the temp). The core
+cbmc suite is fully green again. Consider moving python-* tests
+into regression/python so the standard gate covers them.
