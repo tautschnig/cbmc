@@ -14,6 +14,7 @@
 #include <util/ieee_float.h>
 #include <util/json.h>
 #include <util/pointer_expr.h>
+#include <util/pointer_offset_size.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
@@ -557,6 +558,41 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     (rhs.type().id() == ID_struct_tag &&
      id2string(to_struct_tag_type(rhs.type()).get_identifier())
          .find("python_class_") != std::string::npos);
+  // --python-ref-instances: `b = a` where `a` is a heap-constructed
+  // instance local converts as *a (a dereference). Alias = plain
+  // POINTER COPY into a pointer-typed b -- identity, mutation
+  // visibility, and rebinding independence all follow from the
+  // representation, no promotion machinery needed.
+  if(
+    python_ref_instances_flag() && rhs_is_direct_name &&
+    rhs.id() == ID_dereference && rhs.operands()[0].id() == ID_symbol &&
+    ref_instance_locals.count(
+      to_symbol_expr(rhs.operands()[0]).get_identifier()) > 0)
+  {
+    const symbol_exprt src_ptr = to_symbol_expr(rhs.operands()[0]);
+    const irep_idt tgt_id{qualify_name(json_string(
+      json_member(*as_array(json_member(stmt, "targets")).begin(), "id")))};
+    if(symbol_table.lookup(tgt_id) == nullptr)
+    {
+      symbolt bs{tgt_id, src_ptr.type(), "python"};
+      bs.base_name = id2string(tgt_id).substr(
+        id2string(tgt_id).rfind("::") == std::string::npos
+          ? 8
+          : id2string(tgt_id).rfind("::") + 2);
+      bs.is_lvalue = true;
+      bs.is_state_var = true;
+      bs.is_static_lifetime = current_function.empty();
+      symbol_table.add(bs);
+    }
+    else
+      symbol_table.get_writeable_ref(tgt_id).type = src_ptr.type();
+    ref_instance_locals.insert(tgt_id);
+    alias_targets.erase(tgt_id);
+    code_frontend_assignt pa{
+      symbol_table.lookup_ref(tgt_id).symbol_expr(), src_ptr};
+    pa.add_source_location() = loc;
+    return std::move(pa);
+  }
   if(
     rhs_is_direct_name && rhs.id() == ID_symbol &&
     (is_python_list_type(rhs.type()) || is_python_dict_type(rhs.type()) ||
@@ -1370,6 +1406,35 @@ codet python_convertert::convert_assign(const jsont &stmt)
       {
         irep_idt lhs_id{qualify_name(lhs_name)};
         irep_idt rhs_id{qualify_name(rhs_name)};
+        // --python-ref-instances: the source is a heap-constructed
+        // instance local (pointer-typed) -- the alias is a plain
+        // POINTER COPY; identity, mutation visibility, and
+        // rebinding independence follow from the representation.
+        if(
+          python_ref_instances_flag() && lhs_id != rhs_id &&
+          ref_instance_locals.count(rhs_id) > 0)
+        {
+          const symbolt &src_sym = symbol_table.lookup_ref(rhs_id);
+          if(symbol_table.lookup(lhs_id) == nullptr)
+          {
+            symbolt bs{lhs_id, src_sym.type, "python"};
+            bs.base_name = lhs_name;
+            bs.is_lvalue = true;
+            bs.is_state_var = true;
+            bs.is_static_lifetime = current_function.empty();
+            symbol_table.add(bs);
+          }
+          else
+            symbol_table.get_writeable_ref(lhs_id).type = src_sym.type;
+          ref_instance_locals.insert(lhs_id);
+          alias_targets.erase(lhs_id);
+          invalidate_reassigned_symbol(lhs_id);
+          code_frontend_assignt pa{
+            symbol_table.lookup_ref(lhs_id).symbol_expr(),
+            src_sym.symbol_expr()};
+          pa.add_source_location() = loc;
+          return std::move(pa);
+        }
         // Walk the rhs side to find the canonical source.
         auto it = alias_targets.find(rhs_id);
         irep_idt target_id = (it != alias_targets.end()) ? it->second : rhs_id;
@@ -1630,6 +1695,33 @@ codet python_convertert::convert_assign(const jsont &stmt)
                         << resolved_var_type.id_string()
                         << "'; class state will not be tracked precisely."
                         << messaget::eom;
+        }
+
+        // --python-ref-instances spike: construction allocates the
+        // instance on the HEAP and binds the local as a POINTER
+        // (deref at use). Address = identity; REBINDING allocates
+        // fresh and repoints -- the old object stays live through
+        // other references, exactly PLR 3.1. Enables pointer-
+        // equality identity (`is`, identity-keyed dicts).
+        if(python_ref_instances_flag())
+        {
+          const pointer_typet ptr_t{cls_type, 64};
+          if(symbol_table.lookup_ref(symbol_id).type != ptr_t)
+            symbol_table.get_writeable_ref(symbol_id).type = ptr_t;
+          alias_targets.erase(symbol_id);
+          ref_instance_locals.insert(symbol_id);
+          symbol_exprt psym = symbol_table.lookup_ref(symbol_id).symbol_expr();
+          namespacet ns_ri{symbol_table};
+          exprt osize = from_integer(
+            pointer_offset_size(cls_type, ns_ri).value_or(16), size_type());
+          side_effect_exprt oalloc{
+            ID_allocate, {osize, false_exprt{}}, ptr_t, loc};
+          result.add(code_frontend_assignt{psym, std::move(oalloc)});
+          dereference_exprt obj{psym};
+          for(auto &s :
+              build_class_construction(call_name, std::move(obj), value, loc))
+            result.add(std::move(s));
+          return std::move(result);
         }
 
         // Construct: __init__ call, or @dataclass field binding.
