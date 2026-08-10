@@ -14,9 +14,11 @@ def all_empty_div() -> None:
 
 
 def all_with_zeros() -> None:
-    # When the list actually contains 0, the ZeroDivisionError
-    # IS legitimate and must still be detected.
-    xs = [1, 2, 3]
+    # CPython: 1 % 1 == 0 is FALSY, so all() over [1, 2, 3] is
+    # False and the bare assert would raise -- the original test
+    # asserted a CPython-false fact. Use divisors > 1 (all
+    # remainders truthy, no ZeroDivisionError).
+    xs = [2, 3, 4]
     assert all(1 % x for x in xs)
 
 
