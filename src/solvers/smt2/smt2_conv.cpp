@@ -2827,7 +2827,50 @@ void smt2_convt::convert_expr(const exprt &expr)
     }
     out << ") ";
 
+    // Instantiation trigger for EXISTS only (E-matching hint):
+    // derived from the body -- the first array select indexed by a
+    // bound variable -- and emitted as the semantics-free
+    // `(! body :pattern (select))`. EXISTS-membership shapes
+    // (x in xs, dict-key presence) are goal-directed and E-matching
+    // closes their stacked-conjunct ceilings (17 memberships:
+    // TIMEOUT -> 20s); FORALL witness/minimality encodings need
+    // Z3's saturation, which a pattern RESTRICTS (pop/setdefault
+    // chains regressed under blanket emission) -- so foralls stay
+    // unannotated. Derived HERE (not a frontend attribute): an
+    // attribute-held term bypasses symex SSA renaming.
+    exprt trigger = nil_exprt{};
+    if(quantifier_expr.id() == ID_exists)
+    {
+      std::function<void(const exprt &)> find_trig = [&](const exprt &e) -> void
+      {
+        if(trigger.is_not_nil())
+          return;
+        if(e.id() == ID_index)
+        {
+          const exprt &ix = to_index_expr(e).index();
+          for(const auto &bound : quantifier_expr.variables())
+            if(ix == bound)
+            {
+              trigger = e;
+              return;
+            }
+        }
+        for(const auto &op : e.operands())
+          find_trig(op);
+      };
+      find_trig(quantifier_expr.where());
+    }
+    if(trigger.is_not_nil())
+      out << "(! ";
+
     convert_expr(quantifier_expr.where());
+
+    if(trigger.is_not_nil())
+    {
+      out << " :pattern (";
+      convert_expr(trigger);
+      out << "))";
+    }
 
     out << ')';
   }
