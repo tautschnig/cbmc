@@ -479,3 +479,21 @@ once the param's deref shape is recognised alongside the local's).
 Productisation = extending ref_instance_locals coverage to those
 positions, then re-assessing the perf re-spike's == precision cost
 with the identity representation as the default.
+
+
+## Callee-side pointer returns LANDED (2026-08-10)
+
+The return slot was the LAST by-value boundary under the flag
+(params, locals, Phase-3 fields all pointers). A method whose every
+Return is `self.<attr>` of ONE pointer-typed field now returns the
+POINTER (maybe_pointer_field_return, shared by the free-function
+and method def paths; same no-fall-through gate as the freshness
+scan). The pointer TYPE of the slot is the caller-side signal: any
+pointer-to-instance call result binds the target as a ref local via
+plain pointer copy; chained attribute / `is` / arg-passing forms
+compose through the existing deref seams. Param-passthrough
+(`return t`) was probed already correct. REMAINDER (recorded):
+owned-field construction identity (`self.x = Inner(1)`; two gets
+returning the same object) still loud-fails -- that is the Phase-3
+field-STORE-identity item (heap-allocate fresh constructions stored
+into fields), not a return-path issue.
