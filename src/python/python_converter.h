@@ -2622,6 +2622,10 @@ private:
   /// name; empty for @staticmethod or no-arg defs). Usable in
   /// pre-pass scans that walk class bodies.
   std::string receiver_name_of_def(const jsont &funcdef) const;
+  void maybe_pointer_field_return(
+    const jsont &funcdef,
+    const std::string &cls_name,
+    typet &return_type);
   /// The receiver name of the method whose body is currently being
   /// converted ("self" outside method bodies -- free functions have
   /// no receiver and the default keeps non-method comparisons
