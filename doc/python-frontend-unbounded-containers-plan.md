@@ -674,3 +674,32 @@ choice carried INSIDE the formula, not as an attribute), plus the
 cvc5 story re-checked per shape. The revert keeps today's
 behaviour; the derivation patch is trivially reconstructible from
 this record.
+
+
+## Selective :pattern LANDED (2026-08-10); axiom-path fix; spikes B/C deferred
+
+The exists-only selector resolves the blanket-emission wash:
+EXISTS bodies (goal-directed membership) get the E-matching hint --
+deep17 TIMEOUT -> ~20s, the four-witness get/membership consistency
+query terminates; FORALL witnesses stay unannotated (saturation
+solves the mutation chains). Landing this UNMASKED a real axiom
+bug: once-per-intern strtab axioms were path-local to the first
+interning branch (strtab(id) = "" on the other path -- encodings of
+the same lookup disagreed); axioms now re-emit at every use.
+
+NOTE: regression/cbmc carries FOUR failing python-* tests
+(python-complex-pow, python-defaultdict-counter,
+python-genexp-length-guard, python-power-fractional) -- all four
+verified failing at cfc42d853ce~1, i.e. they PRE-DATE the entire
+perf-study line and everything after it; not introduced here.
+Worth a dedicated root-cause session (they are python tests living
+in the cbmc suite, so the python-suite gate never covers them --
+consider MOVING them into regression/python so the standard gate
+catches regressions).
+
+Spikes B (callee-side pointer returns: non-fresh factories
+returning params/fields need the return-slot representation change
++ call-site coordination) and C (SoA row-view bindings r = xs[i]:
+index binding + escape guard + rebind/merge discipline) are
+DEFERRED to a fresh session -- both need unhurried multi-site
+surgery; design notes stand in the respective plan sections.
