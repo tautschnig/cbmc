@@ -1,0 +1,10 @@
+THOROUGH
+main.py
+--unwind 6 --python-smt-containers --python-smt-strings --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+~135s on z3 (four lookup witnesses over one key); THOROUGH keeps it
+out of the CI fast path while pinning the else-branch axiom.
