@@ -234,9 +234,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
     // directly. ==/!= lower to (= s t); ordering routes through compare_to
     // (lowered to str.< in smt2_conv). Bypasses the refined struct path.
     if(
-      use_smt_string_native &&
-      (op == "Eq" || op == "NotEq" || op == "Lt" || op == "LtE" || op == "Gt" ||
-       op == "GtE"))
+      use_smt_string_native && (op == "Eq" || op == "NotEq" || op == "Lt" ||
+                                op == "LtE" || op == "Gt" || op == "GtE"))
     {
       // Allow one side to be a python_value carrying a string (e.g. an
       // untyped class attribute): unwrap its __str slot and, for equality,
@@ -2636,8 +2635,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
             const symbolt *cs = symbol_table.lookup(irep_idt{prefix});
             if(cs != nullptr)
             {
-              exprt::operandst contains_args{
-                address_of_exprt{container}, item};
+              exprt::operandst contains_args{address_of_exprt{container}, item};
               coerce_call_args(cs->type, contains_args);
               side_effect_expr_function_callt call{
                 cs->symbol_expr(),
@@ -2698,17 +2696,18 @@ exprt python_convertert::convert_compare(const jsont &expr)
         }
         else
         {
-        exprt shifted_item = item;
-        if(shifted_item.type() != signedbv_typet{64})
-          shifted_item = safe_typecast(shifted_item, signedbv_typet{64});
-        // Cast to unsigned for shift
-        exprt shift_amount = typecast_exprt{shifted_item, unsignedbv_typet{64}};
-        exprt shifted = lshr_exprt{bm, shift_amount};
-        exprt bit =
-          bitand_exprt{shifted, from_integer(1, unsignedbv_typet{64})};
-        exprt in_set =
-          notequal_exprt{bit, from_integer(0, unsignedbv_typet{64})};
-        cmp = (op == "In") ? in_set : exprt{not_exprt{in_set}};
+          exprt shifted_item = item;
+          if(shifted_item.type() != signedbv_typet{64})
+            shifted_item = safe_typecast(shifted_item, signedbv_typet{64});
+          // Cast to unsigned for shift
+          exprt shift_amount =
+            typecast_exprt{shifted_item, unsignedbv_typet{64}};
+          exprt shifted = lshr_exprt{bm, shift_amount};
+          exprt bit =
+            bitand_exprt{shifted, from_integer(1, unsignedbv_typet{64})};
+          exprt in_set =
+            notequal_exprt{bit, from_integer(0, unsignedbv_typet{64})};
+          cmp = (op == "In") ? in_set : exprt{not_exprt{in_set}};
         }
       }
       // x in lst → disjunction: lst.data[0]==x or lst.data[1]==x or ...
@@ -2722,19 +2721,20 @@ exprt python_convertert::convert_compare(const jsont &expr)
         // CPython's identity-eq says False), the runtime scans, the
         // quantified lifts -- compares structurally. Reject loudly.
         {
-        const typet &lelem =
-          to_array_type(to_struct_type(container.type()).components()[1].type())
-            .element_type();
-        // python_value items/elements are exempt (tag-aware
-        // value_equal: sound-nondet for class tags; no
-        // conversion-time fold can match per-instance wraps).
-        if(
-          (!python_eq_is_structural(item.type()) &&
-           !is_python_value_type(item.type())) ||
-          (!python_eq_is_structural(lelem) && !is_python_value_type(lelem)))
-        {
-          emit_eq_semantics_guard(get_location(expr), "list membership");
-        }
+          const typet &lelem =
+            to_array_type(
+              to_struct_type(container.type()).components()[1].type())
+              .element_type();
+          // python_value items/elements are exempt (tag-aware
+          // value_equal: sound-nondet for class tags; no
+          // conversion-time fold can match per-instance wraps).
+          if(
+            (!python_eq_is_structural(item.type()) &&
+             !is_python_value_type(item.type())) ||
+            (!python_eq_is_structural(lelem) && !is_python_value_type(lelem)))
+          {
+            emit_eq_semantics_guard(get_location(expr), "list membership");
+          }
         }
         // Constant-string optimization: resolve at conversion time
         auto item_str = extract_string_value(item);
@@ -3297,6 +3297,13 @@ exprt python_convertert::convert_compare(const jsont &expr)
           // Symbolic dict 'in': iterate keys and compare
           const auto &dict_st = to_struct_type(container.type());
           const auto &keys_type = to_array_type(dict_st.components()[1].type());
+          // --python-ref-instances identity keys: strip the probe's
+          // deref so POINTER-typed key slots compare identities.
+          if(
+            keys_type.element_type().id() == ID_pointer &&
+            item.id() == ID_dereference &&
+            item.operands()[0].type() == keys_type.element_type())
+            item = item.operands()[0];
           member_exprt length{container, "length", signedbv_typet{64}};
           member_exprt keys{container, "keys", keys_type};
           // Wrap the query once (not per key) for value-domain compares.
@@ -3502,45 +3509,125 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // False) than it introduces (`y = x; assert y is x`).
       // Same-symbol comparisons stay True, literal-vs-anything is
       // False, and different-symbol cases are False.
-      if(
-        (is_python_list_type(current_left.type()) ||
-         is_python_dict_type(current_left.type())) &&
-        (is_python_list_type(right.type()) ||
-         is_python_dict_type(right.type())))
+      //
+      // PLR 6.10.3, class instances: `is` was falling through to
+      // the scalar arm's VALUE equality -- `C(1) is C(1)` with equal
+      // fields PROVED (a false proof in the identity cluster). Three
+      // sound tiers: both operands dereferences of POINTER symbols
+      // (params/self/promoted aliases) compare the pointers -- exact
+      // identity, correct for f(a, a) receiver aliasing; both
+      // by-value locals use the alias-chain constant below (the same
+      // documented approximation as list/dict); mixed
+      // pointer-vs-local is statically unknowable -- a sound NONDET
+      // (both outcomes explored, never a definite wrong answer).
       {
-        // PLR §6.10.3: walk the alias chain so that
-        // 'z = y; assert y is z' returns True. alias_targets
-        // records the canonical-source identifier for each
-        // alias; same canonical source = same identity.
-        // Either side may be a raw Name (symbol_expr) OR a
-        // dereference of a pointer-promoted alias symbol — peel
-        // a single dereference layer to see the raw id.
-        auto canonical = [this](irep_idt id) -> irep_idt
+        const bool left_is_instance =
+          !class_name_of_type(current_left.type()).empty();
+        const bool right_is_instance =
+          !class_name_of_type(right.type()).empty();
+        if(left_is_instance && right_is_instance)
         {
-          auto it = alias_targets.find(id);
-          while(it != alias_targets.end())
+          // Tier 1: the alias chain is DEFINITIONAL -- `b = a`
+          // records b's canonical source, so equal canonicals are
+          // the same object regardless of representation (a
+          // promoted alias converts as a POINTER deref, which the
+          // pointer tiers below would have judged nondet).
+          auto is_canon = [this](irep_idt id) -> irep_idt
           {
-            id = it->second;
-            it = alias_targets.find(id);
-          }
-          return id;
-        };
-        auto raw_id = [&](const exprt &e) -> irep_idt
-        {
-          if(e.id() == ID_symbol)
-            return to_symbol_expr(e).get_identifier();
+            auto it = alias_targets.find(id);
+            while(it != alias_targets.end())
+            {
+              id = it->second;
+              it = alias_targets.find(id);
+            }
+            return id;
+          };
+          auto is_raw_id = [&](const exprt &e) -> irep_idt
+          {
+            if(e.id() == ID_symbol)
+              return to_symbol_expr(e).get_identifier();
+            if(
+              e.id() == ID_dereference && e.operands().size() == 1 &&
+              e.operands()[0].id() == ID_symbol)
+              return to_symbol_expr(e.operands()[0]).get_identifier();
+            return irep_idt{};
+          };
+          const irep_idt lid0 = is_raw_id(current_left);
+          const irep_idt rid0 = is_raw_id(right);
           if(
-            e.id() == ID_dereference && e.operands().size() == 1 &&
-            e.operands()[0].id() == ID_symbol)
-            return to_symbol_expr(e.operands()[0]).get_identifier();
-          return irep_idt{};
-        };
-        irep_idt lid = raw_id(current_left);
-        irep_idt rid = raw_id(right);
-        bool same_id =
-          !lid.empty() && !rid.empty() && canonical(lid) == canonical(rid);
-        cmp = same_id ? exprt{true_exprt{}} : exprt{false_exprt{}};
-        goto done_cmp;
+            !lid0.empty() && !rid0.empty() &&
+            is_canon(lid0) == is_canon(rid0))
+          {
+            cmp = true_exprt{};
+            goto done_cmp;
+          }
+          const bool lp = current_left.id() == ID_dereference &&
+                          current_left.operands()[0].id() == ID_symbol;
+          const bool rp = right.id() == ID_dereference &&
+                          right.operands()[0].id() == ID_symbol;
+          // Tier 2: both by-reference -- POINTER equality is exact
+          // identity (correct for f(a, a) receiver aliasing).
+          if(lp && rp)
+          {
+            exprt lptr = current_left.operands()[0];
+            exprt rptr = right.operands()[0];
+            if(lptr.type() != rptr.type())
+              rptr = typecast_exprt{rptr, lptr.type()};
+            cmp = equal_exprt{std::move(lptr), std::move(rptr)};
+            goto done_cmp;
+          }
+          // Tier 3: mixed pointer-vs-by-value with DISTINCT
+          // canonicals -- statically unknowable, sound NONDET.
+          if(lp != rp)
+          {
+            log_overapprox(
+              "'is' between a by-reference and a by-value instance "
+              "binding: nondeterministic");
+            cmp = side_effect_expr_nondett{bool_typet{}, get_location(expr)};
+            goto done_cmp;
+          }
+        }
+        if(
+          (left_is_instance && right_is_instance) ||
+          ((is_python_list_type(current_left.type()) ||
+            is_python_dict_type(current_left.type())) &&
+           (is_python_list_type(right.type()) ||
+            is_python_dict_type(right.type()))))
+        {
+          // PLR §6.10.3: walk the alias chain so that
+          // 'z = y; assert y is z' returns True. alias_targets
+          // records the canonical-source identifier for each
+          // alias; same canonical source = same identity.
+          // Either side may be a raw Name (symbol_expr) OR a
+          // dereference of a pointer-promoted alias symbol — peel
+          // a single dereference layer to see the raw id.
+          auto canonical = [this](irep_idt id) -> irep_idt
+          {
+            auto it = alias_targets.find(id);
+            while(it != alias_targets.end())
+            {
+              id = it->second;
+              it = alias_targets.find(id);
+            }
+            return id;
+          };
+          auto raw_id = [&](const exprt &e) -> irep_idt
+          {
+            if(e.id() == ID_symbol)
+              return to_symbol_expr(e).get_identifier();
+            if(
+              e.id() == ID_dereference && e.operands().size() == 1 &&
+              e.operands()[0].id() == ID_symbol)
+              return to_symbol_expr(e.operands()[0]).get_identifier();
+            return irep_idt{};
+          };
+          irep_idt lid = raw_id(current_left);
+          irep_idt rid = raw_id(right);
+          bool same_id =
+            !lid.empty() && !rid.empty() && canonical(lid) == canonical(rid);
+          cmp = same_id ? exprt{true_exprt{}} : exprt{false_exprt{}};
+          goto done_cmp;
+        }
       }
       if(current_left.type() != right.type())
         right = safe_typecast(right, current_left.type());

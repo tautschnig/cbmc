@@ -1,0 +1,8 @@
+CORE
+main.py
+--z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
