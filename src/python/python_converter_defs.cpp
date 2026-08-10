@@ -31,6 +31,88 @@
 // `return self`, `return varname` bound to a constructor), tuple returns,
 // generator yields, `return param` for tagged-union params, and dict /
 // list literal shapes. PLR §3.2 / §6.10.5 / §7.6.
+
+/// --python-ref-instances callee-side pointer return (the non-fresh
+/// factory): a method whose every Return value is `self.<attr>` of ONE
+/// attr whose field is already POINTER-typed (the Phase-3 field seam)
+/// returns the POINTER itself. The return slot was the last by-value
+/// boundary under the flag: a struct-typed slot deref-copied the field,
+/// killing identity at every composition read (`h.get() is i` and
+/// shared-mutation false alarms). The pointer TYPE of the slot is
+/// itself the caller-side signal (no side map): any call result of
+/// pointer-to-python_class_* binds the target as a ref local. Same
+/// no-fall-through gate as the freshness scan (an implicit None return
+/// cannot hide behind a valid pointer).
+void python_convertert::maybe_pointer_field_return(
+  const jsont &funcdef,
+  const std::string &cls_name,
+  typet &return_type)
+{
+  if(!python_ref_instances_flag() || return_type.id() == ID_pointer)
+    return;
+  if(class_name_of_type(return_type).empty())
+    return;
+  const std::string recv = receiver_name_of_def(funcdef);
+  std::string ret_attr;
+  bool all_self_attr = !recv.empty();
+  std::function<void(const jsont &)> scan_attr_rets =
+    [&](const jsont &b) -> void
+  {
+    if(!b.is_array() || !all_self_attr)
+      return;
+    for(const auto &st : as_array(b))
+    {
+      if(is_node_type(st, "Return"))
+      {
+        const jsont &rv = json_member(st, "value");
+        std::string a;
+        if(is_node_type(rv, "Attribute"))
+        {
+          const jsont &ro = json_member(rv, "value");
+          if(
+            is_node_type(ro, "Name") &&
+            json_string(json_member(ro, "id")) == recv)
+            a = json_string(json_member(rv, "attr"));
+        }
+        if(a.empty() || (!ret_attr.empty() && ret_attr != a))
+        {
+          all_self_attr = false;
+          return;
+        }
+        ret_attr = a;
+      }
+      for(const char *k : {"body", "orelse", "finalbody"})
+      {
+        const jsont &sub = json_member(st, k);
+        if(sub.is_array())
+          scan_attr_rets(sub);
+      }
+      const jsont &handlers = json_member(st, "handlers");
+      if(handlers.is_array())
+        for(const auto &h : as_array(handlers))
+          scan_attr_rets(json_member(h, "body"));
+    }
+  };
+  scan_attr_rets(json_member(funcdef, "body"));
+  if(!all_self_attr || ret_attr.empty())
+    return;
+  const jsont &fb = json_member(funcdef, "body");
+  const bool ends_with_return =
+    fb.is_array() && !as_array(fb).empty() &&
+    is_node_type(*std::prev(as_array(fb).end()), "Return");
+  auto cls_it = class_types.find(cls_name);
+  if(!ends_with_return || cls_it == class_types.end())
+    return;
+  const struct_typet &ct = cls_it->second;
+  if(
+    ct.has_component(ret_attr) &&
+    ct.get_component(ret_attr).type().id() == ID_pointer &&
+    !class_name_of_type(
+       to_pointer_type(ct.get_component(ret_attr).type()).base_type())
+       .empty())
+    return_type = ct.get_component(ret_attr).type();
+}
+
 python_convertert::inferred_returnt
 python_convertert::infer_return_type_from_body(
   const jsont &body,
@@ -1273,6 +1355,9 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         if(ends_with_return)
           function_returns_fresh[qualified_func_name] = fresh_cls;
       }
+      // Callee-side pointer return: see maybe_pointer_field_return.
+      if(!current_class.empty())
+        maybe_pointer_field_return(stmt, current_class, return_type);
     }
     // If the annotation is a concrete (non-python_value) type but some return
     // path GENUINELY yields a python_value VALUE (`return <union/Any param>`),
@@ -5074,6 +5159,9 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           else if(inf.type.id() != ID_empty)
             return_type = inf.type;
         }
+
+        if(!method_is_generator && method_name != "__init__")
+          maybe_pointer_field_return(item, class_name, return_type);
 
         code_typet func_type{parameters, return_type};
         irep_idt func_id{"python::" + class_name + "::" + method_name};

@@ -1803,6 +1803,36 @@ codet python_convertert::convert_assign(const jsont &stmt)
             return std::move(blk);
           }
         }
+        // Callee-side pointer return: a call whose result type is
+        // POINTER-to-instance (the callee scan typed the slot; see
+        // python_converter_defs.cpp) hands back the object's
+        // identity -- bind the target as a plain pointer local
+        // (no re-box, no copy). Keyed on the TYPE, so any call form
+        // (method via Attribute, plain Name) participates.
+        if(
+          python_ref_instances_flag() && is_node_type(value, "Call") &&
+          rhs.type().id() == ID_pointer &&
+          !class_name_of_type(to_pointer_type(rhs.type()).base_type()).empty())
+        {
+          if(symbol_table.lookup(tid0) == nullptr)
+          {
+            symbolt bs{tid0, rhs.type(), "python"};
+            bs.base_name = json_string(json_member(t0, "id"));
+            bs.is_lvalue = true;
+            bs.is_state_var = true;
+            bs.is_static_lifetime = current_function.empty();
+            symbol_table.add(bs);
+          }
+          else
+            symbol_table.get_writeable_ref(tid0).type = rhs.type();
+          ref_instance_locals.insert(tid0);
+          alias_targets.erase(tid0);
+          invalidate_reassigned_symbol(tid0);
+          code_frontend_assignt pa{
+            symbol_table.lookup_ref(tid0).symbol_expr(), rhs};
+          pa.add_source_location() = loc;
+          return std::move(pa);
+        }
       }
     }
   }
