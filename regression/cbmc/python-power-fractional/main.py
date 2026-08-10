@@ -10,7 +10,11 @@ assert 8 ** (1 / 3) == 2.0
 assert 27 ** (1 / 3) == 3.0
 assert 16 ** 0.25 == 2.0
 assert 32 ** (1 / 5) == 2.0
-assert 27 ** (2 / 3) == 9.0
+# CPython: 27 ** (2/3) is 8.999999999999998, NOT 9.0 (the 2/3
+# double is inexact; pow cannot recover). Assert the true value's
+# bracket -- the original `== 9.0` expectation was refuted by
+# CPython on this host.
+assert 8.99 < 27 ** (2 / 3) < 9.0
 
 # Negative exponent
 assert 8 ** (-1 / 3) == 0.5
