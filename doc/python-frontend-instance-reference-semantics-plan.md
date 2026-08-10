@@ -452,3 +452,30 @@ post-mutation assert FAILs; flag-off default bit-identical (suite
 green); the full instance-* family is verdict-identical under the
 flag (14/14). The == precision cost stays as documented (boxed
 elements compare by tag/value_equal, opt-in accepted).
+
+
+## Status update (2026-08-10): identity spike under --python-ref-instances
+
+The Phase-4 flag now additionally gates the representation jump the
+identity family needs: CONSTRUCTION heap-allocates and binds locals
+as pointers (ref_instance_locals; deref-at-use like promoted
+aliases), so address = object identity, rebinding allocates fresh
+(the old object stays live -- PLR 3.1), and `b = a` is a plain
+pointer copy. On top of it, DEFAULT-equality class keys form
+IDENTITY-KEYED dicts: keys store the pointer, lookups/membership
+compare pointers (a PURE term -- the quantified witness composes),
+CPython-differential battery green in both configurations. The
+unconditional `is` fix (three tiers: alias-chain / pointer equality
+/ sound nondet) landed alongside -- `C(1) is C(1)` no longer falsely
+proves.
+
+Spike scope: locals bound by construction and their aliases. NOT
+yet under the flag's identity story: instances reaching dicts
+through returns/fields/params-of-params (their conversion shapes
+don't produce ref_instance_locals entries -- the guard still
+rejects, fail-closed), sets, and `is` between a ref-local and a
+by-ref param (tier-3 nondet today; both are pointers, comparable
+once the param's deref shape is recognised alongside the local's).
+Productisation = extending ref_instance_locals coverage to those
+positions, then re-assessing the perf re-spike's == precision cost
+with the identity representation as the default.
