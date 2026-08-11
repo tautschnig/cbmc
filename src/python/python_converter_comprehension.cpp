@@ -357,10 +357,96 @@ exprt python_convertert::try_soa_map(
       };
       return walk(e);
     };
-    const bool clean = pending_checks.size() == pc_before2 &&
-                       !elt_val.is_nil() && quantifier_safe_term(elt_val) &&
+    // PEP 589 optional fields: the subscript hook emits a
+    // presence-guarded KeyError (a code_ifthenelset raise) into
+    // pending_checks, which used to make the body IMPURE (loud
+    // fallback). RELOCATE such checks to a REPRESENTATIVE index
+    // instead (the study-§5b lift): the comprehension evaluates the
+    // body at EVERY row, so an exception fires iff it fires at SOME
+    // in-range row -- checking once at a nondet in-range index is
+    // exact. Only the recognized raise shape relocates (guard =
+    // and(cond-over-var, !exception_active), body = flag/type
+    // assigns); anything else keeps the loud fallback.
+    auto occurs = [&](const exprt &e) -> bool
+    {
+      std::function<bool(const exprt &)> w = [&](const exprt &n) -> bool
+      {
+        if(n == var)
+          return true;
+        for(const auto &op : n.operands())
+          if(w(op))
+            return true;
+        return false;
+      };
+      return w(e);
+    };
+    std::vector<codet> relocated;
+    bool reloc_ok = true;
+    for(std::size_t pi = pc_before2; pi < pending_checks.size(); ++pi)
+    {
+      const codet &pc = pending_checks[pi];
+      if(pc.get_statement() == ID_ifthenelse)
+      {
+        const auto &ite = to_code_ifthenelse(pc);
+        bool guard_uses_var = occurs(ite.cond());
+        bool body_uses_var =
+          ite.then_case().is_not_nil() && occurs(ite.then_case());
+        if(guard_uses_var && !body_uses_var && !ite.else_case().is_not_nil())
+        {
+          relocated.push_back(pc);
+          continue;
+        }
+      }
+      reloc_ok = false;
+      break;
+    }
+    const bool checks_relocatable =
+      reloc_ok || pending_checks.size() == pc_before2;
+    const bool clean = checks_relocatable && !elt_val.is_nil() &&
+                       quantifier_safe_term(elt_val) &&
                        !has_subexpr(elt_val, ID_side_effect) &&
                        !row_escapes(elt_val);
+    if(clean && !relocated.empty())
+    {
+      // Drop the per-statement copies; re-emit each at a fresh
+      // nondet representative r with 0 <= r < len assumed.
+      pending_checks.erase(
+        pending_checks.begin() + pc_before2, pending_checks.end());
+      static unsigned soa_rep_ctr = 0;
+      const std::string rpn = "__soa_rep_" + std::to_string(soa_rep_ctr++);
+      const irep_idt rpid{qualify_name(rpn)};
+      if(symbol_table.lookup(rpid) == nullptr)
+      {
+        symbolt rs{rpid, len_t, "python"};
+        rs.base_name = rpn;
+        rs.is_lvalue = true;
+        rs.is_state_var = true;
+        rs.is_static_lifetime = current_function.empty();
+        symbol_table.add(rs);
+      }
+      const symbol_exprt rep = symbol_table.lookup_ref(rpid).symbol_expr();
+      member_exprt rep_len{iter_val, "length", len_t};
+      pending_checks.push_back(
+        code_frontend_assignt{rep, side_effect_expr_nondett{len_t, loc}});
+      code_assumet rng{and_exprt{
+        binary_relation_exprt{from_integer(0, len_t), ID_le, rep},
+        binary_relation_exprt{rep, ID_lt, rep_len}}};
+      rng.add_source_location() = loc;
+      pending_checks.push_back(std::move(rng));
+      for(codet rc : relocated)
+      {
+        exprt rc_e = rc;
+        replace_expr(var, rep, rc_e);
+        // A zero-length iterable has no rows: the representative
+        // range assume is vacuous there, but the nondet rep is
+        // unconstrained -- guard the relocated raise by len > 0.
+        auto &rite = to_code_ifthenelse(to_code(rc_e));
+        rite.cond() = and_exprt{
+          binary_relation_exprt{from_integer(0, len_t), ID_lt, rep_len},
+          rite.cond()};
+        pending_checks.push_back(to_code(rc_e));
+      }
+    }
     if(clean)
     {
       typet et_out = elt_val.type();

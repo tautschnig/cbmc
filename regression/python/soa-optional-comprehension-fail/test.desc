@@ -1,0 +1,9 @@
+CORE
+main.py
+--python-smt-containers --python-smt-strings --z3
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+uncaught exception: FAILURE
+--
+--
