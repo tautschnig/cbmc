@@ -3163,14 +3163,51 @@ std::optional<exprt> python_convertert::try_builtin_call(
         // meaningless). Other element types compare directly.
         auto key_of = [&](const exprt &elem) -> exprt
         {
-          if(
-            !sorted_key_attr.empty() &&
-            data_type.element_type().id() == ID_struct)
+          // Reference-semantics instances: object elements are
+          // POINTERS (identity-preserving container storage) --
+          // project the key through the deref. The swap reorders
+          // the pointers; the pointees (and their identities) are
+          // untouched, exactly sorted()'s semantics.
+          typet et = data_type.element_type();
+          exprt e2 = elem;
+          if(!sorted_key_attr.empty() && et.id() == ID_pointer)
           {
-            const auto &est = to_struct_type(data_type.element_type());
+            et = to_pointer_type(et).base_type();
+            e2 = dereference_exprt{elem};
+          }
+          if(!sorted_key_attr.empty() && et.id() == ID_struct)
+          {
+            const auto &est = to_struct_type(et);
             if(est.has_component(sorted_key_attr))
               return member_exprt{
-                elem, sorted_key_attr, est.component_type(sorted_key_attr)};
+                e2, sorted_key_attr, est.component_type(sorted_key_attr)};
+          }
+          // Reference-semantics instances in a python_value list:
+          // the element is a CLASS-BOXED value (__class_ptr holds
+          // the identity pointer). When exactly ONE known class
+          // defines the key attribute, project through the cast
+          // pointer -- unambiguous; otherwise fall through (the
+          // direct comparison keeps the old conservative shape).
+          if(!sorted_key_attr.empty() && is_python_value_type(et))
+          {
+            const struct_typet *only_cls = nullptr;
+            std::size_t hits = 0;
+            for(const auto &ct : class_types)
+              if(ct.second.has_component(sorted_key_attr))
+              {
+                only_cls = &ct.second;
+                ++hits;
+              }
+            if(hits == 1)
+            {
+              const pointer_typet cpt{*only_cls, 64};
+              dereference_exprt obj{
+                typecast_exprt{python_value_class_ptr(e2), cpt}};
+              return member_exprt{
+                obj,
+                sorted_key_attr,
+                only_cls->component_type(sorted_key_attr)};
+            }
           }
           return elem;
         };

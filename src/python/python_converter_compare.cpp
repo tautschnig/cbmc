@@ -1797,6 +1797,18 @@ exprt python_convertert::convert_compare(const jsont &expr)
             null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}};
           goto done_cmp;
         }
+        // Reference-semantics instances: a nullable instance
+        // pointer (`Class | None` slot) encodes None as NULL.
+        if(
+          current_left.type().id() == ID_pointer &&
+          !class_name_of_type(to_pointer_type(current_left.type()).base_type())
+             .empty())
+        {
+          cmp = equal_exprt{
+            current_left,
+            null_pointer_exprt{to_pointer_type(current_left.type())}};
+          goto done_cmp;
+        }
         // typed-list / typed-dict: no canonical None marker
         // distinct from empty list/dict — Python source uses
         // `not arg` / `len(arg) == 0` for those tests rather
@@ -1834,6 +1846,15 @@ exprt python_convertert::convert_compare(const jsont &expr)
           cmp = equal_exprt{
             member_exprt{right, "data", pointer_typet{unsignedbv_typet{8}, 64}},
             null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}};
+          goto done_cmp;
+        }
+        if(
+          right.type().id() == ID_pointer &&
+          !class_name_of_type(to_pointer_type(right.type()).base_type())
+             .empty())
+        {
+          cmp = equal_exprt{
+            right, null_pointer_exprt{to_pointer_type(right.type())}};
           goto done_cmp;
         }
         cmp = false_exprt{};
@@ -2237,6 +2258,18 @@ exprt python_convertert::convert_compare(const jsont &expr)
             member_exprt{
               current_left, "data", pointer_typet{unsignedbv_typet{8}, 64}},
             null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}};
+          goto done_cmp;
+        }
+        // Reference-semantics instances: nullable instance
+        // pointer -- `is not None` = non-NULL.
+        if(
+          current_left.type().id() == ID_pointer &&
+          !class_name_of_type(to_pointer_type(current_left.type()).base_type())
+             .empty())
+        {
+          cmp = notequal_exprt{
+            current_left,
+            null_pointer_exprt{to_pointer_type(current_left.type())}};
           goto done_cmp;
         }
         // typed-list / typed-dict / class instances: see Eq
@@ -3701,7 +3734,15 @@ exprt python_convertert::convert_compare(const jsont &expr)
                            "not modeled"
                         << messaget::eom;
       }
-      cmp = equal_exprt{current_left, right};
+      {
+        // Guard the raw equality against mixed representations
+        // (e.g. a pointer-typed call result vs a scalar) -- cast
+        // the right operand rather than crash in equal_exprt.
+        exprt r2 = right;
+        if(current_left.type() != r2.type())
+          r2 = safe_typecast(std::move(r2), current_left.type());
+        cmp = equal_exprt{current_left, std::move(r2)};
+      }
     }
     else if(op == "IsNot")
     {

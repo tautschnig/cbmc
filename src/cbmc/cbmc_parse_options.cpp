@@ -185,8 +185,6 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-smt-strings", true);
   if(cmdline.isset("python-smt-containers"))
     options.set_option("python-smt-containers", true);
-  if(cmdline.isset("python-ref-instances"))
-    options.set_option("python-ref-instances", true);
   if(
     cmdline.isset("python-smt-containers") && !cmdline.isset("smt2") &&
     !cmdline.isset("z3") && !cmdline.isset("cvc5") && !cmdline.isset("cvc4") &&
@@ -1239,9 +1237,6 @@ void cbmc_parse_optionst::help()
     " {uN}\n"
     " {y--python-unbounded-ints} \t arbitrary-precision int semantics"
     " (requires an SMT backend, e.g. {y--cvc5})\n"
-    " {y--python-ref-instances} \t class instances stored in containers keep\n"
-    " \t per-object identity (PLR 3.1 element mutation; opt-in, see the\n"
-    " \t instance-reference-semantics plan)\n"
     " {y--python-smt-containers} \t unbounded (infinite-array) lists"
     " (P1: core ops; see doc/python-frontend-unbounded-containers-plan.md)\n"
     " {y--python-smt-strings} \t native SMT-LIB String backend for str"

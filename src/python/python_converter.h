@@ -2622,6 +2622,7 @@ private:
   /// name; empty for @staticmethod or no-arg defs). Usable in
   /// pre-pass scans that walk class bodies.
   std::string receiver_name_of_def(const jsont &funcdef) const;
+  void maybe_nullable_instance_return(const jsont &returns, typet &return_type);
   void maybe_pointer_field_return(
     const jsont &funcdef,
     const std::string &cls_name,

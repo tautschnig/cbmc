@@ -80,7 +80,6 @@ class optionst;
   "(python-use-stdlib-source)" \
   "(python-smt-strings)" \
   "(python-smt-containers)" \
-  "(python-ref-instances)" \
   "(python-lazy-stubs)" \
   "(python-no-exception-checks)" \
   "(python-raising-ops-check)" \

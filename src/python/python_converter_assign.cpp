@@ -570,8 +570,10 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
       to_symbol_expr(rhs.operands()[0]).get_identifier()) > 0)
   {
     const symbol_exprt src_ptr = to_symbol_expr(rhs.operands()[0]);
-    const irep_idt tgt_id{qualify_name(json_string(
-      json_member(*as_array(json_member(stmt, "targets")).begin(), "id")))};
+    // AnnAssign carries a SINGULAR "target" (reading the plural
+    // "targets" here dereferenced a null json array -- crash).
+    const irep_idt tgt_id{qualify_name(
+      json_string(json_member(json_member(stmt, "target"), "id")))};
     if(symbol_table.lookup(tgt_id) == nullptr)
     {
       symbolt bs{tgt_id, src_ptr.type(), "python"};
@@ -1681,6 +1683,46 @@ codet python_convertert::convert_assign(const jsont &stmt)
           return std::move(result);
         }
 
+        // Reference-semantics instances: construction allocates the
+        // instance on the HEAP and binds the local as a POINTER
+        // (deref at use). Address = identity; REBINDING allocates
+        // fresh and repoints -- the old object stays live through
+        // other references, exactly PLR 3.1. Runs BEFORE the
+        // struct-typed tag/defaults block below (which targets the
+        // symbol directly and would fight the pointer re-type):
+        // tag and class-level defaults are applied through the
+        // DEREF here.
+        if(python_ref_instances_flag())
+        {
+          const pointer_typet ptr_t{cls_type, 64};
+          if(symbol_table.lookup_ref(symbol_id).type != ptr_t)
+            symbol_table.get_writeable_ref(symbol_id).type = ptr_t;
+          alias_targets.erase(symbol_id);
+          ref_instance_locals.insert(symbol_id);
+          symbol_exprt psym = symbol_table.lookup_ref(symbol_id).symbol_expr();
+          namespacet ns_ri{symbol_table};
+          exprt osize = from_integer(
+            pointer_offset_size(cls_type, ns_ri).value_or(16), size_type());
+          side_effect_exprt oalloc{
+            ID_allocate, {osize, false_exprt{}}, ptr_t, loc};
+          result.add(code_frontend_assignt{psym, std::move(oalloc)});
+          dereference_exprt obj{psym};
+          irep_idt class_obj_id_r{"python::" + call_name};
+          const symbolt *class_obj_r = symbol_table.lookup(class_obj_id_r);
+          if(class_obj_r != nullptr && !class_obj_r->value.is_nil())
+            result.add(code_frontend_assignt{obj, class_obj_r->symbol_expr()});
+          if(class_tag_ids.count(call_name))
+          {
+            result.add(code_frontend_assignt{
+              member_exprt{obj, "__class_tag", signedbv_typet{32}},
+              from_integer(class_tag_ids[call_name], signedbv_typet{32})});
+          }
+          for(auto &s : build_class_construction(
+                call_name, dereference_exprt{psym}, value, loc))
+            result.add(std::move(s));
+          return std::move(result);
+        }
+
         // Identify whether the destination symbol's type can actually
         // hold class-instance state. Python allows rebinding a name
         // to a different type, so a previous scalar use of the same
@@ -1721,33 +1763,6 @@ codet python_convertert::convert_assign(const jsont &stmt)
                         << resolved_var_type.id_string()
                         << "'; class state will not be tracked precisely."
                         << messaget::eom;
-        }
-
-        // --python-ref-instances spike: construction allocates the
-        // instance on the HEAP and binds the local as a POINTER
-        // (deref at use). Address = identity; REBINDING allocates
-        // fresh and repoints -- the old object stays live through
-        // other references, exactly PLR 3.1. Enables pointer-
-        // equality identity (`is`, identity-keyed dicts).
-        if(python_ref_instances_flag())
-        {
-          const pointer_typet ptr_t{cls_type, 64};
-          if(symbol_table.lookup_ref(symbol_id).type != ptr_t)
-            symbol_table.get_writeable_ref(symbol_id).type = ptr_t;
-          alias_targets.erase(symbol_id);
-          ref_instance_locals.insert(symbol_id);
-          symbol_exprt psym = symbol_table.lookup_ref(symbol_id).symbol_expr();
-          namespacet ns_ri{symbol_table};
-          exprt osize = from_integer(
-            pointer_offset_size(cls_type, ns_ri).value_or(16), size_type());
-          side_effect_exprt oalloc{
-            ID_allocate, {osize, false_exprt{}}, ptr_t, loc};
-          result.add(code_frontend_assignt{psym, std::move(oalloc)});
-          dereference_exprt obj{psym};
-          for(auto &s :
-              build_class_construction(call_name, std::move(obj), value, loc))
-            result.add(std::move(s));
-          return std::move(result);
         }
 
         // Construct: __init__ call, or @dataclass field binding.

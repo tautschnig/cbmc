@@ -32,6 +32,38 @@
 // generator yields, `return param` for tagged-union params, and dict /
 // list literal shapes. PLR §3.2 / §6.10.5 / §7.6.
 
+/// Reference-semantics instances: a `Class | None` (or
+/// Optional[Class] / forward-ref string) return annotation types the
+/// slot POINTER-to-class with None == NULL -- ONE representation for
+/// every return path. Without this the slot came out as the bare
+/// class struct (the forward-ref union parse keeps the class member)
+/// and the Phase-1 by-ref return promotion then MUTATED it to
+/// pointer mid-conversion when a `return <ptr-local>` path converted
+/// -- other paths kept struct/sentinel shapes: a MIXED encoding
+/// (equal_exprt type-mismatch crash at `... is None` call sites).
+void python_convertert::maybe_nullable_instance_return(
+  const jsont &returns,
+  typet &return_type)
+{
+  if(!python_ref_instances_flag() || return_type.id() == ID_pointer)
+    return;
+  if(class_name_of_type(return_type).empty())
+    return;
+  bool has_none = annotation_includes_none(returns);
+  if(!has_none && is_node_type(returns, "Constant"))
+  {
+    const jsont &v = json_member(returns, "value");
+    if(v.is_string())
+    {
+      const std::string &txt = v.value;
+      has_none = txt.find("None") != std::string::npos &&
+                 txt.find('|') != std::string::npos;
+    }
+  }
+  if(has_none)
+    return_type = pointer_type(return_type);
+}
+
 /// --python-ref-instances callee-side pointer return (the non-fresh
 /// factory): a method whose every Return value is `self.<attr>` of ONE
 /// attr whose field is already POINTER-typed (the Phase-3 field seam)
@@ -52,9 +84,34 @@ void python_convertert::maybe_pointer_field_return(
     return;
   if(class_name_of_type(return_type).empty())
     return;
+  // ANNOTATED class returns only: an INFERRED class type would
+  // pointer-ify every unannotated helper returning locals (the
+  // decimal stub's __truediv__ family), pushing pointers into
+  // dunder-dispatch sites that expect values. The annotation is
+  // the author's contract that the callee hands out the object.
+  const jsont &ret_ann = json_member(funcdef, "returns");
+  if(ret_ann.is_null())
+    return;
+  {
+    std::string ann_name;
+    if(is_node_type(ret_ann, "Name"))
+      ann_name = json_string(json_member(ret_ann, "id"));
+    else if(is_node_type(ret_ann, "Constant"))
+    {
+      const jsont &av = json_member(ret_ann, "value");
+      if(av.is_string())
+        ann_name = av.value;
+    }
+    if(ann_name != class_name_of_type(return_type))
+      return;
+  }
   const std::string recv = receiver_name_of_def(funcdef);
   std::string ret_attr;
-  bool all_self_attr = !recv.empty();
+  // Free functions have no receiver: the Name/ctor shapes still
+  // apply (param passthrough `return t` was previously handled by
+  // a mid-conversion slot mutation, removed for the mixed-encoding
+  // crashes); only the self.<attr> shape needs recv.
+  bool all_self_attr = true;
   std::function<void(const jsont &)> scan_attr_rets =
     [&](const jsont &b) -> void
   {
@@ -65,8 +122,16 @@ void python_convertert::maybe_pointer_field_return(
       if(is_node_type(st, "Return"))
       {
         const jsont &rv = json_member(st, "value");
+        // Three by-reference return shapes (any mix): a pointer
+        // FIELD read (self.<attr>, one attr), a bare NAME (a
+        // class-typed local or by-ref param -- under the flag
+        // constructions bind pointer locals, and the epilogue in
+        // convert_return heap-materializes any residual by-value
+        // path), or a direct CTOR call (the ctor-as-expression
+        // arm denotes the deref of a fresh heap pointer).
         std::string a;
-        if(is_node_type(rv, "Attribute"))
+        bool ok_shape = false;
+        if(is_node_type(rv, "Attribute") && !recv.empty())
         {
           const jsont &ro = json_member(rv, "value");
           if(
@@ -74,12 +139,30 @@ void python_convertert::maybe_pointer_field_return(
             json_string(json_member(ro, "id")) == recv)
             a = json_string(json_member(rv, "attr"));
         }
-        if(a.empty() || (!ret_attr.empty() && ret_attr != a))
+        else if(
+          is_node_type(rv, "Name") &&
+          json_string(json_member(rv, "id")) != "None")
+          ok_shape = true;
+        else if(
+          is_node_type(rv, "Call") &&
+          is_node_type(json_member(rv, "func"), "Name") &&
+          class_types.count(
+            json_string(json_member(json_member(rv, "func"), "id"))) > 0)
+          ok_shape = true;
+        if(!a.empty())
+        {
+          if(!ret_attr.empty() && ret_attr != a)
+          {
+            all_self_attr = false;
+            return;
+          }
+          ret_attr = a;
+        }
+        else if(!ok_shape)
         {
           all_self_attr = false;
           return;
         }
-        ret_attr = a;
       }
       for(const char *k : {"body", "orelse", "finalbody"})
       {
@@ -94,23 +177,31 @@ void python_convertert::maybe_pointer_field_return(
     }
   };
   scan_attr_rets(json_member(funcdef, "body"));
-  if(!all_self_attr || ret_attr.empty())
+  if(!all_self_attr)
     return;
   const jsont &fb = json_member(funcdef, "body");
   const bool ends_with_return =
     fb.is_array() && !as_array(fb).empty() &&
     is_node_type(*std::prev(as_array(fb).end()), "Return");
-  auto cls_it = class_types.find(cls_name);
-  if(!ends_with_return || cls_it == class_types.end())
+  if(!ends_with_return)
     return;
-  const struct_typet &ct = cls_it->second;
-  if(
-    ct.has_component(ret_attr) &&
-    ct.get_component(ret_attr).type().id() == ID_pointer &&
-    !class_name_of_type(
-       to_pointer_type(ct.get_component(ret_attr).type()).base_type())
-       .empty())
-    return_type = ct.get_component(ret_attr).type();
+  if(!ret_attr.empty())
+  {
+    auto cls_it = class_types.find(cls_name);
+    if(cls_it == class_types.end())
+      return;
+    const struct_typet &ct = cls_it->second;
+    if(
+      ct.has_component(ret_attr) &&
+      ct.get_component(ret_attr).type().id() == ID_pointer &&
+      !class_name_of_type(
+         to_pointer_type(ct.get_component(ret_attr).type()).base_type())
+         .empty())
+      return_type = ct.get_component(ret_attr).type();
+    return;
+  }
+  // Name/ctor-only shapes: pointer-to-annotated-class.
+  return_type = pointer_type(return_type);
 }
 
 python_convertert::inferred_returnt
@@ -1356,8 +1447,8 @@ codet python_convertert::convert_function_def(const jsont &stmt)
           function_returns_fresh[qualified_func_name] = fresh_cls;
       }
       // Callee-side pointer return: see maybe_pointer_field_return.
-      if(!current_class.empty())
-        maybe_pointer_field_return(stmt, current_class, return_type);
+      maybe_pointer_field_return(stmt, current_class, return_type);
+      maybe_nullable_instance_return(returns, return_type);
     }
     // If the annotation is a concrete (non-python_value) type but some return
     // path GENUINELY yields a python_value VALUE (`return <union/Any param>`),
@@ -5186,6 +5277,8 @@ codet python_convertert::convert_class_def(const jsont &stmt)
 
         if(!method_is_generator && method_name != "__init__")
           maybe_pointer_field_return(item, class_name, return_type);
+
+        maybe_nullable_instance_return(returns, return_type);
 
         code_typet func_type{parameters, return_type};
         irep_idt func_id{"python::" + class_name + "::" + method_name};

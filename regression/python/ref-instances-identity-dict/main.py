@@ -1,4 +1,4 @@
-# --python-ref-instances: construction heap-allocates and binds a
+# Reference-semantics instances (DEFAULT): construction heap-allocates and binds a
 # POINTER local (rebinding allocates fresh; the old object stays
 # live -- PLR 3.1). Default-equality class keys then use IDENTITY =
 # pointer equality: distinct equal-fielded objects don't dedup,

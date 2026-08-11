@@ -12,6 +12,7 @@
 #include <util/c_types.h>
 #include <util/json.h>
 #include <util/pointer_expr.h>
+#include <util/pointer_offset_size.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
@@ -2473,6 +2474,76 @@ codet python_convertert::convert_return(const jsont &stmt)
 
   const jsont &value = json_member(stmt, "value");
 
+  // Reference-semantics instances: a POINTER-typed return slot
+  // (nullable `Class | None` -- see maybe_nullable_instance_return)
+  // uses ONE representation for every path: `return None` is the
+  // NULL pointer; a fresh construction returns its heap pointer
+  // (the ctor-as-expression arm denotes *ptr, so address_of
+  // recovers it); a pointer local returns the pointer itself.
+  if(!current_function.empty())
+  {
+    irep_idt func_id_p{"python::" + current_function};
+    const symbolt *fs_p = symbol_table.lookup(func_id_p);
+    if(fs_p != nullptr && fs_p->type.id() == ID_code)
+    {
+      const typet &rt_p = to_code_type(fs_p->type).return_type();
+      if(
+        rt_p.id() == ID_pointer &&
+        !class_name_of_type(to_pointer_type(rt_p).base_type()).empty())
+      {
+        if(
+          value.is_null() ||
+          (is_node_type(value, "Constant") &&
+           json_member(value, "value").is_null()) ||
+          (is_node_type(value, "Name") &&
+           json_string(json_member(value, "id")) == "None"))
+        {
+          return code_frontend_returnt{
+            null_pointer_exprt{to_pointer_type(rt_p)}};
+        }
+        exprt rv_p = convert_expression(value);
+        if(!rv_p.is_nil())
+        {
+          if(rv_p.type() == rt_p)
+            return code_frontend_returnt{std::move(rv_p)};
+          if(rv_p.id() == ID_dereference && rv_p.operands()[0].type() == rt_p)
+            return code_frontend_returnt{rv_p.operands()[0]};
+          if(rv_p.type().id() == ID_pointer)
+            return code_frontend_returnt{typecast_exprt{std::move(rv_p), rt_p}};
+          // A by-VALUE struct on some path (e.g. an if_exprt mixing
+          // shapes): materialize on the heap so the slot stays
+          // uniform (a dangling stack address would be wrong).
+          namespacet ns_rp{symbol_table};
+          const typet &ot = to_pointer_type(rt_p).base_type();
+          exprt osize = from_integer(
+            pointer_offset_size(ot, ns_rp).value_or(16), size_type());
+          static unsigned retbox_ctr = 0;
+          const std::string bn = "__retbox_" + std::to_string(retbox_ctr++);
+          const irep_idt bid{qualify_name(bn)};
+          if(symbol_table.lookup(bid) == nullptr)
+          {
+            symbolt bs{bid, rt_p, "python"};
+            bs.base_name = bn;
+            bs.is_lvalue = true;
+            bs.is_state_var = true;
+            symbol_table.add(bs);
+          }
+          symbol_exprt bp = symbol_table.lookup_ref(bid).symbol_expr();
+          side_effect_exprt oalloc{
+            ID_allocate, {osize, false_exprt{}}, rt_p, get_location(stmt)};
+          code_blockt blk;
+          blk.add(code_frontend_assignt{bp, std::move(oalloc)});
+          exprt rv_c = rv_p;
+          if(rv_c.type() != ot)
+            rv_c = safe_typecast(rv_c, ot);
+          blk.add(code_frontend_assignt{dereference_exprt{bp}, rv_c});
+          blk.add(code_frontend_returnt{bp});
+          return std::move(blk);
+        }
+      }
+    }
+  }
+
   if(value.is_null())
   {
     // Bare \`return\` — PLR §7.6: returns None.
@@ -2593,7 +2664,15 @@ codet python_convertert::convert_return(const jsont &stmt)
        is_instance_pointer(ret_sym->type)))
     {
       // Promote the function's return type to pointer so the call
-      // site sees a pointer-typed result.
+      // site sees a pointer-typed result -- but NEVER when the
+      // declared slot is python_value: a `Class | None` union slot
+      // must keep ONE representation for every path (the boxed
+      // tagged union; the CLASS variant's __class_ptr carries the
+      // identity pointer). Mutating the slot mid-conversion left
+      // the already-converted None/ctor paths with python_value
+      // shapes while later calls saw a pointer slot -- a MIXED
+      // encoding (equal/notequal type-mismatch crashes at
+      // `... is None` call sites, unmasked by default-on).
       if(!current_function.empty())
       {
         irep_idt func_id{"python::" + current_function};
@@ -2601,8 +2680,32 @@ codet python_convertert::convert_return(const jsont &stmt)
         if(func_sym_w != nullptr && func_sym_w->type.id() == ID_code)
         {
           code_typet &ft = to_code_type(func_sym_w->type);
-          if(ft.return_type() != ret_sym->type)
-            ft.return_type() = ret_sym->type;
+          if(is_python_value_type(ft.return_type()))
+          {
+            // Box into the union's CLASS variant THROUGH THE DEREF:
+            // wrapping an lvalue instance takes address_of(*p) == p,
+            // so the box's __class_ptr carries the identity pointer
+            // (boxing the raw pointer value would pun it as a
+            // scalar -- Match.start() read garbage).
+            exprt src = ret_sym->symbol_expr();
+            if(is_instance_pointer(ret_sym->type))
+              src = dereference_exprt{src};
+            exprt boxed = coerce_assign_rhs(std::move(src), ft.return_type());
+            return code_frontend_returnt{std::move(boxed)};
+          }
+          // NO mid-conversion slot mutation: the pointer-vs-value
+          // decision is made at DEF time (maybe_pointer_field_return
+          // covers self-field / Name / ctor return shapes) so every
+          // return path and every call site sees ONE encoding. A
+          // pointer local returned into a still-STRUCT slot
+          // value-copies via the deref below -- correct, just
+          // identity-losing for shapes the def-time scan rejected
+          // (mixed returns with fall-through).
+          if(
+            ft.return_type().id() != ID_pointer &&
+            is_instance_pointer(ret_sym->type))
+            return code_frontend_returnt{
+              dereference_exprt{ret_sym->symbol_expr()}};
         }
       }
       return code_frontend_returnt{ret_sym->symbol_expr()};
