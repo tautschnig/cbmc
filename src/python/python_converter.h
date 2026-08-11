@@ -1118,6 +1118,15 @@ private:
     std::map<irep_idt, exprt> tuple_literals;
     std::map<irep_idt, double> float_constants;
     std::map<irep_idt, irep_idt> alias_targets;
+    // SoA provenance (merge-safe): a row view or element-TD
+    // binding that DISAGREES across branches is dropped at the
+    // merge; the row-view NAME guard set merges by intersection,
+    // so a dropped binding's post-merge read fail-closes loudly
+    // (the m6/m7 wrong-owner false proof).
+    std::map<irep_idt, exprt> soa_row_bindings;
+    std::set<irep_idt> soa_row_view_names;
+    std::map<irep_idt, std::string> var_typeddict;
+    std::map<irep_idt, std::string> var_soa_elem;
     // function_aliases and bound_methods are intentionally NOT
     // snapshot/merged: they record one-way name → callable
     // mappings whose runtime dispatch is needed for any program
