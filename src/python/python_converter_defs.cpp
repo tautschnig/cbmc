@@ -2491,6 +2491,18 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       member_exprt clen{csym, "length", signedbv_typet{64}};
       body_block.add(code_assumet{binary_relation_exprt{
         clen, ID_ge, from_integer(0, signedbv_typet{64})}});
+      // Nested list fields of an SoA return: per-row inner lengths
+      // are non-negative (the matrix representation invariant;
+      // pending_checks are flushed into the stub body below).
+      if(is_soa_list_type(return_type))
+      {
+        const std::size_t pc_nl0 = pending_checks.size();
+        soa_assume_nested_lens(csym);
+        for(std::size_t pi = pc_nl0; pi < pending_checks.size(); ++pi)
+          body_block.add(pending_checks[pi]);
+        pending_checks.erase(
+          pending_checks.begin() + pc_nl0, pending_checks.end());
+      }
       // Dict WELL-FORMEDNESS invariant: keys are UNIQUE (a Python
       // dict cannot contain a key twice). Without it, an arbitrary
       // dict model may hold duplicates, so removing the witness

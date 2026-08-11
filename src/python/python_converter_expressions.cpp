@@ -482,6 +482,111 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       }
     }
   }
+  // Nested list-field ELEMENT read: xs[i]['f'][j] (and the
+  // row-view form r['f'][j]) over a per-field MATRIX resolves to
+  // f_data[<row>][j], with the row IndexError from the inner
+  // read's emission and the ELEMENT IndexError against the
+  // per-row length f_len[<row>] (PLR 6.10.2; negative j counts
+  // from the inner end).
+  if(python_smt_containers_flag())
+  {
+    const jsont &inner_n = json_member(expr, "value");
+    if(is_node_type(inner_n, "Subscript"))
+    {
+      const jsont &isl = json_member(inner_n, "slice");
+      if(is_node_type(isl, "Constant") && json_member(isl, "value").is_string())
+      {
+        const std::string fld = json_member(isl, "value").value;
+        const jsont &ibase = json_member(inner_n, "value");
+        exprt soa_v = nil_exprt{};
+        exprt row = nil_exprt{};
+        const typet len_t = signedbv_typet{64};
+        if(is_node_type(ibase, "Name"))
+        {
+          const irep_idt vid{
+            qualify_name(json_string(json_member(ibase, "id")))};
+          auto rb = soa_row_bindings.find(vid);
+          const symbolt *vs = symbol_table.lookup(vid);
+          if(rb != soa_row_bindings.end() && vs != nullptr)
+          {
+            soa_v = rb->second;
+            row = vs->symbol_expr();
+          }
+          else if(vs != nullptr && is_soa_list_type(vs->type))
+          {
+            // xs['f'][j] is not a row shape; fall through.
+          }
+        }
+        else if(
+          is_node_type(ibase, "Subscript") &&
+          is_node_type(json_member(ibase, "value"), "Name"))
+        {
+          const irep_idt bid{qualify_name(
+            json_string(json_member(json_member(ibase, "value"), "id")))};
+          const symbolt *bs = symbol_table.lookup(bid);
+          if(bs != nullptr && is_soa_list_type(bs->type))
+          {
+            exprt ridx = convert_expression(json_member(ibase, "slice"));
+            if(!ridx.is_nil())
+            {
+              if(ridx.type() != len_t)
+                ridx = safe_typecast(std::move(ridx), len_t);
+              member_exprt blen{bs->symbol_expr(), "length", len_t};
+              if_exprt nridx{
+                binary_relation_exprt{ridx, ID_lt, from_integer(0, len_t)},
+                plus_exprt{ridx, blen},
+                ridx};
+              emit_conditional_exception(
+                not_exprt{and_exprt{
+                  binary_relation_exprt{from_integer(0, len_t), ID_le, nridx},
+                  binary_relation_exprt{nridx, ID_lt, blen}}},
+                "IndexError");
+              soa_v = bs->symbol_expr();
+              row = std::move(nridx);
+            }
+          }
+        }
+        if(soa_v.is_not_nil() && row.is_not_nil())
+        {
+          const auto &sst = to_struct_type(soa_v.type());
+          const std::string dcomp = fld + "_data";
+          const std::string lcomp = fld + "_len";
+          if(
+            sst.has_component(dcomp) && sst.has_component(lcomp) &&
+            to_array_type(sst.get_component(dcomp).type())
+                .element_type()
+                .id() == ID_array)
+          {
+            exprt j = convert_expression(json_member(expr, "slice"));
+            if(!j.is_nil())
+            {
+              if(j.type() != len_t)
+                j = safe_typecast(std::move(j), len_t);
+              exprt ilen = index_exprt{
+                member_exprt{soa_v, lcomp, sst.get_component(lcomp).type()},
+                row};
+              if_exprt nj{
+                binary_relation_exprt{j, ID_lt, from_integer(0, len_t)},
+                plus_exprt{j, ilen},
+                j};
+              emit_conditional_exception(
+                not_exprt{and_exprt{
+                  binary_relation_exprt{from_integer(0, len_t), ID_le, nj},
+                  binary_relation_exprt{nj, ID_lt, ilen}}},
+                "IndexError");
+              exprt inner_arr = index_exprt{
+                member_exprt{soa_v, dcomp, sst.get_component(dcomp).type()},
+                row};
+              exprt sel = index_exprt{std::move(inner_arr), std::move(nj)};
+              if(is_python_string_handle_type(sel.type()))
+                return string_handle_to_string(sel);
+              return sel;
+            }
+          }
+        }
+      }
+    }
+  }
   // SPIKE structure-of-arrays row views. The SAFE consumers of a
   // row xs[i] are (a) the chained field read xs[i]['f'] -- resolved
   // here to f_data[i] directly, (b) the Name binding r = xs[i]
@@ -505,6 +610,27 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       {
         const std::string fld = json_member(sl_n, "value").value;
         exprt fd = soa_field_data(base_sym->symbol_expr(), fld);
+        // A MATRIX field (nested list) reached as a bare VALUE:
+        // its safe consumers (len, [j]) are intercepted ABOVE, so
+        // reaching here would leak an infinite inner array into
+        // value contexts (boxing puns, value-set aborts). Reject
+        // fail-closed.
+        if(
+          fd.is_not_nil() &&
+          to_array_type(fd.type()).element_type().id() == ID_array)
+        {
+          source_locationt aloc = get_location(expr);
+          aloc.set_property_class("python-model-limitation");
+          aloc.set_comment(
+            "nested list field '" + fld +
+            "' used outside len()/[index]: not encoded, rejected "
+            "(fail-closed)");
+          code_assertt guard{false_exprt{}};
+          guard.add_source_location() = aloc;
+          pending_checks.push_back(std::move(guard));
+          return side_effect_expr_nondett{
+            python_value_type(), get_location(expr)};
+        }
         if(fd.is_not_nil())
         {
           exprt idx = convert_expression(json_member(val_n, "slice"));

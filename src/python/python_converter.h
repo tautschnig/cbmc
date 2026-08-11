@@ -2535,6 +2535,8 @@ private:
   symbol_exprt
   mint_witness_symbol(const std::string &stem, const typet &result_type);
   exprt forall_in_range(const symbol_exprt &j, const exprt &length, exprt pred);
+  void soa_assume_nested_lens(const exprt &soa_val);
+  exprt try_soa_nested_len(const jsont &sub);
   exprt exists_in_range(const symbol_exprt &j, const exprt &length, exprt pred);
 
   /// Per-slot key equality for a dict's keys array, dispatching on the

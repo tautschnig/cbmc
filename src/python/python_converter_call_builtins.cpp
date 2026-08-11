@@ -621,6 +621,21 @@ std::optional<exprt> python_convertert::try_builtin_call(
       if(python_smt_containers_flag())
       {
         const jsont &a0 = *as_array(args).begin();
+        // Nested list FIELD length: len(xs[i]['f']) over an SoA
+        // list with a per-field matrix reads the per-row length
+        // array f_len[i] (one select); the row-view form
+        // len(r['f']) uses the bound row index. The IndexError
+        // obligation on the ROW read is emitted here exactly as
+        // the chained field-read arm does.
+        {
+          exprt nlen = try_soa_nested_len(a0);
+          if(nlen.is_not_nil())
+          {
+            if(nlen.type() != python_int_type())
+              nlen = safe_typecast(std::move(nlen), python_int_type());
+            return nlen;
+          }
+        }
         std::string soa_td;
         if(is_node_type(a0, "Name"))
         {

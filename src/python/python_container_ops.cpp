@@ -255,8 +255,46 @@ exprt python_convertert::soa_value_of_name(
     member_exprt{tsym, "length", signedbv_typet{64}},
     ID_ge,
     from_integer(0, signedbv_typet{64})}});
+  // Nested list fields: every row's inner length is non-negative
+  // (representation invariant of the per-field matrix, mirroring
+  // the whole-list assume above).
+  soa_assume_nested_lens(tsym);
   td_field_read_cache.emplace(key, tsym);
   return tsym;
+}
+
+/// For each `<f>_len` component of an SoA value, assume
+/// `forall r in [0, length): 0 <= f_len[r]`. Emitted as a
+/// STATEMENT into the caller's block (the witness-assume rule:
+/// it reads current state).
+void python_convertert::soa_assume_nested_lens(const exprt &soa_val)
+{
+  const auto &st = to_struct_type(soa_val.type());
+  const typet len_t = signedbv_typet{64};
+  for(const auto &c : st.components())
+  {
+    const std::string cn = id2string(c.get_name());
+    if(cn.size() <= 4 || cn.substr(cn.size() - 4) != "_len")
+      continue;
+    static unsigned nl_ctr = 0;
+    const std::string qn = "__soa_nl_" + std::to_string(nl_ctr++);
+    const irep_idt qid{qualify_name(qn)};
+    if(symbol_table.lookup(qid) == nullptr)
+    {
+      symbolt qs{qid, len_t, "python"};
+      qs.base_name = qn;
+      qs.is_lvalue = true;
+      qs.is_state_var = true;
+      qs.is_static_lifetime = current_function.empty();
+      symbol_table.add(qs);
+    }
+    const symbol_exprt r = symbol_table.lookup_ref(qid).symbol_expr();
+    member_exprt lens{soa_val, cn, c.type()};
+    exprt body = binary_relation_exprt{
+      from_integer(0, len_t), ID_le, index_exprt{lens, r}};
+    pending_checks.push_back(code_assumet{forall_in_range(
+      r, member_exprt{soa_val, "length", len_t}, std::move(body))});
+  }
 }
 
 exprt python_convertert::build_dict_value_user_eq(
@@ -579,11 +617,31 @@ bool python_convertert::soa_eligible_td(const std::string &td_name) const
   for(const auto &f : tff->second)
   {
     auto ft = tft->second.find(f);
-    if(
-      ft == tft->second.end() ||
-      (ft->second != "str" && ft->second != "int" && ft->second != "bool" &&
-       ft->second != "float"))
+    if(ft == tft->second.end())
       return false;
+    if(
+      ft->second == "str" || ft->second == "int" || ft->second == "bool" ||
+      ft->second == "float")
+      continue;
+    // A list-of-SCALAR field is SoA-eligible as a per-field MATRIX
+    // (rows x elements) plus a per-row length array; the recorded
+    // element annotation must be a scalar (a nested TypedDict /
+    // list-of-list field would re-introduce boxing -- reject, the
+    // caller falls back loudly).
+    if(ft->second == "list")
+    {
+      auto fle = typed_dict_field_list_elem.find(td_name);
+      if(fle == typed_dict_field_list_elem.end())
+        return false;
+      auto fe = fle->second.find(f);
+      if(
+        fe == fle->second.end() ||
+        (fe->second != "int" && fe->second != "str" && fe->second != "bool" &&
+         fe->second != "float"))
+        return false;
+      continue;
+    }
+    return false;
   }
   // Optional fields are supported via per-row presence arrays.
   return true;
@@ -617,6 +675,39 @@ typet python_convertert::soa_list_type(const std::string &td_name)
       et = bool_typet{};
     else if(cat == "float")
       et = double_type();
+    else if(cat == "list")
+    {
+      // Per-field MATRIX: rows x elements of the recorded scalar
+      // element type, plus a per-row length array. The consuming
+      // shapes (len(xs[i]['f']), xs[i]['f'][j]) are intercepted at
+      // the subscript/len sites; any OTHER use of the nested list
+      // value stays loud (the row-view escape discipline).
+      typet elem_t = python_int_type();
+      const std::string &ecat = typed_dict_field_list_elem.at(td_name).at(f);
+      if(ecat == "str")
+        elem_t = python_smt_string_native_flag()
+                   ? typet{python_string_handle_type()}
+                   : typet{python_string_type()};
+      else if(ecat == "bool")
+        elem_t = bool_typet{};
+      else if(ecat == "float")
+        elem_t = double_type();
+      const array_typet inner{
+        elem_t, exprt{infinity_exprt{signedbv_typet{64}}}};
+      comps.push_back(struct_typet::componentt{
+        f + "_data",
+        array_typet{inner, exprt{infinity_exprt{signedbv_typet{64}}}}});
+      comps.push_back(struct_typet::componentt{
+        f + "_len",
+        array_typet{
+          signedbv_typet{64}, exprt{infinity_exprt{signedbv_typet{64}}}}});
+      if(opt_fields != nullptr && opt_fields->count(f) > 0)
+        comps.push_back(struct_typet::componentt{
+          f + "_present",
+          array_typet{
+            bool_typet{}, exprt{infinity_exprt{signedbv_typet{64}}}}});
+      continue;
+    }
     else
       et = python_value_type();
     comps.push_back(struct_typet::componentt{
@@ -639,6 +730,74 @@ bool python_convertert::is_soa_list_type(const typet &t) const
   return t.id() == ID_struct &&
          id2string(to_struct_type(t).get_tag()).rfind("python_soa_list_", 0) ==
            0;
+}
+
+/// Nested list-field length: recognizes `xs[i]['f']` (xs an SoA
+/// list, f a list field -> matrix) and the row-view form `r['f']`
+/// (r in soa_row_bindings), returning `f_len[<row>]` with the row
+/// IndexError obligation. Nil when the shape does not apply.
+exprt python_convertert::try_soa_nested_len(const jsont &sub)
+{
+  if(!is_node_type(sub, "Subscript"))
+    return nil_exprt{};
+  const jsont &sl = json_member(sub, "slice");
+  if(!is_node_type(sl, "Constant") || !json_member(sl, "value").is_string())
+    return nil_exprt{};
+  const std::string fld = json_member(sl, "value").value;
+  const jsont &base = json_member(sub, "value");
+  const typet len_t = signedbv_typet{64};
+  // Row-view form: r['f'].
+  if(is_node_type(base, "Name"))
+  {
+    const irep_idt vid{qualify_name(json_string(json_member(base, "id")))};
+    auto rb = soa_row_bindings.find(vid);
+    if(rb == soa_row_bindings.end())
+      return nil_exprt{};
+    const auto &ost = to_struct_type(rb->second.type());
+    const std::string lcomp = fld + "_len";
+    if(!ost.has_component(lcomp))
+      return nil_exprt{};
+    const symbolt *vs = symbol_table.lookup(vid);
+    if(vs == nullptr)
+      return nil_exprt{};
+    return index_exprt{
+      member_exprt{rb->second, lcomp, ost.get_component(lcomp).type()},
+      vs->symbol_expr()};
+  }
+  // Chained form: xs[i]['f'].
+  if(
+    !is_node_type(base, "Subscript") ||
+    !is_node_type(json_member(base, "value"), "Name"))
+    return nil_exprt{};
+  const irep_idt base_id{
+    qualify_name(json_string(json_member(json_member(base, "value"), "id")))};
+  const symbolt *base_sym = symbol_table.lookup(base_id);
+  if(base_sym == nullptr || !is_soa_list_type(base_sym->type))
+    return nil_exprt{};
+  const auto &bst = to_struct_type(base_sym->type);
+  const std::string lcomp = fld + "_len";
+  if(!bst.has_component(lcomp))
+    return nil_exprt{};
+  exprt idx = convert_expression(json_member(base, "slice"));
+  if(idx.is_nil())
+    return nil_exprt{};
+  if(idx.type() != len_t)
+    idx = safe_typecast(std::move(idx), len_t);
+  member_exprt blen{base_sym->symbol_expr(), "length", len_t};
+  // PLR 6.10.2: negative row index counts from the end.
+  if_exprt nidx{
+    binary_relation_exprt{idx, ID_lt, from_integer(0, len_t)},
+    plus_exprt{idx, blen},
+    idx};
+  emit_conditional_exception(
+    not_exprt{and_exprt{
+      binary_relation_exprt{from_integer(0, len_t), ID_le, nidx},
+      binary_relation_exprt{nidx, ID_lt, blen}}},
+    "IndexError");
+  return index_exprt{
+    member_exprt{
+      base_sym->symbol_expr(), lcomp, bst.get_component(lcomp).type()},
+    std::move(nidx)};
 }
 
 exprt python_convertert::soa_field_data(
