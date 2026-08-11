@@ -89,10 +89,22 @@ inline std::size_t &python_max_list_length_config()
 /// bounded prefix emit a fail-closed python-model-bound obligation at
 /// the USE site (never silent truncation). Same function-static
 /// pattern as python_smt_string_native_flag.
-inline bool &python_ref_instances_flag()
+/// Reference semantics for class instances (PLR 3.1: assignment,
+/// argument passing, returns and attribute stores bind REFERENCES,
+/// never copy objects) is ALWAYS ON -- it is the model-fidelity
+/// default, not a feature toggle (the by-value model produced
+/// demonstrated false proofs: invisible mutation through aliases,
+/// unprovable identity). Compile with
+/// -DCBMC_PYTHON_BYVALUE_INSTANCES to restore the old by-value
+/// model for debugging comparisons; there is deliberately no
+/// run-time option.
+inline bool python_ref_instances_flag()
 {
-  static bool flag = false;
-  return flag;
+#ifdef CBMC_PYTHON_BYVALUE_INSTANCES
+  return false;
+#else
+  return true;
+#endif
 }
 
 inline bool &python_smt_containers_flag()

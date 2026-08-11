@@ -3594,6 +3594,16 @@ exprt python_convertert::python_truthiness(const exprt &e)
     const auto &base = to_pointer_type(t).base_type();
     if(is_python_list_type(base) || is_python_dict_type(base))
       return python_truthiness(dereference_exprt{e});
+    // Reference-semantics instances: a nullable instance pointer
+    // is falsy iff NULL (None) or the pointee's __bool__/__len__
+    // decide falsy (PLR 4.1). Guarding the deref by non-null keeps
+    // the recursion well-defined on the None path.
+    if(!class_name_of_type(base).empty())
+    {
+      return and_exprt{
+        notequal_exprt{e, null_pointer_exprt{to_pointer_type(t)}},
+        python_truthiness(dereference_exprt{e})};
+    }
   }
 
   // Class instance struct: try __bool__ then __len__; default True.

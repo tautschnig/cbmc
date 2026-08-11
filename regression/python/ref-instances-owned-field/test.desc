@@ -1,6 +1,6 @@
 CORE
 main.py
---python-ref-instances --z3
+--z3
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$

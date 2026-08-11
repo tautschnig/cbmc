@@ -1,4 +1,4 @@
-# Phase 4 (--python-ref-instances): class instances stored in
+# Reference-semantics instances (DEFAULT): class instances stored in
 # containers keep per-object identity (PLR 3.1) -- iteration,
 # subscript-attribute access and extract-then-mutate all reach the
 # stored object; distinct elements stay distinct.

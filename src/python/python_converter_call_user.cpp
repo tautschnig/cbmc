@@ -557,6 +557,13 @@ exprt python_convertert::convert_user_call(
     if(var_sym != nullptr)
     {
       typet inst_type = var_sym->type;
+      // Reference-semantics instances: locals are POINTERS to the
+      // class struct -- look through the pointer for the tag and
+      // pass the pointer VALUE as the receiver (an address_of the
+      // pointer symbol would be a pointer-to-pointer).
+      const bool inst_is_ptr = inst_type.id() == ID_pointer;
+      if(inst_is_ptr)
+        inst_type = to_pointer_type(inst_type).base_type();
       std::string tag;
       if(inst_type.id() == ID_struct)
         tag = id2string(to_struct_type(inst_type).get_tag());
@@ -576,7 +583,10 @@ exprt python_convertert::convert_user_call(
             if(cs->type.id() == ID_code)
               ret_type = to_code_type(cs->type).return_type();
             exprt::operandst call_args;
-            call_args.push_back(address_of_exprt{var_sym->symbol_expr()});
+            if(inst_is_ptr)
+              call_args.push_back(var_sym->symbol_expr());
+            else
+              call_args.push_back(address_of_exprt{var_sym->symbol_expr()});
             if(args.is_array())
             {
               for(const auto &arg : as_array(args))
