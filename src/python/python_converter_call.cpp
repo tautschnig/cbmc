@@ -1512,6 +1512,46 @@ exprt python_convertert::convert_call(const jsont &expr)
 
     // Constructor call as expression: create temp, call __init__, return temp
     const struct_typet &cls_type = class_types[func_name];
+    // reference-semantics-for-instances: the expression-position
+    // construction heap-allocates PER EXECUTION and denotes the
+    // DEREF of the fresh pointer. Value contexts copy exactly as
+    // the temp did; pointer contexts (a Phase-3 field store's
+    // address_of, an is-comparison strip) recover per-execution
+    // identity. The named temp below is shared across EXECUTIONS
+    // of the converted-once site (both Holder() constructions
+    // aliased one __ctor_expr -- h1.x is h2.x false-proved).
+    if(python_ref_instances_flag())
+    {
+      static unsigned ctor_heap_counter = 0;
+      std::string hp_name =
+        "__ctor_heap_" + func_name + "_" + std::to_string(ctor_heap_counter++);
+      irep_idt hp_id{qualify_name(hp_name)};
+      const pointer_typet hp_t{cls_type, 64};
+      if(symbol_table.lookup(hp_id) == nullptr)
+      {
+        symbolt hs{hp_id, hp_t, "python"};
+        hs.base_name = hp_name;
+        hs.is_lvalue = true;
+        hs.is_state_var = true;
+        symbol_table.add(hs);
+      }
+      symbol_exprt hp = symbol_table.lookup_ref(hp_id).symbol_expr();
+      namespacet ns_ch{symbol_table};
+      exprt osize = from_integer(
+        pointer_offset_size(cls_type, ns_ch).value_or(16), size_type());
+      side_effect_exprt oalloc{
+        ID_allocate, {osize, false_exprt{}}, hp_t, get_location(expr)};
+      pending_checks.push_back(code_frontend_assignt{hp, std::move(oalloc)});
+      irep_idt class_obj_id_h{"python::" + func_name};
+      const symbolt *class_obj_h = symbol_table.lookup(class_obj_id_h);
+      if(class_obj_h != nullptr && !class_obj_h->value.is_nil())
+        pending_checks.push_back(code_frontend_assignt{
+          dereference_exprt{hp}, class_obj_h->symbol_expr()});
+      for(auto &st2 : build_class_construction(
+            func_name, dereference_exprt{hp}, expr, get_location(expr)))
+        pending_checks.push_back(std::move(st2));
+      return dereference_exprt{hp};
+    }
     static unsigned ctor_tmp_counter = 0;
     std::string tmp_name =
       "__ctor_expr_" + func_name + "_" + std::to_string(ctor_tmp_counter++);

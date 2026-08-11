@@ -1540,6 +1540,32 @@ codet python_convertert::convert_assign(const jsont &stmt)
           if(st.has_component(attr))
           {
             member_exprt lhs{lhs_obj, attr, st.get_component(attr).type()};
+            // reference-semantics-for-instances (Phase 3, OWNED
+            // fields): a POINTER-typed field assigned a fresh
+            // construction heap-allocates AT THE STORE SITE (one
+            // allocation per execution: each Holder() owns a
+            // DISTINCT Inner -- a shared temp would alias every
+            // instance's field to one object) and constructs
+            // through the pointer.
+            if(
+              python_ref_instances_flag() && lhs.type().id() == ID_pointer &&
+              !class_name_of_type(to_pointer_type(lhs.type()).base_type())
+                 .empty())
+            {
+              const typet &obj_t = to_pointer_type(lhs.type()).base_type();
+              namespacet ns_of{symbol_table};
+              exprt osize = from_integer(
+                pointer_offset_size(obj_t, ns_of).value_or(16), size_type());
+              side_effect_exprt oalloc{
+                ID_allocate, {osize, false_exprt{}}, lhs.type(), loc};
+              code_blockt resultp;
+              resultp.add(code_frontend_assignt{lhs, std::move(oalloc)});
+              dereference_exprt fobj{lhs};
+              for(auto &s2 : build_class_construction(
+                    call_name, std::move(fobj), value, loc))
+                resultp.add(std::move(s2));
+              return std::move(resultp);
+            }
             std::string tmp_name = "__ctor_tmp_" + attr;
             std::string tmp_qname = qualify_name(tmp_name);
             irep_idt tmp_id{tmp_qname};

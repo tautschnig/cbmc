@@ -3661,6 +3661,17 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                  .find("python_class_") != std::string::npos);
           if(field_is_instance && is_node_type(av, "Name"))
             attr_type = pointer_type(attr_type);
+          // Phase 3 OWNED fields: `self.x: C = C()` also holds a
+          // pointer now -- the store site heap-allocates PER
+          // EXECUTION (see convert_assign), so instances own
+          // distinct objects; the old keep-the-struct rationale
+          // (a shared temp would over-alias) no longer applies.
+          else if(
+            field_is_instance && is_node_type(av, "Call") &&
+            is_node_type(json_member(av, "func"), "Name") &&
+            class_types.count(
+              json_string(json_member(json_member(av, "func"), "id"))) > 0)
+            attr_type = pointer_type(attr_type);
           // External-store slot-pun: widen when a mismatched external store to
           // a field of this name was seen module-wide.
           if(ext_store_punned(attr_name, attr_type))
@@ -3734,7 +3745,20 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           std::string ctor_name =
             json_string(json_member(json_member(rhs, "func"), "id"));
           if(class_types.count(ctor_name))
+          {
             attr_type = class_types[ctor_name];
+            // reference-semantics-for-instances (Phase 3, OWNED
+            // fields): under the flag the constructed object lives
+            // on the HEAP and the field holds the POINTER -- the
+            // store site allocates PER EXECUTION of the store (see
+            // convert_assign), so two Holder() instances own two
+            // distinct Inner objects (the shared-__ctor_tmp
+            // over-aliasing trap this scan's comment used to warn
+            // about), while two reads of ONE holder's field give
+            // the SAME object (h.get() is h.get() -- PLR 3.1).
+            if(python_ref_instances_flag())
+              attr_type = pointer_type(attr_type);
+          }
         }
         else if(!rhs_name.empty())
         {
