@@ -497,3 +497,35 @@ owned-field construction identity (`self.x = Inner(1)`; two gets
 returning the same object) still loud-fails -- that is the Phase-3
 field-STORE-identity item (heap-allocate fresh constructions stored
 into fields), not a return-path issue.
+
+
+## Phase 3 COMPLETE: owned-field identity (2026-08-11)
+
+`self.x = Inner(1)` (plain and annotated) now heap-allocates PER
+EXECUTION of the store and holds the POINTER; the ctor-AS-EXPRESSION
+path heap-allocates and denotes the deref of the fresh pointer, so
+value contexts copy as before while pointer contexts recover
+identity. This closed the documented over-aliasing trap (the shared
+converted-once __ctor temp): h1.x is h2.x refutes, h.get() is
+h.get() proves, no cross-instance mutation bleed, rebinding keeps
+the old object live. Tests: ref-instances-owned-field{,-fail}.
+
+## Phase 4 assessment (2026-08-11): default-on is VIABLE
+
+Evidence, measured on this host:
+- SEMANTICS: the FULL python regression suite (and the four
+  regression/cbmc python tests) pass with the flag FORCED ON via a
+  temporary default flip -- no test depends on by-value instance
+  semantics.
+- PERF: study-corpus repro sweep within noise both ways (t4 even
+  improves 161ms -> 87ms); pyhard 36s on vs 35s off; suite wall
+  267s (normal range). The ref_mutables nested-container == cliff
+  does NOT reproduce for instance pointers.
+- COVERAGE: identity flows through locals, params, self, returns
+  (fresh factories AND pointer fields), owned and by-ref fields,
+  is/is-not tiers, identity-keyed dicts and sets.
+
+RECOMMENDATION: flip the default (retaining a
+--no-python-ref-instances escape hatch) in a dedicated commit.
+Left un-flipped pending sign-off -- a semantic default change
+deserves its own review.
