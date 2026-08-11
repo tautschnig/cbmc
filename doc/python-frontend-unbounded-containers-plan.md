@@ -730,3 +730,25 @@ python-complex-pow was the PLR 6.16 binop LHS snapshot orphaning
 constant tracking (entries now propagate to the temp). The core
 cbmc suite is fully green again. Consider moving python-* tests
 into regression/python so the standard gate covers them.
+
+
+## Batch record (2026-08-11 pm): nested SoA fields, merge-safe
+## provenance, cvc5 pattern verdict, test relocation
+
+- Nested list fields: per-field MATRICES + per-row length arrays
+  (len / element / row-view consumers exact, bare escapes loud).
+- Merge-safe provenance: the SoA maps joined the EXISTING
+  snapshot/merge protocol of convert_if -- the m7 wrong-owner
+  false proof (row view bound to different owners per branch read
+  the last-converted owner on BOTH paths) is dead; agreeing
+  bindings survive exactly.
+- :pattern on cvc5: the exists-only emission HOLDS on cvc5 --
+  deep17 TIMEOUT -> 21s, pop_gone 2s, setdefault/get_consist fast;
+  the lookup/consist_fail VERIFICATION ERRORs are a PRE-EXISTING
+  cvc5 `STORE_ALL not supported` limitation (A/B with patterns
+  stripped: identical), fixable via --arrays-exp in the solver
+  invocation -- recorded as a follow-up, not a pattern issue.
+- All 74 python-* tests moved out of regression/cbmc.
+
+Remaining recorded: --arrays-exp for cvc5 invocations; the
+k5 dict-iteration residual; ex4 solver-side provenance entailment.
