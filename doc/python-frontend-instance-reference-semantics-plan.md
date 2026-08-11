@@ -529,3 +529,22 @@ RECOMMENDATION: flip the default (retaining a
 --no-python-ref-instances escape hatch) in a dedicated commit.
 Left un-flipped pending sign-off -- a semantic default change
 deserves its own review.
+
+
+## Phase 4 SHIPPED (2026-08-11): reference semantics is the default
+
+The --python-ref-instances option is REMOVED (no run-time opt-out;
+-DCBMC_PYTHON_BYVALUE_INSTANCES restores the by-value model at
+compile time for debugging). NOTE the earlier forced-on suite
+experiment was INVALID -- the option handler clobbered the
+temporary default at load time -- so the flip came with a real
+audit (16 failing tests, one frontend crash, one genuine false
+proof): __call__ receivers, construction-arm ordering (tag/defaults
+through the deref), AnnAssign's singular target, sorted-key
+projection through pointer and class-boxed elements, and the
+biggest: `Class | None` union returns. The Phase-1 MID-CONVERSION
+return-slot mutation is removed -- pointer-vs-value is decided at
+DEF time only (annotated class returns, self-field/Name/ctor
+shapes, free functions included), None = NULL on nullable instance
+pointers, pointer-into-union boxing goes through the deref. The
+identity pinning tests now enforce CPython behaviour by default.
