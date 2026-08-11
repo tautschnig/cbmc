@@ -825,6 +825,10 @@ python_convertert::snapshot_tracking() const
   snap.tuple_literals = tuple_literals;
   snap.float_constants = float_constants;
   snap.alias_targets = alias_targets;
+  snap.soa_row_bindings = soa_row_bindings;
+  snap.soa_row_view_names = soa_row_view_names;
+  snap.var_typeddict = var_typeddict;
+  snap.var_soa_elem = var_soa_elem;
   return snap;
 }
 
@@ -836,6 +840,10 @@ void python_convertert::restore_tracking(const tracking_snapshott &snap)
   tuple_literals = snap.tuple_literals;
   float_constants = snap.float_constants;
   alias_targets = snap.alias_targets;
+  soa_row_bindings = snap.soa_row_bindings;
+  soa_row_view_names = snap.soa_row_view_names;
+  var_typeddict = snap.var_typeddict;
+  var_soa_elem = snap.var_soa_elem;
 }
 
 namespace
@@ -882,6 +890,24 @@ void python_convertert::merge_tracking(
     state0.alias_targets,
     state1.alias_targets,
     [](const irep_idt &x, const irep_idt &y) { return x == y; });
+  soa_row_bindings =
+    merge_maps(state0.soa_row_bindings, state1.soa_row_bindings, expr_eq);
+  // The guard SET merges by intersection: a name that is a row
+  // view on BOTH paths stays guarded even when its binding was
+  // dropped for disagreement -- the post-merge read then
+  // fail-closes at convert_name instead of reading a wrong owner.
+  {
+    std::set<irep_idt> both;
+    for(const auto &n : state0.soa_row_view_names)
+      if(state1.soa_row_view_names.count(n) > 0)
+        both.insert(n);
+    soa_row_view_names = std::move(both);
+  }
+  auto str_eq = [](const std::string &x, const std::string &y)
+  { return x == y; };
+  var_typeddict =
+    merge_maps(state0.var_typeddict, state1.var_typeddict, str_eq);
+  var_soa_elem = merge_maps(state0.var_soa_elem, state1.var_soa_elem, str_eq);
 }
 
 /// Back-end-dispatching Python string literal. See
