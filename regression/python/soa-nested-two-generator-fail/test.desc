@@ -1,0 +1,11 @@
+CORE
+main.py
+--python-smt-containers --python-smt-strings --z3
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Twin: x >= 63 refutes (62 is attainable); under the BOUNDED int
+model even x >= 62 honestly fails on 64-bit wraparound of the sum
+-- exact under --python-unbounded-ints (verified on cvc5).

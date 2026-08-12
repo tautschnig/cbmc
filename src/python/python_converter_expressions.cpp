@@ -434,6 +434,40 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   // raise; an SoA list only exists for all-required TypedDicts).
   // An unknown field name falls through to the generic path (which
   // will loudly reject the row's index type -- the escape gate).
+  // NESTED row binding (recursive SoA): `n['g']` where n is bound
+  // to an inner row of a flattened List[InnerTD] field resolves to
+  // owner.<f>_<g>_data[outer][n] -- a pure double select.
+  {
+    const jsont &val_n = json_member(expr, "value");
+    const jsont &sl_n = json_member(expr, "slice");
+    if(
+      is_node_type(val_n, "Name") && !soa_nested_row_bindings.empty() &&
+      is_node_type(sl_n, "Constant") && json_member(sl_n, "value").is_string())
+    {
+      const irep_idt vid{qualify_name(json_string(json_member(val_n, "id")))};
+      auto nb = soa_nested_row_bindings.find(vid);
+      if(nb != soa_nested_row_bindings.end())
+      {
+        const std::string g = json_member(sl_n, "value").value;
+        const auto &ost = to_struct_type(nb->second.owner.type());
+        const std::string comp = nb->second.field + "_" + g + "_data";
+        if(ost.has_component(comp))
+        {
+          const symbolt *vs = symbol_table.lookup(vid);
+          if(vs != nullptr)
+          {
+            exprt mat = member_exprt{
+              nb->second.owner, comp, ost.get_component(comp).type()};
+            exprt inner = index_exprt{std::move(mat), nb->second.outer_row};
+            exprt sel = index_exprt{std::move(inner), vs->symbol_expr()};
+            if(is_python_string_handle_type(sel.type()))
+              return string_handle_to_string(sel);
+            return sel;
+          }
+        }
+      }
+    }
+  }
   {
     const jsont &val_n = json_member(expr, "value");
     if(is_node_type(val_n, "Name") && !soa_row_bindings.empty())
