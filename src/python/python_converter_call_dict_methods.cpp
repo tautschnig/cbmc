@@ -699,7 +699,8 @@ std::optional<exprt> python_convertert::try_dict_method(
     // Quantified witness lift (--python-smt-containers): the shared
     // lookup encoding plus an EXACT quantified compaction -- the
     // removal shift is a lambda-array (array_comprehension) that
-    // preserves insertion order at any length (PLR 3.7+ order):
+    // preserves insertion order at any length (guaranteed since
+    // Python 3.7; PLR 6.2.7 + stdtypes dict):
     //   keys' := lambda q. q < w ? keys[q] : keys[q+1]
     // The bounded find-and-shift below stays as the ineligible-key
     // fallback.

@@ -809,7 +809,7 @@ bool python_convertert::is_soa_list_type(const typet &t) const
 /// list, f a list field -> matrix) and the row-view form `r['f']`
 /// (r in soa_row_bindings), returning `f_len[<row>]` with the row
 /// IndexError obligation. Nil when the shape does not apply.
-/// PLR 6.10.1: iterating a dict yields its KEYS in insertion
+/// PLR 6.2.7 / stdtypes dict: iterating a dict yields its KEYS in insertion
 /// order -- and the dict struct's keys[] array IS insertion-ordered
 /// with build-time canonical dedup, so a dict iterable is exactly a
 /// list view {length, keys}. Materialized into a temp (member reads
@@ -946,7 +946,8 @@ exprt python_convertert::try_soa_nested_len(const jsont &sub)
   if(idx.type() != len_t)
     idx = safe_typecast(std::move(idx), len_t);
   member_exprt blen{base_sym->symbol_expr(), "length", len_t};
-  // PLR 6.10.2: negative row index counts from the end.
+  // PLR 6.3.2 (Subscriptions): a negative row index counts
+  // from the end.
   if_exprt nidx{
     binary_relation_exprt{idx, ID_lt, from_integer(0, len_t)},
     plus_exprt{idx, blen},

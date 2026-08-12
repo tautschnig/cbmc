@@ -1815,7 +1815,8 @@ codet python_convertert::convert_assign(const jsont &stmt)
             if(idx.type() != len_t)
               idx = safe_typecast(idx, len_t);
             member_exprt blen{base_sym->symbol_expr(), "length", len_t};
-            // PLR 6.10.2: negative index counts from the end;
+            // PLR 6.3.2 (Subscriptions): a negative index counts from
+            // the end (the sequence length is added to it);
             // normalize BEFORE the bounds obligation.
             if_exprt nidx{
               binary_relation_exprt{idx, ID_lt, from_integer(0, len_t)},
@@ -4827,7 +4828,8 @@ codet python_convertert::convert_assign(const jsont &stmt)
     }
     if(is_python_dict_type(typed_rhs.type()))
     {
-      // PLR 8.5: consume the defaultdict-factory hint stashed by
+      // Library ref (collections.defaultdict): consume the
+      // factory hint stashed by
       // convert_call. This seam previously existed ONLY in
       // convert_ann_assign -- a PLAIN `d = defaultdict(int)` never
       // registered the factory, so missing-key reads raised
