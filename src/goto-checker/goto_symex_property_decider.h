@@ -44,6 +44,23 @@ public:
   /// Calls solve() on the solver instance
   decision_proceduret::resultt solve();
 
+  /// Decides each goal in ITS OWN solver query
+  /// (check-sat-assuming over the goal's condition literal):
+  /// unrelated properties' negations stay out of scope, which
+  /// keeps quantifier-heavy encodings tractable -- N sites in one
+  /// query can be unsolvable while every site is trivial alone
+  /// (E-matching poisoning is structural, not formula size).
+  /// Sets FAIL/PASS/ERROR per goal from its own query result.
+  void solve_goals_individually(
+    propertiest &properties,
+    std::unordered_set<irep_idt> &updated_properties,
+    messaget &log);
+
+  const optionst &get_options() const
+  {
+    return options;
+  }
+
   /// Returns the solver instance
   stack_decision_proceduret &get_decision_procedure() const;
 

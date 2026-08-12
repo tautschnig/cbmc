@@ -385,6 +385,31 @@ void run_property_decider(
     << property_decider.get_decision_procedure().decision_procedure_text()
     << messaget::eom;
 
+  // --isolate-properties: one solver query per property
+  // (check-sat-assuming over each goal's condition literal). The
+  // goal conditions are DEFINED but never asserted, so unrelated
+  // properties' negations stay inert -- decisive for
+  // quantifier-heavy encodings (comprehension witness axioms),
+  // where N goals disjoined in one query can be unsolvable while
+  // each is trivial alone.
+  if(property_decider.get_options().get_bool_option("isolate-properties"))
+  {
+    auto const sat_solver_start = std::chrono::steady_clock::now();
+    property_decider.solve_goals_individually(
+      properties, result.updated_properties, log);
+    auto const sat_solver_stop = std::chrono::steady_clock::now();
+    std::chrono::duration<double> sat_solver_runtime =
+      std::chrono::duration<double>(sat_solver_stop - sat_solver_start);
+    log.statistics() << "Runtime Solver: " << sat_solver_runtime.count() << "s"
+                     << messaget::eom;
+    auto solver_stop_i = std::chrono::steady_clock::now();
+    solver_runtime +=
+      std::chrono::duration<double>(solver_stop_i - solver_start);
+    log.statistics() << "Runtime decision procedure: " << solver_runtime.count()
+                     << "s" << messaget::eom;
+    return;
+  }
+
   property_decider.add_constraint_from_goals(
     [&properties](const irep_idt &property_id) {
       return is_property_to_check(properties.at(property_id).status);

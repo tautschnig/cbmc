@@ -112,6 +112,40 @@ decision_proceduret::resultt goto_symex_property_decidert::solve()
   return solver->decision_procedure()();
 }
 
+void goto_symex_property_decidert::solve_goals_individually(
+  propertiest &properties,
+  std::unordered_set<irep_idt> &updated_properties,
+  messaget &log)
+{
+  stack_decision_proceduret &dp = solver->decision_procedure();
+  for(auto &goal_pair : goal_map)
+  {
+    auto &status = properties.at(goal_pair.first).status;
+    if(!is_property_to_check(status))
+      continue;
+    log.status() << "Solving property " << goal_pair.first << " in isolation"
+                 << messaget::eom;
+    dp.push({goal_pair.second.condition});
+    decision_proceduret::resultt dec_result = dp();
+    dp.pop();
+    switch(dec_result)
+    {
+    case decision_proceduret::resultt::D_SATISFIABLE:
+      status |= property_statust::FAIL;
+      updated_properties.insert(goal_pair.first);
+      break;
+    case decision_proceduret::resultt::D_UNSATISFIABLE:
+      status |= property_statust::PASS;
+      updated_properties.insert(goal_pair.first);
+      break;
+    case decision_proceduret::resultt::D_ERROR:
+      status |= property_statust::ERROR;
+      updated_properties.insert(goal_pair.first);
+      break;
+    }
+  }
+}
+
 stack_decision_proceduret &
 goto_symex_property_decidert::get_decision_procedure() const
 {

@@ -10,6 +10,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #ifndef CPROVER_SOLVERS_SMT2_SMT2_DEC_H
 #define CPROVER_SOLVERS_SMT2_SMT2_DEC_H
 
+#include <solvers/prop/solver_resource_limits.h>
+
 #include "smt2_conv.h"
 
 class message_handlert;
@@ -22,9 +24,16 @@ protected:
 
 /*! \brief Decision procedure interface for various SMT 2.x solvers
 */
-class smt2_dect : protected smt2_stringstreamt, public smt2_convt
+class smt2_dect : protected smt2_stringstreamt,
+                  public smt2_convt,
+                  public solver_resource_limitst
 {
 public:
+  void set_time_limit_seconds(uint32_t lim) override
+  {
+    time_limit_seconds = lim;
+  }
+
   smt2_dect(
     const namespacet &_ns,
     const std::string &_benchmark,
@@ -42,6 +51,11 @@ public:
   std::string decision_procedure_text() const override;
 
 protected:
+  /// timeout per dec_solve() run; 0 = none. Passed to the solver
+  /// process (z3 -T:, cvc5 --tlimit) -- an intra-process deadline
+  /// is not available for external solvers.
+  uint32_t time_limit_seconds = 0;
+
   std::string solver_binary_or_empty;
   message_handlert &message_handler;
   resultt dec_solve(const exprt &) override;

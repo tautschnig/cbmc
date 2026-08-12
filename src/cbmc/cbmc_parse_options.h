@@ -79,7 +79,9 @@ class optionst;
   "(python-strict-warnings)" \
   "(python-use-stdlib-source)" \
   "(python-smt-strings)" \
-  "(python-smt-containers)" \
+"(isolate-properties)" \
+  "(solver-time-limit):" \
+    "(python-smt-containers)" \
   "(python-lazy-stubs)" \
   "(python-no-exception-checks)" \
   "(python-raising-ops-check)" \

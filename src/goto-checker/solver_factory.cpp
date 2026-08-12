@@ -538,6 +538,8 @@ solver_factoryt::get_smt2(smt2_dect::solvert solver)
     if(options.get_bool_option("fpa"))
       smt2_dec->use_FPA_theory = true;
 
+    set_decision_procedure_time_limit(*smt2_dec);
+
     return std::make_unique<solvert>(std::move(smt2_dec));
   }
   else if(filename == "-")

@@ -183,6 +183,13 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-use-stdlib-source", true);
   if(cmdline.isset("python-smt-strings"))
     options.set_option("python-smt-strings", true);
+  if(cmdline.isset("isolate-properties"))
+    options.set_option("isolate-properties", true);
+
+  if(cmdline.isset("solver-time-limit"))
+    options.set_option(
+      "solver-time-limit", cmdline.get_value("solver-time-limit"));
+
   if(cmdline.isset("python-smt-containers"))
     options.set_option("python-smt-containers", true);
   if(
@@ -1237,6 +1244,10 @@ void cbmc_parse_optionst::help()
     " {uN}\n"
     " {y--python-unbounded-ints} \t arbitrary-precision int semantics"
     " (requires an SMT backend, e.g. {y--cvc5})\n"
+    " {y--solver-time-limit} {us} \t per-query time limit for external"
+    " SMT solvers (seconds)\n"
+    " {y--isolate-properties} \t one solver query per property"
+    " (keeps quantifier-heavy encodings tractable)\n"
     " {y--python-smt-containers} \t unbounded (infinite-array) lists"
     " (P1: core ops; see doc/python-frontend-unbounded-containers-plan.md)\n"
     " {y--python-smt-strings} \t native SMT-LIB String backend for str"
