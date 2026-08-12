@@ -1,0 +1,11 @@
+CORE
+main.py
+--python-smt-containers --python-smt-strings --z3
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+python-model-limitation
+--
+--
+The `if COND: return` scan is exact; an ASSIGN-body loop over an
+SoA list fail-closes loudly (previously aborted in pointer_logic).

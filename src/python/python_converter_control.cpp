@@ -10,9 +10,11 @@
 #include <util/bitvector_expr.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
+#include <util/expr_util.h>
 #include <util/json.h>
 #include <util/pointer_expr.h>
 #include <util/pointer_offset_size.h>
+#include <util/replace_expr.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
@@ -455,6 +457,259 @@ codet python_convertert::convert_for(const jsont &stmt)
           checks_only = false;
           break;
         }
+    // EARLY-EXIT SCAN over an SoA list: a body of exactly
+    // `if COND: return [expr]` is a first-match search --
+    //   nondet witness w; if (0 <= w < len && COND(row w)):
+    //     <the return>            (a genuine witnessed match)
+    //   else: assume(forall j in range: !COND(row j))
+    // Both paths are EXACT (PLR 8.3: the loop returns on the first
+    // matching element or falls through iff NO element matches; a
+    // FORALL-ONLY encoding -- the same witness discipline as the
+    // dict lookups; the unrolled fallback materialized rows via
+    // address_of into the infinite field arrays and ABORTED in
+    // pointer_logic -- the study ex4 crash).
+    bool early_exit_scan = false;
+    if(
+      !checks_only && body_n.is_array() && as_array(body_n).size() == 1 &&
+      (!orelse_n.is_array() || as_array(orelse_n).empty()))
+    {
+      const jsont &b0 = *as_array(body_n).begin();
+      if(is_node_type(b0, "If"))
+      {
+        const jsont &ib = json_member(b0, "body");
+        const jsont &ie = json_member(b0, "orelse");
+        if(
+          ib.is_array() && as_array(ib).size() == 1 &&
+          is_node_type(*as_array(ib).begin(), "Return") &&
+          (!ie.is_array() || as_array(ie).empty()))
+          early_exit_scan = true;
+      }
+    }
+    if(early_exit_scan)
+    {
+      const typet len_t = signedbv_typet{64};
+      exprt seq = convert_expression(iter);
+      if(!seq.is_nil() && is_python_value_type(seq.type()))
+      {
+        // Boxed SoA field (resp['items']): deref through the box
+        // at the SoA type via the provenance chain.
+        const jsont &it_n = iter;
+        std::string soa_td;
+        if(is_node_type(it_n, "Subscript"))
+        {
+          const jsont &sv = json_member(it_n, "value");
+          const jsont &sl = json_member(it_n, "slice");
+          if(
+            is_node_type(sv, "Name") && is_node_type(sl, "Constant") &&
+            json_member(sl, "value").is_string())
+          {
+            auto vt = var_typeddict.find(
+              irep_idt{qualify_name(json_string(json_member(sv, "id")))});
+            if(vt != var_typeddict.end())
+            {
+              auto fle = typed_dict_field_list_elem.find(vt->second);
+              if(fle != typed_dict_field_list_elem.end())
+              {
+                auto fe = fle->second.find(json_member(sl, "value").value);
+                if(fe != fle->second.end() && soa_eligible_td(fe->second))
+                  soa_td = fe->second;
+              }
+            }
+          }
+        }
+        else if(is_node_type(it_n, "Name"))
+        {
+          auto se = var_soa_elem.find(
+            irep_idt{qualify_name(json_string(json_member(it_n, "id")))});
+          if(se != var_soa_elem.end())
+            soa_td = se->second;
+        }
+        if(!soa_td.empty())
+        {
+          const typet soat = soa_list_type(soa_td);
+          exprt v =
+            is_node_type(it_n, "Name")
+              ? soa_value_of_name(
+                  irep_idt{qualify_name(json_string(json_member(it_n, "id")))},
+                  soat)
+              : td_field_read_memo(it_n, soat);
+          if(v.is_not_nil())
+            seq = std::move(v);
+        }
+      }
+      if(!seq.is_nil() && is_soa_list_type(seq.type()))
+      {
+        const jsont &if_stmt_n = *as_array(body_n).begin();
+        const jsont &cond_n = json_member(if_stmt_n, "test");
+        const jsont &ret_n = *as_array(json_member(if_stmt_n, "body")).begin();
+        code_blockt blk;
+        // Witness symbol.
+        static unsigned scanw_ctr = 0;
+        const std::string wn = "__scan_w_" + std::to_string(scanw_ctr++);
+        const irep_idt wid{qualify_name(wn)};
+        if(symbol_table.lookup(wid) == nullptr)
+        {
+          symbolt ws{wid, len_t, "python"};
+          ws.base_name = wn;
+          ws.is_lvalue = true;
+          ws.is_state_var = true;
+          ws.is_static_lifetime = current_function.empty();
+          symbol_table.add(ws);
+        }
+        symbol_exprt w = symbol_table.lookup_ref(wid).symbol_expr();
+        blk.add(code_frontend_assignt{w, side_effect_expr_nondett{len_t, loc}});
+        // Bind the loop var as a ROW INDEX = w for COND conversion.
+        const std::string vname = json_string(json_member(target, "id"));
+        const irep_idt vid{qualify_name(vname)};
+        if(symbol_table.lookup(vid) == nullptr)
+        {
+          symbolt vs{vid, len_t, "python"};
+          vs.base_name = vname;
+          vs.is_lvalue = true;
+          vs.is_state_var = true;
+          vs.is_static_lifetime = current_function.empty();
+          symbol_table.add(vs);
+        }
+        else
+          symbol_table.get_writeable_ref(vid).type = len_t;
+        symbol_exprt lv = symbol_table.lookup_ref(vid).symbol_expr();
+        blk.add(code_frontend_assignt{lv, w});
+        std::optional<exprt> saved_rv2;
+        auto srv2 = soa_row_bindings.find(vid);
+        if(srv2 != soa_row_bindings.end())
+          saved_rv2 = srv2->second;
+        soa_row_bindings[vid] = seq;
+        const std::size_t pc_c0 = pending_checks.size();
+        exprt cond = convert_expression(cond_n);
+        const bool cond_clean = pending_checks.size() == pc_c0 &&
+                                !cond.is_nil() && quantifier_safe_term(cond) &&
+                                !has_subexpr(cond, ID_side_effect);
+        if(cond_clean)
+        {
+          if(cond.type().id() != ID_bool)
+            cond = python_truthiness(cond);
+          member_exprt slen{seq, "length", len_t};
+          // forall j: !COND(j), for the no-match arm.
+          static unsigned scanj_ctr = 0;
+          const std::string jn2 = "__scan_j_" + std::to_string(scanj_ctr++);
+          const irep_idt jid2{qualify_name(jn2)};
+          if(symbol_table.lookup(jid2) == nullptr)
+          {
+            symbolt js{jid2, len_t, "python"};
+            js.base_name = jn2;
+            js.is_lvalue = true;
+            js.is_state_var = true;
+            js.is_static_lifetime = current_function.empty();
+            symbol_table.add(js);
+          }
+          const symbol_exprt j2 = symbol_table.lookup_ref(jid2).symbol_expr();
+          exprt cond_j = cond;
+          replace_expr(lv, j2, cond_j);
+          exprt none_match =
+            forall_in_range(j2, slen, not_exprt{std::move(cond_j)});
+          // The then-arm: the return (converted normally; the loop
+          // var stays bound as the witness row for any use in the
+          // return expression).
+          codet ret_code = convert_statement(ret_n);
+          exprt found = and_exprt{
+            binary_relation_exprt{from_integer(0, len_t), ID_le, w},
+            binary_relation_exprt{w, ID_lt, slen},
+            std::move(cond)};
+          code_blockt else_blk;
+          code_assumet nm{std::move(none_match)};
+          nm.add_source_location() = loc;
+          else_blk.add(std::move(nm));
+          code_ifthenelset scan{
+            std::move(found), std::move(ret_code), std::move(else_blk)};
+          scan.add_source_location() = loc;
+          blk.add(std::move(scan));
+          if(saved_rv2.has_value())
+            soa_row_bindings[vid] = *saved_rv2;
+          else
+            soa_row_bindings.erase(vid);
+          return std::move(blk);
+        }
+        pending_checks.erase(
+          pending_checks.begin() + pc_c0, pending_checks.end());
+        if(saved_rv2.has_value())
+          soa_row_bindings[vid] = *saved_rv2;
+        else
+          soa_row_bindings.erase(vid);
+        // fall through to the SoA fail-closed guard below.
+      }
+    }
+    // Any OTHER for-loop over an SoA list (assign bodies, breaks,
+    // nested control flow): the generic unroll would materialize
+    // rows via address_of into the INFINITE field arrays and abort
+    // in pointer_logic (a crash, not even a loud failure). Reject
+    // fail-closed until the shape gets its own witness encoding.
+    if(!checks_only)
+    {
+      exprt seq_g = nil_exprt{};
+      bool soa_iterable_g = false;
+      {
+        // Reuse the boxed-field/name provenance resolution.
+        const jsont &it_n = iter;
+        std::string soa_td;
+        if(is_node_type(it_n, "Subscript"))
+        {
+          const jsont &sv = json_member(it_n, "value");
+          const jsont &sl = json_member(it_n, "slice");
+          if(
+            is_node_type(sv, "Name") && is_node_type(sl, "Constant") &&
+            json_member(sl, "value").is_string())
+          {
+            auto vt = var_typeddict.find(
+              irep_idt{qualify_name(json_string(json_member(sv, "id")))});
+            if(vt != var_typeddict.end())
+            {
+              auto fle = typed_dict_field_list_elem.find(vt->second);
+              if(fle != typed_dict_field_list_elem.end())
+              {
+                auto fe = fle->second.find(json_member(sl, "value").value);
+                if(fe != fle->second.end() && soa_eligible_td(fe->second))
+                  soa_td = fe->second;
+              }
+            }
+          }
+        }
+        else if(is_node_type(it_n, "Name"))
+        {
+          const irep_idt inid{
+            qualify_name(json_string(json_member(it_n, "id")))};
+          auto se = var_soa_elem.find(inid);
+          if(se != var_soa_elem.end())
+            soa_td = se->second;
+          else
+          {
+            const symbolt *isym = symbol_table.lookup(inid);
+            if(isym != nullptr && is_soa_list_type(isym->type))
+              seq_g = isym->symbol_expr();
+          }
+        }
+        if(!soa_td.empty())
+          soa_iterable_g = true;
+        if(seq_g.is_not_nil() && is_soa_list_type(seq_g.type()))
+          soa_iterable_g = true;
+      }
+      if(soa_iterable_g)
+      {
+        source_locationt aloc = loc;
+        aloc.set_property_class("python-model-limitation");
+        aloc.set_comment(
+          "for-loop shape over an SoA list not encoded (only "
+          "check-only bodies and `if COND: return` scans are); "
+          "rejected (fail-closed)");
+        code_assertt guard{false_exprt{}};
+        guard.add_source_location() = aloc;
+        code_blockt gblk;
+        gblk.add(std::move(guard));
+        code_assumet cut{false_exprt{}};
+        cut.add_source_location() = loc;
+        gblk.add(std::move(cut));
+        return std::move(gblk);
+      }
+    }
     if(checks_only)
     {
       const typet len_t = signedbv_typet{64};

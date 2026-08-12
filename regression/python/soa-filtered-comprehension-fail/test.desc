@@ -1,0 +1,10 @@
+CORE
+main.py
+--python-smt-containers --python-smt-strings --z3
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Completeness is deliberately NOT asserted: counting facts stay
+unprovable (sound under-constraint of out_len).
