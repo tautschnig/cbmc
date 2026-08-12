@@ -752,3 +752,34 @@ into regression/python so the standard gate covers them.
 
 Remaining recorded: --arrays-exp for cvc5 invocations; the
 k5 dict-iteration residual; ex4 solver-side provenance entailment.
+
+
+## Batch record (2026-08-12): k5 features, ex4 SHIPPED, cvc5 verdict
+
+- Dict iteration in comprehensions (keys-list view, PLR 6.10.1
+  insertion order) and user-__eq__ SET displays (a set IS a dict
+  with unit values -- build_dict_value_user_eq reused;
+  first-occurrence dedup is the set rule). k5's remaining reds are
+  CORRECT: its list({3,1,2}) asserts pin CPython's hash-order
+  implementation detail, which PLR leaves unspecified -- k5 now
+  encodes fully and became a solver-ceiling stress file (z3 >900s
+  on the combined formula; every individual feature verifies fast).
+- ex4 provenance entailment SHIPPED: filtered SoA comprehensions
+  via a skolem witness array (forall-only; completeness
+  deliberately under-constrained -- counting facts stay
+  unprovable), plus the `if COND: return` early-exit scan via the
+  first-match witness discipline. The pre-existing pointer_logic
+  CRASH on non-check-only SoA loops is closed fail-closed. Study
+  sweep: ex1/ex4/ex6 now VERIFY (were ceilings); ex5 fails on the
+  INTENDED nondet-divisor ZeroDivisionError; ex2/ex7 remain the
+  recorded bounded-fallback shapes; ex3 remains a solver unknown.
+- cvc5 --arrays-exp: ALREADY in the invocation (smt2_dec.cpp);
+  the residual lookup/consist_fail ERRORs are cvc5 'unknown' on
+  SAT-direction model queries -- a recorded solver ceiling, not a
+  missing flag.
+
+PROCESS NOTE: a git-stash round-trip during a pre-existence check
+silently held uncommitted spike work; the filtered-comprehension
+arm was absent from two probe runs that "passed" vacuously through
+the fallback. Re-verified after the pop: always re-run the acid
+battery on the final tree.
