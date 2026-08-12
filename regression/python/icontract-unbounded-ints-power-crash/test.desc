@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 main.py
 --function abs_val --unwind 10 --python-unbounded-ints --z3
 ^EXIT=0$
