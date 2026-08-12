@@ -813,3 +813,51 @@ deliberate completeness under-constraint) but three hand-built
 sites; folding them into one parameterized witness-core builder is
 recorded as a refactor candidate -- semantics are pinned by the
 soa-* test family, so the refactor is safe to do mechanically.
+
+
+## Reconciliation with ~/comprehensions-encoding (Remi, 2026-08-12)
+
+Remi's schema study and this frontend's witness family were built in
+parallel and CONVERGE: our dictcomp encoding is exactly his tier-1
+"full contract" MINUS the D5 completeness axiom -- and his
+leave-one-out diagnosis identifies D5 as precisely the axiom that
+makes z3 model-finding intractable (all six schematic dict configs
+timeout; one :pattern on D5's witness read fixes them). Dropping D5
+("counting facts stay unprovable") sidestepped that wall entirely,
+which is why ex7 verifies in ~1s where the full contract needs the
+trigger. His tier-2 insight (WELL-FORMEDNESS IS COLLISION-INVARIANT
+-- safety facts need NO clash axioms at all, depth 1, flat to 32
+sites) is the fallback design if our middle tier ever hits
+performance walls; measured today it does not (4 ambient dictcomp
+sites + a site-0 contents fact: 1s in our pipeline -- our
+B-literal-guarded bitvector formulas do not reproduce his
+schematic-Int ambient poisoning at small N).
+
+Three findings TRANSFERRED and verified in our pipeline today:
+1. QUERY ISOLATION is the k5 answer: the >900s monolith splits into
+   28 instant proofs + the 7 intended refusals + 1 timeout (the
+   PLR-unspecified hash-order assert, an acceptable refusal shape)
+   under --property per-site runs. Comprehension-heavy files should
+   be verified per-property; his data (full contract: 2 sites = 6x,
+   4 = unsolvable, isolated = flat) says the effect is structural.
+2. CORRECTION of a misdiagnosis recorded here yesterday: the
+   "value-facts-through-lookup solver unknown" (e5) is NOT a
+   ceiling -- the one-shot dump is SAT (ident * 2 WRAPS under the
+   bounded-int model, the fact is genuinely false; the incremental
+   run's unknown was the solver declining on a satisfiable query).
+   Same wraparound honesty as the ex2 62-entailment.
+3. cvc5 --fmf-bound does NOT transfer: his quantifiers range over
+   Int (the fmf fragment); ours are bitvector-bounded. No invocation
+   change.
+
+RECORDED designs from the study, not yet implemented here:
+- GROUND per-key presence witnesses (his slotof-instance idea):
+  when a program READS a specific key of a witness-built dict,
+  emit the D5 instance for that source slot only -- depth 1,
+  proves presence without the quantified completeness axiom.
+- Frontend :pattern on WITNESS-FAMILY foralls only, carried by the
+  BINDER-NAME convention (__dc_/__nm_/__soa_filt_ binders =
+  comprehension witnesses -> trigger on the witness read;
+  __dq_/__dk_ = mutation-chain witnesses -> leave to saturation,
+  the blanket-emission regression class). The binder name survives
+  SSA renaming, where the #trigger attribute did not.
