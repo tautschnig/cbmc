@@ -728,6 +728,14 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       saved.swap(pending_checks);
       if(iter_val.type().id() == ID_pointer)
         iter_val = dereference_exprt{iter_val};
+      // PLR 6.10.1: a DICT iterable yields keys in insertion order
+      // -- lower to the keys-list view so every downstream path
+      // (closed forms, filters, unrolling) applies unchanged.
+      {
+        exprt dkv = dict_keys_view(iter_val, get_location(gen_iter));
+        if(dkv.is_not_nil())
+          iter_val = std::move(dkv);
+      }
 
       // PLR §3.3.1: a comprehension over a class instance whose MRO defines
       // neither __iter__ nor __getitem__ is not iterable -> TypeError (mirrors
