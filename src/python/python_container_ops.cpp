@@ -1311,8 +1311,9 @@ python_convertert::dict_witness_resultt python_convertert::dict_lookup_witness(
   const exprt &key)
 {
   // Demand-driven D5: a presence-consuming read of a witness-built
-  // dictcomp result flushes its completeness axiom (once).
-  flush_d5_for(dict_value);
+  // dictcomp result flushes its completeness axiom (once) plus a
+  // per-key bridge instance for THIS key.
+  flush_d5_for(dict_value, key);
 
   const auto &dict_st = to_struct_type(dict_value.type());
   const auto &keys_type = to_array_type(dict_st.components()[1].type());
@@ -1329,10 +1330,11 @@ python_convertert::dict_lookup_witness_members(
   std::function<exprt(const exprt &)> matcher)
 {
   // Demand-driven D5: a presence-consuming read of a witness-built
-  // dictcomp result flushes its completeness axiom (once). Here the
-  // dict arrives as its keys MEMBER -- look through to the owner.
+  // dictcomp result flushes its completeness axiom (once) plus a
+  // per-key bridge instance for THIS key. Here the dict arrives as
+  // its keys MEMBER -- look through to the owner.
   if(keys.id() == ID_member)
-    flush_d5_for(to_member_expr(keys).compound());
+    flush_d5_for(to_member_expr(keys).compound(), key);
 
   dict_witness_resultt r;
   if(!python_smt_containers_flag())
