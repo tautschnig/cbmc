@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 main.py
 --python-smt-containers --python-smt-strings --z3
 ^EXIT=0$
@@ -6,8 +6,9 @@ main.py
 ^VERIFICATION SUCCESSFUL$
 --
 --
-PLR 8.3: after a for loop over a non-empty sequence the loop
-variable holds the LAST element. The early-exit scan encoding
-loud-fails the post-loop read (TypeError not-subscriptable --
-sound, never a pun). Acceptance: bind the row index to len-1 on
-the no-match path so the read is exact.
+PLR 8.3: after a completed (no-match) loop over a non-empty
+sequence the loop variable holds the LAST element -- the scan's
+else-arm now binds the row index to len-1 (exact: equals
+xs[len-1] AND inherits the no-match forall), with the empty-source
+case carried by the path-sensitive $bound machinery
+(UnboundLocalError at a post-loop read, as in CPython).

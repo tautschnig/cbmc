@@ -13,12 +13,10 @@ def probe() -> None:
     for r in xs:
         if r['v'] > 999999:
             return
-    # r is now bound to the scan WITNESS INDEX (an i64) -- a bare
-    # read here must not pun it into a value. In CPython r is the
-    # LAST ELEMENT (a dict) if xs non-empty, else unbound.
     if len(xs) > 0:
-        x = r['v']
-        assert x == x
+        # PLR 8.3: r is the LAST element on the no-match path.
+        assert r['v'] == xs[len(xs) - 1]['v']
+        assert r['v'] <= 999999
 
 
 probe()
