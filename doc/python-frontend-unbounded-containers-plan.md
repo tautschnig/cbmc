@@ -783,3 +783,33 @@ silently held uncommitted spike work; the filtered-comprehension
 arm was absent from two probe runs that "passed" vacuously through
 the fallback. Re-verified after the pop: always re-run the acid
 battery on the final tree.
+
+
+## ex2 + ex7 SHIPPED (2026-08-12 pm): the result-shape items close
+
+The witness-array family now covers the full study ex-series
+(ex1/ex2/ex4/ex6/ex7 VERIFY; ex5 fails on its intended may-raise;
+ex3 remains the recorded solver unknown):
+
+- ex7: filtered dictcomp with non-injective keys -- the asymmetric
+  clash contract (first-occurrence key/position, last-occurrence
+  value) via key witness + value witness + two-binder
+  distinctness/firstness/lastness. Value facts through a LOOKUP on
+  the built dict are a solver unknown on both backends (loud) --
+  the known multi-witness ceiling.
+- ex2: recursive SoA depth 1 (List[InnerTD] fields flatten to
+  per-nested-field matrices + shared per-row length) + witness
+  PAIRS with lexicographic monotonicity. ENCODING LESSON, learned
+  twice this session: the output data must be a DEFINITIONAL
+  array_comprehension over the witness selects, with the forall
+  carrying only ranges and filters -- asserting body equalities
+  under the binder leaves two-level instantiation to saturation
+  (unknown); and the lambda binder must be DISTINCT from the
+  forall binder (sharing corrupts under SSA renaming).
+
+ARCHITECTURAL NOTE: list/dict/nested comprehensions now share one
+design language (witness arrays, monotonicity for order,
+deliberate completeness under-constraint) but three hand-built
+sites; folding them into one parameterized witness-core builder is
+recorded as a refactor candidate -- semantics are pinned by the
+soa-* test family, so the refactor is safe to do mechanically.
