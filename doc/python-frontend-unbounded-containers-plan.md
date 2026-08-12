@@ -884,3 +884,23 @@ Residual after this batch: presence-proof latency (~3min -- the
 membership witness and D5 interact through two quantifiers; a
 sharper trigger or a ground slot equality could cut it); the
 witness-core refactor candidate stands.
+
+
+## Residuals batch (2026-08-12 late): bridges + isolation SHIPPED
+
+- Per-key D5 BRIDGE axioms: presence proofs 195s -> 1s. Root cause
+  diagnosed on the dumped formula: the completeness axiom's trigger
+  term (select slotof c) never occurs GROUNDED, so E-matching was
+  inert and the proof fell to MBQI. The flush now also emits a
+  K-specialized bridge triggered on the SOURCE data read, which
+  DOES occur grounded in the program's own guards.
+- --isolate-properties + --solver-time-limit (core features): one
+  solver query per property via the existing stack-decision-
+  procedure machinery; smt2_dect now implements the resource-limits
+  interface (z3 -T: / cvc5 --tlimit) -- the factory called it but
+  the smt2 path silently dropped it. k5 completes in one bounded
+  invocation (28 proofs + 8 loud refusals) where the monolith gave
+  no answer in 900s.
+
+Remaining candidate: the witness-core refactor (mechanical;
+soa-* tests pin semantics).
