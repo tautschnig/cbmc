@@ -1,0 +1,12 @@
+CORE
+main.py
+--python-smt-containers --python-smt-strings --z3 --property assertion.1
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The per-property run pattern for comprehension-heavy files. k5
+(the study stress file, 36 properties) is the full-size instance:
+monolithic >900s, isolated 28 proofs + 7 intended refusals + 1
+acceptable refusal, each <=60s.
