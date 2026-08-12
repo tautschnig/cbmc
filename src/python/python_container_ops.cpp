@@ -1310,6 +1310,10 @@ python_convertert::dict_witness_resultt python_convertert::dict_lookup_witness(
   const exprt &dict_value,
   const exprt &key)
 {
+  // Demand-driven D5: a presence-consuming read of a witness-built
+  // dictcomp result flushes its completeness axiom (once).
+  flush_d5_for(dict_value);
+
   const auto &dict_st = to_struct_type(dict_value.type());
   const auto &keys_type = to_array_type(dict_st.components()[1].type());
   member_exprt length{dict_value, "length", signedbv_typet{64}};
@@ -1324,6 +1328,12 @@ python_convertert::dict_lookup_witness_members(
   const exprt &key,
   std::function<exprt(const exprt &)> matcher)
 {
+  // Demand-driven D5: a presence-consuming read of a witness-built
+  // dictcomp result flushes its completeness axiom (once). Here the
+  // dict arrives as its keys MEMBER -- look through to the owner.
+  if(keys.id() == ID_member)
+    flush_d5_for(to_member_expr(keys).compound());
+
   dict_witness_resultt r;
   if(!python_smt_containers_flag())
     return r;

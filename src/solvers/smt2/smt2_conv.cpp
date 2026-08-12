@@ -2860,6 +2860,56 @@ void smt2_convt::convert_expr(const exprt &expr)
       };
       find_trig(quantifier_expr.where());
     }
+    // FORALL triggers by BINDER-NAME CONVENTION: a frontend that
+    // wants an E-matching trigger on a forall names the bound
+    // variable `...__pt$<array-key>$<x>...`; the trigger is the
+    // select of the (unique) array whose name contains <array-key>,
+    // indexed by that binder. The name is the only carrier that
+    // survives symex SSA renaming (an attribute-held term does
+    // not), and the OPT-IN convention preserves the measured
+    // default: witness/minimality foralls rely on saturation, which
+    // a pattern would restrict (the blanket-emission regression);
+    // only axioms whose instantiation is keyed to their own witness
+    // read (completeness-style) opt in.
+    if(
+      quantifier_expr.id() == ID_forall &&
+      quantifier_expr.variables().size() == 1)
+    {
+      const irep_idt &bid =
+        quantifier_expr.variables().front().get_identifier();
+      const std::string bs = id2string(bid);
+      const std::size_t p0 = bs.find("__pt$");
+      if(p0 != std::string::npos)
+      {
+        const std::size_t p1 = bs.find('$', p0 + 5);
+        if(p1 != std::string::npos)
+        {
+          const std::string arr_key = bs.substr(p0 + 5, p1 - (p0 + 5));
+          const exprt &bound = quantifier_expr.variables().front();
+          std::function<void(const exprt &)> find_ptrig =
+            [&](const exprt &e) -> void
+          {
+            if(trigger.is_not_nil())
+              return;
+            if(
+              e.id() == ID_index && to_index_expr(e).index() == bound &&
+              to_index_expr(e).array().id() == ID_symbol)
+            {
+              const std::string an = id2string(
+                to_symbol_expr(to_index_expr(e).array()).get_identifier());
+              if(an.find(arr_key) != std::string::npos)
+              {
+                trigger = e;
+                return;
+              }
+            }
+            for(const auto &op : e.operands())
+              find_ptrig(op);
+          };
+          find_ptrig(quantifier_expr.where());
+        }
+      }
+    }
     if(trigger.is_not_nil())
       out << "(! ";
 

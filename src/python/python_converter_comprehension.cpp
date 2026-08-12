@@ -2120,7 +2120,77 @@ exprt python_convertert::try_soa_dict_comp(
     notequal_exprt{subst(key_e, i), index_exprt{out_keys, j}}};
   pending_checks.push_back(
     code_assumet{forall_exprt{j, forall_exprt{i, std::move(lastness)}}});
+  // D5 COMPLETENESS (Remi's schema study): every passing source
+  // element's key occupies a result slot -- via the slotof witness
+  // array, DEPTH 1. This is real PLR semantics (the dict DOES
+  // contain every passing key), so presence facts become provable
+  // (`K in by` given a known passing element with key K).
+  // AFFORDABILITY: the study's leave-one-out shows D5 is what makes
+  // z3 model-finding intractable UNLESS triggered on its own
+  // witness read -- the binder carries the trigger by NAME
+  // (__pt$<array-key>$: smt2_conv emits
+  // `:pattern ((select slotof c))`). Measured there: all six dict
+  // configs timeout -> 0.3-3.4s with exactly this trigger.
+  symbol_exprt slotof = fresh_arr("__dc_slot_");
+  const irep_idt cid_t{
+    qualify_name("__pt$__dc_slot_" + std::to_string(did) + "$c")};
+  if(symbol_table.lookup(cid_t) == nullptr)
+  {
+    symbolt cs{cid_t, len_t, "python"};
+    cs.base_name = id2string(cid_t);
+    cs.is_lvalue = true;
+    cs.is_state_var = true;
+    cs.is_static_lifetime = current_function.empty();
+    symbol_table.add(cs);
+  }
+  const symbol_exprt c_t = symbol_table.lookup_ref(cid_t).symbol_expr();
+  exprt slot_c = index_exprt{slotof, c_t};
+  exprt::operandst d5c;
+  d5c.push_back(binary_relation_exprt{from_integer(0, len_t), ID_le, slot_c});
+  d5c.push_back(binary_relation_exprt{slot_c, ID_lt, out_len});
+  {
+    exprt key_at_c = key_e;
+    replace_expr(var, c_t, key_at_c);
+    d5c.push_back(
+      equal_exprt{index_exprt{out_keys, slot_c}, std::move(key_at_c)});
+  }
+  exprt filt_at_c = filt;
+  replace_expr(var, c_t, filt_at_c);
+  // NOT emitted here: registered for DEMAND-DRIVEN flush at the
+  // first presence-consuming read of the result (see flush_d5_for).
+  // Always-on D5 flipped refutation (SAT-direction) queries to
+  // timeouts -- the study's model-finding diagnosis, reproduced.
+  {
+    code_assumet d5{forall_exprt{
+      c_t,
+      implies_exprt{
+        and_exprt{
+          binary_relation_exprt{from_integer(0, len_t), ID_le, c_t},
+          and_exprt{
+            binary_relation_exprt{c_t, ID_lt, src_len}, std::move(filt_at_c)}},
+        conjunction(d5c)}}};
+    d5_slots.push_back(d5_slott{std::move(d5), false});
+    d5_pending[rid] = d5_slots.size() - 1;
+  }
   return std::move(res);
+}
+
+/// Demand-driven D5: if `dict_val` is (a symbol holding) a
+/// witness-built dictcomp result with a registered completeness
+/// axiom, emit it ONCE into pending_checks. Call at presence-
+/// consuming sites (membership tests, subscript lookups).
+void python_convertert::flush_d5_for(const exprt &dict_val)
+{
+  if(d5_pending.empty() || dict_val.id() != ID_symbol)
+    return;
+  auto it = d5_pending.find(to_symbol_expr(dict_val).get_identifier());
+  if(it == d5_pending.end())
+    return;
+  d5_slott &slot = d5_slots[it->second];
+  if(slot.emitted)
+    return;
+  slot.emitted = true;
+  pending_checks.push_back(slot.assume);
 }
 
 /// Two-generator nested comprehension over a recursive-SoA source

@@ -1893,6 +1893,15 @@ codet python_convertert::convert_assign(const jsont &stmt)
         note_mutable_extraction(tid0, rhs, value);
         // SPIKE structure-of-arrays provenance.
         record_soa_provenance(tid0, value);
+        // Demand-driven D5: `by = <dictcomp>` -- alias the target
+        // to the temp's registered completeness slot (shared index:
+        // either name's first presence read flushes once).
+        if(rhs.id() == ID_symbol)
+        {
+          auto d5it = d5_pending.find(to_symbol_expr(rhs).get_identifier());
+          if(d5it != d5_pending.end())
+            d5_pending[tid0] = d5it->second;
+        }
         // --python-ref-instances return-flow identity: the RHS is a
         // call to a PROVABLY-FRESH factory (every return a direct
         // constructor call) returning a class struct -- re-box the
