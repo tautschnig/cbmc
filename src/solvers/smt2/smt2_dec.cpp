@@ -102,6 +102,8 @@ decision_proceduret::resultt smt2_dect::dec_solve(const exprt &assumption)
       // such as x86's 80-bit long double
       argv.push_back("--fp-exp");
     }
+    if(time_limit_seconds > 0)
+      argv.push_back("--tlimit=" + std::to_string(time_limit_seconds * 1000));
     argv.push_back(temp_file_problem());
     break;
 
@@ -137,6 +139,8 @@ decision_proceduret::resultt smt2_dect::dec_solve(const exprt &assumption)
 
   case solvert::Z3:
     argv = {solver_binary_name("z3"), "-smt2", temp_file_problem()};
+    if(time_limit_seconds > 0)
+      argv.insert(argv.begin() + 1, "-T:" + std::to_string(time_limit_seconds));
     break;
 
   case solvert::GENERIC:

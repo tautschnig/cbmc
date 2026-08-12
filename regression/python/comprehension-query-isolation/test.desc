@@ -1,12 +1,14 @@
 CORE
 main.py
---python-smt-containers --python-smt-strings --z3 --property assertion.1
+--python-smt-containers --python-smt-strings --z3 --isolate-properties --solver-time-limit 60
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
 --
-The per-property run pattern for comprehension-heavy files. k5
+--isolate-properties: one solver query per property
+(check-sat-assuming over the goal literal; goal conditions are
+defined but never asserted, so unrelated sites stay inert). k5
 (the study stress file, 36 properties) is the full-size instance:
-monolithic >900s, isolated 28 proofs + 7 intended refusals + 1
-acceptable refusal, each <=60s.
+monolithic >900s no answer; isolated 28 proofs + 8 loud refusals
+in one bounded invocation.

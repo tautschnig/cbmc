@@ -12,6 +12,8 @@ Author: Peter Schrammel
 #ifndef CPROVER_SOLVERS_PROP_SOLVER_RESOURCE_LIMITS_H
 #define CPROVER_SOLVERS_PROP_SOLVER_RESOURCE_LIMITS_H
 
+#include <cstdint>
+
 class solver_resource_limitst
 {
 public:
