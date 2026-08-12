@@ -858,6 +858,46 @@ exprt python_convertert::dict_keys_view(
   return std::move(v);
 }
 
+/// Witness-core helpers shared by the comprehension witness family
+/// (filtered list map, dictcomp, nested map): mint an infinite
+/// i64 witness array, and emit the strict-monotonicity assume that
+/// gives order + injectivity (PLR: comprehension outputs preserve
+/// source order; strictly increasing witnesses also bound out_len
+/// by construction).
+symbol_exprt python_convertert::mint_witness_array(const std::string &base)
+{
+  const typet len_t = signedbv_typet{64};
+  const array_typet at{len_t, exprt{infinity_exprt{signedbv_typet{64}}}};
+  const irep_idt aid{qualify_name(base)};
+  if(symbol_table.lookup(aid) == nullptr)
+  {
+    symbolt as{aid, at, "python"};
+    as.base_name = base;
+    as.is_lvalue = true;
+    as.is_state_var = true;
+    as.is_static_lifetime = current_function.empty();
+    symbol_table.add(as);
+  }
+  return symbol_table.lookup_ref(aid).symbol_expr();
+}
+
+void python_convertert::assume_strictly_increasing(
+  const exprt &w,
+  const symbol_exprt &binder,
+  const exprt &out_len)
+{
+  const typet len_t = signedbv_typet{64};
+  exprt prev = index_exprt{w, minus_exprt{binder, from_integer(1, len_t)}};
+  exprt cur = index_exprt{w, binder};
+  pending_checks.push_back(code_assumet{forall_exprt{
+    binder,
+    implies_exprt{
+      and_exprt{
+        binary_relation_exprt{from_integer(1, len_t), ID_le, binder},
+        binary_relation_exprt{binder, ID_lt, out_len}},
+      binary_relation_exprt{std::move(prev), ID_lt, std::move(cur)}}}});
+}
+
 exprt python_convertert::try_soa_nested_len(const jsont &sub)
 {
   if(!is_node_type(sub, "Subscript"))
