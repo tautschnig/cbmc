@@ -1281,6 +1281,95 @@ intermediate type-coercion inside an expression, internal
 representation conversions, etc. — anywhere there is no typed
 slot semantics involved.
 
+## Instance reference semantics (DEFAULT since 2026-08-11)
+
+PLR §3.1: assignment, argument passing, returns, and attribute stores
+bind REFERENCES to objects; they never copy. Class instances are
+heap-allocated at construction and handled as pointers everywhere:
+
+- **Locals** (`a = C()`): allocate + bind a pointer local
+  (`ref_instance_locals`); rebinding allocates fresh, the old object
+  stays live through other references (PLR §3.1). `b = a` is a plain
+  pointer copy.
+- **Params/self**: always were pointers (by-ref params).
+- **Returns**: decided AT DEF TIME only (`maybe_pointer_field_return`:
+  annotated class returns whose every `return` is a self-field read /
+  a Name / a ctor call; the freshness scan for factories). `Class |
+  None` slots stay `python_value` with the CLASS box carrying the
+  identity pointer; there is NO mid-conversion slot mutation (mixed
+  encodings crash in smt2_conv — see the 2026-08-11 audit).
+- **Fields**: instance-typed fields hold pointers, both by-ref
+  (`self.x = param`) and OWNED (`self.x = Inner(1)` heap-allocates
+  per execution of the store; the ctor-AS-EXPRESSION path denotes the
+  deref of a fresh pointer, so value contexts copy and pointer
+  contexts recover identity).
+- **`is` / `is not`** (PLR §6.10.3): shared tiers
+  (`try_instance_identity`) — alias-chain definitional, pointer
+  equality, sound nondet for mixed shapes. Nullable instance pointers
+  encode `None` as NULL; truthiness derefs to `__bool__`/`__len__`
+  under a non-null guard (stdtypes Truth Value Testing).
+- **Containers**: identity-keyed dicts and identity sets store
+  pointers; default `__eq__` IS identity (PLR §3.3.1), so
+  pointer-compare is exact there; user-`__eq__` classes use the
+  statement-level scan tiers; `__eq__`-without-`__hash__` raises
+  TypeError (PLR §3.3.1 hashability).
+
+**Distinct from `--python-ref-mutables`** (lists/dicts by reference),
+which remains opt-in: its nested-`==` pointer-deref blowup is a
+fundamental BMC tradeoff (see the 2026-06-25 inventory entry).
+Compile with `-DCBMC_PYTHON_BYVALUE_INSTANCES` to restore the old
+by-value instance model for debugging; there is deliberately no
+run-time option.
+
+## Symbolic-length containers: SoA rows & witness comprehensions
+
+Under `--python-smt-containers`, `List[TD]` for an all-scalar
+TypedDict lowers to parallel per-field INFINITE arrays (SoA; tag
+`python_soa_list_<TD>`); rows are INDICES, never materialized values:
+
+- field reads `xs[i]['f']` → `f_data[i]` (PLR §6.3.2 negative
+  indices normalize before the IndexError obligation); row views
+  (`r = xs[i]`) are frozen indices with a fail-closed escape guard
+  and merge-safe provenance (branch-disagreeing bindings drop at the
+  `convert_if` snapshot/merge; the guard set intersects so dead
+  views stay loud).
+- one nesting level: `List[InnerTD]` fields flatten to per-nested-
+  field matrices + a shared per-row length; list-of-scalar fields are
+  single matrices (`f_len[i] >= 0` is a representation invariant
+  assumed at every materialization seam).
+- comprehensions over SoA sources use the WITNESS-ARRAY family
+  (PLR §6.2.4 displays; §6.2.7 dictionary displays for the
+  asymmetric clash rule — value from the LAST duplicate per the PLR
+  text, key object/position from the FIRST per CPython): skolem
+  witness per output slot, strictly-increasing witnesses for order
+  (comprehensions preserve source order), lexicographic pairs for
+  two generators, and DEMAND-DRIVEN completeness (D5 + per-key
+  bridge axioms, flushed at presence-consuming reads; always-on
+  completeness makes refutation queries intractable — the
+  comprehension-schema study's model-finding diagnosis).
+  Completeness of counting facts is deliberately under-constrained:
+  `len(out) == k` facts stay unprovable, never wrong.
+- `for v in xs: if COND: return` lowers to a first-match witness
+  scan (PLR §8.3 semantics, both paths exact); OTHER loop shapes
+  over SoA lists fail closed loudly (the unroll would abort in
+  pointer_logic).
+- `assume(all(pred for i in range(..) [for j in range(..)]))`
+  lowers to a nested forall — the CONTRACT channel (spec reads
+  carry no runtime obligations; binders are fresh symbols, PLR
+  §6.2.4 scope separation).
+
+## Per-property solver isolation
+
+`--isolate-properties` decides each property in its own
+`check-sat-assuming` query (goal literals are defined but never
+asserted, so unrelated witness quantifiers stay inert);
+`--solver-time-limit` bounds each external-solver query (z3 `-T:`,
+cvc5 `--tlimit`). Comprehension-heavy files that are unsolvable as
+one query (36-property k5: no answer in 900s) complete per-goal in
+one bounded invocation. See the unbounded-containers plan for the
+parallelisation design (bounded process pool; composes with
+upstream PR 8941's symex-concurrent work).
+
 ## Gaps, soundness issues & imprecisions (master inventory)
 
 This is **the** honest, current inventory of where the frontend
@@ -1294,6 +1383,34 @@ intrinsic design choices, not bugs. The tables are grouped by kind:
 soundness, imprecision, performance, intrinsic.
 
 ### A. Soundness (false proofs / latent unsoundness / deliberate tradeoffs)
+
+**2026-08-12 PLR review (this arc's audit).** Code annotations
+audited against the PLR table of contents; a systematic
+mis-citation family was fixed (§6.10.x Comparisons cited where
+§6.3.2 Subscriptions is the mandate for negative indexing and
+IndexError; dict insertion-order cites moved to §6.2.7 + stdtypes;
+"PLR 8.5"/"PLR 4.1" library-reference confusions relabelled). One
+REAL BUG found and fixed by the review's probes: the
+quantified-assume lowering reused the USER'S symbol as the forall
+binder, corrupting UnboundLocal tracking of a same-named enclosing
+local (a crash; PLR §6.2.4 scope separation) — binders are now
+fresh symbols substituted post-conversion, with the user symbol's
+type restored (CORE test quantified-assume-binder-shadow). Review
+gaps recorded with test candidates:
+- post-scan loop-variable reads (`for r in xs: ... ; r['v']` after
+  the early-exit scan) loud-fail (TypeError not-subscriptable)
+  where CPython binds the LAST element (PLR §8.3) — sound,
+  imprecise; candidate: bind the row index to len-1 on the
+  no-match path.
+- dict mutation during iteration: the keys-list view is a SNAPSHOT
+  (CPython raises RuntimeError) — documented latitude shared with
+  the for-loop lowering; candidate test pinning the latitude.
+- k5's `list({3,1,2})` order asserts pin CPython hash-order, which
+  the PLR leaves unspecified — refusals are CORRECT behaviour.
+- bounded-int wraparound makes some arithmetic entailments
+  honestly unprovable (ex2's 62-bound, e5's ident*2) — exact under
+  --python-unbounded-ints; intrinsic, not a gap.
+
 
 **CURRENT STATE (2026-07-23) — read this first; the dated notes below are a
 chronological changelog.** The differential oracle (external CPython-semantics

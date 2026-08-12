@@ -1,0 +1,13 @@
+KNOWNBUG
+main.py
+--python-smt-containers --python-smt-strings --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 8.3: after a for loop over a non-empty sequence the loop
+variable holds the LAST element. The early-exit scan encoding
+loud-fails the post-loop read (TypeError not-subscriptable --
+sound, never a pun). Acceptance: bind the row index to len-1 on
+the no-match path so the read is exact.
