@@ -2695,6 +2695,123 @@ exprt python_convertert::try_quantified_all(const jsont &genexp)
   return body;
 }
 
+/// Dict comprehension over a RUNTIME list value (PLR 6.2.4: the
+/// comprehension's semantics IS its for-clause loop): a REAL
+/// while-loop -- goto-level unwinding bounds it exactly like the
+/// user-written `for x in xs: d[k(x)] = v(x)` -- with each
+/// iteration binding the loop variable from data[i] and routing
+/// the store through emit_dict_store (PLR 6.2.7 clash semantics:
+/// replace-or-insert). The key/value expressions' conditional-
+/// raise obligations (e.g. `%` TypeError) are REAL program
+/// obligations (unlike an assume spec's) and are flushed INTO the
+/// loop body, so they hold per iteration under unwinding.
+/// Filter-free single generator with a plain Name target (the
+/// caller gates). Nil when the shape cannot bind.
+exprt python_convertert::build_dict_comp_over_list(
+  const jsont &key_expr_json,
+  const jsont &val_expr_json,
+  const std::string &var_name,
+  const exprt &src,
+  const source_locationt &loc)
+{
+  const typet len_t = signedbv_typet{64};
+  const auto &src_st = to_struct_type(src.type());
+  const auto &src_data_t = to_array_type(src_st.components()[1].type());
+  member_exprt src_len{src, "length", len_t};
+  member_exprt src_data{src, "data", src_data_t};
+  // The loop variable: a REAL symbol of the element type, assigned
+  // per iteration (PLR 6.2.4 comprehension-scope latitude matches
+  // the existing unroll path: the name is function-scoped here).
+  const irep_idt vid{qualify_name(var_name)};
+  const typet elem_t = src_data_t.element_type();
+  std::optional<typet> saved_vt;
+  if(symbol_table.lookup(vid) == nullptr)
+  {
+    symbolt vs{vid, elem_t, "python"};
+    vs.base_name = var_name;
+    vs.is_lvalue = true;
+    vs.is_state_var = true;
+    vs.is_static_lifetime = current_function.empty();
+    symbol_table.add(vs);
+  }
+  else
+  {
+    saved_vt = symbol_table.lookup_ref(vid).type;
+    symbol_table.get_writeable_ref(vid).type = elem_t;
+  }
+  symbol_exprt var = symbol_table.lookup_ref(vid).symbol_expr();
+  // Convert key/value in the BODY context: their pending checks
+  // (conditional raises of the key/value expressions) belong
+  // inside the loop body.
+  const std::size_t pc0 = pending_checks.size();
+  exprt key_e = convert_expression(key_expr_json);
+  exprt val_e = convert_expression(val_expr_json);
+  std::vector<codet> body_checks(
+    pending_checks.begin() + pc0, pending_checks.end());
+  pending_checks.erase(pending_checks.begin() + pc0, pending_checks.end());
+  if(saved_vt.has_value())
+    symbol_table.get_writeable_ref(vid).type = *saved_vt;
+  if(
+    key_e.is_nil() || val_e.is_nil() ||
+    has_subexpr(key_e, ID_side_effect) || has_subexpr(val_e, ID_side_effect))
+    return nil_exprt{};
+  struct_typet dict_t = python_dict_type(key_e.type(), val_e.type());
+  const auto &keys_at = to_array_type(dict_t.components()[1].type());
+  const auto &vals_at = to_array_type(dict_t.components()[2].type());
+  static unsigned rdc_ctr = 0;
+  const unsigned rdid = rdc_ctr++;
+  const irep_idt rid{qualify_name("__rdc_out_" + std::to_string(rdid))};
+  if(symbol_table.lookup(rid) == nullptr)
+  {
+    symbolt rs{rid, dict_t, "python"};
+    rs.base_name = id2string(rid);
+    rs.is_lvalue = true;
+    rs.is_state_var = true;
+    rs.is_static_lifetime = current_function.empty();
+    symbol_table.add(rs);
+  }
+  symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
+  code_blockt blk;
+  blk.add(code_frontend_assignt{res, safe_zero(dict_t)});
+  member_exprt dlen{res, "length", len_t};
+  member_exprt dkeys{res, "keys", keys_at};
+  member_exprt dvals{res, "values", vals_at};
+  const irep_idt iid{qualify_name("__rdc_i_" + std::to_string(rdid))};
+  if(symbol_table.lookup(iid) == nullptr)
+  {
+    symbolt is{iid, len_t, "python"};
+    is.base_name = id2string(iid);
+    is.is_lvalue = true;
+    is.is_state_var = true;
+    is.is_static_lifetime = current_function.empty();
+    symbol_table.add(is);
+  }
+  symbol_exprt i_sym = symbol_table.lookup_ref(iid).symbol_expr();
+  blk.add(code_frontend_assignt{i_sym, from_integer(0, len_t)});
+  code_blockt body_blk;
+  // var := data[i]  (bind, then the key/value obligations, then
+  // the store -- the user-loop shape exactly).
+  body_blk.add(
+    code_frontend_assignt{var, index_exprt{src_data, i_sym}});
+  for(const codet &c : body_checks)
+    body_blk.add(c);
+  exprt key_i = key_e;
+  exprt val_i = val_e;
+  if(key_i.type() != keys_at.element_type())
+    key_i = coerce_element(key_i, keys_at.element_type());
+  if(val_i.type() != vals_at.element_type())
+    val_i = coerce_element(val_i, vals_at.element_type());
+  emit_dict_store(body_blk, dkeys, dvals, dlen, key_i, val_i, loc);
+  body_blk.add(code_frontend_assignt{
+    i_sym, plus_exprt{i_sym, from_integer(1, len_t)}});
+  code_whilet loop{
+    binary_relation_exprt{i_sym, ID_lt, src_len}, std::move(body_blk)};
+  loop.add_source_location() = loc;
+  blk.add(std::move(loop));
+  pending_checks.push_back(std::move(blk));
+  return std::move(res);
+}
+
 exprt python_convertert::convert_dict_comp(const jsont &expr)
 {
   const jsont &key_expr_json = json_member(expr, "key");
@@ -2921,6 +3038,35 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
       }
       if(!resolved)
       {
+        // RUNTIME list iterable (a list parameter / a call
+        // result): desugar to the comprehension's DEFINING loop
+        // (PLR 6.2.4 -- the comprehension IS the for-clause
+        // nest) over emit_dict_store, the choke point that
+        // already implements the clash semantics (PLR 6.2.7:
+        // replace-or-insert = first key position, last value).
+        // The unroll is bounded by the list model's capacity,
+        // with the standard fail-closed scan-bound guard past
+        // it -- exactly the for-loop latitude.
+        if(
+          as_array(generators).size() == 1 && !gi.tuple_target &&
+          gi.var_names.size() == 1)
+        {
+          exprt src = convert_expression(gen_iter);
+          if(
+            !src.is_nil() && is_python_list_type(src.type()) &&
+            (!json_member(gen, "ifs").is_array() ||
+             as_array(json_member(gen, "ifs")).empty()))
+          {
+            exprt r = build_dict_comp_over_list(
+              key_expr_json,
+              val_expr_json,
+              gi.var_names.front(),
+              src,
+              get_location(expr));
+            if(!r.is_nil())
+              return r;
+          }
+        }
         log_overapprox(
           "dict comprehension with non-literal iterable: using nondet dict");
         return side_effect_expr_nondett{
