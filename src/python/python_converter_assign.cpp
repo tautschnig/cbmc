@@ -3883,7 +3883,17 @@ codet python_convertert::convert_assign(const jsont &stmt)
                         if(ex.has_value() && ex.value() == key_str.value())
                         {
                           have_key = true;
-                          if(typed_val.is_constant())
+                          // A STRING literal value is as foldable
+                          // as a numeric constant, but its struct
+                          // shape ({len, address_of(buffer)}) fails
+                          // is_constant() -- the stale safe_zero
+                          // ({0, NULL}) then folded reads to the
+                          // WRONG value (d[k] = "hello";
+                          // d[k] == "hello" refuted). Accept any
+                          // value whose string content extracts.
+                          if(
+                            typed_val.is_constant() ||
+                            extract_string_value(typed_val).has_value())
                             dlit.operands()[2].operands()[j] = typed_val;
                           // else: leave existing value entry
                           // alone; key tracking is preserved.
@@ -3906,7 +3916,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
                           key_lit = safe_typecast(
                             key_lit, keys_arr_type.element_type());
                         dlit.operands()[1].operands()[idx] = key_lit;
-                        if(typed_val.is_constant())
+                        if(
+                          typed_val.is_constant() ||
+                          extract_string_value(typed_val).has_value())
                           dlit.operands()[2].operands()[idx] = typed_val;
                         // else: leave value-array's existing
                         // entry (a safe_zero from the dict's
