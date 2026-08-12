@@ -15,6 +15,7 @@
 #include <util/json.h>
 #include <util/pointer_expr.h>
 #include <util/pointer_offset_size.h>
+#include <util/simplify_expr.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
@@ -4762,6 +4763,16 @@ exprt python_convertert::build_dict_value(
     // are never proven equal).
     std::vector<std::pair<exprt, exprt>> deduped;
     std::vector<std::optional<std::string>> dkeys;
+    // COMPUTED keys over enumerated elements arrive as UNFOLDED
+    // arithmetic trees (`0 % 2`, `1 % 2` from {x % 2: ...} over a
+    // literal): fold them first, or canonical_key sees
+    // non-constants and the PLR 6.2.7 clash dedup never fires
+    // (len({x % 2: x for x in [0,1,2]}) came out 3). simplify_expr
+    // is semantics-preserving, so this is a pure precision gain
+    // for EVERY computed-key family at once.
+    namespacet ns_dk{symbol_table};
+    for(auto &p_mut : pairs)
+      p_mut.first = simplify_expr(p_mut.first, ns_dk);
     for(const auto &p : pairs)
     {
       std::optional<std::string> ck = canonical_key(p.first);
