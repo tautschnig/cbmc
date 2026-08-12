@@ -1,0 +1,12 @@
+CORE
+main.py
+--python-smt-containers --python-smt-strings --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 6.2.4: the comprehension scope is separate -- a quantified
+assume's binder must not clobber a same-named enclosing local
+(reusing the user symbol as the forall binder corrupted its
+UnboundLocal tracking: a crash found by the PLR review).

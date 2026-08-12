@@ -26,7 +26,7 @@ class OrderedDict(dict):
 # `class defaultdict(dict)` SHADOWS that intrinsic (class
 # construction wins over the builtins arm) while providing NO
 # storage or __getitem__ -- reads raised TypeError and the
-# factory-zero semantics (PLR 8.5) silently vanished (the
+# factory-zero semantics (library ref: collections) silently vanished (the
 # python-defaultdict-counter regression).
 
 

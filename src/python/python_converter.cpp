@@ -3622,7 +3622,8 @@ exprt python_convertert::python_truthiness(const exprt &e)
       return python_truthiness(dereference_exprt{e});
     // Reference-semantics instances: a nullable instance pointer
     // is falsy iff NULL (None) or the pointee's __bool__/__len__
-    // decide falsy (PLR 4.1). Guarding the deref by non-null keeps
+    // decide falsy (stdtypes Truth Value Testing; PLR 3.3.1
+    // object.__bool__). Guarding the deref by non-null keeps
     // the recursion well-defined on the None path.
     if(!class_name_of_type(base).empty())
     {
@@ -6496,7 +6497,8 @@ exprt python_convertert::convert_expression(const jsont &expr)
               }
               else if(class_defines_eq(ecls) && class_defines_hash(ecls))
               {
-                // PLR 6.10.1 user-__eq__ SET display: a set IS a
+                // PLR 6.2.6 (Set displays) + 3.3.1 (__eq__/__hash__):
+                // a user-__eq__ set display IS a
                 // dict with unit values -- reuse the user-eq dict
                 // constructor (statement-level __eq__ scans,
                 // FIRST-occurrence-wins dedup = exactly the set

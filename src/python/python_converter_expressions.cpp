@@ -430,7 +430,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   // (an INDEX into per-field parallel arrays -- see soa_row_bindings)
   // resolves to `f_data[a]`: a pure array select, no box, no deref,
   // and NO KeyError obligation -- the field is DECLARED on the
-  // TypedDict, so every row has it (PLR 6.10.1: only ABSENT keys
+  // TypedDict, so every row has it (PEP 589 / stdtypes mapping lookup: only ABSENT keys
   // raise; an SoA list only exists for all-required TypedDicts).
   // An unknown field name falls through to the generic path (which
   // will loudly reject the row's index type -- the escape gate).
@@ -520,7 +520,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   // row-view form r['f'][j]) over a per-field MATRIX resolves to
   // f_data[<row>][j], with the row IndexError from the inner
   // read's emission and the ELEMENT IndexError against the
-  // per-row length f_len[<row>] (PLR 6.10.2; negative j counts
+  // per-row length f_len[<row>] (PLR 6.3.2; negative j counts
   // from the inner end).
   if(python_smt_containers_flag())
   {
@@ -672,7 +672,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           {
             if(idx.type() != signedbv_typet{64})
               idx = safe_typecast(idx, signedbv_typet{64});
-            // PLR 6.10.2: IndexError obligation on the row read.
+            // PLR 6.3.2 (Subscriptions): out-of-range -> IndexError.
             member_exprt blen{
               base_sym->symbol_expr(), "length", signedbv_typet{64}};
             emit_conditional_exception(
@@ -1028,7 +1028,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
               pending_checks.push_back(
                 code_ifthenelset{std::move(in_range), std::move(slotb)});
             }
-            // KeyError on miss (PLR 6.10.1) via the exception
+            // KeyError on miss (stdtypes mapping lookup) via the exception
             // machinery.
             emit_conditional_exception(not_exprt{fnd}, "KeyError");
             return std::move(res);

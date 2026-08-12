@@ -881,7 +881,8 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       saved.swap(pending_checks);
       if(iter_val.type().id() == ID_pointer)
         iter_val = dereference_exprt{iter_val};
-      // PLR 6.10.1: a DICT iterable yields keys in insertion order
+      // PLR 6.2.7 / stdtypes dict: a dict iterable yields keys in
+      // insertion order
       // -- lower to the keys-list view so every downstream path
       // (closed forms, filters, unrolling) applies unchanged.
       {
@@ -1818,7 +1819,11 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
 // generator-unrolling logic with convert_list_comp; builds a
 // python_dict struct (length, keys array, values array) at the end.
 /// Filtered DICT comprehension over an SoA list (the study's ex7):
-/// the asymmetric clash rule (verified on CPython) --
+/// the asymmetric clash rule (PLR 6.2.7 Dictionary displays: on
+/// duplicate keys "the last datum ... stored" wins for the VALUE;
+/// the surviving KEY OBJECT and its insertion position are the
+/// first occurrence's -- the latter is CPython behaviour, verified
+/// against CPython 3 since the PLR text pins only the value) --
 ///   KEY object + insertion POSITION <- FIRST passing occurrence
 ///   VALUE                           <- LAST  passing occurrence
 /// Encoded with per-slot witness ARRAYS, forall-only:
@@ -2547,6 +2552,8 @@ exprt python_convertert::try_quantified_all(const jsont &genexp)
     symbol_exprt var{irep_idt{}, typet{}};
     exprt lo;
     exprt hi;
+    irep_idt user_id;
+    std::optional<typet> saved_type;
   };
   std::vector<boundt> binders;
   for(const auto &g : as_array(gens))
@@ -2569,6 +2576,15 @@ exprt python_convertert::try_quantified_all(const jsont &genexp)
     boundt b;
     const std::string vn = json_string(json_member(tgt, "id"));
     const irep_idt vid{qualify_name(vn)};
+    // PLR 6.2.4: the comprehension's scope is SEPARATE -- the
+    // iteration variable must not leak into (or clobber) an
+    // equally-named enclosing variable. The user-visible symbol is
+    // only TEMPORARILY retyped for predicate conversion (restored
+    // below); the forall quantifies over a FRESH binder substituted
+    // in afterwards, so the user's symbol is never bound or
+    // assigned (reusing it as the binder corrupted the
+    // UnboundLocal tracking of an existing same-named local -- a
+    // crash found in the PLR review).
     if(symbol_table.lookup(vid) == nullptr)
     {
       symbolt vs{vid, len_t, "python"};
@@ -2577,9 +2593,14 @@ exprt python_convertert::try_quantified_all(const jsont &genexp)
       vs.is_state_var = true;
       vs.is_static_lifetime = current_function.empty();
       symbol_table.add(vs);
+      b.saved_type = std::nullopt;
     }
     else
+    {
+      b.saved_type = symbol_table.lookup_ref(vid).type;
       symbol_table.get_writeable_ref(vid).type = len_t;
+    }
+    b.user_id = vid;
     b.var = symbol_table.lookup_ref(vid).symbol_expr();
     const std::size_t pc0 = pending_checks.size();
     if(as_array(rargs).size() == 1)
@@ -2633,6 +2654,35 @@ exprt python_convertert::try_quantified_all(const jsont &genexp)
     return nil_exprt{};
   if(pred.type().id() != ID_bool)
     pred = python_truthiness(pred);
+  // Substitute FRESH binder symbols for the user-visible ones
+  // (inner binders may appear in outer bounds -- triangular
+  // ranges -- so substitute in lo/hi too), then RESTORE the user
+  // symbols' original types: the enclosing scope never sees the
+  // binder (PLR 6.2.4).
+  static unsigned qa_ctr = 0;
+  for(auto &bnd : binders)
+  {
+    const irep_idt fid{qualify_name("__qa_b_" + std::to_string(qa_ctr++))};
+    if(symbol_table.lookup(fid) == nullptr)
+    {
+      symbolt fs{fid, len_t, "python"};
+      fs.base_name = id2string(fid);
+      fs.is_lvalue = true;
+      fs.is_state_var = true;
+      fs.is_static_lifetime = current_function.empty();
+      symbol_table.add(fs);
+    }
+    const symbol_exprt fresh = symbol_table.lookup_ref(fid).symbol_expr();
+    replace_expr(bnd.var, fresh, pred);
+    for(auto &other : binders)
+    {
+      replace_expr(bnd.var, fresh, other.lo);
+      replace_expr(bnd.var, fresh, other.hi);
+    }
+    bnd.var = fresh;
+    if(bnd.saved_type.has_value())
+      symbol_table.get_writeable_ref(bnd.user_id).type = *bnd.saved_type;
+  }
   // Innermost-out: wrap in foralls.
   exprt body = pred;
   for(auto it = binders.rbegin(); it != binders.rend(); ++it)
