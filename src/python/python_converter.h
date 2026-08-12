@@ -2781,6 +2781,23 @@ private:
     exprt outer_row;
   };
   std::map<irep_idt, soa_nested_bindingt> soa_nested_row_bindings;
+  /// DEMAND-DRIVEN D5 completeness (Remi's schema study): the
+  /// completeness axiom of a witness-built dictcomp is emitted only
+  /// when the program actually READS presence on the result (`k in
+  /// d`, `d[k]`) -- always-on D5 made the SAT direction (refutation
+  /// queries) intractable, exactly the study's model-finding
+  /// diagnosis. The stored assume references the construction-time
+  /// TEMP (assigned once, never mutated -- user mutations hit the
+  /// copy), so a late flush is sound; precision simply fades after
+  /// mutation. Entries share a slot via index so aliases flush once.
+  struct d5_slott
+  {
+    codet assume;
+    bool emitted = false;
+  };
+  std::vector<d5_slott> d5_slots;
+  std::map<irep_idt, std::size_t> d5_pending;
+  void flush_d5_for(const exprt &dict_val);
   /// Row-view NAMES bound by `r = xs[i]` (a subset of
   /// soa_row_bindings' keys): a BARE read of such a name outside
   /// the subscript hook is the index-pun escape -- loud-rejected

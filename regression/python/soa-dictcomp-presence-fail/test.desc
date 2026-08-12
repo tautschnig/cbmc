@@ -1,0 +1,12 @@
+CORE
+main.py
+--python-smt-containers --python-smt-strings --z3
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Vacuity control: with D5 flushed, a plainly false fact still
+refutes fast (the assumes stay satisfiable; the demand-driven
+design keeps SAT-direction queries tractable -- always-on D5
+flipped refutations to timeouts).
