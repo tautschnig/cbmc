@@ -1924,8 +1924,7 @@ exprt python_convertert::try_soa_dict_comp(
     return nil_exprt{};
   const typet len_t = signedbv_typet{64};
   // Bind the loop var as a row index; convert key/value/filter.
-  const std::string var_name =
-    json_string(json_member(target, "id"));
+  const std::string var_name = json_string(json_member(target, "id"));
   const irep_idt var_id{qualify_name(var_name)};
   if(symbol_table.lookup(var_id) == nullptr)
   {
@@ -1979,8 +1978,7 @@ exprt python_convertert::try_soa_dict_comp(
     pending_checks.size() == pc0 && !keyf.is_nil() && !valf.is_nil() &&
     !filt.is_nil() && quantifier_safe_term(keyf) &&
     quantifier_safe_term(valf) && quantifier_safe_term(filt) &&
-    !has_subexpr(keyf, ID_side_effect) &&
-    !has_subexpr(valf, ID_side_effect) &&
+    !has_subexpr(keyf, ID_side_effect) && !has_subexpr(valf, ID_side_effect) &&
     !has_subexpr(filt, ID_side_effect) && !occurs_bare(keyf) &&
     !occurs_bare(valf) && !occurs_bare(filt);
   if(!clean)
@@ -2087,8 +2085,8 @@ exprt python_convertert::try_soa_dict_comp(
         ID_lt,
         index_exprt{w, j}}}}});
   // Two-binder tier: distinct keys; FIRSTNESS; LASTNESS.
-  exprt keys_i_ne_j = notequal_exprt{
-    index_exprt{out_keys, i}, index_exprt{out_keys, j}};
+  exprt keys_i_ne_j =
+    notequal_exprt{index_exprt{out_keys, i}, index_exprt{out_keys, j}};
   pending_checks.push_back(code_assumet{forall_exprt{
     i,
     forall_exprt{
@@ -2354,8 +2352,8 @@ exprt python_convertert::try_soa_nested_map(
       side_effect_expr_nondett{comp.type(), loc}});
   member_exprt out_len{res, "length", len_t};
   member_exprt out_data{res, "data", out_dt};
-  pending_checks.push_back(code_assumet{binary_relation_exprt{
-    out_len, ID_ge, from_integer(0, len_t)}});
+  pending_checks.push_back(code_assumet{
+    binary_relation_exprt{out_len, ID_ge, from_integer(0, len_t)}});
   const irep_idt jid{qualify_name("__nm_j_" + std::to_string(mid))};
   if(symbol_table.lookup(jid) == nullptr)
   {
@@ -2414,8 +2412,7 @@ exprt python_convertert::try_soa_nested_map(
   conj.push_back(binary_relation_exprt{w1k, ID_lt, src_len});
   conj.push_back(substk(f1));
   conj.push_back(binary_relation_exprt{from_integer(0, len_t), ID_le, w2k});
-  conj.push_back(
-    binary_relation_exprt{w2k, ID_lt, index_exprt{flen_arr, w1k}});
+  conj.push_back(binary_relation_exprt{w2k, ID_lt, index_exprt{flen_arr, w1k}});
   conj.push_back(substk(f2));
   pending_checks.push_back(
     code_assumet{forall_in_range(k, out_len, conjunction(conj))});
@@ -2424,8 +2421,7 @@ exprt python_convertert::try_soa_nested_map(
   exprt w2p = index_exprt{w2, minus_exprt{k, from_integer(1, len_t)}};
   exprt lex = or_exprt{
     binary_relation_exprt{w1p, ID_lt, w1k},
-    and_exprt{
-      equal_exprt{w1p, w1k}, binary_relation_exprt{w2p, ID_lt, w2k}}};
+    and_exprt{equal_exprt{w1p, w1k}, binary_relation_exprt{w2p, ID_lt, w2k}}};
   pending_checks.push_back(code_assumet{forall_exprt{
     k,
     implies_exprt{

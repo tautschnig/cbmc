@@ -1,0 +1,11 @@
+CORE
+main.py
+--python-smt-containers --python-smt-strings --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Study ex2: two-generator nested comprehension over a recursive-SoA
+source (witness pairs, lexicographic monotonicity, definitional
+body lambda).

@@ -634,12 +634,49 @@ bool python_convertert::soa_eligible_td(const std::string &td_name) const
       if(fle == typed_dict_field_list_elem.end())
         return false;
       auto fe = fle->second.find(f);
-      if(
-        fe == fle->second.end() ||
-        (fe->second != "int" && fe->second != "str" && fe->second != "bool" &&
-         fe->second != "float"))
+      if(fe == fle->second.end())
         return false;
-      continue;
+      if(
+        fe->second == "int" || fe->second == "str" || fe->second == "bool" ||
+        fe->second == "float")
+        continue;
+      // ONE nesting level of TypedDict: List[InnerTD] where every
+      // InnerTD field is a SCALAR flattens to per-nested-field
+      // matrices (f_<g>_data[i][j]) + one per-row length f_len[i]
+      // (recursive SoA, depth 1 -- deeper nesting or a nested
+      // list/dict field still rejects).
+      {
+        const std::string &etd = fe->second;
+        auto etdb = class_bases.find(etd);
+        const bool e_is_td =
+          etdb != class_bases.end() &&
+          std::find(etdb->second.begin(), etdb->second.end(), "TypedDict") !=
+            etdb->second.end();
+        if(!e_is_td)
+          return false;
+        auto etff = typeddict_class_fields.find(etd);
+        auto etft = typed_dict_field_types.find(etd);
+        if(
+          etff == typeddict_class_fields.end() || etff->second.empty() ||
+          etft == typed_dict_field_types.end())
+          return false;
+        bool all_scalar = true;
+        for(const auto &g : etff->second)
+        {
+          auto gt = etft->second.find(g);
+          if(
+            gt == etft->second.end() ||
+            (gt->second != "int" && gt->second != "str" &&
+             gt->second != "bool" && gt->second != "float"))
+          {
+            all_scalar = false;
+            break;
+          }
+        }
+        if(all_scalar)
+          continue;
+      }
+      return false;
     }
     return false;
   }
@@ -684,6 +721,42 @@ typet python_convertert::soa_list_type(const std::string &td_name)
       // value stays loud (the row-view escape discipline).
       typet elem_t = python_int_type();
       const std::string &ecat = typed_dict_field_list_elem.at(td_name).at(f);
+      // Recursive SoA (depth 1): List[InnerTD] flattens to one
+      // matrix PER nested scalar field (f_<g>_data) sharing one
+      // per-row length (f_len).
+      if(ecat != "int" && ecat != "str" && ecat != "bool" && ecat != "float")
+      {
+        const auto &efields = typeddict_class_fields.at(ecat);
+        const auto &etypes = typed_dict_field_types.at(ecat);
+        for(const auto &g : efields)
+        {
+          typet get = python_int_type();
+          const std::string &gcat = etypes.at(g);
+          if(gcat == "str")
+            get = python_smt_string_native_flag()
+                    ? typet{python_string_handle_type()}
+                    : typet{python_string_type()};
+          else if(gcat == "bool")
+            get = bool_typet{};
+          else if(gcat == "float")
+            get = double_type();
+          const array_typet ginner{
+            get, exprt{infinity_exprt{signedbv_typet{64}}}};
+          comps.push_back(struct_typet::componentt{
+            f + "_" + g + "_data",
+            array_typet{ginner, exprt{infinity_exprt{signedbv_typet{64}}}}});
+        }
+        comps.push_back(struct_typet::componentt{
+          f + "_len",
+          array_typet{
+            signedbv_typet{64}, exprt{infinity_exprt{signedbv_typet{64}}}}});
+        if(opt_fields != nullptr && opt_fields->count(f) > 0)
+          comps.push_back(struct_typet::componentt{
+            f + "_present",
+            array_typet{
+              bool_typet{}, exprt{infinity_exprt{signedbv_typet{64}}}}});
+        continue;
+      }
       if(ecat == "str")
         elem_t = python_smt_string_native_flag()
                    ? typet{python_string_handle_type()}
