@@ -373,20 +373,8 @@ exprt python_convertert::try_soa_map(
       static unsigned soa_f_ctr = 0;
       const unsigned fid = soa_f_ctr++;
       // Witness array symbol (infinite i64 array).
-      const array_typet warr_t{
-        len_t, exprt{infinity_exprt{signedbv_typet{64}}}};
-      const std::string wn = "__soa_filt_w_" + std::to_string(fid);
-      const irep_idt wid{qualify_name(wn)};
-      if(symbol_table.lookup(wid) == nullptr)
-      {
-        symbolt ws{wid, warr_t, "python"};
-        ws.base_name = wn;
-        ws.is_lvalue = true;
-        ws.is_state_var = true;
-        ws.is_static_lifetime = current_function.empty();
-        symbol_table.add(ws);
-      }
-      symbol_exprt w = symbol_table.lookup_ref(wid).symbol_expr();
+      symbol_exprt w =
+        mint_witness_array("__soa_filt_w_" + std::to_string(fid));
       typet et_out = body_val.type();
       struct_typet out_lt = python_list_type(et_out);
       const array_typet &out_dt = to_array_type(out_lt.components()[1].type());
@@ -437,19 +425,8 @@ exprt python_convertert::try_soa_map(
         equal_exprt{index_exprt{out_data, j}, std::move(body_at_w)}};
       pending_checks.push_back(
         code_assumet{forall_in_range(j, out_len, std::move(payload))});
-      // Strictly increasing witnesses (order + injectivity):
-      // forall j in [1, out_len): w[j-1] < w[j].
-      exprt mono = binary_relation_exprt{
-        index_exprt{w, minus_exprt{j, from_integer(1, len_t)}},
-        ID_lt,
-        index_exprt{w, j}};
-      pending_checks.push_back(code_assumet{forall_exprt{
-        j,
-        implies_exprt{
-          and_exprt{
-            binary_relation_exprt{from_integer(1, len_t), ID_le, j},
-            binary_relation_exprt{j, ID_lt, out_len}},
-          std::move(mono)}}});
+      // Strictly increasing witnesses (order + injectivity).
+      assume_strictly_increasing(w, j, out_len);
       return std::move(res);
     }
     pending_checks.erase(pending_checks.begin() + pc_f0, pending_checks.end());
@@ -1989,23 +1966,8 @@ exprt python_convertert::try_soa_dict_comp(
   member_exprt src_len{src, "length", len_t};
   static unsigned dcw_ctr = 0;
   const unsigned did = dcw_ctr++;
-  auto fresh_arr = [&](const std::string &base) -> symbol_exprt
-  {
-    const array_typet at{len_t, exprt{infinity_exprt{signedbv_typet{64}}}};
-    const irep_idt aid{qualify_name(base + std::to_string(did))};
-    if(symbol_table.lookup(aid) == nullptr)
-    {
-      symbolt as{aid, at, "python"};
-      as.base_name = base + std::to_string(did);
-      as.is_lvalue = true;
-      as.is_state_var = true;
-      as.is_static_lifetime = current_function.empty();
-      symbol_table.add(as);
-    }
-    return symbol_table.lookup_ref(aid).symbol_expr();
-  };
-  symbol_exprt w = fresh_arr("__dc_w_");
-  symbol_exprt vw = fresh_arr("__dc_vw_");
+  symbol_exprt w = mint_witness_array("__dc_w_" + std::to_string(did));
+  symbol_exprt vw = mint_witness_array("__dc_vw_" + std::to_string(did));
   struct_typet dict_t = python_dict_type(keyf.type(), valf.type());
   const auto &keys_at = to_array_type(dict_t.components()[1].type());
   const auto &vals_at = to_array_type(dict_t.components()[2].type());
@@ -2074,16 +2036,7 @@ exprt python_convertert::try_soa_dict_comp(
   pending_checks.push_back(
     code_assumet{forall_in_range(j, out_len, std::move(payload))});
   // Strictly increasing key witnesses (insertion order of FIRSTS).
-  pending_checks.push_back(code_assumet{forall_exprt{
-    j,
-    implies_exprt{
-      and_exprt{
-        binary_relation_exprt{from_integer(1, len_t), ID_le, j},
-        binary_relation_exprt{j, ID_lt, out_len}},
-      binary_relation_exprt{
-        index_exprt{w, minus_exprt{j, from_integer(1, len_t)}},
-        ID_lt,
-        index_exprt{w, j}}}}});
+  assume_strictly_increasing(w, j, out_len);
   // Two-binder tier: distinct keys; FIRSTNESS; LASTNESS.
   exprt keys_i_ne_j =
     notequal_exprt{index_exprt{out_keys, i}, index_exprt{out_keys, j}};
@@ -2131,7 +2084,7 @@ exprt python_convertert::try_soa_dict_comp(
   // (__pt$<array-key>$: smt2_conv emits
   // `:pattern ((select slotof c))`). Measured there: all six dict
   // configs timeout -> 0.3-3.4s with exactly this trigger.
-  symbol_exprt slotof = fresh_arr("__dc_slot_");
+  symbol_exprt slotof = mint_witness_array("__dc_slot_" + std::to_string(did));
   const irep_idt cid_t{
     qualify_name("__pt$__dc_slot_" + std::to_string(did) + "$c")};
   if(symbol_table.lookup(cid_t) == nullptr)
@@ -2468,23 +2421,8 @@ exprt python_convertert::try_soa_nested_map(
   member_exprt flen_arr{src, lcomp, sst.get_component(lcomp).type()};
   static unsigned nm_ctr = 0;
   const unsigned mid = nm_ctr++;
-  auto fresh_arr = [&](const std::string &base) -> symbol_exprt
-  {
-    const array_typet at{len_t, exprt{infinity_exprt{signedbv_typet{64}}}};
-    const irep_idt aid{qualify_name(base + std::to_string(mid))};
-    if(symbol_table.lookup(aid) == nullptr)
-    {
-      symbolt as{aid, at, "python"};
-      as.base_name = base + std::to_string(mid);
-      as.is_lvalue = true;
-      as.is_state_var = true;
-      as.is_static_lifetime = current_function.empty();
-      symbol_table.add(as);
-    }
-    return symbol_table.lookup_ref(aid).symbol_expr();
-  };
-  symbol_exprt w1 = fresh_arr("__nm_w1_");
-  symbol_exprt w2 = fresh_arr("__nm_w2_");
+  symbol_exprt w1 = mint_witness_array("__nm_w1_" + std::to_string(mid));
+  symbol_exprt w2 = mint_witness_array("__nm_w2_" + std::to_string(mid));
   typet et_out = body.type();
   struct_typet out_lt = python_list_type(et_out);
   const array_typet &out_dt = to_array_type(out_lt.components()[1].type());
