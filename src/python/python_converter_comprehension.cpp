@@ -293,6 +293,168 @@ exprt python_convertert::try_soa_map(
   // applies with the standard substitution a := j. Filters and
   // bodies that use the row in any other way (escape) fall
   // through to the sound over-approximation below, loudly.
+  // FILTERED SoA comprehension (the study's ex4 provenance
+  // entailment): encode via a SKOLEM WITNESS ARRAY w --
+  //   forall j in [0, out_len): 0 <= w[j] < src_len
+  //                             AND filter(src[w[j]])
+  //                             AND out[j] == body(src[w[j]])
+  //   AND out_len <= src_len AND forall j1<j2: w[j1] < w[j2]
+  // (strictly increasing witnesses = order preserved, no double
+  // counting). FORALL-ONLY -- no exists under a forall, keeping
+  // the q9 model-parse class and E-matching behavior intact. This
+  // direction is EXACT for universal facts about the OUTPUT
+  // (every out element IS the image of a PASSING source slot --
+  // ex4's `no source passes P => no output is f(P-element)`), and
+  // an UNDER-constrained out_len (completeness -- every passing
+  // slot appears -- is NOT asserted: a fact counting or locating
+  // specific outputs stays unprovable, sound, never wrong).
+  if(
+    !iter_val.is_nil() && is_soa_list_type(iter_val.type()) && ifs.is_array() &&
+    as_array(ifs).size() == 1)
+  {
+    const typet len_t = signedbv_typet{64};
+    const irep_idt var_id{qualify_name(var_name)};
+    if(symbol_table.lookup(var_id) == nullptr)
+    {
+      symbolt vs{var_id, len_t, "python"};
+      vs.base_name = var_name;
+      vs.is_lvalue = true;
+      vs.is_state_var = true;
+      vs.is_static_lifetime = current_function.empty();
+      symbol_table.add(vs);
+    }
+    else
+      symbol_table.get_writeable_ref(var_id).type = len_t;
+    symbol_exprt var = symbol_table.lookup_ref(var_id).symbol_expr();
+    std::optional<exprt> saved_rv;
+    auto srv_it = soa_row_bindings.find(var_id);
+    if(srv_it != soa_row_bindings.end())
+      saved_rv = srv_it->second;
+    soa_row_bindings[var_id] = iter_val;
+    const std::size_t pc_f0 = pending_checks.size();
+    exprt body_val = convert_expression(elt);
+    exprt filt_val = convert_expression(*as_array(ifs).begin());
+    if(saved_rv.has_value())
+      soa_row_bindings[var_id] = *saved_rv;
+    else
+      soa_row_bindings.erase(var_id);
+    auto occurs_bare = [&](const exprt &e) -> bool
+    {
+      std::function<bool(const exprt &)> walk = [&](const exprt &n) -> bool
+      {
+        if(n == var)
+          return true;
+        if(n.id() == ID_index)
+        {
+          const auto &ix = to_index_expr(n);
+          if(
+            ix.index() == var && ix.array().id() == ID_member &&
+            to_member_expr(ix.array()).compound() == iter_val)
+            return walk(ix.array());
+        }
+        for(const auto &op : n.operands())
+          if(walk(op))
+            return true;
+        return false;
+      };
+      return walk(e);
+    };
+    if(filt_val.is_not_nil() && filt_val.type().id() != ID_bool)
+      filt_val = python_truthiness(filt_val);
+    const bool fclean = pending_checks.size() == pc_f0 && !body_val.is_nil() &&
+                        !filt_val.is_nil() && quantifier_safe_term(body_val) &&
+                        quantifier_safe_term(filt_val) &&
+                        !has_subexpr(body_val, ID_side_effect) &&
+                        !has_subexpr(filt_val, ID_side_effect) &&
+                        !occurs_bare(body_val) && !occurs_bare(filt_val);
+    if(fclean)
+    {
+      member_exprt src_len{iter_val, "length", len_t};
+      static unsigned soa_f_ctr = 0;
+      const unsigned fid = soa_f_ctr++;
+      // Witness array symbol (infinite i64 array).
+      const array_typet warr_t{
+        len_t, exprt{infinity_exprt{signedbv_typet{64}}}};
+      const std::string wn = "__soa_filt_w_" + std::to_string(fid);
+      const irep_idt wid{qualify_name(wn)};
+      if(symbol_table.lookup(wid) == nullptr)
+      {
+        symbolt ws{wid, warr_t, "python"};
+        ws.base_name = wn;
+        ws.is_lvalue = true;
+        ws.is_state_var = true;
+        ws.is_static_lifetime = current_function.empty();
+        symbol_table.add(ws);
+      }
+      symbol_exprt w = symbol_table.lookup_ref(wid).symbol_expr();
+      typet et_out = body_val.type();
+      struct_typet out_lt = python_list_type(et_out);
+      const array_typet &out_dt = to_array_type(out_lt.components()[1].type());
+      const std::string rn = "__soa_filt_" + std::to_string(fid);
+      const irep_idt rid{qualify_name(rn)};
+      if(symbol_table.lookup(rid) == nullptr)
+      {
+        symbolt rs{rid, out_lt, "python"};
+        rs.base_name = rn;
+        rs.is_lvalue = true;
+        rs.is_state_var = true;
+        rs.is_static_lifetime = current_function.empty();
+        symbol_table.add(rs);
+      }
+      symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
+      // Nondet-init then constrain (member-wise per the stub rule).
+      pending_checks.push_back(
+        code_frontend_assignt{res, side_effect_expr_nondett{out_lt, loc}});
+      member_exprt out_len{res, "length", len_t};
+      member_exprt out_data{res, "data", out_dt};
+      pending_checks.push_back(code_assumet{and_exprt{
+        binary_relation_exprt{out_len, ID_ge, from_integer(0, len_t)},
+        binary_relation_exprt{out_len, ID_le, src_len}}});
+      // The quantified j.
+      const std::string qn = "__soa_filt_j_" + std::to_string(fid);
+      const irep_idt qid{qualify_name(qn)};
+      if(symbol_table.lookup(qid) == nullptr)
+      {
+        symbolt qs{qid, len_t, "python"};
+        qs.base_name = qn;
+        qs.is_lvalue = true;
+        qs.is_state_var = true;
+        qs.is_static_lifetime = current_function.empty();
+        symbol_table.add(qs);
+      }
+      const symbol_exprt j = symbol_table.lookup_ref(qid).symbol_expr();
+      exprt wj = index_exprt{w, j};
+      exprt body_at_w = body_val;
+      replace_expr(var, wj, body_at_w);
+      exprt filt_at_w = filt_val;
+      replace_expr(var, wj, filt_at_w);
+      if(body_at_w.type() != out_dt.element_type())
+        body_at_w = coerce_element(body_at_w, out_dt.element_type());
+      exprt payload = and_exprt{
+        binary_relation_exprt{from_integer(0, len_t), ID_le, wj},
+        binary_relation_exprt{wj, ID_lt, src_len},
+        std::move(filt_at_w),
+        equal_exprt{index_exprt{out_data, j}, std::move(body_at_w)}};
+      pending_checks.push_back(
+        code_assumet{forall_in_range(j, out_len, std::move(payload))});
+      // Strictly increasing witnesses (order + injectivity):
+      // forall j in [1, out_len): w[j-1] < w[j].
+      exprt mono = binary_relation_exprt{
+        index_exprt{w, minus_exprt{j, from_integer(1, len_t)}},
+        ID_lt,
+        index_exprt{w, j}};
+      pending_checks.push_back(code_assumet{forall_exprt{
+        j,
+        implies_exprt{
+          and_exprt{
+            binary_relation_exprt{from_integer(1, len_t), ID_le, j},
+            binary_relation_exprt{j, ID_lt, out_len}},
+          std::move(mono)}}});
+      return std::move(res);
+    }
+    pending_checks.erase(pending_checks.begin() + pc_f0, pending_checks.end());
+    // fall through to the generic path (loud fallback).
+  }
   if(
     !iter_val.is_nil() && is_soa_list_type(iter_val.type()) &&
     (!ifs.is_array() || as_array(ifs).empty()))

@@ -1,0 +1,11 @@
+CORE
+main.py
+--python-smt-containers --python-smt-strings --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The study ex4 shape: a fact about the SOURCE learned AFTER the
+comprehension transfers to the OUTPUT through the skolem-witness
+encoding (forall-only).
