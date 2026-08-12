@@ -2523,6 +2523,128 @@ exprt python_convertert::try_soa_nested_map(
   return std::move(res);
 }
 
+/// Lower `all(<pred> for v1 in range(<hi1>) [for v2 in
+/// range(<lo2>, <hi2>)])` (a GeneratorExp) to a nested forall term:
+/// the quantified-assume channel. Range bounds may be arbitrary
+/// pure expressions (len(xs), the outer binder for triangular
+/// contracts). Binders are fresh i64 symbols bound over
+/// [lo, hi); the predicate converts under row bindings when it
+/// subscripts SoA lists (r['f'] resolves through the standard
+/// hooks with the binder as the row index -- the iteration
+/// variables here ARE indices by construction of range()).
+/// Nil when the shape does not apply or the predicate is impure.
+exprt python_convertert::try_quantified_all(const jsont &genexp)
+{
+  if(!is_node_type(genexp, "GeneratorExp"))
+    return nil_exprt{};
+  const jsont &elt = json_member(genexp, "elt");
+  const jsont &gens = json_member(genexp, "generators");
+  if(!gens.is_array() || as_array(gens).empty() || as_array(gens).size() > 2)
+    return nil_exprt{};
+  const typet len_t = signedbv_typet{64};
+  struct boundt
+  {
+    symbol_exprt var{irep_idt{}, typet{}};
+    exprt lo;
+    exprt hi;
+  };
+  std::vector<boundt> binders;
+  for(const auto &g : as_array(gens))
+  {
+    const jsont &tgt = json_member(g, "target");
+    const jsont &ifs = json_member(g, "ifs");
+    if(!is_node_type(tgt, "Name") || (ifs.is_array() && !as_array(ifs).empty()))
+      return nil_exprt{};
+    const jsont &it = json_member(g, "iter");
+    if(
+      !is_node_type(it, "Call") ||
+      !is_node_type(json_member(it, "func"), "Name") ||
+      json_string(json_member(json_member(it, "func"), "id")) != "range")
+      return nil_exprt{};
+    const jsont &rargs = json_member(it, "args");
+    if(
+      !rargs.is_array() || as_array(rargs).empty() ||
+      as_array(rargs).size() > 2)
+      return nil_exprt{};
+    boundt b;
+    const std::string vn = json_string(json_member(tgt, "id"));
+    const irep_idt vid{qualify_name(vn)};
+    if(symbol_table.lookup(vid) == nullptr)
+    {
+      symbolt vs{vid, len_t, "python"};
+      vs.base_name = vn;
+      vs.is_lvalue = true;
+      vs.is_state_var = true;
+      vs.is_static_lifetime = current_function.empty();
+      symbol_table.add(vs);
+    }
+    else
+      symbol_table.get_writeable_ref(vid).type = len_t;
+    b.var = symbol_table.lookup_ref(vid).symbol_expr();
+    const std::size_t pc0 = pending_checks.size();
+    if(as_array(rargs).size() == 1)
+    {
+      b.lo = from_integer(0, len_t);
+      b.hi = convert_expression(*as_array(rargs).begin());
+    }
+    else
+    {
+      auto ai = as_array(rargs).begin();
+      b.lo = convert_expression(*ai);
+      ++ai;
+      b.hi = convert_expression(*ai);
+    }
+    if(
+      b.lo.is_nil() || b.hi.is_nil() || pending_checks.size() != pc0 ||
+      !quantifier_safe_term(b.lo) || !quantifier_safe_term(b.hi))
+    {
+      pending_checks.erase(pending_checks.begin() + pc0, pending_checks.end());
+      return nil_exprt{};
+    }
+    if(b.lo.type() != len_t)
+      b.lo = safe_typecast(std::move(b.lo), len_t);
+    if(b.hi.type() != len_t)
+      b.hi = safe_typecast(std::move(b.hi), len_t);
+    binders.push_back(std::move(b));
+  }
+  // Convert the predicate with the binders in scope. A SPEC's
+  // reads carry no runtime obligations (PLR-wise the assume()
+  // primitive never executes its argument as checked program
+  // code): emitted conditional-raise obligations (IndexError of
+  // the contract's own subscripts) are DROPPED -- constraining
+  // extra cells of an infinite array is benign (they are free
+  // otherwise), and the range-bounded binder makes in-range reads
+  // the intended reading. Any OTHER side effect (an assignment,
+  // an unrecognized check) still rejects.
+  const std::size_t pc1 = pending_checks.size();
+  exprt pred = convert_expression(elt);
+  bool only_obligations = true;
+  for(std::size_t pi = pc1; pi < pending_checks.size(); ++pi)
+    if(pending_checks[pi].get_statement() != ID_ifthenelse)
+    {
+      only_obligations = false;
+      break;
+    }
+  const bool clean = only_obligations && !pred.is_nil() &&
+                     quantifier_safe_term(pred) &&
+                     !has_subexpr(pred, ID_side_effect);
+  pending_checks.erase(pending_checks.begin() + pc1, pending_checks.end());
+  if(!clean)
+    return nil_exprt{};
+  if(pred.type().id() != ID_bool)
+    pred = python_truthiness(pred);
+  // Innermost-out: wrap in foralls.
+  exprt body = pred;
+  for(auto it = binders.rbegin(); it != binders.rend(); ++it)
+  {
+    and_exprt range{
+      binary_relation_exprt{it->lo, ID_le, it->var},
+      binary_relation_exprt{it->var, ID_lt, it->hi}};
+    body = forall_exprt{it->var, implies_exprt{std::move(range), body}};
+  }
+  return body;
+}
+
 exprt python_convertert::convert_dict_comp(const jsont &expr)
 {
   const jsont &key_expr_json = json_member(expr, "key");
