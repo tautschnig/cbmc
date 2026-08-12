@@ -904,3 +904,47 @@ witness-core refactor candidate stands.
 
 Remaining candidate: the witness-core refactor (mechanical;
 soa-* tests pin semantics).
+
+
+## ex3 SHIPPED; --isolate-properties parallelisation design (2026-08-12)
+
+ex3 (filter preserves sortedness) closes the ex-series: the missing
+piece was a CONTRACT CHANNEL, not solver power. `assume(all(<pred>
+for i in range(..) [for j in range(..)]))` now lowers to a nested
+forall assume (try_quantified_all) -- the Python-source form of the
+__CPROVER_assume(forall ...) the study's C encoding used, which a
+stub docstring cannot provide. Spec-context rule: the predicate's
+own conditional-raise obligations are dropped (an assume argument
+never executes as checked code; constraining extra cells of an
+infinite array is benign); other side effects reject to the loud
+path (vacuity twin pinned). ex-series final: ex1/ex2/ex3/ex4/ex6/
+ex7 VERIFY, ex5 fails on its intended may-raise.
+
+### Parallelising --isolate-properties (upstream candidate; relates
+### to PR diffblue/cbmc#8941)
+
+The isolation loop is embarrassingly parallel BY CONSTRUCTION for
+external SMT solvers: after one symex + one conversion, goals
+differ only in the assumption literal, and smt2_dect::dec_solve
+already writes a fresh problem file per call (shared cached prefix
++ per-goal check-sat-assuming footer) and spawns an external
+process. The parallel design:
+1. split dec_solve into prepare(assumption) -> file and
+   run-and-parse(file); N prepares run serially (cheap, they share
+   the conversion buffers), N solver processes run concurrently
+   under a bounded pool (--parallel-solvers N; each z3 can take
+   GBs, so the pool must respect memory, not just cores).
+2. per-goal statuses join serially into propertiest afterwards.
+3. OPTIONAL fail-fast sharing: a SAT model for goal i can be
+   evaluated against other goals' condition literals (the existing
+   SAT-arm scan in update_properties_status_from_goals does
+   exactly this on the monolithic query) to retire several goals
+   per counterexample.
+No thread-safe irept is needed for this phase (processes, not
+threads). PR 8941's atomic-irept + concurrent checker solve a
+DIFFERENT axis -- overlapping SYMEX with solving -- and the two
+compose: 8941's incremental equation slices could feed an
+isolation pool as assertions complete, giving symex||conversion||
+N-solvers pipelining. Sequencing suggestion for upstreaming:
+(a) --isolate-properties + --solver-time-limit as-is (this tree),
+(b) the process pool, (c) the 8941 composition.
