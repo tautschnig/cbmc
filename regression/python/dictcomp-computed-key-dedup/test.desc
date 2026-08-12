@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 6.2.7 clash dedup for COMPUTED keys over enumerated literals:
+keys arrive as unfolded arithmetic trees (0 % 2, "a" + "b") --
+simplify_expr folds them before canonical_key, so the dedup (first
+key position, last value) fires for every computed-key family.
