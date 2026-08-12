@@ -861,3 +861,26 @@ RECORDED designs from the study, not yet implemented here:
   __dq_/__dk_ = mutation-chain witnesses -> leave to saturation,
   the blanket-emission regression class). The binder name survives
   SSA renaming, where the #trigger attribute did not.
+
+
+## Study follow-ups SHIPPED (2026-08-12 pm)
+
+- Binder-name :pattern convention in smt2_conv (opt-in,
+  `__pt$<array-key>$` binders; the only carrier surviving SSA) +
+  DEMAND-DRIVEN D5 completeness for witness dictcomps: presence
+  facts prove (~3min, THOROUGH-tested); always-on D5 reproduced the
+  study's model-finding wall in our pipeline (refutations flipped
+  to timeouts) and the lazy flush at the dict_lookup_witness choke
+  points resolves the tension -- construction-time-temp reference
+  keeps the late flush sound. Canaries all unchanged.
+- Query-isolation pattern pinned as a CORE test
+  (comprehension-query-isolation) + the k5 procedure recorded:
+  comprehension-heavy files verify per-property. A cbmc-side
+  auto-isolation mode (one solver query per property over witness
+  formulas) is the natural core feature if this pattern recurs;
+  recorded as a candidate, not started.
+
+Residual after this batch: presence-proof latency (~3min -- the
+membership witness and D5 interact through two quantifiers; a
+sharper trigger or a ground slot equality could cut it); the
+witness-core refactor candidate stands.
