@@ -1449,6 +1449,23 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       // Callee-side pointer return: see maybe_pointer_field_return.
       maybe_pointer_field_return(stmt, current_class, return_type);
       maybe_nullable_instance_return(returns, return_type);
+      // Maybe-fall-through scan (the missing-return_* root): an
+      // int-annotated function whose LAST top-level statement is
+      // not Return/Raise may fall through -> its result may carry
+      // the None SENTINEL (PLR 7.6/3.1: a function that does not
+      // execute `return` returns None). Feeds the maybe-None
+      // ordering obligation at compare sites.
+      if(return_type == python_int_type())
+      {
+        const jsont &fb_mf = json_member(stmt, "body");
+        if(fb_mf.is_array() && !as_array(fb_mf).empty())
+        {
+          const jsont &last_mf = *std::prev(as_array(fb_mf).end());
+          if(
+            !is_node_type(last_mf, "Return") && !is_node_type(last_mf, "Raise"))
+            may_fallthrough_int_functions.insert(qualified_func_name);
+        }
+      }
     }
     // If the annotation is a concrete (non-python_value) type but some return
     // path GENUINELY yields a python_value VALUE (`return <union/Any param>`),

@@ -1471,6 +1471,110 @@ bool python_convertert::convert()
     }
   }
 
+  // Pass 0.24b: maybe-None int provenance (the missing-return_*
+  // false-proof root). (1) collect int-annotated functions whose
+  // last top-level body statement is not Return/Raise (they MAY
+  // fall through -> return the None SENTINEL, PLR 7.6); (2) walk
+  // every Call: an argument that is itself a call to such a
+  // function marks the receiving int PARAMETER as maybe-None.
+  // Purely syntactic and BEFORE def conversion (bodies convert at
+  // their def statement, before later call sites -- marking at the
+  // call would come too late for the callee's own compares).
+  if(body.is_array())
+  {
+    std::map<std::string, std::vector<std::string>> fn_params;
+    for(const auto &stmt : as_array(body))
+    {
+      if(!is_node_type(stmt, "FunctionDef"))
+        continue;
+      const std::string fn = json_string(json_member(stmt, "name"));
+      const jsont &rets = json_member(stmt, "returns");
+      const jsont &fb = json_member(stmt, "body");
+      // record param names for the marking pass
+      {
+        const jsont &fargs = json_member(stmt, "args");
+        const jsont &plist = json_member(fargs, "args");
+        if(plist.is_array())
+          for(const auto &p : as_array(plist))
+            fn_params[fn].push_back(json_string(json_member(p, "arg")));
+      }
+      if(
+        !rets.is_null() && is_node_type(rets, "Name") &&
+        json_string(json_member(rets, "id")) == "int" && fb.is_array() &&
+        !as_array(fb).empty())
+      {
+        const jsont &last = *std::prev(as_array(fb).end());
+        if(!is_node_type(last, "Return") && !is_node_type(last, "Raise"))
+          may_fallthrough_int_functions.insert(fn);
+      }
+    }
+    std::function<void(const jsont &)> walk_calls = [&](const jsont &n) -> void
+    {
+      if(n.is_array())
+      {
+        for(const auto &e : as_array(n))
+          walk_calls(e);
+        return;
+      }
+      if(!n.is_object())
+        return;
+      if(is_node_type(n, "Call"))
+      {
+        const jsont &fn_n = json_member(n, "func");
+        const jsont &cargs = json_member(n, "args");
+        if(is_node_type(fn_n, "Name") && cargs.is_array())
+        {
+          const std::string callee = json_string(json_member(fn_n, "id"));
+          auto pit = fn_params.find(callee);
+          if(pit != fn_params.end())
+          {
+            std::size_t ai = 0;
+            for(const auto &a : as_array(cargs))
+            {
+              if(
+                is_node_type(a, "Call") &&
+                is_node_type(json_member(a, "func"), "Name") &&
+                may_fallthrough_int_functions.count(
+                  json_string(json_member(json_member(a, "func"), "id"))) > 0 &&
+                ai < pit->second.size())
+              {
+                maybe_none_int_symbols.insert(
+                  irep_idt{"python::" + callee + "::" + pit->second[ai]});
+              }
+              ++ai;
+            }
+          }
+        }
+      }
+      for(const auto &key :
+          {"body",
+           "orelse",
+           "finalbody",
+           "value",
+           "test",
+           "iter",
+           "args",
+           "func",
+           "targets",
+           "target",
+           "left",
+           "right",
+           "comparators",
+           "elts",
+           "keys",
+           "values",
+           "elt",
+           "generators",
+           "slice"})
+      {
+        const jsont &sub = json_member(n, key);
+        if(!sub.is_null())
+          walk_calls(sub);
+      }
+    };
+    walk_calls(body);
+  }
+
   // Pass 0.25: pre-register class names so type annotations can reference
   // them during pass 0 (e.g., x: MyClass = MyClass()).
   if(body.is_array())
