@@ -108,6 +108,12 @@ class Decimal:
     _is_special: int = 0
     _special_kind: int = 0
 
+    def __bool__(self):
+        # stdtypes Truth Value Testing / CPython decimal: a Decimal
+        # is falsy iff it is (positive or negative) ZERO. Specials
+        # (NaN, Infinity) are truthy; zero has coefficient 0.
+        return self._is_special != 0 or self._int != 0
+
     def __init__(self, value=0, context=None):
         if isinstance(value, Decimal):
             self._sign = value._sign
