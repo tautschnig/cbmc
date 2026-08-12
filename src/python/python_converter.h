@@ -2792,12 +2792,27 @@ private:
   /// mutation. Entries share a slot via index so aliases flush once.
   struct d5_slott
   {
-    codet assume;
+    codet assume{ID_skip}; // the general axiom (slotof-triggered)
     bool emitted = false;
+    // Templates for per-key BRIDGE axioms (specialized to the
+    // looked-up key, triggered on the SOURCE data read -- which,
+    // unlike the slotof select, occurs GROUNDED in the program's
+    // own guards, so E-matching can fire): keyf/filt over `var`.
+    exprt var = nil_exprt{};
+    exprt keyf = nil_exprt{};
+    exprt filt = nil_exprt{};
+    exprt src_len = nil_exprt{};
+    exprt slotof = nil_exprt{};
+    exprt out_len = nil_exprt{};
+    exprt out_keys = nil_exprt{};
+    std::string trig_comp; // source component name for the trigger
+    unsigned uid = 0;
+    std::set<std::string> bridged_keys; // dedup per key text
   };
   std::vector<d5_slott> d5_slots;
   std::map<irep_idt, std::size_t> d5_pending;
   void flush_d5_for(const exprt &dict_val);
+  void flush_d5_for(const exprt &dict_val, const exprt &key);
   /// Row-view NAMES bound by `r = xs[i]` (a subset of
   /// soa_row_bindings' keys): a BARE read of such a name outside
   /// the subscript hook is the index-pun escape -- loud-rejected

@@ -2169,7 +2169,36 @@ exprt python_convertert::try_soa_dict_comp(
           and_exprt{
             binary_relation_exprt{c_t, ID_lt, src_len}, std::move(filt_at_c)}},
         conjunction(d5c)}}};
-    d5_slots.push_back(d5_slott{std::move(d5), false});
+    d5_slott slot;
+    slot.assume = std::move(d5);
+    slot.var = var;
+    slot.keyf = key_e;
+    slot.filt = filt;
+    slot.src_len = src_len;
+    slot.slotof = slotof;
+    slot.out_len = out_len;
+    slot.out_keys = out_keys;
+    slot.uid = did;
+    // The bridge trigger: the first source-array read in keyf
+    // (member of src indexed by var) -- its COMPONENT name keys
+    // the __pt$ convention; those reads occur GROUNDED in program
+    // guards, so E-matching fires where slotof never does.
+    {
+      std::function<void(const exprt &)> find_src = [&](const exprt &e) -> void
+      {
+        if(!slot.trig_comp.empty())
+          return;
+        if(
+          e.id() == ID_index && to_index_expr(e).index() == var &&
+          to_index_expr(e).array().id() == ID_member)
+          slot.trig_comp = id2string(
+            to_member_expr(to_index_expr(e).array()).get_component_name());
+        for(const auto &op : e.operands())
+          find_src(op);
+      };
+      find_src(key_e);
+    }
+    d5_slots.push_back(std::move(slot));
     d5_pending[rid] = d5_slots.size() - 1;
   }
   return std::move(res);
@@ -2181,16 +2210,70 @@ exprt python_convertert::try_soa_dict_comp(
 /// consuming sites (membership tests, subscript lookups).
 void python_convertert::flush_d5_for(const exprt &dict_val)
 {
+  flush_d5_for(dict_val, nil_exprt{});
+}
+
+void python_convertert::flush_d5_for(const exprt &dict_val, const exprt &key)
+{
   if(d5_pending.empty() || dict_val.id() != ID_symbol)
     return;
   auto it = d5_pending.find(to_symbol_expr(dict_val).get_identifier());
   if(it == d5_pending.end())
     return;
   d5_slott &slot = d5_slots[it->second];
-  if(slot.emitted)
+  if(!slot.emitted)
+  {
+    slot.emitted = true;
+    pending_checks.push_back(slot.assume);
+  }
+  // Per-key BRIDGE: the K-specialized instance
+  //   forall b in [0, src_len): (filt(b) AND keyf(b) == K)
+  //     => (0 <= slotof[b] < out_len AND out_keys[slotof[b]] == K)
+  // -- follows from the general axiom (sound to assume), and
+  // emitting it SPECIALIZED with a trigger on the SOURCE read cuts
+  // the presence proof from MBQI-only minutes to E-matching
+  // seconds: the source reads occur GROUNDED in program guards,
+  // where the slotof select never does. One bridge per key text.
+  if(key.is_nil() || slot.trig_comp.empty())
     return;
-  slot.emitted = true;
-  pending_checks.push_back(slot.assume);
+  if(!quantifier_safe_term(key) || has_subexpr(key, ID_side_effect))
+    return;
+  const std::string ktxt = key.pretty(0, 0);
+  if(!slot.bridged_keys.insert(ktxt).second)
+    return;
+  const typet len_t = signedbv_typet{64};
+  static unsigned bridge_ctr = 0;
+  const irep_idt bcid{qualify_name(
+    "__pt$" + slot.trig_comp + "$b" + std::to_string(bridge_ctr++))};
+  if(symbol_table.lookup(bcid) == nullptr)
+  {
+    symbolt bs{bcid, len_t, "python"};
+    bs.base_name = id2string(bcid);
+    bs.is_lvalue = true;
+    bs.is_state_var = true;
+    bs.is_static_lifetime = current_function.empty();
+    symbol_table.add(bs);
+  }
+  const symbol_exprt b = symbol_table.lookup_ref(bcid).symbol_expr();
+  exprt keyf_b = slot.keyf;
+  replace_expr(slot.var, b, keyf_b);
+  exprt filt_b = slot.filt;
+  replace_expr(slot.var, b, filt_b);
+  exprt key_c = key;
+  if(key_c.type() != keyf_b.type())
+    key_c = coerce_element(key_c, keyf_b.type());
+  exprt slot_b = index_exprt{slot.slotof, b};
+  exprt::operandst concl;
+  concl.push_back(binary_relation_exprt{from_integer(0, len_t), ID_le, slot_b});
+  concl.push_back(binary_relation_exprt{slot_b, ID_lt, slot.out_len});
+  concl.push_back(equal_exprt{index_exprt{slot.out_keys, slot_b}, key_c});
+  exprt::operandst antec;
+  antec.push_back(binary_relation_exprt{from_integer(0, len_t), ID_le, b});
+  antec.push_back(binary_relation_exprt{b, ID_lt, slot.src_len});
+  antec.push_back(std::move(filt_b));
+  antec.push_back(equal_exprt{std::move(keyf_b), key_c});
+  pending_checks.push_back(code_assumet{
+    forall_exprt{b, implies_exprt{conjunction(antec), conjunction(concl)}}});
 }
 
 /// Two-generator nested comprehension over a recursive-SoA source

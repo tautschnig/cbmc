@@ -1,4 +1,4 @@
-THOROUGH
+CORE
 main.py
 --python-smt-containers --python-smt-strings --z3
 ^EXIT=0$
@@ -7,5 +7,5 @@ main.py
 --
 --
 Demand-driven D5 completeness: a known passing element's key IS in
-the dictcomp result. THOROUGH: the triggered completeness axiom +
+the dictcomp result. CORE: the triggered completeness axiom +
 membership witness solve in ~3min on z3.
