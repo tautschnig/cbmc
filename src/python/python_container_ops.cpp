@@ -736,6 +736,55 @@ bool python_convertert::is_soa_list_type(const typet &t) const
 /// list, f a list field -> matrix) and the row-view form `r['f']`
 /// (r in soa_row_bindings), returning `f_len[<row>]` with the row
 /// IndexError obligation. Nil when the shape does not apply.
+/// PLR 6.10.1: iterating a dict yields its KEYS in insertion
+/// order -- and the dict struct's keys[] array IS insertion-ordered
+/// with build-time canonical dedup, so a dict iterable is exactly a
+/// list view {length, keys}. Materialized into a temp (member reads
+/// of an rvalue struct display don't lower everywhere); the view is
+/// a SNAPSHOT, correct for the iteration entry (mutation during
+/// iteration raises RuntimeError in CPython -- not modeled, matching
+/// the existing for-loop latitude). Nil when not a dict.
+exprt python_convertert::dict_keys_view(
+  const exprt &dict_val,
+  const source_locationt &loc)
+{
+  if(!is_python_dict_type(dict_val.type()))
+    return nil_exprt{};
+  const auto &dst = to_struct_type(dict_val.type());
+  if(!dst.has_component("keys") || !dst.has_component("length"))
+    return nil_exprt{};
+  const array_typet &keys_at = to_array_type(dst.get_component("keys").type());
+  struct_typet view_t = python_list_type(keys_at.element_type());
+  const auto &view_at = to_array_type(view_t.components()[1].type());
+  static unsigned dkv_ctr = 0;
+  const std::string vn = "__dict_keys_view_" + std::to_string(dkv_ctr++);
+  const irep_idt vid{qualify_name(vn)};
+  if(symbol_table.lookup(vid) == nullptr)
+  {
+    symbolt vs{vid, view_t, "python"};
+    vs.base_name = vn;
+    vs.is_lvalue = true;
+    vs.is_state_var = true;
+    vs.is_static_lifetime = current_function.empty();
+    symbol_table.add(vs);
+  }
+  symbol_exprt v = symbol_table.lookup_ref(vid).symbol_expr();
+  code_frontend_assignt asg_len{
+    member_exprt{v, "length", signedbv_typet{64}},
+    member_exprt{dict_val, "length", signedbv_typet{64}}};
+  asg_len.add_source_location() = loc;
+  exprt keys_m = member_exprt{dict_val, "keys", keys_at};
+  exprt data_src = std::move(keys_m);
+  if(view_at != keys_at)
+    data_src = typecast_exprt{std::move(data_src), view_at};
+  code_frontend_assignt asg_data{
+    member_exprt{v, "data", view_at}, std::move(data_src)};
+  asg_data.add_source_location() = loc;
+  pending_checks.push_back(std::move(asg_len));
+  pending_checks.push_back(std::move(asg_data));
+  return std::move(v);
+}
+
 exprt python_convertert::try_soa_nested_len(const jsont &sub)
 {
   if(!is_node_type(sub, "Subscript"))

@@ -6494,6 +6494,46 @@ exprt python_convertert::convert_expression(const jsont &expr)
                 if(dup)
                   continue;
               }
+              else if(class_defines_eq(ecls) && class_defines_hash(ecls))
+              {
+                // PLR 6.10.1 user-__eq__ SET display: a set IS a
+                // dict with unit values -- reuse the user-eq dict
+                // constructor (statement-level __eq__ scans,
+                // FIRST-occurrence-wins dedup = exactly the set
+                // rule; the dict's last-value-wins applies to the
+                // irrelevant unit). len/iteration flow through the
+                // dict machinery on the same struct shape.
+                std::vector<std::pair<exprt, exprt>> spairs;
+                bool all_cls = true;
+                {
+                  // Restart the scan: convert ALL elements as
+                  // keys (the loop we are in stops at the first
+                  // non-identity element, so collect from the AST
+                  // afresh).
+                  for(const auto &e2 : as_array(elts))
+                  {
+                    exprt ke = convert_expression(e2);
+                    if(class_name_of_type(ke.type()).empty())
+                    {
+                      all_cls = false;
+                      break;
+                    }
+                    spairs.emplace_back(
+                      std::move(ke), from_integer(1, python_int_type()));
+                  }
+                }
+                if(all_cls && !spairs.empty())
+                {
+                  return build_dict_value_user_eq(
+                    std::move(spairs), ecls, get_location(expr));
+                }
+                emit_eq_semantics_guard(get_location(expr), "set element");
+              }
+              else if(class_defines_eq(ecls) && !class_defines_hash(ecls))
+              {
+                // PLR 3.3: __eq__ without __hash__ -> unhashable.
+                emit_conditional_exception(true_exprt{}, "TypeError");
+              }
               else
               {
                 emit_eq_semantics_guard(get_location(expr), "set element");

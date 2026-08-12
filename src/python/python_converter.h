@@ -2546,6 +2546,7 @@ private:
   exprt forall_in_range(const symbol_exprt &j, const exprt &length, exprt pred);
   void soa_assume_nested_lens(const exprt &soa_val);
   exprt try_soa_nested_len(const jsont &sub);
+  exprt dict_keys_view(const exprt &dict_val, const source_locationt &loc);
   exprt exists_in_range(const symbol_exprt &j, const exprt &length, exprt pred);
 
   /// Per-slot key equality for a dict's keys array, dispatching on the
