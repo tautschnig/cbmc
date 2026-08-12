@@ -1384,6 +1384,20 @@ soundness, imprecision, performance, intrinsic.
 
 ### A. Soundness (false proofs / latent unsoundness / deliberate tradeoffs)
 
+**2026-08-12 eve: the KNOWNBUG false-proof class is CLOSED.** The
+three remaining false-proof residual tests all meet their
+acceptance criteria and are CORE: Decimal truthiness (the model
+lacked __bool__ -- zero Decimals were blanket-truthy),
+maybe-None int ordering (the missing-return_* root: the
+fall-through sentinel flowing through an int parameter compared
+numerically -- fixed PROVENANCE-GATED after a blanket sentinel
+check regressed 17 suite tests), and explicit-iterator exhaustion
+(iter() now allocates the consumption cursor; next() raises
+StopIteration at length). Together with the earlier promotions (15
+KNOWNBUGs whose criteria the 08-10..12 arc satisfied
+incidentally), the tracked false-proof count is ZERO in the test
+inventory as well as the differential oracle.
+
 **2026-08-12 PLR review (this arc's audit).** Code annotations
 audited against the PLR table of contents; a systematic
 mis-citation family was fixed (§6.10.x Comparisons cited where
