@@ -591,7 +591,37 @@ std::optional<exprt> python_convertert::try_nondet_call(
   {
     if(args.is_array() && !as_array(args).empty())
     {
-      exprt cond = convert_expression(*as_array(args).begin());
+      const jsont &a0 = *as_array(args).begin();
+      // QUANTIFIED assume: assume(all(<pred> for v1 in range(R1)
+      // [for v2 in range(R2)])) lowers to a (nested) FORALL assume
+      // -- the Python-source form of __CPROVER_assume(forall ...),
+      // the contract channel stub docstrings cannot provide (a
+      // docstring is not semantics; the sortedness contract of the
+      // study's ex3 needs stating as CODE). Bounds may read
+      // len(...) or the outer binder (triangular ranges). The
+      // predicate must be a pure quantifier-safe term; anything
+      // else falls through to the plain path (which loud-fails on
+      // the genexp, never silently weakens).
+      if(is_node_type(a0, "Call"))
+      {
+        const jsont &af = json_member(a0, "func");
+        if(
+          is_node_type(af, "Name") &&
+          json_string(json_member(af, "id")) == "all")
+        {
+          const jsont &aargs = json_member(a0, "args");
+          if(aargs.is_array() && as_array(aargs).size() == 1)
+          {
+            exprt q = try_quantified_all(*as_array(aargs).begin());
+            if(!q.is_nil())
+            {
+              pending_checks.push_back(code_assumet{std::move(q)});
+              return from_integer(0, python_int_type());
+            }
+          }
+        }
+      }
+      exprt cond = convert_expression(a0);
       if(cond.type().id() != ID_bool)
         cond = typecast_exprt{cond, bool_typet{}};
       pending_checks.push_back(code_assumet{cond});

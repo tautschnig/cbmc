@@ -2546,6 +2546,7 @@ private:
   exprt forall_in_range(const symbol_exprt &j, const exprt &length, exprt pred);
   void soa_assume_nested_lens(const exprt &soa_val);
   exprt try_soa_nested_len(const jsont &sub);
+  exprt try_quantified_all(const jsont &genexp);
   symbol_exprt mint_witness_array(const std::string &base);
   void assume_strictly_increasing(
     const exprt &w,

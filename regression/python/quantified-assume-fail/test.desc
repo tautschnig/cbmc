@@ -1,0 +1,10 @@
+CORE
+main.py
+--python-smt-containers --python-smt-strings --z3
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Twin: without the sortedness contract the entailment must refute
+(an unsorted source violates the ordering assert).

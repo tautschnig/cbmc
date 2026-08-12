@@ -1,0 +1,12 @@
+CORE
+main.py
+--python-smt-containers --python-smt-strings --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The study ex3 shape: assume(all(<pred> for i in range(..) for j in
+range(..))) lowers to a nested forall assume -- the Python-source
+contract channel (a stub docstring is not semantics). Filter
+preserves sortedness through the monotone witnesses.
