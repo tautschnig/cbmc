@@ -2752,8 +2752,8 @@ exprt python_convertert::build_dict_comp_over_list(
   if(saved_vt.has_value())
     symbol_table.get_writeable_ref(vid).type = *saved_vt;
   if(
-    key_e.is_nil() || val_e.is_nil() ||
-    has_subexpr(key_e, ID_side_effect) || has_subexpr(val_e, ID_side_effect))
+    key_e.is_nil() || val_e.is_nil() || has_subexpr(key_e, ID_side_effect) ||
+    has_subexpr(val_e, ID_side_effect))
     return nil_exprt{};
   struct_typet dict_t = python_dict_type(key_e.type(), val_e.type());
   const auto &keys_at = to_array_type(dict_t.components()[1].type());
@@ -2791,8 +2791,7 @@ exprt python_convertert::build_dict_comp_over_list(
   code_blockt body_blk;
   // var := data[i]  (bind, then the key/value obligations, then
   // the store -- the user-loop shape exactly).
-  body_blk.add(
-    code_frontend_assignt{var, index_exprt{src_data, i_sym}});
+  body_blk.add(code_frontend_assignt{var, index_exprt{src_data, i_sym}});
   for(const codet &c : body_checks)
     body_blk.add(c);
   exprt key_i = key_e;
@@ -2802,8 +2801,8 @@ exprt python_convertert::build_dict_comp_over_list(
   if(val_i.type() != vals_at.element_type())
     val_i = coerce_element(val_i, vals_at.element_type());
   emit_dict_store(body_blk, dkeys, dvals, dlen, key_i, val_i, loc);
-  body_blk.add(code_frontend_assignt{
-    i_sym, plus_exprt{i_sym, from_integer(1, len_t)}});
+  body_blk.add(
+    code_frontend_assignt{i_sym, plus_exprt{i_sym, from_integer(1, len_t)}});
   code_whilet loop{
     binary_relation_exprt{i_sym, ID_lt, src_len}, std::move(body_blk)};
   loop.add_source_location() = loc;

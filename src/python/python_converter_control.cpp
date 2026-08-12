@@ -619,14 +619,37 @@ codet python_convertert::convert_for(const jsont &stmt)
           code_assumet nm{std::move(none_match)};
           nm.add_source_location() = loc;
           else_blk.add(std::move(nm));
+          // PLR 8.3: after a completed (no-match) loop over a
+          // NON-EMPTY sequence the loop variable holds the LAST
+          // element -- bind the row index to len-1 so post-loop
+          // reads are exact. The EMPTY-sequence case leaves the
+          // variable unbound in CPython (UnboundLocalError at a
+          // read); the existing path-sensitive $bound machinery
+          // carries exactly that: set bound := (len > 0) here and
+          // the read-site assertion does the rest (only when the
+          // variable is bit-tracked in this function).
+          else_blk.add(code_frontend_assignt{
+            lv, minus_exprt{slen, from_integer(1, len_t)}});
+          {
+            const symbolt *bsym =
+              symbol_table.lookup(irep_idt{id2string(vid) + "$bound"});
+            if(bsym != nullptr)
+              else_blk.add(code_frontend_assignt{
+                bsym->symbol_expr(),
+                binary_relation_exprt{slen, ID_gt, from_integer(0, len_t)}});
+          }
           code_ifthenelset scan{
             std::move(found), std::move(ret_code), std::move(else_blk)};
           scan.add_source_location() = loc;
           blk.add(std::move(scan));
+          // The row binding PERSISTS for post-loop reads (the
+          // then-arm returned; only the no-match path continues,
+          // where lv is the last row). Registered as a row VIEW so
+          // the escape/invalidation discipline applies.
           if(saved_rv2.has_value())
             soa_row_bindings[vid] = *saved_rv2;
           else
-            soa_row_bindings.erase(vid);
+            soa_row_view_names.insert(vid);
           return std::move(blk);
         }
         pending_checks.erase(
