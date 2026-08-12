@@ -2806,12 +2806,24 @@ codet python_convertert::allocate_generator_cursor(
   }
   if(callee.empty())
     return code_skipt{};
+  // PLR 3.3.1 iterator protocol: `it = iter(<iterable>)` creates an
+  // ITERATOR with consumption state -- iter() returns the
+  // iterable's list identity in this model, so the CURSOR is what
+  // makes `it` an iterator rather than a re-readable sequence.
+  // Without it, next(it) re-read slot 0 forever and the exhaustion
+  // StopIteration never fired (the range-explicit-iter false
+  // proof). The existing next() machinery consults
+  // generator_cursors[<name>], so allocating here closes the whole
+  // shape for ANY single-argument iterable.
+  const bool is_iter_call = callee == "iter" &&
+                            json_member(value, "args").is_array() &&
+                            as_array(json_member(value, "args")).size() == 1;
   // Try the qualified form (function defined in current scope)
   // and the unqualified form (top-level / nested function).
   std::string q_callee = qualify_name(callee);
   bool is_gen = generator_functions.count(callee) > 0 ||
                 generator_functions.count(q_callee) > 0;
-  if(!is_gen)
+  if(!is_gen && !is_iter_call)
     return code_skipt{};
 
   std::string base = id2string(symbol_id);
