@@ -2683,6 +2683,16 @@ private:
   /// facts; a function returning a param/field/alias is NOT fresh
   /// and must not be re-boxed, else f(v) is v would break).
   std::map<std::string, std::string> function_returns_fresh;
+  /// Functions with a non-None return annotation whose body MAY
+  /// reach the implicit fall-through (syntactic over-approx: the
+  /// last top-level statement is not Return/Raise): their result
+  /// carries the None SENTINEL on the fall-through path. Feeds the
+  /// maybe-None ordering obligation (PLR 6.10.1: ordering None
+  /// raises TypeError) -- the missing-return_* false-proof root.
+  std::set<std::string> may_fallthrough_int_functions;
+  /// Symbols (locals bound from such calls; parameters that some
+  /// call site feeds from such a call) that may carry the sentinel.
+  std::set<irep_idt> maybe_none_int_symbols;
   bool is_receiver_name(const std::string &name) const
   {
     return name == current_receiver_name;

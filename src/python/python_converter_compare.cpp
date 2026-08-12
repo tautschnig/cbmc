@@ -502,6 +502,49 @@ exprt python_convertert::convert_compare(const jsont &expr)
         emit_conditional_exception(true_exprt{}, "TypeError");
         return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
       }
+      // PLR 6.10.1: ordering None against a number raises TypeError.
+      // In the INT representation None is the sentinel value (and
+      // `x is None` matches it model-wide), so an int operand that
+      // MAY carry the fall-through None (provenance: a symbol in
+      // maybe_none_int_symbols -- an int PARAMETER some call site
+      // feeds from a may-fall-through int function, or a direct
+      // call result of one) gets the guarded TypeError. This closes
+      // the missing-return_* false-proof root
+      // (absolute(absolute(5)) proved facts CPython rejects) --
+      // provenance-GATED, not blanket: an unconditional sentinel
+      // check on every int compare poisoned comprehension purity
+      // gates and fired on plain nondet ints (17 suite
+      // regressions).
+      auto maybe_none_int = [&](const exprt &e) -> bool
+      {
+        if(e.type().id() != ID_signedbv || e.is_constant())
+          return false;
+        if(
+          e.id() == ID_symbol &&
+          maybe_none_int_symbols.count(to_symbol_expr(e).get_identifier()) > 0)
+          return true;
+        if(
+          e.id() == ID_side_effect && !e.operands().empty() &&
+          e.operands()[0].id() == ID_symbol)
+        {
+          std::string cn =
+            id2string(to_symbol_expr(e.operands()[0]).get_identifier());
+          if(cn.rfind("python::", 0) == 0)
+            cn = cn.substr(8);
+          return may_fallthrough_int_functions.count(cn) > 0;
+        }
+        return false;
+      };
+      for(const exprt *opnd : {&current_left, &right})
+      {
+        if(maybe_none_int(*opnd))
+        {
+          emit_conditional_exception(
+            equal_exprt{
+              *opnd, from_integer(python_none_sentinel_int(), opnd->type())},
+            "TypeError");
+        }
+      }
     }
     auto to_float_numeric = [&](const exprt &pv) -> exprt
     {
