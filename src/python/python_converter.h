@@ -2546,6 +2546,16 @@ private:
   exprt forall_in_range(const symbol_exprt &j, const exprt &length, exprt pred);
   void soa_assume_nested_lens(const exprt &soa_val);
   exprt try_soa_nested_len(const jsont &sub);
+  exprt try_soa_nested_map(
+    const jsont &elt,
+    const jsont &gen1,
+    const jsont &gen2,
+    const source_locationt &loc);
+  exprt try_soa_dict_comp(
+    const jsont &key_expr_json,
+    const jsont &val_expr_json,
+    const jsont &gen,
+    const source_locationt &loc);
   exprt dict_keys_view(const exprt &dict_val, const source_locationt &loc);
   exprt exists_in_range(const symbol_exprt &j, const exprt &length, exprt pred);
 
@@ -2760,6 +2770,17 @@ private:
   /// -> the owning SoA list EXPRESSION. While bound, the variable is
   /// index-typed and subscripts resolve through the owner.
   std::map<irep_idt, exprt> soa_row_bindings;
+  /// NESTED row binding (recursive SoA, depth 1): var -> (owner
+  /// SoA value, list-field name, OUTER row expr). `n['g']` resolves
+  /// to owner.<f>_<g>_data[outer][n]; only alive during nested-
+  /// comprehension conversion (save/restore discipline).
+  struct soa_nested_bindingt
+  {
+    exprt owner;
+    std::string field;
+    exprt outer_row;
+  };
+  std::map<irep_idt, soa_nested_bindingt> soa_nested_row_bindings;
   /// Row-view NAMES bound by `r = xs[i]` (a subset of
   /// soa_row_bindings' keys): a BARE read of such a name outside
   /// the subscript hook is the index-pun escape -- loud-rejected

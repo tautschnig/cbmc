@@ -1,0 +1,10 @@
+CORE
+main.py
+--python-smt-containers --python-smt-strings --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Study ex7: the asymmetric-clash two-witness dictcomp encoding
+(first-occurrence keys, last-occurrence values, distinctness).

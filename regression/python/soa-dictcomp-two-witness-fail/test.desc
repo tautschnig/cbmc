@@ -1,0 +1,11 @@
+CORE
+main.py
+--python-smt-containers --python-smt-strings --z3
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Twin: k > 501 must refute (k == 501 possible); counting facts
+(len == 0) stay unprovable by the deliberate completeness
+under-constraint.
