@@ -668,6 +668,20 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
   if(!generators.is_array() || as_array(generators).empty())
     return nil_exprt{};
 
+  // Two-generator nested comprehension over a recursive-SoA source
+  // (study ex2): witness-pair encoding. Tried FIRST (the nested-
+  // comp over-approximation below would otherwise catch it).
+  if(as_array(generators).size() == 2)
+  {
+    auto git = as_array(generators).begin();
+    const jsont &g1 = *git;
+    ++git;
+    const jsont &g2 = *git;
+    exprt r = try_soa_nested_map(elt, g1, g2, get_location(expr));
+    if(!r.is_nil())
+      return r;
+  }
+
   // Nested comprehension: an element expression that itself contains a
   // comprehension (e.g. `[len([j for j in range(i)]) for i in range(n)]`) is
   // not correctly re-evaluated per OUTER iteration by the unroll path -- the
@@ -1826,6 +1840,602 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
 // PLR §6.2.7: dict comprehension '{k: v for x in xs}'. Shares the
 // generator-unrolling logic with convert_list_comp; builds a
 // python_dict struct (length, keys array, values array) at the end.
+/// Filtered DICT comprehension over an SoA list (the study's ex7):
+/// the asymmetric clash rule (verified on CPython) --
+///   KEY object + insertion POSITION <- FIRST passing occurrence
+///   VALUE                           <- LAST  passing occurrence
+/// Encoded with per-slot witness ARRAYS, forall-only:
+///  single-binder tier (shape + images):
+///   forall j < out_len:
+///     0 <= w[j] < src_len AND filter(src[w[j]])
+///     AND keys[j] == keyf(src[w[j]])
+///     AND w[j] <= vw[j] < src_len AND filter(src[vw[j]])
+///     AND keyf(src[vw[j]]) == keys[j]
+///     AND values[j] == valf(src[vw[j]])
+///   AND out_len <= src_len AND strictly-increasing w
+///  two-binder tier (clash exactness):
+///   forall j1 < j2 < out_len: keys[j1] != keys[j2]   (real dict)
+///   forall j < out_len, i < w[j]:
+///     filter(src[i]) => keyf(src[i]) != keys[j]      (FIRSTNESS)
+///   forall j < out_len, i in (vw[j], src_len):
+///     filter(src[i]) => keyf(src[i]) != keys[j]      (LASTNESS)
+/// Completeness (every passing slot's key appears) is deliberately
+/// NOT asserted: counting facts stay unprovable (sound). Nil when
+/// the shape does not apply.
+exprt python_convertert::try_soa_dict_comp(
+  const jsont &key_expr_json,
+  const jsont &val_expr_json,
+  const jsont &gen,
+  const source_locationt &loc)
+{
+  if(!python_smt_containers_flag())
+    return nil_exprt{};
+  const jsont &target = json_member(gen, "target");
+  const jsont &ifs = json_member(gen, "ifs");
+  if(!is_node_type(target, "Name"))
+    return nil_exprt{};
+  if(!ifs.is_array() || as_array(ifs).size() != 1)
+    return nil_exprt{};
+  const jsont &gen_iter = json_member(gen, "iter");
+  // Resolve the iterable to an SoA value (Name or boxed field).
+  exprt src = nil_exprt{};
+  {
+    std::string soa_td;
+    if(is_node_type(gen_iter, "Subscript"))
+    {
+      const jsont &sv = json_member(gen_iter, "value");
+      const jsont &sl = json_member(gen_iter, "slice");
+      if(
+        is_node_type(sv, "Name") && is_node_type(sl, "Constant") &&
+        json_member(sl, "value").is_string())
+      {
+        auto vt = var_typeddict.find(
+          irep_idt{qualify_name(json_string(json_member(sv, "id")))});
+        if(vt != var_typeddict.end())
+        {
+          auto fle = typed_dict_field_list_elem.find(vt->second);
+          if(fle != typed_dict_field_list_elem.end())
+          {
+            auto fe = fle->second.find(json_member(sl, "value").value);
+            if(fe != fle->second.end() && soa_eligible_td(fe->second))
+              soa_td = fe->second;
+          }
+        }
+      }
+      if(!soa_td.empty())
+        src = td_field_read_memo(gen_iter, soa_list_type(soa_td));
+    }
+    else if(is_node_type(gen_iter, "Name"))
+    {
+      const irep_idt inid{
+        qualify_name(json_string(json_member(gen_iter, "id")))};
+      auto se = var_soa_elem.find(inid);
+      if(se != var_soa_elem.end() && soa_eligible_td(se->second))
+        src = soa_value_of_name(inid, soa_list_type(se->second));
+      else
+      {
+        const symbolt *isym = symbol_table.lookup(inid);
+        if(isym != nullptr && is_soa_list_type(isym->type))
+          src = isym->symbol_expr();
+      }
+    }
+  }
+  if(src.is_nil() || !is_soa_list_type(src.type()))
+    return nil_exprt{};
+  const typet len_t = signedbv_typet{64};
+  // Bind the loop var as a row index; convert key/value/filter.
+  const std::string var_name =
+    json_string(json_member(target, "id"));
+  const irep_idt var_id{qualify_name(var_name)};
+  if(symbol_table.lookup(var_id) == nullptr)
+  {
+    symbolt vs{var_id, len_t, "python"};
+    vs.base_name = var_name;
+    vs.is_lvalue = true;
+    vs.is_state_var = true;
+    vs.is_static_lifetime = current_function.empty();
+    symbol_table.add(vs);
+  }
+  else
+    symbol_table.get_writeable_ref(var_id).type = len_t;
+  symbol_exprt var = symbol_table.lookup_ref(var_id).symbol_expr();
+  std::optional<exprt> saved_rv;
+  auto srv = soa_row_bindings.find(var_id);
+  if(srv != soa_row_bindings.end())
+    saved_rv = srv->second;
+  soa_row_bindings[var_id] = src;
+  const std::size_t pc0 = pending_checks.size();
+  exprt keyf = convert_expression(key_expr_json);
+  exprt valf = convert_expression(val_expr_json);
+  exprt filt = convert_expression(*as_array(ifs).begin());
+  if(saved_rv.has_value())
+    soa_row_bindings[var_id] = *saved_rv;
+  else
+    soa_row_bindings.erase(var_id);
+  auto occurs_bare = [&](const exprt &e) -> bool
+  {
+    std::function<bool(const exprt &)> walk = [&](const exprt &n) -> bool
+    {
+      if(n == var)
+        return true;
+      if(n.id() == ID_index)
+      {
+        const auto &ix = to_index_expr(n);
+        if(
+          ix.index() == var && ix.array().id() == ID_member &&
+          to_member_expr(ix.array()).compound() == src)
+          return walk(ix.array());
+      }
+      for(const auto &op : n.operands())
+        if(walk(op))
+          return true;
+      return false;
+    };
+    return walk(e);
+  };
+  if(filt.is_not_nil() && filt.type().id() != ID_bool)
+    filt = python_truthiness(filt);
+  const bool clean =
+    pending_checks.size() == pc0 && !keyf.is_nil() && !valf.is_nil() &&
+    !filt.is_nil() && quantifier_safe_term(keyf) &&
+    quantifier_safe_term(valf) && quantifier_safe_term(filt) &&
+    !has_subexpr(keyf, ID_side_effect) &&
+    !has_subexpr(valf, ID_side_effect) &&
+    !has_subexpr(filt, ID_side_effect) && !occurs_bare(keyf) &&
+    !occurs_bare(valf) && !occurs_bare(filt);
+  if(!clean)
+  {
+    pending_checks.erase(pending_checks.begin() + pc0, pending_checks.end());
+    return nil_exprt{};
+  }
+  member_exprt src_len{src, "length", len_t};
+  static unsigned dcw_ctr = 0;
+  const unsigned did = dcw_ctr++;
+  auto fresh_arr = [&](const std::string &base) -> symbol_exprt
+  {
+    const array_typet at{len_t, exprt{infinity_exprt{signedbv_typet{64}}}};
+    const irep_idt aid{qualify_name(base + std::to_string(did))};
+    if(symbol_table.lookup(aid) == nullptr)
+    {
+      symbolt as{aid, at, "python"};
+      as.base_name = base + std::to_string(did);
+      as.is_lvalue = true;
+      as.is_state_var = true;
+      as.is_static_lifetime = current_function.empty();
+      symbol_table.add(as);
+    }
+    return symbol_table.lookup_ref(aid).symbol_expr();
+  };
+  symbol_exprt w = fresh_arr("__dc_w_");
+  symbol_exprt vw = fresh_arr("__dc_vw_");
+  struct_typet dict_t = python_dict_type(keyf.type(), valf.type());
+  const auto &keys_at = to_array_type(dict_t.components()[1].type());
+  const auto &vals_at = to_array_type(dict_t.components()[2].type());
+  const irep_idt rid{qualify_name("__dc_out_" + std::to_string(did))};
+  if(symbol_table.lookup(rid) == nullptr)
+  {
+    symbolt rs{rid, dict_t, "python"};
+    rs.base_name = "__dc_out_" + std::to_string(did);
+    rs.is_lvalue = true;
+    rs.is_state_var = true;
+    rs.is_static_lifetime = current_function.empty();
+    symbol_table.add(rs);
+  }
+  symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
+  // Member-wise nondet (the stub rule).
+  for(const auto &comp : to_struct_type(dict_t).components())
+    pending_checks.push_back(code_frontend_assignt{
+      member_exprt{res, comp.get_name(), comp.type()},
+      side_effect_expr_nondett{comp.type(), loc}});
+  member_exprt out_len{res, "length", len_t};
+  member_exprt out_keys{res, "keys", keys_at};
+  member_exprt out_vals{res, "values", vals_at};
+  pending_checks.push_back(code_assumet{and_exprt{
+    binary_relation_exprt{out_len, ID_ge, from_integer(0, len_t)},
+    binary_relation_exprt{out_len, ID_le, src_len}}});
+  // Quantified binders.
+  const irep_idt jid{qualify_name("__dc_j_" + std::to_string(did))};
+  const irep_idt iid{qualify_name("__dc_i_" + std::to_string(did))};
+  for(const irep_idt &qid : {jid, iid})
+    if(symbol_table.lookup(qid) == nullptr)
+    {
+      symbolt qs{qid, len_t, "python"};
+      qs.base_name = id2string(qid);
+      qs.is_lvalue = true;
+      qs.is_state_var = true;
+      qs.is_static_lifetime = current_function.empty();
+      symbol_table.add(qs);
+    }
+  const symbol_exprt j = symbol_table.lookup_ref(jid).symbol_expr();
+  const symbol_exprt i = symbol_table.lookup_ref(iid).symbol_expr();
+  exprt wj = index_exprt{w, j};
+  exprt vwj = index_exprt{vw, j};
+  auto subst = [&](const exprt &e, const exprt &row) -> exprt
+  {
+    exprt r = e;
+    replace_expr(var, row, r);
+    return r;
+  };
+  exprt key_e = keyf;
+  if(key_e.type() != keys_at.element_type())
+    key_e = coerce_element(key_e, keys_at.element_type());
+  exprt val_e = valf;
+  if(val_e.type() != vals_at.element_type())
+    val_e = coerce_element(val_e, vals_at.element_type());
+  // Single-binder tier.
+  exprt payload = and_exprt{
+    {binary_relation_exprt{from_integer(0, len_t), ID_le, wj},
+     binary_relation_exprt{wj, ID_lt, src_len},
+     subst(filt, wj),
+     equal_exprt{index_exprt{out_keys, j}, subst(key_e, wj)},
+     binary_relation_exprt{wj, ID_le, vwj},
+     binary_relation_exprt{vwj, ID_lt, src_len},
+     subst(filt, vwj),
+     equal_exprt{subst(key_e, vwj), index_exprt{out_keys, j}},
+     equal_exprt{index_exprt{out_vals, j}, subst(val_e, vwj)}}};
+  pending_checks.push_back(
+    code_assumet{forall_in_range(j, out_len, std::move(payload))});
+  // Strictly increasing key witnesses (insertion order of FIRSTS).
+  pending_checks.push_back(code_assumet{forall_exprt{
+    j,
+    implies_exprt{
+      and_exprt{
+        binary_relation_exprt{from_integer(1, len_t), ID_le, j},
+        binary_relation_exprt{j, ID_lt, out_len}},
+      binary_relation_exprt{
+        index_exprt{w, minus_exprt{j, from_integer(1, len_t)}},
+        ID_lt,
+        index_exprt{w, j}}}}});
+  // Two-binder tier: distinct keys; FIRSTNESS; LASTNESS.
+  exprt keys_i_ne_j = notequal_exprt{
+    index_exprt{out_keys, i}, index_exprt{out_keys, j}};
+  pending_checks.push_back(code_assumet{forall_exprt{
+    i,
+    forall_exprt{
+      j,
+      implies_exprt{
+        and_exprt{
+          binary_relation_exprt{from_integer(0, len_t), ID_le, i},
+          and_exprt{
+            binary_relation_exprt{i, ID_lt, j},
+            binary_relation_exprt{j, ID_lt, out_len}}},
+        std::move(keys_i_ne_j)}}}});
+  exprt::operandst fconj;
+  fconj.push_back(binary_relation_exprt{from_integer(0, len_t), ID_le, j});
+  fconj.push_back(binary_relation_exprt{j, ID_lt, out_len});
+  fconj.push_back(binary_relation_exprt{from_integer(0, len_t), ID_le, i});
+  fconj.push_back(binary_relation_exprt{i, ID_lt, wj});
+  fconj.push_back(subst(filt, i));
+  exprt firstness = implies_exprt{
+    conjunction(fconj),
+    notequal_exprt{subst(key_e, i), index_exprt{out_keys, j}}};
+  pending_checks.push_back(
+    code_assumet{forall_exprt{j, forall_exprt{i, std::move(firstness)}}});
+  exprt::operandst lconj;
+  lconj.push_back(binary_relation_exprt{from_integer(0, len_t), ID_le, j});
+  lconj.push_back(binary_relation_exprt{j, ID_lt, out_len});
+  lconj.push_back(binary_relation_exprt{vwj, ID_lt, i});
+  lconj.push_back(binary_relation_exprt{i, ID_lt, src_len});
+  lconj.push_back(subst(filt, i));
+  exprt lastness = implies_exprt{
+    conjunction(lconj),
+    notequal_exprt{subst(key_e, i), index_exprt{out_keys, j}}};
+  pending_checks.push_back(
+    code_assumet{forall_exprt{j, forall_exprt{i, std::move(lastness)}}});
+  return std::move(res);
+}
+
+/// Two-generator nested comprehension over a recursive-SoA source
+/// (the study's ex2):
+///   [body for c in xs if F1 for n in c['f'] if F2]
+/// via witness PAIRS (w1[j], w2[j]), forall-only:
+///   forall j < out_len:
+///     0 <= w1[j] < len(xs) AND F1(w1[j])
+///     AND 0 <= w2[j] < f_len[w1[j]] AND F2(w1[j], w2[j])
+///     AND out[j] == body(w1[j], w2[j])
+///   lexicographically increasing pairs (order + injectivity).
+/// out_len's upper bound is IMPLIED by injective in-range pairs;
+/// completeness deliberately not asserted (counting facts stay
+/// unprovable). Filters optional (0 or 1 per generator). Nil when
+/// the shape does not apply.
+exprt python_convertert::try_soa_nested_map(
+  const jsont &elt,
+  const jsont &gen1,
+  const jsont &gen2,
+  const source_locationt &loc)
+{
+  if(!python_smt_containers_flag())
+    return nil_exprt{};
+  const jsont &t1 = json_member(gen1, "target");
+  const jsont &t2 = json_member(gen2, "target");
+  if(!is_node_type(t1, "Name") || !is_node_type(t2, "Name"))
+    return nil_exprt{};
+  const jsont &ifs1 = json_member(gen1, "ifs");
+  const jsont &ifs2 = json_member(gen2, "ifs");
+  if(ifs1.is_array() && as_array(ifs1).size() > 1)
+    return nil_exprt{};
+  if(ifs2.is_array() && as_array(ifs2).size() > 1)
+    return nil_exprt{};
+  // Outer iterable: SoA (Name or boxed field).
+  const jsont &it1 = json_member(gen1, "iter");
+  exprt src = nil_exprt{};
+  {
+    std::string soa_td;
+    if(is_node_type(it1, "Subscript"))
+    {
+      const jsont &sv = json_member(it1, "value");
+      const jsont &sl = json_member(it1, "slice");
+      if(
+        is_node_type(sv, "Name") && is_node_type(sl, "Constant") &&
+        json_member(sl, "value").is_string())
+      {
+        auto vt = var_typeddict.find(
+          irep_idt{qualify_name(json_string(json_member(sv, "id")))});
+        if(vt != var_typeddict.end())
+        {
+          auto fle = typed_dict_field_list_elem.find(vt->second);
+          if(fle != typed_dict_field_list_elem.end())
+          {
+            auto fe = fle->second.find(json_member(sl, "value").value);
+            if(fe != fle->second.end() && soa_eligible_td(fe->second))
+              soa_td = fe->second;
+          }
+        }
+      }
+      if(!soa_td.empty())
+        src = td_field_read_memo(it1, soa_list_type(soa_td));
+    }
+    else if(is_node_type(it1, "Name"))
+    {
+      const irep_idt inid{qualify_name(json_string(json_member(it1, "id")))};
+      auto se = var_soa_elem.find(inid);
+      if(se != var_soa_elem.end() && soa_eligible_td(se->second))
+        src = soa_value_of_name(inid, soa_list_type(se->second));
+      else
+      {
+        const symbolt *isym = symbol_table.lookup(inid);
+        if(isym != nullptr && is_soa_list_type(isym->type))
+          src = isym->symbol_expr();
+      }
+    }
+  }
+  if(src.is_nil() || !is_soa_list_type(src.type()))
+    return nil_exprt{};
+  // Inner iterable: Subscript(outer_var)['f'] with a flattened
+  // nested-TD matrix family.
+  const std::string v1 = json_string(json_member(t1, "id"));
+  const std::string v2 = json_string(json_member(t2, "id"));
+  const jsont &it2 = json_member(gen2, "iter");
+  if(
+    !is_node_type(it2, "Subscript") ||
+    !is_node_type(json_member(it2, "value"), "Name") ||
+    json_string(json_member(json_member(it2, "value"), "id")) != v1)
+    return nil_exprt{};
+  const jsont &isl = json_member(it2, "slice");
+  if(!is_node_type(isl, "Constant") || !json_member(isl, "value").is_string())
+    return nil_exprt{};
+  const std::string fld = json_member(isl, "value").value;
+  const auto &sst = to_struct_type(src.type());
+  const std::string lcomp = fld + "_len";
+  if(!sst.has_component(lcomp))
+    return nil_exprt{};
+  const typet len_t = signedbv_typet{64};
+  // Bind both loop vars.
+  auto bind_var = [&](const std::string &nm) -> symbol_exprt
+  {
+    const irep_idt id{qualify_name(nm)};
+    if(symbol_table.lookup(id) == nullptr)
+    {
+      symbolt vs{id, len_t, "python"};
+      vs.base_name = nm;
+      vs.is_lvalue = true;
+      vs.is_state_var = true;
+      vs.is_static_lifetime = current_function.empty();
+      symbol_table.add(vs);
+    }
+    else
+      symbol_table.get_writeable_ref(id).type = len_t;
+    return symbol_table.lookup_ref(id).symbol_expr();
+  };
+  symbol_exprt cvar = bind_var(v1);
+  symbol_exprt nvar = bind_var(v2);
+  const irep_idt cid{qualify_name(v1)};
+  const irep_idt nid{qualify_name(v2)};
+  std::optional<exprt> saved_c;
+  auto sc = soa_row_bindings.find(cid);
+  if(sc != soa_row_bindings.end())
+    saved_c = sc->second;
+  soa_row_bindings[cid] = src;
+  std::optional<soa_nested_bindingt> saved_n;
+  auto sn = soa_nested_row_bindings.find(nid);
+  if(sn != soa_nested_row_bindings.end())
+    saved_n = sn->second;
+  soa_nested_row_bindings[nid] = soa_nested_bindingt{src, fld, cvar};
+  const std::size_t pc0 = pending_checks.size();
+  exprt body = convert_expression(elt);
+  exprt f1 = ifs1.is_array() && !as_array(ifs1).empty()
+               ? convert_expression(*as_array(ifs1).begin())
+               : exprt{true_exprt{}};
+  exprt f2 = ifs2.is_array() && !as_array(ifs2).empty()
+               ? convert_expression(*as_array(ifs2).begin())
+               : exprt{true_exprt{}};
+  if(saved_c.has_value())
+    soa_row_bindings[cid] = *saved_c;
+  else
+    soa_row_bindings.erase(cid);
+  if(saved_n.has_value())
+    soa_nested_row_bindings[nid] = *saved_n;
+  else
+    soa_nested_row_bindings.erase(nid);
+  auto occurs_bare = [&](const exprt &e) -> bool
+  {
+    std::function<bool(const exprt &)> walk = [&](const exprt &n) -> bool
+    {
+      if(n == cvar || n == nvar)
+      {
+        return true;
+      }
+      if(n.id() == ID_index)
+      {
+        const auto &ix = to_index_expr(n);
+        // legal: <member of src>[cvar]  (outer field read)
+        if(
+          ix.index() == cvar && ix.array().id() == ID_member &&
+          to_member_expr(ix.array()).compound() == src)
+          return walk(ix.array());
+        // legal: (<member of src>[cvar])[nvar]  (nested field read)
+        if(
+          ix.index() == nvar && ix.array().id() == ID_index &&
+          to_index_expr(ix.array()).index() == cvar &&
+          to_index_expr(ix.array()).array().id() == ID_member &&
+          to_member_expr(to_index_expr(ix.array()).array()).compound() == src)
+          return walk(to_index_expr(ix.array()).array());
+      }
+      for(const auto &op : n.operands())
+        if(walk(op))
+          return true;
+      return false;
+    };
+    return walk(e);
+  };
+  if(f1.is_not_nil() && f1.type().id() != ID_bool)
+    f1 = python_truthiness(f1);
+  if(f2.is_not_nil() && f2.type().id() != ID_bool)
+    f2 = python_truthiness(f2);
+  const bool clean =
+    pending_checks.size() == pc0 && !body.is_nil() && !f1.is_nil() &&
+    !f2.is_nil() && quantifier_safe_term(body) && quantifier_safe_term(f1) &&
+    quantifier_safe_term(f2) && !has_subexpr(body, ID_side_effect) &&
+    !has_subexpr(f1, ID_side_effect) && !has_subexpr(f2, ID_side_effect) &&
+    !occurs_bare(body) && !occurs_bare(f1) && !occurs_bare(f2);
+  if(!clean)
+  {
+    pending_checks.erase(pending_checks.begin() + pc0, pending_checks.end());
+    return nil_exprt{};
+  }
+  member_exprt src_len{src, "length", len_t};
+  member_exprt flen_arr{src, lcomp, sst.get_component(lcomp).type()};
+  static unsigned nm_ctr = 0;
+  const unsigned mid = nm_ctr++;
+  auto fresh_arr = [&](const std::string &base) -> symbol_exprt
+  {
+    const array_typet at{len_t, exprt{infinity_exprt{signedbv_typet{64}}}};
+    const irep_idt aid{qualify_name(base + std::to_string(mid))};
+    if(symbol_table.lookup(aid) == nullptr)
+    {
+      symbolt as{aid, at, "python"};
+      as.base_name = base + std::to_string(mid);
+      as.is_lvalue = true;
+      as.is_state_var = true;
+      as.is_static_lifetime = current_function.empty();
+      symbol_table.add(as);
+    }
+    return symbol_table.lookup_ref(aid).symbol_expr();
+  };
+  symbol_exprt w1 = fresh_arr("__nm_w1_");
+  symbol_exprt w2 = fresh_arr("__nm_w2_");
+  typet et_out = body.type();
+  struct_typet out_lt = python_list_type(et_out);
+  const array_typet &out_dt = to_array_type(out_lt.components()[1].type());
+  const irep_idt rid{qualify_name("__nm_out_" + std::to_string(mid))};
+  if(symbol_table.lookup(rid) == nullptr)
+  {
+    symbolt rs{rid, out_lt, "python"};
+    rs.base_name = "__nm_out_" + std::to_string(mid);
+    rs.is_lvalue = true;
+    rs.is_state_var = true;
+    rs.is_static_lifetime = current_function.empty();
+    symbol_table.add(rs);
+  }
+  symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
+  for(const auto &comp : to_struct_type(out_lt).components())
+    pending_checks.push_back(code_frontend_assignt{
+      member_exprt{res, comp.get_name(), comp.type()},
+      side_effect_expr_nondett{comp.type(), loc}});
+  member_exprt out_len{res, "length", len_t};
+  member_exprt out_data{res, "data", out_dt};
+  pending_checks.push_back(code_assumet{binary_relation_exprt{
+    out_len, ID_ge, from_integer(0, len_t)}});
+  const irep_idt jid{qualify_name("__nm_j_" + std::to_string(mid))};
+  if(symbol_table.lookup(jid) == nullptr)
+  {
+    symbolt js{jid, len_t, "python"};
+    js.base_name = "__nm_j_" + std::to_string(mid);
+    js.is_lvalue = true;
+    js.is_state_var = true;
+    js.is_static_lifetime = current_function.empty();
+    symbol_table.add(js);
+  }
+  const symbol_exprt j = symbol_table.lookup_ref(jid).symbol_expr();
+  exprt w1j = index_exprt{w1, j};
+  exprt w2j = index_exprt{w2, j};
+  auto subst2 = [&](const exprt &e) -> exprt
+  {
+    exprt r = e;
+    replace_expr(cvar, w1j, r);
+    replace_expr(nvar, w2j, r);
+    return r;
+  };
+  exprt body_w = subst2(body);
+  if(body_w.type() != out_dt.element_type())
+    body_w = coerce_element(body_w, out_dt.element_type());
+  // The BODY is DEFINITIONAL, not quantified: out_data is an
+  // array_comprehension over j (total: junk beyond out_len, never
+  // read there). Reads out_data[r] then beta-reduce in the backend
+  // -- no quantifier instantiation on the two-level witness
+  // selects, which Z3's saturation failed to close (x6 unknown).
+  pending_checks.push_back(code_frontend_assignt{
+    out_data, array_comprehension_exprt{j, std::move(body_w), out_dt}});
+  // SEPARATE binder for the range/filter forall: sharing the
+  // lambda's binder symbol corrupts one of the two bindings under
+  // SSA renaming.
+  const irep_idt kid{qualify_name("__nm_k_" + std::to_string(mid))};
+  if(symbol_table.lookup(kid) == nullptr)
+  {
+    symbolt ks{kid, len_t, "python"};
+    ks.base_name = "__nm_k_" + std::to_string(mid);
+    ks.is_lvalue = true;
+    ks.is_state_var = true;
+    ks.is_static_lifetime = current_function.empty();
+    symbol_table.add(ks);
+  }
+  const symbol_exprt k = symbol_table.lookup_ref(kid).symbol_expr();
+  exprt w1k = index_exprt{w1, k};
+  exprt w2k = index_exprt{w2, k};
+  auto substk = [&](const exprt &e) -> exprt
+  {
+    exprt r = e;
+    replace_expr(cvar, w1k, r);
+    replace_expr(nvar, w2k, r);
+    return r;
+  };
+  exprt::operandst conj;
+  conj.push_back(binary_relation_exprt{from_integer(0, len_t), ID_le, w1k});
+  conj.push_back(binary_relation_exprt{w1k, ID_lt, src_len});
+  conj.push_back(substk(f1));
+  conj.push_back(binary_relation_exprt{from_integer(0, len_t), ID_le, w2k});
+  conj.push_back(
+    binary_relation_exprt{w2k, ID_lt, index_exprt{flen_arr, w1k}});
+  conj.push_back(substk(f2));
+  pending_checks.push_back(
+    code_assumet{forall_in_range(k, out_len, conjunction(conj))});
+  // Lexicographic strict increase (order + injectivity).
+  exprt w1p = index_exprt{w1, minus_exprt{k, from_integer(1, len_t)}};
+  exprt w2p = index_exprt{w2, minus_exprt{k, from_integer(1, len_t)}};
+  exprt lex = or_exprt{
+    binary_relation_exprt{w1p, ID_lt, w1k},
+    and_exprt{
+      equal_exprt{w1p, w1k}, binary_relation_exprt{w2p, ID_lt, w2k}}};
+  pending_checks.push_back(code_assumet{forall_exprt{
+    k,
+    implies_exprt{
+      and_exprt{
+        binary_relation_exprt{from_integer(1, len_t), ID_le, k},
+        binary_relation_exprt{k, ID_lt, out_len}},
+      std::move(lex)}}});
+  return std::move(res);
+}
+
 exprt python_convertert::convert_dict_comp(const jsont &expr)
 {
   const jsont &key_expr_json = json_member(expr, "key");
@@ -1834,6 +2444,21 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
 
   if(!generators.is_array() || as_array(generators).empty())
     return nil_exprt{};
+
+  // Filtered single-generator dictcomp over an SoA list: the
+  // two-witness asymmetric-clash encoding (study ex7). Tried
+  // FIRST -- the constant-iterable path below requires literal
+  // sources.
+  if(as_array(generators).size() == 1)
+  {
+    exprt r = try_soa_dict_comp(
+      key_expr_json,
+      val_expr_json,
+      *as_array(generators).begin(),
+      get_location(expr));
+    if(!r.is_nil())
+      return r;
+  }
 
   // Collect generators: supported iterables are literal lists and
   // range() calls with constant-integer arguments. Anything else
