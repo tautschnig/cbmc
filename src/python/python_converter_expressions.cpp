@@ -4064,6 +4064,38 @@ exprt python_convertert::convert_attribute_impl(const jsont &expr)
             binary_relation_exprt{len, ID_ge, from_integer(0, i64)},
             binary_relation_exprt{
               len, ID_le, from_integer(PYTHON_MAX_LIST_LENGTH, i64)}}});
+          // Representation invariant for STRING elements: {0, NULL}
+          // is reserved as the typed-slot None marker, so a nondet
+          // list-of-str global (sys.argv) must not hand out
+          // elements aliasing it (isinstance/is-None recognizers
+          // key on data == NULL). In-range slots only.
+          const auto &lst = to_struct_type(cs->type);
+          const auto &dat = to_array_type(lst.components()[1].type());
+          if(
+            is_python_string_type(dat.element_type()) &&
+            !python_smt_string_native_flag())
+          {
+            member_exprt data_arr{cs->symbol_expr(), "data", dat};
+            mp_integer capi;
+            std::size_t cap = PYTHON_MAX_LIST_LENGTH;
+            if(
+              dat.size().is_constant() &&
+              !to_integer(to_constant_expr(dat.size()), capi))
+              cap = numeric_cast_v<std::size_t>(capi);
+            for(std::size_t i = 0; i < cap; i++)
+            {
+              exprt idx = from_integer(i, i64);
+              pending_checks.push_back(code_assumet{or_exprt{
+                binary_relation_exprt{idx, ID_ge, len},
+                notequal_exprt{
+                  member_exprt{
+                    index_exprt{data_arr, idx},
+                    "data",
+                    pointer_typet{unsignedbv_typet{8}, 64}},
+                  null_pointer_exprt{
+                    pointer_typet{unsignedbv_typet{8}, 64}}}}});
+            }
+          }
         }
         return cs->symbol_expr();
       }
