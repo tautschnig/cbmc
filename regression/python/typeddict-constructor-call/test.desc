@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 6 --no-unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PEP 589: TD(k="v") constructs a plain DICT -- the constructor call
+lowers to a dict display (kwargs), matching the annotation seam.
+The class-struct construction previously made every read fail
+(missing .get, subscripts/membership raising -- the K experiment's
+TypedDict diagnostic).

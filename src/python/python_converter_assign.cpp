@@ -1523,7 +1523,17 @@ codet python_convertert::convert_assign(const jsont &stmt)
   {
     std::string call_name =
       json_string(json_member(json_member(value, "func"), "id"));
-    if(class_types.count(call_name))
+    // PEP 589: a TypedDict call is a DICT construction, not a class
+    // construction -- skip this arm so the RHS converts through the
+    // call-site lowering (kwargs -> dict display).
+    const bool call_is_typeddict = [&]
+    {
+      auto tdb = class_bases.find(call_name);
+      return tdb != class_bases.end() &&
+             std::find(tdb->second.begin(), tdb->second.end(), "TypedDict") !=
+               tdb->second.end();
+    }();
+    if(class_types.count(call_name) && !call_is_typeddict)
     {
       const jsont &first_target = *as_array(targets).begin();
 
