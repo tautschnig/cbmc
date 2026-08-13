@@ -1385,6 +1385,71 @@ exprt python_convertert::convert_call(const jsont &expr)
       return std::move(*r);
   }
 
+  // PEP 589: a TypedDict CALL (TD(k="v", ...)) constructs a plain
+  // DICT at runtime -- the same canonical string-keyed layout the
+  // annotation seam resolves TypedDict names to. The class-struct
+  // construction below mis-modelled it (every read then failed:
+  // .get had no method, subscripts raised -- the K-experiment
+  // TypedDict diagnostic). Lower the kwargs to a dict display and
+  // convert THAT; --python-check-typeddict-fields hooks stay
+  // applicable via the same map (unknown-key checks fire below).
+  {
+    auto tdb_call = class_bases.find(func_name);
+    if(
+      tdb_call != class_bases.end() &&
+      std::find(
+        tdb_call->second.begin(), tdb_call->second.end(), "TypedDict") !=
+        tdb_call->second.end())
+    {
+      const jsont &kw = json_member(expr, "keywords");
+      json_objectt dict_node;
+      dict_node["_type"] = json_stringt("Dict");
+      json_arrayt keys_arr;
+      json_arrayt vals_arr;
+      if(kw.is_array())
+      {
+        for(const auto &k : as_array(kw))
+        {
+          const jsont &arg_name = json_member(k, "arg");
+          if(arg_name.is_null())
+            continue; // **expansion: fall through to nondet below
+          json_objectt key_node;
+          key_node["_type"] = json_stringt("Constant");
+          key_node["value"] = json_stringt(json_string(arg_name));
+          // --python-check-typeddict-fields: unknown keys at
+          // construction (the existing flag semantics).
+          if(python_check_typeddict_fields)
+          {
+            auto tf = typeddict_class_fields.find(func_name);
+            if(
+              tf != typeddict_class_fields.end() &&
+              std::find(
+                tf->second.begin(), tf->second.end(), json_string(arg_name)) ==
+                tf->second.end())
+            {
+              source_locationt tdl = get_location(expr);
+              tdl.set_property_class("python-typeddict-field");
+              tdl.set_comment(
+                "unknown TypedDict key '" + json_string(arg_name) + "' in " +
+                func_name + "(...) construction");
+              code_assertt bad{false_exprt{}};
+              bad.add_source_location() = tdl;
+              pending_checks.push_back(std::move(bad));
+            }
+          }
+          keys_arr.push_back(key_node);
+          vals_arr.push_back(json_member(k, "value"));
+        }
+      }
+      dict_node["keys"] = keys_arr;
+      dict_node["values"] = vals_arr;
+      dict_node["lineno"] = json_member(expr, "lineno");
+      dict_node["col_offset"] = json_member(expr, "col_offset");
+      exprt d = convert_expression(dict_node);
+      if(!d.is_nil())
+        return d;
+    }
+  }
   // Regular function call — check if it's a class constructor
   if(class_types.count(func_name))
   {
