@@ -47,9 +47,11 @@ class Counter(dict):
     """
 
     _d: dict[tuple[int, int], int]
+    _s: dict[str, int]
 
     def __init__(self, iterable=None, **kwds):
         self._d = {}
+        self._s = {}
         # PLR: Counter(iterable) treats each element as a key
         # with count 1 (we don't accumulate counts in the
         # bounded model). For tuple-keyed iterables this still
@@ -62,13 +64,26 @@ class Counter(dict):
     def __setitem__(self, k: tuple[int, int], v: int) -> None:
         self._d[k] = v
 
+    def __setitem_str__(self, k: str, v: int) -> None:
+        # Typed STRING variant (frontend convention: preferred by
+        # the subscript dispatch when the key is statically str) --
+        # a single untyped __setitem__ would box the tuple keys
+        # through the Any channel, which does not round-trip.
+        self._s[k] = v
+
     def __getitem__(self, k: tuple[int, int]) -> int:
-        # PLR §6.10.1 / Counter `__missing__`: missing keys
-        # return 0, not KeyError.
+        # stdtypes Counter.__missing__: missing keys return 0,
+        # not KeyError.
         return self._d.get(k, 0)
+
+    def __getitem_str__(self, k: str) -> int:
+        return self._s.get(k, 0)
 
     def __contains__(self, k: tuple[int, int]) -> bool:
         return k in self._d
+
+    def __contains_str__(self, k: str) -> bool:
+        return k in self._s
 
     def get(self, k: tuple[int, int], default: int = 0) -> int:
         return self._d.get(k, default)

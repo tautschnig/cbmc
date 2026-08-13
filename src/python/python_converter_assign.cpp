@@ -3389,9 +3389,24 @@ codet python_convertert::convert_assign(const jsont &stmt)
           if(tag.substr(0, 13) == "python_class_")
           {
             std::string bare = tag.substr(13);
-            for(const std::string &prefix :
-                {std::string{"python::"} + tag + "::__setitem__",
-                 std::string{"python::"} + bare + "::__setitem__"})
+            std::vector<std::string> si_prefixes;
+            {
+              const jsont &sl_probe = json_member(target, "slice");
+              const bool str_key = is_node_type(sl_probe, "Constant") &&
+                                   json_member(sl_probe, "value").is_string();
+              if(str_key)
+              {
+                si_prefixes.push_back(
+                  std::string{"python::"} + tag + "::__setitem_str__");
+                si_prefixes.push_back(
+                  std::string{"python::"} + bare + "::__setitem_str__");
+              }
+              si_prefixes.push_back(
+                std::string{"python::"} + tag + "::__setitem__");
+              si_prefixes.push_back(
+                std::string{"python::"} + bare + "::__setitem__");
+            }
+            for(const std::string &prefix : si_prefixes)
             {
               const symbolt *ss = symbol_table.lookup(irep_idt{prefix});
               if(ss != nullptr)
@@ -5177,6 +5192,68 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       if(is_node_type(sub_base, "Name"))
         list_literals.erase(
           irep_idt{qualify_name(json_string(json_member(sub_base, "id")))});
+    }
+    // PLR 7.2.1 (augmented assignment) + 3.3.7: `obj[k] op= v` on a
+    // class instance with __getitem__/__setitem__ evaluates
+    // obj[k] op v via __getitem__ and stores via __setitem__ (an
+    // in-place dunder would take precedence, which int payloads
+    // never define). The aug-assign lowerings below know nothing
+    // of dunders -- the store SILENTLY VANISHED (Counter
+    // `c['x'] += 1` never called __setitem__), so DESUGAR to the
+    // load-op-store pair and convert THAT statement: both existing
+    // dispatches (subscript-read __getitem__, plain-assign
+    // __setitem__) apply.
+    {
+      const jsont &sub_base = json_member(target, "value");
+      if(is_node_type(sub_base, "Name"))
+      {
+        exprt obj_probe = convert_expression(sub_base);
+        std::string tag;
+        if(!obj_probe.is_nil())
+        {
+          typet ot = obj_probe.type();
+          if(ot.id() == ID_struct)
+            tag = id2string(to_struct_type(ot).get_tag());
+          else if(ot.id() == ID_struct_tag)
+            tag = id2string(to_struct_tag_type(ot).get_identifier());
+        }
+        if(tag.rfind("python_class_", 0) == 0)
+        {
+          const std::string bare = tag.substr(13);
+          const bool has_setitem =
+            symbol_table.lookup(irep_idt{"python::" + tag + "::__setitem__"}) !=
+              nullptr ||
+            symbol_table.lookup(
+              irep_idt{"python::" + bare + "::__setitem__"}) != nullptr;
+          if(has_setitem)
+          {
+            // Build `obj[k] = obj[k] <op> v` as a synthetic Assign
+            // AST and convert it (evaluation once for k is
+            // preserved below only for Name/Constant slices; a
+            // side-effecting slice falls through to the plain
+            // lowerings, loud).
+            const jsont &slice_n = json_member(target, "slice");
+            if(
+              is_node_type(slice_n, "Name") ||
+              is_node_type(slice_n, "Constant"))
+            {
+              json_objectt binop;
+              binop["_type"] = json_stringt("BinOp");
+              binop["left"] = target; // re-read obj[k]
+              binop["op"] = json_member(stmt, "op");
+              binop["right"] = json_member(stmt, "value");
+              jsont assign_stmt = stmt; // inherit lineno/col
+              json_objectt &an = to_json_object(assign_stmt);
+              an["_type"] = json_stringt("Assign");
+              json_arrayt tgts;
+              tgts.push_back(target);
+              an["targets"] = tgts;
+              an["value"] = binop;
+              return convert_assign(assign_stmt);
+            }
+          }
+        }
+      }
     }
     const jsont &slice = json_member(target, "slice");
     if(is_node_type(slice, "Call"))
