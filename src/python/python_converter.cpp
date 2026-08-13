@@ -4399,6 +4399,22 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
       // differing component widened to value) and the arg is an lvalue.
       if(promotable && e_lvalue)
       {
+        // The callee may have MUTATED the container through the
+        // by-ref temp; the write-back lands those mutations in the
+        // original symbol, so its constant-tracking snapshot is
+        // stale -- reads folding against it were a FALSE PROOF
+        // (`c.upd(m); m['a'] == 1` proved after the callee stored
+        // 99; the free-call arg path already invalidates, this
+        // PROMOTION path did not).
+        if(e.id() == ID_symbol)
+        {
+          const irep_idt sid = to_symbol_expr(e).get_identifier();
+          list_literals.erase(sid);
+          dict_literals.erase(sid);
+          tuple_literals.erase(sid);
+          string_constants.erase(sid);
+          float_constants.erase(sid);
+        }
         for(std::size_t c = 1; c < dst_st.components().size(); c++)
         {
           const auto &dst_at = to_array_type(dst_st.components()[c].type());
