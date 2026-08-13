@@ -759,9 +759,27 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     if(tag.substr(0, 13) == "python_class_")
     {
       std::string bare = tag.substr(13);
-      for(const std::string &prefix :
-          {std::string{"python::"} + tag + "::__getitem__",
-           std::string{"python::"} + bare + "::__getitem__"})
+      // Typed STRING-variant convention: a model class may define
+      // __getitem_str__ for statically-string keys (one untyped
+      // __getitem__ would box other key types through the Any
+      // channel, which tuples do not round-trip -- the Counter
+      // dual-storage model).
+      std::vector<std::string> gi_prefixes;
+      {
+        const jsont &sl_probe = json_member(expr, "slice");
+        const bool str_key = is_node_type(sl_probe, "Constant") &&
+                             json_member(sl_probe, "value").is_string();
+        if(str_key)
+        {
+          gi_prefixes.push_back(
+            std::string{"python::"} + tag + "::__getitem_str__");
+          gi_prefixes.push_back(
+            std::string{"python::"} + bare + "::__getitem_str__");
+        }
+        gi_prefixes.push_back(std::string{"python::"} + tag + "::__getitem__");
+        gi_prefixes.push_back(std::string{"python::"} + bare + "::__getitem__");
+      }
+      for(const std::string &prefix : gi_prefixes)
       {
         const symbolt *gs = symbol_table.lookup(irep_idt{prefix});
         if(gs != nullptr)
@@ -883,6 +901,86 @@ exprt python_convertert::convert_subscript(const jsont &expr)
                   // sees dicts whose container values are still pristine.
                   if(value_is_const_foldable(cv))
                     return cv;
+                }
+              }
+            }
+            // ABSENT-key fold: the tracked literal has a KNOWN
+            // key population; when every tracked key extracts and
+            // the constant probe matches NONE, the read's outcome
+            // is decided at conversion time -- the found-ternary
+            // over the runtime arrays otherwise blocks it (the
+            // defaultdict str-factory miss read: len('') == 0 was
+            // unprovable on an EMPTY tracked dict).
+            {
+              bool all_extract = true;
+              bool any_match = false;
+              for(mp_integer i = 0; i < len_val; ++i)
+              {
+                auto idx = i.to_ulong();
+                if(idx >= keys_arr.operands().size())
+                {
+                  all_extract = false;
+                  break;
+                }
+                auto kv = extract_string_value(keys_arr.operands()[idx]);
+                if(!kv.has_value())
+                {
+                  all_extract = false;
+                  break;
+                }
+                if(kv.value() == key_str.value())
+                  any_match = true;
+              }
+              // ABSENCE is only provable while the tracked key set
+              // is EXACT: once the dict ESCAPES (a call receives it
+              // by reference), a callee may have ADDED keys -- the
+              // tracked set is an under-approximation and the
+              // absent fold would raise a KeyError CPython does not
+              // (caught by dict-param-by-reference). The PRESENT
+              // fold above is immune: keys never vanish without an
+              // invalidating del/pop, which erase the tracking.
+              if(all_extract && !any_match && value.id() == ID_symbol)
+                log.warning()
+                  << "[dbgM] absent-arm cand "
+                  << to_symbol_expr(value).get_identifier() << " escaped="
+                  << escaped_mutables.count(
+                       to_symbol_expr(value).get_identifier())
+                  << messaget::eom;
+              if(
+                all_extract && !any_match && value.id() == ID_symbol &&
+                escaped_mutables.count(
+                  to_symbol_expr(value).get_identifier()) == 0)
+              {
+                auto ddi = defaultdict_factories.find(
+                  to_symbol_expr(value).get_identifier());
+                if(ddi != defaultdict_factories.end())
+                {
+                  // Library ref (collections.defaultdict):
+                  // missing-key reads yield the factory zero.
+                  const std::string &fac = ddi->second;
+                  if(fac == "str")
+                    return python_string_literal("");
+                  if(fac == "int" || fac.empty())
+                    return from_integer(0, python_int_type());
+                  if(fac == "float")
+                  {
+                    ieee_floatt z{
+                      ieee_float_spect{to_floatbv_type(double_type())},
+                      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                    z.from_integer(0);
+                    return z.to_expr();
+                  }
+                  // list/dict/set factories: fall through to the
+                  // runtime path (container zeros need statements).
+                }
+                else
+                {
+                  // Plain dict: a PROVABLY absent key raises
+                  // KeyError (stdtypes mapping lookup) --
+                  // definite, not guarded.
+                  emit_conditional_exception(true_exprt{}, "KeyError");
+                  return side_effect_expr_nondett{
+                    python_value_type(), get_location(expr)};
                 }
               }
             }
