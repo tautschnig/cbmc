@@ -1384,6 +1384,20 @@ soundness, imprecision, performance, intrinsic.
 
 ### A. Soundness (false proofs / latent unsoundness / deliberate tradeoffs)
 
+**2026-08-13: two defects from an external cross-tool study
+(laurel-encoding-experiments) fixed; one residual recorded.** The
+K experiment's diagnostics found (1) isinstance answering constant
+TRUE on typed slots carrying the None marker (a refuted TAUTOLOGY:
+a value both None and str) -- fixed by making isinstance the exact
+`is None` complement on int/float/str slots, with the {0, NULL}
+marker now an enforced representation invariant at every
+nondet-string seam; (2) TypedDict CONSTRUCTOR calls building class
+structs (every read failed) -- fixed by lowering TD(kwargs) to the
+dict display per PEP 589. Residual recorded as
+typeddict-get-branch-knownbug: a branch-merged .get result loses
+the None arm (isinstance proved despite an absent-key branch), a
+false proof isolated from the study's harness.
+
 **2026-08-12 eve: the KNOWNBUG false-proof class is CLOSED.** The
 three remaining false-proof residual tests all meet their
 acceptance criteria and are CORE: Decimal truthiness (the model

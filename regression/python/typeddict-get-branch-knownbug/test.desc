@@ -1,0 +1,10 @@
+KNOWNBUG
+main.py
+--unwind 6 --no-unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Acceptance: the absent-key branch's None reaches the merged
+isinstance -- the assert refutes.
