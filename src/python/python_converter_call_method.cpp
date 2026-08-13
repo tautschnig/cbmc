@@ -60,6 +60,23 @@ void python_convertert::coerce_call_args(
   for(std::size_t i = 0; i < args.size() && i < params.size(); ++i)
   {
     const typet &pt = params[i].type();
+    // Invalidate constant tracking for an lvalue argument passed
+    // into a BY-REFERENCE (pointer) parameter: the callee may
+    // mutate it, and post-call reads folding against the pre-call
+    // snapshot were a FALSE PROOF (`c.upd(m); m['a'] == 1` proved
+    // after the callee stored 99 -- the free-call path had this
+    // invalidation, METHOD calls skipped it).
+    if(
+      pt.id() == ID_pointer && args[i].id() == ID_symbol &&
+      args[i].type().id() == ID_struct)
+    {
+      const irep_idt sid = to_symbol_expr(args[i]).get_identifier();
+      list_literals.erase(sid);
+      dict_literals.erase(sid);
+      tuple_literals.erase(sid);
+      string_constants.erase(sid);
+      float_constants.erase(sid);
+    }
     if(args[i].type() == pt)
       continue;
     if(is_python_value_type(pt) && !is_python_value_type(args[i].type()))
