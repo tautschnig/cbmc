@@ -425,6 +425,12 @@ std::optional<exprt> python_convertert::try_nondet_call(
         binary_relation_exprt{
           len_intr, ID_le, from_integer(15, signedbv_typet{64})}}});
     }
+    // Representation invariant: {0, NULL} is RESERVED as the
+    // typed-slot None marker -- a nondet STRING must never alias
+    // it (isinstance/is-None key on data == NULL).
+    pending_checks.push_back(code_assumet{notequal_exprt{
+      member_exprt{tmp, "data", pointer_typet{unsignedbv_typet{8}, 64}},
+      null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}}});
     return std::move(tmp);
   }
   else if(func_name == "nondet_list")
@@ -478,6 +484,35 @@ std::optional<exprt> python_convertert::try_nondet_call(
     pending_checks.push_back(code_assumet{and_exprt{
       binary_relation_exprt{len, ID_ge, from_integer(0, signedbv_typet{64})},
       binary_relation_exprt{len, ID_le, max_len}}});
+    // Representation invariant for STRING elements: {0, NULL} is
+    // reserved as the typed-slot None marker, so a nondet list of
+    // str must not hand out elements aliasing it (isinstance/
+    // is-None key on data == NULL; sys.argv[i] is this shape).
+    // Bounded per-slot assumes over the capacity, in-range only.
+    if(is_python_string_type(elem_type) && !use_smt_string_native)
+    {
+      const auto &dat =
+        to_array_type(to_struct_type(lt).components()[1].type());
+      member_exprt data_arr{tmp, "data", dat};
+      mp_integer capi;
+      std::size_t cap = PYTHON_MAX_LIST_LENGTH;
+      if(
+        dat.size().is_constant() &&
+        !to_integer(to_constant_expr(dat.size()), capi))
+        cap = numeric_cast_v<std::size_t>(capi);
+      for(std::size_t i = 0; i < cap; i++)
+      {
+        exprt idx = from_integer(i, signedbv_typet{64});
+        pending_checks.push_back(code_assumet{or_exprt{
+          binary_relation_exprt{idx, ID_ge, len},
+          notequal_exprt{
+            member_exprt{
+              index_exprt{data_arr, idx},
+              "data",
+              pointer_typet{unsignedbv_typet{8}, 64}},
+            null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}}}});
+      }
+    }
     return std::move(tmp);
   }
   else if(func_name == "nondet_bytes")

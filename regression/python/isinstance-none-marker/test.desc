@@ -1,0 +1,14 @@
+CORE
+main.py
+--unwind 6 --no-unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+isinstance must agree with `is None` on typed slots carrying the
+None marker: a constant TRUE admitted a value that is both None
+and str (the laurel-encoding-experiments K diagnostic: FAILURE on
+the tautology `not (e is None and isinstance(e, str))`). Nondet
+strings and nondet list-of-str globals carry the data != NULL
+representation invariant ({0, NULL} is reserved as the marker).

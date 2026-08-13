@@ -4960,13 +4960,38 @@ std::optional<exprt> python_convertert::try_builtin_call(
               if(
                 tname == "int" && (obj.type().id() == ID_signedbv ||
                                    obj.type().id() == ID_integer))
-                match = true;
+              {
+                // A typed int slot may CARRY None as the sentinel
+                // (fall-through returns, absent-key gets):
+                // isinstance must agree with `is None` on the same
+                // value -- a constant TRUE admitted a value that is
+                // both None and int (the K-experiment tautology
+                // diagnostic: FAILURE on
+                // `not (e is None and isinstance(e, str))`).
+                return not_exprt{equal_exprt{
+                  obj, from_integer(python_none_sentinel_int(), obj.type())}};
+              }
               else if(tname == "float" && obj.type().id() == ID_floatbv)
-                match = true;
+              {
+                ieee_floatt none_f{
+                  ieee_float_spect{to_floatbv_type(obj.type())},
+                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                none_f.from_integer(python_none_sentinel_int());
+                return not_exprt{ieee_float_equal_exprt{obj, none_f.to_expr()}};
+              }
               else if(tname == "bool" && obj.type().id() == ID_bool)
                 match = true;
               else if(tname == "str" && is_python_string_type(obj.type()))
-                match = true;
+              {
+                // The canonical typed-string None marker is
+                // {0, NULL} (coerce_to_typed_slot); a real "" has a
+                // non-NULL interned buffer. Mirrors the `is None`
+                // recognizer in the compare arms.
+                return notequal_exprt{
+                  member_exprt{
+                    obj, "data", pointer_typet{unsignedbv_typet{8}, 64}},
+                  null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}};
+              }
               else if(tname == "list" && is_python_list_type(obj.type()))
                 match = true;
               else if(tname == "set" && is_python_set_type(obj.type()))
@@ -5216,16 +5241,30 @@ std::optional<exprt> python_convertert::try_builtin_call(
         }
 
         // Check built-in types first
+        // Typed slots may CARRY None as their marker (fall-through
+        // returns, absent-key gets): isinstance must agree with
+        // `is None` on the same value -- a constant TRUE admitted
+        // a value that is both None and str (the K-experiment
+        // tautology diagnostic).
         if(
           cls_name == "int" &&
           (obj.type().id() == ID_signedbv || obj.type().id() == ID_integer))
-          return true_exprt{};
+          return not_exprt{equal_exprt{
+            obj, from_integer(python_none_sentinel_int(), obj.type())}};
         if(cls_name == "float" && obj.type().id() == ID_floatbv)
-          return true_exprt{};
+        {
+          ieee_floatt none_f{
+            ieee_float_spect{to_floatbv_type(obj.type())},
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          none_f.from_integer(python_none_sentinel_int());
+          return not_exprt{ieee_float_equal_exprt{obj, none_f.to_expr()}};
+        }
         if(cls_name == "bool" && obj.type().id() == ID_bool)
           return true_exprt{};
         if(cls_name == "str" && is_python_string_type(obj.type()))
-          return true_exprt{};
+          return notequal_exprt{
+            member_exprt{obj, "data", pointer_typet{unsignedbv_typet{8}, 64}},
+            null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}};
         if(cls_name == "list" && is_python_list_type(obj.type()))
           return true_exprt{};
         if(cls_name == "tuple" && is_python_tuple_type(obj.type()))

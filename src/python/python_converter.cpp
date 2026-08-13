@@ -3284,6 +3284,14 @@ exprt python_convertert::bounded_nondet_string(const source_locationt &loc)
         len_intr,
         ID_le,
         from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64})}}});
+    // Representation invariant: {0, NULL} is RESERVED as the
+    // typed-slot None marker (coerce_to_typed_slot; the `is None`
+    // and isinstance recognizers key on data == NULL) -- a nondet
+    // STRING must never alias it, or `isinstance(s, str)` on a
+    // genuine nondet str becomes refutable.
+    pending_checks.push_back(code_assumet{notequal_exprt{
+      member_exprt{tmp, "data", pointer_typet{unsignedbv_typet{8}, 64}},
+      null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}}});
     return std::move(tmp);
   }
 
