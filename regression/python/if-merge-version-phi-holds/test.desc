@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 6 --no-unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Completeness twin: key presence is CORRELATED with the guard flag
+(2-way), so the merged isinstance holds -- the phi must not lose
+precision, and the branch-point pv boxing must be tag-correct (the
+hardcoded INT tag punned a str literal/pv .get result and made
+this refute).

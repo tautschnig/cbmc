@@ -1,4 +1,4 @@
-# KNOWNBUG (false PROOF, from laurel-encoding-experiments K):
+# From laurel-encoding-experiments K (was a false PROOF):
 # `isinstance(entry, str)` is proved although the NotRequired key
 # may be ABSENT on one branch, making entry None there. The
 # branch-merged .get result loses the None arm. DESIRED:
