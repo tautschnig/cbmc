@@ -4584,14 +4584,15 @@ codet python_convertert::convert_assign(const jsont &stmt)
 
         variable_versions[qualified_name] = versioned_id;
 
-        // Wrap the value in a tagged union
-        python_type_tagt tag = python_type_tagt::INT;
-        if(rhs.type().id() == ID_floatbv)
-          tag = python_type_tagt::FLOAT;
-        else if(rhs.type().id() == ID_bool)
-          tag = python_type_tagt::BOOL;
-
-        struct_exprt wrapped = make_python_value(tag, rhs);
+        // Wrap the value in a tagged union. wrap_value picks the
+        // tag from the rhs TYPE (str/float/bool/int/...) and passes
+        // an already-boxed python_value through unchanged -- the
+        // previous hardcoded INT default punned a str literal (or a
+        // pv-typed .get result) into {INT, cast(rhs, int)}, so
+        // isinstance downstream read the wrong tag (K probe bm4).
+        exprt wrapped = is_python_value_type(rhs.type())
+                          ? rhs
+                          : static_cast<exprt>(wrap_value(rhs));
         const symbolt &new_sym = symbol_table.lookup_ref(versioned_id);
         code_frontend_assignt assign{new_sym.symbol_expr(), wrapped};
         assign.add_source_location() = loc;
