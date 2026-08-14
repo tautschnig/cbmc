@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 6 --no-unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+The if/else merge must PHI divergent variable versions: keeping
+only the then-version orphaned the else arm's assignment (the
+branch-merged .get lost its None arm -- a false proof). The middle
+arm here has the key absent with is_error False, so the merged
+isinstance must refute.

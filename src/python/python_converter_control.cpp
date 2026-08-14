@@ -261,9 +261,87 @@ codet python_convertert::convert_if(const jsont &stmt)
     for(const auto &s : as_array(orelse))
       else_block.add(convert_statement(s));
 
-    // Merge: if both branches modified the same variable, keep the
-    // then-branch version (the else branch's version is only live on
-    // the else path, which CBMC handles via the if-then-else structure)
+    // Merge with a PHI: when the two arms leave a name at DIFFERENT
+    // version symbols, post-merge reads through variable_versions
+    // can see only one of them -- the other arm's assignment became
+    // INVISIBLE after the join (a false proof: the K study's
+    // branch-merged .get lost its None arm because the else-arm's
+    // fresh version was orphaned). Reconcile each divergent name
+    // into a fresh MERGED symbol assigned at the END of both arms
+    // (python_value when the arm types differ; wrap_value coerces),
+    // and point variable_versions at it.
+    auto else_versions = variable_versions;
+    {
+      std::set<std::string> names;
+      for(const auto &kv : then_versions)
+        names.insert(kv.first);
+      for(const auto &kv : else_versions)
+        names.insert(kv.first);
+      for(const auto &name : names)
+      {
+        auto tv = then_versions.find(name);
+        auto ev = else_versions.find(name);
+        const irep_idt tid =
+          tv != then_versions.end() ? tv->second : irep_idt{name};
+        const irep_idt eid =
+          ev != else_versions.end() ? ev->second : irep_idt{name};
+        if(tid == eid)
+          continue;
+        const symbolt *ts = symbol_table.lookup(tid);
+        const symbolt *es = symbol_table.lookup(eid);
+        if(ts == nullptr || es == nullptr)
+          continue;
+        // Compare RESOLVED types: a struct_tag and its underlying
+        // struct are the same Python type (comparing them raw
+        // wrapped one arm in a pv box and punned the other --
+        // isinstance downstream read the wrong tag).
+        namespacet ns_phi{symbol_table};
+        auto resolve = [&](const typet &t) -> typet
+        {
+          if(t.id() == ID_struct_tag)
+            return ns_phi.follow_tag(to_struct_tag_type(t));
+          return t;
+        };
+        const typet t_res = resolve(ts->type);
+        const typet e_res = resolve(es->type);
+        const bool same_type = t_res == e_res;
+        const typet phi_t = same_type ? t_res : python_value_type();
+        unsigned &ver = version_counters[name];
+        ver++;
+        const std::string phi_name = name + "__v" + std::to_string(ver);
+        const irep_idt phi_id{phi_name};
+        if(symbol_table.lookup(phi_id) == nullptr)
+        {
+          symbolt ps{phi_id, phi_t, "python"};
+          ps.base_name = phi_name;
+          ps.is_lvalue = true;
+          ps.is_state_var = true;
+          ps.is_static_lifetime = current_function.empty();
+          symbol_table.add(ps);
+        }
+        symbol_exprt phi = symbol_table.lookup_ref(phi_id).symbol_expr();
+        exprt tval = ts->symbol_expr();
+        exprt eval_ = es->symbol_expr();
+        if(same_type)
+        {
+          // struct_tag vs struct spelling: cast to the phi type.
+          if(tval.type() != phi_t)
+            tval = typecast_exprt{std::move(tval), phi_t};
+          if(eval_.type() != phi_t)
+            eval_ = typecast_exprt{std::move(eval_), phi_t};
+        }
+        else
+        {
+          if(!is_python_value_type(resolve(tval.type())))
+            tval = wrap_value(tval);
+          if(!is_python_value_type(resolve(eval_.type())))
+            eval_ = wrap_value(eval_);
+        }
+        then_block.add(code_frontend_assignt{phi, std::move(tval)});
+        else_block.add(code_frontend_assignt{phi, std::move(eval_)});
+        then_versions[name] = phi_id;
+      }
+    }
     variable_versions = then_versions;
     // Capture the else-branch's post-state and merge it with the
     // then-branch's. After merge_tracking, the live tracking maps
