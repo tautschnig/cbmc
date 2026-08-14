@@ -2536,6 +2536,20 @@ private:
   /// SMT terms only (refined-string solver applications are not
   /// quantifier-aware; native-strings terms are).
   bool quantifier_safe_term(const exprt &e) const;
+  /// Expression-inline a SMALL PURE callee: the converted body must
+  /// be an if/return chain (code_blockt of code_ifthenelset /
+  /// code_frontend_returnt) whose conditions and return values are
+  /// quantifier-safe terms over the parameters. Returns the nested
+  /// if_exprt with \p arguments substituted for the parameter
+  /// symbols, or nullopt when the body has any other shape. Used
+  /// under comprehension conversion (pure_inline_context) so a
+  /// call in a key/value/filter arm becomes a pure term instead of
+  /// tripping the witness-arm purity gate into the nondet fallback.
+  std::optional<exprt>
+  pure_expr_inline(const symbolt &fsym, const exprt::operandst &arguments);
+  /// When true (comprehension key/value/filter conversion),
+  /// convert_user_call attempts pure_expr_inline first.
+  bool pure_inline_context = false;
   /// Witness pattern (index / min / max): fresh nondet-initialized
   /// symbol; the caller assumes its defining constraints guarded by
   /// the feasibility condition (PLR raise-instead-of-value cases keep

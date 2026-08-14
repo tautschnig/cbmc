@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 6 --no-unwinding-assertions --python-smt-containers --z3 --slice-formula --isolate-properties
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+smt-backend
+A CALL in a dictcomp key/value arm is expression-inlined when the
+callee is a small pure if/return chain (docstrings skipped), so
+the witness encoding applies instead of the nondet fallback (the
+J-experiment precision gap: non-injective key bucket_of).

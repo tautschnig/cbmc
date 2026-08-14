@@ -1926,9 +1926,17 @@ exprt python_convertert::try_soa_dict_comp(
     saved_rv = srv->second;
   soa_row_bindings[var_id] = src;
   const std::size_t pc0 = pending_checks.size();
+  // A CALL in the key/value/filter is not a pure term; let
+  // convert_user_call expression-inline small pure callees
+  // (if/return chains) so e.g. a non-injective key function
+  // becomes a nested if_exprt instead of tripping the purity
+  // gate into the nondet fallback (the J-experiment gap).
+  const bool saved_pic = pure_inline_context;
+  pure_inline_context = true;
   exprt keyf = convert_expression(key_expr_json);
   exprt valf = convert_expression(val_expr_json);
   exprt filt = convert_expression(*as_array(ifs).begin());
+  pure_inline_context = saved_pic;
   if(saved_rv.has_value())
     soa_row_bindings[var_id] = *saved_rv;
   else
