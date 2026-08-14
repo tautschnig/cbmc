@@ -1446,6 +1446,45 @@ exprt python_convertert::convert_call(const jsont &expr)
       dict_node["lineno"] = json_member(expr, "lineno");
       dict_node["col_offset"] = json_member(expr, "col_offset");
       exprt d = convert_expression(dict_node);
+      // Land at the CANONICAL string-keyed dict layout the
+      // annotation seam resolves TypedDict names to. The display
+      // infers a value type from the kwargs (str for TD(k="v"),
+      // the default int for TD()) -- two constructions of the SAME
+      // TypedDict then disagree across branches and the merged
+      // reads go through the wrong view (K probe bm4: get's hit
+      // arm read str slots as ints).
+      const typet canon = canonical_str_dict_type();
+      if(!d.is_nil() && is_python_dict_type(d.type()) && d.type() != canon)
+      {
+        const auto &src_st = to_struct_type(d.type());
+        const typet &src_keys_t = src_st.components()[1].type();
+        const typet &src_vals_t = src_st.components()[2].type();
+        const typet &key_elem_t = to_array_type(src_keys_t).element_type();
+        const auto &canon_st = to_struct_type(canon);
+        // Materialise once: d may be a struct display; index its members.
+        exprt dv = materialize_call_operand(d);
+        member_exprt src_len{dv, "length", signedbv_typet{64}};
+        member_exprt src_keys{dv, "keys", src_keys_t};
+        member_exprt src_vals{dv, "values", src_vals_t};
+        exprt::operandst keys, vals;
+        for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+        {
+          const exprt idx = from_integer(i, signedbv_typet{64});
+          if(is_python_string_type(key_elem_t))
+            keys.push_back(index_exprt{src_keys, idx});
+          else
+            keys.push_back(safe_zero(python_string_type()));
+          exprt v = index_exprt{src_vals, idx};
+          vals.push_back(is_python_value_type(v.type()) ? v : wrap_value(v));
+        }
+        d = struct_exprt{
+          {src_len,
+           array_exprt{
+             std::move(keys), to_array_type(canon_st.components()[1].type())},
+           array_exprt{
+             std::move(vals), to_array_type(canon_st.components()[2].type())}},
+          canon};
+      }
       if(!d.is_nil())
         return d;
     }
