@@ -1393,10 +1393,21 @@ a value both None and str) -- fixed by making isinstance the exact
 marker now an enforced representation invariant at every
 nondet-string seam; (2) TypedDict CONSTRUCTOR calls building class
 structs (every read failed) -- fixed by lowering TD(kwargs) to the
-dict display per PEP 589. Residual recorded as
-typeddict-get-branch-knownbug: a branch-merged .get result loses
-the None arm (isinstance proved despite an absent-key branch), a
-false proof isolated from the study's harness.
+dict display per PEP 589. Both residuals since CLOSED
+(2026-08-14): (a) the branch-merged .get false proof was the
+if/else merge keeping only the then-VERSION of a name -- the else
+arm's assignment was orphaned; fixed with a merge PHI (fresh
+merged symbol assigned at the end of both arms), plus two
+surfaced companions: the branch-point pv boxing used a hardcoded
+INT tag (str/pv payloads punned) and TD() constructor calls
+landed at a non-canonical dict layout (test
+typeddict-get-branch-merge, promoted from KNOWNBUG, plus the
+if-merge-version-phi pair); (b) the J-experiment precision gap
+(calls in dictcomp arms tripping the witness purity gate) is
+closed by pure_expr_inline -- small pure if/return-chain callees
+are expression-inlined under comprehension conversion only
+(dictcomp-pure-call-inline pair); the study's property_holds now
+proves 0-of-8 isolated.
 
 **2026-08-12 eve: the KNOWNBUG false-proof class is CLOSED.** The
 three remaining false-proof residual tests all meet their
