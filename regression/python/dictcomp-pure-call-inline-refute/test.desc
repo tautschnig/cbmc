@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 6 --no-unwinding-assertions --python-smt-containers --z3
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+smt-backend
+Refutation twin: the inlined key function's range includes bucket
+2, so `key < 2` must refute -- the inline must not weaken the
+derived key set.

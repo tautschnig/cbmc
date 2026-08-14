@@ -16,6 +16,7 @@
 #include <util/c_types.h>
 #include <util/config.h>
 #include <util/cprover_prefix.h>
+#include <util/expr_util.h>
 #include <util/floatbv_expr.h>
 #include <util/ieee_float.h>
 #include <util/json.h>
@@ -2360,6 +2361,19 @@ exprt python_convertert::convert_user_call(
     }
   }
 
+  // Comprehension key/value/filter conversion: a CALL is not a
+  // pure term, so it trips the witness-arm purity gate into the
+  // nondet fallback (the J-experiment precision gap: dictcomp key
+  // bucket_of(...)). A small pure callee -- an if/return chain of
+  // quantifier-safe terms -- IS a pure term after substitution;
+  // inline it as a nested if_exprt.
+  if(pure_inline_context)
+  {
+    auto inlined = pure_expr_inline(*sym, arguments);
+    if(inlined.has_value())
+      return std::move(*inlined);
+  }
+
   side_effect_expr_function_callt call{
     sym->symbol_expr(),
     std::move(arguments),
@@ -2367,4 +2381,157 @@ exprt python_convertert::convert_user_call(
     get_location(expr)};
 
   return std::move(call);
+}
+
+std::optional<exprt> python_convertert::pure_expr_inline(
+  const symbolt &fsym,
+  const exprt::operandst &arguments)
+{
+  if(fsym.type.id() != ID_code || fsym.value.is_nil())
+    return std::nullopt;
+  const auto &ftype = to_code_type(fsym.type);
+  const auto &params = ftype.parameters();
+  if(params.size() != arguments.size())
+    return std::nullopt;
+  // Arguments themselves must already be pure terms.
+  for(const exprt &a : arguments)
+    if(!quantifier_safe_term(a) || has_subexpr(a, ID_side_effect))
+      return std::nullopt;
+  // Fold the statement list into an expression: a return ends the
+  // path with its value; an if/else forks, each side continuing
+  // into the REST of the list (Python's fall-through). Any other
+  // statement -- or a path that falls off the end (implicit None)
+  // -- refuses.
+  using it_t = code_blockt::code_operandst::const_iterator;
+  std::function<std::optional<exprt>(it_t, it_t)> fold =
+    [&](it_t begin, it_t end) -> std::optional<exprt>
+  {
+    if(begin == end)
+      return std::nullopt; // implicit-None fall-through
+    const codet &st = *begin;
+    // No-ops: skips and value-discarding pure expression
+    // statements (a docstring is an Expr(Constant(str))).
+    if(
+      st.get_statement() == ID_skip ||
+      (st.get_statement() == ID_expression && st.operands().size() == 1 &&
+       quantifier_safe_term(st.op0()) &&
+       !has_subexpr(st.op0(), ID_side_effect)))
+      return fold(std::next(begin), end);
+    if(st.get_statement() == ID_return)
+    {
+      const auto &ret = to_code_frontend_return(st);
+      if(
+        !ret.has_return_value() || !quantifier_safe_term(ret.return_value()) ||
+        has_subexpr(ret.return_value(), ID_side_effect))
+        return std::nullopt;
+      return ret.return_value();
+    }
+    if(st.get_statement() == ID_block)
+    {
+      const auto &blk = to_code_block(st);
+      // Splice: fold the block's statements with the tail as
+      // continuation by concatenating into a temporary list.
+      code_blockt spliced;
+      for(const auto &inner : blk.statements())
+        spliced.add(inner);
+      for(auto it = std::next(begin); it != end; ++it)
+        spliced.add(*it);
+      return fold(spliced.statements().begin(), spliced.statements().end());
+    }
+    if(st.get_statement() == ID_ifthenelse)
+    {
+      const auto &ite = to_code_ifthenelse(st);
+      if(
+        !quantifier_safe_term(ite.cond()) ||
+        has_subexpr(ite.cond(), ID_side_effect))
+        return std::nullopt;
+      auto fold_branch = [&](const codet &branch) -> std::optional<exprt>
+      {
+        code_blockt seq;
+        if(branch.get_statement() == ID_block)
+          for(const auto &inner : to_code_block(branch).statements())
+            seq.add(inner);
+        else
+          seq.add(branch);
+        for(auto it = std::next(begin); it != end; ++it)
+          seq.add(*it);
+        return fold(seq.statements().begin(), seq.statements().end());
+      };
+      auto then_e = fold_branch(ite.then_case());
+      if(!then_e.has_value())
+        return std::nullopt;
+      std::optional<exprt> else_e;
+      if(ite.else_case().is_not_nil())
+        else_e = fold_branch(ite.else_case());
+      else
+      {
+        code_blockt seq;
+        for(auto it = std::next(begin); it != end; ++it)
+          seq.add(*it);
+        else_e = fold(seq.statements().begin(), seq.statements().end());
+      }
+      if(!else_e.has_value())
+        return std::nullopt;
+      if(then_e->type() != else_e->type())
+        return std::nullopt;
+      exprt c = ite.cond();
+      if(c.type().id() != ID_bool)
+        c = python_truthiness(c);
+      return if_exprt{std::move(c), std::move(*then_e), std::move(*else_e)};
+    }
+    return std::nullopt;
+  };
+  if(fsym.value.id() != ID_code)
+    return std::nullopt;
+  const codet &body = to_code(fsym.value);
+  code_blockt top;
+  if(body.get_statement() == ID_block)
+    for(const auto &inner : to_code_block(body).statements())
+      top.add(inner);
+  else
+    top.add(body);
+  auto folded = fold(top.statements().begin(), top.statements().end());
+  if(!folded.has_value())
+    return std::nullopt;
+  // Substitute parameter symbols with the (coerced) arguments.
+  std::map<irep_idt, exprt> subst;
+  for(std::size_t i = 0; i < params.size(); i++)
+  {
+    exprt a = arguments[i];
+    if(a.type() != params[i].type())
+      a = safe_typecast(a, params[i].type());
+    subst[params[i].get_identifier()] = std::move(a);
+  }
+  std::function<void(exprt &)> replace = [&](exprt &e)
+  {
+    if(e.id() == ID_symbol)
+    {
+      auto it = subst.find(to_symbol_expr(e).get_identifier());
+      if(it != subst.end())
+      {
+        e = it->second;
+        return;
+      }
+    }
+    for(auto &op : e.operands())
+      replace(op);
+  };
+  replace(*folded);
+  // Any residual callee-local symbol (a local variable the chain
+  // read) makes the inline unsound -- refuse.
+  const std::string prefix = id2string(fsym.name) + "::";
+  bool leaks = false;
+  std::function<void(const exprt &)> scan = [&](const exprt &e)
+  {
+    if(
+      e.id() == ID_symbol &&
+      id2string(to_symbol_expr(e).get_identifier()).find(prefix) == 0)
+      leaks = true;
+    for(const auto &op : e.operands())
+      scan(op);
+  };
+  scan(*folded);
+  if(leaks)
+    return std::nullopt;
+  return folded;
 }
