@@ -410,18 +410,17 @@ static dfcc_loop_infot gen_dfcc_loop_info(
     message_handler,
     ns);
 
-  // Exclude locals of inner nested loops that are abstracted by a contract.
-  // Locals of skipped (contract-less) inner loops are kept, because such loops
-  // are not abstracted and share the enclosing scope's write set; their locals
-  // must therefore be considered local to this scope (otherwise assignments to
-  // them would be checked against this scope's write set and fail).
+  // Exclude locals of inner nested loops.
+  // A skipped (contract-less) loop can only be nested in another skipped loop
+  // (see check_inner_loops_have_contracts), and dfcc_cfg_infot::get_local_set
+  // never returns the local set of a skipped loop. The locals of skipped loops
+  // are instead collected in top_level_local by the dfcc_cfg_infot
+  // constructor, so they need no special treatment here.
   for(const auto &inner_loop : loop_nesting_graph.get_predecessors(loop_id))
   {
     INVARIANT(
       loop_info_map.find(inner_loop) != loop_info_map.end(),
       "DFCC should gen_dfcc_loop_info for inner loops first.");
-    if(loop_info_map.at(inner_loop).must_skip())
-      continue;
     for(const auto &inner_local : loop_info_map.at(inner_loop).local)
     {
       loop_locals.erase(inner_local);
