@@ -600,14 +600,10 @@ dfcc_cfg_infot::dfcc_cfg_infot(
       target++)
   {
     // A DECL belongs to the top level either when it is directly at the top
-    // level, or when it is declared inside a skipped (contract-less) loop whose
-    // enclosing non-skipped scope is the top level. Such loops are not
-    // abstracted and share the top-level write set, so their locals must be
-    // considered top-level locals.
-    if(
-      target->is_decl() &&
-      is_top_level_id(get_first_id_not_skipped_or_top_level_id(
-        dfcc_get_loop_id(target).value())))
+    // level, or when it is declared inside a skipped (contract-less) loop.
+    // Such loops are not abstracted and share the top-level write set, so
+    // their locals must be considered top-level locals.
+    if(target->is_decl() && is_top_level_id(get_scope_id(target)))
       top_level_local.insert(target->decl_symbol().identifier());
   }
 
@@ -670,14 +666,20 @@ std::size_t dfcc_cfg_infot::get_first_id_not_skipped_or_top_level_id(
     get_outer_loop_identifier(loop_id).value_or(top_level_id()));
 }
 
-const exprt &
-dfcc_cfg_infot::get_write_set(goto_programt::const_targett target) const
+std::size_t
+dfcc_cfg_infot::get_scope_id(goto_programt::const_targett target) const
 {
-  auto loop_id_opt = dfcc_get_loop_id(target);
+  const auto loop_id_opt = dfcc_get_loop_id(target);
   PRECONDITION(
     loop_id_opt.has_value() &&
     is_valid_loop_or_top_level_id(loop_id_opt.value()));
-  auto loop_id = get_first_id_not_skipped_or_top_level_id(loop_id_opt.value());
+  return get_first_id_not_skipped_or_top_level_id(loop_id_opt.value());
+}
+
+const exprt &
+dfcc_cfg_infot::get_write_set(goto_programt::const_targett target) const
+{
+  const auto loop_id = get_scope_id(target);
   if(is_top_level_id(loop_id))
   {
     return top_level_write_set;
@@ -691,11 +693,7 @@ dfcc_cfg_infot::get_write_set(goto_programt::const_targett target) const
 const std::unordered_set<irep_idt> &
 dfcc_cfg_infot::get_tracked_set(goto_programt::const_targett target) const
 {
-  auto loop_id_opt = dfcc_get_loop_id(target);
-  PRECONDITION(
-    loop_id_opt.has_value() &&
-    is_valid_loop_or_top_level_id(loop_id_opt.value()));
-  auto loop_id = get_first_id_not_skipped_or_top_level_id(loop_id_opt.value());
+  const auto loop_id = get_scope_id(target);
   if(is_top_level_id(loop_id))
   {
     return top_level_tracked;
@@ -709,11 +707,7 @@ dfcc_cfg_infot::get_tracked_set(goto_programt::const_targett target) const
 const std::unordered_set<irep_idt> &
 dfcc_cfg_infot::get_local_set(goto_programt::const_targett target) const
 {
-  auto loop_id_opt = dfcc_get_loop_id(target);
-  PRECONDITION(
-    loop_id_opt.has_value() &&
-    is_valid_loop_or_top_level_id(loop_id_opt.value()));
-  auto loop_id = get_first_id_not_skipped_or_top_level_id(loop_id_opt.value());
+  const auto loop_id = get_scope_id(target);
   if(is_top_level_id(loop_id))
   {
     return top_level_local;
