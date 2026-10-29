@@ -8,6 +8,7 @@ goto-symex
 json
 langapi # should go away
 memory-analyzer
+shell
 solvers/flattening
 solvers/floatbv
 solvers/miniBDD
