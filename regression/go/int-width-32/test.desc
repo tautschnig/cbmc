@@ -1,0 +1,9 @@
+CORE
+main.go
+--32
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Go1.27 §Numeric_types: with --32, int is 32 bits (GOARCH=386)

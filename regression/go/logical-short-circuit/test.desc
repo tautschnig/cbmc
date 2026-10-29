@@ -1,0 +1,9 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Go1.27 §Logical_operators: the right operand is evaluated only if the condition requires it

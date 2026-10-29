@@ -86,6 +86,12 @@ ifeq ($(WITH_MEMORY_ANALYZER),1)
           extract_type_header
 endif
 
+# The Go front-end needs cbmc-go-helper, built by `make -C src/go helper`
+# when a Go toolchain is available.
+ifneq ($(wildcard ../src/cbmc/cbmc-go-helper),)
+  DIRS += go
+endif
+
 # Run all test directories in sequence
 .PHONY: test
 test:

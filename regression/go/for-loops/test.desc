@@ -1,0 +1,9 @@
+CORE
+main.go
+--unwind 12
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Go1.27 §For_statements: condition, for clause (continue runs post), break

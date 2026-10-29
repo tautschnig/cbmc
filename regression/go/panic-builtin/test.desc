@@ -1,0 +1,11 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.panic\.1\] .*panic: negative input: FAILURE$
+^\[go::main\.main\.assertion\.1\] .*: SUCCESS$
+^VERIFICATION FAILED$
+--
+--
+Go1.27 §Handling_panics: a reachable panic fails; execution does not continue past it

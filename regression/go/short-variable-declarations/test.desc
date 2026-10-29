@@ -1,0 +1,9 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Go1.27 §Short_variable_declarations, §Declarations_and_scope

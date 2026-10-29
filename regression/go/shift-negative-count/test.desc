@@ -1,0 +1,11 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.negative-shift\.1\] .*negative shift amount: FAILURE$
+^VERIFICATION FAILED$
+--
+^\[.*negative-shift\.2\]
+--
+Go1.27 §Arithmetic_operators: a negative signed shift count panics; unsigned counts need no check

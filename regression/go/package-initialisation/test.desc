@@ -1,0 +1,9 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Go1.27 §Package_initialization: variables in dependency order, then init functions in source order

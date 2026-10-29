@@ -1,0 +1,10 @@
+CORE
+main.go
+--32
+^EXIT=6$
+^SIGNAL=0$
+overflows
+^PARSING ERROR$
+--
+--
+Go1.27 §Constants: a constant must be representable; 1<<40 overflows a 32-bit int

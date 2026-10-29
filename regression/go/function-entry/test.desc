@@ -1,0 +1,10 @@
+CORE
+main.go
+--function check
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.check\.assertion\.1\] .*x is not 42: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+--function calls the named function with arbitrary arguments

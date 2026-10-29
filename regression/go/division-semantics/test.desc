@@ -1,0 +1,10 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^\[.*division-by-zero.*FAILURE
+--
+Go1.27 §Integer_operators: truncated division and the most negative value

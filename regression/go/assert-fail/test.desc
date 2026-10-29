@@ -1,0 +1,8 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] .* x is not 3: FAILURE$
+^VERIFICATION FAILED$
+--
