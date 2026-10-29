@@ -139,9 +139,8 @@ testing, Batch is a research project in its own right. Park it.
 
 ## 3. Prior academic and tooling work
 
-PDFs that could be fetched are in `~/shell-specs/papers/` (26 files;
-sources are listed in `urls.tsv` there).
-Items marked † are not yet in the local collection (see §8).
+All papers cited here are in `~/shell-specs/papers/`. Download sources
+are in `urls.tsv` and file names are mapped in `~/shell-specs/README.md`.
 
 ### 3.1 Semantics of the POSIX shell
 
@@ -157,7 +156,7 @@ Items marked † are not yet in the local collection (see §8).
 
 | Work | Use for us |
 |------|-----------|
-| † Régis-Gianas, Jeannerod, Treinen, *Morbig: A Static Parser for POSIX Shell*, SLE 2018 (extended version in J. Computer Languages 2020) | Explains why shell is hard to parse statically: lexing depends on parsing state, here-docs, alias expansion, and `eval`. Morbig handles a well-defined realistic subset using Menhir's incremental LR(1) and emits JSON concrete syntax trees. Defines what "statically parseable" means. |
+| Régis-Gianas, Jeannerod, Treinen, *Morbig: A Static Parser for POSIX Shell*, SLE 2018 (extended version in J. Computer Languages 2020) | Explains why shell is hard to parse statically: lexing depends on parsing state, here-docs, alias expansion, and `eval`. Morbig handles a well-defined realistic subset using Menhir's incremental LR(1) and emits JSON concrete syntax trees. Defines what "statically parseable" means. |
 | libdash (Greenberg) | dash's real parser as a C library with OCaml and Python bindings, used by Smoosh and PaSh. Faithful to one real POSIX shell. |
 | mvdan/sh (`shfmt --to-json`) | Go parser for POSIX, Bash, mksh, and (since a 2026 release) Zsh, with typed JSON AST output and a `-ln` dialect flag. Ubuntu packages 3.8.0, which predates Zsh support. |
 | tree-sitter-bash, Oils (OSH) | Alternatives. OSH has the most detailed bash-compatibility documentation. |
@@ -170,7 +169,7 @@ Items marked † are not yet in the local collection (see §8).
 | Mazurak & Zdancewic, *ABASH: Finding Bugs in Bash Scripts*, PLAS 2007 | Earliest abstract interpreter for bash. Uses **signatures for external programs** (a precursor of command specs). Found bugs in 20 of 49 scripts. |
 | Becker, Jeannerod, Marché, Régis-Gianas, Sighireanu, Treinen, *Analysing Installation Scenarios of Debian Packages*, TACAS 2020 | **Symbolic execution** of about 28k Debian maintainer scripts, with **feature-tree constraints** modelling the file system and specs of about 30 core utilities. The closest prior work to bounded model checking of shell. |
 | *The CoLiS Platform for the Analysis of Maintainer Scripts in Debian Software Packages*, STTT 2022 | Journal version with the full toolchain and utility specifications |
-| † Jeannerod & Treinen, *Deciding the First-Order Theory of an Algebra of Feature Trees with Updates*, IJCAR 2018; Jeannerod, Régis-Gianas, Treinen, *Having Fun With 31.521 Shell Scripts* (2017 report, obtained) | The file-system logic, and an empirical survey of which features real scripts use |
+| Jeannerod & Treinen, *Deciding the First-Order Theory of an Algebra of Feature Trees with Updates*, IJCAR 2018; Jeannerod, Régis-Gianas, Treinen, *Having Fun With 31.521 Shell Scripts* (2017 report, obtained) | The file-system logic, and an empirical survey of which features real scripts use |
 | Lazarek, Lamprou et al., *Ahead-of-time Analysis of Shell Program Effects*, **SOSP 2026** (best paper) | The state of the art for static effect analysis of shell programs |
 | Lazarek et al., *From Ahead-of- to Just-in-Time and Back Again: Static Analysis for Unix Shell Programs*, HotOS 2025 | Position paper for the effect-analysis line |
 | Zhao, Li, Lazarek et al., *Trees, Walks, and Words: A Logic for File System Interactions*, **POPL 2027** | A modern file-system logic. Compare against CoLiS feature trees when choosing our FS model. |
@@ -312,9 +311,11 @@ TypeScript:
 
 ---
 
-## 8. References not yet obtained
+## 8. Bibliographic details for key references
 
-Exact bibliographic data, checked against Crossref:
+Checked against Crossref. All are in the local collection; the SLE 2018
+Morbig paper and the IJCAR LNCS paper are represented by their
+extended versions.
 
 - Yann Régis-Gianas, Nicolas Jeannerod, Ralf Treinen. *Morbig: A Static
   Parser for POSIX Shell.* SLE 2018, pp. 29–41.
@@ -330,7 +331,7 @@ Exact bibliographic data, checked against Crossref:
   Consistency Theory for Multi-threaded Program Verification.*
   PLDI 2021, pp. 1264–1279. doi:10.1145/3453483.3454108 (Deagle).
 
-Related follow-ups worth having (optional):
+Related follow-ups:
 
 - Hongyu Fan, Zhihang Sun, Fei He. *Satisfiability Modulo Ordering
   Consistency Theory for SC, TSO, and PSO Memory Models.* TOPLAS 2023,
@@ -341,10 +342,11 @@ Related follow-ups worth having (optional):
 - Nicolas Jeannerod. *Verification of Shell Scripts Performing File
   Hierarchy Transformations.* PhD thesis, Université Paris Cité, 2021
   (HAL tel-03917971). The consolidated CoLiS account.
-- *Safety of Transformations of Data Trees: Tree Transducer Theory
+- Paul D. Gallot. *Safety of Transformations of Data Trees: Tree Transducer Theory
   Applied to a Verification Problem on Shell Scripts.* PhD thesis
   (HAL tel-03517128). Tree-transducer view of file-hierarchy
   transformations, from the same project.
-- CoLiS project. *Specification of UNIX Utilities* (HAL hal-02321691).
+- Nicolas Jeannerod, Claude Marché, Yann Régis-Gianas, Mihaela
+  Sighireanu, Ralf Treinen. *Specification of UNIX Utilities* (HAL hal-02321691).
   The utility specifications used by the CoLiS symbolic engine, and the
   most direct prior art for our external-command models (§4 item 3).
