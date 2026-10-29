@@ -2,6 +2,7 @@ analyses
 ansi-c
 assembler
 cpp
+go
 goto-checker
 goto-instrument
 goto-programs

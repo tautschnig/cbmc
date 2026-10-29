@@ -6,6 +6,7 @@ DIRS = analyses \
        cpp \
        cprover \
        crangler \
+       go \
        goto-analyzer \
        goto-bmc \
        goto-cc \
@@ -81,7 +82,7 @@ crangler.dir: util.dir json.dir
 
 languages: util.dir langapi.dir \
            cpp.dir ansi-c.dir xmllang.dir assembler.dir \
-           json.dir json-symtab-language.dir statement-list.dir
+           json.dir json-symtab-language.dir statement-list.dir go.dir
 
 solvers.dir: util.dir
 

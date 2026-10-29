@@ -16,6 +16,7 @@ target_link_libraries(cbmc-lib
     goto-checker
     goto-instrument-lib
     goto-programs
+    go-frontend
     goto-symex
     json
     json-symtab-language

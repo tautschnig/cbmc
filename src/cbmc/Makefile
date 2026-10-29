@@ -8,6 +8,7 @@ OBJ += ../ansi-c/ansi-c$(LIBEXT) \
       ../cpp/cpp$(LIBEXT) \
       ../json/json$(LIBEXT) \
       ../json-symtab-language/json-symtab-language$(LIBEXT) \
+      ../go/go$(LIBEXT) \
       ../statement-list/statement-list$(LIBEXT) \
       ../linking/linking$(LIBEXT) \
       ../big-int/big-int$(LIBEXT) \
