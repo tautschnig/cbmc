@@ -406,13 +406,20 @@ a reason to go native for them.
 
 1. ~~Install shfmt and reference shells~~ (done, §6.1). Fetch the
    Smoosh test suite as a conformance corpus.
-2. Define the internal shell IR (CoLiS-inspired: commands, words as
-   part lists, explicit subshell/environment boundaries) and a
-   JSON → IR reader for shfmt's schema.
-3. Skeleton `src/shell/` front-end (`languaget`, `.sh` extension,
-   `#!` sniffing, shfmt invocation through `run()` with stdin
-   redirection), following `building-a-new-frontend.md` steps 1–5.
-4. Native arithmetic-expression parser (§6.5 item 3).
+2. ~~Define the internal shell IR and a JSON → IR reader for shfmt's
+   schema~~ (done: `src/shell/shell_ast.h`, `shfmt_reader.cpp`).
+   Bash's `DeclClause` is rebuilt as the simple command POSIX mode
+   yields, so declaration utilities (XCU 2.9.1.1) are handled by
+   command name in every dialect.
+3. ~~Skeleton `src/shell/` front-end~~ (done: `shell_languaget`,
+   `--show-parse-tree`; `typecheck` errors until a converter exists).
+   Still open: language selection is by extension only (langapi);
+   `#!` sniffing for extensionless scripts needs a langapi change.
+4. ~~Native arithmetic-expression parser~~ (done: `shell_arith.cpp`,
+   with dialect options for `++`/`--` and the comma operator, each
+   checked against dash, bash, mksh, zsh, ksh93, yash, posh, busybox).
+   On 843 local scripts the reader handles 783 completely and never
+   crashes; the rest use bash/zsh extensions or fail in shfmt.
 5. Minimal semantics: assignments, parameter expansion without field
    splitting, `test`/`[`, `if`/`while`/`for`/`case`, `&&`/`||`,
    functions, exit statuses, `assert`-style primitive
