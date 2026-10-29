@@ -141,8 +141,7 @@ testing, Batch is a research project in its own right. Park it.
 
 PDFs that could be fetched are in `~/shell-specs/papers/` (26 files;
 sources are listed in `urls.tsv` there).
-Items marked † could not be fetched from this host (HAL and Springer
-are blocked).
+Items marked † are not yet in the local collection (see §8).
 
 ### 3.1 Semantics of the POSIX shell
 
@@ -152,7 +151,7 @@ are blocked).
 | Greenberg, *Word Expansion Supports POSIX Shell Interactivity*, ‹Programming› 2018 companion | Argues expansion order and semantics is the heart of the shell | Guides how we structure the expansion engine (§4.1) |
 | Greenberg, *The POSIX Shell is an Interactive DSL for Concurrency*, DSLDI 2018 | Pipelines, `&`, `wait`, traps as concurrency primitives | Framing for the concurrency model (§5) |
 | Greenberg, *Understanding the POSIX shell as a programming language*, OBT 2017 (talk) | Survey of semantic pitfalls | Pitfall checklist |
-| † Jeannerod, Marché, Treinen, *A Formally Verified Interpreter for a Shell-like Programming Language*, VSTTE 2017 (CoLiS language) | A "sane" intermediate language for shell, interpreter verified in Why3 | Design reference for our internal IR between shell AST and GOTO |
+| Jeannerod, Marché, Treinen, *A Formally Verified Interpreter for a Shell-like Programming Language*, VSTTE 2017 (CoLiS language) | A "sane" intermediate language for shell, interpreter verified in Why3 | Design reference for our internal IR between shell AST and GOTO |
 
 ### 3.2 Parsing
 
@@ -169,9 +168,9 @@ are blocked).
 | Work | Use for us |
 |------|-----------|
 | Mazurak & Zdancewic, *ABASH: Finding Bugs in Bash Scripts*, PLAS 2007 | Earliest abstract interpreter for bash. Uses **signatures for external programs** (a precursor of command specs). Found bugs in 20 of 49 scripts. |
-| † Becker, Jeannerod, Marché, Régis-Gianas, Sighireanu, Treinen, *Analysing Installation Scenarios of Debian Packages*, TACAS 2020 | **Symbolic execution** of about 28k Debian maintainer scripts, with **feature-tree constraints** modelling the file system and specs of about 30 core utilities. The closest prior work to bounded model checking of shell. |
-| † *The CoLiS Platform for the Analysis of Maintainer Scripts in Debian Software Packages*, STTT 2022 | Journal version with the full toolchain and utility specifications |
-| † Jeannerod & Treinen, *Deciding the First-Order Theory of an Algebra of Feature Trees with Updates*, IJCAR 2018; Jeannerod, Régis-Gianas, Treinen, *Having Fun with 31.521 Shell Scripts* (2017 report) | The file-system logic, and an empirical survey of which features real scripts use |
+| Becker, Jeannerod, Marché, Régis-Gianas, Sighireanu, Treinen, *Analysing Installation Scenarios of Debian Packages*, TACAS 2020 | **Symbolic execution** of about 28k Debian maintainer scripts, with **feature-tree constraints** modelling the file system and specs of about 30 core utilities. The closest prior work to bounded model checking of shell. |
+| *The CoLiS Platform for the Analysis of Maintainer Scripts in Debian Software Packages*, STTT 2022 | Journal version with the full toolchain and utility specifications |
+| † Jeannerod & Treinen, *Deciding the First-Order Theory of an Algebra of Feature Trees with Updates*, IJCAR 2018; Jeannerod, Régis-Gianas, Treinen, *Having Fun With 31.521 Shell Scripts* (2017 report, obtained) | The file-system logic, and an empirical survey of which features real scripts use |
 | Lazarek, Lamprou et al., *Ahead-of-time Analysis of Shell Program Effects*, **SOSP 2026** (best paper) | The state of the art for static effect analysis of shell programs |
 | Lazarek et al., *From Ahead-of- to Just-in-Time and Back Again: Static Analysis for Unix Shell Programs*, HotOS 2025 | Position paper for the effect-analysis line |
 | Zhao, Li, Lazarek et al., *Trees, Walks, and Words: A Logic for File System Interactions*, **POPL 2027** | A modern file-system logic. Compare against CoLiS feature trees when choosing our FS model. |
@@ -315,20 +314,37 @@ TypeScript:
 
 ## 8. References not yet obtained
 
-Could not be downloaded from this host (HAL/Springer blocked):
+Exact bibliographic data, checked against Crossref:
 
-- Régis-Gianas, Jeannerod, Treinen. *Morbig: A Static Parser for POSIX
-  Shell.* SLE 2018 (HAL hal-01890044), and the J. Computer Languages
-  2020 extended version.
-- Jeannerod, Marché, Treinen. *A Formally Verified Interpreter for a
-  Shell-like Programming Language.* VSTTE 2017.
-- Becker et al. *Analysing Installation Scenarios of Debian Packages.*
-  TACAS 2020 (LNCS 12079).
-- Becker et al. *The CoLiS Platform for the Analysis of Maintainer
-  Scripts in Debian Software Packages.* STTT 2022 (HAL hal-03737886).
-- Jeannerod & Treinen. *Deciding the First-Order Theory of an Algebra
-  of Feature Trees with Updates.* IJCAR 2018.
-- Jeannerod, Régis-Gianas, Treinen. *Having Fun with 31.521 Shell
-  Scripts.* 2017 (HAL).
-- He, Sun, Fan. *Satisfiability Modulo Ordering Consistency Theory for
-  Multi-threaded Program Verification.* PLDI 2021 (Deagle).
+- Yann Régis-Gianas, Nicolas Jeannerod, Ralf Treinen. *Morbig: A Static
+  Parser for POSIX Shell.* SLE 2018, pp. 29–41.
+  doi:10.1145/3276604.3276615 (preprint: HAL hal-01890044). Extended
+  version: *Morbig: A Static Parser for POSIX Shell*, Journal of
+  Computer Languages 57 (2020), article 100944,
+  doi:10.1016/j.cola.2020.100944.
+- Nicolas Jeannerod, Ralf Treinen. *Deciding the First-Order Theory of
+  an Algebra of Feature Trees with Updates.* IJCAR 2018, LNCS 10900,
+  pp. 439–454. doi:10.1007/978-3-319-94205-6_29 (extended version:
+  HAL hal-01760575).
+- Fei He, Zhihang Sun, Hongyu Fan. *Satisfiability Modulo Ordering
+  Consistency Theory for Multi-threaded Program Verification.*
+  PLDI 2021, pp. 1264–1279. doi:10.1145/3453483.3454108 (Deagle).
+
+Related follow-ups worth having (optional):
+
+- Hongyu Fan, Zhihang Sun, Fei He. *Satisfiability Modulo Ordering
+  Consistency Theory for SC, TSO, and PSO Memory Models.* TOPLAS 2023,
+  doi:10.1145/3579835.
+- Hongyu Fan, Weiting Liu, Fei He. *Interference Relation-Guided SMT
+  Solving for Multi-threaded Program Verification.* PPoPP 2022,
+  pp. 163–176, doi:10.1145/3503221.3508424.
+- Nicolas Jeannerod. *Verification of Shell Scripts Performing File
+  Hierarchy Transformations.* PhD thesis, Université Paris Cité, 2021
+  (HAL tel-03917971). The consolidated CoLiS account.
+- *Safety of Transformations of Data Trees: Tree Transducer Theory
+  Applied to a Verification Problem on Shell Scripts.* PhD thesis
+  (HAL tel-03517128). Tree-transducer view of file-hierarchy
+  transformations, from the same project.
+- CoLiS project. *Specification of UNIX Utilities* (HAL hal-02321691).
+  The utility specifications used by the CoLiS symbolic engine, and the
+  most direct prior art for our external-command models (§4 item 3).
