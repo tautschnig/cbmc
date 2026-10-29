@@ -24,6 +24,7 @@ DIRS = analyses \
        linking \
        memory-analyzer \
        pointer-analysis \
+       python \
        solvers \
        statement-list \
        symtab2gb \
@@ -79,9 +80,12 @@ cpp.dir: ansi-c.dir linking.dir
 
 crangler.dir: util.dir json.dir
 
+python.dir: util.dir json.dir langapi.dir
+
 languages: util.dir langapi.dir \
            cpp.dir ansi-c.dir xmllang.dir assembler.dir \
-           json.dir json-symtab-language.dir statement-list.dir
+           json.dir json-symtab-language.dir statement-list.dir \
+           python.dir
 
 solvers.dir: util.dir
 

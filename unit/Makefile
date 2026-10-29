@@ -288,6 +288,7 @@ CPROVER_LIBS =../src/ansi-c/ansi-c$(LIBEXT) \
               ../src/analyses/analyses$(LIBEXT) \
               ../src/solvers/solvers$(LIBEXT) \
               ../src/statement-list/statement-list$(LIBEXT) \
+              ../src/python/python$(LIBEXT) \
               $(BMC_DEPS)
               # Empty last line
 
