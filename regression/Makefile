@@ -136,4 +136,6 @@ clean:
 	@for dir in $(DIRS); do \
 		$(MAKE) -C "$$dir" clean; \
 	done;
+	@# go is only in DIRS while cbmc-go-helper exists, but always clean it
+	$(if $(filter go,$(DIRS)),,$(MAKE) -C go clean)
 	$(RM) tests.log
