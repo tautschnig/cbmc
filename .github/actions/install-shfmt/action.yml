@@ -1,0 +1,40 @@
+name: Install shfmt
+description: >
+  Install a pinned release of shfmt (https://github.com/mvdan/sh), the parser
+  used by the shell front-end (src/shell), and put it on the PATH. Without
+  shfmt, regression/shell is skipped.
+runs:
+  using: composite
+  steps:
+    - name: Download and verify shfmt
+      shell: bash
+      run: |
+        set -euo pipefail
+        version=v3.14.1
+        # SHA-256 digests of the release assets, as published by GitHub for
+        # https://github.com/mvdan/sh/releases/tag/v3.14.1
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64)
+            asset=linux_amd64
+            sha256=76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf ;;
+          Linux-ARM64)
+            asset=linux_arm64
+            sha256=5f2db09dae91fca848f7adbdd014632e921a383863a2ad7e0450ad3aba0c6489 ;;
+          macOS-X64)
+            asset=darwin_amd64
+            sha256=d33eee0da0f92835b3562e9767a05cee7e4eaeef47daa03bfd09da17b4b590a6 ;;
+          macOS-ARM64)
+            asset=darwin_arm64
+            sha256=b7c872db63553ccffc7253aba3ed7d4885a27d83f1ba567b1138c6315a5847e5 ;;
+          *)
+            echo "::error::no shfmt release for ${RUNNER_OS}-${RUNNER_ARCH}"
+            exit 1 ;;
+        esac
+        dir="${RUNNER_TEMP}/shfmt"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 -o "$dir/shfmt" \
+          "https://github.com/mvdan/sh/releases/download/${version}/shfmt_${version}_${asset}"
+        echo "${sha256}  $dir/shfmt" | shasum -a 256 -c -
+        chmod +x "$dir/shfmt"
+        echo "$dir" >> "$GITHUB_PATH"
+        "$dir/shfmt" --version

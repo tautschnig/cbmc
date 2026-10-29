@@ -25,6 +25,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -yq gcc gdb g++ maven jq flex bison libxml2-utils ccache cmake z3
+      - name: Install shfmt for the shell front-end tests
+        uses: ./.github/actions/install-shfmt
       - name: Confirm z3 solver is available and log the version installed
         run: z3 --version
       - name: Download cvc-5 from the releases page and make sure it can be deployed
@@ -112,6 +114,8 @@ jobs:
           sudo apt-get install --no-install-recommends -yq clang-19 clang++-19 gdb maven jq flex bison libxml2-utils cpanminus ccache z3
           make -C src minisat2-download cadical-download
           cpanm Thread::Pool::Simple
+      - name: Install shfmt for the shell front-end tests
+        uses: ./.github/actions/install-shfmt
       - name: Confirm z3 solver is available and log the version installed
         run: z3 --version
       - name: Download cvc-5 from the releases page and make sure it can be deployed
@@ -223,6 +227,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -yq cmake ninja-build gcc gdb g++ maven flex bison libxml2-utils dpkg-dev ccache doxygen graphviz z3
+      - name: Install shfmt for the shell front-end tests
+        uses: ./.github/actions/install-shfmt
       - name: Confirm z3 solver is available and log the version installed
         run: z3 --version
       - name: Download cvc-5 from the releases page and make sure it can be deployed
@@ -295,6 +301,8 @@ jobs:
           sudo apt-get install --no-install-recommends -yq clang clang-14 gdb maven jq flex bison libxml2-utils cpanminus ccache z3
           make -C src minisat2-download cadical-download
           cpanm Thread::Pool::Simple
+      - name: Install shfmt for the shell front-end tests
+        uses: ./.github/actions/install-shfmt
       - name: Confirm z3 solver is available and log the version installed
         run: z3 --version
       - name: Download cvc-5 from the releases page and make sure it can be deployed
@@ -362,6 +370,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -yq cmake ninja-build gcc gdb g++ maven flex bison libxml2-utils dpkg-dev ccache doxygen graphviz z3
+      - name: Install shfmt for the shell front-end tests
+        uses: ./.github/actions/install-shfmt
       - name: Confirm z3 solver is available and log the version installed
         run: z3 --version
       - name: Download cvc-5 from the releases page and make sure it can be deployed
@@ -422,6 +432,8 @@ jobs:
             --slave /usr/bin/g++ g++ /usr/bin/g++-14 \
             --slave /usr/bin/gcov gcov /usr/bin/gcov-14
           sudo ln -sf cpp-14 /usr/bin/cpp
+      - name: Install shfmt for the shell front-end tests
+        uses: ./.github/actions/install-shfmt
       - name: Confirm z3 solver is available and log the version installed
         run: z3 --version
       - name: Download cvc-5 from the releases page and make sure it can be deployed
@@ -469,6 +481,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -yq cmake ninja-build gcc gdb g++ maven flex bison libxml2-utils dpkg-dev ccache doxygen graphviz z3
+      - name: Install shfmt for the shell front-end tests
+        uses: ./.github/actions/install-shfmt
       - name: Confirm z3 solver is available and log the version installed
         run: z3 --version
       - name: Download cvc-5 from the releases page and make sure it can be deployed
@@ -523,6 +537,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -yq cmake ninja-build gcc gdb g++ maven flex bison libxml2-utils ccache doxygen z3 g++-multilib
+      - name: Install shfmt for the shell front-end tests
+        uses: ./.github/actions/install-shfmt
       - name: Confirm z3 solver is available and log the version installed
         run: z3 --version
       - name: Download cvc-5 from the releases page and make sure it can be deployed
@@ -570,6 +586,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -yq cmake ninja-build gcc g++ maven flex bison libxml2-utils ccache z3
+      - name: Install shfmt for the shell front-end tests
+        uses: ./.github/actions/install-shfmt
       - name: Prepare ccache
         uses: actions/cache@v5
         with:
@@ -617,6 +635,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -yq cmake ninja-build gcc g++ maven flex bison libxml2-utils ccache z3
+      - name: Install shfmt for the shell front-end tests
+        uses: ./.github/actions/install-shfmt
       - name: Prepare ccache
         uses: actions/cache@v5
         with:
@@ -653,6 +673,8 @@ jobs:
           # maven is already installed and upgrading to a newer version yields
           # symlink conflicts as previously reported in https://github.com/actions/runner-images/issues/4020
           brew install flex bison parallel ccache z3
+      - name: Install shfmt for the shell front-end tests
+        uses: ./.github/actions/install-shfmt
       - name: Confirm z3 solver is available and log the version installed
         run: z3 --version
       - name: Download cvc5 binary and make sure it can be deployed
@@ -707,6 +729,8 @@ jobs:
           submodules: recursive
       - name: Fetch dependencies
         run: brew install ninja maven flex bison ccache z3
+      - name: Install shfmt for the shell front-end tests
+        uses: ./.github/actions/install-shfmt
       - name: Confirm z3 solver is available and log the version installed
         run: z3 --version
       - name: Download cvc5 binary and make sure it can be deployed
