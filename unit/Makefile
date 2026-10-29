@@ -179,6 +179,7 @@ SRC += analyses/ai/ai.cpp \
        util/json_object.cpp \
        util/lazy.cpp \
        util/lower_byte_operators.cpp \
+       util/config_go.cpp \
        util/max_malloc_size.cpp \
        util/memory_info.cpp \
        util/message.cpp \

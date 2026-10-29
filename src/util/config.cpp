@@ -828,6 +828,8 @@ void configt::set_arch(const irep_idt &arch)
     ansi_c.set_arch_spec_i386();
     ansi_c.arch="i386";
   }
+
+  go.set_from_pointer_width(ansi_c.pointer_width);
 }
 
 /// \brief Parses the `object_bits` argument from the command line arguments.
@@ -1159,6 +1161,9 @@ bool configt::set(const cmdlinet &cmdline)
   if(cmdline.isset("LP32"))
     ansi_c.set_LP32();  // int=16, long=32, pointer=32
 
+  // Go's int/uint/uintptr follow the (possibly overridden) pointer width.
+  go.set_from_pointer_width(ansi_c.pointer_width);
+
   if(cmdline.isset("string-abstraction"))
     ansi_c.string_abstraction=true;
   else
@@ -1386,6 +1391,7 @@ void configt::set_from_symbol_table(const symbol_table_baset &symbol_table)
   ansi_c.short_int_width=unsigned_from_ns(ns, "short_int_width");
   ansi_c.long_long_int_width=unsigned_from_ns(ns, "long_long_int_width");
   ansi_c.pointer_width=unsigned_from_ns(ns, "pointer_width");
+  go.set_from_pointer_width(ansi_c.pointer_width);
   ansi_c.single_width=unsigned_from_ns(ns, "single_width");
   ansi_c.double_width=unsigned_from_ns(ns, "double_width");
   ansi_c.long_double_width=unsigned_from_ns(ns, "long_double_width");

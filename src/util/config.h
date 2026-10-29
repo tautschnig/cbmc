@@ -379,6 +379,32 @@ public:
     static const std::size_t default_object_bits = 16;
   } java;
 
+  /// Configuration of the Go front-end.
+  ///
+  /// The Go specification (Go1.27 §Numeric_types) leaves the width of
+  /// `int`, `uint` and `uintptr` to the implementation: `int` and `uint`
+  /// must have the same width (32 or 64 bits), and `uintptr` must be wide
+  /// enough to hold a pointer. The gc toolchain uses the target's pointer
+  /// width for all three types on every supported GOARCH. We follow gc and
+  /// derive the widths from `ansi_c.pointer_width`, which is
+  /// auto-configured from the host and adjusted by `--arch`, `--32`, and
+  /// `--64`.
+  struct got
+  {
+    /// Width of Go's `int` and `uint`.
+    std::size_t int_width = 64;
+    /// Width of Go's `uintptr`.
+    std::size_t uintptr_width = 64;
+
+    /// Set all implementation-specific widths to match gc on a target
+    /// whose pointers are \p pointer_width bits wide.
+    void set_from_pointer_width(std::size_t pointer_width)
+    {
+      int_width = pointer_width;
+      uintptr_width = pointer_width;
+    }
+  } go;
+
   struct bv_encodingt
   {
     // number of bits to encode heap object addresses
