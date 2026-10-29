@@ -1,0 +1,13 @@
+CORE
+main.bash
+--show-parse-tree
+^EXIT=6$
+^SIGNAL=0$
+^file main.bash line 2 column 1: unsupported shell construct: \[\[ \.\.\. \]\] test \(bash/mksh/zsh\)$
+^file main.bash line 3 column 1: unsupported shell construct: array assignment \(bash/mksh/zsh\)$
+^PARSING ERROR$
+--
+^program
+--
+Constructs that the front-end does not support yet are rejected with an
+error rather than dropped.

@@ -1,0 +1,20 @@
+CORE
+main.sh
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^    word lit"export"$
+^    word lit"A=1"$
+^    word lit"B"$
+^    word dq\(param\(C\)\)$
+^    word lit"D=" param\(x\)$
+^    word lit"E="$
+^    word lit"readonly"$
+^    word lit"R=~/x"$
+^    word lit"local"$
+^    word lit"l=" param\(1\)$
+--
+^warning: ignoring
+--
+export and readonly are declaration utilities (POSIX.1-2024 XCU 2.9.1.1);
+the tree must match the one of declaration-utilities (bash dialect).

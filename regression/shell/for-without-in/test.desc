@@ -1,0 +1,12 @@
+CORE
+main.sh
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^  for j @2:1$
+^    do:$
+--
+^    in:$
+--
+"for j; do" iterates over the positional parameters (POSIX.1-2024 XCU
+2.9.4.3), so it has no "in" list.

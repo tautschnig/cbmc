@@ -1,0 +1,18 @@
+CORE
+main.sh
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^    redirect > lit"/tmp/f"$
+^    redirect 2>& lit"1"$
+^    redirect < lit"/tmp/f"$
+^    redirect >> lit"/tmp/g"$
+^    redirect 3<> lit"/tmp/h"$
+^      here-document lit"hello " param\(HOME\) lit"\\n"$
+^    redirect << q"EOT"$
+^      here-document q"literal \$HOME\\n"$
+--
+^warning: ignoring
+--
+Redirections and here-documents (POSIX.1-2024 XCU 2.7). A quoted
+delimiter makes the here-document body literal (XCU 2.7.4).

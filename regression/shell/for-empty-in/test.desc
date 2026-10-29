@@ -1,0 +1,13 @@
+CORE
+main.sh
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^  for j @2:1$
+^    in:$
+^    do:$
+--
+^warning: ignoring
+--
+"for j in; do" has an empty "in" list and runs zero times (POSIX.1-2024
+XCU 2.9.4.3), unlike "for j; do".

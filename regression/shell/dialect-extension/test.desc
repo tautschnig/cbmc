@@ -1,0 +1,10 @@
+CORE
+main.bash
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^dialect bash$
+--
+^warning: ignoring
+--
+Without a "#!" line, the dialect follows the file extension.

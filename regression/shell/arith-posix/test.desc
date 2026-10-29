@@ -1,0 +1,22 @@
+CORE
+main.sh
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^dialect posix$
+^    assign a = arith"1 \+ 2 \* 3 - 4 / 2 % 3"\{\(\(1 \+ \(2 \* 3\)\) - \(\(4 / 2\) % 3\)\)\}$
+^    assign b = arith"x = y \+= 2"\{\(x = \(y \+= 2\)\)\}$
+^    assign c = arith"p \? q : r"\{\(p \? q : r\)\}$
+^    assign d = arith"0x1F \+ 010 \+ 7"\{\(\(31 \+ 8\) \+ 7\)\}$
+^    assign e = arith"--x"\{\(-\(-x\)\)\}$
+^    assign f = arith" \$\{n\} \+ \$1 "\{\(\$n \+ \$1\)\}$
+^    assign g = arith"1 << 2 >= 3 && 4 \| 5 \^ 6 & 7"\{\(\(\(1 << 2\) >= 3\) && \(4 \| \(5 \^ \(6 & 7\)\)\)\)\}$
+^    assign h = arith"08"\{error: invalid digit '8' in constant at offset 2\}$
+^    assign i = arith"a, b"\{error: unexpected ',' at offset 1\}$
+^    assign j = arith"x\+\+"\{error: expecting an operand at offset 3\}$
+--
+^warning: ignoring
+--
+Arithmetic expansion (POSIX.1-2024 XCU 2.6.4, 1.1.2.1) as /bin/sh (dash)
+reads it: C precedence and constants, no ++/-- (so "--x" is "-(-x)"),
+and no comma operator.

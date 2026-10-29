@@ -1,0 +1,26 @@
+CORE
+main.sh
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^  if @2:1$
+^      if @2:31$
+^  while @3:1$
+^  until @4:1$
+^  for i @5:1$
+^    in:$
+^  for j @6:1$
+^    do:$
+^  case @7:1$
+^    item ;; @7:12$
+^      pattern lit"a"$
+^      pattern lit"b"$
+^  function f @8:1$
+^  subshell @9:1$
+^  group @10:1$
+--
+^warning: ignoring
+--
+Compound commands and function definitions (POSIX.1-2024 XCU 2.9.4,
+2.9.5). "elif" is an "if" in the "else" branch; "for j; do" has no "in"
+list, unlike "for j in; do".

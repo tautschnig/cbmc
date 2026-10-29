@@ -1,0 +1,22 @@
+CORE
+main.bash
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^    word lit"export"$
+^    word lit"A=1"$
+^    word lit"B"$
+^    word dq\(param\(C\)\)$
+^    word lit"D=" param\(x\)$
+^    word lit"E="$
+^    word lit"readonly"$
+^    word lit"R=~/x"$
+^    word lit"local"$
+^    word lit"l=" param\(1\)$
+--
+^warning: ignoring
+--
+In the bash dialect shfmt parses declaration utilities as DeclClause; the
+reader rebuilds the simple command that the POSIX dialect yields (see
+declaration-utilities-posix), so that later stages apply XCU 2.9.1.1 by
+command name.
