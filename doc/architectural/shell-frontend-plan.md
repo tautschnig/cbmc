@@ -273,41 +273,155 @@ Proposed staging:
 
 ---
 
-## 6. Parser decision (proposed, to validate in Step 1)
+## 6. Parser evaluation (done 2026-10-29)
 
-Following the external-parser approach that worked for Python and
-TypeScript:
+### 6.1 Setup
 
-- **Primary: `shfmt --to-json`** (mvdan/sh). It covers POSIX, bash,
-  and mksh (plus zsh in newer releases) with one AST schema and a
-  dialect switch. It is a single static binary with no Go toolchain
-  needed at run time. Ubuntu's 3.8.0 package is enough to start.
-- **Cross-check: libdash or Morbig** for POSIX-mode parsing fidelity.
-  libdash is literally dash's parser; Morbig is grounded in the
-  standard's grammar (§2.10).
-- Parsing alone cannot be fully static (aliases, `eval`). Document
-  this limitation in the Morbig sense from day one.
+- **shfmt built from source** (mvdan/sh `e96ef1da`, 2026-10-27,
+  v3.14.0+; reports `v3.14.1-0.20261027094050-e96ef1dae52c`) with
+  Go 1.26.10, installed user-locally in `~/tools/go`, binary at
+  `~/tools/bin/shfmt`. Dialects: `-ln posix|bash|mksh|bats|zsh`.
+  Ubuntu's packaged 3.8.0 lacks zsh.
+- **Reference shells installed for differential testing:** bash 5.2.21,
+  dash 0.5.12, zsh 5.9, ksh93u+m 1.0.8, mksh 59c, yash 2.55, posh 0.14.1,
+  busybox ash.
+- Probe tools: `scripts/shell-frontend/shfmt_astview.py` (compact AST
+  viewer) and `scripts/shell-frontend/parse_corpus.sh` (corpus
+  parse-rate driver).
+
+### 6.2 What the AST gives us
+
+- `shfmt --to-json` reads **stdin only** and writes one typed JSON tree.
+  Interface-typed nodes carry `"Type"`; every node carries `Pos`/`End`
+  as `{Offset, Line, Col}`, which maps directly to `source_locationt`.
+- 48 node types in total (`syntax/nodes.go`). The POSIX subset is
+  about 20: `File Stmt CallExpr Assign Redirect BinaryCmd Subshell
+  Block IfClause WhileClause ForClause WordIter CaseClause CaseItem
+  FuncDecl Word Lit SglQuoted DblQuoted CmdSubst ParamExp Expansion
+  ArithmExp BinaryArithm UnaryArithm ParenArithm`. The rest are bash,
+  mksh, or zsh extensions (`TestClause` for `[[ ]]`, `DeclClause`,
+  arrays, `ProcSubst`, `ExtGlob`, `CoprocClause`, …).
+- **Words keep their quoting structure** as a list of parts (`Lit`,
+  `SglQuoted`, `DblQuoted`, `ParamExp`, `CmdSubst`, `ArithmExp`).
+  This is exactly what §2.6.5 field splitting and §2.6.6 pathname
+  expansion need, since both depend on what was quoted.
+- Operators are strings (`"&&"`, `"|"`, `">&"`, `";;"`); `&` is a
+  `Background` flag on `Stmt`; here-doc bodies are attached to the
+  `Redirect` as a `Hdoc` word with expansions already split out.
+- **Globs stay literal** (`*.txt` is a `Lit`). This is correct, since
+  pathname expansion is a run-time step, but the converter must
+  re-scan unquoted literal parts for pattern characters.
+
+### 6.3 Fidelity gaps found
+
+| Input | Real shells | shfmt | Consequence |
+|-------|-------------|-------|-------------|
+| `$'tab\there'` (POSIX.1-2024 §2.2.4) | bash, zsh, ksh93, mksh, busybox: TAB; dash 0.5.12, yash, posh: literal `$tab\there` | `-ln posix`: wrong (literal `$` + `'…'`); `-ln bash`: correct (`SglQuoted{Dollar:true}`) | shfmt's POSIX mode targets pre-Issue-8 POSIX. Our "POSIX" means 2024, so either parse POSIX scripts in bash mode and reject bashisms ourselves, or patch shfmt. |
+| `op=+; echo $((1 $op 2))` | dash and bash: `3` | parse error in all dialects | §2.6.4 says arithmetic is evaluated on the text *after* expansion. shfmt parses `$(( ))` statically. We need our own arithmetic parser applied after expansion; this is needed regardless of which word parser we use. |
+| aliases, `eval`, `.`, `sh -c`, `trap` strings | parsed at run time | unparsed strings | Inherent to static parsing (see Morbig). Parse constant strings at conversion time. |
+
+### 6.4 Corpus robustness
+
+All `#!/bin/sh`, bash, dash, and zsh scripts on this machine (Debian
+maintainer scripts plus `/usr/bin`, `/usr/sbin`, `/etc/init.d`):
+**1,266 scripts** (1,190 sh, 73 bash, 2 dash, 1 zsh), each parsed in
+the dialect its shebang names.
+
+- **1,265 / 1,266 parse (99.9%)**, the same rate Morbig reports for
+  Debian's 31,521 maintainer scripts.
+- The single failure is a real bug, not a parser problem.
+  `/usr/bin/xdg-settings` (xdg-utils) is `#!/bin/sh` but uses the
+  bashism `${browser:1}` (lines 736, 1092). On Ubuntu `/bin/sh` is
+  dash, which reports `Bad substitution` on that code path. Dialect-
+  aware parsing alone finds portability bugs.
+- Cost: about 13 ms per file through the subprocess. JSON is verbose:
+  a 2,819-line script yields 5 MB, mostly position records.
+
+### 6.5 Decision
+
+1. **Use `shfmt --to-json` now**, as the TypeScript front-end used the
+   tsc API. It gives broad multi-dialect coverage immediately and lets
+   us concentrate on the hard part, expansion semantics.
+2. **Convert into our own internal shell AST first, not straight to
+   GOTO.** The converter then depends on that IR rather than on
+   shfmt's schema, which is what makes a native parser (§6.6) a
+   drop-in replacement later. The IR also normalises dialect
+   differences such as `$'…'`.
+3. **Write a native arithmetic-expression parser immediately.** It is
+   small (C-like precedence grammar, §2.6.4 / XCU `expr` rules), it is
+   required anyway for post-expansion arithmetic, and it is the first
+   piece of a native parser.
+4. Use the corpus (`parse_corpus.sh`) and the Smoosh test suite as
+   parser regression and differential-parse corpora.
+
+### 6.6 Could we have a native parser?
+
+Yes, and it is more tractable than it first looks:
+
+| Data point | Size |
+|------------|------|
+| POSIX.1-2024 XCU §2.10.2 grammar | ~45 productions, 424 lines, **already in yacc notation** |
+| dash `parser.c` + `parser.h` + `nodetypes` (BSD licence) | 2,076 lines of C (POSIX plus dash quirks) |
+| mvdan/sh `syntax/` (non-test, all dialects) | 10,366 lines of Go (parser.go 3,128, lexer.go 1,445, parser_arithm.go 410) with 98 dialect checks |
+| bash | its parser *is* a yacc grammar (`parse.y`) with lexer hooks |
+
+The difficulty is the lexer, not the grammar. §2.3 token
+recognition and the §2.10.1/§2.10.2 context rules (reserved words are
+only recognised in command position, assignment-word detection, `case`
+patterns, here-documents read after the next newline, alias
+substitution) require **feedback from the parser to the lexer**.
+Morbig solved this with Menhir's incremental LR(1) API; bash does it
+with lexer hooks around bison; dash and mvdan/sh use hand-written
+recursive descent.
+
+Options, in order of preference:
+
+- **(a) Bison grammar transcribed from §2.10.2 plus a hand-written
+  context-aware lexer.** This is CBMC's established approach
+  (`src/ansi-c/`), cites the standard production by production, and
+  needs no run-time dependency. Bison's push-parser interface or
+  explicit lexer state flags can provide the feedback.
+- **(b) Hand-written recursive descent in C++**, modelled on dash or
+  mvdan/sh. Simpler feedback handling; POSIX-only would be roughly
+  2–3 kLOC.
+- **(c) Vendor libdash** (dash's parser extracted as a library,
+  BSD-licensed). Highest fidelity to one real shell, but it is tied to
+  dash's allocator and longjmp error handling, and it is POSIX/dash
+  only.
+
+A native parser would also allow parsing strings that only become
+known during conversion (`eval "…"`, `sh -c "…"`, `trap` handlers,
+post-expansion arithmetic) without a subprocess per string. That is a
+stronger argument for it than parse speed.
+
+Plan: keep shfmt as the multi-dialect front door. Build the native
+POSIX parser (option a) once the IR and semantics have stabilised.
+Validate it by differential parsing against shfmt (bash mode) and dash
+on the corpus. Bash, zsh, and mksh would remain on shfmt until there is
+a reason to go native for them.
 
 ---
 
 ## 7. Next steps
 
-1. Install `shfmt`, `zsh`, `ksh`, `mksh`, `yash`, and `posh` for
-   differential testing (bash 5.2, dash, and busybox ash are already
-   present). Fetch the Smoosh test suite as a conformance corpus.
-2. Prototype `shfmt --to-json` on a few scripts and inspect the AST
-   schema. Decide on an internal IR, perhaps CoLiS-like, versus
-   converting straight to GOTO.
+1. ~~Install shfmt and reference shells~~ (done, §6.1). Fetch the
+   Smoosh test suite as a conformance corpus.
+2. Define the internal shell IR (CoLiS-inspired: commands, words as
+   part lists, explicit subshell/environment boundaries) and a
+   JSON → IR reader for shfmt's schema.
 3. Skeleton `src/shell/` front-end (`languaget`, `.sh` extension,
-   `#!` sniffing), following `building-a-new-frontend.md` steps 1–5.
-4. Minimal semantics: assignments, parameter expansion without field
+   `#!` sniffing, shfmt invocation through `run()` with stdin
+   redirection), following `building-a-new-frontend.md` steps 1–5.
+4. Native arithmetic-expression parser (§6.5 item 3).
+5. Minimal semantics: assignments, parameter expansion without field
    splitting, `test`/`[`, `if`/`while`/`for`/`case`, `&&`/`||`,
    functions, exit statuses, `assert`-style primitive
    (`__CPROVER_assert` exposed as a shell builtin).
-5. Word expansion done properly (§2.6 in full), with a per-spec
+6. Word expansion done properly (§2.6 in full), with a per-spec
    review of XCU §2.6 as the first soundness review.
-6. Decide the file-system and external-command specification
-   strategy (CoLiS vs POPL 2027 logic vs ABASH signatures).
+7. Decide the file-system and external-command specification
+   strategy (CoLiS utility specs vs POPL 2027 logic vs ABASH
+   signatures).
 
 ---
 
