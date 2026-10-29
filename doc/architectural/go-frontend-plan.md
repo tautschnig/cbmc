@@ -127,10 +127,10 @@ trivial programs:
 
 The external route needs a Go toolchain at verification time. That is a
 reasonable requirement for people verifying Go code, and it parallels the
-TypeScript frontend's dependency on Node.js. The frontend will detect a
-missing or too-old `go` and report it clearly. The JSON schema decouples
-the two halves, so a native type checker could replace the helper later
-without changing the converter.
+TypeScript frontend's dependency on Node.js. The frontend reports a
+missing helper clearly (§5); building the helper requires Go 1.27. The
+JSON schema decouples the two halves, so a native type checker could
+replace the helper later without changing the converter.
 
 ### 4.3 The native route is retained
 
@@ -146,14 +146,14 @@ would remove the Go toolchain from the verification-time path.
 
 To keep that route cheap, the C++ converter must consume an **in-memory
 Go AST**, not the helper's JSON directly. The helper's JSON is loaded into
-that AST; a native parser and checker would produce the same AST. See
-§5, step 1.
+that AST; a native parser and checker would produce the same AST. That
+AST is `src/go/go_parse_tree.h` (§5).
 
 ### 4.4 Lessons applied from the TypeScript frontend
 
 - **Ship a compiled helper, not an inline script.** TypeScript embeds a
   JavaScript program in a C++ string literal. Instead, the Go helper
-  will live as ordinary Go source under `src/go/` and be built by CMake
+  lives as ordinary Go source in `src/go/helper/` and is built by CMake
   when `go` is available.
 - **No daemon needed.** TypeScript needed `ts_ast_server` to amortise
   Node.js start-up. The Go helper runs in 0.18 s, so we use one
@@ -170,19 +170,122 @@ library, we will need Go models for the stdlib functions programs use.
 The helper supplies the stdlib *signatures*; the models supply the
 *bodies*.
 
-## 5. Next steps
+## 5. Status: first end-to-end slice
 
-1. Turn the helper into `src/go/`'s JSON emitter, closing the gaps listed
-   in its header (type-switch bindings from `types.Info.Implicits`,
-   receiver-qualified method ids, file-qualified positions). Define the
-   C++ in-memory Go AST, typed and resolved and built on `irept` with
-   `source_locationt`, which the JSON is loaded into. The converter reads
-   only that AST, so the native route of §4.3 can later produce it
-   instead.
-2. Add the `languaget` skeleton and `go2goto` conversion for a first
-   vertical slice: `package main`, functions, integer arithmetic with
-   wrap-around, `if`/`for`, and assertions.
-3. Draft the feature-phasing plan (types → expressions → statements →
-   functions → slices, maps, and strings → structs, methods, and
-   interfaces → generics → panics and `defer`/`recover` → goroutines and
-   channels).
+Steps 1 and 2 of the original plan are done. The code is in `src/go/`,
+the tests are in `regression/go/`.
+
+| Part | Files | Role |
+|---|---|---|
+| Helper | `helper/main.go`, `helper/cprover/` | `go/parser` + `go/types` → typed JSON (schema version 1). Type-switch bindings (`_impl`, from `types.Info.Implicits`), receiver-qualified method ids and file-qualified positions are emitted. |
+| Go AST | `go_parse_tree.{h,cpp}` | In-memory `irept` tree loaded from the JSON. The converter reads only this tree (§4.3). |
+| Types | `go_types.{h,cpp}` | `go/types` type table → `typet`. `int`/`uint`/`uintptr` come from `config.go`. |
+| Converter | `go_convert.{h,cpp}` | Go AST → symbol table and code. Constructs outside the slice are reported as errors, never dropped. |
+| Language | `go_language.{h,cpp}`, `expr2go.{h,cpp}` | `languaget` for `.go` files: runs the helper, sets the target GOARCH from `--arch`/`--32`/`--64`, builds the entry point. |
+
+The slice supports:
+
+- Types: integer and boolean types; untyped constants with their final
+  types from `go/types`, folded exactly.
+- Declarations: package-level variables initialised in
+  `types.Info.InitOrder`, then `init` functions in source order
+  (`§Package_initialization`), then `main.main` (`§Program_execution`)
+  or the `--function` target with nondeterministic arguments.
+  Functions with at most one result, including named results.
+- Statements: `if`, `for` (all three forms), unlabelled `break` and
+  `continue`, `return`, assignments (two-phase, `op=`, `++`/`--`, `:=`,
+  blank identifier).
+- Expressions: integer unary and binary operators with Go's wrap-around
+  (`§Integer_overflow`), comparisons, `&&`/`||` short-circuiting,
+  conversions between integer types, `min`/`max`, `panic`, `print`.
+- Run-time panics, emitted by the converter as an assertion followed by
+  an assumption because `goto_check_c` skips non-C modes. They cover
+  integer division or remainder by zero (`division-by-zero`), negative
+  signed shift counts (`negative-shift`), and `panic` (`panic`).
+  CBMC's own semantics already match Go for `MinInt / -1`,
+  `MinInt % -1`, and oversized shift counts.
+- Verification primitives from package `cprover`: `Assert`, `Assume`,
+  `Nondet[T]`.
+
+Errors are reported as follows:
+
+- Syntax and type errors from the helper are printed as
+  `file:line:col: message` and end in `PARSING ERROR`.
+- Unsupported constructs end in `CONVERSION ERROR`.
+- If the helper is missing, CBMC says where it looks for it.
+  The lookup order is `$CBMC_GO_HELPER`, then next to `cbmc`, then `PATH`.
+
+Build and test wiring:
+
+- CMake builds `cbmc-go-helper` when it finds `go`.
+- With the Makefiles, build the helper with `make -C src/go helper`.
+- `regression/go` runs only when the helper exists.
+- Building the helper needs Go 1.27 (`go.mod`, `GOTOOLCHAIN=local`).
+- At verification time, programs that import only `cprover` need no Go
+  toolchain. Other imports go through the gc importer, which runs
+  `go list -export` and so needs the toolchain.
+
+Known limitations of the slice:
+
+- **One file per package.** `cbmc` runs the helper on each `.go` file
+  separately, so a package spread over several files is not yet
+  supported. The helper itself accepts several files.
+- **Single package.** Only the package being verified plus `cprover`.
+  Calls into other packages, and uses of their variables, are reported
+  as unsupported.
+- The converter does not yet use `_impl`, because there are no type
+  switches yet.
+- Not yet supported: labelled statements, `goto`, `switch`, `select`,
+  `defer`, `recover`, multiple results, strings, floats, complex
+  numbers, pointers, arrays, slices, maps, structs, methods, interfaces,
+  closures, generics beyond `cprover.Nondet`, goroutines, and channels.
+
+The Makefile build of `cbmc` on `develop` does not link the Python
+front-end that `cbmc_languages.cpp` registers. This predates the Go
+work and is not fixed here.
+
+## 6. Feature phasing
+
+Each phase lists the specification sections it implements. A phase is
+done when every construct in it is converted or explicitly reported, and
+each behaviour the spec defines has a regression test citing its
+section.
+
+1. **Control flow and functions.** `§Labeled_statements`, labelled
+   `§Break_statements`/`§Continue_statements`, `§Goto_statements`,
+   `§Switch_statements` (expression switches, `fallthrough`), multiple
+   results and `§Return_statements` with several values, `§Calls` with
+   multi-valued arguments, `§Function_literals` without captures.
+2. **Composite value types.** `§Array_types`, `§Struct_types` (including
+   embedded fields and promotion, using the helper's `_sel` paths),
+   `§Pointer_types` with nil-dereference panics, `§Address_operators`,
+   `§Composite_literals`, `§Comparison_operators` for arrays and structs,
+   index-out-of-range panics (`§Index_expressions`).
+3. **Strings, slices and maps.** `§String_types` (immutable byte
+   sequences, `len`, indexing, `§Slice_expressions`, `+`, comparisons,
+   `§For_range` over strings with UTF-8 decoding), `§Slice_types` with
+   `make`, `append` and `copy` (`§Appending_and_copying_slices`),
+   `§Map_types` with nondeterministic iteration order, `delete`, `clear`.
+4. **Floating point.** `float32`/`float64` per IEEE 754
+   (`§Arithmetic_operators`), numeric conversions (`§Conversions`), and
+   `complex64`/`complex128`.
+5. **Methods and interfaces.** `§Method_declarations`, method values and
+   expressions, `§Interface_types` with dynamic dispatch,
+   `§Type_assertions` and `§Type_switches` (using `_impl`), the `error`
+   interface.
+6. **Generics.** `§Type_parameter_declarations` and instantiation
+   (`_inst`), by monomorphising each instantiation `go/types` reports.
+7. **Panics and deferral.** `§Defer_statements`, `§Handling_panics`
+   (`recover`), so that a run-time panic becomes an unwinding path
+   instead of an assumption.
+8. **Packages and the standard library.** Several files per package,
+   imported user packages, and Go models of the stdlib functions programs
+   use (§4.5).
+9. **Concurrency.** `§Go_statements`, `§Channel_types`,
+   `§Send_statements`, `§Receive_operator`, `§Select_statements` with a
+   nondeterministic choice, and the Go Memory Model for data races.
+
+Phases 1–3 cover most small verification harnesses. Phase 7 changes how
+panics are encoded, so the converter keeps all panic checks behind one
+helper (`go_convertert::guard_panic` and friends) to make that change
+local.
