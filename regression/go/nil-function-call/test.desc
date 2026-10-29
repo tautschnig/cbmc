@@ -1,0 +1,12 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.nil-dereference\.1\] .*line 20 runtime error: invalid memory address or nil pointer dereference: FAILURE$
+^\[go::main\.main\.assertion\.1\] .*line 21 only reached if f was not nil: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Go1.27 §Calls: calling a nil function value panics

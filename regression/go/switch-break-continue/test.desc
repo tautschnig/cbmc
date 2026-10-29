@@ -1,0 +1,10 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Break_statements, §Continue_statements: innermost switch vs loop

@@ -1,0 +1,11 @@
+CORE
+main.go
+
+^EXIT=6$
+^SIGNAL=0$
+function literals capturing variables \('n'\) is not supported yet$
+^CONVERSION ERROR$
+--
+^VERIFICATION
+--
+Unsupported closures are errors, never silently dropped

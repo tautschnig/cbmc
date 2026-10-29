@@ -1,0 +1,10 @@
+CORE
+main.go
+--function apply
+^EXIT=6$
+^SIGNAL=0$
+--function with parameters of function type is not supported yet$
+--
+^VERIFICATION
+--
+Unsupported entry points are errors, never silently dropped
