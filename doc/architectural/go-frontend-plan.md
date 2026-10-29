@@ -170,20 +170,20 @@ library, we will need Go models for the stdlib functions programs use.
 The helper supplies the stdlib *signatures*; the models supply the
 *bodies*.
 
-## 5. Status: first end-to-end slice
+## 5. Status
 
-Steps 1 and 2 of the original plan are done. The code is in `src/go/`,
-the tests are in `regression/go/`.
+The first end-to-end slice and phase 1 of §6 are done. The code is in
+`src/go/`, the tests are in `regression/go/`.
 
 | Part | Files | Role |
 |---|---|---|
 | Helper | `helper/main.go`, `helper/cprover/` | `go/parser` + `go/types` → typed JSON (schema version 1). Type-switch bindings (`_impl`, from `types.Info.Implicits`), receiver-qualified method ids and file-qualified positions are emitted. |
 | Go AST | `go_parse_tree.{h,cpp}` | In-memory `irept` tree loaded from the JSON. The converter reads only this tree (§4.3). |
-| Types | `go_types.{h,cpp}` | `go/types` type table → `typet`. `int`/`uint`/`uintptr` come from `config.go`. |
+| Types | `go_types.{h,cpp}` | `go/types` type table → `typet`. `int`/`uint`/`uintptr` come from `config.go`. Function values are pointers to code; several results are returned as one struct marked `#go_tuple`, with components `$0`, `$1`, ... |
 | Converter | `go_convert.{h,cpp}` | Go AST → symbol table and code. Constructs outside the slice are reported as errors, never dropped. |
 | Language | `go_language.{h,cpp}`, `expr2go.{h,cpp}` | `languaget` for `.go` files: runs the helper, sets the target GOARCH from `--arch`/`--32`/`--64`, builds the entry point. |
 
-The slice supports:
+Supported so far:
 
 - Types: integer and boolean types; untyped constants with their final
   types from `go/types`, folded exactly.
@@ -191,17 +191,25 @@ The slice supports:
   `types.Info.InitOrder`, then `init` functions in source order
   (`§Package_initialization`), then `main.main` (`§Program_execution`)
   or the `--function` target with nondeterministic arguments.
-  Functions with at most one result, including named results.
-- Statements: `if`, `for` (all three forms), unlabelled `break` and
-  `continue`, `return`, assignments (two-phase, `op=`, `++`/`--`, `:=`,
-  blank identifier).
+  Functions with any number of results, named or not (`return f()`,
+  `x, y := f()`, `var x, y = f()` also at package level, `f(g())`).
+- Statements: `if`, `for` (all three forms), `switch` with or without a
+  tag, including `fallthrough` (as a chain of conditional jumps, which
+  keeps Go's evaluation order of non-constant case expressions),
+  labelled statements, `break` and `continue` with or without a label,
+  `goto`, `return`, assignments (two-phase, `op=`, `++`/`--`, `:=`, blank
+  identifier).
+- Function values: declared functions and function literals that do not
+  capture variables (lifted to functions named `<enclosing>$lit<N>`),
+  calls through function values, and comparison with `nil`.
 - Expressions: integer unary and binary operators with Go's wrap-around
   (`§Integer_overflow`), comparisons, `&&`/`||` short-circuiting,
   conversions between integer types, `min`/`max`, `panic`, `print`.
 - Run-time panics, emitted by the converter as an assertion followed by
   an assumption because `goto_check_c` skips non-C modes. They cover
   integer division or remainder by zero (`division-by-zero`), negative
-  signed shift counts (`negative-shift`), and `panic` (`panic`).
+  signed shift counts (`negative-shift`), calls of a nil function value
+  (`nil-dereference`), and `panic` (`panic`).
   CBMC's own semantics already match Go for `MinInt / -1`,
   `MinInt % -1`, and oversized shift counts.
 - Verification primitives from package `cprover`: `Assert`, `Assume`,
@@ -220,12 +228,26 @@ Build and test wiring:
 - CMake builds `cbmc-go-helper` when it finds `go`.
 - With the Makefiles, build the helper with `make -C src/go helper`.
 - `regression/go` runs only when the helper exists.
+- In CI, the Ubuntu 24.04 `make-gcc` and `cmake-gcc` jobs of
+  `.github/workflows/pull-request-checks.yaml` install Go with
+  `actions/setup-go` (version from `src/go/helper/go.mod`) and so run
+  `regression/go`; other jobs skip it.
 - Building the helper needs Go 1.27 (`go.mod`, `GOTOOLCHAIN=local`).
 - At verification time, programs that import only `cprover` need no Go
   toolchain. Other imports go through the gc importer, which runs
   `go list -export` and so needs the toolchain.
 
-Known limitations of the slice:
+Checks beyond the regression tests, in `scripts/go-frontend/`:
+
+- `check_spec_quotes.py` checks that comments quote the specification
+  verbatim and cite existing sections.
+- `run_with_go.sh` runs every test with the Go toolchain, using the real
+  `cprover` package, as an oracle: each test that CBMC is expected to
+  verify must also run to completion.
+- `check_non_vacuous.sh` appends a failing assertion to `main` of each
+  success test and checks that CBMC reports it.
+
+Known limitations:
 
 - **One file per package.** `cbmc` runs the helper on each `.go` file
   separately, so a package spread over several files is not yet
@@ -235,10 +257,18 @@ Known limitations of the slice:
   as unsupported.
 - The converter does not yet use `_impl`, because there are no type
   switches yet.
-- Not yet supported: labelled statements, `goto`, `switch`, `select`,
-  `defer`, `recover`, multiple results, strings, floats, complex
-  numbers, pointers, arrays, slices, maps, structs, methods, interfaces,
-  closures, generics beyond `cprover.Nondet`, goroutines, and channels.
+- Function values cannot be nondeterministic: `cprover.Nondet` of a
+  function type and `--function` with function-typed parameters are
+  reported. Modelling them needs a choice among the program's functions
+  of that type, or nil.
+- Function-pointer removal adds a `pointer_dereference` property per call
+  through a function value ("dereferenced function pointer must be
+  ..."). It always holds, because function values are only ever nil
+  (checked first) or the address of a function of that type.
+- Not yet supported: type switches, `select`, `defer`, `recover`,
+  variadic functions, strings, floats, complex numbers, pointers, arrays,
+  slices, maps, structs, methods, interfaces, closures that capture
+  variables, generics beyond `cprover.Nondet`, goroutines, and channels.
 
 The Makefile build of `cbmc` does not link the Python front-end that
 `cbmc_languages.cpp` registers (by inspection: no Makefile builds
@@ -253,16 +283,20 @@ done when every construct in it is converted or explicitly reported, and
 each behaviour the spec defines has a regression test citing its
 section.
 
-1. **Control flow and functions.** `§Labeled_statements`, labelled
-   `§Break_statements`/`§Continue_statements`, `§Goto_statements`,
-   `§Switch_statements` (expression switches, `fallthrough`), multiple
-   results and `§Return_statements` with several values, `§Calls` with
-   multi-valued arguments, `§Function_literals` without captures.
+1. **Control flow and functions** (done). `§Labeled_statements`,
+   labelled `§Break_statements`/`§Continue_statements`,
+   `§Goto_statements`, `§Switch_statements` (expression switches,
+   `fallthrough`), multiple results and `§Return_statements` with
+   several values, `§Calls` with multi-valued arguments,
+   `§Function_literals` without captures. Closures that capture
+   variables need variables that outlive their function, so they move
+   to phase 2, together with pointers.
 2. **Composite value types.** `§Array_types`, `§Struct_types` (including
    embedded fields and promotion, using the helper's `_sel` paths),
    `§Pointer_types` with nil-dereference panics, `§Address_operators`,
    `§Composite_literals`, `§Comparison_operators` for arrays and structs,
-   index-out-of-range panics (`§Index_expressions`).
+   index-out-of-range panics (`§Index_expressions`), and closures that
+   capture variables (`§Function_literals`).
 3. **Strings, slices and maps.** `§String_types` (immutable byte
    sequences, `len`, indexing, `§Slice_expressions`, `+`, comparisons,
    `§For_range` over strings with UTF-8 decoding), `§Slice_types` with
