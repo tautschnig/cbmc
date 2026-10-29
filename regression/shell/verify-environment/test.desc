@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] file main.sh line 3 assertion "\$\{n\}" = new: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Variables not assigned by the script come from the environment, which
+may already set n, so ${n:=new} need not assign it.

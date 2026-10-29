@@ -4,4 +4,4 @@ add_library(shell-frontend ${sources})
 
 generic_includes(shell-frontend)
 
-target_link_libraries(shell-frontend util json langapi big-int)
+target_link_libraries(shell-frontend util json langapi big-int ansi-c goto-programs)

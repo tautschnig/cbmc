@@ -420,15 +420,93 @@ a reason to go native for them.
    checked against dash, bash, mksh, zsh, ksh93, yash, posh, busybox).
    On 843 local scripts the reader handles 783 completely and never
    crashes; the rest use bash/zsh extensions or fail in shfmt.
-5. Minimal semantics: assignments, parameter expansion without field
-   splitting, `test`/`[`, `if`/`while`/`for`/`case`, `&&`/`||`,
-   functions, exit statuses, `assert`-style primitive
-   (`__CPROVER_assert` exposed as a shell builtin).
+5. ~~Minimal semantics~~ (first slice done: `shell_converter.cpp`,
+   `shell_runtime.cpp`; see §7.1). Still open from the original list:
+   functions, subshells, field splitting, `$@`/`$*`.
 6. Word expansion done properly (§2.6 in full), with a per-spec
    review of XCU §2.6 as the first soundness review.
 7. Decide the file-system and external-command specification
    strategy (CoLiS utility specs vs POPL 2027 logic vs ABASH
    signatures).
+
+### 7.1 The first converter (done 2026-10-29)
+
+`shell_convert` turns the IR into `shell::main`, called from
+`__CPROVER__start` after `__CPROVER_initialize`, and CBMC verifies it.
+
+**Values.** Every value is a bounded string: a C struct
+`__CPROVER_shell_string {set, length, data[N]}` with
+N = `--shell-max-string-length` (default 64). The helpers (equality,
+concatenation, integer conversion, nondeterministic strings) are C
+code generated with their loops unrolled (`shell_runtime.cpp`), added
+through the C front-end without a preprocessor. They are hidden in
+traces, so `--unwind` bounds for the script do not cut them short, and
+checks such as `--bounds-check` are disabled inside them.
+
+**Inputs and assumptions.** These are explicit and sound for scripts
+whose inputs fit the bound:
+- Variables the script does not assign come from the environment:
+  set or unset, with any contents without NUL bytes.
+- `$1`, `$2`, … are set iff `$#` is large enough; `$#` is at most
+  2^31−1, and `$0`, `$$`, `$-` are nondeterministic.
+- External commands (anything not modelled as a builtin) have a
+  nondeterministic exit status and cannot change shell variables.
+  Command substitution yields a nondeterministic string and status.
+  `echo` and `printf` are treated the same way, since writes can fail.
+- File tests, `-ef`/`-nt`/`-ot`, and `<`/`>` in `test` are
+  nondeterministic. So are the results POSIX leaves unspecified.
+- Inputs are at most N bytes; strings the script builds that exceed N
+  fail the `shell-string-length` property.
+
+**Checks.** Arithmetic is ISO C `long` (32-bit in mksh). Division by
+zero, overflow, out-of-range shifts, and variables whose values are not
+integer constants are properties (`division-by-zero`, `overflow`,
+`undefined-shift`, `shell-arithmetic`). They are asserted, then assumed.
+`__CPROVER_assert` and `__CPROVER_assume` take `test` arguments.
+
+**Dialects,** each checked against the real shells:
+- `$((010))` is 10 in mksh and zsh.
+- `[ x -eq 1 ]` gives status 2 in dash and bash, and a
+  nondeterministic status in mksh and zsh, which evaluate the operand
+  as an expression.
+- Trailing blanks in integer operands are rejected in zsh.
+- `==` in `test` is an extension (bash, mksh, zsh), not POSIX.
+- The integer conversions were compared with dash and bash on 3000
+  generated strings. There were no mismatches. Values the shells
+  accept but the model flags: 45 for dash and 612 for bash. Dash's are
+  44 blank strings, which dash reads as 0, and `0b0`; dash 0.5.12 reads
+  binary constants, apparently through glibc's C23 `strtoimax`. Bash's
+  are expressions such as `+-1`, or names.
+
+**Supported:** simple commands; assignments, including before special
+builtins; `:`, `true`, `false`, `test`/`[` with up to four arguments;
+`exit`, `export`, `unset`, `break`/`continue` with counts; pipelines
+and `&` of commands without side effects; `&&`, `||`, `!`; `if`,
+`while`, `until`, `for … in` with words that each yield one field;
+`case` with literal patterns, `*`, and `;&`; parameter expansion
+`${x}`, `${#x}`, `-`, `=`, `?`, `+` with and without `:`; arithmetic
+expansion.
+
+**Rejected with an error** (never ignored):
+- functions and subshells;
+- unquoted expansions where field splitting matters, and unquoted
+  pattern characters (pathname expansion);
+- tilde expansion; pattern removal (`%`, `#`);
+- `$@`, `$*`, `$!`;
+- builtins that change the shell's state (`cd`, `read`, `set`, `shift`,
+  `eval`, `.`, `local`, …);
+- variables the shell maintains (`LINENO`, `RANDOM`, `IFS`, …);
+- redirections that could fail on builtins, and redirections with side
+  effects;
+- `test` arguments whose values could change how `test` parses them.
+
+**Known imprecision.** In mksh, `$((1-$x))` with `x=-1` is an error
+(`--` needs a variable), but the model computes 2, as dash and bash do.
+
+**Next.** Functions with positional parameters and `return`; subshells
+by copying the state; field splitting with a modelled `IFS`; `read`
+as a nondeterministic assignment; command substitution of commands
+that only print (such as `echo`), so their output can be modelled.
 
 ---
 

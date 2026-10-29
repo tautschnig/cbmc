@@ -1,0 +1,11 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Exit statuses of &&, ||, !, if, and the test utility, including status 2
+for an invalid integer (as in dash and bash).

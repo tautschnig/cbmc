@@ -83,7 +83,8 @@ crangler.dir: util.dir json.dir
 
 python.dir: util.dir json.dir langapi.dir
 
-shell.dir: util.dir json.dir langapi.dir big-int.dir
+shell.dir: util.dir json.dir langapi.dir big-int.dir ansi-c.dir \
+           goto-programs.dir
 
 languages: util.dir langapi.dir \
            cpp.dir ansi-c.dir xmllang.dir assembler.dir \

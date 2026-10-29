@@ -1,7 +1,9 @@
 SRC = shell_arith.cpp \
       shell_ast.cpp \
+      shell_converter.cpp \
       shell_dialect.cpp \
       shell_language.cpp \
+      shell_runtime.cpp \
       shfmt_reader.cpp \
       # Empty last line
 

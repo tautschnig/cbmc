@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=6$
+^SIGNAL=0$
+unsupported shell construct: test operand that is an expansion where its value could change how the arguments are parsed
+^CONVERSION ERROR$
+--
+^VERIFICATION
+--
+With two arguments, test decides how to parse them by the value of the
+first, which is unknown here.

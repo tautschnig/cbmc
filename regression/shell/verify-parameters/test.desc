@@ -1,0 +1,11 @@
+CORE
+main.bash
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Parameter expansion operators (XCU 2.6.2), ${#x}, and arithmetic
+expansion, including the comma operator of bash.

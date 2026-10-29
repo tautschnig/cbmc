@@ -171,6 +171,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
       "python-max-list-length", cmdline.get_value("python-max-list-length"));
   if(cmdline.isset("python-no-body-check"))
     options.set_option("python-no-body-check", true);
+  if(cmdline.isset("shell-max-string-length"))
+    options.set_option(
+      "shell-max-string-length", cmdline.get_value("shell-max-string-length"));
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
   // Disable signed overflow checks for Python source files.
@@ -1060,6 +1063,10 @@ void cbmc_parse_optionst::help()
     HELP_CONFIG_C_CPP
     HELP_ANSI_C_LANGUAGE
     HELP_FUNCTIONS
+    "\n"
+    "Shell scripts:\n"
+    " {y--shell-max-string-length} {un} \t "
+    "bound the length of shell strings to {un} bytes (default: 64)\n"
     "\n"
     "Platform options:\n"
     HELP_CONFIG_PLATFORM

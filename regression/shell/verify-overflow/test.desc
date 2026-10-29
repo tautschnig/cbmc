@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[overflow\.1\] file main.sh line 3 arithmetic overflow on \+ in arithmetic expansion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Overflow of signed long in arithmetic expansion is reported: XCU 1.1.2.1
+gives it ISO C semantics, where it is undefined.
