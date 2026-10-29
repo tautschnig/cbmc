@@ -232,8 +232,19 @@ bool go_languaget::generate_support_functions(
   }
   exprt::operandst arguments;
   for(const auto &parameter : to_code_type(function->type).parameters())
+  {
+    if(parameter.type().id() == ID_pointer)
+    {
+      // A function value is nil or refers to a function; an arbitrary
+      // pointer would be neither.
+      log.error() << "Go front-end: --function with parameters of function "
+                     "type is not supported yet"
+                  << messaget::eom;
+      return true;
+    }
     arguments.push_back(
       side_effect_expr_nondett{parameter.type(), function->location});
+  }
   body.add(call(*function, std::move(arguments)));
 
   symbolt start{start_id, code_typet{{}, empty_typet{}}, "go"};

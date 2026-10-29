@@ -72,11 +72,33 @@ private:
   go_type_convertert type_converter;
   bool error_found = false;
 
-  // State of the function being converted.
-  irep_idt function_id;
-  typet return_type;
-  std::vector<symbol_exprt> named_results;
-  std::size_t tmp_counter = 0;
+  /// A statement that "break" (and, for loops, "continue") can refer to
+  /// (Go1.27 §Break_statements, §Continue_statements).
+  struct jump_targett
+  {
+    /// Go object id of the statement's label, or empty.
+    irep_idt label_object;
+    bool is_loop;
+    /// GOTO labels for jumps that native break/continue cannot express:
+    /// after the statement, and at the end of a loop body.
+    irep_idt break_label;
+    irep_idt continue_label;
+  };
+
+  /// State of the function being converted; saved while converting the
+  /// body of a function literal (Go1.27 §Function_literals).
+  struct function_statet
+  {
+    irep_idt function_id;
+    typet return_type;
+    /// Result parameters, if named (Go1.27 §Function_types).
+    std::vector<symbol_exprt> named_results;
+    std::size_t tmp_counter = 0;
+    std::size_t label_counter = 0;
+    std::size_t literal_counter = 0;
+    std::vector<jump_targett> jump_targets;
+  };
+  function_statet state;
 
   /// The source location of \p node, attributed to the current function.
   source_locationt location_of(const irept &node) const;
@@ -94,7 +116,21 @@ private:
   // Declarations
   void declare_package_var(const irep_idt &object_id, const irept &where);
   void declare_function(const irept &decl);
+  /// Bind the parameters of \p code_type, whose go/types signature is
+  /// \p signature, to symbols; unnamed ones get ids below \p function.
+  void declare_parameters(
+    code_typet &code_type,
+    const irept &signature,
+    const irep_idt &function,
+    const source_locationt &location);
   void convert_function_body(const irept &decl);
+  /// Convert \p body into the value of function \p function, whose
+  /// go/types signature has type-table index \p signature_index.
+  void convert_function(
+    const irep_idt &function,
+    const irep_idt &signature_index,
+    const irept &body,
+    const source_locationt &location);
   void convert_package_init(const std::vector<irep_idt> &init_functions);
   symbol_exprt declare_local(
     const irep_idt &object_id,
@@ -115,7 +151,17 @@ private:
   void convert_assign(const irept &stmt, code_blockt &dest);
   void convert_inc_dec(const irept &stmt, code_blockt &dest);
   void convert_if(const irept &stmt, code_blockt &dest);
-  void convert_for(const irept &stmt, code_blockt &dest);
+  /// \p label_object: the object id of the label of the statement, if any.
+  void convert_for(
+    const irept &stmt,
+    code_blockt &dest,
+    const irep_idt &label_object = irep_idt{});
+  void convert_switch(
+    const irept &stmt,
+    code_blockt &dest,
+    const irep_idt &label_object = irep_idt{});
+  void convert_labeled(const irept &stmt, code_blockt &dest);
+  void convert_branch(const irept &stmt, code_blockt &dest);
   void convert_return(const irept &stmt, code_blockt &dest);
   void convert_expr_stmt(const irept &stmt, code_blockt &dest);
   /// Calls that are statements only (panic, cprover.Assert, ...): appends
@@ -127,7 +173,24 @@ private:
   exprt convert_constant(const irept &expr, const typet &type);
   exprt convert_unary(const irept &expr);
   exprt convert_binary(const irept &expr);
+  /// The comparison \p x \p op \p y (Go1.27 §Comparison_operators).
+  exprt
+  convert_comparison(const irep_idt &op, exprt x, exprt y, const irept &where);
+  exprt convert_func_lit(const irept &lit);
+  /// The values of a multi-valued expression \p value (a struct, see
+  /// go_type_convertert::tuple), evaluated once into a temporary.
+  std::vector<exprt> unpack(
+    const exprt &value,
+    const source_locationt &location,
+    code_blockt &dest);
   exprt convert_call(const irept &call);
+  /// The arguments of \p call, converted to the parameter types of
+  /// \p code_type, including f(g()) with multi-valued g (Go1.27 §Calls).
+  bool convert_arguments(
+    const irept &call,
+    const code_typet &code_type,
+    exprt::operandst &arguments,
+    code_blockt &prefix);
   exprt convert_conversion(const irept &call);
   exprt convert_min_max(const irept &call, bool is_min);
   /// \p value, evaluated only if \p condition holds; otherwise the program

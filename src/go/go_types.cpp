@@ -13,6 +13,7 @@ Author: Michael Tautschnig
 
 #include <util/bitvector_types.h>
 #include <util/config.h>
+#include <util/pointer_expr.h>
 #include <util/std_types.h>
 
 #include "go_parse_tree.h"
@@ -100,33 +101,19 @@ typet go_type_convertert::operator()(const irep_idt &index)
   }
   else if(k == "signature")
   {
-    // Go1.27 §Function_types. Functions with more than one result are
-    // not supported yet.
-    const auto &results = go_list(under, "results");
-    typet return_type = empty_typet{};
-    if(results.size() == 1)
-      return_type = (*this)(results.front().get("type"));
-    else if(results.size() > 1)
-    {
-      unsupported_reason = "functions with multiple results";
+    // Go1.27 §Function_types: a function value refers to a function, or
+    // is nil; it is modelled as a pointer to code.
+    typet code = signature(index);
+    if(code.is_nil())
       return typet{ID_nil};
-    }
-    if(return_type.is_nil())
+    result = pointer_typet{std::move(code), config.ansi_c.pointer_width};
+  }
+  else if(k == "tuple")
+  {
+    // The type of a call of a function with several results.
+    result = tuple(go_list(under, "items"));
+    if(result.is_nil())
       return typet{ID_nil};
-    code_typet::parameterst parameters;
-    for(const auto &param : go_list(under, "params"))
-    {
-      typet param_type = (*this)(param.get("type"));
-      if(param_type.is_nil())
-        return typet{ID_nil};
-      parameters.emplace_back(param_type);
-    }
-    if(under.get_bool("variadic"))
-    {
-      unsupported_reason = "variadic functions";
-      return typet{ID_nil};
-    }
-    result = code_typet{std::move(parameters), std::move(return_type)};
   }
   else
   {
@@ -137,4 +124,59 @@ typet go_type_convertert::operator()(const irep_idt &index)
   if(result.is_not_nil())
     result.set(ID_C_go_type, entry.get("str"));
   return result;
+}
+
+typet go_type_convertert::tuple(const irept::subt &items)
+{
+  struct_typet::componentst components;
+  for(const auto &item : items)
+  {
+    typet type = (*this)(item.get("type"));
+    if(type.is_nil())
+      return typet{ID_nil};
+    components.emplace_back(
+      "$" + std::to_string(components.size()), std::move(type));
+  }
+  struct_typet result{std::move(components)};
+  result.set(ID_C_go_tuple, true);
+  return std::move(result);
+}
+
+typet go_type_convertert::signature(const irep_idt &index)
+{
+  const irept &under = underlying(index);
+  if(under.get("k") != "signature")
+  {
+    unsupported_reason =
+      "type " + parse_tree.type_entry(index).get_string("str");
+    return typet{ID_nil};
+  }
+  if(under.get_bool("variadic"))
+  {
+    unsupported_reason = "variadic functions";
+    return typet{ID_nil};
+  }
+
+  // Go1.27 §Function_types. A function with several results returns them
+  // as one struct (see tuple), with components $0, $1, ...
+  const auto &results = go_list(under, "results");
+  typet return_type = empty_typet{};
+  if(results.size() == 1)
+    return_type = (*this)(results.front().get("type"));
+  else if(results.size() > 1)
+    return_type = tuple(results);
+  if(return_type.is_nil())
+    return typet{ID_nil};
+
+  code_typet::parameterst parameters;
+  for(const auto &param : go_list(under, "params"))
+  {
+    typet param_type = (*this)(param.get("type"));
+    if(param_type.is_nil())
+      return typet{ID_nil};
+    parameters.emplace_back(param_type);
+  }
+  code_typet result{std::move(parameters), std::move(return_type)};
+  result.set(ID_C_go_type, parse_tree.type_entry(index).get("str"));
+  return std::move(result);
 }

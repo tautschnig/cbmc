@@ -17,10 +17,13 @@ Author: Michael Tautschnig
 #include <util/expr_initializer.h>
 #include <util/expr_util.h>
 #include <util/mp_arith.h>
+#include <util/pointer_expr.h>
 #include <util/std_code.h>
 #include <util/symbol_table_base.h>
 
 #include "go_parse_tree.h"
+
+#include <set>
 
 go_convertert::go_convertert(
   symbol_table_baset &symbol_table,
@@ -34,13 +37,43 @@ go_convertert::go_convertert(
 {
 }
 
+/// Id of the expression standing for the untyped nil until its context
+/// determines the type (see go_convertert::convert_expr).
+static const irep_idt ID_go_nil = "go_nil";
+
+/// An expression statement evaluating \p value, at \p location.
+static code_expressiont
+expression_statement(exprt value, const source_locationt &location)
+{
+  code_expressiont result{std::move(value)};
+  result.add_source_location() = location;
+  return result;
+}
+
+/// \p value converted to \p type, as for an assignment (Go1.27
+/// §Assignability): go/types has checked that this is valid. Integer
+/// representations change as for conversions; the untyped nil becomes the
+/// null pointer of \p type.
+static exprt go_cast(exprt value, const typet &type)
+{
+  if(value.id() == ID_go_nil)
+  {
+    PRECONDITION(type.id() == ID_pointer);
+    source_locationt location = value.source_location();
+    exprt result = null_pointer_exprt{to_pointer_type(type)};
+    result.add_source_location() = std::move(location);
+    return result;
+  }
+  return typecast_exprt::conditional_cast(std::move(value), type);
+}
+
 source_locationt go_convertert::location_of(const irept &node) const
 {
   // Property and loop ids are derived from the function recorded in the
   // source location (CBMC convention: the function's symbol id).
   source_locationt location = go_location(node);
-  if(!function_id.empty() && location.is_not_nil())
-    location.set_function(function_id);
+  if(!state.function_id.empty() && location.is_not_nil())
+    location.set_function(state.function_id);
   return location;
 }
 
@@ -124,24 +157,12 @@ void go_convertert::declare_package_var(
   add_symbol(symbol);
 }
 
-void go_convertert::declare_function(const irept &decl)
+void go_convertert::declare_parameters(
+  code_typet &code_type,
+  const irept &signature,
+  const irep_idt &function,
+  const source_locationt &location)
 {
-  if(go_field(decl, "Recv").is_not_nil())
-    return unsupported(decl, "methods");
-  if(go_field(decl, "Body").is_nil())
-    return unsupported(decl, "functions without a body");
-  const irept &name = go_field(decl, "Name");
-  const irep_idt &object_id = name.get("_obj");
-  const irept &object = parse_tree.object(object_id);
-  const irept &signature = parse_tree.type_entry(object.get("type"));
-  if(go_field(go_field(decl, "Type"), "TypeParams").is_not_nil())
-    return unsupported(decl, "generic functions");
-
-  typet type = convert_type(object.get("type"), decl);
-  if(type.is_nil())
-    return;
-  code_typet &code_type = to_code_type(type);
-
   // Go1.27 §Function_declarations: parameters are local variables of the
   // function. Unnamed parameters still need a symbol to bind the argument.
   const auto &params = go_list(signature, "params");
@@ -153,14 +174,14 @@ void go_convertert::declare_function(const irept &decl)
     irep_idt base = param.get("name");
     if(param_object.empty() || base == "_")
     {
-      param_object = id2string(object_id) + "::$param" + std::to_string(index);
+      param_object = id2string(function) + "::$param" + std::to_string(index);
       base = "$param" + std::to_string(index);
     }
     const irep_idt param_id = symbol_id(param_object);
     parameter.set_identifier(param_id);
     parameter.set_base_name(base);
     symbolt param_symbol = make_symbol(
-      param_id, base, parameter.type(), location_of(decl), parse_tree.package);
+      param_id, base, parameter.type(), location, parse_tree.package);
     param_symbol.is_parameter = true;
     param_symbol.is_lvalue = true;
     param_symbol.is_thread_local = true;
@@ -168,6 +189,28 @@ void go_convertert::declare_function(const irept &decl)
     add_symbol(param_symbol);
     ++index;
   }
+}
+
+void go_convertert::declare_function(const irept &decl)
+{
+  if(go_field(decl, "Recv").is_not_nil())
+    return unsupported(decl, "methods");
+  if(go_field(decl, "Body").is_nil())
+    return unsupported(decl, "functions without a body");
+  const irept &name = go_field(decl, "Name");
+  const irep_idt &object_id = name.get("_obj");
+  const irept &object = parse_tree.object(object_id);
+  if(go_field(go_field(decl, "Type"), "TypeParams").is_not_nil())
+    return unsupported(decl, "generic functions");
+
+  typet type = type_converter.signature(object.get("type"));
+  if(type.is_nil())
+    return unsupported(decl, type_converter.unsupported_reason);
+  declare_parameters(
+    to_code_type(type),
+    parse_tree.type_entry(object.get("type")),
+    object_id,
+    location_of(decl));
 
   symbolt symbol = make_symbol(
     symbol_id(object_id),
@@ -207,9 +250,9 @@ symbol_exprt go_convertert::new_temporary(
   const source_locationt &location,
   code_blockt &dest)
 {
-  const irep_idt base = "$tmp" + std::to_string(tmp_counter++);
+  const irep_idt base = "$tmp" + std::to_string(state.tmp_counter++);
   symbolt symbol = make_symbol(
-    id2string(function_id) + "::" + id2string(base),
+    id2string(state.function_id) + "::" + id2string(base),
     base,
     type,
     location,
@@ -230,6 +273,22 @@ exprt go_convertert::variable(const irept &ident)
   const irep_idt &object_id = ident.get("_obj");
   const irept &object = parse_tree.object(object_id);
   const irep_idt &kind = object.get("kind");
+  if(kind == "func")
+  {
+    // Go1.27 §Function_types: a function value referring to a declared
+    // function.
+    const symbolt *function = symbol_table.lookup(symbol_id(object_id));
+    if(function == nullptr)
+    {
+      if(object.get("pkg") != parse_tree.package)
+        unsupported(
+          ident, "function values from package " + object.get_string("pkg"));
+      return nil_exprt{};
+    }
+    address_of_exprt result{function->symbol_expr()};
+    result.add_source_location() = location_of(ident);
+    return std::move(result);
+  }
   if(kind != "var")
   {
     unsupported(
@@ -261,44 +320,55 @@ void go_convertert::convert_function_body(const irept &decl)
 {
   const irept &name = go_field(decl, "Name");
   const irep_idt &object_id = name.get("_obj");
-  symbolt *symbol = symbol_table.get_writeable(symbol_id(object_id));
-  if(symbol == nullptr)
+  if(!symbol_table.has_symbol(symbol_id(object_id)))
     return; // declaration failed and was reported
-  function_id = symbol->name;
-  tmp_counter = 0;
-  return_type = to_code_type(symbol->type).return_type();
-  named_results.clear();
+  convert_function(
+    symbol_id(object_id),
+    parse_tree.object(object_id).get("type"),
+    go_field(decl, "Body"),
+    location_of(decl));
+}
+
+void go_convertert::convert_function(
+  const irep_idt &function,
+  const irep_idt &signature_index,
+  const irept &body_node,
+  const source_locationt &location)
+{
+  state = function_statet{};
+  state.function_id = function;
+  state.return_type = to_code_type(ns.lookup(function).type).return_type();
 
   code_blockt body;
-  // Go1.27 §Function_types, §Return_statements: named result parameters
-  // are local variables initialised to their zero value.
-  const irept &signature =
-    parse_tree.type_entry(parse_tree.object(object_id).get("type"));
+  // Go1.27 §Return_statements: "Regardless of how they are declared, all
+  // the result values are initialized to the zero values for their type
+  // upon entry to the function." Named results are local variables.
+  const irept &signature = parse_tree.type_entry(signature_index);
   for(const auto &result : go_list(signature, "results"))
   {
     const irep_idt &result_object = result.get("obj");
     if(result_object.empty())
       continue;
-    const symbol_exprt sym =
-      declare_local(result_object, return_type, location_of(decl), body);
-    named_results.push_back(sym);
-    body.add(code_frontend_assignt{
-      sym, *zero_initializer(return_type, location_of(decl), ns)});
+    typet type = convert_type(result.get("type"), body_node);
+    if(type.is_nil())
+      return;
+    const symbol_exprt sym = declare_local(result_object, type, location, body);
+    state.named_results.push_back(sym);
+    body.add(code_frontend_assignt{sym, *zero_initializer(type, location, ns)});
   }
 
-  code_blockt statements = convert_block(go_field(decl, "Body"));
+  code_blockt statements = convert_block(body_node);
   for(auto &s : statements.statements())
     body.add(std::move(s));
-  symbol = symbol_table.get_writeable(function_id);
-  symbol->value = std::move(body);
+  symbol_table.get_writeable_ref(function).value = std::move(body);
 }
 
 void go_convertert::convert_package_init(
   const std::vector<irep_idt> &init_functions)
 {
   const irep_idt init_id = package_init_id(parse_tree.package);
-  function_id = init_id;
-  tmp_counter = 0;
+  state = function_statet{};
+  state.function_id = init_id;
   code_blockt body;
 
   // Go1.27 §Package_initialization: package-level variables are
@@ -307,25 +377,29 @@ void go_convertert::convert_package_init(
   // go/types computes this order (types.Info.InitOrder).
   for(const auto &init : parse_tree.init_order)
   {
-    if(init.lhs.size() != 1)
-    {
-      unsupported(init.rhs, "initialising several variables from one call");
-      continue;
-    }
     exprt rhs = convert_expr(init.rhs);
     if(rhs.is_nil())
       continue;
-    const irept &object = parse_tree.object(init.lhs.front());
-    if(object.get("name") == "_")
+    // var a, b = f() initialises several variables from one call.
+    std::vector<exprt> values{rhs};
+    if(init.lhs.size() > 1)
+      values = unpack(rhs, location_of(init.rhs), body);
+    for(std::size_t i = 0; i < init.lhs.size(); ++i)
     {
-      body.add(code_expressiont{rhs});
-      continue;
+      const irept &object = parse_tree.object(init.lhs[i]);
+      if(object.get("name") == "_")
+      {
+        body.add(expression_statement(values[i], location_of(init.rhs)));
+        continue;
+      }
+      const symbolt *lhs = symbol_table.lookup(symbol_id(init.lhs[i]));
+      if(lhs == nullptr)
+        continue; // declaration failed and was reported
+      code_frontend_assignt assign{
+        lhs->symbol_expr(), go_cast(values[i], lhs->type)};
+      assign.add_source_location() = location_of(init.rhs);
+      body.add(std::move(assign));
     }
-    const symbolt &lhs = ns.lookup(symbol_id(init.lhs.front()));
-    code_frontend_assignt assign{
-      lhs.symbol_expr(), typecast_exprt::conditional_cast(rhs, lhs.type)};
-    assign.add_source_location() = location_of(init.rhs);
-    body.add(std::move(assign));
   }
 
   // Go1.27 §Package_initialization: "... followed by calling all init
@@ -419,24 +493,89 @@ void go_convertert::convert_statement(const irept &stmt, code_blockt &dest)
     convert_return(stmt, dest);
   else if(kind == "ExprStmt")
     convert_expr_stmt(stmt, dest);
+  else if(kind == "SwitchStmt")
+    convert_switch(stmt, dest);
+  else if(kind == "LabeledStmt")
+    convert_labeled(stmt, dest);
+  else if(kind == "BranchStmt")
+    convert_branch(stmt, dest);
   else if(kind == "EmptyStmt")
     return;
-  else if(kind == "BranchStmt")
-  {
-    // Go1.27 §Break_statements, §Continue_statements.
-    const irep_idt &tok = stmt.get("Tok");
-    if(go_field(stmt, "Label").is_not_nil())
-      return unsupported(stmt, "labelled " + id2string(tok));
-    codet branch = tok == "break"      ? codet{code_breakt{}}
-                   : tok == "continue" ? codet{code_continuet{}}
-                                       : codet{ID_nil};
-    if(branch.get_statement() == ID_nil)
-      return unsupported(stmt, id2string(tok) + " statements");
-    branch.add_source_location() = location_of(stmt);
-    dest.add(std::move(branch));
-  }
   else
     unsupported(stmt, "statement " + id2string(kind));
+}
+
+void go_convertert::convert_labeled(const irept &stmt, code_blockt &dest)
+{
+  // Go1.27 §Labeled_statements: "A labeled statement may be the target of
+  // a goto, break or continue statement." Labels are function-scoped
+  // (§Label_scopes), so the label name is unique within the function.
+  const irept &label = go_field(stmt, "Label");
+  const irept &inner = go_field(stmt, "Stmt");
+  code_blockt labelled;
+  if(inner.id() == "ForStmt")
+    convert_for(inner, labelled, label.get("_obj"));
+  else if(inner.id() == "SwitchStmt")
+    convert_switch(inner, labelled, label.get("_obj"));
+  else
+    convert_statement(inner, labelled);
+  code_labelt result{label.get("Name"), std::move(labelled)};
+  result.add_source_location() = location_of(stmt);
+  dest.add(std::move(result));
+}
+
+void go_convertert::convert_branch(const irept &stmt, code_blockt &dest)
+{
+  const irep_idt &tok = stmt.get("Tok");
+  const irept &label = go_field(stmt, "Label");
+  const source_locationt location = location_of(stmt);
+
+  if(tok == "goto")
+  {
+    // Go1.27 §Goto_statements: go/types has checked that the jump neither
+    // enters a block nor skips variable declarations.
+    code_gotot jump{label.get("Name")};
+    jump.add_source_location() = location;
+    return dest.add(std::move(jump));
+  }
+  if(tok == "fallthrough")
+  {
+    // Handled by convert_switch; go/types rejects all other uses.
+    return unsupported(stmt, "fallthrough in this position");
+  }
+  if(tok != "break" && tok != "continue")
+    return unsupported(stmt, id2string(tok) + " statements");
+
+  // Go1.27 §Break_statements: "A "break" statement terminates execution of
+  // the innermost "for", "switch", or "select" statement within the same
+  // function." §Continue_statements: "A "continue" statement begins the
+  // next iteration of the innermost enclosing "for" loop". With a label,
+  // the statement with that label is meant instead.
+  const bool is_break = tok == "break";
+  const jump_targett *target = nullptr;
+  for(auto it = state.jump_targets.rbegin(); it != state.jump_targets.rend();
+      ++it)
+  {
+    const bool matches = label.is_nil() ? (is_break || it->is_loop)
+                                        : it->label_object == label.get("_obj");
+    if(matches)
+    {
+      target = &*it;
+      break;
+    }
+  }
+  if(target == nullptr)
+    return unsupported(stmt, id2string(tok) + " outside its statement");
+
+  // Switch statements are not converted to native switches, so native
+  // break and continue reach the innermost loop.
+  codet code = !label.is_nil() || !target->is_loop
+                 ? codet{code_gotot{
+                     is_break ? target->break_label : target->continue_label}}
+               : is_break ? codet{code_breakt{}}
+                          : codet{code_continuet{}};
+  code.add_source_location() = location;
+  dest.add(std::move(code));
 }
 
 void go_convertert::convert_decl_stmt(const irept &stmt, code_blockt &dest)
@@ -449,17 +588,19 @@ void go_convertert::convert_decl_stmt(const irept &stmt, code_blockt &dest)
   {
     const auto &names = go_list(spec, "Names");
     const auto &values = go_list(spec, "Values");
-    if(!values.empty() && values.size() != names.size())
-    {
-      unsupported(spec, "initialising several variables from one call");
-      continue;
-    }
     // Go1.27 §Variable_declarations: the scope of a variable declared in
     // a function begins after its VarSpec, so the initialisers refer to
     // outer objects; go/types has already resolved them by object id.
     std::vector<exprt> initialisers;
     for(const auto &value : values)
       initialisers.push_back(convert_expr(value));
+    if(!values.empty() && values.size() != names.size())
+    {
+      // var a, b = f(): one multi-valued initialiser.
+      if(initialisers.front().is_nil())
+        continue;
+      initialisers = unpack(initialisers.front(), location_of(spec), dest);
+    }
     for(std::size_t i = 0; i < names.size(); ++i)
     {
       const irept &name = names[i];
@@ -470,7 +611,7 @@ void go_convertert::convert_decl_stmt(const irept &stmt, code_blockt &dest)
       if(name.get("Name") == "_")
       {
         if(!values.empty() && initialisers[i].is_not_nil())
-          dest.add(code_expressiont{initialisers[i]});
+          dest.add(expression_statement(initialisers[i], location_of(name)));
         continue;
       }
       symbol_exprt sym =
@@ -478,7 +619,7 @@ void go_convertert::convert_decl_stmt(const irept &stmt, code_blockt &dest)
       // Go1.27 §The_zero_value.
       exprt value = values.empty()
                       ? *zero_initializer(type, location_of(name), ns)
-                      : typecast_exprt::conditional_cast(initialisers[i], type);
+                      : go_cast(initialisers[i], type);
       if(value.is_nil())
         continue;
       code_frontend_assignt assign{sym, value};
@@ -519,9 +660,6 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
     return;
   }
 
-  if(lhs.size() != rhs.size())
-    return unsupported(stmt, "assigning the results of a multi-valued call");
-
   // Go1.27 §Assignment_statements: "The assignment proceeds in two phases.
   // First, the operands of index expressions and pointer indirections ...
   // on the left and the expressions on the right are all evaluated in the
@@ -531,7 +669,15 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
   std::vector<exprt> values;
   for(const auto &value : rhs)
     values.push_back(convert_expr(value));
-  if(lhs.size() > 1)
+  if(lhs.size() != rhs.size())
+  {
+    // "In the first, the right hand operand is a single multi-valued
+    // expression such as a function call".
+    if(values.front().is_nil())
+      return;
+    values = unpack(values.front(), location, dest);
+  }
+  else if(lhs.size() > 1)
   {
     for(auto &value : values)
     {
@@ -557,7 +703,7 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
     {
       // Go1.27 §Assignment_statements: the blank identifier ignores the
       // value; the expression is still evaluated.
-      dest.add(code_expressiont{values[i]});
+      dest.add(expression_statement(values[i], location));
       continue;
     }
     exprt lvalue;
@@ -575,8 +721,7 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
       lvalue = variable(target);
     if(lvalue.is_nil())
       continue;
-    code_frontend_assignt assign{
-      lvalue, typecast_exprt::conditional_cast(values[i], lvalue.type())};
+    code_frontend_assignt assign{lvalue, go_cast(values[i], lvalue.type())};
     assign.add_source_location() = location;
     dest.add(std::move(assign));
   }
@@ -630,7 +775,10 @@ void go_convertert::convert_if(const irept &stmt, code_blockt &dest)
   dest.add(std::move(scope));
 }
 
-void go_convertert::convert_for(const irept &stmt, code_blockt &dest)
+void go_convertert::convert_for(
+  const irept &stmt,
+  code_blockt &dest,
+  const irep_idt &label_object)
 {
   // Go1.27 §For_statements, §For_clause: init runs once before the loop;
   // the condition is evaluated before each iteration (absent means true);
@@ -652,12 +800,117 @@ void go_convertert::convert_for(const irept &stmt, code_blockt &dest)
     iter = side_effect_expr_statement_expressiont{
       std::move(post_block), empty_typet{}, location_of(post)};
   }
+
+  // A labelled loop may be the target of a break or continue from within
+  // a nested loop or switch; these jump after the loop or to the end of
+  // the loop body, from where the post statement runs.
+  const std::string prefix =
+    "$for" + std::to_string(state.label_counter++) + "$";
+  state.jump_targets.push_back(
+    {label_object, true, prefix + "break", prefix + "continue"});
   code_blockt body = convert_block(go_field(stmt, "Body"));
+  state.jump_targets.pop_back();
   if(cond.is_nil())
     return;
+  if(!label_object.empty())
+    body.add(code_labelt{prefix + "continue", code_skipt{}});
   code_fort loop{code_skipt{}, cond, iter, std::move(body)};
   loop.add_source_location() = location_of(stmt);
   scope.add(std::move(loop));
+  if(!label_object.empty())
+    scope.add(code_labelt{prefix + "break", code_skipt{}});
+  dest.add(std::move(scope));
+}
+
+void go_convertert::convert_switch(
+  const irept &stmt,
+  code_blockt &dest,
+  const irep_idt &label_object)
+{
+  // Go1.27 §Switch_statements, §Expression_switches. The switch statement
+  // is its own implicit block, which the optional simple statement starts.
+  // "The switch expression is evaluated exactly once", into a temporary;
+  // "A missing switch expression is equivalent to the boolean value
+  // true." Case expressions "are evaluated left-to-right and
+  // top-to-bottom; the first one that equals the switch expression
+  // triggers execution of the statements of the associated case". Hence
+  // a chain of conditional jumps rather than a native switch, whose case
+  // labels would be constants compared in no particular order.
+  const source_locationt location = location_of(stmt);
+  code_blockt scope;
+  const irept &init = go_field(stmt, "Init");
+  if(init.is_not_nil())
+    convert_statement(init, scope);
+
+  exprt tag = nil_exprt{};
+  const irept &tag_node = go_field(stmt, "Tag");
+  if(tag_node.is_not_nil())
+  {
+    exprt value = convert_expr(tag_node);
+    if(value.is_nil())
+      return;
+    symbol_exprt tmp = new_temporary(value.type(), location, scope);
+    scope.add(code_frontend_assignt{tmp, value});
+    tag = tmp;
+  }
+
+  const std::string prefix =
+    "$switch" + std::to_string(state.label_counter++) + "$";
+  const irep_idt end_label = prefix + "end";
+  const auto &clauses = go_list(go_field(stmt, "Body"), "List");
+  const auto clause_label = [&prefix](std::size_t i)
+  { return irep_idt{prefix + std::to_string(i)}; };
+
+  // Dispatch: test the cases in order; "If no case matches and there is a
+  // "default" case, its statements are executed."
+  irep_idt default_label = end_label;
+  for(std::size_t i = 0; i < clauses.size(); ++i)
+  {
+    const auto &cases = go_list(clauses[i], "List");
+    if(cases.empty())
+      default_label = clause_label(i);
+    for(const auto &case_node : cases)
+    {
+      exprt value = convert_expr(case_node);
+      if(value.is_nil())
+        continue;
+      exprt condition =
+        tag.is_nil() ? value : convert_comparison("==", value, tag, case_node);
+      if(condition.is_nil())
+        continue;
+      code_ifthenelset dispatch{condition, code_gotot{clause_label(i)}};
+      dispatch.add_source_location() = location_of(case_node);
+      scope.add(std::move(dispatch));
+    }
+  }
+  scope.add(code_gotot{default_label});
+
+  // Clauses: "Each clause in a "switch" or "select" statement acts as an
+  // implicit block." A final "fallthrough" statement continues with the
+  // first statement of the next clause; otherwise "control flows to the
+  // end of the "switch" statement".
+  state.jump_targets.push_back({label_object, false, end_label, irep_idt{}});
+  for(std::size_t i = 0; i < clauses.size(); ++i)
+  {
+    const auto &body = go_list(clauses[i], "Body");
+    std::size_t last = body.size();
+    while(last > 0 && body[last - 1].id() == "EmptyStmt")
+      --last;
+    const bool falls_through = last > 0 &&
+                               body[last - 1].id() == "BranchStmt" &&
+                               body[last - 1].get("Tok") == "fallthrough";
+    code_blockt clause;
+    clause.add_source_location() = location_of(clauses[i]);
+    for(std::size_t j = 0; j < (falls_through ? last - 1 : body.size()); ++j)
+      convert_statement(body[j], clause);
+    code_labelt labelled{clause_label(i), std::move(clause)};
+    labelled.add_source_location() = location_of(clauses[i]);
+    scope.add(std::move(labelled));
+    if(!falls_through)
+      scope.add(code_gotot{end_label});
+  }
+  state.jump_targets.pop_back();
+  scope.add(code_labelt{end_label, code_skipt{}});
   dest.add(std::move(scope));
 }
 
@@ -665,24 +918,51 @@ void go_convertert::convert_return(const irept &stmt, code_blockt &dest)
 {
   // Go1.27 §Return_statements.
   const auto &results = go_list(stmt, "Results");
+  const source_locationt location = location_of(stmt);
   code_frontend_returnt ret;
-  if(results.size() == 1)
+  if(results.empty() && !state.named_results.empty())
   {
-    exprt value = convert_expr(results.front());
-    if(value.is_nil())
-      return;
-    ret = code_frontend_returnt{
-      typecast_exprt::conditional_cast(value, return_type)};
+    // "The "return" statement returns the values of these variables."
+    if(state.named_results.size() == 1)
+      ret = code_frontend_returnt{state.named_results.front()};
+    else
+    {
+      exprt::operandst values{
+        state.named_results.begin(), state.named_results.end()};
+      ret = code_frontend_returnt{
+        struct_exprt{std::move(values), state.return_type}};
+    }
   }
-  else if(results.size() > 1)
-    return unsupported(stmt, "returning several results");
-  else if(!named_results.empty())
+  else if(!results.empty())
   {
-    // A "return" without results in a function with named results
-    // returns their current values.
-    ret = code_frontend_returnt{named_results.front()};
+    // Either one value per result, or "a single call to a multi-valued
+    // function. The effect is as if each value returned from that
+    // function were assigned to a temporary variable with the type of the
+    // respective value, followed by a "return" statement listing these
+    // variables".
+    std::vector<exprt> values;
+    for(const auto &result : results)
+      values.push_back(convert_expr(result));
+    for(const auto &value : values)
+      if(value.is_nil())
+        return;
+    if(results.size() == 1 && is_tuple(values.front().type()))
+      values = unpack(values.front(), location, dest);
+    if(values.size() == 1)
+    {
+      ret = code_frontend_returnt{go_cast(values.front(), state.return_type)};
+    }
+    else
+    {
+      const auto &components = to_struct_type(state.return_type).components();
+      exprt::operandst operands;
+      for(std::size_t i = 0; i < values.size(); ++i)
+        operands.push_back(go_cast(values[i], components[i].type()));
+      ret = code_frontend_returnt{
+        struct_exprt{std::move(operands), state.return_type}};
+    }
   }
-  ret.add_source_location() = location_of(stmt);
+  ret.add_source_location() = location;
   dest.add(std::move(ret));
 }
 
@@ -755,7 +1035,7 @@ bool go_convertert::convert_intrinsic_call(const irept &call, code_blockt &dest)
       exprt value = convert_expr(args.front());
       if(value.is_nil())
         return true;
-      dest.add(code_expressiont{value});
+      dest.add(expression_statement(value, location));
     }
     add_panic(dest, false_exprt{}, "panic", comment, location);
     return true;
@@ -771,7 +1051,7 @@ bool go_convertert::convert_intrinsic_call(const irept &call, code_blockt &dest)
       {
         exprt value = convert_expr(arg);
         if(value.is_not_nil())
-          dest.add(code_expressiont{value});
+          dest.add(expression_statement(value, location));
       }
     }
     return true;
@@ -861,7 +1141,7 @@ exprt go_convertert::convert_min_max(const irept &call, bool is_min)
       unsupported(arg, "min/max arguments with side effects");
       return nil_exprt{};
     }
-    value = typecast_exprt::conditional_cast(value, type);
+    value = go_cast(value, type);
     if(result.is_nil())
       result = value;
     else
@@ -899,6 +1179,13 @@ exprt go_convertert::convert_call(const irept &call)
     typet type = expr_type(call);
     if(type.is_nil())
       return nil_exprt{};
+    if(type.id() == ID_pointer)
+    {
+      // A function value is nil or refers to a function; an arbitrary
+      // pointer would be neither.
+      unsupported(call, "cprover.Nondet of function types");
+      return nil_exprt{};
+    }
     return side_effect_expr_nondett{type, location};
   }
 
@@ -907,13 +1194,7 @@ exprt go_convertert::convert_call(const irept &call)
     unsupported(call, "built-in function " + id2string(callee));
     return nil_exprt{};
   }
-  if(object.get("kind") != "func" || callee.empty())
-  {
-    unsupported(call, "calls of function values");
-    return nil_exprt{};
-  }
-  const symbolt *function = symbol_table.lookup(symbol_id(callee));
-  if(function == nullptr)
+  if(object.get("kind") == "func" && object.get("pkg") != parse_tree.package)
   {
     unsupported(
       call,
@@ -922,24 +1203,201 @@ exprt go_convertert::convert_call(const irept &call)
     return nil_exprt{};
   }
 
-  // Go1.27 §Calls: arguments are evaluated in the usual order and assigned
-  // to the parameters; go/types guarantees assignability.
-  const code_typet &code_type = to_code_type(function->type);
+  // Go1.27 §Calls: "In a function call, the function value and arguments
+  // are evaluated in the usual order. After they are evaluated, new storage
+  // is allocated for the function's variables, which includes its
+  // parameters and results. Then, the arguments of the call are passed to
+  // the function".
+  exprt function = convert_expr(fun);
+  if(function.is_nil())
+    return nil_exprt{};
+  const code_typet &code_type =
+    to_code_type(to_pointer_type(function.type()).base_type());
+  code_blockt prefix;
   exprt::operandst arguments;
-  std::size_t index = 0;
-  for(const auto &arg : go_list(call, "Args"))
+  if(convert_arguments(call, code_type, arguments, prefix))
+    return nil_exprt{};
+
+  exprt result;
+  if(function.id() == ID_address_of)
+  {
+    // A declared function or function literal: call it directly.
+    result = side_effect_expr_function_callt{
+      to_address_of_expr(function).object(),
+      std::move(arguments),
+      code_type.return_type(),
+      location};
+  }
+  else
+  {
+    // A function value. "Calling a nil function value causes a run-time
+    // panic." The check follows the evaluation of the function value and
+    // of the arguments, so evaluate those that have side effects first.
+    if(has_subexpr(function, ID_side_effect))
+    {
+      symbol_exprt tmp = new_temporary(function.type(), location, prefix);
+      code_frontend_assignt assign{tmp, function};
+      assign.add_source_location() = location;
+      prefix.add(std::move(assign));
+      function = tmp;
+    }
+    for(auto &argument : arguments)
+    {
+      if(!has_subexpr(argument, ID_side_effect))
+        continue;
+      symbol_exprt tmp = new_temporary(argument.type(), location, prefix);
+      code_frontend_assignt assign{tmp, argument};
+      assign.add_source_location() = location;
+      prefix.add(std::move(assign));
+      argument = tmp;
+    }
+    add_panic(
+      prefix,
+      notequal_exprt{
+        function, null_pointer_exprt{to_pointer_type(function.type())}},
+      "nil-dereference",
+      "runtime error: invalid memory address or nil pointer dereference",
+      location);
+    // Instructions generated for the call (e.g., by function-pointer
+    // removal) take their location from the function expression.
+    dereference_exprt callee_expr{function};
+    callee_expr.add_source_location() = location;
+    result = side_effect_expr_function_callt{
+      std::move(callee_expr),
+      std::move(arguments),
+      code_type.return_type(),
+      location};
+  }
+
+  if(prefix.statements().empty())
+    return result;
+  // Statement expressions need a value: a call of a function without
+  // results is wrapped as is (its type is void).
+  code_expressiont call_code{std::move(result)};
+  call_code.add_source_location() = location;
+  prefix.add(std::move(call_code));
+  return side_effect_expr_statement_expressiont{
+    std::move(prefix), code_type.return_type(), location};
+}
+
+bool go_convertert::convert_arguments(
+  const irept &call,
+  const code_typet &code_type,
+  exprt::operandst &arguments,
+  code_blockt &prefix)
+{
+  // Go1.27 §Calls: arguments are evaluated in the usual order and assigned
+  // to the parameters; go/types guarantees assignability. "As a special
+  // case, if the return values of a function or method g are equal in
+  // number and individually assignable to the parameters of another
+  // function or method f, then the call f(g(parameters_of_g)) will invoke
+  // f after passing the return values of g to the parameters of f in
+  // order."
+  const auto &args = go_list(call, "Args");
+  std::vector<exprt> values;
+  for(const auto &arg : args)
   {
     exprt value = convert_expr(arg);
     if(value.is_nil())
-      return nil_exprt{};
-    arguments.push_back(typecast_exprt::conditional_cast(
-      value, code_type.parameters()[index++].type()));
+      return true;
+    values.push_back(std::move(value));
   }
-  side_effect_expr_function_callt result{
-    function->symbol_expr(),
-    std::move(arguments),
-    code_type.return_type(),
-    location};
+  if(values.size() == 1 && is_tuple(values.front().type()))
+    values = unpack(values.front(), location_of(call), prefix);
+  const auto &parameters = code_type.parameters();
+  if(values.size() != parameters.size())
+  {
+    unsupported(call, "this call");
+    return true;
+  }
+  for(std::size_t i = 0; i < values.size(); ++i)
+    arguments.push_back(go_cast(values[i], parameters[i].type()));
+  return false;
+}
+
+std::vector<exprt> go_convertert::unpack(
+  const exprt &value,
+  const source_locationt &location,
+  code_blockt &dest)
+{
+  PRECONDITION(is_tuple(value.type()));
+  symbol_exprt tmp = new_temporary(value.type(), location, dest);
+  code_frontend_assignt assign{tmp, value};
+  assign.add_source_location() = location;
+  dest.add(std::move(assign));
+  std::vector<exprt> values;
+  for(const auto &component : to_struct_type(value.type()).components())
+    values.push_back(member_exprt{tmp, component});
+  return values;
+}
+
+/// Collect the ids of the objects that \p node declares (`_def`) and of
+/// the variables it refers to, outside nested function literals' own
+/// declarations.
+static void collect_objects(
+  const irept &node,
+  std::set<irep_idt> &declared,
+  std::vector<const irept *> &uses)
+{
+  if(node.id() == "Ident" && !node.get("_obj").empty())
+  {
+    if(node.get_bool("_def"))
+      declared.insert(node.get("_obj"));
+    else
+      uses.push_back(&node);
+  }
+  for(const auto &sub : node.get_sub())
+    collect_objects(sub, declared, uses);
+  for(const auto &named : node.get_named_sub())
+    collect_objects(named.second, declared, uses);
+}
+
+exprt go_convertert::convert_func_lit(const irept &lit)
+{
+  // Go1.27 §Function_literals: "A function literal represents an anonymous
+  // function." It becomes a function of its own. "Function literals are
+  // closures: they may refer to variables declared in a surrounding
+  // function." Such captured variables are not supported yet.
+  std::set<irep_idt> declared;
+  std::vector<const irept *> uses;
+  collect_objects(lit, declared, uses);
+  for(const irept *use : uses)
+  {
+    const irept &object = parse_tree.object(use->get("_obj"));
+    if(
+      object.get("kind") == "var" && !object.get_bool("package_level") &&
+      declared.find(use->get("_obj")) == declared.end())
+    {
+      unsupported(
+        *use,
+        "function literals capturing variables ('" + use->get_string("Name") +
+          "')");
+      return nil_exprt{};
+    }
+  }
+
+  const irep_idt &signature_index = lit.get("_t");
+  typet type = type_converter.signature(signature_index);
+  if(type.is_nil())
+  {
+    unsupported(lit, type_converter.unsupported_reason);
+    return nil_exprt{};
+  }
+  const std::string base = "$lit" + std::to_string(++state.literal_counter);
+  const irep_idt id = id2string(state.function_id) + base;
+  const source_locationt location = location_of(lit);
+  declare_parameters(
+    to_code_type(type), parse_tree.type_entry(signature_index), id, location);
+  symbolt symbol = make_symbol(id, base, type, location, parse_tree.package);
+  add_symbol(symbol);
+
+  // The literal's body has its own labels, temporaries and results.
+  function_statet outer = std::move(state);
+  convert_function(id, signature_index, go_field(lit, "Body"), location);
+  state = std::move(outer);
+
+  address_of_exprt result{ns.lookup(id).symbol_expr()};
+  result.add_source_location() = location;
   return std::move(result);
 }
 
@@ -981,9 +1439,46 @@ exprt go_convertert::guard_panic(
   code_blockt block;
   add_panic(block, condition, property_class, comment, location);
   const typet type = value.type();
-  block.add(code_expressiont{std::move(value)});
+  block.add(expression_statement(std::move(value), location));
   return side_effect_expr_statement_expressiont{
     std::move(block), type, location};
+}
+
+exprt go_convertert::convert_comparison(
+  const irep_idt &op,
+  exprt x,
+  exprt y,
+  const irept &where)
+{
+  // Go1.27 §Comparison_operators: operands are of identical types (go/types
+  // has converted untyped constants), or one is the untyped nil; the
+  // result is an (untyped) boolean. "Slice, map, and function types are
+  // not comparable. However, as a special case, a slice, map, or function
+  // value may be compared to the predeclared identifier nil."
+  if(x.id() == ID_go_nil && y.id() != ID_go_nil)
+    x = null_pointer_exprt{to_pointer_type(y.type())};
+  if(y.id() == ID_go_nil && x.id() != ID_go_nil)
+    y = null_pointer_exprt{to_pointer_type(x.type())};
+  const bool is_pointer = x.type().id() == ID_pointer;
+  if(
+    x.type().id() != ID_bool && x.type().id() != ID_signedbv &&
+    x.type().id() != ID_unsignedbv && !(is_pointer && op == "==") &&
+    !(is_pointer && op == "!="))
+  {
+    unsupported(
+      where, "comparison of type " + x.type().get_string(ID_C_go_type));
+    return nil_exprt{};
+  }
+  y = go_cast(y, x.type());
+  const irep_idt rel = op == "=="   ? ID_equal
+                       : op == "!=" ? ID_notequal
+                       : op == "<"  ? ID_lt
+                       : op == "<=" ? ID_le
+                       : op == ">"  ? ID_gt
+                                    : ID_ge;
+  binary_relation_exprt result{x, rel, y};
+  result.add_source_location() = location_of(where);
+  return std::move(result);
 }
 
 exprt go_convertert::convert_unary(const irept &expr)
@@ -1030,30 +1525,11 @@ exprt go_convertert::convert_binary(const irept &expr)
   if(op == "||")
     return or_exprt{x, y};
 
-  // Go1.27 §Comparison_operators: operands are of identical types (go/types
-  // has converted untyped constants); the result is an (untyped) boolean.
   if(
     op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" ||
     op == ">=")
   {
-    if(
-      x.type().id() != ID_bool && x.type().id() != ID_signedbv &&
-      x.type().id() != ID_unsignedbv)
-    {
-      unsupported(
-        expr, "comparison of type " + x.type().get_string(ID_C_go_type));
-      return nil_exprt{};
-    }
-    y = typecast_exprt::conditional_cast(y, x.type());
-    const irep_idt rel = op == "=="   ? ID_equal
-                         : op == "!=" ? ID_notequal
-                         : op == "<"  ? ID_lt
-                         : op == "<=" ? ID_le
-                         : op == ">"  ? ID_gt
-                                      : ID_ge;
-    binary_relation_exprt result{x, rel, y};
-    result.add_source_location() = location;
-    return std::move(result);
+    return convert_comparison(op, x, y, expr);
   }
 
   // Arithmetic (Go1.27 §Arithmetic_operators). Only integers so far.
@@ -1068,11 +1544,11 @@ exprt go_convertert::convert_binary(const irept &expr)
         type.get_string(ID_C_go_type));
     return nil_exprt{};
   }
-  x = typecast_exprt::conditional_cast(x, type);
+  x = go_cast(x, type);
 
   const bool is_shift = op == "<<" || op == ">>";
   if(!is_shift)
-    y = typecast_exprt::conditional_cast(y, type);
+    y = go_cast(y, type);
 
   // Operations that may panic: integer division and remainder by zero,
   // and shifts by a negative count. Constant divisors and shift counts
@@ -1183,8 +1659,21 @@ exprt go_convertert::convert_expr(const irept &expr)
   }
 
   const irep_idt &kind = expr.id();
+  if(
+    kind == "Ident" && parse_tree.object(expr.get("_obj")).get("kind") == "nil")
+  {
+    // Go1.27 §Predeclared_identifiers: go/types records the untyped nil
+    // even where it is converted (§Assignability), so the context supplies
+    // the pointer type: a typed null replaces this marker in
+    // go_cast and convert_comparison.
+    exprt result{ID_go_nil, typet{ID_nil}};
+    result.add_source_location() = location_of(expr);
+    return result;
+  }
   if(kind == "Ident")
     return variable(expr);
+  if(kind == "FuncLit")
+    return convert_func_lit(expr);
   if(kind == "ParenExpr")
     return convert_expr(go_field(expr, "X"));
   if(kind == "UnaryExpr")
