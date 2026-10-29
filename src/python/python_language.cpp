@@ -29,6 +29,11 @@ std::set<std::string> python_languaget::extensions() const
   return {"py"};
 }
 
+std::set<std::string> python_languaget::interpreters() const
+{
+  return {"python3", "python"};
+}
+
 void python_languaget::modules_provided(std::set<std::string> &modules)
 {
   modules.insert(get_base_name(parse_path, true));

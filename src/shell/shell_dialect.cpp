@@ -3,6 +3,8 @@
 
 #include "shell_dialect.h"
 
+#include <langapi/mode.h>
+
 std::string shfmt_dialect_name(shell_dialectt dialect)
 {
   switch(dialect)
@@ -26,50 +28,22 @@ bool ends_with(const std::string &s, const std::string &suffix)
   return s.size() >= suffix.size() &&
          s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
-
-/// The interpreter named by a `#!` line: the last path component, or the
-/// first argument when the interpreter is `env`.
-std::string interpreter(const std::string &source)
-{
-  if(source.compare(0, 2, "#!") != 0)
-    return {};
-  const std::string line = source.substr(2, source.find('\n') - 2);
-  std::size_t pos = 0;
-  auto next_word = [&]() -> std::string
-  {
-    while(pos < line.size() && (line[pos] == ' ' || line[pos] == '\t'))
-      ++pos;
-    const std::size_t start = pos;
-    while(pos < line.size() && line[pos] != ' ' && line[pos] != '\t' &&
-          line[pos] != '\r')
-    {
-      ++pos;
-    }
-    std::string word = line.substr(start, pos - start);
-    const std::size_t slash = word.rfind('/');
-    return slash == std::string::npos ? word : word.substr(slash + 1);
-  };
-  std::string word = next_word();
-  if(word == "env")
-  {
-    word = next_word();
-    while(!word.empty() && word[0] == '-') // e.g. env -S
-      word = next_word();
-  }
-  return word;
-}
 } // namespace
 
 shell_dialectt
 detect_shell_dialect(const std::string &source, const std::string &path)
 {
-  const std::string program = interpreter(source);
+  const std::string program = shebang_interpreter(source);
   if(program == "bash")
     return shell_dialectt::BASH;
   if(program == "zsh")
     return shell_dialectt::ZSH;
-  if(program == "mksh" || program == "ksh" || program == "ksh93")
+  if(
+    program == "mksh" || program == "ksh" || program == "ksh93" ||
+    program == "lksh" || program == "pdksh")
+  {
     return shell_dialectt::MKSH;
+  }
   if(!program.empty())
     return shell_dialectt::POSIX; // sh, dash, ash, yash, posh, ...
 

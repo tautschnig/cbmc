@@ -1,0 +1,12 @@
+CORE
+script
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^dialect posix$
+^    word lit"echo"$
+--
+^failed to figure out type of file
+--
+A file without a registered extension is identified as a shell script by
+the interpreter on its #! line.

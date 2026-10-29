@@ -59,6 +59,23 @@ public:
     return {"sh", "bash", "ksh", "mksh", "zsh"};
   }
 
+  std::set<std::string> interpreters() const override
+  {
+    // ksh93 and other versioned names match "ksh" etc.
+    return {
+      "sh",
+      "ash",
+      "dash",
+      "bash",
+      "ksh",
+      "mksh",
+      "lksh",
+      "pdksh",
+      "posh",
+      "yash",
+      "zsh"};
+  }
+
 protected:
   shell_programt program;
 };

@@ -1,0 +1,11 @@
+CORE
+script
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^dialect mksh$
+--
+^failed to figure out type of file
+--
+"#!/usr/bin/env -S ksh93" names ksh93, which matches the shell front-end's
+"ksh" once the version suffix is dropped.
