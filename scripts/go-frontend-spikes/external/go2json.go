@@ -3,18 +3,35 @@
 // Parses and type-checks one Go package with go/parser and go/types, and
 // emits the syntax tree as JSON, annotated with type-checker results:
 //
-//   "_k"     node kind (Go AST type name)
-//   "_pos"   "line:col"
-//   "_t"     type of an expression (types.Info.Types / TypeOf)
-//   "_cv"    exact constant value (go/constant, arbitrary precision)
-//   "_obj"   for identifiers: the object they define or use, with a
-//            package-qualified unique id (resolves scopes, shadowing,
-//            imports, and embedded-field promotion)
-//   "_sel"   for selectors: field/method selection, embedding path,
-//            and whether an implicit dereference happens
-//   "_inst"  for generic uses: the inferred type arguments
+//	"_k"     node kind (Go AST type name)
+//	"_pos"   "line:col"
+//	"_t"     type of an expression (types.Info.Types / TypeOf)
+//	"_cv"    exact constant value (go/constant, arbitrary precision)
+//	"_obj"   for identifiers: the object they define or use, with a
+//	         package-qualified unique id (resolves scopes, shadowing,
+//	         imports, and embedded-field promotion)
+//	"_sel"   for selectors: field/method selection, embedding path,
+//	         and whether an implicit dereference happens
+//	"_inst"  for generic uses: the inferred type arguments
 //
 // Usage: go2json [-importer source|gc] DIR
+//
+// Spike findings (corpus/features.go, go1.27.3):
+//   - 0.18 s per run with a warm build cache using the "gc" importer
+//     (export data via `go list -export`); 4.5 s once with a cold cache.
+//     The "source" importer (type-checks imported packages from GOROOT
+//     sources, no go command needed) takes 0.53 s.
+//   - Every expression node carries "_t" or "_obj" except import paths,
+//     the package name, and type-switch bindings ("switch x := v.(type)").
+//     The latter are per-clause objects in types.Info.Implicits and must
+//     be emitted on the CaseClause.
+//   - Gaps to close before production:
+//   - method ids are "pkg.Name#n"; qualify them by receiver type;
+//   - an instantiated generic *type* ("Pair[string, int]") reports the
+//     generic signature on the Ident; the instantiated type is on the
+//     enclosing IndexListExpr's "_t";
+//   - positions are "line:col" only; include the file name and byte
+//     offsets for multi-file packages.
 package main
 
 import (

@@ -1,9 +1,23 @@
 # Go front-end parsing/type-checking spikes
 
-Throw-away spikes used to choose between an external and a native parser
-and type checker for the CBMC Go front-end. The decision and the data are
-recorded in `doc/architectural/go-frontend-plan.md` §4. They are kept here
-so the measurements can be reproduced.
+Spikes used to choose between an external and a native parser and type
+checker for the CBMC Go front-end. The decision and the data are recorded
+in `doc/architectural/go-frontend-plan.md` §4. The front-end starts with
+the external helper (spike A). The native parser (spike B) is **retained**
+as the basis for a possible native route. Its findings, gaps, and resume
+plan are in `native/README.md`, and `check_native.sh` keeps it from
+bit-rotting.
+
+Layout:
+
+- `corpus/features.go`: semantic corpus (one package), for both spikes.
+- `corpus/syntax/`: valid constructs the native parser resolves
+  heuristically, compared structurally against `go/parser`.
+- `corpus/invalid/`: inputs both parsers must reject.
+- `external/`: spike A, `go2json` (`go/parser` + `go/types` → typed JSON).
+- `native/`: spike B, the C++ lexer and parser, with `native/README.md`.
+- `oracle/`: `go/parser` node-kind counts and `compare_counts.py`.
+- `check_native.sh`: the native parser's full regression check.
 
 All commands assume `go1.27.3` on `PATH`. The toolchain on the development
 host is in `~/go-toolchain/go/bin`.
@@ -37,7 +51,13 @@ cd native && g++ -std=c++17 -O2 -Wall -Wextra -o /tmp/goparse \
   main.cpp go_lexer.cpp go_parser.cpp
 find "$(go env GOROOT)/src" -name '*.go' -not -path '*/testdata/*' \
   > /tmp/stdlib_files.txt
-/tmp/goparse < /tmp/stdlib_files.txt > /dev/null   # ok=6827 fail=0, ~6 s
+/tmp/goparse < /tmp/stdlib_files.txt > /dev/null   # ok=6827 fail=0, ~6.5 s
+```
+
+Or run everything (corpus, stdlib, structural comparison, invalid inputs):
+
+```sh
+./check_native.sh            # add --no-stdlib for a quick corpus-only run
 ```
 
 ## oracle/ — structural check of spike B against go/parser
@@ -46,5 +66,6 @@ find "$(go env GOROOT)/src" -name '*.go' -not -path '*/testdata/*' \
 cd oracle && go build -o /tmp/go_oracle .
 /tmp/go_oracle < /tmp/stdlib_files.txt > /tmp/oracle_counts.txt
 /tmp/goparse --counts < /tmp/stdlib_files.txt > /tmp/native_counts.txt
-# Compare per-file counts of 18 node kinds: 0 mismatching files.
+python3 compare_counts.py /tmp/native_counts.txt /tmp/oracle_counts.txt
+# Per-file counts of 21 node kinds: 0 mismatching files.
 ```

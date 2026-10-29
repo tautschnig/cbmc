@@ -79,31 +79,34 @@ design. Each will receive a regression test.
 
 ## 4. Parsing and type checking: decision
 
-**Decision: use an external helper built on `go/parser` and `go/types`.**
-It is a small compiled Go program that type-checks the package and emits
-the syntax tree as JSON annotated with type-checker results. This is
-Approach 1 of `building-a-new-frontend.md`. The C++ side consumes the
-JSON and never redoes name resolution, constant evaluation, or type
-inference. We decided after spiking all three approaches. The spikes live
-in `scripts/go-frontend-spikes/`; its `README.md` describes how to
-reproduce the measurements.
+**Decision: start with an external helper built on `go/parser` and
+`go/types`, while retaining the native parser (§4.3).** The helper is a
+small compiled Go program that type-checks the package and emits the
+syntax tree as JSON annotated with type-checker results. This is Approach
+1 of `building-a-new-frontend.md`. The C++ side loads that JSON into its
+in-memory Go AST and never redoes name resolution, constant evaluation,
+or type inference. We decided after spiking all three approaches. The
+spikes live in `scripts/go-frontend-spikes/`; its `README.md` describes
+how to reproduce the measurements.
 
 ### 4.1 Data
 
 | | Spike A: external (`go/types`) | Spike B: native C++ | Library (gofrontend) |
 |---|---|---|---|
-| Parser | `go/parser` (reference) | 1,207 LOC C++. Parses 6,827/6,827 go1.27.3 stdlib files (90 MB, 6.2 s). Identical to `go/parser` on 18 node kinds in every file. Rejects 8/8 invalid inputs. | 70k LOC C++ |
+| Parser | `go/parser` (reference) | 1,242 LOC C++. Parses 6,829/6,829 files (go1.27.3 stdlib plus corpus, 90 MB, ~6.5 s). Identical to `go/parser` on 21 node kinds in every file. Rejects 12/12 invalid inputs. | 70k LOC C++ |
 | Type checker | `go/types` (reference), via a 200-LOC helper | Not attempted; see 4.2 | Present, but no type parameters and library at go1.18 |
 | Resolution, generics, constants | All provided: inferred type arguments (`Sum` → `[int]`), promoted-method embedding paths and implicit dereferences, exact constants (`1<<100 >> 98` = 4) | Must be implemented | — |
 | Latency per package | 0.18 s warm, 4.5 s once on a cold build cache (`gc` importer); 0.53 s (`source` importer) | n/a | — |
 | Language evolution | Follows each Go release for free | Manual, every six months | Stalled at go1.18 |
 | Runtime dependency | Go toolchain (`go1.27.x`) | None | None |
 
-### 4.2 Why the native route was rejected
+### 4.2 Why the native route is deferred
 
-The native *parser* is clearly feasible: one pass and three small fixes
-gave full agreement with `go/parser`. Type checking dominates the cost,
-however, and it is needed even for trivial programs:
+The native *parser* is clearly feasible. It reached full agreement with
+`go/parser` after a handful of fixes, which are documented together with
+its remaining gaps in `scripts/go-frontend-spikes/native/README.md`.
+Type checking dominates the cost, however, and it is needed even for
+trivial programs:
 
 - `go/types` is 15.8k LOC of Go, plus `go/constant` (1.1k) and
   `math/big` (6.5k) for exact untyped constants. Generics alone (type
@@ -129,7 +132,24 @@ missing or too-old `go` and report it clearly. The JSON schema decouples
 the two halves, so a native type checker could replace the helper later
 without changing the converter.
 
-### 4.3 Lessons applied from the TypeScript frontend
+### 4.3 The native route is retained
+
+The native parser stays in-tree as a basis for a possible native
+front-end. `scripts/go-frontend-spikes/check_native.sh` checks it against
+`go/parser` on the corpus and the whole stdlib, and checks that invalid
+inputs are rejected. Run it whenever the parser changes or the pinned Go
+version moves. `native/README.md` records the ambiguities and how they are
+resolved, the bugs the structural oracle found, the known gaps, and a
+resume plan. That plan includes a hybrid option: a native checker for
+user code, with stdlib signatures pre-extracted by `go/types`, which
+would remove the Go toolchain from the verification-time path.
+
+To keep that route cheap, the C++ converter must consume an **in-memory
+Go AST**, not the helper's JSON directly. The helper's JSON is loaded into
+that AST; a native parser and checker would produce the same AST. See
+§5, step 1.
+
+### 4.4 Lessons applied from the TypeScript frontend
 
 - **Ship a compiled helper, not an inline script.** TypeScript embeds a
   JavaScript program in a C++ string literal. Instead, the Go helper
@@ -141,7 +161,7 @@ without changing the converter.
 - **Fail closed on type errors.** The helper exits non-zero, and CBMC
   reports a parse error, instead of verifying a partially-typed program.
 
-### 4.4 Orthogonal: standard-library bodies
+### 4.5 Orthogonal: standard-library bodies
 
 Whichever parser we use, CBMC cannot symbolically execute the real
 runtime: `unsafe`, assembly, and `//go:linkname` are pervasive. As with
@@ -152,9 +172,13 @@ The helper supplies the stdlib *signatures*; the models supply the
 
 ## 5. Next steps
 
-1. Turn the helper into `src/go/`'s JSON emitter. Settle the schema,
-   including `types.Info.Implicits` (type-switch bindings),
-   receiver-qualified method ids, and constants on declarations.
+1. Turn the helper into `src/go/`'s JSON emitter, closing the gaps listed
+   in its header (type-switch bindings from `types.Info.Implicits`,
+   receiver-qualified method ids, file-qualified positions). Define the
+   C++ in-memory Go AST, typed and resolved and built on `irept` with
+   `source_locationt`, which the JSON is loaded into. The converter reads
+   only that AST, so the native route of §4.3 can later produce it
+   instead.
 2. Add the `languaget` skeleton and `go2goto` conversion for a first
    vertical slice: `package main`, functions, integer arithmetic with
    wrap-around, `if`/`for`, and assertions.
