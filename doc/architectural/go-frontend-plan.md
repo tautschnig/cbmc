@@ -240,9 +240,11 @@ Known limitations of the slice:
   numbers, pointers, arrays, slices, maps, structs, methods, interfaces,
   closures, generics beyond `cprover.Nondet`, goroutines, and channels.
 
-The Makefile build of `cbmc` on `develop` does not link the Python
-front-end that `cbmc_languages.cpp` registers. This predates the Go
-work and is not fixed here.
+The Makefile build of `cbmc` does not link the Python front-end that
+`cbmc_languages.cpp` registers (by inspection: no Makefile builds
+`src/python`). This comes from the not-yet-upstream Python front-end
+work this branch is based on, predates the Go work, and is not fixed
+here.
 
 ## 6. Feature phasing
 
