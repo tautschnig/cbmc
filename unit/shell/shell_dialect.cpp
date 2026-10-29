@@ -48,6 +48,7 @@ TEST_CASE("shell dialect: arithmetic options", "[shell]")
   const auto posix = arith_options(shell_dialectt::POSIX);
   REQUIRE(posix.increment_mode == shell_arith_increment_modet::NONE);
   REQUIRE_FALSE(posix.comma_operator);
+  REQUIRE(posix.leading_zero_octal);
 
   const auto bash = arith_options(shell_dialectt::BASH);
   REQUIRE(bash.increment_mode == shell_arith_increment_modet::LENIENT);
@@ -58,5 +59,6 @@ TEST_CASE("shell dialect: arithmetic options", "[shell]")
     const auto options = arith_options(dialect);
     REQUIRE(options.increment_mode == shell_arith_increment_modet::STRICT);
     REQUIRE(options.comma_operator);
+    REQUIRE_FALSE(options.leading_zero_octal);
   }
 }

@@ -75,6 +75,7 @@ shell_arith_optionst arith_options(shell_dialectt dialect)
   case shell_dialectt::ZSH:
     options.increment_mode = shell_arith_increment_modet::STRICT;
     options.comma_operator = true;
+    options.leading_zero_octal = false;
     break;
   }
   return options;

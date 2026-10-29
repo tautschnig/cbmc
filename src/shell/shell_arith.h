@@ -81,6 +81,9 @@ struct shell_arith_optionst
   /// bash, mksh, zsh, ksh93, posh, and busybox accept it; dash and yash
   /// do not.
   bool comma_operator = false;
+  /// Read constants with a leading 0 as octal, as ISO C and POSIX do.
+  /// mksh and zsh read them as decimal: $((010)) is 10.
+  bool leading_zero_octal = true;
 };
 
 /// Result of \ref parse_shell_arithmetic.

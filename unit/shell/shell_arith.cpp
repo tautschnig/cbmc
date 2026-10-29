@@ -6,9 +6,18 @@
 
 namespace
 {
-const shell_arith_optionst posix{shell_arith_increment_modet::NONE, false};
-const shell_arith_optionst bash{shell_arith_increment_modet::LENIENT, true};
-const shell_arith_optionst mksh{shell_arith_increment_modet::STRICT, true};
+const shell_arith_optionst posix{
+  shell_arith_increment_modet::NONE,
+  false,
+  true};
+const shell_arith_optionst bash{
+  shell_arith_increment_modet::LENIENT,
+  true,
+  true};
+const shell_arith_optionst mksh{
+  shell_arith_increment_modet::STRICT,
+  true,
+  false};
 
 /// The fully parenthesised rendering, or "error: ..." on failure.
 std::string parse(const std::string &text, const shell_arith_optionst &options)
@@ -67,6 +76,10 @@ TEST_CASE("shell arithmetic: constants", "[shell]")
     parse("123456789012345678901234567890", posix) ==
     "123456789012345678901234567890");
   REQUIRE(is_error("08", posix));
+  // mksh and zsh read a leading 0 as decimal.
+  REQUIRE(parse("010", mksh) == "10");
+  REQUIRE(parse("08", mksh) == "8");
+  REQUIRE(parse("0x10", mksh) == "16");
   REQUIRE(is_error("0x", posix));
   REQUIRE(is_error("12abc", posix));
 }

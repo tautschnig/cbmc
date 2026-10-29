@@ -23,7 +23,10 @@ class arith_parsert
 {
 public:
   arith_parsert(const std::string &text, const shell_arith_optionst &options)
-    : text(text), mode(options.increment_mode), comma(options.comma_operator)
+    : text(text),
+      mode(options.increment_mode),
+      comma(options.comma_operator),
+      octal(options.leading_zero_octal)
   {
   }
 
@@ -45,6 +48,7 @@ private:
   const std::string &text;
   const shell_arith_increment_modet mode;
   const bool comma;
+  const bool octal;
   std::size_t pos = 0;
 
   using kindt = shell_arith_exprt::kindt;
@@ -447,7 +451,7 @@ private:
       pos += 2;
       start = pos;
     }
-    else if(text[pos] == '0')
+    else if(text[pos] == '0' && octal)
       base = 8;
 
     while(!at_end() && is_name_char(text[pos]))
