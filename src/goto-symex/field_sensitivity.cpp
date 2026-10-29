@@ -389,6 +389,7 @@ void field_sensitivityt::field_assignments(
   const ssa_exprt &lhs,
   const exprt &rhs,
   symex_targett &target,
+  symex_targett::assignment_typet assignment_type,
   bool allow_pointer_unsoundness) const
 {
   const exprt lhs_fs = get_fields(ns, state, lhs, false);
@@ -396,7 +397,13 @@ void field_sensitivityt::field_assignments(
   if(lhs != lhs_fs)
   {
     field_assignments_rec(
-      ns, state, lhs_fs, rhs, target, allow_pointer_unsoundness);
+      ns,
+      state,
+      lhs_fs,
+      rhs,
+      target,
+      assignment_type,
+      allow_pointer_unsoundness);
     // Erase the composite symbol from our working state. Note that we need to
     // have it in the propagation table and the value set while doing the field
     // assignments, thus we cannot skip putting it in there above.
@@ -417,6 +424,7 @@ void field_sensitivityt::field_assignments(
 /// \param lhs_fs: expanded symbol
 /// \param ssa_rhs: right-hand-side value to assign
 /// \param target: symbolic execution equation store
+/// \param assignment_type: the type of the assignment to the full object
 /// \param allow_pointer_unsoundness: allow pointer unsoundness
 void field_sensitivityt::field_assignments_rec(
   const namespacet &ns,
@@ -424,6 +432,7 @@ void field_sensitivityt::field_assignments_rec(
   const exprt &lhs_fs,
   const exprt &ssa_rhs,
   symex_targett &target,
+  symex_targett::assignment_typet assignment_type,
   bool allow_pointer_unsoundness) const
 {
   if(is_ssa_expr(lhs_fs))
@@ -442,7 +451,7 @@ void field_sensitivityt::field_assignments_rec(
       ssa_lhs.get_original_expr(),
       ssa_rhs,
       state.source,
-      symex_targett::assignment_typet::STATE);
+      assignment_type);
     // Erase the composite symbol from our working state. Note that we need to
     // have it in the propagation table and the value set while doing the field
     // assignments, thus we cannot skip putting it in there above.
@@ -488,11 +497,18 @@ void field_sensitivityt::field_assignments_rec(
           fs_ssa->get_object_ssa(),
           member_rhs,
           target,
+          assignment_type,
           allow_pointer_unsoundness);
       }
 
       field_assignments_rec(
-        ns, state, member_lhs, member_rhs, target, allow_pointer_unsoundness);
+        ns,
+        state,
+        member_lhs,
+        member_rhs,
+        target,
+        assignment_type,
+        allow_pointer_unsoundness);
       ++fs_it;
     }
   }
@@ -533,11 +549,18 @@ void field_sensitivityt::field_assignments_rec(
           fs_ssa->get_object_ssa(),
           member_rhs,
           target,
+          assignment_type,
           allow_pointer_unsoundness);
       }
 
       field_assignments_rec(
-        ns, state, member_lhs, member_rhs, target, allow_pointer_unsoundness);
+        ns,
+        state,
+        member_lhs,
+        member_rhs,
+        target,
+        assignment_type,
+        allow_pointer_unsoundness);
       ++fs_it;
     }
   }
@@ -574,11 +597,18 @@ void field_sensitivityt::field_assignments_rec(
           fs_ssa->get_object_ssa(),
           index_rhs,
           target,
+          assignment_type,
           allow_pointer_unsoundness);
       }
 
       field_assignments_rec(
-        ns, state, index_lhs, index_rhs, target, allow_pointer_unsoundness);
+        ns,
+        state,
+        index_lhs,
+        index_rhs,
+        target,
+        assignment_type,
+        allow_pointer_unsoundness);
       ++fs_it;
     }
   }
@@ -600,11 +630,18 @@ void field_sensitivityt::field_assignments_rec(
           fs_ssa->get_object_ssa(),
           op,
           target,
+          assignment_type,
           allow_pointer_unsoundness);
       }
 
       field_assignments_rec(
-        ns, state, *fs_it, op, target, allow_pointer_unsoundness);
+        ns,
+        state,
+        *fs_it,
+        op,
+        target,
+        assignment_type,
+        allow_pointer_unsoundness);
       ++fs_it;
     }
   }

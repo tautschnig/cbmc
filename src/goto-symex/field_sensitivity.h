@@ -11,10 +11,11 @@ Author: Michael Tautschnig
 
 #include <util/ssa_expr.h>
 
+#include "symex_target.h"
+
 class byte_extract_exprt;
 class namespacet;
 class goto_symex_statet;
-class symex_targett;
 class value_sett;
 
 class field_sensitive_ssa_exprt : public exprt
@@ -142,6 +143,8 @@ public:
   /// \param rhs: right-hand-side value that was used in the preceding update of
   ///   the full object
   /// \param target: symbolic execution equation store
+  /// \param assignment_type: the type of the full assignment, which the
+  ///   field assignments inherit (hidden assignments stay hidden)
   /// \param allow_pointer_unsoundness: allow pointer unsoundness
   void field_assignments(
     const namespacet &ns,
@@ -149,6 +152,7 @@ public:
     const ssa_exprt &lhs,
     const exprt &rhs,
     symex_targett &target,
+    symex_targett::assignment_typet assignment_type,
     bool allow_pointer_unsoundness) const;
 
   /// Turn an expression \p expr into a field-sensitive SSA expression.
@@ -216,6 +220,7 @@ private:
     const exprt &lhs_fs,
     const exprt &ssa_rhs,
     symex_targett &target,
+    symex_targett::assignment_typet assignment_type,
     bool allow_pointer_unsoundness) const;
 
   [[nodiscard]] exprt simplify_opt(
