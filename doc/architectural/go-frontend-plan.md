@@ -68,7 +68,7 @@ design. Each will receive a regression test.
 
 | Spec section | Behaviour | Consequence for CBMC |
 |---|---|---|
-| `§Numeric_types` | `int`, `uint`, `uintptr` are 32 or 64 bits ("implementation-specific sizes") | Fix 64 bits, matching `gc` on amd64/arm64. Consider a 32-bit option later. |
+| `§Numeric_types` | `int`, `uint`, `uintptr` are 32 or 64 bits ("implementation-specific sizes") | `config.go.int_width` / `uintptr_width`, derived (as gc does) from `config.ansi_c.pointer_width`. These are auto-configured from the host and follow `--arch`, `--32`, `--64` (commit `f494777325`). |
 | `§Integer_overflow` | Signed and unsigned integer overflow wraps (two's complement). It is **not** an error. | Do not enable C-style `--signed-overflow-check` semantics by default. Overflow is defined behaviour in Go. |
 | `§Arithmetic_operators` | Integer division or remainder by zero is a run-time panic. Float division by zero follows IEEE 754. | Emit a panic assertion for integer division only. |
 | `§Run_time_panics` | Out-of-range indexing, nil dereference, failed type assertion, and similar operations panic. | Model panics as assertion failures. `recover` handling comes later (`§Handling_panics`). |
@@ -77,14 +77,88 @@ design. Each will receive a regression test.
 | `§Order_of_evaluation` | Operand order is only partially specified. | Must not assume a specific order where the spec leaves it open. |
 | `§Constants` | Untyped constants are exact, arbitrary-precision values. | Evaluate constant expressions exactly at conversion time, as `go/types` does. |
 
-## 4. Next steps
+## 4. Parsing and type checking: decision
 
-1. Choose a parsing and type-checking approach. The leading candidate is
-   an external helper built on `go/parser` and `go/types`, emitting typed
-   JSON, analogous to the TypeScript frontend's use of the TypeScript
-   Compiler API. A Go toolchain (`go1.27.x`) is required, and is not yet
-   installed on the development host.
-2. Draft a feature-phasing plan (types → expressions → statements →
+**Decision: use an external helper built on `go/parser` and `go/types`.**
+It is a small compiled Go program that type-checks the package and emits
+the syntax tree as JSON annotated with type-checker results. This is
+Approach 1 of `building-a-new-frontend.md`. The C++ side consumes the
+JSON and never redoes name resolution, constant evaluation, or type
+inference. We decided after spiking all three approaches. The spikes live
+in `scripts/go-frontend-spikes/`; its `README.md` describes how to
+reproduce the measurements.
+
+### 4.1 Data
+
+| | Spike A: external (`go/types`) | Spike B: native C++ | Library (gofrontend) |
+|---|---|---|---|
+| Parser | `go/parser` (reference) | 1,207 LOC C++. Parses 6,827/6,827 go1.27.3 stdlib files (90 MB, 6.2 s). Identical to `go/parser` on 18 node kinds in every file. Rejects 8/8 invalid inputs. | 70k LOC C++ |
+| Type checker | `go/types` (reference), via a 200-LOC helper | Not attempted; see 4.2 | Present, but no type parameters and library at go1.18 |
+| Resolution, generics, constants | All provided: inferred type arguments (`Sum` → `[int]`), promoted-method embedding paths and implicit dereferences, exact constants (`1<<100 >> 98` = 4) | Must be implemented | — |
+| Latency per package | 0.18 s warm, 4.5 s once on a cold build cache (`gc` importer); 0.53 s (`source` importer) | n/a | — |
+| Language evolution | Follows each Go release for free | Manual, every six months | Stalled at go1.18 |
+| Runtime dependency | Go toolchain (`go1.27.x`) | None | None |
+
+### 4.2 Why the native route was rejected
+
+The native *parser* is clearly feasible: one pass and three small fixes
+gave full agreement with `go/parser`. Type checking dominates the cost,
+however, and it is needed even for trivial programs:
+
+- `go/types` is 15.8k LOC of Go, plus `go/constant` (1.1k) and
+  `math/big` (6.5k) for exact untyped constants. Generics alone (type
+  inference, unification, instantiation, type sets) are 1.9k LOC. For
+  comparison, CBMC's own C and C++ type checkers are 9.5k and 11.1k LOC.
+  A faithful C++ port is estimated at 15–25k LOC.
+- Every Go program imports the standard library, so the checker must
+  also process its source. Importing `errors` pulls in 56k LOC across
+  33 packages; `fmt` pulls in 101k LOC across 59 packages. Even choosing
+  which files to compile requires Go's build-constraint logic: only
+  587 of the 1,423 files in `fmt`'s dependency directories apply on
+  linux/amd64. That source also contains 118 generic declarations,
+  3,208 `unsafe` uses, 556 `//go:linkname` directives, and 275
+  assembly-backed functions with no Go body.
+- The language changes every six months (for example range-over-func
+  iterators in go1.23 and generic type aliases in go1.24). With
+  `go/types`, each release reaches us automatically.
+
+The external route needs a Go toolchain at verification time. That is a
+reasonable requirement for people verifying Go code, and it parallels the
+TypeScript frontend's dependency on Node.js. The frontend will detect a
+missing or too-old `go` and report it clearly. The JSON schema decouples
+the two halves, so a native type checker could replace the helper later
+without changing the converter.
+
+### 4.3 Lessons applied from the TypeScript frontend
+
+- **Ship a compiled helper, not an inline script.** TypeScript embeds a
+  JavaScript program in a C++ string literal. Instead, the Go helper
+  will live as ordinary Go source under `src/go/` and be built by CMake
+  when `go` is available.
+- **No daemon needed.** TypeScript needed `ts_ast_server` to amortise
+  Node.js start-up. The Go helper runs in 0.18 s, so we use one
+  subprocess per verification run.
+- **Fail closed on type errors.** The helper exits non-zero, and CBMC
+  reports a parse error, instead of verifying a partially-typed program.
+
+### 4.4 Orthogonal: standard-library bodies
+
+Whichever parser we use, CBMC cannot symbolically execute the real
+runtime: `unsafe`, assembly, and `//go:linkname` are pervasive. As with
+the C library models in `src/ansi-c/library/` and the Java models
+library, we will need Go models for the stdlib functions programs use.
+The helper supplies the stdlib *signatures*; the models supply the
+*bodies*.
+
+## 5. Next steps
+
+1. Turn the helper into `src/go/`'s JSON emitter. Settle the schema,
+   including `types.Info.Implicits` (type-switch bindings),
+   receiver-qualified method ids, and constants on declarations.
+2. Add the `languaget` skeleton and `go2goto` conversion for a first
+   vertical slice: `package main`, functions, integer arithmetic with
+   wrap-around, `if`/`for`, and assertions.
+3. Draft the feature-phasing plan (types → expressions → statements →
    functions → slices, maps, and strings → structs, methods, and
    interfaces → generics → panics and `defer`/`recover` → goroutines and
    channels).
