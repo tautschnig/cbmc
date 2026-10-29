@@ -15,8 +15,10 @@ Author: Michael Tautschnig
 #include <util/cprover_prefix.h>
 #include <util/json.h>
 #include <util/options.h>
+#include <util/prefix.h>
 #include <util/run.h>
 #include <util/std_code.h>
+#include <util/suffix.h>
 #include <util/symbol_table_base.h>
 #include <util/tempfile.h>
 
@@ -187,25 +189,45 @@ bool go_languaget::generate_support_functions(
       function.location}};
   };
 
+  // With --function, CBMC calls this on a new instance, without a parse
+  // tree; the package is then that of the package initialisation function
+  // the conversion created.
+  std::string package = parse_tree.package;
+  if(package.empty())
+  {
+    for(const auto &entry : symbol_table.symbols)
+    {
+      const std::string name = id2string(entry.first);
+      const std::string suffix = ".$init";
+      if(
+        entry.second.mode == "go" && has_prefix(name, "go::") &&
+        has_suffix(name, suffix))
+      {
+        package = name.substr(4, name.size() - 4 - suffix.size());
+        break;
+      }
+    }
+  }
+
   // Go1.27 §Program_execution: "Program execution begins by initializing
   // the program and then invoking the function main in package main."
   code_blockt body;
   body.add(call(symbol_table.lookup_ref(INITIALIZE_FUNCTION), {}));
-  const irep_idt package_init =
-    go_convertert::package_init_id(parse_tree.package);
-  if(const symbolt *init = symbol_table.lookup(package_init))
+  if(
+    const symbolt *init =
+      symbol_table.lookup(go_convertert::package_init_id(package)))
     body.add(call(*init, {}));
 
   // With --function, call that function with arbitrary arguments instead
   // of main.main.
   const std::string entry =
     function_entry_point.empty() ? "main" : function_entry_point;
-  const symbolt *function = symbol_table.lookup(
-    go_convertert::symbol_id(parse_tree.package + "." + entry));
+  const symbolt *function =
+    symbol_table.lookup(go_convertert::symbol_id(package + "." + entry));
   if(function == nullptr)
   {
-    log.error() << "Go front-end: function " << parse_tree.package << "."
-                << entry << " not found" << messaget::eom;
+    log.error() << "Go front-end: function " << package << "." << entry
+                << " not found" << messaget::eom;
     return true;
   }
   exprt::operandst arguments;

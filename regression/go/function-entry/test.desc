@@ -6,5 +6,6 @@ main.go
 ^\[go::main\.check\.assertion\.1\] .*x is not 42: FAILURE$
 ^VERIFICATION FAILED$
 --
+not found$
 --
 --function calls the named function with arbitrary arguments
