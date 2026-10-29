@@ -10,6 +10,7 @@ OBJ += ../ansi-c/ansi-c$(LIBEXT) \
       ../json-symtab-language/json-symtab-language$(LIBEXT) \
       ../statement-list/statement-list$(LIBEXT) \
       ../python/python$(LIBEXT) \
+      ../shell/shell$(LIBEXT) \
       ../linking/linking$(LIBEXT) \
       ../big-int/big-int$(LIBEXT) \
       ../goto-checker/goto-checker$(LIBEXT) \
