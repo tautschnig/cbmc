@@ -127,10 +127,16 @@ bool go_languaget::parse(
     std::string line;
     while(std::getline(errors, line))
       log.error() << line << messaget::eom;
-    if(status == 127 || status == -1)
-      log.error() << "Go front-end: failed to run " << helper
-                  << "; set CBMC_GO_HELPER or put cbmc-go-helper on PATH"
+    if(status != 3)
+    {
+      // Not a diagnosed Go error: the helper could not be run (util/run
+      // reports a failed exec as status 1) or failed internally.
+      log.error() << "Go front-end: " << helper << " failed with status "
+                  << status
+                  << "; set CBMC_GO_HELPER or put cbmc-go-helper next to "
+                     "cbmc or on PATH"
                   << messaget::eom;
+    }
     return true;
   }
 
