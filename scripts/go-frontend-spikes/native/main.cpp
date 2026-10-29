@@ -15,10 +15,25 @@
 static void count(const nodet &n, std::map<std::string, int> &c)
 {
   static const std::set<std::string> tracked = {
-    "FuncDecl", "FuncLit",  "CompositeLit", "Call",       "TypeSpec",
-    "If",       "Switch",   "For",          "KeyValue",   "Return",
-    "Labeled",  "Send",     "IncDec",       "Slice",      "TypeAssert",
-    "Select"};
+    "FuncDecl",
+    "FuncLit",
+    "CompositeLit",
+    "Call",
+    "TypeSpec",
+    "If",
+    "Switch",
+    "For",
+    "KeyValue",
+    "Return",
+    "Labeled",
+    "Send",
+    "IncDec",
+    "Slice",
+    "TypeAssert",
+    "Select",
+    "TypeParams",
+    "ArrayType",
+    "SliceType"};
   if(tracked.count(n.kind))
     c[n.kind]++;
   for(const auto &k : n.kids)
@@ -62,9 +77,9 @@ int main(int argc, char **argv)
                 << e.what() << '\n';
     }
   }
-  double secs = std::chrono::duration<double>(
-                  std::chrono::steady_clock::now() - start)
-                  .count();
+  double secs =
+    std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
+      .count();
   std::cerr << "files ok=" << ok << " fail=" << fail << " nodes=" << nodes
             << " MB=" << bytes / 1e6 << " secs=" << secs << '\n';
   return fail != 0;

@@ -88,7 +88,10 @@ struct parsert
     nodet n = mk("TypeName", ident());
     if(got_op("."))
       n.text += "." + ident();
-    if(cur().op("["))
+    // "T[" starts type arguments only if a type follows: "src []E" in a
+    // parameter list is a name followed by a slice type, not an empty
+    // instantiation (which Go1.27 §Instantiations does not permit).
+    if(cur().op("[") && !la(1).op("]"))
       n.kids.push_back(type_args());
     return n;
   }
@@ -477,8 +480,9 @@ struct parsert
   // make/new arguments, and type arguments.
   nodet expr_or_type()
   {
-    if(cur().op("[") || cur().kw("struct") || cur().kw("map") ||
-       cur().kw("chan") || cur().kw("interface") || cur().kw("func"))
+    if(
+      cur().op("[") || cur().kw("struct") || cur().kw("map") ||
+      cur().kw("chan") || cur().kw("interface") || cur().kw("func"))
       return expr();
     if(cur().op("...")) // [...]T inside composite types is handled by type()
       fail("unexpected ...");
@@ -644,10 +648,10 @@ struct parsert
     }
     nodet lhs = expr_list();
     const tokent &k = cur();
-    if(k.op(":=") || k.op("=") || (k.kind == tokt::OP && k.text.size() >= 2 &&
-                                   k.text.back() == '=' && k.text != "==" &&
-                                   k.text != "!=" && k.text != "<=" &&
-                                   k.text != ">="))
+    if(
+      k.op(":=") || k.op("=") ||
+      (k.kind == tokt::OP && k.text.size() >= 2 && k.text.back() == '=' &&
+       k.text != "==" && k.text != "!=" && k.text != "<=" && k.text != ">="))
     {
       nodet a = mk("Assign", t[p++].text);
       a.kids.push_back(lhs);
@@ -687,7 +691,7 @@ struct parsert
     if(k.kind == tokt::IDENT && la(1).op(":"))
     {
       nodet l = mk("Labeled", ident());
-      p++; // ':'
+      p++;                                 // ':'
       if(!cur().op("}") && !cur().op(";")) // label on an empty statement
         l.kids.push_back(stmt());
       return l;
@@ -850,48 +854,96 @@ struct parsert
   nodet decl()
   {
     if(got_kw("var"))
-      return group("VarDecl", [&] {
-        nodet s = mk("Spec");
-        do
-          s.kids.push_back(mk("Name", ident()));
-        while(got_op(","));
-        if(!cur().op("="))
-          s.kids.push_back(type());
-        if(got_op("="))
-          s.kids.push_back(expr_list());
-        return s;
-      });
+      return group(
+        "VarDecl",
+        [&]
+        {
+          nodet s = mk("Spec");
+          do
+            s.kids.push_back(mk("Name", ident()));
+          while(got_op(","));
+          if(!cur().op("="))
+            s.kids.push_back(type());
+          if(got_op("="))
+            s.kids.push_back(expr_list());
+          return s;
+        });
     if(got_kw("const"))
-      return group("ConstDecl", [&] {
-        nodet s = mk("Spec");
-        do
-          s.kids.push_back(mk("Name", ident()));
-        while(got_op(","));
-        if(!cur().op("=") && !cur().op(";") && !cur().op(")"))
-          s.kids.push_back(type());
-        if(got_op("="))
-          s.kids.push_back(expr_list());
-        return s;
-      });
+      return group(
+        "ConstDecl",
+        [&]
+        {
+          nodet s = mk("Spec");
+          do
+            s.kids.push_back(mk("Name", ident()));
+          while(got_op(","));
+          if(!cur().op("=") && !cur().op(";") && !cur().op(")"))
+            s.kids.push_back(type());
+          if(got_op("="))
+            s.kids.push_back(expr_list());
+          return s;
+        });
     if(got_kw("type"))
       return group("TypeDecl", [&] { return type_spec(); });
     fail("expected declaration");
   }
 
-  // Go1.27 §Type_declarations. "type T[P C] ..." declares a generic type;
-  // "type T [N]E" an array type. Disambiguate by the token after "[ IDENT".
+  // Go1.27 §Type_declarations: after "type T [ IDENT", decide whether a
+  // type parameter list (generic type) or an array length follows.
+  //
+  // Go1.27 §Type_parameter_declarations: if the list declares a single
+  // parameter P with constraint C such that "P C" is a valid expression
+  // ("type T[P *C] ...", "type T[P (C)] ...", "type T[P *C|Q] ..."), the
+  // declaration is parsed as an array type; a trailing comma
+  // ("type T[P *C,] ...") or an interface ("[P interface{*C}]") makes it
+  // generic. Unambiguous starts of a constraint (another identifier, "~",
+  // ",", or a type keyword) also make it generic.
+  //
+  // Known gap (not exercised by the go1.27.3 stdlib): a constraint that is
+  // an array type, "type T[P [2]int] ...", is parsed as an array.
+  bool starts_type_params() const
+  {
+    if(!cur().op("[") || la(1).kind != tokt::IDENT)
+      return false;
+    const tokent &k = la(2);
+    if(
+      k.kind == tokt::IDENT || k.op(",") || k.op("~") || k.kw("interface") ||
+      k.kw("func") || k.kw("map") || k.kw("chan") || k.kw("struct"))
+      return true;
+    if(k.op("[")) // "[P []E]" is generic; "[N[0]]E" is an array
+      return la(3).op("]");
+    if(k.op("*") || k.op("("))
+    {
+      // The spec's ambiguity rule only concerns a *single* parameter:
+      // "[P *C]", "[P (C)]", "[P *C|Q]" are arrays, while a comma at the
+      // outermost bracket level ("[P *C,]", "[T *pkg.C | string, V any]")
+      // means a parameter list.
+      int depth = 0;
+      for(std::size_t k2 = 1; la(k2).kind != tokt::END; k2++)
+      {
+        const tokent &t2 = la(k2);
+        if(t2.op("[") || t2.op("(") || t2.op("{"))
+          depth++;
+        else if(t2.op(")") || t2.op("}"))
+          depth--;
+        else if(t2.op("]"))
+        {
+          if(depth == 0)
+            return false;
+          depth--;
+        }
+        else if(t2.op(",") && depth == 0)
+          return true;
+      }
+      return false;
+    }
+    return false; // "]", operators: array length expression
+  }
+
   nodet type_spec()
   {
     nodet s = mk("TypeSpec", ident());
-    if(
-      cur().op("[") && la(1).kind == tokt::IDENT &&
-      (la(2).kind == tokt::IDENT || la(2).op(",") || la(2).op("~") ||
-       la(2).op("[") || la(2).op("(") || la(2).kw("interface") ||
-       la(2).kw("func") || la(2).kw("map") || la(2).kw("chan") ||
-       la(2).kw("struct") ||
-       (la(2).op("*") && la(3).kind == tokt::IDENT && !la(4).op("]")) ||
-       (la(2).op("*") && la(3).kind == tokt::IDENT && la(4).op("]") &&
-        starts_type(la(5)) == false)))
+    if(starts_type_params())
       s.kids.push_back(type_params());
     if(got_op("="))
       s.text += "=";
@@ -926,15 +978,18 @@ struct parsert
     semi();
     while(got_kw("import"))
     {
-      f.kids.push_back(group("ImportDecl", [&] {
-        nodet s = mk("ImportSpec");
-        if(cur().kind == tokt::IDENT || cur().op("."))
-          s.text = t[p++].text;
-        if(cur().kind != tokt::STRING)
-          fail("expected import path");
-        s.kids.push_back(mk("Path", t[p++].text));
-        return s;
-      }));
+      f.kids.push_back(group(
+        "ImportDecl",
+        [&]
+        {
+          nodet s = mk("ImportSpec");
+          if(cur().kind == tokt::IDENT || cur().op("."))
+            s.text = t[p++].text;
+          if(cur().kind != tokt::STRING)
+            fail("expected import path");
+          s.kids.push_back(mk("Path", t[p++].text));
+          return s;
+        }));
       semi();
     }
     while(cur().kind != tokt::END)

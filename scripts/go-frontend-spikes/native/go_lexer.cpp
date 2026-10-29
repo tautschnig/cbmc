@@ -5,19 +5,17 @@
 #include <set>
 
 static const std::set<std::string> keywords = {
-  "break",  "case",   "chan",        "const",   "continue", "default",
-  "defer",  "else",   "fallthrough", "for",     "func",     "go",
-  "goto",   "if",     "import",      "interface", "map",    "package",
-  "range",  "return", "select",      "struct",  "switch",   "type",
-  "var"};
+  "break",  "case",        "chan", "const",   "continue", "default", "defer",
+  "else",   "fallthrough", "for",  "func",    "go",       "goto",    "if",
+  "import", "interface",   "map",  "package", "range",    "return",  "select",
+  "struct", "switch",      "type", "var"};
 
 // Longest-match-first operator table (Go1.27 §Operators_and_punctuation).
 static const char *operators[] = {
-  "<<=", ">>=", "&^=", "...", "&&", "||", "<-", "++", "--", "==", "!=",
-  "<=",  ">=",  ":=",  "+=",  "-=", "*=", "/=", "%=", "&=", "|=", "^=",
-  "<<",  ">>",  "&^",  "+",   "-",  "*",  "/",  "%",  "&",  "|",  "^",
-  "<",   ">",   "=",   "!",   "(",  ")",  "[",  "]",  "{",  "}",  ",",
-  ";",   ".",   ":",   "~"};
+  "<<=", ">>=", "&^=", "...", "&&", "||", "<-", "++", "--", "==", "!=", "<=",
+  ">=",  ":=",  "+=",  "-=",  "*=", "/=", "%=", "&=", "|=", "^=", "<<", ">>",
+  "&^",  "+",   "-",   "*",   "/",  "%",  "&",  "|",  "^",  "<",  ">",  "=",
+  "!",   "(",   ")",   "[",   "]",  "{",  "}",  ",",  ";",  ".",  ":",  "~"};
 
 namespace
 {
@@ -106,7 +104,8 @@ struct lexert
       base = 2, adv(2);
     else if(peek() == '0' && (peek(1) == 'o' || peek(1) == 'O'))
       base = 8, adv(2);
-    auto digits = [&](int b) {
+    auto digits = [&](int b)
+    {
       while(is_digit_in(peek(), b == 8 || b == 2 ? 10 : b) || peek() == '_')
         adv();
     };

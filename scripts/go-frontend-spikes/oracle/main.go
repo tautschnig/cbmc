@@ -41,6 +41,25 @@ func main() {
 			if k, ok := kinds[fmt.Sprintf("%T", n)]; ok {
 				counts[k]++
 			}
+			// Distinguish generic declarations, arrays and slices, which
+			// the native parser must disambiguate heuristically
+			// (Go1.27 §Type_parameter_declarations).
+			switch x := n.(type) {
+			case *ast.TypeSpec:
+				if x.TypeParams != nil {
+					counts["TypeParams"]++
+				}
+			case *ast.FuncDecl:
+				if x.Type.TypeParams != nil {
+					counts["TypeParams"]++
+				}
+			case *ast.ArrayType:
+				if x.Len == nil {
+					counts["SliceType"]++
+				} else {
+					counts["ArrayType"]++
+				}
+			}
 			return true
 		})
 		var keys []string
