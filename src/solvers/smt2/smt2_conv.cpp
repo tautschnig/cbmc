@@ -3080,6 +3080,8 @@ void smt2_convt::convert_expr(const exprt &expr)
            {ID_cprover_string_from_code_func, "str.from_code"},
            {ID_cprover_string_to_code_func, "str.to_code"},
            {ID_cprover_string_from_int_func, "str.from_int"},
+           // -1 unless the operand is a non-empty string of decimal digits.
+           {ID_cprover_string_parse_int_func, "str.to_int"},
            {ID_cprover_string_concat_func, "str.++"},
            {ID_cprover_string_length_func, "str.len"},
            {ID_cprover_string_substring_func, "str.substr"},
