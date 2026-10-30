@@ -41,7 +41,15 @@ void shell_convertert::add_value_type()
   const irep_idt name = "tag-" SHELL_VALUE_TAG;
   if(symbol_table.has_symbol(name))
     return;
-  struct_typet type{{{"set", c_bool_type()}, {"value", payload_type()}}};
+  // is_int: the string is the decimal representation of int_value, as
+  // it was made from an integer. Integer operands then need no parsing:
+  // shell values are often integers, and parsing is the most expensive
+  // operation for the solvers.
+  struct_typet type{
+    {{"set", c_bool_type()},
+     {"value", payload_type()},
+     {"is_int", c_bool_type()},
+     {"int_value", integer_type()}}};
   type.set_tag(SHELL_VALUE_TAG);
   symbolt symbol{name, type, shell_mode()};
   symbol.base_name = SHELL_VALUE_TAG;
@@ -75,7 +83,40 @@ void shell_convertert::add_value_type()
 exprt shell_convertert::make_value(exprt payload) const
 {
   return struct_exprt{
-    {from_integer(1, c_bool_type()), std::move(payload)}, string_type()};
+    {from_integer(1, c_bool_type()),
+     std::move(payload),
+     from_integer(0, c_bool_type()),
+     from_integer(0, integer_type())},
+    string_type()};
+}
+
+exprt shell_convertert::make_int_value(exprt payload, const exprt &value) const
+{
+  return struct_exprt{
+    {from_integer(1, c_bool_type()),
+     std::move(payload),
+     from_integer(1, c_bool_type()),
+     typecast_exprt::conditional_cast(value, integer_type())},
+    string_type()};
+}
+
+exprt shell_convertert::set_value(const exprt &value) const
+{
+  PRECONDITION(!bounded());
+  return struct_exprt{
+    {from_integer(1, c_bool_type()),
+     payload_of(value),
+     member_exprt{value, "is_int", c_bool_type()},
+     member_exprt{value, "int_value", integer_type()}},
+    string_type()};
+}
+
+exprt shell_convertert::known_int(const exprt &value) const
+{
+  PRECONDITION(!bounded());
+  return notequal_exprt{
+    member_exprt{value, "is_int", c_bool_type()},
+    from_integer(0, c_bool_type())};
 }
 
 namespace
@@ -133,6 +174,86 @@ exprt to_int_sort(const exprt &value)
   }
   return typecast_exprt::conditional_cast(value, integer_typet{});
 }
+
+/// Regular expressions over the SMT-LIB RegLan sort.
+class regex_buildert
+{
+public:
+  explicit regex_buildert(symbol_table_baset &symbol_table)
+    : symbol_table(symbol_table)
+  {
+  }
+
+  exprt literal(const std::string &text)
+  {
+    return apply(
+      ID_cprover_string_to_regex_func, {constant_exprt{text, string_typet{}}});
+  }
+
+  /// One byte in [low, high].
+  exprt range(unsigned char low, unsigned char high)
+  {
+    return apply(
+      ID_cprover_regex_range_func,
+      {constant_exprt{std::string(1, static_cast<char>(low)), string_typet{}},
+       constant_exprt{
+         std::string(1, static_cast<char>(high)), string_typet{}}});
+  }
+
+  exprt any()
+  {
+    return apply(ID_cprover_regex_allchar_func, {});
+  }
+
+  exprt none()
+  {
+    return apply(ID_cprover_regex_none_func, {});
+  }
+
+  exprt star(const exprt &r)
+  {
+    return apply(ID_cprover_regex_star_func, {r});
+  }
+
+  exprt plus(const exprt &r)
+  {
+    return apply(ID_cprover_regex_plus_func, {r});
+  }
+
+  exprt optional(const exprt &r)
+  {
+    return apply(ID_cprover_regex_opt_func, {r});
+  }
+
+  exprt either(const exprt &a, const exprt &b)
+  {
+    return apply(ID_cprover_regex_union_func, {a, b});
+  }
+
+  exprt sequence(const std::vector<exprt> &rs)
+  {
+    PRECONDITION(!rs.empty());
+    exprt result = rs.back();
+    for(auto it = std::next(rs.rbegin()); it != rs.rend(); ++it)
+      result = apply(ID_cprover_regex_concat_func, {*it, result});
+    return result;
+  }
+
+  /// Whether the string \p s is in the language of \p r.
+  exprt matches(const exprt &s, const exprt &r)
+  {
+    return apply_function(
+      symbol_table, ID_cprover_string_in_regex_func, {s, r}, bool_typet{});
+  }
+
+private:
+  symbol_table_baset &symbol_table;
+
+  exprt apply(const irep_idt &id, const exprt::operandst &arguments)
+  {
+    return apply_function(symbol_table, id, arguments, typet{ID_regex});
+  }
+};
 
 exprt is_blank(const exprt &c)
 {
@@ -264,6 +385,11 @@ exprt shell_convertert::payload_length(
 {
   if(native())
   {
+    if(payload.is_constant())
+    {
+      return from_integer(
+        to_constant_expr(payload).get_value().size(), integer_type());
+    }
     return string_function(
       ID_cprover_string_length_func, {payload}, integer_type(), dest, loc);
   }
@@ -353,6 +479,7 @@ exprt shell_convertert::payload_last_index_of(
   const exprt &payload,
   const exprt &needle,
   const exprt &upto,
+  bool anywhere,
   code_blockt &dest,
   const source_locationt &loc)
 {
@@ -365,8 +492,46 @@ exprt shell_convertert::payload_last_index_of(
       dest,
       loc);
   }
-  // SMT-LIB has no last-index operator: j is -1 or an occurrence at or
-  // before upto, and there is none after j up to upto.
+  // SMT-LIB has no last-index operator. For a single byte c anywhere in
+  // the string, the rest r after the last c is a suffix without c; this
+  // is much faster in z3 than the index-based encoding below.
+  if(
+    anywhere && needle.is_constant() &&
+    to_constant_expr(needle).get_value().size() == 1)
+  {
+    const symbol_exprt rest = temporary(payload_type(), dest, loc);
+    const exprt has_c = string_function(
+      ID_cprover_string_contains_func, {rest, needle}, bool_typet{}, dest, loc);
+    const exprt c_rest = payload_concat(needle, rest, dest, loc);
+    add(
+      dest,
+      code_assumet{conjunction(
+        {string_function(
+           ID_cprover_string_is_suffix_func,
+           {rest, payload},
+           bool_typet{},
+           dest,
+           loc),
+         not_exprt{has_c},
+         or_exprt{
+           equal_exprt{rest, payload},
+           string_function(
+             ID_cprover_string_is_suffix_func,
+             {c_rest, payload},
+             bool_typet{},
+             dest,
+             loc)}})},
+      loc);
+    const exprt length = payload_length(payload, dest, loc);
+    return if_exprt{
+      equal_exprt{rest, payload},
+      from_integer(-1, integer_type()),
+      minus_exprt{
+        minus_exprt{length, payload_length(rest, dest, loc)},
+        from_integer(1, integer_type())}};
+  }
+  // Otherwise j is -1 or an occurrence at or before upto, and there is
+  // none after j up to upto.
   const symbol_exprt j = temporary(integer_type(), dest, loc);
   const exprt needle_length = payload_length(needle, dest, loc);
   const exprt at_j = string_function(
@@ -415,7 +580,21 @@ exprt shell_convertert::string_literal(
   const source_locationt &loc)
 {
   if(!bounded())
+  {
+    // Decimal numbers without leading zeros (which are octal in some
+    // contexts) are integers whose value is known.
+    const bool decimal =
+      !text.empty() && text.size() <= 18 &&
+      text.find_first_not_of("0123456789") == std::string::npos &&
+      (text[0] != '0' || text.size() == 1);
+    if(decimal)
+    {
+      return make_int_value(
+        payload_literal(text),
+        from_integer(string2integer(text), integer_type()));
+    }
     return make_value(payload_literal(text));
+  }
   if(text.size() > max_length)
   {
     log.error().source_location = loc;
@@ -516,8 +695,10 @@ exprt shell_convertert::from_integer_expr(
     return call(SHELL_RT_FROM_INTEGER, {v}, dest, loc);
   if(!native())
   {
-    return make_value(string_function(
-      ID_cprover_string_of_int_func, {v}, payload_type(), dest, loc));
+    return make_int_value(
+      string_function(
+        ID_cprover_string_of_int_func, {v}, payload_type(), dest, loc),
+      v);
   }
   // str.from_int is "" for negative numbers.
   const exprt n = to_int_sort(v);
@@ -531,7 +712,7 @@ exprt shell_convertert::from_integer_expr(
     loc);
   const exprt signed_digits =
     payload_concat(payload_literal("-"), digits, dest, loc);
-  return make_value(if_exprt{negative, signed_digits, digits});
+  return make_int_value(if_exprt{negative, signed_digits, digits}, v);
 }
 
 exprt shell_convertert::string_length(
@@ -553,14 +734,11 @@ exprt shell_convertert::nondet_string(
   const symbol_exprt payload = temporary(payload_type(), dest, loc);
   if(native())
   {
-    // Shells do not store null bytes in variables.
-    const exprt has_null = string_function(
-      ID_cprover_string_contains_func,
-      {payload, payload_literal(std::string(1, '\0'))},
-      bool_typet{},
-      dest,
-      loc);
-    add(dest, code_assumet{not_exprt{has_null}}, loc);
+    // Shells do not store null bytes in variables, and SMT-LIB strings
+    // have code points up to 0x2FFFF: the bytes are 1 to 255.
+    regex_buildert re{symbol_table};
+    add(
+      dest, code_assumet{re.matches(payload, re.star(re.range(1, 255)))}, loc);
   }
   else
   {
@@ -586,101 +764,61 @@ exprt shell_convertert::environment_string(
 {
   if(bounded())
     return call(SHELL_RT_ENVIRONMENT, {}, dest, loc);
+  // An unset value has an empty payload, which value_of relies on.
   const exprt value = nondet_string(dest, loc);
+  const symbol_exprt set = temporary(bool_typet{}, dest, loc);
+  add(dest, code_assumet{or_exprt{set, is_empty(value)}}, loc);
   return struct_exprt{
-    {typecast_exprt{nondet(bool_typet{}, loc), c_bool_type()},
-     payload_of(value)},
+    {typecast_exprt{set, c_bool_type()},
+     payload_of(value),
+     from_integer(0, c_bool_type()),
+     from_integer(0, integer_type())},
     string_type()};
 }
 
 // ------------------------------------------------------------------
 // Integers in strings
 
-namespace
-{
-/// Regular expressions over the SMT-LIB RegLan sort.
-class regex_buildert
-{
-public:
-  explicit regex_buildert(symbol_table_baset &symbol_table)
-    : symbol_table(symbol_table)
-  {
-  }
-
-  exprt literal(const std::string &text)
-  {
-    return apply(
-      ID_cprover_string_to_regex_func, {constant_exprt{text, string_typet{}}});
-  }
-
-  /// One byte in [low, high].
-  exprt range(unsigned char low, unsigned char high)
-  {
-    return apply(
-      ID_cprover_regex_range_func,
-      {constant_exprt{std::string(1, static_cast<char>(low)), string_typet{}},
-       constant_exprt{
-         std::string(1, static_cast<char>(high)), string_typet{}}});
-  }
-
-  exprt any()
-  {
-    return apply(ID_cprover_regex_allchar_func, {});
-  }
-
-  exprt none()
-  {
-    return apply(ID_cprover_regex_none_func, {});
-  }
-
-  exprt star(const exprt &r)
-  {
-    return apply(ID_cprover_regex_star_func, {r});
-  }
-
-  exprt plus(const exprt &r)
-  {
-    return apply(ID_cprover_regex_plus_func, {r});
-  }
-
-  exprt optional(const exprt &r)
-  {
-    return apply(ID_cprover_regex_opt_func, {r});
-  }
-
-  exprt either(const exprt &a, const exprt &b)
-  {
-    return apply(ID_cprover_regex_union_func, {a, b});
-  }
-
-  exprt sequence(const std::vector<exprt> &rs)
-  {
-    PRECONDITION(!rs.empty());
-    exprt result = rs.back();
-    for(auto it = std::next(rs.rbegin()); it != rs.rend(); ++it)
-      result = apply(ID_cprover_regex_concat_func, {*it, result});
-    return result;
-  }
-
-  /// Whether the string \p s is in the language of \p r.
-  exprt matches(const exprt &s, const exprt &r)
-  {
-    return apply_function(
-      symbol_table, ID_cprover_string_in_regex_func, {s, r}, bool_typet{});
-  }
-
-private:
-  symbol_table_baset &symbol_table;
-
-  exprt apply(const irep_idt &id, const exprt::operandst &arguments)
-  {
-    return apply_function(symbol_table, id, arguments, typet{ID_regex});
-  }
-};
-
-} // namespace
-
 exprt shell_convertert::test_integer(
+  const exprt &string,
+  bool trailing_space,
+  const symbol_exprt &value,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  if(bounded())
+    return parse_test_integer(string, trailing_space, value, dest, loc);
+  // Strings made from integers need no parsing: parse "0" instead, which
+  // the solvers decide at once, and use the integer.
+  const exprt known = known_int(string);
+  const exprt payload = payload_of(string);
+  exprt subject;
+  if(native())
+    subject = if_exprt{known, payload_literal("0"), payload};
+  else
+  {
+    subject = payload_substring(
+      payload,
+      from_integer(0, integer_type()),
+      if_exprt{
+        known,
+        from_integer(0, integer_type()),
+        payload_length(payload, dest, loc)},
+      dest,
+      loc);
+  }
+  const symbol_exprt parsed = temporary(integer_type(), dest, loc);
+  const exprt valid =
+    parse_test_integer(make_value(subject), trailing_space, parsed, dest, loc);
+  assign(
+    dest,
+    value,
+    if_exprt{known, member_exprt{string, "int_value", integer_type()}, parsed},
+    loc);
+  return or_exprt{known, valid};
+}
+
+exprt shell_convertert::parse_test_integer(
   const exprt &string,
   bool trailing_space,
   const symbol_exprt &value,
@@ -912,8 +1050,18 @@ exprt shell_convertert::arith_integer(
     }
     valid = and_exprt{valid, not_exprt{disjunction(other_blanks)}};
   }
-  assign(dest, value, if_exprt{empty, zero, number}, loc);
-  return or_exprt{empty, valid};
+  // Strings made from integers are valid; the checks above are then
+  // constant, so that loops over counters can be unwound.
+  const exprt known = known_int(string);
+  assign(
+    dest,
+    value,
+    if_exprt{
+      known,
+      member_exprt{string, "int_value", integer_type()},
+      if_exprt{empty, zero, number}},
+    loc);
+  return or_exprt{known, or_exprt{empty, valid}};
 }
 
 // ------------------------------------------------------------------
@@ -1088,10 +1236,14 @@ exprt shell_convertert::unbounded_remove_pattern(
     else
     {
       const exprt found =
-        longest
-          ? payload_last_index_of(
-              s, payload_literal(b), minus_exprt{length, b_size}, dest, loc)
-          : payload_index_of(s, payload_literal(b), a_size, dest, loc);
+        longest ? payload_last_index_of(
+                    s,
+                    payload_literal(b),
+                    minus_exprt{length, b_size},
+                    true,
+                    dest,
+                    loc)
+                : payload_index_of(s, payload_literal(b), a_size, dest, loc);
       conditions.push_back(binary_relation_exprt{found, ID_ge, a_size});
       start = plus_exprt{found, b_size};
     }
@@ -1110,9 +1262,9 @@ exprt shell_convertert::unbounded_remove_pattern(
     {
       const exprt bound = minus_exprt{length, plus_exprt{a_size, b_size}};
       const exprt found =
-        longest
-          ? payload_index_of(s, payload_literal(a), zero, dest, loc)
-          : payload_last_index_of(s, payload_literal(a), bound, dest, loc);
+        longest ? payload_index_of(s, payload_literal(a), zero, dest, loc)
+                : payload_last_index_of(
+                    s, payload_literal(a), bound, b.empty(), dest, loc);
       conditions.push_back(binary_relation_exprt{found, ID_ge, zero});
       conditions.push_back(binary_relation_exprt{found, ID_le, bound});
       end = found;

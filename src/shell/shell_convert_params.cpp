@@ -16,7 +16,7 @@ exprt shell_convertert::positional_parameter(
   // max_arguments parameters.
   if(n > max_arguments)
     return unset_string(loc);
-  return index_exprt{positional_array(), from_integer(n - 1, c_index_type())};
+  return index_exprt{positional_array(), from_integer(n - 1, index_type())};
 }
 
 shell_convertert::field_listt
@@ -46,7 +46,7 @@ void shell_convertert::append_field(
   assign(
     store,
     index_exprt{
-      list.array, typecast_exprt::conditional_cast(list.count, c_index_type())},
+      list.array, typecast_exprt::conditional_cast(list.count, index_type())},
     value,
     loc);
   add(
@@ -73,7 +73,7 @@ void shell_convertert::append_positional_parameters(
     code_blockt append;
     append_field(
       list,
-      index_exprt{positional_array(), from_integer(i, c_index_type())},
+      index_exprt{positional_array(), from_integer(i, index_type())},
       append,
       loc);
     add(
@@ -182,7 +182,7 @@ exprt shell_convertert::join_positional_parameters(
     joined = concat(
       joined,
       value_of(
-        index_exprt{positional_array(), from_integer(i, c_index_type())}, loc),
+        index_exprt{positional_array(), from_integer(i, index_type())}, loc),
       append,
       loc);
     assign(append, result, joined, loc);
@@ -244,13 +244,13 @@ void shell_convertert::convert_shift(
   const exprt args = positional_array();
   for(std::size_t i = 0; i < max_arguments; ++i)
   {
-    const index_exprt element{args, from_integer(i, c_index_type())};
+    const index_exprt element{args, from_integer(i, index_type())};
     if(i + n < max_arguments)
     {
       assign(
         shift,
         element,
-        index_exprt{args, from_integer(i + n, c_index_type())},
+        index_exprt{args, from_integer(i + n, index_type())},
         loc);
     }
     else
@@ -320,13 +320,16 @@ void shell_convertert::initialize_positional_parameters(
   assign(init, argument_count(), nondet(count_type(), loc), loc);
   add(
     init,
-    code_assumet{binary_relation_exprt{
-      argument_count(), ID_le, from_integer(max_arguments, count_type())}},
+    code_assumet{and_exprt{
+      binary_relation_exprt{
+        argument_count(), ID_ge, from_integer(0, count_type())},
+      binary_relation_exprt{
+        argument_count(), ID_le, from_integer(max_arguments, count_type())}}},
     loc);
   for(std::size_t i = 0; i < max_arguments; ++i)
   {
     const index_exprt element{
-      positional_array(), from_integer(i, c_index_type())};
+      positional_array(), from_integer(i, index_type())};
     code_blockt set, unset;
     assign(set, element, nondet_string(set, loc), loc);
     assign(unset, element, unset_string(loc), loc);

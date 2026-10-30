@@ -244,7 +244,7 @@ std::string expr2shell(const exprt &expr, const namespacet &ns)
     expr.id() == ID_struct && expr.type().id() == ID_struct_tag &&
     to_struct_tag_type(expr.type()).get_identifier() ==
       "tag-" SHELL_VALUE_TAG &&
-    expr.operands().size() == 2)
+    expr.operands().size() >= 2)
   {
     const auto set = numeric_cast<mp_integer>(expr.operands()[0]);
     if(set.has_value() && *set == 0)

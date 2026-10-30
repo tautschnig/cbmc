@@ -421,7 +421,7 @@ void shell_convertert::convert_for_loop(
   assign_variable(
     command.name,
     index_exprt{
-      items.array, typecast_exprt::conditional_cast(index, c_index_type())},
+      items.array, typecast_exprt::conditional_cast(index, index_type())},
     dest,
     loc);
   loops.push_back({break_label, continue_label, loop_status});

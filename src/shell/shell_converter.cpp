@@ -65,7 +65,15 @@ void shell_convertert::add_initialize()
       from_integer(0, current_definition_type()),
       loc);
   }
-  initialize_positional_parameters(init, loc);
+  // The positional parameters are unknown strings, which cost the
+  // solvers even when unused: initialise them only if the script uses
+  // them.
+  if(
+    symbol_table.has_symbol("shell::args") ||
+    symbol_table.has_symbol("shell::argc"))
+  {
+    initialize_positional_parameters(init, loc);
+  }
 
   // Variables not yet assigned are inherited from the environment.
   for(const auto &name : variables)

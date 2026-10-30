@@ -206,9 +206,21 @@ private:
 
   /// A set value whose string is \p payload.
   exprt make_value(exprt payload) const;
+  /// A set value whose string \p payload is the decimal representation of
+  /// \p value.
+  exprt make_int_value(exprt payload, const exprt &value) const;
+  /// \p value with the set flag set.
+  exprt set_value(const exprt &value) const;
+  /// Whether \p value is known to be the representation of its int_value.
+  exprt known_int(const exprt &value) const;
 
-  static typet status_type()
+  /// Exit statuses, counts and indices are mathematical integers with
+  /// native strings, as integer_type() is, so that converting them to
+  /// strings does not mix Int and bit-vectors.
+  typet status_type() const
   {
+    if(native())
+      return integer_typet{};
     return unsigned_char_type();
   }
 
@@ -288,16 +300,26 @@ private:
     return global_symbol("shell::argc", "#", count_type());
   }
 
-  static typet count_type()
+  typet count_type() const
   {
+    if(native())
+      return integer_typet{};
     return unsigned_long_long_int_type();
+  }
+
+  /// The index type of arrays of values.
+  typet index_type() const
+  {
+    if(native())
+      return integer_typet{};
+    return c_index_type();
   }
 
   /// A list of at most max_arguments strings.
   array_typet field_array_type() const
   {
     return array_typet{
-      string_type(), from_integer(max_arguments, c_index_type())};
+      string_type(), from_integer(max_arguments, index_type())};
   }
 
   /// The positional parameters: element i is $(i+1). Elements at and after
@@ -396,12 +418,15 @@ private:
   nondet_status(code_blockt &dest, unsigned max, const source_locationt &loc)
   {
     assign(dest, status(), nondet(status_type(), loc), loc);
-    if(max < 255)
+    if(max < 255 || native())
     {
       add(
         dest,
-        code_assumet{binary_relation_exprt{
-          status(), ID_le, from_integer(max, status_type())}},
+        code_assumet{and_exprt{
+          binary_relation_exprt{
+            status(), ID_ge, from_integer(0, status_type())},
+          binary_relation_exprt{
+            status(), ID_le, from_integer(max, status_type())}}},
         loc);
     }
   }
@@ -444,8 +469,12 @@ private:
   exprt unset_string(const source_locationt &loc);
 
   /// The value of a parameter: its contents if set, else the empty string.
+  /// Unset unbounded values have an empty payload (see
+  /// environment_string), so their value is a copy with the flag set.
   exprt value_of(const exprt &parameter, const source_locationt &loc)
   {
+    if(!bounded())
+      return set_value(parameter);
     return if_exprt{
       is_set(parameter), parameter, string_literal("", loc), string_type()};
   }
@@ -485,6 +514,14 @@ private:
   /// is valid, for the test utility's integer operands (with trailing white
   /// space if \p trailing_space) and for exit and return.
   exprt test_integer(
+    const exprt &string,
+    bool trailing_space,
+    const symbol_exprt &value,
+    code_blockt &dest,
+    const source_locationt &loc);
+
+  /// test_integer for strings whose int_value is not known.
+  exprt parse_test_integer(
     const exprt &string,
     bool trailing_space,
     const symbol_exprt &value,
@@ -551,10 +588,13 @@ private:
     code_blockt &dest,
     const source_locationt &loc);
   /// The greatest index at or before \p upto where \p needle occurs, or -1.
+  /// \p anywhere: \p upto is the length of \p payload minus that of
+  /// \p needle, so that any occurrence counts.
   exprt payload_last_index_of(
     const exprt &payload,
     const exprt &needle,
     const exprt &upto,
+    bool anywhere,
     code_blockt &dest,
     const source_locationt &loc);
 
