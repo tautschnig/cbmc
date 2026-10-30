@@ -36,6 +36,29 @@ std::unique_ptr<languaget> new_shell_language()
 
 namespace
 {
+/// Set \p value from option \p name if it is given and in [min, max].
+void read_bound(
+  const optionst &options,
+  const std::string &name,
+  std::size_t min,
+  std::size_t max,
+  std::size_t &value,
+  message_handlert &message_handler)
+{
+  const std::string text = options.get_option(name);
+  if(text.empty())
+    return;
+  const auto parsed = string2optional_size_t(text);
+  if(!parsed.has_value() || *parsed < min || *parsed > max)
+  {
+    messaget log{message_handler};
+    log.error() << "--" << name << " must be a number in [" << min << ", "
+                << max << "]; using the default " << value << messaget::eom;
+    return;
+  }
+  value = *parsed;
+}
+
 /// The shfmt executable: $CBMC_SHFMT, or `shfmt` on the PATH.
 std::string shfmt_executable()
 {
@@ -113,8 +136,7 @@ bool shell_languaget::typecheck(
   const std::string &,
   message_handlert &message_handler)
 {
-  return shell_convert(
-    program, max_string_length, symbol_table, message_handler);
+  return shell_convert(program, convert_options, symbol_table, message_handler);
 }
 
 void shell_languaget::set_language_options(
@@ -122,20 +144,21 @@ void shell_languaget::set_language_options(
   message_handlert &message_handler)
 {
   function = options.get_option("function");
-  const std::string max = options.get_option("shell-max-string-length");
-  if(max.empty())
-    return;
-  const auto value = string2optional_size_t(max);
   // Integers need up to 20 bytes, and $((...)) must be representable.
-  if(!value.has_value() || *value < 24 || *value > 100000)
-  {
-    messaget log{message_handler};
-    log.error() << "--shell-max-string-length must be a number in [24, "
-                   "100000]; using the default "
-                << SHELL_DEFAULT_MAX_STRING_LENGTH << messaget::eom;
-    return;
-  }
-  max_string_length = *value;
+  read_bound(
+    options,
+    "shell-max-string-length",
+    24,
+    100000,
+    convert_options.max_string_length,
+    message_handler);
+  read_bound(
+    options,
+    "shell-max-arguments",
+    1,
+    1000,
+    convert_options.max_arguments,
+    message_handler);
 }
 
 bool shell_languaget::generate_support_functions(

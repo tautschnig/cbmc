@@ -21,13 +21,25 @@ const irep_idt &shell_mode();
 /// Default for --shell-max-string-length.
 #define SHELL_DEFAULT_MAX_STRING_LENGTH 64
 
+/// Default for --shell-max-arguments.
+#define SHELL_DEFAULT_MAX_ARGUMENTS 8
+
+/// Bounds of the model. Inputs (the environment, arguments, command
+/// output) are assumed to respect them; values built by the script that
+/// would exceed them fail a property.
+struct shell_convert_optionst
+{
+  /// Shell values are strings of at most this many bytes.
+  std::size_t max_string_length = SHELL_DEFAULT_MAX_STRING_LENGTH;
+  /// There are at most this many positional parameters, and lists of
+  /// fields (such as the arguments of a function call) have at most this
+  /// many elements.
+  std::size_t max_arguments = SHELL_DEFAULT_MAX_ARGUMENTS;
+};
+
 /// Convert \p program into `shell::main` and the variable symbols it uses,
 /// and fill `__CPROVER_initialize` with the initial state: variables from
 /// the environment, positional parameters, and special parameters.
-///
-/// Shell values are strings of at most \p max_string_length bytes. Inputs
-/// (the environment, arguments, command output) are assumed to fit; a
-/// string built by the script that does not fit fails a property.
 ///
 /// Constructs outside the supported subset are errors rather than being
 /// ignored, so that a script never appears to be verified when parts of it
@@ -35,7 +47,7 @@ const irep_idt &shell_mode();
 /// \return true on error
 bool shell_convert(
   const shell_programt &program,
-  std::size_t max_string_length,
+  const shell_convert_optionst &options,
   symbol_table_baset &symbol_table,
   message_handlert &message_handler);
 

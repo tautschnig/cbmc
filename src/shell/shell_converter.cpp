@@ -49,41 +49,14 @@ void shell_convertert::add_initialize()
   init.add(code_labelt{CPROVER_PREFIX "HIDE", code_skipt{}});
 
   set_status(init, 0, loc);
-  // The number of arguments is bounded by ARG_MAX in practice.
-  assign(
-    init, argument_count(), nondet(unsigned_long_long_int_type(), loc), loc);
-  add(
-    init,
-    code_assumet{binary_relation_exprt{
-      argument_count(),
-      ID_le,
-      from_integer(2147483647, unsigned_long_long_int_type())}},
-    loc);
+  assign(init, exited(), false_exprt{}, loc);
+  initialize_positional_parameters(init, loc);
 
   // Variables not yet assigned are inherited from the environment.
   for(const auto &name : variables)
   {
     const symbol_exprt var = variable(name);
     assign(init, var, call(SHELL_RT_ENVIRONMENT, {}, init, loc), loc);
-  }
-  // $1, $2, ... are set if there are that many arguments.
-  for(const std::size_t n : positional_parameters)
-  {
-    const symbol_exprt arg = positional(n);
-    assign(init, arg, call(SHELL_RT_NONDET_STRING, {}, init, loc), loc);
-    code_blockt unset;
-    assign(unset, set_of(arg), from_integer(0, component_type("set")), loc);
-    assign(
-      unset, length_of(arg), from_integer(0, component_type("length")), loc);
-    add(
-      init,
-      code_ifthenelset{
-        binary_relation_exprt{
-          argument_count(),
-          ID_lt,
-          from_integer(n, unsigned_long_long_int_type())},
-        std::move(unset)},
-      loc);
   }
   // $0, $$, and $- are set; their values depend on how the shell was run.
   for(const auto &name : special_parameters)
@@ -113,16 +86,18 @@ void shell_convertert::operator()()
 
 bool shell_convert(
   const shell_programt &program,
-  std::size_t max_string_length,
+  const shell_convert_optionst &options,
   symbol_table_baset &symbol_table,
   message_handlert &message_handler)
 {
-  if(add_shell_runtime(max_string_length, symbol_table, message_handler))
+  if(add_shell_runtime(
+       options.max_string_length, symbol_table, message_handler))
+  {
     return true;
+  }
   try
   {
-    shell_convertert{
-      program, max_string_length, symbol_table, message_handler}();
+    shell_convertert{program, options, symbol_table, message_handler}();
   }
   catch(const shell_conversion_errort &)
   {

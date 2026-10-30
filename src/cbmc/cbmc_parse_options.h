@@ -75,6 +75,7 @@ class optionst;
   "(python-max-list-length):" \
   "(python-no-body-check)" \
   "(shell-max-string-length):" \
+  "(shell-max-arguments):" \
   "(claim):(show-claims)(floatbv)(all-claims)(all-properties)" // legacy, and will eventually disappear // NOLINT(whitespace/line_length)
 // clang-format on
 

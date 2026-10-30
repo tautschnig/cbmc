@@ -1,0 +1,12 @@
+CORE
+main.bash
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+As verify-positional-list, in bash. Outside POSIX mode, bash keeps an
+assignment before a special builtin only for the command, so the
+assertion about it is left out.

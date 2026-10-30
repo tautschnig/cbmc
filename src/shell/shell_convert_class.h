@@ -66,6 +66,8 @@ enum class shell_command_kindt
   UNSET,
   BREAK,
   CONTINUE,
+  SHIFT,
+  SET,
   ASSERT,
   ASSUME,
   /// echo and printf: output only; their status is nondeterministic, as
@@ -91,11 +93,12 @@ class shell_convertert
 public:
   shell_convertert(
     const shell_programt &program,
-    std::size_t max_length,
+    const shell_convert_optionst &options,
     symbol_table_baset &symbol_table,
     message_handlert &message_handler)
     : program(program),
-      max_length(max_length),
+      max_length(options.max_string_length),
+      max_arguments(options.max_arguments),
       symbol_table(symbol_table),
       ns(symbol_table),
       log(message_handler),
@@ -108,6 +111,7 @@ public:
 private:
   const shell_programt &program;
   const std::size_t max_length;
+  const std::size_t max_arguments;
   symbol_table_baset &symbol_table;
   namespacet ns;
   messaget log;
@@ -120,11 +124,13 @@ private:
   /// which decides the status of a command without a command name.
   bool expanded_command_substitution = false;
 
-  /// Variables, positional parameters, and special parameters that the
-  /// script uses, for the initial state.
+  /// Variables and special parameters that the script uses, for the
+  /// initial state.
   std::set<std::string> variables;
-  std::set<std::size_t> positional_parameters;
   std::set<std::string> special_parameters;
+
+  /// The function whose body is being converted, for naming temporaries.
+  std::string current_function = SHELL_MAIN_FUNCTION;
 
   // ----------------------------------------------------------------
   // Errors
@@ -216,22 +222,35 @@ private:
     return global_symbol("shell::status", "?", status_type());
   }
 
+  /// $#, the number of positional parameters.
   symbol_exprt argument_count()
   {
-    return global_symbol("shell::argc", "#", unsigned_long_long_int_type());
+    return global_symbol("shell::argc", "#", count_type());
+  }
+
+  static typet count_type()
+  {
+    return unsigned_long_long_int_type();
+  }
+
+  /// A list of at most max_arguments strings.
+  array_typet field_array_type() const
+  {
+    return array_typet{
+      string_type(), from_integer(max_arguments, c_index_type())};
+  }
+
+  /// The positional parameters: element i is $(i+1). Elements at and after
+  /// $# are unset.
+  symbol_exprt positional_array()
+  {
+    return global_symbol("shell::args", "@", field_array_type());
   }
 
   symbol_exprt variable(const std::string &name)
   {
     variables.insert(name);
     return global_symbol("shell::var::" + name, name, string_type());
-  }
-
-  symbol_exprt positional(std::size_t n)
-  {
-    positional_parameters.insert(n);
-    const std::string number = std::to_string(n);
-    return global_symbol("shell::arg::" + number, number, string_type());
   }
 
   symbol_exprt special(const std::string &name)
@@ -245,7 +264,7 @@ private:
   temporary(const typet &type, code_blockt &dest, const source_locationt &loc)
   {
     const std::string base_name = "tmp" + std::to_string(temporary_count++);
-    symbolt symbol{SHELL_MAIN_FUNCTION "::" + base_name, type, shell_mode()};
+    symbolt symbol{current_function + "::" + base_name, type, shell_mode()};
     symbol.base_name = base_name;
     symbol.is_lvalue = true;
     symbol.is_state_var = true;
@@ -387,6 +406,21 @@ private:
     return struct_exprt{std::move(operands), string_type()};
   }
 
+  /// The unset value, as of a variable that was never assigned.
+  exprt unset_string(const source_locationt &loc)
+  {
+    exprt result = string_literal("", loc);
+    for(auto &operand : result.operands())
+    {
+      if(operand.type() == component_type("set"))
+      {
+        operand = from_integer(0, component_type("set"));
+        break;
+      }
+    }
+    return result;
+  }
+
   /// The value of a parameter: its contents if set, else the empty string.
   exprt value_of(const exprt &parameter, const source_locationt &loc)
   {
@@ -493,6 +527,63 @@ private:
 
   /// The word as written, for property descriptions.
   static std::string display(const shell_wordt &word);
+
+  // ----------------------------------------------------------------
+  // Positional parameters and lists of fields (XCU 2.5.1, 2.5.2)
+
+  /// A list of fields being built, such as the arguments of a function.
+  struct field_listt
+  {
+    symbol_exprt array;
+    symbol_exprt count;
+  };
+
+  exprt positional_parameter(std::size_t n, const source_locationt &loc);
+  field_listt new_field_list(code_blockt &dest, const source_locationt &loc);
+  void append_field(
+    const field_listt &list,
+    const exprt &value,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// Check that \p list fits within max_arguments; fields beyond it were
+  /// not stored.
+  void check_field_list(
+    const field_listt &list,
+    code_blockt &dest,
+    const source_locationt &loc);
+  void append_positional_parameters(
+    const field_listt &list,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// Expand \p words into a list of fields; each word yields one field,
+  /// except "$@", which yields one per positional parameter.
+  field_listt expand_fields(
+    std::vector<shell_wordt>::const_iterator begin,
+    std::vector<shell_wordt>::const_iterator end,
+    code_blockt &dest,
+    const source_locationt &loc);
+  static bool is_quoted_at(const shell_wordt &word);
+  static bool contains_at(const shell_wordt &word);
+  /// "$*" outside field splitting: the positional parameters joined with
+  /// spaces (the first character of the default IFS).
+  exprt
+  join_positional_parameters(code_blockt &dest, const source_locationt &loc);
+  void set_positional_parameters(
+    const field_listt &list,
+    code_blockt &dest,
+    const source_locationt &loc);
+  void convert_shift(const shell_commandt &command, code_blockt &dest);
+  void convert_set(const shell_commandt &command, code_blockt &dest);
+  /// Convert the option argument at \p arg of set.
+  /// \return the next argument
+  std::vector<shell_wordt>::const_iterator convert_set_option(
+    std::vector<shell_wordt>::const_iterator arg,
+    std::vector<shell_wordt>::const_iterator end,
+    code_blockt &dest,
+    const source_locationt &loc);
+  void initialize_positional_parameters(
+    code_blockt &init,
+    const source_locationt &loc);
 
   // ----------------------------------------------------------------
   // Arithmetic (XCU 2.6.4)
@@ -621,6 +712,16 @@ private:
     bool assertion,
     code_blockt &dest);
   void convert_exit(const shell_commandt &command, code_blockt &dest);
+  /// Leave the shell with the current status, or a nondeterministic
+  /// non-zero status if \p failure, as after an error that makes a
+  /// non-interactive shell exit (XCU 2.8.1).
+  void exit_shell(code_blockt &dest, bool failure, const source_locationt &);
+  /// shell::exited: set once the shell has exited, so that each function
+  /// returns to its caller in turn.
+  symbol_exprt exited()
+  {
+    return global_symbol("shell::exited", "exited", bool_typet{});
+  }
   void convert_export(const shell_commandt &command, code_blockt &dest);
   void convert_unset(const shell_commandt &command, code_blockt &dest);
   void convert_break_continue(
@@ -633,6 +734,10 @@ private:
   void convert_if(const shell_commandt &command, code_blockt &dest);
   void convert_while(const shell_commandt &command, code_blockt &dest);
   void convert_for(const shell_commandt &command, code_blockt &dest);
+  void convert_for_loop(
+    const shell_commandt &command,
+    const field_listt &items,
+    code_blockt &dest);
   void convert_case(const shell_commandt &command, code_blockt &dest);
   exprt case_pattern_matches(
     const shell_wordt &pattern,

@@ -182,13 +182,18 @@ exprt shell_convertert::parameter(const shell_word_partt &part)
   const std::string &name = part.text;
   if(!name.empty() && std::isdigit(static_cast<unsigned char>(name[0])))
   {
-    const std::size_t n = std::stoul(name);
-    return n == 0 ? special("0") : exprt{positional(n)};
+    // Leading zeros are allowed, and the number can be large.
+    const std::size_t first = name.find_first_not_of('0');
+    if(first == std::string::npos)
+      return special("0");
+    if(name.size() - first > 9)
+      return unset_string(part.location);
+    return positional_parameter(std::stoul(name.substr(first)), part.location);
   }
   if(name == "$" || name == "-")
     return special(name);
-  if(name == "@" || name == "*" || name == "!")
-    unsupported(part.location, "special parameter $" + name);
+  if(name == "!")
+    unsupported(part.location, "special parameter $!");
   check_parameter_name(name, part.location);
   return variable(name);
 }
@@ -206,6 +211,16 @@ exprt shell_convertert::expand_parameter(
     value = from_integer_expr(status(), dest, loc);
   else if(part.text == "#")
     value = from_integer_expr(argument_count(), dest, loc);
+  else if(part.text == "@" || part.text == "*")
+  {
+    if(part.parameter_length || !part.parameter_operator.empty())
+      unsupported(loc, "${" + part.text + "} with an operator");
+    // "$@" as a whole word is expanded by expand_fields; elsewhere, its
+    // result is unspecified unless it is subject to field splitting.
+    if(part.text == "@")
+      unsupported(loc, "$@ where it does not expand to a list of fields");
+    return join_positional_parameters(dest, loc);
+  }
   else
   {
     value = parameter(part);

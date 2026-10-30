@@ -87,7 +87,7 @@ public:
 
 protected:
   shell_programt program;
-  std::size_t max_string_length = SHELL_DEFAULT_MAX_STRING_LENGTH;
+  shell_convert_optionst convert_options;
   /// The --function option, which is not supported.
   std::string function;
 };

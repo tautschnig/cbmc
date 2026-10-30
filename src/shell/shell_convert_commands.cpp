@@ -19,6 +19,8 @@ shell_command_kindt shell_convertert::classify(const std::string &name) const
     {"unset", shell_command_kindt::UNSET},
     {"break", shell_command_kindt::BREAK},
     {"continue", shell_command_kindt::CONTINUE},
+    {"shift", shell_command_kindt::SHIFT},
+    {"set", shell_command_kindt::SET},
     {CPROVER_PREFIX "assert", shell_command_kindt::ASSERT},
     {CPROVER_PREFIX "assume", shell_command_kindt::ASSUME},
     {"echo", shell_command_kindt::OUTPUT},
@@ -26,15 +28,15 @@ shell_command_kindt shell_convertert::classify(const std::string &name) const
   // Builtins that change the shell environment (XCU 2.15 special
   // builtins, regular builtins of XCU 1.7, and common extensions).
   static const std::set<std::string> unsupported_builtins{
-    ".",       "eval",      "exec",     "readonly", "return",  "set",
-    "shift",   "times",     "trap",     "cd",       "read",    "getopts",
-    "alias",   "unalias",   "umask",    "wait",     "jobs",    "fg",
-    "bg",      "command",   "type",     "hash",     "kill",    "ulimit",
-    "fc",      "newgrp",    "local",    "declare",  "typeset", "source",
-    "let",     "shopt",     "builtin",  "enable",   "mapfile", "readarray",
-    "pushd",   "popd",      "dirs",     "disown",   "suspend", "logout",
-    "nameref", "autoload",  "setopt",   "unsetopt", "emulate", "print",
-    "whence",  "functions", "zmodload", "caller",   "compgen", "complete"};
+    ".",        "eval",     "exec",    "readonly",  "return",  "times",
+    "trap",     "cd",       "read",    "getopts",   "alias",   "unalias",
+    "umask",    "wait",     "jobs",    "fg",        "bg",      "command",
+    "type",     "hash",     "kill",    "ulimit",    "fc",      "newgrp",
+    "local",    "declare",  "typeset", "source",    "let",     "shopt",
+    "builtin",  "enable",   "mapfile", "readarray", "pushd",   "popd",
+    "dirs",     "disown",   "suspend", "logout",    "nameref", "autoload",
+    "setopt",   "unsetopt", "emulate", "print",     "whence",  "functions",
+    "zmodload", "caller",   "compgen", "complete"};
   const auto it = builtins.find(name);
   if(it != builtins.end())
     return it->second;
@@ -288,9 +290,29 @@ void shell_convertert::convert_for(
   code_blockt &dest)
 {
   const source_locationt &loc = command.location;
-  if(!command.has_in)
-    unsupported(loc, "for loop over the positional parameters");
   check_parameter_name(command.name, loc);
+
+  // "for name; do" is "for name in "$@"; do" (XCU 2.9.4.2).
+  bool dynamic = !command.has_in;
+  for(const auto &word : command.for_items)
+    dynamic |= contains_at(word);
+  if(dynamic)
+  {
+    field_listt items = [&]()
+    {
+      if(command.has_in)
+      {
+        return expand_fields(
+          command.for_items.begin(), command.for_items.end(), dest, loc);
+      }
+      // The positional parameters always fit.
+      const field_listt list = new_field_list(dest, loc);
+      append_positional_parameters(list, dest, loc);
+      return list;
+    }();
+    convert_for_loop(command, items, dest);
+    return;
+  }
 
   // The words are expanded once, before the first iteration
   // (XCU 2.9.4.2); each yields one field, so the iterations are known.
@@ -321,6 +343,53 @@ void shell_convertert::convert_for(
   }
   assign(dest, status(), loop_status, loc);
   label(dest, break_label);
+}
+
+/// A for loop over a list whose length is only known at run time. The
+/// index is also compared with the static bound of the list, so that
+/// symbolic execution stops after max_arguments iterations without an
+/// unwinding bound.
+void shell_convertert::convert_for_loop(
+  const shell_commandt &command,
+  const field_listt &items,
+  code_blockt &dest)
+{
+  const source_locationt &loc = command.location;
+  const irep_idt break_label = new_label("break");
+  const irep_idt continue_label = new_label("continue");
+  const irep_idt head_label = new_label("for");
+  const symbol_exprt index = temporary(count_type(), dest, loc);
+  const symbol_exprt loop_status = temporary(status_type(), dest, loc);
+  assign(dest, index, from_integer(0, count_type()), loc);
+  assign(dest, loop_status, from_integer(0, status_type()), loc);
+
+  label(dest, head_label);
+  code_blockt leave;
+  goto_label(leave, break_label);
+  add(
+    dest,
+    code_ifthenelset{
+      or_exprt{
+        binary_relation_exprt{
+          index, ID_ge, from_integer(max_arguments, count_type())},
+        binary_relation_exprt{index, ID_ge, items.count}},
+      std::move(leave)},
+    loc);
+  assign_variable(
+    command.name,
+    index_exprt{
+      items.array, typecast_exprt::conditional_cast(index, c_index_type())},
+    dest,
+    loc);
+  loops.push_back({break_label, continue_label, loop_status});
+  convert_list(command.body, dest);
+  loops.pop_back();
+  assign(dest, loop_status, status(), loc);
+  label(dest, continue_label);
+  assign(dest, index, plus_exprt{index, from_integer(1, count_type())}, loc);
+  goto_label(dest, head_label);
+  label(dest, break_label);
+  assign(dest, status(), loop_status, loc);
 }
 
 void shell_convertert::convert_break_continue(
@@ -609,17 +678,60 @@ void shell_convertert::convert_builtin(
   code_blockt &dest)
 {
   const source_locationt &loc = command.location;
-  // Special builtins keep the assignments before them (XCU 2.9.1.2).
+  // Special builtins keep the assignments before them (XCU 2.9.1.2),
+  // except in bash (outside POSIX mode) and zsh, where they only last for
+  // the command, as for other builtins.
+  const bool persistent_assignments = program.dialect != shell_dialectt::BASH &&
+                                      program.dialect != shell_dialectt::ZSH;
   const bool special =
     kind == shell_command_kindt::COLON || kind == shell_command_kindt::EXIT ||
     kind == shell_command_kindt::EXPORT || kind == shell_command_kindt::UNSET ||
-    kind == shell_command_kindt::BREAK || kind == shell_command_kindt::CONTINUE;
+    kind == shell_command_kindt::BREAK ||
+    kind == shell_command_kindt::CONTINUE ||
+    kind == shell_command_kindt::SHIFT || kind == shell_command_kindt::SET;
   if(
     !command.assignments.empty() && kind != shell_command_kindt::EXTERNAL &&
     kind != shell_command_kindt::OUTPUT && !special)
   {
     // Shells differ in whether these assignments persist.
     unsupported(loc, "variable assignment before a regular builtin");
+  }
+  if(
+    special && !persistent_assignments && !command.assignments.empty() &&
+    (kind == shell_command_kindt::EXPORT || kind == shell_command_kindt::UNSET))
+  {
+    unsupported(loc, "temporary variable assignment before export or unset");
+  }
+  if(special && !persistent_assignments)
+  {
+    // Only evaluated for their side effects.
+    for(const auto &assignment : command.assignments)
+      expand_word(assignment.value, shell_word_contextt::IGNORED, dest, loc);
+  }
+  if(special && persistent_assignments && !command.assignments.empty())
+  {
+    // The arguments are expanded before the assignments (XCU 2.9.1.1);
+    // with literal arguments the order does not matter, and the
+    // assignments can be made first.
+    for(std::size_t i = 1; i < command.words.size(); ++i)
+    {
+      if(!static_text(command.words[i]).has_value())
+      {
+        unsupported(
+          loc,
+          "variable assignment before a special builtin with expanded "
+          "arguments");
+      }
+    }
+    for(const auto &assignment : command.assignments)
+    {
+      const exprt value = expand_word(
+        assignment.value,
+        shell_word_contextt::ASSIGNMENT,
+        dest,
+        assignment.location);
+      assign_variable(assignment.name, value, dest, assignment.location);
+    }
   }
 
   switch(kind)
@@ -646,6 +758,12 @@ void shell_convertert::convert_builtin(
   case shell_command_kindt::CONTINUE:
     convert_break_continue(command, kind == shell_command_kindt::BREAK, dest);
     return;
+  case shell_command_kindt::SHIFT:
+    convert_shift(command, dest);
+    return;
+  case shell_command_kindt::SET:
+    convert_set(command, dest);
+    return;
   case shell_command_kindt::COLON:
   case shell_command_kindt::TRUE:
   case shell_command_kindt::FALSE:
@@ -659,22 +777,11 @@ void shell_convertert::convert_builtin(
   // The remaining commands only depend on their arguments for output.
   for(std::size_t i = 1; i < command.words.size(); ++i)
     expand_word(command.words[i], shell_word_contextt::IGNORED, dest, loc);
-  for(const auto &assignment : command.assignments)
+  if(!special)
   {
-    if(special)
-    {
-      const exprt value = expand_word(
-        assignment.value,
-        shell_word_contextt::ASSIGNMENT,
-        dest,
-        assignment.location);
-      assign_variable(assignment.name, value, dest, assignment.location);
-    }
-    else
-    {
-      // In the environment of the command only.
+    // In the environment of the command only.
+    for(const auto &assignment : command.assignments)
       expand_word(assignment.value, shell_word_contextt::IGNORED, dest, loc);
-    }
   }
   if(kind == shell_command_kindt::COLON || kind == shell_command_kindt::TRUE)
     set_status(dest, 0, loc);
@@ -765,6 +872,23 @@ void shell_convertert::convert_exit(
       nondet_status(dest, 255, loc);
     }
   }
+  exit_shell(dest, false, loc);
+}
+
+void shell_convertert::exit_shell(
+  code_blockt &dest,
+  bool failure,
+  const source_locationt &loc)
+{
+  if(failure)
+  {
+    nondet_status(dest, 255, loc);
+    add(
+      dest,
+      code_assumet{notequal_exprt{status(), from_integer(0, status_type())}},
+      loc);
+  }
+  assign(dest, exited(), true_exprt{}, loc);
   add(dest, code_frontend_returnt{}, loc);
 }
 
@@ -773,15 +897,6 @@ void shell_convertert::convert_export(
   code_blockt &dest)
 {
   const source_locationt &loc = command.location;
-  for(const auto &assignment : command.assignments)
-  {
-    const exprt value = expand_word(
-      assignment.value,
-      shell_word_contextt::ASSIGNMENT,
-      dest,
-      assignment.location);
-    assign_variable(assignment.name, value, dest, assignment.location);
-  }
   for(std::size_t i = 1; i < command.words.size(); ++i)
   {
     const shell_wordt &word = command.words[i];
