@@ -3,7 +3,7 @@ main.go
 
 ^EXIT=6$
 ^SIGNAL=0$
-cprover\.Nondet of function types is not supported yet$
+cprover\.Nondet of types containing pointers or functions is not supported yet$
 ^CONVERSION ERROR$
 --
 ^VERIFICATION

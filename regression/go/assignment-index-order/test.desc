@@ -1,0 +1,13 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.[1-4]\] .*: SUCCESS$
+^\[go::main\.main\.index-out-of-range\.3\] .*line 37 .*index out of range: FAILURE$
+^VERIFICATION FAILED$
+--
+^\[go::main\.main\.assertion\.[1-4]\] .*: FAILURE$
+^warning: ignoring
+--
+Go1.27 §Assignment_statements: operands on the left are evaluated first

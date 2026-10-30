@@ -1,0 +1,13 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.nil-dereference\.1\] .*line 20 .*nil pointer dereference: FAILURE$
+^\[go::main\.main\.nil-dereference\.2\] .*line 22 .*nil pointer dereference: FAILURE$
+^\[go::main\.main\.nil-dereference\.3\] .*line 24 .*nil pointer dereference: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Go1.27 §Address_operators, §Selectors: nil pointer indirection panics

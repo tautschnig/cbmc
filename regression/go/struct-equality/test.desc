@@ -1,0 +1,10 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Comparison_operators: struct and array equality
