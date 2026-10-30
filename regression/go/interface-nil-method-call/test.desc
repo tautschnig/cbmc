@@ -1,0 +1,12 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::\$method\.[0-9]+\.M\.nil-dereference\.1\] .*nil pointer dereference: FAILURE$
+^\[go::main\.main\.assertion\.1\] .* only reached if i is not nil: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Go1.27 §Selectors: calling a method of a nil interface value panics

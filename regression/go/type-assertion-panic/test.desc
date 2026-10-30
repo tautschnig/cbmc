@@ -1,0 +1,12 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.type-assertion\.1\] .*line 12 interface conversion: the type assertion does not hold: FAILURE$
+^\[go::main\.main\.assertion\.1\] .* only reached if x holds an int: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Go1.27 §Type_assertions: a false assertion panics

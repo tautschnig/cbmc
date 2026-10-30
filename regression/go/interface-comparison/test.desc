@@ -1,0 +1,13 @@
+CORE
+main.go
+--unwind 5 --unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.[1-6]\] .*: SUCCESS$
+^\[go::\$interface_equal\.uncomparable\.1\] .*comparing uncomparable type \[\]int: FAILURE$
+^VERIFICATION FAILED$
+--
+^\[go::main\.main\.assertion\.[1-6]\] .*: FAILURE$
+^warning: ignoring
+--
+Go1.27 §Comparison_operators: interface values
