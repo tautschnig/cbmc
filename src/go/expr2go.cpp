@@ -12,6 +12,7 @@ Author: Michael Tautschnig
 #include "expr2go.h"
 
 #include <util/arith_tools.h>
+#include <util/expr_util.h>
 #include <util/format_expr.h>
 #include <util/format_type.h>
 #include <util/namespace.h>
@@ -88,8 +89,42 @@ std::string expr2go(const exprt &expr, const namespacet &ns)
       return "true";
     if(expr.is_false())
       return "false";
+    // Go1.27 §Pointer_types: "The value of an uninitialized pointer is nil."
+    if(
+      expr.type().id() == ID_pointer &&
+      to_constant_expr(expr).is_null_pointer())
+      return "nil";
     if(auto value = numeric_cast<mp_integer>(expr))
       return integer2string(*value);
+  }
+  else if(expr.id() == ID_annotated_pointer_constant)
+  {
+    // Pointer values in traces: print the pointer they stand for.
+    const exprt &pointer =
+      to_annotated_pointer_constant_expr(expr).symbolic_pointer();
+    if(pointer.is_constant() && to_constant_expr(pointer).is_null_pointer())
+      return "nil";
+    return expr2go(pointer, ns);
+  }
+  else if(expr.id() == ID_address_of)
+    return "&" + expr2go(to_address_of_expr(expr).object(), ns);
+  else if(expr.id() == ID_dereference)
+    return "*" + expr2go(to_dereference_expr(expr).pointer(), ns);
+  else if(expr.id() == ID_member)
+  {
+    // Fields are named after their Go names (blank ones are "_$N").
+    const member_exprt &member = to_member_expr(expr);
+    const exprt &compound = member.compound();
+    const std::string base =
+      compound.id() == ID_dereference
+        ? expr2go(to_dereference_expr(compound).pointer(), ns)
+        : expr2go(compound, ns);
+    return base + "." + id2string(member.get_component_name());
+  }
+  else if(expr.id() == ID_index)
+  {
+    const index_exprt &index = to_index_expr(expr);
+    return expr2go(index.array(), ns) + "[" + expr2go(index.index(), ns) + "]";
   }
   else if(expr.id() == ID_symbol)
   {
