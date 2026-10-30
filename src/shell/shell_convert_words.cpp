@@ -255,8 +255,7 @@ exprt shell_convertert::expand_parameter(
   {
     if(!part.parameter_operator.empty())
       unsupported(loc, "${#parameter} with an operator");
-    return from_integer_expr(
-      typecast_exprt{length_of(value), integer_type()}, dest, loc);
+    return from_integer_expr(string_length(value, dest, loc), dest, loc);
   }
   if(part.parameter_operator.empty())
     return value_of(value, loc);

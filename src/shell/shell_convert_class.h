@@ -3,8 +3,10 @@
 /// shell_converter.cpp (initial state and entry point),
 /// shell_convert_words.cpp (word expansion, XCU 2.6),
 /// shell_convert_arith.cpp (arithmetic expansion, XCU 2.6.4),
-/// shell_convert_test.cpp (the test utility), and
-/// shell_convert_commands.cpp (commands, XCU 2.9).
+/// shell_convert_test.cpp (the test utility),
+/// shell_convert_commands.cpp (commands, XCU 2.9), and
+/// shell_convert_strings.cpp (the representations of strings), among
+/// others named after their topic.
 ///
 /// Internal to src/shell; see shell_converter.h for the interface.
 
@@ -15,6 +17,7 @@
 #include <util/bitvector_expr.h>
 #include <util/c_types.h>
 #include <util/cprover_prefix.h>
+#include <util/mathematical_types.h>
 #include <util/message.h>
 #include <util/namespace.h>
 #include <util/std_code.h>
@@ -105,6 +108,7 @@ public:
     : program(program),
       max_length(options.max_string_length),
       max_arguments(options.max_arguments),
+      strings(options.strings),
       symbol_table(symbol_table),
       ns(symbol_table),
       log(message_handler),
@@ -118,6 +122,7 @@ private:
   const shell_programt &program;
   const std::size_t max_length;
   const std::size_t max_arguments;
+  const shell_string_representationt strings;
   symbol_table_baset &symbol_table;
   namespacet ns;
   messaget log;
@@ -155,14 +160,19 @@ private:
   // ----------------------------------------------------------------
   // Types and symbols
 
+  /// The type of shell values: a struct with a `set` flag. Bounded strings
+  /// are the runtime's struct (shell_runtime.h); the other representations
+  /// use a struct of the flag and a `value` of payload_type().
   typet string_type() const
   {
-    return struct_tag_typet{"tag-" SHELL_STRING_TAG};
+    return struct_tag_typet{
+      bounded() ? irep_idt{"tag-" SHELL_STRING_TAG}
+                : irep_idt{"tag-" SHELL_VALUE_TAG}};
   }
 
   const struct_typet &string_struct() const
   {
-    return ns.follow_tag(struct_tag_typet{"tag-" SHELL_STRING_TAG});
+    return ns.follow_tag(to_struct_tag_type(string_type()));
   }
 
   const typet &component_type(const irep_idt &name) const
@@ -170,14 +180,57 @@ private:
     return string_struct().get_component(name).type();
   }
 
+  bool bounded() const
+  {
+    return strings == shell_string_representationt::BOUNDED;
+  }
+
+  bool native() const
+  {
+    return strings == shell_string_representationt::NATIVE;
+  }
+
+  /// The string itself, without the `set` flag: string_typet for native
+  /// strings, and a refined string {length, content} for refinement.
+  typet payload_type() const;
+
+  /// Add the type symbol of string_type() for the unbounded
+  /// representations.
+  void add_value_type();
+
+  member_exprt payload_of(const exprt &string) const
+  {
+    PRECONDITION(!bounded());
+    return member_exprt{string, "value", payload_type()};
+  }
+
+  /// A set value whose string is \p payload.
+  exprt make_value(exprt payload) const;
+
   static typet status_type()
   {
     return unsigned_char_type();
   }
 
-  static typet integer_type()
+  /// Integers: 64-bit, or mathematical integers with native strings, whose
+  /// conversions to and from strings are of the SMT-LIB Int sort. Mixing
+  /// Int and bit-vectors there is slow in z3 and cvc5; arithmetic then
+  /// checks that its values are in range instead (arith_min, arith_max).
+  typet integer_type() const
   {
+    if(native())
+      return integer_typet{};
     return signed_long_long_int_type();
+  }
+
+  /// The range of arithmetic values.
+  mp_integer arith_min() const
+  {
+    return -power(2, arith_width() - 1);
+  }
+  mp_integer arith_max() const
+  {
+    return power(2, arith_width() - 1) - 1;
   }
 
   /// The width of arithmetic: mksh uses 32-bit integers.
@@ -193,6 +246,7 @@ private:
 
   member_exprt length_of(const exprt &string) const
   {
+    PRECONDITION(bounded());
     return member_exprt{string, "length", component_type("length")};
   }
 
@@ -202,11 +256,7 @@ private:
       set_of(string), from_integer(0, component_type("set"))};
   }
 
-  exprt is_empty(const exprt &string) const
-  {
-    return equal_exprt{
-      length_of(string), from_integer(0, component_type("length"))};
-  }
+  exprt is_empty(const exprt &string) const;
 
   symbol_exprt global_symbol(
     const std::string &identifier,
@@ -380,56 +430,18 @@ private:
   }
 
   // ----------------------------------------------------------------
-  // Strings
+  // Strings (shell_convert_strings.cpp)
+  //
+  // The operations below are written for each representation. Bounded
+  // strings call the C runtime; refined strings emit `cprover_string_*`
+  // applications whose results are fresh temporaries, so that each
+  // execution of an operation (in a loop or a function called twice)
+  // constrains new symbols; native strings are SMT-LIB String terms.
 
-  exprt string_literal(const std::string &text, const source_locationt &loc)
-  {
-    if(text.size() > max_length)
-    {
-      log.error().source_location = loc;
-      log.error() << "string literal of " << text.size()
-                  << " bytes exceeds --shell-max-string-length " << max_length
-                  << messaget::eom;
-      throw shell_conversion_errort{};
-    }
-    const array_typet &data_type = to_array_type(component_type("data"));
-    exprt::operandst bytes;
-    for(std::size_t i = 0; i < max_length; ++i)
-    {
-      const unsigned char c =
-        i < text.size() ? static_cast<unsigned char>(text[i]) : 0;
-      bytes.push_back(from_integer(c, data_type.element_type()));
-    }
-    // Follow the components of the C struct, which include padding.
-    exprt::operandst operands;
-    for(const auto &component : string_struct().components())
-    {
-      if(component.get_name() == "set")
-        operands.push_back(from_integer(1, component.type()));
-      else if(component.get_name() == "length")
-        operands.push_back(from_integer(text.size(), component.type()));
-      else if(component.get_name() == "data")
-        operands.push_back(array_exprt{std::move(bytes), data_type});
-      else
-        operands.push_back(from_integer(0, component.type()));
-    }
-    return struct_exprt{std::move(operands), string_type()};
-  }
+  exprt string_literal(const std::string &text, const source_locationt &loc);
 
   /// The unset value, as of a variable that was never assigned.
-  exprt unset_string(const source_locationt &loc)
-  {
-    exprt result = string_literal("", loc);
-    for(auto &operand : result.operands())
-    {
-      if(operand.type() == component_type("set"))
-      {
-        operand = from_integer(0, component_type("set"));
-        break;
-      }
-    }
-    return result;
-  }
+  exprt unset_string(const source_locationt &loc);
 
   /// The value of a parameter: its contents if set, else the empty string.
   exprt value_of(const exprt &parameter, const source_locationt &loc)
@@ -442,42 +454,109 @@ private:
     const exprt &a,
     const exprt &b,
     code_blockt &dest,
-    const source_locationt &loc)
-  {
-    check(
-      dest,
-      binary_relation_exprt{
-        plus_exprt{length_of(a), length_of(b)},
-        ID_le,
-        from_integer(max_length, component_type("length"))},
-      "shell-string-length",
-      "string exceeds --shell-max-string-length (" +
-        std::to_string(max_length) + ")",
-      loc);
-    return call(SHELL_RT_CONCAT, {a, b}, dest, loc);
-  }
+    const source_locationt &loc);
 
   exprt equal(
     const exprt &a,
     const exprt &b,
     code_blockt &dest,
-    const source_locationt &l)
-  {
-    const symbol_exprt result = call(SHELL_RT_EQUAL, {a, b}, dest, l);
-    return notequal_exprt{result, from_integer(0, result.type())};
-  }
+    const source_locationt &loc);
 
+  /// The decimal representation of \p value.
   exprt from_integer_expr(
     const exprt &value,
     code_blockt &dest,
-    const source_locationt &loc)
-  {
-    return call(
-      SHELL_RT_FROM_INTEGER,
-      {typecast_exprt::conditional_cast(value, integer_type())},
-      dest,
-      loc);
-  }
+    const source_locationt &loc);
+
+  /// The length of \p string, of integer_type().
+  exprt string_length(
+    const exprt &string,
+    code_blockt &dest,
+    const source_locationt &loc);
+
+  /// A set value of nondeterministic contents without null bytes, as in the
+  /// environment, arguments, or command output.
+  exprt nondet_string(code_blockt &dest, const source_locationt &loc);
+
+  /// A variable as inherited from the environment: set or unset.
+  exprt environment_string(code_blockt &dest, const source_locationt &loc);
+
+  /// The integer that \p string denotes, stored in \p value, and whether it
+  /// is valid, for the test utility's integer operands (with trailing white
+  /// space if \p trailing_space) and for exit and return.
+  exprt test_integer(
+    const exprt &string,
+    bool trailing_space,
+    const symbol_exprt &value,
+    code_blockt &dest,
+    const source_locationt &loc);
+
+  /// The same for the value of a variable in arithmetic expansion.
+  exprt arith_integer(
+    const exprt &string,
+    bool leading_zero_octal,
+    bool any_space,
+    const symbol_exprt &value,
+    code_blockt &dest,
+    const source_locationt &loc);
+
+  // Primitive operations on payloads, for the unbounded representations.
+
+  /// Apply string function \p id to \p arguments; the result, of type
+  /// \p type (a payload, Boolean, or integer_type()), is a temporary.
+  exprt string_function(
+    const irep_idt &id,
+    const exprt::operandst &arguments,
+    const typet &type,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// Give the refined string \p payload, whose content is a temporary, a
+  /// fresh array of its length, associated with it for the solver.
+  void back_refined_string(
+    const exprt &payload,
+    code_blockt &dest,
+    const source_locationt &loc);
+  exprt payload_literal(const std::string &text) const;
+  exprt payload_length(
+    const exprt &payload,
+    code_blockt &dest,
+    const source_locationt &loc);
+  exprt payload_concat(
+    const exprt &a,
+    const exprt &b,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// payload[start, end), where 0 <= start <= end <= length.
+  exprt payload_substring(
+    const exprt &payload,
+    const exprt &start,
+    const exprt &end,
+    code_blockt &dest,
+    const source_locationt &loc);
+  exprt payload_has_prefix(
+    const exprt &payload,
+    const exprt &prefix,
+    code_blockt &dest,
+    const source_locationt &loc);
+  exprt payload_has_suffix(
+    const exprt &payload,
+    const exprt &suffix,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// The least index at or after \p from where \p needle occurs, or -1.
+  exprt payload_index_of(
+    const exprt &payload,
+    const exprt &needle,
+    const exprt &from,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// The greatest index at or before \p upto where \p needle occurs, or -1.
+  exprt payload_last_index_of(
+    const exprt &payload,
+    const exprt &needle,
+    const exprt &upto,
+    code_blockt &dest,
+    const source_locationt &loc);
 
   // ----------------------------------------------------------------
   // Words (XCU 2.6)
@@ -638,6 +717,28 @@ private:
     code_blockt &dest,
     const source_locationt &loc);
 
+  // Patterns for the unbounded representations, which decompose patterns
+  // of characters and * into literal segments.
+
+  /// The literal texts between the stars of \p pattern, or nothing if it has
+  /// ? or bracket expressions.
+  static std::optional<std::vector<std::string>>
+  star_segments(const shell_patternt &pattern);
+  exprt unbounded_pattern_matches(
+    const shell_patternt &pattern,
+    const exprt &subject,
+    code_blockt &dest,
+    const source_locationt &loc);
+  exprt unbounded_remove_pattern(
+    const shell_patternt &pattern,
+    const exprt &value,
+    bool prefix,
+    bool longest,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// For native strings: the regular expression of \p pattern.
+  exprt pattern_regex(const shell_patternt &pattern);
+
   // ----------------------------------------------------------------
   // Shell options (XCU 2.15 set)
 
@@ -744,6 +845,13 @@ private:
     code_blockt &dest,
     const source_locationt &loc);
   exprt arith_type_cast(const exprt &value) const;
+  /// Whether \p value is in [arith_min(), arith_max()].
+  exprt arith_in_range(const exprt &value) const;
+  /// \p operation on bit-vectors of the width of arithmetic.
+  exprt arith_bitwise(
+    const std::function<exprt(const exprt &, const exprt &)> &operation,
+    const exprt &lhs,
+    const exprt &rhs) const;
 
   // ----------------------------------------------------------------
   // The test utility

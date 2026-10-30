@@ -21,6 +21,11 @@ class symbol_table_baset;
 /// char[max_length]); bytes at and after `length` are unspecified.
 #define SHELL_STRING_TAG CPROVER_PREFIX "shell_string"
 
+/// Struct tag of shell values for unbounded strings (--shell-strings
+/// refined or native): `set` (_Bool) and `value`, a refined string or an
+/// SMT-LIB string.
+#define SHELL_VALUE_TAG CPROVER_PREFIX "shell_value"
+
 /// Names of the runtime functions; see \ref shell_runtime_source.
 #define SHELL_RT_NONDET_STRING CPROVER_PREFIX "shell_nondet_string"
 #define SHELL_RT_ENVIRONMENT CPROVER_PREFIX "shell_environment"

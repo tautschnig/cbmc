@@ -291,6 +291,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("shell-max-arguments"))
     options.set_option(
       "shell-max-arguments", cmdline.get_value("shell-max-arguments"));
+  if(cmdline.isset("shell-strings"))
+    options.set_option("shell-strings", cmdline.get_value("shell-strings"));
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
   // Disable signed overflow checks for Python source files.
@@ -1296,6 +1298,10 @@ void cbmc_parse_optionst::help()
     " {y--shell-max-arguments} {un} \t "
     "bound the number of positional parameters and of fields in a list to "
     "{un} (default: 8)\n"
+    " {y--shell-strings} {ubounded}|{urefined}|{unative} \t "
+    "represent shell strings as bounded byte arrays (default), for the "
+    "string refinement solver ({y--refine-strings}), or as SMT-LIB strings "
+    "({y--z3} or {y--cvc5})\n"
     "\n"
     "Platform options:\n"
     HELP_CONFIG_PLATFORM

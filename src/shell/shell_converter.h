@@ -24,6 +24,20 @@ const irep_idt &shell_mode();
 /// Default for --shell-max-arguments.
 #define SHELL_DEFAULT_MAX_ARGUMENTS 8
 
+/// How shell strings are represented (--shell-strings).
+enum class shell_string_representationt
+{
+  /// A C struct with a byte array of --shell-max-string-length bytes, and
+  /// runtime functions written in C (shell_runtime.h). Works with any back
+  /// end.
+  BOUNDED,
+  /// Unbounded strings for the string refinement solver (--refine-strings):
+  /// `cprover_string_*` function applications over refined strings.
+  REFINED,
+  /// Unbounded strings of the SMT-LIB String sort, for --z3 and --cvc5.
+  NATIVE
+};
+
 /// Bounds of the model. Inputs (the environment, arguments, command
 /// output) are assumed to respect them; values built by the script that
 /// would exceed them fail a property.
@@ -35,6 +49,7 @@ struct shell_convert_optionst
   /// fields (such as the arguments of a function call) have at most this
   /// many elements.
   std::size_t max_arguments = SHELL_DEFAULT_MAX_ARGUMENTS;
+  shell_string_representationt strings = shell_string_representationt::BOUNDED;
 };
 
 /// Convert \p program into `shell::main` and the variable symbols it uses,

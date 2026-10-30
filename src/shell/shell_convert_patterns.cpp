@@ -105,6 +105,8 @@ exprt shell_convertert::pattern_matches(
   {
     return true_exprt{};
   }
+  if(!bounded())
+    return unbounded_pattern_matches(pattern, subject, dest, loc);
   const auto names = shell_pattern_function_names(pattern_prefix(pattern));
   const symbol_exprt result = call(names.match, {subject}, dest, loc);
   return notequal_exprt{result, from_integer(0, result.type())};
@@ -124,6 +126,24 @@ exprt shell_convertert::remove_pattern(
   {
     // A literal pattern matches one string: shortest and longest agree.
     const exprt literal = literal_pattern_string(pattern, dest, loc);
+    if(!bounded())
+    {
+      const exprt s = payload_of(value);
+      const exprt l = payload_of(literal);
+      const exprt found = prefix ? payload_has_prefix(s, l, dest, loc)
+                                 : payload_has_suffix(s, l, dest, loc);
+      const exprt length = payload_length(s, dest, loc);
+      const exprt rest = minus_exprt{length, payload_length(l, dest, loc)};
+      const exprt zero = from_integer(0, integer_type());
+      const exprt start = prefix ? exprt{minus_exprt{length, rest}} : zero;
+      const exprt end = prefix ? length : rest;
+      return make_value(payload_substring(
+        s,
+        if_exprt{found, start, zero},
+        if_exprt{found, end, length},
+        dest,
+        loc));
+    }
     const symbol_exprt found = call(
       prefix ? SHELL_RT_HAS_PREFIX : SHELL_RT_HAS_SUFFIX,
       {value, literal},
@@ -141,6 +161,8 @@ exprt shell_convertert::remove_pattern(
     return if_exprt{
       notequal_exprt{found, from_integer(0, found.type())}, removed, value};
   }
+  if(!bounded())
+    return unbounded_remove_pattern(pattern, value, prefix, longest, dest, loc);
   const auto names = shell_pattern_function_names(pattern_prefix(pattern));
   const std::string &function =
     prefix

@@ -71,13 +71,13 @@ void shell_convertert::add_initialize()
   for(const auto &name : variables)
   {
     const symbol_exprt var = variable(name);
-    assign(init, var, call(SHELL_RT_ENVIRONMENT, {}, init, loc), loc);
+    assign(init, var, environment_string(init, loc), loc);
   }
   // $0, $$, and $- are set; their values depend on how the shell was run.
   for(const auto &name : special_parameters)
   {
     const symbol_exprt param = special(name);
-    assign(init, param, call(SHELL_RT_NONDET_STRING, {}, init, loc), loc);
+    assign(init, param, nondet_string(init, loc), loc);
   }
 
   const std::string init_name = CPROVER_PREFIX "initialize";
@@ -93,6 +93,8 @@ void shell_convertert::add_initialize()
 
 void shell_convertert::operator()()
 {
+  if(!bounded())
+    add_value_type();
   collect_dot_scripts(program.commands);
   collect_function_definitions(program.commands);
   collect_options(program.commands);
@@ -122,8 +124,9 @@ bool shell_convert(
   symbol_table_baset &symbol_table,
   message_handlert &message_handler)
 {
-  if(add_shell_runtime(
-       options.max_string_length, symbol_table, message_handler))
+  if(
+    options.strings == shell_string_representationt::BOUNDED &&
+    add_shell_runtime(options.max_string_length, symbol_table, message_handler))
   {
     return true;
   }

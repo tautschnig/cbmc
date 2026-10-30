@@ -249,19 +249,13 @@ void shell_convertert::integer_test(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  const typet &bool_type = c_bool_type();
   // zsh rejects trailing white space; dash, bash, and mksh accept it.
-  const exprt trailing =
-    from_integer(program.dialect == shell_dialectt::ZSH ? 0 : 1, bool_type);
+  const bool trailing = program.dialect != shell_dialectt::ZSH;
   const symbol_exprt l = temporary(integer_type(), dest, loc);
   const symbol_exprt r = temporary(integer_type(), dest, loc);
-  const symbol_exprt l_valid = call(
-    SHELL_RT_TEST_INTEGER, {lhs, trailing, address_of_exprt{l}}, dest, loc);
-  const symbol_exprt r_valid = call(
-    SHELL_RT_TEST_INTEGER, {rhs, trailing, address_of_exprt{r}}, dest, loc);
-  const exprt valid = and_exprt{
-    notequal_exprt{l_valid, from_integer(0, l_valid.type())},
-    notequal_exprt{r_valid, from_integer(0, r_valid.type())}};
+  const exprt l_valid = test_integer(lhs, trailing, l, dest, loc);
+  const exprt r_valid = test_integer(rhs, trailing, r, dest, loc);
+  const exprt valid = and_exprt{l_valid, r_valid};
 
   const irep_idt relation = op == "-eq"   ? ID_equal
                             : op == "-ne" ? ID_notequal

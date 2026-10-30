@@ -328,7 +328,7 @@ void shell_convertert::initialize_positional_parameters(
     const index_exprt element{
       positional_array(), from_integer(i, c_index_type())};
     code_blockt set, unset;
-    assign(set, element, call(SHELL_RT_NONDET_STRING, {}, set, loc), loc);
+    assign(set, element, nondet_string(set, loc), loc);
     assign(unset, element, unset_string(loc), loc);
     add(
       init,

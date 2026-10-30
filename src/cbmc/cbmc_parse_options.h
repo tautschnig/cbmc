@@ -95,6 +95,7 @@ class optionst;
   "(python-strict)" \
   "(shell-max-string-length):" \
   "(shell-max-arguments):" \
+  "(shell-strings):" \
   "(claim):(show-claims)(floatbv)(all-claims)(all-properties)" // legacy, and will eventually disappear // NOLINT(whitespace/line_length)
 // clang-format on
 

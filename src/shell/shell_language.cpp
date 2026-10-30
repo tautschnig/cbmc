@@ -108,7 +108,7 @@ void shell_languaget::set_language_options(
     options,
     "shell-max-string-length",
     24,
-    100000,
+    1u << 26,
     convert_options.max_string_length,
     message_handler);
   read_bound(
@@ -118,6 +118,18 @@ void shell_languaget::set_language_options(
     1000,
     convert_options.max_arguments,
     message_handler);
+  const std::string strings = options.get_option("shell-strings");
+  if(strings == "refined")
+    convert_options.strings = shell_string_representationt::REFINED;
+  else if(strings == "native")
+    convert_options.strings = shell_string_representationt::NATIVE;
+  else if(!strings.empty() && strings != "bounded")
+  {
+    messaget log{message_handler};
+    log.error() << "--shell-strings must be bounded, refined, or native; "
+                   "using bounded"
+                << messaget::eom;
+  }
 }
 
 bool shell_languaget::generate_support_functions(
@@ -222,6 +234,26 @@ std::string expr2shell(const exprt &expr, const namespacet &ns)
       // Single quotes, as the shell would need to read the value back.
       std::string quoted = "'";
       for(char c : text)
+        quoted += c == '\'' ? std::string{"'\\''"} : std::string{c};
+      return quoted + "'";
+    }
+  }
+  // The same for unbounded strings, of which only native strings have
+  // constant contents.
+  if(
+    expr.id() == ID_struct && expr.type().id() == ID_struct_tag &&
+    to_struct_tag_type(expr.type()).get_identifier() ==
+      "tag-" SHELL_VALUE_TAG &&
+    expr.operands().size() == 2)
+  {
+    const auto set = numeric_cast<mp_integer>(expr.operands()[0]);
+    if(set.has_value() && *set == 0)
+      return "<unset>";
+    const exprt &value = expr.operands()[1];
+    if(value.is_constant() && value.type().id() == ID_string)
+    {
+      std::string quoted = "'";
+      for(char c : id2string(to_constant_expr(value).get_value()))
         quoted += c == '\'' ? std::string{"'\\''"} : std::string{c};
       return quoted + "'";
     }

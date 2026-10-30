@@ -32,9 +32,34 @@ exprt shell_convertert::expand_arithmetic(
 
 exprt shell_convertert::arith_type_cast(const exprt &value) const
 {
-  const typet type = arith_width() == 32 ? typet{signed_int_type()}
-                                         : typet{signed_long_long_int_type()};
+  const typet type = native()              ? integer_type()
+                     : arith_width() == 32 ? typet{signed_int_type()}
+                                           : typet{signed_long_long_int_type()};
   return typecast_exprt::conditional_cast(value, type);
+}
+
+exprt shell_convertert::arith_in_range(const exprt &value) const
+{
+  return and_exprt{
+    binary_relation_exprt{
+      value, ID_ge, from_integer(arith_min(), value.type())},
+    binary_relation_exprt{
+      value, ID_le, from_integer(arith_max(), value.type())}};
+}
+
+exprt shell_convertert::arith_bitwise(
+  const std::function<exprt(const exprt &, const exprt &)> &operation,
+  const exprt &lhs,
+  const exprt &rhs) const
+{
+  if(!native())
+    return operation(lhs, rhs);
+  // Mathematical integers in range: compute on bit-vectors of the width
+  // of arithmetic.
+  const signedbv_typet bv_type{arith_width()};
+  return typecast_exprt{
+    operation(typecast_exprt{lhs, bv_type}, typecast_exprt{rhs, bv_type}),
+    lhs.type()};
 }
 
 exprt shell_convertert::arith(
@@ -49,8 +74,7 @@ exprt shell_convertert::arith(
   {
   case kindt::CONSTANT:
   {
-    const auto &bv_type = to_signedbv_type(type);
-    if(expr.value > bv_type.largest())
+    if(expr.value > arith_max())
     {
       log.error().source_location = loc;
       log.error() << "arithmetic constant " << integer2string(expr.value)
@@ -107,11 +131,21 @@ exprt shell_convertert::arith(
       return operand;
     if(expr.op == "-")
     {
-      arith_overflow_check(unary_minus_overflow_exprt{operand}, "-", dest, loc);
+      arith_overflow_check(
+        native() ? exprt{not_exprt{arith_in_range(unary_minus_exprt{operand})}}
+                 : exprt{unary_minus_overflow_exprt{operand}},
+        "-",
+        dest,
+        loc);
       return unary_minus_exprt{operand};
     }
     if(expr.op == "~")
-      return bitnot_exprt{operand};
+    {
+      return arith_bitwise(
+        [](const exprt &a, const exprt &) { return bitnot_exprt{a}; },
+        operand,
+        operand);
+    }
     return if_exprt{equal_exprt{operand, zero}, from_integer(1, type), zero};
   }
   case kindt::POSTFIX:
@@ -152,18 +186,10 @@ exprt shell_convertert::arith_read(
   // dash accepts any isspace() character around the number; bash only
   // space, tab, and newline.
   const bool any_space = program.dialect == shell_dialectt::POSIX;
-  const typet &bool_type = c_bool_type();
-  const symbol_exprt valid = call(
-    SHELL_RT_ARITH_INTEGER,
-    {string,
-     from_integer(octal ? 1 : 0, bool_type),
-     from_integer(any_space ? 1 : 0, bool_type),
-     address_of_exprt{value}},
-    dest,
-    loc);
+  const exprt valid = arith_integer(string, octal, any_space, value, dest, loc);
   check(
     dest,
-    notequal_exprt{valid, from_integer(0, valid.type())},
+    valid,
     "shell-arithmetic",
     "value of " + name +
       " is an integer constant in arithmetic expansion (other values are "
@@ -223,21 +249,21 @@ exprt shell_convertert::arith_binary(
   };
   if(op == "+" || op == "-" || op == "*")
   {
+    const exprt result = op == "+"   ? exprt{plus_exprt{lhs, rhs}}
+                         : op == "-" ? exprt{minus_exprt{lhs, rhs}}
+                                     : exprt{mult_exprt{lhs, rhs}};
     arith_overflow_check(
-      binary_overflow_exprt{
-        lhs,
-        op == "+"   ? ID_plus
-        : op == "-" ? ID_minus
-                    : ID_mult,
-        rhs},
+      native() ? exprt{not_exprt{arith_in_range(result)}}
+               : exprt{binary_overflow_exprt{
+                   lhs,
+                   op == "+"   ? ID_plus
+                   : op == "-" ? ID_minus
+                               : ID_mult,
+                   rhs}},
       op,
       dest,
       loc);
-    if(op == "+")
-      return plus_exprt{lhs, rhs};
-    if(op == "-")
-      return minus_exprt{lhs, rhs};
-    return mult_exprt{lhs, rhs};
+    return result;
   }
   if(op == "/" || op == "%")
   {
@@ -247,10 +273,9 @@ exprt shell_convertert::arith_binary(
       "division-by-zero",
       "division by zero in arithmetic expansion",
       loc);
-    const auto &bv_type = to_signedbv_type(type);
     arith_overflow_check(
       and_exprt{
-        equal_exprt{lhs, from_integer(bv_type.smallest(), type)},
+        equal_exprt{lhs, from_integer(arith_min(), type)},
         equal_exprt{rhs, from_integer(-1, type)}},
       op,
       dest,
@@ -261,7 +286,7 @@ exprt shell_convertert::arith_binary(
   }
   if(op == "<<" || op == ">>")
   {
-    const std::size_t width = to_signedbv_type(type).get_width();
+    const std::size_t width = arith_width();
     check(
       dest,
       and_exprt{
@@ -271,9 +296,32 @@ exprt shell_convertert::arith_binary(
       "shift distance is in range in arithmetic expansion",
       loc);
     if(op == ">>")
-      return ashr_exprt{lhs, rhs};
-    arith_overflow_check(shl_overflow_exprt{lhs, rhs}, op, dest, loc);
-    return shl_exprt{lhs, rhs};
+    {
+      return arith_bitwise(
+        [](const exprt &a, const exprt &b) {
+          return ashr_exprt{a, b};
+        },
+        lhs,
+        rhs);
+    }
+    if(native())
+    {
+      const signedbv_typet bv_type{width};
+      arith_overflow_check(
+        shl_overflow_exprt{
+          typecast_exprt{lhs, bv_type}, typecast_exprt{rhs, bv_type}},
+        op,
+        dest,
+        loc);
+    }
+    else
+      arith_overflow_check(shl_overflow_exprt{lhs, rhs}, op, dest, loc);
+    return arith_bitwise(
+      [](const exprt &a, const exprt &b) {
+        return shl_exprt{a, b};
+      },
+      lhs,
+      rhs);
   }
   if(op == "<")
     return relation(ID_lt);
@@ -288,11 +336,32 @@ exprt shell_convertert::arith_binary(
   if(op == "!=")
     return if_exprt{notequal_exprt{lhs, rhs}, one, zero};
   if(op == "&")
-    return bitand_exprt{lhs, rhs};
+  {
+    return arith_bitwise(
+      [](const exprt &a, const exprt &b) {
+        return bitand_exprt{a, b};
+      },
+      lhs,
+      rhs);
+  }
   if(op == "^")
-    return bitxor_exprt{lhs, rhs};
+  {
+    return arith_bitwise(
+      [](const exprt &a, const exprt &b) {
+        return bitxor_exprt{a, b};
+      },
+      lhs,
+      rhs);
+  }
   if(op == "|")
-    return bitor_exprt{lhs, rhs};
+  {
+    return arith_bitwise(
+      [](const exprt &a, const exprt &b) {
+        return bitor_exprt{a, b};
+      },
+      lhs,
+      rhs);
+  }
   UNREACHABLE;
 }
 

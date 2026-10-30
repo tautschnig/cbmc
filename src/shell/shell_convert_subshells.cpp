@@ -133,7 +133,7 @@ exprt shell_convertert::expand_command_substitution(
     assign(dest, status(), previous, loc);
   assign(dest, substitution_ran(), true_exprt{}, loc);
   // The output is not modelled.
-  return call(SHELL_RT_NONDET_STRING, {}, dest, loc);
+  return nondet_string(dest, loc);
 }
 
 /// The commands of a pipeline run in subshells (XCU 2.9.2), except that

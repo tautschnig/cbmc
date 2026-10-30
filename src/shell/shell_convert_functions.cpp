@@ -274,15 +274,11 @@ void shell_convertert::status_from_operand(
 
   const exprt string = expand_word(word, shell_word_contextt::FIELD, dest, loc);
   const symbol_exprt value = temporary(integer_type(), dest, loc);
-  const symbol_exprt valid = call(
-    SHELL_RT_TEST_INTEGER,
-    {string, from_integer(0, c_bool_type()), address_of_exprt{value}},
-    dest,
-    loc);
+  const exprt valid = test_integer(string, false, value, dest, loc);
   check(
     dest,
     and_exprt{
-      notequal_exprt{valid, from_integer(0, valid.type())},
+      valid,
       binary_relation_exprt{value, ID_ge, from_integer(0, integer_type())},
       binary_relation_exprt{
         value, ID_le, from_integer(modulo ? 2147483647 : 255, integer_type())}},
