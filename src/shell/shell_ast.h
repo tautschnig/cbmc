@@ -193,6 +193,8 @@ struct shell_programt
   shell_command_listt commands;
   std::string filename;
   shell_dialectt dialect = shell_dialectt::POSIX;
+  /// Single-letter options on the #! line, as in "#!/bin/sh -eu".
+  std::string initial_options;
 
   /// Print the IR as an indented tree, one node per line. This is the
   /// output of --show-parse-tree and is used by regression tests, so

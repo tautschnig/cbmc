@@ -61,6 +61,13 @@ exprt shell_convertert::arith(
   }
   case kindt::VARIABLE:
     check_parameter_name(expr.name, loc);
+    // bash and zsh apply -u to names in arithmetic; dash and mksh do not.
+    if(
+      program.dialect == shell_dialectt::BASH ||
+      program.dialect == shell_dialectt::ZSH)
+    {
+      check_nounset(variable(expr.name), expr.name, dest, loc);
+    }
     return arith_read(expr.name, value_of(variable(expr.name), loc), dest, loc);
   case kindt::PARAMETER:
   {

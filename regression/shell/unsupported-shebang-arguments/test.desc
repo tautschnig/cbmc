@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=6$
+^SIGNAL=0$
+^main.sh: unsupported arguments on the #! line \(only single-letter options such as -eu are supported\)$
+^PARSING ERROR$
+--
+^VERIFICATION
+--
+Linux passes "-e -u" to the shell as one argument, which shells handle
+differently.

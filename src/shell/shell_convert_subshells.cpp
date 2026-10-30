@@ -108,16 +108,26 @@ exprt shell_convertert::expand_command_substitution(
                            program.dialect == shell_dialectt::MKSH;
   const symbol_exprt previous = temporary(status_type(), dest, loc);
   assign(dest, previous, status(), loc);
+  // bash, outside POSIX mode, turns -e off in command substitutions.
+  const bool errexit_off = program.dialect == shell_dialectt::BASH;
+  const bool saved_errexit_ignored = errexit_ignored;
   run_in_subshell(
     loc,
     dest,
     [&](code_blockt &body)
     {
+      if(errexit_off)
+      {
+        errexit_ignored = true;
+        if(option_possible("errexit"))
+          assign(body, errexit_ignored_in_caller(), true_exprt{}, loc);
+      }
       if(part.commands != nullptr)
         convert_list(*part.commands, body);
       else
         set_status(body, 0, loc);
     });
+  errexit_ignored = saved_errexit_ignored;
   assign(dest, substitution_status(), status(), loc);
   if(keep_status)
     assign(dest, status(), previous, loc);
@@ -133,6 +143,12 @@ void shell_convertert::convert_pipeline(
   const shell_commandt &command,
   code_blockt &dest)
 {
+  const source_locationt &loc = command.location;
+  const bool pipefail = option_possible("pipefail");
+  // With pipefail, the status is that of the last command that failed.
+  const symbol_exprt failed = temporary(status_type(), dest, loc);
+  if(pipefail)
+    assign(dest, failed, from_integer(0, status_type()), loc);
   const std::size_t last = command.body.size() - 1;
   for(std::size_t i = 0; i < command.body.size(); ++i)
   {
@@ -146,6 +162,21 @@ void shell_convertert::convert_pipeline(
         dest,
         [&](code_blockt &body) { convert_command(element, body); });
     }
+    if(pipefail)
+    {
+      assign(
+        dest,
+        failed,
+        if_exprt{
+          equal_exprt{status(), from_integer(0, status_type())},
+          failed,
+          status()},
+        loc);
+    }
+  }
+  if(pipefail)
+  {
+    assign(dest, status(), if_exprt{option("pipefail"), failed, status()}, loc);
   }
 }
 

@@ -5,6 +5,9 @@
 
 #include <langapi/mode.h>
 
+#include <cctype>
+#include <vector>
+
 std::string shfmt_dialect_name(shell_dialectt dialect)
 {
   switch(dialect)
@@ -77,6 +80,79 @@ shell_arith_optionst arith_options(shell_dialectt dialect)
     options.comma_operator = true;
     options.leading_zero_octal = false;
     break;
+  }
+  return options;
+}
+
+std::optional<std::string> shebang_options(const std::string &source)
+{
+  if(source.compare(0, 2, "#!") != 0)
+    return std::string{};
+  std::string line = source.substr(2, source.find('\n') - 2);
+  if(!line.empty() && line.back() == '\r')
+    line.pop_back();
+  std::vector<std::string> words;
+  std::size_t pos = 0;
+  while(pos < line.size())
+  {
+    while(pos < line.size() && (line[pos] == ' ' || line[pos] == '\t'))
+      ++pos;
+    const std::size_t start = pos;
+    while(pos < line.size() && line[pos] != ' ' && line[pos] != '\t')
+      ++pos;
+    if(pos > start)
+      words.push_back(line.substr(start, pos - start));
+  }
+  if(words.empty())
+    return std::string{};
+
+  // Linux passes the rest of the line after the interpreter as one
+  // argument; env -S splits it into several.
+  std::vector<std::string> arguments{words.begin() + 1, words.end()};
+  const std::string interpreter = words[0].substr(
+    words[0].rfind('/') == std::string::npos ? 0 : words[0].rfind('/') + 1);
+  if(interpreter == "env")
+  {
+    if(arguments.empty())
+      return std::string{};
+    if(arguments[0].compare(0, 2, "-S") != 0)
+    {
+      // env gets one argument, the name of the shell.
+      if(arguments.size() > 1)
+        return {};
+      return std::string{};
+    }
+    if(arguments[0] != "-S")
+      arguments[0] = arguments[0].substr(2);
+    else
+      arguments.erase(arguments.begin());
+    // Skip further env options and assignments, then the shell's name.
+    auto it = arguments.begin();
+    while(it != arguments.end() &&
+          ((*it)[0] == '-' || it->find('=') != std::string::npos))
+    {
+      ++it;
+    }
+    if(it == arguments.end())
+      return {};
+    arguments.erase(arguments.begin(), it + 1);
+  }
+  else if(arguments.size() > 1)
+    return {};
+
+  std::string options;
+  for(const auto &argument : arguments)
+  {
+    if(argument == "-" || argument == "--")
+      continue;
+    if(argument.size() < 2 || argument[0] != '-')
+      return {};
+    for(std::size_t i = 1; i < argument.size(); ++i)
+    {
+      if(!std::isalpha(static_cast<unsigned char>(argument[i])))
+        return {};
+      options += argument[i];
+    }
   }
   return options;
 }

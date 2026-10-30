@@ -1,0 +1,16 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] file main.sh line 11 assertion "\$\{r\}" = after-false: SUCCESS$
+^\[assertion\.2\] file main.sh line 13 assertion reached = yes: FAILURE$
+^\[assertion\.3\] file main.sh line 15 assertion reached = no: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+set -e (XCU 2.15 set): failures are ignored in conditions, before && and
+||, after !, and in functions called there; the call of f on line 14
+fails where -e applies, so the shell exits. "reached = yes" fails to show
+that line 13 is reachable.

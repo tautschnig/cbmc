@@ -126,6 +126,17 @@ void shell_convertert::label(code_blockt &dest, const irep_idt &label)
   dest.add(code_labelt{label, code_skipt{}});
 }
 
+/// The condition of if, while, or until, where -e is ignored.
+void shell_convertert::convert_condition(
+  const shell_command_listt &list,
+  code_blockt &dest)
+{
+  const bool saved_errexit_ignored = errexit_ignored;
+  errexit_ignored = true;
+  convert_list(list, dest);
+  errexit_ignored = saved_errexit_ignored;
+}
+
 void shell_convertert::convert_list(
   const shell_command_listt &list,
   code_blockt &dest)
@@ -152,6 +163,11 @@ void shell_convertert::convert_foreground(
   if(!command.redirects.empty() && command.kind != kindt::SIMPLE)
     unsupported(command.location, "redirection of a compound command");
 
+  // -e is ignored in a pipeline beginning with ! (XCU 2.15 set).
+  const bool saved_errexit_ignored = errexit_ignored;
+  if(command.negated)
+    errexit_ignored = true;
+
   switch(command.kind)
   {
   case kindt::SIMPLE:
@@ -174,6 +190,17 @@ void shell_convertert::convert_foreground(
   case kindt::FUNCTION_DEFINITION:
     convert_compound(command, dest);
     break;
+  }
+  errexit_ignored = saved_errexit_ignored;
+
+  // A failure of a compound command other than a subshell comes from a
+  // command inside it, which was checked there (XCU 2.15 set).
+  if(
+    !command.negated &&
+    (command.kind == kindt::SIMPLE || command.kind == kindt::PIPELINE ||
+     command.kind == kindt::SUBSHELL))
+  {
+    check_errexit(dest, command.location);
   }
   if(command.negated)
   {
@@ -230,7 +257,11 @@ void shell_convertert::convert_and_or(
   const shell_commandt &command,
   code_blockt &dest)
 {
+  // -e is ignored for all commands of an AND-OR list but the last.
+  const bool saved_errexit_ignored = errexit_ignored;
+  errexit_ignored = true;
   convert_command(command.body[0], dest);
+  errexit_ignored = saved_errexit_ignored;
   code_blockt rhs;
   convert_command(command.body[1], rhs);
   add(
@@ -244,7 +275,7 @@ void shell_convertert::convert_if(
   code_blockt &dest)
 {
   const source_locationt &loc = command.location;
-  convert_list(command.condition, dest);
+  convert_condition(command.condition, dest);
   code_blockt then_block;
   convert_list(command.body, then_block);
   code_blockt else_block;
@@ -278,7 +309,7 @@ void shell_convertert::convert_while(
   assign(dest, loop_status, from_integer(0, status_type()), loc);
 
   label(dest, continue_label);
-  convert_list(command.condition, dest);
+  convert_condition(command.condition, dest);
   code_blockt leave;
   // The status is that of the last body executed, or zero.
   assign(leave, status(), loop_status, loc);

@@ -56,7 +56,7 @@ exprt shell_convertert::expand_parts(
         pending_loc = part.location;
       pending_text += part.kind == kindt::QUOTED_LITERAL ? part.text
                       : quoted ? double_quoted_literal(part.text)
-                               : unquoted_literal(part, context, first);
+                               : unquoted_literal(part, context, first, dest);
     }
     else
     {
@@ -121,7 +121,8 @@ exprt shell_convertert::expand_part(
 std::string shell_convertert::unquoted_literal(
   const shell_word_partt &part,
   shell_word_contextt context,
-  bool word_start)
+  bool word_start,
+  code_blockt &dest)
 {
   const std::string &text = part.text;
   const bool globbing = context == shell_word_contextt::FIELD;
@@ -138,10 +139,21 @@ std::string shell_convertert::unquoted_literal(
       unsupported(part.location, "tilde expansion (XCU 2.6.1)");
     if(globbing && (c == '*' || c == '?' || c == '['))
     {
-      unsupported(
-        part.location,
-        "unquoted pattern character '" + std::string{c} +
-          "' (pathname expansion, XCU 2.6.6); quote it");
+      if(!option_possible("noglob"))
+      {
+        unsupported(
+          part.location,
+          "unquoted pattern character '" + std::string{c} +
+            "' (pathname expansion, XCU 2.6.6); quote it");
+      }
+      // With set -f the character is literal; report it otherwise.
+      check(
+        dest,
+        option("noglob"),
+        "shell-unsupported",
+        "noglob (set -f) is on where pathname expansion would apply to '" +
+          std::string{c} + "' (pathname expansion is not supported)",
+        part.location);
     }
     if(c == '\\' && i + 1 < text.size())
     {
@@ -234,6 +246,8 @@ exprt shell_convertert::expand_parameter(
     assignable = value.id() == ID_symbol &&
                  id2string(to_symbol_expr(value).get_identifier())
                      .rfind("shell::var::", 0) == 0;
+    if(part.parameter_operator.empty())
+      check_nounset(value, part.text, dest, loc);
   }
 
   if(part.parameter_length)
@@ -323,7 +337,7 @@ exprt shell_convertert::expand_parameter_operator(
   return result;
 }
 
-bool shell_convertert::has_side_effects(const shell_word_partt &part)
+bool shell_convertert::has_side_effects(const shell_word_partt &part) const
 {
   using kindt = shell_word_partt::kindt;
   switch(part.kind)
@@ -348,6 +362,11 @@ bool shell_convertert::has_side_effects(const shell_word_partt &part)
     const std::string &op = part.parameter_operator;
     if(!op.empty() && (op.back() == '=' || op.back() == '?'))
       return true;
+    // With -u, expanding an unset parameter makes the shell exit.
+    if(op.empty() && nounset_possible && part.text != "@" && part.text != "*")
+    {
+      return true;
+    }
     for(const auto &p : part.parts)
     {
       if(has_side_effects(p))
@@ -359,7 +378,7 @@ bool shell_convertert::has_side_effects(const shell_word_partt &part)
   UNREACHABLE;
 }
 
-bool shell_convertert::has_side_effects(const shell_wordt &word)
+bool shell_convertert::has_side_effects(const shell_wordt &word) const
 {
   for(const auto &part : word)
   {

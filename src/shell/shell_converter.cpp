@@ -50,6 +50,9 @@ void shell_convertert::add_initialize()
 
   set_status(init, 0, loc);
   assign(init, exited(), false_exprt{}, loc);
+  initialize_options(init, loc);
+  if(option_possible("errexit"))
+    assign(init, errexit_ignored_in_caller(), false_exprt{}, loc);
   assign(init, substitution_status(), from_integer(0, status_type()), loc);
   assign(init, substitution_ran(), false_exprt{}, loc);
   // No functions are defined at the start: functions exported by bash in
@@ -91,6 +94,8 @@ void shell_convertert::add_initialize()
 void shell_convertert::operator()()
 {
   collect_function_definitions(program.commands);
+  collect_options(program.commands);
+  nounset_possible = option_possible("nounset");
   declare_functions();
   code_blockt body;
   convert_list(program.commands, body);

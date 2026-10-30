@@ -1,0 +1,11 @@
+CORE
+main.bash
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] file main.bash line 3 assertion in = no: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+bash, outside POSIX mode, turns -e off in command substitutions.

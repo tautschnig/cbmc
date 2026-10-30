@@ -501,7 +501,8 @@ private:
   std::string unquoted_literal(
     const shell_word_partt &part,
     shell_word_contextt context,
-    bool word_start);
+    bool word_start,
+    code_blockt &dest);
 
   static std::string double_quoted_literal(const std::string &text);
 
@@ -523,8 +524,8 @@ private:
   exprt
   expand_command_substitution(const shell_word_partt &part, code_blockt &dest);
 
-  static bool has_side_effects(const shell_word_partt &part);
-  static bool has_side_effects(const shell_wordt &word);
+  bool has_side_effects(const shell_word_partt &part) const;
+  bool has_side_effects(const shell_wordt &word) const;
 
   /// The text of \p word if it has no expansions, after quote removal.
   static std::optional<std::string>
@@ -588,6 +589,40 @@ private:
     const source_locationt &loc);
   void initialize_positional_parameters(
     code_blockt &init,
+    const source_locationt &loc);
+
+  // ----------------------------------------------------------------
+  // Shell options (XCU 2.15 set)
+
+  /// Options that set may enable somewhere, by name.
+  std::set<std::string> possible_options;
+  bool nounset_possible = false;
+  /// Whether -e is ignored where the code being converted runs: in the
+  /// condition of if, while, and until, before && and ||, and after !.
+  bool errexit_ignored = false;
+  symbol_exprt option(const std::string &name);
+  bool set_option(
+    const std::string &name,
+    bool on,
+    code_blockt &dest,
+    const source_locationt &loc);
+  void collect_options(const shell_command_listt &list);
+  void collect_options(const shell_word_partt &part);
+  void initialize_options(code_blockt &init, const source_locationt &loc);
+  bool option_possible(const std::string &name) const;
+  /// Whether -e was ignored where the current function was called.
+  symbol_exprt errexit_ignored_in_caller()
+  {
+    return global_symbol(
+      "shell::errexit_ignored", "errexit_ignored", bool_typet{});
+  }
+  /// Exit if -e is on and the last command failed.
+  void check_errexit(code_blockt &dest, const source_locationt &loc);
+  /// Exit if -u is on and \p parameter is unset.
+  void check_nounset(
+    const exprt &parameter,
+    const std::string &name,
+    code_blockt &dest,
     const source_locationt &loc);
 
   // ----------------------------------------------------------------
@@ -725,6 +760,7 @@ private:
   // Commands (XCU 2.9)
 
   void convert_list(const shell_command_listt &list, code_blockt &dest);
+  void convert_condition(const shell_command_listt &list, code_blockt &dest);
   void convert_command(const shell_commandt &command, code_blockt &dest);
   /// Convert \p command, ignoring a trailing &.
   void convert_foreground(const shell_commandt &command, code_blockt &dest);

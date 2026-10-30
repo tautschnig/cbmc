@@ -340,12 +340,3 @@ void shell_convertert::initialize_positional_parameters(
       loc);
   }
 }
-
-std::vector<shell_wordt>::const_iterator shell_convertert::convert_set_option(
-  std::vector<shell_wordt>::const_iterator arg,
-  std::vector<shell_wordt>::const_iterator,
-  code_blockt &,
-  const source_locationt &loc)
-{
-  unsupported(loc, "set option " + static_text(*arg).value_or(""));
-}

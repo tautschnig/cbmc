@@ -197,6 +197,14 @@ void shell_convertert::convert_function_call(
   assign(dest, saved_count, argument_count(), loc);
   set_positional_parameters(arguments, dest, loc);
 
+  // -e stays ignored in the function if it is ignored at the call.
+  const symbol_exprt saved_ignored = temporary(bool_typet{}, dest, loc);
+  if(errexit_ignored && option_possible("errexit"))
+  {
+    assign(dest, saved_ignored, errexit_ignored_in_caller(), loc);
+    assign(dest, errexit_ignored_in_caller(), true_exprt{}, loc);
+  }
+
   const auto &definitions = function_definitions.at(name);
   for(std::size_t k = 1; k <= definitions.size(); ++k)
   {
@@ -220,6 +228,8 @@ void shell_convertert::convert_function_call(
 
   assign(dest, positional_array(), saved_array, loc);
   assign(dest, argument_count(), saved_count, loc);
+  if(errexit_ignored && option_possible("errexit"))
+    assign(dest, errexit_ignored_in_caller(), saved_ignored, loc);
 }
 
 /// return [n] (XCU 2.15 return).

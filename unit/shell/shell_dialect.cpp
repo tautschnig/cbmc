@@ -62,3 +62,22 @@ TEST_CASE("shell dialect: arithmetic options", "[shell]")
     REQUIRE_FALSE(options.leading_zero_octal);
   }
 }
+
+TEST_CASE("shell dialect: options on the #! line", "[shell]")
+{
+  REQUIRE(shebang_options("echo\n") == std::string{});
+  REQUIRE(shebang_options("#!/bin/sh\n") == std::string{});
+  REQUIRE(shebang_options("#!/bin/sh -e\n") == std::string{"e"});
+  REQUIRE(shebang_options("#! /bin/bash -eu\r\n") == std::string{"eu"});
+  REQUIRE(shebang_options("#!/bin/sh -\n") == std::string{});
+  REQUIRE(shebang_options("#!/usr/bin/env bash\n") == std::string{});
+  REQUIRE(
+    shebang_options("#!/usr/bin/env -S bash -e -u\n") == std::string{"eu"});
+  REQUIRE(shebang_options("#!/usr/bin/env -Sbash -x\n") == std::string{"x"});
+  // The shell gets the single argument "-e -u".
+  REQUIRE_FALSE(shebang_options("#!/bin/sh -e -u\n").has_value());
+  // env would look for a program named "bash -e".
+  REQUIRE_FALSE(shebang_options("#!/usr/bin/env bash -e\n").has_value());
+  REQUIRE_FALSE(shebang_options("#!/bin/bash -o pipefail\n").has_value());
+  REQUIRE_FALSE(shebang_options("#!/bin/sh +e\n").has_value());
+}

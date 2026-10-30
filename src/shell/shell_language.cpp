@@ -84,6 +84,16 @@ bool shell_languaget::parse(
 
   program = shell_programt{};
   program.dialect = detect_shell_dialect(source, path);
+  const auto options = shebang_options(source);
+  if(!options.has_value())
+  {
+    log.error() << path
+                << ": unsupported arguments on the #! line (only single-letter "
+                   "options such as -eu are supported)"
+                << messaget::eom;
+    return true;
+  }
+  program.initial_options = *options;
 
   // shfmt's --to-json reads only standard input.
   temporary_filet source_file{"cbmc_shell_src_", ".sh"};

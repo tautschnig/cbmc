@@ -1,0 +1,13 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] file main.sh line 5 assertion reached = yes: FAILURE$
+^\[assertion\.2\] file main.sh line 7 assertion reached = no: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+set -u: expanding an unset parameter makes the shell exit; ${x-}, $#,
+and "$@" do not.
