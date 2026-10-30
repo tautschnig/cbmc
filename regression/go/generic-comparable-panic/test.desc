@@ -1,0 +1,12 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::\$interface_equal\.uncomparable\.1\] runtime error: comparing uncomparable type \[\]int: FAILURE$
+^\[go::main\.main\.assertion\.1\] .* comparable dynamic type: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Go1.27 §Satisfying_a_type_constraint: comparing type parameters may panic.

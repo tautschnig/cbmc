@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Type_constraints, §Arithmetic_operators: operations on type
+parameters use the type argument.

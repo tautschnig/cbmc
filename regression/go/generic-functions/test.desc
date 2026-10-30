@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Function_declarations, §Instantiations: generic functions, explicit
+and inferred instantiation, instances as values.

@@ -1,0 +1,10 @@
+CORE
+main.go
+--unwind 4
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Method_declarations: generic methods [Go 1.27].

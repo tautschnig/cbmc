@@ -1,0 +1,13 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.Div\[uint8\]\.division-by-zero\.1\] line 9 .*: SUCCESS$
+^\[go::main\.Div\[int\]\.division-by-zero\.1\] line 9 .*: FAILURE$
+^VERIFICATION FAILED$
+--
+main\.Alias
+^warning: ignoring
+--
+Go1.27 §Instantiations: per-instance properties

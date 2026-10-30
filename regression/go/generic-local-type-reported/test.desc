@@ -1,0 +1,11 @@
+CORE
+main.go
+
+^EXIT=6$
+^SIGNAL=0$
+line 7 column 7: Go front-end: type declarations in generic functions is not supported yet$
+^CONVERSION ERROR$
+--
+^VERIFICATION SUCCESSFUL$
+--
+local types of generic functions are reported
