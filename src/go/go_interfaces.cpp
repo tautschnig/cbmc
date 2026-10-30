@@ -302,9 +302,7 @@ exprt go_convertert::convert_method_call(const irept &call)
   // type of) x contains m and the argument list can be assigned to the
   // parameter list of m." The receiver is evaluated before the arguments.
   const source_locationt location = location_of(call);
-  const irept *fun = &go_field(call, "Fun");
-  while(fun->id() == "ParenExpr")
-    fun = &go_field(*fun, "X");
+  const irept *fun = &skip_instantiation(go_field(call, "Fun"));
   const irept &selection = fun->find("_sel");
   const irept &x_node = go_field(*fun, "X");
   const irep_idt &method_object = selection.get("obj");

@@ -360,9 +360,11 @@ void go_convertert::declare_function(const irept &decl)
     code_type.parameters().insert(code_type.parameters().begin(), param);
   }
 
+  // The object's name, which for instances of generic functions includes
+  // the type arguments (e.g., "Sum[int]").
   symbolt symbol = make_symbol(
     symbol_id(object_id),
-    name.get("Name"),
+    object.get("name"),
     type,
     location_of(decl),
     parse_tree.package);
@@ -1080,8 +1082,22 @@ void go_convertert::convert_decl_stmt(const irept &stmt, code_blockt &dest)
 {
   const irept &decl = go_field(stmt, "Decl");
   const irep_idt &tok = decl.get("Tok");
-  if(tok == "const" || tok == "type")
-    return; // folded / resolved by go/types
+  if(tok == "type")
+  {
+    // Resolved by go/types, except where the helper could not represent
+    // the type (local types of generic functions).
+    for(const auto &spec : go_list(decl, "Specs"))
+    {
+      const irept &object =
+        parse_tree.object(go_field(spec, "Name").get("_obj"));
+      const irept &entry = parse_tree.type_entry(object.get("type"));
+      if(entry.get("k") == "unknown" && !entry.get("reason").empty())
+        unsupported(spec, entry.get_string("reason"));
+    }
+    return;
+  }
+  if(tok == "const")
+    return; // folded by go/types
   for(const auto &spec : go_list(decl, "Specs"))
   {
     const auto &names = go_list(spec, "Names");
@@ -2076,6 +2092,39 @@ exprt go_convertert::convert_access(const irept &expr, access_partst &parts)
   return access_operand(expr, parts);
 }
 
+/// Whether \p expr denotes an instantiated generic function or method.
+static bool is_instantiation(const irept &expr)
+{
+  const irept *node = &expr;
+  while(node->id() == "ParenExpr")
+    node = &go_field(*node, "X");
+  if(node->id() == "SelectorExpr")
+    node = &go_field(*node, "Sel");
+  return node->id() == "Ident" && !go_list(*node, "_inst").empty();
+}
+
+const irept &skip_instantiation(const irept &expr)
+{
+  // Go1.27 §Instantiations: "When using a generic function or method, type
+  // arguments may be provided explicitly, or they may be partially or
+  // completely inferred from the context in which the function is used."
+  // Either way the instance is recorded on the function's identifier.
+  const irept *node = &expr;
+  while(true)
+  {
+    if(node->id() == "ParenExpr")
+      node = &go_field(*node, "X");
+    else if(
+      (node->id() == "IndexExpr" || node->id() == "IndexListExpr") &&
+      !node->get_bool("_tx") && is_instantiation(go_field(*node, "X")))
+    {
+      node = &go_field(*node, "X");
+    }
+    else
+      return *node;
+  }
+}
+
 irep_idt go_convertert::callee_object(const irept &call)
 {
   const irept *fun = &go_field(call, "Fun");
@@ -2357,9 +2406,7 @@ exprt go_convertert::convert_call(const irept &call)
 
   {
     // Method calls (also of the predeclared error interface's Error).
-    const irept *method = &fun;
-    while(method->id() == "ParenExpr")
-      method = &go_field(*method, "X");
+    const irept *method = &skip_instantiation(fun);
     if(
       method->id() == "SelectorExpr" &&
       method->find("_sel").get("kind") == "method")
@@ -2424,9 +2471,7 @@ exprt go_convertert::convert_call(const irept &call)
   exprt::operandst arguments;
 
   // A declared function of this package: call it directly.
-  const irept *callee_node = &fun;
-  while(callee_node->id() == "ParenExpr")
-    callee_node = &go_field(*callee_node, "X");
+  const irept *callee_node = &skip_instantiation(fun);
 
   if(object.get("kind") == "func" && callee_node->id() == "Ident")
   {
@@ -3453,6 +3498,8 @@ exprt go_convertert::convert_expr(const irept &expr)
     return convert_func_lit(expr);
   if(kind == "ParenExpr")
     return convert_expr(go_field(expr, "X"));
+  if(&skip_instantiation(expr) != &expr)
+    return convert_expr(skip_instantiation(expr));
   if(kind == "UnaryExpr" && expr.get("Op") == "&")
     return convert_address_of(expr);
   if(kind == "UnaryExpr")

@@ -489,4 +489,9 @@ private:
   irep_idt callee_object(const irept &call);
 };
 
+/// \p expr without enclosing parentheses and explicit instantiations
+/// (`f[int]`, `x.m[int]`): the instantiated function or method, whose node
+/// denotes the instance.
+const irept &skip_instantiation(const irept &expr);
+
 #endif // CPROVER_GO_GO_CONVERT_H

@@ -30,7 +30,8 @@
 //	"_tx"   true if the expression denotes a type (types.TypeAndValue.IsType)
 //	"_obj"  id of the object an identifier denotes; "_def" if it defines it
 //	"_sel"  selection info for selector expressions
-//	"_inst" type-argument indices for instantiated generic identifiers
+//	"_inst" type-argument indices for instantiated generic identifiers,
+//	        whose "_obj" (and "_sel" "obj") is then the instance
 //	"_impl" id of an implicitly declared object (e.g. per-clause type-switch
 //	        variables, types.Info.Implicits)
 //	"_sb"   for string constants, their bytes
@@ -40,6 +41,15 @@
 //
 //	"_fb"   for constants of floating-point type, the IEEE 754 bits of the
 //	        value rounded to the type; "_fbr"/"_fbi" for complex types
+//
+// Generic code is monomorphised: generic functions and methods, and generic
+// type declarations, are not emitted as such. Each instance of a generic
+// function or method is a FuncDecl of its own, appended to the declarations
+// of its file, with object id `<pkg>.<f>[<type args>]` (methods:
+// `<pkg>.<T>[<type args>].<m>`, generic methods `...<m>[<type args>]`),
+// in which every type is substituted and objects declared in the generic
+// declaration have ids `<id>@<instance id>`. Named type entries of
+// instantiated types have "iname", `<type object id>[<type args>]`.
 //
 // The last entry of "files" and "asts" is the front-end's runtime package
 // "cprover/rt" (runtime/rt.go), whose objects have ids "cprover/rt.<name>".
@@ -120,20 +130,95 @@ type encoder struct {
 	typeIdx  map[types.Type]int
 	objects  map[string]any
 	ids      map[types.Object]string
+
+	// completeTypes state: the number of entries completed, and the
+	// entries that are candidates for identity, by key.
+	completed int
+	byKey     map[string][]int
+
+	// Monomorphisation (see instance). ctxt is shared with the type checker
+	// so that identical instantiations are the same types.Type.
+	ctxt         *types.Context
+	cur          *instance // the instance being encoded, or nil
+	instances    map[string]*instance
+	queue        []*instance
+	genericDecls map[*types.Func]*ast.FuncDecl
+	declFile     map[*ast.FuncDecl]int
+	localIDs     map[localKey]string
+	aliases      map[types.Object]string     // instances' copies of local objects
+	selObj       map[*ast.Ident]types.Object // re-resolved selectors and keys
+	selPath      map[*ast.SelectorExpr]selPath
+	namedTypes   []types.Type // the types named by typeName,
+	typeNames    []string     // and their names
+	usedNames    map[string]bool
+}
+
+// An instance of a generic function or method (Go1.27 §Instantiations),
+// encoded as a FuncDecl of its own: the generic declaration with every
+// type parameter replaced by its type argument (monomorphisation). Objects
+// declared in the generic declaration get ids of their own in each
+// instance (`<id>@<instance id>`), with their types substituted.
+type instance struct {
+	id     string
+	origin *types.Func
+	decl   *ast.FuncDecl // nil if the declaration is in another package
+	params []*types.TypeParam
+	args   []types.Type
+	memo   map[types.Type]types.Type
+}
+
+type localKey struct {
+	obj  types.Object
+	inst *instance
+}
+
+// maxInstances bounds the number of instances of generic functions and
+// methods, which recursive generic code can make unbounded.
+const maxInstances = 2000
+
+func (in *instance) isLocal(o types.Object) bool {
+	return in != nil && in.decl != nil && o.Pos().IsValid() &&
+		in.decl.Pos() <= o.Pos() && o.Pos() < in.decl.End()
 }
 
 // objID gives every object a unique id. Package-level objects and methods
 // get readable ids ("main.f", "main.T.M"); objects in local scopes get a
 // numeric suffix ("main.x#3") because shadowing makes names ambiguous.
 func (e *encoder) objID(o types.Object) string {
-	if id, ok := e.ids[o]; ok {
+	if e.cur != nil && o == types.Object(e.cur.origin) {
+		return e.cur.id
+	}
+	if id, ok := e.aliases[o]; ok {
 		return id
 	}
-	var id string
 	pkg := ""
 	if o.Pkg() != nil {
 		pkg = o.Pkg().Path()
 	}
+	if f, ok := o.(*types.Func); ok && isMethod(f) {
+		if n := recvNamed(f); n != nil && n.TypeArgs().Len() > 0 &&
+			!types.IsInterface(n) {
+			return e.methodInstance(f, nil)
+		}
+	}
+	if e.cur.isLocal(o) {
+		key := localKey{o, e.cur}
+		if id, ok := e.localIDs[key]; ok {
+			return id
+		}
+		id := fmt.Sprintf("%s.%s#%d@%s", pkg, o.Name(), len(e.localIDs),
+			e.cur.id)
+		e.localIDs[key] = id
+		e.objects[id] = e.objectEntry(o)
+		return id
+	}
+	// Objects of generic declarations may also occur outside instances, in
+	// the types of instances from go/types (which shares the variables
+	// whose types do not change); there they get plain ids.
+	if id, ok := e.ids[o]; ok {
+		return id
+	}
+	var id string
 	switch {
 	case o.Pkg() == nil: // universe: predeclared types, builtins, nil, ...
 		id = o.Name()
@@ -162,6 +247,327 @@ func (e *encoder) objID(o types.Object) string {
 	return id
 }
 
+// recvNamed is the named type of a method's receiver.
+func recvNamed(f *types.Func) *types.Named {
+	recv := f.Signature().Recv().Type()
+	if p, ok := recv.(*types.Pointer); ok {
+		recv = p.Elem()
+	}
+	n, _ := types.Unalias(recv).(*types.Named)
+	return n
+}
+
+// typeName names a type in instance ids, the same for identical types
+// (so that, e.g., an alias and the type it denotes give one instance): the
+// string, with package paths, of the first identical type named, made
+// unique among non-identical types (e.g., local types of the same name) by
+// a suffix.
+func (e *encoder) typeName(t types.Type) string {
+	for i, u := range e.namedTypes {
+		if types.Identical(u, t) {
+			return e.typeNames[i]
+		}
+	}
+	s := types.TypeString(e.unaliased(t), nil)
+	name := s
+	for n := 1; e.usedNames[name]; n++ {
+		name = fmt.Sprintf("%s'%d", s, n) // '#' is for local objects
+	}
+	e.usedNames[name] = true
+	e.namedTypes = append(e.namedTypes, t)
+	e.typeNames = append(e.typeNames, name)
+	return name
+}
+
+// unaliased is t with the aliases in it replaced by the types they denote
+// (Go1.27 §Alias_declarations), for naming.
+func (e *encoder) unaliased(t types.Type) types.Type {
+	switch x := types.Unalias(t).(type) {
+	case *types.Pointer:
+		return types.NewPointer(e.unaliased(x.Elem()))
+	case *types.Slice:
+		return types.NewSlice(e.unaliased(x.Elem()))
+	case *types.Array:
+		return types.NewArray(e.unaliased(x.Elem()), x.Len())
+	case *types.Map:
+		return types.NewMap(e.unaliased(x.Key()), e.unaliased(x.Elem()))
+	case *types.Chan:
+		return types.NewChan(x.Dir(), e.unaliased(x.Elem()))
+	case *types.Named:
+		args := typeList(x.TypeArgs())
+		if len(args) == 0 {
+			return x
+		}
+		for i, a := range args {
+			args[i] = e.unaliased(a)
+		}
+		if r, err := types.Instantiate(e.ctxt, x.Origin(), args,
+			false); err == nil {
+			return r
+		}
+		return x
+	default:
+		return x
+	}
+}
+
+func (e *encoder) typeArgs(args []types.Type) string {
+	var names []string
+	for _, a := range args {
+		names = append(names, e.typeName(a))
+	}
+	return "[" + strings.Join(names, ",") + "]"
+}
+
+func typeList(l *types.TypeList) []types.Type {
+	var out []types.Type
+	for i := 0; i < l.Len(); i++ {
+		out = append(out, l.At(i))
+	}
+	return out
+}
+
+func typeParams(l *types.TypeParamList) []*types.TypeParam {
+	var out []*types.TypeParam
+	for i := 0; i < l.Len(); i++ {
+		out = append(out, l.At(i))
+	}
+	return out
+}
+
+// funcInstance returns the object id of generic function f instantiated
+// with targs, `<pkg>.<f>[<targs>]`, creating the instance if needed.
+func (e *encoder) funcInstance(f *types.Func, targs []types.Type) string {
+	id := f.Pkg().Path() + "." + f.Name() + e.typeArgs(targs)
+	return e.instantiate(id, f, typeParams(f.Signature().TypeParams()), targs)
+}
+
+// methodInstance returns the object id of method m of an instantiated
+// generic type (`<pkg>.<T>[<targs>].<m>`), where m is that instance's
+// method, instantiated with its own type arguments mtargs if it is a
+// generic method (`...<m>[<mtargs>]`, Go1.27 §Method_declarations).
+func (e *encoder) methodInstance(m *types.Func, mtargs []types.Type) string {
+	n := recvNamed(m)
+	rargs := typeList(n.TypeArgs())
+	id := m.Pkg().Path() + "." + n.Obj().Name()
+	if len(rargs) > 0 {
+		id += e.typeArgs(rargs)
+	}
+	id += "." + m.Name()
+	if len(mtargs) > 0 {
+		id += e.typeArgs(mtargs)
+	}
+	origin := m.Origin()
+	sig := origin.Signature()
+	params := append(typeParams(sig.RecvTypeParams()),
+		typeParams(sig.TypeParams())...)
+	return e.instantiate(id, origin, params, append(rargs, mtargs...))
+}
+
+// instantiate registers the instance id of origin with the type arguments
+// args for params, with an object entry of the substituted signature, and
+// queues its declaration (if it is available) for encoding.
+func (e *encoder) instantiate(id string, origin *types.Func,
+	params []*types.TypeParam, args []types.Type) string {
+	if _, ok := e.instances[id]; ok {
+		return id
+	}
+	if len(e.instances) >= maxInstances {
+		fmt.Fprintf(os.Stderr, "%s: more than %d instances of generic "+
+			"functions and methods (unbounded instantiation?)\n",
+			e.fset.Position(origin.Pos()), maxInstances)
+		os.Exit(3)
+	}
+	inst := &instance{id: id, origin: origin, decl: e.genericDecls[origin],
+		params: params, args: args, memo: map[types.Type]types.Type{}}
+	e.instances[id] = inst
+	saved := e.cur
+	e.cur = inst
+	// The name has the type arguments of the function or method itself.
+	name := origin.Name()
+	if own := len(args) - origin.Signature().RecvTypeParams().Len(); own > 0 {
+		name += e.typeArgs(args[len(args)-own:])
+	}
+	e.objects[id] = map[string]any{"name": name,
+		"exported": origin.Exported(), "pkg": origin.Pkg().Path(),
+		"package_level": !isMethod(origin), "kind": "func",
+		"type": e.typ(e.subst(origin.Type()))}
+	e.cur = saved
+	if inst.decl != nil {
+		e.queue = append(e.queue, inst)
+	}
+	return id
+}
+
+// subst replaces the type parameters of the current instance in t by its
+// type arguments. Types that contain objects declared in the generic
+// declaration (parameters, fields of local struct types) are rebuilt with
+// that instance's objects, so that type entries and identifiers agree.
+func (e *encoder) subst(t types.Type) types.Type {
+	if e.cur == nil || t == nil {
+		return t
+	}
+	if r, ok := e.cur.memo[t]; ok {
+		return r
+	}
+	r := e.substType(t)
+	e.cur.memo[t] = r
+	return r
+}
+
+func (e *encoder) substType(t types.Type) types.Type {
+	switch x := t.(type) {
+	case *types.TypeParam:
+		for i, p := range e.cur.params {
+			if p == x {
+				return e.cur.args[i]
+			}
+		}
+	case *types.Alias:
+		return e.subst(types.Unalias(t))
+	case *types.Named:
+		args := typeList(x.TypeArgs())
+		changed := false
+		for i, a := range args {
+			args[i] = e.subst(a)
+			changed = changed || args[i] != a
+		}
+		if changed {
+			if r, err := types.Instantiate(e.ctxt, x.Origin(), args,
+				false); err == nil {
+				return r
+			}
+		}
+	case *types.Pointer:
+		if el := e.subst(x.Elem()); el != x.Elem() {
+			return types.NewPointer(el)
+		}
+	case *types.Slice:
+		if el := e.subst(x.Elem()); el != x.Elem() {
+			return types.NewSlice(el)
+		}
+	case *types.Array:
+		if el := e.subst(x.Elem()); el != x.Elem() {
+			return types.NewArray(el, x.Len())
+		}
+	case *types.Map:
+		k, v := e.subst(x.Key()), e.subst(x.Elem())
+		if k != x.Key() || v != x.Elem() {
+			return types.NewMap(k, v)
+		}
+	case *types.Chan:
+		if el := e.subst(x.Elem()); el != x.Elem() {
+			return types.NewChan(x.Dir(), el)
+		}
+	case *types.Struct:
+		changed := false
+		var fields []*types.Var
+		var tags []string
+		for i := 0; i < x.NumFields(); i++ {
+			f := x.Field(i)
+			ft := e.subst(f.Type())
+			nf := f
+			if ft != f.Type() || e.cur.isLocal(f) {
+				changed = true
+				nf = types.NewField(f.Pos(), f.Pkg(), f.Name(), ft, f.Embedded())
+				if e.cur.isLocal(f) {
+					e.aliases[nf] = e.objID(f)
+				}
+			}
+			fields = append(fields, nf)
+			tags = append(tags, x.Tag(i))
+		}
+		if changed {
+			return types.NewStruct(fields, tags)
+		}
+	case *types.Tuple:
+		if r, changed := e.substTuple(x); changed {
+			return r
+		}
+	case *types.Signature:
+		return e.substSignature(x)
+	case *types.Interface:
+		changed := false
+		var methods []*types.Func
+		for i := 0; i < x.NumExplicitMethods(); i++ {
+			// The receiver of the new methods is set by NewInterfaceType.
+			m := x.ExplicitMethod(i)
+			params, c1 := e.substTuple(m.Signature().Params())
+			results, c2 := e.substTuple(m.Signature().Results())
+			if c1 || c2 {
+				changed = true
+				m = types.NewFunc(m.Pos(), m.Pkg(), m.Name(),
+					types.NewSignatureType(nil, nil, nil, params, results,
+						m.Signature().Variadic()))
+			}
+			methods = append(methods, m)
+		}
+		var embedded []types.Type
+		for i := 0; i < x.NumEmbeddeds(); i++ {
+			et := x.EmbeddedType(i)
+			if _, isUnion := et.(*types.Union); !isUnion {
+				et = e.subst(et)
+			}
+			changed = changed || et != x.EmbeddedType(i)
+			embedded = append(embedded, et)
+		}
+		if changed {
+			return types.NewInterfaceType(methods, embedded).Complete()
+		}
+	}
+	return t
+}
+
+// substVar substitutes in the type of v; v is replaced if its type changes
+// or it is declared in the current generic declaration (then the new
+// variable has the instance's id of v).
+func (e *encoder) substVar(v *types.Var) (*types.Var, bool) {
+	vt := e.subst(v.Type())
+	local := e.cur.isLocal(v)
+	if vt == v.Type() && !local {
+		return v, false
+	}
+	nv := types.NewParam(v.Pos(), v.Pkg(), v.Name(), vt)
+	if local && v.Name() != "" {
+		e.aliases[nv] = e.objID(v)
+	}
+	return nv, true
+}
+
+func (e *encoder) substTuple(t *types.Tuple) (*types.Tuple, bool) {
+	if t == nil {
+		return nil, false
+	}
+	changed := false
+	var vars []*types.Var
+	for i := 0; i < t.Len(); i++ {
+		v, c := e.substVar(t.At(i))
+		changed = changed || c
+		vars = append(vars, v)
+	}
+	if !changed {
+		return t, false
+	}
+	return types.NewTuple(vars...), true
+}
+
+// substSignature substitutes in a signature, which loses its type
+// parameters (an instance is not generic).
+func (e *encoder) substSignature(s *types.Signature) *types.Signature {
+	params, c1 := e.substTuple(s.Params())
+	results, c2 := e.substTuple(s.Results())
+	recv, c3 := s.Recv(), false
+	if recv != nil {
+		recv, c3 = e.substVar(recv)
+	}
+	if !c1 && !c2 && !c3 && s.TypeParams().Len() == 0 &&
+		s.RecvTypeParams().Len() == 0 {
+		return s
+	}
+	return types.NewSignatureType(recv, nil, nil, params, results,
+		s.Variadic())
+}
+
 func isMethod(o types.Object) bool {
 	f, ok := o.(*types.Func)
 	return ok && f.Signature().Recv() != nil
@@ -187,11 +593,18 @@ func (e *encoder) objectEntry(o types.Object) map[string]any {
 		}
 	case *types.Func:
 		entry["kind"] = "func"
+		if x.Signature().TypeParams().Len() > 0 {
+			return entry // generic, only used instantiated
+		}
 	case *types.Const:
 		entry["kind"] = "const"
 		entry["value"] = x.Val().ExactString()
 	case *types.TypeName:
 		entry["kind"] = "type"
+		if n, ok := x.Type().(*types.Named); ok && n.TypeParams().Len() > 0 &&
+			n.TypeArgs().Len() == 0 {
+			return entry // a generic type, only used instantiated
+		}
 	case *types.PkgName:
 		entry["kind"] = "package"
 		entry["path"] = x.Imported().Path()
@@ -205,7 +618,7 @@ func (e *encoder) objectEntry(o types.Object) map[string]any {
 		entry["kind"] = "other"
 	}
 	if o.Type() != nil {
-		entry["type"] = e.typ(o.Type())
+		entry["type"] = e.typ(e.subst(o.Type()))
 	}
 	return entry
 }
@@ -242,6 +655,12 @@ func (e *encoder) typ(t types.Type) int {
 	case *types.Basic:
 		entry = map[string]any{"k": "basic", "kind": basicNames[x.Kind()]}
 	case *types.Named:
+		if e.cur.isLocal(x.Obj()) {
+			// Its underlying type would need substituting as well.
+			entry = map[string]any{"k": "unknown",
+				"reason": "type declarations in generic functions"}
+			break
+		}
 		entry = map[string]any{"k": "named", "obj": e.objID(x.Obj()),
 			"under": e.typ(x.Underlying())}
 		if args := x.TypeArgs(); args.Len() > 0 {
@@ -250,6 +669,8 @@ func (e *encoder) typ(t types.Type) int {
 				targs = append(targs, e.typ(args.At(j)))
 			}
 			entry["targs"] = targs
+			// Go1.27 §Instantiations: each instance is a distinct type.
+			entry["iname"] = e.objID(x.Obj()) + e.typeArgs(typeList(args))
 		}
 	case *types.Pointer:
 		entry = map[string]any{"k": "pointer", "elem": e.typ(x.Elem())}
@@ -321,8 +742,9 @@ func (e *encoder) completeTypes() {
 		}
 		return t.String()
 	}
-	byKey := map[string][]int{}
-	for i := 0; i < len(e.types); i++ { // e.types may grow
+	byKey := e.byKey
+	for i := e.completed; i < len(e.types); i++ { // e.types may grow
+		e.completed = i + 1
 		t := e.typeList[i]
 		entry := e.types[i].(map[string]any)
 		canonical := i
@@ -347,6 +769,12 @@ func (e *encoder) completeTypes() {
 		for j := 0; j < mset.Len(); j++ {
 			sel := mset.At(j)
 			f := sel.Obj().(*types.Func)
+			if f.Signature().TypeParams().Len() > 0 {
+				// Generic methods must be instantiated to be used and are
+				// not in method sets of interfaces (Go1.27 §Interface_types),
+				// so dynamic dispatch never needs them.
+				continue
+			}
 			_, ptrRecv := f.Signature().Recv().Type().(*types.Pointer)
 			methods = append(methods, map[string]any{
 				"name": f.Name(), "obj": e.objID(f), "path": sel.Index(),
@@ -385,12 +813,17 @@ func (e *encoder) node(n ast.Node) any {
 	if p := e.fset.Position(n.Pos()); p.IsValid() {
 		out["_p"] = []int{e.fileIdx[p.Filename], p.Line, p.Column}
 	}
+	e.resolveInInstance(n)
 	for i := 0; i < v.NumField(); i++ {
 		f, name := v.Field(i), v.Type().Field(i).Name
 		switch name {
 		case "Obj", "Scope", "Unresolved", "Imports", "Comments", "Doc",
 			"Comment":
 			continue // superseded by go/types, or irrelevant
+		case "TypeParams":
+			if e.cur != nil {
+				continue // an instance is not generic
+			}
 		}
 		if r := e.value(f); r != nil {
 			out[name] = r
@@ -398,6 +831,19 @@ func (e *encoder) node(n ast.Node) any {
 	}
 	if x, ok := n.(ast.Expr); ok {
 		if tv, ok := e.info.Types[x]; ok {
+			// Instantiated identifiers and selectors have the type of the
+			// instance, not that of the generic function or type.
+			var instID *ast.Ident
+			switch y := x.(type) {
+			case *ast.Ident:
+				instID = y
+			case *ast.SelectorExpr:
+				instID = y.Sel
+			}
+			if inst, ok := e.info.Instances[instID]; ok && instID != nil {
+				tv.Type = inst.Type
+			}
+			tv.Type = e.subst(tv.Type)
 			out["_t"] = e.typ(tv.Type)
 			if tv.IsType() {
 				out["_tx"] = true
@@ -418,19 +864,39 @@ func (e *encoder) node(n ast.Node) any {
 		}
 	}
 	if id, ok := n.(*ast.Ident); ok {
-		if o := e.info.Defs[id]; o != nil {
-			out["_obj"] = e.objID(o)
+		o := e.info.Uses[id]
+		if d := e.info.Defs[id]; d != nil {
+			o = d
 			out["_def"] = true
-		} else if o := e.info.Uses[id]; o != nil {
-			out["_obj"] = e.objID(o)
+		}
+		if r, ok := e.selObj[id]; ok {
+			o = r
 		}
 		if inst, ok := e.info.Instances[id]; ok {
-			var targs []int
+			// Go1.27 §Instantiations: "A generic function, method, or type
+			// is instantiated by substituting type arguments for the type
+			// parameters". Instantiated functions and methods denote their
+			// instance.
+			var targs []types.Type
+			var tidx []int
 			for i := 0; i < inst.TypeArgs.Len(); i++ {
-				targs = append(targs, e.typ(inst.TypeArgs.At(i)))
+				targs = append(targs, e.subst(inst.TypeArgs.At(i)))
+				tidx = append(tidx, e.typ(targs[i]))
 			}
-			out["_inst"] = targs
-			out["_t"] = e.typ(inst.Type)
+			out["_inst"] = tidx
+			out["_t"] = e.typ(e.subst(inst.Type)) // even if not in Types
+			f, _ := o.(*types.Func)
+			if f != nil && isMethod(f) {
+				out["_obj"] = e.methodInstance(f, targs)
+			} else if f != nil && e.genericDecls[f] != nil {
+				out["_obj"] = e.funcInstance(f, targs)
+			} else if o != nil {
+				// Generic types, and functions without source here (e.g.,
+				// cprover.Nondet, which the converter implements).
+				out["_obj"] = e.objID(o)
+			}
+		} else if o != nil {
+			out["_obj"] = e.objID(o)
 		}
 	}
 	if o := e.info.Implicits[n]; o != nil {
@@ -444,15 +910,86 @@ func (e *encoder) node(n ast.Node) any {
 	}
 	if se, ok := n.(*ast.SelectorExpr); ok {
 		if s := e.info.Selections[se]; s != nil {
+			index, indirect := s.Index(), s.Indirect()
+			if r, ok := e.selPath[se]; ok {
+				index, indirect = r.index, r.indirect
+			}
+			// The selector's object, as encoded for Sel (an instance for
+			// instantiated generic methods).
+			sel := out["Sel"].(map[string]any)
 			out["_sel"] = map[string]any{
 				"kind":     [...]string{"field", "method", "methodexpr"}[s.Kind()],
-				"path":     s.Index(),
-				"indirect": s.Indirect(),
-				"obj":      e.objID(s.Obj()),
+				"path":     index,
+				"indirect": indirect,
+				"obj":      sel["_obj"],
 			}
 		}
 	}
 	return out
+}
+
+type selPath struct {
+	index    []int
+	indirect bool
+}
+
+// resolveInInstance resolves, in an instance, the selectors and the keys
+// of struct literals whose operand type involves type parameters, in the
+// substituted type: their objects and paths are those of the instance's
+// types (methods of the type argument, fields of instantiated structs).
+func (e *encoder) resolveInInstance(n ast.Node) {
+	switch x := n.(type) {
+	case *ast.SelectorExpr:
+		s := e.info.Selections[x]
+		if s == nil {
+			return
+		}
+		// The selected object (for methods of instantiated types, the
+		// instance's method, which Uses need not record).
+		e.selObj[x.Sel] = s.Obj()
+		delete(e.selPath, x)
+		recv := e.subst(s.Recv())
+		if recv == s.Recv() {
+			return
+		}
+		obj, index, indirect := types.LookupFieldOrMethod(recv, true,
+			s.Obj().Pkg(), s.Obj().Name())
+		if obj == nil {
+			return
+		}
+		e.selObj[x.Sel] = obj
+		e.selPath[x] = selPath{index, indirect}
+	case *ast.CompositeLit:
+		tv, ok := e.info.Types[x]
+		if !ok || e.cur == nil {
+			return
+		}
+		t := e.subst(tv.Type)
+		if t == tv.Type {
+			return
+		}
+		if p, ok := t.Underlying().(*types.Pointer); ok {
+			t = p.Elem() // elided &T
+		}
+		if _, ok := t.Underlying().(*types.Struct); !ok {
+			return
+		}
+		for _, elt := range x.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			key, ok := kv.Key.(*ast.Ident)
+			if !ok || e.info.Uses[key] == nil {
+				continue
+			}
+			obj, _, _ := types.LookupFieldOrMethod(t, false,
+				e.info.Uses[key].Pkg(), key.Name)
+			if obj != nil {
+				e.selObj[key] = obj
+			}
+		}
+	}
 }
 
 // floatConstant records constants of floating-point and complex types as
@@ -529,6 +1066,38 @@ func (e *encoder) value(f reflect.Value) any {
 	return nil
 }
 
+// withoutGenerics returns file f (with index i) without its generic
+// declarations, which are recorded instead: they are encoded once per
+// instance (see instance).
+func (e *encoder) withoutGenerics(f *ast.File, i int) *ast.File {
+	out := *f
+	out.Decls = nil
+	for _, d := range f.Decls {
+		switch x := d.(type) {
+		case *ast.FuncDecl:
+			fn, _ := e.info.Defs[x.Name].(*types.Func)
+			if fn != nil && (fn.Signature().TypeParams().Len() > 0 ||
+				fn.Signature().RecvTypeParams().Len() > 0) {
+				e.genericDecls[fn] = x
+				e.declFile[x] = i
+				continue
+			}
+		case *ast.GenDecl:
+			g := *x
+			g.Specs = nil
+			for _, s := range x.Specs {
+				if ts, ok := s.(*ast.TypeSpec); ok && ts.TypeParams != nil {
+					continue // generic types are used instantiated
+				}
+				g.Specs = append(g.Specs, s)
+			}
+			d = &g
+		}
+		out.Decls = append(out.Decls, d)
+	}
+	return &out
+}
+
 // ensureGoOnPath makes the toolchain this helper was built with available to
 // the gc importer (which runs `go list -export`) even if `go` is not on
 // PATH at verification time.
@@ -561,7 +1130,15 @@ func main() {
 	fset := token.NewFileSet()
 	enc := &encoder{fset: fset, fileIdx: map[string]int{},
 		typeIdx: map[types.Type]int{}, objects: map[string]any{},
-		ids: map[types.Object]string{}}
+		ids: map[types.Object]string{}, byKey: map[string][]int{},
+		ctxt: types.NewContext(), instances: map[string]*instance{},
+		genericDecls: map[*types.Func]*ast.FuncDecl{},
+		declFile:     map[*ast.FuncDecl]int{},
+		localIDs:     map[localKey]string{},
+		aliases:      map[types.Object]string{},
+		selObj:       map[*ast.Ident]types.Object{},
+		selPath:      map[*ast.SelectorExpr]selPath{},
+		usedNames:    map[string]bool{}}
 	var files []*ast.File
 	var names []string
 	failed := false
@@ -596,6 +1173,7 @@ func main() {
 	enc.info = info
 	conf := types.Config{
 		GoVersion: "go1.27", // the pinned language version (plan §2.1)
+		Context:   enc.ctxt,
 		Sizes:     sizes,
 		Importer: &helperImporter{fset: fset, sizes: sizes,
 			std: importer.ForCompiler(fset, "gc", nil)},
@@ -633,10 +1211,9 @@ func main() {
 		enc.typ(types.Typ[k])
 	}
 	var asts []any
-	for _, f := range files {
-		asts = append(asts, enc.node(f))
+	for i, f := range files {
+		asts = append(asts, enc.node(enc.withoutGenerics(f, i)))
 	}
-	enc.completeTypes()
 	initOrder := []any{}
 	for _, init := range programInitOrder {
 		var lhs []string
@@ -645,6 +1222,22 @@ func main() {
 		}
 		initOrder = append(initOrder, map[string]any{"lhs": lhs,
 			"rhs": enc.node(init.Rhs)})
+	}
+	// Instances, and the types' method sets, until no new instances arise:
+	// encoding an instance or a method set may need further instances.
+	for {
+		enc.completeTypes()
+		if len(enc.queue) == 0 {
+			break
+		}
+		inst := enc.queue[0]
+		enc.queue = enc.queue[1:]
+		enc.cur = inst
+		decl := enc.node(inst.decl)
+		enc.cur = nil
+		file := asts[enc.declFile[inst.decl]].(map[string]any)
+		decls, _ := file["Decls"].([]any)
+		file["Decls"] = append(decls, decl)
 	}
 	doc := map[string]any{"version": 1, "go_version": runtime.Version(),
 		"goarch": *goarch, "package": pkg.Path(), "files": names,

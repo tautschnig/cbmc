@@ -128,12 +128,8 @@ typet go_type_convertert::operator()(const irep_idt &index)
   }
   if(entry.get("k") == "named")
   {
-    if(!go_list(entry, "targs").empty())
-    {
-      unsupported_reason =
-        "instances of generic type " + entry.get_string("str");
-      return typet{ID_nil};
-    }
+    // Instances of generic types (with "targs") have their type arguments
+    // substituted in their underlying type by go/types.
     if(underlying(index).get("k") == "struct")
       return named_struct(index, entry);
     // Other named types are their underlying type (Go1.27
@@ -211,6 +207,8 @@ typet go_type_convertert::operator()(const irep_idt &index)
     if(element.is_not_nil())
       result = slice_type(element);
   }
+  else if(!under.get("reason").empty())
+    unsupported_reason = under.get_string("reason");
   else
     unsupported_reason = "type " + entry.get_string("str");
 
@@ -253,7 +251,12 @@ typet go_type_convertert::named_struct(
   // pointer) are finite. The type symbol is added before the fields are
   // converted.
   const irep_idt &object_id = entry.get("obj");
-  const irep_idt id = go_symbol_id(object_id);
+  // Go1.27 §Instantiations: "Instantiating a generic type, function, or
+  // method results in a non-generic type, function, or method,
+  // respectively." Each instance of a generic struct type is a struct tag of
+  // its own, named after the type arguments ("iname").
+  const irep_idt id =
+    go_symbol_id(entry.get("iname").empty() ? object_id : entry.get("iname"));
   struct_tag_typet tag{id};
   tag.set(ID_C_go_type, entry.get("str"));
   tag.set(ID_C_go_tid, type_id(index));
