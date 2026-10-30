@@ -5,6 +5,7 @@ package main
 import "cprover"
 
 func main() {
-	s := "not yet"
-	cprover.Assert(len(s) == 7, "length")
+	done := false
+	go func() {}() // goroutines are not supported yet
+	cprover.Assert(!done, "not done")
 }

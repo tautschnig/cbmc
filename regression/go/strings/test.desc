@@ -1,0 +1,10 @@
+CORE
+main.go
+--unwind 16 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §String_types, §String_concatenation, §Comparison_operators

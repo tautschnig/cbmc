@@ -1,0 +1,13 @@
+CORE
+main.go
+--unwind 5 --unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] .* some key comes first: SUCCESS$
+^\[go::main\.main\.assertion\.2\] .* but not necessarily key 1: FAILURE$
+^\[go::main\.main\.assertion\.3\] .* a removed entry may not be reached: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Go1.27 §For_range: map iteration order is not specified

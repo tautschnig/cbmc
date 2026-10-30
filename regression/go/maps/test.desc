@@ -1,0 +1,10 @@
+CORE
+main.go
+--unwind 6 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Map_types, §Index_expressions, §Deletion_of_map_elements, §Clear

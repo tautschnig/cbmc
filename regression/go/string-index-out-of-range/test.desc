@@ -1,0 +1,13 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.index-out-of-range\.1\] .*line 14 .*index out of range: FAILURE$
+^\[go::main\.main\.slice-bounds-out-of-range\.1\] .*line 16 .*slice bounds out of range: FAILURE$
+^\[go::main\.main\.slice-bounds-out-of-range\.2\] .*line 18 .*slice bounds out of range: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Go1.27 §Index_expressions, §Slice_expressions: string bounds panic

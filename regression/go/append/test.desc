@@ -1,0 +1,10 @@
+CORE
+main.go
+--unwind 10 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Appending_and_copying_slices: append

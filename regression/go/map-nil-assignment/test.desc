@@ -1,0 +1,11 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.nil-map\.1\] .*line 12 assignment to entry in nil map: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Go1.27 §Index_expressions: assignment to a nil map panics
