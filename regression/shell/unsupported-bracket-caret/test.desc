@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=6$
+^SIGNAL=0$
+unsupported shell construct: \[\^\.\.\.\] in a pattern, whose meaning is unspecified; use \[!\.\.\.\]$
+^CONVERSION ERROR$
+--
+^VERIFICATION
+--
+POSIX leaves [^...] unspecified: dash reads ^ literally, bash as
+negation.

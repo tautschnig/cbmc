@@ -246,7 +246,8 @@ exprt shell_convertert::expand_parameter(
     assignable = value.id() == ID_symbol &&
                  id2string(to_symbol_expr(value).get_identifier())
                      .rfind("shell::var::", 0) == 0;
-    if(part.parameter_operator.empty())
+    const std::string &op = part.parameter_operator;
+    if(op.empty() || op[0] == '%' || op[0] == '#')
       check_nounset(value, part.text, dest, loc);
   }
 
@@ -276,7 +277,7 @@ exprt shell_convertert::expand_parameter_operator(
   const source_locationt &loc = part.location;
   const std::string &op = part.parameter_operator;
   if(op == "%" || op == "%%" || op == "#" || op == "##")
-    unsupported(loc, "pattern removal ${parameter" + op + "word}");
+    return remove_pattern(value_of(parameter, loc), op, part.parts, dest, loc);
 
   const bool colon = op[0] == ':';
   const char kind = op.back();

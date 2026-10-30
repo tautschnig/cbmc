@@ -103,6 +103,7 @@ SRC += analyses/ai/ai.cpp \
        shell/dollar_single_quotes.cpp \
        shell/shell_arith.cpp \
        shell/shell_dialect.cpp \
+       shell/shell_pattern.cpp \
        solvers/bdd/miniBDD/miniBDD.cpp \
        solvers/flattening/boolbv.cpp \
        solvers/flattening/boolbv_enumeration.cpp \

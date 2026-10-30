@@ -32,6 +32,9 @@ public:
     from_integer();
     test_integer();
     arith_integer();
+    substring();
+    affix(false);
+    affix(true);
     return out.str();
   }
 
@@ -45,29 +48,51 @@ private:
   /// traces, as in CBMC's C library.
   void begin(const std::string &signature)
   {
-    out << signature << "\n"
-        << "{\n"
-        << CPROVER_PREFIX "HIDE:;\n"
-        << "#pragma CPROVER check push\n";
-    for(const char *check :
-        {"bounds",
-         "pointer",
-         "pointer-primitive",
-         "pointer-overflow",
-         "signed-overflow",
-         "unsigned-overflow",
-         "undefined-shift",
-         "conversion",
-         "div-by-zero"})
-    {
-      out << "#pragma CPROVER check disable \"" << check << "\"\n";
-    }
+    shell_runtime_function_begin(out, signature);
   }
 
   void end()
   {
-    out << "#pragma CPROVER check pop\n"
-        << "}\n\n";
+    shell_runtime_function_end(out);
+  }
+
+  /// s[start..start+length), which the caller keeps within s.
+  void substring()
+  {
+    begin("struct " SHELL_STRING_TAG " " SHELL_RT_SUBSTRING
+          "(struct " SHELL_STRING_TAG
+          " s, unsigned long long start, unsigned long long length)");
+    out << "  struct " SHELL_STRING_TAG " r;\n"
+        << "  r.set = 1;\n"
+        << "  r.length = length;\n";
+    for(std::size_t i = 0; i < max_length; ++i)
+    {
+      out << "  r.data[" << i << "] = start + " << i << "ull < " << max_length
+          << "ull ? s.data[start + " << i << "ull] : 0;\n";
+    }
+    out << "  return r;\n";
+    end();
+  }
+
+  /// Whether p is a prefix (or, with suffix, a suffix) of s.
+  void affix(bool suffix)
+  {
+    begin(
+      std::string{"_Bool "} +
+      (suffix ? SHELL_RT_HAS_SUFFIX : SHELL_RT_HAS_PREFIX) +
+      "(struct " SHELL_STRING_TAG " s, struct " SHELL_STRING_TAG " p)");
+    out << "  _Bool r = p.length <= s.length;\n";
+    for(std::size_t i = 0; i < max_length; ++i)
+    {
+      const std::string index =
+        suffix ? "s.length - p.length + " + std::to_string(i) + "ull"
+               : std::to_string(i) + "ull";
+      out << "  r = r & (" << i << "ull >= p.length | (" << index << " < "
+          << max_length << "ull && s.data[" << index << "] == p.data[" << i
+          << "]));\n";
+    }
+    out << "  return r;\n";
+    end();
   }
 
   void type()
@@ -328,6 +353,51 @@ private:
 };
 } // namespace
 
+void shell_runtime_function_begin(
+  std::ostream &out,
+  const std::string &signature)
+{
+  // The runtime's own accesses and arithmetic are correct by
+  // construction, so checks requested for the script (such as
+  // --bounds-check) are disabled in it, and its steps are hidden from
+  // traces, as in CBMC's C library.
+  out << signature << "\n"
+      << "{\n"
+      << CPROVER_PREFIX "HIDE:;\n"
+      << "#pragma CPROVER check push\n";
+  for(const char *check :
+      {"bounds",
+       "pointer",
+       "pointer-primitive",
+       "pointer-overflow",
+       "signed-overflow",
+       "unsigned-overflow",
+       "undefined-shift",
+       "conversion",
+       "div-by-zero"})
+  {
+    out << "#pragma CPROVER check disable \"" << check << "\"\n";
+  }
+}
+
+void shell_runtime_function_end(std::ostream &out)
+{
+  out << "#pragma CPROVER check pop\n"
+      << "}\n\n";
+}
+
+std::string shell_runtime_declarations(std::size_t max_length)
+{
+  return "struct " SHELL_STRING_TAG
+         "\n{\n  _Bool set;\n"
+         "  unsigned long long length;\n  unsigned char data[" +
+         std::to_string(max_length) +
+         "];\n};\n"
+         "struct " SHELL_STRING_TAG " " SHELL_RT_SUBSTRING
+         "(struct " SHELL_STRING_TAG
+         " s, unsigned long long start, unsigned long long length);\n";
+}
+
 std::string shell_runtime_source(std::size_t max_length)
 {
   return runtime_writert{max_length}.str();
@@ -343,31 +413,31 @@ std::set<irep_idt> shell_runtime_symbols()
     SHELL_RT_CONCAT,
     SHELL_RT_FROM_INTEGER,
     SHELL_RT_TEST_INTEGER,
-    SHELL_RT_ARITH_INTEGER};
+    SHELL_RT_ARITH_INTEGER,
+    SHELL_RT_SUBSTRING,
+    SHELL_RT_HAS_PREFIX,
+    SHELL_RT_HAS_SUFFIX};
 }
 
-bool add_shell_runtime(
-  std::size_t max_length,
+bool add_shell_runtime_code(
+  const std::string &source,
+  const std::set<irep_idt> &functions,
   symbol_table_baset &symbol_table,
   message_handlert &message_handler)
 {
-  if(symbol_table.has_symbol(SHELL_RT_EQUAL))
-    return false;
-
   // The runtime uses no preprocessor directives; do not require a C
   // preprocessor for shell scripts.
   const auto preprocessor = config.ansi_c.preprocessor;
   config.ansi_c.preprocessor = configt::ansi_ct::preprocessort::NONE;
 
-  std::istringstream in{shell_runtime_source(max_length)};
+  std::istringstream in{source};
   ansi_c_languaget c_language;
-  bool error =
-    c_language.parse(in, "", message_handler) || c_language.typecheck(
-                                                   symbol_table,
-                                                   "<shell-runtime>",
-                                                   message_handler,
-                                                   true,
-                                                   shell_runtime_symbols());
+  std::set<irep_idt> keep = functions;
+  keep.insert("tag-" SHELL_STRING_TAG);
+  const bool error =
+    c_language.parse(in, "", message_handler) ||
+    c_language.typecheck(
+      symbol_table, "<shell-runtime>", message_handler, true, keep);
 
   config.ansi_c.preprocessor = preprocessor;
 
@@ -377,4 +447,18 @@ bool add_shell_runtime(
     log.error() << "failed to add the shell runtime" << messaget::eom;
   }
   return error;
+}
+
+bool add_shell_runtime(
+  std::size_t max_length,
+  symbol_table_baset &symbol_table,
+  message_handlert &message_handler)
+{
+  if(symbol_table.has_symbol(SHELL_RT_EQUAL))
+    return false;
+  return add_shell_runtime_code(
+    shell_runtime_source(max_length),
+    shell_runtime_symbols(),
+    symbol_table,
+    message_handler);
 }

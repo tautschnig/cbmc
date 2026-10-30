@@ -1,0 +1,13 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Pattern matching (XCU 2.14) in case and in ${x#p}, ${x##p}, ${x%p}, and
+${x%%p} (XCU 2.6.2): *, ?, bracket expressions with ranges, negation,
+and character classes, quoting, and quoted expansions in literal
+patterns.

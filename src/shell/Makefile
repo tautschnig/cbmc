@@ -5,12 +5,14 @@ SRC = shell_arith.cpp \
       shell_convert_functions.cpp \
       shell_convert_options.cpp \
       shell_convert_params.cpp \
+      shell_convert_patterns.cpp \
       shell_convert_subshells.cpp \
       shell_convert_test.cpp \
       shell_convert_words.cpp \
       shell_converter.cpp \
       shell_dialect.cpp \
       shell_language.cpp \
+      shell_pattern.cpp \
       shell_runtime.cpp \
       shfmt_reader.cpp \
       # Empty last line

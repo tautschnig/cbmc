@@ -515,24 +515,14 @@ void shell_convertert::convert_case(
   label(dest, end_label);
 }
 
-/// Whether \p pattern matches; only patterns without unquoted pattern
-/// characters, and the pattern "*", are supported.
+/// Whether \p pattern matches \p subject (XCU 2.14).
 exprt shell_convertert::case_pattern_matches(
   const shell_wordt &pattern,
   const exprt &subject,
   code_blockt &dest,
   const source_locationt &loc)
 {
-  if(
-    pattern.size() == 1 &&
-    pattern[0].kind == shell_word_partt::kindt::LITERAL &&
-    pattern[0].text == "*")
-  {
-    return true_exprt{};
-  }
-  const exprt text =
-    expand_word(pattern, shell_word_contextt::FIELD, dest, loc);
-  return equal(subject, text, dest, loc);
+  return pattern_matches(pattern, subject, dest, loc);
 }
 
 /// Redirections that cannot fail or change the shell's state: duplicating

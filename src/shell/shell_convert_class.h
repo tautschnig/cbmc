@@ -24,6 +24,7 @@
 #include "shell_arith.h"
 #include "shell_ast.h"
 #include "shell_converter.h"
+#include "shell_pattern.h"
 #include "shell_runtime.h"
 
 #include <functional>
@@ -589,6 +590,30 @@ private:
     const source_locationt &loc);
   void initialize_positional_parameters(
     code_blockt &init,
+    const source_locationt &loc);
+
+  // ----------------------------------------------------------------
+  // Patterns (XCU 2.14)
+
+  /// Prefixes of the matcher functions, by pattern signature.
+  std::map<std::string, std::string> pattern_matchers;
+  shell_patternt compile_pattern(const shell_wordt &, const source_locationt &);
+  exprt literal_pattern_string(
+    const shell_patternt &pattern,
+    code_blockt &dest,
+    const source_locationt &loc);
+  const std::string &pattern_prefix(const shell_patternt &pattern);
+  exprt pattern_matches(
+    const shell_wordt &pattern,
+    const exprt &subject,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// ${x#p}, ${x##p}, ${x%p}, ${x%%p} for \p op and the pattern \p word.
+  exprt remove_pattern(
+    const exprt &value,
+    const std::string &op,
+    const shell_wordt &word,
+    code_blockt &dest,
     const source_locationt &loc);
 
   // ----------------------------------------------------------------
