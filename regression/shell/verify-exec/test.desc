@@ -1,0 +1,15 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] file main.sh line 3 assertion "\$\{\?\}" -eq 0: SUCCESS$
+^\[assertion\.2\] file main.sh line 5 assertion reached = maybe: FAILURE$
+^\[assertion\.3\] file main.sh line 7 assertion "\$\{1\}" != run: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+exec without a command applies redirections to the shell (dash exits if
+one fails); exec with a command replaces the shell, so the script does
+not continue.

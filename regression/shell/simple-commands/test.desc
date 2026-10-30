@@ -1,0 +1,19 @@
+CORE
+main.sh
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^dialect posix$
+^    assign x = lit"1"$
+^    assign y = lit"two"$
+^  pipeline @3:1$
+^      word dq\(param\(x\)\)$
+^  or @4:1$
+^    and @4:1$
+^    simple negated @5:1$
+^  simple background @6:1$
+--
+^warning: ignoring
+--
+Simple commands, assignments, pipelines, and AND-OR lists (POSIX.1-2024
+XCU 2.9.1-2.9.3). "!" applies to the first pipeline only.

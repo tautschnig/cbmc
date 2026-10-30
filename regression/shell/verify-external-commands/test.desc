@@ -1,0 +1,14 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] file main.sh line 3 assertion "\$\{\?\}" -eq 0: FAILURE$
+^\[assertion\.2\] file main.sh line 5 assertion "\$\{d\}" != "": FAILURE$
+^\[assertion\.3\] file main.sh line 7 assertion "\$\{\?\}" -eq 0: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+External commands have nondeterministic exit statuses and output; the
+status of a pipeline is that of its last command.

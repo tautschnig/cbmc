@@ -285,6 +285,12 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-missing-return-check", true);
   if(cmdline.isset("python-check-iter-none") || python_strict)
     options.set_option("python-check-iter-none", true);
+  if(cmdline.isset("shell-max-string-length"))
+    options.set_option(
+      "shell-max-string-length", cmdline.get_value("shell-max-string-length"));
+  if(cmdline.isset("shell-max-arguments"))
+    options.set_option(
+      "shell-max-arguments", cmdline.get_value("shell-max-arguments"));
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
   // Disable signed overflow checks for Python source files.
@@ -1284,6 +1290,12 @@ void cbmc_parse_optionst::help()
     " over the bundled models where available\n"
     " {y--python-ref-mutables} \t (experimental) reference semantics for"
     " nested mutable containers\n"
+    "Shell scripts:\n"
+    " {y--shell-max-string-length} {un} \t "
+    "bound the length of shell strings to {un} bytes (default: 64)\n"
+    " {y--shell-max-arguments} {un} \t "
+    "bound the number of positional parameters and of fields in a list to "
+    "{un} (default: 8)\n"
     "\n"
     "Platform options:\n"
     HELP_CONFIG_PLATFORM

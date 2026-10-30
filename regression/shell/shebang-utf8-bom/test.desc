@@ -1,0 +1,15 @@
+CORE
+script
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^dialect bash$
+^    word lit".+#!/bin/bash"$
+--
+^failed to figure out type of file
+--
+A UTF-8 byte order mark before "#!" does not stop the file from being
+identified as a shell script, and the #! line still selects the dialect.
+The shell itself reads the byte order mark as part of the first word, so
+the first line is a command named "<BOM>#!/bin/bash" rather than a
+comment, as in bash and dash.

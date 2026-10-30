@@ -1,0 +1,14 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] file main.sh line 4 assertion "\$\{\?\}" -eq 0: FAILURE$
+^\[assertion\.2\] file main.sh line 6 assertion "\$\{\?\}" -eq 0: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Opening a file for a redirection can fail. The command is then skipped
+with a non-zero status, and dash exits if the command is a special
+builtin such as ":" (XCU 2.8.1), so the second assertion holds.

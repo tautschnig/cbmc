@@ -1,0 +1,13 @@
+CORE
+main.sh
+--unwind 8
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Function definitions and calls (XCU 2.9.5): positional parameters of
+the call, return with a status, recursion, redefinition, a function that
+shadows the test builtin, and exit from a function, which makes the last
+assertion unreachable.

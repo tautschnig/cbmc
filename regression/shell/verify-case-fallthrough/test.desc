@@ -1,0 +1,11 @@
+CORE
+main.bash
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+case with ";&" (POSIX.1-2024 XCU 2.9.4.3) falls through to the next
+item.

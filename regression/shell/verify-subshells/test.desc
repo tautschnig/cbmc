@@ -1,0 +1,14 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Subshells (XCU 2.13): ( ), command substitution, pipelines, and
+asynchronous lists run with a copy of the shell's state, whose changes
+are lost; only the status remains. Assertions inside them are checked.
+In dash, $? keeps its value until the command with the command
+substitution completes.

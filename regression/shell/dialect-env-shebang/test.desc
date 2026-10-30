@@ -1,0 +1,10 @@
+CORE
+main.sh
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^dialect zsh$
+--
+^warning: ignoring
+--
+The dialect follows "#!/usr/bin/env <shell>" over the file extension.

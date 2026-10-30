@@ -1,0 +1,11 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Positional parameters are nondeterministic and can be constrained with
+__CPROVER_assume; with one argument, $2 is unset and expands to "".

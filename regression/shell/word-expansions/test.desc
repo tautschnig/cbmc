@@ -1,0 +1,19 @@
+CORE
+main.sh
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^    word q"single \$x"$
+^    word dq\(lit"double " param\(x\) lit" " param\(y\)\)$
+^    word param\(1\)$
+^    word param\(#\)$
+^    word param\(\?\)$
+^      cmdsubst#1:$
+^          word lit"date"$
+^      cmdsubst#2:$
+^          word lit"uname"$
+--
+^warning: ignoring
+--
+Quoting, parameter expansion, and command substitution in both forms
+(POSIX.1-2024 XCU 2.2, 2.6.2, 2.6.3).

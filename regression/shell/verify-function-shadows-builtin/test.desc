@@ -1,0 +1,13 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] file main.sh line 5 'cd' is a function here \(the builtin 'cd' is not supported\): FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A command that runs either a function or an unsupported builtin, depending
+on whether the definition ran, is a property instead of an error: it is
+reported only if the builtin can be reached.

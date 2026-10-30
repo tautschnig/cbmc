@@ -1,0 +1,13 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-arithmetic\.1\] file main.sh line 3 value of x is an integer constant in arithmetic expansion \(other values are not supported\): FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A variable whose value is not an integer constant is an error in dash
+and evaluated recursively in bash; it is reported rather than given
+either meaning.

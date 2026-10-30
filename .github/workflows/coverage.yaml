@@ -32,6 +32,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y g++ gcc gdb binutils flex bison cmake maven jq libxml2-utils openjdk-11-jdk-headless lcov ccache z3
+      - name: Install shfmt for the shell front-end tests
+        uses: ./.github/actions/install-shfmt
       - name: Confirm z3 solver is available and log the version installed
         run: z3 --version
       - name: Install cvc5

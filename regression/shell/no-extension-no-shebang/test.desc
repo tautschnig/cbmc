@@ -1,0 +1,9 @@
+CORE
+script
+--show-parse-tree
+^EXIT=6$
+^SIGNAL=0$
+^failed to figure out type of file 'script'$
+--
+--
+Without a registered extension or a #! line, the file type is unknown.

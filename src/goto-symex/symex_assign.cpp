@@ -259,6 +259,11 @@ void symex_assignt::assign_non_struct_symbol(
       l1_lhs,
       assignment.rhs,
       target,
+      // Field assignments of a hidden assignment are hidden, too; all
+      // others are state updates.
+      current_assignment_type == symex_targett::assignment_typet::HIDDEN
+        ? symex_targett::assignment_typet::HIDDEN
+        : symex_targett::assignment_typet::STATE,
       symex_config.allow_pointer_unsoundness);
   }
 }

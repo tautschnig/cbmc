@@ -67,6 +67,7 @@ public:
   }
 
   std::set<std::string> extensions() const override;
+  std::set<std::string> interpreters() const override;
 
   void modules_provided(std::set<std::string> &modules) override;
 

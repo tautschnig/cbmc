@@ -1,0 +1,12 @@
+CORE
+main.bash
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] file main.bash line 3 assertion "\$\{#\}" -ge 2: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+In bash, shift 2 with fewer than two parameters fails with status 1 and
+the script continues with the parameters unchanged.

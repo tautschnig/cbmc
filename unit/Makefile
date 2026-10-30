@@ -98,9 +98,14 @@ SRC += analyses/ai/ai.cpp \
        json-symtab-language/json_goto_functions_extended.cpp \
        json-symtab-language/json_malformed_input.cpp \
        json/json_parser.cpp \
+       langapi/shebang_interpreter.cpp \
        json_symbol_table.cpp \
        path_strategies.cpp \
        pointer-analysis/value_set.cpp \
+       shell/dollar_single_quotes.cpp \
+       shell/shell_arith.cpp \
+       shell/shell_dialect.cpp \
+       shell/shell_pattern.cpp \
        solvers/bdd/miniBDD/miniBDD.cpp \
        solvers/flattening/boolbv.cpp \
        solvers/flattening/boolbv_enumeration.cpp \
@@ -298,6 +303,8 @@ CPROVER_LIBS =../src/ansi-c/ansi-c$(LIBEXT) \
               ../src/analyses/analyses$(LIBEXT) \
               ../src/solvers/solvers$(LIBEXT) \
               ../src/statement-list/statement-list$(LIBEXT) \
+              ../src/python/python$(LIBEXT) \
+              ../src/shell/shell$(LIBEXT) \
               $(BMC_DEPS)
               # Empty last line
 

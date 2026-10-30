@@ -1,0 +1,14 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] file main.sh line 3 assertion "\$\{#\}" -ge 0: SUCCESS$
+^\[assertion\.2\] file main.sh line 4 assertion "\$\{#\}" -ge 2: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+shift 2 with fewer than two parameters makes dash exit, as for errors of
+special builtins (XCU 2.8.1); the script continues only with $# >= 2
+before the shift, so $# >= 0 after it, but not $# >= 2.

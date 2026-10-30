@@ -1,0 +1,11 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+With pipefail (POSIX.1-2024 XCU 2.15 set), the status of a pipeline is
+that of the last command that failed.

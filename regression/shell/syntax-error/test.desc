@@ -1,0 +1,11 @@
+CORE
+main.sh
+--show-parse-tree
+^EXIT=6$
+^SIGNAL=0$
+^main.sh:1:1: `if` must be followed by a statement list$
+^PARSING ERROR$
+--
+^program
+--
+shfmt's syntax errors are reported with the script's path.

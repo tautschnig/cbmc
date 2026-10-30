@@ -93,6 +93,8 @@ class optionst;
   "(python-missing-return-check)" \
   "(python-check-iter-none)" \
   "(python-strict)" \
+  "(shell-max-string-length):" \
+  "(shell-max-arguments):" \
   "(claim):(show-claims)(floatbv)(all-claims)(all-properties)" // legacy, and will eventually disappear // NOLINT(whitespace/line_length)
 // clang-format on
 

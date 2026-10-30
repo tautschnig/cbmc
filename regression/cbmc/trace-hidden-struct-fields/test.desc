@@ -1,0 +1,15 @@
+CORE no-new-smt
+main.c
+--trace
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+return_value_f\.length=
+--
+return_value\$\$f\.
+^warning: ignoring
+--
+Assignments to the fields of a struct in a hidden function (one with a
+__CPROVER_HIDE label) are hidden in traces, like the assignment to the
+whole struct. They used to be shown, one step per field, for the
+function's return value.

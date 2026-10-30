@@ -1,0 +1,15 @@
+CORE
+main.sh
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^dialect mksh$
+^    assign e = arith"--x"\{\(--x\)\}$
+^    assign i = arith"a = 1, b"\{\(\(a = 1\) , b\)\}$
+^    assign j = arith"x\+\+"\{\(x\+\+\)\}$
+^    assign k = arith"-- 3"\{error: -- requires a variable at offset 4\}$
+--
+^warning: ignoring
+--
+mksh (also zsh, ksh93, yash, posh) arithmetic: increment operators
+require a variable operand.

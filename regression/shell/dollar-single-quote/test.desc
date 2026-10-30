@@ -1,0 +1,13 @@
+CORE
+main.bash
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^dialect bash$
+^    assign x = q"tab\\there\\nnewAA\\x01\\\\'"$
+--
+^warning: ignoring
+--
+Dollar-single-quotes (POSIX.1-2024 XCU 2.2.4): \t, \n, \xHH, octal \ddd,
+control characters \cX, \\, and \' are decoded. Uses bash, as released
+shfmt versions do not lex $'...' in POSIX mode.

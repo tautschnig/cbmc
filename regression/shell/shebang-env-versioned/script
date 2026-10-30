@@ -1,0 +1,2 @@
+#!/usr/bin/env -S ksh93 -e
+echo hi

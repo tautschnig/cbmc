@@ -1,0 +1,12 @@
+CORE
+main.sh
+--shell-max-string-length 30
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-string-length\.1\] file main.sh line 2 string exceeds --shell-max-string-length \(30\): FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Inputs are at most --shell-max-string-length bytes; strings that the
+script builds and that would exceed the bound are reported.

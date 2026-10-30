@@ -1,0 +1,11 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[division-by-zero\.1\] file main.sh line 3 division by zero in arithmetic expansion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Division by zero in arithmetic expansion is reported.

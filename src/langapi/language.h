@@ -161,6 +161,14 @@ public:
   virtual std::string description() const = 0;
   virtual std::set<std::string> extensions() const = 0;
 
+  /// Names of interpreters that a `#!` line can name for this language,
+  /// e.g. `sh` or `python3`. They select a language for files whose name
+  /// has no registered extension; see \ref get_language_from_filename.
+  virtual std::set<std::string> interpreters() const
+  {
+    return {};
+  }
+
   // show parse tree
 
   virtual void

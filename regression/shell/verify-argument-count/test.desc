@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-argument-count\.1\] file main.sh line 3 list of fields exceeds --shell-max-arguments \(8\): FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Lists of fields built by the script are checked against
+--shell-max-arguments; the list on line 2 is known to fit.

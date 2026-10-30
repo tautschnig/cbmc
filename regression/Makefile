@@ -40,6 +40,8 @@ DIRS = cbmc-shadow-memory \
        goto-cc-goto-analyzer \
        goto-analyzer-simplify \
        statement-list \
+       python \
+       shell \
        systemc \
        contracts \
        contracts-dfcc \

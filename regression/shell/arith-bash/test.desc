@@ -1,0 +1,15 @@
+CORE
+main.bash
+--show-parse-tree
+^EXIT=0$
+^SIGNAL=0$
+^dialect bash$
+^    assign e = arith"--x"\{\(--x\)\}$
+^    assign i = arith"a = 1, b"\{\(\(a = 1\) , b\)\}$
+^    assign j = arith"x\+\+"\{\(x\+\+\)\}$
+^    assign k = arith"-- 3"\{\(-\(-3\)\)\}$
+--
+^warning: ignoring
+--
+bash arithmetic: increment operators, falling back to two sign operators
+when the operand is not a variable, and the comma operator.

@@ -23,6 +23,7 @@ target_link_libraries(cbmc-lib
     linking
     pointer-analysis
     python-frontend
+    shell-frontend
     solvers
     statement-list
     util

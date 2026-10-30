@@ -1,0 +1,13 @@
+CORE
+main.bash
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] file main.bash line 4 assertion "\$\{\?\}" -eq 0: FAILURE$
+^\[assertion\.2\] file main.bash line 6 assertion "\$\{\?\}" -eq 0: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+As verify-redirection-failure, but bash (outside POSIX mode) does not
+exit when a redirection of a special builtin fails.
