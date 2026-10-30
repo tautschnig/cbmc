@@ -61,6 +61,7 @@ import (
 	"flag"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/constant"
 	"go/importer"
 	"go/parser"
@@ -68,6 +69,7 @@ import (
 	"go/types"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -1101,9 +1103,23 @@ func (e *encoder) withoutGenerics(f *ast.File, i int) *ast.File {
 // ensureGoOnPath makes the toolchain this helper was built with available to
 // the gc importer (which runs `go list -export`) even if `go` is not on
 // PATH at verification time.
+//
+// The helper is built with -trimpath, which leaves runtime.GOROOT() empty;
+// then the GOROOT of the `go` on PATH, if any, is used. go/build (and so the
+// gc importer) needs it to find the standard library.
 func ensureGoOnPath() {
-	if _, err := os.Stat(filepath.Join(runtime.GOROOT(), "bin", "go")); err == nil {
-		os.Setenv("PATH", filepath.Join(runtime.GOROOT(), "bin")+
+	goroot := runtime.GOROOT()
+	if goroot == "" {
+		if out, err := exec.Command("go", "env", "GOROOT").Output(); err == nil {
+			goroot = strings.TrimSpace(string(out))
+		}
+	}
+	if goroot == "" {
+		return
+	}
+	build.Default.GOROOT = goroot
+	if _, err := os.Stat(filepath.Join(goroot, "bin", "go")); err == nil {
+		os.Setenv("PATH", filepath.Join(goroot, "bin")+
 			string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
 }
