@@ -50,6 +50,16 @@ void shell_convertert::add_initialize()
 
   set_status(init, 0, loc);
   assign(init, exited(), false_exprt{}, loc);
+  // No functions are defined at the start: functions exported by bash in
+  // the environment are not modelled (see the plan's assumptions).
+  for(const auto &entry : function_definitions)
+  {
+    assign(
+      init,
+      current_definition(entry.first),
+      from_integer(0, current_definition_type()),
+      loc);
+  }
   initialize_positional_parameters(init, loc);
 
   // Variables not yet assigned are inherited from the environment.
@@ -78,9 +88,12 @@ void shell_convertert::add_initialize()
 
 void shell_convertert::operator()()
 {
+  collect_function_definitions(program.commands);
+  declare_functions();
   code_blockt body;
   convert_list(program.commands, body);
   add_main(std::move(body));
+  convert_function_bodies();
   add_initialize();
 }
 

@@ -26,6 +26,7 @@
 #include "shell_converter.h"
 #include "shell_runtime.h"
 
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -68,6 +69,7 @@ enum class shell_command_kindt
   CONTINUE,
   SHIFT,
   SET,
+  RETURN,
   ASSERT,
   ASSUME,
   /// echo and printf: output only; their status is nondeterministic, as
@@ -131,6 +133,12 @@ private:
 
   /// The function whose body is being converted, for naming temporaries.
   std::string current_function = SHELL_MAIN_FUNCTION;
+  /// Whether a shell function's body is being converted.
+  bool in_function = false;
+
+  /// The function definitions in the script, by name, in source order.
+  std::map<std::string, std::vector<const shell_commandt *>>
+    function_definitions;
 
   // ----------------------------------------------------------------
   // Errors
@@ -586,6 +594,32 @@ private:
     const source_locationt &loc);
 
   // ----------------------------------------------------------------
+  // Functions (XCU 2.9.5)
+
+  void collect_function_definitions(const shell_command_listt &list);
+  void collect_function_definitions(const std::vector<shell_word_partt> &);
+  void declare_functions();
+  static std::string function_identifier(const std::string &name, std::size_t);
+  static typet current_definition_type()
+  {
+    return unsigned_int_type();
+  }
+  symbol_exprt current_definition(const std::string &name);
+  std::size_t definition_number(const shell_commandt &definition) const;
+  void
+  convert_function_definition(const shell_commandt &command, code_blockt &);
+  void convert_function_body(const shell_commandt &definition);
+  void convert_function_bodies();
+  void convert_function_call(const shell_commandt &command, code_blockt &);
+  void convert_return(const shell_commandt &command, code_blockt &dest);
+  void status_from_operand(
+    const shell_wordt &word,
+    const std::string &builtin,
+    bool modulo,
+    code_blockt &dest,
+    const source_locationt &loc);
+
+  // ----------------------------------------------------------------
   // Arithmetic (XCU 2.6.4)
 
   exprt expand_arithmetic(const shell_word_partt &part, code_blockt &dest);
@@ -746,6 +780,21 @@ private:
     const source_locationt &loc);
   void
   check_redirections(const shell_commandt &command, shell_command_kindt kind);
+  /// Whether a redirection of \p command can fail: opening a file,
+  /// rather than duplicating a standard descriptor or /dev/null.
+  static bool redirection_may_fail(const shell_commandt &command);
+  /// Model the failure of a redirection of \p command, which skips the
+  /// command (XCU 2.8.1); \p run converts it.
+  void with_redirections(
+    const shell_commandt &command,
+    bool special,
+    code_blockt &dest,
+    const std::function<void(code_blockt &)> &run);
+  /// Convert a simple command that is not a call of a shell function.
+  void convert_non_function(
+    const shell_commandt &command,
+    shell_command_kindt kind,
+    code_blockt &dest);
   void check_pure_command(const shell_commandt &command);
 
   shell_command_kindt classify(const std::string &name) const;

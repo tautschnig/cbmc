@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=6$
+^SIGNAL=0$
+^file main.sh line 2 column 1: unsupported shell construct: function named like the special builtin 'export'$
+^CONVERSION ERROR$
+--
+^VERIFICATION
+--
+Special builtins are found before functions (XCU 2.9.1.4), and functions
+must not be given their names (XCU 2.9.5).

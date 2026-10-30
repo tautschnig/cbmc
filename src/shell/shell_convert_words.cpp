@@ -81,10 +81,17 @@ exprt shell_convertert::expand_part(
   code_blockt &dest)
 {
   using kindt = shell_word_partt::kindt;
+  // Arithmetic expansion, $?, and $# yield a non-empty decimal number,
+  // which field splitting with the default IFS cannot split; the script
+  // cannot change IFS (check_parameter_name).
+  const bool single_field =
+    part.kind == kindt::ARITHMETIC ||
+    (part.kind == kindt::PARAMETER && (part.text == "?" || part.text == "#") &&
+     part.parameter_operator.empty());
   if(
     !quoted && context == shell_word_contextt::FIELD &&
     part.kind != kindt::LITERAL && part.kind != kindt::QUOTED_LITERAL &&
-    part.kind != kindt::DOUBLE_QUOTED)
+    part.kind != kindt::DOUBLE_QUOTED && !single_field)
   {
     unsupported(
       part.location,

@@ -373,7 +373,7 @@ private:
     {
       ++pos;
       result.kind = kindt::PARAMETER;
-      result.name = parse_parameter();
+      result.name = parse_parameter(result);
       return result;
     }
 
@@ -400,7 +400,7 @@ private:
 
   /// After "$": a name, a single digit, a special parameter, or a braced
   /// name or number. Other ${...} forms must be expanded by the caller.
-  std::string parse_parameter()
+  std::string parse_parameter(shell_arith_exprt &result)
   {
     if(at_end())
       error("expecting a parameter after '$'");
@@ -420,8 +420,10 @@ private:
         !at_end() &&
         std::string{"@*#?-$!"}.find(text[pos]) != std::string::npos)
         name = text.substr(pos++, 1);
-      if(name.empty() || at_end() || text[pos] != '}')
+      if(name.empty() || at_end())
         error("unsupported parameter expansion in arithmetic expression");
+      if(text[pos] != '}')
+        parse_parameter_operator(result);
       ++pos;
       return name;
     }
@@ -435,6 +437,32 @@ private:
       return std::string{c};
     }
     error("expecting a parameter after '$'");
+  }
+
+  /// The operator and word of ${name<op>word}, up to the closing '}'. Only
+  /// words of literal text are supported: other expansions and quoting in
+  /// the word would have to be expanded before the expression is parsed.
+  void parse_parameter_operator(shell_arith_exprt &result)
+  {
+    std::string op;
+    if(text[pos] == ':')
+      op += text[pos++];
+    if(at_end() || std::string{"-=?+"}.find(text[pos]) == std::string::npos)
+      error("unsupported parameter expansion in arithmetic expression");
+    op += text[pos++];
+    const std::size_t end = text.find('}', pos);
+    if(end == std::string::npos)
+      error("unterminated parameter expansion in arithmetic expression");
+    const std::string word = text.substr(pos, end - pos);
+    if(word.find_first_of("$`\\'\"{") != std::string::npos)
+    {
+      error(
+        "parameter expansion with a word that is not literal text in "
+        "arithmetic expression");
+    }
+    result.op = op;
+    result.word = word;
+    pos = end;
   }
 
   /// A decimal, octal (leading 0), or hexadecimal (0x) constant, per ISO
@@ -508,6 +536,8 @@ std::string to_string(const shell_arith_exprt &expr)
   case kindt::VARIABLE:
     return expr.name;
   case kindt::PARAMETER:
+    if(!expr.op.empty())
+      return "${" + expr.name + expr.op + expr.word + "}";
     return "$" + expr.name;
   case kindt::UNARY:
     return "(" + expr.op + to_string(expr.operands[0]) + ")";

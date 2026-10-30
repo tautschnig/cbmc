@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=6$
+^SIGNAL=0$
+^file main.sh line 2 column 1: unsupported shell construct: return outside a function$
+^CONVERSION ERROR$
+--
+^VERIFICATION
+--
+Outside a function or a dot script, the effect of return is unspecified:
+dash exits, bash continues.

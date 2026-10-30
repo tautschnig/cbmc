@@ -21,6 +21,7 @@ shell_command_kindt shell_convertert::classify(const std::string &name) const
     {"continue", shell_command_kindt::CONTINUE},
     {"shift", shell_command_kindt::SHIFT},
     {"set", shell_command_kindt::SET},
+    {"return", shell_command_kindt::RETURN},
     {CPROVER_PREFIX "assert", shell_command_kindt::ASSERT},
     {CPROVER_PREFIX "assume", shell_command_kindt::ASSUME},
     {"echo", shell_command_kindt::OUTPUT},
@@ -28,15 +29,15 @@ shell_command_kindt shell_convertert::classify(const std::string &name) const
   // Builtins that change the shell environment (XCU 2.15 special
   // builtins, regular builtins of XCU 1.7, and common extensions).
   static const std::set<std::string> unsupported_builtins{
-    ".",        "eval",     "exec",    "readonly",  "return",  "times",
-    "trap",     "cd",       "read",    "getopts",   "alias",   "unalias",
-    "umask",    "wait",     "jobs",    "fg",        "bg",      "command",
-    "type",     "hash",     "kill",    "ulimit",    "fc",      "newgrp",
-    "local",    "declare",  "typeset", "source",    "let",     "shopt",
-    "builtin",  "enable",   "mapfile", "readarray", "pushd",   "popd",
-    "dirs",     "disown",   "suspend", "logout",    "nameref", "autoload",
-    "setopt",   "unsetopt", "emulate", "print",     "whence",  "functions",
-    "zmodload", "caller",   "compgen", "complete"};
+    ".",        "eval",    "exec",      "readonly", "times",     "trap",
+    "cd",       "read",    "getopts",   "alias",    "unalias",   "umask",
+    "wait",     "jobs",    "fg",        "bg",       "command",   "type",
+    "hash",     "kill",    "ulimit",    "fc",       "newgrp",    "local",
+    "declare",  "typeset", "source",    "let",      "shopt",     "builtin",
+    "enable",   "mapfile", "readarray", "pushd",    "popd",      "dirs",
+    "disown",   "suspend", "logout",    "nameref",  "autoload",  "setopt",
+    "unsetopt", "emulate", "print",     "whence",   "functions", "zmodload",
+    "caller",   "compgen", "complete"};
   const auto it = builtins.find(name);
   if(it != builtins.end())
     return it->second;
@@ -209,7 +210,8 @@ void shell_convertert::convert_compound(
   case kindt::SUBSHELL:
     unsupported(command.location, "subshell ( ... )");
   case kindt::FUNCTION_DEFINITION:
-    unsupported(command.location, "function definition");
+    convert_function_definition(command, dest);
+    return;
   case kindt::SIMPLE:
   case kindt::PIPELINE:
   case kindt::AND:
@@ -540,16 +542,70 @@ void shell_convertert::check_redirections(
       unsupported(
         redirect.location, "redirection with an expansion with side effects");
     }
-    if(
-      kind != shell_command_kindt::EXTERNAL &&
-      kind != shell_command_kindt::OUTPUT && !is_harmless_redirection(redirect))
+  }
+  (void)kind;
+}
+
+bool shell_convertert::redirection_may_fail(const shell_commandt &command)
+{
+  for(const auto &redirect : command.redirects)
+  {
+    if(!is_harmless_redirection(redirect))
+      return true;
+  }
+  return false;
+}
+
+void shell_convertert::with_redirections(
+  const shell_commandt &command,
+  bool special,
+  code_blockt &dest,
+  const std::function<void(code_blockt &)> &run)
+{
+  const source_locationt &loc = command.location;
+  if(!redirection_may_fail(command))
+  {
+    run(dest);
+    return;
+  }
+  // The redirections are made after the words are expanded (XCU 2.9.1.1);
+  // with no side effects in them, the expansion can be skipped when the
+  // redirection fails.
+  for(const auto &word : command.words)
+  {
+    if(has_side_effects(word))
     {
-      // A failed redirection changes the status of builtins, and makes
-      // the shell exit for special builtins (XCU 2.8.1).
       unsupported(
-        redirect.location, "redirection of a builtin that could fail");
+        loc,
+        "expansion with side effects in a command whose redirection can "
+        "fail");
     }
   }
+  // A failed redirection skips the command with a non-zero status, and
+  // makes the shell exit for special builtins (XCU 2.8.1), except in bash
+  // (outside POSIX mode) and zsh.
+  code_blockt failure;
+  if(
+    special && (program.dialect == shell_dialectt::POSIX ||
+                program.dialect == shell_dialectt::MKSH))
+  {
+    exit_shell(failure, true, loc);
+  }
+  else
+  {
+    nondet_status(failure, 255, loc);
+    add(
+      failure,
+      code_assumet{notequal_exprt{status(), from_integer(0, status_type())}},
+      loc);
+  }
+  code_blockt success;
+  run(success);
+  add(
+    dest,
+    code_ifthenelset{
+      nondet(bool_typet{}, loc), std::move(failure), std::move(success)},
+    loc);
 }
 
 /// Commands in pipelines and asynchronous lists run in subshells: they
@@ -666,10 +722,78 @@ void shell_convertert::convert_simple(
   if(!name.has_value())
     unsupported(loc, "command name that is an expansion");
   const shell_command_kindt kind = classify(*name);
-  if(kind == shell_command_kindt::UNSUPPORTED_BUILTIN)
-    unsupported(loc, "builtin '" + *name + "'");
+  if(function_definitions.count(*name) == 0)
+  {
+    convert_non_function(command, kind, dest);
+    return;
+  }
+
+  // Functions are found before regular builtins and utilities
+  // (XCU 2.9.1.4), but only once their definition has run.
   check_redirections(command, kind);
-  convert_builtin(kind, command, dest);
+  code_blockt undefined, defined;
+  convert_non_function(command, kind, undefined);
+  with_redirections(
+    command,
+    false,
+    defined,
+    [&](code_blockt &block) { convert_function_call(command, block); });
+  add(
+    dest,
+    code_ifthenelset{
+      equal_exprt{
+        current_definition(*name), from_integer(0, current_definition_type())},
+      std::move(undefined),
+      std::move(defined)},
+    loc);
+}
+
+void shell_convertert::convert_non_function(
+  const shell_commandt &command,
+  shell_command_kindt kind,
+  code_blockt &dest)
+{
+  const source_locationt &loc = command.location;
+  const std::string name = *static_text(command.words.front());
+  if(kind == shell_command_kindt::UNSUPPORTED_BUILTIN)
+  {
+    if(function_definitions.count(name) == 0)
+      unsupported(loc, "builtin '" + name + "'");
+    // A function of this name may be defined at this point; report it if
+    // it is not.
+    source_locationt check_loc = loc;
+    check_loc.set_property_class("shell-unsupported");
+    check_loc.set_comment(
+      "'" + name + "' is a function here (the builtin '" + name +
+      "' is not supported)");
+    code_assertt assertion{false_exprt{}};
+    assertion.add_source_location() = check_loc;
+    dest.add(std::move(assertion));
+    add(dest, code_assumet{false_exprt{}}, loc);
+    return;
+  }
+  check_redirections(command, kind);
+  if(
+    kind == shell_command_kindt::EXTERNAL ||
+    kind == shell_command_kindt::OUTPUT)
+  {
+    // Their status is nondeterministic whether or not a redirection
+    // fails.
+    convert_builtin(kind, command, dest);
+    return;
+  }
+  const bool special =
+    kind == shell_command_kindt::COLON || kind == shell_command_kindt::EXIT ||
+    kind == shell_command_kindt::EXPORT || kind == shell_command_kindt::UNSET ||
+    kind == shell_command_kindt::BREAK ||
+    kind == shell_command_kindt::CONTINUE ||
+    kind == shell_command_kindt::SHIFT || kind == shell_command_kindt::SET ||
+    kind == shell_command_kindt::RETURN;
+  with_redirections(
+    command,
+    special,
+    dest,
+    [&](code_blockt &block) { convert_builtin(kind, command, block); });
 }
 
 void shell_convertert::convert_builtin(
@@ -688,7 +812,8 @@ void shell_convertert::convert_builtin(
     kind == shell_command_kindt::EXPORT || kind == shell_command_kindt::UNSET ||
     kind == shell_command_kindt::BREAK ||
     kind == shell_command_kindt::CONTINUE ||
-    kind == shell_command_kindt::SHIFT || kind == shell_command_kindt::SET;
+    kind == shell_command_kindt::SHIFT || kind == shell_command_kindt::SET ||
+    kind == shell_command_kindt::RETURN;
   if(
     !command.assignments.empty() && kind != shell_command_kindt::EXTERNAL &&
     kind != shell_command_kindt::OUTPUT && !special)
@@ -763,6 +888,9 @@ void shell_convertert::convert_builtin(
     return;
   case shell_command_kindt::SET:
     convert_set(command, dest);
+    return;
+  case shell_command_kindt::RETURN:
+    convert_return(command, dest);
     return;
   case shell_command_kindt::COLON:
   case shell_command_kindt::TRUE:
@@ -857,21 +985,7 @@ void shell_convertert::convert_exit(
   if(command.words.size() > 2)
     unsupported(loc, "exit with several operands");
   if(command.words.size() == 2)
-  {
-    // The value is only used for the status, which nothing observes yet.
-    auto text = static_text(command.words[1]);
-    if(
-      text.has_value() && !text->empty() && text->size() < 10 &&
-      text->find_first_not_of("0123456789") == std::string::npos)
-    {
-      set_status(dest, std::stoul(*text) % 256, loc);
-    }
-    else
-    {
-      expand_word(command.words[1], shell_word_contextt::IGNORED, dest, loc);
-      nondet_status(dest, 255, loc);
-    }
-  }
+    status_from_operand(command.words[1], "exit", true, dest, loc);
   exit_shell(dest, false, loc);
 }
 

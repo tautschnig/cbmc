@@ -123,10 +123,14 @@ shell_convertert::field_listt shell_convertert::expand_fields(
   const source_locationt &loc)
 {
   const field_listt list = new_field_list(dest, loc);
+  bool dynamic = false;
   for(auto it = begin; it != end; ++it)
   {
     if(is_quoted_at(*it))
+    {
       append_positional_parameters(list, dest, loc);
+      dynamic = true;
+    }
     else if(contains_at(*it))
     {
       // "x$@y" joins the first and last fields with the surrounding text;
@@ -142,7 +146,9 @@ shell_convertert::field_listt shell_convertert::expand_fields(
         loc);
     }
   }
-  check_field_list(list, dest, loc);
+  // A list of only single fields has a length known here.
+  if(dynamic || static_cast<std::size_t>(end - begin) > max_arguments)
+    check_field_list(list, dest, loc);
   return list;
 }
 

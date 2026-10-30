@@ -70,6 +70,17 @@ exprt shell_convertert::arith(
     part.kind = shell_word_partt::kindt::PARAMETER;
     part.text = expr.name;
     part.location = loc;
+    if(!expr.op.empty())
+    {
+      // The expression is expanded as if in double quotes (XCU 2.6.4),
+      // and the parser only accepts literal words.
+      part.parameter_operator = expr.op;
+      shell_word_partt word;
+      word.kind = shell_word_partt::kindt::QUOTED_LITERAL;
+      word.text = expr.word;
+      word.location = loc;
+      part.parts.push_back(std::move(word));
+    }
     const exprt string =
       expand_parameter(part, shell_word_contextt::FIELD, true, dest);
     check(
