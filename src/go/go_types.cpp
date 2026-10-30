@@ -22,6 +22,8 @@ Author: Michael Tautschnig
 
 #include "go_parse_tree.h"
 
+#include <map>
+
 irep_idt go_symbol_id(const irep_idt &object_id)
 {
   const std::string id = id2string(object_id);
@@ -188,6 +190,14 @@ typet go_type_convertert::operator()(const irep_idt &index)
   }
   else if(k == "struct")
     result = struct_type(under);
+  else if(k == "interface")
+  {
+    // Go1.27 §Interface_types: "A variable of interface type can store a
+    // value of any type that is in the type set of the interface." "The
+    // value of an uninitialized variable of interface type
+    // is nil."
+    result = interface_type();
+  }
   else if(k == "map")
   {
     typet key = (*this)(under.get("key"));
@@ -206,7 +216,10 @@ typet go_type_convertert::operator()(const irep_idt &index)
 
   converting.erase(index);
   if(result.is_not_nil())
+  {
     result.set(ID_C_go_type, entry.get("str"));
+    result.set(ID_C_go_tid, type_id(index));
+  }
   return result;
 }
 
@@ -243,6 +256,7 @@ typet go_type_convertert::named_struct(
   const irep_idt id = go_symbol_id(object_id);
   struct_tag_typet tag{id};
   tag.set(ID_C_go_type, entry.get("str"));
+  tag.set(ID_C_go_tid, type_id(index));
   if(symbol_table.has_symbol(id))
     return std::move(tag);
 
@@ -387,4 +401,74 @@ struct_typet go_type_convertert::complex_type(const typet &part)
   struct_typet result{{{"real", part}, {"imag", part}}};
   result.set(ID_C_go_complex, true);
   return result;
+}
+
+struct_typet go_type_convertert::interface_type()
+{
+  struct_typet::componentst components;
+  components.emplace_back("type", signedbv_typet{32});
+  components.emplace_back(
+    "data", pointer_typet{empty_typet{}, config.ansi_c.pointer_width});
+  struct_typet result{std::move(components)};
+  result.set(ID_C_go_interface, true);
+  return result;
+}
+
+std::size_t go_type_convertert::type_id(const irep_idt &index) const
+{
+  const irept &entry = parse_tree.type_entry(index);
+  irep_idt canonical = entry.get("tid");
+  const irept &under = underlying(index);
+  if(entry.get("k") == "basic" && under.get("k") == "basic")
+  {
+    // Go1.27 §Constants: an untyped constant used as a value takes its
+    // default type.
+    const std::string kind = under.get_string("kind");
+    static const std::map<std::string, std::string> defaults{
+      {"untyped bool", "bool"},
+      {"untyped int", "int"},
+      {"untyped rune", "int32"},
+      {"untyped float", "float64"},
+      {"untyped complex", "complex128"},
+      {"untyped string", "string"}};
+    const auto it = defaults.find(kind);
+    if(it != defaults.end())
+    {
+      for(std::size_t i = 0; i < parse_tree.types.size(); ++i)
+      {
+        const irept &candidate = parse_tree.types[i];
+        if(candidate.get("k") == "basic" && candidate.get("kind") == it->second)
+        {
+          canonical = candidate.get("tid");
+          break;
+        }
+      }
+    }
+  }
+  return std::stoul(id2string(canonical)) + 1;
+}
+
+std::size_t go_type_convertert::basic_type_id(const std::string &kind) const
+{
+  for(std::size_t i = 0; i < parse_tree.types.size(); ++i)
+  {
+    const irept &candidate = parse_tree.types[i];
+    if(candidate.get("k") == "basic" && candidate.get("kind") == kind)
+      return std::stoul(id2string(candidate.get("tid"))) + 1;
+  }
+  return 0;
+}
+
+std::size_t go_type_convertert::pointer_type_id(std::size_t base) const
+{
+  for(std::size_t i = 0; i < parse_tree.types.size(); ++i)
+  {
+    const irept &candidate = parse_tree.types[i];
+    if(
+      candidate.get("k") == "pointer" && type_id(candidate.get("elem")) == base)
+    {
+      return std::stoul(id2string(candidate.get("tid"))) + 1;
+    }
+  }
+  return 0;
 }

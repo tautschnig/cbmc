@@ -364,6 +364,68 @@ private:
   static exprt float_min_max(const exprt &x, const exprt &y, bool is_min);
   exprt convert_complex_builtin(const irept &call, const irep_idt &callee);
 
+  // Methods and interfaces (go_interfaces.cpp)
+  /// The dynamic types: every type converted to an interface, by type id.
+  std::map<std::size_t, typet> dynamic_types;
+  /// Generated functions calling a method (name, signature type id) of an
+  /// interface value.
+  std::map<std::pair<irep_idt, std::size_t>, irep_idt> dispatchers;
+  /// Generated functions checking that a dynamic type implements the
+  /// interface type with the given type id.
+  std::map<std::size_t, irep_idt> implements_checks;
+  /// The Go type id recorded on \p type (ID_C_go_tid), or 0.
+  std::size_t go_type_id(const typet &type) const;
+  typet convert_type_of_basic(const std::string &kind);
+  /// \p value converted to \p type as for an assignment: go_cast, and
+  /// values of non-interface type stored in interface values.
+  exprt assign_cast(exprt value, const typet &type);
+  /// The interface value holding (a copy of) \p value.
+  exprt box(const exprt &value, const source_locationt &location);
+  /// The dynamic value of interface value \p iface as a value of \p type.
+  static exprt unbox(const exprt &iface, const typet &type);
+  irep_idt dispatcher(const irep_idt &name, const irep_idt &signature_index);
+  /// Whether the dynamic type with id \p type_id implements the interface
+  /// at type-table index \p interface_index.
+  exprt implements(const exprt &type_id, const irep_idt &interface_index);
+  exprt interface_equal(
+    const exprt &x,
+    const exprt &y,
+    const source_locationt &location);
+  /// The receiver argument for calling \p method_object on \p x through the
+  /// selection path \p path (an interface value for interface methods).
+  exprt method_receiver(
+    exprt x,
+    const irept &path,
+    const irep_idt &method_object,
+    const source_locationt &location,
+    code_blockt &checks);
+  exprt call_method(
+    const exprt &receiver,
+    const irep_idt &method_object,
+    const irep_idt &signature_index,
+    exprt::operandst arguments,
+    const source_locationt &location);
+  exprt convert_method_call(const irept &call);
+  exprt method_adapter(
+    const irep_idt &id,
+    const typet &receiver_type,
+    const irep_idt &method_object,
+    const irep_idt &signature_index,
+    const source_locationt &location);
+  exprt convert_method_value(const irept &selector);
+  exprt convert_type_assertion(const irept &expr);
+  /// Whether the dynamic type of \p iface is (or, for interface types,
+  /// implements) the type at \p type_index.
+  exprt dynamic_type_is(const exprt &iface, const irep_idt &type_index);
+  void convert_type_switch(
+    const irept &stmt,
+    code_blockt &dest,
+    const irep_idt &label_object = irep_idt{});
+  bool is_comparable(const typet &type) const;
+  /// Generate the bodies of dispatchers, implements checks and interface
+  /// comparisons, once all dynamic types are known.
+  void finish_interfaces();
+
   // Expressions
   exprt convert_expr(const irept &expr);
   exprt convert_composite_lit(const irept &lit);

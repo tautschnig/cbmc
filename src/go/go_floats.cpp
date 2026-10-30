@@ -123,8 +123,8 @@ exprt go_convertert::float_arithmetic(
     error(irept{}, "operator " + id2string(op) + " on floating-point values");
     return nil_exprt{};
   }
-  x = go_cast(x, type);
-  y = go_cast(y, type);
+  x = assign_cast(x, type);
+  y = assign_cast(y, type);
   exprt result;
   if(type.id() == ID_floatbv)
     result = float_op(x, id, y);

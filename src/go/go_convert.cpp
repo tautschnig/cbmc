@@ -144,6 +144,16 @@ exprt go_cast(exprt value, const typet &type)
     exprt result;
     if(type.id() == ID_pointer)
       result = null_pointer_exprt{to_pointer_type(type)};
+    else if(is_go_interface(type))
+    {
+      // Go1.27 §Interface_types: "The value of an uninitialized variable of
+      // interface type is nil": no dynamic type.
+      const auto &components = to_struct_type(type).components();
+      result = struct_exprt{
+        {from_integer(0, components[0].type()),
+         null_pointer_exprt{to_pointer_type(components[1].type())}},
+        type};
+    }
     else if(is_go_slice(type))
     {
       // Go1.27 §Slice_types: "The value of an uninitialized slice is nil."
@@ -301,8 +311,6 @@ void go_convertert::declare_parameters(
 
 void go_convertert::declare_function(const irept &decl)
 {
-  if(go_field(decl, "Recv").is_not_nil())
-    return unsupported(decl, "methods");
   if(go_field(decl, "Body").is_nil())
     return unsupported(decl, "functions without a body");
   const irept &name = go_field(decl, "Name");
@@ -314,11 +322,43 @@ void go_convertert::declare_function(const irept &decl)
   typet type = type_converter.signature(object.get("type"));
   if(type.is_nil())
     return unsupported(decl, type_converter.unsupported_reason);
-  declare_parameters(
-    to_code_type(type),
-    parse_tree.type_entry(object.get("type")),
-    object_id,
-    location_of(decl));
+  const irept &signature = parse_tree.type_entry(object.get("type"));
+  code_typet &code_type = to_code_type(type);
+  declare_parameters(code_type, signature, object_id, location_of(decl));
+
+  const irept &receiver = signature.find("recv");
+  if(receiver.is_not_nil())
+  {
+    // Go1.27 §Method_declarations: "A method is a function with a
+    // receiver." The receiver is the first parameter.
+    if(!go_list(go_field(decl, "Type"), "TypeParams").empty())
+      return unsupported(decl, "generic methods");
+    typet receiver_type = convert_type(receiver.get("type"), decl);
+    if(receiver_type.is_nil())
+      return;
+    irep_idt receiver_object = receiver.get("obj");
+    irep_idt base = receiver.get("name");
+    if(receiver_object.empty() || base == "_")
+    {
+      receiver_object = id2string(object_id) + "::$recv";
+      base = "$recv";
+    }
+    code_typet::parametert param{receiver_type};
+    param.set_identifier(symbol_id(receiver_object));
+    param.set_base_name(base);
+    symbolt param_symbol = make_symbol(
+      param.get_identifier(),
+      base,
+      receiver_type,
+      location_of(decl),
+      parse_tree.package);
+    param_symbol.is_parameter = true;
+    param_symbol.is_lvalue = true;
+    param_symbol.is_thread_local = true;
+    param_symbol.is_file_local = true;
+    add_symbol(param_symbol);
+    code_type.parameters().insert(code_type.parameters().begin(), param);
+  }
 
   symbolt symbol = make_symbol(
     symbol_id(object_id),
@@ -396,7 +436,7 @@ symbol_exprt go_convertert::new_heap_variable(
   code_frontend_assignt initialise{
     dereference_exprt{pointer},
     value.is_nil() ? *zero_initializer(type, location, ns)
-                   : go_cast(value, type)};
+                   : assign_cast(value, type)};
   initialise.add_source_location() = location;
   dest.add(std::move(initialise));
   return pointer;
@@ -442,7 +482,12 @@ exprt go_convertert::variable(const irept &ident)
           ident, "function values from package " + object.get_string("pkg"));
       return nil_exprt{};
     }
-    return function_value(*function, location_of(ident));
+    exprt result = function_value(*function, location_of(ident));
+    // The Go type of the value (for interface values holding it).
+    const typet type = convert_type(ident.get("_t"), ident);
+    if(type.is_not_nil())
+      result.type() = type;
+    return result;
   }
   if(kind != "var")
   {
@@ -535,7 +580,7 @@ exprt go_convertert::function_value(
   }
   const auto &components = value_type.components();
   struct_exprt result{
-    {go_cast(
+    {assign_cast(
        address_of_exprt{ns.lookup(id).symbol_expr()}, components[0].type()),
      null_pointer_exprt{to_pointer_type(components[1].type())}},
     value_type};
@@ -639,6 +684,23 @@ void go_convertert::scan_heap_variables(const irept &node)
       state.heap_objects.insert(id);
   }
   else if(
+    node.id() == "SelectorExpr" && node.find("_sel").get("kind") == "method")
+  {
+    // Go1.27 §Calls: "If x is addressable and &x's method set contains m,
+    // x.m() is shorthand for (&x).m()".
+    const irept &method = parse_tree.object(node.find("_sel").get("obj"));
+    const irept &recv = parse_tree.type_entry(method.get("type")).find("recv");
+    if(
+      recv.is_not_nil() &&
+      type_converter.underlying(recv.get("type")).get("k") == "pointer")
+    {
+      irept address{"UnaryExpr"};
+      address.set("Op", "&");
+      address.add("X") = go_field(node, "X");
+      scan_heap_variables(address);
+    }
+  }
+  else if(
     node.id() == "SliceExpr" &&
     type_converter.underlying(go_field(node, "X").get("_t")).get("k") ==
       "array")
@@ -725,7 +787,11 @@ void go_convertert::convert_function(
 
   // Parameters whose address is taken, or that a literal captures, are
   // copied to the heap on entry.
-  for(const auto &param : go_list(signature, "params"))
+  std::vector<irept> heap_params{
+    go_list(signature, "params").begin(), go_list(signature, "params").end()};
+  if(signature.find("recv").is_not_nil())
+    heap_params.push_back(signature.find("recv"));
+  for(const auto &param : heap_params)
   {
     const irep_idt &object_id = param.get("obj");
     if(object_id.empty() || state.heap_objects.count(object_id) == 0)
@@ -790,7 +856,7 @@ void go_convertert::convert_package_init(
       if(lhs == nullptr)
         continue; // declaration failed and was reported
       code_frontend_assignt assign{
-        lhs->symbol_expr(), go_cast(values[i], lhs->type)};
+        lhs->symbol_expr(), assign_cast(values[i], lhs->type)};
       assign.add_source_location() = location_of(init.rhs);
       body.add(std::move(assign));
     }
@@ -882,6 +948,7 @@ bool go_convertert::operator()()
   for(const irept *decl : functions)
     convert_function_body(*decl);
   convert_package_init(init_functions);
+  finish_interfaces();
 
   return error_found;
 }
@@ -920,6 +987,8 @@ void go_convertert::convert_statement(const irept &stmt, code_blockt &dest)
     convert_switch(stmt, dest);
   else if(kind == "RangeStmt")
     convert_range(stmt, dest);
+  else if(kind == "TypeSwitchStmt")
+    convert_type_switch(stmt, dest);
   else if(kind == "LabeledStmt")
     convert_labeled(stmt, dest);
   else if(kind == "BranchStmt")
@@ -944,6 +1013,8 @@ void go_convertert::convert_labeled(const irept &stmt, code_blockt &dest)
     convert_switch(inner, labelled, label.get("_obj"));
   else if(inner.id() == "RangeStmt")
     convert_range(inner, labelled, label.get("_obj"));
+  else if(inner.id() == "TypeSwitchStmt")
+    convert_type_switch(inner, labelled, label.get("_obj"));
   else
     convert_statement(inner, labelled);
   code_labelt result{label.get("Name"), std::move(labelled)};
@@ -1046,7 +1117,7 @@ void go_convertert::convert_decl_stmt(const irept &stmt, code_blockt &dest)
       // Go1.27 §The_zero_value.
       exprt value = values.empty()
                       ? *zero_initializer(type, location_of(name), ns)
-                      : go_cast(initialisers[i], type);
+                      : assign_cast(initialisers[i], type);
       if(value.is_nil())
         continue;
       code_frontend_assignt assign{sym, value};
@@ -1136,7 +1207,7 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
         return;
       map = evaluate_once(map, location, parts.operands);
       key = evaluate_once(
-        go_cast(
+        assign_cast(
           key,
           to_pointer_type(
             to_struct_type(to_pointer_type(map.type()).base_type())
@@ -1208,7 +1279,7 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
                           .type())
           .base_type();
       const exprt value =
-        evaluate_once(go_cast(values[i], element), location, dest);
+        evaluate_once(assign_cast(values[i], element), location, dest);
       map_insert(map, lvalue.operands()[1], value, target, dest);
       continue;
     }
@@ -1224,7 +1295,7 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
     }
     if(lvalue.is_nil())
       continue;
-    code_frontend_assignt assign{lvalue, go_cast(values[i], lvalue.type())};
+    code_frontend_assignt assign{lvalue, assign_cast(values[i], lvalue.type())};
     assign.add_source_location() = location;
     dest.add(std::move(assign));
   }
@@ -1251,7 +1322,7 @@ void go_convertert::convert_map_update(
     to_pointer_type(header.get_component("keys").type()).base_type();
   const typet element =
     to_pointer_type(header.get_component("vals").type()).base_type();
-  key = evaluate_once(go_cast(key, key_type), location, dest);
+  key = evaluate_once(assign_cast(key, key_type), location, dest);
   const symbol_exprt found = map_find(map, key, target, dest);
   const member_exprt vals{dereference_exprt{map}, header.get_component("vals")};
   const symbol_exprt old = new_temporary(element, location, dest);
@@ -1468,7 +1539,7 @@ void go_convertert::convert_range(
     exprt value = convert_expr(x_node);
     if(value.is_nil())
       return;
-    value = go_cast(value, convert_type(x_node.get("_t"), x_node));
+    value = assign_cast(value, convert_type(x_node.get("_t"), x_node));
     symbol_exprt tmp = new_temporary(value.type(), location, scope);
     scope.add(code_frontend_assignt{tmp, value});
     range_value = tmp;
@@ -1486,7 +1557,7 @@ void go_convertert::convert_range(
     exprt n = convert_expr(x_node);
     if(n.is_nil())
       return;
-    n = go_cast(n, index_type);
+    n = assign_cast(n, index_type);
     if(!n.is_constant())
     {
       symbol_exprt tmp = new_temporary(index_type, location, scope);
@@ -1560,7 +1631,7 @@ void go_convertert::convert_range(
       for(auto &code : parts.checks.statements())
         body.add(std::move(code));
     }
-    code_frontend_assignt assign{target, go_cast(value, target.type())};
+    code_frontend_assignt assign{target, assign_cast(value, target.type())};
     assign.add_source_location() = location_of(node);
     body.add(std::move(assign));
   };
@@ -1762,14 +1833,15 @@ void go_convertert::convert_return(const irept &stmt, code_blockt &dest)
       values = unpack(values.front(), location, dest);
     if(values.size() == 1)
     {
-      ret = code_frontend_returnt{go_cast(values.front(), state.return_type)};
+      ret =
+        code_frontend_returnt{assign_cast(values.front(), state.return_type)};
     }
     else
     {
       const auto &components = to_struct_type(state.return_type).components();
       exprt::operandst operands;
       for(std::size_t i = 0; i < values.size(); ++i)
-        operands.push_back(go_cast(values[i], components[i].type()));
+        operands.push_back(assign_cast(values[i], components[i].type()));
       ret = code_frontend_returnt{
         struct_exprt{std::move(operands), state.return_type}};
     }
@@ -1896,10 +1968,7 @@ exprt go_convertert::convert_access(const irept &expr, access_partst &parts)
       return variable(go_field(expr, "Sel"));
     }
     if(selection.get("kind") != "field")
-    {
-      unsupported(expr, "methods");
-      return nil_exprt{};
-    }
+      return access_operand(convert_method_value(expr), parts);
     // Go1.27 §Selectors: x.f denotes the field at the shallowest depth;
     // go/types records the path of field indices through embedded fields,
     // each of which may be a pointer, dereferenced implicitly ("p.x is
@@ -2192,6 +2261,12 @@ exprt go_convertert::convert_conversion(const irept &call)
   if(type.is_nil() || value.is_nil())
     return nil_exprt{};
   value = go_cast_nil(value, type);
+  if(is_go_interface(type))
+  {
+    // Go1.27 §Conversions: "x is assignable to T." Converting to an
+    // interface type stores the value in an interface value.
+    return assign_cast(value, type);
+  }
   exprt result = convert_string_conversion(value, type, call);
   if(result.is_not_nil())
     return result;
@@ -2246,7 +2321,7 @@ exprt go_convertert::convert_min_max(const irept &call, bool is_min)
       unsupported(arg, "min/max arguments with side effects");
       return nil_exprt{};
     }
-    value = go_cast(value, type);
+    value = assign_cast(value, type);
     if(result.is_nil())
       result = value;
     else
@@ -2280,6 +2355,18 @@ exprt go_convertert::convert_call(const irept &call)
   const irept &object = parse_tree.object(callee);
   const source_locationt &location = location_of(call);
 
+  {
+    // Method calls (also of the predeclared error interface's Error).
+    const irept *method = &fun;
+    while(method->id() == "ParenExpr")
+      method = &go_field(*method, "X");
+    if(
+      method->id() == "SelectorExpr" &&
+      method->find("_sel").get("kind") == "method")
+    {
+      return convert_method_call(call);
+    }
+  }
   if(callee == "min" || callee == "max")
     return convert_min_max(call, callee == "min");
   if(callee == "new")
@@ -2340,6 +2427,7 @@ exprt go_convertert::convert_call(const irept &call)
   const irept *callee_node = &fun;
   while(callee_node->id() == "ParenExpr")
     callee_node = &go_field(*callee_node, "X");
+
   if(object.get("kind") == "func" && callee_node->id() == "Ident")
   {
     const symbolt *function = symbol_table.lookup(symbol_id(callee));
@@ -2470,7 +2558,7 @@ bool go_convertert::convert_arguments(
     return true;
   }
   for(std::size_t i = 0; i < values.size(); ++i)
-    arguments.push_back(go_cast(values[i], parameters[i].type()));
+    arguments.push_back(assign_cast(values[i], parameters[i].type()));
   return false;
 }
 
@@ -2556,10 +2644,12 @@ exprt go_convertert::convert_func_lit(const irept &lit)
 
   // The value: the code and, if the literal captures variables, a new
   // environment ("each time they are evaluated", like composite literals).
-  const struct_typet value_type = go_type_convertert::func_value(
-    to_code_type(type_converter.signature(signature_index)));
-  const auto &components = value_type.components();
-  const exprt code = go_cast(
+  // The Go type of the value (recorded for interface values holding it).
+  const typet value_type = convert_type(signature_index, lit);
+  if(value_type.is_nil())
+    return nil_exprt{};
+  const auto &components = to_struct_type(value_type).components();
+  const exprt code = assign_cast(
     address_of_exprt{ns.lookup(id).symbol_expr()}, components[0].type());
   if(captured.empty())
   {
@@ -2605,7 +2695,9 @@ exprt go_convertert::convert_constant(const irept &expr, const typet &type)
     std::string bytes;
     for(const auto &b : go_list(expr, "_sb"))
       bytes += static_cast<char>(std::stoi(b.id_string()));
-    return string_constant(bytes, location_of(expr));
+    exprt result = string_constant(bytes, location_of(expr));
+    result.type() = type; // the Go type, e.g., a named string type
+    return result;
   }
   else
   {
@@ -2648,10 +2740,26 @@ exprt go_convertert::convert_comparison(
   // not comparable. However, as a special case, a slice, map, or function
   // value may be compared to the predeclared identifier nil."
   if(x.id() == ID_go_nil && y.id() != ID_go_nil)
-    x = go_cast(x, y.type());
+    x = assign_cast(x, y.type());
   if(y.id() == ID_go_nil && x.id() != ID_go_nil)
-    y = go_cast(y, x.type());
+    y = assign_cast(y, x.type());
   const source_locationt location = location_of(where);
+  if(
+    (op == "==" || op == "!=") &&
+    (is_go_interface(x.type()) || is_go_interface(y.type())))
+  {
+    // Go1.27 §Comparison_operators: "A value x of non-interface type X and
+    // a value t of interface type T can be compared if type X is comparable
+    // and X implements T. They are equal if t's dynamic type is identical to
+    // X and t's dynamic value is equal to x." Comparing the interface value
+    // that holds x is equivalent.
+    const typet iface = go_type_convertert::interface_type();
+    exprt result =
+      interface_equal(assign_cast(x, iface), assign_cast(y, iface), location);
+    if(op == "!=")
+      result = not_exprt{result};
+    return at_location(std::move(result), location);
+  }
   // A copy: x is replaced below.
   const typet type = go_follow(ns, x.type());
 
@@ -2659,7 +2767,7 @@ exprt go_convertert::convert_comparison(
   {
     // Go1.27 §Comparison_operators: "String types are comparable and
     // ordered. Two string values are compared lexically byte-wise."
-    y = go_cast(y, x.type());
+    y = assign_cast(y, x.type());
     exprt result;
     if(op == "==" || op == "!=")
       result = string_equal(x, y, location);
@@ -2676,7 +2784,7 @@ exprt go_convertert::convert_comparison(
     // Go1.27 §Comparison_operators: "Floating-point types are comparable
     // and ordered. Two floating-point values are compared as defined by the
     // IEEE 754 standard." Complex types are comparable but not ordered.
-    y = go_cast(y, x.type());
+    y = assign_cast(y, x.type());
     exprt result;
     if(op == "==" || op == "!=")
     {
@@ -2724,11 +2832,11 @@ exprt go_convertert::convert_comparison(
         symbol_exprt tx = new_temporary(x.type(), location, prefix);
         prefix.add(code_frontend_assignt{tx, x});
         symbol_exprt ty = new_temporary(y.type(), location, prefix);
-        prefix.add(code_frontend_assignt{ty, go_cast(y, x.type())});
+        prefix.add(code_frontend_assignt{ty, assign_cast(y, x.type())});
         x = tx;
         y = ty;
       }
-      exprt result = equality(x, go_cast(y, x.type()), where);
+      exprt result = equality(x, assign_cast(y, x.type()), where);
       if(result.is_nil())
         return nil_exprt{};
       if(op == "!=")
@@ -2753,7 +2861,7 @@ exprt go_convertert::convert_comparison(
     y = as_condition(y);
   }
   else
-    y = go_cast(y, x.type());
+    y = assign_cast(y, x.type());
   const irep_idt rel = op == "=="   ? ID_equal
                        : op == "!=" ? ID_notequal
                        : op == "<"  ? ID_lt
@@ -2774,8 +2882,8 @@ static bool has_blank_fields(const typet &type, const namespacet &ns)
     return true; // booleans are compared as conditions
   if(followed.id() == ID_floatbv || is_go_complex(followed))
     return true; // IEEE 754 comparison: -0 == +0, NaN != NaN
-  if(is_go_string(followed))
-    return true; // strings are compared by contents, not representation
+  if(is_go_string(followed) || is_go_interface(followed))
+    return true; // compared by contents, not representation
   if(followed.id() == ID_array)
     return has_blank_fields(to_array_type(followed).element_type(), ns);
   if(followed.id() != ID_struct)
@@ -2820,6 +2928,8 @@ exprt go_convertert::equality(
   }
   if(is_go_string(type))
     return string_equal(x, y, location_of(where));
+  if(is_go_interface(type))
+    return interface_equal(x, y, location_of(where));
   if(type.id() == ID_struct)
   {
     // "Two struct values are equal if their corresponding non-blank field
@@ -2957,7 +3067,7 @@ exprt go_convertert::convert_arithmetic(
   // Go1.27 §String_concatenation: "Strings can be concatenated using the +
   // operator or the += assignment operator".
   if(is_go_string(type) && op == "+")
-    return string_concat(go_cast(x, type), go_cast(y, type), location);
+    return string_concat(assign_cast(x, type), assign_cast(y, type), location);
   if(is_float_like(type))
     return float_arithmetic(op, x, y, type, location);
   // Only integers so far.
@@ -2969,11 +3079,11 @@ exprt go_convertert::convert_arithmetic(
         type.get_string(ID_C_go_type) + " is not supported yet");
     return nil_exprt{};
   }
-  x = go_cast(x, type);
+  x = assign_cast(x, type);
 
   const bool is_shift = op == "<<" || op == ">>";
   if(!is_shift)
-    y = go_cast(y, type);
+    y = assign_cast(y, type);
 
   // Operations that may panic: integer division and remainder by zero,
   // and shifts by a negative count. Constant divisors and shift counts
@@ -3188,7 +3298,7 @@ exprt go_convertert::convert_composite_lit(const irept &lit)
     exprt value = convert_expr(value_node);
     if(value.is_nil())
       return nil_exprt{};
-    code_frontend_assignt assign{target, go_cast(value, target.type())};
+    code_frontend_assignt assign{target, assign_cast(value, target.type())};
     assign.add_source_location() = location_of(value_node);
     block.add(std::move(assign));
   }
@@ -3351,6 +3461,8 @@ exprt go_convertert::convert_expr(const irept &expr)
     return convert_composite_lit(expr);
   if(kind == "SliceExpr")
     return convert_slice_expr(expr);
+  if(kind == "TypeAssertExpr")
+    return convert_type_assertion(expr);
   if(kind == "StarExpr" || kind == "SelectorExpr" || kind == "IndexExpr")
   {
     access_partst parts;

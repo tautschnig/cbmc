@@ -37,6 +37,11 @@ class symbol_table_baset;
 #define ID_C_go_map "#go_map"
 /// Name of the comment marking the struct that represents a complex number.
 #define ID_C_go_complex "#go_complex"
+/// Name of the comment marking the struct that represents interface values.
+#define ID_C_go_interface "#go_interface"
+/// Name of the comment recording the dynamic type id of a type (see
+/// go_type_convertert::type_id).
+#define ID_C_go_tid "#go_tid"
 
 /// True if \p type holds the values of a multi-valued expression (see
 /// go_type_convertert::tuple).
@@ -69,6 +74,13 @@ inline bool is_go_slice(const typet &type)
 inline bool is_go_complex(const typet &type)
 {
   return type.id() == ID_struct && type.get_bool(ID_C_go_complex);
+}
+
+/// True if \p type is that of interface values (see
+/// go_type_convertert::interface_type).
+inline bool is_go_interface(const typet &type)
+{
+  return type.id() == ID_struct && type.get_bool(ID_C_go_interface);
 }
 
 /// True if \p type is that of maps (see go_type_convertert::map_type).
@@ -140,6 +152,29 @@ public:
   /// The type of complex numbers with parts of floating-point type \p part:
   /// `{real, imag}`.
   static struct_typet complex_type(const typet &part);
+
+  /// The type of interface values: `{type int32, data *void}`, the dynamic
+  /// type's id (0 for nil) and a pointer to a copy of the dynamic value.
+  static struct_typet interface_type();
+
+  /// The id of the type at type-table index \p index as a dynamic type
+  /// (Go1.27 §Type_identity: identical types have the same id); untyped
+  /// constants have their default type. Ids start at 1.
+  std::size_t type_id(const irep_idt &index) const;
+
+  /// The type id of the predeclared basic type \p kind ("string", ...);
+  /// the helper emits all of them.
+  std::size_t basic_type_id(const std::string &kind) const;
+
+  /// The type id of pointers to the type with id \p base, if the program
+  /// has that type; 0 otherwise.
+  std::size_t pointer_type_id(std::size_t base) const;
+
+  /// The type-table index of the canonical entry for type id \p id.
+  irep_idt type_index(std::size_t id) const
+  {
+    return std::to_string(id - 1);
+  }
 
   /// For a nil result of operator(): a description of what is unsupported.
   std::string unsupported_reason;

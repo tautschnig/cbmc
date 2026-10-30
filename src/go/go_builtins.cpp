@@ -272,7 +272,9 @@ exprt go_convertert::string_concat(
     location,
     block);
   const struct_typet type = go_type_convertert::string_type();
-  return with_prefix(struct_exprt{{data_tmp, length}, type}, block, location);
+  // The type of the operands, which records the Go type (go_type_id).
+  return with_prefix(
+    struct_exprt{{data_tmp, length}, x.type()}, block, location);
 }
 
 exprt go_convertert::nondet_value(
@@ -581,7 +583,7 @@ exprt go_convertert::convert_append(const irept &call)
   exprt s = convert_expr(args.front());
   if(s.is_nil())
     return nil_exprt{};
-  s = go_cast(s, type);
+  s = assign_cast(s, type);
   const symbol_exprt slice = new_temporary(type, location, block);
   block.add(code_frontend_assignt{slice, s});
   const typet &element =
@@ -596,7 +598,7 @@ exprt go_convertert::convert_append(const irept &call)
     exprt t = convert_expr(args[1]);
     if(t.is_nil())
       return nil_exprt{};
-    t = go_cast(t, type); // nil or a string with []byte
+    t = assign_cast(t, type); // nil or a string with []byte
     const symbol_exprt tail = new_temporary(t.type(), location, block);
     block.add(code_frontend_assignt{tail, t});
     extra_data = component(tail, "data");
@@ -620,7 +622,7 @@ exprt go_convertert::convert_append(const irept &call)
           return nil_exprt{};
         block.add(code_frontend_assignt{
           dereference_exprt{plus_exprt{values, from_integer(i, int_type())}},
-          go_cast(value, element)});
+          assign_cast(value, element)});
       }
       extra_data = values;
     }
@@ -793,7 +795,7 @@ exprt go_convertert::convert_slice_lit(const irept &lit, const typet &type)
       return nil_exprt{};
     code_frontend_assignt assign{
       dereference_exprt{plus_exprt{data, from_integer(next, int_type())}},
-      go_cast(value, element)};
+      assign_cast(value, element)};
     assign.add_source_location() = location_of(value_node);
     block.add(std::move(assign));
     ++next;
@@ -821,7 +823,12 @@ exprt go_convertert::convert_string_conversion(
   };
 
   if(is_go_string(type) && is_go_string(from))
-    return value; // between string types
+  {
+    // Between string types: the same bytes, of the new type.
+    exprt result = value;
+    result.type() = type;
+    return result;
+  }
   if(
     is_go_string(type) &&
     (from.id() == ID_signedbv || from.id() == ID_unsignedbv))

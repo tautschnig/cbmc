@@ -125,7 +125,7 @@ exprt go_convertert::convert_map_lookup(const irept &expr, bool comma_ok)
   if(map.is_nil() || key.is_nil())
     return nil_exprt{};
   map = evaluate_once(map, location, block);
-  key = evaluate_once(go_cast(key, key_type(map.type())), location, block);
+  key = evaluate_once(assign_cast(key, key_type(map.type())), location, block);
   const symbol_exprt found = map_find(map, key, expr, block);
   const typet element = value_type(map.type());
   const binary_relation_exprt present{
@@ -140,7 +140,7 @@ exprt go_convertert::convert_map_lookup(const irept &expr, bool comma_ok)
   const auto &components = to_struct_type(tuple).components();
   return with_prefix(
     struct_exprt{
-      {go_cast(value, components[0].type()),
+      {assign_cast(value, components[0].type()),
        typecast_exprt::conditional_cast(present, components[1].type())},
       tuple},
     block,
@@ -241,8 +241,9 @@ exprt go_convertert::convert_map_lit(const irept &lit, const typet &type)
     exprt value = convert_expr(go_field(element, "Value"));
     if(key.is_nil() || value.is_nil())
       return nil_exprt{};
-    key = evaluate_once(go_cast(key, key_type(type)), location, block);
-    value = evaluate_once(go_cast(value, value_type(type)), location, block);
+    key = evaluate_once(assign_cast(key, key_type(type)), location, block);
+    value =
+      evaluate_once(assign_cast(value, value_type(type)), location, block);
     map_insert(map, key, value, element, block);
   }
   return with_prefix(map, block, location);
@@ -261,7 +262,7 @@ void go_convertert::convert_delete(const irept &call, code_blockt &dest)
   if(map.is_nil() || key.is_nil())
     return;
   map = evaluate_once(map, location, dest);
-  key = evaluate_once(go_cast(key, key_type(map.type())), location, dest);
+  key = evaluate_once(assign_cast(key, key_type(map.type())), location, dest);
   const symbol_exprt found = map_find(map, key, call, dest);
   code_blockt remove;
   const exprt last =
@@ -361,7 +362,7 @@ void go_convertert::convert_map_range(
       for(auto &code : parts.checks.statements())
         body.add(std::move(code));
     }
-    code_frontend_assignt assign{target, go_cast(value, target.type())};
+    code_frontend_assignt assign{target, assign_cast(value, target.type())};
     assign.add_source_location() = location_of(node);
     body.add(std::move(assign));
   };
