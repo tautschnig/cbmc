@@ -34,6 +34,10 @@
 //	"_impl" id of an implicitly declared object (e.g. per-clause type-switch
 //	        variables, types.Info.Implicits)
 //	"_sb"   for string constants, their bytes
+//
+// Type entries also have "tid", the index of the first identical type, and
+// non-interface types their method set "mset" (see completeTypes).
+//
 //	"_fb"   for constants of floating-point type, the IEEE 754 bits of the
 //	        value rounded to the type; "_fbr"/"_fbi" for complex types
 //
@@ -108,13 +112,14 @@ func (h *helperImporter) Import(path string) (*types.Package, error) {
 }
 
 type encoder struct {
-	fset    *token.FileSet
-	info    *types.Info
-	fileIdx map[string]int
-	types   []any
-	typeIdx map[types.Type]int
-	objects map[string]any
-	ids     map[types.Object]string
+	fset     *token.FileSet
+	info     *types.Info
+	fileIdx  map[string]int
+	types    []any
+	typeList []types.Type // the type of each entry of types
+	typeIdx  map[types.Type]int
+	objects  map[string]any
+	ids      map[types.Object]string
 }
 
 // objID gives every object a unique id. Package-level objects and methods
@@ -231,6 +236,7 @@ func (e *encoder) typ(t types.Type) int {
 	i := len(e.types)
 	e.typeIdx[t] = i
 	e.types = append(e.types, nil)
+	e.typeList = append(e.typeList, t)
 	var entry map[string]any
 	switch x := t.(type) {
 	case *types.Basic:
@@ -293,6 +299,64 @@ func (e *encoder) typ(t types.Type) int {
 	entry["str"] = t.String()
 	e.types[i] = entry
 	return i
+}
+
+// completeTypes adds to every type entry its canonical index "tid" (the
+// first entry of an identical type, Go1.27 §Type_identity: go/types may
+// represent identical types by distinct objects) and, for non-interface
+// types, its method set "mset" (Go1.27 §Method_sets): for each method its
+// name, the method object, the selection path through embedded fields
+// (ending in the method's index), whether pointer indirections occur on
+// the way, whether the method has a pointer receiver, and the type of the
+// method value (its signature without receiver). Method sets may add types
+// to the table, which are completed in turn.
+func (e *encoder) completeTypes() {
+	// Candidates for identity share a key; parameter names do not matter
+	// for identity (Go1.27 §Type_identity), so signatures are keyed by
+	// their arity only.
+	key := func(t types.Type) string {
+		if s, ok := t.(*types.Signature); ok {
+			return fmt.Sprintf("func/%d/%d/%v", s.Params().Len(),
+				s.Results().Len(), s.Variadic())
+		}
+		return t.String()
+	}
+	byKey := map[string][]int{}
+	for i := 0; i < len(e.types); i++ { // e.types may grow
+		t := e.typeList[i]
+		entry := e.types[i].(map[string]any)
+		canonical := i
+		for _, j := range byKey[key(t)] {
+			if types.Identical(e.typeList[j], t) {
+				canonical = j
+				break
+			}
+		}
+		if canonical == i {
+			byKey[key(t)] = append(byKey[key(t)], i)
+		}
+		entry["tid"] = canonical
+		if types.IsInterface(t) {
+			continue
+		}
+		if _, isParam := t.(*types.TypeParam); isParam {
+			continue
+		}
+		mset := types.NewMethodSet(t)
+		var methods []any
+		for j := 0; j < mset.Len(); j++ {
+			sel := mset.At(j)
+			f := sel.Obj().(*types.Func)
+			_, ptrRecv := f.Signature().Recv().Type().(*types.Pointer)
+			methods = append(methods, map[string]any{
+				"name": f.Name(), "obj": e.objID(f), "path": sel.Index(),
+				"indirect": sel.Indirect(), "ptr_recv": ptrRecv,
+				"type": e.typ(sel.Type())})
+		}
+		if methods != nil {
+			entry["mset"] = methods
+		}
+	}
 }
 
 func (e *encoder) vars(t *types.Tuple) []any {
@@ -563,10 +627,16 @@ func main() {
 		os.Exit(2)
 	}
 
+	// The predeclared basic types, which the front-end needs as dynamic
+	// types of interface values even if the program does not name them.
+	for k := types.Bool; k <= types.UnsafePointer; k++ {
+		enc.typ(types.Typ[k])
+	}
 	var asts []any
 	for _, f := range files {
 		asts = append(asts, enc.node(f))
 	}
+	enc.completeTypes()
 	initOrder := []any{}
 	for _, init := range programInitOrder {
 		var lhs []string
