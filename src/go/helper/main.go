@@ -502,9 +502,9 @@ func main() {
 	if failed {
 		os.Exit(3)
 	}
-	// The program's initialisation order, before checking the runtime
-	// package (which shares info) can change it.
-	programInitOrder := info.InitOrder
+	// The program's initialisation order, copied before checking the runtime
+	// package (which shares info, and so reuses InitOrder's array).
+	programInitOrder := append([]*types.Initializer(nil), info.InitOrder...)
 
 	// The runtime package, with its own file index after the program's.
 	rtFile, err := parser.ParseFile(fset, "cprover/rt/rt.go", runtimeSource,
