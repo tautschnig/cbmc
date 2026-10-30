@@ -478,35 +478,170 @@ integer constants are properties (`division-by-zero`, `overflow`,
   binary constants, apparently through glibc's C23 `strtoimax`. Bash's
   are expressions such as `+-1`, or names.
 
-**Supported:** simple commands; assignments, including before special
-builtins; `:`, `true`, `false`, `test`/`[` with up to four arguments;
-`exit`, `export`, `unset`, `break`/`continue` with counts; pipelines
-and `&` of commands without side effects; `&&`, `||`, `!`; `if`,
-`while`, `until`, `for … in` with words that each yield one field;
-`case` with literal patterns, `*`, and `;&`; parameter expansion
-`${x}`, `${#x}`, `-`, `=`, `?`, `+` with and without `:`; arithmetic
-expansion.
+**Supported** (updated 2026-10-30):
+- simple commands and assignments, including before special builtins;
+  in bash outside POSIX mode and in zsh, those assignments last only for
+  the command;
+- `:`, `true`, `false`, `test`/`[` with up to four arguments, `exit`,
+  `export`, `unset`, `break`/`continue` with counts, `shift`, `set`
+  (positional parameters and the options below), `return`, `exec`;
+- `.` and `source` with literal absolute paths (§7.2);
+- functions: definition, redefinition, recursion, and shadowing of
+  builtins (§7.2);
+- subshells, command substitution, pipelines, and `&`, as subshell
+  environments (§7.2);
+- `&&`, `||`, `!`, `if`, `while`, `until`, `for` (including
+  `for x; do` and `"$@"`), and `case` with `;;` and `;&`;
+- parameter expansion: `-`, `=`, `?`, `+` with and without `:`,
+  `${#x}`, and `#`, `##`, `%`, `%%`; `$@`, `$*`, and `$#`;
+- pattern matching as in XCU 2.14, in `case` and in pattern removal;
+- arithmetic expansion, including `${x:-1}` with a literal word;
+- the options `-e`, `-u`, `-f`, and `pipefail`, set with `set` or on the
+  `#!` line. Options without an effect on the model, such as `-x` and
+  `-C`, are accepted;
+- redirections. Those that open files may fail: the command is then
+  skipped with a non-zero status, or the shell exits for special
+  builtins in dash and mksh.
 
 **Rejected with an error** (never ignored):
-- functions and subshells;
-- unquoted expansions where field splitting matters, and unquoted
-  pattern characters (pathname expansion);
-- tilde expansion; pattern removal (`%`, `#`);
-- `$@`, `$*`, `$!`;
-- builtins that change the shell's state (`cd`, `read`, `set`, `shift`,
-  `eval`, `.`, `local`, …);
+- unquoted expansions where field splitting matters;
+- unquoted pattern characters where pathname expansion applies. If
+  `set -f` can be on, they are a `shell-unsupported` property instead;
+- unquoted expansions in patterns, and patterns that have both pattern
+  characters and expansions;
+- tilde expansion; `$!`; command names that are expansions;
+- `local`, `read`, `cd`, `eval`, `trap`, `getopts`, `command`, `umask`,
+  and other builtins that change the shell's state. If a function may
+  shadow such a builtin, it is a `shell-unsupported` property instead;
 - variables the shell maintains (`LINENO`, `RANDOM`, `IFS`, …);
-- redirections that could fail on builtins, and redirections with side
-  effects;
+- redirections with side effects; redirections of compound commands;
 - `test` arguments whose values could change how `test` parses them.
 
 **Known imprecision.** In mksh, `$((1-$x))` with `x=-1` is an error
 (`--` needs a variable), but the model computes 2, as dash and bash do.
+In mksh, `unset` of a local variable reveals the outer value; this is
+not modelled, as `local` is not supported yet.
 
-**Next.** Functions with positional parameters and `return`; subshells
-by copying the state; field splitting with a modelled `IFS`; `read`
-as a nondeterministic assignment; command substitution of commands
-that only print (such as `echo`), so their output can be modelled.
+### 7.2 Functions, subshells, dot scripts, options (done 2026-10-30)
+
+**Functions.** The K-th definition of a name in the source becomes
+`shell::function::NAME#K`. `shell::fn::NAME` records which definition
+has run, so a call dispatches on it, and falls back to the builtin or
+utility otherwise. A call's arguments become its positional parameters,
+and the caller's are restored afterwards.
+
+**Exit.** `exit`, and `-e` failures, set `shell::exited`; every caller
+then returns in turn.
+
+**Subshells.** Each subshell is a GOTO function that saves and restores
+all state symbols except the status. The commands of pipelines and `&`
+run sequentially at the point where they would start. They cannot see
+each other's changes to the shell state, so this is exact for
+everything the model observes. This is the first concurrency stage of
+§5. zsh runs the last command of a pipeline in the current shell.
+
+**Dot scripts** are parsed when the script is converted. This assumes
+that the script finds the same files when it runs.
+
+**Option `-e`.**
+- Inside the code being converted, whether `-e` is ignored is known
+  statically: in conditions, before `&&`/`||`, and after `!`.
+- `shell::errexit_ignored` carries this into called functions.
+- The exit check follows simple commands, pipelines, and subshells.
+- bash outside POSIX mode turns `-e` off in command substitutions.
+
+**Other options.** `-u`, `-f`, and pipefail are modelled only if the
+script can turn them on.
+
+**Additional assumptions**:
+- the script is run as a program, so its `#!` options apply;
+- the environment does not define functions (bash's `BASH_FUNC_*`), and
+  `ENV`/`BASH_ENV` do not cause startup files to run.
+
+**Differential checks.**
+- `scripts/shell-frontend/pattern_differential.py` compares 49,200
+  pattern/subject/operation combinations with dash, bash, and busybox.
+  There were no mismatches.
+- 33 `set -e`/`-u`/pipefail scripts agree with dash, bash, and mksh.
+
+**Corpus.** Of 843 local scripts, 129 now convert completely, up from
+72. The leading blockers are:
+- `.` with a non-literal or relative path, mostly
+  `. "$VAR/lib/..."` (181 before the dot support);
+- field splitting (66);
+- `exec` (59 before the exec support);
+- pathname expansion (41);
+- `local` (37);
+- command names that are expansions (33).
+
+### 7.3 String representation: options (2026-10-30)
+
+Today every value is a bounded struct `{set, length, data[N]}`. The
+runtime functions are unrolled over N. Solver cost grows with N, and
+inputs are bounded by N.
+
+The Python front-end on branch `tautschnig/py` went through the same
+design, a bounded inline struct. It then moved through:
+1. refined strings with `--refine-strings`;
+2. a hybrid that intercepted those in smt2_conv. That failed at the
+   "symbol-indirection wall": once a string is a symbol, its bytes are
+   behind `s.data`;
+3. a private SMT String sort;
+4. finally, the upstream `string_typet` / `ID_string`. It is lowered to
+   SMT-LIB `String` and `RegLan` (`str.*`, `re.*`) by `smt2_conv`. The
+   flat encoder is on `develop`; `from_int`, trace read-back of String
+   values, and Int↔bit-vector typecasts are still only on the branch.
+
+The reasons for each move were soundness and precision first, then
+speed: the native String back end was "precise and fast" on its whole
+corpus, where refined strings needed many refinement iterations.
+
+For the shell this maps as follows:
+- **equality, concatenation, length, prefix/suffix, substring** are
+  `str.=`, `str.++`, `str.len`, `str.prefixof`/`suffixof`, `str.substr`;
+- **glob patterns** map directly to regular expressions:
+  - `*` → `re.* re.allchar`
+  - `?` → `re.allchar`
+  - `[a-z]` → `re.range`
+  - `[!…]` → `re.diff re.allchar …`
+  - quoted parts → `str.to_re`
+
+  `case` becomes `str.in_re`. Pattern removal needs a witness
+  `s = p ++ r ∧ p ∈ L(G)`, plus constraints that pick the shortest or
+  longest match;
+- **integer conversion**: there is no `str.to_int` lowering. The parsing
+  rules that the runtime matches against dash and bash would need it,
+  and the sign and blank handling would have to be modelled on top;
+- **the set/unset flag**: a separate Boolean per variable, not a struct
+  member.
+
+Pitfalls from that work:
+- strings inside structs or arrays that get byte operators abort in
+  `lower_byte_operators`. The positional-parameter array would need the
+  handle-plus-uninterpreted-function design of the Python front-end;
+- `str.len` needs an explicit bound (`< 2^63`) where it is cast to a
+  bit-vector;
+- interning axioms must hold on every path;
+- there is no SAT back end for `string_typet`, and
+  `--incremental-smt2-solver` does not support it.
+
+Proposal, not yet decided:
+- keep the bounded representation as the default, because it works
+  with every back end and its integer parsing is exact;
+- add a second representation on `string_typet` for runs with `--z3` or
+  `--cvc5`, which removes the length bound from inputs. The step-by-step
+  approach Python took (one operation at a time, sort-based dispatch in
+  smt2_conv) applies, and so do the generic pieces it added there.
+
+**Next.**
+- field splitting with the default IFS, for `for x in $list`,
+  `set -- $x`, and function arguments;
+- `local`, with dash keeping the outer value and bash leaving the
+  variable unset;
+- `read` as a nondeterministic assignment;
+- command names that are expansions, dispatched on their value;
+- `. "$dir/file"` with an option that maps such paths to files;
+- modelling the output of command substitutions of `echo` and `printf`.
 
 ---
 
