@@ -172,21 +172,22 @@ The helper supplies the stdlib *signatures*; the models supply the
 
 ## 5. Status
 
-The first end-to-end slice and phases 1 to 3 of §6 are done. The code is in
+The first end-to-end slice and phases 1 to 4 of §6 are done. The code is in
 `src/go/`, the tests are in `regression/go/`.
 
 | Part | Files | Role |
 |---|---|---|
 | Helper | `helper/main.go`, `helper/cprover/`, `helper/runtime/` | `go/parser` + `go/types` → typed JSON (schema version 1). Type-switch bindings (`_impl`, from `types.Info.Implicits`), receiver-qualified method ids, file-qualified positions and the bytes of string constants (`_sb`) are emitted. The runtime package `cprover/rt` (`helper/runtime/rt.go`) is type-checked and emitted with every program. |
 | Go AST | `go_parse_tree.{h,cpp}` | In-memory `irept` tree loaded from the JSON. The converter reads only this tree (§4.3). |
-| Types | `go_types.{h,cpp}` | `go/types` type table → `typet`. `int`/`uint`/`uintptr` come from `config.go`. Named struct types become struct tags (type symbols named like objects, e.g. `go::main.Node`), so recursion through pointers is finite; other named types are their underlying type. Blank fields are kept under the names `_$N`. Booleans are stored in a byte (`c_bool`), so that they have a size (for heap variables and arrays); `as_condition` turns them into conditions. Strings, slices and maps: see below. Function values are structs `{code, env}` marked `#go_func_value` (see below); several results are returned as one struct marked `#go_tuple`, with components `$0`, `$1`, ... |
-| Converter | `go_convert.{h,cpp}`, `go_builtins.cpp`, `go_maps.cpp` | Go AST → symbol table and code. Constructs outside the slice are reported as errors, never dropped. Strings, slices and their built-ins are in `go_builtins.cpp`, maps in `go_maps.cpp`. |
+| Types | `go_types.{h,cpp}` | `go/types` type table → `typet`. `int`/`uint`/`uintptr` come from `config.go`. Named struct types become struct tags (type symbols named like objects, e.g. `go::main.Node`), so recursion through pointers is finite; other named types are their underlying type. Blank fields are kept under the names `_$N`. Booleans are stored in a byte (`c_bool`), so that they have a size (for heap variables and arrays); `as_condition` turns them into conditions. `float32`/`float64` are IEEE 754 `floatbv` types; complex numbers are structs `{real, imag}` marked `#go_complex` (CBMC's complex type is not lowered in function types). Strings, slices and maps: see below. Function values are structs `{code, env}` marked `#go_func_value` (see below); several results are returned as one struct marked `#go_tuple`, with components `$0`, `$1`, ... |
+| Converter | `go_convert.{h,cpp}`, `go_builtins.cpp`, `go_maps.cpp`, `go_floats.cpp` | Go AST → symbol table and code. Constructs outside the slice are reported as errors, never dropped. Strings, slices and their built-ins are in `go_builtins.cpp`, maps in `go_maps.cpp`, floating-point and complex numbers in `go_floats.cpp`. |
 | Language | `go_language.{h,cpp}`, `expr2go.{h,cpp}` | `languaget` for `.go` files: runs the helper, sets the target GOARCH from `--arch`/`--32`/`--64`, builds the entry point. |
 
 Supported so far:
 
-- Types: integer and boolean types, strings, pointers, arrays, slices,
-  structs (including embedded fields), maps, and function types; untyped constants
+- Types: integer, floating-point, complex and boolean types, strings,
+  pointers, arrays, slices, structs (including embedded fields), maps,
+  and function types; untyped constants
   with their final types from `go/types`, folded exactly.
 - Declarations: package-level variables initialised in
   `types.Info.InitOrder`, then `init` functions in source order
@@ -268,6 +269,26 @@ Supported so far:
   nondeterministic order, skipping keys deleted before they are reached;
   entries added during the iteration are not visited, which the spec
   allows.
+- Floating-point and complex numbers (`§Numeric_types`): constants are
+  the IEEE 754 bits of their exact value rounded to the type, which the
+  helper records (`_fb`, `_fbr`/`_fbi`). Operations round to nearest,
+  ties to even. Division by zero gives infinities or NaN without a panic
+  (`§Floating_point_operators` leaves this implementation-specific; gc
+  does not panic). Comparisons follow IEEE 754 (`NaN != NaN`, `-0 ==
+  +0`), also in struct and array equality and for map keys. Conversions
+  truncate towards zero (float to integer) or round (to floating point);
+  a float-to-integer conversion whose result is not representable,
+  including NaN, gives an arbitrary value, as the spec makes it
+  implementation-dependent. `min`/`max` follow the spec's table for -0,
+  infinities and NaN. Complex numbers: `complex`, `real`, `imag`,
+  arithmetic, conversions and `==`. Multiplication computes the parts as
+  gc does, `(ac - bd)` and `(ad + bc)` in float64, rounded back for
+  complex64; division is `rt.ComplexDiv`, which gives gc's results
+  (Smith's algorithm with the C99 Annex G corrections; complex64 as
+  complex128), checked against gc bit for bit on about 3.2 million
+  quotients including zeros, infinities and NaNs. CBMC's floating-point
+  passes read `__CPROVER_rounding_mode`, which the front-end declares
+  (round to nearest).
 - Run-time panics, emitted by the converter as an assertion followed by
   an assumption because `goto_check_c` skips non-C modes. They cover
   integer division or remainder by zero (`division-by-zero`), negative
@@ -357,9 +378,16 @@ Known limitations:
   through a function value ("dereferenced function pointer must be
   ..."). It always holds, because function values are only ever nil
   (checked first) or the address of a function of that type.
+- **Fused floating-point operations.** `§Floating_point_operators`
+  allows an implementation to "combine multiple floating-point
+  operations into a single fused operation, possibly across statements",
+  and to keep float32 values at higher precision. The converter models
+  each operation rounded separately, as gc does on amd64; gc fuses
+  `x*y + z` on some architectures (e.g. arm64), so results proved here
+  need not hold there for programs sensitive to that rounding.
 - Not yet supported: type switches, `select`, `defer`, `recover`,
-  variadic functions (other than `append`), floats, complex numbers,
-  `range` over functions and channels, methods, interfaces, generic
+  variadic functions (other than `append`), the `math` package (and
+  other packages), `range` over functions and channels, methods, interfaces, generic
   functions and types, goroutines, and channels.
 
 The Makefile build of `cbmc` does not link the Python front-end that
@@ -396,7 +424,7 @@ section.
    `§For_range` over strings with UTF-8 decoding), `§Slice_types` with
    `make`, `append` and `copy` (`§Appending_and_copying_slices`),
    `§Map_types` with nondeterministic iteration order, `delete`, `clear`.
-4. **Floating point.** `float32`/`float64` per IEEE 754
+4. **Floating point** (done). `float32`/`float64` per IEEE 754
    (`§Arithmetic_operators`), numeric conversions (`§Conversions`), and
    `complex64`/`complex128`.
 5. **Methods and interfaces.** `§Method_declarations`, method values and
