@@ -21,6 +21,7 @@ if(GO_EXECUTABLE)
       "${CMAKE_CURRENT_SOURCE_DIR}/helper/main.go"
       "${CMAKE_CURRENT_SOURCE_DIR}/helper/go.mod"
       "${CMAKE_CURRENT_SOURCE_DIR}/helper/cprover/cprover.go"
+      "${CMAKE_CURRENT_SOURCE_DIR}/helper/runtime/rt.go"
     COMMENT "Building cbmc-go-helper")
   add_custom_target(cbmc-go-helper ALL DEPENDS "${go_helper}")
 else()

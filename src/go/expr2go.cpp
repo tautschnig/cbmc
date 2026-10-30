@@ -29,7 +29,7 @@ std::string type2go(const typet &type, const namespacet &)
   const irep_idt &go_name = type.get(ID_C_go_type);
   if(!go_name.empty())
     return id2string(go_name);
-  if(type.id() == ID_bool)
+  if(type.id() == ID_bool || type.id() == ID_c_bool)
     return "bool";
   if(type.id() == ID_signedbv)
     return "int" + type.get_string(ID_width);
@@ -94,6 +94,8 @@ std::string expr2go(const exprt &expr, const namespacet &ns)
       expr.type().id() == ID_pointer &&
       to_constant_expr(expr).is_null_pointer())
       return "nil";
+    if(expr.type().id() == ID_c_bool)
+      return to_constant_expr(expr).is_zero() ? "false" : "true";
     if(auto value = numeric_cast<mp_integer>(expr))
       return integer2string(*value);
   }

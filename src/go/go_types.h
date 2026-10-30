@@ -29,6 +29,12 @@ class symbol_table_baset;
 
 /// Name of the comment marking the struct that represents a function value.
 #define ID_C_go_func_value "#go_func_value"
+/// Name of the comment marking the struct that represents a string.
+#define ID_C_go_string "#go_string"
+/// Name of the comment marking the struct that represents a slice.
+#define ID_C_go_slice "#go_slice"
+/// Name of the comment marking the header struct of maps.
+#define ID_C_go_map "#go_map"
 
 /// True if \p type holds the values of a multi-valued expression (see
 /// go_type_convertert::tuple).
@@ -42,6 +48,25 @@ inline bool is_tuple(const typet &type)
 inline bool is_func_value(const typet &type)
 {
   return type.id() == ID_struct && type.get_bool(ID_C_go_func_value);
+}
+
+/// True if \p type is that of strings (see go_type_convertert::string_type).
+inline bool is_go_string(const typet &type)
+{
+  return type.id() == ID_struct && type.get_bool(ID_C_go_string);
+}
+
+/// True if \p type is that of slices (see go_type_convertert::slice_type).
+inline bool is_go_slice(const typet &type)
+{
+  return type.id() == ID_struct && type.get_bool(ID_C_go_slice);
+}
+
+/// True if \p type is that of maps (see go_type_convertert::map_type).
+inline bool is_go_map(const typet &type)
+{
+  return type.id() == ID_pointer &&
+         to_pointer_type(type).base_type().get_bool(ID_C_go_map);
 }
 
 /// The CBMC symbol for the Go object with id \p object_id.
@@ -85,6 +110,23 @@ public:
 
   /// The type of the environment pointer of function values.
   static pointer_typet env_pointer_type();
+
+  /// The type of strings: a pointer to the first byte and the length,
+  /// `{data *uint8, len int}`. Go1.27 §String_types: "A string value is a
+  /// (possibly empty) sequence of bytes." "Strings are immutable", so
+  /// strings may share their bytes. The zero value, "", has a null data
+  /// pointer.
+  static struct_typet string_type();
+
+  /// The type of slices of \p element: `{data *E, len int, cap int}`.
+  /// Go1.27 §Slice_types: "A slice is a descriptor for a contiguous segment
+  /// of an underlying array". The zero value, nil, has a null data pointer.
+  static struct_typet slice_type(const typet &element);
+
+  /// The type of maps from \p key to \p value: a pointer to a header
+  /// `{len int, cap int, keys *K, vals *V}` (go_maps.cpp). Go1.27
+  /// §Map_types: "The value of an uninitialized map is nil."
+  static pointer_typet map_type(const typet &key, const typet &value);
 
   /// For a nil result of operator(): a description of what is unsupported.
   std::string unsupported_reason;

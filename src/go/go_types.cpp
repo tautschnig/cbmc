@@ -67,7 +67,12 @@ typet go_type_convertert::basic(const irep_idt &kind)
   // Go1.27 §Numeric_types. int, uint and uintptr have implementation-
   // specific sizes; they follow gc on the target (config.go).
   if(kind == "bool" || kind == "untyped bool")
-    return bool_typet{}; // Go1.27 §Boolean_types
+  {
+    // Go1.27 §Boolean_types. Stored in a byte, as C's _Bool, so that
+    // boolean variables have a size (e.g., on the heap); used as conditions
+    // through as_condition (go_convert.cpp): any non-zero byte is true.
+    return c_bool_typet{8};
+  }
   if(kind == "int8")
     return signedbv_typet{8};
   if(kind == "int16")
@@ -90,6 +95,8 @@ typet go_type_convertert::basic(const irep_idt &kind)
     return unsignedbv_typet{config.go.int_width};
   if(kind == "uintptr")
     return unsignedbv_typet{config.go.uintptr_width};
+  if(kind == "string" || kind == "untyped string")
+    return string_type();
 
   unsupported_reason = "type " + id2string(kind);
   return typet{ID_nil};
@@ -167,6 +174,19 @@ typet go_type_convertert::operator()(const irep_idt &index)
   }
   else if(k == "struct")
     result = struct_type(under);
+  else if(k == "map")
+  {
+    typet key = (*this)(under.get("key"));
+    typet value = (*this)(under.get("elem"));
+    if(key.is_not_nil() && value.is_not_nil())
+      result = map_type(key, value);
+  }
+  else if(k == "slice")
+  {
+    typet element = (*this)(under.get("elem"));
+    if(element.is_not_nil())
+      result = slice_type(element);
+  }
   else
     unsupported_reason = "type " + entry.get_string("str");
 
@@ -305,4 +325,43 @@ typet go_type_convertert::signature(const irep_idt &index)
   code_typet result{std::move(parameters), std::move(return_type)};
   result.set(ID_C_go_type, parse_tree.type_entry(index).get("str"));
   return std::move(result);
+}
+
+struct_typet go_type_convertert::string_type()
+{
+  struct_typet::componentst components;
+  components.emplace_back(
+    "data", pointer_typet{unsignedbv_typet{8}, config.ansi_c.pointer_width});
+  components.emplace_back("len", signedbv_typet{config.go.int_width});
+  struct_typet result{std::move(components)};
+  result.set(ID_C_go_string, true);
+  result.set(ID_C_go_type, "string");
+  return result;
+}
+
+struct_typet go_type_convertert::slice_type(const typet &element)
+{
+  struct_typet::componentst components;
+  components.emplace_back(
+    "data", pointer_typet{element, config.ansi_c.pointer_width});
+  components.emplace_back("len", signedbv_typet{config.go.int_width});
+  components.emplace_back("cap", signedbv_typet{config.go.int_width});
+  struct_typet result{std::move(components)};
+  result.set(ID_C_go_slice, true);
+  return result;
+}
+
+pointer_typet go_type_convertert::map_type(const typet &key, const typet &value)
+{
+  const signedbv_typet int_type{config.go.int_width};
+  struct_typet::componentst components;
+  components.emplace_back("len", int_type);
+  components.emplace_back("cap", int_type);
+  components.emplace_back(
+    "keys", pointer_typet{key, config.ansi_c.pointer_width});
+  components.emplace_back(
+    "vals", pointer_typet{value, config.ansi_c.pointer_width});
+  struct_typet header{std::move(components)};
+  header.set(ID_C_go_map, true);
+  return pointer_typet{std::move(header), config.ansi_c.pointer_width};
 }

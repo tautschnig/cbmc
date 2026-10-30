@@ -32,9 +32,21 @@ class go_parse_treet;
 class symbol_table_baset;
 class symbolt;
 
+/// The Go boolean \p value (stored as a c_bool) as a condition.
+exprt as_condition(exprt value);
+
+/// \p value converted to \p type, as for an assignment (Go1.27
+/// §Assignability); the untyped nil becomes the nil of \p type.
+exprt go_cast(exprt value, const typet &type);
+
 /// True if values of \p type contain pointers or function values, which
-/// cannot take arbitrary (nondeterministic) values.
-bool contains_reference(const typet &type, const namespacet &ns);
+/// cannot take arbitrary (nondeterministic) values. Strings and slices
+/// can (go_convertert::nondet_value), except, if \p strings_too, at the top
+/// level and in struct fields.
+bool contains_reference(
+  const typet &type,
+  const namespacet &ns,
+  bool strings_too = true);
 
 /// Converts one Go package.
 class go_convertert
@@ -105,6 +117,7 @@ private:
   };
   function_statet state;
 
+  bool is_converted_package(const irep_idt &package) const;
   /// The source location of \p node, attributed to the current function.
   source_locationt location_of(const irept &node) const;
   void error(const irept &node, const std::string &message);
@@ -176,6 +189,13 @@ private:
   void convert_decl_stmt(const irept &stmt, code_blockt &dest);
   void convert_assign(const irept &stmt, code_blockt &dest);
   void convert_inc_dec(const irept &stmt, code_blockt &dest);
+  /// m[k] op= y, or m[k]++/-- for a nil \p y_node.
+  void convert_map_update(
+    const irept &target,
+    const irep_idt &op,
+    const irept &y_node,
+    const irept &stmt,
+    code_blockt &dest);
   void convert_if(const irept &stmt, code_blockt &dest);
   /// \p label_object: the object id of the label of the statement, if any.
   void convert_for(
@@ -229,6 +249,97 @@ private:
     const mp_integer &size,
     const source_locationt &location,
     code_blockt &dest);
+
+  // Strings and slices (go_builtins.cpp)
+  /// The string constant with bytes \p bytes.
+  exprt string_constant(const std::string &bytes, const source_locationt &);
+  /// Code copying \p count elements from \p source to \p dest (pointers
+  /// to elements; the ranges may overlap), appended to \p dest_code.
+  void copy_elements(
+    const exprt &dest,
+    const exprt &source,
+    const exprt &count,
+    const source_locationt &location,
+    code_blockt &dest_code);
+  /// A new array of \p count elements of type \p element, zeroed if
+  /// \p zero; the result points to its first element.
+  exprt allocate_elements(
+    const typet &element,
+    const exprt &count,
+    bool zero,
+    const source_locationt &location,
+    code_blockt &dest);
+  /// Calls of the generated helper functions $string_equal and
+  /// $string_concat (see go_builtins.cpp).
+  exprt string_equal(const exprt &a, const exprt &b, const source_locationt &);
+  exprt string_concat(const exprt &a, const exprt &b, const source_locationt &);
+  /// A call of function \p name of the runtime package cprover/rt.
+  exprt runtime_call(
+    const std::string &name,
+    exprt::operandst arguments,
+    const source_locationt &location);
+  /// An arbitrary value of \p type (strings get arbitrary contents).
+  exprt nondet_value(
+    const typet &type,
+    const source_locationt &location,
+    code_blockt &dest);
+  /// \p value, or a temporary holding it if it is not a symbol or a
+  /// constant (whose declaration and assignment go to \p dest).
+  exprt evaluate_once(
+    const exprt &value,
+    const source_locationt &location,
+    code_blockt &dest);
+  exprt convert_slice_expr(const irept &expr);
+  exprt convert_make(const irept &call);
+  exprt convert_append(const irept &call);
+  exprt convert_copy(const irept &call);
+  void convert_clear(const irept &call, code_blockt &dest);
+  /// Conversions involving strings and slices (Go1.27 §Conversions); nil
+  /// if \p value and \p type are not such types.
+  exprt convert_string_conversion(
+    const exprt &value,
+    const typet &type,
+    const irept &where);
+  /// The slice literal \p lit (Go1.27 §Composite_literals).
+  exprt convert_slice_lit(const irept &lit, const typet &type);
+  /// The element \p index of string or slice \p value: a pointer
+  /// dereference, after checks added to \p checks.
+  exprt element(
+    const exprt &value,
+    const exprt &index,
+    bool constant_index,
+    const source_locationt &location,
+    code_blockt &checks);
+
+  // Maps (go_maps.cpp)
+  /// The index of the entry of \p map with key \p key, or -1 (also for
+  /// nil maps); \p map and \p key have no side effects.
+  symbol_exprt map_find(
+    const exprt &map,
+    const exprt &key,
+    const irept &where,
+    code_blockt &dest);
+  /// The map index expression \p expr, as a pair (value, ok) if
+  /// \p comma_ok.
+  exprt convert_map_lookup(const irept &expr, bool comma_ok);
+  /// Code setting the entry of \p map with key \p key to \p value (none of
+  /// which have side effects).
+  void map_insert(
+    const exprt &map,
+    const exprt &key,
+    const exprt &value,
+    const irept &where,
+    code_blockt &dest);
+  /// A new, empty map of type \p type.
+  exprt
+  make_map(const typet &type, const source_locationt &, code_blockt &dest);
+  exprt convert_map_lit(const irept &lit, const typet &type);
+  void convert_delete(const irept &call, code_blockt &dest);
+  void convert_map_range(
+    const irept &stmt,
+    const exprt &map,
+    code_blockt &dest,
+    const irep_idt &label_object);
 
   // Expressions
   exprt convert_expr(const irept &expr);

@@ -33,6 +33,10 @@
 //	"_inst" type-argument indices for instantiated generic identifiers
 //	"_impl" id of an implicitly declared object (e.g. per-clause type-switch
 //	        variables, types.Info.Implicits)
+//	"_sb"   for string constants, their bytes
+//
+// The last entry of "files" and "asts" is the front-end's runtime package
+// "cprover/rt" (runtime/rt.go), whose objects have ids "cprover/rt.<name>".
 package main
 
 import (
@@ -61,6 +65,14 @@ import (
 var cproverSource string
 
 const cproverPath = "cprover"
+
+// The front-end's runtime support (runtime/rt.go), type-checked as package
+// "cprover/rt" and emitted with the program, whose conversion calls it.
+//
+//go:embed runtime/rt.go
+var runtimeSource string
+
+const runtimePath = "cprover/rt"
 
 // importer that serves "cprover" from the embedded source and everything
 // else from the gc toolchain's export data.
@@ -325,6 +337,14 @@ func (e *encoder) node(n ast.Node) any {
 			if tv.Value != nil {
 				out["_cv"] = tv.Value.ExactString()
 				out["_cvk"] = constKinds[tv.Value.Kind()]
+				if tv.Value.Kind() == constant.String {
+					// The exact bytes (Go strings need not be valid UTF-8).
+					sb := []int{}
+					for _, b := range []byte(constant.StringVal(tv.Value)) {
+						sb = append(sb, int(b))
+					}
+					out["_sb"] = sb
+				}
 			}
 		}
 	}
@@ -482,13 +502,31 @@ func main() {
 	if failed {
 		os.Exit(3)
 	}
+	// The program's initialisation order, before checking the runtime
+	// package (which shares info) can change it.
+	programInitOrder := info.InitOrder
+
+	// The runtime package, with its own file index after the program's.
+	rtFile, err := parser.ParseFile(fset, "cprover/rt/rt.go", runtimeSource,
+		parser.SkipObjectResolution)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "runtime:", err)
+		os.Exit(2)
+	}
+	enc.fileIdx["cprover/rt/rt.go"] = len(names)
+	names = append(names, "cprover/rt/rt.go")
+	files = append(files, rtFile)
+	if _, err := conf.Check(runtimePath, fset, []*ast.File{rtFile}, info); err != nil || failed {
+		fmt.Fprintln(os.Stderr, "runtime:", err)
+		os.Exit(2)
+	}
 
 	var asts []any
 	for _, f := range files {
 		asts = append(asts, enc.node(f))
 	}
 	initOrder := []any{}
-	for _, init := range info.InitOrder {
+	for _, init := range programInitOrder {
 		var lhs []string
 		for _, v := range init.Lhs {
 			lhs = append(lhs, enc.objID(v))

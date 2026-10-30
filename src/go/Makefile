@@ -1,6 +1,8 @@
 SRC = expr2go.cpp \
+      go_builtins.cpp \
       go_convert.cpp \
       go_language.cpp \
+      go_maps.cpp \
       go_parse_tree.cpp \
       go_types.cpp \
       # Empty last line
@@ -23,7 +25,8 @@ go$(LIBEXT): $(OBJ)
 # (helper/main.go). It needs a Go toolchain and is placed next to the cbmc
 # binary, where the Go front-end looks for it.
 GO ?= go
-HELPER_SRC = helper/main.go helper/go.mod helper/cprover/cprover.go
+HELPER_SRC = helper/main.go helper/go.mod helper/cprover/cprover.go \
+             helper/runtime/rt.go
 
 helper: ../cbmc/cbmc-go-helper
 

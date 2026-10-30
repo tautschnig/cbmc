@@ -15,6 +15,7 @@ Author: Michael Tautschnig
 #include <util/bitvector_expr.h>
 #include <util/c_types.h>
 #include <util/config.h>
+#include <util/cprover_prefix.h>
 #include <util/expr_initializer.h>
 #include <util/expr_util.h>
 #include <util/mp_arith.h>
@@ -43,6 +44,20 @@ go_convertert::go_convertert(
 /// Id of the expression standing for the untyped nil until its context
 /// determines the type (see go_convertert::convert_expr).
 static const irep_idt ID_go_nil = "go_nil";
+
+/// True for the packages whose declarations are converted: the program's
+/// and the runtime package cprover/rt (helper/runtime/rt.go).
+bool go_convertert::is_converted_package(const irep_idt &package) const
+{
+  return package == parse_tree.package || package == "cprover/rt";
+}
+
+/// \p expr with location \p location.
+static exprt at_location(exprt expr, const source_locationt &location)
+{
+  expr.add_source_location() = location;
+  return expr;
+}
 
 /// An expression statement evaluating \p value, at \p location.
 static code_expressiont
@@ -75,17 +90,34 @@ static bool contains_call(const irept &node)
   return false;
 }
 
-bool contains_reference(const typet &type, const namespacet &ns)
+bool contains_reference(
+  const typet &type,
+  const namespacet &ns,
+  bool strings_too)
 {
   const typet &followed = go_follow(ns, type);
   if(followed.id() == ID_pointer || is_func_value(followed))
     return true;
+  if(is_go_string(followed))
+    return strings_too;
+  if(is_go_slice(followed))
+  {
+    // An arbitrary slice gets a new underlying array of arbitrary
+    // elements, which must not contain references themselves.
+    return strings_too ||
+           contains_reference(
+             to_pointer_type(
+               to_struct_type(followed).get_component("data").type())
+               .base_type(),
+             ns,
+             true);
+  }
   if(followed.id() == ID_array)
-    return contains_reference(to_array_type(followed).element_type(), ns);
+    return contains_reference(to_array_type(followed).element_type(), ns, true);
   if(followed.id() == ID_struct)
   {
     for(const auto &component : to_struct_type(followed).components())
-      if(contains_reference(component.type(), ns))
+      if(contains_reference(component.type(), ns, strings_too))
         return true;
   }
   return false;
@@ -94,11 +126,17 @@ bool contains_reference(const typet &type, const namespacet &ns)
 /// \p value, or the nil of \p type if \p value is the untyped nil.
 static exprt go_cast_nil(const exprt &value, const typet &type);
 
-/// \p value converted to \p type, as for an assignment (Go1.27
-/// §Assignability): go/types has checked that this is valid. Integer
-/// representations change as for conversions; the untyped nil becomes the
-/// null pointer of \p type.
-static exprt go_cast(exprt value, const typet &type)
+exprt as_condition(exprt value)
+{
+  if(value.type().id() == ID_bool)
+    return value;
+  source_locationt location = value.source_location();
+  typecast_exprt result{std::move(value), bool_typet{}};
+  result.add_source_location() = std::move(location);
+  return std::move(result);
+}
+
+exprt go_cast(exprt value, const typet &type)
 {
   if(value.id() == ID_go_nil)
   {
@@ -106,6 +144,16 @@ static exprt go_cast(exprt value, const typet &type)
     exprt result;
     if(type.id() == ID_pointer)
       result = null_pointer_exprt{to_pointer_type(type)};
+    else if(is_go_slice(type))
+    {
+      // Go1.27 §Slice_types: "The value of an uninitialized slice is nil."
+      const auto &components = to_struct_type(type).components();
+      result = struct_exprt{
+        {null_pointer_exprt{to_pointer_type(components[0].type())},
+         from_integer(0, components[1].type()),
+         from_integer(0, components[2].type())},
+        type};
+    }
     else
     {
       // A nil function value.
@@ -389,7 +437,7 @@ exprt go_convertert::variable(const irept &ident)
     const symbolt *function = symbol_table.lookup(symbol_id(object_id));
     if(function == nullptr)
     {
-      if(object.get("pkg") != parse_tree.package)
+      if(!is_converted_package(object.get("pkg")))
         unsupported(
           ident, "function values from package " + object.get_string("pkg"));
       return nil_exprt{};
@@ -416,7 +464,7 @@ exprt go_convertert::variable(const irept &ident)
   {
     // A variable of this package whose declaration failed has already been
     // reported; only report variables of other packages.
-    if(object.get("pkg") != parse_tree.package || !error_found)
+    if(!is_converted_package(object.get("pkg")) || !error_found)
       unsupported(
         ident,
         "variable '" + ident.get_string("Name") + "' of package " +
@@ -590,6 +638,18 @@ void go_convertert::scan_heap_variables(const irept &node)
     for(const auto &id : captured_variables(node, parse_tree))
       state.heap_objects.insert(id);
   }
+  else if(
+    node.id() == "SliceExpr" &&
+    type_converter.underlying(go_field(node, "X").get("_t")).get("k") ==
+      "array")
+  {
+    // Slicing an array refers to it (Go1.27 §Slice_expressions: "If the
+    // sliced operand is an array, it must be addressable").
+    irept address{"UnaryExpr"};
+    address.set("Op", "&");
+    address.add("X") = go_field(node, "X");
+    scan_heap_variables(address);
+  }
   for(const auto &sub : node.get_sub())
     scan_heap_variables(sub);
   for(const auto &named : node.get_named_sub())
@@ -758,6 +818,22 @@ void go_convertert::convert_package_init(
 
 bool go_convertert::operator()()
 {
+  // As for C (cprover.h), goto-symex accesses memory at integer addresses
+  // through __CPROVER_memory, e.g., when a pointer derived from nil is
+  // dereferenced on a path that is not feasible.
+  if(!symbol_table.has_symbol(CPROVER_PREFIX "memory"))
+  {
+    symbolt memory{
+      CPROVER_PREFIX "memory",
+      array_typet{unsigned_char_type(), infinity_exprt{size_type()}},
+      "go"};
+    memory.base_name = CPROVER_PREFIX "memory";
+    memory.is_static_lifetime = true;
+    memory.is_lvalue = true;
+    memory.is_extern = true;
+    symbol_table.add(memory);
+  }
+
   std::vector<irep_idt> init_functions;
   std::vector<const irept *> functions;
 
@@ -974,6 +1050,17 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
   const auto &rhs = go_list(stmt, "Rhs");
   const source_locationt &location = location_of(stmt);
 
+  if(
+    tok != "=" && tok != ":=" && lhs.front().id() == "IndexExpr" &&
+    type_converter.underlying(go_field(lhs.front(), "X").get("_t")).get("k") ==
+      "map")
+  {
+    // Go1.27 §Assignment_statements: "x op= y" "is equivalent to x = x op (y)
+    // but evaluates x only once"; for a map element, the map and the key.
+    const std::string op = id2string(tok);
+    return convert_map_update(
+      lhs.front(), op.substr(0, op.size() - 1), rhs.front(), stmt, dest);
+  }
   if(tok != "=" && tok != ":=")
   {
     // Go1.27 §Assignment_statements: "An assignment operation x op= y
@@ -1023,6 +1110,30 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
     parts.force_temporaries = lhs.size() > 1;
     if(target.id() == "Ident" && target.get("Name") == "_")
       targets.push_back(exprt{ID_skip}); // the blank identifier
+    else if(
+      target.id() == "IndexExpr" &&
+      type_converter.underlying(go_field(target, "X").get("_t")).get("k") ==
+        "map")
+    {
+      // m[k] = v: the map and the key are operands evaluated in phase 1;
+      // the entry is set in phase 2.
+      exprt map = access_operand(go_field(target, "X"), parts);
+      exprt key = access_operand(go_field(target, "Index"), parts);
+      if(map.is_nil() || key.is_nil())
+        return;
+      map = evaluate_once(map, location, parts.operands);
+      key = evaluate_once(
+        go_cast(
+          key,
+          to_pointer_type(
+            to_struct_type(to_pointer_type(map.type()).base_type())
+              .get_component("keys")
+              .type())
+            .base_type()),
+        location,
+        parts.operands);
+      targets.push_back(exprt{"go_map_entry", typet{}, {map, key}});
+    }
     else if(tok == ":=" && target.get_bool("_def"))
       targets.push_back(exprt{ID_declaration}); // declared below
     else
@@ -1075,6 +1186,19 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
       dest.add(expression_statement(values[i], location));
       continue;
     }
+    if(lvalue.id() == "go_map_entry")
+    {
+      const exprt &map = lvalue.operands()[0];
+      const typet element =
+        to_pointer_type(to_struct_type(to_pointer_type(map.type()).base_type())
+                          .get_component("vals")
+                          .type())
+          .base_type();
+      const exprt value =
+        evaluate_once(go_cast(values[i], element), location, dest);
+      map_insert(map, lvalue.operands()[1], value, target, dest);
+      continue;
+    }
     if(lvalue.id() == ID_declaration)
     {
       // Go1.27 §Short_variable_declarations: new variables are declared;
@@ -1093,8 +1217,58 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
   }
 }
 
+void go_convertert::convert_map_update(
+  const irept &target,
+  const irep_idt &op,
+  const irept &y_node,
+  const irept &stmt,
+  code_blockt &dest)
+{
+  // m[k] op= y and m[k]++: look up the entry (the zero value if absent),
+  // combine, and set the entry, evaluating m and k once.
+  const source_locationt location = location_of(stmt);
+  exprt map = convert_expr(go_field(target, "X"));
+  exprt key = convert_expr(go_field(target, "Index"));
+  if(map.is_nil() || key.is_nil())
+    return;
+  map = evaluate_once(map, location, dest);
+  const struct_typet &header =
+    to_struct_type(to_pointer_type(map.type()).base_type());
+  const typet key_type =
+    to_pointer_type(header.get_component("keys").type()).base_type();
+  const typet element =
+    to_pointer_type(header.get_component("vals").type()).base_type();
+  key = evaluate_once(go_cast(key, key_type), location, dest);
+  const symbol_exprt found = map_find(map, key, target, dest);
+  const member_exprt vals{dereference_exprt{map}, header.get_component("vals")};
+  const symbol_exprt old = new_temporary(element, location, dest);
+  dest.add(code_frontend_assignt{
+    old,
+    if_exprt{
+      binary_relation_exprt{found, ID_ge, from_integer(0, found.type())},
+      dereference_exprt{plus_exprt{vals, found}},
+      *zero_initializer(element, location, ns)}});
+  exprt y = y_node.is_nil() ? from_integer(1, element) : convert_expr(y_node);
+  if(y.is_nil())
+    return;
+  exprt value = convert_arithmetic(
+    op, old, y, y_node.is_nil() ? stmt : y_node, element, location);
+  if(value.is_nil())
+    return;
+  map_insert(map, key, evaluate_once(value, location, dest), stmt, dest);
+}
+
 void go_convertert::convert_inc_dec(const irept &stmt, code_blockt &dest)
 {
+  const irept &x_node = go_field(stmt, "X");
+  if(
+    x_node.id() == "IndexExpr" &&
+    type_converter.underlying(go_field(x_node, "X").get("_t")).get("k") ==
+      "map")
+  {
+    return convert_map_update(
+      x_node, stmt.get("Tok") == "++" ? "+" : "-", irept{ID_nil}, stmt, dest);
+  }
   // Go1.27 §IncDec_statements: "x++" is "x += 1" (and so wraps on
   // overflow, Go1.27 §Integer_overflow), evaluating x once.
   access_partst parts;
@@ -1122,6 +1296,8 @@ void go_convertert::convert_if(const irept &stmt, code_blockt &dest)
   if(init.is_not_nil())
     convert_statement(init, scope);
   exprt cond = convert_expr(go_field(stmt, "Cond"));
+  if(cond.is_not_nil())
+    cond = as_condition(cond);
   code_blockt then_block = convert_block(go_field(stmt, "Body"));
   codet else_code = codet{ID_nil};
   const irept &else_node = go_field(stmt, "Else");
@@ -1159,6 +1335,8 @@ void go_convertert::convert_for(
   const irept &cond_node = go_field(stmt, "Cond");
   exprt cond =
     cond_node.is_nil() ? exprt{true_exprt{}} : convert_expr(cond_node);
+  if(cond.is_not_nil())
+    cond = as_condition(cond);
   // Go1.27 §For_clause: "Each iteration has its own separate declared
   // variable (or variables) [Go 1.22]. The variable used by the first
   // iteration is declared by the init statement. The variable used by each
@@ -1235,11 +1413,22 @@ void go_convertert::convert_range(
     value_node.is_not_nil() && value_node.get("Name") != "_";
   const irept &under = type_converter.underlying(x_node.get("_t"));
   const irep_idt &k = under.get("k");
-  const bool is_integer = k == "basic";
+  const bool is_string =
+    k == "basic" &&
+    (under.get("kind") == "string" || under.get("kind") == "untyped string");
+  const bool is_slice = k == "slice";
+  const bool is_integer = k == "basic" && !is_string;
   const irept *array_type = &under;
   if(k == "pointer")
     array_type = &type_converter.underlying(under.get("elem"));
-  if(!is_integer && array_type->get("k") != "array")
+  if(k == "map")
+  {
+    exprt map = convert_expr(x_node);
+    if(map.is_nil())
+      return;
+    return convert_map_range(stmt, map, dest, label_object);
+  }
+  if(!is_integer && !is_string && !is_slice && array_type->get("k") != "array")
   {
     unsupported(stmt, "range over values of type " + under.get_string("str"));
     return;
@@ -1251,7 +1440,21 @@ void go_convertert::convert_range(
   typet index_type;
   exprt count;
   exprt range_value = nil_exprt{};
-  if(is_integer)
+  if(is_string || is_slice)
+  {
+    // The string or slice is evaluated once; for slices "For a nil slice,
+    // the number of iterations is 0" (its length is 0).
+    index_type = signedbv_typet{config.go.int_width};
+    exprt value = convert_expr(x_node);
+    if(value.is_nil())
+      return;
+    value = go_cast(value, convert_type(x_node.get("_t"), x_node));
+    symbol_exprt tmp = new_temporary(value.type(), location, scope);
+    scope.add(code_frontend_assignt{tmp, value});
+    range_value = tmp;
+    count = member_exprt{tmp, to_struct_type(tmp.type()).get_component("len")};
+  }
+  else if(is_integer)
   {
     const irept &type_source =
       type_converter.is_untyped(x_node.get("_t")) && key_node.is_not_nil()
@@ -1341,8 +1544,39 @@ void go_convertert::convert_range(
     assign.add_source_location() = location_of(node);
     body.add(std::move(assign));
   };
-  bind(key_node, index);
-  if(has_value)
+  // For strings, the byte index advances by the length of each code point.
+  exprt step = from_integer(1, index_type);
+  if(is_string)
+  {
+    // Go1.27 §For_range: "For a string value, the "range" clause iterates
+    // over the Unicode code points in the string starting at byte index 0.
+    // On successive iterations, the index value will be the index of the
+    // first byte of successive UTF-8-encoded code points in the string, and
+    // the second value, of type rune, will be the value of the
+    // corresponding code point." (rt.DecodeRune)
+    const exprt decoded =
+      runtime_call("DecodeRune", {range_value, index}, location);
+    const symbol_exprt pair = new_temporary(decoded.type(), location, scope);
+    const auto &parts = to_struct_type(pair.type()).components();
+    body.add(code_frontend_assignt{pair, decoded});
+    bind(key_node, index);
+    if(has_value)
+      bind(value_node, member_exprt{pair, parts[0]});
+    step = typecast_exprt::conditional_cast(
+      member_exprt{pair, parts[1]}, index_type);
+  }
+  else
+    bind(key_node, index);
+  if(is_slice && has_value)
+  {
+    // The elements are those of the underlying array at each iteration.
+    const struct_typet &slice_type = to_struct_type(range_value.type());
+    bind(
+      value_node,
+      dereference_exprt{plus_exprt{
+        member_exprt{range_value, slice_type.get_component("data")}, index}});
+  }
+  else if(has_value && !is_string)
   {
     exprt array = range_value;
     if(k == "pointer")
@@ -1364,10 +1598,13 @@ void go_convertert::convert_range(
   if(!label_object.empty())
     body.add(code_labelt{prefix + "continue", code_skipt{}});
 
+  code_blockt advance;
+  advance.add(code_frontend_assignt{index, plus_exprt{index, step}});
   code_fort loop{
     code_frontend_assignt{index, from_integer(0, index_type)},
     binary_relation_exprt{index, ID_lt, count},
-    side_effect_exprt{ID_preincrement, {index}, index_type, location},
+    side_effect_expr_statement_expressiont{
+      std::move(advance), empty_typet{}, location},
     std::move(body)};
   loop.add_source_location() = location;
   scope.add(std::move(loop));
@@ -1432,7 +1669,8 @@ void go_convertert::convert_switch(
         tag.is_nil() ? value : convert_comparison("==", value, tag, case_node);
       if(condition.is_nil())
         continue;
-      code_ifthenelset dispatch{condition, code_gotot{clause_label(i)}};
+      code_ifthenelset dispatch{
+        as_condition(condition), code_gotot{clause_label(i)}};
       dispatch.add_source_location() = location_of(case_node);
       scope.add(std::move(dispatch));
     }
@@ -1689,6 +1927,39 @@ exprt go_convertert::convert_access(const irept &expr, access_partst &parts)
       check_not_nil(pointer, parts.checks);
       array = dereference_exprt{pointer};
     }
+    else if(under.get("k") == "map")
+    {
+      // Map elements are not variables; reads are lookups.
+      return access_operand(
+        convert_map_lookup(
+          expr, type_converter.underlying(expr.get("_t")).get("k") == "tuple"),
+        parts);
+    }
+    else if(
+      under.get("k") == "slice" ||
+      (under.get("k") == "basic" && (under.get("kind") == "string" ||
+                                     under.get("kind") == "untyped string")))
+    {
+      // Go1.27 §Index_expressions: for slices, "a[x] is the slice element
+      // at index x"; for strings, "a[x] is the non-constant byte value at
+      // index x". Both panic if x is out of range.
+      exprt value = access_operand(x, parts);
+      if(value.is_nil())
+        return nil_exprt{};
+      if(!value.is_constant() && value.id() != ID_symbol)
+      {
+        // The operand is used twice (bounds and element).
+        symbol_exprt tmp =
+          new_temporary(value.type(), location, parts.operands);
+        parts.operands.add(code_frontend_assignt{tmp, value});
+        value = tmp;
+      }
+      const irept &index_node = go_field(expr, "Index");
+      exprt index = access_operand(index_node, parts);
+      if(index.is_nil())
+        return nil_exprt{};
+      return element(value, index, false, location, parts.checks);
+    }
     else
     {
       unsupported(expr, "indexing values of type " + under.get_string("str"));
@@ -1774,6 +2045,17 @@ bool go_convertert::convert_intrinsic_call(const irept &call, code_blockt &dest)
     return true;
   }
 
+  if(callee == "clear")
+  {
+    convert_clear(call, dest);
+    return true;
+  }
+  if(callee == "delete")
+  {
+    convert_delete(call, dest);
+    return true;
+  }
+
   if(callee == "print" || callee == "println")
   {
     // Go1.27 §Bootstrapping: implementation-specific output; the
@@ -1804,7 +2086,7 @@ bool go_convertert::convert_intrinsic_call(const irept &call, code_blockt &dest)
     source_locationt loc = location;
     loc.set_property_class("assertion");
     loc.set_comment(text.substr(1, text.size() - 2));
-    code_assertt check{cond};
+    code_assertt check{as_condition(cond)};
     check.add_source_location() = loc;
     dest.add(std::move(check));
     return true;
@@ -1815,7 +2097,7 @@ bool go_convertert::convert_intrinsic_call(const irept &call, code_blockt &dest)
     exprt cond = convert_expr(args[0]);
     if(cond.is_nil())
       return true;
-    code_assumet assume{cond};
+    code_assumet assume{as_condition(cond)};
     assume.add_source_location() = location;
     dest.add(std::move(assume));
     return true;
@@ -1863,9 +2145,11 @@ convert_composite(const exprt &value, const typet &type, const namespacet &ns)
   if(
     (from.id() == ID_pointer && to.id() == ID_pointer) ||
     (is_func_value(from) && is_func_value(to)) ||
+    (is_go_slice(from) && is_go_slice(to) &&
+     from.get_named_sub() == to.get_named_sub()) ||
     ((from.id() == ID_signedbv || from.id() == ID_unsignedbv) &&
      (to.id() == ID_signedbv || to.id() == ID_unsignedbv)) ||
-    (from.id() == ID_bool && to.id() == ID_bool))
+    (from.id() == ID_c_bool && to.id() == ID_c_bool))
   {
     return typecast_exprt::conditional_cast(value, type);
   }
@@ -1888,7 +2172,10 @@ exprt go_convertert::convert_conversion(const irept &call)
   if(type.is_nil() || value.is_nil())
     return nil_exprt{};
   value = go_cast_nil(value, type);
-  exprt result = convert_composite(value, type, ns);
+  exprt result = convert_string_conversion(value, type, call);
+  if(result.is_not_nil())
+    return result;
+  result = convert_composite(value, type, ns);
   if(result.is_nil())
   {
     unsupported(call, "this conversion");
@@ -1951,7 +2238,7 @@ exprt go_convertert::convert_call(const irept &call)
   const irept &fun = go_field(call, "Fun");
   if(fun.get_bool("_tx"))
     return convert_conversion(call);
-  if(call.get_bool("_ellipsis"))
+  if(call.get_bool("_ellipsis") && callee_object(call) != "append")
   {
     unsupported(call, "calls with \"...\" arguments");
     return nil_exprt{};
@@ -1967,6 +2254,12 @@ exprt go_convertert::convert_call(const irept &call)
     return convert_new(call);
   if(callee == "len" || callee == "cap")
     return convert_len(call);
+  if(callee == "make")
+    return convert_make(call);
+  if(callee == "append")
+    return convert_append(call);
+  if(callee == "copy")
+    return convert_copy(call);
 
   if(callee == "cprover.Nondet")
   {
@@ -1974,7 +2267,7 @@ exprt go_convertert::convert_call(const irept &call)
     typet type = expr_type(call);
     if(type.is_nil())
       return nil_exprt{};
-    if(contains_reference(type, ns))
+    if(contains_reference(type, ns, false))
     {
       // A pointer or function value is nil or refers to a variable or
       // function; an arbitrary bit pattern would be neither.
@@ -1982,7 +2275,9 @@ exprt go_convertert::convert_call(const irept &call)
         call, "cprover.Nondet of types containing pointers or functions");
       return nil_exprt{};
     }
-    return side_effect_expr_nondett{type, location};
+    code_blockt prefix;
+    exprt value = nondet_value(type, location, prefix);
+    return with_prefix(std::move(value), prefix, location);
   }
 
   if(object.get("kind") == "builtin")
@@ -1990,7 +2285,7 @@ exprt go_convertert::convert_call(const irept &call)
     unsupported(call, "built-in function " + id2string(callee));
     return nil_exprt{};
   }
-  if(object.get("kind") == "func" && object.get("pkg") != parse_tree.package)
+  if(object.get("kind") == "func" && !is_converted_package(object.get("pkg")))
   {
     unsupported(
       call,
@@ -2079,6 +2374,20 @@ exprt go_convertert::convert_call(const irept &call)
     code_type.return_type(),
     location};
   return with_prefix(std::move(result), prefix, location);
+}
+
+exprt go_convertert::evaluate_once(
+  const exprt &value,
+  const source_locationt &location,
+  code_blockt &dest)
+{
+  if(value.id() == ID_symbol || value.is_constant())
+    return value;
+  symbol_exprt tmp = new_temporary(value.type(), location, dest);
+  code_frontend_assignt assign{tmp, value};
+  assign.add_source_location() = location;
+  dest.add(std::move(assign));
+  return std::move(tmp);
 }
 
 exprt go_convertert::with_prefix(
@@ -2247,10 +2556,21 @@ exprt go_convertert::convert_constant(const irept &expr, const typet &type)
   const std::string value = expr.get_string("_cv");
   exprt result;
   if(kind == "bool")
+  {
     result = value == "true" ? exprt{true_exprt{}} : exprt{false_exprt{}};
+    result = typecast_exprt::conditional_cast(result, type);
+  }
   else if(
     kind == "int" && (type.id() == ID_signedbv || type.id() == ID_unsignedbv))
     result = from_integer(string2integer(value), type);
+  else if(kind == "string" && is_go_string(type))
+  {
+    // Go1.27 §String_literals; the helper records the exact bytes.
+    std::string bytes;
+    for(const auto &b : go_list(expr, "_sb"))
+      bytes += static_cast<char>(std::stoi(b.id_string()));
+    return string_constant(bytes, location_of(expr));
+  }
   else
   {
     unsupported(
@@ -2299,9 +2619,31 @@ exprt go_convertert::convert_comparison(
   // A copy: x is replaced below.
   const typet type = go_follow(ns, x.type());
 
+  if(is_go_string(type))
+  {
+    // Go1.27 §Comparison_operators: "String types are comparable and
+    // ordered. Two string values are compared lexically byte-wise."
+    y = go_cast(y, x.type());
+    exprt result;
+    if(op == "==" || op == "!=")
+      result = string_equal(x, y, location);
+    else if(op == "<" || op == ">=")
+      result = as_condition(runtime_call("StringLess", {x, y}, location));
+    else
+      result = as_condition(runtime_call("StringLess", {y, x}, location));
+    if(op == "!=" || op == ">=" || op == "<=")
+      result = not_exprt{result};
+    return at_location(std::move(result), location);
+  }
   if(op == "==" || op == "!=")
   {
-    if(is_func_value(type))
+    if(is_go_slice(type))
+    {
+      // Slices may only be compared to nil.
+      x = member_exprt{x, to_struct_type(type).components()[0]};
+      y = member_exprt{y, to_struct_type(type).components()[0]};
+    }
+    else if(is_func_value(type))
     {
       // Only comparisons with nil: compare the code pointers.
       x = member_exprt{x, to_struct_type(type).components()[0]};
@@ -2333,14 +2675,22 @@ exprt go_convertert::convert_comparison(
     }
   }
   if(
-    type.id() != ID_bool && type.id() != ID_signedbv &&
-    type.id() != ID_unsignedbv && !is_func_value(type))
+    type.id() != ID_bool && type.id() != ID_c_bool &&
+    type.id() != ID_signedbv && type.id() != ID_unsignedbv &&
+    !is_func_value(type) && !is_go_slice(type))
   {
     unsupported(
       where, "comparison of type " + x.type().get_string(ID_C_go_type));
     return nil_exprt{};
   }
-  y = go_cast(y, x.type());
+  if(type.id() == ID_c_bool || type.id() == ID_bool)
+  {
+    // Any non-zero byte is true.
+    x = as_condition(x);
+    y = as_condition(y);
+  }
+  else
+    y = go_cast(y, x.type());
   const irep_idt rel = op == "=="   ? ID_equal
                        : op == "!=" ? ID_notequal
                        : op == "<"  ? ID_lt
@@ -2357,6 +2707,10 @@ exprt go_convertert::convert_comparison(
 static bool has_blank_fields(const typet &type, const namespacet &ns)
 {
   const typet &followed = go_follow(ns, type);
+  if(followed.id() == ID_c_bool)
+    return true; // booleans are compared as conditions
+  if(is_go_string(followed))
+    return true; // strings are compared by contents, not representation
   if(followed.id() == ID_array)
     return has_blank_fields(to_array_type(followed).element_type(), ns);
   if(followed.id() != ID_struct)
@@ -2399,6 +2753,8 @@ exprt go_convertert::equality(
     }
     return same;
   }
+  if(is_go_string(type))
+    return string_equal(x, y, location_of(where));
   if(type.id() == ID_struct)
   {
     // "Two struct values are equal if their corresponding non-blank field
@@ -2440,12 +2796,10 @@ exprt go_convertert::equality(
     }
     return conjunction(std::move(conjuncts));
   }
-  if(
-    type.id() == ID_bool || type.id() == ID_signedbv ||
-    type.id() == ID_unsignedbv)
-  {
+  if(type.id() == ID_c_bool || type.id() == ID_bool)
+    return equal_exprt{as_condition(x), as_condition(y)};
+  if(type.id() == ID_signedbv || type.id() == ID_unsignedbv)
     return equal_exprt{x, y};
-  }
   unsupported(where, "comparison of type " + x.type().get_string(ID_C_go_type));
   return nil_exprt{};
 }
@@ -2465,7 +2819,7 @@ exprt go_convertert::convert_unary(const irept &expr)
   else if(op == "^")
     result = bitnot_exprt{x}; // Go1.27: "bitwise complement"
   else if(op == "!")
-    result = not_exprt{x};
+    result = not_exprt{as_condition(x)};
   else
   {
     unsupported(expr, "unary operator " + id2string(op));
@@ -2490,9 +2844,9 @@ exprt go_convertert::convert_binary(const irept &expr)
   // Go1.27 §Logical_operators: "&&" and "||" evaluate the right operand
   // conditionally; goto_convert preserves this for side effects.
   if(op == "&&")
-    return and_exprt{x, y};
+    return and_exprt{as_condition(x), as_condition(y)};
   if(op == "||")
-    return or_exprt{x, y};
+    return or_exprt{as_condition(x), as_condition(y)};
 
   if(
     op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" ||
@@ -2516,6 +2870,10 @@ exprt go_convertert::convert_arithmetic(
   const typet &type,
   const source_locationt &location)
 {
+  // Go1.27 §String_concatenation: "Strings can be concatenated using the +
+  // operator or the += assignment operator".
+  if(is_go_string(type) && op == "+")
+    return string_concat(go_cast(x, type), go_cast(y, type), location);
   // Only integers so far.
   if(type.id() != ID_signedbv && type.id() != ID_unsignedbv)
   {
@@ -2686,6 +3044,10 @@ exprt go_convertert::convert_composite_lit(const irept &lit)
   if(type.is_nil())
     return nil_exprt{};
   const irep_idt &k = literal_type.get("k");
+  if(k == "slice")
+    return convert_slice_lit(lit, type);
+  if(k == "map")
+    return convert_map_lit(lit, type);
   if(k != "struct" && k != "array")
   {
     unsupported(
@@ -2807,13 +3169,50 @@ exprt go_convertert::convert_new(const irept &call)
 
 exprt go_convertert::convert_len(const irept &call)
 {
-  // Go1.27 §Length_and_capacity: for an array or pointer to array, "The
-  // expressions len(s) and cap(s) are constants if ... the expression s
-  // does not contain channel receives or (non-constant) function calls"
-  // (go/types folds those). "Otherwise, invocations of len and cap are not
-  // constant and s is evaluated." The result is the array length.
+  // Go1.27 §Length_and_capacity: len(s) is the "string length in bytes"
+  // for strings, the "array length (== n)" for [n]T and *[n]T, the "slice
+  // length" for []T; cap(s) is the "slice capacity" for []T. "The length
+  // of a nil slice, map or channel is 0. The capacity of a nil slice or
+  // channel is 0." For an array or
+  // pointer to array, "The expressions len(s) and cap(s) are constants if
+  // ... the expression s does not contain channel receives or
+  // (non-constant) function calls" (go/types folds those). "Otherwise,
+  // invocations of len and cap are not constant and s is evaluated."
   const irept &argument = go_list(call, "Args").front();
+  const bool is_cap = callee_object(call) == "cap";
   const irept *under = &type_converter.underlying(argument.get("_t"));
+  const typet type = expr_type(call);
+  exprt value = convert_expr(argument);
+  if(type.is_nil() || value.is_nil())
+    return nil_exprt{};
+  const source_locationt location = location_of(call);
+  if(is_go_map(value.type()))
+  {
+    // For maps, the "map length (number of defined keys)"; nil maps have
+    // none.
+    code_blockt prefix;
+    const exprt map = evaluate_once(value, location, prefix);
+    const struct_typet &header =
+      to_struct_type(to_pointer_type(map.type()).base_type());
+    return with_prefix(
+      if_exprt{
+        equal_exprt{map, null_pointer_exprt{to_pointer_type(map.type())}},
+        from_integer(0, type),
+        typecast_exprt::conditional_cast(
+          member_exprt{dereference_exprt{map}, header.get_component("len")},
+          type)},
+      prefix,
+      location);
+  }
+  if(is_go_string(value.type()) || is_go_slice(value.type()))
+  {
+    const struct_typet &struct_type = to_struct_type(value.type());
+    return at_location(
+      typecast_exprt::conditional_cast(
+        member_exprt{value, struct_type.get_component(is_cap ? "cap" : "len")},
+        type),
+      location);
+  }
   if(under->get("k") == "pointer")
     under = &type_converter.underlying(under->get("elem"));
   if(under->get("k") != "array")
@@ -2821,11 +3220,6 @@ exprt go_convertert::convert_len(const irept &call)
     unsupported(call, "len and cap of type " + under->get_string("str"));
     return nil_exprt{};
   }
-  const typet type = expr_type(call);
-  exprt value = convert_expr(argument);
-  if(type.is_nil() || value.is_nil())
-    return nil_exprt{};
-  const source_locationt location = location_of(call);
   code_blockt prefix;
   prefix.add(expression_statement(std::move(value), location));
   return with_prefix(
@@ -2869,6 +3263,8 @@ exprt go_convertert::convert_expr(const irept &expr)
     return convert_unary(expr);
   if(kind == "CompositeLit")
     return convert_composite_lit(expr);
+  if(kind == "SliceExpr")
+    return convert_slice_expr(expr);
   if(kind == "StarExpr" || kind == "SelectorExpr" || kind == "IndexExpr")
   {
     access_partst parts;
