@@ -172,14 +172,14 @@ The helper supplies the stdlib *signatures*; the models supply the
 
 ## 5. Status
 
-The first end-to-end slice and phases 1 to 5 of §6 are done. The code is in
+The first end-to-end slice and phases 1 to 6 of §6 are done. The code is in
 `src/go/`, the tests are in `regression/go/`.
 
 | Part | Files | Role |
 |---|---|---|
-| Helper | `helper/main.go`, `helper/cprover/`, `helper/runtime/` | `go/parser` + `go/types` → typed JSON (schema version 1). Type-switch bindings (`_impl`, from `types.Info.Implicits`), receiver-qualified method ids, file-qualified positions and the bytes of string constants (`_sb`) are emitted. Each type entry has a canonical id `tid` (the first entry of a `types.Identical` class), and each non-interface type its method set `mset` (name, method object, embedded-field path, whether the receiver is reached through a pointer, whether it is a pointer receiver, and the method-value type). The runtime package `cprover/rt` (`helper/runtime/rt.go`) is type-checked and emitted with every program. |
+| Helper | `helper/main.go`, `helper/cprover/`, `helper/runtime/` | `go/parser` + `go/types` → typed JSON (schema version 1). Type-switch bindings (`_impl`, from `types.Info.Implicits`), receiver-qualified method ids, file-qualified positions and the bytes of string constants (`_sb`) are emitted. Each type entry has a canonical id `tid` (the first entry of a `types.Identical` class), and each non-interface type its method set `mset` (name, method object, embedded-field path, whether the receiver is reached through a pointer, whether it is a pointer receiver, and the method-value type). Generic code is monomorphised here (see below), so the converter sees no type parameters. The runtime package `cprover/rt` (`helper/runtime/rt.go`) is type-checked and emitted with every program. |
 | Go AST | `go_parse_tree.{h,cpp}` | In-memory `irept` tree loaded from the JSON. The converter reads only this tree (§4.3). |
-| Types | `go_types.{h,cpp}` | `go/types` type table → `typet`. `int`/`uint`/`uintptr` come from `config.go`. Named struct types become struct tags (type symbols named like objects, e.g. `go::main.Node`), so recursion through pointers is finite; other named types are their underlying type. Blank fields are kept under the names `_$N`. Booleans are stored in a byte (`c_bool`), so that they have a size (for heap variables and arrays); `as_condition` turns them into conditions. `float32`/`float64` are IEEE 754 `floatbv` types; complex numbers are structs `{real, imag}` marked `#go_complex` (CBMC's complex type is not lowered in function types). Strings, slices and maps: see below. Function values are structs `{code, env}` marked `#go_func_value` (see below); several results are returned as one struct marked `#go_tuple`, with components `$0`, `$1`, ... All interface types are one struct `{type int32, data *void}` marked `#go_interface` (see below). Each type records its canonical Go type id in the comment `#go_tid`. |
+| Types | `go_types.{h,cpp}` | `go/types` type table → `typet`. `int`/`uint`/`uintptr` come from `config.go`. Named struct types become struct tags (type symbols named like objects, e.g. `go::main.Node`, and `go::main.Pair[int,string]` for instances of generic types), so recursion through pointers is finite; other named types are their underlying type. Blank fields are kept under the names `_$N`. Booleans are stored in a byte (`c_bool`), so that they have a size (for heap variables and arrays); `as_condition` turns them into conditions. `float32`/`float64` are IEEE 754 `floatbv` types; complex numbers are structs `{real, imag}` marked `#go_complex` (CBMC's complex type is not lowered in function types). Strings, slices and maps: see below. Function values are structs `{code, env}` marked `#go_func_value` (see below); several results are returned as one struct marked `#go_tuple`, with components `$0`, `$1`, ... All interface types are one struct `{type int32, data *void}` marked `#go_interface` (see below). Each type records its canonical Go type id in the comment `#go_tid`. |
 | Converter | `go_convert.{h,cpp}`, `go_builtins.cpp`, `go_maps.cpp`, `go_floats.cpp`, `go_interfaces.cpp` | Go AST → symbol table and code. Constructs outside the slice are reported as errors, never dropped. Strings, slices and their built-ins are in `go_builtins.cpp`, maps in `go_maps.cpp`, floating-point and complex numbers in `go_floats.cpp`, methods and interfaces in `go_interfaces.cpp`. |
 | Language | `go_language.{h,cpp}`, `expr2go.{h,cpp}` | `languaget` for `.go` files: runs the helper, sets the target GOARCH from `--arch`/`--32`/`--64`, builds the entry point. |
 
@@ -312,6 +312,27 @@ Supported so far:
   values and with non-interface values (`go::$interface_equal`), and the
   predeclared `error` interface. The dispatch functions are filled in
   after all code is converted, when all dynamic types are known.
+- Generics (`§Type_parameter_declarations`, `§Instantiations`), by
+  monomorphisation in the helper. Generic declarations are not emitted;
+  instead each instance of a generic function or method that the
+  program uses becomes a function declaration of its own, named after
+  its type arguments: `main.Max[int]`, `main.Pair[int,string].Swap`,
+  and for generic methods [Go 1.27] `main.List[int].Apply[string]`.
+  The helper encodes the generic declaration once per instance with
+  every type parameter replaced by its type argument (in expression
+  types, constants, which then get the IEEE 754 bits of the type
+  argument, and object types), gives the objects declared in it ids of
+  their own per instance (`<id>@<instance id>`), and resolves selectors
+  and struct-literal keys again in the substituted types, so that
+  methods of type arguments and fields of instantiated structs are
+  found. Instances are found from `types.Info.Instances`, from the
+  bodies of other instances, and from method sets (every method of an
+  instantiated type, so that interface dispatch can call it). Type
+  arguments are inferred by go/types; identical type arguments (e.g.,
+  an alias) give the same instance. Instantiated types are ordinary
+  types of their own (`types.Instantiate` with the type checker's
+  context, so that identical instances are one type). `--function`
+  takes an instance by its base name, e.g. `--function 'Max[int]'`.
 - Run-time panics, emitted by the converter as an assertion followed by
   an assumption because `goto_check_c` skips non-C modes. They cover
   integer division or remainder by zero (`division-by-zero`), negative
@@ -370,8 +391,13 @@ Known limitations:
 - **Single package.** Only the package being verified plus `cprover`.
   Calls into other packages, and uses of their variables, are reported
   as unsupported.
-- Methods of generic types, and interfaces with type sets other than
-  method sets (type constraints), wait for phase 6.
+- Type declarations inside generic functions are reported: their
+  underlying types may involve the type parameters, which the helper does
+  not substitute in named types it has not instantiated.
+- Generic functions of other packages (e.g., `slices.Contains`) are
+  reported like other calls into other packages. Instances are bounded
+  by go/types' check for instantiation cycles, and in addition by 2000
+  instances.
 - Values containing pointers, functions, maps or interfaces cannot be
   nondeterministic: `cprover.Nondet` of such types and `--function` with
   such parameters are reported. Modelling them needs a choice of nil or
@@ -412,8 +438,7 @@ Known limitations:
   need not hold there for programs sensitive to that rounding.
 - Not yet supported: `select`, `defer`, `recover`, variadic functions
   (other than `append`), the `math` package (and other packages),
-  `range` over functions and channels, generic functions and types,
-  goroutines, and channels. The `Error` method of run-time panics
+  `range` over functions and channels, goroutines, and channels. The `Error` method of run-time panics
   (`runtime.Error`) is not modelled, as `recover` is not.
 
 The Makefile build of `cbmc` does not link the Python front-end that
@@ -457,8 +482,9 @@ section.
    expressions, `§Interface_types` with dynamic dispatch,
    `§Type_assertions` and `§Type_switches` (using `_impl`), the `error`
    interface.
-6. **Generics.** `§Type_parameter_declarations` and instantiation
-   (`_inst`), by monomorphising each instantiation `go/types` reports.
+6. **Generics** (done). `§Type_parameter_declarations` and
+   `§Instantiations` (also generic methods [Go 1.27]), by monomorphising
+   each instantiation `go/types` reports.
 7. **Panics and deferral.** `§Defer_statements`, `§Handling_panics`
    (`recover`), so that a run-time panic becomes an unwinding path
    instead of an assumption.
