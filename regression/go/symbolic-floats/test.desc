@@ -1,0 +1,14 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] .* no absorption in this range: SUCCESS$
+^\[go::main\.main\.assertion\.2\] .* exact: multiplying by two: SUCCESS$
+^\[go::main\.main\.assertion\.3\] .* not exact: rounding: FAILURE$
+^\[go::main\.main\.assertion\.4\] .* NaN or not: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Nondeterministic floating-point values

@@ -1,0 +1,14 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] .* an implementation-dependent value: FAILURE$
+^\[go::main\.main\.assertion\.2\] .* NaN converts to an implementation-dependent value: FAILURE$
+^\[go::main\.main\.assertion\.3\] .* in range: truncated: SUCCESS$
+^\[go::main\.main\.assertion\.4\] .* in range: truncated towards zero: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Go1.27 §Conversions: out-of-range results are implementation-dependent

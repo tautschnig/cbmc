@@ -1,0 +1,10 @@
+CORE
+main.go
+--unwind 5 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Comparison_operators: IEEE 754 equality in composite values and keys
