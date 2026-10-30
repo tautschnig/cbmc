@@ -1,5 +1,9 @@
 SRC = shell_arith.cpp \
       shell_ast.cpp \
+      shell_convert_arith.cpp \
+      shell_convert_commands.cpp \
+      shell_convert_test.cpp \
+      shell_convert_words.cpp \
       shell_converter.cpp \
       shell_dialect.cpp \
       shell_language.cpp \
