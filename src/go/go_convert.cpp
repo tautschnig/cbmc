@@ -14,10 +14,13 @@ Author: Michael Tautschnig
 #include <util/arith_tools.h>
 #include <util/bitvector_expr.h>
 #include <util/c_types.h>
+#include <util/config.h>
 #include <util/expr_initializer.h>
 #include <util/expr_util.h>
 #include <util/mp_arith.h>
 #include <util/pointer_expr.h>
+#include <util/pointer_offset_size.h>
+#include <util/prefix.h>
 #include <util/std_code.h>
 #include <util/symbol_table_base.h>
 
@@ -33,7 +36,7 @@ go_convertert::go_convertert(
     parse_tree(parse_tree),
     log(message_handler),
     ns(symbol_table),
-    type_converter(parse_tree)
+    type_converter(parse_tree, symbol_table)
 {
 }
 
@@ -50,6 +53,47 @@ expression_statement(exprt value, const source_locationt &location)
   return result;
 }
 
+/// \p type, with a struct tag replaced by the struct it names.
+static const typet &go_follow(const namespacet &ns, const typet &type)
+{
+  if(type.id() == ID_struct_tag)
+    return ns.follow_tag(to_struct_tag_type(type));
+  return type;
+}
+
+/// True if the Go AST \p node contains a call.
+static bool contains_call(const irept &node)
+{
+  if(node.id() == "CallExpr")
+    return true;
+  for(const auto &sub : node.get_sub())
+    if(contains_call(sub))
+      return true;
+  for(const auto &named : node.get_named_sub())
+    if(contains_call(named.second))
+      return true;
+  return false;
+}
+
+bool contains_reference(const typet &type, const namespacet &ns)
+{
+  const typet &followed = go_follow(ns, type);
+  if(followed.id() == ID_pointer || is_func_value(followed))
+    return true;
+  if(followed.id() == ID_array)
+    return contains_reference(to_array_type(followed).element_type(), ns);
+  if(followed.id() == ID_struct)
+  {
+    for(const auto &component : to_struct_type(followed).components())
+      if(contains_reference(component.type(), ns))
+        return true;
+  }
+  return false;
+}
+
+/// \p value, or the nil of \p type if \p value is the untyped nil.
+static exprt go_cast_nil(const exprt &value, const typet &type);
+
 /// \p value converted to \p type, as for an assignment (Go1.27
 /// §Assignability): go/types has checked that this is valid. Integer
 /// representations change as for conversions; the untyped nil becomes the
@@ -58,13 +102,29 @@ static exprt go_cast(exprt value, const typet &type)
 {
   if(value.id() == ID_go_nil)
   {
-    PRECONDITION(type.id() == ID_pointer);
     source_locationt location = value.source_location();
-    exprt result = null_pointer_exprt{to_pointer_type(type)};
+    exprt result;
+    if(type.id() == ID_pointer)
+      result = null_pointer_exprt{to_pointer_type(type)};
+    else
+    {
+      // A nil function value.
+      PRECONDITION(is_func_value(type));
+      const auto &components = to_struct_type(type).components();
+      result = struct_exprt{
+        {null_pointer_exprt{to_pointer_type(components[0].type())},
+         null_pointer_exprt{to_pointer_type(components[1].type())}},
+        type};
+    }
     result.add_source_location() = std::move(location);
     return result;
   }
   return typecast_exprt::conditional_cast(std::move(value), type);
+}
+
+static exprt go_cast_nil(const exprt &value, const typet &type)
+{
+  return value.id() == ID_go_nil ? go_cast(value, type) : value;
 }
 
 source_locationt go_convertert::location_of(const irept &node) const
@@ -221,17 +281,21 @@ void go_convertert::declare_function(const irept &decl)
   add_symbol(symbol);
 }
 
-symbol_exprt go_convertert::declare_local(
+exprt go_convertert::declare_local(
   const irep_idt &object_id,
   const typet &type,
   const source_locationt &location,
   code_blockt &dest)
 {
   const irept &object = parse_tree.object(object_id);
+  const bool on_heap = state.heap_objects.count(object_id) != 0;
+  // A heap variable is accessed through a pointer, named after it.
+  const irep_idt id = id2string(symbol_id(object_id)) + (on_heap ? "$ptr" : "");
+  const irep_idt base = id2string(object.get("name")) + (on_heap ? "$ptr" : "");
   symbolt symbol = make_symbol(
-    symbol_id(object_id),
-    object.get("name"),
-    type,
+    id,
+    base,
+    on_heap ? typet{pointer_typet{type, config.ansi_c.pointer_width}} : type,
     location,
     parse_tree.package);
   symbol.is_lvalue = true;
@@ -242,7 +306,52 @@ symbol_exprt go_convertert::declare_local(
   code_frontend_declt decl{result};
   decl.add_source_location() = location;
   dest.add(std::move(decl));
-  return result;
+  if(!on_heap)
+    return std::move(result);
+
+  // Go1.27 §Variable_declarations: each execution of the declaration
+  // creates a new variable, so allocate it here.
+  code_frontend_assignt allocate{result, allocation(type, location)};
+  allocate.add_source_location() = location;
+  dest.add(std::move(allocate));
+  state.heap_pointers[object_id] = result;
+  dereference_exprt variable{result};
+  variable.add_source_location() = location;
+  return std::move(variable);
+}
+
+exprt go_convertert::allocation(
+  const typet &type,
+  const source_locationt &location)
+{
+  auto size = size_of_expr(type, ns);
+  CHECK_RETURN(size.has_value());
+  side_effect_exprt result{
+    ID_allocate,
+    {std::move(*size), false_exprt{}},
+    pointer_typet{type, config.ansi_c.pointer_width},
+    location};
+  return std::move(result);
+}
+
+symbol_exprt go_convertert::new_heap_variable(
+  const typet &type,
+  const exprt &value,
+  const source_locationt &location,
+  code_blockt &dest)
+{
+  symbol_exprt pointer = new_temporary(
+    pointer_typet{type, config.ansi_c.pointer_width}, location, dest);
+  code_frontend_assignt allocate{pointer, allocation(type, location)};
+  allocate.add_source_location() = location;
+  dest.add(std::move(allocate));
+  code_frontend_assignt initialise{
+    dereference_exprt{pointer},
+    value.is_nil() ? *zero_initializer(type, location, ns)
+                   : go_cast(value, type)};
+  initialise.add_source_location() = location;
+  dest.add(std::move(initialise));
+  return pointer;
 }
 
 symbol_exprt go_convertert::new_temporary(
@@ -285,9 +394,7 @@ exprt go_convertert::variable(const irept &ident)
           ident, "function values from package " + object.get_string("pkg"));
       return nil_exprt{};
     }
-    address_of_exprt result{function->symbol_expr()};
-    result.add_source_location() = location_of(ident);
-    return std::move(result);
+    return function_value(*function, location_of(ident));
   }
   if(kind != "var")
   {
@@ -296,6 +403,13 @@ exprt go_convertert::variable(const irept &ident)
       "use of " + id2string(kind) + " '" + ident.get_string("Name") +
         "' as a value");
     return nil_exprt{};
+  }
+  const auto heap = state.heap_pointers.find(object_id);
+  if(heap != state.heap_pointers.end())
+  {
+    dereference_exprt result{heap->second};
+    result.add_source_location() = location_of(ident);
+    return std::move(result);
   }
   const symbolt *symbol = symbol_table.lookup(symbol_id(object_id));
   if(symbol == nullptr)
@@ -314,7 +428,189 @@ exprt go_convertert::variable(const irept &ident)
   return std::move(result);
 }
 
+exprt go_convertert::function_value(
+  const symbolt &function,
+  const source_locationt &location)
+{
+  // Function values take an environment before their parameters (see
+  // go_type_convertert::func_value); a declared function is called through
+  // an adapter that ignores it.
+  const code_typet &code = to_code_type(function.type);
+  const struct_typet value_type = go_type_convertert::func_value(code);
+  const irep_idt id = id2string(function.name) + "$value";
+  if(!symbol_table.has_symbol(id))
+  {
+    code_typet adapter_type = code;
+    adapter_type.parameters().insert(
+      adapter_type.parameters().begin(),
+      code_typet::parametert{typet{go_type_convertert::env_pointer_type()}});
+    exprt::operandst arguments;
+    std::size_t index = 0;
+    for(auto &parameter : adapter_type.parameters())
+    {
+      const irep_idt base = "$param" + std::to_string(index++);
+      const irep_idt param_id = id2string(id) + "::" + id2string(base);
+      parameter.set_identifier(param_id);
+      parameter.set_base_name(base);
+      symbolt param_symbol = make_symbol(
+        param_id,
+        base,
+        parameter.type(),
+        function.location,
+        id2string(function.module));
+      param_symbol.is_parameter = true;
+      param_symbol.is_lvalue = true;
+      param_symbol.is_thread_local = true;
+      param_symbol.is_file_local = true;
+      add_symbol(param_symbol);
+      if(index > 1)
+        arguments.push_back(param_symbol.symbol_expr());
+    }
+    side_effect_expr_function_callt call{
+      function.symbol_expr(),
+      std::move(arguments),
+      code.return_type(),
+      function.location};
+    code_blockt body;
+    if(code.return_type().id() == ID_empty)
+      body.add(expression_statement(std::move(call), function.location));
+    else
+      body.add(code_frontend_returnt{std::move(call)});
+    symbolt adapter = make_symbol(
+      id,
+      id2string(function.base_name) + "$value",
+      adapter_type,
+      function.location,
+      id2string(function.module));
+    adapter.value = std::move(body);
+    add_symbol(adapter);
+  }
+  const auto &components = value_type.components();
+  struct_exprt result{
+    {go_cast(
+       address_of_exprt{ns.lookup(id).symbol_expr()}, components[0].type()),
+     null_pointer_exprt{to_pointer_type(components[1].type())}},
+    value_type};
+  result.add_source_location() = location;
+  return std::move(result);
+}
+
 // -------------------------------------------------------------- functions
+
+/// Collect the ids of the objects that \p node declares (`_def`) and the
+/// identifiers that refer to objects, including in nested function
+/// literals.
+static void collect_objects(
+  const irept &node,
+  std::set<irep_idt> &declared,
+  std::vector<const irept *> &uses)
+{
+  if(node.id() == "Ident" && !node.get("_obj").empty())
+  {
+    if(node.get_bool("_def"))
+      declared.insert(node.get("_obj"));
+    else
+      uses.push_back(&node);
+  }
+  for(const auto &sub : node.get_sub())
+    collect_objects(sub, declared, uses);
+  for(const auto &named : node.get_named_sub())
+    collect_objects(named.second, declared, uses);
+}
+
+/// The variables a function literal \p lit captures (Go1.27
+/// §Function_literals): local variables it refers to that it does not
+/// declare itself, in order of first use.
+static std::vector<irep_idt>
+captured_variables(const irept &lit, const go_parse_treet &parse_tree)
+{
+  std::set<irep_idt> declared;
+  std::vector<const irept *> uses;
+  collect_objects(lit, declared, uses);
+  // Parameters and results are declared by the literal's signature.
+  const irept &signature = parse_tree.type_entry(lit.get("_t"));
+  for(const char *list : {"params", "results"})
+    for(const auto &item : go_list(signature, list))
+      if(!item.get("obj").empty())
+        declared.insert(item.get("obj"));
+  std::vector<irep_idt> captured;
+  std::set<irep_idt> seen;
+  for(const irept *use : uses)
+  {
+    const irep_idt &id = use->get("_obj");
+    const irept &object = parse_tree.object(id);
+    if(
+      object.get("kind") == "var" && !object.get_bool("package_level") &&
+      declared.count(id) == 0 && seen.insert(id).second)
+    {
+      captured.push_back(id);
+    }
+  }
+  return captured;
+}
+
+void go_convertert::scan_heap_variables(const irept &node)
+{
+  // Go1.27 §Variables: a variable lives as long as it is accessible.
+  // Local variables whose address is taken, and those that function
+  // literals capture ("Those variables are then shared between the
+  // surrounding function and the function literal, and they survive as
+  // long as they are accessible", §Function_literals), may outlive the
+  // function, so they are allocated (as gc does after escape analysis).
+  if(node.id() == "UnaryExpr" && node.get("Op") == "&")
+  {
+    // The variable at the root of the operand: x in &x, &x.f, &x[i]
+    // (for an array x), but not p in &p.f or &p[i] for a pointer p.
+    const irept *root = &go_field(node, "X");
+    while(true)
+    {
+      if(root->id() == "ParenExpr")
+        root = &go_field(*root, "X");
+      else if(
+        root->id() == "SelectorExpr" && !root->find("_sel").is_nil() &&
+        !root->find("_sel").get_bool("indirect"))
+        root = &go_field(*root, "X");
+      else if(
+        root->id() == "IndexExpr" &&
+        type_converter.underlying(go_field(*root, "X").get("_t")).get("k") ==
+          "array")
+        root = &go_field(*root, "X");
+      else
+        break;
+    }
+    if(root->id() == "Ident")
+    {
+      const irept &object = parse_tree.object(root->get("_obj"));
+      if(object.get("kind") == "var" && !object.get_bool("package_level"))
+        state.heap_objects.insert(root->get("_obj"));
+    }
+  }
+  else if(node.id() == "FuncLit")
+  {
+    for(const auto &id : captured_variables(node, parse_tree))
+      state.heap_objects.insert(id);
+  }
+  for(const auto &sub : node.get_sub())
+    scan_heap_variables(sub);
+  for(const auto &named : node.get_named_sub())
+    scan_heap_variables(named.second);
+}
+
+/// The type of the environment of a function literal that captures the
+/// variables \p captured: a struct of pointers to them.
+static struct_typet environment_type(
+  const std::vector<irep_idt> &captured,
+  const std::vector<typet> &types)
+{
+  struct_typet::componentst components;
+  for(std::size_t i = 0; i < captured.size(); ++i)
+  {
+    components.emplace_back(
+      "c" + std::to_string(i),
+      pointer_typet{types[i], config.ansi_c.pointer_width});
+  }
+  return struct_typet{std::move(components)};
+}
 
 void go_convertert::convert_function_body(const irept &decl)
 {
@@ -333,17 +629,55 @@ void go_convertert::convert_function(
   const irep_idt &function,
   const irep_idt &signature_index,
   const irept &body_node,
-  const source_locationt &location)
+  const source_locationt &location,
+  const std::vector<irep_idt> &captured)
 {
   state = function_statet{};
   state.function_id = function;
-  state.return_type = to_code_type(ns.lookup(function).type).return_type();
+  const code_typet &code_type = to_code_type(ns.lookup(function).type);
+  state.return_type = code_type.return_type();
+  scan_heap_variables(body_node);
 
   code_blockt body;
+  const irept &signature = parse_tree.type_entry(signature_index);
+
+  // Function literals reach the variables they capture through their
+  // environment, the first parameter (see convert_func_lit).
+  if(!captured.empty())
+  {
+    std::vector<typet> types;
+    for(const auto &id : captured)
+      types.push_back(
+        convert_type(parse_tree.object(id).get("type"), body_node));
+    for(const auto &type : types)
+      if(type.is_nil())
+        return;
+    const struct_typet env_type = environment_type(captured, types);
+    const exprt env_param{symbol_exprt{
+      code_type.parameters().front().get_identifier(),
+      code_type.parameters().front().type()}};
+    const dereference_exprt env{typecast_exprt{
+      env_param, pointer_typet{env_type, config.ansi_c.pointer_width}}};
+    for(std::size_t i = 0; i < captured.size(); ++i)
+      state.heap_pointers[captured[i]] =
+        member_exprt{env, env_type.components()[i]};
+  }
+
+  // Parameters whose address is taken, or that a literal captures, are
+  // copied to the heap on entry.
+  for(const auto &param : go_list(signature, "params"))
+  {
+    const irep_idt &object_id = param.get("obj");
+    if(object_id.empty() || state.heap_objects.count(object_id) == 0)
+      continue;
+    const symbolt &symbol = ns.lookup(symbol_id(object_id));
+    state.heap_pointers[object_id] =
+      new_heap_variable(symbol.type, symbol.symbol_expr(), location, body);
+  }
+
   // Go1.27 §Return_statements: "Regardless of how they are declared, all
   // the result values are initialized to the zero values for their type
   // upon entry to the function." Named results are local variables.
-  const irept &signature = parse_tree.type_entry(signature_index);
   for(const auto &result : go_list(signature, "results"))
   {
     const irep_idt &result_object = result.get("obj");
@@ -352,9 +686,9 @@ void go_convertert::convert_function(
     typet type = convert_type(result.get("type"), body_node);
     if(type.is_nil())
       return;
-    const symbol_exprt sym = declare_local(result_object, type, location, body);
-    state.named_results.push_back(sym);
-    body.add(code_frontend_assignt{sym, *zero_initializer(type, location, ns)});
+    const exprt var = declare_local(result_object, type, location, body);
+    state.named_results.push_back(var);
+    body.add(code_frontend_assignt{var, *zero_initializer(type, location, ns)});
   }
 
   code_blockt statements = convert_block(body_node);
@@ -495,6 +829,8 @@ void go_convertert::convert_statement(const irept &stmt, code_blockt &dest)
     convert_expr_stmt(stmt, dest);
   else if(kind == "SwitchStmt")
     convert_switch(stmt, dest);
+  else if(kind == "RangeStmt")
+    convert_range(stmt, dest);
   else if(kind == "LabeledStmt")
     convert_labeled(stmt, dest);
   else if(kind == "BranchStmt")
@@ -517,6 +853,8 @@ void go_convertert::convert_labeled(const irept &stmt, code_blockt &dest)
     convert_for(inner, labelled, label.get("_obj"));
   else if(inner.id() == "SwitchStmt")
     convert_switch(inner, labelled, label.get("_obj"));
+  else if(inner.id() == "RangeStmt")
+    convert_range(inner, labelled, label.get("_obj"));
   else
     convert_statement(inner, labelled);
   code_labelt result{label.get("Name"), std::move(labelled)};
@@ -614,7 +952,7 @@ void go_convertert::convert_decl_stmt(const irept &stmt, code_blockt &dest)
           dest.add(expression_statement(initialisers[i], location_of(name)));
         continue;
       }
-      symbol_exprt sym =
+      exprt sym =
         declare_local(name.get("_obj"), type, location_of(name), dest);
       // Go1.27 §The_zero_value.
       exprt value = values.empty()
@@ -638,21 +976,27 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
 
   if(tok != "=" && tok != ":=")
   {
-    // Go1.27 §Assignment_statements: "x op= y" is "x = x op (y)" but
-    // evaluates x only once. Only variables are supported as x so far, so
-    // evaluating it twice is equivalent.
-    if(lhs.size() != 1 || lhs.front().id() != "Ident")
-      return unsupported(stmt, "this assignment target");
-    irept binary{"BinaryExpr"};
-    binary.add("X") = lhs.front();
-    binary.add("Y") = rhs.front();
+    // Go1.27 §Assignment_statements: "An assignment operation x op= y
+    // where op is a binary arithmetic operator is equivalent to x = x op
+    // (y) but evaluates x only once."
+    access_partst parts;
+    exprt target = convert_access(lhs.front(), parts);
+    exprt y = convert_expr(rhs.front());
+    if(target.is_nil() || y.is_nil())
+      return;
+    for(auto &code : parts.operands.statements())
+      dest.add(std::move(code));
+    for(auto &code : parts.checks.statements())
+      dest.add(std::move(code));
     const std::string op = id2string(tok);
-    binary.set("Op", op.substr(0, op.size() - 1));
-    binary.set("_t", lhs.front().get("_t"));
-    binary.add(ID_C_source_location) = location;
-    exprt target = variable(lhs.front());
-    exprt value = convert_expr(binary);
-    if(target.is_nil() || value.is_nil())
+    exprt value = convert_arithmetic(
+      op.substr(0, op.size() - 1),
+      target,
+      y,
+      rhs.front(),
+      target.type(),
+      location);
+    if(value.is_nil())
       return;
     code_frontend_assignt assign{target, value};
     assign.add_source_location() = location;
@@ -661,53 +1005,77 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
   }
 
   // Go1.27 §Assignment_statements: "The assignment proceeds in two phases.
-  // First, the operands of index expressions and pointer indirections ...
-  // on the left and the expressions on the right are all evaluated in the
-  // usual order. Second, the assignments are carried out in left-to-right
-  // order." With more than one assignment, evaluate into temporaries first
-  // (so that "a, b = b, a" swaps).
+  // First, the operands of index expressions and pointer indirections
+  // (including implicit pointer indirections in selectors) on the left and
+  // the expressions on the right are all evaluated in the usual order.
+  // Second, the assignments are carried out in left-to-right order." So
+  // the operands on the left are evaluated first (into temporaries if
+  // there are several assignments, which could change them), then the
+  // right; the checks for run-time panics on the left (nil pointers,
+  // indices out of range) belong to each assignment, so that in the spec's
+  // "x[1], x[3] = 4, 5  // set x[1] = 4, then panic setting x[3] = 5."
+  std::vector<exprt> targets;
+  std::vector<code_blockt> checks;
+  bool any_checks = false;
+  for(const auto &target : lhs)
+  {
+    access_partst parts;
+    parts.force_temporaries = lhs.size() > 1;
+    if(target.id() == "Ident" && target.get("Name") == "_")
+      targets.push_back(exprt{ID_skip}); // the blank identifier
+    else if(tok == ":=" && target.get_bool("_def"))
+      targets.push_back(exprt{ID_declaration}); // declared below
+    else
+      targets.push_back(convert_access(target, parts));
+    for(auto &code : parts.operands.statements())
+      dest.add(std::move(code));
+    any_checks |= !parts.checks.statements().empty();
+    checks.push_back(std::move(parts.checks));
+  }
+
   std::vector<exprt> values;
   for(const auto &value : rhs)
     values.push_back(convert_expr(value));
+  for(const auto &value : values)
+    if(value.is_nil())
+      return;
   if(lhs.size() != rhs.size())
   {
     // "In the first, the right hand operand is a single multi-valued
     // expression such as a function call".
-    if(values.front().is_nil())
-      return;
     values = unpack(values.front(), location, dest);
   }
-  else if(lhs.size() > 1)
+  else if(lhs.size() > 1 || any_checks)
   {
+    // Evaluate the right before any assignment (so that "a, b = b, a"
+    // swaps) and before the checks on the left.
     for(auto &value : values)
     {
-      if(value.is_nil())
+      if(value.is_constant() || value.id() == ID_go_nil)
+        continue;
+      if(lhs.size() == 1 && !has_subexpr(value, ID_side_effect))
         continue;
       symbol_exprt tmp = new_temporary(value.type(), location, dest);
-      dest.add(code_frontend_assignt{tmp, value});
+      code_frontend_assignt assign{tmp, value};
+      assign.add_source_location() = location;
+      dest.add(std::move(assign));
       value = tmp;
     }
   }
-
   for(std::size_t i = 0; i < lhs.size(); ++i)
   {
     const irept &target = lhs[i];
-    if(values[i].is_nil())
-      continue;
-    if(target.id() != "Ident")
-    {
-      unsupported(target, "assignment to " + target.id_string());
-      continue;
-    }
-    if(target.get("Name") == "_")
+    exprt lvalue = targets[i];
+    for(auto &code : checks[i].statements())
+      dest.add(std::move(code));
+    if(lvalue.id() == ID_skip)
     {
       // Go1.27 §Assignment_statements: the blank identifier ignores the
       // value; the expression is still evaluated.
       dest.add(expression_statement(values[i], location));
       continue;
     }
-    exprt lvalue;
-    if(tok == ":=" && target.get_bool("_def"))
+    if(lvalue.id() == ID_declaration)
     {
       // Go1.27 §Short_variable_declarations: new variables are declared;
       // others (redeclared) are just assigned.
@@ -717,8 +1085,6 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
         continue;
       lvalue = declare_local(target.get("_obj"), type, location, dest);
     }
-    else
-      lvalue = variable(target);
     if(lvalue.is_nil())
       continue;
     code_frontend_assignt assign{lvalue, go_cast(values[i], lvalue.type())};
@@ -730,13 +1096,15 @@ void go_convertert::convert_assign(const irept &stmt, code_blockt &dest)
 void go_convertert::convert_inc_dec(const irept &stmt, code_blockt &dest)
 {
   // Go1.27 §IncDec_statements: "x++" is "x += 1" (and so wraps on
-  // overflow, Go1.27 §Integer_overflow).
-  const irept &x = go_field(stmt, "X");
-  if(x.id() != "Ident")
-    return unsupported(stmt, "this increment/decrement target");
-  exprt target = variable(x);
+  // overflow, Go1.27 §Integer_overflow), evaluating x once.
+  access_partst parts;
+  exprt target = convert_access(go_field(stmt, "X"), parts);
   if(target.is_nil())
     return;
+  for(auto &code : parts.operands.statements())
+    dest.add(std::move(code));
+  for(auto &code : parts.checks.statements())
+    dest.add(std::move(code));
   const exprt one = from_integer(1, target.type());
   exprt value = stmt.get("Tok") == "++" ? exprt{plus_exprt{target, one}}
                                         : exprt{minus_exprt{target, one}};
@@ -791,14 +1159,36 @@ void go_convertert::convert_for(
   const irept &cond_node = go_field(stmt, "Cond");
   exprt cond =
     cond_node.is_nil() ? exprt{true_exprt{}} : convert_expr(cond_node);
+  // Go1.27 §For_clause: "Each iteration has its own separate declared
+  // variable (or variables) [Go 1.22]. The variable used by the first
+  // iteration is declared by the init statement. The variable used by each
+  // subsequent iteration is declared implicitly before executing the post
+  // statement and initialized to the value of the previous iteration's
+  // variable at that moment." This is observable only for heap variables
+  // (whose address is taken or that a literal captures): allocate a copy.
+  code_blockt post_block;
+  if(init.id() == "AssignStmt" && init.get("Tok") == ":=")
+  {
+    for(const auto &name : go_list(init, "Lhs"))
+    {
+      const auto heap = state.heap_pointers.find(name.get("_obj"));
+      if(!name.get_bool("_def") || heap == state.heap_pointers.end())
+        continue;
+      const exprt &pointer = heap->second;
+      const typet &type = to_pointer_type(pointer.type()).base_type();
+      symbol_exprt next = new_heap_variable(
+        type, dereference_exprt{pointer}, location_of(name), post_block);
+      post_block.add(code_frontend_assignt{pointer, next});
+    }
+  }
   exprt iter = nil_exprt{};
   const irept &post = go_field(stmt, "Post");
   if(post.is_not_nil())
-  {
-    code_blockt post_block;
     convert_statement(post, post_block);
+  if(!post_block.statements().empty())
+  {
     iter = side_effect_expr_statement_expressiont{
-      std::move(post_block), empty_typet{}, location_of(post)};
+      std::move(post_block), empty_typet{}, location_of(stmt)};
   }
 
   // A labelled loop may be the target of a break or continue from within
@@ -816,6 +1206,170 @@ void go_convertert::convert_for(
     body.add(code_labelt{prefix + "continue", code_skipt{}});
   code_fort loop{code_skipt{}, cond, iter, std::move(body)};
   loop.add_source_location() = location_of(stmt);
+  scope.add(std::move(loop));
+  if(!label_object.empty())
+    scope.add(code_labelt{prefix + "break", code_skipt{}});
+  dest.add(std::move(scope));
+}
+
+void go_convertert::convert_range(
+  const irept &stmt,
+  code_blockt &dest,
+  const irep_idt &label_object)
+{
+  // Go1.27 §For_range, for integers, arrays and pointers to arrays. "The
+  // range expression x is evaluated before beginning the loop, with one
+  // exception: if at most one iteration variable is present and x or
+  // len(x) is constant, the range expression is not evaluated." For an
+  // integer n, "the iteration values 0 through n-1 are produced in
+  // increasing order"; for an array or pointer to array a, "the index
+  // iteration values are produced in increasing order, starting at element
+  // index 0. If at most one iteration variable is present, the range loop
+  // produces iteration values from 0 up to len(a)-1 and does not index
+  // into the array or slice itself."
+  const source_locationt location = location_of(stmt);
+  const irept &x_node = go_field(stmt, "X");
+  const irept &key_node = go_field(stmt, "Key");
+  const irept &value_node = go_field(stmt, "Value");
+  const bool has_value =
+    value_node.is_not_nil() && value_node.get("Name") != "_";
+  const irept &under = type_converter.underlying(x_node.get("_t"));
+  const irep_idt &k = under.get("k");
+  const bool is_integer = k == "basic";
+  const irept *array_type = &under;
+  if(k == "pointer")
+    array_type = &type_converter.underlying(under.get("elem"));
+  if(!is_integer && array_type->get("k") != "array")
+  {
+    unsupported(stmt, "range over values of type " + under.get_string("str"));
+    return;
+  }
+
+  code_blockt scope;
+  // The type of the index: that of n for integers (or of the iteration
+  // variable, for an untyped constant n), int for arrays.
+  typet index_type;
+  exprt count;
+  exprt range_value = nil_exprt{};
+  if(is_integer)
+  {
+    const irept &type_source =
+      type_converter.is_untyped(x_node.get("_t")) && key_node.is_not_nil()
+        ? key_node
+        : x_node;
+    index_type = expr_type(type_source);
+    if(index_type.is_nil())
+      return;
+    exprt n = convert_expr(x_node);
+    if(n.is_nil())
+      return;
+    n = go_cast(n, index_type);
+    if(!n.is_constant())
+    {
+      symbol_exprt tmp = new_temporary(index_type, location, scope);
+      scope.add(code_frontend_assignt{tmp, n});
+      n = tmp;
+    }
+    count = n;
+  }
+  else
+  {
+    index_type = signedbv_typet{config.go.int_width};
+    count =
+      from_integer(string2integer(array_type->get_string("len")), index_type);
+    // An array is copied (it is evaluated as a value); a pointer to an
+    // array is not. Without a value variable, x is evaluated only if
+    // len(x) is not constant, i.e., if it contains calls.
+    if(has_value || contains_call(x_node))
+    {
+      exprt value = convert_expr(x_node);
+      if(value.is_nil())
+        return;
+      symbol_exprt tmp = new_temporary(value.type(), location, scope);
+      scope.add(code_frontend_assignt{tmp, value});
+      range_value = tmp;
+    }
+  }
+
+  // The loop, with a hidden index.
+  const irep_idt index_id = id2string(state.function_id) + "::$range" +
+                            std::to_string(state.label_counter);
+  symbolt index_symbol = make_symbol(
+    index_id,
+    "$range" + std::to_string(state.label_counter),
+    index_type,
+    location,
+    parse_tree.package);
+  index_symbol.is_lvalue = true;
+  index_symbol.is_thread_local = true;
+  index_symbol.is_file_local = true;
+  add_symbol(index_symbol);
+  const symbol_exprt index = index_symbol.symbol_expr();
+  scope.add(code_frontend_declt{index});
+
+  const std::string prefix =
+    "$for" + std::to_string(state.label_counter++) + "$";
+  code_blockt body;
+  // Iteration values: declared anew in each iteration with ":=" ("each
+  // iteration has its own new variables [Go 1.22]"), or assigned to
+  // preexisting variables "as in an assignment statement".
+  const auto bind = [&](const irept &node, const exprt &value)
+  {
+    if(node.is_nil() || (node.id() == "Ident" && node.get("Name") == "_"))
+      return;
+    exprt target;
+    if(stmt.get("Tok") == ":=")
+    {
+      typet type =
+        convert_type(parse_tree.object(node.get("_obj")).get("type"), node);
+      if(type.is_nil())
+        return;
+      target = declare_local(node.get("_obj"), type, location_of(node), body);
+    }
+    else
+    {
+      access_partst parts;
+      target = convert_access(node, parts);
+      if(target.is_nil())
+        return;
+      for(auto &code : parts.operands.statements())
+        body.add(std::move(code));
+      for(auto &code : parts.checks.statements())
+        body.add(std::move(code));
+    }
+    code_frontend_assignt assign{target, go_cast(value, target.type())};
+    assign.add_source_location() = location_of(node);
+    body.add(std::move(assign));
+  };
+  bind(key_node, index);
+  if(has_value)
+  {
+    exprt array = range_value;
+    if(k == "pointer")
+    {
+      // Indexing through a nil pointer panics.
+      array.add_source_location() = location;
+      check_not_nil(array, body);
+      array = dereference_exprt{array};
+    }
+    bind(value_node, index_exprt{array, typecast_exprt{index, c_index_type()}});
+  }
+
+  state.jump_targets.push_back(
+    {label_object, true, prefix + "break", prefix + "continue"});
+  code_blockt statements = convert_block(go_field(stmt, "Body"));
+  state.jump_targets.pop_back();
+  for(auto &code : statements.statements())
+    body.add(std::move(code));
+  if(!label_object.empty())
+    body.add(code_labelt{prefix + "continue", code_skipt{}});
+
+  code_fort loop{
+    code_frontend_assignt{index, from_integer(0, index_type)},
+    binary_relation_exprt{index, ID_lt, count},
+    side_effect_exprt{ID_preincrement, {index}, index_type, location},
+    std::move(body)};
+  loop.add_source_location() = location;
   scope.add(std::move(loop));
   if(!label_object.empty())
     scope.add(code_labelt{prefix + "break", code_skipt{}});
@@ -983,6 +1537,185 @@ void go_convertert::convert_expr_stmt(const irept &stmt, code_blockt &dest)
 
 // ------------------------------------------------------------------ calls
 
+// ---------------------------------------------------------- access paths
+
+void go_convertert::check_not_nil(const exprt &pointer, code_blockt &dest)
+{
+  // Go1.27 §Address_operators: "If x is nil, an attempt to evaluate *x will
+  // cause a run-time panic." §Selectors: "If x is of pointer type and has
+  // the value nil and x.f denotes a struct field, assigning to or
+  // evaluating x.f causes a run-time panic."
+  add_panic(
+    dest,
+    notequal_exprt{
+      pointer, null_pointer_exprt{to_pointer_type(pointer.type())}},
+    "nil-dereference",
+    "runtime error: invalid memory address or nil pointer dereference",
+    pointer.source_location());
+}
+
+void go_convertert::check_index(
+  const exprt &index,
+  const mp_integer &size,
+  const source_locationt &location,
+  code_blockt &dest)
+{
+  // Go1.27 §Index_expressions: "the index x is in range if 0 <= x < len(a),
+  // otherwise it is out of range"; "if x is out of range at run time, a
+  // run-time panic occurs". Compare in a type that holds both bounds.
+  const signedbv_typet wide{65};
+  const typecast_exprt i{index, wide};
+  const and_exprt in_range{
+    binary_relation_exprt{i, ID_ge, from_integer(0, wide)},
+    binary_relation_exprt{i, ID_lt, from_integer(size, wide)}};
+  add_panic(
+    dest,
+    in_range,
+    "index-out-of-range",
+    "runtime error: index out of range",
+    location);
+}
+
+exprt go_convertert::access_operand(exprt value, access_partst &parts)
+{
+  if(value.is_nil() || value.is_constant())
+    return value;
+  if(!parts.force_temporaries && !has_subexpr(value, ID_side_effect))
+    return value;
+  const source_locationt location = value.source_location();
+  symbol_exprt tmp = new_temporary(value.type(), location, parts.operands);
+  code_frontend_assignt assign{tmp, std::move(value)};
+  assign.add_source_location() = location;
+  parts.operands.add(std::move(assign));
+  return std::move(tmp);
+}
+
+exprt go_convertert::access_operand(const irept &expr, access_partst &parts)
+{
+  return access_operand(convert_expr(expr), parts);
+}
+
+exprt go_convertert::with_parts(exprt value, access_partst &parts)
+{
+  code_blockt prefix = std::move(parts.operands);
+  for(auto &check : parts.checks.statements())
+    prefix.add(std::move(check));
+  parts = access_partst{};
+  return with_prefix(std::move(value), prefix, value.source_location());
+}
+
+exprt go_convertert::convert_access(const irept &expr, access_partst &parts)
+{
+  const source_locationt location = location_of(expr);
+  const irep_idt &kind = expr.id();
+
+  if(kind == "ParenExpr")
+    return convert_access(go_field(expr, "X"), parts);
+
+  if(kind == "Ident" && expr.get("Name") != "_")
+    return variable(expr);
+
+  if(kind == "StarExpr" && !expr.get_bool("_tx"))
+  {
+    // Go1.27 §Address_operators: "the pointer indirection *x denotes the
+    // variable of type T pointed to by x."
+    exprt pointer = access_operand(go_field(expr, "X"), parts);
+    if(pointer.is_nil())
+      return nil_exprt{};
+    pointer.add_source_location() = location;
+    check_not_nil(pointer, parts.checks);
+    dereference_exprt result{pointer};
+    result.add_source_location() = location;
+    return std::move(result);
+  }
+
+  if(kind == "SelectorExpr")
+  {
+    const irept &selection = expr.find("_sel");
+    if(selection.is_nil())
+    {
+      // A qualified identifier (Go1.27 §Qualified_identifiers).
+      return variable(go_field(expr, "Sel"));
+    }
+    if(selection.get("kind") != "field")
+    {
+      unsupported(expr, "methods");
+      return nil_exprt{};
+    }
+    // Go1.27 §Selectors: x.f denotes the field at the shallowest depth;
+    // go/types records the path of field indices through embedded fields,
+    // each of which may be a pointer, dereferenced implicitly ("p.x is
+    // (*(*p).T0).x").
+    const irept &x = go_field(expr, "X");
+    exprt current = type_converter.underlying(x.get("_t")).get("k") == "pointer"
+                      ? access_operand(x, parts)
+                      : convert_access(x, parts);
+    if(current.is_nil())
+      return nil_exprt{};
+    for(const auto &step : go_list(selection, "path"))
+    {
+      if(current.type().id() == ID_pointer)
+      {
+        current.add_source_location() = location;
+        check_not_nil(current, parts.checks);
+        current = dereference_exprt{current};
+      }
+      const struct_typet &type = to_struct_type(go_follow(ns, current.type()));
+      // Path elements are numbers, stored as the ids of their ireps.
+      const std::size_t index = std::stoul(step.id_string());
+      current = member_exprt{current, type.components()[index]};
+      current.add_source_location() = location;
+    }
+    return current;
+  }
+
+  if(kind == "IndexExpr")
+  {
+    const irept &x = go_field(expr, "X");
+    const irept &under = type_converter.underlying(x.get("_t"));
+    exprt array;
+    if(under.get("k") == "array")
+      array = convert_access(x, parts);
+    else if(
+      under.get("k") == "pointer" &&
+      type_converter.underlying(under.get("elem")).get("k") == "array")
+    {
+      // Go1.27 §Index_expressions: "For a of pointer to array type: a[x] is
+      // shorthand for (*a)[x]".
+      exprt pointer = access_operand(x, parts);
+      if(pointer.is_nil())
+        return nil_exprt{};
+      pointer.add_source_location() = location;
+      check_not_nil(pointer, parts.checks);
+      array = dereference_exprt{pointer};
+    }
+    else
+    {
+      unsupported(expr, "indexing values of type " + under.get_string("str"));
+      return nil_exprt{};
+    }
+    if(array.is_nil())
+      return nil_exprt{};
+    const irept &index_node = go_field(expr, "Index");
+    exprt index = access_operand(index_node, parts);
+    if(index.is_nil())
+      return nil_exprt{};
+    const auto size =
+      numeric_cast<mp_integer>(to_array_type(array.type()).size());
+    CHECK_RETURN(size.has_value());
+    // "a constant index must be in range" (checked by go/types).
+    if(index_node.get("_cv").empty())
+      check_index(index, *size, location, parts.checks);
+    index_exprt result{
+      array, typecast_exprt::conditional_cast(index, c_index_type())};
+    result.add_source_location() = location;
+    return std::move(result);
+  }
+
+  // Any other expression is a value, not a variable.
+  return access_operand(expr, parts);
+}
+
 irep_idt go_convertert::callee_object(const irept &call)
 {
   const irept *fun = &go_field(call, "Fun");
@@ -1091,30 +1824,88 @@ bool go_convertert::convert_intrinsic_call(const irept &call, code_blockt &dest)
   return false;
 }
 
+/// Convert \p value to \p type, whose underlying types are identical
+/// ignoring struct tags (Go1.27 §Conversions); nil if CBMC cannot express
+/// it.
+static exprt
+convert_composite(const exprt &value, const typet &type, const namespacet &ns)
+{
+  if(value.type() == type)
+    return value;
+  const typet &from = go_follow(ns, value.type());
+  const typet &to = go_follow(ns, type);
+  if(from.id() == ID_struct && to.id() == ID_struct)
+  {
+    // Rebuild the struct field by field.
+    const auto &from_components = to_struct_type(from).components();
+    const auto &to_components = to_struct_type(to).components();
+    if(from_components.size() != to_components.size())
+      return nil_exprt{};
+    exprt::operandst operands;
+    for(std::size_t i = 0; i < to_components.size(); ++i)
+    {
+      exprt field = convert_composite(
+        member_exprt{value, from_components[i]}, to_components[i].type(), ns);
+      if(field.is_nil())
+        return nil_exprt{};
+      operands.push_back(std::move(field));
+    }
+    return struct_exprt{std::move(operands), type};
+  }
+  if(from.id() == ID_array && to.id() == ID_array)
+  {
+    // Arrays whose element types differ only in their Go names have the
+    // same CBMC element type.
+    if(to_array_type(from).element_type() == to_array_type(to).element_type())
+      return typecast_exprt{value, type};
+    return nil_exprt{};
+  }
+  if(
+    (from.id() == ID_pointer && to.id() == ID_pointer) ||
+    (is_func_value(from) && is_func_value(to)) ||
+    ((from.id() == ID_signedbv || from.id() == ID_unsignedbv) &&
+     (to.id() == ID_signedbv || to.id() == ID_unsignedbv)) ||
+    (from.id() == ID_bool && to.id() == ID_bool))
+  {
+    return typecast_exprt::conditional_cast(value, type);
+  }
+  return nil_exprt{};
+}
+
 exprt go_convertert::convert_conversion(const irept &call)
 {
   // Go1.27 §Conversions: "When converting between integer types, if the
   // value is a signed integer, it is sign extended to implicit infinite
   // precision; otherwise it is zero extended. It is then truncated to fit
   // in the result type's size." This is CBMC's typecast semantics.
-  // Constant conversions have already been folded by go/types.
+  // Other conversions supported so far change only the type's name: x's
+  // type and T have identical underlying types, ignoring struct tags, or
+  // are pointer types whose base types do. Constant conversions have
+  // already been folded by go/types.
   const auto &args = go_list(call, "Args");
   typet type = expr_type(call);
   exprt value = convert_expr(args.front());
   if(type.is_nil() || value.is_nil())
     return nil_exprt{};
-  const bool supported =
-    (type.id() == ID_bool && value.type().id() == ID_bool) ||
-    ((type.id() == ID_signedbv || type.id() == ID_unsignedbv) &&
-     (value.type().id() == ID_signedbv || value.type().id() == ID_unsignedbv));
-  if(!supported)
+  value = go_cast_nil(value, type);
+  exprt result = convert_composite(value, type, ns);
+  if(result.is_nil())
   {
     unsupported(call, "this conversion");
     return nil_exprt{};
   }
-  typecast_exprt result{value, type};
+  if(has_subexpr(value, ID_side_effect) && result.id() == ID_struct)
+  {
+    // The value is used once per field: evaluate it once.
+    code_blockt prefix;
+    const source_locationt location = location_of(call);
+    symbol_exprt tmp = new_temporary(value.type(), location, prefix);
+    prefix.add(code_frontend_assignt{tmp, value});
+    result = convert_composite(tmp, type, ns);
+    return with_prefix(std::move(result), prefix, location);
+  }
   result.add_source_location() = location_of(call);
-  return std::move(result);
+  return result;
 }
 
 exprt go_convertert::convert_min_max(const irept &call, bool is_min)
@@ -1172,6 +1963,10 @@ exprt go_convertert::convert_call(const irept &call)
 
   if(callee == "min" || callee == "max")
     return convert_min_max(call, callee == "min");
+  if(callee == "new")
+    return convert_new(call);
+  if(callee == "len" || callee == "cap")
+    return convert_len(call);
 
   if(callee == "cprover.Nondet")
   {
@@ -1179,11 +1974,12 @@ exprt go_convertert::convert_call(const irept &call)
     typet type = expr_type(call);
     if(type.is_nil())
       return nil_exprt{};
-    if(type.id() == ID_pointer)
+    if(contains_reference(type, ns))
     {
-      // A function value is nil or refers to a function; an arbitrary
-      // pointer would be neither.
-      unsupported(call, "cprover.Nondet of function types");
+      // A pointer or function value is nil or refers to a variable or
+      // function; an arbitrary bit pattern would be neither.
+      unsupported(
+        call, "cprover.Nondet of types containing pointers or functions");
       return nil_exprt{};
     }
     return side_effect_expr_nondett{type, location};
@@ -1208,76 +2004,96 @@ exprt go_convertert::convert_call(const irept &call)
   // is allocated for the function's variables, which includes its
   // parameters and results. Then, the arguments of the call are passed to
   // the function".
-  exprt function = convert_expr(fun);
-  if(function.is_nil())
-    return nil_exprt{};
-  const code_typet &code_type =
-    to_code_type(to_pointer_type(function.type()).base_type());
   code_blockt prefix;
   exprt::operandst arguments;
+
+  // A declared function of this package: call it directly.
+  const irept *callee_node = &fun;
+  while(callee_node->id() == "ParenExpr")
+    callee_node = &go_field(*callee_node, "X");
+  if(object.get("kind") == "func" && callee_node->id() == "Ident")
+  {
+    const symbolt *function = symbol_table.lookup(symbol_id(callee));
+    if(function == nullptr)
+      return nil_exprt{}; // declaration failed and was reported
+    const code_typet &code_type = to_code_type(function->type);
+    if(convert_arguments(call, code_type, arguments, prefix))
+      return nil_exprt{};
+    side_effect_expr_function_callt result{
+      function->symbol_expr(),
+      std::move(arguments),
+      code_type.return_type(),
+      location};
+    return with_prefix(std::move(result), prefix, location);
+  }
+
+  // A function value (see go_type_convertert::func_value).
+  exprt value = convert_expr(fun);
+  if(value.is_nil())
+    return nil_exprt{};
+  PRECONDITION(is_func_value(value.type()));
+  const auto &components = to_struct_type(value.type()).components();
+  code_typet code_type =
+    to_code_type(to_pointer_type(components[0].type()).base_type());
+  code_type.parameters().erase(code_type.parameters().begin()); // $env
+  if(has_subexpr(value, ID_side_effect))
+  {
+    symbol_exprt tmp = new_temporary(value.type(), location, prefix);
+    code_frontend_assignt assign{tmp, value};
+    assign.add_source_location() = location;
+    prefix.add(std::move(assign));
+    value = tmp;
+  }
   if(convert_arguments(call, code_type, arguments, prefix))
     return nil_exprt{};
+  const member_exprt code{value, components[0]};
+  const member_exprt env{value, components[1]};
 
-  exprt result;
-  if(function.id() == ID_address_of)
+  // "Calling a nil function value causes a run-time panic." The check
+  // follows the evaluation of the function value and of the arguments, so
+  // evaluate those that have side effects first.
+  for(auto &argument : arguments)
   {
-    // A declared function or function literal: call it directly.
-    result = side_effect_expr_function_callt{
-      to_address_of_expr(function).object(),
-      std::move(arguments),
-      code_type.return_type(),
-      location};
+    if(!has_subexpr(argument, ID_side_effect))
+      continue;
+    symbol_exprt tmp = new_temporary(argument.type(), location, prefix);
+    code_frontend_assignt assign{tmp, argument};
+    assign.add_source_location() = location;
+    prefix.add(std::move(assign));
+    argument = tmp;
   }
-  else
-  {
-    // A function value. "Calling a nil function value causes a run-time
-    // panic." The check follows the evaluation of the function value and
-    // of the arguments, so evaluate those that have side effects first.
-    if(has_subexpr(function, ID_side_effect))
-    {
-      symbol_exprt tmp = new_temporary(function.type(), location, prefix);
-      code_frontend_assignt assign{tmp, function};
-      assign.add_source_location() = location;
-      prefix.add(std::move(assign));
-      function = tmp;
-    }
-    for(auto &argument : arguments)
-    {
-      if(!has_subexpr(argument, ID_side_effect))
-        continue;
-      symbol_exprt tmp = new_temporary(argument.type(), location, prefix);
-      code_frontend_assignt assign{tmp, argument};
-      assign.add_source_location() = location;
-      prefix.add(std::move(assign));
-      argument = tmp;
-    }
-    add_panic(
-      prefix,
-      notequal_exprt{
-        function, null_pointer_exprt{to_pointer_type(function.type())}},
-      "nil-dereference",
-      "runtime error: invalid memory address or nil pointer dereference",
-      location);
-    // Instructions generated for the call (e.g., by function-pointer
-    // removal) take their location from the function expression.
-    dereference_exprt callee_expr{function};
-    callee_expr.add_source_location() = location;
-    result = side_effect_expr_function_callt{
-      std::move(callee_expr),
-      std::move(arguments),
-      code_type.return_type(),
-      location};
-  }
+  add_panic(
+    prefix,
+    notequal_exprt{code, null_pointer_exprt{to_pointer_type(code.type())}},
+    "nil-dereference",
+    "runtime error: invalid memory address or nil pointer dereference",
+    location);
+  arguments.insert(arguments.begin(), env);
+  // Instructions generated for the call (e.g., by function-pointer
+  // removal) take their location from the function expression.
+  dereference_exprt callee_expr{code};
+  callee_expr.add_source_location() = location;
+  side_effect_expr_function_callt result{
+    std::move(callee_expr),
+    std::move(arguments),
+    code_type.return_type(),
+    location};
+  return with_prefix(std::move(result), prefix, location);
+}
 
+exprt go_convertert::with_prefix(
+  exprt value,
+  code_blockt &prefix,
+  const source_locationt &location)
+{
   if(prefix.statements().empty())
-    return result;
+    return value;
   // Statement expressions need a value: a call of a function without
   // results is wrapped as is (its type is void).
-  code_expressiont call_code{std::move(result)};
-  call_code.add_source_location() = location;
-  prefix.add(std::move(call_code));
+  const typet type = value.type();
+  prefix.add(expression_statement(std::move(value), location));
   return side_effect_expr_statement_expressiont{
-    std::move(prefix), code_type.return_type(), location};
+    std::move(prefix), type, location};
 }
 
 bool go_convertert::convert_arguments(
@@ -1331,49 +2147,33 @@ std::vector<exprt> go_convertert::unpack(
   return values;
 }
 
-/// Collect the ids of the objects that \p node declares (`_def`) and of
-/// the variables it refers to, outside nested function literals' own
-/// declarations.
-static void collect_objects(
-  const irept &node,
-  std::set<irep_idt> &declared,
-  std::vector<const irept *> &uses)
-{
-  if(node.id() == "Ident" && !node.get("_obj").empty())
-  {
-    if(node.get_bool("_def"))
-      declared.insert(node.get("_obj"));
-    else
-      uses.push_back(&node);
-  }
-  for(const auto &sub : node.get_sub())
-    collect_objects(sub, declared, uses);
-  for(const auto &named : node.get_named_sub())
-    collect_objects(named.second, declared, uses);
-}
-
 exprt go_convertert::convert_func_lit(const irept &lit)
 {
   // Go1.27 §Function_literals: "A function literal represents an anonymous
-  // function." It becomes a function of its own. "Function literals are
-  // closures: they may refer to variables declared in a surrounding
-  // function." Such captured variables are not supported yet.
-  std::set<irep_idt> declared;
-  std::vector<const irept *> uses;
-  collect_objects(lit, declared, uses);
-  for(const irept *use : uses)
+  // function." It becomes a function of its own, named after the
+  // enclosing one. "Function literals are closures: they may refer to
+  // variables declared in a surrounding function. Those variables are then
+  // shared between the surrounding function and the function literal, and
+  // they survive as long as they are accessible." Captured variables live
+  // on the heap (scan_heap_variables); the literal's value carries an
+  // environment with pointers to them.
+  const std::vector<irep_idt> captured = captured_variables(lit, parse_tree);
+  const source_locationt location = location_of(lit);
+  std::vector<typet> types;
+  exprt::operandst pointers;
+  for(const auto &id : captured)
   {
-    const irept &object = parse_tree.object(use->get("_obj"));
-    if(
-      object.get("kind") == "var" && !object.get_bool("package_level") &&
-      declared.find(use->get("_obj")) == declared.end())
+    const auto heap = state.heap_pointers.find(id);
+    if(heap == state.heap_pointers.end())
     {
+      // Not declared yet (e.g., a forward goto skipped it) or failed.
       unsupported(
-        *use,
-        "function literals capturing variables ('" + use->get_string("Name") +
-          "')");
+        lit,
+        "capturing '" + parse_tree.object(id).get_string("name") + "' here");
       return nil_exprt{};
     }
+    pointers.push_back(heap->second);
+    types.push_back(to_pointer_type(heap->second.type()).base_type());
   }
 
   const irep_idt &signature_index = lit.get("_t");
@@ -1385,20 +2185,56 @@ exprt go_convertert::convert_func_lit(const irept &lit)
   }
   const std::string base = "$lit" + std::to_string(++state.literal_counter);
   const irep_idt id = id2string(state.function_id) + base;
-  const source_locationt location = location_of(lit);
+  code_typet &code_type = to_code_type(type);
   declare_parameters(
-    to_code_type(type), parse_tree.type_entry(signature_index), id, location);
+    code_type, parse_tree.type_entry(signature_index), id, location);
+  // The environment comes first (go_type_convertert::func_value).
+  const irep_idt env_id = id2string(id) + "::$env";
+  code_typet::parametert env_param{
+    typet{go_type_convertert::env_pointer_type()}};
+  env_param.set_identifier(env_id);
+  env_param.set_base_name("$env");
+  code_type.parameters().insert(code_type.parameters().begin(), env_param);
+  symbolt env_symbol =
+    make_symbol(env_id, "$env", env_param.type(), location, parse_tree.package);
+  env_symbol.is_parameter = true;
+  env_symbol.is_lvalue = true;
+  env_symbol.is_thread_local = true;
+  env_symbol.is_file_local = true;
+  add_symbol(env_symbol);
   symbolt symbol = make_symbol(id, base, type, location, parse_tree.package);
   add_symbol(symbol);
 
   // The literal's body has its own labels, temporaries and results.
   function_statet outer = std::move(state);
-  convert_function(id, signature_index, go_field(lit, "Body"), location);
+  convert_function(
+    id, signature_index, go_field(lit, "Body"), location, captured);
   state = std::move(outer);
 
-  address_of_exprt result{ns.lookup(id).symbol_expr()};
-  result.add_source_location() = location;
-  return std::move(result);
+  // The value: the code and, if the literal captures variables, a new
+  // environment ("each time they are evaluated", like composite literals).
+  const struct_typet value_type = go_type_convertert::func_value(
+    to_code_type(type_converter.signature(signature_index)));
+  const auto &components = value_type.components();
+  const exprt code = go_cast(
+    address_of_exprt{ns.lookup(id).symbol_expr()}, components[0].type());
+  if(captured.empty())
+  {
+    struct_exprt result{
+      {code, null_pointer_exprt{to_pointer_type(components[1].type())}},
+      value_type};
+    result.add_source_location() = location;
+    return std::move(result);
+  }
+  code_blockt prefix;
+  const struct_typet env_type = environment_type(captured, types);
+  const symbol_exprt env = new_heap_variable(
+    env_type, struct_exprt{std::move(pointers), env_type}, location, prefix);
+  struct_exprt result{
+    {code, typecast_exprt{env, components[1].type()}}, value_type};
+  prefix.add(expression_statement(std::move(result), location));
+  return side_effect_expr_statement_expressiont{
+    std::move(prefix), value_type, location};
 }
 
 // ------------------------------------------------------------ expressions
@@ -1456,14 +2292,49 @@ exprt go_convertert::convert_comparison(
   // not comparable. However, as a special case, a slice, map, or function
   // value may be compared to the predeclared identifier nil."
   if(x.id() == ID_go_nil && y.id() != ID_go_nil)
-    x = null_pointer_exprt{to_pointer_type(y.type())};
+    x = go_cast(x, y.type());
   if(y.id() == ID_go_nil && x.id() != ID_go_nil)
-    y = null_pointer_exprt{to_pointer_type(x.type())};
-  const bool is_pointer = x.type().id() == ID_pointer;
+    y = go_cast(y, x.type());
+  const source_locationt location = location_of(where);
+  // A copy: x is replaced below.
+  const typet type = go_follow(ns, x.type());
+
+  if(op == "==" || op == "!=")
+  {
+    if(is_func_value(type))
+    {
+      // Only comparisons with nil: compare the code pointers.
+      x = member_exprt{x, to_struct_type(type).components()[0]};
+      y = member_exprt{y, to_struct_type(type).components()[0]};
+    }
+    else if(
+      type.id() == ID_pointer || type.id() == ID_struct ||
+      type.id() == ID_array)
+    {
+      // Equality of composite values compares their parts; evaluate the
+      // operands once, in order.
+      code_blockt prefix;
+      if(has_subexpr(x, ID_side_effect) || has_subexpr(y, ID_side_effect))
+      {
+        symbol_exprt tx = new_temporary(x.type(), location, prefix);
+        prefix.add(code_frontend_assignt{tx, x});
+        symbol_exprt ty = new_temporary(y.type(), location, prefix);
+        prefix.add(code_frontend_assignt{ty, go_cast(y, x.type())});
+        x = tx;
+        y = ty;
+      }
+      exprt result = equality(x, go_cast(y, x.type()), where);
+      if(result.is_nil())
+        return nil_exprt{};
+      if(op == "!=")
+        result = not_exprt{result};
+      result.add_source_location() = location;
+      return with_prefix(std::move(result), prefix, location);
+    }
+  }
   if(
-    x.type().id() != ID_bool && x.type().id() != ID_signedbv &&
-    x.type().id() != ID_unsignedbv && !(is_pointer && op == "==") &&
-    !(is_pointer && op == "!="))
+    type.id() != ID_bool && type.id() != ID_signedbv &&
+    type.id() != ID_unsignedbv && !is_func_value(type))
   {
     unsupported(
       where, "comparison of type " + x.type().get_string(ID_C_go_type));
@@ -1477,8 +2348,106 @@ exprt go_convertert::convert_comparison(
                        : op == ">"  ? ID_gt
                                     : ID_ge;
   binary_relation_exprt result{x, rel, y};
-  result.add_source_location() = location_of(where);
+  result.add_source_location() = location;
   return std::move(result);
+}
+
+/// True if values of \p type contain blank struct fields, which equality
+/// ignores (Go1.27 §Comparison_operators).
+static bool has_blank_fields(const typet &type, const namespacet &ns)
+{
+  const typet &followed = go_follow(ns, type);
+  if(followed.id() == ID_array)
+    return has_blank_fields(to_array_type(followed).element_type(), ns);
+  if(followed.id() != ID_struct)
+    return false;
+  for(const auto &component : to_struct_type(followed).components())
+  {
+    if(
+      has_prefix(id2string(component.get_name()), "_$") ||
+      has_blank_fields(component.type(), ns))
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+exprt go_convertert::equality(
+  const exprt &x,
+  const exprt &y,
+  const irept &where)
+{
+  const typet &type = go_follow(ns, x.type());
+  if(type.id() == ID_pointer)
+  {
+    // Go1.27 §Comparison_operators: "Two pointer values are equal if they
+    // point to the same variable or if both have value nil. Pointers to
+    // distinct zero-size variables may or may not be equal."
+    const auto size =
+      pointer_offset_size(to_pointer_type(type).base_type(), ns);
+    exprt same = equal_exprt{x, y};
+    if(size.has_value() && *size == 0)
+    {
+      const null_pointer_exprt null{to_pointer_type(type)};
+      same = or_exprt{
+        same,
+        and_exprt{
+          notequal_exprt{x, null},
+          notequal_exprt{y, null},
+          side_effect_expr_nondett{bool_typet{}, location_of(where)}}};
+    }
+    return same;
+  }
+  if(type.id() == ID_struct)
+  {
+    // "Two struct values are equal if their corresponding non-blank field
+    // values are equal."
+    exprt::operandst conjuncts;
+    for(const auto &component : to_struct_type(type).components())
+    {
+      if(has_prefix(id2string(component.get_name()), "_$"))
+        continue;
+      exprt part =
+        equality(member_exprt{x, component}, member_exprt{y, component}, where);
+      if(part.is_nil())
+        return nil_exprt{};
+      conjuncts.push_back(std::move(part));
+    }
+    return conjunction(std::move(conjuncts));
+  }
+  if(type.id() == ID_array)
+  {
+    // "Two array values are equal if their corresponding element values are
+    // equal."
+    if(!has_blank_fields(type, ns))
+      return equal_exprt{x, y};
+    const auto size = numeric_cast<mp_integer>(to_array_type(type).size());
+    if(!size.has_value() || *size > 64)
+    {
+      unsupported(where, "comparing large arrays of structs with blank fields");
+      return nil_exprt{};
+    }
+    exprt::operandst conjuncts;
+    for(mp_integer i = 0; i < *size; ++i)
+    {
+      const exprt index = from_integer(i, c_index_type());
+      exprt part =
+        equality(index_exprt{x, index}, index_exprt{y, index}, where);
+      if(part.is_nil())
+        return nil_exprt{};
+      conjuncts.push_back(std::move(part));
+    }
+    return conjunction(std::move(conjuncts));
+  }
+  if(
+    type.id() == ID_bool || type.id() == ID_signedbv ||
+    type.id() == ID_unsignedbv)
+  {
+    return equal_exprt{x, y};
+  }
+  unsupported(where, "comparison of type " + x.type().get_string(ID_C_go_type));
+  return nil_exprt{};
 }
 
 exprt go_convertert::convert_unary(const irept &expr)
@@ -1532,16 +2501,28 @@ exprt go_convertert::convert_binary(const irept &expr)
     return convert_comparison(op, x, y, expr);
   }
 
-  // Arithmetic (Go1.27 §Arithmetic_operators). Only integers so far.
+  // Arithmetic (Go1.27 §Arithmetic_operators).
   typet type = expr_type(expr);
   if(type.is_nil())
     return nil_exprt{};
+  return convert_arithmetic(op, x, y, y_node, type, location);
+}
+
+exprt go_convertert::convert_arithmetic(
+  const irep_idt &op,
+  exprt x,
+  exprt y,
+  const irept &y_node,
+  const typet &type,
+  const source_locationt &location)
+{
+  // Only integers so far.
   if(type.id() != ID_signedbv && type.id() != ID_unsignedbv)
   {
-    unsupported(
-      expr,
+    error(
+      y_node,
       "operator " + id2string(op) + " on type " +
-        type.get_string(ID_C_go_type));
+        type.get_string(ID_C_go_type) + " is not supported yet");
     return nil_exprt{};
   }
   x = go_cast(x, type);
@@ -1608,7 +2589,7 @@ exprt go_convertert::convert_binary(const irept &expr)
                                       : exprt{lshr_exprt{x, y}};
   else
   {
-    unsupported(expr, "binary operator " + id2string(op));
+    error(y_node, "binary operator " + id2string(op) + " is not supported yet");
     return nil_exprt{};
   }
   result.add_source_location() = location;
@@ -1647,6 +2628,212 @@ exprt go_convertert::convert_binary(const irept &expr)
   return guarded;
 }
 
+/// The path of field indices from a struct of type-table entry \p struct_entry
+/// to the field with object id \p field, through embedded fields that are
+/// not pointers; empty if there is none.
+static std::vector<std::size_t> field_path(
+  const irep_idt &field,
+  const irept &struct_entry,
+  const go_type_convertert &types)
+{
+  const auto &fields = go_list(struct_entry, "fields");
+  for(std::size_t i = 0; i < fields.size(); ++i)
+    if(fields[i].get("obj") == field)
+      return {i};
+  for(std::size_t i = 0; i < fields.size(); ++i)
+  {
+    if(!fields[i].get_bool("embedded"))
+      continue;
+    const irept &under = types.underlying(fields[i].get("type"));
+    if(under.get("k") != "struct")
+      continue;
+    auto path = field_path(field, under, types);
+    if(!path.empty())
+    {
+      path.insert(path.begin(), i);
+      return path;
+    }
+  }
+  return {};
+}
+
+exprt go_convertert::convert_composite_lit(const irept &lit)
+{
+  // Go1.27 §Composite_literals: "Composite literals construct new values
+  // for structs, arrays, slices, and maps each time they are evaluated."
+  // Elements are evaluated in order into a temporary that starts as the
+  // zero value: "Omitted fields get the zero value for that field", and
+  // for arrays "the missing elements are set to the zero value".
+  const source_locationt location = location_of(lit);
+  const irep_idt &type_index = lit.get("_t");
+  const irept &literal_type = type_converter.underlying(type_index);
+  if(literal_type.get("k") == "pointer")
+  {
+    // "elements or keys that are addresses of composite literals may elide
+    // the &T when the element or key type is *T."
+    irept inner = lit;
+    inner.set("_t", literal_type.get("elem"));
+    exprt value = convert_composite_lit(inner);
+    if(value.is_nil())
+      return nil_exprt{};
+    code_blockt prefix;
+    symbol_exprt pointer =
+      new_heap_variable(value.type(), value, location, prefix);
+    return with_prefix(std::move(pointer), prefix, location);
+  }
+
+  typet type = convert_type(type_index, lit);
+  if(type.is_nil())
+    return nil_exprt{};
+  const irep_idt &k = literal_type.get("k");
+  if(k != "struct" && k != "array")
+  {
+    unsupported(
+      lit, "composite literals of type " + literal_type.get_string("str"));
+    return nil_exprt{};
+  }
+
+  code_blockt block;
+  symbol_exprt tmp = new_temporary(type, location, block);
+  block.add(code_frontend_assignt{tmp, *zero_initializer(type, location, ns)});
+  mp_integer next_index = 0;
+  std::size_t position = 0;
+  for(const auto &element : go_list(lit, "Elts"))
+  {
+    const bool keyed = element.id() == "KeyValueExpr";
+    const irept &value_node = keyed ? go_field(element, "Value") : element;
+    exprt target;
+    if(k == "struct")
+    {
+      // "For struct literals without keys, the element list must contain an
+      // element for each struct field in the order in which the fields are
+      // declared." With keys, "Each key must be a valid field selector
+      // [Go 1.27] for a (possibly promoted) field of the struct".
+      std::vector<std::size_t> path;
+      if(keyed)
+        path = field_path(
+          go_field(element, "Key").get("_obj"), literal_type, type_converter);
+      else
+        path = {position++};
+      if(path.empty())
+      {
+        unsupported(element, "this struct literal key");
+        return nil_exprt{};
+      }
+      target = tmp;
+      for(const std::size_t index : path)
+      {
+        const struct_typet &struct_type =
+          to_struct_type(go_follow(ns, target.type()));
+        target = member_exprt{target, struct_type.components()[index]};
+      }
+    }
+    else
+    {
+      // "An element with a key uses the key as its index. ... An element
+      // without a key uses the previous element's index plus one."
+      if(keyed)
+        next_index = string2integer(go_field(element, "Key").get_string("_cv"));
+      target = index_exprt{tmp, from_integer(next_index, c_index_type())};
+      ++next_index;
+    }
+    exprt value = convert_expr(value_node);
+    if(value.is_nil())
+      return nil_exprt{};
+    code_frontend_assignt assign{target, go_cast(value, target.type())};
+    assign.add_source_location() = location_of(value_node);
+    block.add(std::move(assign));
+  }
+  return with_prefix(std::move(tmp), block, location);
+}
+
+exprt go_convertert::convert_address_of(const irept &expr)
+{
+  // Go1.27 §Address_operators: "For an operand x of type T, the address
+  // operation &x generates a pointer of type *T to x." "As an exception to
+  // the addressability requirement, x may also be a (possibly
+  // parenthesized) composite literal." "Taking the address of a composite
+  // literal generates a pointer to a unique variable initialized with the
+  // literal's value." "If the evaluation of x would cause a run-time
+  // panic, then the evaluation of &x does too."
+  const irept *operand = &go_field(expr, "X");
+  while(operand->id() == "ParenExpr")
+    operand = &go_field(*operand, "X");
+  const source_locationt location = location_of(expr);
+  if(operand->id() == "CompositeLit")
+  {
+    exprt value = convert_composite_lit(*operand);
+    if(value.is_nil())
+      return nil_exprt{};
+    code_blockt prefix;
+    symbol_exprt pointer =
+      new_heap_variable(value.type(), value, location, prefix);
+    return with_prefix(std::move(pointer), prefix, location);
+  }
+  access_partst parts;
+  exprt target = convert_access(*operand, parts);
+  if(target.is_nil())
+    return nil_exprt{};
+  address_of_exprt result{
+    target, pointer_typet{target.type(), config.ansi_c.pointer_width}};
+  result.add_source_location() = location;
+  return with_parts(std::move(result), parts);
+}
+
+exprt go_convertert::convert_new(const irept &call)
+{
+  // Go1.27 §Allocation: "The built-in function new creates a new,
+  // initialized variable and returns a pointer to it." "If the argument is
+  // a type T, then new(T) allocates a variable of type T initialized to its
+  // zero value. If the argument is an expression x, then new(x) allocates a
+  // variable of the type of x initialized to the value of x."
+  const typet type = expr_type(call);
+  if(type.is_nil())
+    return nil_exprt{};
+  const typet &base = to_pointer_type(type).base_type();
+  const irept &argument = go_list(call, "Args").front();
+  exprt value = nil_exprt{};
+  if(!argument.get_bool("_tx"))
+  {
+    value = convert_expr(argument);
+    if(value.is_nil())
+      return nil_exprt{};
+  }
+  const source_locationt location = location_of(call);
+  code_blockt prefix;
+  symbol_exprt pointer = new_heap_variable(base, value, location, prefix);
+  return with_prefix(std::move(pointer), prefix, location);
+}
+
+exprt go_convertert::convert_len(const irept &call)
+{
+  // Go1.27 §Length_and_capacity: for an array or pointer to array, "The
+  // expressions len(s) and cap(s) are constants if ... the expression s
+  // does not contain channel receives or (non-constant) function calls"
+  // (go/types folds those). "Otherwise, invocations of len and cap are not
+  // constant and s is evaluated." The result is the array length.
+  const irept &argument = go_list(call, "Args").front();
+  const irept *under = &type_converter.underlying(argument.get("_t"));
+  if(under->get("k") == "pointer")
+    under = &type_converter.underlying(under->get("elem"));
+  if(under->get("k") != "array")
+  {
+    unsupported(call, "len and cap of type " + under->get_string("str"));
+    return nil_exprt{};
+  }
+  const typet type = expr_type(call);
+  exprt value = convert_expr(argument);
+  if(type.is_nil() || value.is_nil())
+    return nil_exprt{};
+  const source_locationt location = location_of(call);
+  code_blockt prefix;
+  prefix.add(expression_statement(std::move(value), location));
+  return with_prefix(
+    from_integer(string2integer(under->get_string("len")), type),
+    prefix,
+    location);
+}
+
 exprt go_convertert::convert_expr(const irept &expr)
 {
   // Every constant expression has been evaluated exactly by go/types.
@@ -1676,8 +2863,20 @@ exprt go_convertert::convert_expr(const irept &expr)
     return convert_func_lit(expr);
   if(kind == "ParenExpr")
     return convert_expr(go_field(expr, "X"));
+  if(kind == "UnaryExpr" && expr.get("Op") == "&")
+    return convert_address_of(expr);
   if(kind == "UnaryExpr")
     return convert_unary(expr);
+  if(kind == "CompositeLit")
+    return convert_composite_lit(expr);
+  if(kind == "StarExpr" || kind == "SelectorExpr" || kind == "IndexExpr")
+  {
+    access_partst parts;
+    exprt result = convert_access(expr, parts);
+    if(result.is_nil())
+      return nil_exprt{};
+    return with_parts(std::move(result), parts);
+  }
   if(kind == "BinaryExpr")
     return convert_binary(expr);
   if(kind == "CallExpr")

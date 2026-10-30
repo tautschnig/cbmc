@@ -18,15 +18,23 @@ Author: Michael Tautschnig
 #define CPROVER_GO_GO_CONVERT_H
 
 #include <util/message.h>
+#include <util/mp_arith.h>
 #include <util/namespace.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 
 #include "go_types.h"
 
+#include <map>
+#include <set>
+
 class go_parse_treet;
 class symbol_table_baset;
 class symbolt;
+
+/// True if values of \p type contain pointers or function values, which
+/// cannot take arbitrary (nondeterministic) values.
+bool contains_reference(const typet &type, const namespacet &ns);
 
 /// Converts one Go package.
 class go_convertert
@@ -40,20 +48,11 @@ public:
   /// \return true on error
   bool operator()();
 
-  /// The CBMC symbol for the Go object with id \p object_id.
-  /// Package-level objects ("main.f") become "go::main.f"; local objects,
-  /// whose ids carry a uniqueness suffix ("main.x#3"), become
-  /// "go::main::3::x", so that symbol names end in their base name.
+  /// The CBMC symbol for the Go object with id \p object_id (see
+  /// go_symbol_id).
   static irep_idt symbol_id(const irep_idt &object_id)
   {
-    const std::string id = id2string(object_id);
-    const auto hash = id.rfind('#');
-    if(hash == std::string::npos)
-      return "go::" + id;
-    const std::string qualified = id.substr(0, hash); // pkg.name
-    const auto dot = qualified.rfind('.');            // pkg may contain dots
-    return "go::" + qualified.substr(0, dot) + "::" + id.substr(hash + 1) +
-           "::" + qualified.substr(dot + 1);
+    return go_symbol_id(object_id);
   }
 
   /// The generated function that initialises package \p package:
@@ -92,7 +91,13 @@ private:
     irep_idt function_id;
     typet return_type;
     /// Result parameters, if named (Go1.27 §Function_types).
-    std::vector<symbol_exprt> named_results;
+    std::vector<exprt> named_results;
+    /// Local variables that live on the heap because their address is
+    /// taken or a function literal captures them (see scan_heap_variables).
+    std::set<irep_idt> heap_objects;
+    /// For each heap variable (and each variable a function literal
+    /// captures), the pointer to it.
+    std::map<irep_idt, exprt> heap_pointers;
     std::size_t tmp_counter = 0;
     std::size_t label_counter = 0;
     std::size_t literal_counter = 0;
@@ -126,13 +131,34 @@ private:
   void convert_function_body(const irept &decl);
   /// Convert \p body into the value of function \p function, whose
   /// go/types signature has type-table index \p signature_index.
+  /// \p captured: for function literals, the objects of the variables it
+  /// captures, in the order of the fields of its environment.
   void convert_function(
     const irep_idt &function,
     const irep_idt &signature_index,
     const irept &body,
-    const source_locationt &location);
+    const source_locationt &location,
+    const std::vector<irep_idt> &captured = {});
+  /// Collect the variables in \p body that must live on the heap: those
+  /// whose address is taken and those captured by a function literal.
+  void scan_heap_variables(const irept &body);
+  /// A new variable of type \p type with value \p value, which outlives
+  /// the current function (Go1.27 §Variables): code allocating it is
+  /// appended to \p dest, and the result points to it.
+  /// An allocation of a new variable of type \p type (uninitialised).
+  exprt allocation(const typet &type, const source_locationt &location);
+  symbol_exprt new_heap_variable(
+    const typet &type,
+    const exprt &value,
+    const source_locationt &location,
+    code_blockt &dest);
+  /// The function value referring to declared function \p function,
+  /// through an adapter that takes (and ignores) an environment.
+  exprt function_value(const symbolt &function, const source_locationt &);
   void convert_package_init(const std::vector<irep_idt> &init_functions);
-  symbol_exprt declare_local(
+  /// Declare the local variable for \p object_id; for heap variables, the
+  /// result is the dereferenced pointer to it.
+  exprt declare_local(
     const irep_idt &object_id,
     const typet &type,
     const source_locationt &location,
@@ -156,6 +182,10 @@ private:
     const irept &stmt,
     code_blockt &dest,
     const irep_idt &label_object = irep_idt{});
+  void convert_range(
+    const irept &stmt,
+    code_blockt &dest,
+    const irep_idt &label_object = irep_idt{});
   void convert_switch(
     const irept &stmt,
     code_blockt &dest,
@@ -168,8 +198,56 @@ private:
   /// code and returns true; otherwise returns false.
   bool convert_intrinsic_call(const irept &call, code_blockt &dest);
 
+  /// Code evaluating the operands of an access path (pointer
+  /// indirections, field selectors and index expressions), and the checks
+  /// for its run-time panics (Go1.27 §Run_time_panics).
+  struct access_partst
+  {
+    code_blockt operands;
+    code_blockt checks;
+    /// Evaluate every non-constant operand into a temporary, as the left
+    /// side of an assignment with several targets requires.
+    bool force_temporaries = false;
+  };
+  /// Convert the variable, pointer indirection, field selector or index
+  /// expression \p expr, which may be assigned to.
+  exprt convert_access(const irept &expr, access_partst &parts);
+  /// \p expr converted, evaluated into a temporary in \p parts if needed.
+  exprt access_operand(const irept &expr, access_partst &parts);
+  exprt access_operand(exprt value, access_partst &parts);
+  /// \p value preceded by \p parts, as a statement expression if needed.
+  exprt with_parts(exprt value, access_partst &parts);
+  /// \p value preceded by \p prefix, as a statement expression if needed.
+  static exprt
+  with_prefix(exprt value, code_blockt &prefix, const source_locationt &);
+  /// Panic unless \p pointer is not nil (Go1.27 §Address_operators).
+  void check_not_nil(const exprt &pointer, code_blockt &dest);
+  /// Panic unless \p index is in range for \p size elements (Go1.27
+  /// §Index_expressions).
+  void check_index(
+    const exprt &index,
+    const mp_integer &size,
+    const source_locationt &location,
+    code_blockt &dest);
+
   // Expressions
   exprt convert_expr(const irept &expr);
+  exprt convert_composite_lit(const irept &lit);
+  exprt convert_address_of(const irept &expr);
+  exprt convert_new(const irept &call);
+  exprt convert_len(const irept &call);
+  /// The arithmetic operation \p op of \p x and \p y in \p type, with
+  /// the checks for its run-time panics; \p y_node is the right operand.
+  exprt convert_arithmetic(
+    const irep_idt &op,
+    exprt x,
+    exprt y,
+    const irept &y_node,
+    const typet &type,
+    const source_locationt &location);
+  /// Equality (\p equal) of values of the comparable type of \p x and
+  /// \p y, which have no side effects (Go1.27 §Comparison_operators).
+  exprt equality(const exprt &x, const exprt &y, const irept &where);
   exprt convert_constant(const irept &expr, const typet &type);
   exprt convert_unary(const irept &expr);
   exprt convert_binary(const irept &expr);

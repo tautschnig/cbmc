@@ -233,12 +233,12 @@ bool go_languaget::generate_support_functions(
   exprt::operandst arguments;
   for(const auto &parameter : to_code_type(function->type).parameters())
   {
-    if(parameter.type().id() == ID_pointer)
+    if(contains_reference(parameter.type(), namespacet{symbol_table}))
     {
-      // A function value is nil or refers to a function; an arbitrary
-      // pointer would be neither.
-      log.error() << "Go front-end: --function with parameters of function "
-                     "type is not supported yet"
+      // A pointer or function value is nil or refers to a variable or
+      // function; an arbitrary bit pattern would be neither.
+      log.error() << "Go front-end: --function with parameters containing "
+                     "pointers or functions is not supported yet"
                   << messaget::eom;
       return true;
     }
