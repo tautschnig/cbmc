@@ -172,21 +172,21 @@ The helper supplies the stdlib *signatures*; the models supply the
 
 ## 5. Status
 
-The first end-to-end slice and phases 1 and 2 of §6 are done. The code is in
+The first end-to-end slice and phases 1 to 3 of §6 are done. The code is in
 `src/go/`, the tests are in `regression/go/`.
 
 | Part | Files | Role |
 |---|---|---|
-| Helper | `helper/main.go`, `helper/cprover/` | `go/parser` + `go/types` → typed JSON (schema version 1). Type-switch bindings (`_impl`, from `types.Info.Implicits`), receiver-qualified method ids and file-qualified positions are emitted. |
+| Helper | `helper/main.go`, `helper/cprover/`, `helper/runtime/` | `go/parser` + `go/types` → typed JSON (schema version 1). Type-switch bindings (`_impl`, from `types.Info.Implicits`), receiver-qualified method ids, file-qualified positions and the bytes of string constants (`_sb`) are emitted. The runtime package `cprover/rt` (`helper/runtime/rt.go`) is type-checked and emitted with every program. |
 | Go AST | `go_parse_tree.{h,cpp}` | In-memory `irept` tree loaded from the JSON. The converter reads only this tree (§4.3). |
-| Types | `go_types.{h,cpp}` | `go/types` type table → `typet`. `int`/`uint`/`uintptr` come from `config.go`. Named struct types become struct tags (type symbols named like objects, e.g. `go::main.Node`), so recursion through pointers is finite; other named types are their underlying type. Blank fields are kept under the names `_$N`. Function values are structs `{code, env}` marked `#go_func_value` (see below); several results are returned as one struct marked `#go_tuple`, with components `$0`, `$1`, ... |
-| Converter | `go_convert.{h,cpp}` | Go AST → symbol table and code. Constructs outside the slice are reported as errors, never dropped. |
+| Types | `go_types.{h,cpp}` | `go/types` type table → `typet`. `int`/`uint`/`uintptr` come from `config.go`. Named struct types become struct tags (type symbols named like objects, e.g. `go::main.Node`), so recursion through pointers is finite; other named types are their underlying type. Blank fields are kept under the names `_$N`. Booleans are stored in a byte (`c_bool`), so that they have a size (for heap variables and arrays); `as_condition` turns them into conditions. Strings, slices and maps: see below. Function values are structs `{code, env}` marked `#go_func_value` (see below); several results are returned as one struct marked `#go_tuple`, with components `$0`, `$1`, ... |
+| Converter | `go_convert.{h,cpp}`, `go_builtins.cpp`, `go_maps.cpp` | Go AST → symbol table and code. Constructs outside the slice are reported as errors, never dropped. Strings, slices and their built-ins are in `go_builtins.cpp`, maps in `go_maps.cpp`. |
 | Language | `go_language.{h,cpp}`, `expr2go.{h,cpp}` | `languaget` for `.go` files: runs the helper, sets the target GOARCH from `--arch`/`--32`/`--64`, builds the entry point. |
 
 Supported so far:
 
-- Types: integer and boolean types, pointers, arrays, structs
-  (including embedded fields), and function types; untyped constants
+- Types: integer and boolean types, strings, pointers, arrays, slices,
+  structs (including embedded fields), maps, and function types; untyped constants
   with their final types from `go/types`, folded exactly.
 - Declarations: package-level variables initialised in
   `types.Info.InitOrder`, then `init` functions in source order
@@ -230,13 +230,55 @@ Supported so far:
 - Expressions: integer unary and binary operators with Go's wrap-around
   (`§Integer_overflow`), comparisons, `&&`/`||` short-circuiting,
   conversions between integer types, `min`/`max`, `panic`, `print`.
+- Strings (`§String_types`) are `{data *uint8, len int}`: a pointer to
+  the first byte and the length, with a null pointer for `""`. Constants
+  are static arrays (one per distinct constant); concatenation,
+  conversions and `[]byte`/string copies allocate a new array. Strings are
+  immutable, so substrings share bytes. `len`, indexing, slicing,
+  `+`/`+=`, `==`/`!=`/`<`/`<=`/`>`/`>=`, `range` over code points,
+  conversions to and from `[]byte` and `[]rune`, and from integers.
+  Equality, ordering and UTF-8 encoding and decoding are Go functions in
+  the runtime package `cprover/rt`, converted with the program; they loop
+  once per byte or rune, so they need loop bounds of at least the string
+  length.
+- Slices (`§Slice_types`) are `{data *E, len int, cap int}`, nil with a
+  null data pointer; underlying arrays are dynamic objects allocated
+  where they are created (`make`, slice literals, `append` growing,
+  conversions), or existing arrays (slicing an array puts it on the
+  heap). Indexing, simple and full slice expressions on arrays, pointers
+  to arrays, slices and strings, `make`, `append` (also `s...` and
+  `[]byte` with `string...`), `copy` (also from strings), `clear`,
+  `range`, `len`, `cap`, and comparison with nil. When `append` must
+  grow, the new capacity is nondeterministic, as the spec does not fix
+  it. Element ranges are copied as by CBMC's `memcpy` model: with
+  `__CPROVER_array_copy` into a new array of the exact length and
+  `__CPROVER_array_replace`, without loops and independent of overlaps.
+  Elements that contain pointers (strings, slices, pointers, function
+  values) are copied one by one in a loop instead, because a byte-wise
+  copy would lose what the pointers point to. Allocations go through
+  `void *` with an element-sized `sizeof` annotation, as C's `malloc`,
+  so that goto-symex derives the array type and gives it a size variable
+  of its own.
+- Maps (`§Map_types`) are pointers to a header `{len, cap, keys *K, vals
+  *V}` on the heap (so map values share the map), nil as the null
+  pointer. Lookups (also `v, ok := m[k]`), assignments (with `op=` and
+  `++`), `delete`, `clear`, `len`, `make`, map literals and `range` search
+  the keys linearly with Go's `==`, so they need loop bounds of at least
+  the number of entries. `range` visits a snapshot of the keys in a
+  nondeterministic order, skipping keys deleted before they are reached;
+  entries added during the iteration are not visited, which the spec
+  allows.
 - Run-time panics, emitted by the converter as an assertion followed by
   an assumption because `goto_check_c` skips non-C modes. They cover
   integer division or remainder by zero (`division-by-zero`), negative
   signed shift counts (`negative-shift`), dereferences of nil pointers
   and calls of nil function values (`nil-dereference`), non-constant
-  array indices out of range (`index-out-of-range`), and `panic`
-  (`panic`).
+  array, slice and string indices out of range (`index-out-of-range`),
+  slice bounds out of range (`slice-bounds-out-of-range`), invalid `make`
+  sizes and slices growing beyond what `int` holds (`makeslice`),
+  assignments to entries of nil maps (`nil-map`), and `panic` (`panic`).
+  Checks also run in the runtime package (properties of
+  `go::cprover/rt.*`).
   CBMC's own semantics already match Go for `MinInt / -1`,
   `MinInt % -1`, and oversized shift counts.
 - Verification primitives from package `cprover`: `Assert`, `Assume`,
@@ -284,10 +326,27 @@ Known limitations:
   as unsupported.
 - The converter does not yet use `_impl`, because there are no type
   switches yet.
-- Values containing pointers or functions cannot be nondeterministic:
-  `cprover.Nondet` of such types and `--function` with such parameters
-  are reported. Modelling them needs a choice of nil or some variable
-  (or function) of the right type, including aliasing between them.
+- Values containing pointers, functions or maps cannot be
+  nondeterministic: `cprover.Nondet` of such types and `--function` with
+  such parameters are reported. Modelling them needs a choice of nil or
+  some variable (or function) of the right type, including aliasing
+  between them. `cprover.Nondet` supports strings and slices (of any
+  length, in a new underlying array; slices may be nil), also within
+  structs; `--function` does not support them yet.
+- **Strings and maps need loop bounds.** String comparisons, UTF-8
+  conversions and all map operations loop; `--unwind` must cover the
+  string lengths and map sizes, which `--unwinding-assertions` checks.
+- The string representation was chosen after studying the Python
+  front-end's iterations (branch `tautschnig/py`,
+  `doc/python-frontend-strings-plan.md` there): Python strings are code
+  point sequences, for which it ended up with CBMC's string refinement
+  (`--refine-strings`, default) and SMT-LIB `String` (opt-in, needing
+  cvc5 or z3, with fixed-width handles because variable-width values
+  must not appear in structs). Go strings are byte sequences with byte
+  indexing and shared substrings, which a pointer and a length over
+  ordinary arrays represent exactly, with the default SAT back end, and
+  inside structs, arrays, slices and maps. String refinement or SMT
+  strings could later speed up comparisons of long symbolic strings.
 - **Evaluation order.** Where `§Order_of_evaluation` leaves the order
   open (e.g., reading a variable relative to a call in the same
   expression), the converter picks one order, so a program whose
@@ -299,9 +358,9 @@ Known limitations:
   ..."). It always holds, because function values are only ever nil
   (checked first) or the address of a function of that type.
 - Not yet supported: type switches, `select`, `defer`, `recover`,
-  variadic functions, strings, floats, complex numbers, slices
-  (including slicing arrays), maps, `range` over other values, methods,
-  interfaces, generic functions and types, goroutines, and channels.
+  variadic functions (other than `append`), floats, complex numbers,
+  `range` over functions and channels, methods, interfaces, generic
+  functions and types, goroutines, and channels.
 
 The Makefile build of `cbmc` does not link the Python front-end that
 `cbmc_languages.cpp` registers (by inspection: no Makefile builds
@@ -332,7 +391,7 @@ section.
    (`§Index_expressions`), closures that capture variables
    (`§Function_literals`), and `§For_range` over integers, arrays and
    pointers to arrays.
-3. **Strings, slices and maps.** `§String_types` (immutable byte
+3. **Strings, slices and maps** (done). `§String_types` (immutable byte
    sequences, `len`, indexing, `§Slice_expressions`, `+`, comparisons,
    `§For_range` over strings with UTF-8 decoding), `§Slice_types` with
    `make`, `append` and `copy` (`§Appending_and_copying_slices`),
