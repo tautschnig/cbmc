@@ -323,23 +323,6 @@ exprt shell_convertert::expand_parameter_operator(
   return result;
 }
 
-exprt shell_convertert::expand_command_substitution(
-  const shell_word_partt &part,
-  code_blockt &dest)
-{
-  // The commands run in a subshell environment, so they cannot change
-  // this shell's state; their output is not modelled yet.
-  if(part.commands != nullptr && contains_verification_builtin(*part.commands))
-  {
-    unsupported(
-      part.location,
-      CPROVER_PREFIX "assert or " CPROVER_PREFIX
-                     "assume in a command substitution");
-  }
-  expanded_command_substitution = true;
-  return call(SHELL_RT_NONDET_STRING, {}, dest, part.location);
-}
-
 bool shell_convertert::has_side_effects(const shell_word_partt &part)
 {
   using kindt = shell_word_partt::kindt;
@@ -347,10 +330,11 @@ bool shell_convertert::has_side_effects(const shell_word_partt &part)
   {
   case kindt::LITERAL:
   case kindt::QUOTED_LITERAL:
-  case kindt::COMMAND_SUBSTITUTION:
     return false;
   case kindt::ARITHMETIC:
     // Assignments, and errors such as division by zero.
+  case kindt::COMMAND_SUBSTITUTION:
+    // The commands' properties, and the status of the substitution.
     return true;
   case kindt::DOUBLE_QUOTED:
     for(const auto &p : part.parts)
@@ -448,30 +432,4 @@ std::string shell_convertert::display(const shell_wordt &parts)
     }
   }
   return result;
-}
-
-bool shell_convertert::contains_verification_builtin(
-  const shell_command_listt &list)
-{
-  for(const auto &command : list)
-  {
-    if(!command.words.empty())
-    {
-      auto name = static_text(command.words.front());
-      if(name.has_value() && name->rfind(CPROVER_PREFIX, 0) == 0)
-        return true;
-    }
-    for(const auto *sub :
-        {&command.body, &command.condition, &command.else_body})
-    {
-      if(contains_verification_builtin(*sub))
-        return true;
-    }
-    for(const auto &item : command.case_items)
-    {
-      if(contains_verification_builtin(item.body))
-        return true;
-    }
-  }
-  return false;
 }

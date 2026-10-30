@@ -122,9 +122,6 @@ private:
   std::size_t temporary_count = 0;
   std::size_t label_count = 0;
   std::vector<shell_loop_labelst> loops;
-  /// Set while expanding a word when a command substitution is expanded,
-  /// which decides the status of a command without a command name.
-  bool expanded_command_substitution = false;
 
   /// Variables and special parameters that the script uses, for the
   /// initial state.
@@ -221,6 +218,7 @@ private:
       symbol.is_state_var = true;
       symbol.is_static_lifetime = true;
       symbol_table.add(symbol);
+      state_symbols.insert(identifier);
     }
     return symbol_table.lookup_ref(identifier).symbol_expr();
   }
@@ -527,7 +525,6 @@ private:
 
   static bool has_side_effects(const shell_word_partt &part);
   static bool has_side_effects(const shell_wordt &word);
-  static bool contains_verification_builtin(const shell_command_listt &list);
 
   /// The text of \p word if it has no expansions, after quote removal.
   static std::optional<std::string>
@@ -729,6 +726,38 @@ private:
 
   void convert_list(const shell_command_listt &list, code_blockt &dest);
   void convert_command(const shell_commandt &command, code_blockt &dest);
+  /// Convert \p command, ignoring a trailing &.
+  void convert_foreground(const shell_commandt &command, code_blockt &dest);
+
+  // ----------------------------------------------------------------
+  // Subshells (XCU 2.13)
+
+  struct subshellt
+  {
+    std::string identifier;
+    source_locationt location;
+  };
+  std::vector<subshellt> subshells;
+  /// Identifiers of all static-lifetime symbols of the shell state,
+  /// saved and restored around subshells.
+  std::set<std::string> state_symbols;
+  /// Run the code that \p convert produces in a subshell.
+  void run_in_subshell(
+    const source_locationt &loc,
+    code_blockt &dest,
+    const std::function<void(code_blockt &)> &convert);
+  void build_subshell_wrappers();
+  void convert_subshell(const shell_commandt &command, code_blockt &dest);
+  /// The status of the last command substitution of the current command.
+  symbol_exprt substitution_status()
+  {
+    return global_symbol("shell::substitution_status", "?", status_type());
+  }
+  /// Whether a command substitution ran in the current command.
+  symbol_exprt substitution_ran()
+  {
+    return global_symbol("shell::substitution_ran", "?", bool_typet{});
+  }
   void convert_compound(const shell_commandt &command, code_blockt &dest);
   void convert_simple(const shell_commandt &command, code_blockt &dest);
   void
@@ -795,7 +824,6 @@ private:
     const shell_commandt &command,
     shell_command_kindt kind,
     code_blockt &dest);
-  void check_pure_command(const shell_commandt &command);
 
   shell_command_kindt classify(const std::string &name) const;
   void check_parameter_name(const std::string &name, const source_locationt &);

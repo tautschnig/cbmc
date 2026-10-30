@@ -50,6 +50,8 @@ void shell_convertert::add_initialize()
 
   set_status(init, 0, loc);
   assign(init, exited(), false_exprt{}, loc);
+  assign(init, substitution_status(), from_integer(0, status_type()), loc);
+  assign(init, substitution_ran(), false_exprt{}, loc);
   // No functions are defined at the start: functions exported by bash in
   // the environment are not modelled (see the plan's assumptions).
   for(const auto &entry : function_definitions)
@@ -94,6 +96,7 @@ void shell_convertert::operator()()
   convert_list(program.commands, body);
   add_main(std::move(body));
   convert_function_bodies();
+  build_subshell_wrappers();
   add_initialize();
 }
 

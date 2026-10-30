@@ -138,12 +138,17 @@ void shell_convertert::convert_command(
   const shell_commandt &command,
   code_blockt &dest)
 {
-  using kindt = shell_commandt::kindt;
   if(command.background)
-  {
     convert_background(command, dest);
-    return;
-  }
+  else
+    convert_foreground(command, dest);
+}
+
+void shell_convertert::convert_foreground(
+  const shell_commandt &command,
+  code_blockt &dest)
+{
+  using kindt = shell_commandt::kindt;
   if(!command.redirects.empty() && command.kind != kindt::SIMPLE)
     unsupported(command.location, "redirection of a compound command");
 
@@ -208,7 +213,8 @@ void shell_convertert::convert_compound(
     convert_case(command, dest);
     return;
   case kindt::SUBSHELL:
-    unsupported(command.location, "subshell ( ... )");
+    convert_subshell(command, dest);
+    return;
   case kindt::FUNCTION_DEFINITION:
     convert_function_definition(command, dest);
     return;
@@ -608,81 +614,6 @@ void shell_convertert::with_redirections(
     loc);
 }
 
-/// Commands in pipelines and asynchronous lists run in subshells: they
-/// must not have effects that would wrongly be applied to this shell.
-void shell_convertert::check_pure_command(const shell_commandt &command)
-{
-  if(command.kind != shell_commandt::kindt::SIMPLE || command.words.empty())
-    unsupported(
-      command.location,
-      "pipeline or & with a command other than a "
-      "simple command");
-  auto name = static_text(command.words.front());
-  if(!name.has_value())
-    unsupported(command.location, "command name that is an expansion");
-  const shell_command_kindt kind = classify(*name);
-  if(
-    kind != shell_command_kindt::EXTERNAL &&
-    kind != shell_command_kindt::OUTPUT && kind != shell_command_kindt::TEST &&
-    kind != shell_command_kindt::BRACKET && kind != shell_command_kindt::TRUE &&
-    kind != shell_command_kindt::FALSE && kind != shell_command_kindt::COLON)
-  {
-    unsupported(command.location, "'" + *name + "' in a pipeline or with &");
-  }
-  for(const auto &word : command.words)
-  {
-    if(has_side_effects(word))
-      unsupported(
-        command.location,
-        "expansion with side effects in a "
-        "pipeline or with &");
-  }
-  for(const auto &assignment : command.assignments)
-  {
-    if(has_side_effects(assignment.value))
-      unsupported(
-        command.location,
-        "expansion with side effects in a "
-        "pipeline or with &");
-  }
-  check_redirections(command, kind);
-}
-
-/// The status of a pipeline is that of its last command (XCU 2.9.2); each
-/// command runs in a subshell environment.
-void shell_convertert::convert_pipeline(
-  const shell_commandt &command,
-  code_blockt &dest)
-{
-  for(const auto &element : command.body)
-  {
-    if(element.negated || element.background)
-      unsupported(element.location, "! or & inside a pipeline");
-    check_pure_command(element);
-  }
-  // The commands have no effects on this shell, so only the last one's
-  // status is computed.
-  shell_commandt last = command.body.back();
-  last.redirects.clear();
-  last.assignments.clear();
-  convert_simple(last, dest);
-}
-
-void shell_convertert::convert_background(
-  const shell_commandt &command,
-  code_blockt &dest)
-{
-  if(command.kind == shell_commandt::kindt::PIPELINE)
-  {
-    for(const auto &element : command.body)
-      check_pure_command(element);
-  }
-  else
-    check_pure_command(command);
-  // The status of an asynchronous list is zero (XCU 2.9.3.1).
-  set_status(dest, 0, command.location);
-}
-
 void shell_convertert::convert_assignments_only(
   const shell_commandt &command,
   code_blockt &dest)
@@ -690,7 +621,7 @@ void shell_convertert::convert_assignments_only(
   const source_locationt &loc = command.location;
   if(!command.redirects.empty())
     unsupported(loc, "redirection without a command name");
-  expanded_command_substitution = false;
+  assign(dest, substitution_ran(), false_exprt{}, loc);
   for(const auto &assignment : command.assignments)
   {
     const exprt value = expand_word(
@@ -702,10 +633,14 @@ void shell_convertert::convert_assignments_only(
   }
   // The status is that of the last command substitution, or zero
   // (XCU 2.9.1.3).
-  if(expanded_command_substitution)
-    nondet_status(dest, 255, loc);
-  else
-    set_status(dest, 0, loc);
+  assign(
+    dest,
+    status(),
+    if_exprt{
+      substitution_ran(),
+      substitution_status(),
+      from_integer(0, status_type())},
+    loc);
 }
 
 void shell_convertert::convert_simple(

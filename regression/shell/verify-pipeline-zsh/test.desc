@@ -1,0 +1,10 @@
+CORE
+main.zsh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+zsh runs the last command of a pipeline in the current shell.
