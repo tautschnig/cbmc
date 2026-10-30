@@ -34,6 +34,8 @@
 //	"_impl" id of an implicitly declared object (e.g. per-clause type-switch
 //	        variables, types.Info.Implicits)
 //	"_sb"   for string constants, their bytes
+//	"_fb"   for constants of floating-point type, the IEEE 754 bits of the
+//	        value rounded to the type; "_fbr"/"_fbi" for complex types
 //
 // The last entry of "files" and "asts" is the front-end's runtime package
 // "cprover/rt" (runtime/rt.go), whose objects have ids "cprover/rt.<name>".
@@ -50,10 +52,12 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -337,6 +341,7 @@ func (e *encoder) node(n ast.Node) any {
 			if tv.Value != nil {
 				out["_cv"] = tv.Value.ExactString()
 				out["_cvk"] = constKinds[tv.Value.Kind()]
+				e.floatConstant(out, tv)
 				if tv.Value.Kind() == constant.String {
 					// The exact bytes (Go strings need not be valid UTF-8).
 					sb := []int{}
@@ -384,6 +389,43 @@ func (e *encoder) node(n ast.Node) any {
 		}
 	}
 	return out
+}
+
+// floatConstant records constants of floating-point and complex types as
+// the IEEE 754 bits of their value rounded to the type ("_fb", or "_fbr"
+// and "_fbi" for the parts of complex values), and constants of integer
+// types given by floating-point constants (e.g. 1e3) as integers. Go1.27
+// §Constants: numeric constants are exact; §Representability: a constant
+// of floating-point type is rounded to that type's precision.
+func (e *encoder) floatConstant(out map[string]any, tv types.TypeAndValue) {
+	basic, ok := tv.Type.Underlying().(*types.Basic)
+	if !ok || tv.Value.Kind() == constant.Bool ||
+		tv.Value.Kind() == constant.String {
+		return
+	}
+	bits := func(v constant.Value, single bool) string {
+		if single {
+			f, _ := constant.Float32Val(constant.ToFloat(v))
+			return strconv.FormatUint(uint64(math.Float32bits(f)), 10)
+		}
+		f, _ := constant.Float64Val(constant.ToFloat(v))
+		return strconv.FormatUint(math.Float64bits(f), 10)
+	}
+	switch {
+	case basic.Info()&types.IsInteger != 0 &&
+		tv.Value.Kind() != constant.Int:
+		out["_cv"] = constant.ToInt(tv.Value).ExactString()
+		out["_cvk"] = "int"
+	case basic.Info()&types.IsFloat != 0:
+		out["_fb"] = bits(tv.Value, basic.Kind() == types.Float32)
+		out["_cvk"] = "float"
+	case basic.Info()&types.IsComplex != 0:
+		single := basic.Kind() == types.Complex64
+		v := constant.ToComplex(tv.Value)
+		out["_fbr"] = bits(constant.Real(v), single)
+		out["_fbi"] = bits(constant.Imag(v), single)
+		out["_cvk"] = "complex"
+	}
 }
 
 func (e *encoder) value(f reflect.Value) any {

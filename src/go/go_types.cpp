@@ -15,6 +15,7 @@ Author: Michael Tautschnig
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
 #include <util/config.h>
+#include <util/ieee_float.h>
 #include <util/pointer_expr.h>
 #include <util/std_types.h>
 #include <util/symbol_table_base.h>
@@ -97,6 +98,19 @@ typet go_type_convertert::basic(const irep_idt &kind)
     return unsignedbv_typet{config.go.uintptr_width};
   if(kind == "string" || kind == "untyped string")
     return string_type();
+  // Go1.27 §Numeric_types: "float32 the set of all IEEE 754 32-bit
+  // floating-point numbers", "float64 the set of all IEEE 754 64-bit
+  // floating-point numbers", "complex64 the set of all complex numbers with
+  // float32 real and imaginary parts", complex128 with float64 parts.
+  // Untyped constants default to float64 and complex128 (§Constants).
+  if(kind == "float32")
+    return ieee_float_spect::single_precision().to_type();
+  if(kind == "float64" || kind == "untyped float")
+    return ieee_float_spect::double_precision().to_type();
+  if(kind == "complex64")
+    return complex_type(ieee_float_spect::single_precision().to_type());
+  if(kind == "complex128" || kind == "untyped complex")
+    return complex_type(ieee_float_spect::double_precision().to_type());
 
   unsupported_reason = "type " + id2string(kind);
   return typet{ID_nil};
@@ -364,4 +378,13 @@ pointer_typet go_type_convertert::map_type(const typet &key, const typet &value)
   struct_typet header{std::move(components)};
   header.set(ID_C_go_map, true);
   return pointer_typet{std::move(header), config.ansi_c.pointer_width};
+}
+
+struct_typet go_type_convertert::complex_type(const typet &part)
+{
+  // A struct rather than CBMC's complex type, whose lowering
+  // (remove_complex) does not cover function types.
+  struct_typet result{{{"real", part}, {"imag", part}}};
+  result.set(ID_C_go_complex, true);
+  return result;
 }

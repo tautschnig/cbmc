@@ -818,6 +818,19 @@ void go_convertert::convert_package_init(
 
 bool go_convertert::operator()()
 {
+  // As for C, CBMC's floating-point passes (adjust_float_expressions) read
+  // the rounding mode from __CPROVER_rounding_mode. Go always rounds to
+  // nearest, ties to even (Go1.27 §Numeric_types: IEEE 754 types).
+  if(!symbol_table.has_symbol(CPROVER_PREFIX "rounding_mode"))
+  {
+    symbolt rounding{CPROVER_PREFIX "rounding_mode", signed_int_type(), "go"};
+    rounding.base_name = CPROVER_PREFIX "rounding_mode";
+    rounding.is_static_lifetime = true;
+    rounding.is_lvalue = true;
+    rounding.is_thread_local = true;
+    rounding.value = from_integer(0, signed_int_type()); // ROUND_TO_EVEN
+    symbol_table.add(rounding);
+  }
   // As for C (cprover.h), goto-symex accesses memory at integer addresses
   // through __CPROVER_memory, e.g., when a pointer derived from nil is
   // dereferenced on a path that is not feasible.
@@ -1280,8 +1293,15 @@ void go_convertert::convert_inc_dec(const irept &stmt, code_blockt &dest)
   for(auto &code : parts.checks.statements())
     dest.add(std::move(code));
   const exprt one = from_integer(1, target.type());
-  exprt value = stmt.get("Tok") == "++" ? exprt{plus_exprt{target, one}}
-                                        : exprt{minus_exprt{target, one}};
+  exprt value = convert_arithmetic(
+    stmt.get("Tok") == "++" ? "+" : "-",
+    target,
+    one,
+    stmt,
+    target.type(),
+    location_of(stmt));
+  if(value.is_nil())
+    return;
   code_frontend_assignt assign{target, value};
   assign.add_source_location() = location_of(stmt);
   dest.add(std::move(assign));
@@ -2175,6 +2195,12 @@ exprt go_convertert::convert_conversion(const irept &call)
   exprt result = convert_string_conversion(value, type, call);
   if(result.is_not_nil())
     return result;
+  if(is_float_like(type) || is_float_like(value.type()))
+  {
+    result = numeric_conversion(value, type, location_of(call));
+    if(result.is_not_nil())
+      return result;
+  }
   result = convert_composite(value, type, ns);
   if(result.is_nil())
   {
@@ -2203,9 +2229,10 @@ exprt go_convertert::convert_min_max(const irept &call, bool is_min)
   typet type = expr_type(call);
   if(type.is_nil())
     return nil_exprt{};
-  if(type.id() != ID_signedbv && type.id() != ID_unsignedbv)
+  const bool is_float = type.id() == ID_floatbv;
+  if(type.id() != ID_signedbv && type.id() != ID_unsignedbv && !is_float)
   {
-    unsupported(call, "min/max on non-integer operands");
+    unsupported(call, "min/max on non-numeric operands");
     return nil_exprt{};
   }
   exprt result = nil_exprt{};
@@ -2224,10 +2251,15 @@ exprt go_convertert::convert_min_max(const irept &call, bool is_min)
       result = value;
     else
     {
-      const exprt keep = is_min
-                           ? exprt{binary_relation_exprt{result, ID_le, value}}
-                           : exprt{binary_relation_exprt{result, ID_ge, value}};
-      result = if_exprt{keep, result, value};
+      if(is_float)
+        result = float_min_max(result, value, is_min);
+      else
+      {
+        const exprt keep =
+          is_min ? exprt{binary_relation_exprt{result, ID_le, value}}
+                 : exprt{binary_relation_exprt{result, ID_ge, value}};
+        result = if_exprt{keep, result, value};
+      }
     }
   }
   return result;
@@ -2252,6 +2284,8 @@ exprt go_convertert::convert_call(const irept &call)
     return convert_min_max(call, callee == "min");
   if(callee == "new")
     return convert_new(call);
+  if(callee == "complex" || callee == "real" || callee == "imag")
+    return convert_complex_builtin(call, callee);
   if(callee == "len" || callee == "cap")
     return convert_len(call);
   if(callee == "make")
@@ -2563,6 +2597,8 @@ exprt go_convertert::convert_constant(const irept &expr, const typet &type)
   else if(
     kind == "int" && (type.id() == ID_signedbv || type.id() == ID_unsignedbv))
     result = from_integer(string2integer(value), type);
+  else if(is_float_like(type))
+    result = float_constant(expr, type);
   else if(kind == "string" && is_go_string(type))
   {
     // Go1.27 §String_literals; the helper records the exact bytes.
@@ -2634,6 +2670,33 @@ exprt go_convertert::convert_comparison(
     if(op == "!=" || op == ">=" || op == "<=")
       result = not_exprt{result};
     return at_location(std::move(result), location);
+  }
+  if(is_float_like(type))
+  {
+    // Go1.27 §Comparison_operators: "Floating-point types are comparable
+    // and ordered. Two floating-point values are compared as defined by the
+    // IEEE 754 standard." Complex types are comparable but not ordered.
+    y = go_cast(y, x.type());
+    exprt result;
+    if(op == "==" || op == "!=")
+    {
+      code_blockt prefix;
+      if(is_go_complex(type))
+      {
+        x = evaluate_once(x, location, prefix);
+        y = evaluate_once(y, location, prefix);
+      }
+      result = float_equality(x, y);
+      if(op == "!=")
+        result = not_exprt{result};
+      return with_prefix(
+        at_location(std::move(result), location), prefix, location);
+    }
+    const irep_idt rel = op == "<"    ? ID_lt
+                         : op == "<=" ? ID_le
+                         : op == ">"  ? ID_gt
+                                      : ID_ge;
+    return at_location(binary_relation_exprt{x, rel, y}, location);
   }
   if(op == "==" || op == "!=")
   {
@@ -2709,6 +2772,8 @@ static bool has_blank_fields(const typet &type, const namespacet &ns)
   const typet &followed = go_follow(ns, type);
   if(followed.id() == ID_c_bool)
     return true; // booleans are compared as conditions
+  if(followed.id() == ID_floatbv || is_go_complex(followed))
+    return true; // IEEE 754 comparison: -0 == +0, NaN != NaN
   if(is_go_string(followed))
     return true; // strings are compared by contents, not representation
   if(followed.id() == ID_array)
@@ -2798,6 +2863,8 @@ exprt go_convertert::equality(
   }
   if(type.id() == ID_c_bool || type.id() == ID_bool)
     return equal_exprt{as_condition(x), as_condition(y)};
+  if(is_float_like(type))
+    return float_equality(x, y);
   if(type.id() == ID_signedbv || type.id() == ID_unsignedbv)
     return equal_exprt{x, y};
   unsupported(where, "comparison of type " + x.type().get_string(ID_C_go_type));
@@ -2814,8 +2881,25 @@ exprt go_convertert::convert_unary(const irept &expr)
   exprt result;
   if(op == "+")
     return x;
+  else if(op == "-" && is_go_complex(x.type()))
+  {
+    // Go1.27 §Floating_point_operators: "For floating-point and complex
+    // numbers, +x is the same as x, while -x is the negation of x."
+    code_blockt block;
+    const source_locationt location = location_of(expr);
+    x = evaluate_once(x, location, block);
+    const auto &parts = to_struct_type(x.type()).components();
+    return with_prefix(
+      struct_exprt{
+        {unary_minus_exprt{member_exprt{x, parts[0]}},
+         unary_minus_exprt{member_exprt{x, parts[1]}}},
+        x.type()},
+      block,
+      location);
+  }
   else if(op == "-")
-    result = unary_minus_exprt{x}; // "0 - x" for unsigned: wraps
+    result = unary_minus_exprt{x}; // "0 - x" for unsigned: wraps; floats:
+                                   // negation
   else if(op == "^")
     result = bitnot_exprt{x}; // Go1.27: "bitwise complement"
   else if(op == "!")
@@ -2874,6 +2958,8 @@ exprt go_convertert::convert_arithmetic(
   // operator or the += assignment operator".
   if(is_go_string(type) && op == "+")
     return string_concat(go_cast(x, type), go_cast(y, type), location);
+  if(is_float_like(type))
+    return float_arithmetic(op, x, y, type, location);
   // Only integers so far.
   if(type.id() != ID_signedbv && type.id() != ID_unsignedbv)
   {

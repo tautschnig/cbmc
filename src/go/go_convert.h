@@ -341,6 +341,29 @@ private:
     code_blockt &dest,
     const irep_idt &label_object);
 
+  // Floating-point and complex numbers (go_floats.cpp)
+  static bool is_float_like(const typet &type);
+  /// The constant \p expr of floating-point or complex type \p type.
+  exprt float_constant(const irept &expr, const typet &type);
+  exprt float_arithmetic(
+    const irep_idt &op,
+    exprt x,
+    exprt y,
+    const typet &type,
+    const source_locationt &location);
+  /// \p z rounded to the complex type \p type.
+  exprt convert_complex(const exprt &z, const typet &type);
+  /// == on floating-point or complex values (IEEE 754 comparison).
+  static exprt float_equality(const exprt &x, const exprt &y);
+  /// Conversions involving floating-point values; nil for other types.
+  exprt numeric_conversion(
+    const exprt &value,
+    const typet &type,
+    const source_locationt &location);
+  /// min(x, y) or max(x, y) of floating-point values without side effects.
+  static exprt float_min_max(const exprt &x, const exprt &y, bool is_min);
+  exprt convert_complex_builtin(const irept &call, const irep_idt &callee);
+
   // Expressions
   exprt convert_expr(const irept &expr);
   exprt convert_composite_lit(const irept &lit);

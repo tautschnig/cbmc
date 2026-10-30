@@ -35,6 +35,8 @@ class symbol_table_baset;
 #define ID_C_go_slice "#go_slice"
 /// Name of the comment marking the header struct of maps.
 #define ID_C_go_map "#go_map"
+/// Name of the comment marking the struct that represents a complex number.
+#define ID_C_go_complex "#go_complex"
 
 /// True if \p type holds the values of a multi-valued expression (see
 /// go_type_convertert::tuple).
@@ -60,6 +62,13 @@ inline bool is_go_string(const typet &type)
 inline bool is_go_slice(const typet &type)
 {
   return type.id() == ID_struct && type.get_bool(ID_C_go_slice);
+}
+
+/// True if \p type is that of complex numbers (see
+/// go_type_convertert::complex_type).
+inline bool is_go_complex(const typet &type)
+{
+  return type.id() == ID_struct && type.get_bool(ID_C_go_complex);
 }
 
 /// True if \p type is that of maps (see go_type_convertert::map_type).
@@ -127,6 +136,10 @@ public:
   /// `{len int, cap int, keys *K, vals *V}` (go_maps.cpp). Go1.27
   /// §Map_types: "The value of an uninitialized map is nil."
   static pointer_typet map_type(const typet &key, const typet &value);
+
+  /// The type of complex numbers with parts of floating-point type \p part:
+  /// `{real, imag}`.
+  static struct_typet complex_type(const typet &part);
 
   /// For a nil result of operator(): a description of what is unsupported.
   std::string unsupported_reason;

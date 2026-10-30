@@ -137,3 +137,92 @@ func RunesToString(runes []rune) string {
 	}
 	return s
 }
+
+// Floating-point helpers for ComplexDiv.
+
+func isNaN(f float64) bool { return f != f }
+
+func isInf(f float64) bool { return f > maxFloat64 || f < -maxFloat64 }
+
+func isFinite(f float64) bool { return !isNaN(f) && !isInf(f) }
+
+const maxFloat64 = 0x1p1023 * (1 + (1 - 0x1p-52))
+
+// posInf returns +Inf. (The runtime package has no package-level variables:
+// only the program's are initialised.)
+func posInf() float64 {
+	zero := 0.0
+	return 1 / zero
+}
+
+// signBit reports whether f is negative, -0 included (NaN signs do not
+// matter here).
+func signBit(f float64) bool { return f < 0 || (f == 0 && 1/f < 0) }
+
+// copySign returns x with the sign of y.
+func copySign(x, y float64) float64 {
+	if signBit(x) != signBit(y) {
+		return -x
+	}
+	return x
+}
+
+func abs(f float64) float64 {
+	if signBit(f) {
+		return -f
+	}
+	return f
+}
+
+// infToOne returns a signed 1 for an infinity and a signed 0 otherwise,
+// with the sign of f.
+func infToOne(f float64) float64 {
+	g := 0.0
+	if isInf(f) {
+		g = 1.0
+	}
+	return copySign(g, f)
+}
+
+// ComplexDiv returns n/m. Go1.27 §Arithmetic_operators: "The result of a
+// floating-point or complex division by zero is not specified beyond the
+// IEEE 754 standard". The specification does not fix the algorithm; this
+// one gives the results of gc, the reference implementation, which divides
+// complex64 values as complex128 values: Smith's algorithm (Robert L.
+// Smith, Algorithm 116: Complex division, Commun. ACM 5(8):435, 1962),
+// with results that are NaN in both parts corrected to infinities and
+// zeros as in C99 (ISO/IEC 9899:1999 G.5.1).
+func ComplexDiv(n, m complex128) complex128 {
+	a, b := real(n), imag(n)
+	c, d := real(m), imag(m)
+	var e, f float64
+	if abs(c) >= abs(d) {
+		ratio := d / c
+		denom := c + ratio*d
+		e = (a + b*ratio) / denom
+		f = (b - a*ratio) / denom
+	} else {
+		ratio := c / d
+		denom := d + ratio*c
+		e = (a*ratio + b) / denom
+		f = (b*ratio - a) / denom
+	}
+	if isNaN(e) && isNaN(f) {
+		switch {
+		case m == 0 && (!isNaN(a) || !isNaN(b)):
+			e = copySign(posInf(), c) * a
+			f = copySign(posInf(), c) * b
+		case (isInf(a) || isInf(b)) && isFinite(c) && isFinite(d):
+			a = infToOne(a)
+			b = infToOne(b)
+			e = posInf() * (a*c + b*d)
+			f = posInf() * (b*c - a*d)
+		case (isInf(c) || isInf(d)) && isFinite(a) && isFinite(b):
+			c = infToOne(c)
+			d = infToOne(d)
+			e = 0 * (a*c + b*d)
+			f = 0 * (b*c - a*d)
+		}
+	}
+	return complex(e, f)
+}
