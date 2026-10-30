@@ -172,21 +172,22 @@ The helper supplies the stdlib *signatures*; the models supply the
 
 ## 5. Status
 
-The first end-to-end slice and phase 1 of §6 are done. The code is in
+The first end-to-end slice and phases 1 and 2 of §6 are done. The code is in
 `src/go/`, the tests are in `regression/go/`.
 
 | Part | Files | Role |
 |---|---|---|
 | Helper | `helper/main.go`, `helper/cprover/` | `go/parser` + `go/types` → typed JSON (schema version 1). Type-switch bindings (`_impl`, from `types.Info.Implicits`), receiver-qualified method ids and file-qualified positions are emitted. |
 | Go AST | `go_parse_tree.{h,cpp}` | In-memory `irept` tree loaded from the JSON. The converter reads only this tree (§4.3). |
-| Types | `go_types.{h,cpp}` | `go/types` type table → `typet`. `int`/`uint`/`uintptr` come from `config.go`. Function values are pointers to code; several results are returned as one struct marked `#go_tuple`, with components `$0`, `$1`, ... |
+| Types | `go_types.{h,cpp}` | `go/types` type table → `typet`. `int`/`uint`/`uintptr` come from `config.go`. Named struct types become struct tags (type symbols named like objects, e.g. `go::main.Node`), so recursion through pointers is finite; other named types are their underlying type. Blank fields are kept under the names `_$N`. Function values are structs `{code, env}` marked `#go_func_value` (see below); several results are returned as one struct marked `#go_tuple`, with components `$0`, `$1`, ... |
 | Converter | `go_convert.{h,cpp}` | Go AST → symbol table and code. Constructs outside the slice are reported as errors, never dropped. |
 | Language | `go_language.{h,cpp}`, `expr2go.{h,cpp}` | `languaget` for `.go` files: runs the helper, sets the target GOARCH from `--arch`/`--32`/`--64`, builds the entry point. |
 
 Supported so far:
 
-- Types: integer and boolean types; untyped constants with their final
-  types from `go/types`, folded exactly.
+- Types: integer and boolean types, pointers, arrays, structs
+  (including embedded fields), and function types; untyped constants
+  with their final types from `go/types`, folded exactly.
 - Declarations: package-level variables initialised in
   `types.Info.InitOrder`, then `init` functions in source order
   (`§Package_initialization`), then `main.main` (`§Program_execution`)
@@ -197,19 +198,45 @@ Supported so far:
   tag, including `fallthrough` (as a chain of conditional jumps, which
   keeps Go's evaluation order of non-constant case expressions),
   labelled statements, `break` and `continue` with or without a label,
-  `goto`, `return`, assignments (two-phase, `op=`, `++`/`--`, `:=`, blank
-  identifier).
-- Function values: declared functions and function literals that do not
-  capture variables (lifted to functions named `<enclosing>$lit<N>`),
-  calls through function values, and comparison with `nil`.
+  `goto`, `return`, assignments (two-phase, with the operands on the
+  left evaluated first and each target's checks performed at its
+  assignment; `op=` and `++`/`--` evaluate the target once; `:=`, blank
+  identifier), and `for range` over integers, arrays (copied) and
+  pointers to arrays, with per-iteration variables.
+- Function values: declared functions and function literals, including
+  closures. A function value is a pair of a code pointer and an
+  environment pointer; the code takes the environment as a hidden first
+  parameter `$env`. Literals are lifted to functions named
+  `<enclosing>$lit<N>`, and declared functions used as values get an
+  adapter `<f>$value` that ignores the environment. A closure's
+  environment is a new heap struct of pointers to the variables it
+  captures. Calls through function values, and comparison with `nil`.
+- Variables that outlive their function (`§Variables`): local variables
+  whose address is taken (`&x`, `&x.f`, `&x[i]` for an array `x`) or
+  that a function literal captures are allocated on the heap
+  (`ALLOCATE`) at each execution of their declaration, as gc does after
+  escape analysis; uses go through the pointer `x$ptr`. Loop variables
+  of a `for` clause get a new variable per iteration (`§For_clause`,
+  [Go 1.22]) when they live on the heap; otherwise the difference is not
+  observable.
+- Pointers and composite values: `&x`, `*p`, `new(T)` and `new(x)`,
+  field selectors with implicit dereferences along embedded-field paths
+  (`_sel` from the helper), indexing of arrays and pointers to arrays,
+  struct and array composite literals (keys, promoted-field keys
+  [Go 1.27], `[...]`, elided types and elided `&T`), `&T{...}`, `len` and
+  `cap` of arrays, value semantics of struct and array assignment,
+  equality of pointers, structs (ignoring blank fields) and arrays, and
+  conversions between types with identical underlying types.
 - Expressions: integer unary and binary operators with Go's wrap-around
   (`§Integer_overflow`), comparisons, `&&`/`||` short-circuiting,
   conversions between integer types, `min`/`max`, `panic`, `print`.
 - Run-time panics, emitted by the converter as an assertion followed by
   an assumption because `goto_check_c` skips non-C modes. They cover
   integer division or remainder by zero (`division-by-zero`), negative
-  signed shift counts (`negative-shift`), calls of a nil function value
-  (`nil-dereference`), and `panic` (`panic`).
+  signed shift counts (`negative-shift`), dereferences of nil pointers
+  and calls of nil function values (`nil-dereference`), non-constant
+  array indices out of range (`index-out-of-range`), and `panic`
+  (`panic`).
   CBMC's own semantics already match Go for `MinInt / -1`,
   `MinInt % -1`, and oversized shift counts.
 - Verification primitives from package `cprover`: `Assert`, `Assume`,
@@ -257,18 +284,24 @@ Known limitations:
   as unsupported.
 - The converter does not yet use `_impl`, because there are no type
   switches yet.
-- Function values cannot be nondeterministic: `cprover.Nondet` of a
-  function type and `--function` with function-typed parameters are
-  reported. Modelling them needs a choice among the program's functions
-  of that type, or nil.
+- Values containing pointers or functions cannot be nondeterministic:
+  `cprover.Nondet` of such types and `--function` with such parameters
+  are reported. Modelling them needs a choice of nil or some variable
+  (or function) of the right type, including aliasing between them.
+- **Evaluation order.** Where `§Order_of_evaluation` leaves the order
+  open (e.g., reading a variable relative to a call in the same
+  expression), the converter picks one order, so a program whose
+  correctness depends on that order is only verified for that one.
+- Pointers to distinct zero-size variables compare equal
+  nondeterministically (if neither is nil), as the spec allows.
 - Function-pointer removal adds a `pointer_dereference` property per call
   through a function value ("dereferenced function pointer must be
   ..."). It always holds, because function values are only ever nil
   (checked first) or the address of a function of that type.
 - Not yet supported: type switches, `select`, `defer`, `recover`,
-  variadic functions, strings, floats, complex numbers, pointers, arrays,
-  slices, maps, structs, methods, interfaces, closures that capture
-  variables, generics beyond `cprover.Nondet`, goroutines, and channels.
+  variadic functions, strings, floats, complex numbers, slices
+  (including slicing arrays), maps, `range` over other values, methods,
+  interfaces, generic functions and types, goroutines, and channels.
 
 The Makefile build of `cbmc` does not link the Python front-end that
 `cbmc_languages.cpp` registers (by inspection: no Makefile builds
@@ -291,12 +324,14 @@ section.
    `§Function_literals` without captures. Closures that capture
    variables need variables that outlive their function, so they move
    to phase 2, together with pointers.
-2. **Composite value types.** `§Array_types`, `§Struct_types` (including
-   embedded fields and promotion, using the helper's `_sel` paths),
-   `§Pointer_types` with nil-dereference panics, `§Address_operators`,
-   `§Composite_literals`, `§Comparison_operators` for arrays and structs,
-   index-out-of-range panics (`§Index_expressions`), and closures that
-   capture variables (`§Function_literals`).
+2. **Composite value types** (done). `§Array_types`, `§Struct_types`
+   (including embedded fields and promotion, using the helper's `_sel`
+   paths), `§Pointer_types` with nil-dereference panics,
+   `§Address_operators`, `§Composite_literals`, `§Comparison_operators`
+   for arrays and structs, index-out-of-range panics
+   (`§Index_expressions`), closures that capture variables
+   (`§Function_literals`), and `§For_range` over integers, arrays and
+   pointers to arrays.
 3. **Strings, slices and maps.** `§String_types` (immutable byte
    sequences, `len`, indexing, `§Slice_expressions`, `+`, comparisons,
    `§For_range` over strings with UTF-8 decoding), `§Slice_types` with
