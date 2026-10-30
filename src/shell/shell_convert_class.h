@@ -29,6 +29,7 @@
 
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 
@@ -71,6 +72,8 @@ enum class shell_command_kindt
   SHIFT,
   SET,
   RETURN,
+  EXEC,
+  DOT,
   ASSERT,
   ASSUME,
   /// echo and printf: output only; their status is nondeterministic, as
@@ -593,6 +596,25 @@ private:
     const source_locationt &loc);
 
   // ----------------------------------------------------------------
+  // Dot scripts (XCU 2.15 dot)
+
+  /// The dot scripts with literal absolute paths, by path; null if the
+  /// file does not exist.
+  std::map<std::string, std::unique_ptr<shell_programt>> dot_scripts;
+  /// Whether a dot script's body is being converted.
+  bool in_dot_script = false;
+  std::optional<std::string>
+  dot_script_path(const shell_commandt &command) const;
+  bool is_dot_command(const std::string &name) const;
+  void collect_dot_scripts(const shell_command_listt &list);
+  void collect_dot_scripts(const shell_word_partt &part);
+  void load_dot_script(const std::string &path, const source_locationt &loc);
+  static std::string dot_identifier(const std::string &path);
+  void declare_dot_scripts();
+  void convert_dot_scripts();
+  void convert_dot(const shell_commandt &command, code_blockt &dest);
+
+  // ----------------------------------------------------------------
   // Patterns (XCU 2.14)
 
   /// Prefixes of the matcher functions, by pattern signature.
@@ -836,6 +858,7 @@ private:
     bool assertion,
     code_blockt &dest);
   void convert_exit(const shell_commandt &command, code_blockt &dest);
+  void convert_exec(const shell_commandt &command, code_blockt &dest);
   /// Leave the shell with the current status, or a nondeterministic
   /// non-zero status if \p failure, as after an error that makes a
   /// non-interactive shell exit (XCU 2.8.1).

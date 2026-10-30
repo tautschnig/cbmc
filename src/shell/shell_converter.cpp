@@ -93,14 +93,25 @@ void shell_convertert::add_initialize()
 
 void shell_convertert::operator()()
 {
+  collect_dot_scripts(program.commands);
   collect_function_definitions(program.commands);
   collect_options(program.commands);
+  for(const auto &dot : dot_scripts)
+  {
+    if(dot.second != nullptr)
+    {
+      collect_function_definitions(dot.second->commands);
+      collect_options(dot.second->commands);
+    }
+  }
   nounset_possible = option_possible("nounset");
   declare_functions();
+  declare_dot_scripts();
   code_blockt body;
   convert_list(program.commands, body);
   add_main(std::move(body));
   convert_function_bodies();
+  convert_dot_scripts();
   build_subshell_wrappers();
   add_initialize();
 }

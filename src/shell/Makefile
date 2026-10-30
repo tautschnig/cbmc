@@ -2,6 +2,7 @@ SRC = shell_arith.cpp \
       shell_ast.cpp \
       shell_convert_arith.cpp \
       shell_convert_commands.cpp \
+      shell_convert_dot.cpp \
       shell_convert_functions.cpp \
       shell_convert_options.cpp \
       shell_convert_params.cpp \
@@ -14,6 +15,7 @@ SRC = shell_arith.cpp \
       shell_language.cpp \
       shell_pattern.cpp \
       shell_runtime.cpp \
+      shfmt_parser.cpp \
       shfmt_reader.cpp \
       # Empty last line
 

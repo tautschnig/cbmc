@@ -3,7 +3,7 @@ main.sh
 
 ^EXIT=6$
 ^SIGNAL=0$
-^file main.sh line 2 column 1: unsupported shell construct: return outside a function$
+^file main.sh line 2 column 1: unsupported shell construct: return outside a function or dot script$
 ^CONVERSION ERROR$
 --
 ^VERIFICATION

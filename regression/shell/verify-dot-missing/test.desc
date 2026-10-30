@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^file main.sh line 2 column 1: dot script /nonexistent/cbmc-shell-test.sh does not exist here; it is assumed not to exist when the script runs$
+^VERIFICATION SUCCESSFUL$
+--
+--
+A dot script that does not exist is an error of a special builtin, which
+makes dash exit (XCU 2.8.1). Dot scripts are read when the script is
+converted, assuming the same files exist when it runs.

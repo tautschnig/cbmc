@@ -238,10 +238,10 @@ void shell_convertert::convert_return(
   code_blockt &dest)
 {
   const source_locationt &loc = command.location;
-  if(!in_function)
+  if(!in_function && !in_dot_script)
   {
     // dash exits; bash reports an error and continues.
-    unsupported(loc, "return outside a function");
+    unsupported(loc, "return outside a function or dot script");
   }
   if(command.words.size() > 2)
     unsupported(loc, "return with several operands");

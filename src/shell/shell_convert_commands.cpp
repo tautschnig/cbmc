@@ -22,6 +22,8 @@ shell_command_kindt shell_convertert::classify(const std::string &name) const
     {"shift", shell_command_kindt::SHIFT},
     {"set", shell_command_kindt::SET},
     {"return", shell_command_kindt::RETURN},
+    {"exec", shell_command_kindt::EXEC},
+    {".", shell_command_kindt::DOT},
     {CPROVER_PREFIX "assert", shell_command_kindt::ASSERT},
     {CPROVER_PREFIX "assume", shell_command_kindt::ASSUME},
     {"echo", shell_command_kindt::OUTPUT},
@@ -29,18 +31,20 @@ shell_command_kindt shell_convertert::classify(const std::string &name) const
   // Builtins that change the shell environment (XCU 2.15 special
   // builtins, regular builtins of XCU 1.7, and common extensions).
   static const std::set<std::string> unsupported_builtins{
-    ".",        "eval",    "exec",      "readonly", "times",     "trap",
-    "cd",       "read",    "getopts",   "alias",    "unalias",   "umask",
-    "wait",     "jobs",    "fg",        "bg",       "command",   "type",
-    "hash",     "kill",    "ulimit",    "fc",       "newgrp",    "local",
-    "declare",  "typeset", "source",    "let",      "shopt",     "builtin",
-    "enable",   "mapfile", "readarray", "pushd",    "popd",      "dirs",
-    "disown",   "suspend", "logout",    "nameref",  "autoload",  "setopt",
-    "unsetopt", "emulate", "print",     "whence",   "functions", "zmodload",
-    "caller",   "compgen", "complete"};
+    "eval",      "readonly", "times",     "trap",     "cd",       "read",
+    "getopts",   "alias",    "unalias",   "umask",    "wait",     "jobs",
+    "fg",        "bg",       "command",   "type",     "hash",     "kill",
+    "ulimit",    "fc",       "newgrp",    "local",    "declare",  "typeset",
+    "source",    "let",      "shopt",     "builtin",  "enable",   "mapfile",
+    "readarray", "pushd",    "popd",      "dirs",     "disown",   "suspend",
+    "logout",    "nameref",  "autoload",  "setopt",   "unsetopt", "emulate",
+    "print",     "whence",   "functions", "zmodload", "caller",   "compgen",
+    "complete"};
   const auto it = builtins.find(name);
   if(it != builtins.end())
     return it->second;
+  if(name == "source" && program.dialect != shell_dialectt::POSIX)
+    return shell_command_kindt::DOT;
   if(unsupported_builtins.count(name) != 0)
     return shell_command_kindt::UNSUPPORTED_BUILTIN;
   if(name.rfind(CPROVER_PREFIX, 0) == 0)
@@ -744,7 +748,8 @@ void shell_convertert::convert_non_function(
     kind == shell_command_kindt::BREAK ||
     kind == shell_command_kindt::CONTINUE ||
     kind == shell_command_kindt::SHIFT || kind == shell_command_kindt::SET ||
-    kind == shell_command_kindt::RETURN;
+    kind == shell_command_kindt::RETURN || kind == shell_command_kindt::EXEC ||
+    kind == shell_command_kindt::DOT;
   with_redirections(
     command,
     special,
@@ -769,7 +774,8 @@ void shell_convertert::convert_builtin(
     kind == shell_command_kindt::BREAK ||
     kind == shell_command_kindt::CONTINUE ||
     kind == shell_command_kindt::SHIFT || kind == shell_command_kindt::SET ||
-    kind == shell_command_kindt::RETURN;
+    kind == shell_command_kindt::RETURN || kind == shell_command_kindt::EXEC ||
+    kind == shell_command_kindt::DOT;
   if(
     !command.assignments.empty() && kind != shell_command_kindt::EXTERNAL &&
     kind != shell_command_kindt::OUTPUT && !special)
@@ -847,6 +853,12 @@ void shell_convertert::convert_builtin(
     return;
   case shell_command_kindt::RETURN:
     convert_return(command, dest);
+    return;
+  case shell_command_kindt::EXEC:
+    convert_exec(command, dest);
+    return;
+  case shell_command_kindt::DOT:
+    convert_dot(command, dest);
     return;
   case shell_command_kindt::COLON:
   case shell_command_kindt::TRUE:
@@ -942,6 +954,37 @@ void shell_convertert::convert_exit(
     unsupported(loc, "exit with several operands");
   if(command.words.size() == 2)
     status_from_operand(command.words[1], "exit", true, dest, loc);
+  exit_shell(dest, false, loc);
+}
+
+/// exec [command [argument...]] (XCU 2.15 exec): without a command, the
+/// redirections apply to the shell, which only affects output; with one,
+/// the command replaces the shell, which then exits with its status.
+void shell_convertert::convert_exec(
+  const shell_commandt &command,
+  code_blockt &dest)
+{
+  const source_locationt &loc = command.location;
+  if(command.words.size() == 1)
+  {
+    set_status(dest, 0, loc);
+    return;
+  }
+  const auto name = static_text(command.words[1]);
+  if(name.has_value() && !name->empty() && (*name)[0] == '-')
+    unsupported(loc, "exec option " + *name);
+  if(
+    name.has_value() && function_definitions.count(*name) != 0 &&
+    (program.dialect == shell_dialectt::MKSH ||
+     program.dialect == shell_dialectt::ZSH))
+  {
+    // mksh and zsh run functions; dash and bash look for a utility.
+    unsupported(loc, "exec of a shell function");
+  }
+  for(std::size_t i = 1; i < command.words.size(); ++i)
+    expand_word(command.words[i], shell_word_contextt::IGNORED, dest, loc);
+  // The utility's status, which is 127 if it is not found.
+  nondet_status(dest, 255, loc);
   exit_shell(dest, false, loc);
 }
 
