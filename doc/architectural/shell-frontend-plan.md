@@ -725,6 +725,40 @@ measure the solvers: its encoding gave spurious results.
   - refined: `?` and brackets (via per-character constraints), and
     blanks in integers.
 
+Decided (2026-10-31): native strings are the default with `--cvc5` or
+`--z3`; bounded strings stay the SAT default; `--shell-strings refined`
+turns on the refinement solver.
+
+**The refinement solver's memory blow-up** (profiled with
+`scripts/profile_cbmc.py --no-skip-solver` on `option-split` and
+`csv-loop`, at a 6 GB limit):
+- Symbolic execution is negligible: `option-split` has 645 steps and one
+  VCC. All memory goes to the string refinement loop.
+- The loop does not converge. Each round finds the model violates a
+  universal axiom, adds index terms, and instantiates the axioms at them.
+  The index set grows by about 1.6× per round (149, 292, 440, 697, 1117,
+  1789 terms on `option-split`). The new terms are nested
+  `if`-expressions over lengths of strings merged at join points (after
+  `case` and in loops), so each instantiation creates more.
+- The SAT formula grows with them. Array reads at symbolic indices get
+  Ackermann constraints (`i = j ⇒ a[i] = a[j]`), quadratic in the index
+  terms of each array class. `arrayst::add_array_Ackermann_constraints`
+  takes 49% of the time on `option-split`, and the sixth round had 11
+  million variables and 53 million clauses. On `csv-loop`, 59% of the time
+  is in MiniSat and 23% in `add_lemma`.
+- Experiments that did not help:
+  - Refining only from concrete counterexamples, not from index-set
+    growth. Memory stays under 1 GB on `option-split` and `path-split`,
+    but neither finishes in 300 s.
+  - Initialising positional parameters without branches, so that inputs
+    are not `if`-expressions over strings. This is kept, because it also
+    simplifies the formula.
+  - Copying a string after a join.
+- A fix belongs in the solver's instantiation strategy: stop index terms
+  from nesting merged lengths, or concretize them from the model before
+  instantiating, and bound the Ackermann constraints. That is a project
+  of its own, so refined strings stay an option.
+
 **Next.**
 - field splitting with the default IFS, for `for x in $list`,
   `set -- $x`, and function arguments;
