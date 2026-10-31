@@ -1,6 +1,6 @@
 // Go1.27 §Handling_panics: panic stops the ordinary execution; without
-// recover the program terminates. A reachable panic is a property
-// violation; the code after it is not executed on that path.
+// recover the program terminates. A panic that ends the program is a
+// property violation; the code after it is not executed on that path.
 package main
 
 import "cprover"

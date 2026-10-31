@@ -112,9 +112,7 @@ exprt go_convertert::unbox(const exprt &iface, const typet &type)
     pointer_typet{type, config.ansi_c.pointer_width}}};
 }
 
-/// Declare the generated function \p id with parameters of types
-/// \p parameters and result type \p result (body added later).
-static void declare_generated(
+void declare_generated(
   symbol_table_baset &symbol_table,
   const irep_idt &id,
   const std::vector<typet> &parameters,
@@ -149,7 +147,7 @@ static void declare_generated(
   symbol_table.add(symbol);
 }
 
-static std::vector<exprt> parameter_symbols(const symbolt &function)
+std::vector<exprt> parameter_symbols(const symbolt &function)
 {
   std::vector<exprt> result;
   for(const auto &p : to_code_type(function.type).parameters())
@@ -371,6 +369,8 @@ exprt go_convertert::method_adapter(
       body.add(code_expressiont{std::move(call)});
     else
       body.add(code_frontend_returnt{std::move(call)});
+    end_generated_function(
+      body, to_code_type(ns.lookup(id).type).return_type());
     symbol_table.get_writeable_ref(id).value = std::move(body);
   }
   return ns.lookup(id).symbol_expr();
@@ -432,6 +432,7 @@ exprt go_convertert::convert_method_value(const irept &selector)
         body.add(code_expressiont{std::move(call)});
       else
         body.add(code_frontend_returnt{std::move(call)});
+      end_generated_function(body, with_receiver.return_type());
       symbol_table.get_writeable_ref(id).value = std::move(body);
     }
     return struct_exprt{
@@ -747,6 +748,7 @@ void go_convertert::finish_interfaces()
         "nil-dereference",
         "runtime error: invalid memory address or nil pointer dereference",
         function.location);
+      end_generated_function(body, result_type);
       state = std::move(outer);
       symbol_table.get_writeable_ref(d.second).value = std::move(body);
     }
@@ -829,6 +831,7 @@ void go_convertert::finish_interfaces()
     }
     body.add(code_frontend_returnt{from_integer(0, result_type)});
     state = std::move(outer);
+    end_generated_function(body, result_type);
     symbol_table.get_writeable_ref(function.name).value = std::move(body);
   }
 }

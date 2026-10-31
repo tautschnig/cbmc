@@ -114,8 +114,32 @@ private:
     std::size_t label_counter = 0;
     std::size_t literal_counter = 0;
     std::vector<jump_targett> jump_targets;
+
+    /// Deferred calls (Go1.27 §Defer_statements): whether the function has
+    /// defer statements, and whether they are kept in a list on the heap
+    /// (if a defer statement may execute more than once) rather than in
+    /// one variable per statement ("slots", with a flag each).
+    bool has_defers = false;
+    bool defer_list = false;
+    std::vector<std::pair<exprt, exprt>> defer_slots; // (flag, function)
+    exprt defer_head = nil_exprt{};                   // the list
+    std::size_t defer_counter = 0;
+    /// With deferred calls, the results are set by return statements and
+    /// returned after the deferred calls: the named results, or this.
+    exprt result_variable = nil_exprt{};
+    /// Whether recover() in this function may stop a panic: the function
+    /// was called directly as a deferred function (Go1.27
+    /// §Handling_panics).
+    exprt may_recover = nil_exprt{};
   };
   function_statet state;
+
+  /// The locations (with property class and comment) of the panics of the
+  /// program; panic n is reported as a property at that location if it
+  /// ends the program (see finish_panics).
+  std::vector<source_locationt> panic_sites;
+  /// Whether the program calls recover.
+  bool uses_recover = false;
 
   bool is_converted_package(const irep_idt &package) const;
   /// The source location of \p node, attributed to the current function.
@@ -468,16 +492,15 @@ private:
   exprt convert_conversion(const irept &call);
   exprt convert_min_max(const irept &call, bool is_min);
   /// \p value, evaluated only if \p condition holds; otherwise the program
-  /// panics (Go1.27 §Run_time_panics), modelled as a failing property of
-  /// class \p property_class, after which execution does not continue.
+  /// panics (Go1.27 §Run_time_panics), see add_panic.
   exprt guard_panic(
     exprt value,
     const exprt &condition,
     const std::string &property_class,
     const std::string &comment,
     const source_locationt &location);
-  /// Code for a panic with message \p comment: a failing property and the
-  /// end of the execution (no recover yet: Go1.27 §Handling_panics).
+  /// Code for a run-time panic with message \p comment unless \p condition
+  /// holds (Go1.27 §Run_time_panics), see raise_panic.
   void add_panic(
     code_blockt &dest,
     const exprt &condition,
@@ -485,9 +508,63 @@ private:
     const std::string &comment,
     const source_locationt &location);
 
+  // Panics, deferred calls and recover (go_panics.cpp)
+  /// Code starting to panic with interface value \p value (Go1.27
+  /// §Handling_panics): it records the value and the panic site and jumps
+  /// to the end of the function (label `$unwind`), from where the
+  /// deferred calls run and the function returns; callers continue
+  /// unwinding after the call (add_panic_checks). A panic that reaches the
+  /// top-level function is reported as a failing property of class
+  /// \p property_class at \p location (see finish_panics).
+  void raise_panic(
+    code_blockt &dest,
+    const exprt &value,
+    const std::string &property_class,
+    const std::string &comment,
+    const source_locationt &location);
+  /// The interface value of a run-time panic with message \p message.
+  exprt runtime_error(const std::string &message, const source_locationt &);
+  /// Declare the variables recording the panic state.
+  void declare_panic_state();
+  /// The panic state: whether the goroutine is panicking, the value
+  /// passed to panic, the panic site, and whether the function now called
+  /// is a deferred one (for recover).
+  static symbol_exprt panicking();
+  static symbol_exprt panic_value();
+  static symbol_exprt panic_site();
+  static symbol_exprt defer_token();
+  /// After each call in \p code (to a Go function), continue unwinding if
+  /// the callee panicked.
+  void add_panic_checks(exprt &code);
+  /// Set up deferred calls and recover for the function whose body is
+  /// \p body_node; appended to \p dest (the start of the function).
+  void begin_function_panics(const irept &body_node, code_blockt &dest);
+  /// The end of a function: label `$unwind`, the deferred calls, and the
+  /// return, appended to \p body.
+  void end_function_panics(code_blockt &body);
+  /// The end of a generated function that may panic, returning \p type.
+  static void end_generated_function(code_blockt &body, const typet &type);
+  /// The type of the nodes of the list of deferred calls.
+  static struct_typet deferred_node_type();
+  void convert_defer(const irept &stmt, code_blockt &dest);
+  exprt convert_recover(const irept &call);
+  /// The function `go::$check_panics`, called after the top-level
+  /// function, with a property per panic site.
+  void finish_panics();
+
   /// Object id of the function a call refers to, or empty.
   irep_idt callee_object(const irept &call);
 };
+
+/// Declare the generated function \p id with parameters of types
+/// \p parameters and result type \p result (body added later).
+void declare_generated(
+  symbol_table_baset &symbol_table,
+  const irep_idt &id,
+  const std::vector<typet> &parameters,
+  const typet &result);
+/// The parameters of \p function, as symbol expressions.
+std::vector<exprt> parameter_symbols(const symbolt &function);
 
 /// \p expr without enclosing parentheses and explicit instantiations
 /// (`f[int]`, `x.m[int]`): the instantiated function or method, whose node

@@ -226,3 +226,17 @@ func ComplexDiv(n, m complex128) complex128 {
 	}
 	return complex(e, f)
 }
+
+// Error is the type of the values of run-time panics (Go1.27
+// §Run_time_panics: "Execution errors such as attempting to index an array
+// out of bounds trigger a run-time panic equivalent to a call of the
+// built-in function panic with a value of the implementation-defined
+// interface type runtime.Error. That type satisfies the predeclared
+// interface type error."). The message is gc's.
+type Error struct{ msg string }
+
+// Error returns the message of the run-time error.
+func (e Error) Error() string { return e.msg }
+
+// RuntimeError distinguishes run-time errors, as in package runtime.
+func (e Error) RuntimeError() {}

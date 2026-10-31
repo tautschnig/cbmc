@@ -245,7 +245,20 @@ bool go_languaget::generate_support_functions(
     arguments.push_back(
       side_effect_expr_nondett{parameter.type(), function->location});
   }
-  body.add(call(*function, std::move(arguments)));
+  // Go1.27 §Handling_panics: a panic during initialisation ends the
+  // program; one that is not recovered is reported by go::$check_panics.
+  const symbolt *panicking = symbol_table.lookup("go::$panicking");
+  if(panicking != nullptr)
+  {
+    code_ifthenelset run{
+      not_exprt{panicking->symbol_expr()},
+      call(*function, std::move(arguments))};
+    body.add(std::move(run));
+  }
+  else
+    body.add(call(*function, std::move(arguments)));
+  if(const symbolt *check = symbol_table.lookup("go::$check_panics"))
+    body.add(call(*check, {}));
 
   symbolt start{start_id, code_typet{{}, empty_typet{}}, "go"};
   start.base_name = start_id;

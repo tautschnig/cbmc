@@ -818,10 +818,16 @@ void go_convertert::convert_function(
     state.named_results.push_back(var);
     body.add(code_frontend_assignt{var, *zero_initializer(type, location, ns)});
   }
+  begin_function_panics(body_node, body);
 
+  // The statements are a block of their own, so that jumping to the end of
+  // the function (label $unwind) leaves the scopes of their variables
+  // rather than entering them.
   code_blockt statements = convert_block(body_node);
-  for(auto &s : statements.statements())
-    body.add(std::move(s));
+  add_panic_checks(statements);
+  body.add(std::move(statements));
+  body.add_source_location() = location;
+  end_function_panics(body);
   symbol_table.get_writeable_ref(function).value = std::move(body);
 }
 
@@ -873,6 +879,9 @@ void go_convertert::convert_package_init(
     body.add(code_expressiont{side_effect_expr_function_callt{
       function.symbol_expr(), {}, empty_typet{}, function.location}});
   }
+  // A panic ends the initialisation (and the program).
+  add_panic_checks(body);
+  end_generated_function(body, empty_typet{});
 
   symbolt symbol = make_symbol(
     init_id,
@@ -882,6 +891,20 @@ void go_convertert::convert_package_init(
     parse_tree.package);
   symbol.value = std::move(body);
   add_symbol(symbol);
+}
+
+/// Whether \p node refers to the object \p object_id.
+static bool mentions_object(const irept &node, const irep_idt &object_id)
+{
+  if(node.get("_obj") == object_id)
+    return true;
+  for(const auto &sub : node.get_sub())
+    if(mentions_object(sub, object_id))
+      return true;
+  for(const auto &named : node.get_named_sub())
+    if(mentions_object(named.second, object_id))
+      return true;
+  return false;
 }
 
 bool go_convertert::operator()()
@@ -914,6 +937,12 @@ bool go_convertert::operator()()
     memory.is_extern = true;
     symbol_table.add(memory);
   }
+
+  // Go1.27 §Handling_panics: the state of panicking, and whether recover
+  // can stop it (only if the program calls recover).
+  declare_panic_state();
+  for(const auto &file : parse_tree.asts)
+    uses_recover |= mentions_object(file, "recover");
 
   std::vector<irep_idt> init_functions;
   std::vector<const irept *> functions;
@@ -951,6 +980,7 @@ bool go_convertert::operator()()
     convert_function_body(*decl);
   convert_package_init(init_functions);
   finish_interfaces();
+  finish_panics();
 
   return error_found;
 }
@@ -995,6 +1025,8 @@ void go_convertert::convert_statement(const irept &stmt, code_blockt &dest)
     convert_labeled(stmt, dest);
   else if(kind == "BranchStmt")
     convert_branch(stmt, dest);
+  else if(kind == "DeferStmt")
+    convert_defer(stmt, dest);
   else if(kind == "EmptyStmt")
     return;
   else
@@ -1863,7 +1895,43 @@ void go_convertert::convert_return(const irept &stmt, code_blockt &dest)
     }
   }
   ret.add_source_location() = location;
-  dest.add(std::move(ret));
+  if(!state.has_defers)
+  {
+    dest.add(std::move(ret));
+    return;
+  }
+
+  // Go1.27 §Defer_statements: "deferred functions are executed after any
+  // result parameters are set by that return statement but before the
+  // function returns to its caller."
+  if(ret.has_return_value())
+  {
+    if(state.named_results.empty())
+    {
+      dest.add(
+        code_frontend_assignt{state.result_variable, ret.return_value()});
+    }
+    else if(state.named_results.size() == 1)
+    {
+      dest.add(
+        code_frontend_assignt{state.named_results.front(), ret.return_value()});
+    }
+    else
+    {
+      // The values are computed before the results are set: they may refer
+      // to the results (return b, a).
+      const exprt values = evaluate_once(ret.return_value(), location, dest);
+      const auto &components = to_struct_type(state.return_type).components();
+      for(std::size_t i = 0; i < state.named_results.size(); ++i)
+      {
+        dest.add(code_frontend_assignt{
+          state.named_results[i], member_exprt{values, components[i]}});
+      }
+    }
+  }
+  code_gotot jump{"$unwind"};
+  jump.add_source_location() = location;
+  dest.add(std::move(jump));
 }
 
 void go_convertert::convert_expr_stmt(const irept &stmt, code_blockt &dest)
@@ -2136,26 +2204,6 @@ irep_idt go_convertert::callee_object(const irept &call)
   return fun->id() == "Ident" ? fun->get("_obj") : irep_idt{};
 }
 
-void go_convertert::add_panic(
-  code_blockt &dest,
-  const exprt &condition,
-  const std::string &property_class,
-  const std::string &comment,
-  const source_locationt &location)
-{
-  source_locationt loc = location;
-  loc.set_property_class(property_class);
-  loc.set_comment(comment);
-  code_assertt check{condition};
-  check.add_source_location() = loc;
-  dest.add(std::move(check));
-  // A panic ends the execution (there is no recover yet): only executions
-  // in which it does not happen continue.
-  code_assumet stop{condition};
-  stop.add_source_location() = location;
-  dest.add(std::move(stop));
-}
-
 bool go_convertert::convert_intrinsic_call(const irept &call, code_blockt &dest)
 {
   const irep_idt callee = callee_object(call);
@@ -2165,21 +2213,40 @@ bool go_convertert::convert_intrinsic_call(const irept &call, code_blockt &dest)
   if(callee == "panic")
   {
     // Go1.27 §Handling_panics: "panic" stops the ordinary execution of
-    // the function; without recover, the program terminates.
+    // the function, see raise_panic.
     std::string comment = "panic";
     if(args.size() == 1 && args.front().get("_cvk") == "string")
     {
       const std::string text = args.front().get_string("_cv");
       comment += ": " + text.substr(1, text.size() - 2); // drop quotes
     }
-    else if(args.size() == 1)
+    exprt value = convert_expr(args.front());
+    if(value.is_nil())
+      return true;
+    if(!uses_recover)
     {
-      exprt value = convert_expr(args.front());
-      if(value.is_nil())
-        return true;
-      dest.add(expression_statement(value, location));
+      // The value is not observable (see raise_panic), but is evaluated.
+      if(value.id() != ID_go_nil)
+        dest.add(expression_statement(value, location));
+      raise_panic(dest, nil_exprt{}, "panic", comment, location);
+      return true;
     }
-    add_panic(dest, false_exprt{}, "panic", comment, location);
+    value = evaluate_once(
+      assign_cast(value, go_type_convertert::interface_type()), location, dest);
+    // "calling panic with a nil interface value (or an untyped nil) causes
+    // a run-time panic", whose value gc describes as follows.
+    const struct_typet iface = go_type_convertert::interface_type();
+    code_blockt nil_value;
+    nil_value.add(code_frontend_assignt{
+      value,
+      runtime_error(
+        "runtime error: panic called with nil argument", location)});
+    dest.add(code_ifthenelset{
+      equal_exprt{
+        member_exprt{value, iface.components()[0]},
+        from_integer(0, iface.components()[0].type())},
+      std::move(nil_value)});
+    raise_panic(dest, value, "panic", comment, location);
     return true;
   }
 
@@ -2416,6 +2483,8 @@ exprt go_convertert::convert_call(const irept &call)
   }
   if(callee == "min" || callee == "max")
     return convert_min_max(call, callee == "min");
+  if(callee == "recover")
+    return convert_recover(call);
   if(callee == "new")
     return convert_new(call);
   if(callee == "complex" || callee == "real" || callee == "imag")
