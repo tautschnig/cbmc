@@ -460,6 +460,29 @@ exprt shell_convertert::payload_has_suffix(
     loc);
 }
 
+/// For refined strings, the byte of a literal one-byte \p needle: the
+/// solver searches for characters with one universal axiom, but for
+/// strings with not-contains axioms, whose instantiation over pairs of
+/// index terms does not converge in loops.
+static std::optional<exprt> refined_needle_char(const exprt &needle)
+{
+  if(needle.id() != ID_struct || needle.operands().size() != 2)
+    return {};
+  const auto length = numeric_cast<mp_integer>(needle.operands()[0]);
+  const exprt &content = needle.operands()[1];
+  if(
+    !length.has_value() || *length != 1 || content.id() != ID_address_of ||
+    to_address_of_expr(content).object().id() != ID_index)
+  {
+    return {};
+  }
+  const exprt &array =
+    to_index_expr(to_address_of_expr(content).object()).array();
+  if(array.id() != ID_array || array.operands().size() != 1)
+    return {};
+  return array.operands()[0];
+}
+
 exprt shell_convertert::payload_index_of(
   const exprt &payload,
   const exprt &needle,
@@ -467,6 +490,18 @@ exprt shell_convertert::payload_index_of(
   code_blockt &dest,
   const source_locationt &loc)
 {
+  if(!native())
+  {
+    if(const auto c = refined_needle_char(needle))
+    {
+      return string_function(
+        ID_cprover_string_index_of_func,
+        {payload, *c, from},
+        integer_type(),
+        dest,
+        loc);
+    }
+  }
   return string_function(
     ID_cprover_string_index_of_func,
     {payload, needle, native() ? to_int_sort(from) : from},
@@ -485,9 +520,10 @@ exprt shell_convertert::payload_last_index_of(
 {
   if(!native())
   {
+    const auto c = refined_needle_char(needle);
     return string_function(
       ID_cprover_string_last_index_of_func,
-      {payload, needle, upto},
+      {payload, c.has_value() ? *c : needle, upto},
       integer_type(),
       dest,
       loc);
@@ -788,34 +824,24 @@ exprt shell_convertert::test_integer(
 {
   if(bounded())
     return parse_test_integer(string, trailing_space, value, dest, loc);
-  // Strings made from integers need no parsing: parse "0" instead, which
-  // the solvers decide at once, and use the integer.
+  // Strings made from integers need no parsing. The parser is in a branch
+  // of its own, which symbolic execution skips when the string is known to
+  // be an integer, as for counters: the parser's string constraints are
+  // then not generated at all.
   const exprt known = known_int(string);
-  const exprt payload = payload_of(string);
-  exprt subject;
-  if(native())
-    subject = if_exprt{known, payload_literal("0"), payload};
-  else
-  {
-    subject = payload_substring(
-      payload,
-      from_integer(0, integer_type()),
-      if_exprt{
-        known,
-        from_integer(0, integer_type()),
-        payload_length(payload, dest, loc)},
-      dest,
-      loc);
-  }
-  const symbol_exprt parsed = temporary(integer_type(), dest, loc);
-  const exprt valid =
-    parse_test_integer(make_value(subject), trailing_space, parsed, dest, loc);
+  const symbol_exprt valid = temporary(bool_typet{}, dest, loc);
+  code_blockt use_int;
   assign(
-    dest,
-    value,
-    if_exprt{known, member_exprt{string, "int_value", integer_type()}, parsed},
-    loc);
-  return or_exprt{known, valid};
+    use_int, value, member_exprt{string, "int_value", integer_type()}, loc);
+  assign(use_int, valid, true_exprt{}, loc);
+  code_blockt parse;
+  const symbol_exprt parsed = temporary(integer_type(), parse, loc);
+  const exprt parsed_valid =
+    parse_test_integer(string, trailing_space, parsed, parse, loc);
+  assign(parse, value, parsed, loc);
+  assign(parse, valid, parsed_valid, loc);
+  add(dest, code_ifthenelset{known, std::move(use_int), std::move(parse)}, loc);
+  return valid;
 }
 
 exprt shell_convertert::parse_test_integer(
@@ -979,6 +1005,34 @@ exprt shell_convertert::arith_integer(
       loc);
     return notequal_exprt{valid, from_integer(0, valid.type())};
   }
+  // As in test_integer, the parser is in a branch that symbolic execution
+  // skips for strings known to be integers.
+  const symbol_exprt valid = temporary(bool_typet{}, dest, loc);
+  code_blockt use_int;
+  assign(
+    use_int, value, member_exprt{string, "int_value", integer_type()}, loc);
+  assign(use_int, valid, true_exprt{}, loc);
+  code_blockt parse;
+  const symbol_exprt parsed = temporary(integer_type(), parse, loc);
+  const exprt parsed_valid = parse_arith_integer(
+    string, leading_zero_octal, any_space, parsed, parse, loc);
+  assign(parse, value, parsed, loc);
+  assign(parse, valid, parsed_valid, loc);
+  add(
+    dest,
+    code_ifthenelset{known_int(string), std::move(use_int), std::move(parse)},
+    loc);
+  return valid;
+}
+
+exprt shell_convertert::parse_arith_integer(
+  const exprt &string,
+  bool leading_zero_octal,
+  bool any_space,
+  const symbol_exprt &value,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
   // Decimal numbers only: octal and hexadecimal constants, and blanks
   // other than those of the test utility, are reported as unsupported by
   // the caller's check.
@@ -986,7 +1040,7 @@ exprt shell_convertert::arith_integer(
   const exprt zero = from_integer(0, integer_type());
   const exprt empty = is_empty(string);
   const symbol_exprt number = temporary(integer_type(), dest, loc);
-  exprt valid = test_integer(string, true, number, dest, loc);
+  exprt valid = parse_test_integer(string, true, number, dest, loc);
   if(leading_zero_octal)
   {
     // A leading zero followed by more digits is octal.
@@ -1050,18 +1104,8 @@ exprt shell_convertert::arith_integer(
     }
     valid = and_exprt{valid, not_exprt{disjunction(other_blanks)}};
   }
-  // Strings made from integers are valid; the checks above are then
-  // constant, so that loops over counters can be unwound.
-  const exprt known = known_int(string);
-  assign(
-    dest,
-    value,
-    if_exprt{
-      known,
-      member_exprt{string, "int_value", integer_type()},
-      if_exprt{empty, zero, number}},
-    loc);
-  return or_exprt{known, or_exprt{empty, valid}};
+  assign(dest, value, if_exprt{empty, zero, number}, loc);
+  return or_exprt{empty, valid};
 }
 
 // ------------------------------------------------------------------

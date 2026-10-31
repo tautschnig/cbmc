@@ -357,8 +357,13 @@ private:
     code_frontend_declt decl{result};
     decl.add_source_location() = loc;
     dest.add(std::move(decl));
+    live_temporaries.push_back(result);
     return result;
   }
+
+  /// Temporaries declared by the commands being converted, which end with
+  /// the command that declared them (see convert_command).
+  std::vector<symbol_exprt> live_temporaries;
 
   irep_idt new_label(const std::string &purpose)
   {
@@ -516,6 +521,15 @@ private:
   exprt test_integer(
     const exprt &string,
     bool trailing_space,
+    const symbol_exprt &value,
+    code_blockt &dest,
+    const source_locationt &loc);
+
+  /// arith_integer for strings whose int_value is not known.
+  exprt parse_arith_integer(
+    const exprt &string,
+    bool leading_zero_octal,
+    bool any_space,
     const symbol_exprt &value,
     code_blockt &dest,
     const source_locationt &loc);
