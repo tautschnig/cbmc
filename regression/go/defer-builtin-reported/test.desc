@@ -1,0 +1,11 @@
+CORE
+main.go
+
+^EXIT=6$
+^SIGNAL=0$
+line 8 column 8: Go front-end: deferred calls of delete is not supported yet$
+^CONVERSION ERROR$
+--
+^VERIFICATION SUCCESSFUL$
+--
+deferred built-in calls are reported

@@ -1,0 +1,11 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.div\.division-by-zero\.1\] line 19 runtime error: integer divide by zero: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Run_time_panics, §Handling_panics: recovering from run-time panics

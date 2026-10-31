@@ -1,0 +1,14 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.work\.nil-dereference\.1\] line 15 runtime error: invalid memory address or nil pointer dereference: FAILURE$
+^\[go::main\.main\$lit1\.assertion\.1\] line 20 deferred calls of callees ran first: SUCCESS$
+^\[go::main\.main\$lit1\.assertion\.2\] line 21 reached while panicking: FAILURE$
+^\[go::main\.main\.assertion\.1\] line 28 only reached without a panic: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Go1.27 §Handling_panics: unrecovered panics run deferred calls

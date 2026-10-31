@@ -1,0 +1,12 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.start\.panic\.1\] line 10 panic: initialisation failed: FAILURE$
+^\[go::main\.main\.assertion\.1\] line 14 main is not invoked: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Go1.27 §Handling_panics: panics during initialisation
