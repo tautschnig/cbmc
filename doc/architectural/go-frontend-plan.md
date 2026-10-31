@@ -172,16 +172,16 @@ The helper supplies the stdlib *signatures*; the models supply the
 
 ## 5. Status
 
-The first end-to-end slice and phases 1 to 7 of §6 are done. The code is in
+The first end-to-end slice and phases 1 to 8 of §6 are done. The code is in
 `src/go/`, the tests are in `regression/go/`.
 
 | Part | Files | Role |
 |---|---|---|
-| Helper | `helper/main.go`, `helper/cprover/`, `helper/runtime/` | `go/parser` + `go/types` → typed JSON (schema version 1). Type-switch bindings (`_impl`, from `types.Info.Implicits`), receiver-qualified method ids, file-qualified positions and the bytes of string constants (`_sb`) are emitted. Each type entry has a canonical id `tid` (the first entry of a `types.Identical` class), and each non-interface type its method set `mset` (name, method object, embedded-field path, whether the receiver is reached through a pointer, whether it is a pointer receiver, and the method-value type). Generic code is monomorphised here (see below), so the converter sees no type parameters. The runtime package `cprover/rt` (`helper/runtime/rt.go`) is type-checked and emitted with every program. |
+| Helper | `helper/main.go`, `helper/packages.go`, `helper/cprover/`, `helper/runtime/`, `helper/models/` | `go/parser` + `go/types` → typed JSON (schema version 1). Type-switch bindings (`_impl`, from `types.Info.Implicits`), receiver-qualified method ids, file-qualified positions and the bytes of string constants (`_sb`) are emitted. Each type entry has a canonical id `tid` (the first entry of a `types.Identical` class), and each non-interface type its method set `mset` (name, method object, embedded-field path, whether the receiver is reached through a pointer, whether it is a pointer receiver, and the method-value type). Generic code is monomorphised here (see below), so the converter sees no type parameters. The runtime package `cprover/rt` (`helper/runtime/rt.go`) is type-checked and emitted with every program. The files given to it form the program's package; the user packages it imports are loaded from source, and models of standard-library packages (`helper/models/`) where the program imports those (see below). Each package has its initialisation order (`packages`, in the order in which the packages are initialised). |
 | Go AST | `go_parse_tree.{h,cpp}` | In-memory `irept` tree loaded from the JSON. The converter reads only this tree (§4.3). |
 | Types | `go_types.{h,cpp}` | `go/types` type table → `typet`. `int`/`uint`/`uintptr` come from `config.go`. Named struct types become struct tags (type symbols named like objects, e.g. `go::main.Node`, and `go::main.Pair[int,string]` for instances of generic types), so recursion through pointers is finite; other named types are their underlying type. Blank fields are kept under the names `_$N`. Booleans are stored in a byte (`c_bool`), so that they have a size (for heap variables and arrays); `as_condition` turns them into conditions. `float32`/`float64` are IEEE 754 `floatbv` types; complex numbers are structs `{real, imag}` marked `#go_complex` (CBMC's complex type is not lowered in function types). Strings, slices and maps: see below. Function values are structs `{code, env}` marked `#go_func_value` (see below); several results are returned as one struct marked `#go_tuple`, with components `$0`, `$1`, ... All interface types are one struct `{type int32, data *void}` marked `#go_interface` (see below). Each type records its canonical Go type id in the comment `#go_tid`. |
 | Converter | `go_convert.{h,cpp}`, `go_builtins.cpp`, `go_maps.cpp`, `go_floats.cpp`, `go_interfaces.cpp`, `go_panics.cpp` | Go AST → symbol table and code. Constructs outside the slice are reported as errors, never dropped. Strings, slices and their built-ins are in `go_builtins.cpp`, maps in `go_maps.cpp`, floating-point and complex numbers in `go_floats.cpp`, methods and interfaces in `go_interfaces.cpp`, panics, `defer` and `recover` in `go_panics.cpp`. |
-| Language | `go_language.{h,cpp}`, `expr2go.{h,cpp}` | `languaget` for `.go` files: runs the helper, sets the target GOARCH from `--arch`/`--32`/`--64`, builds the entry point. |
+| Language | `go_language.{h,cpp}`, `expr2go.{h,cpp}` | `languaget` for `.go` files: runs the helper (on each file to check its syntax, then once on all of them), sets the target GOARCH from `--arch`/`--32`/`--64`, builds the entry point. |
 
 Supported so far:
 
@@ -333,6 +333,57 @@ Supported so far:
   types of their own (`types.Instantiate` with the type checker's
   context, so that identical instances are one type). `--function`
   takes an instance by its base name, e.g. `--function 'Max[int]'`.
+- Variadic functions (`§Passing_arguments_to_..._parameters`): calls
+  pass a new slice of the final arguments (nil if there are none), or
+  `s...` unchanged; also for methods, function values and generic
+  functions.
+- Packages (`§Packages`, `§Import_declarations`). The `.go` files given
+  to `cbmc` are the program's package, as for `go run a.go b.go`: syntax
+  errors are reported per file (`PARSING ERROR`); then the helper
+  type-checks all of them together (type errors end in `CONVERSION
+  ERROR`, as for C), sorted by name as the go command presents them,
+  which fixes the order of `init` functions. Packages of the main
+  module (found through the `go.mod` enclosing the files) are loaded from
+  their directories, with the files `go build` would select (build
+  constraints, no tests; cgo is reported); packages of other modules
+  are located with the go command. All of them are converted, with
+  object ids qualified by the import path (e.g.
+  `example.com/shapes/geom.Rect.Area`). Each package has its own
+  initialisation function `go::<path>.$init`; `go::$init` calls them in
+  the order of `§Package_initialization` (sorted by import path, each
+  after the packages it imports), and the entry point calls it.
+- Models of standard-library functions (§4.5), in
+  `src/go/helper/models/<path>`: Go code converted with the program as
+  package `cprover/std/<path>` when the program imports `<path>`. The
+  real package (from the toolchain's export data) still provides the
+  declarations, so programs type-check as with gc; a call of a function
+  with a model of identical signature (for generic functions: of
+  identical instance) denotes the model, and calls of other functions
+  are reported. The models follow the standard library's code (BSD
+  licence, attributed in each file) or its documented results, and were
+  checked against the real functions on hundreds of thousands of random
+  inputs each (strings with ASCII, multi-byte, invalid and space
+  characters; floats including zeros, infinities, NaNs and boundary
+  values; NaN payloads excepted). Modelled: `errors` (`New`, `Is`,
+  `Unwrap`, `AsType`; not `As`, which needs reflection), `strings`
+  (`Compare`, `Contains`, `ContainsRune`, `Count`, `Cut`, `CutPrefix`,
+  `CutSuffix`, `Fields`, `HasPrefix`, `HasSuffix`, `Index`, `IndexByte`,
+  `Join`, `LastIndex`, `Repeat`, `Split`, `TrimPrefix`, `TrimSpace`,
+  `TrimSuffix`), `strconv` (`FormatBool`, `FormatInt`, `FormatUint`,
+  `Itoa`), `unicode/utf8` (`AppendRune`, `DecodeRune`,
+  `DecodeRuneInString`, `EncodeRune`, `RuneCount`, `RuneCountInString`,
+  `RuneLen`, `Valid`, `ValidRune`, `ValidString`), `math` (`Abs`,
+  `Ceil`, `Copysign`, `Float32bits`, `Float32frombits`, `Float64bits`,
+  `Float64frombits`, `Floor`, `Inf`, `IsInf`, `IsNaN`, `Max`, `Min`,
+  `Modf`, `NaN`, `Signbit`, `Trunc`), `slices` (`Contains`, `Equal`,
+  `Index`, `Max`, `Min`, `Reverse`) and `fmt` (`Print`, `Printf`,
+  `Println`: the output is not modelled; they call the `Error` or
+  `String` method of each argument, recovering from panics in them, and
+  their results are arbitrary). Constants of standard-library packages
+  (e.g. `math.MaxInt64`) are folded by go/types as before. The runtime
+  package provides intrinsics that the converter implements:
+  `rt.Comparable` (whether a dynamic type is comparable, for
+  `errors.Is`) and the IEEE 754 bit conversions (byte extraction).
 - Run-time panics, emitted by the converter (`goto_check_c` skips non-C
   modes) as a jump to the end of the function after recording the panic
   (see below). They cover
@@ -396,33 +447,38 @@ Build and test wiring:
   `actions/setup-go` (version from `src/go/helper/go.mod`) and so run
   `regression/go`; other jobs skip it.
 - Building the helper needs Go 1.27 (`go.mod`, `GOTOOLCHAIN=local`).
-- At verification time, programs that import only `cprover` need no Go
-  toolchain. Other imports go through the gc importer, which runs
-  `go list -export` and so needs the toolchain.
+- At verification time, programs that import only `cprover` and packages
+  of their own module need no Go toolchain. Standard-library imports go
+  through the gc importer, which runs `go list -export`, and packages of
+  other modules are located with the go command, so these need `go` on
+  `PATH` (as in the CI jobs that run `regression/go`, whose stdlib tests
+  need it).
 
 Checks beyond the regression tests, in `scripts/go-frontend/`:
 
 - `check_spec_quotes.py` checks that comments quote the specification
   verbatim and cite existing sections.
 - `run_with_go.sh` runs every test with the Go toolchain, using the real
-  `cprover` package, as an oracle: each test that CBMC is expected to
-  verify must also run to completion.
+  `cprover` package (and so the real standard library rather than the
+  models), as an oracle: each test that CBMC is expected to verify must
+  also run to completion. Tests are directories: all their files, and a
+  `go.mod` with further packages, are used.
 - `check_non_vacuous.sh` appends a failing assertion to `main` of each
   success test and checks that CBMC reports it.
 
 Known limitations:
 
-- **One file per package.** `cbmc` runs the helper on each `.go` file
-  separately, so a package spread over several files is not yet
-  supported. The helper itself accepts several files.
-- **Single package.** Only the package being verified plus `cprover`.
-  Calls into other packages, and uses of their variables, are reported
-  as unsupported.
+- **The standard library is models only.** Calls of unmodelled functions,
+  methods of standard-library types, and variables of standard-library
+  packages (e.g., `io.EOF`, `os.Args`) are reported. Packages of other
+  modules are converted from source and so may use constructs that are
+  not supported yet. The printing functions of `fmt` do not call
+  `Format` or `GoString` methods, nor methods of nested values.
 - Type declarations inside generic functions are reported: their
   underlying types may involve the type parameters, which the helper does
   not substitute in named types it has not instantiated.
-- Generic functions of other packages (e.g., `slices.Contains`) are
-  reported like other calls into other packages. Instances are bounded
+- Generic functions of the standard library without a model are
+  reported like other unmodelled functions. Instances are bounded
   by go/types' check for instantiation cycles, and in addition by 2000
   instances.
 - Values containing pointers, functions, maps or interfaces cannot be
@@ -470,9 +526,8 @@ Known limitations:
   panicking, only the latest panic is reported. The messages of run-time
   errors are gc's without the operands (e.g., no index in "index out of
   range"), as the specification leaves them unspecified.
-- Not yet supported: `select`, variadic functions (other than `append`),
-  the `math` package (and other packages), `range` over functions and
-  channels, goroutines, and channels.
+- Not yet supported: `select`, `range` over functions and channels,
+  goroutines, and channels.
 
 The Makefile build of `cbmc` does not link the Python front-end that
 `cbmc_languages.cpp` registers (by inspection: no Makefile builds
@@ -521,9 +576,9 @@ section.
 7. **Panics and deferral** (done). `§Defer_statements`,
    `§Handling_panics` (`recover`), so that a run-time panic becomes an
    unwinding path instead of an assumption.
-8. **Packages and the standard library.** Several files per package,
-   imported user packages, and Go models of the stdlib functions programs
-   use (§4.5).
+8. **Packages and the standard library** (done). Several files per
+   package, imported user packages, variadic functions, and Go models of
+   the stdlib functions programs use (§4.5).
 9. **Concurrency.** `§Go_statements`, `§Channel_types`,
    `§Send_statements`, `§Receive_operator`, `§Select_statements` with a
    nondeterministic choice, and the Go Memory Model for data races.
