@@ -1,0 +1,11 @@
+CORE
+main.go
+
+^EXIT=6$
+^SIGNAL=0$
+b/b\.go:3:8: could not import example\.com/cyc/a \(import cycle not allowed\)$
+^CONVERSION ERROR$
+--
+^VERIFICATION
+--
+import cycles are reported

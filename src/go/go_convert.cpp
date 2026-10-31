@@ -49,7 +49,7 @@ static const irep_idt ID_go_nil = "go_nil";
 /// and the runtime package cprover/rt (helper/runtime/rt.go).
 bool go_convertert::is_converted_package(const irep_idt &package) const
 {
-  return package == parse_tree.package || package == "cprover/rt";
+  return converted_packages.count(package) != 0;
 }
 
 /// \p expr with location \p location.
@@ -832,9 +832,10 @@ void go_convertert::convert_function(
 }
 
 void go_convertert::convert_package_init(
+  const go_parse_treet::packaget &package,
   const std::vector<irep_idt> &init_functions)
 {
-  const irep_idt init_id = package_init_id(parse_tree.package);
+  const irep_idt init_id = package_init_id(package.path);
   state = function_statet{};
   state.function_id = init_id;
   code_blockt body;
@@ -843,7 +844,7 @@ void go_convertert::convert_package_init(
   // initialised stepwise, each step selecting the earliest variable in
   // declaration order that has no dependencies on uninitialised variables;
   // go/types computes this order (types.Info.InitOrder).
-  for(const auto &init : parse_tree.init_order)
+  for(const auto &init : package.init_order)
   {
     exprt rhs = convert_expr(init.rhs);
     if(rhs.is_nil())
@@ -885,6 +886,32 @@ void go_convertert::convert_package_init(
 
   symbolt symbol = make_symbol(
     init_id,
+    "$init",
+    code_typet{{}, empty_typet{}},
+    source_locationt{},
+    package.path);
+  symbol.value = std::move(body);
+  add_symbol(symbol);
+}
+
+void go_convertert::convert_program_init()
+{
+  // Go1.27 §Package_initialization: "Package initialization—variable
+  // initialization and the invocation of init functions—happens in a single
+  // goroutine, sequentially, one package at a time."
+  state = function_statet{};
+  state.function_id = program_init_id();
+  code_blockt body;
+  for(const auto &package : parse_tree.packages)
+  {
+    const symbolt &init = ns.lookup(package_init_id(package.path));
+    body.add(code_expressiont{side_effect_expr_function_callt{
+      init.symbol_expr(), {}, empty_typet{}, init.location}});
+  }
+  add_panic_checks(body);
+  end_generated_function(body, empty_typet{});
+  symbolt symbol = make_symbol(
+    program_init_id(),
     "$init",
     code_typet{{}, empty_typet{}},
     source_locationt{},
@@ -944,7 +971,10 @@ bool go_convertert::operator()()
   for(const auto &file : parse_tree.asts)
     uses_recover |= mentions_object(file, "recover");
 
-  std::vector<irep_idt> init_functions;
+  for(const auto &package : parse_tree.packages)
+    converted_packages.insert(package.path);
+  // Each package's init functions, in source order.
+  std::map<irep_idt, std::vector<irep_idt>> init_functions;
   std::vector<const irept *> functions;
 
   // Declare all package-level objects first: declarations may be used
@@ -958,7 +988,10 @@ bool go_convertert::operator()()
       {
         const irept &name = go_field(decl, "Name");
         if(name.get("Name") == "init" && go_field(decl, "Recv").is_nil())
-          init_functions.push_back(name.get("_obj"));
+        {
+          const irep_idt &id = name.get("_obj");
+          init_functions[parse_tree.object(id).get("pkg")].push_back(id);
+        }
         declare_function(decl);
         functions.push_back(&decl);
       }
@@ -978,7 +1011,9 @@ bool go_convertert::operator()()
 
   for(const irept *decl : functions)
     convert_function_body(*decl);
-  convert_package_init(init_functions);
+  for(const auto &package : parse_tree.packages)
+    convert_package_init(package, init_functions[package.path]);
+  convert_program_init();
   finish_interfaces();
   finish_panics();
 
@@ -2536,6 +2571,8 @@ exprt go_convertert::convert_call(const irept &call)
 
   // A declared function of this package: call it directly.
   const irept *callee_node = &skip_instantiation(fun);
+  if(callee_node->id() == "SelectorExpr" && callee_node->find("_sel").is_nil())
+    callee_node = &go_field(*callee_node, "Sel"); // a qualified identifier
 
   if(object.get("kind") == "func" && callee_node->id() == "Ident")
   {

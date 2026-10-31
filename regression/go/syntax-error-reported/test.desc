@@ -1,0 +1,11 @@
+CORE
+main.go
+
+^EXIT=6$
+^SIGNAL=0$
+main\.go:7:1: expected operand, found .}.$
+^PARSING ERROR$
+--
+^CONVERSION ERROR$
+--
+syntax errors are reported with positions, as parsing errors

@@ -1,0 +1,10 @@
+CORE
+main.go
+shapes.go --unwind 10
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Packages: a package of several files

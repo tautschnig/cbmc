@@ -4,7 +4,7 @@ main.go
 ^EXIT=6$
 ^SIGNAL=0$
 main\.go:7:6: cannot use "s" \+ "" \(untyped string constant "s"\) as int value in assignment
-^PARSING ERROR$
+^CONVERSION ERROR$
 --
 --
-type errors from go/types are reported with positions
+type errors from go/types are reported with positions, as conversion errors (as for C)

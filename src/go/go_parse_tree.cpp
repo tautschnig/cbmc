@@ -125,13 +125,19 @@ bool go_parse_treet::load_json(
     types.push_back(loader.object(t));
   for(const auto &o : to_json_object(json["objects"]))
     objects.emplace(o.first, loader.object(o.second));
-  for(const auto &init : to_json_array(json["init_order"]))
+  for(const auto &p : to_json_array(json["packages"]))
   {
-    initializert entry;
-    for(const auto &id : to_json_array(init["lhs"]))
-      entry.lhs.push_back(id.value);
-    entry.rhs = loader.object(init["rhs"]);
-    init_order.push_back(std::move(entry));
+    packaget package_entry;
+    package_entry.path = p["path"].value;
+    for(const auto &init : to_json_array(p["init_order"]))
+    {
+      initializert entry;
+      for(const auto &id : to_json_array(init["lhs"]))
+        entry.lhs.push_back(id.value);
+      entry.rhs = loader.object(init["rhs"]);
+      package_entry.init_order.push_back(std::move(entry));
+    }
+    packages.push_back(std::move(package_entry));
   }
   return false;
 }
@@ -145,7 +151,7 @@ void go_parse_treet::clear()
   asts.clear();
   types.clear();
   objects.clear();
-  init_order.clear();
+  packages.clear();
 }
 
 void go_parse_treet::output(std::ostream &out) const

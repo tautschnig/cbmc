@@ -28,6 +28,7 @@ Author: Michael Tautschnig
 #include "expr2go.h"
 #include "go_convert.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 
@@ -95,11 +96,73 @@ static std::string helper_path()
   return "cbmc-go-helper";
 }
 
+/// The .go files given to CBMC that have not been loaded yet. CBMC parses
+/// each file with its own languaget, but the files form one package (as
+/// with `go run a.go b.go`, Go1.27 §Packages: "A package in turn is
+/// constructed from one or more source files"), which go/types must check
+/// together: the files are collected here and loaded by the first
+/// typecheck (or show_parse).
+static std::vector<std::string> &pending_files()
+{
+  static std::vector<std::string> files;
+  return files;
+}
+
+/// Run the helper with \p arguments; report its diagnostics.
+/// \return true on error
+static bool run_helper(
+  const std::vector<std::string> &arguments,
+  message_handlert &message_handler)
+{
+  messaget log{message_handler};
+  temporary_filet stderr_file{"cbmc_go_err_", ".txt"};
+  const std::string helper = helper_path();
+  std::vector<std::string> argv{helper};
+  argv.insert(argv.end(), arguments.begin(), arguments.end());
+  const int status = run(helper, argv, "", "", stderr_file());
+  if(status == 0)
+    return false;
+
+  // Exit status 3: syntax or type errors, one per line, already in
+  // "file:line:col: message" form.
+  std::ifstream errors{stderr_file()};
+  std::string line;
+  while(std::getline(errors, line))
+    log.error() << line << messaget::eom;
+  if(status != 3)
+  {
+    // Not a diagnosed Go error: the helper could not be run (util/run
+    // reports a failed exec as status 1) or failed internally.
+    log.error() << "Go front-end: " << helper << " failed with status "
+                << status
+                << "; set CBMC_GO_HELPER or put cbmc-go-helper next to "
+                   "cbmc or on PATH"
+                << messaget::eom;
+  }
+  return true;
+}
+
 bool go_languaget::parse(
   std::istream &,
   const std::string &path,
   message_handlert &message_handler)
 {
+  // The syntax of each file; type checking needs all files of the package.
+  if(run_helper({"-syntax", path}, message_handler))
+    return true;
+  pending_files().push_back(path);
+  return false;
+}
+
+bool go_languaget::load_pending(message_handlert &message_handler)
+{
+  std::vector<std::string> paths;
+  paths.swap(pending_files());
+  if(paths.empty())
+    return false; // loaded by another file's language
+  // As the go command presents a package's files (sorted by name), which
+  // fixes the order of the init functions (Go1.27 §Package_initialization).
+  std::sort(paths.begin(), paths.end());
   messaget log{message_handler};
 
   const std::string goarch = target_goarch();
@@ -112,35 +175,10 @@ bool go_languaget::parse(
   }
 
   temporary_filet json_file{"cbmc_go_", ".json"};
-  temporary_filet stderr_file{"cbmc_go_err_", ".txt"};
-  const std::string helper = helper_path();
-  const int status = run(
-    helper,
-    {helper, "-goarch", goarch, "-o", json_file(), path},
-    "",
-    "",
-    stderr_file());
-
-  if(status != 0)
-  {
-    // Exit status 3: syntax or type errors, one per line, already in
-    // "file:line:col: message" form.
-    std::ifstream errors{stderr_file()};
-    std::string line;
-    while(std::getline(errors, line))
-      log.error() << line << messaget::eom;
-    if(status != 3)
-    {
-      // Not a diagnosed Go error: the helper could not be run (util/run
-      // reports a failed exec as status 1) or failed internally.
-      log.error() << "Go front-end: " << helper << " failed with status "
-                  << status
-                  << "; set CBMC_GO_HELPER or put cbmc-go-helper next to "
-                     "cbmc or on PATH"
-                  << messaget::eom;
-    }
+  std::vector<std::string> arguments{"-goarch", goarch, "-o", json_file()};
+  arguments.insert(arguments.end(), paths.begin(), paths.end());
+  if(run_helper(arguments, message_handler))
     return true;
-  }
 
   jsont json;
   if(parse_json(json_file(), message_handler, json))
@@ -157,6 +195,10 @@ bool go_languaget::typecheck(
   const std::string &,
   message_handlert &message_handler)
 {
+  if(load_pending(message_handler))
+    return true;
+  if(parse_tree.files.empty())
+    return false; // the files were converted with another file's package
   return go_convertert{symbol_table, parse_tree, message_handler}();
 }
 
@@ -189,34 +231,22 @@ bool go_languaget::generate_support_functions(
       function.location}};
   };
 
-  // With --function, CBMC calls this on a new instance, without a parse
-  // tree; the package is then that of the package initialisation function
-  // the conversion created.
-  std::string package = parse_tree.package;
-  if(package.empty())
+  // The program's package is the module of its initialisation function
+  // (also with --function, where CBMC calls this on a new instance, without
+  // a parse tree).
+  const symbolt *init = symbol_table.lookup(go_convertert::program_init_id());
+  if(init == nullptr)
   {
-    for(const auto &entry : symbol_table.symbols)
-    {
-      const std::string name = id2string(entry.first);
-      const std::string suffix = ".$init";
-      if(
-        entry.second.mode == "go" && has_prefix(name, "go::") &&
-        has_suffix(name, suffix))
-      {
-        package = name.substr(4, name.size() - 4 - suffix.size());
-        break;
-      }
-    }
+    log.error() << "Go front-end: no Go program was converted" << messaget::eom;
+    return true;
   }
+  const std::string package = id2string(init->module);
 
   // Go1.27 §Program_execution: "Program execution begins by initializing
   // the program and then invoking the function main in package main."
   code_blockt body;
   body.add(call(symbol_table.lookup_ref(INITIALIZE_FUNCTION), {}));
-  if(
-    const symbolt *init =
-      symbol_table.lookup(go_convertert::package_init_id(package)))
-    body.add(call(*init, {}));
+  body.add(call(*init, {}));
 
   // With --function, call that function with arbitrary arguments instead
   // of main.main.
@@ -267,9 +297,14 @@ bool go_languaget::generate_support_functions(
   return false;
 }
 
-void go_languaget::show_parse(std::ostream &out, message_handlert &)
+void go_languaget::show_parse(
+  std::ostream &out,
+  message_handlert &message_handler)
 {
-  parse_tree.output(out);
+  if(load_pending(message_handler))
+    return;
+  if(!parse_tree.files.empty())
+    parse_tree.output(out);
 }
 
 bool go_languaget::from_expr(

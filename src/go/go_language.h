@@ -78,6 +78,11 @@ public:
   static std::string target_goarch();
 
 protected:
+  /// Run the helper on the files parsed so far (see pending_files in
+  /// go_language.cpp), if any, and load its output.
+  /// \return true on error
+  bool load_pending(message_handlert &message_handler);
+
   go_parse_treet parse_tree;
   /// The function named by --function, or empty for main.main.
   std::string function_entry_point;

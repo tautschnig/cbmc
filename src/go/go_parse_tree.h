@@ -71,7 +71,15 @@ public:
     std::vector<irep_idt> lhs;
     irept rhs;
   };
-  std::vector<initializert> init_order;
+  /// A package converted from source: the program's, a user package it
+  /// imports, a model of a standard-library package, or the runtime.
+  struct packaget
+  {
+    std::string path;
+    std::vector<initializert> init_order;
+  };
+  /// The packages, in the order of their initialisation.
+  std::vector<packaget> packages;
 
   /// Load the helper's JSON (schema version 1).
   /// \return true on error

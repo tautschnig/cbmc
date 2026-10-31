@@ -12,16 +12,17 @@ target_link_libraries(go-frontend util json langapi linking)
 find_program(GO_EXECUTABLE go)
 if(GO_EXECUTABLE)
   set(go_helper "${CMAKE_BINARY_DIR}/bin/cbmc-go-helper")
+  # All Go sources, including the embedded packages and models.
+  file(GLOB_RECURSE helper_sources CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/helper/*.go")
   add_custom_command(
     OUTPUT "${go_helper}"
     COMMAND ${CMAKE_COMMAND} -E env GOTOOLCHAIN=local GOFLAGS=-mod=mod
             "${GO_EXECUTABLE}" build -trimpath -o "${go_helper}" .
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/helper"
     DEPENDS
-      "${CMAKE_CURRENT_SOURCE_DIR}/helper/main.go"
+      ${helper_sources}
       "${CMAKE_CURRENT_SOURCE_DIR}/helper/go.mod"
-      "${CMAKE_CURRENT_SOURCE_DIR}/helper/cprover/cprover.go"
-      "${CMAKE_CURRENT_SOURCE_DIR}/helper/runtime/rt.go"
     COMMENT "Building cbmc-go-helper")
   add_custom_target(cbmc-go-helper ALL DEPENDS "${go_helper}")
 else()

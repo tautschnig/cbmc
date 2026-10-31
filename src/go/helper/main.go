@@ -8,6 +8,8 @@
 //
 // Usage: cbmc-go-helper -goarch ARCH -o OUT.json FILE.go...
 //
+//	cbmc-go-helper -syntax FILE.go...    (only check the syntax)
+//
 // Exit status: 0 on success, 2 on usage or I/O errors, 3 on syntax or type
 // errors (reported on stderr as "file:line:col: message").
 //
@@ -18,7 +20,15 @@
 //	  "asts": [ <File node>, ... ],
 //	  "types": [ <type>, ... ],          // referenced by index
 //	  "objects": { "<id>": <object> },   // referenced by id
-//	  "init_order": [ {"lhs": ["<id>", ...], "rhs": <expr node>}, ... ] }
+//	  "packages": [ {"path": "<import path>", "init_order":
+//	      [ {"lhs": ["<id>", ...], "rhs": <expr node>}, ... ]}, ... ] }
+//
+// The files given are the program's package; "files" and "asts" also have
+// the files of the packages converted from source with it (see
+// packages.go): the user packages it imports, and the front-end's runtime
+// package "cprover/rt" (runtime/rt.go), whose objects have ids
+// "cprover/rt.<name>".
+// "packages" lists them in the order of their initialisation.
 //
 // A node is {"_k": <go/ast type name>, "_p": [file, line, col], <fields>}
 // plus, where go/types provides them:
@@ -50,9 +60,6 @@
 // in which every type is substituted and objects declared in the generic
 // declaration have ids `<id>@<instance id>`. Named type entries of
 // instantiated types have "iname", `<type object id>[<type args>]`.
-//
-// The last entry of "files" and "asts" is the front-end's runtime package
-// "cprover/rt" (runtime/rt.go), whose objects have ids "cprover/rt.<name>".
 package main
 
 import (
@@ -94,17 +101,25 @@ var runtimeSource string
 
 const runtimePath = "cprover/rt"
 
-// importer that serves "cprover" from the embedded source and everything
-// else from the gc toolchain's export data.
+// importer that serves "cprover" from the embedded source, user packages
+// from source (see loader), and the standard library from the gc
+// toolchain's export data.
 type helperImporter struct {
 	fset    *token.FileSet
 	sizes   types.Sizes
 	std     types.Importer
 	cprover *types.Package
+	loader  *loader
 }
 
 func (h *helperImporter) Import(path string) (*types.Package, error) {
+	if path == runtimePath {
+		return h.loader.runtime()
+	}
 	if path != cproverPath {
+		if pkg, ok, err := h.loader.importSource(path); ok {
+			return pkg, err
+		}
 		return h.std.Import(path)
 	}
 	if h.cprover == nil {
@@ -150,6 +165,7 @@ type encoder struct {
 	aliases      map[types.Object]string     // instances' copies of local objects
 	selObj       map[*ast.Ident]types.Object // re-resolved selectors and keys
 	selPath      map[*ast.SelectorExpr]selPath
+	loader       *loader
 	namedTypes   []types.Type // the types named by typeName,
 	typeNames    []string     // and their names
 	usedNames    map[string]bool
@@ -1127,6 +1143,8 @@ func ensureGoOnPath() {
 func main() {
 	goarch := flag.String("goarch", runtime.GOARCH, "target GOARCH")
 	out := flag.String("o", "", "output file (default: stdout)")
+	syntaxOnly := flag.Bool("syntax", false,
+		"only check the syntax of the files (no output)")
 	flag.Parse()
 	if flag.NArg() == 0 {
 		fmt.Fprintln(os.Stderr, "usage: cbmc-go-helper [-goarch ARCH] [-o OUT] FILE.go...")
@@ -1177,6 +1195,9 @@ func main() {
 	if failed {
 		os.Exit(3)
 	}
+	if *syntaxOnly {
+		return
+	}
 
 	info := &types.Info{
 		Types:      map[ast.Expr]types.TypeAndValue{},
@@ -1191,32 +1212,31 @@ func main() {
 		GoVersion: "go1.27", // the pinned language version (plan §2.1)
 		Context:   enc.ctxt,
 		Sizes:     sizes,
-		Importer: &helperImporter{fset: fset, sizes: sizes,
-			std: importer.ForCompiler(fset, "gc", nil)},
 		Error: func(err error) {
 			fmt.Fprintln(os.Stderr, err)
 			failed = true
 		},
 	}
-	pkg, _ := conf.Check(files[0].Name.Name, fset, files, info)
+	// The program's files are its package (as for go run); the user
+	// packages they import are loaded from source.
+	srcDir := filepath.Dir(names[0])
+	modRoot, modPath := findModule(srcDir)
+	ld := &loader{fset: fset, conf: &conf, info: info, enc: enc,
+		names: &names, files: &files, modRoot: modRoot, modPath: modPath,
+		srcDir: srcDir, byPath: map[string]*sourcePkg{},
+		loading: map[string]bool{},
+		failed:  &failed}
+	enc.loader = ld
+	conf.Importer = &helperImporter{fset: fset, sizes: sizes,
+		std: importer.ForCompiler(fset, "gc", nil), loader: ld}
+	mainPkg := ld.check(files[0].Name.Name, append([]*ast.File(nil), files...))
 	if failed {
 		os.Exit(3)
 	}
-	// The program's initialisation order, copied before checking the runtime
-	// package (which shares info, and so reuses InitOrder's array).
-	programInitOrder := append([]*types.Initializer(nil), info.InitOrder...)
+	pkg := mainPkg.pkg
 
-	// The runtime package, with its own file index after the program's.
-	rtFile, err := parser.ParseFile(fset, "cprover/rt/rt.go", runtimeSource,
-		parser.SkipObjectResolution)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "runtime:", err)
-		os.Exit(2)
-	}
-	enc.fileIdx["cprover/rt/rt.go"] = len(names)
-	names = append(names, "cprover/rt/rt.go")
-	files = append(files, rtFile)
-	if _, err := conf.Check(runtimePath, fset, []*ast.File{rtFile}, info); err != nil || failed {
+	// The runtime package, which the conversion calls.
+	if _, err := ld.runtime(); err != nil || failed {
 		fmt.Fprintln(os.Stderr, "runtime:", err)
 		os.Exit(2)
 	}
@@ -1226,18 +1246,31 @@ func main() {
 	for k := types.Bool; k <= types.UnsafePointer; k++ {
 		enc.typ(types.Typ[k])
 	}
-	var asts []any
+	// Generic declarations are recorded first: any file may instantiate
+	// those of another.
+	var filtered []*ast.File
 	for i, f := range files {
-		asts = append(asts, enc.node(enc.withoutGenerics(f, i)))
+		filtered = append(filtered, enc.withoutGenerics(f, i))
 	}
-	initOrder := []any{}
-	for _, init := range programInitOrder {
-		var lhs []string
-		for _, v := range init.Lhs {
-			lhs = append(lhs, enc.objID(v))
+	var asts []any
+	for _, f := range filtered {
+		asts = append(asts, enc.node(f))
+	}
+	// The packages, in the order of their initialisation, each with the
+	// order of its variables' initialisation (types.Info.InitOrder).
+	packages := []any{}
+	for _, sp := range initOrder(ld.order) {
+		initOrder := []any{}
+		for _, init := range sp.initOrder {
+			var lhs []string
+			for _, v := range init.Lhs {
+				lhs = append(lhs, enc.objID(v))
+			}
+			initOrder = append(initOrder, map[string]any{"lhs": lhs,
+				"rhs": enc.node(init.Rhs)})
 		}
-		initOrder = append(initOrder, map[string]any{"lhs": lhs,
-			"rhs": enc.node(init.Rhs)})
+		packages = append(packages, map[string]any{"path": sp.path,
+			"init_order": initOrder})
 	}
 	// Instances, and the types' method sets, until no new instances arise:
 	// encoding an instance or a method set may need further instances.
@@ -1258,7 +1291,7 @@ func main() {
 	doc := map[string]any{"version": 1, "go_version": runtime.Version(),
 		"goarch": *goarch, "package": pkg.Path(), "files": names,
 		"asts": asts, "types": enc.types, "objects": enc.objects,
-		"init_order": initOrder}
+		"packages": packages}
 
 	w := os.Stdout
 	if *out != "" {

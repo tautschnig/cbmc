@@ -1,0 +1,10 @@
+CORE
+main.go
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Import_declarations, §Package_initialization: user packages

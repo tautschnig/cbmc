@@ -23,12 +23,12 @@ Author: Michael Tautschnig
 #include <util/std_code.h>
 #include <util/std_expr.h>
 
+#include "go_parse_tree.h"
 #include "go_types.h"
 
 #include <map>
 #include <set>
 
-class go_parse_treet;
 class symbol_table_baset;
 class symbolt;
 
@@ -73,6 +73,14 @@ public:
   static irep_idt package_init_id(const std::string &package)
   {
     return "go::" + package + ".$init";
+  }
+
+  /// The generated function that initialises the program: all packages in
+  /// order (Go1.27 §Package_initialization). Its module is the program's
+  /// package.
+  static irep_idt program_init_id()
+  {
+    return "go::$init";
   }
 
 private:
@@ -142,6 +150,8 @@ private:
   bool uses_recover = false;
 
   bool is_converted_package(const irep_idt &package) const;
+  /// The paths of the packages converted from source.
+  std::set<irep_idt> converted_packages;
   /// The source location of \p node, attributed to the current function.
   source_locationt location_of(const irept &node) const;
   void error(const irept &node, const std::string &message);
@@ -192,7 +202,13 @@ private:
   /// The function value referring to declared function \p function,
   /// through an adapter that takes (and ignores) an environment.
   exprt function_value(const symbolt &function, const source_locationt &);
-  void convert_package_init(const std::vector<irep_idt> &init_functions);
+  /// The initialisation of \p package, and its init functions (in source
+  /// order).
+  void convert_package_init(
+    const go_parse_treet::packaget &package,
+    const std::vector<irep_idt> &init_functions);
+  /// go::$init, calling the initialisation of each package in order.
+  void convert_program_init();
   /// Declare the local variable for \p object_id; for heap variables, the
   /// result is the dereferenced pointer to it.
   exprt declare_local(

@@ -23,11 +23,9 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 # A module that resolves the import path "cprover" to the real package.
-mkdir -p "$work/cprover" "$work/main"
+mkdir -p "$work/cprover"
 cp "$root/src/go/helper/cprover/cprover.go" "$work/cprover/"
 printf 'module cprover\n\ngo 1.27\n' > "$work/cprover/go.mod"
-printf 'module oracle\n\ngo 1.27\n\nrequire cprover v0.0.0\n\nreplace cprover => ../cprover\n' \
-  > "$work/main/go.mod"
 
 if [ $# -eq 0 ]; then
   set -- "$root"/regression/go/*/
@@ -47,7 +45,14 @@ for dir in "$@"; do
   case " $options " in
     *" --32 "*) goarch=386 ;;
   esac
-  cp "$dir/main.go" "$work/main/main.go"
+  # The test's directory is its package (and, with a go.mod, its module,
+  # which may have further packages); it gets the real package cprover.
+  rm -rf "$work/main"
+  cp -r "$dir" "$work/main"
+  [ -f "$work/main/go.mod" ] ||
+    printf 'module oracle\n\ngo 1.27\n' > "$work/main/go.mod"
+  (cd "$work/main" && GOTOOLCHAIN=local go mod edit \
+    -require=cprover@v0.0.0 -replace=cprover="$work/cprover")
   output="$(cd "$work/main" && env GOTOOLCHAIN=local GOFLAGS=-mod=mod \
     ${goarch:+GOARCH=$goarch} timeout 60 go run . 2>&1)"
   result=$?

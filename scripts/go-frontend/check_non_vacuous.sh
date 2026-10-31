@@ -37,7 +37,11 @@ for dir in "$@"; do
   echo "$expected" | grep -q '^\^VERIFICATION SUCCESSFUL\$$' || continue
   options="$(sed -n 3p "$desc")"
 
-  # The closing brace of main is the first line "}" after "func main() {".
+  # A copy of the test's directory (it may have further files and
+  # packages), in which the closing brace of main, the first line "}" after
+  # "func main() {", is preceded by the assertion.
+  rm -rf "$work/test"
+  cp -r "$dir" "$work/test"
   awk '
     /^func main\(\) \{$/ { in_main = 1 }
     in_main && /^\}$/ {
@@ -45,14 +49,14 @@ for dir in "$@"; do
       in_main = 0
     }
     { print }
-  ' "$dir/main.go" > "$work/main.go"
-  if ! grep -q '"non-vacuity"' "$work/main.go"; then
+  ' "$dir/main.go" > "$work/test/main.go"
+  if ! grep -q '"non-vacuity"' "$work/test/main.go"; then
     echo "SKIPPED $name: no func main() found"
     continue
   fi
 
   # shellcheck disable=SC2086 # options are a word list
-  output="$(cd "$work" && timeout 300 "$cbmc" main.go $options 2>&1)"
+  output="$(cd "$work/test" && timeout 300 "$cbmc" main.go $options 2>&1)"
   if echo "$output" | grep -q 'non-vacuity: FAILURE$'; then
     echo "ok      $name"
   else
