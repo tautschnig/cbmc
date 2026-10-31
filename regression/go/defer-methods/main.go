@@ -8,7 +8,7 @@ import "cprover"
 
 type counter struct{ n int }
 
-func (c *counter) inc()        { c.n++ }
+func (c *counter) inc()         { c.n++ }
 func (c counter) add(d int) int { return c.n + d }
 
 type Closer interface{ Close() }
