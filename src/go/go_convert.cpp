@@ -311,8 +311,12 @@ void go_convertert::declare_parameters(
 
 void go_convertert::declare_function(const irept &decl)
 {
-  if(go_field(decl, "Body").is_nil())
+  if(
+    go_field(decl, "Body").is_nil() &&
+    !is_intrinsic(go_field(decl, "Name").get("_obj")))
+  {
     return unsupported(decl, "functions without a body");
+  }
   const irept &name = go_field(decl, "Name");
   const irep_idt &object_id = name.get("_obj");
   const irept &object = parse_tree.object(object_id);
@@ -742,6 +746,8 @@ void go_convertert::convert_function_body(const irept &decl)
   const irep_idt &object_id = name.get("_obj");
   if(!symbol_table.has_symbol(symbol_id(object_id)))
     return; // declaration failed and was reported
+  if(is_intrinsic(object_id))
+    return; // see finish_intrinsics
   convert_function(
     symbol_id(object_id),
     parse_tree.object(object_id).get("type"),
@@ -1015,6 +1021,7 @@ bool go_convertert::operator()()
     convert_package_init(package, init_functions[package.path]);
   convert_program_init();
   finish_interfaces();
+  finish_intrinsics();
   finish_panics();
 
   return error_found;

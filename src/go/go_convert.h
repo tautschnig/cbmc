@@ -564,6 +564,12 @@ private:
   static struct_typet deferred_node_type();
   void convert_defer(const irept &stmt, code_blockt &dest);
   exprt convert_recover(const irept &call);
+  /// Whether \p object_id is a function of the runtime package whose body
+  /// the converter generates (see runtime/rt.go).
+  static bool is_intrinsic(const irep_idt &object_id);
+  /// Generate the bodies of the intrinsics, once the dynamic types of
+  /// interface values are known.
+  void finish_intrinsics();
   /// The function `go::$check_panics`, called after the top-level
   /// function, with a property per panic site.
   void finish_panics();

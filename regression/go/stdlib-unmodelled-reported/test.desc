@@ -1,0 +1,11 @@
+CORE
+main.go
+
+^EXIT=6$
+^SIGNAL=0$
+Go front-end: calls to strings.ToUpper \(package strings\) is not supported yet$
+^CONVERSION ERROR$
+--
+^VERIFICATION
+--
+unmodelled standard-library functions are reported

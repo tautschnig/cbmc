@@ -39,6 +39,7 @@ type loader struct {
 	byPath  map[string]*sourcePkg
 	loading map[string]bool
 	order   []*sourcePkg // in the order they were type-checked
+	models  map[string]*types.Package
 	failed  *bool
 }
 

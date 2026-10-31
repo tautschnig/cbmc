@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 4
+^EXIT=10$
+^SIGNAL=0$
+^\[go::cprover/std/strings\.Repeat\.panic\.1\] line [0-9]+ panic: strings: negative Repeat count: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+panics in models

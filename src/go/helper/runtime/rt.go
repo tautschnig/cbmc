@@ -240,3 +240,24 @@ func (e Error) Error() string { return e.msg }
 
 // RuntimeError distinguishes run-time errors, as in package runtime.
 func (e Error) RuntimeError() {}
+
+// Intrinsics, whose bodies the front-end generates (go_convertert::
+// intrinsic_body): they are not expressible in the Go it converts.
+
+// Comparable reports whether the dynamic type of x is comparable (Go1.27
+// §Comparison_operators), or x is nil; the standard library uses
+// reflection for this.
+func Comparable(x any) bool
+
+// Float64bits returns the IEEE 754 binary representation of f, as
+// math.Float64bits.
+func Float64bits(f float64) uint64
+
+// Float64frombits returns the float64 with representation b.
+func Float64frombits(b uint64) float64
+
+// Float32bits returns the IEEE 754 binary representation of f.
+func Float32bits(f float32) uint32
+
+// Float32frombits returns the float32 with representation b.
+func Float32frombits(b uint32) float32

@@ -22,6 +22,7 @@ Author: Michael Tautschnig
 /// converted (finish_interfaces).
 
 #include <util/arith_tools.h>
+#include <util/byte_operators.h>
 #include <util/c_types.h>
 #include <util/config.h>
 #include <util/expr_initializer.h>
@@ -845,5 +846,61 @@ void go_convertert::finish_interfaces()
     state = std::move(outer);
     end_generated_function(body, result_type);
     symbol_table.get_writeable_ref(function.name).value = std::move(body);
+  }
+}
+
+bool go_convertert::is_intrinsic(const irep_idt &object_id)
+{
+  static const std::set<irep_idt> intrinsics{
+    "cprover/rt.Comparable",
+    "cprover/rt.Float64bits",
+    "cprover/rt.Float64frombits",
+    "cprover/rt.Float32bits",
+    "cprover/rt.Float32frombits"};
+  return intrinsics.count(object_id) != 0;
+}
+
+void go_convertert::finish_intrinsics()
+{
+  const auto body_of = [&](const irep_idt &object_id) -> symbolt *
+  {
+    symbolt *function = symbol_table.get_writeable(symbol_id(object_id));
+    return function != nullptr && function->value.is_nil() ? function : nullptr;
+  };
+
+  // Comparable: Go1.27 §Comparison_operators, for each dynamic type.
+  if(symbolt *function = body_of("cprover/rt.Comparable"))
+  {
+    const exprt x = parameter_symbols(*function)[0];
+    const exprt type = iface_field(x, "type");
+    exprt::operandst uncomparable;
+    for(const auto &t : dynamic_types)
+    {
+      if(!is_comparable(t.second))
+        uncomparable.push_back(
+          equal_exprt{type, from_integer(t.first, type.type())});
+    }
+    const typet &result = to_code_type(function->type).return_type();
+    code_blockt body{{code_frontend_returnt{typecast_exprt{
+      not_exprt{disjunction(std::move(uncomparable))}, result}}}};
+    function->value = std::move(body);
+  }
+
+  // The IEEE 754 representations (Go1.27 §Numeric_types: float32 and
+  // float64 are IEEE 754 binary32 and binary64): the same bits.
+  for(const char *name :
+      {"cprover/rt.Float64bits",
+       "cprover/rt.Float64frombits",
+       "cprover/rt.Float32bits",
+       "cprover/rt.Float32frombits"})
+  {
+    if(symbolt *function = body_of(name))
+    {
+      const exprt x = parameter_symbols(*function)[0];
+      const typet &result = to_code_type(function->type).return_type();
+      code_blockt body{{code_frontend_returnt{
+        make_byte_extract(x, from_integer(0, c_index_type()), result)}}};
+      function->value = std::move(body);
+    }
   }
 }

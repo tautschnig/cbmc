@@ -25,9 +25,9 @@
 //
 // The files given are the program's package; "files" and "asts" also have
 // the files of the packages converted from source with it (see
-// packages.go): the user packages it imports, and the front-end's runtime
-// package "cprover/rt" (runtime/rt.go), whose objects have ids
-// "cprover/rt.<name>".
+// packages.go): the user packages it imports, models of the standard
+// library (as "cprover/std/<path>"), and the front-end's runtime package
+// "cprover/rt" (runtime/rt.go), whose objects have ids "cprover/rt.<name>".
 // "packages" lists them in the order of their initialisation.
 //
 // A node is {"_k": <go/ast type name>, "_p": [file, line, col], <fields>}
@@ -103,7 +103,7 @@ const runtimePath = "cprover/rt"
 
 // importer that serves "cprover" from the embedded source, user packages
 // from source (see loader), and the standard library from the gc
-// toolchain's export data.
+// toolchain's export data, loading models of it where available.
 type helperImporter struct {
 	fset    *token.FileSet
 	sizes   types.Sizes
@@ -120,7 +120,11 @@ func (h *helperImporter) Import(path string) (*types.Package, error) {
 		if pkg, ok, err := h.loader.importSource(path); ok {
 			return pkg, err
 		}
-		return h.std.Import(path)
+		pkg, err := h.std.Import(path)
+		if err == nil {
+			err = h.loader.loadModel(path)
+		}
+		return pkg, err
 	}
 	if h.cprover == nil {
 		f, err := parser.ParseFile(h.fset, "cprover/cprover.go", cproverSource,
@@ -890,6 +894,12 @@ func (e *encoder) node(n ast.Node) any {
 		if r, ok := e.selObj[id]; ok {
 			o = r
 		}
+		if f, ok := o.(*types.Func); ok && e.loader != nil {
+			// A standard-library function with a model denotes the model.
+			if m := e.loader.model(f); m != nil {
+				o = m
+			}
+		}
 		if inst, ok := e.info.Instances[id]; ok {
 			// Go1.27 §Instantiations: "A generic function, method, or type
 			// is instantiated by substituting type arguments for the type
@@ -906,6 +916,8 @@ func (e *encoder) node(n ast.Node) any {
 			f, _ := o.(*types.Func)
 			if f != nil && isMethod(f) {
 				out["_obj"] = e.methodInstance(f, targs)
+			} else if m := e.genericModel(f, inst); m != nil {
+				out["_obj"] = e.funcInstance(m, targs)
 			} else if f != nil && e.genericDecls[f] != nil {
 				out["_obj"] = e.funcInstance(f, targs)
 			} else if o != nil {
@@ -1224,8 +1236,8 @@ func main() {
 	ld := &loader{fset: fset, conf: &conf, info: info, enc: enc,
 		names: &names, files: &files, modRoot: modRoot, modPath: modPath,
 		srcDir: srcDir, byPath: map[string]*sourcePkg{},
-		loading: map[string]bool{},
-		failed:  &failed}
+		loading: map[string]bool{}, models: map[string]*types.Package{},
+		failed: &failed}
 	enc.loader = ld
 	conf.Importer = &helperImporter{fset: fset, sizes: sizes,
 		std: importer.ForCompiler(fset, "gc", nil), loader: ld}
@@ -1235,7 +1247,8 @@ func main() {
 	}
 	pkg := mainPkg.pkg
 
-	// The runtime package, which the conversion calls.
+	// The runtime package, which the conversion calls (models may have
+	// imported it already).
 	if _, err := ld.runtime(); err != nil || failed {
 		fmt.Fprintln(os.Stderr, "runtime:", err)
 		os.Exit(2)
