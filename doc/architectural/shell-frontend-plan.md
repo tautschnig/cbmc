@@ -574,64 +574,156 @@ script can turn them on.
 - `local` (37);
 - command names that are expansions (33).
 
-### 7.3 String representation: options (2026-10-30)
+### 7.3 String representation: measurements (2026-10-31)
 
-Today every value is a bounded struct `{set, length, data[N]}`. The
-runtime functions are unrolled over N. Solver cost grows with N, and
-inputs are bounded by N.
+`--shell-strings` chooses the representation (branch `shell-strings`,
+which is `shell-frontend` merged into `tautschnig/py` for its string
+solver work):
+- `bounded` (the default): the struct `{set, length, data[N]}` and the
+  C runtime unrolled over N;
+- `refined`: refined strings for the string refinement solver
+  (`--refine-strings`);
+- `native`: the SMT-LIB String sort, for `--z3` and `--cvc5`.
 
-The Python front-end on branch `tautschnig/py` went through the same
-design, a bounded inline struct. It then moved through:
-1. refined strings with `--refine-strings`;
-2. a hybrid that intercepted those in smt2_conv. That failed at the
-   "symbol-indirection wall": once a string is a symbol, its bytes are
-   behind `s.data`;
-3. a private SMT String sort;
-4. finally, the upstream `string_typet` / `ID_string`. It is lowered to
-   SMT-LIB `String` and `RegLan` (`str.*`, `re.*`) by `smt2_conv`. The
-   flat encoder is on `develop`; `from_int`, trace read-back of String
-   values, and Int↔bit-vector typecasts are still only on the branch.
+**What shell does and does not have.** Shell has no structs, unions,
+`sizeof`, or way to look at the bytes of a value. So an unbounded value
+can be a struct of the set flag and the string with no layout to
+preserve, and no byte operator ever reaches a string (the obstacle the
+Python front-end met with strings inside aggregates). Values are byte
+strings without NUL: native inputs are constrained to bytes 1 to 255,
+as SMT-LIB strings have code points up to 0x2FFFF. Values are never
+mutated in place and there are no pointers, so the functional style of
+SMT-LIB strings fits. Many values are integers: counters, `$?`, `$#`,
+`$((...))`. Every value therefore also carries the integer it was made
+from, if any (`is_int`, `int_value`), and integer operands with a known
+value are not parsed. Literal decimal strings without leading zeros
+count too.
 
-The reasons for each move were soundness and precision first, then
-speed: the native String back end was "precise and fast" on its whole
-corpus, where refined strings needed many refinement iterations.
+**Census** (833 scripts; `scripts/shell-frontend/string_ops_census.py`).
+Of 8,654 case patterns, 4,784 are literal, 1,669 have one star at an
+end (`*.txt`, `--*`), 890 more have only stars and literals, 689 are
+`*`, 530 have `?` or brackets, and 92 contain expansions. Of 882
+pattern removals, 456 are `L*` or `*L`, 299 are literal, 73 contain
+expansions, 49 have `?` or brackets, and 5 have two stars. Decomposing
+star patterns into literal segments therefore covers 93% of case
+patterns and 86% of removals. Native strings match the remaining case
+patterns with regular expressions; removals with `?` or brackets are
+not supported by either unbounded representation yet.
 
-For the shell this maps as follows:
-- **equality, concatenation, length, prefix/suffix, substring** are
-  `str.=`, `str.++`, `str.len`, `str.prefixof`/`suffixof`, `str.substr`;
-- **glob patterns** map directly to regular expressions:
-  - `*` → `re.* re.allchar`
-  - `?` → `re.allchar`
-  - `[a-z]` → `re.range`
-  - `[!…]` → `re.diff re.allchar …`
-  - quoted parts → `str.to_re`
+**Encodings.**
+- Equality, concatenation, length, prefix, suffix, substring and
+  index_of map to one operation each on both back ends.
+- The last occurrence (for `##*L` and `%L*`) is `last_index_of` with
+  refinement. With native strings it is a fresh index and an `indexof`
+  after it, or, for one byte, a suffix that does not contain the byte,
+  which z3 decides much faster.
+- Integer operands of `test`. Native: a regular expression for the
+  syntax, then `str.to_int`, for which smt2_conv now has a lowering;
+  blanks and signs are split off only if the string is not plain
+  digits. Refined: `is_valid_long` and `parse_int`. Blanks around the
+  number and numbers longer than 18 bytes are over-approximated there,
+  because the solver's overflow axioms would otherwise constrain other
+  strings.
+- Native arithmetic, exit statuses, counts and indices are mathematical
+  integers with range checks. With 64-bit vectors, every conversion
+  between strings and integers mixed Int and bit-vectors, which neither
+  solver could do (`int_encodings.py`: the mixed encoding times out in
+  cvc5; a digit-by-digit bit-vector encoding times out in both; pure Int
+  takes 0.02 s in both).
+- Refined results need a backing array associated with their pointer
+  and length. Without one, the solver gave concatenation results a
+  length unrelated to the output length, and wrong verdicts.
 
-  `case` becomes `str.in_re`. Pattern removal needs a witness
-  `s = p ++ r ∧ p ∈ L(G)`, plus constraints that pick the shortest or
-  longest match;
-- **integer conversion**: there is no `str.to_int` lowering. The parsing
-  rules that the runtime matches against dash and bash would need it,
-  and the sign and blank handling would have to be modelled on top;
-- **the set/unset flag**: a separate Boolean per variable, not a struct
-  member.
+**Results.**
 
-Pitfalls from that work:
-- strings inside structs or arrays that get byte operators abort in
-  `lower_byte_operators`. The positional-parameter array would need the
-  handle-plus-uninterpreted-function design of the Python front-end;
-- `str.len` needs an explicit bound (`< 2^63`) where it is cast to a
-  bit-vector;
-- interning axioms must hold on every path;
-- there is no SAT back end for `string_typet`, and
-  `--incremental-smt2-solver` does not support it.
+Regression tests (`regression/shell`, 66 tests; per-test bounds of
+120 s and 6 GB):
 
-Proposal, not yet decided:
-- keep the bounded representation as the default, because it works
-  with every back end and its integer parsing is exact;
-- add a second representation on `string_typet` for runs with `--z3` or
-  `--cvc5`, which removes the length bound from inputs. The step-by-step
-  approach Python took (one operation at a time, sort-based dispatch in
-  smt2_conv) applies, and so do the generic pieces it added there.
+| Representation | Pass | Total time | Slowest |
+|---|---|---|---|
+| bounded | 66 | 66 s | 10 s |
+| native, cvc5 | 65 | 6 s | 1 s |
+| native, z3 | 65 | 18 s | 13 s |
+| refined | 62 | 133 s | 43 s |
+
+The test that native strings fail checks the bounded-only
+`shell-string-length` property. Refined strings fail it too, as well as
+two tests with bracket expressions (not supported) and one with
+`" 12 " -eq 12`, which blank over-approximation makes fail.
+
+Kernels (`string-study/run_kernels.py`): 12 scripts from common idioms
+and a failing variant of each, with `--unwind 10 --unwinding-assertions`,
+300 s and 7 GiB per run. "Correct" means the expected verdict; time is
+the sum over correct runs.
+
+| Representation | Correct | Time | Wrong | Timeout or out of memory | Max memory |
+|---|---|---|---|---|---|
+| bounded, N=16 | 22/24 | 514 s | 2 | 0 | 3.4 GB |
+| bounded, N=64 | 22/24 | 514 s | 2 | 0 | 3.4 GB |
+| bounded, N=256 | 15/24 | 643 s | 2 | 7 | 6.6 GB |
+| refined, inputs ≤ 64 | 19/24 | 70 s | 0 | 5 | 6.5 GB |
+| refined, inputs ≤ 1000 | 19/24 | 71 s | 0 | 5 | 6.5 GB |
+| native, z3 | 18/24 | 42 s | 0 | 6 | 103 MB |
+| native, cvc5 | 22/24 | 47 s | 0 | 2 | 58 MB |
+
+- Bounded strings fail `concat-eq` and `loop-concat` spuriously: a
+  concatenation with an input can exceed N. They are 10 to 100 times
+  slower than the unbounded representations and use 5 to 60 times the
+  memory; with N=256, 7 of 24 runs exceed the time or memory bound.
+- Refined strings run out of memory on the kernels that remove patterns
+  in a loop or split paths (`csv-loop`, `option-split`, `path-split`).
+- z3 times out on the same kernels and on `int-octal-fail`; cvc5 solves
+  them in 0.3 to 2.4 s.
+- Neither native solver finishes `int-octal-fail` (" 08" is valid for
+  `test` but an invalid octal constant in `$((...))`) or its companion
+  `int-roundtrip-fail`. Both combine blank decomposition, the octal
+  check and arithmetic on unknown strings.
+- `prefix-remove` uses `${#x}` unquoted in `$((...))`, which no
+  representation supports yet.
+
+Encodings against dash (`encoding_differential.py`, 400 cases with
+constant inputs: pattern removal, case, `${#x}`, `test -eq`, `$((x+1))`):
+- no mismatches in any representation;
+- refined strings were imprecise on 16 integers with blanks or more than
+  18 digits, as designed;
+- unsupported values (octal and hexadecimal constants, reported as
+  properties) were 16 for refined, 4 to 5 for native, and 0 for bounded,
+  whose runtime handles them;
+- with z3, two of the ten batches (70 cases) timed out; earlier runs
+  traced such timeouts to integers with blanks.
+
+The Python front-end's earlier numbers (`results-python.tsv`) do not
+measure the solvers: its encoding gave spurious results.
+
+**Conclusions.**
+- Native strings with cvc5 are the fastest and most precise. They
+  support every pattern, need no length bound, and use the least
+  memory. With z3 they are correct but time out on loops over pattern
+  removal and on integers with blanks, which are z3 string-solver
+  weaknesses that the encodings above only partly work around.
+- Refined strings are correct where they answer, but are slower than
+  native strings and run out of memory on pattern removal in loops.
+  They need an input length bound for the solver's model check (2^26
+  bytes), over-approximate some integers, and have no regular
+  expressions for `?` and brackets. Their solver needed fixes on the
+  shell's side (explicit backing arrays) to give correct results.
+- Bounded strings work with every back end and their integer parsing is
+  exact. They are much slower, need a length bound that makes
+  concatenations with inputs fail, and N=256 is already too large.
+
+**Proposal, to decide.**
+- Make `native` the representation whenever `--z3` or `--cvc5` is
+  given, and recommend cvc5.
+- For SAT runs, keep `bounded` as the default for now. Offer `refined`
+  as an option until it handles pattern removal in loops; those
+  out-of-memory runs are the next thing to investigate in the solver.
+- Remove `--shell-max-string-length` from unbounded runs, except as the
+  input bound for refined strings.
+- Open work:
+  - z3: the blank decomposition and loops over `index_of`;
+  - native octal and hexadecimal constants in `$((...))`;
+  - refined: `?` and brackets (via per-character constraints), and
+    blanks in integers.
 
 **Next.**
 - field splitting with the default IFS, for `for x in $list`,
