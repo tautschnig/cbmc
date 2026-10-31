@@ -759,6 +759,82 @@ turns on the refinement solver.
   instantiating, and bound the Ackermann constraints. That is a project
   of its own, so refined strings stay an option.
 
+**The growth within the refinement loop: causes and candidate fixes**
+(2026-11-01). The quadratic array constraints are being handled
+elsewhere; this concerns only the string solver's own growth. The
+experiments are on branch `string-refinement-experiments`, behind
+environment variables. The kernels ran with 200 s and 6 GB each.
+
+Causes, each measured:
+1. **Not-contains axioms.** `index_of` with a string needle generates
+   them, and they are instantiated over pairs of index terms (new ×
+   all, both ways). On `option-split`, from round 6 on the only
+   violated axioms were not-contains axioms, while the index set kept
+   growing.
+2. **Index terms grow with merged strings.** A string assigned in a loop
+   or in one branch of a `case` is an if-expression over the strings of
+   each path. Its length, and every index term derived from it, nests
+   those choices. On `csv-loop` the median term had 85 characters and the
+   largest 7,693. Substituting the terms into 110 axiom bodies produced
+   19,622 lemmas of 1.5 GB in the first round alone: 77 KB on average,
+   1.5 MB at most.
+3. **Many terms denote the same position.** Evaluated in the current
+   model, 33 to 956 of the new terms per round repeat the value of a term
+   already instantiated, against 30 to 68 with a new value.
+
+Fixes tried:
+
+| Fix | Where | Effect |
+|---|---|---|
+| Search for one-byte literal needles as characters | front end | `option-split` and `path-split`: out of memory → 2 to 3 s, 60 MB |
+| Skip the integer parser for known integers (branch) | front end | `int-format` 13 s → 0.3 s, `count-args-fail` 18.6 s → 3.4 s |
+| End temporaries per command (DEAD) | front end | fewer merged strings; with the filter, `csv-loop-fail` 5.3 → 3.0 GB |
+| Model-value filter: instantiate only index terms whose model value is new for their array; hold the others back and retry them later | solver | `option-split` 18.9 → 2.2 s, `path-split` 15.7 → 3.2 s |
+| Counterexample-only refinement (violated axiom at its witness) | solver | memory bounded, but one point per round: `option-split` needed 221 rounds and 107 s |
+| Ground range instances: each violated axiom at every position within its bounds in the model (at most 64), with arrays concretized | solver | converges in a few rounds; solves `csv-loop` (63 s) and `arg-loop-fail` (8.8 s) |
+| Filter, then ground instances once the index set exceeds 100 terms | solver | 23/24 kernels correct (default 21/24) |
+| Naming large index terms with fresh symbols | solver | worse: out of memory sooner |
+| Propagating witness positions to all axioms on the same array | solver | worse |
+
+Combined result (front-end changes plus filter and switch at 100;
+`CBMC_STRING_IS_FILTER=1 CBMC_STRING_SWITCH=100`):
+- Kernels: 23 of 24 correct, against 21 of 24 by default, with no wrong
+  verdicts. `csv-loop-fail` takes 8.8 s and `arg-loop-fail` 87 s, where
+  the default runs out of memory or time. `csv-loop` alone still exceeds
+  200 s; it finished in 191 s and 2.5 GB in a single run.
+- Python regression suite (1,278 tests): every test passes, against one
+  failure for the default solver; total time 346 s against 352 s.
+  `regex-findall-split-sound` needed a bound on the ground rounds: when
+  ground instances add nothing new, or after 64 rounds, the model is
+  taken as a counterexample. That is the same sound fallback the solver
+  already uses for an empty index set.
+- Shell regression tests in refined mode and the C string tests: no
+  change.
+
+**Soundness.** Every instance is implied by its axiom, so the filter, the
+ground instances and the switch only affect progress. A satisfying model
+is still checked against all axioms. The only other way to SAT is the
+existing fallback (model treated as a counterexample), which can cause a
+false alarm but cannot hide a bug.
+
+**Feasible solutions, in order of confidence:**
+1. Search for constant one-character needles as characters in the
+   solver itself, for every front end. More generally, encode
+   `index_of`/`contains` with a constant needle as a universal axiom
+   over fixed offsets instead of a not-contains axiom.
+2. The model-value filter on index sets: small, and it helped wherever
+   the index set grew.
+3. Ground range instances once the index set passes a budget. These are
+   bounded because the model's lengths are, and they kept every kernel
+   within memory. The budget, the 64-position limit and the round bound
+   need tuning on more benchmarks before they become defaults.
+4. In front ends, keep strings from being merged at join points where
+   possible: end temporaries and skip unneeded string operations.
+
+The remaining cost is the SAT problem itself: about 1.7 million
+variables on `arg-loop-fail` after one round. That is where the
+array-constraint work being done elsewhere comes in.
+
 **Next.**
 - field splitting with the default IFS, for `for x in $list`,
   `set -- $x`, and function arguments;
