@@ -172,7 +172,7 @@ The helper supplies the stdlib *signatures*; the models supply the
 
 ## 5. Status
 
-The first end-to-end slice and phases 1 to 6 of §6 are done. The code is in
+The first end-to-end slice and phases 1 to 7 of §6 are done. The code is in
 `src/go/`, the tests are in `regression/go/`.
 
 | Part | Files | Role |
@@ -180,7 +180,7 @@ The first end-to-end slice and phases 1 to 6 of §6 are done. The code is in
 | Helper | `helper/main.go`, `helper/cprover/`, `helper/runtime/` | `go/parser` + `go/types` → typed JSON (schema version 1). Type-switch bindings (`_impl`, from `types.Info.Implicits`), receiver-qualified method ids, file-qualified positions and the bytes of string constants (`_sb`) are emitted. Each type entry has a canonical id `tid` (the first entry of a `types.Identical` class), and each non-interface type its method set `mset` (name, method object, embedded-field path, whether the receiver is reached through a pointer, whether it is a pointer receiver, and the method-value type). Generic code is monomorphised here (see below), so the converter sees no type parameters. The runtime package `cprover/rt` (`helper/runtime/rt.go`) is type-checked and emitted with every program. |
 | Go AST | `go_parse_tree.{h,cpp}` | In-memory `irept` tree loaded from the JSON. The converter reads only this tree (§4.3). |
 | Types | `go_types.{h,cpp}` | `go/types` type table → `typet`. `int`/`uint`/`uintptr` come from `config.go`. Named struct types become struct tags (type symbols named like objects, e.g. `go::main.Node`, and `go::main.Pair[int,string]` for instances of generic types), so recursion through pointers is finite; other named types are their underlying type. Blank fields are kept under the names `_$N`. Booleans are stored in a byte (`c_bool`), so that they have a size (for heap variables and arrays); `as_condition` turns them into conditions. `float32`/`float64` are IEEE 754 `floatbv` types; complex numbers are structs `{real, imag}` marked `#go_complex` (CBMC's complex type is not lowered in function types). Strings, slices and maps: see below. Function values are structs `{code, env}` marked `#go_func_value` (see below); several results are returned as one struct marked `#go_tuple`, with components `$0`, `$1`, ... All interface types are one struct `{type int32, data *void}` marked `#go_interface` (see below). Each type records its canonical Go type id in the comment `#go_tid`. |
-| Converter | `go_convert.{h,cpp}`, `go_builtins.cpp`, `go_maps.cpp`, `go_floats.cpp`, `go_interfaces.cpp` | Go AST → symbol table and code. Constructs outside the slice are reported as errors, never dropped. Strings, slices and their built-ins are in `go_builtins.cpp`, maps in `go_maps.cpp`, floating-point and complex numbers in `go_floats.cpp`, methods and interfaces in `go_interfaces.cpp`. |
+| Converter | `go_convert.{h,cpp}`, `go_builtins.cpp`, `go_maps.cpp`, `go_floats.cpp`, `go_interfaces.cpp`, `go_panics.cpp` | Go AST → symbol table and code. Constructs outside the slice are reported as errors, never dropped. Strings, slices and their built-ins are in `go_builtins.cpp`, maps in `go_maps.cpp`, floating-point and complex numbers in `go_floats.cpp`, methods and interfaces in `go_interfaces.cpp`, panics, `defer` and `recover` in `go_panics.cpp`. |
 | Language | `go_language.{h,cpp}`, `expr2go.{h,cpp}` | `languaget` for `.go` files: runs the helper, sets the target GOARCH from `--arch`/`--32`/`--64`, builds the entry point. |
 
 Supported so far:
@@ -333,8 +333,9 @@ Supported so far:
   types of their own (`types.Instantiate` with the type checker's
   context, so that identical instances are one type). `--function`
   takes an instance by its base name, e.g. `--function 'Max[int]'`.
-- Run-time panics, emitted by the converter as an assertion followed by
-  an assumption because `goto_check_c` skips non-C modes. They cover
+- Run-time panics, emitted by the converter (`goto_check_c` skips non-C
+  modes) as a jump to the end of the function after recording the panic
+  (see below). They cover
   integer division or remainder by zero (`division-by-zero`), negative
   signed shift counts (`negative-shift`), dereferences of nil pointers
   and calls of nil function values (`nil-dereference`), non-constant
@@ -348,6 +349,32 @@ Supported so far:
   `go::cprover/rt.*`).
   CBMC's own semantics already match Go for `MinInt / -1`,
   `MinInt % -1`, and oversized shift counts.
+- Panicking, `defer` and `recover` (`§Handling_panics`,
+  `§Defer_statements`). A panic sets the thread-local `go::$panicking`,
+  records the panic site (`go::$panic_site`) and, if the program calls
+  `recover`, the value (`go::$panic_value`), and jumps to the label
+  `$unwind` at the end of the function. There the deferred calls run, in
+  reverse order, and the function returns. After every call of a Go
+  function, the caller jumps to its own `$unwind` if `go::$panicking` is
+  set, so a panic unwinds up to the top-level function. The entry point
+  calls `go::$check_panics` after `main.main` (which does not run if
+  initialisation panicked); it has one assertion per panic site, with the
+  site's location, property class and message, which fails if that panic
+  ended the program. Property names are as before, e.g.
+  `go::main.div.division-by-zero.1`, and a recovered panic is not a
+  violation. The values of run-time panics are `cprover/rt.Error`
+  values (an `error` with gc's message, e.g. "runtime error: integer
+  divide by zero"). `defer f(args)` evaluates the function value and the
+  arguments into a new environment on the heap and saves a function
+  value of type `func()` calling it (`<function>$deferN`); a function
+  whose defer statements each run at most once keeps one variable per
+  statement, otherwise (a defer in a loop, or `goto`) a list on the heap.
+  Return statements set the results (named, or a hidden `$tmp`) and jump
+  to `$unwind`, so deferred functions can change named results.
+  `recover` returns the panic value and stops panicking if the goroutine
+  is panicking and the calling function was called directly by the
+  deferral: the deferral sets `go::$defer_token`, which every Go function
+  clears on entry after reading it.
 - Verification primitives from package `cprover`: `Assert`, `Assume`,
   `Nondet[T]`.
 
@@ -436,10 +463,16 @@ Known limitations:
   each operation rounded separately, as gc does on amd64; gc fuses
   `x*y + z` on some architectures (e.g. arm64), so results proved here
   need not hold there for programs sensitive to that rounding.
-- Not yet supported: `select`, `defer`, `recover`, variadic functions
-  (other than `append`), the `math` package (and other packages),
-  `range` over functions and channels, goroutines, and channels. The `Error` method of run-time panics
-  (`runtime.Error`) is not modelled, as `recover` is not.
+- Deferred calls of built-in functions (other than `recover`, which then
+  has no effect) are reported. The list of deferred calls is a loop, so
+  `--unwind` must cover the number of deferred calls of a function whose
+  defer statements are in loops. When a deferred function panics while
+  panicking, only the latest panic is reported. The messages of run-time
+  errors are gc's without the operands (e.g., no index in "index out of
+  range"), as the specification leaves them unspecified.
+- Not yet supported: `select`, variadic functions (other than `append`),
+  the `math` package (and other packages), `range` over functions and
+  channels, goroutines, and channels.
 
 The Makefile build of `cbmc` does not link the Python front-end that
 `cbmc_languages.cpp` registers (by inspection: no Makefile builds
@@ -485,9 +518,9 @@ section.
 6. **Generics** (done). `§Type_parameter_declarations` and
    `§Instantiations` (also generic methods [Go 1.27]), by monomorphising
    each instantiation `go/types` reports.
-7. **Panics and deferral.** `§Defer_statements`, `§Handling_panics`
-   (`recover`), so that a run-time panic becomes an unwinding path
-   instead of an assumption.
+7. **Panics and deferral** (done). `§Defer_statements`,
+   `§Handling_panics` (`recover`), so that a run-time panic becomes an
+   unwinding path instead of an assumption.
 8. **Packages and the standard library.** Several files per package,
    imported user packages, and Go models of the stdlib functions programs
    use (§4.5).
@@ -495,7 +528,6 @@ section.
    `§Send_statements`, `§Receive_operator`, `§Select_statements` with a
    nondeterministic choice, and the Go Memory Model for data races.
 
-Phases 1–3 cover most small verification harnesses. Phase 7 changes how
-panics are encoded, so the converter keeps all panic checks behind one
-helper (`go_convertert::guard_panic` and friends) to make that change
-local.
+Phases 1–3 cover most small verification harnesses. All panics go
+through one helper (`go_convertert::raise_panic`, used by `add_panic`
+and `guard_panic`), which made phase 7 a local change.
