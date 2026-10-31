@@ -96,12 +96,19 @@ def run_benchmark(cbmc, bench, output_dir, timeout, memory_mb, skip_solver):
         "-e", perf_event,
         "-o", str(perf_data), "--"] + cmd
 
+    def limit_memory():
+        # Keep the inherited hard limit: raising it is not permitted.
+        hard = resource.getrlimit(resource.RLIMIT_AS)[1]
+        soft = memory_mb * 1024 * 1024
+        if hard != resource.RLIM_INFINITY:
+            soft = min(soft, hard)
+        resource.setrlimit(resource.RLIMIT_AS, (soft, hard))
+
     start = time.monotonic()
     try:
         result = subprocess.run(
             perf_cmd, capture_output=True, text=True, timeout=timeout,
-            preexec_fn=lambda: resource.setrlimit(
-                resource.RLIMIT_AS, (memory_mb * 1024 * 1024, -1)))
+            preexec_fn=limit_memory)
         cbmc_stdout = result.stdout + result.stderr
         elapsed = time.monotonic() - start
     except subprocess.TimeoutExpired:
