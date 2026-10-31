@@ -476,8 +476,6 @@ void go_convertert::convert_defer(const irept &stmt, code_blockt &dest)
   }
   if(object.get("pkg") == "cprover")
     return unsupported(call, "deferred calls of " + id2string(callee));
-  if(call.get_bool("_ellipsis"))
-    return unsupported(call, "calls with \"...\" arguments");
 
   // Function literals, declared functions and methods are not nil (a
   // method value of a nil interface value panics when it is evaluated).

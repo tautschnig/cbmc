@@ -328,11 +328,6 @@ typet go_type_convertert::signature(const irep_idt &index)
       "type " + parse_tree.type_entry(index).get_string("str");
     return typet{ID_nil};
   }
-  if(under.get_bool("variadic"))
-  {
-    unsupported_reason = "variadic functions";
-    return typet{ID_nil};
-  }
 
   // Go1.27 §Function_types. A function with several results returns them
   // as one struct (see tuple), with components $0, $1, ...
@@ -354,6 +349,12 @@ typet go_type_convertert::signature(const irep_idt &index)
     parameters.emplace_back(param_type);
   }
   code_typet result{std::move(parameters), std::move(return_type)};
+  // Go1.27 §Passing_arguments_to_..._parameters: "If f is variadic with a
+  // final parameter p of type ...T, then within f the type of p is
+  // equivalent to type []T." go/types gives p that type; calls build the
+  // slice (go_convertert::convert_arguments).
+  if(under.get_bool("variadic"))
+    result.set(ID_C_go_variadic, true);
   result.set(ID_C_go_type, parse_tree.type_entry(index).get("str"));
   return std::move(result);
 }

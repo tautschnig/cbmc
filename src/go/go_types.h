@@ -42,6 +42,8 @@ class symbol_table_baset;
 /// Name of the comment recording the dynamic type id of a type (see
 /// go_type_convertert::type_id).
 #define ID_C_go_tid "#go_tid"
+/// Name of the comment marking the code types of variadic functions.
+#define ID_C_go_variadic "#go_variadic"
 
 /// True if \p type holds the values of a multi-valued expression (see
 /// go_type_convertert::tuple).

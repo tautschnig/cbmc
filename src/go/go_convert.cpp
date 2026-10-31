@@ -2461,11 +2461,6 @@ exprt go_convertert::convert_call(const irept &call)
   const irept &fun = go_field(call, "Fun");
   if(fun.get_bool("_tx"))
     return convert_conversion(call);
-  if(call.get_bool("_ellipsis") && callee_object(call) != "append")
-  {
-    unsupported(call, "calls with \"...\" arguments");
-    return nil_exprt{};
-  }
 
   const irep_idt callee = callee_object(call);
   const irept &object = parse_tree.object(callee);
@@ -2666,6 +2661,46 @@ bool go_convertert::convert_arguments(
   if(values.size() == 1 && is_tuple(values.front().type()))
     values = unpack(values.front(), location_of(call), prefix);
   const auto &parameters = code_type.parameters();
+  if(code_type.get_bool(ID_C_go_variadic) && !call.get_bool("_ellipsis"))
+  {
+    // Go1.27 §Passing_arguments_to_..._parameters: "If f is invoked with no
+    // actual arguments for p, the value passed to p is nil. Otherwise, the
+    // value passed is a new slice of type []T with a new underlying array
+    // whose successive elements are the actual arguments". (With "s...",
+    // "it is passed unchanged as the value for a ...T parameter".)
+    const std::size_t fixed = parameters.size() - 1;
+    if(values.size() < fixed)
+    {
+      unsupported(call, "this call");
+      return true;
+    }
+    const typet &slice = parameters.back().type();
+    const auto &components = to_struct_type(slice).components();
+    const typet &element = to_pointer_type(components[0].type()).base_type();
+    const std::size_t count = values.size() - fixed;
+    const source_locationt location = location_of(call);
+    exprt data = null_pointer_exprt{to_pointer_type(components[0].type())};
+    if(count > 0)
+    {
+      // The elements are evaluated (in order) before the array exists.
+      for(std::size_t i = fixed; i < values.size(); ++i)
+      {
+        values[i] =
+          evaluate_once(assign_cast(values[i], element), location, prefix);
+      }
+      data = allocate_elements(
+        element, from_integer(count, size_type()), false, location, prefix);
+      for(std::size_t i = 0; i < count; ++i)
+      {
+        prefix.add(code_frontend_assignt{
+          dereference_exprt{plus_exprt{data, from_integer(i, c_index_type())}},
+          values[fixed + i]});
+      }
+    }
+    const exprt length = from_integer(count, components[1].type());
+    values.resize(fixed);
+    values.push_back(struct_exprt{{data, length, length}, slice});
+  }
   if(values.size() != parameters.size())
   {
     unsupported(call, "this call");
