@@ -454,6 +454,18 @@ exprt go_convertert::convert_method_value(const irept &selector)
     x, selection.find("path"), method_object, location, parts.checks);
   code_blockt prefix;
   receiver = evaluate_once(with_parts(receiver, parts), location, prefix);
+  if(is_go_interface(receiver.type()))
+  {
+    // Go1.27 §Selectors: "If x is of interface type and has the value nil,
+    // calling or evaluating the method x.f causes a run-time panic."
+    const exprt type = iface_field(receiver, "type");
+    add_panic(
+      prefix,
+      notequal_exprt{type, from_integer(0, type.type())},
+      "nil-dereference",
+      "runtime error: invalid memory address or nil pointer dereference",
+      location);
+  }
   if(
     !is_go_interface(receiver.type()) &&
     !symbol_table.has_symbol(symbol_id(method_object)))
