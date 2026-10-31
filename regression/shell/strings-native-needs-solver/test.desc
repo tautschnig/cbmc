@@ -1,0 +1,10 @@
+CORE
+main.sh
+--shell-strings native
+^EXIT=1$
+^SIGNAL=0$
+native shell strings need an SMT solver with the theory of strings
+--
+^VERIFICATION
+--
+Native strings without --cvc5 or --z3 are rejected.

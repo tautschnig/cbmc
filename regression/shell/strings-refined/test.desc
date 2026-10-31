@@ -1,0 +1,12 @@
+CORE
+main.sh
+--shell-strings refined
+^EXIT=10$
+^SIGNAL=0$
+string refinement
+^\[assertion\.1\] .*: SUCCESS$
+^\[assertion\.2\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+--shell-strings refined selects the string refinement solver.

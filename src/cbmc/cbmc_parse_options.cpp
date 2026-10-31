@@ -291,8 +291,35 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("shell-max-arguments"))
     options.set_option(
       "shell-max-arguments", cmdline.get_value("shell-max-arguments"));
-  if(cmdline.isset("shell-strings"))
-    options.set_option("shell-strings", cmdline.get_value("shell-strings"));
+  // Shell strings: native SMT-LIB strings whenever an SMT solver with the
+  // theory of strings is chosen, else bounded strings; refined strings
+  // need the string refinement solver.
+  {
+    const bool string_solver = cmdline.isset("z3") || cmdline.isset("cvc5");
+    std::string shell_strings = cmdline.get_value("shell-strings");
+    if(shell_strings.empty() && string_solver)
+      shell_strings = "native";
+    if(shell_strings == "native" && !string_solver && !cmdline.isset("outfile"))
+    {
+      throw invalid_command_line_argument_exceptiont{
+        "native shell strings need an SMT solver with the theory of strings",
+        "--shell-strings",
+        "add --cvc5 or --z3"};
+    }
+    if(shell_strings == "refined")
+    {
+      if(cmdline.isset("smt2") || string_solver)
+      {
+        throw invalid_command_line_argument_exceptiont{
+          "refined shell strings need the SAT back end",
+          "--shell-strings",
+          "use --shell-strings native with --cvc5 or --z3"};
+      }
+      options.set_option("refine-strings", true);
+    }
+    if(!shell_strings.empty())
+      options.set_option("shell-strings", shell_strings);
+  }
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
   // Disable signed overflow checks for Python source files.
@@ -1299,9 +1326,9 @@ void cbmc_parse_optionst::help()
     "bound the number of positional parameters and of fields in a list to "
     "{un} (default: 8)\n"
     " {y--shell-strings} {ubounded}|{urefined}|{unative} \t "
-    "represent shell strings as bounded byte arrays (default), for the "
-    "string refinement solver ({y--refine-strings}), or as SMT-LIB strings "
-    "({y--z3} or {y--cvc5})\n"
+    "represent shell strings as bounded byte arrays, for the string "
+    "refinement solver, or as SMT-LIB strings (the default with {y--cvc5} "
+    "or {y--z3}; else bounded is the default)\n"
     "\n"
     "Platform options:\n"
     HELP_CONFIG_PLATFORM

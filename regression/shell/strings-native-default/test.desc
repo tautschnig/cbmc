@@ -1,0 +1,10 @@
+CORE
+main.sh
+--cvc5 --shell-max-string-length 24
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+shell-string-length
+--
+With --cvc5, shell strings are SMT-LIB strings without a length bound.
