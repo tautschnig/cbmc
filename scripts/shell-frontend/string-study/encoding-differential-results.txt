@@ -1,0 +1,6 @@
+native-z3: no results for batch 80:
+native-z3: no results for batch 240:
+bounded      arith-check ok: 51, ok: 389
+refined      arith-check ok: 35, imprecise (blanks, long): 16, ok: 272, unsupported value: 16
+native-z3    arith-check ok: 34, error: 70, ok: 238, unsupported value: 4
+native-cvc5  arith-check ok: 46, ok: 344, unsupported value: 5
