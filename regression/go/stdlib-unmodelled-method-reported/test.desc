@@ -1,0 +1,13 @@
+CORE
+main.go
+
+^EXIT=6$
+^SIGNAL=0$
+Go front-end: calls to strings.Builder.WriteString \(package strings\) is not supported yet$
+Go front-end: calls to strings.Builder.String \(package strings\) is not supported yet$
+^CONVERSION ERROR$
+--
+^VERIFICATION
+Invariant check failed
+--
+unmodelled methods of standard-library types are reported

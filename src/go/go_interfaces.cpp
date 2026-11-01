@@ -254,7 +254,19 @@ exprt go_convertert::method_receiver(
   }
   if(is_go_interface(x.type()))
     return x;
-  const symbolt &method = ns.lookup(symbol_id(method_object));
+  const symbolt *method_symbol = symbol_table.lookup(symbol_id(method_object));
+  if(method_symbol == nullptr)
+  {
+    // A method of a standard-library type without a model.
+    const irept &object = parse_tree.object(method_object);
+    log.error().source_location = location;
+    log.error() << "Go front-end: calls to " << method_object << " (package "
+                << object.get_string("pkg") << ") is not supported yet"
+                << messaget::eom;
+    error_found = true;
+    return nil_exprt{};
+  }
+  const symbolt &method = *method_symbol;
   const typet &receiver = to_code_type(method.type).parameters().front().type();
   if(receiver.id() == ID_pointer && x.type().id() != ID_pointer)
     return address_of_exprt{
@@ -315,6 +327,8 @@ exprt go_convertert::convert_method_call(const irept &call)
     return nil_exprt{};
   exprt receiver = method_receiver(
     x, selection.find("path"), method_object, location, parts.checks);
+  if(receiver.is_nil())
+    return nil_exprt{};
   code_blockt prefix;
   receiver = evaluate_once(with_parts(receiver, parts), location, prefix);
 
@@ -419,6 +433,11 @@ exprt go_convertert::convert_method_value(const irept &selector)
       state.function_id = id;
       exprt receiver = method_receiver(
         params[1], selection.find("path"), method_object, location, body);
+      if(receiver.is_nil())
+      {
+        state = std::move(outer);
+        return nil_exprt{};
+      }
       exprt::operandst arguments{params.begin() + 2, params.end()};
       irep_idt method_signature = signature_index;
       if(is_go_interface(receiver.type()))
@@ -453,6 +472,8 @@ exprt go_convertert::convert_method_value(const irept &selector)
     return nil_exprt{};
   exprt receiver = method_receiver(
     x, selection.find("path"), method_object, location, parts.checks);
+  if(receiver.is_nil())
+    return nil_exprt{};
   code_blockt prefix;
   receiver = evaluate_once(with_parts(receiver, parts), location, prefix);
   if(is_go_interface(receiver.type()))
@@ -733,6 +754,8 @@ void go_convertert::finish_interfaces()
           entry->get("obj"),
           location,
           call_block);
+        if(receiver.is_nil())
+          continue; // reported
         exprt::operandst arguments{params.begin() + 1, params.end()};
         exprt call = call_method(
           receiver,
