@@ -1,0 +1,12 @@
+CORE
+main.go
+--unwind 4
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 22 in order: SUCCESS$
+^\[go::main\.main\.assertion\.4\] line 38 synchronised: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Channel_types: unbuffered channels synchronise

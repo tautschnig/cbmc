@@ -1,0 +1,15 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.closed-channel\.3\] line 13 send on closed channel: FAILURE$
+^\[go::main\.main\.closed-channel\.5\] line 15 close of closed channel: FAILURE$
+^\[go::main\.main\.closed-channel\.6\] line 18 close of nil channel: FAILURE$
+^\[go::main\.main\.makechan\.2\] line 21 makechan: size out of range: FAILURE$
+^\[go::main\.main\.closed-channel\.2\] line 10 close of closed channel: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Go1.27 §Send_statements, §Close: run-time panics of channel operations

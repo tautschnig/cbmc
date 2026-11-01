@@ -78,11 +78,10 @@ exprt go_convertert::make_chan(
   const source_locationt &location,
   code_blockt &dest)
 {
-  // Go1.27 §Making_slices_maps_and_channels: make(T, n) is a "channel of
-  // type T, buffered channel of size n"; "The size arguments n and m must
-  // be of integer type, have a type set containing only integer types, or
-  // be untyped constants." A negative size panics (gc: "makechan: size out
-  // of range").
+  // Go1.27 §Making_slices_maps_and_channels: make(T, n) makes a "buffered
+  // channel of type T, buffer size n"; "For slices and channels, if n is
+  // negative or larger than m at run time, a run-time panic occurs." The
+  // message is gc's (makechan: size out of range).
   const typet int_type = signedbv_typet{config.go.int_width};
   const exprt n = evaluate_once(
     typecast_exprt::conditional_cast(size, int_type), location, dest);

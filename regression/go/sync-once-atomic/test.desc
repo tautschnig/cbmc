@@ -1,0 +1,13 @@
+CORE
+main.go
+--unwind 4
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.2\] line 18 once value: SUCCESS$
+^\[go::main\.main\.assertion\.3\] line 25 atomic adds: SUCCESS$
+^\[go::main\.main\.assertion\.7\] line 34 pointer: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+models of sync.Once, sync.OnceValue and sync/atomic

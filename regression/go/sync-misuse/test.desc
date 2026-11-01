@@ -1,0 +1,12 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::sync\.Mutex\.Unlock\.fatal\.1\] line \d+ fatal error: sync: unlock of unlocked mutex: FAILURE$
+^\[go::sync\.WaitGroup\.Add\.panic\.1\] line \d+ panic: sync: negative WaitGroup counter: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+misuse of sync: fatal errors and panics
