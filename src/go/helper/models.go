@@ -25,16 +25,46 @@ var modelFS embed.FS
 
 const modelPrefix = "cprover/std/"
 
+// Standard-library packages that their models replace: the program is
+// type-checked against models/<path> as package <path>, so that only the
+// API the model declares is available. Their types have methods that
+// operate on state the real types keep in internal fields, which models of
+// functions alone (see model) cannot reach.
+var replaced = map[string]bool{"sync": true, "sync/atomic": true}
+
+// loadReplacement loads the model that replaces standard-library package
+// path (see replaced).
+func (l *loader) loadReplacement(path string) (*types.Package, error) {
+	if sp, ok := l.byPath[path]; ok {
+		return sp.pkg, nil
+	}
+	files, err := l.parseModel(path)
+	if err != nil {
+		return nil, err
+	}
+	return l.check(path, files).pkg, nil
+}
+
 // loadModel loads the model of standard-library package path, if any.
 func (l *loader) loadModel(path string) error {
 	if _, done := l.models[path]; done {
 		return nil
 	}
 	l.models[path] = nil
+	files, err := l.parseModel(path)
+	if err != nil || files == nil {
+		return err
+	}
+	l.models[path] = l.check(modelPrefix+path, files).pkg
+	return nil
+}
+
+// parseModel parses the files of models/<path>; none if there is no model.
+func (l *loader) parseModel(path string) ([]*ast.File, error) {
 	dir := "models/" + path
 	entries, err := fs.ReadDir(modelFS, dir)
 	if err != nil {
-		return nil // no model
+		return nil, nil // no model
 	}
 	var files []*ast.File
 	for _, e := range entries {
@@ -43,18 +73,17 @@ func (l *loader) loadModel(path string) error {
 		}
 		src, err := fs.ReadFile(modelFS, dir+"/"+e.Name())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		name := modelPrefix + path + "/" + e.Name()
 		f, err := parser.ParseFile(l.fset, name, src, parser.SkipObjectResolution)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		l.addFile(name, f)
 		files = append(files, f)
 	}
-	l.models[path] = l.check(modelPrefix+path, files).pkg
-	return nil
+	return files, nil
 }
 
 // model returns the model of standard-library function f, or nil.

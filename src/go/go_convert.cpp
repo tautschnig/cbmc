@@ -2362,6 +2362,41 @@ bool go_convertert::convert_intrinsic_call(const irept &call, code_blockt &dest)
     return true;
   }
 
+  if(callee == "cprover/rt.AtomicBegin" || callee == "cprover/rt.AtomicEnd")
+  {
+    const bool begin = callee == "cprover/rt.AtomicBegin";
+    if(begin)
+      ++state.atomic_depth;
+    else if(state.atomic_depth > 0)
+      --state.atomic_depth;
+    codet section{begin ? ID_atomic_begin : ID_atomic_end};
+    section.add_source_location() = location;
+    dest.add(std::move(section));
+    return true;
+  }
+
+  if(callee == "cprover/rt.Fatal")
+  {
+    // A fatal error (as the runtime's fatal, which deferred functions
+    // cannot recover from) stops the program.
+    if(args.size() != 1 || args.front().get("_cvk") != "string")
+    {
+      unsupported(call, "a non-constant message of rt.Fatal");
+      return true;
+    }
+    const std::string text = args.front().get_string("_cv");
+    source_locationt loc = location;
+    loc.set_property_class("fatal");
+    loc.set_comment("fatal error: " + text.substr(1, text.size() - 2));
+    code_assertt check{false_exprt{}};
+    check.add_source_location() = loc;
+    dest.add(std::move(check));
+    code_assumet stop{false_exprt{}};
+    stop.add_source_location() = location;
+    dest.add(std::move(stop));
+    return true;
+  }
+
   if(callee == "cprover.Assume")
   {
     exprt cond = convert_expr(args[0]);

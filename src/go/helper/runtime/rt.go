@@ -261,3 +261,19 @@ func Float32bits(f float32) uint32
 
 // Float32frombits returns the float32 with representation b.
 func Float32frombits(b uint32) float32
+
+// Operations of the models of sync and sync/atomic, whose calls (as
+// statements) the front-end converts (go_convertert::
+// convert_intrinsic_call); the bodies are not used.
+
+// AtomicBegin starts an atomic section: no other goroutine runs until the
+// matching AtomicEnd. A section must not panic.
+func AtomicBegin() {}
+
+// AtomicEnd ends the atomic section that AtomicBegin started.
+func AtomicEnd() {}
+
+// Fatal reports a fatal error with constant message msg and stops the
+// program, as the runtime's fatal errors (which deferred functions cannot
+// recover from) do: a failing property of class "fatal".
+func Fatal(msg string) { panic(msg) }

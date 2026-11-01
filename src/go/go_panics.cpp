@@ -127,6 +127,14 @@ void go_convertert::raise_panic(
     assign(panic_value(), value);
   assign(panic_site(), from_integer(panic_sites.size(), panic_site().type()));
   assign(panicking(), true_exprt{});
+  // Unwinding leaves the atomic sections of the models (rt.AtomicBegin):
+  // the paths that join at the end of the function must agree on them.
+  for(std::size_t i = 0; i < state.atomic_depth; ++i)
+  {
+    codet end{ID_atomic_end};
+    end.add_source_location() = location;
+    dest.add(std::move(end));
+  }
   code_gotot jump{UNWIND_LABEL};
   jump.add_source_location() = location;
   dest.add(std::move(jump));

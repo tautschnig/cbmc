@@ -133,6 +133,9 @@ private:
     exprt defer_head = nil_exprt{};                   // the list
     std::size_t defer_counter = 0;
     std::size_t go_counter = 0;
+    /// The number of atomic sections (rt.AtomicBegin) open at the
+    /// statement being converted: a panic in them ends them.
+    std::size_t atomic_depth = 0;
     /// With deferred calls, the results are set by return statements and
     /// returned after the deferred calls: the named results, or this.
     exprt result_variable = nil_exprt{};

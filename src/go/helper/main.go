@@ -120,6 +120,9 @@ func (h *helperImporter) Import(path string) (*types.Package, error) {
 		if pkg, ok, err := h.loader.importSource(path); ok {
 			return pkg, err
 		}
+		if replaced[path] {
+			return h.loader.loadReplacement(path)
+		}
 		pkg, err := h.std.Import(path)
 		if err == nil {
 			err = h.loader.loadModel(path)
