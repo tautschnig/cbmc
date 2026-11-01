@@ -1,12 +1,14 @@
 CORE
 main_03.c
-
-^EXIT=6$
+--no-malloc-may-fail
+^EXIT=0$
 ^SIGNAL=0$
-pointer handling for concurrency is unsound
+^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring
+pointer handling for concurrency is unsound
 --
 The test uses "__CPROVER_ASYNC_1:" and the async-called function foo does
-pointer operations over allocated memory - which is not handled in a sound way
-in CBMC.
+pointer operations over allocated memory. Symbolic execution repeats until the
+value sets of shared objects include what any thread may write to them, which
+makes this sound.

@@ -16,6 +16,7 @@ SRC = auto_objects.cpp \
       renaming_level.cpp \
       shadow_memory.cpp \
       shadow_memory_util.cpp \
+      shared_value_summary.cpp \
       show_program.cpp \
       show_vcc.cpp \
       simplify_expr_with_value_set.cpp \

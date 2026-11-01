@@ -1,0 +1,14 @@
+CORE
+main.c
+
+^EXIT=10$
+^SIGNAL=0$
+^\[main\.assertion\.1\] .*: SUCCESS$
+^\[main\.assertion\.2\] .* end of other is reachable: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+pointer handling for concurrency is unsound
+--
+A shared pointer that another thread sets to an offset into a different array:
+the dereference must consider that object and offset.

@@ -135,13 +135,13 @@ void goto_symext::symex_allocate(
     {
       exprt &array_size = to_array_type(*object_type).size();
 
-      symbolt &size_symbol = get_fresh_aux_symbol(
+      symbolt &size_symbol = fresh_object_symbol(
         tmp_size.type(),
         SYMEX_DYNAMIC_PREFIX,
         "dynamic_object_size",
         code.source_location(),
         mode,
-        state.symbol_table);
+        state);
       size_symbol.type.set(ID_C_constant, true);
       size_symbol.value = array_size;
 
@@ -153,13 +153,13 @@ void goto_symext::symex_allocate(
   }
 
   // value
-  symbolt &value_symbol = get_fresh_aux_symbol(
+  symbolt &value_symbol = fresh_object_symbol(
     *object_type,
     SYMEX_DYNAMIC_PREFIX,
     "dynamic_object",
     code.source_location(),
     mode,
-    state.symbol_table);
+    state);
   value_symbol.is_auxiliary = false;
   value_symbol.is_thread_local = false;
   value_symbol.is_file_local = false;
@@ -524,13 +524,13 @@ void goto_symext::symex_cpp_new(
   else
     INVARIANT_WITH_IREP(false, "Unexpected side effect expression", code);
 
-  symbolt &symbol = get_fresh_aux_symbol(
+  symbolt &symbol = fresh_object_symbol(
     *type,
     SYMEX_DYNAMIC_PREFIX,
     (do_array ? "dynamic_array" : "dynamic_value"),
     code.source_location(),
     mode,
-    state.symbol_table);
+    state);
   symbol.is_auxiliary = false;
   symbol.is_thread_local = false;
   symbol.is_file_local = false;

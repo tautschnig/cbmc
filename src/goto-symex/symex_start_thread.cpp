@@ -32,6 +32,11 @@ void goto_symext::symex_start_thread(statet &state)
   // record this
   target.spawn(state.guard.as_expr(), state.source);
 
+  // From now on, the value sets of shared objects must include what any
+  // thread may write to them (see shared_value_summaryt).
+  if(state.value_set.update_observer == &shared_value_summary)
+    shared_value_summary.spawn(state.value_set);
+
   const goto_programt::instructiont &instruction=*state.source.pc;
 
   INVARIANT(instruction.targets.size() == 1, "start_thread expects one target");

@@ -1,0 +1,15 @@
+CORE
+main.c
+
+^EXIT=10$
+^SIGNAL=0$
+^\[main\.assertion\.1\] .*: SUCCESS$
+^\[main\.assertion\.2\] .* y is reachable: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+pointer handling for concurrency is unsound
+--
+A pointer that a thread executed later in symbolic execution writes to a
+shared object is in the value set of the reader: the first assertion holds,
+and the second one fails because the reader may see the pointer to y.

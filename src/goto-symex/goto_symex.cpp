@@ -24,6 +24,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/string_utils.h>
 
 #include "expr_skeleton.h"
+#include "path_storage.h"
 #include "simplify_expr_with_value_set.h"
 #include "symex_assign.h"
 
@@ -1201,4 +1202,54 @@ bool goto_symext::constant_propagate_trim(
     new_char_array);
 
   return true;
+}
+
+bool goto_symext::is_shared_object(const irep_idt &name) const
+{
+  if(name == goto_symex_statet::guard_identifier())
+    return false;
+  const symbolt *symbol = nullptr;
+  return (!ns.lookup(name, symbol) && symbol->is_shared()) ||
+         path_storage.dirty(name);
+}
+
+symbolt &goto_symext::fresh_object_symbol(
+  const typet &type,
+  const std::string &name_prefix,
+  const std::string &basename_prefix,
+  const source_locationt &source_location,
+  const irep_idt &mode,
+  statet &state)
+{
+  // Paths are executed separately; their names need not agree.
+  if(symex_config.doing_path_exploration)
+  {
+    return get_fresh_aux_symbol(
+      type,
+      name_prefix,
+      basename_prefix,
+      source_location,
+      mode,
+      state.symbol_table);
+  }
+  // Named as get_fresh_aux_symbol names them in a fresh symbol table: the
+  // first without suffix, then $0, $1, ...; an object of the previous run
+  // of that name is replaced.
+  std::size_t &counter = object_counters[name_prefix + "::" + basename_prefix];
+  const std::string basename =
+    counter == 0 ? basename_prefix
+                 : basename_prefix + "$" + std::to_string(counter - 1);
+  ++counter;
+  const irep_idt identifier = name_prefix + "::" + basename;
+  auxiliary_symbolt new_symbol{identifier, type, mode};
+  new_symbol.base_name = basename;
+  new_symbol.location = source_location;
+  if(symbolt *existing = state.symbol_table.get_writeable(identifier))
+  {
+    *existing = std::move(new_symbol);
+    return *existing;
+  }
+  auto result = state.symbol_table.insert(std::move(new_symbol));
+  CHECK_RETURN(result.second);
+  return result.first;
 }

@@ -112,9 +112,16 @@ renamedt<ssa_exprt, L2> goto_symex_statet::assignment(
   }
 
   // see #305 on GitHub for a simple example and possible discussion
-  if(is_shared && lhs.type().id() == ID_pointer && !allow_pointer_unsoundness)
+  // Value sets of shared objects are only sound with a summary of what
+  // threads write to them (see shared_value_summaryt), which multi-path
+  // symbolic execution provides.
+  if(
+    is_shared && lhs.type().id() == ID_pointer && !allow_pointer_unsoundness &&
+    value_set.update_observer == nullptr)
+  {
     throw unsupported_operation_exceptiont(
       "pointer handling for concurrency is unsound");
+  }
 
   // Update constant propagation map -- the RHS is L2
   if(!is_shared && record_value && goto_symex_can_forward_propagatet(ns)(rhs))

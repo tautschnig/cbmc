@@ -16,6 +16,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "complexity_limiter.h"
 #include "shadow_memory.h"
+#include "shared_value_summary.h"
 #include "symex_config.h"
 #include "symex_target_equation.h"
 
@@ -69,6 +70,8 @@ public:
       _total_vccs(std::numeric_limits<unsigned>::max()),
       _remaining_vccs(std::numeric_limits<unsigned>::max()),
       complexity_module(mh, options),
+      shared_value_summary([this](const irep_idt &name)
+                           { return is_shared_object(name); }),
       shadow_memory(
         std::bind(
           &goto_symext::symex_assign,
@@ -832,6 +835,33 @@ protected:
   ///@}
 
   complexity_limitert complexity_module;
+
+  /// A fresh symbol for an object that symbolic execution creates (dynamic
+  /// objects, their sizes, auto objects), named \p name_prefix::
+  /// \p basename_prefix$N, as get_fresh_aux_symbol does. When symbolic
+  /// execution is repeated (see shared_value_summaryt), the objects of the
+  /// previous run are in the symbol table from the start, as value sets may
+  /// refer to them before they are created; such a symbol is reused for the
+  /// object of the same name. Path exploration uses get_fresh_aux_symbol.
+  symbolt &fresh_object_symbol(
+    const typet &type,
+    const std::string &name_prefix,
+    const std::string &basename_prefix,
+    const source_locationt &source_location,
+    const irep_idt &mode,
+    statet &state);
+
+  /// The number of objects created so far by the current run, by name
+  /// prefix (see fresh_object_symbol).
+  std::map<std::string, std::size_t> object_counters;
+
+  /// Whether the object with name \p name may be shared between threads:
+  /// it is not thread-local, or it is a local whose address is taken.
+  bool is_shared_object(const irep_idt &name) const;
+
+  /// Value sets of objects shared between threads (see
+  /// shared_value_summaryt), for multi-path symbolic execution.
+  shared_value_summaryt shared_value_summary;
 
   /// Shadow memory instrumentation API
   shadow_memoryt shadow_memory;

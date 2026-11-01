@@ -1,0 +1,14 @@
+CORE
+main.c
+--no-malloc-may-fail
+^EXIT=10$
+^SIGNAL=0$
+^\[main\.assertion\.1\] .*: SUCCESS$
+^\[main\.assertion\.2\] .* the heap object is reachable: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+pointer handling for concurrency is unsound
+--
+A local copy of a shared pointer that a thread executed later in symbolic
+execution sets to a heap object may point to that object.

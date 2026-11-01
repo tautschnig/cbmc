@@ -111,6 +111,16 @@ public:
     return get_unique_index(l2_indices, id, 1);
   }
 
+  /// Forget the indices handed out, and the nondet objects' counter, so that
+  /// a repeated symbolic execution of the same program produces the same
+  /// names (see shared_value_summaryt).
+  void reset_indices()
+  {
+    l1_indices.clear();
+    l2_indices.clear();
+    build_symex_nondet = symex_nondet_generatort{};
+  }
+
   /// Local variables are considered 'dirty' if they've had an address taken and
   /// therefore may be referred to by a pointer.
   incremental_dirtyt dirty;

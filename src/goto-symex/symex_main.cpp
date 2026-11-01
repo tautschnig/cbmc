@@ -17,6 +17,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/invariant.h>
 #include <util/magic.h>
 #include <util/mathematical_expr.h>
+#include <util/pointer_predicates.h>
 #include <util/replace_symbol.h>
 #include <util/std_expr.h>
 
@@ -466,11 +467,57 @@ symbol_tablet goto_symext::symex_from_entry_point_of(
   const get_goto_functiont &get_goto_function,
   const shadow_memory_field_definitionst &fields)
 {
-  auto state = initialize_entry_point_state(get_goto_function);
-  // Initialize declared shadow memory fields
-  state->shadow_memory.fields = fields;
+  // Symbolic execution is repeated while the value sets of objects shared
+  // between threads grow (see shared_value_summaryt): a run that spawns
+  // threads may have dereferenced shared pointers with value sets that miss
+  // values that threads executed later write.
+  symbol_tablet previous;
+  while(true)
+  {
+    shared_value_summary.begin_run();
+    object_counters.clear();
+    auto state = initialize_entry_point_state(get_goto_function);
+    // Initialize declared shadow memory fields
+    state->shadow_memory.fields = fields;
+    state->value_set.update_observer = &shared_value_summary;
+    // Value sets may refer to the objects the previous run created before
+    // this run creates them (fresh_object_symbol replaces them then).
+    for(const auto &pair : previous.symbols)
+    {
+      const symbolt &symbol = pair.second;
+      if(
+        symbol.name.starts_with(SYMEX_DYNAMIC_PREFIX "::") ||
+        symbol.name.starts_with("symex::auto_object$"))
+      {
+        state->symbol_table.insert(symbol);
+      }
+    }
 
-  return symex_with_state(*state, get_goto_function);
+    symbol_tablet result = symex_with_state(*state, get_goto_function);
+
+    if(
+      should_pause_symex || !shared_value_summary.concurrent() ||
+      !shared_value_summary.grew(state->value_set))
+    {
+      if(shared_value_summary.runs() > 1)
+      {
+        log.statistics() << "Value sets of shared objects converged after "
+                         << shared_value_summary.runs() << " runs"
+                         << messaget::eom;
+      }
+      return result;
+    }
+
+    log.status() << "Repeating symbolic execution with the values of shared "
+                    "pointers that threads may write"
+                 << messaget::eom;
+    // Start afresh, with the same names.
+    previous = result;
+    target.SSA_steps.clear();
+    path_storage.reset_indices();
+    atomic_section_counter = 0;
+    path_segment_vccs = 0;
+  }
 }
 
 void goto_symext::initialize_path_storage_from_entry_point_of(
@@ -792,6 +839,15 @@ void goto_symext::try_filter_value_sets(
     find_unique_pointer_typed_symbol(condition);
 
   if(!symbol_expr)
+  {
+    return;
+  }
+
+  // Another thread may change a shared pointer between the test and a later
+  // read: its value set must keep all values (see shared_value_summaryt).
+  if(
+    shared_value_summary.concurrent() &&
+    shared_value_summary.shared(symbol_expr->get_identifier()))
   {
     return;
   }

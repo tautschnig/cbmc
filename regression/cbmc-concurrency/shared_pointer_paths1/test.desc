@@ -1,0 +1,12 @@
+CORE
+main.c
+--paths lifo
+^EXIT=6$
+^SIGNAL=0$
+pointer handling for concurrency is unsound
+--
+^warning: ignoring
+--
+Path exploration executes paths separately, without the repetitions that make
+the value sets of shared objects sound, and therefore still rejects the
+program.

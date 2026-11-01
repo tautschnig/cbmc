@@ -19,13 +19,13 @@ Author: Daniel Kroening, kroening@kroening.com
 exprt goto_symext::make_auto_object(const typet &type, statet &state)
 {
   // produce auto-object symbol
-  symbolt &symbol = get_fresh_aux_symbol(
+  symbolt &symbol = fresh_object_symbol(
     type,
     "symex",
     "auto_object",
     state.source.pc->source_location(),
     ID_C,
-    state.symbol_table);
+    state);
   symbol.is_thread_local = false;
   symbol.is_file_local = false;
 

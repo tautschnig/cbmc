@@ -95,6 +95,23 @@ void value_sett::update_entry(
     new_entry.object_map = new_values;
     values.insert(index, std::move(new_entry));
   }
+
+  if(update_observer != nullptr)
+  {
+    const object_mapt *extra =
+      update_observer->updated(*this, index, e, new_values, add_to_sets);
+    if(extra != nullptr)
+    {
+      const entryt *entry = find_entry(index);
+      if(entry != nullptr && make_union_would_change(entry->object_map, *extra))
+      {
+        values.update(
+          index,
+          [&extra, this](entryt &existing)
+          { make_union(existing.object_map, *extra); });
+      }
+    }
+  }
 }
 
 value_sett::insert_actiont value_sett::get_insert_action(

@@ -214,6 +214,28 @@ public:
     }
   };
 
+  /// Observer of the updates of entries, see \ref update_entry: symbolic
+  /// execution of concurrent programs uses it to summarise the values of
+  /// shared objects (see goto-symex/shared_value_summary.h).
+  class update_observert
+  {
+  public:
+    virtual ~update_observert() = default;
+
+    /// Called after entry \p index (for \p entry) was assigned
+    /// \p values (merged into the existing values if \p add_to_sets).
+    /// \return values to merge into the entry in addition, or nullptr.
+    virtual const object_mapt *updated(
+      const value_sett &value_set,
+      const irep_idt &index,
+      const entryt &entry,
+      const object_mapt &values,
+      bool add_to_sets) = 0;
+  };
+
+  /// The observer of updates of entries, if any (not owned).
+  update_observert *update_observer = nullptr;
+
   /// Map representing the entire value set, mapping from string LHS IDs
   /// to RHS expression sets. Note this data structure is somewhat
   /// denormalized, for example mapping
@@ -262,6 +284,8 @@ public:
   /// \param new_values: values to be stored for the entry.
   /// \param add_to_sets: if true, merge in \p new_values instead of replacing
   ///   the existing values.
+  /// If an \ref update_observer is set, it is told about the update, and the
+  /// values it returns are merged in as well.
   void update_entry(
     const entryt &e,
     const typet &type,
