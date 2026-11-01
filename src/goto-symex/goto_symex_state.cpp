@@ -135,7 +135,17 @@ renamedt<ssa_exprt, L2> goto_symex_statet::assignment(
   else
     propagation.erase_if_exists(l1_identifier);
 
-  value_set.assign(lhs, rhs, ns, rhs_is_simplified, is_shared);
+  // Another thread may read an earlier value of a shared object: without a
+  // summary of the values threads write (see shared_value_summaryt), keep
+  // them. With the summary, a strong update is sound: other threads' value
+  // sets have what this thread writes, and update_entry merges what they
+  // write into this thread's.
+  value_set.assign(
+    lhs,
+    rhs,
+    ns,
+    rhs_is_simplified,
+    is_shared && value_set.update_observer == nullptr);
 
 #ifdef DEBUG
   std::cout << "Assigning " << l1_identifier << '\n';

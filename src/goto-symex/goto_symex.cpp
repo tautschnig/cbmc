@@ -1234,11 +1234,16 @@ symbolt &goto_symext::fresh_object_symbol(
   }
   // Named as get_fresh_aux_symbol names them in a fresh symbol table: the
   // first without suffix, then $0, $1, ...; an object of the previous run
-  // of that name is replaced.
-  std::size_t &counter = object_counters[name_prefix + "::" + basename_prefix];
+  // of that name is replaced. Runs agree up to the first spawn; after it,
+  // a run may take paths that an earlier one did not (with the larger value
+  // sets), so objects are numbered per allocating instruction: allocations
+  // elsewhere do not shift their names (which the summary refers to).
+  std::string prefix = basename_prefix;
+  if(shared_value_summary.concurrent())
+    prefix += "$L" + std::to_string(state.source.pc->location_number);
+  std::size_t &counter = object_counters[name_prefix + "::" + prefix];
   const std::string basename =
-    counter == 0 ? basename_prefix
-                 : basename_prefix + "$" + std::to_string(counter - 1);
+    counter == 0 ? prefix : prefix + "$" + std::to_string(counter - 1);
   ++counter;
   const irep_idt identifier = name_prefix + "::" + basename;
   auxiliary_symbolt new_symbol{identifier, type, mode};

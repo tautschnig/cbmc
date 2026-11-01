@@ -26,11 +26,23 @@ Author: Michael Tautschnig
 ///   have then);
 /// - symbolic execution is repeated, with the values recorded so far (the
 ///   summary) merged into the value sets of shared objects at each spawn
-///   and into every later update of such an entry (so that updates are
-///   weak, as another thread may still read an earlier value);
+///   and into every later update of such an entry (as any thread may
+///   write those values at any time);
 /// - until a run records no value that the summary does not contain.
 /// Then every read of a shared object in the last run has, in its value
 /// set, every value any thread may have written to it.
+///
+/// The initial values of objects allocated after the first spawn are not
+/// recorded when they are assigned: no other thread can read them until
+/// the object is published, i.e., a pointer to it is written to a shared
+/// object, or a thread is spawned. Then the current values of the
+/// object's entries (and of the objects reachable from them) are recorded.
+/// Otherwise, the zero values of the fields of every new object (null
+/// pointers) would be in the value sets of all its readers, whose
+/// dereferences would then consider invalid objects.
+///
+/// The summary refers to objects by name, so their names must agree across
+/// runs (see goto_symext::fresh_object_symbol).
 
 #ifndef CPROVER_GOTO_SYMEX_SHARED_VALUE_SUMMARY_H
 #define CPROVER_GOTO_SYMEX_SHARED_VALUE_SUMMARY_H
@@ -39,6 +51,8 @@ Author: Michael Tautschnig
 
 #include <functional>
 #include <map>
+#include <set>
+#include <unordered_map>
 
 class shared_value_summaryt : public value_sett::update_observert
 {
@@ -58,8 +72,19 @@ public:
 
   /// A thread is spawned with value set \p value_set (of the spawning
   /// thread): record the current values of shared entries, merge the
-  /// summary into them, and record (and weaken) updates from now on.
+  /// summary into them, and record updates (merging the summary into
+  /// them) from now on.
   void spawn(value_sett &value_set);
+
+  /// Object \p object is allocated: its initial value is assigned until
+  /// end_allocation.
+  void begin_allocation(const irep_idt &object);
+
+  /// The initial value of the object of begin_allocation is assigned.
+  void end_allocation()
+  {
+    initialising.clear();
+  }
 
   /// Whether a thread has been spawned in the current run.
   bool concurrent() const
@@ -95,6 +120,20 @@ private:
   using entriest = std::map<irep_idt, value_sett::entryt>;
   entriest summary;
   entriest recorded;
+  /// The objects allocated after the first spawn of the current run, with
+  /// the indices of their entries.
+  std::unordered_map<irep_idt, std::set<irep_idt>> young;
+  /// The object whose initial value is being assigned, if any.
+  irep_idt initialising;
+
+  /// The object that the entries with \p identifier belong to.
+  static irep_idt object_of(const irep_idt &identifier);
+
+  /// Record the current values of the entries of the objects allocated
+  /// after the first spawn that \p values points to, and of those
+  /// reachable from them.
+  void
+  publish(const value_sett &value_set, const value_sett::object_mapt &values);
 
   void record(
     const value_sett &value_set,

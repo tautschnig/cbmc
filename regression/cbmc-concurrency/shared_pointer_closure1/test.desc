@@ -1,0 +1,16 @@
+CORE
+main.c
+
+^EXIT=10$
+^SIGNAL=0$
+^\[main\.assertion\.1\] line \d+ x: SUCCESS$
+^\[main\.assertion\.2\] line \d+ the threads may have set x: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Closures (code and environment pointers) on the heap, created after the first
+spawn and published to a thread. The value sets of their fields must not keep
+the initial (nondeterministic) values or the values of other objects: calls
+through them would otherwise consider every function of the type, which
+recurses without bound.

@@ -173,6 +173,9 @@ void goto_symext::symex_allocate(
   INVARIANT(
     zero_init.is_constant(), "allocate expects constant as second argument");
 
+  // Other threads cannot read the initial value before the object is
+  // published (see shared_value_summaryt).
+  shared_value_summary.begin_allocation(value_symbol.name);
   if(zero_init != 0 && zero_init != false)
   {
     const auto zero_value =
@@ -187,6 +190,7 @@ void goto_symext::symex_allocate(
       path_storage.build_symex_nondet(*object_type, code.source_location());
     symex_assign(state, lhs, rhs);
   }
+  shared_value_summary.end_allocation();
 
   exprt rhs;
 
