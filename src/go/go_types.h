@@ -42,6 +42,8 @@ class symbol_table_baset;
 /// Name of the comment recording the dynamic type id of a type (see
 /// go_type_convertert::type_id).
 #define ID_C_go_tid "#go_tid"
+/// Name of the comment marking the header struct of channels.
+#define ID_C_go_chan "#go_chan"
 /// Name of the comment marking the code types of variadic functions.
 #define ID_C_go_variadic "#go_variadic"
 
@@ -86,6 +88,13 @@ inline bool is_go_interface(const typet &type)
 }
 
 /// True if \p type is that of maps (see go_type_convertert::map_type).
+/// True if \p type is that of channels (see go_type_convertert::chan_type).
+inline bool is_go_chan(const typet &type)
+{
+  return type.id() == ID_pointer &&
+         to_pointer_type(type).base_type().get_bool(ID_C_go_chan);
+}
+
 inline bool is_go_map(const typet &type)
 {
   return type.id() == ID_pointer &&
@@ -150,6 +159,8 @@ public:
   /// `{len int, cap int, keys *K, vals *V}` (go_maps.cpp). Go1.27
   /// §Map_types: "The value of an uninitialized map is nil."
   static pointer_typet map_type(const typet &key, const typet &value);
+  /// Channels: pointers to a header on the heap (go_channels.cpp).
+  static pointer_typet chan_type(const typet &element);
 
   /// The type of complex numbers with parts of floating-point type \p part:
   /// `{real, imag}`.

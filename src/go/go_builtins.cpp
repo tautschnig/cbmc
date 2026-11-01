@@ -518,6 +518,19 @@ exprt go_convertert::convert_make(const irept &call)
     const exprt map = make_map(type, location, block);
     return with_prefix(map, block, location);
   }
+  if(is_go_chan(type))
+  {
+    // "make(T)" or "make(T, n)": an unbuffered or buffered channel.
+    exprt size = from_integer(0, signedbv_typet{config.go.int_width});
+    if(args.size() > 1)
+    {
+      size = convert_expr(args[1]);
+      if(size.is_nil())
+        return nil_exprt{};
+    }
+    const exprt chan = make_chan(type, size, location, block);
+    return with_prefix(chan, block, location);
+  }
   if(!is_go_slice(type))
   {
     unsupported(call, "make of type " + type.get_string(ID_C_go_type));

@@ -525,6 +525,69 @@ private:
     const std::string &comment,
     const source_locationt &location);
 
+  // Channels and select (go_channels.cpp)
+  /// A new channel of type \p type with buffer size \p size.
+  exprt make_chan(
+    const typet &type,
+    const exprt &size,
+    const source_locationt &location,
+    code_blockt &dest);
+  /// In an atomic section in which a send on \p chan can proceed: set
+  /// \p failed if \p chan is closed, otherwise store \p value (on an
+  /// unbuffered channel, with ticket \p ticket).
+  void chan_send_step(
+    const exprt &chan,
+    const exprt &value,
+    const exprt &failed,
+    const exprt &ticket,
+    code_blockt &dest);
+  /// After chan_send_step: wait for the receiver of an unbuffered send,
+  /// and panic if the channel was closed.
+  void chan_send_finish(
+    const exprt &chan,
+    const exprt &failed,
+    const exprt &ticket,
+    const source_locationt &location,
+    code_blockt &dest);
+  /// A blocking send of \p value on \p chan.
+  void chan_send(
+    const exprt &chan,
+    const exprt &value,
+    const source_locationt &location,
+    code_blockt &dest);
+  /// In an atomic section in which a receive from \p chan can proceed:
+  /// receive into \p value and \p ok.
+  void chan_recv_step(
+    const exprt &chan,
+    const exprt &value,
+    const exprt &ok,
+    code_blockt &dest);
+  /// A blocking receive from \p chan into \p value and \p ok.
+  void chan_recv(
+    const exprt &chan,
+    const exprt &value,
+    const exprt &ok,
+    const source_locationt &location,
+    code_blockt &dest);
+  exprt convert_receive(const irept &expr);
+  void convert_send(const irept &stmt, code_blockt &dest);
+  void convert_close(const irept &call, code_blockt &dest);
+  /// len or cap of channel \p chan, of type \p type.
+  exprt chan_len(
+    const exprt &chan,
+    bool is_cap,
+    const typet &type,
+    const source_locationt &location);
+  void convert_chan_range(
+    const irept &stmt,
+    const exprt &chan,
+    code_blockt &dest,
+    const irep_idt &label_object);
+  void convert_select(
+    const irept &stmt,
+    code_blockt &dest,
+    const irep_idt &label_object = irep_idt{});
+
   // Panics, deferred calls and recover (go_panics.cpp)
   /// Code starting to panic with interface value \p value (Go1.27
   /// §Handling_panics): it records the value and the panic site and jumps

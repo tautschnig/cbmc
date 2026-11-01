@@ -1,5 +1,6 @@
 SRC = expr2go.cpp \
       go_builtins.cpp \
+      go_channels.cpp \
       go_convert.cpp \
       go_floats.cpp \
       go_interfaces.cpp \

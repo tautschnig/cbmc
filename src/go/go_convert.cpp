@@ -1074,6 +1074,10 @@ void go_convertert::convert_statement(const irept &stmt, code_blockt &dest)
     convert_defer(stmt, dest);
   else if(kind == "GoStmt")
     convert_go(stmt, dest);
+  else if(kind == "SendStmt")
+    convert_send(stmt, dest);
+  else if(kind == "SelectStmt")
+    convert_select(stmt, dest);
   else if(kind == "EmptyStmt")
     return;
   else
@@ -1096,6 +1100,8 @@ void go_convertert::convert_labeled(const irept &stmt, code_blockt &dest)
     convert_range(inner, labelled, label.get("_obj"));
   else if(inner.id() == "TypeSwitchStmt")
     convert_type_switch(inner, labelled, label.get("_obj"));
+  else if(inner.id() == "SelectStmt")
+    convert_select(inner, labelled, label.get("_obj"));
   else
     convert_statement(inner, labelled);
   code_labelt result{label.get("Name"), std::move(labelled)};
@@ -1613,6 +1619,13 @@ void go_convertert::convert_range(
     if(map.is_nil())
       return;
     return convert_map_range(stmt, map, dest, label_object);
+  }
+  if(k == "chan")
+  {
+    exprt chan = convert_expr(x_node);
+    if(chan.is_nil())
+      return;
+    return convert_chan_range(stmt, chan, dest, label_object);
   }
   if(!is_integer && !is_string && !is_slice && array_type->get("k") != "array")
   {
@@ -2300,6 +2313,11 @@ bool go_convertert::convert_intrinsic_call(const irept &call, code_blockt &dest)
   if(callee == "clear")
   {
     convert_clear(call, dest);
+    return true;
+  }
+  if(callee == "close")
+  {
+    convert_close(call, dest);
     return true;
   }
   if(callee == "delete")
@@ -3183,6 +3201,8 @@ exprt go_convertert::convert_unary(const irept &expr)
 {
   // Go1.27 §Arithmetic_operators (unary +, -, ^), §Logical_operators (!).
   const irep_idt &op = expr.get("Op");
+  if(op == "<-")
+    return convert_receive(expr);
   exprt x = convert_expr(go_field(expr, "X"));
   if(x.is_nil())
     return nil_exprt{};
@@ -3580,6 +3600,8 @@ exprt go_convertert::convert_len(const irept &call)
   if(type.is_nil() || value.is_nil())
     return nil_exprt{};
   const source_locationt location = location_of(call);
+  if(is_go_chan(value.type()))
+    return chan_len(value, is_cap, type, location);
   if(is_go_map(value.type()))
   {
     // For maps, the "map length (number of defined keys)"; nil maps have

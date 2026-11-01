@@ -194,6 +194,14 @@ typet go_type_convertert::operator()(const irep_idt &index)
     // is nil."
     result = interface_type();
   }
+  else if(k == "chan")
+  {
+    // Go1.27 §Channel_types: "The value of an uninitialized channel is
+    // nil." Directions do not change the representation.
+    typet element = (*this)(under.get("elem"));
+    if(element.is_not_nil())
+      result = chan_type(element);
+  }
   else if(k == "map")
   {
     typet key = (*this)(under.get("key"));
@@ -381,6 +389,30 @@ struct_typet go_type_convertert::slice_type(const typet &element)
   struct_typet result{std::move(components)};
   result.set(ID_C_go_slice, true);
   return result;
+}
+
+pointer_typet go_type_convertert::chan_type(const typet &element)
+{
+  // A pointer to a header on the heap (see go_channels.cpp): the capacity,
+  // the number of buffered values (for unbuffered channels: whether a
+  // sender has deposited its value), the index of the first one, whether
+  // the channel is closed, the numbers of values deposited and taken by
+  // unbuffered communication, the number of receivers waiting, and the
+  // buffer (one element for unbuffered channels).
+  const signedbv_typet int_type{config.go.int_width};
+  struct_typet::componentst components;
+  components.emplace_back("cap", int_type);
+  components.emplace_back("count", int_type);
+  components.emplace_back("head", int_type);
+  components.emplace_back("closed", c_bool_typet{8});
+  components.emplace_back("sent", int_type);
+  components.emplace_back("recvd", int_type);
+  components.emplace_back("waiting", int_type);
+  components.emplace_back(
+    "buf", pointer_typet{element, config.ansi_c.pointer_width});
+  struct_typet header{std::move(components)};
+  header.set(ID_C_go_chan, true);
+  return pointer_typet{std::move(header), config.ansi_c.pointer_width};
 }
 
 pointer_typet go_type_convertert::map_type(const typet &key, const typet &value)
