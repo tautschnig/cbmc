@@ -32,6 +32,10 @@ Author: Michael Tautschnig
 #include "go_convert.h"
 #include "go_parse_tree.h"
 
+/// Name of the flag of calls after which add_panic_checks does not unwind
+/// (the calls that start a goroutine).
+#define ID_C_go_no_unwind "#go_no_unwind"
+
 #define UNWIND_LABEL "$unwind"
 
 symbol_exprt go_convertert::panicking()
@@ -175,6 +179,8 @@ static bool is_go_call(const exprt &expr)
   {
     return false;
   }
+  if(expr.get_bool(ID_C_go_no_unwind))
+    return false;
   const exprt &function = to_side_effect_expr_function_call(expr).function();
   return function.id() != ID_symbol ||
          has_prefix(
@@ -661,16 +667,22 @@ void go_convertert::convert_go(const irept &stmt, code_blockt &dest)
   assign(panic_site(), from_integer(0, panic_site().type()));
   if(uses_recover)
     assign(defer_token(), false_exprt{});
+  // add_panic_checks leaves these calls alone: a panic must not unwind the
+  // enclosing function, but reach the check after the goroutine's function.
   const symbolt &thunk = ns.lookup(thunk_id);
-  code_expressiont start_call{side_effect_expr_function_callt{
-    thunk.symbol_expr(), {env}, empty_typet{}, location}};
+  side_effect_expr_function_callt thunk_call{
+    thunk.symbol_expr(), {env}, empty_typet{}, location};
+  thunk_call.set(ID_C_go_no_unwind, true);
+  code_expressiont start_call{std::move(thunk_call)};
   start_call.add_source_location() = location;
   thread.add(std::move(start_call));
   // Go1.27 §Handling_panics: a panic that the goroutine does not recover
   // terminates the program.
   const symbolt &check = ns.lookup(check_panics_id);
-  thread.add(code_expressiont{side_effect_expr_function_callt{
-    check.symbol_expr(), {}, empty_typet{}, location}});
+  side_effect_expr_function_callt check_call{
+    check.symbol_expr(), {}, empty_typet{}, location};
+  check_call.set(ID_C_go_no_unwind, true);
+  thread.add(code_expressiont{std::move(check_call)});
   code_labelt start{CPROVER_PREFIX "ASYNC_1", std::move(thread)};
   start.add_source_location() = location;
   dest.add(std::move(start));

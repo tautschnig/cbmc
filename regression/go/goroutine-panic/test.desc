@@ -1,0 +1,12 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\$lit1\.nil-dereference\.1\] line 20 runtime error: invalid memory address or nil pointer dereference: FAILURE$
+^\[go::main\.work\.nil-dereference\.1\] line 9 runtime error: invalid memory address or nil pointer dereference: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Go1.27 §Handling_panics: unrecovered panics in goroutines are reported
