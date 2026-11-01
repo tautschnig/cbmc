@@ -145,7 +145,12 @@ exprt go_convertert::allocate_elements(
                  : exprt{mult_exprt{std::move(*element_size), n}};
   side_effect_exprt allocate{
     ID_allocate,
-    {std::move(size), zero ? exprt{true_exprt{}} : exprt{false_exprt{}}},
+    // Elements with pointers are zeroed even when they are set right away:
+    // the value set of an arbitrary value has all objects in it, which the
+    // value sets of objects shared between goroutines would keep.
+    {std::move(size),
+     zero || contains_reference(element, ns, true) ? exprt{true_exprt{}}
+                                                   : exprt{false_exprt{}}},
     pointer_typet{empty_typet{}, config.ansi_c.pointer_width},
     location};
   const pointer_typet element_pointer{element, config.ansi_c.pointer_width};

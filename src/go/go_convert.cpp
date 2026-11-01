@@ -420,9 +420,12 @@ exprt go_convertert::allocation(
 {
   auto size = size_of_expr(type, ns);
   CHECK_RETURN(size.has_value());
+  // Zeroed (Go1.27 §The_zero_value), also where the value is set right
+  // away: the value set of an arbitrary value has all objects in it, which
+  // the value sets of objects shared between goroutines would keep.
   side_effect_exprt result{
     ID_allocate,
-    {std::move(*size), false_exprt{}},
+    {std::move(*size), true_exprt{}},
     pointer_typet{type, config.ansi_c.pointer_width},
     location};
   return std::move(result);
