@@ -1,0 +1,15 @@
+CORE
+main.c
+
+^EXIT=10$
+^SIGNAL=0$
+^\[main\.assertion\.1\] line 16 x: SUCCESS$
+^\[main\.assertion\.2\] line 17 x is set on one path: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+atomic sections differ across branches
+--
+A path that leaves an atomic section early (and jumps away) leaves an
+unreachable state behind, which need not agree on the atomic section with the
+state that it is merged with.
