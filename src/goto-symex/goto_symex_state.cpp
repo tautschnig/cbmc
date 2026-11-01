@@ -426,8 +426,6 @@ bool goto_symex_statet::l2_thread_read_encoding(
     // we cannot determine for sure that there has been a write already
     // so generate a read even if l1_identifier has been written on
     // all branches flowing into this read
-    guardt read_guard{false_exprt{}, guard_manager};
-
     a_s_r_entryt &a_s_read=read_in_atomic_section[ssa_l1];
     for(const auto &a_s_read_guard : a_s_read.second)
     {
@@ -437,37 +435,40 @@ bool goto_symex_statet::l2_thread_read_encoding(
         // There has already been a read of l1_identifier within this atomic
         // section under the same guard, or a guard implied by the current one.
         return false;
-
-      read_guard |= a_s_read_guard;
     }
 
-    guardt cond = read_guard;
-    if(no_write.op() != false)
-      cond |= guardt{no_write.op(), guard_manager};
+    // After a write within the atomic section, a read sees the value
+    // written. It is safe to perform constant propagation then. We must
+    // actually do this, because goto_state::apply_condition may have placed
+    // the latest value in the propagation map without recording an
+    // assignment.
+    std::optional<exprt> written;
+    if(!write_guard.is_false())
+    {
+      auto p_it = propagation.find(ssa_l1.get_identifier());
+      written = p_it.has_value() ? *p_it : set_indices<L2>(ssa_l1, ns).get();
+    }
 
-    // It is safe to perform constant propagation in case we have read or
-    // written this object within the atomic section. We must actually do this,
-    // because goto_state::apply_condition may have placed the latest value in
-    // the propagation map without recording an assignment.
-    auto p_it = propagation.find(ssa_l1.get_identifier());
-    const exprt l2_true_case =
-      p_it.has_value() ? *p_it : set_indices<L2>(ssa_l1, ns).get();
-
-    if(!cond.is_true())
-      level2.increase_generation(l1_identifier, ssa_l1, fresh_l2_name_provider);
-
+    // All reads within the atomic section that do not follow a write in it
+    // see the value the object has when the section starts: the version of
+    // the first read, for which symex_atomic_end records the shared read.
+    // (A fresh version per read would leave the later ones unconstrained,
+    // and the value known to this thread, e.g. by constant propagation of
+    // an assignment before a thread was spawned, need not be the one that
+    // the other threads' writes leave.)
     if(a_s_read.second.empty())
+    {
+      level2.increase_generation(l1_identifier, ssa_l1, fresh_l2_name_provider);
       a_s_read.first = level2.latest_index(l1_identifier);
-
-    const renamedt<ssa_exprt, L2> l2_false_case = set_indices<L2>(ssa_l1, ns);
+    }
+    ssa_exprt start = ssa_l1;
+    start.set_level_2(a_s_read.first);
 
     exprt tmp;
-    if(cond.is_false())
-      tmp = l2_false_case.get();
-    else if(cond.is_true())
-      tmp = l2_true_case;
+    if(!written.has_value())
+      tmp = std::move(start);
     else
-      tmp = if_exprt{cond.as_expr(), l2_true_case, l2_false_case.get()};
+      tmp = if_exprt{write_guard.as_expr(), *written, std::move(start)};
 
     record_events.push(false);
     ssa_exprt ssa_l2 = assignment(std::move(ssa_l1), tmp, ns, true, true).get();

@@ -1,0 +1,12 @@
+CORE
+main.c
+
+^EXIT=10$
+^SIGNAL=0$
+^\[main\.assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Without synchronisation, the reader's atomic section may follow the writer's
+one, and so the reads of buf may see the value written.

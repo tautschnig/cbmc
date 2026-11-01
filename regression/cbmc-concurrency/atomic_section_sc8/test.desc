@@ -1,0 +1,13 @@
+CORE
+main.c
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+All reads of an object within an atomic section, on any branch, see the value
+the object has when the section starts: the read of flag implies that the
+writer's atomic section precedes the reader's one, and so both reads of buf
+(on different branches) see the value written.
