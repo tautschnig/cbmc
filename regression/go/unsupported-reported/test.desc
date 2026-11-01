@@ -3,7 +3,7 @@ main.go
 
 ^EXIT=6$
 ^SIGNAL=0$
-Go front-end: statement GoStmt is not supported yet$
+Go front-end: range over values of type func\(yield func\(int\) bool\) is not supported yet$
 ^CONVERSION ERROR$
 --
 ^VERIFICATION SUCCESSFUL$

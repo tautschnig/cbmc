@@ -132,6 +132,7 @@ private:
     std::vector<std::pair<exprt, exprt>> defer_slots; // (flag, function)
     exprt defer_head = nil_exprt{};                   // the list
     std::size_t defer_counter = 0;
+    std::size_t go_counter = 0;
     /// With deferred calls, the results are set by return statements and
     /// returned after the deferred calls: the named results, or this.
     exprt result_variable = nil_exprt{};
@@ -563,6 +564,16 @@ private:
   /// The type of the nodes of the list of deferred calls.
   static struct_typet deferred_node_type();
   void convert_defer(const irept &stmt, code_blockt &dest);
+  /// The function value (of type func()) that performs \p call with the
+  /// function value and arguments evaluated now (code in \p prefix),
+  /// through a generated function \p thunk_id; nil on error.
+  exprt saved_call(
+    const irept &call,
+    const irep_idt &thunk_id,
+    const source_locationt &location,
+    code_blockt &prefix);
+  void convert_go(const irept &stmt, code_blockt &dest);
+  static const irep_idt check_panics_id;
   exprt convert_recover(const irept &call);
   /// Whether \p object_id is a function of the runtime package whose body
   /// the converter generates (see runtime/rt.go).

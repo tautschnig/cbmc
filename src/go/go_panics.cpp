@@ -22,6 +22,7 @@ Author: Michael Tautschnig
 #include <util/arith_tools.h>
 #include <util/c_types.h>
 #include <util/config.h>
+#include <util/cprover_prefix.h>
 #include <util/expr_initializer.h>
 #include <util/pointer_expr.h>
 #include <util/prefix.h>
@@ -53,8 +54,12 @@ symbol_exprt go_convertert::defer_token()
   return symbol_exprt{"go::$defer_token", bool_typet{}};
 }
 
+const irep_idt go_convertert::check_panics_id = "go::$check_panics";
+
 void go_convertert::declare_panic_state()
 {
+  // Declared early, as go statements call it.
+  declare_generated(symbol_table, check_panics_id, {}, empty_typet{});
   // The state of the (only) goroutine: thread-local, as goroutines will be
   // threads.
   for(const symbol_exprt &variable :
@@ -477,8 +482,48 @@ void go_convertert::convert_defer(const irept &stmt, code_blockt &dest)
   if(object.get("pkg") == "cprover")
     return unsupported(call, "deferred calls of " + id2string(callee));
 
+  code_blockt prefix;
+  const exprt deferred = saved_call(
+    call,
+    id2string(state.function_id) + "$defer" +
+      std::to_string(state.defer_counter),
+    location,
+    prefix);
+  if(deferred.is_nil())
+    return;
+
+  for(auto &statement : prefix.statements())
+    dest.add(std::move(statement));
+  if(state.defer_list)
+  {
+    const struct_typet node_type = deferred_node_type();
+    const symbol_exprt node = new_heap_variable(
+      node_type,
+      struct_exprt{{deferred, state.defer_head}, node_type},
+      location,
+      dest);
+    dest.add(code_frontend_assignt{
+      state.defer_head, typecast_exprt{node, state.defer_head.type()}});
+  }
+  else
+  {
+    const auto &slot = state.defer_slots.at(state.defer_counter);
+    dest.add(code_frontend_assignt{slot.second, deferred});
+    dest.add(code_frontend_assignt{slot.first, true_exprt{}});
+  }
+  ++state.defer_counter;
+}
+
+exprt go_convertert::saved_call(
+  const irept &call,
+  const irep_idt &thunk_id,
+  const source_locationt &location,
+  code_blockt &prefix)
+{
   // Function literals, declared functions and methods are not nil (a
   // method value of a nil interface value panics when it is evaluated).
+  const irep_idt callee = callee_object(call);
+  const irept &object = parse_tree.object(callee);
   const irept &fun = skip_instantiation(go_field(call, "Fun"));
   const bool may_be_nil =
     fun.id() != "FuncLit" &&
@@ -486,10 +531,9 @@ void go_convertert::convert_defer(const irept &stmt, code_blockt &dest)
     !(fun.id() == "SelectorExpr" && fun.find("_sel").is_not_nil() &&
       fun.find("_sel").get("kind") != "field");
 
-  code_blockt prefix;
   exprt function = convert_expr(go_field(call, "Fun"));
   if(function.is_nil())
-    return;
+    return nil_exprt{};
   PRECONDITION(is_func_value(function.type()));
   function = evaluate_once(function, location, prefix);
   code_typet code_type = to_code_type(
@@ -498,10 +542,10 @@ void go_convertert::convert_defer(const irept &stmt, code_blockt &dest)
   code_type.parameters().erase(code_type.parameters().begin()); // $env
   exprt::operandst arguments;
   if(convert_arguments(call, code_type, arguments, prefix))
-    return;
+    return nil_exprt{};
 
   // The saved call: an environment with the function value and the
-  // arguments, and a function calling it (named <function>$deferN).
+  // arguments, and a function calling it (named thunk_id).
   struct_typet::componentst components{{"f", function.type()}};
   exprt::operandst values{function};
   for(std::size_t i = 0; i < arguments.size(); ++i)
@@ -514,8 +558,6 @@ void go_convertert::convert_defer(const irept &stmt, code_blockt &dest)
   const symbol_exprt env = new_heap_variable(
     env_type, struct_exprt{std::move(values), env_type}, location, prefix);
 
-  const irep_idt thunk_id = id2string(state.function_id) + "$defer" +
-                            std::to_string(state.defer_counter);
   declare_generated(
     symbol_table,
     thunk_id,
@@ -565,33 +607,65 @@ void go_convertert::convert_defer(const irept &stmt, code_blockt &dest)
   }
 
   const struct_typet function_type = deferred_function_type();
-  const exprt deferred = struct_exprt{
+  return struct_exprt{
     {typecast_exprt::conditional_cast(
        address_of_exprt{ns.lookup(thunk_id).symbol_expr()},
        function_type.components()[0].type()),
      typecast_exprt{env, function_type.components()[1].type()}},
     function_type};
+}
 
+void go_convertert::convert_go(const irept &stmt, code_blockt &dest)
+{
+  // Go1.27 §Go_statements: "The function value and parameters are evaluated
+  // as usual in the calling goroutine, but unlike with a regular call,
+  // program execution does not wait for the invoked function to complete.
+  // Instead, the function begins executing independently in a new
+  // goroutine." Goroutines are CBMC threads (a __CPROVER_ASYNC_ label, as
+  // in the C library's pthread_create); the panic state is thread-local.
+  const irept &call = go_field(stmt, "Call");
+  const source_locationt location = location_of(stmt);
+  const irep_idt callee = callee_object(call);
+  const irept &object = parse_tree.object(callee);
+  if(object.get("kind") == "builtin" || object.get("pkg") == "cprover")
+    return unsupported(call, "go statements calling " + id2string(callee));
+
+  code_blockt prefix;
+  const irep_idt thunk_id =
+    id2string(state.function_id) + "$go" + std::to_string(state.go_counter++);
+  const exprt function = saved_call(call, thunk_id, location, prefix);
+  if(function.is_nil())
+    return;
+  // The thread calls the generated function directly (rather than through
+  // the function value), so that it is the only function called there.
+  const exprt env = evaluate_once(function.operands()[1], location, prefix);
   for(auto &statement : prefix.statements())
     dest.add(std::move(statement));
-  if(state.defer_list)
+
+  code_blockt thread;
+  const auto assign = [&](const exprt &lhs, const exprt &rhs)
   {
-    const struct_typet node_type = deferred_node_type();
-    const symbol_exprt node = new_heap_variable(
-      node_type,
-      struct_exprt{{deferred, state.defer_head}, node_type},
-      location,
-      dest);
-    dest.add(code_frontend_assignt{
-      state.defer_head, typecast_exprt{node, state.defer_head.type()}});
-  }
-  else
-  {
-    const auto &slot = state.defer_slots.at(state.defer_counter);
-    dest.add(code_frontend_assignt{slot.second, deferred});
-    dest.add(code_frontend_assignt{slot.first, true_exprt{}});
-  }
-  ++state.defer_counter;
+    code_frontend_assignt result{lhs, rhs};
+    result.add_source_location() = location;
+    thread.add(std::move(result));
+  };
+  assign(panicking(), false_exprt{});
+  assign(panic_site(), from_integer(0, panic_site().type()));
+  if(uses_recover)
+    assign(defer_token(), false_exprt{});
+  const symbolt &thunk = ns.lookup(thunk_id);
+  code_expressiont start_call{side_effect_expr_function_callt{
+    thunk.symbol_expr(), {env}, empty_typet{}, location}};
+  start_call.add_source_location() = location;
+  thread.add(std::move(start_call));
+  // Go1.27 §Handling_panics: a panic that the goroutine does not recover
+  // terminates the program.
+  const symbolt &check = ns.lookup(check_panics_id);
+  thread.add(code_expressiont{side_effect_expr_function_callt{
+    check.symbol_expr(), {}, empty_typet{}, location}});
+  code_labelt start{CPROVER_PREFIX "ASYNC_1", std::move(thread)};
+  start.add_source_location() = location;
+  dest.add(std::move(start));
 }
 
 exprt go_convertert::convert_recover(const irept &call)
@@ -627,7 +701,7 @@ void go_convertert::finish_panics()
   // Go1.27 §Handling_panics: "At that point, the program is terminated and
   // the error condition is reported, including the value of the argument
   // to panic."
-  const irep_idt id = "go::$check_panics";
+  const irep_idt id = check_panics_id;
   declare_generated(symbol_table, id, {}, empty_typet{});
   code_blockt body;
   for(std::size_t i = 0; i < panic_sites.size(); ++i)

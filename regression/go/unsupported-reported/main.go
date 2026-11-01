@@ -6,6 +6,9 @@ import "cprover"
 
 func main() {
 	done := false
-	go func() {}() // goroutines are not supported yet
+	seq := func(yield func(int) bool) {}
+	for range seq { // range over functions is not supported yet
+		done = true
+	}
 	cprover.Assert(!done, "not done")
 }

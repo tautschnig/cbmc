@@ -1072,6 +1072,8 @@ void go_convertert::convert_statement(const irept &stmt, code_blockt &dest)
     convert_branch(stmt, dest);
   else if(kind == "DeferStmt")
     convert_defer(stmt, dest);
+  else if(kind == "GoStmt")
+    convert_go(stmt, dest);
   else if(kind == "EmptyStmt")
     return;
   else
