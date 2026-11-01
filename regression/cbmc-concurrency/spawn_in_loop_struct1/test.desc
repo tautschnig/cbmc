@@ -1,0 +1,13 @@
+CORE
+main.c
+--unwind 3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+Invariant check failed
+--
+Starting a thread copies the locals of the spawning frame. A struct local of a
+loop body left the struct of the previous iteration's (dead) instance in the
+renaming map, whose copy clashed with that of the current instance.

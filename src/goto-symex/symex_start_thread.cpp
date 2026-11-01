@@ -78,6 +78,13 @@ void goto_symext::symex_start_thread(statet &state)
     // get original name
     ssa_exprt lhs(pair.second.first.get_original_expr());
 
+    // Only copy the current instance: DEAD of a struct removes its fields,
+    // but the struct itself of an instance of an earlier loop iteration
+    // remains.
+    if(
+      state.rename_ssa<L1>(lhs, ns).get().get_l1_object_identifier() != l1_o_id)
+      continue;
+
     // get L0 name for current thread
     const renamedt<ssa_exprt, L0> l0_lhs =
       symex_level0(std::move(lhs), ns, new_thread_nr);
