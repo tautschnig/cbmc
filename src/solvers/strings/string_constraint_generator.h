@@ -389,6 +389,12 @@ signedbv_typet get_return_code_type();
 
 exprt zero_if_negative(const exprt &expr);
 
+/// The character of \p s if it is a constant string of length one.
+/// Searching for it as a character needs only universal axioms, where a
+/// string needle needs not-contains axioms, which are instantiated over
+/// pairs of index terms and are much more expensive.
+std::optional<exprt> single_constant_character(const array_string_exprt &s);
+
 exprt is_digit_with_radix(
   const exprt &chr,
   const bool strict_formatting,
