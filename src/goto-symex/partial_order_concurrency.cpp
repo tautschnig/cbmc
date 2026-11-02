@@ -219,8 +219,16 @@ void partial_order_concurrencyt::add_implication(
   const std::string &msg,
   const symex_targett::sourcet &source) const
 {
+  if(auto constraint = implication(premises, consequence))
+    equation.constraint(*constraint, msg, source);
+}
+
+std::optional<exprt> partial_order_concurrencyt::implication(
+  const exprt::operandst &premises,
+  const exprt &consequence)
+{
   if(consequence.is_true())
-    return;
+    return {};
   // The conjunction of the premises, flattened, without duplicates (the
   // guards of two events often share conjuncts) and constants; a false or
   // contradictory conjunction makes the implication hold.
@@ -244,11 +252,11 @@ void partial_order_concurrencyt::add_implication(
       continue;
     }
     if(premise.is_false())
-      return;
+      return {};
     if(premise.is_true() || !seen.insert(premise).second)
       continue;
     if(seen.count(boolean_negate(premise)) != 0)
-      return;
+      return {};
     ops.push_back(premise);
   }
   // As the simplifier would: !p1 || ... || !pn || consequence.
@@ -263,5 +271,5 @@ void partial_order_concurrencyt::add_implication(
   }
   else if(!consequence.is_false())
     disjuncts.push_back(consequence);
-  equation.constraint(disjunction(disjuncts), msg, source);
+  return disjunction(disjuncts);
 }

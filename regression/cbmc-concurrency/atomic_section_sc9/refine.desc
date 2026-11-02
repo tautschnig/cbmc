@@ -1,0 +1,13 @@
+CORE
+main.c
+--refine-concurrency
+^EXIT=10$
+^SIGNAL=0$
+^\[main\.assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Without synchronisation, the reader's atomic section may follow the writer's
+one, and so the reads of buf may see the value written.
+As test.desc, with the from-read constraints added lazily (--refine-concurrency).

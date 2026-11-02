@@ -1,0 +1,13 @@
+CORE
+main.c
+--unwind 3 --refine-concurrency
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Threads write different bytes of a field-sensitive union: each write must only
+assign the fields overlapping its bytes, rather than write back the values of
+the others (which a concurrent write to those bytes may have changed).
+As test.desc, with the from-read constraints added lazily (--refine-concurrency).

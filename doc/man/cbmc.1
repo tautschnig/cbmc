@@ -322,6 +322,11 @@ print test suite for coverage criterion (requires \fB\-\-cover\fR)
 \fB\-\-mm\fR MM
 memory consistency model for concurrent programs (default: sc)
 .TP
+\fB\-\-refine\-concurrency\fR
+add the from\-read constraints of the memory model of concurrent programs
+lazily: solve without them, add those that the solver's model violates, and
+solve again, until the model satisfies all of them or no model exists
+.TP
 \fB\-\-malloc\-may\-fail\fR
 allow malloc calls to return a null pointer
 .TP

@@ -1,0 +1,13 @@
+CORE
+main.c
+
+^EXIT=10$
+^SIGNAL=0$
+^\[main\.assertion\.1\] line \d+ coherent: SUCCESS$
+^\[main\.assertion\.2\] line \d+ both writes may be seen: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+^Refinement
+--
+The same verdicts with all constraints added before solving.

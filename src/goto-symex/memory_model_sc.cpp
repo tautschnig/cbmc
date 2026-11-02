@@ -11,7 +11,10 @@ Author: Michael Tautschnig, michael.tautschnig@cs.ox.ac.uk
 
 #include "memory_model_sc.h"
 
+#include <util/simplify_expr.h>
 #include <util/std_expr.h>
+
+#include <solvers/decision_procedure.h>
 
 #include <algorithm>
 #include <iterator>
@@ -28,7 +31,8 @@ operator()(symex_target_equationt &equation, message_handlert &message_handler)
   read_from(equation);
   write_serialization_external(equation);
   program_order(equation);
-  from_read(equation);
+  if(!lazy_from_read)
+    from_read(equation);
 }
 
 exprt memory_model_sct::before(event_it e1, event_it e2)
@@ -362,4 +366,70 @@ void memory_model_sct::from_read(symex_target_equationt &equation)
       }
     }
   }
+}
+
+std::size_t
+memory_model_sct::refine_from_read(decision_proceduret &decision_procedure)
+{
+  // The value of a Boolean expression in the model; an expression that is
+  // not (or not entirely) in the formula may hold.
+  const auto value = [&](const exprt &expr) -> std::optional<bool>
+  {
+    if(expr.is_true())
+      return true;
+    if(expr.is_false())
+      return false;
+    exprt v = decision_procedure.get(expr);
+    simplify(v, ns);
+    if(v.is_true())
+      return true;
+    if(v.is_false())
+      return false;
+    return {};
+  };
+  const auto may_hold = [&](const exprt &expr)
+  { return value(expr) != std::optional<bool>{false}; };
+
+  // The constraints of from_read are, for each read r that reads from a
+  // write x (rf), and each other write y to the address, ordered after x
+  // (ws): r happens before y (fr). Add those that the model violates.
+  std::size_t added = 0;
+  for(const auto &choice : choice_symbols)
+  {
+    const event_it r = choice.first.first;
+    const event_it x = choice.first.second;
+    if(!may_hold(choice.second) || !may_hold(r->guard))
+      continue;
+    const auto address_it = address_map.find(address(r));
+    if(address_it == address_map.end())
+      continue;
+    for(const event_it y : address_it->second.writes)
+    {
+      if(y == x)
+        continue;
+      exprt ws;
+      if(po(x, y) && !program_order_is_relaxed(x, y))
+        ws = true_exprt{};
+      else if(po(y, x) && !program_order_is_relaxed(y, x))
+        continue; // y precedes x: no constraint
+      else
+        ws = before(x, y);
+      if(!may_hold(y->guard) || !may_hold(ws))
+        continue;
+      const exprt fr = before(r, y);
+      if(value(fr) == std::optional<bool>{true})
+        continue;
+      // A constraint added before holds in the model.
+      if(!refined_from_read.emplace(r, x, y).second)
+        continue;
+      if(
+        auto constraint =
+          implication({r->guard, y->guard, ws, choice.second}, fr))
+      {
+        decision_procedure.set_to_true(*constraint);
+        ++added;
+      }
+    }
+  }
+  return added;
 }

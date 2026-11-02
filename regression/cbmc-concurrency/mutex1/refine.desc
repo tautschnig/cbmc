@@ -1,0 +1,10 @@
+CORE
+main.c
+--refine-concurrency
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+As test.desc, with the from-read constraints added lazily (--refine-concurrency).

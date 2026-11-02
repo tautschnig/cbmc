@@ -132,6 +132,10 @@ protected:
     const std::string &msg,
     const symex_targett::sourcet &source) const;
 
+  /// The constraint add_implication adds, or nothing if it holds trivially.
+  static std::optional<exprt>
+  implication(const exprt::operandst &premises, const exprt &consequence);
+
   /// Build the partial order constraint for two events:
   /// if \p e1 and \p e2 are in the same atomic section then constrain with
   ///   equality between their clocks

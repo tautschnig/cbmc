@@ -1,0 +1,10 @@
+CORE
+main.c
+--unwind 2 --no-unwinding-assertions --refine-concurrency
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+As test.desc, with the from-read constraints added lazily (--refine-concurrency).

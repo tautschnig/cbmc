@@ -428,6 +428,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("show-array-constraints"))
     options.set_option("show-array-constraints", true);
 
+  if(cmdline.isset("refine-concurrency"))
+    options.set_option("refine-concurrency", true);
+
   if(cmdline.isset("refine-strings"))
   {
     options.set_option("refine-strings", true);

@@ -1,0 +1,15 @@
+CORE
+main.c
+--refine-concurrency --verbosity 9
+^EXIT=10$
+^SIGNAL=0$
+^Refinement 1: added \d+ constraints violated by the model$
+^\[main\.assertion\.1\] line \d+ coherent: SUCCESS$
+^\[main\.assertion\.2\] line \d+ both writes may be seen: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+With --refine-concurrency, the from-read constraints are added as models of
+the solver violate them: without them, b could read the first write after a
+read the second one.

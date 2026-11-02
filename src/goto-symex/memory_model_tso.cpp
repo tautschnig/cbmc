@@ -27,7 +27,8 @@ operator()(symex_target_equationt &equation, message_handlert &message_handler)
   write_serialization_external(equation);
   program_order(equation);
 #ifndef CPROVER_MEMORY_MODEL_SUP_CLOCK
-  from_read(equation);
+  if(!lazy_from_read)
+    from_read(equation);
 #endif
 }
 

@@ -14,6 +14,8 @@ Author: Michael Tautschnig, michael.tautschnig@cs.ox.ac.uk
 
 #include "partial_order_concurrency.h"
 
+class decision_proceduret;
+
 class memory_model_baset : public partial_order_concurrencyt
 {
 public:
@@ -22,7 +24,26 @@ public:
 
   virtual void operator()(symex_target_equationt &, message_handlert &) = 0;
 
+  /// Do not add the from-read constraints to the equation (operator()):
+  /// refine_from_read adds those that a model of the solver violates.
+  void set_lazy_from_read()
+  {
+    lazy_from_read = true;
+  }
+
+  /// With set_lazy_from_read, add to \p decision_procedure, whose last
+  /// result was satisfiable, the from-read constraints that its model
+  /// violates (each at most once).
+  /// \return the number of constraints added: if none, the model satisfies
+  ///   all of them, as if operator() had added them.
+  virtual std::size_t refine_from_read(decision_proceduret &decision_procedure)
+  {
+    return 0;
+  }
+
 protected:
+  bool lazy_from_read = false;
+
   /// In-thread program order
   /// \param e1: preceding event
   /// \param e2: following event

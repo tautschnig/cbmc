@@ -302,7 +302,8 @@ void postprocess_equation(
   symex_target_equationt &equation,
   const optionst &options,
   const namespacet &ns,
-  ui_message_handlert &ui_message_handler)
+  ui_message_handlert &ui_message_handler,
+  std::unique_ptr<memory_model_baset> *lazy_memory_model)
 {
   const auto postprocess_equation_start = std::chrono::steady_clock::now();
   // add a partial ordering, if required
@@ -310,7 +311,13 @@ void postprocess_equation(
   {
     std::unique_ptr<memory_model_baset> memory_model =
       get_memory_model(options, ns);
+    const bool lazy = lazy_memory_model != nullptr &&
+                      options.get_bool_option("refine-concurrency");
+    if(lazy)
+      memory_model->set_lazy_from_read();
     (*memory_model)(equation, ui_message_handler);
+    if(lazy)
+      *lazy_memory_model = std::move(memory_model);
   }
 
   messaget log(ui_message_handler);
@@ -375,7 +382,8 @@ void run_property_decider(
   goto_symex_property_decidert &property_decider,
   ui_message_handlert &ui_message_handler,
   std::chrono::duration<double> solver_runtime,
-  bool set_pass)
+  bool set_pass,
+  const std::function<std::size_t()> &refine)
 {
   auto solver_start = std::chrono::steady_clock::now();
 
@@ -393,6 +401,17 @@ void run_property_decider(
   auto const sat_solver_start = std::chrono::steady_clock::now();
 
   decision_proceduret::resultt dec_result = property_decider.solve();
+  std::size_t refinements = 0;
+  while(dec_result == decision_proceduret::resultt::D_SATISFIABLE && refine)
+  {
+    const std::size_t added = refine();
+    if(added == 0)
+      break;
+    ++refinements;
+    log.statistics() << "Refinement " << refinements << ": added " << added
+                     << " constraints violated by the model" << messaget::eom;
+    dec_result = property_decider.solve();
+  }
 
   auto const sat_solver_stop = std::chrono::steady_clock::now();
   std::chrono::duration<double> sat_solver_runtime =

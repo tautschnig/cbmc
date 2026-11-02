@@ -14,6 +14,9 @@ Author: Michael Tautschnig, michael.tautschnig@cs.ox.ac.uk
 
 #include "memory_model.h"
 
+#include <set>
+#include <tuple>
+
 class memory_model_sct:public memory_model_baset
 {
 public:
@@ -24,7 +27,14 @@ public:
 
   virtual void operator()(symex_target_equationt &equation, message_handlert &);
 
+  std::size_t
+  refine_from_read(decision_proceduret &decision_procedure) override;
+
 protected:
+  /// The from-read constraints added by refine_from_read: (read, the write
+  /// it reads from, the other write).
+  std::set<std::tuple<event_it, event_it, event_it>> refined_from_read;
+
   virtual exprt before(event_it e1, event_it e2);
   virtual bool program_order_is_relaxed(
     partial_order_concurrencyt::event_it e1,

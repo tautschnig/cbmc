@@ -17,7 +17,9 @@ Author: Daniel Kroening, Peter Schrammel
 #include <goto-programs/remove_vector.h>
 
 #include <assembler/remove_asm.h>
+#include <goto-symex/memory_model.h>
 #include <goto-symex/solver_hardness.h>
+#include <solvers/prop/prop_conv_solver.h>
 
 #include "bmc_util.h"
 #include "counterexample_beautification.h"
@@ -35,6 +37,10 @@ multi_path_symex_checkert::multi_path_symex_checkert(
   PRECONDITION(!has_asm(goto_model.get_goto_functions()));
   PRECONDITION(!has_function_pointers(goto_model.get_goto_functions()));
   PRECONDITION(!has_vector(goto_model.get_goto_functions()));
+
+  // Concurrency constraints may be added after solving (see
+  // run_property_decider).
+  lazy_from_read = options.get_bool_option("refine-concurrency");
 }
 
 incremental_goto_checkert::resultt multi_path_symex_checkert::
@@ -66,6 +72,18 @@ operator()(propertiest &properties)
     if(!has_properties_to_check(properties))
       return result;
 
+    // Constraints are added after solving: the solver must keep all
+    // variables (not eliminate them in preprocessing).
+    if(lazy_memory_model)
+    {
+      if(
+        auto prop_conv_solver = dynamic_cast<prop_conv_solvert *>(
+          &property_decider.get_decision_procedure()))
+      {
+        prop_conv_solver->set_all_frozen();
+      }
+    }
+
     solver_runtime += prepare_property_decider(properties);
 
     equation_generated = true;
@@ -90,8 +108,23 @@ void multi_path_symex_checkert::run_property_decider(
   propertiest &properties,
   std::chrono::duration<double> solver_runtime)
 {
+  std::function<std::size_t()> refine;
+  if(lazy_memory_model)
+  {
+    refine = [this]()
+    {
+      return lazy_memory_model->refine_from_read(
+        property_decider.get_decision_procedure());
+    };
+  }
   ::run_property_decider(
-    result, properties, property_decider, ui_message_handler, solver_runtime);
+    result,
+    properties,
+    property_decider,
+    ui_message_handler,
+    solver_runtime,
+    true,
+    refine);
 }
 
 goto_tracet multi_path_symex_checkert::build_full_trace() const

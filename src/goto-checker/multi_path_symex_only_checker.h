@@ -14,10 +14,13 @@ Author: Daniel Kroening, Peter Schrammel
 
 #include <goto-programs/unwindset.h>
 
+#include <goto-symex/memory_model.h>
 #include <goto-symex/path_storage.h>
 
 #include "incremental_goto_checker.h"
 #include "symex_bmc.h"
+
+#include <memory>
 
 class multi_path_symex_only_checkert : public incremental_goto_checkert
 {
@@ -38,6 +41,10 @@ protected:
   path_fifot path_storage; // should go away
   unwindsett unwindset;
   symex_bmct symex;
+  /// Whether generate_equation leaves the from-read constraints to a
+  /// memory model kept in lazy_memory_model (with --refine-concurrency).
+  bool lazy_from_read = false;
+  std::unique_ptr<memory_model_baset> lazy_memory_model;
 
   /// Generates the equation by running goto-symex
   virtual void generate_equation();
