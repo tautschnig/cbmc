@@ -258,6 +258,20 @@ string_constraint_generatort::add_axioms_for_contains(
   const array_string_exprt s0 = get_string_expr(array_pool, f.arguments()[0]);
   const array_string_exprt s1 = get_string_expr(array_pool, f.arguments()[1]);
   const typet &index_type = s0.length_type();
+  if(const auto c = single_constant_character(s1))
+  {
+    // s0 contains a one-character constant if it has it at some index.
+    auto index = add_axioms_for_index_of(
+      s0,
+      typecast_exprt::conditional_cast(
+        *c, to_type_with_subtype(s0.content().type()).subtype()),
+      from_integer(0, index_type));
+    return {
+      typecast_exprt{
+        binary_relation_exprt{index.first, ID_ge, from_integer(0, index_type)},
+        f.type()},
+      std::move(index.second)};
+  }
   const symbol_exprt contains = fresh_symbol("contains");
   const symbol_exprt startpos = fresh_symbol("startpos_contains", index_type);
 

@@ -119,6 +119,12 @@ string_constraint_generatort::add_axioms_for_index_of_string(
   const array_string_exprt &needle,
   const exprt &from_index)
 {
+  if(const auto c = single_constant_character(needle))
+    return add_axioms_for_index_of(
+      haystack,
+      typecast_exprt::conditional_cast(
+        *c, to_type_with_subtype(haystack.content().type()).subtype()),
+      from_index);
   string_constraintst constraints;
   const typet &index_type = haystack.length_type();
   symbol_exprt offset = fresh_symbol("index_of", index_type);
@@ -221,6 +227,12 @@ string_constraint_generatort::add_axioms_for_last_index_of_string(
   const array_string_exprt &needle,
   const exprt &from_index)
 {
+  if(const auto c = single_constant_character(needle))
+    return add_axioms_for_last_index_of(
+      haystack,
+      typecast_exprt::conditional_cast(
+        *c, to_type_with_subtype(haystack.content().type()).subtype()),
+      from_index);
   string_constraintst constraints;
   const typet &index_type = haystack.length_type();
   symbol_exprt offset = fresh_symbol("index_of", index_type);
@@ -460,4 +472,16 @@ string_constraint_generatort::add_axioms_for_last_index_of(
     const array_string_exprt sub = get_string_expr(array_pool, c);
     return add_axioms_for_last_index_of_string(str, sub, from_index);
   }
+}
+
+std::optional<exprt> single_constant_character(const array_string_exprt &s)
+{
+  if(s.id() != ID_array || s.operands().size() != 1)
+    return {};
+  const auto &size = to_array_type(s.type()).size();
+  if(!size.is_constant() || numeric_cast<mp_integer>(size) != 1)
+    return {};
+  if(!s.operands()[0].is_constant())
+    return {};
+  return s.operands()[0];
 }
