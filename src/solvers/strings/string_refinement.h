@@ -128,6 +128,30 @@ private:
   /// Index terms deferred by filter_index_set, by array.
   std::map<exprt, std::set<exprt>> pending_indices;
   void filter_index_set();
+  /// Results of substitute_array_access, shared by all lemmas.
+  std::unordered_map<exprt, exprt, irep_hash> substitution_memo;
+  /// Makes equal subterms of lemmas share one node, bottom up: children
+  /// are merged first, so that looking a node up compares children by
+  /// address, and each node of a shared term is visited once.
+  class lemma_mergert
+  {
+  public:
+    void operator()(exprt &expr)
+    {
+      irept result = merged(expr);
+      visited.clear();
+      expr = static_cast<exprt &>(result);
+    }
+
+  private:
+    std::unordered_set<irept, irep_hash> store;
+    /// Results by node within one lemma, with the original kept alive so
+    /// that its address is not reused.
+    std::unordered_map<const void *, std::pair<irept, irept>> visited;
+    irept merged(const irept &irep);
+  };
+  lemma_mergert lemma_merger;
+  void add_length_definitions();
   union_find_replacet symbol_resolve;
 
   std::vector<exprt> equations;

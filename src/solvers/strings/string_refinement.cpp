@@ -89,6 +89,12 @@ static void initial_index_set(
   const namespacet &ns,
   const string_axiomst &axioms);
 
+static exprt substitute_array_access(
+  exprt expr,
+  std::unordered_map<exprt, exprt, irep_hash> &memo,
+  symbol_generatort &symbol_generator,
+  const bool left_propagate);
+
 exprt simplify_sum(const exprt &f);
 
 static void update_index_set(
@@ -1011,7 +1017,8 @@ string_refinementt::dec_solve(const exprt &assumption)
 
   for(const exprt &lemma : constraints.existential)
   {
-    add_lemma(substitute_array_access(lemma, generator.fresh_symbol, true));
+    add_lemma(substitute_array_access(
+      lemma, substitution_memo, generator.fresh_symbol, true));
   }
 
   // All generated strings should have non-negative length
@@ -1026,7 +1033,7 @@ string_refinementt::dec_solve(const exprt &assumption)
   const auto get = [this](const exprt &expr) { return this->get(expr); };
   dependencies.clean_cache();
   const decision_proceduret::resultt initial_result =
-    supert::dec_solve(nil_exprt());
+    (add_length_definitions(), supert::dec_solve(nil_exprt()));
   if(initial_result == resultt::D_SATISFIABLE)
   {
     bool satisfied;
@@ -1064,7 +1071,8 @@ string_refinementt::dec_solve(const exprt &assumption)
     generate_instantiations(index_sets, axioms, not_contain_witnesses);
   for(const auto &instance : initial_instances)
   {
-    add_lemma(substitute_array_access(instance, generator.fresh_symbol, true));
+    add_lemma(substitute_array_access(
+      instance, substitution_memo, generator.fresh_symbol, true));
   }
 
   // Consecutive refinement rounds where update_index_set found no new index
@@ -1077,7 +1085,7 @@ string_refinementt::dec_solve(const exprt &assumption)
   {
     dependencies.clean_cache();
     const decision_proceduret::resultt refined_result =
-      supert::dec_solve(nil_exprt());
+      (add_length_definitions(), supert::dec_solve(nil_exprt()));
 
     if(refined_result == resultt::D_SATISFIABLE)
     {
@@ -1159,8 +1167,8 @@ string_refinementt::dec_solve(const exprt &assumption)
       const auto instances =
         generate_instantiations(index_sets, axioms, not_contain_witnesses);
       for(const auto &instance : instances)
-        add_lemma(
-          substitute_array_access(instance, generator.fresh_symbol, true));
+        add_lemma(substitute_array_access(
+          instance, substitution_memo, generator.fresh_symbol, true));
     }
     else
     {
@@ -1253,6 +1261,44 @@ void string_refinementt::filter_index_set()
               << " held back" << messaget::eom;
 }
 
+irept string_refinementt::lemma_mergert::merged(const irept &irep)
+{
+  const void *const node = &irep.read();
+  const auto found = visited.find(node);
+  if(found != visited.end())
+    return found->second.second;
+
+  irept result = irep;
+  irept::subt &sub = result.get_sub();
+  for(std::size_t i = 0; i < irep.get_sub().size(); ++i)
+  {
+    irept op = merged(irep.get_sub()[i]);
+    if(&op.read() != &irep.get_sub()[i].read())
+      sub[i] = std::move(op);
+  }
+  for(auto &entry : result.get_named_sub())
+  {
+    if(irept::is_comment(entry.first))
+      continue;
+    irept op = merged(entry.second);
+    if(&op.read() != &entry.second.read())
+      entry.second = std::move(op);
+  }
+  const irept &canonical = *store.insert(std::move(result)).first;
+  visited.emplace(node, std::make_pair(irep, canonical));
+  return canonical;
+}
+
+/// Assert the definitions of the length symbols that the array pool made
+/// for if-expressions over strings since the last call.
+void string_refinementt::add_length_definitions()
+{
+  for(const auto &definition : generator.array_pool.take_length_definitions())
+  {
+    add_lemma(definition, false);
+  }
+}
+
 /// Add the given lemma to the solver.
 /// \param lemma: a Boolean expression
 /// \param simplify_lemma: whether the lemma should be simplified before being
@@ -1261,6 +1307,7 @@ void string_refinementt::add_lemma(
   const exprt &lemma,
   const bool simplify_lemma)
 {
+  add_length_definitions();
   if(!seen_instances.insert(lemma).second)
     return;
 
@@ -1300,6 +1347,11 @@ void string_refinementt::add_lemma(
 
   log.debug() << "adding lemma " << format(simple_lemma) << messaget::eom;
 
+  // Share equal subterms with those of earlier lemmas, so that the
+  // conversion cache compares them by address: instances of axioms repeat
+  // large index terms, and comparing unshared copies of them took most of
+  // the time.
+  lemma_merger(simple_lemma);
   prop.l_set_to_true(convert(simple_lemma));
 }
 
@@ -1593,24 +1645,68 @@ static std::optional<exprt> substitute_array_access(
 /// Auxiliary function for substitute_array_access
 /// Performs the same operation but modifies the argument instead of returning
 /// the resulting expression.
+/// Rewrite the array accesses of \p expr (see substitute_array_access),
+/// memoising on subexpressions: lemmas share large subterms (index terms
+/// built from strings merged at join points), and traversing them as trees
+/// took time proportional to their unshared size, which was exponential.
+/// Equal subexpressions get equal results, and unchanged subexpressions
+/// keep their sharing.
+static exprt substitute_array_access_rec(
+  const exprt &expr,
+  std::unordered_map<exprt, exprt, irep_hash> &memo,
+  symbol_generatort &symbol_generator,
+  const bool left_propagate)
+{
+  if(!expr.has_operands())
+    return expr;
+  const auto found = memo.find(expr);
+  if(found != memo.end())
+    return found->second;
+
+  exprt result = expr;
+  if(const auto index_expr = expr_try_dynamic_cast<index_exprt>(expr))
+  {
+    if(
+      std::optional<exprt> replaced =
+        substitute_array_access(*index_expr, symbol_generator, left_propagate))
+    {
+      result = std::move(*replaced);
+    }
+  }
+  for(auto &operand : result.operands())
+  {
+    exprt new_operand = substitute_array_access_rec(
+      operand, memo, symbol_generator, left_propagate);
+    if(new_operand != operand)
+      operand = std::move(new_operand);
+  }
+  memo.emplace(expr, result);
+  return result;
+}
+
 static void substitute_array_access_in_place(
   exprt &expr,
   symbol_generatort &symbol_generator,
   const bool left_propagate)
 {
-  // Recurse down structure and modify on the way.
-  for(auto it = expr.depth_begin(), itend = expr.depth_end(); it != itend; ++it)
-  {
-    if(const auto index_expr = expr_try_dynamic_cast<index_exprt>(*it))
-    {
-      std::optional<exprt> result =
-        substitute_array_access(*index_expr, symbol_generator, left_propagate);
+  std::unordered_map<exprt, exprt, irep_hash> memo;
+  expr =
+    substitute_array_access_rec(expr, memo, symbol_generator, left_propagate);
+}
 
-      // Only perform a write when we have something changed.
-      if(result)
-        it.mutate() = *result;
-    }
-  }
+/// substitute_array_access with a memo that persists across calls, so that
+/// the same array access gets the same result in every lemma: the
+/// out-of-bounds value of a constant array is then one symbol per access
+/// rather than a fresh one per lemma, and the comparisons that select the
+/// element are shared.
+static exprt substitute_array_access(
+  exprt expr,
+  std::unordered_map<exprt, exprt, irep_hash> &memo,
+  symbol_generatort &symbol_generator,
+  const bool left_propagate)
+{
+  return substitute_array_access_rec(
+    expr, memo, symbol_generator, left_propagate);
 }
 
 /// Create an equivalent expression where array accesses and 'with' expressions
@@ -1941,7 +2037,14 @@ static void add_to_index_set(
   const exprt &s,
   exprt i)
 {
-  simplify(i, ns);
+  auto cached = index_set.simplified.find(i);
+  if(cached == index_set.simplified.end())
+  {
+    exprt simplified = i;
+    simplify(simplified, ns);
+    cached = index_set.simplified.emplace(std::move(i), simplified).first;
+  }
+  i = cached->second;
   const bool is_size_t = numeric_cast<std::size_t>(i).has_value();
   if(!i.is_constant() || is_size_t)
   {
