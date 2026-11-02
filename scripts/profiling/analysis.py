@@ -331,15 +331,17 @@ def print_summary(results, output_dir, all_folded, debug_binary=None):
 
     has_stddev = any(r.get("runs", 1) > 1 for r in results)
     out("\n--- CBMC Internal Timings ---\n")
-    hdr = f"{'Benchmark':<20} {'Symex':>10} {'Convert':>10} {'Solver':>10} {'Total':>10} {'Steps':>10}"
+    hdr = (f"{'Benchmark':<20} {'Symex':>10} {'Postproc':>10} {'Convert':>10}"
+           f" {'Solver':>10} {'Total':>10} {'Steps':>10}")
     if has_stddev:
         hdr += f" {'±Total':>8}"
     out(hdr)
-    out("-" * (72 + (9 if has_stddev else 0)))
+    out("-" * (83 + (9 if has_stddev else 0)))
     for r in results:
         t = r["timings"]
         line = (f"{r['name']:<20} "
                 f"{t.get('Symex', 0):>9.3f}s "
+                f"{t.get('Postprocess Equation', 0):>9.3f}s "
                 f"{t.get('Convert SSA', 0):>9.3f}s "
                 f"{t.get('Solver', 0):>9.3f}s "
                 f"{r['elapsed']:>9.1f}s "
@@ -416,6 +418,14 @@ def print_summary(results, output_dir, all_folded, debug_binary=None):
         json.dumps(results, indent=2, default=str) + "\n")
 
 
+def _pre_solver_time(result):
+    """Symex, the post-processing of the equation (e.g. the memory model of
+    concurrent programs) and SSA conversion."""
+    t = result["timings"]
+    return (t.get("Symex", 0) + t.get("Postprocess Equation", 0) +
+            t.get("Convert SSA", 0))
+
+
 def print_diff_summary(results_a, results_b, ref_a, ref_b, output_dir):
     """Compare profiling results between two refs."""
     lines = []
@@ -443,8 +453,8 @@ def print_diff_summary(results_a, results_b, ref_a, ref_b, output_dir):
     stopped = []
     for name in common:
         ra, rb = by_name_a[name], by_name_b[name]
-        ta = ra["timings"].get("Symex", 0) + ra["timings"].get("Convert SSA", 0)
-        tb = rb["timings"].get("Symex", 0) + rb["timings"].get("Convert SSA", 0)
+        ta = _pre_solver_time(ra)
+        tb = _pre_solver_time(rb)
         # Symbolic execution runs (concurrent programs may repeat it).
         runs = (f"{ra['timings'].get('symex_runs', 1):.0f}/"
                 f"{rb['timings'].get('symex_runs', 1):.0f}")
