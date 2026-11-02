@@ -143,13 +143,19 @@ public:
   ///   the full object
   /// \param target: symbolic execution equation store
   /// \param allow_pointer_unsoundness: allow pointer unsoundness
+  /// \param updated_bytes: if set, the assignment only changes these bytes
+  ///   of \p lhs (offset and size), e.g., when it writes a byte of a union
+  ///   through a cast pointer: fields outside them are not assigned (they
+  ///   keep their values, and are neither read nor written).
   void field_assignments(
     const namespacet &ns,
     goto_symex_statet &state,
     const ssa_exprt &lhs,
     const exprt &rhs,
     symex_targett &target,
-    bool allow_pointer_unsoundness) const;
+    bool allow_pointer_unsoundness,
+    const std::optional<std::pair<mp_integer, mp_integer>> &updated_bytes = {})
+    const;
 
   /// Turn an expression \p expr into a field-sensitive SSA expression.
   /// Field-sensitive SSA expressions have individual symbols for each
@@ -210,13 +216,17 @@ private:
   const bool should_simplify;
   const irep_idt &language_mode;
 
+  /// \p updated_bytes: see field_assignments; \p offset: the byte offset
+  /// of \p lhs_fs within the assigned object, if known.
   void field_assignments_rec(
     const namespacet &ns,
     goto_symex_statet &state,
     const exprt &lhs_fs,
     const exprt &ssa_rhs,
     symex_targett &target,
-    bool allow_pointer_unsoundness) const;
+    bool allow_pointer_unsoundness,
+    const std::optional<std::pair<mp_integer, mp_integer>> &updated_bytes,
+    const std::optional<mp_integer> &offset) const;
 
   [[nodiscard]] exprt simplify_opt(
     exprt e,

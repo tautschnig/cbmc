@@ -11,8 +11,10 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "symex_assign.h"
 
+#include <util/arith_tools.h>
 #include <util/byte_operators.h>
 #include <util/pointer_expr.h>
+#include <util/pointer_offset_size.h>
 #include <util/range.h>
 
 #include "expr_skeleton.h"
@@ -187,6 +189,37 @@ void symex_assignt::assign_from_struct(
   }
 }
 
+/// The bytes (offset and size) of \p lhs that an assignment of \p rhs
+/// changes, if it updates some bytes of \p lhs itself
+/// (byte_update(lhs, offset, value), possibly under a guard:
+/// if(guard, byte_update(...), lhs)), and nothing if they are not known.
+static std::optional<std::pair<mp_integer, mp_integer>>
+updated_bytes(const ssa_exprt &lhs, const exprt &rhs, const namespacet &ns)
+{
+  const auto is_lhs = [&lhs](const exprt &expr)
+  {
+    return is_ssa_expr(expr) && to_ssa_expr(expr).get_l1_object_identifier() ==
+                                  lhs.get_l1_object_identifier();
+  };
+  const exprt *update = &rhs;
+  if(rhs.id() == ID_if && is_lhs(to_if_expr(rhs).false_case()))
+    update = &to_if_expr(rhs).true_case();
+  if(
+    update->id() != ID_byte_update_little_endian &&
+    update->id() != ID_byte_update_big_endian)
+  {
+    return {};
+  }
+  const byte_update_exprt &bu = to_byte_update_expr(*update);
+  if(!is_lhs(bu.op()) || bu.op().type() != lhs.type())
+    return {};
+  const auto offset = numeric_cast<mp_integer>(bu.offset());
+  const auto size = pointer_offset_size(bu.value().type(), ns);
+  if(!offset.has_value() || !size.has_value() || *offset < 0)
+    return {};
+  return std::pair<mp_integer, mp_integer>{*offset, *size};
+}
+
 void symex_assignt::assign_non_struct_symbol(
   const ssa_exprt &lhs, // L1
   const expr_skeletont &full_lhs,
@@ -259,7 +292,8 @@ void symex_assignt::assign_non_struct_symbol(
       l1_lhs,
       assignment.rhs,
       target,
-      symex_config.allow_pointer_unsoundness);
+      symex_config.allow_pointer_unsoundness,
+      updated_bytes(l1_lhs, assignment.rhs, ns));
   }
 }
 

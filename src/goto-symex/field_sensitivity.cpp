@@ -389,14 +389,22 @@ void field_sensitivityt::field_assignments(
   const ssa_exprt &lhs,
   const exprt &rhs,
   symex_targett &target,
-  bool allow_pointer_unsoundness) const
+  bool allow_pointer_unsoundness,
+  const std::optional<std::pair<mp_integer, mp_integer>> &updated_bytes) const
 {
   const exprt lhs_fs = get_fields(ns, state, lhs, false);
 
   if(lhs != lhs_fs)
   {
     field_assignments_rec(
-      ns, state, lhs_fs, rhs, target, allow_pointer_unsoundness);
+      ns,
+      state,
+      lhs_fs,
+      rhs,
+      target,
+      allow_pointer_unsoundness,
+      updated_bytes,
+      mp_integer{0});
     // Erase the composite symbol from our working state. Note that we need to
     // have it in the propagation table and the value set while doing the field
     // assignments, thus we cannot skip putting it in there above.
@@ -424,8 +432,23 @@ void field_sensitivityt::field_assignments_rec(
   const exprt &lhs_fs,
   const exprt &ssa_rhs,
   symex_targett &target,
-  bool allow_pointer_unsoundness) const
+  bool allow_pointer_unsoundness,
+  const std::optional<std::pair<mp_integer, mp_integer>> &updated_bytes,
+  const std::optional<mp_integer> &offset) const
 {
+  // Fields outside the bytes that the assignment changes keep their values.
+  if(updated_bytes.has_value() && offset.has_value())
+  {
+    const auto size = pointer_offset_size(lhs_fs.type(), ns);
+    if(
+      size.has_value() &&
+      (*offset + *size <= updated_bytes->first ||
+       *offset >= updated_bytes->first + updated_bytes->second))
+    {
+      return;
+    }
+  }
+
   if(is_ssa_expr(lhs_fs))
   {
     const ssa_exprt &l1_lhs = to_ssa_expr(lhs_fs);
@@ -468,6 +491,13 @@ void field_sensitivityt::field_assignments_rec(
     exprt::operandst::const_iterator fs_it = lhs_fs.operands().begin();
     for(const auto &comp : components)
     {
+      std::optional<mp_integer> member_offset_bytes;
+      if(offset.has_value())
+      {
+        const auto m = member_offset(type, comp.get_name(), ns);
+        if(m.has_value())
+          member_offset_bytes = *offset + *m;
+      }
       const exprt member_rhs = apply(
         ns,
         state,
@@ -488,11 +518,20 @@ void field_sensitivityt::field_assignments_rec(
           fs_ssa->get_object_ssa(),
           member_rhs,
           target,
-          allow_pointer_unsoundness);
+          allow_pointer_unsoundness,
+          updated_bytes,
+          member_offset_bytes);
       }
 
       field_assignments_rec(
-        ns, state, member_lhs, member_rhs, target, allow_pointer_unsoundness);
+        ns,
+        state,
+        member_lhs,
+        member_rhs,
+        target,
+        allow_pointer_unsoundness,
+        updated_bytes,
+        member_offset_bytes);
       ++fs_it;
     }
   }
@@ -533,11 +572,20 @@ void field_sensitivityt::field_assignments_rec(
           fs_ssa->get_object_ssa(),
           member_rhs,
           target,
-          allow_pointer_unsoundness);
+          allow_pointer_unsoundness,
+          updated_bytes,
+          offset);
       }
 
       field_assignments_rec(
-        ns, state, member_lhs, member_rhs, target, allow_pointer_unsoundness);
+        ns,
+        state,
+        member_lhs,
+        member_rhs,
+        target,
+        allow_pointer_unsoundness,
+        updated_bytes,
+        offset);
       ++fs_it;
     }
   }
@@ -551,9 +599,13 @@ void field_sensitivityt::field_assignments_rec(
     if(array_size > max_field_sensitivity_array_size)
       return;
 
+    const auto element_size = pointer_offset_size(type->element_type(), ns);
     exprt::operandst::const_iterator fs_it = lhs_fs.operands().begin();
     for(std::size_t i = 0; i < array_size; ++i)
     {
+      std::optional<mp_integer> element_offset;
+      if(offset.has_value() && element_size.has_value())
+        element_offset = *offset + *element_size * i;
       const exprt index_rhs = apply(
         ns,
         state,
@@ -574,11 +626,20 @@ void field_sensitivityt::field_assignments_rec(
           fs_ssa->get_object_ssa(),
           index_rhs,
           target,
-          allow_pointer_unsoundness);
+          allow_pointer_unsoundness,
+          updated_bytes,
+          element_offset);
       }
 
       field_assignments_rec(
-        ns, state, index_lhs, index_rhs, target, allow_pointer_unsoundness);
+        ns,
+        state,
+        index_lhs,
+        index_rhs,
+        target,
+        allow_pointer_unsoundness,
+        updated_bytes,
+        element_offset);
       ++fs_it;
     }
   }
@@ -600,11 +661,20 @@ void field_sensitivityt::field_assignments_rec(
           fs_ssa->get_object_ssa(),
           op,
           target,
-          allow_pointer_unsoundness);
+          allow_pointer_unsoundness,
+          updated_bytes,
+          std::nullopt);
       }
 
       field_assignments_rec(
-        ns, state, *fs_it, op, target, allow_pointer_unsoundness);
+        ns,
+        state,
+        *fs_it,
+        op,
+        target,
+        allow_pointer_unsoundness,
+        updated_bytes,
+        std::nullopt);
       ++fs_it;
     }
   }
