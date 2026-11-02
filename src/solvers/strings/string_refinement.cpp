@@ -1056,6 +1056,9 @@ string_refinementt::dec_solve(const exprt &assumption)
 
   initial_index_set(index_sets, ns, axioms);
   update_index_set(index_sets, ns, current_constraints);
+  for(const auto &entry : index_sets.cumulative)
+    index_sets.current[entry.first] = entry.second;
+  filter_index_set();
   current_constraints.clear();
   const auto initial_instances =
     generate_instantiations(index_sets, axioms, not_contain_witnesses);
@@ -1105,6 +1108,7 @@ string_refinementt::dec_solve(const exprt &assumption)
       // We will then relaunch the solver with these added lemmas.
       index_sets.current.clear();
       update_index_set(index_sets, ns, current_constraints);
+      filter_index_set();
 
       display_index_set(log.debug(), index_sets);
 
@@ -1169,6 +1173,86 @@ string_refinementt::dec_solve(const exprt &assumption)
               << "of steps allowed" << messaget::eom;
   return resultt::D_ERROR;
 }
+/// Keep only the new index terms whose value in the current model is not
+/// already the value of an index term of the same array, and hold back
+/// the others for later rounds. If every new term would be held back, the
+/// held-back terms are all released, so that the refinement instantiates
+/// at least as much as without the filter, only later.
+///
+/// Instantiating a universal axiom at an index term substitutes the term
+/// into the axiom, whose array accesses yield further terms. Through
+/// strings that are merged at join points of a program (if-expressions
+/// over strings), these compose without bound, while many of them denote
+/// the same position in the model, so their instances do not exclude the
+/// model. Every instance is implied by its axiom, so deferring some is
+/// sound, and check_axioms still verifies each model.
+void string_refinementt::filter_index_set()
+{
+  const auto value_of = [this](const exprt &term) -> std::optional<mp_integer>
+  {
+    const exprt value = simplify_expr(supert::get(term), ns);
+    if(value.is_constant())
+      return numeric_cast<mp_integer>(to_constant_expr(value));
+    return {};
+  };
+  std::size_t kept = 0;
+  std::size_t held = 0;
+  for(auto &entry : index_sets.cumulative)
+  {
+    const exprt &array = entry.first;
+    std::set<exprt> &current = index_sets.current[array];
+    std::set<exprt> &pending = pending_indices[array];
+    // The positions that terms instantiated earlier cover in this model.
+    std::set<mp_integer> covered;
+    for(const auto &term : entry.second)
+    {
+      if(current.count(term) == 0)
+      {
+        if(const auto value = value_of(term))
+          covered.insert(*value);
+      }
+    }
+    std::set<exprt> candidates = current;
+    candidates.insert(pending.begin(), pending.end());
+    current.clear();
+    pending.clear();
+    for(const auto &term : candidates)
+    {
+      const auto value = value_of(term);
+      if(!value.has_value() || covered.insert(*value).second)
+      {
+        current.insert(term);
+        entry.second.insert(term);
+        ++kept;
+      }
+      else
+      {
+        pending.insert(term);
+        entry.second.erase(term);
+        ++held;
+      }
+    }
+  }
+  if(kept == 0 && held > 0)
+  {
+    for(auto &entry : pending_indices)
+    {
+      for(const auto &term : entry.second)
+      {
+        index_sets.current[entry.first].insert(term);
+        index_sets.cumulative[entry.first].insert(term);
+      }
+      entry.second.clear();
+    }
+    kept = held;
+    held = 0;
+  }
+  for(auto it = index_sets.current.begin(); it != index_sets.current.end();)
+    it = it->second.empty() ? index_sets.current.erase(it) : std::next(it);
+  log.debug() << "filter_index_set: " << kept << " new index terms, " << held
+              << " held back" << messaget::eom;
+}
+
 /// Add the given lemma to the solver.
 /// \param lemma: a Boolean expression
 /// \param simplify_lemma: whether the lemma should be simplified before being

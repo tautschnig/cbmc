@@ -125,6 +125,9 @@ private:
   // Warning: this is indexed by array_expressions and not string expressions
 
   index_set_pairt index_sets;
+  /// Index terms deferred by filter_index_set, by array.
+  std::map<exprt, std::set<exprt>> pending_indices;
+  void filter_index_set();
   union_find_replacet symbol_resolve;
 
   std::vector<exprt> equations;
