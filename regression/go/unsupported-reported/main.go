@@ -5,10 +5,6 @@ package main
 import "cprover"
 
 func main() {
-	done := false
-	seq := func(yield func(int) bool) {}
-	for range seq { // range over functions is not supported yet
-		done = true
-	}
-	cprover.Assert(!done, "not done")
+	msg := "not constant"
+	cprover.Assert(false, msg) // descriptions must be constants
 }

@@ -8,6 +8,7 @@ SRC = expr2go.cpp \
       go_maps.cpp \
       go_panics.cpp \
       go_parse_tree.cpp \
+      go_range_func.cpp \
       go_types.cpp \
       # Empty last line
 

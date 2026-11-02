@@ -1,0 +1,12 @@
+CORE
+main.go
+
+^EXIT=6$
+^SIGNAL=0$
+Go front-end: defer in the body of a range over a function is not supported yet$
+Go front-end: goto out of the body of a range over a function is not supported yet$
+^CONVERSION ERROR$
+--
+^VERIFICATION
+--
+unsupported statements in the body of a range over a function are reported

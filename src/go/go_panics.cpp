@@ -481,6 +481,10 @@ void go_convertert::convert_defer(const irept &stmt, code_blockt &dest)
   // saved anew but the actual function is not invoked."
   const irept &call = go_field(stmt, "Call");
   const source_locationt location = location_of(stmt);
+  // Go1.27 §Defer_statements: the deferred call belongs to the function
+  // containing a range over a function, not to its yield function.
+  if(state.range_body)
+    return unsupported(stmt, "defer in the body of a range over a function");
   const irep_idt callee = callee_object(call);
   const irept &object = parse_tree.object(callee);
   if(object.get("kind") == "builtin")

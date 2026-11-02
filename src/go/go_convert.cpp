@@ -651,6 +651,31 @@ captured_variables(const irept &lit, const go_parse_treet &parse_tree)
   return captured;
 }
 
+std::vector<irep_idt>
+range_body_variables(const irept &stmt, const go_parse_treet &parse_tree)
+{
+  // The iteration variables (declared with ":=", or assigned), and the
+  // body, become the yield function.
+  std::set<irep_idt> declared;
+  std::vector<const irept *> uses;
+  for(const char *field : {"Key", "Value", "Body"})
+    collect_objects(go_field(stmt, field), declared, uses);
+  std::vector<irep_idt> captured;
+  std::set<irep_idt> seen;
+  for(const irept *use : uses)
+  {
+    const irep_idt &id = use->get("_obj");
+    const irept &object = parse_tree.object(id);
+    if(
+      object.get("kind") == "var" && !object.get_bool("package_level") &&
+      declared.count(id) == 0 && seen.insert(id).second)
+    {
+      captured.push_back(id);
+    }
+  }
+  return captured;
+}
+
 void go_convertert::scan_heap_variables(const irept &node)
 {
   // Go1.27 §Variables: a variable lives as long as it is accessible.
@@ -690,6 +715,15 @@ void go_convertert::scan_heap_variables(const irept &node)
   else if(node.id() == "FuncLit")
   {
     for(const auto &id : captured_variables(node, parse_tree))
+      state.heap_objects.insert(id);
+  }
+  else if(
+    node.id() == "RangeStmt" &&
+    type_converter.underlying(go_field(node, "X").get("_t")).get("k") ==
+      "signature")
+  {
+    // The body becomes a function (convert_range_func).
+    for(const auto &id : range_body_variables(node, parse_tree))
       state.heap_objects.insert(id);
   }
   else if(
@@ -763,10 +797,14 @@ void go_convertert::convert_function(
   const irep_idt &signature_index,
   const irept &body_node,
   const source_locationt &location,
-  const std::vector<irep_idt> &captured)
+  const std::vector<irep_idt> &captured,
+  const std::vector<typet> *captured_types,
+  std::shared_ptr<range_bodyt> range_body,
+  const std::function<void(code_blockt &)> &prologue)
 {
   state = function_statet{};
   state.function_id = function;
+  state.range_body = std::move(range_body);
   const code_typet &code_type = to_code_type(ns.lookup(function).type);
   state.return_type = code_type.return_type();
   scan_heap_variables(body_node);
@@ -779,9 +817,14 @@ void go_convertert::convert_function(
   if(!captured.empty())
   {
     std::vector<typet> types;
-    for(const auto &id : captured)
-      types.push_back(
-        convert_type(parse_tree.object(id).get("type"), body_node));
+    if(captured_types != nullptr)
+      types = *captured_types;
+    else
+    {
+      for(const auto &id : captured)
+        types.push_back(
+          convert_type(parse_tree.object(id).get("type"), body_node));
+    }
     for(const auto &type : types)
       if(type.is_nil())
         return;
@@ -832,7 +875,17 @@ void go_convertert::convert_function(
   // The statements are a block of their own, so that jumping to the end of
   // the function (label $unwind) leaves the scopes of their variables
   // rather than entering them.
-  code_blockt statements = convert_block(body_node);
+  code_blockt statements;
+  if(prologue)
+    prologue(statements);
+  code_blockt converted = convert_block(body_node);
+  for(auto &statement : converted.statements())
+    statements.add(std::move(statement));
+  if(state.range_body)
+  {
+    // The end of the body of a range over a function: the next iteration.
+    range_body_exit(RANGE_EXIT_NONE, location, statements);
+  }
   add_panic_checks(statements);
   body.add(std::move(statements));
   body.add_source_location() = location;
@@ -1117,6 +1170,13 @@ void go_convertert::convert_branch(const irept &stmt, code_blockt &dest)
 
   if(tok == "goto")
   {
+    if(
+      state.range_body &&
+      state.range_body->labels.count(label.get("_obj")) == 0)
+    {
+      return unsupported(
+        stmt, "goto out of the body of a range over a function");
+    }
     // Go1.27 §Goto_statements: go/types has checked that the jump neither
     // enters a block nor skips variable declarations.
     code_gotot jump{label.get("Name")};
@@ -1149,6 +1209,8 @@ void go_convertert::convert_branch(const irept &stmt, code_blockt &dest)
       break;
     }
   }
+  if(target == nullptr && state.range_body)
+    return range_body_branch(stmt, dest);
   if(target == nullptr)
     return unsupported(stmt, id2string(tok) + " outside its statement");
 
@@ -1627,6 +1689,13 @@ void go_convertert::convert_range(
       return;
     return convert_chan_range(stmt, chan, dest, label_object);
   }
+  if(k == "signature")
+  {
+    exprt function = convert_expr(x_node);
+    if(function.is_nil())
+      return;
+    return convert_range_func(stmt, function, dest, label_object);
+  }
   if(!is_integer && !is_string && !is_slice && array_type->get("k") != "array")
   {
     unsupported(stmt, "range over values of type " + under.get_string("str"));
@@ -1910,21 +1979,14 @@ void go_convertert::convert_return(const irept &stmt, code_blockt &dest)
   // Go1.27 §Return_statements.
   const auto &results = go_list(stmt, "Results");
   const source_locationt location = location_of(stmt);
+  // In the body of a range over a function, the results are those of the
+  // function containing the loop.
+  const typet &return_type =
+    state.range_body ? state.range_body->return_type : state.return_type;
   code_frontend_returnt ret;
-  if(results.empty() && !state.named_results.empty())
-  {
-    // "The "return" statement returns the values of these variables."
-    if(state.named_results.size() == 1)
-      ret = code_frontend_returnt{state.named_results.front()};
-    else
-    {
-      exprt::operandst values{
-        state.named_results.begin(), state.named_results.end()};
-      ret = code_frontend_returnt{
-        struct_exprt{std::move(values), state.return_type}};
-    }
-  }
-  else if(!results.empty())
+  if(results.empty())
+    ret = bare_return();
+  else
   {
     // Either one value per result, or "a single call to a multi-valued
     // function. The effect is as if each value returned from that
@@ -1940,21 +2002,53 @@ void go_convertert::convert_return(const irept &stmt, code_blockt &dest)
     if(results.size() == 1 && is_tuple(values.front().type()))
       values = unpack(values.front(), location, dest);
     if(values.size() == 1)
-    {
-      ret =
-        code_frontend_returnt{assign_cast(values.front(), state.return_type)};
-    }
+      ret = code_frontend_returnt{assign_cast(values.front(), return_type)};
     else
     {
-      const auto &components = to_struct_type(state.return_type).components();
+      const auto &components = to_struct_type(return_type).components();
       exprt::operandst operands;
       for(std::size_t i = 0; i < values.size(); ++i)
         operands.push_back(assign_cast(values[i], components[i].type()));
-      ret = code_frontend_returnt{
-        struct_exprt{std::move(operands), state.return_type}};
+      ret =
+        code_frontend_returnt{struct_exprt{std::move(operands), return_type}};
     }
   }
+  emit_return(std::move(ret), location, dest);
+}
+
+code_frontend_returnt go_convertert::bare_return() const
+{
+  // Go1.27 §Return_statements: "The "return" statement returns the values
+  // of these variables." In the body of a range over a function, the loop
+  // returns them.
+  if(state.range_body || state.named_results.empty())
+    return code_frontend_returnt{};
+  if(state.named_results.size() == 1)
+    return code_frontend_returnt{state.named_results.front()};
+  exprt::operandst values{
+    state.named_results.begin(), state.named_results.end()};
+  return code_frontend_returnt{
+    struct_exprt{std::move(values), state.return_type}};
+}
+
+void go_convertert::emit_return(
+  code_frontend_returnt ret,
+  const source_locationt &location,
+  code_blockt &dest)
+{
   ret.add_source_location() = location;
+  if(state.range_body)
+  {
+    // The loop returns the values (see convert_range_func).
+    if(ret.has_return_value())
+    {
+      dest.add(code_frontend_assignt{
+        dereference_exprt{state.heap_pointers.at(state.range_body->results_id)},
+        ret.return_value()});
+      return range_body_exit(RANGE_EXIT_RETURN_VALUES, location, dest);
+    }
+    return range_body_exit(RANGE_EXIT_RETURN, location, dest);
+  }
   if(!state.has_defers)
   {
     dest.add(std::move(ret));

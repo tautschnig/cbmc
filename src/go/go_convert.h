@@ -26,7 +26,9 @@ Author: Michael Tautschnig
 #include "go_parse_tree.h"
 #include "go_types.h"
 
+#include <functional>
 #include <map>
+#include <memory>
 #include <set>
 
 class symbol_table_baset;
@@ -104,6 +106,29 @@ private:
     irep_idt continue_label;
   };
 
+  /// The body of a range over a function (Go1.27 §For_range), converted to
+  /// the yield function that the range expression calls (go_range_func.cpp).
+  struct range_bodyt
+  {
+    /// The ids (in the environment) of the variables shared with the loop:
+    /// the state of the iteration, why the body ended the loop, and the
+    /// result values of a return statement.
+    irep_idt state_id, exit_id, results_id;
+    /// The results of the function that contains the loop (the outermost
+    /// one, for nested loops), and whether they are named.
+    typet return_type;
+    bool named_results = false;
+    /// The label of the range statement, if any.
+    irep_idt label_object;
+    /// The labels declared in the body (the targets of goto statements
+    /// that stay in it).
+    std::set<irep_idt> labels;
+    /// The break and continue statements with labels outside the loop, as
+    /// the exit code (index + first_branch_exit) after the loop: their
+    /// statements, to convert after the loop.
+    std::vector<irept> *branches = nullptr;
+  };
+
   /// State of the function being converted; saved while converting the
   /// body of a function literal (Go1.27 §Function_literals).
   struct function_statet
@@ -143,6 +168,8 @@ private:
     /// was called directly as a deferred function (Go1.27
     /// §Handling_panics).
     exprt may_recover = nil_exprt{};
+    /// If the function is the yield function of a range over a function.
+    std::shared_ptr<range_bodyt> range_body;
   };
   function_statet state;
 
@@ -184,12 +211,19 @@ private:
   /// go/types signature has type-table index \p signature_index.
   /// \p captured: for function literals, the objects of the variables it
   /// captures, in the order of the fields of its environment.
+  /// \p captured_types: the types of the captured variables, if they are
+  /// not (all) objects of the parse tree. \p range_body: for the yield
+  /// function of a range over a function, the loop, and \p prologue the
+  /// statements before the body.
   void convert_function(
     const irep_idt &function,
     const irep_idt &signature_index,
     const irept &body,
     const source_locationt &location,
-    const std::vector<irep_idt> &captured = {});
+    const std::vector<irep_idt> &captured = {},
+    const std::vector<typet> *captured_types = nullptr,
+    std::shared_ptr<range_bodyt> range_body = nullptr,
+    const std::function<void(code_blockt &)> &prologue = {});
   /// Collect the variables in \p body that must live on the heap: those
   /// whose address is taken and those captured by a function literal.
   void scan_heap_variables(const irept &body);
@@ -257,6 +291,42 @@ private:
   void convert_labeled(const irept &stmt, code_blockt &dest);
   void convert_branch(const irept &stmt, code_blockt &dest);
   void convert_return(const irept &stmt, code_blockt &dest);
+  /// Return \p ret (built for the results of the function) from the
+  /// function, running the deferred calls, or from the body of a range over
+  /// a function (see range_body_exit).
+  void emit_return(
+    code_frontend_returnt ret,
+    const source_locationt &location,
+    code_blockt &dest);
+  /// A return statement without values (the named results, if any).
+  code_frontend_returnt bare_return() const;
+
+  // Range over functions (go_range_func.cpp)
+  /// Go1.27 §For_range over a function value \p function.
+  void convert_range_func(
+    const irept &stmt,
+    const exprt &function,
+    code_blockt &dest,
+    const irep_idt &label_object);
+  /// The exit codes of the body of a range over a function, for the loop.
+  enum range_exitt
+  {
+    RANGE_EXIT_NONE = 0,
+    RANGE_EXIT_BREAK = 1,
+    RANGE_EXIT_RETURN_VALUES = 2,
+    RANGE_EXIT_RETURN = 3,
+    first_branch_exit = 4
+  };
+  /// Leave the body of a range over a function with exit code \p exit:
+  /// continue the iteration (yield returns true) for RANGE_EXIT_NONE, else
+  /// end it.
+  void range_body_exit(
+    std::size_t exit,
+    const source_locationt &location,
+    code_blockt &dest);
+  /// A break or continue statement in the body of a range over a function
+  /// whose target is not in it.
+  void range_body_branch(const irept &stmt, code_blockt &dest);
   void convert_expr_stmt(const irept &stmt, code_blockt &dest);
   /// Calls that are statements only (panic, cprover.Assert, ...): appends
   /// code and returns true; otherwise returns false.
@@ -664,6 +734,10 @@ void declare_generated(
   const typet &result);
 /// The parameters of \p function, as symbol expressions.
 std::vector<exprt> parameter_symbols(const symbolt &function);
+/// The variables of the function containing the range over a function
+/// \p stmt that its body uses (see go_convertert::convert_range_func).
+std::vector<irep_idt>
+range_body_variables(const irept &stmt, const go_parse_treet &parse_tree);
 
 /// \p expr without enclosing parentheses and explicit instantiations
 /// (`f[int]`, `x.m[int]`): the instantiated function or method, whose node

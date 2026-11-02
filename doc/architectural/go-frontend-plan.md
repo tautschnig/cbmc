@@ -466,6 +466,16 @@ Supported so far:
   (reads in atomic sections on different branches saw different values;
   starting a thread in a loop with a struct local failed an invariant),
   and atomic sections may now be left early on one branch.
+- Range over functions (`§For_range`, `go_range_func.cpp`). The body
+  becomes the yield function, a closure over the variables of the
+  enclosing function it uses and over three it shares with the loop: the
+  state of the iteration, why the body ended it (break, return, or a break
+  or continue statement whose target is outside the loop), and the
+  results of a return statement. After the iterator returns, the loop
+  does what the body asked for (also through nested loops). As in gc,
+  calls of yield after the body ended the loop, after the loop, or after a
+  panic of the body that the iterator recovered are run-time errors
+  (property class `range-func`).
 - Verification primitives from package `cprover`: `Assert`, `Assume`,
   `Nondet[T]`.
 
@@ -582,7 +592,9 @@ Known limitations:
   CBMC's value sets track imprecisely (e.g. byte-level copies of
   pointers) make calls through function values read from shared objects
   consider every function of their type.
-- Not yet supported: `range` over functions.
+- **Range over functions.** Deferred calls in the body of a range over a
+  function (which belong to the enclosing function) and goto statements
+  that leave the body are reported.
 
 The Makefile build of `cbmc` does not link the Python front-end that
 `cbmc_languages.cpp` registers (by inspection: no Makefile builds
