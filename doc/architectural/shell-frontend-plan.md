@@ -817,19 +817,30 @@ is still checked against all axioms. The only other way to SAT is the
 existing fallback (model treated as a counterexample), which can cause a
 false alarm but cannot hide a bug.
 
-**Feasible solutions, in order of confidence:**
-1. Search for constant one-character needles as characters in the
-   solver itself, for every front end. More generally, encode
-   `index_of`/`contains` with a constant needle as a universal axiom
-   over fixed offsets instead of a not-contains axiom.
-2. The model-value filter on index sets: small, and it helped wherever
-   the index set grew.
-3. Ground range instances once the index set passes a budget. These are
-   bounded because the model's lengths are, and they kept every kernel
-   within memory. The budget, the 64-position limit and the round bound
-   need tuning on more benchmarks before they become defaults.
-4. In front ends, keep strings from being merged at join points where
-   possible: end temporaries and skip unneeded string operations.
+**Implemented and enabled by default** (2026-11-02):
+- The solver searches for constant one-character needles of `index_of`,
+  `last_index_of` and `contains` as characters, for every front end. The
+  shell's own workaround is gone.
+- The model-value filter on index sets, with one rule added: if a round
+  would defer every new term, all deferred terms are released, so the
+  refinement never instantiates less than before, only later.
+
+Results with both, on the default settings:
+- Kernels: 21/24 correct, 22 s in total (45 s before), with no wrong
+  verdicts.
+- Python regression suite (1,278 tests): all pass.
+- C string tests: all pass.
+- Shell tests: unchanged.
+- `csv-loop`, `csv-loop-fail` and `arg-loop-fail` still exceed 200 s,
+  now by time rather than memory.
+
+**Held back as a heuristic:** ground range instances once the index set
+passes a budget (branch `string-refinement-experiments`). It solves the
+remaining kernels, but its three thresholds would need tuning. Other open
+candidates:
+- encode `index_of`/`contains` with a longer constant needle as a
+  universal axiom over fixed offsets instead of a not-contains axiom;
+- in front ends, avoid strings merged at join points where possible.
 
 The remaining cost is the SAT problem itself: about 1.7 million
 variables on `arg-loop-fail` after one round. That is where the
