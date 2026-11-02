@@ -118,6 +118,20 @@ protected:
     const std::string &msg,
     const symex_targett::sourcet &source) const;
 
+  /// Add the constraint that the conjunction of \p premises implies
+  /// \p consequence, without simplifying the premises (which are, e.g.,
+  /// guards of SSA steps, already simplified): conjunctions are flattened,
+  /// duplicate and true conjuncts dropped, and nothing is added if a
+  /// conjunct is false, two contradict each other, or \p consequence is
+  /// true. The constraint is the disjunction of the negated conjuncts and
+  /// \p consequence, as the simplifier would make it.
+  void add_implication(
+    symex_target_equationt &equation,
+    const exprt::operandst &premises,
+    const exprt &consequence,
+    const std::string &msg,
+    const symex_targett::sourcet &source) const;
+
   /// Build the partial order constraint for two events:
   /// if \p e1 and \p e2 are in the same atomic section then constrain with
   ///   equality between their clocks

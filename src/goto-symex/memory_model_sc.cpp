@@ -328,38 +328,36 @@ void memory_model_sct::from_read(symex_target_equationt &equation)
         for(const auto &c_it : choices)
         {
           event_it r=c_it->first.first;
-          exprt rf=c_it->second;
-          exprt cond;
-          cond.make_nil();
+          const exprt &rf = c_it->second;
 
+          // The guards, the rf choice and the ws order (true, false or a
+          // clock comparison) are simplified already: add the implication
+          // without simplifying it again, which took most of the time of
+          // the memory model.
           if(c_it->first.second == *w_prime && ws1 != false)
           {
-            exprt fr=before(r, *w);
-
             // the guard of w_prime follows from rf; with rfi
             // optimisation such as the previous write_symbol_primed
             // it would even be wrong to add this guard
-            cond=
-              implies_exprt(
-                and_exprt(r->guard, (*w)->guard, ws1, rf),
-                fr);
+            add_implication(
+              equation,
+              {r->guard, (*w)->guard, ws1, rf},
+              before(r, *w),
+              "fr",
+              r->source);
           }
           else if(c_it->first.second == *w && ws2 != false)
           {
-            exprt fr=before(r, *w_prime);
-
             // the guard of w follows from rf; with rfi
             // optimisation such as the previous write_symbol_primed
             // it would even be wrong to add this guard
-            cond=
-              implies_exprt(
-                and_exprt(r->guard, (*w_prime)->guard, ws2, rf),
-                fr);
+            add_implication(
+              equation,
+              {r->guard, (*w_prime)->guard, ws2, rf},
+              before(r, *w_prime),
+              "fr",
+              r->source);
           }
-
-          if(cond.is_not_nil())
-            add_constraint(equation,
-              cond, "fr", r->source);
         }
       }
     }

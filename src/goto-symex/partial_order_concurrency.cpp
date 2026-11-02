@@ -13,7 +13,10 @@ Author: Michael Tautschnig, michael.tautschnig@cs.ox.ac.uk
 
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
+#include <util/expr_util.h>
 #include <util/simplify_expr.h>
+
+#include <unordered_set>
 
 partial_order_concurrencyt::partial_order_concurrencyt(
   const namespacet &_ns):ns(_ns)
@@ -207,4 +210,58 @@ void partial_order_concurrencyt::add_constraint(
   simplify(tmp, ns);
 
   equation.constraint(tmp, msg, source);
+}
+
+void partial_order_concurrencyt::add_implication(
+  symex_target_equationt &equation,
+  const exprt::operandst &premises,
+  const exprt &consequence,
+  const std::string &msg,
+  const symex_targett::sourcet &source) const
+{
+  if(consequence.is_true())
+    return;
+  // The conjunction of the premises, flattened, without duplicates (the
+  // guards of two events often share conjuncts) and constants; a false or
+  // contradictory conjunction makes the implication hold.
+  exprt::operandst ops;
+  std::unordered_set<exprt, irep_hash> seen;
+  std::vector<const exprt *> work;
+  for(auto it = premises.rbegin(); it != premises.rend(); ++it)
+    work.push_back(&*it);
+  while(!work.empty())
+  {
+    const exprt &premise = *work.back();
+    work.pop_back();
+    if(premise.id() == ID_and)
+    {
+      for(auto it = premise.operands().rbegin();
+          it != premise.operands().rend();
+          ++it)
+      {
+        work.push_back(&*it);
+      }
+      continue;
+    }
+    if(premise.is_false())
+      return;
+    if(premise.is_true() || !seen.insert(premise).second)
+      continue;
+    if(seen.count(boolean_negate(premise)) != 0)
+      return;
+    ops.push_back(premise);
+  }
+  // As the simplifier would: !p1 || ... || !pn || consequence.
+  exprt::operandst disjuncts;
+  disjuncts.reserve(ops.size() + 1);
+  for(const exprt &op : ops)
+    disjuncts.push_back(boolean_negate(op));
+  if(consequence.id() == ID_or)
+  {
+    for(const exprt &op : consequence.operands())
+      disjuncts.push_back(op);
+  }
+  else if(!consequence.is_false())
+    disjuncts.push_back(consequence);
+  equation.constraint(disjunction(disjuncts), msg, source);
 }
