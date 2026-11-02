@@ -89,7 +89,10 @@ def run_benchmark(cbmc, bench, output_dir, timeout, memory_mb, skip_solver):
     if skip_solver:
         if not any(a in cmd for a in ("--dimacs", "--smt2", "--show-vcc")):
             cmd += ["--dimacs", "--outfile", "/dev/null"]
-    cmd += ["--verbosity", "10"]
+    # Statistics (verbosity 9) include the timings parsed below; debug output
+    # (verbosity 10) would format every SSA step during conversion, which
+    # took about 16% of the samples on concurrent programs.
+    cmd += ["--verbosity", "9"]
 
     perf_data = bench_dir / "perf.data"
     cbmc_output = bench_dir / "cbmc_output.txt"
