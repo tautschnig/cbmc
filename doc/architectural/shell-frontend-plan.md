@@ -834,6 +834,38 @@ Results with both, on the default settings:
 - `csv-loop`, `csv-loop-fail` and `arg-loop-fail` still exceed 200 s,
   now by time rather than memory.
 
+**Second round: profiling with DWARF call graphs** (2026-11-03;
+`perf record --call-graph dwarf`, as the Release build has no frame
+pointers). Once the index sets were bounded, the remaining time went into
+handling copies of the same large terms, not into solving. Each fix
+targets one hotspot, none changes the constraints' meaning, and all are
+in `2c311bf17f`:
+
+| Hotspot | Share of time (`arg-loop-fail`) | Fix |
+|---|---|---|
+| Simplifying index terms again for every array and axiom | 86% | simplify each term once (cache) |
+| `substitute_array_access` walking shared terms as trees | 90% | memoise on the term DAG, shared by all lemmas; equal out-of-bounds accesses now share one value symbol |
+| Lengths of if-expressions over strings copied into every use | (term size) | one symbol per such length, defined once |
+| The conversion cache comparing unshared equal terms deeply | 52 to 68% | hash-cons lemmas bottom up before conversion |
+
+`arg-loop-fail` now finishes in 61 s and 1.7 GB; it timed out at
+200 s before. All other kernels keep their verdicts, and the Python suite,
+the C string tests and the shell tests pass.
+
+Also tried: naming every index term with a fresh symbol, so that each
+instance would convert it only once. It solved `arg-loop-fail` in 19 s,
+but `string-of-float-twice-called-function` ran out of memory, because
+derived terms were no longer normalised as linear functions. Naming only
+the non-linear atoms avoided that but helped less. Both were dropped.
+
+**Where the time goes now.** On `csv-loop` and `csv-loop-fail`, 85 to 90%
+of the time is in MiniSat and 6 to 10% in the array Ackermann
+constraints; the string solver's own work is under 5%. The remaining
+limit is the propositional problem, that is the array encoding being
+worked on elsewhere, and the number of instances, which grows with the
+number of strings merged at join points (110 axioms; 1,352 new index
+terms in round 2 of `csv-loop`).
+
 **Held back as a heuristic:** ground range instances once the index set
 passes a budget (branch `string-refinement-experiments`). It solves the
 remaining kernels, but its three thresholds would need tuning. Other open
