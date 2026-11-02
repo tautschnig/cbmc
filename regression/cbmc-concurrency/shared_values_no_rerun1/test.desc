@@ -1,0 +1,14 @@
+CORE
+main.c
+--unwind 3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^Repeating symbolic execution
+--
+The threads write values to shared objects (the mutex model's fields, and
+__CPROVER_dead_object when main's locals die) that the first run did not have,
+but no lookup by another thread lacked them: main writes the latter after all
+its lookups. Repeating symbolic execution is not needed, and is skipped.

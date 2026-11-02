@@ -21,6 +21,9 @@ void shared_value_summaryt::begin_run()
   ++run_count;
   active = false;
   recorded.clear();
+  written.clear();
+  seen.clear();
+  thread = 0;
   young.clear();
   initialising.clear();
 }
@@ -71,7 +74,7 @@ void shared_value_summaryt::publish(
   const value_sett::object_mapt &values)
 {
   std::vector<irep_idt> work;
-  std::set<irep_idt> seen;
+  std::set<irep_idt> visited;
   const auto add_objects = [&](const value_sett::object_mapt &map)
   {
     for(const auto &pair : map.read())
@@ -80,7 +83,7 @@ void shared_value_summaryt::publish(
       if(object.id() != ID_symbol)
         continue;
       const irep_idt &id = to_symbol_expr(object).get_identifier();
-      if(young.count(id) != 0 && seen.insert(id).second)
+      if(young.count(id) != 0 && visited.insert(id).second)
         work.push_back(id);
     }
   };
@@ -115,6 +118,7 @@ void shared_value_summaryt::record(
   }
   else
     value_set.make_union(it->second.object_map, values);
+  value_set.make_union(written[index][thread], values);
 }
 
 void shared_value_summaryt::spawn(value_sett &value_set)
@@ -171,8 +175,85 @@ const value_sett::object_mapt *shared_value_summaryt::updated(
   return it == summary.end() ? nullptr : &it->second.object_map;
 }
 
-bool shared_value_summaryt::grew(const value_sett &value_set)
+void shared_value_summaryt::read(
+  const value_sett &value_set,
+  const irep_idt &identifier,
+  const irep_idt &index,
+  const value_sett::entryt *entry)
 {
+  if(!active || !shared(identifier))
+    return;
+  auto &by_thread = seen[index];
+  if(entry == nullptr)
+  {
+    // Looked up while absent: no value of other threads was there.
+    by_thread.insert_or_assign(thread, value_sett::object_mapt{});
+    return;
+  }
+  auto it = by_thread.find(thread);
+  if(it == by_thread.end())
+  {
+    by_thread.emplace(thread, entry->object_map);
+    return;
+  }
+  const auto &before = it->second.read();
+  const auto &now = entry->object_map.read();
+  if(&before == &now)
+    return;
+  // Keep what every lookup had: an object with an offset that some lookup
+  // did not have (exactly, or as an unknown offset) is dropped.
+  value_sett::object_map_dt meet;
+  for(const auto &object : before)
+  {
+    const auto other = now.find(object.first);
+    if(other == now.end())
+      continue;
+    if(!object.second)
+      meet.insert(*other);
+    else if(!other->second || *other->second == *object.second)
+      meet.insert(object);
+  }
+  if(meet != before)
+    it->second = value_sett::object_mapt{meet};
+}
+
+bool shared_value_summaryt::lookups_had_values(
+  const value_sett &value_set) const
+{
+  for(const auto &entry : written)
+  {
+    const auto read = seen.find(entry.first);
+    if(read == seen.end())
+      continue;
+    for(const auto &reader : read->second)
+    {
+      // The values of the other threads.
+      value_sett::object_mapt others;
+      for(const auto &writer : entry.second)
+      {
+        if(writer.first != reader.first)
+          value_set.make_union(others, writer.second);
+      }
+      if(value_set.make_union_would_change(reader.second, others))
+        return false;
+    }
+  }
+  return true;
+}
+
+bool shared_value_summaryt::needs_rerun(const value_sett &value_set)
+{
+  // Soundness needs every lookup of a shared entry (after the first spawn)
+  // to have the values that other threads may write to it: a value a
+  // thread itself wrote is in its value sets wherever program order lets
+  // it read that value (and nowhere else can it). By induction over an
+  // execution, the values a lookup had then cover what it reads. This
+  // run's lookups may already have had all the values it recorded for the
+  // other threads; else the run is repeated with the larger summary, until
+  // that holds or the summary no longer grows (then each lookup after the
+  // first spawn has the summary's values, which include all the run
+  // recorded).
+  const bool complete = lookups_had_values(value_set);
   bool changed = false;
   for(auto &pair : recorded)
   {
@@ -188,5 +269,5 @@ bool shared_value_summaryt::grew(const value_sett &value_set)
     }
   }
   recorded.clear();
-  return changed;
+  return changed && !complete;
 }

@@ -480,9 +480,18 @@ std::optional<irep_idt> value_sett::get_index_of_symbol(
     return {};
   }
 
-  // look it up
+  // Look it up, telling the observer about each entry looked up (also
+  // the ones that do not exist), as their values decide the result.
+  const auto lookup = [this, &identifier](const irep_idt &index)
+  {
+    const entryt *entry = find_entry(index);
+    if(update_observer != nullptr)
+      update_observer->read(*this, identifier, index, entry);
+    return entry;
+  };
+
   irep_idt index = id2string(identifier) + suffix;
-  auto *entry = find_entry(index);
+  auto *entry = lookup(index);
   if(entry)
     return std::move(index);
 
@@ -505,14 +514,14 @@ std::optional<irep_idt> value_sett::get_index_of_symbol(
 
       index =
         id2string(identifier) + "." + id2string(first_component_name) + suffix;
-      entry = find_entry(index);
+      entry = lookup(index);
       if(entry)
         return std::move(index);
     }
   }
 
   // not found? try without suffix
-  entry = find_entry(identifier);
+  entry = lookup(identifier);
   if(entry)
     return std::move(identifier);
 

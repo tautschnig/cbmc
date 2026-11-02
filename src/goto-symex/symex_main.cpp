@@ -317,6 +317,7 @@ void goto_symext::symex_threaded_step(
     std::cout << "********* Now executing thread " << t << '\n';
 #endif
     switch_to_thread(state, t);
+    shared_value_summary.set_thread(t);
     symex_transition(state, state.source.pc, false);
   }
 }
@@ -497,7 +498,7 @@ symbol_tablet goto_symext::symex_from_entry_point_of(
 
     if(
       should_pause_symex || !shared_value_summary.concurrent() ||
-      !shared_value_summary.grew(state->value_set))
+      !shared_value_summary.needs_rerun(state->value_set))
     {
       if(shared_value_summary.runs() > 1)
       {

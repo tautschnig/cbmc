@@ -231,6 +231,15 @@ public:
       const entryt &entry,
       const object_mapt &values,
       bool add_to_sets) = 0;
+
+    /// Called when the values of entry \p index of the symbol with (L1)
+    /// identifier \p identifier are looked up: \p entry is the entry, or
+    /// nullptr if there is none.
+    virtual void read(
+      const value_sett &value_set,
+      const irep_idt &identifier,
+      const irep_idt &index,
+      const entryt *entry) = 0;
   };
 
   /// The observer of updates of entries, if any (not owned).

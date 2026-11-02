@@ -1,0 +1,11 @@
+CORE
+before.c
+
+^EXIT=0$
+^SIGNAL=0$
+^\[main\.assertion\.1\] line \d+ only a: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+As main.c, but main reads q before it writes p = &b, so q cannot point to b.

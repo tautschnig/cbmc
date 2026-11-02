@@ -28,7 +28,9 @@ Author: Michael Tautschnig
 ///   summary) merged into the value sets of shared objects at each spawn
 ///   and into every later update of such an entry (as any thread may
 ///   write those values at any time);
-/// - until a run records no value that the summary does not contain.
+/// - until a run records no value that the summary does not contain, or
+///   every lookup in the run already had the values that the other threads
+///   wrote to the entry (see needs_rerun).
 /// Then every read of a shared object in the last run has, in its value
 /// set, every value any thread may have written to it.
 ///
@@ -86,19 +88,32 @@ public:
     initialising.clear();
   }
 
+  /// Symbolic execution continues with thread \p thread_number.
+  void set_thread(std::size_t thread_number)
+  {
+    thread = thread_number;
+  }
+
   /// Whether a thread has been spawned in the current run.
   bool concurrent() const
   {
     return active;
   }
 
-  /// Whether the current run recorded values that the summary does not
-  /// contain (then the run needs to be repeated), after adding them to the
-  /// summary. \p value_set is used to merge object maps.
-  bool grew(const value_sett &value_set);
+  /// Add the values recorded by the current run to the summary, and tell
+  /// whether the run needs to be repeated: the summary grew, and a lookup
+  /// of some entry in this run did not have a value that another thread
+  /// wrote to it (see read). \p value_set is used to merge object maps.
+  bool needs_rerun(const value_sett &value_set);
 
   /// Whether \p identifier (an L1 identifier) belongs to a shared object.
   bool shared(const irep_idt &identifier) const;
+
+  void read(
+    const value_sett &value_set,
+    const irep_idt &identifier,
+    const irep_idt &index,
+    const value_sett::entryt *entry) override;
 
   const value_sett::object_mapt *updated(
     const value_sett &value_set,
@@ -120,6 +135,21 @@ private:
   using entriest = std::map<irep_idt, value_sett::entryt>;
   entriest summary;
   entriest recorded;
+  /// For each entry of a shared object looked up since the first spawn of
+  /// the current run, and each thread that looked it up, the values that
+  /// all its lookups had (none if it was absent at some lookup).
+  std::unordered_map<irep_idt, std::map<std::size_t, value_sett::object_mapt>>
+    seen;
+  /// For each entry of a shared object, the values recorded for it in the
+  /// current run, by the thread that wrote them.
+  std::unordered_map<irep_idt, std::map<std::size_t, value_sett::object_mapt>>
+    written;
+  /// The thread that symbolic execution executes.
+  std::size_t thread = 0;
+
+  /// Whether every lookup of an entry in the current run had the values
+  /// that the other threads wrote to it (see needs_rerun).
+  bool lookups_had_values(const value_sett &value_set) const;
   /// The objects allocated after the first spawn of the current run, with
   /// the indices of their entries.
   std::unordered_map<irep_idt, std::set<irep_idt>> young;

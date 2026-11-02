@@ -1,0 +1,13 @@
+CORE
+main.c
+
+^EXIT=10$
+^SIGNAL=0$
+^\[main\.assertion\.1\] line \d+ b is reachable: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+main writes p = &b and then reads q, which the thread may have copied from p
+in between: the lookup of q in the first run lacked the thread's value (the
+thread is executed later), so symbolic execution is repeated.
