@@ -60,6 +60,9 @@ struct index_set_pairt
 {
   std::map<exprt, std::set<exprt>> cumulative;
   std::map<exprt, std::set<exprt>> current;
+  /// Simplified forms of index terms: the same terms are added for many
+  /// arrays and axioms, and simplifying large terms is expensive.
+  std::unordered_map<exprt, exprt, irep_hash> simplified;
 };
 
 struct string_axiomst

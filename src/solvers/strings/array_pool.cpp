@@ -27,10 +27,20 @@ exprt array_poolt::get_or_create_length(const array_string_exprt &s)
 {
   if(const auto &if_expr = expr_try_dynamic_cast<if_exprt>((exprt)s))
   {
-    return if_exprt{
+    // A symbol defined as the if-expression of the lengths. Strings merged
+    // at join points of a program nest such choices, and index terms and
+    // lemmas built from the length would copy the nesting each time.
+    const auto found = if_lengths.find(s);
+    if(found != if_lengths.end())
+      return found->second;
+    const exprt length = if_exprt{
       if_expr->cond(),
       get_or_create_length(to_array_string_expr(if_expr->true_case())),
       get_or_create_length(to_array_string_expr(if_expr->false_case()))};
+    const symbol_exprt symbol = fresh_symbol("string_length", length.type());
+    length_definitions.emplace_back(symbol, length);
+    if_lengths.emplace(s, symbol);
+    return symbol;
   }
 
   // For constant arrays, use the known size directly
@@ -50,6 +60,14 @@ exprt array_poolt::get_or_create_length(const array_string_exprt &s)
   }
 
   return emplace_result.first->second;
+}
+
+std::vector<equal_exprt> array_poolt::take_length_definitions()
+{
+  std::vector<equal_exprt> result{
+    length_definitions.begin() + emitted_definitions, length_definitions.end()};
+  emitted_definitions = length_definitions.size();
+  return result;
 }
 
 std::optional<exprt>

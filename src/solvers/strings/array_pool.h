@@ -78,6 +78,10 @@ public:
   const std::unordered_map<array_string_exprt, exprt, irep_hash> &
   created_strings() const;
 
+  /// The definitions of the symbols for the lengths of if-expressions over
+  /// strings created since the last call; the caller must assert them.
+  std::vector<equal_exprt> take_length_definitions();
+
   /// Construct a string expression whose length and content are new variables
   /// \param index_type: type used to index characters of the strings
   /// \param char_type: type of characters
@@ -96,6 +100,12 @@ private:
 
   /// Associate length to arrays of infinite size
   std::unordered_map<array_string_exprt, exprt, irep_hash> length_of_array;
+
+  /// Lengths of if-expressions over strings, by expression: a symbol
+  /// defined in length_definitions.
+  std::unordered_map<array_string_exprt, symbol_exprt, irep_hash> if_lengths;
+  std::vector<equal_exprt> length_definitions;
+  std::size_t emitted_definitions = 0;
 
   /// Generate fresh symbols
   symbol_generatort &fresh_symbol;
