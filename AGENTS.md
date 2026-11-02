@@ -785,6 +785,10 @@ scripts/profile_cbmc.py --auto
 # Extended suite (10 benchmarks) plus CSmith-generated tests
 scripts/profile_cbmc.py --auto-large --auto-csmith
 
+# Concurrent programs (threads sharing pointers, a Go pipeline); the summary
+# shows how often symex was repeated, and runs that stopped early
+scripts/profile_cbmc.py --auto-concurrency --runs 3
+
 # Multiple runs for statistical significance (reports mean ± stddev)
 scripts/profile_cbmc.py --auto --runs 3
 

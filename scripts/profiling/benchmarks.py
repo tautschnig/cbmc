@@ -376,6 +376,302 @@ def generate_auto_large_benchmarks(output_dir):
 CSMITH_SEEDS = [1234567890, 42, 1111111111, 2718281828, 314159265]
 
 
+def generate_concurrency_benchmarks(output_dir):
+    """Generate benchmarks of concurrent programs: threads that share
+    pointers make symex repeat until the value sets of shared objects
+    converge (goto-symex/shared_value_summary.h), which the sequential
+    benchmarks do not exercise."""
+    benchmarks = []
+    bench_dir = output_dir / "benchmarks"
+    bench_dir.mkdir(parents=True, exist_ok=True)
+
+    # Threads incrementing a counter under a pthread mutex (no shared
+    # pointers: also runs with versions that reject them).
+    (bench_dir / "mutex_counter.c").write_text(textwrap.dedent("""\
+        #include <assert.h>
+        #include <pthread.h>
+        #define THREADS 3
+        #define ITERS 2
+        pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
+        int counter;
+        void *worker(void *arg) {
+          for (int i = 0; i < ITERS; i++) {
+            pthread_mutex_lock(&m);
+            counter++;
+            pthread_mutex_unlock(&m);
+          }
+          return 0;
+        }
+        int main() {
+          pthread_t t[THREADS];
+          for (int i = 0; i < THREADS; i++)
+            pthread_create(&t[i], 0, worker, 0);
+          for (int i = 0; i < THREADS; i++)
+            pthread_join(t[i], 0);
+          assert(counter == THREADS * ITERS);
+          return 0;
+        }
+    """))
+    benchmarks.append({
+        "name": "mutex_counter",
+        "file": str(bench_dir / "mutex_counter.c"),
+        "args": ["--unwind", "3"],
+    })
+
+    # A producer and a consumer of a ring buffer in atomic sections.
+    (bench_dir / "ring_buffer.c").write_text(textwrap.dedent("""\
+        #include <assert.h>
+        #include <pthread.h>
+        #define N 8
+        #define ITEMS 8
+        int buf[N];
+        int head, tail, count;
+        void *producer(void *arg) {
+          for (int i = 1; i <= ITEMS; i++) {
+            __CPROVER_atomic_begin();
+            __CPROVER_assume(count < N);
+            buf[tail] = i;
+            tail = (tail + 1) % N;
+            count++;
+            __CPROVER_atomic_end();
+          }
+          return 0;
+        }
+        int main() {
+          pthread_t p;
+          pthread_create(&p, 0, producer, 0);
+          int last = 0;
+          for (int i = 0; i < ITEMS; i++) {
+            int v;
+            __CPROVER_atomic_begin();
+            __CPROVER_assume(count > 0);
+            v = buf[head];
+            head = (head + 1) % N;
+            count--;
+            __CPROVER_atomic_end();
+            assert(v == last + 1);
+            last = v;
+          }
+          return 0;
+        }
+    """))
+    benchmarks.append({
+        "name": "ring_buffer",
+        "file": str(bench_dir / "ring_buffer.c"),
+        "args": ["--unwind", "9"],
+    })
+
+    # A thread builds a heap list that main traverses under a mutex
+    # (shared pointers, written by the thread that symex executes later).
+    (bench_dir / "shared_list.c").write_text(textwrap.dedent("""\
+        #include <assert.h>
+        #include <pthread.h>
+        #include <stdlib.h>
+        #define ITEMS 5
+        struct node {
+          int data;
+          struct node *next;
+        };
+        struct node *head;
+        pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
+        void *producer(void *arg) {
+          for (int i = 1; i <= ITEMS; i++) {
+            struct node *n = malloc(sizeof(struct node));
+            if (!n)
+              return 0;
+            n->data = i;
+            pthread_mutex_lock(&m);
+            n->next = head;
+            head = n;
+            pthread_mutex_unlock(&m);
+          }
+          return 0;
+        }
+        int main() {
+          pthread_t p;
+          pthread_create(&p, 0, producer, 0);
+          pthread_mutex_lock(&m);
+          int sum = 0;
+          for (struct node *n = head; n; n = n->next)
+            sum += n->data;
+          pthread_mutex_unlock(&m);
+          assert(sum >= 0 && sum <= ITEMS * (ITEMS + 1) / 2);
+          return 0;
+        }
+    """))
+    benchmarks.append({
+        "name": "shared_list",
+        "file": str(bench_dir / "shared_list.c"),
+        "args": ["--unwind", "6", "--no-malloc-may-fail"],
+    })
+
+    # Two workers taking heap tasks, with function pointers, off a queue.
+    (bench_dir / "work_queue.c").write_text(textwrap.dedent("""\
+        #include <assert.h>
+        #include <pthread.h>
+        #include <stdlib.h>
+        #define TASKS 3
+        struct task {
+          void (*run)(struct task *);
+          int arg;
+          int result;
+        };
+        struct task *queue[TASKS];
+        int next_task, done;
+        void square(struct task *t) { t->result = t->arg * t->arg; }
+        void negate(struct task *t) { t->result = -t->arg; }
+        void *worker(void *arg) {
+          while (1) {
+            struct task *t = 0;
+            __CPROVER_atomic_begin();
+            if (next_task < TASKS)
+              t = queue[next_task++];
+            __CPROVER_atomic_end();
+            if (!t)
+              return 0;
+            t->run(t);
+            __CPROVER_atomic_begin();
+            done++;
+            __CPROVER_atomic_end();
+          }
+        }
+        int main() {
+          for (int i = 0; i < TASKS; i++) {
+            struct task *t = malloc(sizeof(struct task));
+            __CPROVER_assume(t != 0);
+            t->run = i % 2 ? square : negate;
+            t->arg = i;
+            t->result = 0;
+            queue[i] = t;
+          }
+          pthread_t w[2];
+          pthread_create(&w[0], 0, worker, 0);
+          pthread_create(&w[1], 0, worker, 0);
+          pthread_join(w[0], 0);
+          pthread_join(w[1], 0);
+          assert(done == TASKS);
+          assert(queue[1]->result == 1);
+          return 0;
+        }
+    """))
+    benchmarks.append({
+        "name": "work_queue",
+        "file": str(bench_dir / "work_queue.c"),
+        "args": ["--unwind", "5", "--no-malloc-may-fail"],
+    })
+
+    # Threads calling closures (code and environment pointers) on the heap,
+    # created after the first thread.
+    (bench_dir / "closures.c").write_text(textwrap.dedent("""\
+        #include <assert.h>
+        #include <pthread.h>
+        #include <stdlib.h>
+        #define JOBS 4
+        struct closure {
+          void (*code)(void *);
+          void *env;
+        };
+        struct counter {
+          int value;
+          pthread_mutex_t m;
+        };
+        struct closure *jobs[JOBS];
+        void add_one(void *env) {
+          struct counter *c = env;
+          pthread_mutex_lock(&c->m);
+          c->value++;
+          pthread_mutex_unlock(&c->m);
+        }
+        void run_closure(void *env) {
+          struct closure *c = env;
+          c->code(c->env);
+        }
+        void *runner(void *arg) {
+          struct closure *c = arg;
+          c->code(c->env);
+          return 0;
+        }
+        int main() {
+          struct counter *cnt = malloc(sizeof(struct counter));
+          __CPROVER_assume(cnt != 0);
+          cnt->value = 0;
+          pthread_mutex_init(&cnt->m, 0);
+          pthread_t t[JOBS];
+          for (int i = 0; i < JOBS; i++) {
+            struct closure *inner = malloc(sizeof(struct closure));
+            __CPROVER_assume(inner != 0);
+            inner->code = add_one;
+            inner->env = cnt;
+            struct closure *outer = malloc(sizeof(struct closure));
+            __CPROVER_assume(outer != 0);
+            outer->code = run_closure;
+            outer->env = inner;
+            jobs[i] = outer;
+            pthread_create(&t[i], 0, runner, outer);
+          }
+          for (int i = 0; i < JOBS; i++)
+            pthread_join(t[i], 0);
+          assert(cnt->value == JOBS);
+          return 0;
+        }
+    """))
+    benchmarks.append({
+        "name": "closures",
+        "file": str(bench_dir / "closures.c"),
+        "args": ["--unwind", "5", "--no-malloc-may-fail"],
+    })
+
+    # A Go pipeline: goroutines, an unbuffered and a buffered channel, and
+    # sync.WaitGroup (needs cbmc-go-helper and the Go toolchain).
+    (bench_dir / "go_pipeline.go").write_text(textwrap.dedent("""\
+        package main
+
+        import (
+        	"cprover"
+        	"sync"
+        )
+
+        type item struct {
+        	id   int
+        	name string
+        }
+
+        func produce(out chan<- item, n int) {
+        	for i := 0; i < n; i++ {
+        		out <- item{i, "x"}
+        	}
+        	close(out)
+        }
+
+        func main() {
+        	src := make(chan item)
+        	dst := make(chan int, 2)
+        	go produce(src, 2)
+        	var wg sync.WaitGroup
+        	wg.Go(func() {
+        		for it := range src {
+        			dst <- it.id + len(it.name)
+        		}
+        	})
+        	wg.Wait()
+        	close(dst)
+        	sum := 0
+        	for v := range dst {
+        		sum += v
+        	}
+        	cprover.Assert(sum == 3, "sum")
+        }
+    """))
+    benchmarks.append({
+        "name": "go_pipeline",
+        "file": str(bench_dir / "go_pipeline.go"),
+        "args": ["--unwind", "4"],
+    })
+
+    ok(f"Generated {len(benchmarks)} concurrency benchmarks in {bench_dir}")
+    return benchmarks
+
+
 def generate_csmith_benchmarks(output_dir):
     """Generate benchmarks using CSmith with fixed seeds for reproducibility."""
     if not shutil.which("csmith"):

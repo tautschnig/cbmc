@@ -57,6 +57,21 @@ def compile_to_goto_binary(cbmc, source_file, output_dir):
         return None
 
 
+def _outcome(returncode, cbmc_stdout):
+    """Whether CBMC completed: "ok", "timeout", or the reason it stopped
+    (so that a run that stops early is not mistaken for a fast one)."""
+    if returncode is None:
+        return "timeout"
+    if returncode in (0, 10):
+        return "ok"
+    for line in reversed(cbmc_stdout.splitlines()):
+        line = line.strip()
+        # Skip CBMC's timings and perf's own messages.
+        if line and not line.startswith(("Runtime", "[ perf")):
+            return f"exit {returncode}: {line[:60]}"
+    return f"exit {returncode}"
+
+
 def run_benchmark(cbmc, bench, output_dir, timeout, memory_mb, skip_solver):
     """Run perf on a single benchmark. Returns parsed results dict."""
     name = bench["name"]
@@ -94,12 +109,14 @@ def run_benchmark(cbmc, bench, output_dir, timeout, memory_mb, skip_solver):
         "-o", str(perf_data), "--"] + cmd
 
     start = time.monotonic()
+    returncode = None
     try:
         result = subprocess.run(
             perf_cmd, capture_output=True, text=True, timeout=timeout,
             preexec_fn=lambda: resource.setrlimit(
                 resource.RLIMIT_AS, (memory_mb * 1024 * 1024, -1)))
         cbmc_stdout = result.stdout + result.stderr
+        returncode = result.returncode
         elapsed = time.monotonic() - start
     except subprocess.TimeoutExpired:
         elapsed = timeout
@@ -147,9 +164,16 @@ def run_benchmark(cbmc, bench, output_dir, timeout, memory_mb, skip_solver):
         if m:
             timings["sliced_assignments"] = int(m.group(1))
 
+    # Symbolic execution of concurrent programs may be repeated until the
+    # value sets of shared objects converge.
+    timings["symex_runs"] = 1 + sum(
+        1 for line in cbmc_stdout.splitlines()
+        if line.startswith("Repeating symbolic execution"))
+
     return {
         "name": name,
         "elapsed": elapsed,
+        "outcome": _outcome(returncode, cbmc_stdout),
         "timings": timings,
         "functions": functions[:30],
         "perf_data": str(perf_data),
@@ -213,6 +237,7 @@ def run_profile_set(cbmc, benchmarks, output_dir, fg_dir, timeout, memory_mb,
         result = {
             "name": last["name"],
             "elapsed": avg_elapsed,
+            "outcome": last.get("outcome", "ok"),
             "timings": avg_timings,
             "functions": last["functions"],
             "perf_data": last["perf_data"],

@@ -21,6 +21,7 @@ Options:
   --auto               Generate and run built-in benchmarks (3 quick tests)
   --auto-large         Generate and run extended benchmark suite (10 tests)
   --auto-csmith        Generate benchmarks using CSmith with fixed seeds
+  --auto-concurrency   Generate and run benchmarks of concurrent programs
   --debug-binary PATH  CBMC binary with debug info for source-level detail
   --diff REF_A REF_B   Differential profiling: compare two git refs
   --compare DIR_A DIR_B Compare two existing result directories
@@ -72,6 +73,9 @@ Examples:
   # Extended suite with CSmith-generated tests
   scripts/profile_cbmc.py --auto-large --auto-csmith
 
+  # Concurrent programs (for changes to the concurrency support of symex)
+  scripts/profile_cbmc.py --auto-concurrency --runs 3
+
   # Compare two branches
   scripts/profile_cbmc.py --diff develop my-optimization-branch
 
@@ -118,7 +122,7 @@ from scripts.profiling.utils import (
 )
 from scripts.profiling.benchmarks import (
     generate_auto_benchmarks, generate_auto_large_benchmarks,
-    generate_csmith_benchmarks,
+    generate_concurrency_benchmarks, generate_csmith_benchmarks,
 )
 from scripts.profiling.runner import (
     generate_aggregated_flamegraph, run_profile_set,
@@ -193,6 +197,9 @@ def parse_args():
                    help="Generate and run extended benchmark suite (10 tests)")
     p.add_argument("--auto-csmith", action="store_true",
                    help="Generate benchmarks using CSmith with fixed seeds")
+    p.add_argument("--auto-concurrency", action="store_true",
+                   help="Generate and run benchmarks of concurrent programs "
+                        "(threads sharing pointers, a Go pipeline)")
     p.add_argument("--diff", nargs=2, metavar=("REF_A", "REF_B"),
                    help="Differential profiling: compare two git refs")
     p.add_argument("--compare", nargs=2, metavar=("DIR_A", "DIR_B"),
@@ -228,11 +235,15 @@ def main():
         cbmc_a = build_ref(ref_a, work_dir, nproc)
         cbmc_b = build_ref(ref_b, work_dir, nproc)
 
-        benchmarks = generate_auto_benchmarks(output_dir)
+        benchmarks = []
         if args.auto_large:
             benchmarks = generate_auto_large_benchmarks(output_dir)
+        elif args.auto or not args.auto_concurrency:
+            benchmarks = generate_auto_benchmarks(output_dir)
         if args.auto_csmith:
             benchmarks += generate_csmith_benchmarks(output_dir)
+        if args.auto_concurrency:
+            benchmarks += generate_concurrency_benchmarks(output_dir)
         for b in benchmarks:
             b["args"] = b.get("args", []) + args.cbmc_args
 
@@ -279,7 +290,8 @@ def main():
         return
 
     # Normal mode
-    has_auto = args.auto or args.auto_large or args.auto_csmith
+    has_auto = (args.auto or args.auto_large or args.auto_csmith or
+                args.auto_concurrency)
     if not has_auto and not args.inputs:
         die("No input files specified. Use --auto, --auto-large, --auto-csmith, "
             "--diff, or --compare for built-in modes. Run with --help for usage.")
@@ -296,6 +308,8 @@ def main():
         benchmarks = generate_auto_benchmarks(output_dir)
     if args.auto_csmith:
         benchmarks += generate_csmith_benchmarks(output_dir)
+    if args.auto_concurrency:
+        benchmarks += generate_concurrency_benchmarks(output_dir)
 
     for b in benchmarks:
         b["args"] = b.get("args", []) + args.cbmc_args

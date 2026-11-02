@@ -437,18 +437,33 @@ def print_diff_summary(results_a, results_b, ref_a, ref_b, output_dir):
         return
 
     out(f"\n--- Timing Comparison (pre-solver) ---\n")
-    out(f"{'Benchmark':<20} {ref_a[:12]:>12} {ref_b[:12]:>12} {'Change':>10}")
-    out("-" * 56)
+    out(f"{'Benchmark':<20} {ref_a[:12]:>12} {ref_b[:12]:>12} {'Change':>10}"
+        f" {'Runs':>5}")
+    out("-" * 62)
+    stopped = []
     for name in common:
         ra, rb = by_name_a[name], by_name_b[name]
         ta = ra["timings"].get("Symex", 0) + ra["timings"].get("Convert SSA", 0)
         tb = rb["timings"].get("Symex", 0) + rb["timings"].get("Convert SSA", 0)
-        if ta > 0.01:
+        # Symbolic execution runs (concurrent programs may repeat it).
+        runs = (f"{ra['timings'].get('symex_runs', 1):.0f}/"
+                f"{rb['timings'].get('symex_runs', 1):.0f}")
+        oa, ob = ra.get("outcome", "ok"), rb.get("outcome", "ok")
+        if oa != "ok" or ob != "ok":
+            # A run that stopped early is not comparable.
+            stopped.append((name, oa, ob))
+            out(f"{name:<20} {ta:>11.3f}s {tb:>11.3f}s {'(stopped)':>10}"
+                f" {runs:>5}")
+        elif ta > 0.01:
             change = (tb - ta) / ta * 100
-            marker = "⚡" if change < -5 else ("⚠️" if change > 5 else "")
-            out(f"{name:<20} {ta:>11.3f}s {tb:>11.3f}s {change:>+9.1f}% {marker}")
+            marker = "⚡" if change < -5 else ("⚠" if change > 5 else "")
+            out(f"{name:<20} {ta:>11.3f}s {tb:>11.3f}s {change:>+9.1f}%"
+                f" {runs:>5} {marker}")
         else:
-            out(f"{name:<20} {ta:>11.3f}s {tb:>11.3f}s {'(too fast)':>10}")
+            out(f"{name:<20} {ta:>11.3f}s {tb:>11.3f}s {'(too fast)':>10}"
+                f" {runs:>5}")
+    for name, oa, ob in stopped:
+        out(f"  {name}: {ref_a[:12]}: {oa}; {ref_b[:12]}: {ob}")
 
     out(f"\n--- Function Sample Comparison (top changes) ---\n")
     agg_a, agg_b = {}, {}
