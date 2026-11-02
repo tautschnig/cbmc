@@ -13,6 +13,9 @@ Author: Michael Tautschnig, michael.tautschnig@cs.ox.ac.uk
 
 #include <util/std_expr.h>
 
+#include <algorithm>
+#include <iterator>
+
 void memory_model_sct::
 operator()(symex_target_equationt &equation, message_handlert &message_handler)
 {
@@ -251,6 +254,20 @@ void memory_model_sct::from_read(symex_target_equationt &equation)
 {
   // from-read: (w', w) in ws and (w', r) in rf -> (r, w) in fr
 
+  // The read-from choices of each write, in the order of choice_symbols, so
+  // that each pair of writes only visits the choices of these two writes
+  // (rather than all choices, of all addresses).
+  std::map<event_it, std::vector<choice_symbolst::const_iterator>> by_write;
+  for(auto c_it = choice_symbols.begin(); c_it != choice_symbols.end(); ++c_it)
+    by_write[c_it->first.second].push_back(c_it);
+  const std::vector<choice_symbolst::const_iterator> no_choices;
+  const auto choices_of = [&by_write, &no_choices](event_it w)
+    -> const std::vector<choice_symbolst::const_iterator> &
+  {
+    const auto it = by_write.find(w);
+    return it == by_write.end() ? no_choices : it->second;
+  };
+
   for(address_mapt::const_iterator
       a_it=address_map.begin();
       a_it!=address_map.end();
@@ -291,11 +308,24 @@ void memory_model_sct::from_read(symex_target_equationt &equation)
           ws2=before(*w, *w_prime);
         }
 
-        // smells like cubic
-        for(choice_symbolst::const_iterator
-            c_it=choice_symbols.begin();
-            c_it!=choice_symbols.end();
-            c_it++)
+        // The choices of w_prime and of w, merged in the order of
+        // choice_symbols.
+        const auto &choices_w_prime = choices_of(*w_prime);
+        const auto &choices_w = choices_of(*w);
+        std::vector<choice_symbolst::const_iterator> choices;
+        choices.reserve(choices_w_prime.size() + choices_w.size());
+        std::merge(
+          choices_w_prime.begin(),
+          choices_w_prime.end(),
+          choices_w.begin(),
+          choices_w.end(),
+          std::back_inserter(choices),
+          [](
+            const choice_symbolst::const_iterator &a,
+            const choice_symbolst::const_iterator &b)
+          { return a->first < b->first; });
+
+        for(const auto &c_it : choices)
         {
           event_it r=c_it->first.first;
           exprt rf=c_it->second;
