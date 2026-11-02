@@ -1,0 +1,16 @@
+CORE
+main.c
+--arrays-uf-always --no-propagation --no-simplify
+^\[main.assertion.1\] .* equal indices, equal elements: SUCCESS$
+^\[main.assertion.2\] .* element written by a with: SUCCESS$
+^\[main.assertion.3\] .* equal indices of a leaf: SUCCESS$
+^\[main.assertion.4\] .* different indices may differ: FAILURE$
+^VERIFICATION FAILED$
+^EXIT=10$
+^SIGNAL=0$
+--
+^warning: ignoring
+--
+Ackermann constraints i=j => a[i]=a[j] are only added to arrays whose
+constraints do not follow from those of other arrays: the constraints for
+with, if and equalities must then relate elements at all indices.

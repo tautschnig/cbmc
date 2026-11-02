@@ -12,13 +12,14 @@ Author: Daniel Kroening, kroening@kroening.com
 #ifndef CPROVER_SOLVERS_FLATTENING_ARRAYS_H
 #define CPROVER_SOLVERS_FLATTENING_ARRAYS_H
 
-#include <list>
-#include <set>
-#include <unordered_set>
-
 #include <util/union_find.h>
 
 #include "equality.h"
+
+#include <list>
+#include <set>
+#include <unordered_set>
+#include <vector>
 
 class array_comprehension_exprt;
 class array_exprt;
@@ -80,6 +81,14 @@ protected:
   // elements are added while references are held
   typedef std::list<array_equalityt> array_equalitiest;
   array_equalitiest array_equalities;
+
+  /// Literals of array equalities that are set to true outside any context,
+  /// and hence hold in every model.
+  std::set<literalt> true_array_equalities;
+
+  /// Whether the constraints for if, with, typecast and array_of
+  /// expressions and for equalities cover all indices of their class.
+  bool complete_array_constraints = false;
 
   // this is used to find the clusters of arrays being compared
   union_find<exprt, irep_hash> arrays;
@@ -144,6 +153,7 @@ protected:
   // adds all the constraints eagerly
   void add_array_constraints();
   void add_array_Ackermann_constraints();
+  std::vector<bool> arrays_needing_Ackermann_constraints();
   void add_array_constraints_equality(
     const index_sett &index_set, const array_equalityt &array_equality);
   void add_array_constraints(

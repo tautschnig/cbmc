@@ -24,6 +24,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #  include <iostream>
 #endif
 
+#include <algorithm>
+#include <optional>
 #include <unordered_set>
 
 arrayst::arrayst(
@@ -91,6 +93,7 @@ void arrayst::record_array_let_binding(
   const equal_exprt eq{symbol, value};
   const literalt eq_lit = record_array_equality(eq);
   prop.l_set_to_true(eq_lit);
+  true_array_equalities.insert(eq_lit);
 }
 
 void arrayst::collect_indices()
@@ -332,9 +335,181 @@ void arrayst::add_array_constraints()
 
     // update_index_map should not be necessary here
   }
+  // The constraints for if, with and so on cover all indices of a class only
+  // if converting equalities added no index (of nested arrays) to it.
+  complete_array_constraints = std::all_of(
+    index_map.begin(),
+    index_map.end(),
+    [this](const auto &entry)
+    {
+      const std::size_t root = arrays.find_number(entry.first);
+      if(root == entry.first)
+        return true;
+      const index_sett &root_indices = index_map.at(root);
+      return std::all_of(
+        entry.second.begin(),
+        entry.second.end(),
+        [&root_indices](const exprt &index)
+        { return root_indices.count(index) != 0; });
+    });
 
   // add the Ackermann constraints
   add_array_Ackermann_constraints();
+}
+
+std::vector<bool> arrayst::arrays_needing_Ackermann_constraints()
+{
+  // Ackermann constraints i=j => a[i]=a[j] for every array a and indices i,
+  // j of its class are needed only for some arrays: they are implied for
+  // a = (c ? t : f) by those for t and f, for a = (b with [w:=v]) and a =
+  // (T[])b by those for b, for a = array_of(v) by a[i]=v, and for either
+  // side of an array equality that holds in every model by those for the
+  // other side, as for each of these the constraints above relate a[i] to
+  // the operands at every index i of the class. Find the arrays whose
+  // constraints follow from those of others, starting from array_of, and
+  // add Ackermann constraints to the rest, preferring arrays not defined
+  // by any of the above (such as symbols that are not assigned).
+  const std::size_t size = arrays.size();
+  // Indices of nested arrays may be added while adding Ackermann
+  // constraints, which no other constraints then cover.
+  if(
+    !complete_array_constraints ||
+    std::any_of(
+      arrays.begin(),
+      arrays.end(),
+      [](const exprt &a)
+      { return to_array_type(a.type()).element_type().id() == ID_array; }))
+  {
+    return std::vector<bool>(size, true);
+  }
+
+  // the operands each array is defined from, if it is
+  std::vector<std::optional<std::vector<std::size_t>>> operands(size);
+  // arrays that equal each array in every model
+  std::vector<std::vector<std::size_t>> equal(size);
+  for(std::size_t i = 0; i < size; ++i)
+  {
+    // a copy, as numbering may modify arrays
+    const exprt a = arrays[i];
+    if(a.id() == ID_if)
+    {
+      const if_exprt &if_expr = to_if_expr(a);
+      operands[i] = std::vector<std::size_t>{
+        arrays.number(if_expr.true_case()),
+        arrays.number(if_expr.false_case())};
+    }
+    else if(a.id() == ID_with && a.operands().size() == 3)
+    {
+      operands[i] =
+        std::vector<std::size_t>{arrays.number(to_with_expr(a).old())};
+    }
+    else if(a.id() == ID_typecast)
+    {
+      operands[i] =
+        std::vector<std::size_t>{arrays.number(to_typecast_expr(a).op())};
+    }
+    else if(a.id() == ID_array_of)
+      operands[i] = std::vector<std::size_t>{};
+  }
+  for(const auto &equality : array_equalities)
+  {
+    if(equality.l.is_true() || true_array_equalities.count(equality.l) != 0)
+    {
+      const std::size_t n1 = arrays.number(equality.f1);
+      const std::size_t n2 = arrays.number(equality.f2);
+      equal[n1].push_back(n2);
+      equal[n2].push_back(n1);
+    }
+  }
+  // all operands should have been collected before
+  if(arrays.size() != size)
+    return std::vector<bool>(arrays.size(), true);
+
+  // the arrays defined from each array, and the number of operands of each
+  // array whose constraints are not known to hold yet
+  std::vector<std::vector<std::size_t>> users(size);
+  std::vector<std::size_t> pending(size, 0);
+  for(std::size_t i = 0; i < size; ++i)
+  {
+    if(operands[i].has_value())
+    {
+      pending[i] = operands[i]->size();
+      for(const std::size_t op : *operands[i])
+        users[op].push_back(i);
+    }
+  }
+
+  // arrays whose Ackermann constraints hold, as they are added or implied
+  std::vector<bool> hold(size, false);
+  std::vector<bool> needed(size, false);
+  std::vector<std::size_t> work;
+  const auto holds = [&](std::size_t i)
+  {
+    if(!hold[i])
+    {
+      hold[i] = true;
+      work.push_back(i);
+    }
+  };
+  const auto propagate = [&]()
+  {
+    while(!work.empty())
+    {
+      const std::size_t i = work.back();
+      work.pop_back();
+      // an operand occurring twice is counted twice
+      for(const std::size_t user : users[i])
+      {
+        if(--pending[user] == 0)
+          holds(user);
+      }
+      for(const std::size_t other : equal[i])
+        holds(other);
+    }
+  };
+  const auto add_to = [&](std::size_t i)
+  {
+    if(!hold[i])
+    {
+      needed[i] = true;
+      holds(i);
+      propagate();
+    }
+  };
+
+  for(std::size_t i = 0; i < size; ++i)
+  {
+    if(operands[i].has_value() && pending[i] == 0)
+      holds(i);
+  }
+  // The reasoning above compares indices of the same type only: keep the
+  // constraints for all arrays of classes with indices of different types.
+  for(std::size_t i = 0; i < size; ++i)
+  {
+    const index_sett &index_set = index_map[arrays.find_number(i)];
+    if(
+      !index_set.empty() &&
+      std::any_of(
+        index_set.begin(),
+        index_set.end(),
+        [&index_set](const exprt &index)
+        { return index.type() != index_set.begin()->type(); }))
+    {
+      needed[i] = true;
+      holds(i);
+    }
+  }
+  propagate();
+  for(std::size_t i = 0; i < size; ++i)
+  {
+    if(!operands[i].has_value() && equal[i].empty())
+      add_to(i);
+  }
+  // cycles, and arrays only defined from arrays without constraints
+  for(std::size_t i = 0; i < size; ++i)
+    add_to(i);
+
+  return needed;
 }
 
 void arrayst::add_array_Ackermann_constraints()
@@ -345,9 +520,15 @@ void arrayst::add_array_Ackermann_constraints()
   std::cout << "arrays.size(): " << arrays.size() << '\n';
 #endif
 
+  const std::vector<bool> needed = arrays_needing_Ackermann_constraints();
+
   // iterate over arrays
   for(std::size_t i=0; i<arrays.size(); i++)
   {
+    // arrays added while adding constraints always need them
+    if(i < needed.size() && !needed[i])
+      continue;
+
     const index_sett &index_set=index_map[arrays.find_number(i)];
 
 #ifdef DEBUG
@@ -621,10 +802,25 @@ void arrayst::add_array_constraints_with(
 
       literalt guard_lit = convert(disjunction(disjuncts));
 
+      const typet &element_type = to_array_type(expr.type()).element_type();
+      index_exprt index_expr1(expr, other_index, element_type);
+
+      if(guard_lit != const_literal(false))
+      {
+        // Also add x[I]=v when I equals i: Ackermann constraints for x, which
+        // would imply this, may be omitted (see
+        // arrays_needing_Ackermann_constraints).
+        lazy_constraintt lazy{
+          lazy_typet::ARRAY_WITH,
+          or_exprt{
+            literal_exprt{!guard_lit},
+            equal_exprt{index_expr1, expr.new_value()}}};
+        add_array_constraint(lazy, false); // added immediately
+        array_constraint_count[constraint_typet::ARRAY_WITH]++;
+      }
+
       if(guard_lit!=const_literal(true))
       {
-        const typet &element_type = to_array_type(expr.type()).element_type();
-        index_exprt index_expr1(expr, other_index, element_type);
         index_exprt index_expr2(expr.old(), other_index, element_type);
 
         equal_exprt equality_expr(index_expr1, index_expr2);

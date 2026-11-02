@@ -537,6 +537,17 @@ void boolbvt::set_to(const exprt &expr, bool value)
   const auto equal_expr = expr_try_dynamic_cast<equal_exprt>(expr);
   if(value && equal_expr && !boolbv_set_equality_to_true(*equal_expr))
     return;
+  if(
+    value && equal_expr && assumption_stack.empty() &&
+    is_unbounded_array(equal_expr->lhs().type()))
+  {
+    // As prop_conv_solvert::set_to would do, but remember that the
+    // equality holds in every model (see add_array_Ackermann_constraints).
+    const literalt l = convert(expr);
+    prop.l_set_to_true(l);
+    true_array_equalities.insert(l);
+    return;
+  }
   SUB::set_to(expr, value);
 }
 
