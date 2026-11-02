@@ -460,29 +460,6 @@ exprt shell_convertert::payload_has_suffix(
     loc);
 }
 
-/// For refined strings, the byte of a literal one-byte \p needle: the
-/// solver searches for characters with one universal axiom, but for
-/// strings with not-contains axioms, whose instantiation over pairs of
-/// index terms does not converge in loops.
-static std::optional<exprt> refined_needle_char(const exprt &needle)
-{
-  if(needle.id() != ID_struct || needle.operands().size() != 2)
-    return {};
-  const auto length = numeric_cast<mp_integer>(needle.operands()[0]);
-  const exprt &content = needle.operands()[1];
-  if(
-    !length.has_value() || *length != 1 || content.id() != ID_address_of ||
-    to_address_of_expr(content).object().id() != ID_index)
-  {
-    return {};
-  }
-  const exprt &array =
-    to_index_expr(to_address_of_expr(content).object()).array();
-  if(array.id() != ID_array || array.operands().size() != 1)
-    return {};
-  return array.operands()[0];
-}
-
 exprt shell_convertert::payload_index_of(
   const exprt &payload,
   const exprt &needle,
@@ -490,18 +467,6 @@ exprt shell_convertert::payload_index_of(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  if(!native())
-  {
-    if(const auto c = refined_needle_char(needle))
-    {
-      return string_function(
-        ID_cprover_string_index_of_func,
-        {payload, *c, from},
-        integer_type(),
-        dest,
-        loc);
-    }
-  }
   return string_function(
     ID_cprover_string_index_of_func,
     {payload, needle, native() ? to_int_sort(from) : from},
@@ -520,10 +485,9 @@ exprt shell_convertert::payload_last_index_of(
 {
   if(!native())
   {
-    const auto c = refined_needle_char(needle);
     return string_function(
       ID_cprover_string_last_index_of_func,
-      {payload, c.has_value() ? *c : needle, upto},
+      {payload, needle, upto},
       integer_type(),
       dest,
       loc);
