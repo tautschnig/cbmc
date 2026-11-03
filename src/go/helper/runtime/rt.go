@@ -249,6 +249,15 @@ func (e Error) RuntimeError() {}
 // reflection for this.
 func Comparable(x any) bool
 
+// SliceLen returns the length of the slice x (of any slice type), as
+// reflectlite.ValueOf(x).Len(), which panics if x is not a slice.
+func SliceLen(x any) int
+
+// SliceSwap swaps the elements i and j of the slice x (of any slice
+// type), as the function that reflectlite.Swapper(x) returns, which
+// panics if x is not a slice or i or j is out of range.
+func SliceSwap(x any, i, j int)
+
 // SameType reports whether x and y have the same dynamic type (both are
 // nil, or neither is and their types are identical, Go1.27
 // §Type_identity); package sync/atomic uses unsafe for this.

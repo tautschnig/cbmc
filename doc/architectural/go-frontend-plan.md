@@ -440,7 +440,9 @@ Supported so far:
   `math/bits` (with its bootstrap errors), `internal/byteorder`,
   `internal/bytealg` (the portable files, `MaxLen` 0), `slices`
   (`overlaps` replaced, as it compares addresses through `unsafe`),
-  `sort`, `strconv` (with `internal/strconv` and `internal/stringslite`,
+  `sort` (with `Slice`, `SliceStable` and `SliceIsSorted` replaced, as
+  they use `internal/reflectlite`), `strconv` (with `internal/strconv`
+  and `internal/stringslite`,
   whose conversions through `unsafe` are replaced; the integer
   formatting is the earlier model's), `strings` (`strings.Builder`,
   `Replacer`, ...), `bytes` (`bytes.Buffer`, ...), `unicode/utf8`,
@@ -456,7 +458,9 @@ Supported so far:
   package provides intrinsics that the converter implements:
   `rt.Comparable` (whether a dynamic type is comparable, for
   `errors.Is`), `rt.SameType` (whether two interface values have the
-  same dynamic type, for `atomic.Value`) and the IEEE 754 bit
+  same dynamic type, for `atomic.Value`), `rt.SliceLen` and
+  `rt.SliceSwap` (the length of a slice of any type in an interface
+  value and swapping its elements, for `sort.Slice`) and the IEEE 754 bit
   conversions (byte extraction).
   `sync` and `sync/atomic` are *replaced* by their models: their types
   keep state in internal fields that function models cannot reach, so

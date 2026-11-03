@@ -905,6 +905,8 @@ bool go_convertert::is_intrinsic(const irep_idt &object_id)
   static const std::set<irep_idt> intrinsics{
     "cprover/rt.Comparable",
     "cprover/rt.SameType",
+    "cprover/rt.SliceLen",
+    "cprover/rt.SliceSwap",
     "cprover/rt.Float64bits",
     "cprover/rt.Float64frombits",
     "cprover/rt.Float32bits",
@@ -935,6 +937,79 @@ void go_convertert::finish_intrinsics()
     const typet &result = to_code_type(function->type).return_type();
     code_blockt body{{code_frontend_returnt{typecast_exprt{
       not_exprt{disjunction(std::move(uncomparable))}, result}}}};
+    function->value = std::move(body);
+  }
+
+  // SliceLen and SliceSwap: on the slice of each dynamic slice type (as
+  // package internal/reflectlite does with ValueOf(x).Len() and Swapper).
+  for(const char *name : {"cprover/rt.SliceLen", "cprover/rt.SliceSwap"})
+  {
+    symbolt *function = body_of(name);
+    if(function == nullptr)
+      continue;
+    const bool is_len = std::string{name} == "cprover/rt.SliceLen";
+    const std::vector<exprt> params = parameter_symbols(*function);
+    const typet result = to_code_type(function->type).return_type();
+    function_statet outer = std::move(state);
+    state = function_statet{};
+    state.function_id = function->name;
+    const source_locationt location = function->location;
+    const exprt type = iface_field(params[0], "type");
+    code_blockt body;
+    for(const auto &t : dynamic_types)
+    {
+      if(!is_go_slice(t.second))
+        continue;
+      const exprt slice = unbox(params[0], t.second);
+      const member_exprt data{
+        slice, to_struct_type(t.second).get_component("data")};
+      const member_exprt length{
+        slice, to_struct_type(t.second).get_component("len")};
+      code_blockt branch;
+      if(is_len)
+        branch.add(code_frontend_returnt{
+          typecast_exprt::conditional_cast(length, result)});
+      else
+      {
+        const exprt &i = params[1];
+        const exprt &j = params[2];
+        const auto in_range = [&](const exprt &k)
+        {
+          const exprt wide = typecast_exprt::conditional_cast(k, length.type());
+          return and_exprt{
+            binary_relation_exprt{wide, ID_ge, from_integer(0, length.type())},
+            binary_relation_exprt{wide, ID_lt, length}};
+        };
+        add_panic(
+          branch,
+          and_exprt{in_range(i), in_range(j)},
+          "index-out-of-range",
+          "runtime error: index out of range",
+          location);
+        const typet &element = to_pointer_type(data.type()).base_type();
+        const dereference_exprt at_i{plus_exprt{data, i}};
+        const dereference_exprt at_j{plus_exprt{data, j}};
+        const symbol_exprt tmp = new_temporary(element, location, branch);
+        branch.add(code_frontend_assignt{tmp, at_i});
+        branch.add(code_frontend_assignt{at_i, at_j});
+        branch.add(code_frontend_assignt{at_j, tmp});
+        branch.add(code_frontend_returnt{});
+      }
+      body.add(code_ifthenelset{
+        equal_exprt{type, from_integer(t.first, type.type())},
+        std::move(branch)});
+    }
+    // reflectlite panics with a *ValueError (here its message).
+    add_panic(
+      body,
+      false_exprt{},
+      "panic",
+      is_len ? "reflect: call of reflect.Value.Len on a value that is not "
+               "a slice"
+             : "reflect: call of Swapper on a value that is not a slice",
+      location);
+    end_generated_function(body, result);
+    state = std::move(outer);
     function->value = std::move(body);
   }
 

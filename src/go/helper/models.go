@@ -111,8 +111,9 @@ var sourceModels = map[string]struct {
 	"strconv": {overrides: true},
 	// Packages whose functions only mention types of other packages (the
 	// model's own types are not identical to the real package's).
-	"encoding/hex":  {},
-	"sort":          {},
+	"encoding/hex": {},
+	// Slice, SliceStable and SliceIsSorted use reflectlite there.
+	"sort":          {overrides: true},
 	"hash/fnv":      {},
 	"unicode/utf16": {},
 }

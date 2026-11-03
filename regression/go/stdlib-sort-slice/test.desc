@@ -1,0 +1,12 @@
+CORE
+main.go
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 19 sort\.Slice: SUCCESS$
+^\[go::main\.main\.assertion\.3\] line 26 SliceStable: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+sort.Slice with the intrinsics rt.SliceLen and rt.SliceSwap
