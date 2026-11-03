@@ -1,0 +1,12 @@
+CORE
+main.go
+--unwind 3 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 14 six entries: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 17 a repeated non-constant key: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+map literals with constant keys need no unwinding

@@ -232,19 +232,48 @@ exprt go_convertert::convert_map_lit(const irept &lit, const typet &type)
 {
   // Go1.27 §Composite_literals: "For map literals, each element must have a
   // key." The keys and values are evaluated in order and inserted.
+  // "It is an error to specify multiple elements with the same field selector
+  // or constant key value." So, as long as all keys so far are constants,
+  // an element is a new entry, without searching the map (a loop that
+  // would need unwinding). The arrays have room for all elements.
   const source_locationt location = location_of(lit);
   code_blockt block;
+  const auto &elements = go_list(lit, "Elts");
   const exprt map = make_map(type, location, block);
-  for(const auto &element : go_list(lit, "Elts"))
+  const exprt capacity = from_integer(elements.size(), int_type());
+  block.add(code_frontend_assignt{
+    field(map, "keys"),
+    allocate_elements(key_type(type), capacity, false, location, block)});
+  block.add(code_frontend_assignt{
+    field(map, "vals"),
+    allocate_elements(value_type(type), capacity, false, location, block)});
+  block.add(code_frontend_assignt{field(map, "cap"), capacity});
+  bool distinct = true;
+  for(const auto &element : elements)
   {
-    exprt key = convert_expr(go_field(element, "Key"));
+    const irept &key_node = go_field(element, "Key");
+    exprt key = convert_expr(key_node);
     exprt value = convert_expr(go_field(element, "Value"));
     if(key.is_nil() || value.is_nil())
       return nil_exprt{};
     key = evaluate_once(assign_cast(key, key_type(type)), location, block);
     value =
       evaluate_once(assign_cast(value, value_type(type)), location, block);
-    map_insert(map, key, value, element, block);
+    distinct = distinct && !key_node.get("_cv").empty();
+    if(!distinct)
+    {
+      map_insert(map, key, value, element, block);
+      continue;
+    }
+    block.add(code_frontend_assignt{
+      dereference_exprt{plus_exprt{field(map, "keys"), field(map, "len")}},
+      key});
+    block.add(code_frontend_assignt{
+      dereference_exprt{plus_exprt{field(map, "vals"), field(map, "len")}},
+      value});
+    block.add(code_frontend_assignt{
+      field(map, "len"),
+      plus_exprt{field(map, "len"), from_integer(1, int_type())}});
   }
   return with_prefix(map, block, location);
 }
