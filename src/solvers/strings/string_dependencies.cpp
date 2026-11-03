@@ -180,6 +180,9 @@ std::optional<exprt> string_dependenciest::eval(
   const auto &f = node.result_from;
   if(f && node.dependencies.size() == 1)
   {
+    // The call need not happen, so its inputs need not determine its result.
+    if(get_value(builtin_function_nodes[*f].guard) == false)
+      return {};
     const auto value_opt = builtin_function_nodes[*f].data->eval(get_value);
     eval_string_cache[it->second] = value_opt;
     return value_opt;
@@ -198,7 +201,8 @@ std::optional<exprt> add_node(
   string_dependenciest &dependencies,
   const exprt &expr,
   array_poolt &array_pool,
-  symbol_generatort &fresh_symbol)
+  symbol_generatort &fresh_symbol,
+  const exprt &guard)
 {
   const auto fun_app = expr_try_dynamic_cast<function_application_exprt>(expr);
   if(!fun_app)
@@ -207,8 +211,8 @@ std::optional<exprt> add_node(
     bool copy_differs_from_expr = false;
     for(std::size_t i = 0; i < expr.operands().size(); ++i)
     {
-      auto new_op =
-        add_node(dependencies, expr.operands()[i], array_pool, fresh_symbol);
+      auto new_op = add_node(
+        dependencies, expr.operands()[i], array_pool, fresh_symbol, guard);
       if(new_op)
       {
         copy.operands()[i] = *new_op;
@@ -225,8 +229,9 @@ std::optional<exprt> add_node(
     to_string_builtin_function(*fun_app, return_code, array_pool);
 
   CHECK_RETURN(builtin_function != nullptr);
-  const auto &builtin_function_node =
-    dependencies.make_node(std::move(builtin_function));
+  auto &new_node = dependencies.make_node(std::move(builtin_function));
+  new_node.guard = guard;
+  const auto &builtin_function_node = new_node;
 
   if(
     const auto &string_result =
@@ -366,13 +371,24 @@ string_constraintst string_dependenciest::add_constraints(
   string_constraintst constraints;
   for(const auto &node : builtin_function_nodes)
   {
+    string_constraintst node_constraints;
     if(test_dependencies.count(nodet(node)))
     {
       const auto &builtin = builtin_function_nodes[node.index];
-      merge(constraints, builtin.data->constraints(generator, message_handler));
+      node_constraints = builtin.data->constraints(generator, message_handler);
     }
     else
-      constraints.existential.push_back(node.data->length_constraint());
+      node_constraints.existential.push_back(node.data->length_constraint());
+    if(!node.guard.is_true())
+    {
+      for(auto &existential : node_constraints.existential)
+        existential = implies_exprt{node.guard, existential};
+      for(auto &universal : node_constraints.universal)
+        universal.body = implies_exprt{node.guard, universal.body};
+      for(auto &not_contains : node_constraints.not_contains)
+        not_contains.premise = and_exprt{node.guard, not_contains.premise};
+    }
+    merge(constraints, std::move(node_constraints));
   }
   return constraints;
 }

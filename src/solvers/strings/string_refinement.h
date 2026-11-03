@@ -85,6 +85,9 @@ public:
 
   exprt get(const exprt &expr) const override;
   void set_to(const exprt &expr, bool value) override;
+  /// Keep the guard of definitions by string builtin functions, whose
+  /// constraints are then conditional on it.
+  void set_definition(const exprt &guard, const exprt &definition) override;
 
 protected:
   decision_proceduret::resultt dec_solve(const exprt &) override;
@@ -156,6 +159,8 @@ private:
   union_find_replacet symbol_resolve;
 
   std::vector<exprt> equations;
+  /// The guard of each of \ref equations, true for most.
+  std::vector<exprt> equation_guards;
 
   // String-specific function_applications captured via convert_*
   // before bit-blasting strips them. Feeds into add_node in
