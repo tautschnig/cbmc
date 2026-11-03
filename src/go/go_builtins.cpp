@@ -307,12 +307,18 @@ exprt go_convertert::nondet_value(
       side_effect_expr_nondett{bool_typet{}, location}, type};
   }
   const bool references = contains_reference(type, ns, false);
-  if(is_func_value(type) || is_go_chan(type))
+  const bool unsafe_pointer =
+    type.id() == ID_pointer &&
+    to_pointer_type(type).base_type().id() == ID_empty;
+  if(is_func_value(type) || is_go_chan(type) || unsafe_pointer)
   {
+    // An arbitrary unsafe.Pointer may point to an object of any type.
     unsupported(
       location,
       std::string{"cprover.Nondet and --function arguments of "} +
-        (is_go_chan(type) ? "channel" : "function") + " types");
+        (is_go_chan(type) ? "channel types"
+         : unsafe_pointer ? "type unsafe.Pointer"
+                          : "function types"));
     return nil_exprt{};
   }
   const bool beyond_depth = depth >= nondet_parameters.max_nondet_tree_depth;
@@ -581,6 +587,12 @@ bool go_convertert::nondet_supported(
 {
   if(is_func_value(type) || is_go_chan(type))
     return false;
+  if(
+    type.id() == ID_pointer &&
+    to_pointer_type(type).base_type().id() == ID_empty)
+  {
+    return false; // unsafe.Pointer
+  }
   if(is_go_interface(type) || is_go_string(type))
     return true;
   if(is_go_slice(type))
@@ -1006,6 +1018,115 @@ exprt go_convertert::convert_make(const irept &call)
     struct_exprt{{data, typecast_exprt{n, int_type()}, capacity}, type},
     block,
     location);
+}
+
+/// \p pointer moved by \p offset bytes (a value of any integer type), with
+/// the type of \p pointer.
+static exprt byte_offset(const exprt &pointer, const exprt &offset)
+{
+  const pointer_typet bytes{unsigned_char_type(), config.ansi_c.pointer_width};
+  return typecast_exprt{
+    plus_exprt{
+      typecast_exprt::conditional_cast(pointer, bytes),
+      typecast_exprt::conditional_cast(
+        offset, signedbv_typet{config.ansi_c.pointer_width})},
+    pointer.type()};
+}
+
+exprt go_convertert::convert_unsafe_call(
+  const irept &call,
+  const irep_idt &name)
+{
+  const source_locationt location = location_of(call);
+  const auto &args = go_list(call, "Args");
+  const typet type = expr_type(call);
+  if(type.is_nil())
+    return nil_exprt{};
+  code_blockt block;
+  exprt::operandst values;
+  for(const auto &arg : args)
+  {
+    exprt value = convert_expr(arg);
+    if(value.is_nil())
+      return nil_exprt{};
+    values.push_back(evaluate_once(value, location, block));
+  }
+
+  if(name == "Add")
+  {
+    // "The function Add adds len to ptr and returns the updated pointer
+    // unsafe.Pointer(uintptr(ptr) + uintptr(len))"
+    return with_prefix(byte_offset(values[0], values[1]), block, location);
+  }
+  if(name == "SliceData" || name == "StringData")
+  {
+    // "The function SliceData returns a pointer to the underlying array of
+    // the slice argument." "If slice is nil, the result is nil." "The
+    // function StringData returns a pointer to the underlying bytes of the
+    // str argument. For an empty string the return value is unspecified,
+    // and may be nil."
+    return with_prefix(
+      typecast_exprt::conditional_cast(component(values[0], "data"), type),
+      block,
+      location);
+  }
+  if(name != "Slice" && name != "String")
+  {
+    unsupported(call, "unsafe." + id2string(name));
+    return nil_exprt{};
+  }
+
+  // "The function Slice returns a slice whose underlying array starts at
+  // ptr and whose length and capacity are len." "The function String
+  // returns a string value whose underlying bytes start at ptr and whose
+  // length is len." "At run time, if len is negative, or if ptr is nil and
+  // len is not zero, a run-time panic occurs" (for String too: "The same
+  // requirements apply to the ptr and len argument as in the function
+  // Slice."). The messages are gc's; gc
+  // also panics if the memory would extend past the end of the address
+  // space, which only a length whose size overflows uintptr is here.
+  const exprt &ptr = values[0];
+  const signedbv_typet wide{65};
+  const exprt len = typecast_exprt::conditional_cast(values[1], wide);
+  const std::string what = "unsafe." + id2string(name);
+  const exprt zero = from_integer(0, wide);
+  add_panic(
+    block,
+    binary_relation_exprt{len, ID_ge, zero},
+    "unsafe-" + id2string(name),
+    "runtime error: " + what + ": len out of range",
+    location);
+  add_panic(
+    block,
+    or_exprt{
+      notequal_exprt{ptr, null_pointer_exprt{to_pointer_type(ptr.type())}},
+      equal_exprt{len, zero}},
+    "unsafe-" + id2string(name),
+    "runtime error: " + what + ": ptr is nil and len is not zero",
+    location);
+  const typet &element = to_pointer_type(ptr.type()).base_type();
+  const auto element_size = pointer_offset_size(element, ns);
+  if(element_size.has_value() && *element_size > 0)
+  {
+    const mp_integer limit =
+      (power(2, config.ansi_c.pointer_width) - 1) / *element_size;
+    add_panic(
+      block,
+      binary_relation_exprt{len, ID_le, from_integer(limit, wide)},
+      "unsafe-" + id2string(name),
+      "runtime error: " + what + ": len out of range",
+      location);
+  }
+  // Also lengths of other integer types than int are representable then
+  // (except on 32-bit targets, where gc checks int64 lengths as above).
+  const exprt length = typecast_exprt{len, int_type()};
+  const struct_typet &result = to_struct_type(type);
+  const typet &data_type = result.get_component("data").type();
+  exprt::operandst components{
+    typecast_exprt::conditional_cast(ptr, data_type), length};
+  if(name == "Slice")
+    components.push_back(length);
+  return with_prefix(struct_exprt{components, type}, block, location);
 }
 
 exprt go_convertert::convert_append(const irept &call)

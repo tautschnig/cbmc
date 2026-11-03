@@ -3,9 +3,9 @@ main.go
 
 ^EXIT=0$
 ^SIGNAL=0$
-Go front-end: package variable 'p' of type unsafe\.Pointer \(type unsafe\.Pointer\) is not supported yet$
-^\[go::main\.touch\.unsupported\.1\] line 15 Go front-end: package variable 'p' .*: SUCCESS$
-^\[go::main\.main\.assertion\.2\] line 24 counter: SUCCESS$
+Go front-end: package variable 'p' of type main\.rec \(type main\.rec that refers to itself\) is not supported yet$
+^\[go::main\.touch\.unsupported\.1\] line 16 Go front-end: package variable 'p' .*: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 25 counter: SUCCESS$
 ^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring

@@ -507,6 +507,12 @@ private:
     code_blockt &dest);
   exprt convert_slice_expr(const irept &expr);
   exprt convert_make(const irept &call);
+  /// A call of the function \p name (Add, Slice, SliceData, String,
+  /// StringData) of package unsafe (Go1.27 §Package_unsafe).
+  exprt convert_unsafe_call(const irept &call, const irep_idt &name);
+  /// A conversion of \p value to \p type that involves unsafe.Pointer, or
+  /// nil if it does not.
+  exprt convert_unsafe_conversion(const exprt &value, const typet &type);
   exprt convert_append(const irept &call);
   /// Add to \p grow the choice of the capacity of the array that append
   /// allocates for \p length elements of a slice of type \p slice_type

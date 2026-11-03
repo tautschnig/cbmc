@@ -1,14 +1,15 @@
 // A type with an unsupported part (here, a pointer to a struct with a
-// field of type unsafe.Pointer) is reported where it is used, also for
+// field of type rec) is reported where it is used, also for
 // variables on the heap; the rest of the program is verified.
 package main
 
-import (
-	"cprover"
-	"unsafe"
-)
+import "cprover"
 
-type box struct{ p unsafe.Pointer }
+// A type that refers to itself other than through a struct or a
+// function type, which is not supported.
+type rec []rec
+
+type box struct{ p rec }
 
 func capture() bool {
 	var b *box

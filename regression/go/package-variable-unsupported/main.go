@@ -3,12 +3,13 @@
 // taken, so that the rest of the program is verified.
 package main
 
-import (
-	"cprover"
-	"unsafe"
-)
+import "cprover"
 
-var p unsafe.Pointer
+// A type that refers to itself other than through a struct or a
+// function type, which is not supported.
+type rec []rec
+
+var p rec
 
 var counter int
 

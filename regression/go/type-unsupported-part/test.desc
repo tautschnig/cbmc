@@ -3,8 +3,8 @@ main.go
 
 ^EXIT=0$
 ^SIGNAL=0$
-^\[go::main\.capture\.unsupported\.1\] line 13 Go front-end: type unsafe\.Pointer is not supported yet: SUCCESS$
-^\[go::main\.main\.assertion\.2\] line 25 n: SUCCESS$
+^\[go::main\.capture\.unsupported\.1\] line 14 Go front-end: type main\.rec that refers to itself is not supported yet: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 26 n: SUCCESS$
 ^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring

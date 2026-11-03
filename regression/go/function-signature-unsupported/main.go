@@ -4,18 +4,19 @@
 // verified.
 package main
 
-import (
-	"cprover"
-	"unsafe"
-)
+import "cprover"
 
-func raw(p unsafe.Pointer) bool { return p == nil }
+// A type that refers to itself other than through a struct or a
+// function type, which is not supported.
+type rec []rec
+
+func raw(p rec) bool { return p == nil }
 
 type T struct{ n int }
 
-func (t *T) raw(p unsafe.Pointer) bool { return p == nil }
+func (t *T) raw(p rec) bool { return p == nil }
 
-type rawer interface{ raw(p unsafe.Pointer) bool }
+type rawer interface{ raw(p rec) bool }
 
 // A function value of raw has an unsupported type: the body of viaValue
 // fails a property instead.

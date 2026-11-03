@@ -2792,6 +2792,78 @@ convert_composite(const exprt &value, const typet &type, const namespacet &ns)
   return nil_exprt{};
 }
 
+/// Whether \p type is unsafe.Pointer (see go_type_convertert::basic).
+static bool is_unsafe_pointer(const typet &type)
+{
+  return type.id() == ID_pointer &&
+         to_pointer_type(type).base_type().id() == ID_empty;
+}
+
+/// If \p value is `uintptr(p) + o1 - o2 ...` for an unsafe.Pointer p,
+/// return p moved by the offsets (in bytes); else nil.
+static exprt pointer_arithmetic(const exprt &value)
+{
+  if(value.id() == ID_typecast)
+  {
+    const exprt &op = to_typecast_expr(value).op();
+    if(op.type().id() == ID_pointer)
+      return op;
+    return nil_exprt{};
+  }
+  if(value.id() != ID_plus && value.id() != ID_minus)
+    return nil_exprt{};
+  const auto &binary = to_binary_expr(value);
+  const signedbv_typet offset_type{config.ansi_c.pointer_width};
+  exprt base = pointer_arithmetic(binary.op0());
+  exprt offset = typecast_exprt::conditional_cast(binary.op1(), offset_type);
+  if(base.is_nil() && value.id() == ID_plus)
+  {
+    // o + uintptr(p)
+    base = pointer_arithmetic(binary.op1());
+    offset = typecast_exprt::conditional_cast(binary.op0(), offset_type);
+  }
+  if(base.is_nil())
+    return nil_exprt{};
+  if(value.id() == ID_minus)
+    offset = unary_minus_exprt{offset};
+  const pointer_typet bytes{unsigned_char_type(), config.ansi_c.pointer_width};
+  return typecast_exprt{
+    plus_exprt{typecast_exprt::conditional_cast(base, bytes), offset},
+    base.type()};
+}
+
+exprt go_convertert::convert_unsafe_conversion(
+  const exprt &value,
+  const typet &type)
+{
+  // Go1.27 §Package_unsafe: "Any pointer or value of underlying type
+  // uintptr can be converted to a type of underlying type Pointer and vice
+  // versa." "The effect of converting between Pointer and uintptr is
+  // implementation-defined": the integer encodes the pointer as CBMC
+  // does (object and offset).
+  const bool to_pointer = is_unsafe_pointer(type);
+  const bool from_pointer = is_unsafe_pointer(value.type());
+  if(to_pointer && value.type().id() == ID_unsignedbv)
+  {
+    // The arithmetic of the valid patterns of package unsafe (e.g.,
+    // unsafe.Pointer(uintptr(p) + offset)) stays within p's object: as
+    // pointer arithmetic, so that the result points into it.
+    exprt moved = pointer_arithmetic(value);
+    if(moved.is_not_nil())
+      return typecast_exprt::conditional_cast(moved, type);
+    return typecast_exprt{value, type};
+  }
+  if(from_pointer && type.id() == ID_unsignedbv)
+    return typecast_exprt{value, type};
+  if(
+    (to_pointer && value.type().id() == ID_pointer) ||
+    (from_pointer && type.id() == ID_pointer))
+  {
+    return typecast_exprt::conditional_cast(value, type);
+  }
+  return nil_exprt{};
+}
+
 exprt go_convertert::convert_conversion(const irept &call)
 {
   // Go1.27 §Conversions: "When converting between integer types, if the
@@ -2822,6 +2894,12 @@ exprt go_convertert::convert_conversion(const irept &call)
     result = numeric_conversion(value, type, location_of(call));
     if(result.is_not_nil())
       return result;
+  }
+  result = convert_unsafe_conversion(value, type);
+  if(result.is_not_nil())
+  {
+    result.add_source_location() = location_of(call);
+    return with_go_type(std::move(result), type);
   }
   result = convert_composite(value, type, ns);
   if(result.is_nil())
@@ -2947,6 +3025,13 @@ exprt go_convertert::convert_call(const irept &call)
     return convert_make(call);
   if(callee == "append")
     return convert_append(call);
+  if(
+    callee == "unsafe.Add" || callee == "unsafe.Slice" ||
+    callee == "unsafe.SliceData" || callee == "unsafe.String" ||
+    callee == "unsafe.StringData")
+  {
+    return convert_unsafe_call(call, id2string(callee).substr(7));
+  }
   if(callee == "copy")
     return convert_copy(call);
 

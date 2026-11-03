@@ -3,12 +3,12 @@ main.go
 
 ^EXIT=0$
 ^SIGNAL=0$
-Go front-end: function main\.raw of type func\(p unsafe\.Pointer\) bool \(type unsafe\.Pointer\) is not supported yet$
-^\[go::main\.main\.unsupported\.1\] line 36 Go front-end: function main\.raw .*: SUCCESS$
-^\[go::main\.main\.unsupported\.2\] line 42 Go front-end: function main\.T\.raw .*: SUCCESS$
-^\[go::main\.viaValue\.unsupported\.1\] line 22 Go front-end: function main\.raw .*: SUCCESS$
-^\[go::main\.viaInterface\.unsupported\.1\] line 29 .*: SUCCESS$
-^\[go::main\.main\.assertion\.5\] line 48 n: SUCCESS$
+Go front-end: function main\.raw of type func\(p main\.rec\) bool \(type main\.rec that refers to itself\) is not supported yet$
+^\[go::main\.main\.unsupported\.1\] line 37 Go front-end: function main\.raw .*: SUCCESS$
+^\[go::main\.main\.unsupported\.2\] line 43 Go front-end: function main\.T\.raw .*: SUCCESS$
+^\[go::main\.viaValue\.unsupported\.1\] line 23 Go front-end: function main\.raw .*: SUCCESS$
+^\[go::main\.viaInterface\.unsupported\.1\] line 30 .*: SUCCESS$
+^\[go::main\.main\.assertion\.5\] line 49 n: SUCCESS$
 ^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring

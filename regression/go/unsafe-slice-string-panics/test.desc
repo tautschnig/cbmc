@@ -1,0 +1,13 @@
+CORE
+main.go
+--unwind 70
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.3\] line 25 nil ptr: SUCCESS$
+^\[go::main\.main\.assertion\.4\] line 29 negative len: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+not supported
+--
+the run-time panics of unsafe.Slice and unsafe.String, with gc's messages

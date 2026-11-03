@@ -1,0 +1,13 @@
+CORE
+main.go
+--unwind 4
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.6\] line 37 uintptr arithmetic: SUCCESS$
+^\[go::main\.main\.assertion\.12\] line 53 string to bytes: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+not supported
+--
+unsafe.Pointer and the functions of package unsafe

@@ -228,6 +228,18 @@ Supported so far:
   `cap` of arrays, value semantics of struct and array assignment,
   equality of pointers, structs (ignoring blank fields) and arrays, and
   conversions between types with identical underlying types.
+- Package unsafe (`§Package_unsafe`): `unsafe.Pointer` is a void
+  pointer. Conversions between it and pointers are casts, and between it
+  and `uintptr` CBMC's pointer-integer casts; `unsafe.Pointer(uintptr(p)
+  + off)` (with further `+`/`-` of offsets) is pointer arithmetic on `p`,
+  so the result points into `p`'s object, as with `unsafe.Add`.
+  `unsafe.Slice` and `unsafe.String` build the descriptors with gc's
+  panics (negative length, nil pointer with a length, a size that
+  overflows `uintptr`; gc's check that the memory does not wrap around
+  the address space is not made); `SliceData` and `StringData` are the
+  data pointers. Dereferencing a pointer converted from another type
+  reinterprets the bytes (CBMC's byte-level encoding, in the target's
+  byte order). `cprover.Nondet` of `unsafe.Pointer` is reported.
 - Expressions: integer unary and binary operators with Go's wrap-around
   (`§Integer_overflow`), comparisons, `&&`/`||` short-circuiting,
   conversions between integer types, `min`/`max`, `panic`, `print`.

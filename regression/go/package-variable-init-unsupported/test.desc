@@ -3,7 +3,7 @@ main.go
 
 ^EXIT=10$
 ^SIGNAL=0$
-^\[go::main\.\$init\.unsupported\.1\] line 13 Go front-end: .*unsafe\.Pointer.*: FAILURE$
+^\[go::main\.\$init\.unsupported\.1\] line 14 Go front-end: type main\.rec that refers to itself is not supported yet: FAILURE$
 ^\*\* 1 of [0-9]+ failed
 ^VERIFICATION FAILED$
 --

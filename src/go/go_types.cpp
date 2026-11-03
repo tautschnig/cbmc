@@ -114,6 +114,13 @@ typet go_type_convertert::basic(const irep_idt &kind)
   if(kind == "complex128" || kind == "untyped complex")
     return complex_type(ieee_float_spect::double_precision().to_type());
 
+  if(kind == "unsafe.Pointer")
+  {
+    // Go1.27 §Package_unsafe: "A Pointer is a pointer type but a Pointer
+    // value may not be dereferenced." A void pointer; nil is null.
+    return pointer_typet{empty_typet{}, config.ansi_c.pointer_width};
+  }
+
   unsupported_reason = "type " + id2string(kind);
   return typet{ID_nil};
 }
