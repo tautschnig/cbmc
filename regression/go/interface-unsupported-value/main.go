@@ -5,11 +5,12 @@ package main
 
 import (
 	"cprover"
-	"encoding/binary"
+	"io"
+	"os"
 )
 
-func order() binary.ByteOrder {
-	var o binary.ByteOrder = binary.BigEndian
+func order() io.Writer {
+	var o io.Writer = os.Stdout
 	return o
 }
 

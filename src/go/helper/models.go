@@ -106,6 +106,10 @@ var sourceModels = map[string]struct {
 	"bytes":   {},
 	// Decoding and encoding use the runtime's (cprover/rt).
 	"unicode/utf8": {overrides: true},
+	"io":           {},
+	// Read, Write and Size use reflection, and are reported when called.
+	"encoding/binary": {files: []string{"binary.go",
+		"native_endian_little.go", "varint.go"}},
 	// The integer formatting of the model is simpler than
 	// internal/strconv's, which uses tables.
 	"strconv": {overrides: true},
@@ -410,14 +414,21 @@ func (e *encoder) realSignature(t types.Type) types.Type {
 }
 
 // modelMethod returns the method of the source model's type (see
-// realType) that method f of a real standard-library type stands for, or
-// nil.
+// realType), or of the replacement's type (see replacementType), that
+// method f of a real standard-library type stands for, or nil.
 func (l *loader) modelMethod(f *types.Func) *types.Func {
 	if !isMethod(f) || f.Pkg() == nil {
 		return nil
 	}
 	path := f.Pkg().Path()
-	if _, isSource := sourceModels[path]; !isSource || l.models[path] == nil {
+	model := l.models[path]
+	if replaced[path] {
+		if sp := l.byPath[path]; sp != nil && sp.pkg != f.Pkg() {
+			model = sp.pkg
+		} else {
+			return nil
+		}
+	} else if _, isSource := sourceModels[path]; !isSource || model == nil {
 		return nil
 	}
 	recv := f.Signature().Recv().Type()
@@ -428,7 +439,7 @@ func (l *loader) modelMethod(f *types.Func) *types.Func {
 	if !ok || n.TypeParams().Len() > 0 {
 		return nil
 	}
-	tn, _ := l.models[path].Scope().Lookup(n.Obj().Name()).(*types.TypeName)
+	tn, _ := model.Scope().Lookup(n.Obj().Name()).(*types.TypeName)
 	if tn == nil {
 		return nil
 	}
@@ -452,7 +463,9 @@ func (l *loader) modelVar(v *types.Var) *types.Var {
 		return nil
 	}
 	mv, _ := m.Scope().Lookup(v.Name()).(*types.Var)
-	if mv == nil || !types.Identical(mv.Type(), v.Type()) {
+	// The type of a source model's variable mentions the model's own types,
+	// which stand for the real ones (see realType).
+	if mv == nil || !types.Identical(l.enc.realType(mv.Type()), v.Type()) {
 		return nil
 	}
 	return mv

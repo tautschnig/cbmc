@@ -433,8 +433,7 @@ Supported so far:
   whether the text is the format); otherwise any shape is possible).
   Models of
   package-level variables work the same way: a variable of the model
-  with the name and an identical type stands for the real one (`io`:
-  `EOF`, `ErrUnexpectedEOF` and the other error variables).
+  with the name and an identical type stands for the real one.
   *Source models* (`sourceModels` in `models.go`) are the packages' own
   source from GOROOT, type-checked as `cprover/std/<path>`: `cmp`,
   `math/bits` (with its bootstrap errors), `internal/byteorder`,
@@ -445,8 +444,11 @@ Supported so far:
   and `internal/stringslite`,
   whose conversions through `unsafe` are replaced; the integer
   formatting is the earlier model's), `strings` (`strings.Builder`,
-  `Replacer`, ...), `bytes` (`bytes.Buffer`, ...), `unicode/utf8`,
-  `encoding/hex`, `hash/fnv` and `unicode/utf16`. Files of `models/<path>` then replace the functions
+  `Replacer`, ...), `bytes` (`bytes.Buffer`, ...), `unicode/utf8`, `io`,
+  `encoding/binary` (whose `Read`, `Write` and `Size` use reflection, and
+  are reported when called), `encoding/hex`, `hash/fnv` and
+  `unicode/utf16`. Variables of source models (e.g. `io.EOF`,
+  `binary.BigEndian`) are the real ones. Files of `models/<path>` then replace the functions
   of the same names. The named types of a source model are encoded as
   the real package's types (with the model's methods), so that the
   program's type assertions and switches see the values the model
