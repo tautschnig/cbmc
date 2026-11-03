@@ -1406,7 +1406,12 @@ void string_refinementt::add_lemma(
       ++it;
   }
 
-  log.debug() << "adding lemma " << format(simple_lemma) << messaget::eom;
+  // Lemmas are DAGs whose tree size can be exponential: only format them
+  // for output that is shown.
+  log.conditional_output(
+    log.debug(),
+    [&simple_lemma](messaget::mstreamt &mstream)
+    { mstream << "adding lemma " << format(simple_lemma) << messaget::eom; });
 
   // Share equal subterms with those of earlier lemmas, so that the
   // conversion cache compares them by address: instances of axioms repeat
