@@ -627,7 +627,7 @@ bool go_convertert::nondet_supported(
 void go_convertert::finish_nondet_interfaces()
 {
   // Go1.27 §Interface_types: "A variable of interface type can store a
-  // value of any type with a type set" that implements the interface. The
+  // value of any type that is in the type set of the interface." The
   // candidates are the program's types: those that have the interface's
   // methods (their method sets, from the helper), or for interfaces
   // without methods the types the program converts to interfaces. A value
