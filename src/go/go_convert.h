@@ -592,7 +592,8 @@ private:
   std::size_t go_type_id(const typet &type) const;
   typet convert_type_of_basic(const std::string &kind);
   /// \p value converted to \p type as for an assignment: go_cast, and
-  /// values of non-interface type stored in interface values.
+  /// values of non-interface type stored in interface values. Nil (a
+  /// value whose conversion failed) stays nil.
   exprt assign_cast(exprt value, const typet &type);
   /// The interface value holding (a copy of) \p value.
   exprt box(const exprt &value, const source_locationt &location);

@@ -49,6 +49,9 @@ std::size_t go_convertert::go_type_id(const typet &type) const
 
 exprt go_convertert::assign_cast(exprt value, const typet &type)
 {
+  // A value whose conversion failed (and was reported) stays nil.
+  if(value.is_nil())
+    return value;
   // Go1.27 §Assignability: "V and T are ... T is an interface type ... and x
   // implements T": the value is stored in an interface value with its type
   // as dynamic type.
