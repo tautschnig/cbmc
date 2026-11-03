@@ -664,10 +664,11 @@ Known limitations:
   panicking, only the latest panic is reported. The messages of run-time
   errors are gc's without the operands (e.g., no index in "index out of
   range"), as the specification leaves them unspecified.
-- **Concurrency.** Data races are not reported: by GoMem §model,
+- **Concurrency.** Data races are not reported yet: by GoMem §model,
   data-race-free programs behave sequentially consistently, which is what CBMC encodes
   (racy programs are verified under sequential consistency, which gc
-  does not guarantee). A goroutine that blocks forever just does not
+  does not guarantee). Reporting races is required future work (see
+  §6, phase 10). A goroutine that blocks forever just does not
   continue; when all do, the deadlock is reported (see Deadlocks above),
   within the bounds of the unwinding. `select` without a default case
   over-approximates: it may commit to a case before it can proceed (and
@@ -739,6 +740,13 @@ section.
    nondeterministic choice, models of `sync` and `sync/atomic`, and
    sound pointer handling for threads in goto-symex. Data races are not
    reported (see the limitations).
+10. **Data races** (open, required). Report the data races of GoMem
+   §model as failing properties. goto-instrument's `--race-check` only
+   instruments accesses to global variables, while Go's shared objects
+   are mostly on the heap (captured variables, slices, maps, pointees),
+   so this likely needs shadow memory that records, per object, the
+   last unsynchronised write and the reads since, with the happens-before
+   edges of channels, `sync` and `sync/atomic` clearing them.
 
 Phases 1–3 cover most small verification harnesses. All panics go
 through one helper (`go_convertert::raise_panic`, used by `add_panic`
