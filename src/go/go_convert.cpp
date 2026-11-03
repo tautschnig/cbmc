@@ -203,8 +203,8 @@ void go_convertert::error(const irept &node, const std::string &message)
   {
     // A consequence of the unsupported construct already reported, in a
     // body that will not be used.
-    log.warning().source_location = go_location(node);
-    log.warning() << message << messaget::eom;
+    log.debug().source_location = go_location(node);
+    log.debug() << message << messaget::eom;
     return;
   }
   log.error().source_location = go_location(node);
@@ -224,8 +224,11 @@ void go_convertert::unsupported(
   const std::string message = "Go front-end: " + what + " is not supported yet";
   if(unsupported_in_body != nullptr)
   {
-    log.warning().source_location = location;
-    log.warning() << message << messaget::eom;
+    // Later ones are often consequences of the first (such as uses of a
+    // variable whose declaration was not supported).
+    auto &stream = unsupported_in_body->empty() ? log.warning() : log.debug();
+    stream.source_location = location;
+    stream << message << messaget::eom;
     unsupported_in_body->push_back(message);
     return;
   }
@@ -850,7 +853,10 @@ exprt go_convertert::unmodelled_call(
   const std::string message =
     "Go front-end: a call of " + id2string(function_object) + " (package " +
     object.get_string("pkg") + ", which has no model) is not supported yet";
-  const typet signature = type_converter.signature(object.get("type"));
+  // The type of the function value, which for generic functions is that of
+  // the instance (and for methods has no receiver).
+  const typet signature =
+    type_converter.signature(go_field(call, "Fun").get("_t"));
   if(signature.is_nil())
   {
     unsupported(call, type_converter.unsupported_reason);
