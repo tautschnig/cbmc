@@ -195,17 +195,35 @@ expression_statement(exprt value, const source_locationt &location)
   return result;
 }
 
-static codet
-unwind_if_panicking(const exprt &panicking, const source_locationt &location)
+/// Unwind if \p panicking, leaving the \p atomic_depth atomic sections
+/// that are open (as raise_panic does).
+static codet unwind_if_panicking(
+  const exprt &panicking,
+  std::size_t atomic_depth,
+  const source_locationt &location)
 {
+  code_blockt unwind;
+  for(std::size_t i = 0; i < atomic_depth; ++i)
+  {
+    codet end{ID_atomic_end};
+    end.add_source_location() = location;
+    unwind.add(std::move(end));
+  }
   code_gotot jump{UNWIND_LABEL};
   jump.add_source_location() = location;
-  code_ifthenelset check{panicking, std::move(jump)};
+  unwind.add(std::move(jump));
+  code_ifthenelset check{panicking, std::move(unwind)};
   check.add_source_location() = location;
   return std::move(check);
 }
 
-void go_convertert::add_panic_checks(exprt &expr)
+void go_convertert::add_panic_checks(exprt &code)
+{
+  std::size_t atomic_depth = 0;
+  add_panic_checks(code, atomic_depth);
+}
+
+void go_convertert::add_panic_checks(exprt &expr, std::size_t &atomic_depth)
 {
   // Go1.27 §Handling_panics: "Next, any deferred functions run by F's
   // caller are run, and so on up to any deferred by the top-level function
@@ -213,25 +231,43 @@ void go_convertert::add_panic_checks(exprt &expr)
   if(expr.id() == ID_code)
   {
     codet &code = to_code(expr);
+    const irep_idt &statement = code.get_statement();
+    // The atomic sections of the models (rt.AtomicBegin) are structured:
+    // those in a branch either end in it or are open after it on all
+    // paths that leave it normally.
+    if(statement == ID_atomic_begin)
+      ++atomic_depth;
+    else if(statement == ID_atomic_end && atomic_depth > 0)
+      --atomic_depth;
+    else if(statement == ID_ifthenelse)
+    {
+      for(auto &operand : code.operands())
+      {
+        std::size_t branch_depth = atomic_depth;
+        add_panic_checks(operand, branch_depth);
+      }
+      return;
+    }
     // A call statement (but one with a value may be the value of a
     // statement expression, which must stay an expression).
     if(
-      code.get_statement() == ID_expression && is_go_call(code.op0()) &&
+      statement == ID_expression && is_go_call(code.op0()) &&
       code.op0().type().id() == ID_empty)
     {
       for(auto &operand : code.op0().operands())
-        add_panic_checks(operand);
+        add_panic_checks(operand, atomic_depth);
       const source_locationt location = code.source_location();
-      code_blockt block{{code, unwind_if_panicking(panicking(), location)}};
+      code_blockt block{
+        {code, unwind_if_panicking(panicking(), atomic_depth, location)}};
       expr = std::move(block);
       return;
     }
     for(auto &operand : code.operands())
-      add_panic_checks(operand);
+      add_panic_checks(operand, atomic_depth);
     return;
   }
   for(auto &operand : expr.operands())
-    add_panic_checks(operand);
+    add_panic_checks(operand, atomic_depth);
   if(!is_go_call(expr))
     return;
 
@@ -242,7 +278,7 @@ void go_convertert::add_panic_checks(exprt &expr)
   if(type.id() == ID_empty)
   {
     block.add(code_expressiont{std::move(expr)});
-    block.add(unwind_if_panicking(panicking(), location));
+    block.add(unwind_if_panicking(panicking(), atomic_depth, location));
   }
   else
   {
@@ -250,7 +286,7 @@ void go_convertert::add_panic_checks(exprt &expr)
     code_frontend_assignt assign{result, std::move(expr)};
     assign.add_source_location() = location;
     block.add(std::move(assign));
-    block.add(unwind_if_panicking(panicking(), location));
+    block.add(unwind_if_panicking(panicking(), atomic_depth, location));
     block.add(expression_statement(result, location));
   }
   expr =

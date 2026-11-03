@@ -46,6 +46,12 @@ for dir in "$@"; do
   case " $options " in
     *" --32 "*) goarch=386 ;;
   esac
+  # Tests of the front-end's runtime package (cprover/rt, whose intrinsics
+  # have no Go implementation) cannot run with Go.
+  if grep -q '"cprover/rt"' "$dir"/*.go; then
+    echo "skip    $name: uses cprover/rt"
+    continue
+  fi
   # Tests of TinyGo's choices (--go-compiler tinygo) run with TinyGo, and
   # are skipped without it.
   runner="go run"

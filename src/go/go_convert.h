@@ -849,6 +849,8 @@ private:
   /// After each call in \p code (to a Go function), continue unwinding if
   /// the callee panicked.
   void add_panic_checks(exprt &code);
+  /// add_panic_checks, with \p atomic_depth atomic sections open.
+  void add_panic_checks(exprt &expr, std::size_t &atomic_depth);
   /// Set up deferred calls and recover for the function whose body is
   /// \p body_node; appended to \p dest (the start of the function).
   void begin_function_panics(const irept &body_node, code_blockt &dest);

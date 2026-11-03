@@ -1,0 +1,11 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\$lit[0-9]*\.assertion\.1\] line 29 panics for large n: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+The unwinding after a call in an atomic section ends the section.
