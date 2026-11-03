@@ -1,6 +1,6 @@
 // A standard-library function without a model is reported, not ignored.
 package main
 
-import "strings"
+import "os"
 
-func main() { _ = strings.ToUpper("x") }
+func main() { _ = os.Getenv("x") }

@@ -6,10 +6,10 @@ package main
 
 import (
 	"cprover"
-	"strings"
+	"os"
 )
 
-func upper(s string) string { return strings.ToUpper(s) }
+func upper(s string) string { return os.Getenv(s) }
 
 func twice(n int) int { return 2 * n }
 

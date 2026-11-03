@@ -1,17 +1,15 @@
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file of the Go distribution.
-// Changes for CBMC's Go front-end: a subset of package strings (go1.27),
-// with straightforward loops instead of the optimised searches (the results
-// are those the documentation specifies), and the same allocation sizes
-// where they are observable (the capacities of returned slices).
+// Changes for CBMC's Go front-end: package strings is the real one (go1.27,
+// see sourceModels in models.go) except for these functions, which use
+// straightforward loops instead of the optimised searches (the results are
+// those the documentation specifies), with the same allocation sizes where
+// they are observable (the capacities of returned slices).
 
-// Package strings models functions of the standard library's strings.
 package strings
 
 import "cprover/rt"
-
-const maxInt = int(^uint(0) >> 1)
 
 // Compare returns an integer comparing two strings lexicographically. The
 // result will be 0 if a == b, -1 if a < b, and +1 if a > b.

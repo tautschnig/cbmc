@@ -4,10 +4,10 @@ package main
 
 import (
 	"cprover"
-	"strings"
+	"os"
 )
 
-func upper(s string) string { return strings.ToUpper(s) }
+func upper(s string) string { return os.Getenv(s) }
 
 func main() {
 	n := cprover.Nondet[int]()

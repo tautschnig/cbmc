@@ -6,15 +6,15 @@ package main
 
 import (
 	"fmt"
-	"strings"
+	"regexp"
 )
 
 func direct() {
-	var b strings.Builder
-	b.WriteString("x")
+	var r regexp.Regexp
+	_ = r.NumSubexp()
 }
 
 func main() {
-	var s fmt.Stringer = &strings.Builder{}
+	var s fmt.Stringer = &regexp.Regexp{}
 	_ = s.String()
 }

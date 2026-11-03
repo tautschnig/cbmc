@@ -403,13 +403,20 @@ Supported so far:
   characters; floats including zeros, infinities, NaNs and boundary
   values; NaN payloads excepted). Modelled: `errors` (`New`, `Is`,
   `Unwrap`, `AsType`; not `As`, which needs reflection), `strings`
-  (`Compare`, `Contains`, `ContainsRune`, `Count`, `Cut`, `CutPrefix`,
+  (now the real package with these functions replaced, see below:
+  `Compare`, `Contains`, `ContainsRune`, `Count`, `Cut`, `CutPrefix`,
   `CutSuffix`, `Fields`, `HasPrefix`, `HasSuffix`, `Index`, `IndexByte`,
   `Join`, `LastIndex`, `Repeat`, `Split`, `TrimPrefix`, `TrimSpace`,
   `TrimSuffix`), `strconv` (`FormatBool`, `FormatInt`, `FormatUint`,
-  `Itoa`), `unicode/utf8` (`AppendRune`, `DecodeRune`,
+  `Itoa`), `unicode/utf8` (likewise: `AppendRune`, `DecodeRune`,
   `DecodeRuneInString`, `EncodeRune`, `RuneCount`, `RuneCountInString`,
-  `RuneLen`, `Valid`, `ValidRune`, `ValidString`), `math` (`Abs`,
+  `RuneLen`, `Valid`, `ValidRune`, `ValidString`, which use the
+  runtime's decoding), `unicode` (the real functions for Latin-1, with
+  the real `properties` and `asciiFold` tables, and `IsSpace` and
+  `IsControl` for all runes; beyond Latin-1, results that need the
+  Unicode tables are arbitrary, a valid rune for the case mappings, as
+  the tables are too large to convert), `internal/abi` (`NoEscape`),
+  `math` (`Abs`,
   `Ceil`, `Copysign`, `Float32bits`, `Float32frombits`, `Float64bits`,
   `Float64frombits`, `Floor`, `Inf`, `IsInf`, `IsNaN`, `Max`, `Min`,
   `Modf`, `NaN`, `Signbit`, `Trunc`), `slices` (`Contains`, `Equal`,
@@ -435,8 +442,9 @@ Supported so far:
   (`overlaps` replaced, as it compares addresses through `unsafe`),
   `sort`, `strconv` (with `internal/strconv` and `internal/stringslite`,
   whose conversions through `unsafe` are replaced; the integer
-  formatting is the earlier model's), `encoding/hex`, `hash/fnv` and
-  `unicode/utf16`. Files of `models/<path>` then replace the functions
+  formatting is the earlier model's), `strings` (`strings.Builder`,
+  `Replacer`, ...), `bytes` (`bytes.Buffer`, ...), `unicode/utf8`,
+  `encoding/hex`, `hash/fnv` and `unicode/utf16`. Files of `models/<path>` then replace the functions
   of the same names. The named types of a source model are encoded as
   the real package's types (with the model's methods), so that the
   program's type assertions and switches see the values the model

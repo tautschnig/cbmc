@@ -1,28 +1,21 @@
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file of the Go distribution.
-// Changes for CBMC's Go front-end: a subset of package unicode/utf8
-// (go1.27), with decoding and encoding from package cprover/rt (which
-// implement the same Unicode rules).
+// Changes for CBMC's Go front-end: package unicode/utf8 is the real one
+// (go1.27, see sourceModels in models.go) except for these functions,
+// which decode and encode with package cprover/rt (which implements the
+// same Unicode rules).
 
-// Package utf8 models functions of the standard library's unicode/utf8.
 package utf8
 
 import "cprover/rt"
-
-const (
-	runeError    = '\uFFFD'
-	maxRune      = '\U0010FFFF'
-	surrogateMin = 0xD800
-	surrogateMax = 0xDFFF
-)
 
 // DecodeRuneInString unpacks the first UTF-8 encoding in s and returns the
 // rune and its width in bytes. If s is empty it returns (RuneError, 0).
 // If the encoding is invalid, it returns (RuneError, 1).
 func DecodeRuneInString(s string) (r rune, size int) {
 	if len(s) == 0 {
-		return runeError, 0
+		return RuneError, 0
 	}
 	return rt.DecodeRune(s, 0)
 }
@@ -52,7 +45,7 @@ func RuneCount(p []byte) int {
 func ValidString(s string) bool {
 	for i := 0; i < len(s); {
 		r, size := rt.DecodeRune(s, i)
-		if r == runeError && size == 1 {
+		if r == RuneError && size == 1 {
 			return false
 		}
 		i += size
@@ -71,7 +64,7 @@ func ValidRune(r rune) bool {
 	switch {
 	case 0 <= r && r < surrogateMin:
 		return true
-	case surrogateMax < r && r <= maxRune:
+	case surrogateMax < r && r <= MaxRune:
 		return true
 	}
 	return false
@@ -91,7 +84,7 @@ func RuneLen(r rune) int {
 		return -1
 	case r < 0x10000:
 		return 3
-	case r <= maxRune:
+	case r <= MaxRune:
 		return 4
 	}
 	return -1

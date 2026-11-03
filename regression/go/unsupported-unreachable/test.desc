@@ -3,7 +3,7 @@ main.go
 
 ^EXIT=0$
 ^SIGNAL=0$
-Go front-end: a call of strings\.ToUpper \(package strings, which has no model\) is not supported yet$
+Go front-end: a call of os\.Getenv \(package os, which has no model\) is not supported yet$
 ^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring

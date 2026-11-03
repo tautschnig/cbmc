@@ -1,0 +1,13 @@
+CORE
+main.go
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 18 Builder: SUCCESS$
+^\[go::main\.main\.assertion\.13\] line 39 unicode: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+missing type information
+--
+source models of strings, bytes and unicode/utf8; model of unicode

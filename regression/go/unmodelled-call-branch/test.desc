@@ -3,7 +3,7 @@ main.go
 
 ^EXIT=0$
 ^SIGNAL=0$
-^\[go::main\.label\.unsupported\.1\] line 13 Go front-end: a call of strings\.ToUpper .*: SUCCESS$
+^\[go::main\.label\.unsupported\.1\] line 13 Go front-end: a call of os\.Getenv .*: SUCCESS$
 ^\[go::main\.main\.assertion\.1\] line 21 small: SUCCESS$
 ^VERIFICATION SUCCESSFUL$
 --

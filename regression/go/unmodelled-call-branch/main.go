@@ -5,12 +5,12 @@ package main
 
 import (
 	"cprover"
-	"strings"
+	"os"
 )
 
 func label(n int) string {
 	if n > 1000 {
-		return strings.ToUpper("large")
+		return os.Getenv("large")
 	}
 	return "small"
 }

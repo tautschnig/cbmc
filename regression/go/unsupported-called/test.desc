@@ -3,8 +3,8 @@ main.go
 
 ^EXIT=10$
 ^SIGNAL=0$
-Go front-end: a call of strings\.ToUpper \(package strings, which has no model\) is not supported yet$
-^\[go::main\.upper\.unsupported\.1\] line 12 Go front-end: a call of strings\.ToUpper .*: FAILURE$
+Go front-end: a call of os\.Getenv \(package os, which has no model\) is not supported yet$
+^\[go::main\.upper\.unsupported\.1\] line 12 Go front-end: a call of os\.Getenv .*: FAILURE$
 ^\[go::main\.main\.assertion\.1\] line 22 even: SUCCESS$
 ^VERIFICATION FAILED$
 --

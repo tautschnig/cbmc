@@ -101,6 +101,11 @@ var sourceModels = map[string]struct {
 	"internal/strconv": {overrides: true},
 	// Clone converts with unsafe.String.
 	"internal/stringslite": {overrides: true},
+	// The searches of models/strings are simpler loops.
+	"strings": {overrides: true},
+	"bytes":   {},
+	// Decoding and encoding use the runtime's (cprover/rt).
+	"unicode/utf8": {overrides: true},
 	// The integer formatting of the model is simpler than
 	// internal/strconv's, which uses tables.
 	"strconv": {overrides: true},
@@ -178,9 +183,11 @@ func override(f *ast.File, replaced map[string]bool) {
 		}
 		return true
 	})
+	decls = nil
 	for _, d := range f.Decls {
 		gd, ok := d.(*ast.GenDecl)
 		if !ok || gd.Tok != token.IMPORT {
+			decls = append(decls, d)
 			continue
 		}
 		var specs []ast.Spec
@@ -194,8 +201,14 @@ func override(f *ast.File, replaced map[string]bool) {
 				specs = append(specs, spec)
 			}
 		}
-		gd.Specs = specs
+		// A declaration without imports left is dropped (go/ast cannot
+		// give the end of an empty one without parentheses).
+		if len(specs) > 0 {
+			gd.Specs = specs
+			decls = append(decls, gd)
+		}
 	}
+	f.Decls = decls
 }
 
 // parseModel parses the files of models/<path>, or of the source model of
