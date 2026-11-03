@@ -1,26 +1,14 @@
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file of the Go distribution.
-// Changes for CBMC's Go front-end: a subset of package math (go1.27), with
-// the pure-Go implementations (which give the same results as gc's
-// assembly ones) and the bit conversions of package cprover/rt.
+// Changes for CBMC's Go front-end: package math is the real one (go1.27,
+// with the pure-Go implementations, which give the same results as gc's
+// assembly ones; see sourceModels in models.go) except for these
+// functions, which use the bit conversions of package cprover/rt.
 
-// Package math models functions of the standard library's package math.
 package math
 
 import "cprover/rt"
-
-const (
-	uvnan    = 0x7FF8000000000001
-	uvinf    = 0x7FF0000000000000
-	uvneginf = 0xFFF0000000000000
-	mask     = 0x7FF
-	shift    = 64 - 11 - 1
-	bias     = 1023
-	signMask = 1 << 63
-
-	maxFloat64 = 0x1p1023 * (1 + (1 - 0x1p-52))
-)
 
 // Float64bits returns the IEEE 754 binary representation of f.
 func Float64bits(f float64) uint64 { return rt.Float64bits(f) }
@@ -61,7 +49,7 @@ func IsInf(f float64, sign int) bool {
 	} else if sign < 0 {
 		f = -f
 	}
-	return f > maxFloat64
+	return f > MaxFloat64
 }
 
 // Abs returns the absolute value of x.

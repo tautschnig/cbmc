@@ -446,8 +446,11 @@ Supported so far:
   formatting is the earlier model's), `strings` (`strings.Builder`,
   `Replacer`, ...), `bytes` (`bytes.Buffer`, ...), `unicode/utf8`, `io`,
   `encoding/binary` (whose `Read`, `Write` and `Size` use reflection, and
-  are reported when called), `encoding/hex`, `hash/fnv` and
-  `unicode/utf16`. Variables of source models (e.g. `io.EOF`,
+  are reported when called), `math` (the files of an architecture without
+  assembly, so the functions are portable Go, with the bit conversions
+  and rounding of the earlier model; `Sqrt` is a loop of up to 54
+  iterations), `math/big` (its pure-Go arithmetic), `time` (see below),
+  `encoding/hex`, `hash/fnv` and `unicode/utf16`. Variables of source models (e.g. `io.EOF`,
   `binary.BigEndian`) are the real ones. Files of `models/<path>` then replace the functions
   of the same names. The named types of a source model are encoded as
   the real package's types (with the model's methods), so that the
@@ -477,7 +480,16 @@ Supported so far:
   `Map.Range` visits the keys present when it starts, with their values
   when visited, and then possibly keys stored meanwhile. Copying a
   `Cond` is not detected, and the comparison and swap of
-  `Value.CompareAndSwap` are one atomic step. They use the
+  `Value.CompareAndSwap` are one atomic step. In `time` (a source model),
+  the runtime's functions are models (`models/time`): the wall clock is
+  arbitrary at each reading (seconds since 1970 below 2^32), the
+  monotonic clock never decreases, and `Sleep(d)` advances it by at least
+  d; a timer fires in a goroutine of its own, so at any later point of
+  the execution unless it is stopped or reset first, and firing advances
+  the monotonic clock to the timer's time; channel timers buffer one
+  value (as before Go 1.23, so a value sent before `Stop` or `Reset` may
+  still be received); the local time zone is a fixed zone with an
+  arbitrary offset. They use the
   runtime intrinsics `rt.AtomicBegin`/`rt.AtomicEnd` (CBMC atomic
   sections) and `rt.Fatal` (property class `fatal`, for gc's fatal
   errors such as "sync: unlock of unlocked mutex", which `recover`

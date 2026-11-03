@@ -80,6 +80,7 @@ func (l *loader) loadModel(path string) error {
 var sourceModels = map[string]struct {
 	files     []string
 	tags      []string
+	goarch    string // the architecture to select the files for, if not the target
 	overrides bool
 }{
 	"cmp":                {},
@@ -107,6 +108,15 @@ var sourceModels = map[string]struct {
 	// Decoding and encoding use the runtime's (cprover/rt).
 	"unicode/utf8": {overrides: true},
 	"io":           {},
+	// The pure Go arithmetic (as without assembly).
+	"math/big": {tags: []string{"math_big_pure_go"}},
+	// The files of an architecture without assembly for package math (the
+	// functions are portable Go there), and the bit conversions and
+	// rounding of models/math.
+	"math": {goarch: "mips64", overrides: true},
+	// The runtime's clock and timers, and the local time zone (see
+	// models/time).
+	"time": {overrides: true},
 	// Read, Write and Size use reflection, and are reported when called.
 	"encoding/binary": {files: []string{"binary.go",
 		"native_endian_little.go", "varint.go"}},
@@ -127,6 +137,9 @@ var sourceModels = map[string]struct {
 func (l *loader) parseSourceModel(path string) ([]*ast.File, error) {
 	sm := sourceModels[path]
 	ctxt := build.Default
+	if sm.goarch != "" {
+		ctxt.GOARCH = sm.goarch
+	}
 	ctxt.BuildTags = append(append([]string(nil), ctxt.BuildTags...),
 		sm.tags...)
 	bp, err := ctxt.Import(path, "", 0)

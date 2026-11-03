@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 3 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 14 after the duration: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+model of time.AfterFunc

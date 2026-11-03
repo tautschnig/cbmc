@@ -1,0 +1,12 @@
+CORE
+main.go
+--unwind 12 --unwindset go::cprover/rt.StringEqual.0:40 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 13 monotonic: SUCCESS$
+^\[go::main\.main\.assertion\.6\] line 20 Format: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+source model of time

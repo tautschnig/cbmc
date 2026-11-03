@@ -1,0 +1,13 @@
+CORE
+main.go
+--unwind 6 --unwindset go::cprover/std/math.sqrt.1:60 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 11 Sqrt: SUCCESS$
+^\[go::main\.main\.assertion\.5\] line 16 Pow: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+not supported
+--
+source model of math; Sqrt's loop needs 54 iterations
