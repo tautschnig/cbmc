@@ -962,6 +962,44 @@ scripts that convert, from 606):
 The counts after the first few steps are rough: a script's other blockers
 may only show up once its first is fixed.
 
+### 7.5 The SAT default: bounded or refined strings (2026-11-04)
+
+Measured after the solver fixes of 7.3 and the commits that followed
+(`c0d27c1efe` to `eba42815b6`): the 26 string-study kernels
+(`--unwind 10 --unwinding-assertions`, 200 s and 4 GB per run), and the
+597 installed scripts that convert in both modes (`--unwind 3`, 120 s and
+4 GB).
+
+| | Bounded | Refined |
+|---|---|---|
+| Kernels correct | 21 of 26 | 22 of 26 |
+| Kernel time (correct ones) | 464 s | 23 s |
+| Kernel peak memory (correct ones) | 2,968 MB | 121 MB |
+| Scripts that convert (of 1,652) | 597 | 606 (a superset) |
+| Scripts decided (of 597) | 597 | 597 |
+| Time on those | 763 s (median 0.91 s, max 22 s) | 369 s (median 0.04 s, max 117 s) |
+| Peak memory | median 47 MB, max 931 MB | median 14 MB, max 1,846 MB |
+
+- **Verdicts.** Apart from bounded strings' `shell-string-length`
+  properties (strings that would exceed `--shell-max-string-length`), the
+  two modes report the same failed properties on every script. Bounded
+  strings fail on 33 scripts, and on the kernels `concat-eq` and
+  `loop-concat`, only through those properties.
+- **Kernels neither mode solves.** `csv-loop` and `csv-loop-fail` (bounded
+  solves `csv-loop` in 118 s), and `prefix-remove` and its `-fail` variant,
+  which use `${#x}` in `$((...))`, which is unsupported.
+- **Where refined is slower.** Three scripts are 4 to 6 times slower than
+  with bounded strings (60 to 115 s against about 19 s): `tarcat`,
+  `c99-gcc` and `src-hilite-lesspipe.sh`, loops over the arguments with
+  `case` patterns. The time goes into `dec_solve`'s setup (symbol
+  resolution that walks expressions as trees), not into refinement.
+- **What refined does not support that bounded does.** Pattern removal
+  with patterns other than `L*`, `*L` and `L1*L2` (found in 114 scripts),
+  and `?` or brackets between two stars (21).
+
+**Proposal:** make `--shell-strings refined` the SAT default, and keep
+`bounded` as an option for the patterns above.
+
 ---
 
 ## 8. Bibliographic details for key references
