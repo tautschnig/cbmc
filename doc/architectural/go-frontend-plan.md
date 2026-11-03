@@ -813,3 +813,128 @@ section.
 Phases 1–3 cover most small verification harnesses. All panics go
 through one helper (`go_convertert::raise_panic`, used by `add_panic`
 and `guard_panic`), which made phase 7 a local change.
+
+## 7. Open problems
+
+Collected while converting a corpus of real code (195 third-party
+packages of 40 modules, and copies of 165 standard-library packages,
+`~/go-scratch/corpus`, a harness per package that imports it). All of
+them now convert, except `golang.org/x/text/date` and
+`golang.org/x/text/unicode/runenames` (the helper runs out of memory).
+Unsupported constructs are reported where they are reached (25,108
+sites), almost all of them calls without a model.
+
+### 7.1 Soundness and required features
+
+- **Data races** are not reported (§6, phase 10). Required.
+- **`reflect`** has no model: 12,356 call sites in 108 packages, by far
+  the largest gap (also `internal/reflectlite`, `errors.As`, the
+  reflection paths of `encoding/json`, `encoding/binary.Read`/`Write`,
+  `fmt`'s formatting of nested values). A model needs the helper's type
+  table at run time (kinds, fields, methods, element types), much as
+  `rt.SliceLen`/`rt.SliceSwap` use the dynamic types.
+- **Arbitrary results of models** are sound but imprecise: the text of
+  `fmt`'s printing functions, `unicode` beyond Latin-1 (also
+  inconsistent between calls for the same rune), the wall clock and the
+  local time zone of `time`, `sync.Pool`, `sync.Map.Range` for keys stored
+  meanwhile, `fmt.Errorf` with non-constant formats (any wrapping).
+  Properties that depend on them may fail where gc's behaviour would
+  satisfy them.
+- **Approximations that are not over-approximations**: `atomic.Value`'s
+  comparison and swap are one atomic step (gc's `CompareAndSwap` can
+  fail on a concurrent store of an equal value); copying a `sync.Cond`
+  is not detected; `unsafe.Slice` does not check that the memory wraps
+  around the address space; nondeterministic values have no aliasing
+  and no function values or channels (§5).
+- **Unsupported constructs left in user code** (other than calls): types
+  that refer to themselves other than through structs or function types
+  (`type T []T`, `type P *P`), type declarations in generic functions,
+  closures that capture type parameters (25 corpus sites), deferred
+  built-in calls, `goto` out of and `defer` in range-over-function
+  bodies, package variables of unmodelled packages (`os.Stdout`,
+  `os.Args`, `base64.StdEncoding`, ...).
+- **Unmodelled packages** by corpus call sites: `go/types` (1,737),
+  `syscall` (1,234, mostly in the file-reading functions of `time`'s and
+  `os`'s sources, reached only through them), `go/ast` (666), `os`
+  (598), `encoding/json` (with `jsontext` and its internals, about
+  1,000), `bufio` (410), `runtime` (290), `go/token`, `log`, `image`,
+  `regexp`, `net`, `net/http`, `path/filepath`, `encoding/asn1`. Several
+  are plain Go and could be source models as `strings` and `io` are
+  (`bufio`, `path/filepath` with `os` stubs, `regexp`, `encoding/json`
+  once `reflect` is modelled); `os` and `syscall` need models of the
+  environment (files, arguments, environment variables).
+- **Models track one Go release.** Source models are the GOROOT source
+  of the toolchain, but the function models, the overrides and the
+  copied tables (`unicode`'s `properties` and `asciiFold`, the
+  White_Space runes) are go1.27's, and `errorfWraps` follows go1.27's
+  `doPrintf` (checked by `models_test.go`).
+
+### 7.2 Performance and scalability
+
+- **`errors.Is` on errors of several possible dynamic types grows
+  exponentially with `--unwind`** (3 s at 2, out of memory at 3, for a
+  variable that holds one of two error types). Interface method calls
+  dispatch on the type id; when the id is a merge of several values,
+  goto-symex explores every type's branch at each level of the
+  `Unwrap` recursion, and the value sets of the data pointers mix the
+  objects of all of them. This affects ordinary programs, not only the
+  models. Possible remedies: dispatch through the value set of the
+  data pointer (as function-pointer removal does), or keep the type id
+  in the pointer's object (a typed pointer per dynamic type).
+- **`append` with a nondeterministic capacity** (gc's capacities are not
+  determined, §5) gives a slice several possible underlying arrays,
+  which multiplies the objects that later accesses may refer to (the
+  `fmt.Errorf` model needed a preallocated slice to verify in 0.5 s
+  instead of running out of memory).
+- **Objects**: every conversion to an interface allocates the value, so
+  programs exhaust CBMC's default 256 objects quickly (`sync-map` needs
+  `--object-bits 10`). The front-end could raise the default, or box
+  values without allocation where they are not shared.
+- **Concurrency** is costly in the solver: two goroutines that update a
+  `map[any]any` under a mutex take 294 s and 12 GB; the timer test
+  (`stdlib-time-timers`, THOROUGH) 200 s; the deadlock check
+  multiplies solver time by 3 to 5 in the concurrency tests (§5).
+  goto-symex repeats symbolic execution while the value sets of shared
+  objects grow.
+- **The fixed cost of source models**: every program converts all of
+  the source models it imports transitively (`strings` alone: 2.4 MB of
+  JSON, 1.5 s; `math/big`: 11 MB, 11 s, after sharing the entries of
+  identical composite types in the helper, which made it 152 MB and
+  29 s before). Signatures (25,000 entries for `x/text`'s pipeline) are
+  still not shared. Generated tables dominate large packages
+  (`x/text/collate/tables.go` is 69 MB of JSON, and the two packages
+  that do not convert are tables); constant composite literals could be
+  encoded as flat arrays of values, and unreachable functions pruned in
+  the helper.
+- **Loops in models need bounds**: string comparisons (`--unwindset
+  go::cprover/rt.StringEqual.0:N` for long constants), map operations,
+  `math.Sqrt` (54 iterations), the word loops of `math/big` (one
+  decimal conversion takes 33 s), `time.ParseDuration`, `strings`'
+  searches. Users have to tune `--unwind`; models could avoid loops
+  where CBMC has the operation (e.g., floating-point square root).
+
+### 7.3 CBMC changes to upstream
+
+- goto-symex: sound value sets for pointers shared between threads,
+  with repeated symbolic execution (`shared_value_summaryt`); objects of
+  a previous run that keep their names when their types differ (no C
+  regression test reproduces it; the Go test `sync-map-concurrent`
+  does); a new thread starts outside any atomic section.
+- Linking: skip the renaming passes over the whole program when nothing
+  is renamed (455 s to 27 s for a large Go program; benefits C too).
+- Array theory (Ackermann constraints) and the profiler's timeout.
+- The branch needs splitting for review (front-end, helper, models,
+  symex, linking).
+
+### 7.4 Infrastructure
+
+- The Makefile build of `cbmc` does not link the Python front-end (§5).
+- `go vet` of the helper reports the models, which import `cprover` and
+  `cprover/rt` (not in GOROOT); a `go.work` or a vendored `cprover`
+  module would make the models checkable with the Go tools.
+- Tests that use unmodelled functions as examples (`os.Getenv`,
+  `regexp.Regexp`, `os.Stdout`) must change as models are added.
+- The corpus counts include sites inside source models that programs
+  rarely reach (e.g., `unicode.SpecialCase` in `strings`, `syscall` in
+  `time`); a count of sites reachable from the harness would track
+  progress better.
