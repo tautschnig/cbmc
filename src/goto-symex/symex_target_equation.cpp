@@ -371,7 +371,7 @@ void symex_target_equationt::convert_assignments(
         mstream << messaget::eom;
       });
 
-      decision_procedure.set_to_true(step.cond_expr);
+      decision_procedure.set_definition(step.guard_handle, step.cond_expr);
       step.converted = true;
       with_solver_hardness(
         decision_procedure, hardness_register_ssa(step_index, step));

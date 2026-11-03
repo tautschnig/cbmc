@@ -31,6 +31,13 @@ public:
   /// For a Boolean expression \p expr, add the constraint 'not expr'
   void set_to_false(const exprt &);
 
+  /// Add \p definition, an equation `lhs == rhs` that defines a symbol
+  /// `lhs` whose value only matters where \p guard holds: as in a single
+  /// static assignment form, where every use of `lhs` is under the guard of
+  /// its definition. A decision procedure may then add `guard => definition`
+  /// instead. The default ignores the guard.
+  virtual void set_definition(const exprt &guard, const exprt &definition);
+
   /// Generate a handle, which is an expression that
   /// has the same value as the argument in any model
   /// that is generated; this offers an efficient way
