@@ -11,10 +11,11 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 /// Generates string constraints for the family of indexOf and lastIndexOf java
 ///   functions
 
-#include "string_constraint_generator.h"
-
+#include <util/arith_tools.h>
+#include <util/bitvector_types.h>
 #include <util/mathematical_expr.h>
 
+#include "string_constraint_generator.h"
 #include "string_refinement_invariant.h"
 
 /// Add axioms stating that the returned value is the index within `haystack`
@@ -43,6 +44,26 @@ string_constraint_generatort::add_axioms_for_index_of(
   const exprt &c,
   const exprt &from_index)
 {
+  return add_axioms_for_index_of(
+    str,
+    [&c](const exprt &x) -> exprt {
+      return equal_exprt{x, c};
+    },
+    from_index);
+}
+
+/// As the first-occurrence search for a character, but for a character
+/// that satisfies \p matches rather than one equal to a given character.
+/// \param str: an array of characters expression
+/// \param matches: the condition on a character expression
+/// \param from_index: an integer expression
+/// \return integer expression `index`
+std::pair<exprt, string_constraintst>
+string_constraint_generatort::add_axioms_for_index_of(
+  const array_string_exprt &str,
+  const std::function<exprt(const exprt &)> &matches,
+  const exprt &from_index)
+{
   string_constraintst constraints;
   const typet &index_type = str.length_type();
   symbol_exprt index = fresh_symbol("index_of", index_type);
@@ -60,8 +81,7 @@ string_constraint_generatort::add_axioms_for_index_of(
   implies_exprt a3(
     contains,
     and_exprt(
-      binary_relation_exprt(from_index, ID_le, index),
-      equal_exprt(str[index], c)));
+      binary_relation_exprt(from_index, ID_le, index), matches(str[index])));
   constraints.existential.push_back(a3);
 
   const exprt lower_bound(zero_if_negative(from_index));
@@ -71,7 +91,7 @@ string_constraint_generatort::add_axioms_for_index_of(
     n,
     lower_bound,
     zero_if_negative(index),
-    implies_exprt(contains, notequal_exprt(str[n], c)),
+    implies_exprt(contains, not_exprt{matches(str[n])}),
     ns,
     message_handler);
   constraints.universal.push_back(a4);
@@ -81,7 +101,7 @@ string_constraint_generatort::add_axioms_for_index_of(
     m,
     lower_bound,
     zero_if_negative(array_pool.get_or_create_length(str)),
-    implies_exprt(not_exprt(contains), not_exprt(equal_exprt(str[m], c))),
+    implies_exprt(not_exprt(contains), not_exprt{matches(str[m])}),
     ns,
     message_handler);
   constraints.universal.push_back(a5);
@@ -381,6 +401,26 @@ string_constraint_generatort::add_axioms_for_last_index_of(
   const exprt &c,
   const exprt &from_index)
 {
+  return add_axioms_for_last_index_of(
+    str,
+    [&c](const exprt &x) -> exprt {
+      return equal_exprt{x, c};
+    },
+    from_index);
+}
+
+/// As the last-occurrence search for a character, but for a character
+/// that satisfies \p matches rather than one equal to a given character.
+/// \param str: an array of characters expression
+/// \param matches: the condition on a character expression
+/// \param from_index: an integer expression
+/// \return integer expression `index`
+std::pair<exprt, string_constraintst>
+string_constraint_generatort::add_axioms_for_last_index_of(
+  const array_string_exprt &str,
+  const std::function<exprt(const exprt &)> &matches,
+  const exprt &from_index)
+{
   string_constraintst constraints;
   const typet &index_type = str.length_type();
   const symbol_exprt index = fresh_symbol("last_index_of", index_type);
@@ -396,7 +436,7 @@ string_constraint_generatort::add_axioms_for_last_index_of(
   const notequal_exprt a2(contains, equal_exprt(index, minus1));
   constraints.existential.push_back(a2);
 
-  const implies_exprt a3(contains, equal_exprt(str[index], c));
+  const implies_exprt a3(contains, matches(str[index]));
   constraints.existential.push_back(a3);
 
   const exprt index1 = from_integer(1, index_type);
@@ -412,7 +452,7 @@ string_constraint_generatort::add_axioms_for_last_index_of(
     n,
     zero_if_negative(plus_exprt(index, index1)),
     zero_if_negative(end_index),
-    implies_exprt(contains, notequal_exprt(str[n], c)),
+    implies_exprt(contains, not_exprt{matches(str[n])}),
     ns,
     message_handler);
   constraints.universal.push_back(a4);
@@ -421,7 +461,7 @@ string_constraint_generatort::add_axioms_for_last_index_of(
   const string_constraintt a5(
     m,
     zero_if_negative(end_index),
-    implies_exprt(not_exprt(contains), notequal_exprt(str[m], c)),
+    implies_exprt(not_exprt(contains), not_exprt{matches(str[m])}),
     ns,
     message_handler);
   constraints.universal.push_back(a5);
@@ -484,4 +524,73 @@ std::optional<exprt> single_constant_character(const array_string_exprt &s)
   if(!s.operands()[0].is_constant())
     return {};
   return s.operands()[0];
+}
+
+/// The condition that character \p c is in the set \p mask, a constant
+/// bit-vector whose bit i is set if the character with code i is in the set.
+static exprt in_set(const exprt &c, const exprt &mask)
+{
+  PRECONDITION(mask.is_constant());
+  const irep_idt &value = to_constant_expr(mask).get_value();
+  const std::size_t width = to_bitvector_type(mask.type()).get_width();
+  const auto has = [&](std::size_t i)
+  { return get_bvrep_bit(value, width, i); };
+  // The union of the ranges of consecutive characters in the set.
+  exprt::operandst ranges;
+  for(std::size_t low = 0; low < width; ++low)
+  {
+    if(!has(low))
+      continue;
+    std::size_t high = low;
+    while(high + 1 < width && has(high + 1))
+      ++high;
+    if(low == high)
+      ranges.push_back(equal_exprt{c, from_integer(low, c.type())});
+    else
+    {
+      ranges.push_back(and_exprt{
+        binary_relation_exprt{c, ID_ge, from_integer(low, c.type())},
+        binary_relation_exprt{c, ID_le, from_integer(high, c.type())}});
+    }
+    low = high;
+  }
+  return disjunction(ranges);
+}
+
+/// Index of the first character of a string, at or after a position, that is
+/// in a set of characters, or -1 if there is none.
+/// \param f: function application with arguments refined_string `haystack`,
+///   integer `from_index`, and a constant bit-vector `mask` whose bit i is
+///   set if the character with code i is in the set
+/// \return integer expression
+std::pair<exprt, string_constraintst>
+string_constraint_generatort::add_axioms_for_index_of_set(
+  const function_application_exprt &f)
+{
+  const auto &args = f.arguments();
+  PRECONDITION(args.size() == 3);
+  const array_string_exprt str = get_string_expr(array_pool, args[0]);
+  PRECONDITION(f.type() == str.length_type());
+  const exprt mask = args[2];
+  return add_axioms_for_index_of(
+    str, [&mask](const exprt &c) { return in_set(c, mask); }, args[1]);
+}
+
+/// Index of the last character of a string, at or before a position, that is
+/// in a set of characters, or -1 if there is none.
+/// \param f: function application with arguments refined_string `haystack`,
+///   integer `from_index`, and a constant bit-vector `mask` whose bit i is
+///   set if the character with code i is in the set
+/// \return integer expression
+std::pair<exprt, string_constraintst>
+string_constraint_generatort::add_axioms_for_last_index_of_set(
+  const function_application_exprt &f)
+{
+  const auto &args = f.arguments();
+  PRECONDITION(args.size() == 3);
+  const array_string_exprt str = get_string_expr(array_pool, args[0]);
+  PRECONDITION(f.type() == str.length_type());
+  const exprt mask = args[2];
+  return add_axioms_for_last_index_of(
+    str, [&mask](const exprt &c) { return in_set(c, mask); }, args[1]);
 }
