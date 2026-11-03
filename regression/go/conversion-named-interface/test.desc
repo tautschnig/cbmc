@@ -1,0 +1,10 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Conversions that keep the representation still change the dynamic type.

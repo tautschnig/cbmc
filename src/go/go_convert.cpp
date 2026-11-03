@@ -2749,10 +2749,25 @@ exprt go_convertert::convert_conversion(const irept &call)
     symbol_exprt tmp = new_temporary(value.type(), location, prefix);
     prefix.add(code_frontend_assignt{tmp, value});
     result = convert_composite(tmp, type, ns);
+    result = with_go_type(std::move(result), type);
     return with_prefix(std::move(result), prefix, location);
   }
+  result = with_go_type(std::move(result), type);
   result.add_source_location() = location_of(call);
   return result;
+}
+
+exprt with_go_type(exprt value, const typet &type)
+{
+  // A conversion between types with the same representation (e.g., from
+  // []int to a named slice type, or from int to a named integer type)
+  // leaves the CBMC type unchanged up to the Go type that it records
+  // (ID_C_go_tid), on which converting to an interface depends.
+  if(
+    value.type() == type &&
+    value.type().get(ID_C_go_tid) != type.get(ID_C_go_tid))
+    value.type() = type;
+  return value;
 }
 
 exprt go_convertert::convert_min_max(const irept &call, bool is_min)

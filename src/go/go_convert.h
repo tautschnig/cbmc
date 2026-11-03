@@ -38,6 +38,10 @@ class symbolt;
 /// The Go boolean \p value (stored as a c_bool) as a condition.
 exprt as_condition(exprt value);
 
+/// \p value with the Go type of \p type, if their CBMC types are the same
+/// (see go_convertert::convert_conversion).
+exprt with_go_type(exprt value, const typet &type);
+
 /// \p value converted to \p type, as for an assignment (Go1.27
 /// §Assignability); the untyped nil becomes the nil of \p type.
 exprt go_cast(exprt value, const typet &type);
