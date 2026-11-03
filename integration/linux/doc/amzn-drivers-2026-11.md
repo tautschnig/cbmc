@@ -4,9 +4,11 @@
 **Target:** https://github.com/amzn/amzn-drivers at `9d5ca40`
 ("linux/efa: Bump driver version to 3.4.0").
 **Status:** No bug reachable from userspace or the network.  Seven places
-where the drivers use device-written values without a bound; all have a
-CBMC witness on a code slice.  None has been reproduced on hardware or an
-emulated device.
+where the drivers use device-written values without a bound.  Each has a
+CBMC witness on a code slice, and F1-F6 now also have a **dynamic
+confirmation** (KASAN in a QEMU guest, and ASAN in userspace) -- see
+"Dynamic confirmation" below.  Still not reproduced on real or emulated
+ENA/EFA hardware: the device value is injected directly.
 
 ## Threat model
 
@@ -54,6 +56,9 @@ as untrusted.  The findings are places that are inconsistent with that.
 | F5 | EFA | kverbs `efa_create_qp_kernel` | OOB increment/decrement in `sub_cq_arr[]` | yes | n/a (out of tree only) |
 | F6 | ENA | RX completion length | `skb_over_panic` (DoS); frag past buffer | yes (modelled assertion) | same gap |
 | F7 | EFA | kverbs `efa_get_dma_mr` | `BIT(64)` undefined shift | not run | n/a |
+
+Dynamic status (detail below): F1-F6 all produce a KASAN report or a kernel
+BUG; F3 additionally reproduces under ASAN against the real DPDK build.
 
 ### F1: EFA doorbell BAR index
 
@@ -129,6 +134,92 @@ frame size for XSK).
 `efa_get_dma_mr()` computes `BIT(dma_addr_bits)`, which is undefined for
 64.  Out of tree only.
 
+## Dynamic confirmation
+
+Two oracles, because the findings live in two places.  In every case the
+only thing injected is the one device-supplied value named in the finding;
+no bound is removed and no driver logic is edited.
+
+### KASAN, QEMU guest (F1-F6)
+
+Kernel: 6.12 LTS, `defconfig` + `CONFIG_KASAN=y` (generic, outline) +
+`CONFIG_FORTIFY_SOURCE=y` + `CONFIG_MAX_SKB_FRAGS=17` (the default), built
+in a scratch copy of the tree.  `CONFIG_FORTIFY_SOURCE` matters: without
+it, `memcpy` in module code is the plain arch routine and KASAN does not
+see the copy at all -- F3 then corrupts the slab silently and only shows up
+later as a general-protection fault on the overwritten neighbour.  With it,
+`memcpy` resolves to `__asan_memcpy` and the report is precise.
+
+Harness: `scan/amzn-drivers/dynamic/kasan_enatest_main.c`, built as a module
+together with the **real** `amzn-drivers` `ena_com.c` and `ena_eth_com.c`
+(`kasan_enatest_Makefile`), run from a BusyBox initramfs
+(`kasan_initramfs_init.sh`) under `qemu-system-x86_64`.  Splats in
+`scan/amzn-drivers/dynamic/logs/`.
+
+| test | report |
+|---|---|
+| F1 | `BUG: KASAN: slab-out-of-bounds`, read of size 8, `struct pci_dev` (kmalloc-4k) |
+| F2 | `BUG: KASAN: slab-out-of-bounds in skb_add_rx_frag_netmem+0x7c/0x1e0`, write of size 8 past `skbuff_small_head` |
+| F3 | `BUG: KASAN: slab-out-of-bounds in ena_com_get_hash_key+0x3e/0x50`, **write of size 256** into kmalloc-64 |
+| F4 | `BUG: KASAN: slab-use-after-free`, read of size 8 (index lands in an unrelated object) |
+| F5 | `BUG: KASAN: slab-out-of-bounds`, read of size 4 past the `sub_cq_arr` allocation |
+| F6 | `skb_over_panic: ... len:36859 put:36859 tail:0x90fb end:0xec0` -> `kernel BUG at net/core/skbuff.c:209` in `skb_put` |
+
+How much real code each test exercises differs, and that matters when
+reading the table:
+
+* **F3 is the strongest.**  The faulting frame is the real driver function
+  `ena_com_get_hash_key()`, compiled from `amzn-drivers` and called with a
+  page-granular DMA buffer (as `dma_alloc_coherent` would give) whose
+  `key_parts` the device set to 0x40.  Nothing else is simulated.
+* **F2 and F6** drive the real kernel APIs the driver calls
+  (`skb_add_rx_frag`, `build_skb` + `skb_put`) with the driver's own bound
+  (`descs <= ENA_PKT_MAX_BUFS`) and the CBMC witness length, but the loop
+  around them is the harness, not `ena_fill_rx_frags()` itself: that
+  function needs a live `ena_ring`.
+* **F1, F4, F5** replicate the driver's indexing against real kernel
+  structures and allocators (`struct pci_dev` + `pci_resource_start()`,
+  `kvzalloc(max_wqes)`, `kvzalloc(sub_cqs_per_cq)`), because the EFA code
+  paths need an `ib_device` and real hardware to reach.  The KASAN frame is
+  therefore the harness, not the driver.  F4's report says
+  `slab-use-after-free` rather than `slab-out-of-bounds` only because
+  `wrid[4096]` lands far enough away to hit an unrelated object.
+
+One incidental finding: with this `defconfig`, `PCI_NUM_RESOURCES` is 11
+rather than the 17 assumed in the F1 CBMC slice (the IOV and bridge
+resource slots are config-dependent).  The out-of-bounds index 32 is past
+either bound, so the conclusion is unchanged.
+
+### ASAN, real DPDK build (F3)
+
+The shared `ena_com` code is also reachable from the DPDK PMD, so F3 can be
+confirmed in userspace without a kernel at all.  DPDK v24.11 with the
+`amzn-drivers` `userspace/dpdk/ena` tree overlaid on `drivers/net/ena`,
+built `-Db_sanitize=address`, and the harness linked directly against the
+PMD's own `ena_com.c.o`
+(`scan/amzn-drivers/dynamic/f3_dpdk_asan_build.sh`).
+
+* heap destination (the Linux ethtool `rxfh->key` shape, 40 bytes):
+  `AddressSanitizer: heap-buffer-overflow ... WRITE of size 256`, frame
+  `#1 ena_com_get_hash_key`.
+* stack destination (the DPDK `ena_get_rss_hash_key` and FreeBSD
+  `ena_rss_get_hash_key` shape, `uint8_t hw_key[40]`):
+  `AddressSanitizer: stack-buffer-overflow ... WRITE of size 256`, same
+  frame.  This is the FreeBSD kernel-stack case.
+
+Note for reproduction: ASAN reserves a large virtual shadow mapping, so
+bound the run with a cgroup (`systemd-run -p MemoryMax=`), not `ulimit -v`.
+
+### Not dynamically confirmed
+
+* **F7** (`BIT(64)`): undefined shift, no sanitizer run; UBSAN would be the
+  oracle.
+* **On real hardware / an emulated ENA or EFA device:** not attempted.
+  QEMU has no ENA or EFA device model, and writing one is the natural next
+  step if an end-to-end PoC is wanted.  The gap this leaves is *reachability
+  of the device value*, not the memory-safety consequence: each test injects
+  the value at the point where the driver reads it from the device.
+
 ## False positives (from the finders and the device query)
 
 * ENA `irq_idx` into `irq_tbl[129]` (7 hits) and the many
@@ -186,7 +277,6 @@ Queries: build DBs as above, then for each DB run the 8 asset queries and
 1. Report F1-F3 and F6 (also in mainline) to the ENA/EFA maintainers
    through Amazon's internal security channel before any public patch;
    F4, F5, F7 and FreeBSD F3 go to the amzn-drivers maintainers.
-2. Dynamic confirmation: a QEMU device model or a patched
-   firmware-response hook that returns the CBMC witness values, under
-   KASAN.
-3. Run `device_tainted_sink.ql` across the kernel-wide driver DBs.
+2. An emulated ENA/EFA device in QEMU would turn the injected values into
+   an end-to-end PoC.
+3. UBSAN run for F7.

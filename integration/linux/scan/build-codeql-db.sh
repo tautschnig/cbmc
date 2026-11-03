@@ -17,7 +17,16 @@ export PATH=/home/ubuntu/codeql:$PATH
 export CODEQL_ALLOW_INSTALLATION_ANYWHERE=true
 export CCACHE_DISABLE=1
 
+# When many DBs are built in parallel against ONE shared tree, each build
+# reverting percpu.h would break the others mid-compile.  Set
+# PERCPU_PREPATCHED=1 to skip both the patch and the revert; the caller is
+# then responsible for applying the workaround once and reverting at the end.
+PERCPU_PREPATCHED="${PERCPU_PREPATCHED:-0}"
+
 echo "=== [1/5] Apply __seg_gs (named-address-space) workaround ==="
+if [ "$PERCPU_PREPATCHED" = 1 ]; then
+  echo "  skipped (PERCPU_PREPATCHED=1)"
+else
 # The gate location moved across kernel versions; patch whichever form
 # is present.  Goal: force __percpu_seg_override empty so current.h does
 # not use the __seg_gs qualifier the EDG extractor frontend can't parse.
@@ -35,6 +44,7 @@ if [ -f "$PERCPU_TYPES" ] && \
   echo "  patched percpu_types.h gate"; PATCHED=1
 fi
 [ "$PATCHED" = 0 ] && echo "  no known gate found (already patched or new layout?)"
+fi
 
 echo "=== [2/5] Clean target objects ==="
 # $TARGET may list MULTIPLE space-separated make targets; clean each one
@@ -78,9 +88,13 @@ fi
 rm -f "$QLDIR/_cov_check.ql" /tmp/_cov.bqrs
 
 echo "=== [5/5] Revert percpu.h ==="
+if [ "$PERCPU_PREPATCHED" = 1 ]; then
+  echo "  skipped (PERCPU_PREPATCHED=1)"
+else
 sed -i 's|^#if 0 /\* codeql: disable __seg_gs \*/|#ifdef CONFIG_CC_HAS_NAMED_AS|' "$PERCPU"
 if [ -f "$PERCPU_TYPES" ]; then
   sed -i 's|^#if 0 /\* codeql: disable __seg_gs \*/|#if defined(CONFIG_SMP) \&\& defined(CONFIG_CC_HAS_NAMED_AS)|' "$PERCPU_TYPES"
 fi
 echo "  reverted"
+fi
 echo "=== DONE: $DB ==="

@@ -1,0 +1,60 @@
+[   45.380069] enatest: enatest: running test 4
+[   45.380749] enatest: enatest: F4 max_wqes=64, device req_id=4096
+[   45.381134] ==================================================================
+[   45.381744] BUG: KASAN: slab-use-after-free in enatest_init+0x512/0xff0 [enatest]
+[   45.382926] Read of size 8 at addr ffff888002751400 by task insmod/74
+[   45.383254] 
+[   45.384071] CPU: 0 UID: 0 PID: 74 Comm: insmod Tainted: G           O       6.12.87-dirty #2
+[   45.384386] Tainted: [O]=OOT_MODULE
+[   45.384428] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.15.0-1 04/01/2014
+[   45.384685] Call Trace:
+[   45.384792]  <TASK>
+[   45.384916]  dump_stack_lvl+0x55/0x70
+[   45.385573]  print_report+0xcb/0x610
+[   45.385658]  ? __virt_addr_valid+0xfb/0x1b0
+[   45.385727]  ? enatest_init+0x512/0xff0 [enatest]
+[   45.385912]  kasan_report+0xaf/0xe0
+[   45.385986]  ? enatest_init+0x512/0xff0 [enatest]
+[   45.386186]  enatest_init+0x512/0xff0 [enatest]
+[   45.386361]  ? __pfx_enatest_init+0x10/0x10 [enatest]
+[   45.386535]  do_one_initcall+0x8d/0x330
+[   45.386607]  ? __pfx_do_one_initcall+0x10/0x10
+[   45.386668]  ? kasan_unpoison+0x27/0x60
+[   45.386728]  ? __kasan_slab_alloc+0x30/0x70
+[   45.386792]  ? __kmalloc_cache_noprof+0xd3/0x260
+[   45.386856]  ? kasan_unpoison+0x27/0x60
+[   45.386924]  do_init_module+0x135/0x390
+[   45.387001]  load_module+0x2ef5/0x3010
+[   45.387110]  ? __pfx_load_module+0x10/0x10
+[   45.387171]  ? inode_security+0x57/0x80
+[   45.387243]  ? security_file_permission+0x20/0x40
+[   45.387324]  ? kernel_read_file+0x19b/0x400
+[   45.387397]  ? __pfx_kernel_read_file+0x10/0x10
+[   45.387475]  ? init_module_from_file+0xcd/0x130
+[   45.387530]  init_module_from_file+0xcd/0x130
+[   45.387591]  ? __pfx_init_module_from_file+0x10/0x10
+[   45.387647]  ? _raw_spin_lock+0x80/0xe0
+[   45.387735]  ? __pfx__raw_spin_lock+0x10/0x10
+[   45.387814]  idempotent_init_module+0x263/0x3b0
+[   45.387882]  ? __pfx_idempotent_init_module+0x10/0x10
+[   45.387951]  ? cap_capable+0x9e/0xd0
+[   45.388017]  ? fdget+0x9c/0x1b0
+[   45.388087]  __x64_sys_finit_module+0x78/0xb0
+[   45.388152]  do_syscall_64+0xa6/0x1b0
+[   45.388215]  entry_SYSCALL_64_after_hwframe+0x77/0x7f
+[   45.388378] RIP: 0033:0x4886ed
+[   45.388585] Code: 5b 41 5c c3 66 0f 1f 84 00 00 00 00 00 f3 0f 1e fa 48 89 f8 48 89 f7 48 89 d6 48 89 ca 4d 89 c2 4d 89 c8 4c 8b 4c 24 08 0f 05 <48> 3d 01 f0 ff ff 73 01 c3 48 c7 c1 e0 ff ff ff f7 d8 64 89 01 48
+[   45.388728] RSP: 002b:00007ffe616482b8 EFLAGS: 00000246 ORIG_RAX: 0000000000000139
+[   45.388848] RAX: ffffffffffffffda RBX: 000000000000005e RCX: 00000000004886ed
+[   45.388912] RDX: 0000000000000000 RSI: 000000003672ab90 RDI: 0000000000000003
+[   45.388969] RBP: 0000000000000003 R08: 0000886400000000 R09: 0000000000000000
+[   45.389024] R10: 0000000000000808 R11: 0000000000000246 R12: 000000003672ab90
+[   45.389082] R13: 0000000000000000 R14: 0000000036729b48 R15: 0000000000000000
+[   45.389186]  </TASK>
+[   45.389284] 
+[   45.394628] Allocated by task 1:
+[   45.394907]  kasan_save_stack+0x24/0x50
+[   45.395122]  kasan_save_track+0x14/0x30
+[   45.395300]  __kasan_slab_alloc+0x59/0x70
+[   45.395481]  kmem_cache_alloc_noprof+0xbb/0x220
+[   45.395677]  acpi_ut_create_generic_state+0x3d/0x60

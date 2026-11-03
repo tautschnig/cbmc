@@ -1,0 +1,60 @@
+[   45.584561] enatest: enatest: running test 2
+[   45.584940] enatest: enatest: F2 MAX_SKB_FRAGS=17, driver allows descs<=19 -> 18 frags
+[   45.585723] enatest: enatest: F2 adding frag 1 (nr_frags=0)
+[   45.586209] enatest: enatest: F2 adding frag 2 (nr_frags=1)
+[   45.586599] enatest: enatest: F2 adding frag 3 (nr_frags=2)
+[   45.586844] enatest: enatest: F2 adding frag 4 (nr_frags=3)
+[   45.587063] enatest: enatest: F2 adding frag 5 (nr_frags=4)
+[   45.587248] enatest: enatest: F2 adding frag 6 (nr_frags=5)
+[   45.587549] enatest: enatest: F2 adding frag 7 (nr_frags=6)
+[   45.587755] enatest: enatest: F2 adding frag 8 (nr_frags=7)
+[   45.587941] enatest: enatest: F2 adding frag 9 (nr_frags=8)
+[   45.588124] enatest: enatest: F2 adding frag 10 (nr_frags=9)
+[   45.588311] enatest: enatest: F2 adding frag 11 (nr_frags=10)
+[   45.588609] enatest: enatest: F2 adding frag 12 (nr_frags=11)
+[   45.588804] enatest: enatest: F2 adding frag 13 (nr_frags=12)
+[   45.588991] enatest: enatest: F2 adding frag 14 (nr_frags=13)
+[   45.589177] enatest: enatest: F2 adding frag 15 (nr_frags=14)
+[   45.589455] enatest: enatest: F2 adding frag 16 (nr_frags=15)
+[   45.589666] enatest: enatest: F2 adding frag 17 (nr_frags=16)
+[   45.589854] enatest: enatest: F2 adding frag 18 (nr_frags=17)
+[   45.590154] ==================================================================
+[   45.590720] BUG: KASAN: slab-out-of-bounds in skb_add_rx_frag_netmem+0x7c/0x1e0
+[   45.591417] Write of size 8 at addr ffff888002653d40 by task insmod/75
+[   45.591706] 
+[   45.592493] CPU: 0 UID: 0 PID: 75 Comm: insmod Tainted: G           O       6.12.87-dirty #2
+[   45.592809] Tainted: [O]=OOT_MODULE
+[   45.592851] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.15.0-1 04/01/2014
+[   45.593100] Call Trace:
+[   45.593214]  <TASK>
+[   45.593335]  dump_stack_lvl+0x55/0x70
+[   45.593501]  print_report+0xcb/0x610
+[   45.593600]  ? __pfx_vprintk_emit+0x10/0x10
+[   45.593670]  ? __virt_addr_valid+0xfb/0x1b0
+[   45.593735]  ? skb_add_rx_frag_netmem+0x7c/0x1e0
+[   45.593807]  kasan_report+0xaf/0xe0
+[   45.593879]  ? skb_add_rx_frag_netmem+0x7c/0x1e0
+[   45.593962]  skb_add_rx_frag_netmem+0x7c/0x1e0
+[   45.594053]  enatest_init+0x3f2/0xff0 [enatest]
+[   45.594667]  ? __pfx_enatest_init+0x10/0x10 [enatest]
+[   45.594882]  do_one_initcall+0x8d/0x330
+[   45.594956]  ? sysvec_apic_timer_interrupt+0xf/0x80
+[   45.595034]  ? __pfx_do_one_initcall+0x10/0x10
+[   45.595110]  ? do_init_module+0xcb/0x390
+[   45.595171]  ? __pfx__sub_I_65535_1+0x10/0x10 [enatest]
+[   45.595354]  ? do_init_module+0xfd/0x390
+[   45.595411]  ? kasan_unpoison+0x27/0x60
+[   45.595486]  do_init_module+0x135/0x390
+[   45.595562]  load_module+0x2ef5/0x3010
+[   45.595677]  ? __pfx_load_module+0x10/0x10
+[   45.595739]  ? sysvec_apic_timer_interrupt+0xf/0x80
+[   45.595827]  ? kernel_read_file+0x19b/0x400
+[   45.595914]  ? __pfx_kernel_read_file+0x10/0x10
+[   45.595995]  ? init_module_from_file+0xcd/0x130
+[   45.596052]  init_module_from_file+0xcd/0x130
+[   45.596115]  ? __pfx_init_module_from_file+0x10/0x10
+[   45.596174]  ? _raw_spin_lock+0x80/0xe0
+[   45.596263]  ? __pfx__raw_spin_lock+0x10/0x10
+[   45.596338]  idempotent_init_module+0x263/0x3b0
+[   45.596406]  ? __pfx_idempotent_init_module+0x10/0x10
+[   45.596475]  ? cap_capable+0x9e/0xd0

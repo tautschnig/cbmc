@@ -1,0 +1,6 @@
+obj-m += enatest.o
+enatest-objs := enatest_main.o ena_com.o ena_eth_com.o
+ccflags-y := -I$(src) -DENA_PHC_SUPPORT
+KERNEL_BUILD_DIR ?= /home/ubuntu/linux-kasan
+all:
+	$(MAKE) -C $(KERNEL_BUILD_DIR) M=$(CURDIR) modules
