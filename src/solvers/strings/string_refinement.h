@@ -184,6 +184,10 @@ private:
   /// Sets the lengths of the arrays the array pool makes for pointers.
   string_length_tiest length_ties;
 
+  /// Definitions of the names of accesses to merged strings, made by
+  /// rewriting array accesses, that add_lemma has yet to add.
+  std::vector<exprt> access_definitions;
+
   void add_lemma(const exprt &lemma, bool simplify_lemma = true);
 };
 

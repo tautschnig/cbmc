@@ -93,7 +93,8 @@ static exprt substitute_array_access(
   exprt expr,
   std::unordered_map<exprt, exprt, irep_hash> &memo,
   symbol_generatort &symbol_generator,
-  const bool left_propagate);
+  const bool left_propagate,
+  std::vector<exprt> &definitions);
 
 exprt simplify_sum(const exprt &f);
 
@@ -1077,7 +1078,11 @@ string_refinementt::dec_solve(const exprt &assumption)
   for(const exprt &lemma : constraints.existential)
   {
     add_lemma(substitute_array_access(
-      lemma, substitution_memo, generator.fresh_symbol, true));
+      lemma,
+      substitution_memo,
+      generator.fresh_symbol,
+      true,
+      access_definitions));
   }
   for(const exprt &tie : length_ties_of_round)
     add_lemma(tie);
@@ -1133,7 +1138,11 @@ string_refinementt::dec_solve(const exprt &assumption)
   for(const auto &instance : initial_instances)
   {
     add_lemma(substitute_array_access(
-      instance, substitution_memo, generator.fresh_symbol, true));
+      instance,
+      substitution_memo,
+      generator.fresh_symbol,
+      true,
+      access_definitions));
   }
 
   // Consecutive refinement rounds where update_index_set found no new index
@@ -1229,7 +1238,11 @@ string_refinementt::dec_solve(const exprt &assumption)
         generate_instantiations(index_sets, axioms, not_contain_witnesses);
       for(const auto &instance : instances)
         add_lemma(substitute_array_access(
-          instance, substitution_memo, generator.fresh_symbol, true));
+          instance,
+          substitution_memo,
+          generator.fresh_symbol,
+          true,
+          access_definitions));
     }
     else
     {
@@ -1369,6 +1382,13 @@ void string_refinementt::add_lemma(
   const bool simplify_lemma)
 {
   add_length_definitions();
+  // The definitions of the names that rewriting array accesses made (see
+  // substitute_array_access); their accesses update the index set as those
+  // of the lemmas that use the names would have.
+  const std::vector<exprt> definitions = std::move(access_definitions);
+  access_definitions.clear();
+  for(const auto &definition : definitions)
+    add_lemma(definition);
   if(!seen_instances.insert(lemma).second)
     return;
 
@@ -1721,7 +1741,8 @@ static exprt substitute_array_access_rec(
   const exprt &expr,
   std::unordered_map<exprt, exprt, irep_hash> &memo,
   symbol_generatort &symbol_generator,
-  const bool left_propagate)
+  const bool left_propagate,
+  std::vector<exprt> *definitions)
 {
   if(!expr.has_operands())
     return expr;
@@ -1730,7 +1751,40 @@ static exprt substitute_array_access_rec(
     return found->second;
 
   exprt result = expr;
-  if(const auto index_expr = expr_try_dynamic_cast<index_exprt>(expr))
+  const auto index_expr = expr_try_dynamic_cast<index_exprt>(expr);
+  if(index_expr && index_expr->array().id() == ID_if)
+  {
+    // (c ? a : b)[i] is c ? a[i] : b[i]. The branches are rewritten through
+    // the memo: strings merged at join points of a program are nested
+    // choices that share their branches, which a recursion outside the
+    // memo would rewrite once per path.
+    const if_exprt &array = to_if_expr(index_expr->array());
+    result = if_exprt{
+      array.cond(),
+      index_exprt{array.true_case(), index_expr->index()},
+      index_exprt{array.false_case(), index_expr->index()}};
+    for(auto &operand : result.operands())
+    {
+      exprt new_operand = substitute_array_access_rec(
+        operand, memo, symbol_generator, left_propagate, definitions);
+      if(new_operand != operand)
+        operand = std::move(new_operand);
+    }
+    if(definitions)
+    {
+      // Name the choice, so that the expressions that contain it are
+      // small: their tree size would otherwise grow with the number of
+      // paths through the merges, and the simplifier, the lemma merger and
+      // symbol resolution walk them as trees.
+      const symbol_exprt name =
+        symbol_generator("merged_string_char", result.type());
+      definitions->push_back(equal_exprt{name, std::move(result)});
+      result = name;
+    }
+    memo.emplace(expr, result);
+    return result;
+  }
+  if(index_expr)
   {
     if(
       std::optional<exprt> replaced =
@@ -1742,7 +1796,7 @@ static exprt substitute_array_access_rec(
   for(auto &operand : result.operands())
   {
     exprt new_operand = substitute_array_access_rec(
-      operand, memo, symbol_generator, left_propagate);
+      operand, memo, symbol_generator, left_propagate, definitions);
     if(new_operand != operand)
       operand = std::move(new_operand);
   }
@@ -1756,23 +1810,26 @@ static void substitute_array_access_in_place(
   const bool left_propagate)
 {
   std::unordered_map<exprt, exprt, irep_hash> memo;
-  expr =
-    substitute_array_access_rec(expr, memo, symbol_generator, left_propagate);
+  expr = substitute_array_access_rec(
+    expr, memo, symbol_generator, left_propagate, nullptr);
 }
 
 /// substitute_array_access with a memo that persists across calls, so that
 /// the same array access gets the same result in every lemma: the
 /// out-of-bounds value of a constant array is then one symbol per access
 /// rather than a fresh one per lemma, and the comparisons that select the
-/// element are shared.
+/// element are shared. An access to a merged string, (c ? a : b)[i], is
+/// replaced by a fresh symbol, whose definition is appended to
+/// \p definitions; the caller must assert it.
 static exprt substitute_array_access(
   exprt expr,
   std::unordered_map<exprt, exprt, irep_hash> &memo,
   symbol_generatort &symbol_generator,
-  const bool left_propagate)
+  const bool left_propagate,
+  std::vector<exprt> &definitions)
 {
   return substitute_array_access_rec(
-    expr, memo, symbol_generator, left_propagate);
+    expr, memo, symbol_generator, left_propagate, &definitions);
 }
 
 /// Create an equivalent expression where array accesses and 'with' expressions

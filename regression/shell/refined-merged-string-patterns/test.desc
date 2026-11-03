@@ -1,0 +1,14 @@
+CORE
+main.sh
+--shell-strings refined --unwind 3
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: SUCCESS$
+^\[\.unwind\.0\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The loop variable is a string merged over the arguments, so the accesses
+in the suffix tests are choices that share their branches across the
+unwindings: rewritten as trees, they took 39 s and 1.9 GB.
