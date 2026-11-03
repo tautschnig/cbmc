@@ -293,8 +293,11 @@ switch_to_thread(goto_symex_statet &state, const unsigned int thread_nb)
   state.source.function_id = state.threads[thread_nb].function_id;
 
   state.guard = state.threads[thread_nb].guard;
-  // A thread's initial state is certainly reachable:
+  // A thread's initial state is certainly reachable, and outside any atomic
+  // section (the previous thread may have ended in one, on a path that an
+  // assumption made unreachable):
   state.reachable = true;
+  state.atomic_section_id = state.threads[thread_nb].atomic_section_id;
 }
 
 void goto_symext::symex_threaded_step(

@@ -1,0 +1,14 @@
+CORE
+main.c
+
+^\[thread.assertion.1\] line 6 thread runs: FAILURE$
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+we don't support nesting of atomic sections
+^warning: ignoring
+--
+A thread that ends inside an atomic section, on a path that an assumption
+made unreachable, must not leave the next thread in that atomic section
+(the assumption only stops main).
