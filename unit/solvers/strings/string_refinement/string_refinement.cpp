@@ -28,8 +28,11 @@ SCENARIO("string refinement", "[core][solvers][strings][string_refinement]")
   info.message_handler = &log;
 
   info.ns = &empty_namespace;
+  info.refinement_bound = DEFAULT_MAX_NB_REFINEMENT;
 
-  satcheckt sat_solver{log};
+  // Refinement adds clauses after solving, which a simplifying solver may
+  // reject for eliminated variables.
+  satcheck_no_simplifiert sat_solver{log};
   info.prop = &sat_solver;
 
   string_refinementt solver{info};
@@ -48,8 +51,8 @@ SCENARIO("string refinement", "[core][solvers][strings][string_refinement]")
     // associate_array_to_pointer : (char[], *char) -> int
     const symbol_exprt associate_array_to_pointer{
       ID_cprover_associate_array_to_pointer_func,
-      mathematical_function_typet{{char_array_type, pointer_type(char_type)},
-                                  int_type}};
+      mathematical_function_typet{
+        {char_array_type, pointer_type(char_type)}, int_type}};
 
     // associate_length_to_array : (int, char[]) -> int
     const symbol_exprt associate_length_to_array{
@@ -71,8 +74,8 @@ SCENARIO("string refinement", "[core][solvers][strings][string_refinement]")
     solver.set_to(
       equal_exprt{
         return_code1,
-        function_application_exprt{associate_array_to_pointer,
-                                   std::vector<exprt>{array1, pointer1}}},
+        function_application_exprt{
+          associate_array_to_pointer, std::vector<exprt>{array1, pointer1}}},
       true);
 
     // return_code2 == associate_length_to_array(length1, array1)
@@ -80,8 +83,8 @@ SCENARIO("string refinement", "[core][solvers][strings][string_refinement]")
     solver.set_to(
       equal_exprt{
         return_code1,
-        function_application_exprt{associate_length_to_array,
-                                   std::vector<exprt>{array1, length1}}},
+        function_application_exprt{
+          associate_length_to_array, std::vector<exprt>{array1, length1}}},
       true);
 
     WHEN(
@@ -90,9 +93,10 @@ SCENARIO("string refinement", "[core][solvers][strings][string_refinement]")
     {
       const symbol_exprt return_length{"return_length", int_type};
       solver.set_to(
-        equal_exprt{return_length,
-                    function_application_exprt{
-                      length_function, std::vector<exprt>{string_expr}}},
+        equal_exprt{
+          return_length,
+          function_application_exprt{
+            length_function, std::vector<exprt>{string_expr}}},
         true);
 
       solver.set_to(
@@ -155,24 +159,26 @@ SCENARIO("string refinement", "[core][solvers][strings][string_refinement]")
       solver.set_to(
         implies_exprt{
           g1,
-          and_exprt{equal_exprt{length1, from_integer(10, int_type)},
-                    equal_exprt{from_integer('b', char_type),
-                                function_application_exprt{
-                                  char_at_function,
-                                  std::vector<exprt>{
-                                    string_expr, from_integer(9, int_type)}}}}},
+          and_exprt{
+            equal_exprt{length1, from_integer(10, int_type)},
+            equal_exprt{
+              from_integer('b', char_type),
+              function_application_exprt{
+                char_at_function,
+                std::vector<exprt>{string_expr, from_integer(9, int_type)}}}}},
         true);
 
       const symbol_exprt g2{"g2", bool_typet{}};
       solver.set_to(
         implies_exprt{
           g2,
-          and_exprt{equal_exprt{length1, from_integer(10, int_type)},
-                    equal_exprt{from_integer('c', char_type),
-                                function_application_exprt{
-                                  char_at_function,
-                                  std::vector<exprt>{
-                                    string_expr, from_integer(3, int_type)}}}}},
+          and_exprt{
+            equal_exprt{length1, from_integer(10, int_type)},
+            equal_exprt{
+              from_integer('c', char_type),
+              function_application_exprt{
+                char_at_function,
+                std::vector<exprt>{string_expr, from_integer(3, int_type)}}}}},
         true);
 
       solver.set_to(and_exprt{g1, g2}, true);
@@ -282,6 +288,155 @@ SCENARIO("string refinement", "[core][solvers][strings][string_refinement]")
         THEN("Both calls constrain array2, which cannot have both lengths")
         {
           REQUIRE(solver() == decision_proceduret::resultt::D_UNSATISFIABLE);
+        }
+      }
+    }
+
+    GIVEN("length1 == 10 and searches for digits and letters")
+    {
+      solver.set_to(equal_exprt{length1, from_integer(10, int_type)}, true);
+
+      // A set of characters is a constant bit-vector whose bit i is set if
+      // the character with code i is in the set.
+      const unsignedbv_typet mask_type{256};
+      const auto mask = [&](std::initializer_list<std::pair<char, char>> ranges)
+      {
+        mp_integer value = 0;
+        for(const auto &range : ranges)
+        {
+          for(int c = range.first; c <= range.second; ++c)
+            value += power(2, c);
+        }
+        return from_integer(value, mask_type);
+      };
+
+      // index_of_set : (string, int, mask) -> int
+      const symbol_exprt index_of_set{
+        ID_cprover_string_index_of_set_func,
+        mathematical_function_typet{
+          {string_type, int_type, mask_type}, int_type}};
+      // last_index_of_set : (string, int, mask) -> int
+      const symbol_exprt last_index_of_set{
+        ID_cprover_string_last_index_of_set_func,
+        mathematical_function_typet{
+          {string_type, int_type, mask_type}, int_type}};
+
+      // first_digit == index_of_set(string, 1, [0-9])
+      const symbol_exprt first_digit{"first_digit", int_type};
+      solver.set_to(
+        equal_exprt{
+          first_digit,
+          function_application_exprt{
+            index_of_set,
+            std::vector<exprt>{
+              string_expr, from_integer(1, int_type), mask({{'0', '9'}})}}},
+        true);
+      // last_letter == last_index_of_set(string, 8, [a-zA-Z])
+      const symbol_exprt last_letter{"last_letter", int_type};
+      solver.set_to(
+        equal_exprt{
+          last_letter,
+          function_application_exprt{
+            last_index_of_set,
+            std::vector<exprt>{
+              string_expr,
+              from_integer(8, int_type),
+              mask({{'a', 'z'}, {'A', 'Z'}})}}},
+        true);
+
+      const auto char_at = [&](int i)
+      {
+        return function_application_exprt{
+          char_at_function,
+          std::vector<exprt>{string_expr, from_integer(i, int_type)}};
+      };
+
+      WHEN("first_digit == 4 and last_letter == 6")
+      {
+        solver.set_to(
+          and_exprt{
+            equal_exprt{first_digit, from_integer(4, int_type)},
+            equal_exprt{last_letter, from_integer(6, int_type)}},
+          true);
+        THEN(
+          "The model has a digit at 4 and none at 1 to 3, and a letter at 6 "
+          "and none at 7 and 8")
+        {
+          REQUIRE(solver() == decision_proceduret::resultt::D_SATISFIABLE);
+          const exprt array_model = solver.get(array1);
+          REQUIRE(can_cast_expr<array_exprt>(array_model));
+          const std::vector<exprt> &elements =
+            to_array_expr(array_model).operands();
+          REQUIRE(elements.size() == 10);
+          const auto value = [&](std::size_t i)
+          {
+            REQUIRE(elements[i].is_constant());
+            return numeric_cast_v<unsigned>(to_constant_expr(elements[i]));
+          };
+          const auto is_digit = [&](std::size_t i)
+          { return value(i) >= '0' && value(i) <= '9'; };
+          const auto is_letter = [&](std::size_t i)
+          {
+            return (value(i) >= 'a' && value(i) <= 'z') ||
+                   (value(i) >= 'A' && value(i) <= 'Z');
+          };
+          for(std::size_t i = 1; i < 4; ++i)
+            REQUIRE(!is_digit(i));
+          REQUIRE(is_digit(4));
+          REQUIRE(is_letter(6));
+          REQUIRE(!is_letter(7));
+          REQUIRE(!is_letter(8));
+        }
+      }
+
+      WHEN("There is a digit at 7 but first_digit == -1")
+      {
+        solver.set_to(
+          and_exprt{
+            equal_exprt{char_at(7), from_integer('5', char_type)},
+            equal_exprt{first_digit, from_integer(-1, int_type)}},
+          true);
+        THEN("The formula is unsatisfiable")
+        {
+          REQUIRE(solver() == decision_proceduret::resultt::D_UNSATISFIABLE);
+        }
+      }
+
+      WHEN("There is a digit at 0 and first_digit == -1")
+      {
+        solver.set_to(
+          equal_exprt{first_digit, from_integer(-1, int_type)}, true);
+        solver.set_to(
+          equal_exprt{char_at(0), from_integer('5', char_type)}, true);
+        THEN("The formula is satisfiable: the search starts at 1")
+        {
+          REQUIRE(solver() == decision_proceduret::resultt::D_SATISFIABLE);
+        }
+      }
+
+      WHEN("There is a letter at 8 but last_letter == 6")
+      {
+        solver.set_to(
+          and_exprt{
+            equal_exprt{char_at(8), from_integer('Q', char_type)},
+            equal_exprt{last_letter, from_integer(6, int_type)}},
+          true);
+        THEN("The formula is unsatisfiable")
+        {
+          REQUIRE(solver() == decision_proceduret::resultt::D_UNSATISFIABLE);
+        }
+      }
+
+      WHEN("There is a letter at 9 and last_letter == -1")
+      {
+        solver.set_to(
+          and_exprt{
+            equal_exprt{char_at(9), from_integer('q', char_type)},
+            equal_exprt{last_letter, from_integer(-1, int_type)}},
+          true);
+        THEN("The formula is satisfiable: the search ends at 8")
+        {
+          REQUIRE(solver() == decision_proceduret::resultt::D_SATISFIABLE);
         }
       }
     }
