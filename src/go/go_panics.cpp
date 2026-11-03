@@ -659,6 +659,19 @@ void go_convertert::convert_go(const irept &stmt, code_blockt &dest)
   const exprt env = evaluate_once(function.operands()[1], location, prefix);
   for(auto &statement : prefix.statements())
     dest.add(std::move(statement));
+  // The new goroutine is live (see park).
+  if(deadlock_check)
+  {
+    const symbol_exprt live = deadlock_variable("live");
+    codet begin{ID_atomic_begin};
+    begin.add_source_location() = location;
+    dest.add(std::move(begin));
+    dest.add(code_frontend_assignt{
+      live, plus_exprt{live, from_integer(1, live.type())}});
+    codet end{ID_atomic_end};
+    end.add_source_location() = location;
+    dest.add(std::move(end));
+  }
 
   code_blockt thread;
   const auto assign = [&](const exprt &lhs, const exprt &rhs)
@@ -687,6 +700,7 @@ void go_convertert::convert_go(const irept &stmt, code_blockt &dest)
     check.symbol_expr(), {}, empty_typet{}, location};
   check_call.set(ID_C_go_no_unwind, true);
   thread.add(code_expressiont{std::move(check_call)});
+  goroutine_end(location, thread);
   code_labelt start{CPROVER_PREFIX "ASYNC_1", std::move(thread)};
   start.add_source_location() = location;
   dest.add(std::move(start));

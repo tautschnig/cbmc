@@ -1,0 +1,12 @@
+CORE
+main.go
+--unwind 4
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.deadlock\.[0-9]+\] line 7 all goroutines are asleep - deadlock!: FAILURE$
+^\[go::main\.main\$lit1\.deadlock\.[0-9]+\] line 6 all goroutines are asleep - deadlock!: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Each goroutine of the deadlock reports it where it blocks.

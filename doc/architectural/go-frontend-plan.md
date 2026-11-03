@@ -440,6 +440,23 @@ Supported so far:
   sections) and `rt.Fatal` (property class `fatal`, for gc's fatal
   errors such as "sync: unlock of unlocked mutex", which `recover`
   cannot stop); blocking operations assume that they can proceed.
+- Deadlocks (property class `deadlock`, gc's "all goroutines are asleep
+  - deadlock!"; `--go-no-deadlock-check` disables them). At each
+  blocking operation (channel operations, `select` without `default`,
+  and the models' `rt.AtomicBeginWhen` for `Mutex`, `RWMutex` and
+  `WaitGroup`), a goroutine that cannot proceed may instead park
+  (nondeterministically) and never continue: it counts itself in
+  `go::$parked`; once all live goroutines (`go::$live`, counting main,
+  which stays live after returning, so that the program then ends rather
+  than deadlocks) have parked, no goroutine changes the state any more,
+  and each confirms that it still cannot proceed; when all have
+  confirmed, an assertion at the blocking operation fails. A parked
+  `select` waits as a receiver on its unbuffered channels, so that a
+  sender sees it, and the operations of a committed `select` case do not
+  park. The parking has atomic sections of its own, before the
+  operation's: goto-symex's atomic sections must not span branches that
+  leave and re-enter them. The check costs about 2.5 to 4 times the
+  verification time of the channel and sync tests.
 - Run-time panics, emitted by the converter (`goto_check_c` skips non-C
   modes) as a jump to the end of the function after recording the panic
   (see below). They cover
@@ -650,9 +667,9 @@ Known limitations:
 - **Concurrency.** Data races are not reported: by GoMem §model,
   data-race-free programs behave sequentially consistently, which is what CBMC encodes
   (racy programs are verified under sequential consistency, which gc
-  does not guarantee). Deadlocks are not reported either: a goroutine
-  that blocks forever (also all of them, which gc reports as a fatal
-  error) just does not continue. `select` without a default case
+  does not guarantee). A goroutine that blocks forever just does not
+  continue; when all do, the deadlock is reported (see Deadlocks above),
+  within the bounds of the unwinding. `select` without a default case
   over-approximates: it may commit to a case before it can proceed (and
   then wait for it), which gc only does for a case that can proceed, so
   a property may fail in an execution gc never produces. Loops in

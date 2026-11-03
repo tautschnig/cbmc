@@ -1,0 +1,11 @@
+CORE
+main.go
+--go-no-deadlock-check
+^EXIT=0$
+^SIGNAL=0$
+^\*\* 0 of [0-9]+ failed
+--
+deadlock!: FAILURE$
+^warning: ignoring
+--
+The check can be disabled.

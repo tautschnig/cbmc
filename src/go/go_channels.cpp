@@ -72,6 +72,108 @@ static dereference_exprt buffer_at(const exprt &chan, const exprt &index)
     typecast_exprt::conditional_cast(index, c_index_type())}};
 }
 
+symbol_exprt go_convertert::deadlock_variable(const std::string &name)
+{
+  const irep_idt id = "go::$" + name;
+  const signedbv_typet type{config.go.int_width};
+  if(!symbol_table.has_symbol(id))
+  {
+    symbolt symbol{id, type, "go"};
+    symbol.base_name = "$" + name;
+    symbol.pretty_name = symbol.base_name;
+    symbol.is_static_lifetime = true;
+    symbol.is_lvalue = true;
+    symbol.module = parse_tree.package;
+    // main is live from the start.
+    symbol.value = from_integer(name == "live" ? 1 : 0, type);
+    symbol_table.add(symbol);
+  }
+  return symbol_exprt{id, type};
+}
+
+void go_convertert::block_until(
+  const exprt &ready,
+  bool may_park,
+  const source_locationt &location,
+  code_blockt &dest)
+{
+  block_until([&ready]() { return ready; }, may_park, location, dest);
+}
+
+void go_convertert::block_until(
+  const std::function<exprt()> &condition,
+  bool may_park,
+  const source_locationt &location,
+  code_blockt &dest)
+{
+  // Go's runtime reports `fatal error: all goroutines are asleep -
+  // deadlock!` when all goroutines are blocked. A goroutine that would
+  // block may instead park (see park), and never continue, so that only
+  // the executions in which it is blocked forever are affected; otherwise
+  // it blocks as before, by assuming in the atomic section that it can
+  // proceed. The parking has atomic sections of its own, before the
+  // operation's: goto-symex's atomic sections must not span branches that
+  // leave and re-enter them.
+  if(may_park && deadlock_check)
+    park(condition, code_blockt{}, location, dest);
+  dest.add(atomic_begin(location));
+  dest.add(code_assumet{condition()});
+}
+
+void go_convertert::park(
+  const std::function<exprt()> &condition,
+  const code_blockt &announce,
+  const source_locationt &location,
+  code_blockt &dest)
+{
+  // A goroutine that parks counts itself in $parked. Once all live
+  // goroutines have parked ($parked = $live), no goroutine changes the
+  // state any more; each then confirms that it still cannot proceed, and
+  // when all have confirmed, the program is deadlocked. main stays live
+  // after it returns, without parking, so that the program then ends
+  // rather than deadlocks.
+  const symbol_exprt live = deadlock_variable("live");
+  const symbol_exprt parked = deadlock_variable("parked");
+  const symbol_exprt confirmed = deadlock_variable("confirmed");
+  const exprt one = from_integer(1, live.type());
+
+  code_blockt park;
+  park.add(atomic_begin(location));
+  park.add(code_assumet{not_exprt{condition()}});
+  for(const auto &statement : announce.statements())
+    park.add(statement);
+  park.add(code_frontend_assignt{parked, plus_exprt{parked, one}});
+  park.add(atomic_end(location));
+  park.add(atomic_begin(location));
+  park.add(
+    code_assumet{and_exprt{equal_exprt{parked, live}, not_exprt{condition()}}});
+  park.add(code_frontend_assignt{confirmed, plus_exprt{confirmed, one}});
+  source_locationt property = location;
+  property.set_property_class("deadlock");
+  property.set_comment("all goroutines are asleep - deadlock!");
+  code_assertt deadlock{notequal_exprt{confirmed, live}};
+  deadlock.add_source_location() = property;
+  park.add(std::move(deadlock));
+  park.add(atomic_end(location));
+  park.add(code_assumet{false_exprt{}});
+  dest.add(code_ifthenelset{
+    side_effect_expr_nondett{bool_typet{}, location}, std::move(park)});
+}
+
+void go_convertert::goroutine_end(
+  const source_locationt &location,
+  code_blockt &dest)
+{
+  // A goroutine that ends is no longer live (see park).
+  if(!deadlock_check)
+    return;
+  const symbol_exprt live = deadlock_variable("live");
+  dest.add(atomic_begin(location));
+  dest.add(code_frontend_assignt{
+    live, minus_exprt{live, from_integer(1, live.type())}});
+  dest.add(atomic_end(location));
+}
+
 exprt go_convertert::make_chan(
   const typet &type,
   const exprt &size,
@@ -201,7 +303,8 @@ void go_convertert::chan_send_finish(
   const exprt &failed,
   const exprt &ticket,
   const source_locationt &location,
-  code_blockt &dest)
+  code_blockt &dest,
+  bool may_park)
 {
   // On an unbuffered channel, the send completes when a receiver has
   // taken the value; if the channel is closed before, it panics (and the
@@ -209,10 +312,10 @@ void go_convertert::chan_send_finish(
   const exprt cap = field(chan, "cap");
   const exprt recvd = field(chan, "recvd");
   code_blockt wait;
-  wait.add(atomic_begin(location));
-  wait.add(code_assumet{or_exprt{
+  const or_exprt taken{
     binary_relation_exprt{recvd, ID_ge, ticket},
-    as_bool(field(chan, "closed"))}});
+    as_bool(field(chan, "closed"))};
+  block_until(taken, may_park, location, wait);
   wait.add(
     code_frontend_assignt{failed, binary_relation_exprt{recvd, ID_lt, ticket}});
   wait.add(code_ifthenelset{
@@ -234,20 +337,22 @@ void go_convertert::chan_send(
   const exprt &chan,
   const exprt &value,
   const source_locationt &location,
-  code_blockt &dest)
+  code_blockt &dest,
+  bool may_park)
 {
   // "A send on a nil channel blocks forever."
-  dest.add(code_assumet{
-    notequal_exprt{chan, null_pointer_exprt{to_pointer_type(chan.type())}}});
+  const exprt not_nil =
+    notequal_exprt{chan, null_pointer_exprt{to_pointer_type(chan.type())}};
+  block_until(not_nil, may_park, location, dest);
+  dest.add(atomic_end(location));
   const symbol_exprt failed = new_temporary(bool_typet{}, location, dest);
   const symbol_exprt ticket =
     new_temporary(field(chan, "sent").type(), location, dest);
   dest.add(code_frontend_assignt{ticket, int_constant(0, ticket)});
-  dest.add(atomic_begin(location));
-  dest.add(code_assumet{send_ready_blocking(chan)});
+  block_until(send_ready_blocking(chan), may_park, location, dest);
   chan_send_step(chan, value, failed, ticket, dest);
   dest.add(atomic_end(location));
-  chan_send_finish(chan, failed, ticket, location, dest);
+  chan_send_finish(chan, failed, ticket, location, dest, may_park);
 }
 
 void go_convertert::chan_recv_step(
@@ -306,11 +411,14 @@ void go_convertert::chan_recv(
   const exprt &value,
   const exprt &ok,
   const source_locationt &location,
-  code_blockt &dest)
+  code_blockt &dest,
+  bool may_park)
 {
   // "Receiving from a nil channel blocks forever."
-  dest.add(code_assumet{
-    notequal_exprt{chan, null_pointer_exprt{to_pointer_type(chan.type())}}});
+  const exprt not_nil =
+    notequal_exprt{chan, null_pointer_exprt{to_pointer_type(chan.type())}};
+  block_until(not_nil, may_park, location, dest);
+  dest.add(atomic_end(location));
   const exprt cap = field(chan, "cap");
   const exprt waiting = field(chan, "waiting");
   const exprt unbuffered = equal_exprt{cap, int_constant(0, cap)};
@@ -321,8 +429,7 @@ void go_convertert::chan_recv(
     waiting, plus_exprt{waiting, int_constant(1, waiting)}});
   announce.add(atomic_end(location));
   dest.add(code_ifthenelset{unbuffered, std::move(announce)});
-  dest.add(atomic_begin(location));
-  dest.add(code_assumet{recv_ready(chan)});
+  block_until(recv_ready(chan), may_park, location, dest);
   dest.add(code_ifthenelset{
     unbuffered,
     code_frontend_assignt{
@@ -605,6 +712,26 @@ void go_convertert::convert_select(
   scope.add(code_frontend_assignt{
     choice, side_effect_expr_nondett{index_type, location}});
   scope.add(code_frontend_assignt{commit, false_exprt{}});
+  // Without a default case, the select may be part of a deadlock if none
+  // of its cases can proceed; then it waits on all of them, as a receiver
+  // on its unbuffered channels.
+  if(!has_default && deadlock_check)
+  {
+    code_blockt announce;
+    for(const auto &c : cases)
+    {
+      if(c.chan.is_nil() || c.is_send)
+        continue;
+      const exprt cap = field(c.chan, "cap");
+      const exprt waiting = field(c.chan, "waiting");
+      announce.add(code_ifthenelset{
+        and_exprt{not_nil(c.chan), equal_exprt{cap, int_constant(0, cap)}},
+        code_frontend_assignt{
+          waiting, plus_exprt{waiting, int_constant(1, waiting)}}});
+    }
+    const exprt any_ready = disjunction(ready);
+    park([&any_ready]() { return any_ready; }, announce, location, scope);
+  }
   scope.add(atomic_begin(location));
   if(has_default)
   {
@@ -621,7 +748,8 @@ void go_convertert::convert_select(
   else
   {
     // Either a case that can proceed now, or (commit) any case, performed
-    // after the atomic section as a blocking operation.
+    // after the atomic section as a blocking operation (which then is not a
+    // deadlock of its own).
     exprt::operandst any_case;
     for(std::size_t i = 0; i < cases.size(); ++i)
       any_case.push_back(equal_exprt{choice, index(i)});
@@ -655,8 +783,7 @@ void go_convertert::convert_select(
   if(cases.empty())
   {
     // "a select with only nil channels and no default case blocks
-    // forever", as does select {}.
-    scope.add(code_assumet{false_exprt{}});
+    // forever", as does select {} (block_until above).
   }
   for(std::size_t i = 0; i < cases.size(); ++i)
   {
@@ -668,15 +795,15 @@ void go_convertert::convert_select(
       if(c.is_send)
       {
         code_blockt now;
-        chan_send_finish(c.chan, c.failed, c.ticket, location, now);
+        chan_send_finish(c.chan, c.failed, c.ticket, location, now, false);
         code_blockt later;
-        chan_send(c.chan, c.value, location, later);
+        chan_send(c.chan, c.value, location, later, false);
         clause.add(code_ifthenelset{commit, std::move(later), std::move(now)});
       }
       else
       {
         code_blockt later;
-        chan_recv(c.chan, c.value, c.ok, location, later);
+        chan_recv(c.chan, c.value, c.ok, location, later, false);
         clause.add(code_ifthenelset{commit, std::move(later)});
         // "If the selected case is a RecvStmt with a short variable
         // declaration or an assignment, the left-hand side expressions are

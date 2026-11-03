@@ -273,6 +273,12 @@ func AtomicBegin() {}
 // AtomicEnd ends the atomic section that AtomicBegin started.
 func AtomicEnd() {}
 
+// AtomicBeginWhen starts an atomic section once cond holds, as
+// AtomicBegin: the goroutine blocks until then (only the executions in
+// which cond holds continue), and if all goroutines block forever, the
+// deadlock is reported.
+func AtomicBeginWhen(cond bool) {}
+
 // Fatal reports a fatal error with constant message msg and stops the
 // program, as the runtime's fatal errors (which deferred functions cannot
 // recover from) do: a failing property of class "fatal".

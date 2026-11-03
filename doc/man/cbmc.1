@@ -196,6 +196,10 @@ capacities of \fBappend\fR) are modelled: \fBgc\fR (go1.27), \fBtinygo\fR
 (0.44) or \fBany\fR (any choice the specification allows); by default,
 \fBgc\fR if the \fBgo\fR command is gc go1.27, else \fBany\fR (TinyGo
 cannot be detected, as it uses the \fBgo\fR command's standard library)
+.TP
+\fB\-\-go\-no\-deadlock\-check\fR
+do not report deadlocks (all goroutines blocked), which the check
+otherwise does at some cost for programs with goroutines
 .SS "Platform options:"
 .TP
 \fB\-\-arch\fR \fIarch\fR

@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 4
+^EXIT=10$
+^SIGNAL=0$
+^\[go::sync\.Mutex\.Lock\.deadlock\.1\] line [0-9]+ all goroutines are asleep - deadlock!: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Deadlocks in the sync models (rt.AtomicBeginWhen).

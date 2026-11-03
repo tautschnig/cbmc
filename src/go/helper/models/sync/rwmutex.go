@@ -9,7 +9,6 @@
 package sync
 
 import (
-	"cprover"
 	"cprover/rt"
 )
 
@@ -23,8 +22,7 @@ type RWMutex struct {
 // RLock locks rw for reading.
 func (rw *RWMutex) RLock() {
 	_ = *rw
-	rt.AtomicBegin()
-	cprover.Assume(!rw.writer)
+	rt.AtomicBeginWhen(!rw.writer)
 	rw.readers++
 	rt.AtomicEnd()
 }
@@ -56,8 +54,7 @@ func (rw *RWMutex) RUnlock() {
 // Lock locks rw for writing.
 func (rw *RWMutex) Lock() {
 	_ = *rw
-	rt.AtomicBegin()
-	cprover.Assume(!rw.writer && rw.readers == 0)
+	rt.AtomicBeginWhen(!rw.writer && rw.readers == 0)
 	rw.writer = true
 	rt.AtomicEnd()
 }

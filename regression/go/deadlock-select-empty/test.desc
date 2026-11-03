@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 4
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.deadlock\.[0-9]+\] line 8 all goroutines are asleep - deadlock!: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+select {} blocks forever.

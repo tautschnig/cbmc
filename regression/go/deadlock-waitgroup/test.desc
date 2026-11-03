@@ -1,0 +1,12 @@
+CORE
+main.go
+--unwind 4
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\$lit1\.deadlock\.[0-9]+\] line 14 all goroutines are asleep - deadlock!: FAILURE$
+^\[go::sync\.WaitGroup\.Wait\.deadlock\.1\] line [0-9]+ all goroutines are asleep - deadlock!: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A goroutine blocked on a full buffer, and main on WaitGroup.Wait.

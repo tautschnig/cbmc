@@ -74,6 +74,8 @@ struct go_convert_optionst
   /// The entry function named by --function (in the program's package), or
   /// empty for main.
   std::string entry_function;
+  /// Whether deadlocks are reported (not with --go-no-deadlock-check).
+  bool deadlock_check = true;
 };
 
 /// Converts one Go package.
@@ -118,6 +120,7 @@ private:
   const go_append_capacityt append_capacity;
   const object_factory_parameterst nondet_parameters;
   const std::string entry_function;
+  const bool deadlock_check;
   messaget log;
   namespacet ns;
   go_type_convertert type_converter;
@@ -702,19 +705,23 @@ private:
     const exprt &ticket,
     code_blockt &dest);
   /// After chan_send_step: wait for the receiver of an unbuffered send,
-  /// and panic if the channel was closed.
+  /// and panic if the channel was closed. Unless \p may_park, waiting is
+  /// not part of a deadlock (see block_until).
   void chan_send_finish(
     const exprt &chan,
     const exprt &failed,
     const exprt &ticket,
     const source_locationt &location,
-    code_blockt &dest);
-  /// A blocking send of \p value on \p chan.
+    code_blockt &dest,
+    bool may_park = true);
+  /// A blocking send of \p value on \p chan; \p may_park as for
+  /// chan_send_finish.
   void chan_send(
     const exprt &chan,
     const exprt &value,
     const source_locationt &location,
-    code_blockt &dest);
+    code_blockt &dest,
+    bool may_park = true);
   /// In an atomic section in which a receive from \p chan can proceed:
   /// receive into \p value and \p ok.
   void chan_recv_step(
@@ -722,13 +729,48 @@ private:
     const exprt &value,
     const exprt &ok,
     code_blockt &dest);
-  /// A blocking receive from \p chan into \p value and \p ok.
+  /// A blocking receive from \p chan into \p value and \p ok; \p may_park
+  /// as for chan_send_finish.
   void chan_recv(
     const exprt &chan,
     const exprt &value,
     const exprt &ok,
     const source_locationt &location,
+    code_blockt &dest,
+    bool may_park = true);
+  /// Begin an atomic section in which \p ready holds: block until it does
+  /// (assume it). If \p may_park, a goroutine that would block may instead
+  /// park: if all live goroutines park, and each still cannot proceed in the
+  /// state they leave, the program is deadlocked, which a property of class
+  /// "deadlock" reports (Go's runtime: `all goroutines are asleep -
+  /// deadlock!`).
+  void block_until(
+    const exprt &ready,
+    bool may_park,
+    const source_locationt &location,
     code_blockt &dest);
+  /// The parking of block_until, without beginning the atomic section: if
+  /// \p condition does not hold, possibly park, with \p announce in the
+  /// atomic section of the parking (to show that the goroutine waits).
+  void park(
+    const std::function<exprt()> &condition,
+    const code_blockt &announce,
+    const source_locationt &location,
+    code_blockt &dest);
+  /// As block_until, with the condition from \p condition, which is called
+  /// for each of its uses, so that conditions with side effects (such as
+  /// nil checks) get their own temporaries in each.
+  void block_until(
+    const std::function<exprt()> &condition,
+    bool may_park,
+    const source_locationt &location,
+    code_blockt &dest);
+  /// The variables of park: go::$live (goroutines that have started and
+  /// not finished, including main, which stays live), go::$parked and
+  /// go::$confirmed.
+  symbol_exprt deadlock_variable(const std::string &name);
+  /// Code that updates them when a goroutine ends.
+  void goroutine_end(const source_locationt &location, code_blockt &dest);
   exprt convert_receive(const irept &expr);
   void convert_send(const irept &stmt, code_blockt &dest);
   void convert_close(const irept &call, code_blockt &dest);

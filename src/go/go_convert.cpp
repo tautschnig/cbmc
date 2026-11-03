@@ -39,6 +39,7 @@ go_convertert::go_convertert(
     append_capacity(options.append_capacity),
     nondet_parameters(options.nondet),
     entry_function(options.entry_function),
+    deadlock_check(options.deadlock_check),
     log(message_handler),
     ns(symbol_table),
     type_converter(parse_tree, symbol_table)
@@ -2599,6 +2600,21 @@ bool go_convertert::convert_intrinsic_call(const irept &call, code_blockt &dest)
     codet section{begin ? ID_atomic_begin : ID_atomic_end};
     section.add_source_location() = location;
     dest.add(std::move(section));
+    return true;
+  }
+
+  if(callee == "cprover/rt.AtomicBeginWhen")
+  {
+    // Begin an atomic section once the condition holds (block until then).
+    const irept &condition = args.front();
+    if(convert_expr(condition).is_nil())
+      return true;
+    ++state.atomic_depth;
+    block_until(
+      [this, &condition]() { return as_condition(convert_expr(condition)); },
+      true,
+      location,
+      dest);
     return true;
   }
 

@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 4
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+deadlock!: FAILURE$
+^warning: ignoring
+--
+No false deadlock for a handoff.

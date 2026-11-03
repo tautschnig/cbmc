@@ -43,6 +43,7 @@ void go_languaget::set_language_options(
 {
   function_entry_point = options.get_option("function");
   go_compiler = options.get_option("go-compiler");
+  deadlock_check = !options.get_bool_option("go-no-deadlock-check");
   nondet_parameters.set(options);
 }
 
@@ -260,6 +261,7 @@ bool go_languaget::typecheck(
   options.append_capacity = *capacity;
   options.nondet = nondet_parameters;
   options.entry_function = function_entry_point;
+  options.deadlock_check = deadlock_check;
   return go_convertert{symbol_table, parse_tree, options, message_handler}();
 }
 

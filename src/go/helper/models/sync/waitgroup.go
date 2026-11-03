@@ -2,14 +2,13 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file of the Go distribution.
 // Changes for CBMC's Go front-end: the state is a counter that atomic
-// sections update; Wait assumes that it is zero. Misuse that the real
+// sections update; Wait blocks until it is zero. Misuse that the real
 // implementation detects only in some interleavings (Add concurrently with
 // Wait, reuse before Wait returned) is not reported.
 
 package sync
 
 import (
-	"cprover"
 	"cprover/rt"
 )
 
@@ -39,8 +38,7 @@ func (wg *WaitGroup) Done() {
 // Wait blocks until the WaitGroup counter is zero.
 func (wg *WaitGroup) Wait() {
 	_ = *wg
-	rt.AtomicBegin()
-	cprover.Assume(wg.n == 0)
+	rt.AtomicBeginWhen(wg.n == 0)
 	rt.AtomicEnd()
 }
 

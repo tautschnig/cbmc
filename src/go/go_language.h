@@ -91,6 +91,8 @@ protected:
   std::string function_entry_point;
   /// The compiler named by --go-compiler, or empty to use the one detected.
   std::string go_compiler;
+  /// Whether deadlocks are reported (not with --go-no-deadlock-check).
+  bool deadlock_check = true;
   /// Bounds of arbitrary values with references (--max-nondet-tree-depth,
   /// --min-null-tree-depth).
   object_factory_parameterst nondet_parameters;

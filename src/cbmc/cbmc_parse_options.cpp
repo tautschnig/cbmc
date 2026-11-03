@@ -173,6 +173,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-no-body-check", true);
   if(cmdline.isset("go-compiler"))
     options.set_option("go-compiler", cmdline.get_value("go-compiler"));
+  if(cmdline.isset("go-no-deadlock-check"))
+    options.set_option("go-no-deadlock-check", true);
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
   // Disable signed overflow checks for Python source files.
@@ -1071,6 +1073,8 @@ void cbmc_parse_optionst::help()
     " {ucompiler} where the specification leaves them open: {ygc} (go1.27),"
     " {ytinygo} (0.44) or {yany} (default: {ygc} if the {ygo} command is gc"
     " go1.27, else {yany})\n"
+    " {y--go-no-deadlock-check} \t do not report deadlocks (all goroutines"
+    " blocked)\n"
     "\n"
     "Platform options:\n"
     HELP_CONFIG_PLATFORM

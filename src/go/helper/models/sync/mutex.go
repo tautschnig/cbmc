@@ -2,19 +2,18 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file of the Go distribution.
 // Changes for CBMC's Go front-end: the state is a flag that atomic
-// sections update; blocking assumes that the lock is free (so only the
-// executions in which it is acquired continue); fatal errors are those of
-// the runtime.
+// sections update; blocking waits until the lock is free
+// (rt.AtomicBeginWhen: only the executions in which it is acquired
+// continue); fatal errors are those of the runtime.
 
 // Package sync models the standard library's package sync (go1.27):
 // Mutex, RWMutex, WaitGroup, Once, OnceFunc, OnceValue and OnceValues. The
 // program is type-checked against this package, so other declarations
-// (Cond, Map, Pool) are not available. Deadlocks are not reported: a
-// goroutine that blocks forever does not continue.
+// (Cond, Map, Pool) are not available. Blocking is rt.AtomicBeginWhen,
+// so that deadlocks are reported.
 package sync
 
 import (
-	"cprover"
 	"cprover/rt"
 )
 
@@ -33,8 +32,7 @@ type Mutex struct {
 // until the mutex is available.
 func (m *Mutex) Lock() {
 	_ = *m // a nil m panics outside the atomic section
-	rt.AtomicBegin()
-	cprover.Assume(!m.locked)
+	rt.AtomicBeginWhen(!m.locked)
 	m.locked = true
 	rt.AtomicEnd()
 }
