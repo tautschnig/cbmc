@@ -842,7 +842,9 @@ protected:
   /// execution is repeated (see shared_value_summaryt), the objects of the
   /// previous run are in the symbol table from the start, as value sets may
   /// refer to them before they are created; such a symbol is reused for the
-  /// object of the same name. Path exploration uses get_fresh_aux_symbol.
+  /// object of the same name and type (an object of another type keeps its
+  /// name). The size of a dynamic object is numbered as the object. Path
+  /// exploration uses get_fresh_aux_symbol.
   symbolt &fresh_object_symbol(
     const typet &type,
     const std::string &name_prefix,

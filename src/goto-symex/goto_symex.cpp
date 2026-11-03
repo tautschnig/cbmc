@@ -1238,18 +1238,39 @@ symbolt &goto_symext::fresh_object_symbol(
   // a run may take paths that an earlier one did not (with the larger value
   // sets), so objects are numbered per allocating instruction: allocations
   // elsewhere do not shift their names (which the summary refers to).
-  std::string prefix = basename_prefix;
+  std::string suffix;
   if(shared_value_summary.concurrent())
-    prefix += "$L" + std::to_string(state.source.pc->location_number);
-  std::size_t &counter = object_counters[name_prefix + "::" + prefix];
-  const std::string basename =
-    counter == 0 ? prefix : prefix + "$" + std::to_string(counter - 1);
-  ++counter;
-  const irep_idt identifier = name_prefix + "::" + basename;
+    suffix = "$L" + std::to_string(state.source.pc->location_number);
+  // The symbol for the size of a dynamic object (see symex_allocate) is
+  // created just before the object, and takes the number the object is
+  // going to have: else an object of the previous run of the same name
+  // could have another size symbol, and so another type.
+  const bool is_size = basename_prefix == "dynamic_object_size";
+  std::size_t &counter = object_counters
+    [name_prefix + "::" + (is_size ? "dynamic_object" : basename_prefix) +
+     suffix];
+  const std::string prefix = basename_prefix + suffix;
+  const auto name = [&prefix](std::size_t n)
+  { return n == 0 ? prefix : prefix + "$" + std::to_string(n - 1); };
+  std::string basename = name(counter);
+  irep_idt identifier = name_prefix + "::" + basename;
+  symbolt *existing = state.symbol_table.get_writeable(identifier);
+  if(!is_size)
+  {
+    ++counter;
+    // An object of the previous run of another type (e.g., of constant
+    // size) keeps its name, as values of the summary may refer to it.
+    while(existing != nullptr && existing->type != type)
+    {
+      basename = name(counter++);
+      identifier = name_prefix + "::" + basename;
+      existing = state.symbol_table.get_writeable(identifier);
+    }
+  }
   auxiliary_symbolt new_symbol{identifier, type, mode};
   new_symbol.base_name = basename;
   new_symbol.location = source_location;
-  if(symbolt *existing = state.symbol_table.get_writeable(identifier))
+  if(existing != nullptr)
   {
     *existing = std::move(new_symbol);
     return *existing;
