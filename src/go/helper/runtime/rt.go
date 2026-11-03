@@ -277,3 +277,242 @@ func AtomicEnd() {}
 // program, as the runtime's fatal errors (which deferred functions cannot
 // recover from) do: a failing property of class "fatal".
 func Fatal(msg string) { panic(msg) }
+
+// Capacities of append. Go1.27 §Appending_and_copying_slices: "If the
+// capacity of s is not large enough to fit the additional values, append
+// allocates a new, sufficiently large underlying array". The spec leaves
+// the capacity open; the functions below give the capacities gc go1.27
+// chooses (runtime/slice.go, runtime/msize.go and the stack allocation of
+// backing stores in cmd/compile), which rt_test.go checks against the gc
+// that builds it. They have no loops, so that they need no unwinding.
+
+// GrowCapGC returns the capacity runtime.growslice gives a slice of
+// elements of size bytes (with pointers or not) that has capacity oldCap
+// and must grow to length newLen.
+func GrowCapGC(newLen, oldCap, size int, pointers bool) int {
+	if size == 0 {
+		return newLen
+	}
+	newcap := nextSliceCap(newLen, oldCap)
+	return int(roundUpSize(uintptr(newcap)*uintptr(size), !pointers) / uintptr(size))
+}
+
+// StackCapGC returns the capacity of the stack buffer that gc may give
+// the backing store of a slice of elements of size bytes that does not
+// escape (cmd/compile/internal/ssagen getBackingStoreInfo: 32 bytes, the
+// default of -d=variablemakethreshold), or 0 if there is none. gc uses it
+// for the first append to an empty slice that fits.
+func StackCapGC(size int) int {
+	if size == 0 || size > stackBufferSize {
+		return 0
+	}
+	return stackBufferSize / size
+}
+
+// RoundUpCapGC returns the capacity runtime.growsliceBuf gives a slice of
+// length newLen that fits in its stack buffer (StackCapGC), which is also
+// the capacity runtime.moveSliceNoCap gives such a slice when moving it to
+// the heap.
+func RoundUpCapGC(newLen, size int, pointers bool) int {
+	return int(roundUpSize(uintptr(newLen)*uintptr(size), !pointers) / uintptr(size))
+}
+
+const stackBufferSize = 32
+
+// nextSliceCap is runtime.nextslicecap, with its loop unrolled: newLen is
+// at most twice oldCap there, and each step grows newcap by more than a
+// quarter, so that four steps (1.25^4 > 2) reach newLen.
+func nextSliceCap(newLen, oldCap int) int {
+	newcap := oldCap
+	doublecap := newcap + newcap
+	if newLen > doublecap {
+		return newLen
+	}
+	const threshold = 256
+	if oldCap < threshold {
+		return doublecap
+	}
+	newcap += (newcap + 3*threshold) >> 2
+	if uint(newcap) < uint(newLen) {
+		newcap += (newcap + 3*threshold) >> 2
+		if uint(newcap) < uint(newLen) {
+			newcap += (newcap + 3*threshold) >> 2
+			if uint(newcap) < uint(newLen) {
+				newcap += (newcap + 3*threshold) >> 2
+			}
+		}
+	}
+	if newcap <= 0 {
+		return newLen
+	}
+	return newcap
+}
+
+const (
+	ptrSize                = 4 << (^uintptr(0) >> 63)
+	maxSmallSize           = 32768
+	mallocHeaderSize       = 8
+	minSizeForMallocHeader = ptrSize * 8 * ptrSize
+	pageSize               = 8192
+)
+
+// roundUpSize is runtime.roundupsize: the size of the memory block that
+// mallocgc allocates for size bytes, less its malloc header if any.
+func roundUpSize(size uintptr, noscan bool) uintptr {
+	reqSize := size
+	if reqSize <= maxSmallSize-mallocHeaderSize {
+		if !noscan && reqSize > minSizeForMallocHeader {
+			reqSize += mallocHeaderSize
+		}
+		return sizeClass(reqSize) - (reqSize - size)
+	}
+	reqSize += pageSize - 1
+	if reqSize < size {
+		return size
+	}
+	return reqSize &^ (pageSize - 1)
+}
+
+// sizeClass returns the smallest of gc's size classes
+// (internal/runtime/gc/sizeclasses.go) of at least size bytes.
+func sizeClass(size uintptr) uintptr {
+	switch {
+	case size == 0:
+		return 0
+	case size <= 8:
+		return 8
+	case size <= 16:
+		return 16
+	case size <= 24:
+		return 24
+	case size <= 32:
+		return 32
+	case size <= 48:
+		return 48
+	case size <= 64:
+		return 64
+	case size <= 80:
+		return 80
+	case size <= 96:
+		return 96
+	case size <= 112:
+		return 112
+	case size <= 128:
+		return 128
+	case size <= 144:
+		return 144
+	case size <= 160:
+		return 160
+	case size <= 176:
+		return 176
+	case size <= 192:
+		return 192
+	case size <= 208:
+		return 208
+	case size <= 224:
+		return 224
+	case size <= 240:
+		return 240
+	case size <= 256:
+		return 256
+	case size <= 288:
+		return 288
+	case size <= 320:
+		return 320
+	case size <= 352:
+		return 352
+	case size <= 384:
+		return 384
+	case size <= 416:
+		return 416
+	case size <= 448:
+		return 448
+	case size <= 480:
+		return 480
+	case size <= 512:
+		return 512
+	case size <= 576:
+		return 576
+	case size <= 640:
+		return 640
+	case size <= 704:
+		return 704
+	case size <= 768:
+		return 768
+	case size <= 896:
+		return 896
+	case size <= 1024:
+		return 1024
+	case size <= 1152:
+		return 1152
+	case size <= 1280:
+		return 1280
+	case size <= 1408:
+		return 1408
+	case size <= 1536:
+		return 1536
+	case size <= 1792:
+		return 1792
+	case size <= 2048:
+		return 2048
+	case size <= 2304:
+		return 2304
+	case size <= 2688:
+		return 2688
+	case size <= 3072:
+		return 3072
+	case size <= 3200:
+		return 3200
+	case size <= 3456:
+		return 3456
+	case size <= 4096:
+		return 4096
+	case size <= 4864:
+		return 4864
+	case size <= 5376:
+		return 5376
+	case size <= 6144:
+		return 6144
+	case size <= 6528:
+		return 6528
+	case size <= 6784:
+		return 6784
+	case size <= 6912:
+		return 6912
+	case size <= 8192:
+		return 8192
+	case size <= 9472:
+		return 9472
+	case size <= 9728:
+		return 9728
+	case size <= 10240:
+		return 10240
+	case size <= 10880:
+		return 10880
+	case size <= 12288:
+		return 12288
+	case size <= 13568:
+		return 13568
+	case size <= 14336:
+		return 14336
+	case size <= 16384:
+		return 16384
+	case size <= 18432:
+		return 18432
+	case size <= 19072:
+		return 19072
+	case size <= 20480:
+		return 20480
+	case size <= 21760:
+		return 21760
+	case size <= 24576:
+		return 24576
+	case size <= 27264:
+		return 27264
+	case size <= 28672:
+		return 28672
+	case size <= 32768:
+		return 32768
+	}
+	return size
+}
