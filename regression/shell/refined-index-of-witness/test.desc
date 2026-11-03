@@ -1,0 +1,14 @@
+CORE
+main.sh
+--shell-strings refined
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: SUCCESS$
+^\[assertion\.2\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The search for .tar. gives a not-contains axiom whose witness must be in
+range: refinement ran out of memory when the solver could satisfy every
+instance with an out-of-range witness.

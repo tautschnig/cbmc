@@ -1952,9 +1952,11 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
 
         std::set<std::pair<exprt, exprt>> indices;
         indices.insert(std::pair<exprt, exprt>(comp_val, func_val));
-        const exprt counter =
-          ::instantiate_not_contains(axiom, indices, not_contain_witnesses)[0];
-        lemmas.push_back(counter);
+        for(auto &counter :
+            ::instantiate_not_contains(axiom, indices, not_contain_witnesses))
+        {
+          lemmas.push_back(std::move(counter));
+        }
       }
       return {false, lemmas};
     }

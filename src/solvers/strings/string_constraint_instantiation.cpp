@@ -199,7 +199,9 @@ exprt instantiate(
 /// \param [in] axiom: the axiom to instantiate
 /// \param [in] index_pairs: pair of indexes for `axiom.s0()`and `axiom.s1()`
 /// \param [in] witnesses: `axiom`'s witnesses for non containment
-/// \return the lemmas produced through instantiation
+/// \return the lemmas produced through instantiation: for each value of the
+///   universal variable, that the witness is in the existential range, and
+///   for each index pair, the instance of the axiom
 std::vector<exprt> instantiate_not_contains(
   const string_not_contains_constraintt &axiom,
   const std::set<std::pair<exprt, exprt>> &index_pairs,
@@ -210,6 +212,27 @@ std::vector<exprt> instantiate_not_contains(
 
   const array_string_exprt s0 = axiom.s0;
   const array_string_exprt s1 = axiom.s1;
+
+  // The witness f(x) is a Skolem function for the existential quantifier,
+  // so it is in the existential bounds for each x the premise holds for.
+  // Without that, f(x) can be out of bounds, which satisfies the instances
+  // below for any index pairs, and only counter-examples would refine.
+  std::set<exprt> values;
+  for(const auto &pair : index_pairs)
+  {
+    const minus_exprt val(pair.first, pair.second);
+    if(!values.insert(val).second)
+      continue;
+    const and_exprt universal_bound(
+      binary_relation_exprt(axiom.univ_lower_bound, ID_le, val),
+      binary_relation_exprt(axiom.univ_upper_bound, ID_gt, val));
+    const exprt f = index_exprt(witnesses.at(axiom), val);
+    lemmas.push_back(implies_exprt{
+      and_exprt{axiom.premise, universal_bound},
+      and_exprt{
+        binary_relation_exprt{axiom.exists_lower_bound, ID_le, f},
+        binary_relation_exprt{axiom.exists_upper_bound, ID_gt, f}}});
+  }
 
   for(const auto &pair : index_pairs)
   {
