@@ -308,15 +308,34 @@ void go_convertert::convert_map_range(
     count,
     if_exprt{
       equal_exprt{map, nil}, from_integer(0, int_type()), field(map, "len")}});
-  const exprt keys = evaluate_once(
-    allocate_elements(k, count, false, location, scope), location, scope);
+  // The arrays have the map's capacity, which unlike its length usually
+  // does not depend on the path (arrays of symbolic size are expensive);
+  // they are allocated where the map is not nil, where goto-symex knows
+  // which header the map points to.
+  const pointer_typet key_pointer{k, config.ansi_c.pointer_width};
+  const pointer_typet byte_pointer{
+    unsignedbv_typet{8}, config.ansi_c.pointer_width};
+  const symbol_exprt keys = new_temporary(key_pointer, location, scope);
+  const symbol_exprt visited = new_temporary(byte_pointer, location, scope);
+  scope.add(code_frontend_assignt{keys, null_pointer_exprt{key_pointer}});
+  scope.add(code_frontend_assignt{visited, null_pointer_exprt{byte_pointer}});
   code_blockt snapshot;
-  copy_elements(keys, field(map, "keys"), count, location, snapshot);
-  scope.add(code_ifthenelset{notequal_exprt{map, nil}, std::move(snapshot)});
-  const exprt visited = evaluate_once(
-    allocate_elements(unsignedbv_typet{8}, count, true, location, scope),
+  snapshot.add(code_frontend_assignt{
+    keys, allocate_elements(k, field(map, "cap"), false, location, snapshot)});
+  // Keys without references are copied as a block (see copy_elements): all
+  // of the keys array (of capacity elements), a constant number more often
+  // than the length. Others are copied one by one, as many as there are.
+  copy_elements(
+    keys,
+    field(map, "keys"),
+    contains_reference(k, ns) ? field(map, "len") : field(map, "cap"),
     location,
-    scope);
+    snapshot);
+  snapshot.add(code_frontend_assignt{
+    visited,
+    allocate_elements(
+      unsignedbv_typet{8}, field(map, "cap"), true, location, snapshot)});
+  scope.add(code_ifthenelset{notequal_exprt{map, nil}, std::move(snapshot)});
 
   const std::string prefix =
     "$for" + std::to_string(state.label_counter++) + "$";
