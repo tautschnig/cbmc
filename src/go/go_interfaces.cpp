@@ -904,6 +904,7 @@ bool go_convertert::is_intrinsic(const irep_idt &object_id)
 {
   static const std::set<irep_idt> intrinsics{
     "cprover/rt.Comparable",
+    "cprover/rt.SameType",
     "cprover/rt.Float64bits",
     "cprover/rt.Float64frombits",
     "cprover/rt.Float32bits",
@@ -934,6 +935,18 @@ void go_convertert::finish_intrinsics()
     const typet &result = to_code_type(function->type).return_type();
     code_blockt body{{code_frontend_returnt{typecast_exprt{
       not_exprt{disjunction(std::move(uncomparable))}, result}}}};
+    function->value = std::move(body);
+  }
+
+  // SameType: the dynamic type ids are equal (0 for nil).
+  if(symbolt *function = body_of("cprover/rt.SameType"))
+  {
+    const std::vector<exprt> params = parameter_symbols(*function);
+    const typet &result = to_code_type(function->type).return_type();
+    code_blockt body{{code_frontend_returnt{typecast_exprt{
+      equal_exprt{
+        iface_field(params[0], "type"), iface_field(params[1], "type")},
+      result}}}};
     function->value = std::move(body);
   }
 

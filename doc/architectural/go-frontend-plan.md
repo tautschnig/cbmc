@@ -427,15 +427,23 @@ Supported so far:
   (e.g. `math.MaxInt64`) are folded by go/types as before. The runtime
   package provides intrinsics that the converter implements:
   `rt.Comparable` (whether a dynamic type is comparable, for
-  `errors.Is`) and the IEEE 754 bit conversions (byte extraction).
+  `errors.Is`), `rt.SameType` (whether two interface values have the
+  same dynamic type, for `atomic.Value`) and the IEEE 754 bit
+  conversions (byte extraction).
   `sync` and `sync/atomic` are *replaced* by their models: their types
   keep state in internal fields that function models cannot reach, so
   programs are type-checked against the models (and only their API is
   available). Modelled: `sync` (`Mutex`, `RWMutex`, `Locker`,
-  `WaitGroup` with `Go`, `Once`, `OnceFunc`, `OnceValue`, `OnceValues`;
-  not `Cond`, `Map`, `Pool`) and `sync/atomic` (the integer functions and
+  `WaitGroup` with `Go`, `Once`, `OnceFunc`, `OnceValue`, `OnceValues`,
+  `Cond`, `Map`, `Pool`) and `sync/atomic` (the integer functions and
   the types `Bool`, `Int32`, `Int64`, `Uint32`, `Uint64`, `Uintptr`,
-  `Pointer[T]`; not `unsafe.Pointer` operations or `Value`). They use the
+  `Pointer[T]`, `Value`; not `unsafe.Pointer` operations). `Pool` keeps
+  or drops each item put, and `Get` returns any kept item or none,
+  nondeterministically (the real pool may drop items at any time).
+  `Map.Range` visits the keys present when it starts, with their values
+  when visited, and then possibly keys stored meanwhile. Copying a
+  `Cond` is not detected, and the comparison and swap of
+  `Value.CompareAndSwap` are one atomic step. They use the
   runtime intrinsics `rt.AtomicBegin`/`rt.AtomicEnd` (CBMC atomic
   sections) and `rt.Fatal` (property class `fatal`, for gc's fatal
   errors such as "sync: unlock of unlocked mutex", which `recover`

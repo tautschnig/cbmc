@@ -7,10 +7,9 @@
 // continue); fatal errors are those of the runtime.
 
 // Package sync models the standard library's package sync (go1.27):
-// Mutex, RWMutex, WaitGroup, Once, OnceFunc, OnceValue and OnceValues. The
-// program is type-checked against this package, so other declarations
-// (Cond, Map, Pool) are not available. Blocking is rt.AtomicBeginWhen,
-// so that deadlocks are reported.
+// Mutex, RWMutex, WaitGroup, Once, OnceFunc, OnceValue, OnceValues, Cond,
+// Map and Pool. Blocking is rt.AtomicBeginWhen, so that deadlocks are
+// reported.
 package sync
 
 import (

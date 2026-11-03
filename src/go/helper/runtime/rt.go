@@ -249,6 +249,11 @@ func (e Error) RuntimeError() {}
 // reflection for this.
 func Comparable(x any) bool
 
+// SameType reports whether x and y have the same dynamic type (both are
+// nil, or neither is and their types are identical, Go1.27
+// §Type_identity); package sync/atomic uses unsafe for this.
+func SameType(x, y any) bool
+
 // Float64bits returns the IEEE 754 binary representation of f, as
 // math.Float64bits.
 func Float64bits(f float64) uint64

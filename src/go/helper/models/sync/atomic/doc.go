@@ -6,9 +6,9 @@
 
 // Package atomic models the standard library's package sync/atomic
 // (go1.27): the functions on integers, and the types Bool, Int32, Int64,
-// Uint32, Uint64, Uintptr and Pointer. The program is type-checked against
-// this package, so the functions on unsafe.Pointer and the type Value are
-// not available. Operations are sequentially consistent, as the Go memory
+// Uint32, Uint64, Uintptr, Pointer and Value. The program is type-checked
+// against this package, so the functions on unsafe.Pointer are not
+// available. Operations are sequentially consistent, as the Go memory
 // model specifies for them.
 package atomic
 

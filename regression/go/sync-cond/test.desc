@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 3
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\$lit[0-9]*\.assertion\.1\] line 23 woken after the change: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+model of sync.Cond, without deadlock

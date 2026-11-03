@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 4 --object-bits 10
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.11\] line 39 Range visits a and d: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+model of sync.Map

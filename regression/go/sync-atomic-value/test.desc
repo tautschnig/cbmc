@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 4 --unwindset go::cprover/rt.StringEqual.0:70
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.10\] line 37 unchanged: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+model of atomic.Value
