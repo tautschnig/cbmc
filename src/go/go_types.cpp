@@ -146,7 +146,8 @@ typet go_type_convertert::operator()(const irep_idt &index)
   const irept &under = underlying(index);
   const irep_idt &k = under.get("k");
 
-  typet result;
+  // Stays nil if a part of the type is unsupported.
+  typet result{ID_nil};
   if(k == "basic")
   {
     // Go1.27 §Constants: an untyped constant that is not given a type by

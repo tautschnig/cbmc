@@ -1,0 +1,14 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.capture\.unsupported\.1\] line 13 Go front-end: type unsafe\.Pointer is not supported yet: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 25 n: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR$
+--
+A pointer type whose base type is unsupported is unsupported, rather than
+an empty type that crashed the allocation of heap variables.
