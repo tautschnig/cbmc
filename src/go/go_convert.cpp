@@ -2731,45 +2731,56 @@ exprt go_convertert::convert_conversion(const irept &call)
 exprt go_convertert::convert_min_max(const irept &call, bool is_min)
 {
   // Go1.27 §Min_and_max: the smallest (largest) of the arguments, which
-  // have the same ordered type. Integers only so far (floats need NaN and
-  // signed-zero handling).
+  // have the same ordered type. The arguments are evaluated once each, in
+  // order (they may have side effects, such as index checks).
+  const source_locationt location = location_of(call);
   typet type = expr_type(call);
   if(type.is_nil())
     return nil_exprt{};
   const bool is_float = type.id() == ID_floatbv;
-  if(type.id() != ID_signedbv && type.id() != ID_unsignedbv && !is_float)
+  const bool is_string = is_go_string(type);
+  if(
+    type.id() != ID_signedbv && type.id() != ID_unsignedbv && !is_float &&
+    !is_string)
   {
     unsupported(call, "min/max on non-numeric operands");
     return nil_exprt{};
   }
+  code_blockt prefix;
   exprt result = nil_exprt{};
   for(const auto &arg : go_list(call, "Args"))
   {
     exprt value = convert_expr(arg);
     if(value.is_nil())
       return nil_exprt{};
-    if(has_subexpr(value, ID_side_effect))
-    {
-      unsupported(arg, "min/max arguments with side effects");
-      return nil_exprt{};
-    }
     value = assign_cast(value, type);
+    if(has_subexpr(value, ID_side_effect) || is_string)
+      value = evaluate_once(value, location, prefix);
     if(result.is_nil())
       result = value;
+    else if(is_float)
+      result = float_min_max(result, value, is_min);
+    else if(is_string)
+    {
+      // "For string arguments the result for min is the first argument
+      // with the smallest (or for max, largest) value, compared lexically
+      // byte-wise": keep result unless value is smaller (larger).
+      const exprt replace = as_condition(runtime_call(
+        "StringLess", is_min ? exprt::operandst{value, result}
+                             : exprt::operandst{result, value},
+        location));
+      result =
+        evaluate_once(if_exprt{replace, value, result}, location, prefix);
+    }
     else
     {
-      if(is_float)
-        result = float_min_max(result, value, is_min);
-      else
-      {
-        const exprt keep =
-          is_min ? exprt{binary_relation_exprt{result, ID_le, value}}
-                 : exprt{binary_relation_exprt{result, ID_ge, value}};
-        result = if_exprt{keep, result, value};
-      }
+      const exprt keep =
+        is_min ? exprt{binary_relation_exprt{result, ID_le, value}}
+               : exprt{binary_relation_exprt{result, ID_ge, value}};
+      result = if_exprt{keep, result, value};
     }
   }
-  return result;
+  return with_prefix(std::move(result), prefix, location);
 }
 
 exprt go_convertert::convert_call(const irept &call)

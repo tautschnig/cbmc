@@ -1,0 +1,16 @@
+CORE
+main.go
+--unwind 4
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 19 max of indexed: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 20 once each: SUCCESS$
+^\[go::main\.main\.assertion\.3\] line 22 max string: SUCCESS$
+^\[go::main\.main\.assertion\.4\] line 25 min string: SUCCESS$
+^\[go::main\.main\.index-out-of-range\.[0-9]+\] line 27 runtime error: index out of range: FAILURE$
+^\*\* 1 of [0-9]+ failed
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+min and max with side-effecting and string arguments.
