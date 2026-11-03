@@ -18,8 +18,29 @@
 import cpp
 
 module DeviceTaint {
-  /** Code outside the kernel tree, i.e. under the DB's source root. */
-  predicate inDriver(Element e) { exists(e.getFile().getRelativePath()) }
+  /**
+   * Driver code, as opposed to generic kernel code.  Two DB shapes have to
+   * be handled: an out-of-tree driver (source root IS the driver, so every
+   * relative path qualifies) and an in-tree subsystem DB (where the kernel's
+   * own `include/` headers are present and must be excluded, or every
+   * inlined `skbuff.h` / `bpf.h` helper becomes a candidate).
+   */
+  predicate inDriver(Element e) {
+    exists(string p | p = e.getFile().getRelativePath() |
+      not p.matches("include/%") and
+      not p.matches("arch/%/include/%") and
+      not p.matches("%/include/linux/%")
+    )
+  }
+
+  /**
+   * A hardware-ABI struct: declared in driver-local code rather than in a
+   * generic kernel header.  Device register/descriptor/admin-response
+   * layouts live next to the driver (ena_admin_defs.h, efa_io_defs.h, ...),
+   * whereas `sk_buff`, `net_device` and `bpf_map` do not -- without this
+   * distinction the nesting rule below drags in half the kernel.
+   */
+  predicate driverLocalStruct(Struct s) { inDriver(s) }
 
   /** A function that returns a buffer it DMA-mapped (driver wrapper). */
   predicate isDmaMappingWrapper(Function g) {
@@ -101,12 +122,13 @@ module DeviceTaint {
   /** A struct type whose instances the device can write. */
   predicate deviceStruct(Struct s) {
     // (a) pointee of DMA storage
-    exists(Variable v | dmaStorage(v) and s = structOf(v.getType()) and inDriver(s))
+    exists(Variable v | dmaStorage(v) and s = structOf(v.getType()) and driverLocalStruct(s))
     or
     // (b) a DMA pointer cast to a struct pointer: (T *)(ring + off)
     exists(Cast c |
       inDriver(c) and
       s = structOf(c.getType()) and
+      driverLocalStruct(s) and
       c.getUnspecifiedType() instanceof PointerType and
       mentionsDma(c.getExpr())
     )
@@ -125,12 +147,15 @@ module DeviceTaint {
       deviceStruct(other)
     )
     or
-    // (d) nested member types (resp.u.device_attr ...)
+    // (d) nested member types (resp.u.device_attr ...), restricted to the
+    //     same declaration file so this follows the hardware ABI grouping
+    //     instead of walking into generic kernel types
     exists(Struct outer, Field f |
       deviceStruct(outer) and
       f.getDeclaringType() = outer and
       s = structOf(f.getType()) and
-      inDriver(s)
+      driverLocalStruct(s) and
+      s.getFile() = outer.getFile()
     )
   }
 
@@ -138,6 +163,7 @@ module DeviceTaint {
   class DeviceFieldRead extends FieldAccess {
     DeviceFieldRead() {
       deviceStruct(this.getTarget().getDeclaringType()) and
+      inDriver(this) and
       this.getUnspecifiedType() instanceof IntegralType and
       not this = any(Assignment a).getLValue() and
       not this = any(CrementOperation op).getOperand()

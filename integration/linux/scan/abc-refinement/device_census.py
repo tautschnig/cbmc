@@ -128,12 +128,35 @@ def percpu_patch(on):
     open(PERCPU, "w").write(s)
 
 
+def rank(line):
+    """Order priority candidates by how closely they match the shapes that
+    turned out to be real in the amzn-drivers run (lower sorts first).
+
+    A device *descriptor/response field* driving a copy length is the F3/F6
+    shape and the most likely to corrupt memory; a field used as a
+    fixed-array index is the F1/F5 shape.  An MMIO register read used as an
+    index is usually a capability/width field (the F7 shape: a bad shift
+    rather than a bad store), so it ranks last.  A length-ish field name is
+    a weak extra signal, applied only within a kind.
+    """
+    kind = line.split("|")[3]
+    src = field(line, "src")
+    mmio = src.startswith("mmio:")
+    lenish = any(w in src.lower() for w in
+                 ("len", "size", "count", "num", "idx", "index", "id",
+                  "parts", "depth", "bar"))
+    k = {"copy-len": 0, "index-fixed": 1}.get(kind, 2)
+    return (k, 1 if mmio else 0, 0 if lenish else 1, src)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--build", action="store_true")
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--classes", default="")
+    ap.add_argument("--top", type=int, default=0,
+                    help="print the N highest-ranked priority candidates")
     a = ap.parse_args()
     os.makedirs(OUT, exist_ok=True)
     classes = a.classes.split(",") if a.classes else CLASSES
@@ -171,6 +194,22 @@ def main():
             by_kind[k] = by_kind.get(k, 0) + 1
         for k, n in sorted(by_kind.items(), key=lambda x: -x[1]):
             print(f"   {k:<14}{n}")
+        if a.top:
+            print(f"\n## top {a.top} priority candidates (ranked)")
+            seen = set()
+            shown = 0
+            for leaf, l in sorted(prio, key=lambda kl: rank(kl[1])):
+                p = l.split("|")
+                sig = (os.path.basename(p[1]), p[2])
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                shown += 1
+                print(f"  {p[3]:<12}{os.path.basename(p[1])}:{p[2]:<6}"
+                      f"{p[0]:<32}{field(l, 'src'):<42}{leaf}")
+                if shown >= a.top:
+                    break
+            return
         print("\n## priority candidates")
         seen = set()
         for leaf, l in sorted(prio):
