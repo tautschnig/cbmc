@@ -5,6 +5,7 @@ main.go
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
+a function without a body
 ^warning: ignoring
 --
 strconv from its source; type assertions see its errors.

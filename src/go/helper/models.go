@@ -84,10 +84,12 @@ var sourceModels = map[string]struct {
 	// the runtime's, which bits_errors.go links to.
 	"math/bits": {tags: []string{"compiler_bootstrap"}},
 	// The portable implementations (as for architectures without assembly):
-	// MaxLen stays 0, so that callers never use Index and IndexString.
+	// MaxLen stays 0, so that callers never use Index and IndexString. The
+	// runtime implements MakeNoZero.
 	"internal/bytealg": {files: []string{"bytealg.go", "compare_generic.go",
 		"count_generic.go", "equal_generic.go", "index_generic.go",
-		"indexbyte_generic.go", "lastindexbyte_generic.go"}},
+		"indexbyte_generic.go", "lastindexbyte_generic.go"},
+		overrides: true},
 	// overlaps compares addresses through package unsafe.
 	"slices": {overrides: true},
 	// The conversions between floating-point numbers and their bits use
