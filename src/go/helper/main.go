@@ -881,6 +881,15 @@ func (e *encoder) node(n ast.Node) any {
 			if tv.IsType() {
 				out["_tx"] = true
 			}
+			if tv.Value == nil {
+				if size, ok := e.instanceSize(n); ok {
+					// Go1.27 §Package_unsafe: "The functions Alignof
+					// and Sizeof take an expression x of any type";
+					// constant in an instance.
+					out["_cv"] = strconv.FormatInt(size, 10)
+					out["_cvk"] = "int"
+				}
+			}
 			if tv.Value != nil {
 				out["_cv"] = tv.Value.ExactString()
 				out["_cvk"] = constKinds[tv.Value.Kind()]
@@ -1137,6 +1146,43 @@ func (e *encoder) withoutGenerics(f *ast.File, i int) *ast.File {
 		out.Decls = append(out.Decls, d)
 	}
 	return &out
+}
+
+// instanceSize returns the value of n if it is a call of unsafe.Sizeof or
+// unsafe.Alignof in an instance of a generic function, whose argument's
+// type then is known (go/types leaves them non-constant when the type
+// depends on type parameters).
+func (e *encoder) instanceSize(n ast.Node) (int64, bool) {
+	call, ok := n.(*ast.CallExpr)
+	if !ok || e.cur == nil || len(call.Args) != 1 {
+		return 0, false
+	}
+	var id *ast.Ident
+	switch f := ast.Unparen(call.Fun).(type) {
+	case *ast.Ident:
+		id = f
+	case *ast.SelectorExpr:
+		id = f.Sel
+	}
+	if id == nil {
+		return 0, false
+	}
+	b, ok := e.info.Uses[id].(*types.Builtin)
+	if !ok || (b.Name() != "Sizeof" && b.Name() != "Alignof") {
+		return 0, false
+	}
+	arg, ok := e.info.Types[call.Args[0]]
+	if !ok {
+		return 0, false
+	}
+	t := e.subst(arg.Type)
+	if hasTypeParams(t) {
+		return 0, false
+	}
+	if b.Name() == "Sizeof" {
+		return e.sizes.Sizeof(t), true
+	}
+	return e.sizes.Alignof(t), true
 }
 
 // gcLayout returns gc's size of t and whether t has pointers (as the
