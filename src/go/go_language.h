@@ -91,6 +91,9 @@ protected:
   std::string function_entry_point;
   /// The compiler named by --go-compiler, or empty to use the one detected.
   std::string go_compiler;
+  /// Bounds of arbitrary values with references (--max-nondet-tree-depth,
+  /// --min-null-tree-depth).
+  object_factory_parameterst nondet_parameters;
 
   /// The capacities of append for go_compiler, or for the compiler the
   /// helper detected (see append_capacity in go_language.cpp).

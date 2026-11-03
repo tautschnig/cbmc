@@ -587,13 +587,28 @@ Known limitations:
   reported like other unmodelled functions. Instances are bounded
   by go/types' check for instantiation cycles, and in addition by 2000
   instances.
-- Values containing pointers, functions, maps or interfaces cannot be
-  nondeterministic: `cprover.Nondet` of such types and `--function` with
-  such parameters are reported. Modelling them needs a choice of nil or
-  some variable (or function) of the right type, including aliasing
-  between them. `cprover.Nondet` supports strings and slices (of any
-  length, in a new underlying array; slices may be nil), also within
-  structs; `--function` does not support them yet.
+- Arbitrary values (`cprover.Nondet`, and the arguments of the
+  `--function` target, which the generated `go::$entry` builds) are
+  built as CBMC's object factory builds C inputs, with its options
+  `--max-nondet-tree-depth` (default 5) and `--min-null-tree-depth`:
+  strings and slices of values without references have any length and
+  arbitrary contents in a new underlying array (slices may be nil); a
+  pointer is nil or points to a new arbitrary value; a map is nil or has
+  at most `max_nondet_array_length` (5) entries with distinct keys
+  (allocated with that capacity, so that its arrays have a constant
+  size); slices of values with references have at most that capacity;
+  an interface value is nil or holds an arbitrary value of one of the
+  program's types that implement it (types with its methods, from the
+  helper's method sets; for interfaces without methods, the types the
+  program converts to interfaces), from a generated function per
+  interface type and depth (`go::$nondet.<tid>.<depth>`); structs and
+  arrays (of at most 256 elements with references) are built field by
+  field. References beyond the maximum depth are nil. These are
+  under-approximations: objects are not shared between references (no
+  aliasing), and values of types outside the program are not built.
+  Function values and channels are not supported (calls of the function
+  with `cprover.Nondet` of such a type fail; `--function` reports
+  them).
 - **Strings and maps need loop bounds.** String comparisons, UTF-8
   conversions and all map operations loop; `--unwind` must cover the
   string lengths and map sizes, which `--unwinding-assertions` checks.

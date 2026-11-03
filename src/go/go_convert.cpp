@@ -32,11 +32,13 @@ Author: Michael Tautschnig
 go_convertert::go_convertert(
   symbol_table_baset &symbol_table,
   const go_parse_treet &parse_tree,
-  go_append_capacityt append_capacity,
+  const go_convert_optionst &options,
   message_handlert &message_handler)
   : symbol_table(symbol_table),
     parse_tree(parse_tree),
-    append_capacity(append_capacity),
+    append_capacity(options.append_capacity),
+    nondet_parameters(options.nondet),
+    entry_function(options.entry_function),
     log(message_handler),
     ns(symbol_table),
     type_converter(parse_tree, symbol_table)
@@ -1205,6 +1207,8 @@ bool go_convertert::operator()()
   for(const auto &package : parse_tree.packages)
     convert_package_init(package, init_functions[package.path]);
   convert_program_init();
+  convert_entry();
+  finish_nondet_interfaces();
   finish_interfaces();
   finish_intrinsics();
   finish_panics();
@@ -2833,16 +2837,10 @@ exprt go_convertert::convert_call(const irept &call)
     typet type = expr_type(call);
     if(type.is_nil())
       return nil_exprt{};
-    if(contains_reference(type, ns, false))
-    {
-      // A pointer or function value is nil or refers to a variable or
-      // function; an arbitrary bit pattern would be neither.
-      unsupported(
-        call, "cprover.Nondet of types containing pointers or functions");
-      return nil_exprt{};
-    }
     code_blockt prefix;
     exprt value = nondet_value(type, location, prefix);
+    if(value.is_nil())
+      return nil_exprt{};
     return with_prefix(std::move(value), prefix, location);
   }
 

@@ -43,6 +43,7 @@ void go_languaget::set_language_options(
 {
   function_entry_point = options.get_option("function");
   go_compiler = options.get_option("go-compiler");
+  nondet_parameters.set(options);
 }
 
 /// Whether \p version (of gc) is go1.27 or a go1.27 release candidate or
@@ -255,7 +256,11 @@ bool go_languaget::typecheck(
   const auto capacity = append_capacity(message_handler);
   if(!capacity.has_value())
     return true;
-  return go_convertert{symbol_table, parse_tree, *capacity, message_handler}();
+  go_convert_optionst options;
+  options.append_capacity = *capacity;
+  options.nondet = nondet_parameters;
+  options.entry_function = function_entry_point;
+  return go_convertert{symbol_table, parse_tree, options, message_handler}();
 }
 
 bool go_languaget::generate_support_functions(
@@ -316,21 +321,14 @@ bool go_languaget::generate_support_functions(
                 << " not found" << messaget::eom;
     return true;
   }
-  exprt::operandst arguments;
-  for(const auto &parameter : to_code_type(function->type).parameters())
+  // Its arguments are arbitrary values (go_convertert::convert_entry).
+  if(!to_code_type(function->type).parameters().empty())
   {
-    if(contains_reference(parameter.type(), namespacet{symbol_table}))
-    {
-      // A pointer or function value is nil or refers to a variable or
-      // function; an arbitrary bit pattern would be neither.
-      log.error() << "Go front-end: --function with parameters containing "
-                     "pointers or functions is not supported yet"
-                  << messaget::eom;
-      return true;
-    }
-    arguments.push_back(
-      side_effect_expr_nondett{parameter.type(), function->location});
+    function = symbol_table.lookup("go::$entry");
+    if(function == nullptr)
+      return true; // reported by the conversion
   }
+  exprt::operandst arguments;
   // Go1.27 §Handling_panics: a panic during initialisation ends the
   // program; one that is not recovered is reported by go::$check_panics.
   const symbolt *panicking = symbol_table.lookup("go::$panicking");

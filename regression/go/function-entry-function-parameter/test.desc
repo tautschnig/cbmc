@@ -3,7 +3,7 @@ main.go
 --function apply
 ^EXIT=6$
 ^SIGNAL=0$
---function with parameters containing pointers or functions is not supported yet$
+--function with parameters containing functions or channels is not supported yet$
 --
 ^VERIFICATION
 --

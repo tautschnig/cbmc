@@ -1,0 +1,14 @@
+CORE
+main.go
+--max-nondet-tree-depth 2 --min-null-tree-depth 1 --unwind 4
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 19 not nil: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 20 bounded: SUCCESS$
+^\[go::main\.main\.assertion\.3\] line 21 two nodes possible: FAILURE$
+^\*\* 1 of [0-9]+ failed
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The bounds of CBMC's object factory apply to Go's arbitrary values.

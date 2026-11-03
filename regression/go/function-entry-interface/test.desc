@@ -1,0 +1,12 @@
+CORE
+main.go
+--function Total --unwind 7
+^EXIT=10$
+^SIGNAL=0$
+^\[go::\$method\.[0-9]+\.Get\.nil-dereference\.1\] runtime error: invalid memory address or nil pointer dereference: FAILURE$
+^\*\* 1 of [0-9]+ failed
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+--function with interface and map parameters: a nil Store is possible.

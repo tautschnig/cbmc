@@ -20,6 +20,7 @@ Author: Michael Tautschnig
 #include <util/message.h>
 #include <util/mp_arith.h>
 #include <util/namespace.h>
+#include <util/object_factory_parameters.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 
@@ -63,6 +64,18 @@ enum class go_append_capacityt
   TINYGO
 };
 
+/// Options of the conversion.
+struct go_convert_optionst
+{
+  go_append_capacityt append_capacity = go_append_capacityt::ANY;
+  /// Bounds of the values of cprover.Nondet and of the entry function's
+  /// arguments (--max-nondet-tree-depth, --min-null-tree-depth).
+  object_factory_parameterst nondet;
+  /// The entry function named by --function (in the program's package), or
+  /// empty for main.
+  std::string entry_function;
+};
+
 /// Converts one Go package.
 class go_convertert
 {
@@ -70,7 +83,7 @@ public:
   go_convertert(
     symbol_table_baset &symbol_table,
     const go_parse_treet &parse_tree,
-    go_append_capacityt append_capacity,
+    const go_convert_optionst &options,
     message_handlert &message_handler);
 
   /// \return true on error
@@ -103,6 +116,8 @@ private:
   symbol_table_baset &symbol_table;
   const go_parse_treet &parse_tree;
   const go_append_capacityt append_capacity;
+  const object_factory_parameterst nondet_parameters;
+  const std::string entry_function;
   messaget log;
   namespacet ns;
   go_type_convertert type_converter;
@@ -429,11 +444,32 @@ private:
     const std::string &name,
     exprt::operandst arguments,
     const source_locationt &location);
-  /// An arbitrary value of \p type (strings get arbitrary contents).
+  /// An arbitrary value of \p type at depth \p depth of the references
+  /// from the value at the root (see go_builtins.cpp), with code to build it
+  /// in \p dest; nil if \p type is not supported (reported).
   exprt nondet_value(
     const typet &type,
     const source_locationt &location,
-    code_blockt &dest);
+    code_blockt &dest,
+    std::size_t depth = 0);
+  /// A call of the generated function that returns an arbitrary value of
+  /// interface type \p type at depth \p depth (see
+  /// finish_nondet_interfaces).
+  exprt nondet_interface(
+    const typet &type,
+    const source_locationt &location,
+    std::size_t depth);
+  /// The functions nondet_interface calls, by interface type id and depth.
+  std::map<std::pair<std::size_t, std::size_t>, irep_idt> nondet_interfaces;
+  /// The bodies of those functions: nil, or an arbitrary value of a type
+  /// that implements the interface.
+  void finish_nondet_interfaces();
+  /// Whether nondet_value supports \p type (no function values or
+  /// channels, also through references).
+  bool nondet_supported(const typet &type, std::set<irep_idt> &visited) const;
+  /// The function go::$entry, which calls the entry function named by
+  /// --function with arbitrary arguments, if it has parameters.
+  void convert_entry();
   /// \p value, or a temporary holding it if it is not a symbol or a
   /// constant (whose declaration and assignment go to \p dest).
   exprt evaluate_once(

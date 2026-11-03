@@ -1,0 +1,11 @@
+CORE
+main.go
+--function Check
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.Check\.assertion\.1\] line 44 conserved: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+--function with pointer parameters.

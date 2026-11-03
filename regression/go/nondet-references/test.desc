@@ -1,0 +1,19 @@
+CORE
+main.go
+--unwind 7
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 38 write through pointer: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 41 list bounded by depth: SUCCESS$
+^\[go::main\.main\.assertion\.3\] line 42 list can be long: FAILURE$
+^\[go::main\.main\.assertion\.4\] line 44 map bounded: SUCCESS$
+^\[go::main\.main\.assertion\.5\] line 45 map can have entries: FAILURE$
+^\[go::main\.main\.assertion\.6\] line 50 known dynamic types: SUCCESS$
+^\[go::main\.main\.assertion\.7\] line 51 can be a rect: FAILURE$
+^\[go::main\.main\.assertion\.8\] line 54 slice of strings bounded: SUCCESS$
+^\*\* 3 of [0-9]+ failed
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The "can" assertions fail, showing the values that are possible.

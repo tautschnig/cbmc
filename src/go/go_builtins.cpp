@@ -285,15 +285,185 @@ exprt go_convertert::string_concat(
 exprt go_convertert::nondet_value(
   const typet &type,
   const source_locationt &location,
-  code_blockt &dest)
+  code_blockt &dest,
+  std::size_t depth)
 {
-  // An arbitrary string or slice of any length, with arbitrary contents
-  // in a new underlying array; within structs and arrays, recursively.
+  // An arbitrary value of the type, for cprover.Nondet and the arguments
+  // of the entry point. Strings and slices of values without references
+  // have any length and arbitrary contents in a new underlying array.
+  // Values with references are built as CBMC's object factory builds C
+  // inputs (--max-nondet-tree-depth, --min-null-tree-depth): a pointer is
+  // nil or points to a new arbitrary value, a map is nil or has at most
+  // max_nondet_array_length arbitrary entries, a slice of such elements
+  // has at most that capacity, and an interface value is nil or holds an
+  // arbitrary value of one of the program's types that implement it (see
+  // finish_nondet_interfaces); beyond the maximum depth, they are nil.
+  // Objects are not shared between references. Function values and
+  // channels are not supported.
   if(type.id() == ID_c_bool)
   {
     // false or true, not an arbitrary byte.
     return typecast_exprt{
       side_effect_expr_nondett{bool_typet{}, location}, type};
+  }
+  const bool references = contains_reference(type, ns, false);
+  if(is_func_value(type) || is_go_chan(type))
+  {
+    unsupported(
+      location,
+      std::string{"cprover.Nondet and --function arguments of "} +
+        (is_go_chan(type) ? "channel" : "function") + " types");
+    return nil_exprt{};
+  }
+  const bool beyond_depth = depth >= nondet_parameters.max_nondet_tree_depth;
+  // Whether a reference may be nil at this depth.
+  const auto may_be_nil = [&]() -> exprt
+  {
+    if(beyond_depth)
+      return true_exprt{};
+    if(depth < nondet_parameters.min_null_tree_depth)
+      return false_exprt{};
+    return side_effect_expr_nondett{bool_typet{}, location};
+  };
+  if(type.id() == ID_pointer && !is_go_map(type))
+  {
+    // Go1.27 §Pointer_types: nil or the address of a variable.
+    const pointer_typet &pointer = to_pointer_type(type);
+    const symbol_exprt result = new_temporary(type, location, dest);
+    dest.add(code_frontend_assignt{result, null_pointer_exprt{pointer}});
+    if(beyond_depth)
+      return result;
+    code_blockt target;
+    const exprt value =
+      nondet_value(pointer.base_type(), location, target, depth + 1);
+    if(value.is_nil())
+      return nil_exprt{};
+    const symbol_exprt object =
+      new_heap_variable(pointer.base_type(), value, location, target);
+    target.add(code_frontend_assignt{
+      result, typecast_exprt::conditional_cast(object, type)});
+    dest.add(code_ifthenelset{not_exprt{may_be_nil()}, std::move(target)});
+    return result;
+  }
+  if(is_go_map(type))
+  {
+    // Go1.27 §Map_types: nil, or a map with some entries.
+    const symbol_exprt result = new_temporary(type, location, dest);
+    dest.add(
+      code_frontend_assignt{result, null_pointer_exprt{to_pointer_type(type)}});
+    if(beyond_depth)
+      return result;
+    code_blockt entries;
+    entries.add(
+      code_frontend_assignt{result, make_map(type, location, entries)});
+    // Room for all entries from the start, so that the arrays never grow
+    // (to sizes that would depend on the number of entries).
+    const std::size_t max = nondet_parameters.max_nondet_array_length;
+    const struct_typet &header =
+      to_struct_type(to_pointer_type(type).base_type());
+    const typet &key_type =
+      to_pointer_type(header.get_component("keys").type()).base_type();
+    const typet &value_type =
+      to_pointer_type(header.get_component("vals").type()).base_type();
+    const dereference_exprt map{result};
+    entries.add(code_frontend_assignt{
+      member_exprt{map, header.get_component("keys")},
+      allocate_elements(
+        key_type, from_integer(max, int_type()), false, location, entries)});
+    entries.add(code_frontend_assignt{
+      member_exprt{map, header.get_component("vals")},
+      allocate_elements(
+        value_type, from_integer(max, int_type()), false, location, entries)});
+    entries.add(code_frontend_assignt{
+      member_exprt{map, header.get_component("cap")},
+      from_integer(max, int_type())});
+    const symbol_exprt count = new_temporary(int_type(), location, entries);
+    entries.add(code_frontend_assignt{
+      count, side_effect_expr_nondett{int_type(), location}});
+    entries.add(code_assumet{and_exprt{
+      binary_relation_exprt{count, ID_ge, from_integer(0, int_type())},
+      binary_relation_exprt{count, ID_le, from_integer(max, int_type())}}});
+    // count entries with distinct keys (Go1.27 §Map_types: "A map is an
+    // unordered group of elements of one type, called the element type,
+    // indexed by a set of unique keys of another type").
+    const exprt keys = member_exprt{map, header.get_component("keys")};
+    const exprt vals = member_exprt{map, header.get_component("vals")};
+    for(std::size_t i = 0; i < max; ++i)
+    {
+      code_blockt entry;
+      const exprt key = evaluate_once(
+        nondet_value(key_type, location, entry, depth + 1), location, entry);
+      const exprt value = nondet_value(value_type, location, entry, depth + 1);
+      if(key.is_nil() || value.is_nil())
+        return nil_exprt{};
+      for(std::size_t j = 0; j < i; ++j)
+      {
+        const exprt other =
+          dereference_exprt{plus_exprt{keys, from_integer(j, int_type())}};
+        entry.add(
+          code_assumet{not_exprt{as_condition(equality(key, other, irept{}))}});
+      }
+      entry.add(code_frontend_assignt{
+        dereference_exprt{plus_exprt{keys, from_integer(i, int_type())}}, key});
+      entry.add(code_frontend_assignt{
+        dereference_exprt{plus_exprt{vals, from_integer(i, int_type())}},
+        value});
+      entries.add(code_ifthenelset{
+        binary_relation_exprt{from_integer(i, int_type()), ID_lt, count},
+        std::move(entry)});
+    }
+    entries.add(code_frontend_assignt{
+      member_exprt{map, header.get_component("len")}, count});
+    dest.add(code_ifthenelset{not_exprt{may_be_nil()}, std::move(entries)});
+    return result;
+  }
+  if(is_go_interface(type))
+    return nondet_interface(type, location, depth);
+  if(is_go_slice(type) && references)
+  {
+    // At most max_nondet_array_length elements (Go1.27
+    // §Length_and_capacity: "0 <= len(s) <= cap(s)"), each arbitrary up
+    // to the capacity; nil if the capacity is 0, possibly.
+    const struct_typet &struct_type = to_struct_type(type);
+    const typet &element =
+      to_pointer_type(struct_type.get_component("data").type()).base_type();
+    const std::size_t max = nondet_parameters.max_nondet_array_length;
+    const symbol_exprt length = new_temporary(int_type(), location, dest);
+    const symbol_exprt cap = new_temporary(int_type(), location, dest);
+    dest.add(code_frontend_assignt{
+      length, side_effect_expr_nondett{int_type(), location}});
+    dest.add(code_frontend_assignt{
+      cap, side_effect_expr_nondett{int_type(), location}});
+    dest.add(code_assumet{conjunction(
+      {binary_relation_exprt{length, ID_ge, from_integer(0, int_type())},
+       binary_relation_exprt{length, ID_le, cap},
+       binary_relation_exprt{
+         cap, ID_le, from_integer(beyond_depth ? 0 : max, int_type())}})});
+    const exprt data = evaluate_once(
+      allocate_elements(element, cap, true, location, dest), location, dest);
+    for(std::size_t i = 0; !beyond_depth && i < max; ++i)
+    {
+      code_blockt init;
+      const exprt value = nondet_value(element, location, init, depth + 1);
+      if(value.is_nil())
+        return nil_exprt{};
+      init.add(code_frontend_assignt{
+        dereference_exprt{plus_exprt{data, from_integer(i, int_type())}},
+        value});
+      dest.add(code_ifthenelset{
+        binary_relation_exprt{from_integer(i, int_type()), ID_lt, cap},
+        std::move(init)});
+    }
+    const symbol_exprt is_nil = new_temporary(bool_typet{}, location, dest);
+    dest.add(code_frontend_assignt{
+      is_nil, side_effect_expr_nondett{bool_typet{}, location}});
+    dest.add(code_assumet{or_exprt{
+      not_exprt{is_nil}, equal_exprt{cap, from_integer(0, int_type())}}});
+    return struct_exprt{
+      {if_exprt{is_nil, null_pointer_exprt{to_pointer_type(data.type())}, data},
+       length,
+       cap},
+      type};
   }
   if(is_go_string(type) || is_go_slice(type))
   {
@@ -340,20 +510,275 @@ exprt go_convertert::nondet_value(
   }
   const typet &followed =
     type.id() == ID_struct_tag ? ns.follow_tag(to_struct_tag_type(type)) : type;
-  if(followed.id() == ID_struct && !contains_reference(type, ns))
+  if(followed.id() == ID_struct)
   {
     exprt::operandst operands;
-    bool has_composite = false;
+    bool has_composite = references;
     for(const auto &c : to_struct_type(followed).components())
       has_composite |= is_go_string(c.type()) || is_go_slice(c.type());
     if(has_composite)
     {
+      // Field by field (the same depth: fields are part of the value).
       for(const auto &c : to_struct_type(followed).components())
-        operands.push_back(nondet_value(c.type(), location, dest));
+      {
+        exprt value = nondet_value(c.type(), location, dest, depth);
+        if(value.is_nil())
+          return nil_exprt{};
+        operands.push_back(evaluate_once(value, location, dest));
+      }
       return struct_exprt{std::move(operands), type};
     }
   }
+  if(followed.id() == ID_array && references)
+  {
+    // Element by element.
+    const array_typet &array = to_array_type(followed);
+    const auto size = numeric_cast<std::size_t>(array.size());
+    if(!size.has_value() || *size > 256)
+    {
+      unsupported(
+        location,
+        "cprover.Nondet and --function arguments of arrays of more than 256 "
+        "elements with references");
+      return nil_exprt{};
+    }
+    exprt::operandst elements;
+    for(std::size_t i = 0; i < *size; ++i)
+    {
+      exprt value = nondet_value(array.element_type(), location, dest, depth);
+      if(value.is_nil())
+        return nil_exprt{};
+      elements.push_back(evaluate_once(value, location, dest));
+    }
+    return array_exprt{std::move(elements), array};
+  }
   return side_effect_expr_nondett{type, location};
+}
+
+exprt go_convertert::nondet_interface(
+  const typet &type,
+  const source_locationt &location,
+  std::size_t depth)
+{
+  const std::size_t tid = go_type_id(type);
+  irep_idt &id = nondet_interfaces[{tid, depth}];
+  if(id.empty())
+  {
+    id = "go::$nondet." + std::to_string(tid) + "." + std::to_string(depth);
+    declare_generated(symbol_table, id, {}, type);
+  }
+  const symbolt &function = ns.lookup(id);
+  return side_effect_expr_function_callt{
+    function.symbol_expr(),
+    {},
+    to_code_type(function.type).return_type(),
+    location};
+}
+
+bool go_convertert::nondet_supported(
+  const typet &type,
+  std::set<irep_idt> &visited) const
+{
+  if(is_func_value(type) || is_go_chan(type))
+    return false;
+  if(is_go_interface(type) || is_go_string(type))
+    return true;
+  if(is_go_slice(type))
+  {
+    return nondet_supported(
+      to_pointer_type(to_struct_type(type).get_component("data").type())
+        .base_type(),
+      visited);
+  }
+  if(is_go_map(type))
+  {
+    const struct_typet &header =
+      to_struct_type(to_pointer_type(type).base_type());
+    return nondet_supported(
+             to_pointer_type(header.get_component("keys").type()).base_type(),
+             visited) &&
+           nondet_supported(
+             to_pointer_type(header.get_component("vals").type()).base_type(),
+             visited);
+  }
+  if(type.id() == ID_pointer)
+    return nondet_supported(to_pointer_type(type).base_type(), visited);
+  if(type.id() == ID_struct_tag)
+  {
+    const irep_idt &tag = to_struct_tag_type(type).get_identifier();
+    if(!visited.insert(tag).second)
+      return true;
+    return nondet_supported(ns.follow_tag(to_struct_tag_type(type)), visited);
+  }
+  if(type.id() == ID_struct)
+  {
+    for(const auto &c : to_struct_type(type).components())
+    {
+      if(!nondet_supported(c.type(), visited))
+        return false;
+    }
+    return true;
+  }
+  if(type.id() == ID_array)
+    return nondet_supported(to_array_type(type).element_type(), visited);
+  return true;
+}
+
+void go_convertert::finish_nondet_interfaces()
+{
+  // Go1.27 §Interface_types: "A variable of interface type can store a
+  // value of any type with a type set" that implements the interface. The
+  // candidates are the program's types: those that have the interface's
+  // methods (their method sets, from the helper), or for interfaces
+  // without methods the types the program converts to interfaces. A value
+  // of another type cannot be built.
+  const auto method_set_entry =
+    [&](const irept &entry, const irep_idt &name, std::size_t signature) -> bool
+  {
+    for(const auto &m : go_list(entry, "mset"))
+    {
+      if(
+        m.get("name") == name &&
+        type_converter.type_id(m.get("type")) == signature)
+      {
+        return true;
+      }
+    }
+    return false;
+  };
+  std::set<irep_idt> done;
+  for(bool more = true; more;)
+  {
+    more = false;
+    const auto pending = nondet_interfaces;
+    for(const auto &n : pending)
+    {
+      if(!done.insert(n.second).second)
+        continue;
+      more = true;
+      const std::size_t tid = n.first.first;
+      const std::size_t depth = n.first.second;
+      const symbolt &function = ns.lookup(n.second);
+      const typet iface_type = to_code_type(function.type).return_type();
+      const irept &iface_entry =
+        type_converter.underlying(type_converter.type_index(tid));
+      const auto &methods = go_list(iface_entry, "methods");
+
+      std::vector<std::size_t> candidates;
+      if(depth < nondet_parameters.max_nondet_tree_depth)
+      {
+        if(methods.empty())
+        {
+          for(const auto &t : dynamic_types)
+            candidates.push_back(t.first);
+        }
+        else
+        {
+          for(std::size_t i = 0; i < parse_tree.types.size(); ++i)
+          {
+            const irep_idt index = std::to_string(i);
+            const std::size_t candidate = type_converter.type_id(index);
+            if(type_converter.type_index(candidate) != index)
+              continue; // not the canonical entry
+            const irept &entry = parse_tree.type_entry(index);
+            if(type_converter.underlying(index).get("k") == "interface")
+              continue;
+            bool all = true;
+            for(const auto &m : methods)
+            {
+              all =
+                all &&
+                method_set_entry(
+                  entry, m.get("name"), type_converter.type_id(m.get("type")));
+            }
+            if(all)
+              candidates.push_back(candidate);
+          }
+        }
+      }
+
+      function_statet outer = std::move(state);
+      state = function_statet{};
+      state.function_id = n.second;
+      code_blockt body;
+      const source_locationt &location = function.location;
+      const bool nil_allowed = depth >= nondet_parameters.min_null_tree_depth;
+      std::vector<code_blockt> choices;
+      for(const std::size_t candidate : candidates)
+      {
+        const typet type = type_converter(type_converter.type_index(candidate));
+        std::set<irep_idt> visited;
+        if(type.is_nil() || !nondet_supported(type, visited))
+          continue;
+        code_blockt choice;
+        const exprt value = nondet_value(type, location, choice, depth + 1);
+        if(value.is_nil())
+          continue;
+        choice.add(code_frontend_returnt{
+          typecast_exprt::conditional_cast(box(value, location), iface_type)});
+        choices.push_back(std::move(choice));
+      }
+      for(std::size_t i = 0; i < choices.size(); ++i)
+      {
+        if(i + 1 == choices.size() && !nil_allowed)
+          body.add(std::move(choices[i]));
+        else
+        {
+          body.add(code_ifthenelset{
+            side_effect_expr_nondett{bool_typet{}, location},
+            std::move(choices[i])});
+        }
+      }
+      body.add(
+        code_frontend_returnt{*zero_initializer(iface_type, location, ns)});
+      end_generated_function(body, iface_type);
+      state = std::move(outer);
+      symbol_table.get_writeable_ref(n.second).value = std::move(body);
+    }
+  }
+}
+
+void go_convertert::convert_entry()
+{
+  // With --function, the program's entry function is called with arbitrary
+  // arguments (see nondet_value), from go::$entry (go_language.cpp).
+  if(entry_function.empty())
+    return;
+  const symbolt *function = symbol_table.lookup(
+    symbol_id(id2string(parse_tree.package) + "." + entry_function));
+  if(function == nullptr)
+    return; // reported by go_languaget
+  const code_typet &code = to_code_type(function->type);
+  if(code.parameters().empty())
+    return;
+  state = function_statet{};
+  state.function_id = "go::$entry";
+  const source_locationt &location = function->location;
+  code_blockt body;
+  exprt::operandst arguments;
+  for(const auto &parameter : code.parameters())
+  {
+    std::set<irep_idt> visited;
+    if(!nondet_supported(parameter.type(), visited))
+    {
+      unsupported(
+        location,
+        "--function with parameters containing functions or channels");
+      return;
+    }
+    const exprt value = nondet_value(parameter.type(), location, body);
+    if(value.is_nil())
+      return;
+    arguments.push_back(evaluate_once(value, location, body));
+  }
+  body.add(code_expressiont{side_effect_expr_function_callt{
+    function->symbol_expr(),
+    std::move(arguments),
+    code.return_type(),
+    location}});
+  end_generated_function(body, empty_typet{});
+  declare_generated(symbol_table, "go::$entry", {}, empty_typet{});
+  symbol_table.get_writeable_ref("go::$entry").value = std::move(body);
 }
 
 exprt go_convertert::element(

@@ -3,8 +3,8 @@ main.go
 
 ^EXIT=10$
 ^SIGNAL=0$
-cprover\.Nondet of types containing pointers or functions is not supported yet$
-^\[go::main\.main\.unsupported\.1\] line 8 Go front-end: cprover\.Nondet of types containing pointers or functions is not supported yet: FAILURE$
+cprover\.Nondet and --function arguments of function types is not supported yet$
+^\[go::main\.main\.unsupported\.1\] line 8 Go front-end: cprover\.Nondet and --function arguments of function types is not supported yet: FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring
