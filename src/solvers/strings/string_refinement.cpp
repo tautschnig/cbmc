@@ -1918,16 +1918,23 @@ static void debug_check_axioms_step(
   const exprt &negaxiom,
   const exprt &with_concretized_arrays)
 {
-  stream << std::string(4, ' ') << "- axiom:\n" << std::string(6, ' ');
-  stream << to_string(axiom);
-  stream << '\n'
-         << std::string(4, ' ') << "- axiom_in_model:\n"
-         << std::string(6, ' ');
-  stream << to_string(axiom_in_model) << '\n'
-         << std::string(4, ' ') << "- negated_axiom:\n"
-         << std::string(6, ' ') << format(negaxiom) << '\n';
-  stream << std::string(4, ' ') << "- negated_axiom_with_concretized_arrays:\n"
-         << std::string(6, ' ') << format(with_concretized_arrays) << '\n';
+  // Formatting is expensive on large axioms: only do it for output that
+  // is shown.
+  stream.message.conditional_output(
+    stream,
+    [&](messaget::mstreamt &out)
+    {
+      out << std::string(4, ' ') << "- axiom:\n" << std::string(6, ' ');
+      out << to_string(axiom);
+      out << '\n'
+          << std::string(4, ' ') << "- axiom_in_model:\n"
+          << std::string(6, ' ');
+      out << to_string(axiom_in_model) << '\n'
+          << std::string(4, ' ') << "- negated_axiom:\n"
+          << std::string(6, ' ') << format(negaxiom) << '\n';
+      out << std::string(4, ' ') << "- negated_axiom_with_concretized_arrays:\n"
+          << std::string(6, ' ') << format(with_concretized_arrays) << '\n';
+    });
 }
 
 /// \return true if the current model satisfies all the axioms
@@ -1944,11 +1951,15 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
 {
   stream << "string_refinementt::check_axioms:" << messaget::eom;
 
-  stream << "symbol_resolve:" << messaget::eom;
-  auto pairs = symbol_resolve.to_vector();
-  for(const auto &pair : pairs)
-    stream << "  - " << format(pair.first) << " --> " << format(pair.second)
-           << messaget::eom;
+  stream.message.conditional_output(
+    stream,
+    [&symbol_resolve](messaget::mstreamt &out)
+    {
+      out << "symbol_resolve:" << messaget::eom;
+      for(const auto &pair : symbol_resolve.to_vector())
+        out << "  - " << format(pair.first) << " --> " << format(pair.second)
+            << messaget::eom;
+    });
 
 #ifdef DEBUG
   debug_model(
