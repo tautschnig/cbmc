@@ -1,10 +1,10 @@
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file of the Go distribution.
-// Changes for CBMC's Go front-end: a subset of package strconv (go1.27),
-// formatting digit by digit.
+// Changes for CBMC's Go front-end: package strconv is the real one (go1.27,
+// see sourceModels in models.go) except for these integer conversions,
+// which format digit by digit, without internal/strconv's tables.
 
-// Package strconv models functions of the standard library's strconv.
 package strconv
 
 const digits = "0123456789abcdefghijklmnopqrstuvwxyz"

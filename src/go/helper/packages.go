@@ -40,6 +40,7 @@ type loader struct {
 	loading map[string]bool
 	order   []*sourcePkg // in the order they were type-checked
 	models  map[string]*types.Package
+	real    map[string]*types.Package // standard-library packages, by path
 	failed  *bool
 }
 

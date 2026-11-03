@@ -1,0 +1,10 @@
+CORE
+main.go
+--unwind 8
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+encoding/hex, hash/fnv, unicode/utf16 from their source; io error variables.

@@ -1,0 +1,10 @@
+CORE
+main.go
+--unwind 8
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+slices, sort, cmp and math/bits from their source.

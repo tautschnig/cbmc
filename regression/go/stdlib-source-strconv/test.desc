@@ -1,0 +1,10 @@
+CORE
+main.go
+--unwind 8
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+strconv from its source; type assertions see its errors.

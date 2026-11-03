@@ -341,12 +341,8 @@ void go_convertert::declare_parameters(
 
 void go_convertert::declare_function(const irept &decl)
 {
-  if(
-    go_field(decl, "Body").is_nil() &&
-    !is_intrinsic(go_field(decl, "Name").get("_obj")))
-  {
-    return unsupported(decl, "functions without a body");
-  }
+  // Functions without a body (implemented in assembly or by the runtime)
+  // are declared; calls of them fail (see convert_function_body).
   const irept &name = go_field(decl, "Name");
   const irep_idt &object_id = name.get("_obj");
   const irept &object = parse_tree.object(object_id);
@@ -818,13 +814,24 @@ void go_convertert::convert_function_body(const irept &decl)
   const irep_idt function = symbol_id(object_id);
   const source_locationt location = location_of(decl);
   std::vector<std::string> messages;
-  unsupported_in_body = &messages;
-  convert_function(
-    function,
-    parse_tree.object(object_id).get("type"),
-    go_field(decl, "Body"),
-    location);
-  unsupported_in_body = nullptr;
+  if(go_field(decl, "Body").is_nil())
+  {
+    messages.push_back(
+      "Go front-end: " + id2string(object_id) +
+      ", a function without a body, is not supported yet");
+    log.warning().source_location = location;
+    log.warning() << messages.back() << messaget::eom;
+  }
+  else
+  {
+    unsupported_in_body = &messages;
+    convert_function(
+      function,
+      parse_tree.object(object_id).get("type"),
+      go_field(decl, "Body"),
+      location);
+    unsupported_in_body = nullptr;
+  }
   if(messages.empty())
     return;
 

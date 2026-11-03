@@ -126,6 +126,7 @@ func (h *helperImporter) Import(path string) (*types.Package, error) {
 		}
 		pkg, err := h.std.Import(path)
 		if err == nil {
+			h.loader.real[path] = pkg
 			err = h.loader.loadModel(path)
 		}
 		return pkg, err
@@ -217,6 +218,13 @@ func (e *encoder) objID(o types.Object) string {
 	}
 	if id, ok := e.aliases[o]; ok {
 		return id
+	}
+	if f, ok := o.(*types.Func); ok && e.loader != nil {
+		// A method of a real type whose package has a source model is the
+		// model's (see realType).
+		if m := e.loader.modelMethod(f); m != nil {
+			o = m
+		}
 	}
 	pkg := ""
 	if o.Pkg() != nil {
@@ -669,7 +677,7 @@ var basicNames = map[types.BasicKind]string{
 // it refers to) if necessary. The index is reserved before the entry is
 // built so that recursive types terminate.
 func (e *encoder) typ(t types.Type) int {
-	t = types.Unalias(t)
+	t = e.realType(types.Unalias(t))
 	if i, ok := e.typeIdx[t]; ok {
 		return i
 	}
@@ -917,6 +925,12 @@ func (e *encoder) node(n ast.Node) any {
 		if f, ok := o.(*types.Func); ok && e.loader != nil {
 			// A standard-library function with a model denotes the model.
 			if m := e.loader.model(f); m != nil {
+				o = m
+			}
+		}
+		if v, ok := o.(*types.Var); ok && e.loader != nil {
+			// So does a package-level variable.
+			if m := e.loader.modelVar(v); m != nil {
 				o = m
 			}
 		}
@@ -1385,7 +1399,7 @@ func main() {
 		names: &names, files: &files, modRoot: modRoot, modPath: modPath,
 		srcDir: srcDir, byPath: map[string]*sourcePkg{},
 		loading: map[string]bool{}, models: map[string]*types.Package{},
-		failed: &failed}
+		real: map[string]*types.Package{}, failed: &failed}
 	enc.loader = ld
 	conf.Importer = &helperImporter{fset: fset, sizes: sizes,
 		std: importer.ForCompiler(fset, "gc", nil), loader: ld}

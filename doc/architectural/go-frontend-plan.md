@@ -401,10 +401,29 @@ Supported so far:
   `Ceil`, `Copysign`, `Float32bits`, `Float32frombits`, `Float64bits`,
   `Float64frombits`, `Floor`, `Inf`, `IsInf`, `IsNaN`, `Max`, `Min`,
   `Modf`, `NaN`, `Signbit`, `Trunc`), `slices` (`Contains`, `Equal`,
-  `Index`, `Max`, `Min`, `Reverse`) and `fmt` (`Print`, `Printf`,
-  `Println`: the output is not modelled; they call the `Error` or
-  `String` method of each argument, recovering from panics in them, and
-  their results are arbitrary). Constants of standard-library packages
+  `Index`, `Max`, `Min`, `Reverse`; now the real package, see below) and
+  `fmt` (`Print`, `Printf`, `Println`: the output is not modelled; they
+  call the `Error` or `String` method of each argument, recovering from
+  panics in them, and their results are arbitrary). Models of
+  package-level variables work the same way: a variable of the model
+  with the name and an identical type stands for the real one (`io`:
+  `EOF`, `ErrUnexpectedEOF` and the other error variables).
+  *Source models* (`sourceModels` in `models.go`) are the packages' own
+  source from GOROOT, type-checked as `cprover/std/<path>`: `cmp`,
+  `math/bits` (with its bootstrap errors), `internal/byteorder`,
+  `internal/bytealg` (the portable files, `MaxLen` 0), `slices`
+  (`overlaps` replaced, as it compares addresses through `unsafe`),
+  `sort`, `strconv` (with `internal/strconv` and `internal/stringslite`,
+  whose conversions through `unsafe` are replaced; the integer
+  formatting is the earlier model's), `encoding/hex`, `hash/fnv` and
+  `unicode/utf16`. Files of `models/<path>` then replace the functions
+  of the same names. The named types of a source model are encoded as
+  the real package's types (with the model's methods), so that the
+  program's type assertions and switches see the values the model
+  creates (e.g. `*strconv.NumError`) as with gc. Functions without a
+  body (assembly, linkname) fail when called. `unsafe.Sizeof` and
+  `unsafe.Alignof` of types that depend on type parameters are
+  constants in each instance (gc's sizes from the helper). Constants of standard-library packages
   (e.g. `math.MaxInt64`) are folded by go/types as before. The runtime
   package provides intrinsics that the converter implements:
   `rt.Comparable` (whether a dynamic type is comparable, for
