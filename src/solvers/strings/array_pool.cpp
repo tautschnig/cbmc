@@ -146,8 +146,22 @@ array_string_exprt array_poolt::make_char_array_for_char_pointer(
     return existing->second;
 
   const std::string symbol_name = "char_array_" + id2string(char_pointer.id());
+  // The length of the string is the one in length_of_array (see
+  // string_length_tiest), not the size of char_array_type, which is the
+  // length that whichever find came first gave. Reading the model cuts an
+  // array at its type's size, so an unrelated size would make
+  // check_axioms see a model that is not the solver's. Fresh strings have
+  // unbounded arrays for the same reason (see fresh_string). Arrays of a
+  // constant size keep it: they are bit-blasted, and their size is the
+  // string's length.
+  const auto &char_array = to_array_type(char_array_type);
+  const typet array_type =
+    char_array.size().is_constant()
+      ? char_array_type
+      : typet{array_typet{
+          char_array.element_type(), infinity_exprt{char_array.size().type()}}};
   const auto array_sym =
-    to_array_string_expr(fresh_symbol(symbol_name, char_array_type));
+    to_array_string_expr(fresh_symbol(symbol_name, array_type));
   arrays_of_pointers.emplace(char_pointer, array_sym);
   made_arrays.emplace_back(char_pointer, array_sym);
 

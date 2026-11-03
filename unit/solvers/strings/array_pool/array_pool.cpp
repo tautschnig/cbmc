@@ -39,6 +39,25 @@ SCENARIO("array_pool", "[core][solvers][strings][string_constraint_generator]")
 
         REQUIRE(second_lookup == associated_array);
       }
+
+      THEN("The array is unbounded, as its length is in the pool")
+      {
+        REQUIRE(
+          to_array_type(associated_array.type()).size() ==
+          infinity_exprt{length_type});
+      }
+    }
+
+    WHEN("Looking for a pointer symbol with a constant length")
+    {
+      const symbol_exprt pointer("my_pointer", pointer_type);
+      const exprt length = from_integer(3, length_type);
+      const array_string_exprt associated_array = pool.find(pointer, length);
+
+      THEN("The array has that size")
+      {
+        REQUIRE(to_array_type(associated_array.type()).size() == length);
+      }
     }
 
     WHEN("Looking for the address of the first element of a constant array")
@@ -100,8 +119,11 @@ SCENARIO("array_pool", "[core][solvers][strings][string_constraint_generator]")
         const array_string_exprt associated_to_false =
           pool.find(false_case, pointer_length2);
 
-        const typet recomposed_type = array_typet(
-          char_type, if_exprt(boolean_symbol, pointer_length, pointer_length));
+        // Arrays made for pointers with lengths that are not constants are
+        // unbounded.
+        const exprt unbounded = infinity_exprt{length_type};
+        const typet recomposed_type = array_typet{
+          char_type, if_exprt{boolean_symbol, unbounded, unbounded}};
         const exprt recomposed_array = if_exprt(
           boolean_symbol,
           associated_to_true,
@@ -132,9 +154,11 @@ SCENARIO("array_pool", "[core][solvers][strings][string_constraint_generator]")
         const array_string_exprt associated_array =
           pool.find(if_expr, pointer_length);
 
-        const typet recomposed_type = array_typet(
-          char_type,
-          if_exprt(boolean_symbol, pointer_length1, pointer_length2));
+        // Arrays made for pointers with lengths that are not constants are
+        // unbounded.
+        const exprt unbounded = infinity_exprt{length_type};
+        const typet recomposed_type = array_typet{
+          char_type, if_exprt{boolean_symbol, unbounded, unbounded}};
         const exprt recomposed_array = if_exprt(
           boolean_symbol,
           associated_to_true,
