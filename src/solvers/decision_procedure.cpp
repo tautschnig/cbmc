@@ -37,3 +37,8 @@ void decision_proceduret::set_to_false(const exprt &expr)
 {
   set_to(expr, false);
 }
+
+void decision_proceduret::set_definition(const exprt &, const exprt &definition)
+{
+  set_to_true(definition);
+}
