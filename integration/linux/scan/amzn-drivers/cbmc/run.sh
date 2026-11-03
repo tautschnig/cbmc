@@ -13,3 +13,5 @@ run f3_ena_hash_key.c
 run f4_efa_kverbs_wrid.c
 run f5_efa_kverbs_sub_cq_idx.c
 run f6_ena_rx_len.c
+# Velocity Labs report 1 (DPDK ENA TX prefetch): independent check
+run g1_dpdk_tx_prefetch.c --unwind 10
