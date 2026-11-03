@@ -13,6 +13,13 @@ import (
 
 type reader struct{ n int }
 
+type sink struct{ data []byte }
+
+func (s *sink) Write(p []byte) (int, error) {
+	s.data = append(s.data, p...)
+	return len(p), nil
+}
+
 func (r *reader) Read(p []byte) (int, error) {
 	if r.n == 0 {
 		return 0, io.EOF
@@ -24,6 +31,9 @@ func (r *reader) Read(p []byte) (int, error) {
 
 func main() {
 	cprover.Assert(hex.EncodeToString([]byte{0xab, 1}) == "ab01", "hex")
+	out := &sink{}
+	hex.NewEncoder(out).Write([]byte{0xcd})
+	cprover.Assert(string(out.data) == "cd", "hex.NewEncoder")
 	_, err := hex.DecodeString("a")
 	cprover.Assert(err == hex.ErrLength, "hex.ErrLength")
 	h := fnv.New32a()

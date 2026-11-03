@@ -239,7 +239,9 @@ func (l *loader) model(f *types.Func) *types.Func {
 		return nil
 	}
 	mf, _ := m.Scope().Lookup(f.Name()).(*types.Func)
-	if mf == nil || !types.Identical(mf.Type(), f.Type()) {
+	// The signature of a source model's function mentions the model's own
+	// types, which stand for the real ones (see realType).
+	if mf == nil || !types.Identical(l.enc.realSignature(mf.Type()), f.Type()) {
 		return nil
 	}
 	return mf
@@ -285,17 +287,6 @@ func (e *encoder) realType(t types.Type) types.Type {
 			return types.NewChan(x.Dir(), el)
 		}
 		return t
-	case *types.Signature:
-		if x.TypeParams().Len() > 0 || x.Recv() != nil {
-			return t
-		}
-		params, pc := e.realTuple(x.Params())
-		results, rc := e.realTuple(x.Results())
-		if pc || rc {
-			return types.NewSignatureType(nil, nil, nil, params, results,
-				x.Variadic())
-		}
-		return t
 	}
 	n, ok := t.(*types.Named)
 	if !ok || n.Obj().Pkg() == nil || n.TypeParams().Len() > 0 {
@@ -321,6 +312,9 @@ func (e *encoder) realType(t types.Type) types.Type {
 
 // realTuple maps the types of tup with realType, reporting whether any
 // changed.
+//
+// Signatures are not mapped (their parameters are the objects that the
+// function bodies refer to), except by realSignature.
 func (e *encoder) realTuple(tup *types.Tuple) (*types.Tuple, bool) {
 	changed := false
 	var vars []*types.Var
@@ -337,6 +331,21 @@ func (e *encoder) realTuple(tup *types.Tuple) (*types.Tuple, bool) {
 		return tup, false
 	}
 	return types.NewTuple(vars...), true
+}
+
+// realSignature is realType for the signature of a function (see model):
+// its parameters' types mapped.
+func (e *encoder) realSignature(t types.Type) types.Type {
+	x, ok := t.(*types.Signature)
+	if !ok || x.TypeParams().Len() > 0 || x.Recv() != nil {
+		return t
+	}
+	params, pc := e.realTuple(x.Params())
+	results, rc := e.realTuple(x.Results())
+	if !pc && !rc {
+		return t
+	}
+	return types.NewSignatureType(nil, nil, nil, params, results, x.Variadic())
 }
 
 // modelMethod returns the method of the source model's type (see

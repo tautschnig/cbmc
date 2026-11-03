@@ -21,6 +21,9 @@ func main() {
 	cprover.Assert(slices.Max(a) == b[2] && slices.Min(a) == b[0], "max/min")
 	sort.Ints(a)
 	cprover.Assert(sort.IntsAreSorted(a) && slices.Equal(a, b), "sort.Ints")
+	d := []int{a[2], a[0], a[1]}
+	sort.Sort(sort.Reverse(sort.IntSlice(d)))
+	cprover.Assert(d[0] == a[2] && d[2] == a[0], "sort.Sort")
 	// Insert may shift b's elements in place (if Clone left room).
 	c := slices.Insert(b, 1, 7)
 	cprover.Assert(len(c) == 4 && c[1] == 7 && c[2] == a[1], "slices.Insert")

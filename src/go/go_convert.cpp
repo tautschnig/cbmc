@@ -3721,6 +3721,47 @@ static std::vector<std::size_t> field_path(
   return {};
 }
 
+/// The path to the field named \p name of the struct \p struct_entry, at
+/// the shallowest depth (Go1.27 §Selectors), or empty if there is none
+/// (or more than one at that depth).
+static std::vector<std::size_t> field_path_by_name(
+  const irep_idt &name,
+  const irept &struct_entry,
+  const go_type_convertert &types)
+{
+  // Breadth first: the structs at the current depth, with their paths.
+  std::vector<std::pair<const irept *, std::vector<std::size_t>>> level{
+    {&struct_entry, {}}};
+  for(std::size_t depth = 0; depth < 16 && !level.empty(); ++depth)
+  {
+    std::vector<std::vector<std::size_t>> found;
+    std::vector<std::pair<const irept *, std::vector<std::size_t>>> next;
+    for(const auto &entry : level)
+    {
+      const auto &fields = go_list(*entry.first, "fields");
+      for(std::size_t i = 0; i < fields.size(); ++i)
+      {
+        std::vector<std::size_t> path = entry.second;
+        path.push_back(i);
+        if(fields[i].get("name") == name)
+          found.push_back(path);
+        if(fields[i].get_bool("embedded"))
+        {
+          const irept &under = types.underlying(fields[i].get("type"));
+          if(under.get("k") == "struct")
+            next.emplace_back(&under, std::move(path));
+        }
+      }
+    }
+    if(found.size() == 1)
+      return found.front();
+    if(!found.empty())
+      return {};
+    level = std::move(next);
+  }
+  return {};
+}
+
 exprt go_convertert::convert_composite_lit(const irept &lit)
 {
   // Go1.27 §Composite_literals: "Composite literals construct new values
@@ -3779,8 +3820,15 @@ exprt go_convertert::convert_composite_lit(const irept &lit)
       // [Go 1.27] for a (possibly promoted) field of the struct".
       std::vector<std::size_t> path;
       if(keyed)
-        path = field_path(
-          go_field(element, "Key").get("_obj"), literal_type, type_converter);
+      {
+        const irept &key = go_field(element, "Key");
+        path = field_path(key.get("_obj"), literal_type, type_converter);
+        // A source model's literal of its own type, which stands for the
+        // real type (whose fields are other objects of the same names).
+        if(path.empty())
+          path =
+            field_path_by_name(key.get("Name"), literal_type, type_converter);
+      }
       else
         path = {position++};
       if(path.empty())
