@@ -138,16 +138,22 @@ array_string_exprt array_poolt::make_char_array_for_char_pointer(
     return to_array_string_expr(
       to_index_expr(to_address_of_expr(char_pointer).object()).array());
   }
+
+  // Strings merged at join points of a program reach the same pointers many
+  // times; only a pointer without an array gets a new one (and a length).
+  const auto existing = arrays_of_pointers.find(char_pointer);
+  if(existing != arrays_of_pointers.end())
+    return existing->second;
+
   const std::string symbol_name = "char_array_" + id2string(char_pointer.id());
   const auto array_sym =
     to_array_string_expr(fresh_symbol(symbol_name, char_array_type));
-  const auto insert_result =
-    arrays_of_pointers.insert({char_pointer, array_sym});
+  arrays_of_pointers.emplace(char_pointer, array_sym);
 
   // add length to length_of_array map
   get_or_create_length(array_sym);
 
-  return to_array_string_expr(insert_result.first->second);
+  return array_sym;
 }
 
 /// Given an array_string_exprt, get the size of the underlying array. If that
