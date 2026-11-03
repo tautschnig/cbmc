@@ -1,7 +1,9 @@
 """Benchmark runner and flamegraph generation."""
 
+import os
 import re
 import resource
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -72,6 +74,62 @@ def _outcome(returncode, cbmc_stdout):
     return f"exit {returncode}"
 
 
+def _text(output):
+    """Captured output as text (TimeoutExpired may hold bytes or None)."""
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        return output.decode(errors="replace")
+    return output
+
+
+# How long perf may take to write its data after an interrupt.
+_INTERRUPT_GRACE_SECS = 30
+
+
+def _run_process_group(cmd, timeout, preexec_fn):
+    """Run cmd in a process group of its own, as subprocess.run with
+    capture_output and text would, but stop the whole group on a timeout.
+
+    subprocess.run only kills its direct child: for perf record that is
+    perf, and the profiled CBMC it started keeps running. On a timeout, the
+    group first gets SIGINT, on which perf stops CBMC and writes the
+    samples collected so far, and SIGKILL if it has not stopped after a
+    grace period. Raises subprocess.TimeoutExpired with the output so far,
+    as subprocess.run does."""
+    with subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            preexec_fn=preexec_fn, start_new_session=True) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _signal_group(process, signal.SIGINT)
+            try:
+                stdout, stderr = process.communicate(
+                    timeout=_INTERRUPT_GRACE_SECS)
+            except subprocess.TimeoutExpired:
+                _signal_group(process, signal.SIGKILL)
+                stdout, stderr = process.communicate()
+            # Children that ignored the interrupt, if perf exited first.
+            _signal_group(process, signal.SIGKILL)
+            raise subprocess.TimeoutExpired(
+                cmd, timeout, output=stdout, stderr=stderr)
+        except BaseException:
+            # e.g. KeyboardInterrupt: do not leave the group running
+            _signal_group(process, signal.SIGKILL)
+            raise
+    return subprocess.CompletedProcess(
+        cmd, process.returncode, stdout, stderr)
+
+
+def _signal_group(process, sig):
+    """Send sig to the process group led by process, if any is left."""
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
 def run_benchmark(cbmc, bench, output_dir, timeout, memory_mb, skip_solver):
     """Run perf on a single benchmark. Returns parsed results dict."""
     name = bench["name"]
@@ -114,16 +172,16 @@ def run_benchmark(cbmc, bench, output_dir, timeout, memory_mb, skip_solver):
     start = time.monotonic()
     returncode = None
     try:
-        result = subprocess.run(
-            perf_cmd, capture_output=True, text=True, timeout=timeout,
-            preexec_fn=lambda: resource.setrlimit(
+        result = _run_process_group(
+            perf_cmd, timeout,
+            lambda: resource.setrlimit(
                 resource.RLIMIT_AS, (memory_mb * 1024 * 1024, -1)))
         cbmc_stdout = result.stdout + result.stderr
         returncode = result.returncode
         elapsed = time.monotonic() - start
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as e:
         elapsed = timeout
-        cbmc_stdout = ""
+        cbmc_stdout = _text(e.stdout) + _text(e.stderr)
         warn(f"[{name}] Timed out after {timeout}s — partial profile collected")
 
     cbmc_output.write_text(cbmc_stdout)
