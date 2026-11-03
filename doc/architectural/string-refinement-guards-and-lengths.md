@@ -1,8 +1,9 @@
 # String refinement: guarded axioms, string lengths, and unbounded arrays
 
-Status: design, backed by a spike (branch `string-solver-spikes`, commit
-`91ff569ae6`, environment-gated). Nothing here is implemented on
-`shell-strings` yet.
+Status: implemented on `shell-strings` (T: `c0d27c1efe`, A: `3f0ff14578`,
+G: `1bace093dd` and `eacbd5eb8c`), after a spike (branch
+`string-solver-spikes`, commit `91ff569ae6`, environment-gated). Section 7
+records how the open questions were decided.
 
 This document covers three changes to the string refinement solver
 (`src/solvers/strings`). Each one is sound on its own:
@@ -239,13 +240,14 @@ This has more coupling: symex must know which steps the solver cares about.
 
 ### 4.5 Tests
 
-- **Regression (refined shell)**: string calls in a loop whose unwindings
-  mostly don't run (`arg-loop-fail` reduced), a `-fail` variant of it, and
-  the argument concatenation loop from 2, which runs out of memory on HEAD.
-- **Regression (Python)**: a string call inside an `if` whose result is only
-  asserted in the other branch.
-- **Unit**: `add_constraints` wraps each kind of constraint with the node's
-  guard, and `eval` gives no value under a false guard.
+- **Regression (refined shell)**: `refined-dead-path-strings` (string
+  calls in a loop whose unwindings mostly don't run, from `arg-loop-fail`),
+  and `refined-dead-path-strings-live` and its `-fail` variant, whose
+  assertions depend on the calls in the unwindings that run.
+- **Unit**: in `unit/solvers/strings/string_refinement`, two guarded
+  definitions that give an array different lengths are satisfiable when
+  only one guard holds and unsatisfiable when both do. The test fails if
+  the guards are ignored.
 - **Check**: the full validation shows no changed verdicts, with the
   perturbation sweep on `arg-loop-fail`, `option-split` and `path-split`.
 
@@ -299,12 +301,12 @@ with a second, syntactically different length.
 
 ### 5.4 Tests
 
-- **Regression (Python)**: `stub-json-loads-fail` with A, which times out
+- **Regression**: `stub-json-loads-fail` (Python) times out with A
   without T.
-- **Regression (pointer reuse)**: a pointer found with two lengths that may
-  differ (a C or Python program that shares a buffer) must stay untied, with
-  the verdict unchanged.
-- **Unit**: the find decomposition and the copy rewriting.
+- **Unit**: `unit/solvers/strings/string_length_ties` covers single and
+  differing lengths, copies, merged pointers with matching, plain and
+  mismatched lengths, and the conflict when a tied pointer is found again
+  with another length.
 
 ## 6. Design of A: unbounded arrays
 
@@ -353,25 +355,33 @@ ones T can't tie.
 
 ### 6.4 Tests
 
-- **Unit**: `unit/solvers/strings/array_pool` checks the leaf types inside
-  if-arrays; two of its expectations change to unbounded sizes (done in the
-  spike).
-- **Regression**: the `arg-loop-fail` runaway, as a reduced refined shell
-  test whose model reads a leaf beyond its type size. The perturbation sweep
-  is the check.
+- **Unit**: `unit/solvers/strings/array_pool` checks that arrays made for
+  pointers are unbounded unless their size is a constant, including inside
+  if-arrays.
+- **Regression**: none of its own; a leaf that T cannot tie needs a pointer
+  found with two lengths, which the front-ends tested here do not produce.
+  The perturbation sweep on `arg-loop-fail` is the check.
 
-## 7. Open questions
+## 7. Questions, and how they were decided
 
-1. **Interface for G.** Is the new `decision_proceduret::set_definition`
-   acceptable, or should it be the symex flag from 4.2?
-2. **Assignment guards in G.** Should G also guard by the assignment guard
-   inside `if(g', f(args), lhs_prev)`? It would need `add_node` to take the
-   guard from the merge.
-3. **Other front-ends.** Java models are the main other user of the string
-   solver. JBMC is not built here; the jbmc-strings suite should be run
-   before merging G and T.
-4. **Length of a merge chain in T.** The limit of 64 steps is arbitrary. The
-   shell kernels need at most 10 (the unwinding).
+1. **Interface for G.** `decision_proceduret::set_definition(guard,
+   definition)`, whose default ignores the guard. `string_refinementt`
+   overrides it; no other decision procedure changes behaviour.
+2. **Assignment guards in G.** Not guarded. The assignment guard of
+   `lhs := g' ? f(args) : lhs_prev` (from writes through pointers to several
+   objects) only selects the object written; `f(args)` is evaluated either
+   way. Calls that return strings through output arguments (a length and a
+   content pointer) must constrain those even when `g'` is false, so
+   guarding by `g'` would be unsound for them. It would also gain nothing
+   today: of the string calls in the shell kernels (1,246), `jbmc-strings`
+   (3,515) and the first 300 Python tests (1,916), none has this form.
+3. **Other front-ends.** With JBMC built (JDK 11), the JBMC suites
+   (`jbmc`, `jbmc-strings`, `strings-smoke-tests` and the smaller ones, in
+   the normal and the symex-driven lazy loading profiles) and `java-unit`
+   give the same results with G, T and A. T and A rarely apply there (5
+   ties in 393 runs), as the Java models associate arrays to pointers; G
+   applies to 2,727 of 3,515 calls in `jbmc-strings`.
+4. **Length of a merge chain in T.** Kept at 64.
 
 ## 8. Not covered by the spike
 
