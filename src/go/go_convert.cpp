@@ -2402,6 +2402,11 @@ exprt go_convertert::convert_access(const irept &expr, access_partst &parts)
   if(kind == "ParenExpr")
     return convert_access(go_field(expr, "X"), parts);
 
+  // A constant (e.g., the receiver of time.Second.String()) is a value, not
+  // a variable.
+  if(!expr.get("_cv").empty() && !expr.get_bool("_tx"))
+    return convert_expr(expr);
+
   if(kind == "Ident" && expr.get("Name") != "_")
     return variable(expr);
 

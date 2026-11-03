@@ -1,0 +1,13 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 14 method on a constant: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+not supported
+--
+Typed constants as method receivers were reported as uses of constants as
+values.
