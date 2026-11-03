@@ -893,6 +893,75 @@ array-constraint work being done elsewhere comes in.
 - `. "$dir/file"` with an option that maps such paths to files;
 - modelling the output of command substitutions of `echo` and `printf`.
 
+### 7.4 Corpus census (2026-11-04)
+
+To rank this backlog, `scripts/shell-frontend/corpus-census.sh` converts
+the sh and bash scripts installed on the development machine (Ubuntu
+24.04): 1,787 files, 1,652 after removing duplicates by content (1,518 sh,
+134 bash). Most come from `/var/lib/dpkg/info` (944 before removing
+duplicates), `/usr/bin` and `/usr/sbin`. Each conversion is bounded to
+4 GB and 60 s.
+
+**How many convert.** 597 of 1,652 (36%) with bounded strings, 606 (37%)
+with `--shell-strings refined`. The difference is 69 scripts whose first
+blocker with bounded strings is a string literal longer than
+`--shell-max-string-length` (64 by default).
+
+**Every unsupported construct, not only the first.** A census build that
+reports each unsupported construct and carries on with the next command
+(not committed: it crashed on 5 scripts, whose state after a failed
+command was inconsistent) gives, with refined strings, 1,047 scripts with
+at least one construct. Per construct: the scripts that have it, its
+occurrences, and the scripts for which it is the only one ("sole").
+
+| Construct | Scripts | Occurrences | Sole |
+|---|---|---|---|
+| unquoted expansion where field splitting matters | 540 | 3,375 | 84 |
+| command name that is an expansion | 302 | 879 | 40 |
+| builtin `command` | 298 | 463 | 208 |
+| builtin `read` | 279 | 615 | 11 |
+| builtin `local` | 211 | 2,525 | 16 |
+| variable `IFS` | 149 | 547 | 0 |
+| builtin `eval` | 148 | 613 | 6 |
+| redirection of a compound command | 144 | 240 | 7 |
+| `$@` other than as the word `"$@"` | 130 | 2,342 | 2 |
+| pattern removal other than `L*`, `*L`, `L1*L2` (refined) | 114 | 221 | 0 |
+| unquoted `*` (pathname expansion) | 104 | 282 | 8 |
+| `.` with a file name that is an expansion | 102 | 191 | 10 |
+| `test` with more than four arguments | 89 | 205 | 19 |
+| builtin `trap` | 84 | 125 | 5 |
+| redirection without a command name | 58 | 60 | 2 |
+| builtin `cd` | 57 | 80 | 4 |
+| redirection with an expansion with side effects | 56 | 379 | 2 |
+| `shift` operand other than a decimal number | 49 | 142 | 0 |
+| builtin `getopts` (with `OPTARG`, `OPTIND`) | 47 | 141 | 0 |
+
+`command` is nearly always `command -v NAME` (446 of about 450 uses), the
+idiom for testing whether a utility exists. `read` is `read` or `read -r`
+(446 of 451 uses).
+
+**Order of the fixes that unlock most scripts** (greedy: at each step the
+construct that is the last one left in most scripts; cumulative number of
+scripts that convert, from 606):
+
+| Fix | Scripts converting |
+|---|---|
+| builtin `command` | 813 |
+| field splitting | 903 |
+| command names that are expansions | 957 |
+| `.` with a file name that is an expansion | 986 |
+| `local` | 1,017 |
+| `eval` | 1,051 |
+| `test` with more than four arguments | 1,081 |
+| `read` | 1,113 |
+| unquoted `*` | 1,137 |
+| redirection of a compound command | 1,161 |
+| `cd` | 1,184 |
+| `return` outside a function | 1,205 |
+
+The counts after the first few steps are rough: a script's other blockers
+may only show up once its first is fixed.
+
 ---
 
 ## 8. Bibliographic details for key references
