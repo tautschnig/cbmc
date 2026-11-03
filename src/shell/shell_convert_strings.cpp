@@ -1146,6 +1146,141 @@ exprt shell_convertert::pattern_regex(const shell_patternt &pattern)
   return re.sequence(sequence);
 }
 
+/// Whether byte \p c matches pattern element \p element, which is a
+/// character, ? or a bracket expression.
+static exprt byte_matches(const shell_pattern_elementt &element, const exprt &c)
+{
+  using kindt = shell_pattern_elementt::kindt;
+  if(element.kind == kindt::CHARACTER)
+    return equal_exprt{c, from_integer(element.character, c.type())};
+  if(element.kind == kindt::ANY)
+    return true_exprt{};
+  PRECONDITION(element.kind == kindt::SET);
+  // The union of the ranges of consecutive bytes in the set.
+  exprt::operandst ranges;
+  for(unsigned low = 0; low < 256; ++low)
+  {
+    if(!element.set[low])
+      continue;
+    unsigned high = low;
+    while(high + 1 < 256 && element.set[high + 1])
+      ++high;
+    if(low == high)
+      ranges.push_back(equal_exprt{c, from_integer(low, c.type())});
+    else
+    {
+      ranges.push_back(and_exprt{
+        binary_relation_exprt{c, ID_ge, from_integer(low, c.type())},
+        binary_relation_exprt{c, ID_le, from_integer(high, c.type())}});
+    }
+    low = high;
+  }
+  return disjunction(ranges);
+}
+
+exprt shell_convertert::refined_pattern_matches(
+  const shell_patternt &pattern,
+  const exprt &s,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  using kindt = shell_pattern_elementt::kindt;
+  // The elements between the stars. The first and last segments are at
+  // known positions, so their bytes are matched one by one; a middle
+  // segment must be literal, as it is searched for.
+  std::vector<std::vector<shell_pattern_elementt>> segments{1};
+  for(const auto &element : pattern.elements)
+  {
+    if(element.kind == kindt::STAR)
+      segments.emplace_back();
+    else if(element.kind == kindt::DYNAMIC)
+      unsupported(loc, "pattern with an expansion and ? or a bracket");
+    else
+      segments.back().push_back(element);
+  }
+  std::vector<std::string> middle;
+  for(std::size_t k = 1; k + 1 < segments.size(); ++k)
+  {
+    std::string text;
+    for(const auto &element : segments[k])
+    {
+      if(element.kind != kindt::CHARACTER)
+      {
+        unsupported(
+          loc,
+          "pattern with ? or a bracket expression between two stars with "
+          "--shell-strings refined");
+      }
+      text += static_cast<char>(element.character);
+    }
+    middle.push_back(std::move(text));
+  }
+
+  const auto &first = segments.front();
+  const auto &last = segments.back();
+  const exprt length = payload_length(s, dest, loc);
+  const auto byte_at = [&](const exprt &position)
+  {
+    return string_function(
+      ID_cprover_string_char_at_func,
+      {s, position},
+      unsigned_char_type(),
+      dest,
+      loc);
+  };
+
+  exprt::operandst conditions;
+  if(segments.size() == 1)
+  {
+    conditions.push_back(
+      equal_exprt{length, from_integer(first.size(), integer_type())});
+  }
+  else
+  {
+    conditions.push_back(binary_relation_exprt{
+      length, ID_ge, from_integer(first.size() + last.size(), integer_type())});
+  }
+  for(std::size_t k = 0; k < first.size(); ++k)
+  {
+    if(first[k].kind != kindt::ANY)
+    {
+      conditions.push_back(
+        byte_matches(first[k], byte_at(from_integer(k, integer_type()))));
+    }
+  }
+  if(segments.size() > 1)
+  {
+    for(std::size_t k = 0; k < last.size(); ++k)
+    {
+      if(last[k].kind != kindt::ANY)
+      {
+        const exprt position =
+          minus_exprt{length, from_integer(last.size() - k, integer_type())};
+        conditions.push_back(byte_matches(last[k], byte_at(position)));
+      }
+    }
+  }
+  exprt position = from_integer(first.size(), integer_type());
+  for(const auto &segment : middle)
+  {
+    if(segment.empty())
+      continue;
+    const exprt found =
+      payload_index_of(s, payload_literal(segment), position, dest, loc);
+    conditions.push_back(
+      binary_relation_exprt{found, ID_ge, from_integer(0, integer_type())});
+    position = plus_exprt{found, from_integer(segment.size(), integer_type())};
+  }
+  if(segments.size() > 2)
+  {
+    conditions.push_back(binary_relation_exprt{
+      position,
+      ID_le,
+      minus_exprt{length, from_integer(last.size(), integer_type())}});
+  }
+  return conjunction(conditions);
+}
+
 exprt shell_convertert::unbounded_pattern_matches(
   const shell_patternt &pattern,
   const exprt &subject,
@@ -1157,12 +1292,7 @@ exprt shell_convertert::unbounded_pattern_matches(
   if(!segments.has_value())
   {
     if(!native())
-    {
-      unsupported(
-        loc,
-        "pattern with ? or a bracket expression with --shell-strings "
-        "refined");
-    }
+      return refined_pattern_matches(pattern, s, dest, loc);
     regex_buildert re{symbol_table};
     return re.matches(s, pattern_regex(pattern));
   }

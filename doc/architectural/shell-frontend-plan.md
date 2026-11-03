@@ -722,8 +722,9 @@ measure the solvers: its encoding gave spurious results.
 - Open work:
   - z3: the blank decomposition and loops over `index_of`;
   - native octal and hexadecimal constants in `$((...))`;
-  - refined: `?` and brackets (via per-character constraints), and
-    blanks in integers.
+  - refined: `?` and brackets between two stars (those before the first
+    or after the last star are matched byte by byte), and blanks in
+    integers.
 
 Decided (2026-10-31): native strings are the default with `--cvc5` or
 `--z3`; bounded strings stay the SAT default; `--shell-strings refined`

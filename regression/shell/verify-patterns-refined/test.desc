@@ -1,0 +1,11 @@
+CORE
+main.sh
+--shell-strings refined
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Patterns with ? and bracket expressions before the first or after the last
+star, with refined strings: their bytes are at known positions.

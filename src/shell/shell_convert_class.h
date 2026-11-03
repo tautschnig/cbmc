@@ -792,6 +792,13 @@ private:
     const source_locationt &loc);
   /// For native strings: the regular expression of \p pattern.
   exprt pattern_regex(const shell_patternt &pattern);
+  /// For refined strings: whether payload \p s matches \p pattern, which has
+  /// ? or bracket expressions, only before the first or after the last *.
+  exprt refined_pattern_matches(
+    const shell_patternt &pattern,
+    const exprt &s,
+    code_blockt &dest,
+    const source_locationt &loc);
 
   // ----------------------------------------------------------------
   // Shell options (XCU 2.15 set)
