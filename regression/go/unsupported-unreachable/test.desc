@@ -3,10 +3,10 @@ main.go
 
 ^EXIT=0$
 ^SIGNAL=0$
-Go front-end: calls of go::main\.upper fail \(property class "unsupported"\)$
+Go front-end: a call of strings\.ToUpper \(package strings, which has no model\) is not supported yet$
 ^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring
 ^CONVERSION ERROR$
 --
-Only calls of a function with an unsupported construct fail.
+Only reaching the call of a function without a model fails.

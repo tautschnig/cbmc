@@ -324,6 +324,8 @@ exprt go_convertert::convert_method_call(const irept &call)
               : convert_access(x_node, parts);
   if(x.is_nil())
     return nil_exprt{};
+  if(is_unmodelled_method(method_object))
+    return unmodelled_call(call, method_object);
   exprt receiver = method_receiver(
     x, selection.find("path"), method_object, location, parts.checks);
   if(receiver.is_nil())

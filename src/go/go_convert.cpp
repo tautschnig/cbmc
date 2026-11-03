@@ -838,6 +838,58 @@ void go_convertert::convert_function_body(const irept &decl)
     unsupported_body(function_location, messages.front());
 }
 
+exprt go_convertert::unmodelled_call(
+  const irept &call,
+  const irep_idt &function_object)
+{
+  // A call of a standard-library function or method without a model: if
+  // it is reached, a property of class "unsupported" fails. Its arguments
+  // are not evaluated, which can only make that property fail more often.
+  const source_locationt location = location_of(call);
+  const irept &object = parse_tree.object(function_object);
+  const std::string message =
+    "Go front-end: a call of " + id2string(function_object) + " (package " +
+    object.get_string("pkg") + ", which has no model) is not supported yet";
+  const typet signature = type_converter.signature(object.get("type"));
+  if(signature.is_nil())
+  {
+    unsupported(call, type_converter.unsupported_reason);
+    return nil_exprt{};
+  }
+  log.warning().source_location = location;
+  log.warning() << message << messaget::eom;
+  source_locationt property = location;
+  property.set_function(state.function_id);
+  code_blockt prefix = unsupported_body(property, message);
+  const typet &result = to_code_type(signature).return_type();
+  if(result.id() == ID_empty)
+  {
+    prefix.add(code_skipt{});
+    return side_effect_expr_statement_expressiont{
+      std::move(prefix), empty_typet{}, location};
+  }
+  return with_prefix(
+    side_effect_expr_nondett{result, location}, prefix, location);
+}
+
+bool go_convertert::is_unmodelled_method(const irep_idt &method_object) const
+{
+  if(symbol_table.has_symbol(symbol_id(method_object)))
+    return false;
+  const irept &object = parse_tree.object(method_object);
+  if(object.get("kind") != "func" || is_converted_package(object.get("pkg")))
+    return false;
+  const irept &receiver =
+    parse_tree.type_entry(object.get("type")).find("recv");
+  if(receiver.is_nil())
+    return false;
+  irept type = type_converter.underlying(receiver.get("type"));
+  if(type.get("k") == "pointer")
+    type = type_converter.underlying(type.get("elem"));
+  // Methods of interfaces are called through dispatchers.
+  return type.get("k") != "interface";
+}
+
 code_blockt go_convertert::unsupported_body(
   const source_locationt &location,
   const std::string &message)
@@ -2776,13 +2828,7 @@ exprt go_convertert::convert_call(const irept &call)
     return nil_exprt{};
   }
   if(object.get("kind") == "func" && !is_converted_package(object.get("pkg")))
-  {
-    unsupported(
-      call,
-      "a call of " + id2string(callee) + " (package " +
-        object.get_string("pkg") + ", which has no model)");
-    return nil_exprt{};
-  }
+    return unmodelled_call(call, callee);
 
   // Go1.27 §Calls: "In a function call, the function value and arguments
   // are evaluated in the usual order. After they are evaluated, new storage

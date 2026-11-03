@@ -232,6 +232,13 @@ private:
   /// class "unsupported" that fails, so that only programs that call it
   /// fail to verify.
   void convert_function_body(const irept &decl);
+  /// A call (\p call) of the standard-library function or method
+  /// \p function_object, which has no model: code that fails a property of
+  /// class "unsupported" (see unsupported_body), with an arbitrary result.
+  exprt unmodelled_call(const irept &call, const irep_idt &function_object);
+  /// Whether \p method_object is a method of a non-interface type of a
+  /// standard-library package that has no model.
+  bool is_unmodelled_method(const irep_idt &method_object) const;
   /// Code that fails a property of class "unsupported" with description
   /// \p message at \p location, and stops.
   code_blockt unsupported_body(

@@ -508,12 +508,14 @@ Errors are reported as follows:
 
 - Syntax and type errors from the helper are printed as
   `file:line:col: message` and end in `PARSING ERROR`.
-- Unsupported constructs in the body of a function, including calls of
-  standard-library functions and methods without a model, are reported
-  as warnings, and the function's body becomes a failing property of
-  class `unsupported` that names the first of them (a dispatcher of
-  interface method calls does the same for an unmodelled method of a
-  dynamic type). They are never dropped silently: a program that calls
+- A call of a standard-library function or method without a model is
+  reported as a warning and becomes a failing property of class
+  `unsupported` where it is (its arguments are not evaluated, and its
+  result is arbitrary); a dispatcher of interface method calls does the
+  same for an unmodelled method of a dynamic type. Other unsupported
+  constructs in the body of a function are reported as warnings, and the
+  function's body becomes a failing property of class `unsupported` that
+  names the first of them. They are never dropped silently: a program that calls
   the function fails to verify, and only programs that do. This lets
   programs use packages (copied or real) of which some functions are not
   supported. Unsupported constructs elsewhere (declarations, package

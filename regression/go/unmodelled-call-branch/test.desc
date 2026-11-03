@@ -1,0 +1,13 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.label\.unsupported\.1\] line 13 Go front-end: a call of strings\.ToUpper .*: SUCCESS$
+^\[go::main\.main\.assertion\.1\] line 21 small: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR$
+--
+The unmodelled call is a property where it is; other paths are verified.

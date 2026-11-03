@@ -4,7 +4,6 @@ main.go
 ^EXIT=10$
 ^SIGNAL=0$
 Go front-end: a call of strings\.Builder\.WriteString \(package strings, which has no model\) is not supported yet$
-Go front-end: calls of go::main\.direct fail \(property class "unsupported"\)$
 Go front-end: a call of strings\.Builder\.String \(package strings, which has no model\) is not supported yet$
 ^\[go::\$method\.[0-9]+\.String\.unsupported\.1\] Go front-end: a call of strings\.Builder\.String \(package strings, which has no model\) is not supported yet: FAILURE$
 ^\*\* 1 of [0-9]+ failed
