@@ -1,0 +1,12 @@
+CORE
+main.sh
+--shell-strings refined --unwind 3 --no-unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The axioms of string calls in the unwindings that run still hold, so the
+assertion fails in any of them.

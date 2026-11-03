@@ -239,5 +239,51 @@ SCENARIO("string refinement", "[core][solvers][strings][string_refinement]")
         REQUIRE(numeric_cast_v<char>(to_constant_expr(elements[9])) == 'c');
       }
     }
+
+    GIVEN(
+      "Definitions r1 == associate_length_to_array(array2, 5) under g1 and "
+      "r2 == associate_length_to_array(array2, 7) under g2")
+    {
+      const symbol_exprt array2{"array2", char_array_type};
+      const symbol_exprt g1{"g1", bool_typet{}};
+      const symbol_exprt g2{"g2", bool_typet{}};
+      const symbol_exprt r1{"r1", int_type};
+      const symbol_exprt r2{"r2", int_type};
+      solver.set_definition(
+        g1,
+        equal_exprt{
+          r1,
+          function_application_exprt{
+            associate_length_to_array,
+            std::vector<exprt>{array2, from_integer(5, int_type)}}});
+      solver.set_definition(
+        g2,
+        equal_exprt{
+          r2,
+          function_application_exprt{
+            associate_length_to_array,
+            std::vector<exprt>{array2, from_integer(7, int_type)}}});
+
+      WHEN("Only g2 holds")
+      {
+        solver.set_to(and_exprt{not_exprt{g1}, g2}, true);
+        THEN("The call under g1 does not constrain array2")
+        {
+          REQUIRE(solver() == decision_proceduret::resultt::D_SATISFIABLE);
+          const exprt array_model = solver.get(array2);
+          REQUIRE(can_cast_expr<array_exprt>(array_model));
+          REQUIRE(to_array_expr(array_model).operands().size() == 7);
+        }
+      }
+
+      WHEN("Both g1 and g2 hold")
+      {
+        solver.set_to(and_exprt{g1, g2}, true);
+        THEN("Both calls constrain array2, which cannot have both lengths")
+        {
+          REQUIRE(solver() == decision_proceduret::resultt::D_UNSATISFIABLE);
+        }
+      }
+    }
   }
 }

@@ -30,6 +30,9 @@ public:
     std::size_t index;
     // pointer to the builtin function
     std::unique_ptr<string_builtin_functiont> data;
+    // condition under which the call happens: its constraints only need to
+    // hold where the guard does
+    exprt guard = true_exprt{};
 
     explicit builtin_function_nodet(
       std::unique_ptr<string_builtin_functiont> d,
@@ -39,7 +42,9 @@ public:
     }
 
     builtin_function_nodet(builtin_function_nodet &&other)
-      : index(other.index), data(std::move(other.data))
+      : index(other.index),
+        data(std::move(other.data)),
+        guard(std::move(other.guard))
     {
     }
 
@@ -47,6 +52,7 @@ public:
     {
       index = other.index;
       data = std::move(other.data);
+      guard = std::move(other.guard);
       return *this;
     }
   };
@@ -98,7 +104,9 @@ public:
     const std::function<void(const string_nodet &)> &f) const;
 
   /// Attempt to evaluate the given string from the dependencies and valuation
-  /// of strings on which it depends
+  /// of strings on which it depends. A string whose builtin function has a
+  /// guard that is false in the valuation is not evaluated, as its
+  /// constraints need not hold.
   /// Warning: eval uses a cache which must be cleaned everytime the valuations
   /// given by get_value can change.
   std::optional<exprt> eval(
@@ -112,7 +120,8 @@ public:
 
   /// For all builtin call on which a test (or an unsupported buitin)
   /// result depends, add the corresponding constraints. For the other builtin
-  /// only add constraints on the length.
+  /// only add constraints on the length. The constraints of a call are
+  /// conditional on its guard.
   [[nodiscard]] string_constraintst add_constraints(
     string_constraint_generatort &generatort,
     message_handlert &message_handler);
@@ -192,6 +201,8 @@ private:
 ///   exprt arguments of the builtin_function call
 /// \param fresh_symbol: used to create new symbols for the return values of
 ///   builtin functions
+/// \param guard: condition under which the builtin functions are called, so
+///   that their constraints only need to hold where it does
 /// \return An expression in which function applications have been replaced
 ///   by symbols corresponding to the `return_value` field of the associated
 ///   builtin function. Or an empty optional when no function applications has
@@ -201,6 +212,7 @@ std::optional<exprt> add_node(
   string_dependenciest &dependencies,
   const exprt &expr,
   array_poolt &array_pool,
-  symbol_generatort &fresh_symbol);
+  symbol_generatort &fresh_symbol,
+  const exprt &guard = true_exprt{});
 
 #endif // CPROVER_SOLVERS_STRINGS_STRING_DEPENDENCIES_H

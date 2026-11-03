@@ -295,6 +295,7 @@ void string_refinementt::set_to(const exprt &expr, bool value)
     equations.push_back(not_exprt{expr});
   else
     equations.push_back(expr);
+  equation_guards.push_back(true_exprt{});
 }
 
 /// Return true if the given function_application's target is one of
@@ -366,6 +367,35 @@ static bool is_cprover_string_application(const function_application_exprt &fa)
   };
   // clang-format on
   return interpreted_ids.count(id) > 0;
+}
+
+/// Whether \p expr applies a string builtin function.
+static bool contains_string_application(const exprt &expr)
+{
+  return has_subexpr(
+    expr,
+    [](const exprt &e)
+    {
+      const auto application =
+        expr_try_dynamic_cast<function_application_exprt>(e);
+      return application && is_cprover_string_application(*application);
+    });
+}
+
+void string_refinementt::set_definition(
+  const exprt &guard,
+  const exprt &definition)
+{
+  if(
+    guard.is_true() || definition.id() != ID_equal ||
+    !contains_string_application(to_equal_expr(definition).rhs()))
+  {
+    set_to_true(definition);
+    return;
+  }
+  PRECONDITION(equality_propagation);
+  equations.push_back(definition);
+  equation_guards.push_back(guard);
 }
 
 literalt string_refinementt::convert_rest(const exprt &expr)
@@ -756,8 +786,17 @@ string_refinementt::dec_solve(const exprt &assumption)
   add_equations_for_symbol_resolution(
     symbol_resolve, equations, ns, log.debug());
   // The definitions are kept between calls to dec_solve, like
-  // symbol_resolve.
-  length_ties.add_definitions(equations);
+  // symbol_resolve. They must hold unconditionally.
+  PRECONDITION(equation_guards.size() == equations.size());
+  {
+    std::vector<exprt> unguarded;
+    for(std::size_t i = 0; i < equations.size(); ++i)
+    {
+      if(equation_guards[i].is_true())
+        unguarded.push_back(equations[i]);
+    }
+    length_ties.add_definitions(unguarded);
+  }
 #ifdef DEBUG
   log.debug() << "symbol resolve:" << messaget::eom;
   for(const auto &pair : symbol_resolve.to_vector())
@@ -844,8 +883,10 @@ string_refinementt::dec_solve(const exprt &assumption)
   log.debug() << "dec_solve: compute dependency graph and remove function "
               << "applications captured by the dependencies:" << messaget::eom;
   std::vector<exprt> local_equations;
-  for(const exprt &eq : equations)
+  for(std::size_t eq_index = 0; eq_index < equations.size(); ++eq_index)
   {
+    const exprt &eq = equations[eq_index];
+    const exprt &guard = equation_guards[eq_index];
     // Ensures that arrays that are equal, are associated to the same nodes
     // in the graph.
     exprt eq_with_char_array_replaced_with_representative_elements =
@@ -873,13 +914,14 @@ string_refinementt::dec_solve(const exprt &assumption)
       dependencies,
       eq_with_char_array_replaced_with_representative_elements,
       generator.array_pool,
-      generator.fresh_symbol);
-    if(new_equation)
-      local_equations.push_back(*new_equation);
-    else
-      local_equations.push_back(eq);
+      generator.fresh_symbol,
+      guard);
+    const exprt &equation = new_equation ? *new_equation : eq;
+    local_equations.push_back(
+      guard.is_true() ? equation : exprt{implies_exprt{guard, equation}});
   }
   equations.clear();
+  equation_guards.clear();
 
   // Also feed the dependency graph from cprover_string_* function
   // applications that were recorded in convert_rest /
