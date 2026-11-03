@@ -155,8 +155,10 @@ type encoder struct {
 	types    []any
 	typeList []types.Type // the type of each entry of types
 	typeIdx  map[types.Type]int
-	objects  map[string]any
-	ids      map[types.Object]string
+	// The entries of composite types, by type string (see typ).
+	structural map[string][]int
+	objects    map[string]any
+	ids        map[types.Object]string
 
 	// completeTypes state: the number of entries completed, and the
 	// entries that are candidates for identity, by key.
@@ -681,7 +683,24 @@ func (e *encoder) typ(t types.Type) int {
 	if i, ok := e.typeIdx[t]; ok {
 		return i
 	}
+	// go/types creates a type literal for each occurrence (e.g., *T for
+	// each &x): identical composite types without objects of their own
+	// share one entry, with one method set.
+	var key string
+	switch t.(type) {
+	case *types.Pointer, *types.Slice, *types.Array, *types.Map, *types.Chan:
+		key = t.String()
+		for _, j := range e.structural[key] {
+			if types.Identical(e.typeList[j], t) {
+				e.typeIdx[t] = j
+				return j
+			}
+		}
+	}
 	i := len(e.types)
+	if key != "" {
+		e.structural[key] = append(e.structural[key], i)
+	}
 	e.typeIdx[t] = i
 	e.types = append(e.types, nil)
 	e.typeList = append(e.typeList, t)
@@ -1342,7 +1361,8 @@ func main() {
 	enc := &encoder{fset: fset, sizes: sizes, fileIdx: map[string]int{},
 		typeIdx: map[types.Type]int{}, objects: map[string]any{},
 		ids: map[types.Object]string{}, byKey: map[string][]int{},
-		ctxt: types.NewContext(), instances: map[string]*instance{},
+		structural: map[string][]int{},
+		ctxt:       types.NewContext(), instances: map[string]*instance{},
 		genericDecls: map[*types.Func]*ast.FuncDecl{},
 		declFile:     map[*ast.FuncDecl]int{},
 		localIDs:     map[localKey]string{},
