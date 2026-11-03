@@ -21,6 +21,16 @@ if(TARGET cbmc-go-helper)
     go-gc-capacity-CORE go-gc-capacity-no-optimisation-CORE
     PROPERTIES LABELS "CORE;CBMC" TIMEOUT 1200)
 
+  # The helper's own checks against the Go toolchain (e.g., which operands
+  # fmt.Errorf wraps, models_test.go).
+  add_test(
+    NAME go-helper-CORE
+    COMMAND ${CMAKE_COMMAND} -E env GOTOOLCHAIN=local GOFLAGS=-mod=mod
+            "${GO_EXECUTABLE}" test -count=1 .
+    WORKING_DIRECTORY "${go_helper_dir}")
+  set_tests_properties(go-helper-CORE
+    PROPERTIES LABELS "CORE;CBMC" TIMEOUT 600)
+
   # The same for TinyGo (rt.GrowCapTinyGo), if it is installed.
   find_program(TINYGO_EXECUTABLE tinygo)
   if(TINYGO_EXECUTABLE)

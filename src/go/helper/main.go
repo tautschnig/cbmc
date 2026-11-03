@@ -972,6 +972,9 @@ func (e *encoder) node(n ast.Node) any {
 	if c, ok := n.(*ast.CallExpr); ok && c.Ellipsis.IsValid() {
 		out["_ellipsis"] = true
 	}
+	if c, ok := n.(*ast.CallExpr); ok && e.loader != nil {
+		e.errorfCall(c, out)
+	}
 	if se, ok := n.(*ast.SelectorExpr); ok {
 		if s := e.info.Selections[se]; s != nil {
 			index, indirect := s.Index(), s.Indirect()

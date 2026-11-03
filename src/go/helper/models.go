@@ -6,13 +6,17 @@ import (
 	"embed"
 	"go/ast"
 	"go/build"
+	"go/constant"
 	"go/parser"
 	"go/token"
 	"go/types"
 	"io/fs"
 	pathpkg "path"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Models of standard-library functions (Go1.27 does not specify the
@@ -460,4 +464,200 @@ func (e *encoder) genericModel(f *types.Func, inst types.Instance) *types.Func {
 		return nil
 	}
 	return mf
+}
+
+// errorfWraps returns, for a call of fmt.Errorf with the constant format
+// and nargs operands, the operands that its %w verbs wrap, as fmt's
+// doPrintf collects them (p.wrappedErrs, in the order of the verbs, with
+// repetitions), and whether the format has explicit argument indexes
+// (p.reordered). Only the operand numbering of doPrintf is followed: the
+// flags, widths, precisions and verbs, not the formatting.
+func errorfWraps(format string, nargs int) (wrapped []int, reordered bool) {
+	end := len(format)
+	argNum := 0
+	afterIndex := false
+	goodArgNum := true
+	// argNumber is pp.argNumber.
+	argNumber := func(i int) (int, int, bool) {
+		if len(format) <= i || format[i] != '[' {
+			return argNum, i, false
+		}
+		reordered = true
+		index, wid, ok := parseArgNumber(format[i:])
+		if ok && 0 <= index && index < nargs {
+			return index, i + wid, true
+		}
+		goodArgNum = false
+		return argNum, i + wid, ok
+	}
+	// intFromArg advances over a '*' operand.
+	intFromArg := func() {
+		if argNum < nargs {
+			argNum++
+		}
+	}
+formatLoop:
+	for i := 0; i < end; {
+		goodArgNum = true
+		for i < end && format[i] != '%' {
+			i++
+		}
+		if i >= end {
+			break
+		}
+		i++
+	simpleFormat:
+		for ; i < end; i++ {
+			c := format[i]
+			switch c {
+			case '#', '0', '+', '-', ' ':
+			default:
+				if 'a' <= c && c <= 'z' && argNum < nargs {
+					if c == 'w' {
+						wrapped = append(wrapped, argNum)
+					}
+					argNum++
+					i++
+					continue formatLoop
+				}
+				break simpleFormat
+			}
+		}
+		argNum, i, afterIndex = argNumber(i)
+		if i < end && format[i] == '*' {
+			i++
+			intFromArg()
+			afterIndex = false
+		} else {
+			var present bool
+			_, present, i = parsenum(format, i, end)
+			if afterIndex && present {
+				goodArgNum = false
+			}
+		}
+		if i+1 < end && format[i] == '.' {
+			i++
+			if afterIndex {
+				goodArgNum = false
+			}
+			argNum, i, afterIndex = argNumber(i)
+			if i < end && format[i] == '*' {
+				i++
+				intFromArg()
+				afterIndex = false
+			} else {
+				_, _, i = parsenum(format, i, end)
+			}
+		}
+		if !afterIndex {
+			argNum, i, afterIndex = argNumber(i)
+		}
+		if i >= end {
+			break
+		}
+		verb, size := utf8.DecodeRuneInString(format[i:])
+		i += size
+		switch {
+		case verb == '%', !goodArgNum, argNum >= nargs:
+		default:
+			if verb == 'w' {
+				wrapped = append(wrapped, argNum)
+			}
+			argNum++
+		}
+	}
+	return wrapped, reordered
+}
+
+// parseArgNumber is fmt's: the index of "[n]" at the start of format.
+func parseArgNumber(format string) (index int, wid int, ok bool) {
+	if len(format) < 3 {
+		return 0, 1, false
+	}
+	for i := 1; i < len(format); i++ {
+		if format[i] == ']' {
+			width, ok, newi := parsenum(format, 1, i)
+			if !ok || newi != i {
+				return 0, i + 1, false
+			}
+			return width - 1, i + 1, true
+		}
+	}
+	return 0, 1, false
+}
+
+// parsenum is fmt's: the number at format[start:end].
+func parsenum(s string, start, end int) (num int, isnum bool, newi int) {
+	if start >= end {
+		return 0, false, end
+	}
+	for newi = start; newi < end && '0' <= s[newi] && s[newi] <= '9'; newi++ {
+		if num > 1e6 || num < -1e6 {
+			return 0, false, end
+		}
+		num = num*10 + int(s[newi]-'0')
+		isnum = true
+	}
+	return
+}
+
+// errorfCall rewrites a call of fmt.Errorf with a constant format, whose
+// operands are not a spread slice, into a call of the model's errorfKnown
+// with what the format determines (see errorfWraps): the number of %w
+// verbs (as fmt counts them), the operands the error keeps (a bit mask, in
+// the operands' order, which is fmt's), and whether no formatting is
+// needed (then the text is the format). The model alone cannot read the
+// format without a loop over its bytes.
+func (e *encoder) errorfCall(c *ast.CallExpr, out map[string]any) {
+	var id *ast.Ident
+	switch f := ast.Unparen(c.Fun).(type) {
+	case *ast.Ident:
+		id = f
+	case *ast.SelectorExpr:
+		id = f.Sel
+	}
+	if id == nil || c.Ellipsis.IsValid() || len(c.Args) == 0 {
+		return
+	}
+	f, ok := e.info.Uses[id].(*types.Func)
+	if !ok || f.Pkg() == nil || f.Pkg().Path() != "fmt" || f.Name() != "Errorf" {
+		return
+	}
+	m := e.loader.models["fmt"]
+	if m == nil {
+		return
+	}
+	known, _ := m.Scope().Lookup("errorfKnown").(*types.Func)
+	tv, ok := e.info.Types[c.Args[0]]
+	if known == nil || !ok || tv.Value == nil ||
+		tv.Value.Kind() != constant.String {
+		return
+	}
+	format := constant.StringVal(tv.Value)
+	nargs := len(c.Args) - 1
+	if nargs >= 64 {
+		return
+	}
+	wrapped, reordered := errorfWraps(format, nargs)
+	if reordered {
+		slices.Sort(wrapped)
+	}
+	var mask uint64
+	for _, argNum := range wrapped {
+		mask |= 1 << argNum // repetitions are dropped, as fmt does
+	}
+	plain := nargs == 0 && !strings.Contains(format, "%")
+	pos := out["_p"]
+	constArg := func(t types.Type, value, kind string) map[string]any {
+		return map[string]any{"_k": "BasicLit", "_p": pos, "_t": e.typ(t),
+			"_cv": value, "_cvk": kind}
+	}
+	out["Fun"] = map[string]any{"_k": "Ident", "_p": pos, "Name": known.Name(),
+		"_obj": e.objID(known), "_t": e.typ(known.Type())}
+	args := []any{
+		constArg(types.Typ[types.Int], strconv.Itoa(len(wrapped)), "int"),
+		constArg(types.Typ[types.Uint64], strconv.FormatUint(mask, 10), "int"),
+		constArg(types.Typ[types.Bool], strconv.FormatBool(plain), "bool"),
+	}
+	out["Args"] = append(args, out["Args"].([]any)...)
 }

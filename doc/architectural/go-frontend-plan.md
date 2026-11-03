@@ -414,9 +414,17 @@ Supported so far:
   `Float64frombits`, `Floor`, `Inf`, `IsInf`, `IsNaN`, `Max`, `Min`,
   `Modf`, `NaN`, `Signbit`, `Trunc`), `slices` (`Contains`, `Equal`,
   `Index`, `Max`, `Min`, `Reverse`; now the real package, see below) and
-  `fmt` (`Print`, `Printf`, `Println`: the output is not modelled; they
-  call the `Error` or `String` method of each argument, recovering from
-  panics in them, and their results are arbitrary). Models of
+  `fmt` (the printing functions `Print`, `Sprint`, `Fprint`, `Append` and
+  their `ln` and `f` variants call the `Error` or `String` method of each
+  argument, recovering from panics in them; the text is arbitrary, except
+  for `Sprint` of one string; `Fprint*` write it with one `Write` call,
+  and the byte counts and errors of `Print*` are arbitrary. `Errorf`
+  returns errors of fmt's types and wrapping: for a constant format, the
+  helper rewrites the call to the model's `errorfKnown` with what the
+  format determines (the number of `%w` verbs and their operands, by
+  fmt's operand numbering, which `models_test.go` checks against fmt; and
+  whether the text is the format); otherwise any shape is possible).
+  Models of
   package-level variables work the same way: a variable of the model
   with the name and an identical type stands for the real one (`io`:
   `EOF`, `ErrUnexpectedEOF` and the other error variables).
@@ -622,7 +630,9 @@ Known limitations:
   packages (e.g., `io.EOF`, `os.Args`) are reported. Packages of other
   modules are converted from source and so may use constructs that are
   not supported yet. The printing functions of `fmt` do not call
-  `Format` or `GoString` methods, nor methods of nested values.
+  `Format` or `GoString` methods, nor methods of nested values, and their
+  text is arbitrary: properties that depend on it may fail where gc's
+  output would satisfy them (e.g., parsing the result of `Sprintf`).
 - Type declarations inside generic functions are reported: their
   underlying types may involve the type parameters, which the helper does
   not substitute in named types it has not instantiated.
