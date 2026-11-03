@@ -726,6 +726,9 @@ measure the solvers: its encoding gave spurious results.
     or after the last star are matched byte by byte), and more than two
     blanks around an integer (fewer are skipped; stripping any number with
     the strip builtin made integer kernels up to 70 times slower).
+  - refined: string axioms on paths that do not run, and lengths of arrays
+    made for pointers; see the design in
+    `string-refinement-guards-and-lengths.md`.
 
 Decided (2026-10-31): native strings are the default with `--cvc5` or
 `--z3`; bounded strings stay the SAT default; `--shell-strings refined`
