@@ -260,6 +260,8 @@ exprt go_convertert::method_receiver(
   const symbolt *method_symbol = symbol_table.lookup(symbol_id(method_object));
   if(method_symbol == nullptr)
   {
+    if(use_of_unsupported_declaration(method_object, location))
+      return nil_exprt{};
     // A method of a standard-library type without a model.
     const irept &object = parse_tree.object(method_object);
     unsupported(
@@ -329,6 +331,13 @@ exprt go_convertert::convert_method_call(const irept &call)
     return nil_exprt{};
   if(is_unmodelled_method(method_object))
     return unmodelled_call(call, method_object);
+  const auto unsupported_method = unsupported_declarations.find(method_object);
+  if(
+    unsupported_method != unsupported_declarations.end() &&
+    !is_go_interface(x.type()))
+  {
+    return unsupported_call(call, unsupported_method->second);
+  }
   exprt receiver = method_receiver(
     x, selection.find("path"), method_object, location, parts.checks);
   if(receiver.is_nil())
@@ -348,7 +357,8 @@ exprt go_convertert::convert_method_call(const irept &call)
     !is_go_interface(receiver.type()) &&
     !symbol_table.has_symbol(symbol_id(method_object)))
   {
-    unsupported(call, "calls of method " + id2string(method_object));
+    if(!use_of_unsupported_declaration(method_object, go_location(call)))
+      unsupported(call, "calls of method " + id2string(method_object));
     return nil_exprt{};
   }
   exprt::operandst arguments;
@@ -496,7 +506,8 @@ exprt go_convertert::convert_method_value(const irept &selector)
     !is_go_interface(receiver.type()) &&
     !symbol_table.has_symbol(symbol_id(method_object)))
   {
-    unsupported(selector, "method " + id2string(method_object));
+    if(!use_of_unsupported_declaration(method_object, go_location(selector)))
+      unsupported(selector, "method " + id2string(method_object));
     return nil_exprt{};
   }
   const symbol_exprt env =

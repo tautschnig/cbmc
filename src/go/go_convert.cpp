@@ -311,14 +311,12 @@ void go_convertert::declare_package_var(
     // property of class "unsupported" (see variable and
     // convert_package_init), so programs that do not use it are not
     // affected.
-    const std::string what =
+    unsupported_declaration(
+      object_id,
+      where,
       "package variable '" + object.get_string("name") + "' of type " +
-      parse_tree.type_entry(object.get("type")).get_string("str") + " (" +
-      type_converter.unsupported_reason + ")";
-    unsupported_variables[object_id] = what;
-    log.warning().source_location = location_of(where);
-    log.warning() << "Go front-end: " << what << " is not supported yet"
-                  << messaget::eom;
+        parse_tree.type_entry(object.get("type")).get_string("str") + " (" +
+        type_converter.unsupported_reason + ")");
     return;
   }
   symbolt symbol = make_symbol(
@@ -336,6 +334,31 @@ void go_convertert::declare_package_var(
   CHECK_RETURN(zero.has_value());
   symbol.value = *zero;
   add_symbol(symbol);
+}
+
+void go_convertert::unsupported_declaration(
+  const irep_idt &object_id,
+  const irept &where,
+  const std::string &what)
+{
+  // Not an error: uses of the object fail a property of class
+  // "unsupported" (see use_of_unsupported_declaration), so programs that
+  // do not use it are not affected.
+  unsupported_declarations[object_id] = what;
+  log.warning().source_location = location_of(where);
+  log.warning() << "Go front-end: " << what << " is not supported yet"
+                << messaget::eom;
+}
+
+bool go_convertert::use_of_unsupported_declaration(
+  const irep_idt &object_id,
+  const source_locationt &location)
+{
+  const auto it = unsupported_declarations.find(object_id);
+  if(it == unsupported_declarations.end())
+    return false;
+  unsupported(location, it->second);
+  return true;
 }
 
 void go_convertert::declare_parameters(
@@ -383,9 +406,18 @@ void go_convertert::declare_function(const irept &decl)
     return unsupported(decl, "generic functions");
 
   typet type = type_converter.signature(object.get("type"));
-  if(type.is_nil())
-    return unsupported(decl, type_converter.unsupported_reason);
   const irept &signature = parse_tree.type_entry(object.get("type"));
+  const auto unsupported_signature = [&]()
+  {
+    unsupported_declaration(
+      object_id,
+      decl,
+      "function " + id2string(object_id) + " of type " +
+        signature.get_string("str") + " (" + type_converter.unsupported_reason +
+        ")");
+  };
+  if(type.is_nil())
+    return unsupported_signature();
   code_typet &code_type = to_code_type(type);
   declare_parameters(code_type, signature, object_id, location_of(decl));
 
@@ -396,9 +428,9 @@ void go_convertert::declare_function(const irept &decl)
     // receiver." The receiver is the first parameter.
     if(!go_list(go_field(decl, "Type"), "TypeParams").empty())
       return unsupported(decl, "generic methods");
-    typet receiver_type = convert_type(receiver.get("type"), decl);
+    typet receiver_type = type_converter(receiver.get("type"));
     if(receiver_type.is_nil())
-      return;
+      return unsupported_signature();
     irep_idt receiver_object = receiver.get("obj");
     irep_idt base = receiver.get("name");
     if(receiver_object.empty() || base == "_")
@@ -545,6 +577,8 @@ exprt go_convertert::variable(const irept &ident)
     const symbolt *function = symbol_table.lookup(symbol_id(object_id));
     if(function == nullptr)
     {
+      if(use_of_unsupported_declaration(object_id, go_location(ident)))
+        return nil_exprt{};
       if(!is_converted_package(object.get("pkg")))
         unsupported(
           ident, "function values from package " + object.get_string("pkg"));
@@ -573,12 +607,10 @@ exprt go_convertert::variable(const irept &ident)
     return std::move(result);
   }
   const symbolt *symbol = symbol_table.lookup(symbol_id(object_id));
-  const auto unsupported_variable = unsupported_variables.find(object_id);
-  if(symbol == nullptr && unsupported_variable != unsupported_variables.end())
-  {
-    unsupported(ident, unsupported_variable->second);
+  if(
+    symbol == nullptr &&
+    use_of_unsupported_declaration(object_id, go_location(ident)))
     return nil_exprt{};
-  }
   if(symbol == nullptr)
   {
     // A variable of this package whose declaration failed has already been
@@ -891,19 +923,27 @@ exprt go_convertert::unmodelled_call(
   const irept &call,
   const irep_idt &function_object)
 {
-  // A call of a standard-library function or method without a model: if
-  // it is reached, a property of class "unsupported" fails. Its arguments
-  // are not evaluated, which can only make that property fail more often.
-  const source_locationt location = location_of(call);
   const irept &object = parse_tree.object(function_object);
-  const std::string message =
-    "Go front-end: a call of " + id2string(function_object) + " (package " +
-    object.get_string("pkg") + ", which has no model) is not supported yet";
-  // The type of the function value, which for generic functions is that of
-  // the instance (and for methods has no receiver).
-  const typet signature =
-    type_converter.signature(go_field(call, "Fun").get("_t"));
-  if(signature.is_nil())
+  return unsupported_call(
+    call,
+    "a call of " + id2string(function_object) + " (package " +
+      object.get_string("pkg") + ", which has no model)");
+}
+
+exprt go_convertert::unsupported_call(
+  const irept &call,
+  const std::string &what)
+{
+  // If the call is reached, a property of class "unsupported" fails. Its
+  // arguments are not evaluated, which can only make that property fail
+  // more often.
+  const source_locationt location = location_of(call);
+  const std::string message = "Go front-end: " + what + " is not supported yet";
+  // The result type of the function value, which for generic functions is
+  // that of the instance.
+  const typet result =
+    type_converter.result_type(go_field(call, "Fun").get("_t"));
+  if(result.is_nil())
   {
     unsupported(call, type_converter.unsupported_reason);
     return nil_exprt{};
@@ -913,7 +953,6 @@ exprt go_convertert::unmodelled_call(
   source_locationt property = location;
   property.set_function(state.function_id);
   code_blockt prefix = unsupported_body(property, message);
-  const typet &result = to_code_type(signature).return_type();
   if(result.id() == ID_empty)
   {
     prefix.add(code_skipt{});
@@ -2949,7 +2988,12 @@ exprt go_convertert::convert_call(const irept &call)
   {
     const symbolt *function = symbol_table.lookup(symbol_id(callee));
     if(function == nullptr)
+    {
+      const auto it = unsupported_declarations.find(callee);
+      if(it != unsupported_declarations.end())
+        return unsupported_call(call, it->second);
       return nil_exprt{}; // declaration failed and was reported
+    }
     const code_typet &code_type = to_code_type(function->type);
     if(convert_arguments(call, code_type, arguments, prefix))
       return nil_exprt{};

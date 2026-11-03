@@ -236,9 +236,21 @@ private:
   /// The messages about unsupported constructs in the body of the function
   /// that convert_function_body converts, or null outside of one.
   std::vector<std::string> *unsupported_in_body = nullptr;
-  /// The package-level variables whose types are unsupported, with what
-  /// to report for their uses (see declare_package_var).
-  std::map<irep_idt, std::string> unsupported_variables;
+  /// The package-level variables and the functions whose types are
+  /// unsupported, with what to report for their uses (see
+  /// declare_package_var and declare_function).
+  std::map<irep_idt, std::string> unsupported_declarations;
+  /// Record that the declaration of \p object_id (at \p where) is not
+  /// supported because of \p what; warns.
+  void unsupported_declaration(
+    const irep_idt &object_id,
+    const irept &where,
+    const std::string &what);
+  /// If the declaration of \p object_id is not supported, report its use
+  /// at \p location and return true.
+  bool use_of_unsupported_declaration(
+    const irep_idt &object_id,
+    const source_locationt &location);
 
   /// The CBMC type of type-table index \p index; reports an error (at
   /// \p where) and returns nil if unsupported.
@@ -265,6 +277,9 @@ private:
   /// \p function_object, which has no model: code that fails a property of
   /// class "unsupported" (see unsupported_body), with an arbitrary result.
   exprt unmodelled_call(const irept &call, const irep_idt &function_object);
+  /// A call that fails a property of class "unsupported" naming \p what
+  /// if it is reached, and otherwise has an arbitrary result.
+  exprt unsupported_call(const irept &call, const std::string &what);
   /// Whether \p method_object is a method of a non-interface type of a
   /// standard-library package that has no model.
   bool is_unmodelled_method(const irep_idt &method_object) const;

@@ -130,6 +130,10 @@ public:
   /// tuple().
   typet signature(const irep_idt &index);
 
+  /// The return type of the code type of the signature at index \p index
+  /// (see signature), which may be supported when a parameter type is not.
+  typet result_type(const irep_idt &index);
+
   /// The struct type holding the values of a tuple (the results of a
   /// function with several results), with components $0, $1, ...
   typet tuple(const irept::subt &items);

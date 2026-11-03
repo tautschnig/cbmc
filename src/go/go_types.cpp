@@ -396,6 +396,18 @@ typet go_type_convertert::tuple(const irept::subt &items)
   return std::move(result);
 }
 
+typet go_type_convertert::result_type(const irep_idt &index)
+{
+  // Go1.27 §Function_types. A function with several results returns them
+  // as one struct (see tuple), with components $0, $1, ...
+  const auto &results = go_list(underlying(index), "results");
+  if(results.empty())
+    return empty_typet{};
+  if(results.size() == 1)
+    return (*this)(results.front().get("type"));
+  return tuple(results);
+}
+
 typet go_type_convertert::signature(const irep_idt &index)
 {
   const irept &under = underlying(index);
@@ -406,14 +418,7 @@ typet go_type_convertert::signature(const irep_idt &index)
     return typet{ID_nil};
   }
 
-  // Go1.27 §Function_types. A function with several results returns them
-  // as one struct (see tuple), with components $0, $1, ...
-  const auto &results = go_list(under, "results");
-  typet return_type = empty_typet{};
-  if(results.size() == 1)
-    return_type = (*this)(results.front().get("type"));
-  else if(results.size() > 1)
-    return_type = tuple(results);
+  typet return_type = result_type(index);
   if(return_type.is_nil())
     return typet{ID_nil};
 

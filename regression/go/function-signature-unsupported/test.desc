@@ -1,0 +1,19 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+Go front-end: function main\.raw of type func\(p unsafe\.Pointer\) bool \(type unsafe\.Pointer\) is not supported yet$
+^\[go::main\.main\.unsupported\.1\] line 36 Go front-end: function main\.raw .*: SUCCESS$
+^\[go::main\.main\.unsupported\.2\] line 42 Go front-end: function main\.T\.raw .*: SUCCESS$
+^\[go::main\.viaValue\.unsupported\.1\] line 22 Go front-end: function main\.raw .*: SUCCESS$
+^\[go::main\.viaInterface\.unsupported\.1\] line 29 .*: SUCCESS$
+^\[go::main\.main\.assertion\.5\] line 48 n: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR$
+--
+Declarations of functions and methods with unsupported signatures are
+warnings; calls of them are properties where they are, other uses fail
+the body that has them.
