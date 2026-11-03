@@ -26,6 +26,7 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
 
 #include "string_constraint_generator.h"
 #include "string_dependencies.h"
+#include "string_length_ties.h"
 #include "string_refinement_util.h"
 
 #define OPT_STRING_REFINEMENT                                                  \
@@ -175,6 +176,8 @@ private:
   std::vector<recorded_string_application_entryt> recorded_string_applications;
 
   string_dependenciest dependencies;
+  /// Sets the lengths of the arrays the array pool makes for pointers.
+  string_length_tiest length_ties;
 
   void add_lemma(const exprt &lemma, bool simplify_lemma = true);
 };
