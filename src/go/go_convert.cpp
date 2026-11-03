@@ -2424,8 +2424,12 @@ exprt go_convertert::convert_access(const irept &expr, access_partst &parts)
     const irept &selection = expr.find("_sel");
     if(selection.is_nil())
     {
-      // A qualified identifier (Go1.27 §Qualified_identifiers).
-      return variable(go_field(expr, "Sel"));
+      // A qualified identifier (Go1.27 §Qualified_identifiers), whose
+      // type go/types records on the selector expression.
+      irept sel = go_field(expr, "Sel");
+      if(sel.get("_t").empty())
+        sel.set("_t", expr.get("_t"));
+      return variable(sel);
     }
     if(selection.get("kind") != "field")
       return access_operand(convert_method_value(expr), parts);
