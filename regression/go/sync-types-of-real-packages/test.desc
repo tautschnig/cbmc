@@ -1,0 +1,12 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 28 locked and unlocked: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR$
+--
+Real standard-library types refer to the models of the replaced packages.

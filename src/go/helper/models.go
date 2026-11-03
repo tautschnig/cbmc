@@ -289,7 +289,13 @@ func (e *encoder) realType(t types.Type) types.Type {
 		return t
 	}
 	n, ok := t.(*types.Named)
-	if !ok || n.Obj().Pkg() == nil || n.TypeParams().Len() > 0 {
+	if !ok || n.Obj().Pkg() == nil {
+		return t
+	}
+	if r := e.replacementType(n); r != nil {
+		return r
+	}
+	if n.TypeParams().Len() > 0 {
 		return t
 	}
 	path, ok := strings.CutPrefix(n.Obj().Pkg().Path(), modelPrefix)
@@ -308,6 +314,41 @@ func (e *encoder) realType(t types.Type) types.Type {
 		return t
 	}
 	return tn.Type()
+}
+
+// replacementType returns the type of the model of a replaced package (see
+// replaced) that named type n of the real package stands for, or nil. The
+// real package is that of the standard-library packages loaded from
+// export data, whose types (e.g., the fields of a struct) may refer to its
+// types; those must be the model's, which has the same path and so the
+// same object ids. A type that the model does not declare stays the real
+// one.
+func (e *encoder) replacementType(n *types.Named) types.Type {
+	path := n.Obj().Pkg().Path()
+	if !replaced[path] {
+		return nil
+	}
+	sp := e.loader.byPath[path]
+	if sp == nil || sp.pkg == n.Obj().Pkg() {
+		return nil
+	}
+	tn, _ := sp.pkg.Scope().Lookup(n.Obj().Name()).(*types.TypeName)
+	if tn == nil {
+		return nil
+	}
+	args := n.TypeArgs()
+	if args.Len() == 0 {
+		return tn.Type()
+	}
+	var targs []types.Type
+	for i := 0; i < args.Len(); i++ {
+		targs = append(targs, e.realType(args.At(i)))
+	}
+	inst, err := types.Instantiate(e.ctxt, tn.Type(), targs, false)
+	if err != nil {
+		return nil
+	}
+	return inst
 }
 
 // realTuple maps the types of tup with realType, reporting whether any
