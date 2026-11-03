@@ -43,9 +43,12 @@ exprt as_condition(exprt value);
 /// (see go_convertert::convert_conversion).
 exprt with_go_type(exprt value, const typet &type);
 
+/// \p type, with a struct tag replaced by the struct it names.
+const typet &go_follow(const namespacet &ns, const typet &type);
+
 /// \p value converted to \p type, as for an assignment (Go1.27
 /// §Assignability); the untyped nil becomes the nil of \p type.
-exprt go_cast(exprt value, const typet &type);
+exprt go_cast(exprt value, const typet &type, const namespacet &ns);
 
 /// True if values of \p type contain pointers or function values, which
 /// cannot take arbitrary (nondeterministic) values. Strings and slices

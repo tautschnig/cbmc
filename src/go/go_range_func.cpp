@@ -337,7 +337,8 @@ void go_convertert::convert_range_func(
        yield_components[0].type()),
      typecast_exprt{env, yield_components[1].type()}},
     yield_type};
-  const auto &f_components = to_struct_type(f.type()).components();
+  const auto &f_components =
+    to_struct_type(go_follow(ns, f.type())).components();
   const member_exprt f_code{f, f_components[0]};
   // "Calling a nil function value causes a run-time panic."
   add_panic(

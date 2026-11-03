@@ -55,10 +55,10 @@ exprt go_convertert::assign_cast(exprt value, const typet &type)
   if(is_go_interface(type) && !is_go_interface(value.type()))
   {
     if(value.id() == "go_nil")
-      return go_cast(value, type);
+      return go_cast(value, type, ns);
     return box(value, value.source_location());
   }
-  return go_cast(std::move(value), type);
+  return go_cast(std::move(value), type, ns);
 }
 
 exprt go_convertert::box(const exprt &value, const source_locationt &location)
@@ -555,7 +555,7 @@ exprt go_convertert::convert_type_assertion(const irept &expr)
   const auto &components = to_struct_type(tuple).components();
   return with_prefix(
     struct_exprt{
-      {go_cast(value, components[0].type()),
+      {go_cast(value, components[0].type(), ns),
        typecast_exprt::conditional_cast(ok, components[1].type())},
       tuple},
     block,

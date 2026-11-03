@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 6 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Function_types, §Type_declarations: named function types that refer
+to themselves (e.g., state functions of lexers) are struct tags.

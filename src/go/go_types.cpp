@@ -132,6 +132,8 @@ typet go_type_convertert::operator()(const irep_idt &index)
     // substituted in their underlying type by go/types.
     if(underlying(index).get("k") == "struct")
       return named_struct(index, entry);
+    if(underlying(index).get("k") == "signature")
+      return named_signature(index, entry);
     // Other named types are their underlying type (Go1.27
     // §Underlying_types); only struct tags can break a cycle.
     if(!converting.insert(index).second)
@@ -250,6 +252,84 @@ typet go_type_convertert::struct_type(const irept &entry)
   return struct_typet{std::move(components)};
 }
 
+/// The identifier of the type symbol of the named type \p entry.
+static irep_idt named_type_id(const irept &entry)
+{
+  // Go1.27 §Instantiations: "Instantiating a generic type, function, or
+  // method results in a non-generic type, function, or method,
+  // respectively." Each instance of a generic type is a type of its own,
+  // named after the type arguments ("iname").
+  return go_symbol_id(
+    entry.get("iname").empty() ? entry.get("obj") : entry.get("iname"));
+}
+
+void go_type_convertert::add_type_symbol(
+  const irep_idt &id,
+  const irept &entry,
+  typet type)
+{
+  const irept &object = parse_tree.object(entry.get("obj"));
+  symbolt symbol{id, std::move(type), "go"};
+  symbol.base_name = object.get("name");
+  symbol.pretty_name = entry.get("str");
+  symbol.module = object.get("pkg");
+  symbol.is_type = true;
+  symbol_table.add(symbol);
+  added_types.push_back(id);
+}
+
+void go_type_convertert::erase_type_symbols(std::size_t mark)
+{
+  // Types added since are reachable from the type whose conversion
+  // failed; some of them may refer to its tag.
+  for(std::size_t i = mark; i < added_types.size(); ++i)
+  {
+    const auto it = symbol_table.symbols.find(added_types[i]);
+    if(it != symbol_table.symbols.end())
+      symbol_table.erase(it);
+  }
+  added_types.resize(mark);
+}
+
+typet go_type_convertert::named_signature(
+  const irep_idt &index,
+  const irept &entry)
+{
+  // A named function type is its underlying type, unless it refers to
+  // itself (e.g., `type stateFn func(*lexer) stateFn`): then it becomes a
+  // struct tag naming its function values, the only way CBMC types can
+  // have cycles. The type symbol is added once the conversion succeeds;
+  // the occurrences inside the type already use the tag.
+  const irep_idt id = named_type_id(entry);
+  struct_tag_typet tag{id};
+  tag.set(ID_C_go_type, entry.get("str"));
+  tag.set(ID_C_go_tid, type_id(index));
+  if(symbol_table.has_symbol(id))
+    return std::move(tag);
+  if(!converting.insert(index).second)
+  {
+    recursive.insert(index);
+    return std::move(tag);
+  }
+  const std::size_t mark = added_types.size();
+  typet code = signature(index);
+  converting.erase(index);
+  const bool is_recursive = recursive.erase(index) != 0;
+  if(code.is_nil())
+  {
+    erase_type_symbols(mark);
+    return typet{ID_nil};
+  }
+  struct_typet result = func_value(to_code_type(code));
+  result.set(ID_C_go_type, entry.get("str"));
+  result.set(ID_C_go_tid, type_id(index));
+  if(!is_recursive)
+    return std::move(result);
+  result.set_tag(parse_tree.object(entry.get("obj")).get("name"));
+  add_type_symbol(id, entry, std::move(result));
+  return std::move(tag);
+}
+
 typet go_type_convertert::named_struct(
   const irep_idt &index,
   const irept &entry)
@@ -258,34 +338,22 @@ typet go_type_convertert::named_struct(
   // (Go1.27 §Struct_types: valid because the cycle passes through a
   // pointer) are finite. The type symbol is added before the fields are
   // converted.
-  const irep_idt &object_id = entry.get("obj");
-  // Go1.27 §Instantiations: "Instantiating a generic type, function, or
-  // method results in a non-generic type, function, or method,
-  // respectively." Each instance of a generic struct type is a struct tag of
-  // its own, named after the type arguments ("iname").
-  const irep_idt id =
-    go_symbol_id(entry.get("iname").empty() ? object_id : entry.get("iname"));
+  const irep_idt id = named_type_id(entry);
   struct_tag_typet tag{id};
   tag.set(ID_C_go_type, entry.get("str"));
   tag.set(ID_C_go_tid, type_id(index));
   if(symbol_table.has_symbol(id))
     return std::move(tag);
 
-  const irept &object = parse_tree.object(object_id);
-  symbolt symbol{id, struct_typet{}, "go"};
-  symbol.base_name = object.get("name");
-  symbol.pretty_name = entry.get("str");
-  symbol.module = object.get("pkg");
-  symbol.is_type = true;
-  symbol_table.add(symbol);
-
+  const std::size_t mark = added_types.size();
+  add_type_symbol(id, entry, struct_typet{});
   typet type = struct_type(underlying(index));
   if(type.is_nil())
   {
-    symbol_table.erase(symbol_table.symbols.find(id));
+    erase_type_symbols(mark);
     return typet{ID_nil};
   }
-  to_struct_type(type).set_tag(symbol.base_name);
+  to_struct_type(type).set_tag(parse_tree.object(entry.get("obj")).get("name"));
   type.set(ID_C_go_type, entry.get("str"));
   symbol_table.get_writeable_ref(id).type = std::move(type);
   return std::move(tag);

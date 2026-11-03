@@ -120,8 +120,9 @@ public:
   }
 
   /// The CBMC type of values of type-table index \p index. Named struct
-  /// types become struct tags, whose type symbols are added on first use.
-  /// Function types yield function values, see func_value().
+  /// types, and named function types that refer to themselves, become
+  /// struct tags, whose type symbols are added on first use. Function
+  /// types yield function values, see func_value().
   typet operator()(const irep_idt &index);
 
   /// The code type of the function signature at index \p index, for
@@ -209,10 +210,21 @@ private:
   /// to themselves other than through a struct (e.g., type P *P), which
   /// CBMC types cannot represent.
   std::set<irep_idt> converting;
+  /// Named function types in `converting` that turned out to refer to
+  /// themselves (see named_signature).
+  std::set<irep_idt> recursive;
+  /// The type symbols added, in order, so that a failed conversion can
+  /// remove those added meanwhile (see erase_type_symbols).
+  std::vector<irep_idt> added_types;
 
   typet basic(const irep_idt &kind);
   typet struct_type(const irept &entry);
   typet named_struct(const irep_idt &index, const irept &entry);
+  typet named_signature(const irep_idt &index, const irept &entry);
+  /// Add the type symbol \p id of the named type \p entry.
+  void add_type_symbol(const irep_idt &id, const irept &entry, typet type);
+  /// Remove the type symbols added since added_types had size \p mark.
+  void erase_type_symbols(std::size_t mark);
 };
 
 #endif // CPROVER_GO_GO_TYPES_H

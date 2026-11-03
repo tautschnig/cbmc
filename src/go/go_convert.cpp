@@ -73,8 +73,7 @@ expression_statement(exprt value, const source_locationt &location)
   return result;
 }
 
-/// \p type, with a struct tag replaced by the struct it names.
-static const typet &go_follow(const namespacet &ns, const typet &type)
+const typet &go_follow(const namespacet &ns, const typet &type)
 {
   if(type.id() == ID_struct_tag)
     return ns.follow_tag(to_struct_tag_type(type));
@@ -129,7 +128,11 @@ bool contains_reference(
 }
 
 /// \p value, or the nil of \p type if \p value is the untyped nil.
-static exprt go_cast_nil(const exprt &value, const typet &type);
+static exprt
+go_cast_nil(const exprt &value, const typet &type, const namespacet &ns);
+
+static exprt
+convert_composite(const exprt &value, const typet &type, const namespacet &ns);
 
 exprt as_condition(exprt value)
 {
@@ -141,8 +144,11 @@ exprt as_condition(exprt value)
   return std::move(result);
 }
 
-exprt go_cast(exprt value, const typet &type)
+exprt go_cast(exprt value, const typet &type, const namespacet &ns)
 {
+  // Function types that refer to themselves are struct tags (see
+  // go_type_convertert::named_signature).
+  const typet &followed = go_follow(ns, type);
   if(value.id() == ID_go_nil)
   {
     source_locationt location = value.source_location();
@@ -172,8 +178,8 @@ exprt go_cast(exprt value, const typet &type)
     else
     {
       // A nil function value.
-      PRECONDITION(is_func_value(type));
-      const auto &components = to_struct_type(type).components();
+      PRECONDITION(is_func_value(followed));
+      const auto &components = to_struct_type(followed).components();
       result = struct_exprt{
         {null_pointer_exprt{to_pointer_type(components[0].type())},
          null_pointer_exprt{to_pointer_type(components[1].type())}},
@@ -182,12 +188,22 @@ exprt go_cast(exprt value, const typet &type)
     result.add_source_location() = std::move(location);
     return result;
   }
+  if(
+    value.type() != type && followed.id() == ID_struct &&
+    (type.id() == ID_struct_tag || value.type().id() == ID_struct_tag))
+  {
+    // A struct and the tag naming it: rebuild the struct.
+    exprt result = convert_composite(value, type, ns);
+    if(result.is_not_nil())
+      return result;
+  }
   return typecast_exprt::conditional_cast(std::move(value), type);
 }
 
-static exprt go_cast_nil(const exprt &value, const typet &type)
+static exprt
+go_cast_nil(const exprt &value, const typet &type, const namespacet &ns)
 {
-  return value.id() == ID_go_nil ? go_cast(value, type) : value;
+  return value.id() == ID_go_nil ? go_cast(value, type, ns) : value;
 }
 
 source_locationt go_convertert::location_of(const irept &node) const
@@ -2719,7 +2735,7 @@ exprt go_convertert::convert_conversion(const irept &call)
   exprt value = convert_expr(args.front());
   if(type.is_nil() || value.is_nil())
     return nil_exprt{};
-  value = go_cast_nil(value, type);
+  value = go_cast_nil(value, type, ns);
   if(is_go_interface(type))
   {
     // Go1.27 §Conversions: "x is assignable to T." Converting to an
@@ -2916,8 +2932,9 @@ exprt go_convertert::convert_call(const irept &call)
   exprt value = convert_expr(fun);
   if(value.is_nil())
     return nil_exprt{};
-  PRECONDITION(is_func_value(value.type()));
-  const auto &components = to_struct_type(value.type()).components();
+  const typet &value_type = go_follow(ns, value.type());
+  PRECONDITION(is_func_value(value_type));
+  const auto &components = to_struct_type(value_type).components();
   code_typet code_type =
     to_code_type(to_pointer_type(components[0].type()).base_type());
   code_type.parameters().erase(code_type.parameters().begin()); // $env

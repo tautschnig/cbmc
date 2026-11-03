@@ -552,10 +552,11 @@ exprt go_convertert::saved_call(
   exprt function = convert_expr(go_field(call, "Fun"));
   if(function.is_nil())
     return nil_exprt{};
-  PRECONDITION(is_func_value(function.type()));
+  const typet value_type = go_follow(ns, function.type());
+  PRECONDITION(is_func_value(value_type));
   function = evaluate_once(function, location, prefix);
   code_typet code_type = to_code_type(
-    to_pointer_type(to_struct_type(function.type()).components()[0].type())
+    to_pointer_type(to_struct_type(value_type).components()[0].type())
       .base_type());
   code_type.parameters().erase(code_type.parameters().begin()); // $env
   exprt::operandst arguments;
@@ -592,7 +593,7 @@ exprt go_convertert::saved_call(
       env_param, pointer_typet{env_type, config.ansi_c.pointer_width}}};
     const member_exprt saved_function{saved, env_type.components()[0]};
     const auto &function_components =
-      to_struct_type(saved_function.type()).components();
+      to_struct_type(go_follow(ns, saved_function.type())).components();
     const member_exprt code{saved_function, function_components[0]};
     // "If a deferred function value evaluates to nil, execution panics when
     // the function is invoked, not when the "defer" statement is
