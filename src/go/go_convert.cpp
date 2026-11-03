@@ -3986,6 +3986,28 @@ exprt go_convertert::convert_len(const irept &call)
 
 exprt go_convertert::convert_expr(const irept &expr)
 {
+  // The value records the Go type of the expression (ID_C_go_tid), on
+  // which converting it to an interface depends, also where it is built
+  // with a CBMC type that only has the same representation (e.g., len(s),
+  // or a map literal).
+  exprt result = convert_expr_value(expr);
+  const irep_idt &index = expr.get("_t");
+  if(result.is_nil() || index.empty() || expr.get_bool("_tx"))
+    return result;
+  auto cached = go_types.find(index);
+  if(cached == go_types.end())
+  {
+    const std::string reason = type_converter.unsupported_reason;
+    cached = go_types.emplace(index, type_converter(index)).first;
+    type_converter.unsupported_reason = reason;
+  }
+  if(cached->second.is_nil())
+    return result;
+  return with_go_type(std::move(result), cached->second);
+}
+
+exprt go_convertert::convert_expr_value(const irept &expr)
+{
   // Every constant expression has been evaluated exactly by go/types.
   if(!expr.get("_cv").empty() && !expr.get_bool("_tx"))
   {

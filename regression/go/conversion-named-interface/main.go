@@ -1,6 +1,7 @@
 // Go1.27 §Conversions to a named type whose underlying type is that of the
 // value (S(d) of a []int, E(len(d)) of an int) give a value of the named
-// type, which is its dynamic type when stored in an interface.
+// type, which is its dynamic type when stored in an interface; values of
+// built-in calls and literals have their Go types, too.
 package main
 
 import "cprover"
@@ -22,4 +23,10 @@ func main() {
 	var err error = E(len(d))
 	_, ok := err.(E)
 	cprover.Assert(ok, "named int")
+	var a any = len(d)
+	_, isInt := a.(int)
+	cprover.Assert(isInt, "len is an int")
+	var m any = map[string]int{}
+	_, isMap := m.(map[string]int)
+	cprover.Assert(isMap, "map literal")
 }

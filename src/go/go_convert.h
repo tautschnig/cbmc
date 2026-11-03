@@ -31,6 +31,7 @@ Author: Michael Tautschnig
 #include <map>
 #include <memory>
 #include <set>
+#include <unordered_map>
 
 class symbol_table_baset;
 class symbolt;
@@ -636,6 +637,10 @@ private:
 
   // Expressions
   exprt convert_expr(const irept &expr);
+  /// convert_expr, without recording the Go type.
+  exprt convert_expr_value(const irept &expr);
+  /// The types of type-table entries, as convert_expr uses them.
+  std::unordered_map<irep_idt, typet> go_types;
   exprt convert_composite_lit(const irept &lit);
   exprt convert_address_of(const irept &expr);
   exprt convert_new(const irept &call);
