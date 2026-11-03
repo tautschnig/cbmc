@@ -149,6 +149,7 @@ array_string_exprt array_poolt::make_char_array_for_char_pointer(
   const auto array_sym =
     to_array_string_expr(fresh_symbol(symbol_name, char_array_type));
   arrays_of_pointers.emplace(char_pointer, array_sym);
+  made_arrays.emplace_back(char_pointer, array_sym);
 
   // add length to length_of_array map
   get_or_create_length(array_sym);
@@ -225,6 +226,7 @@ array_poolt::created_strings() const
 
 array_string_exprt array_poolt::find(const exprt &pointer, const exprt &length)
 {
+  lengths_of_finds[pointer].insert(length);
   const array_typet array_type(
     to_pointer_type(pointer.type()).base_type(), length);
   const array_string_exprt array =

@@ -17,6 +17,8 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 #include <util/std_expr.h>
 #include <util/string_expr.h>
 
+#include <unordered_set>
+
 /// Generation of fresh symbols of a given type
 class symbol_generatort final
 {
@@ -75,6 +77,23 @@ public:
   /// Creates a new array if the pointer is not pointing to an array
   array_string_exprt find(const exprt &pointer, const exprt &length);
 
+  /// The lengths that \ref find was called with, by pointer.
+  const std::
+    unordered_map<exprt, std::unordered_set<exprt, irep_hash>, irep_hash> &
+    found_lengths() const
+  {
+    return lengths_of_finds;
+  }
+
+  /// The arrays made for pointers that were found without an array (see
+  /// make_char_array_for_char_pointer), with their pointers, in the order
+  /// in which they were made.
+  const std::vector<std::pair<exprt, array_string_exprt>> &
+  arrays_made_for_pointers() const
+  {
+    return made_arrays;
+  }
+
   const std::unordered_map<array_string_exprt, exprt, irep_hash> &
   created_strings() const;
 
@@ -106,6 +125,12 @@ private:
   std::unordered_map<array_string_exprt, symbol_exprt, irep_hash> if_lengths;
   std::vector<equal_exprt> length_definitions;
   std::size_t emitted_definitions = 0;
+
+  /// See found_lengths().
+  std::unordered_map<exprt, std::unordered_set<exprt, irep_hash>, irep_hash>
+    lengths_of_finds;
+  /// See arrays_made_for_pointers().
+  std::vector<std::pair<exprt, array_string_exprt>> made_arrays;
 
   /// Generate fresh symbols
   symbol_generatort &fresh_symbol;

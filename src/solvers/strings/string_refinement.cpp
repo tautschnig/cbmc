@@ -755,6 +755,9 @@ string_refinementt::dec_solve(const exprt &assumption)
   // that's why we use a class member here
   add_equations_for_symbol_resolution(
     symbol_resolve, equations, ns, log.debug());
+  // The definitions are kept between calls to dec_solve, like
+  // symbol_resolve.
+  length_ties.add_definitions(equations);
 #ifdef DEBUG
   log.debug() << "symbol resolve:" << messaget::eom;
   for(const auto &pair : symbol_resolve.to_vector())
@@ -950,6 +953,20 @@ string_refinementt::dec_solve(const exprt &assumption)
   output_equations(log.debug(), equations);
 #endif
 
+  // The finds of the array pool are complete once the constraints are made.
+  const std::vector<exprt> length_ties_of_round =
+    length_ties.new_ties(generator.array_pool);
+  if(length_ties.conflict())
+  {
+    log.error() << "dec_solve: a pointer whose string length was set by an "
+                << "earlier call is now found with a length that may differ"
+                << messaget::eom;
+    return resultt::D_ERROR;
+  }
+  log.debug() << "dec_solve: " << length_ties_of_round.size()
+              << " string lengths set from the lengths of their pointers"
+              << messaget::eom;
+
 #ifdef DEBUG
   log.debug() << "dec_solve: arrays_of_pointers:" << messaget::eom;
   for(auto pair : generator.array_pool.get_arrays_of_pointers())
@@ -1020,6 +1037,8 @@ string_refinementt::dec_solve(const exprt &assumption)
     add_lemma(substitute_array_access(
       lemma, substitution_memo, generator.fresh_symbol, true));
   }
+  for(const exprt &tie : length_ties_of_round)
+    add_lemma(tie);
 
   // All generated strings should have non-negative length
   for(const auto &pair : generator.array_pool.created_strings())
