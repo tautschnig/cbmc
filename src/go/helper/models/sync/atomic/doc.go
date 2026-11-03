@@ -5,14 +5,16 @@
 // the front-end; the documentation is shortened.
 
 // Package atomic models the standard library's package sync/atomic
-// (go1.27): the functions on integers, and the types Bool, Int32, Int64,
-// Uint32, Uint64, Uintptr, Pointer and Value. The program is type-checked
-// against this package, so the functions on unsafe.Pointer are not
-// available. Operations are sequentially consistent, as the Go memory
-// model specifies for them.
+// (go1.27): the functions on integers and on unsafe.Pointer, and the types
+// Bool, Int32, Int64, Uint32, Uint64, Uintptr, Pointer and Value.
+// Operations are sequentially consistent, as the Go memory model specifies
+// for them.
 package atomic
 
-import "cprover/rt"
+import (
+	"cprover/rt"
+	"unsafe"
+)
 
 // SwapInt32 atomically stores new into *addr and returns the previous *addr
 // value.
@@ -373,6 +375,47 @@ func LoadUintptr(addr *uintptr) (val uintptr) {
 
 // StoreUintptr atomically stores val into *addr.
 func StoreUintptr(addr *uintptr, val uintptr) {
+	_ = *addr
+	rt.AtomicBegin()
+	*addr = val
+	rt.AtomicEnd()
+}
+
+// SwapPointer atomically stores new into *addr and returns the previous
+// *addr value.
+func SwapPointer(addr *unsafe.Pointer, new unsafe.Pointer) (old unsafe.Pointer) {
+	_ = *addr
+	rt.AtomicBegin()
+	old = *addr
+	*addr = new
+	rt.AtomicEnd()
+	return
+}
+
+// CompareAndSwapPointer executes the compare-and-swap operation for a
+// unsafe.Pointer value.
+func CompareAndSwapPointer(addr *unsafe.Pointer, old, new unsafe.Pointer) (swapped bool) {
+	_ = *addr
+	rt.AtomicBegin()
+	if *addr == old {
+		*addr = new
+		swapped = true
+	}
+	rt.AtomicEnd()
+	return
+}
+
+// LoadPointer atomically loads *addr.
+func LoadPointer(addr *unsafe.Pointer) (val unsafe.Pointer) {
+	_ = *addr
+	rt.AtomicBegin()
+	val = *addr
+	rt.AtomicEnd()
+	return
+}
+
+// StorePointer atomically stores val into *addr.
+func StorePointer(addr *unsafe.Pointer, val unsafe.Pointer) {
 	_ = *addr
 	rt.AtomicBegin()
 	*addr = val

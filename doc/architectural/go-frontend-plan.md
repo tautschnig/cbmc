@@ -449,7 +449,7 @@ Supported so far:
   `WaitGroup` with `Go`, `Once`, `OnceFunc`, `OnceValue`, `OnceValues`,
   `Cond`, `Map`, `Pool`) and `sync/atomic` (the integer functions and
   the types `Bool`, `Int32`, `Int64`, `Uint32`, `Uint64`, `Uintptr`,
-  `Pointer[T]`, `Value`; not `unsafe.Pointer` operations). `Pool` keeps
+  `Pointer[T]`, `Value`, and the functions on `unsafe.Pointer`). `Pool` keeps
   or drops each item put, and `Get` returns any kept item or none,
   nondeterministically (the real pool may drop items at any time).
   `Map.Range` visits the keys present when it starts, with their values
