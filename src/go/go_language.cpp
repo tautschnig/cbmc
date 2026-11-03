@@ -62,17 +62,21 @@ go_languaget::append_capacity(message_handlert &message_handler) const
 {
   // As the C front-end follows the compiler it is configured for, follow
   // the Go compiler on PATH (the one that provides the standard library),
-  // unless --go-compiler names one: gc go1.27's capacities, or any
-  // capacity for other compilers (whose choices are not modelled).
+  // unless --go-compiler names one: gc go1.27's or TinyGo's capacities, or
+  // any capacity for other compilers (whose choices are not modelled).
+  // TinyGo uses the go command's standard library, so that it can only be
+  // named.
   messaget log{message_handler};
   if(go_compiler == "gc")
     return go_append_capacityt::GC;
+  if(go_compiler == "tinygo")
+    return go_append_capacityt::TINYGO;
   if(go_compiler == "any")
     return go_append_capacityt::ANY;
   if(!go_compiler.empty())
   {
-    log.error() << "--go-compiler: expected gc or any, got '" << go_compiler
-                << "'" << messaget::eom;
+    log.error() << "--go-compiler: expected gc, tinygo or any, got '"
+                << go_compiler << "'" << messaget::eom;
     return {};
   }
 
@@ -88,8 +92,8 @@ go_languaget::append_capacity(message_handlert &message_handler) const
                 << (name.empty() ? std::string{"unknown"}
                                  : name + " " + version)
                 << ": the capacities of append are only modelled for gc "
-                << "go1.27, any capacity is assumed (use --go-compiler gc "
-                << "for gc's)" << messaget::eom;
+                << "go1.27 and TinyGo, any capacity is assumed (see "
+                << "--go-compiler)" << messaget::eom;
   return go_append_capacityt::ANY;
 }
 

@@ -3,7 +3,7 @@ main.go
 --go-compiler gcc
 ^EXIT=6$
 ^SIGNAL=0$
-^--go-compiler: expected gc or any, got 'gcc'$
+^--go-compiler: expected gc, tinygo or any, got 'gcc'$
 --
 ^VERIFICATION
 --

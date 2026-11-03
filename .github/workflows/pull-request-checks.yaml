@@ -6,6 +6,7 @@ on:
     branches: [ develop ]
 env:
   cvc5-version: "1.2.1"
+  tinygo-version: "0.44.0"
   linux-vcpus: 4
   windows-vcpus: 4
 
@@ -242,6 +243,12 @@ jobs:
         with:
           go-version-file: src/go/helper/go.mod
           cache-dependency-path: src/go/helper/go.mod
+      - name: Install TinyGo to check the Go front-end's model of it
+        run: |
+          wget https://github.com/tinygo-org/tinygo/releases/download/v${{env.tinygo-version}}/tinygo_${{env.tinygo-version}}_amd64.deb
+          sudo dpkg -i tinygo_${{env.tinygo-version}}_amd64.deb
+          rm tinygo_${{env.tinygo-version}}_amd64.deb
+          tinygo version
       - name: Prepare ccache
         uses: actions/cache@v5
         with:

@@ -319,6 +319,51 @@ func RoundUpCapGC(newLen, size int, pointers bool) int {
 
 const stackBufferSize = 32
 
+// GrowCapTinyGo returns the capacity TinyGo's runtime.sliceGrow (TinyGo
+// 0.44, src/runtime/slice.go) gives a slice that must grow to length
+// newLen: the smallest power of two above newLen (1 << bits.Len(newLen)),
+// whatever the element type. rt_tinygo_test.go checks it against the
+// TinyGo that runs it.
+func GrowCapTinyGo(newLen int) int {
+	return 1 << bitLen(uint(newLen))
+}
+
+// bitLen is math/bits.Len: the number of bits needed to represent x, by a
+// binary search without loops (x>>32 is 0 for 32-bit uint).
+func bitLen(x uint) int {
+	n := 0
+	if x>>32 != 0 {
+		x >>= 32
+		n += 32
+	}
+	if x>>16 != 0 {
+		x >>= 16
+		n += 16
+	}
+	if x>>8 != 0 {
+		x >>= 8
+		n += 8
+	}
+	if x>>4 != 0 {
+		x >>= 4
+		n += 4
+	}
+	if x>>2 != 0 {
+		x >>= 2
+		n += 2
+	}
+	if x>>1 != 0 {
+		x >>= 1
+		n++
+	}
+	return n + int(x)
+}
+
+// GopherJS (which compiles Go to JavaScript) is not modelled: its
+// $calculateNewCapacity (compiler/prelude/prelude.js) gives
+// max(newLen, oldCap < 1024 ? 2*oldCap : floor(oldCap*5/4)), without
+// rounding to size classes, so that --go-compiler any covers it.
+
 // nextSliceCap is runtime.nextslicecap, with its loop unrolled: newLen is
 // at most twice oldCap there, and each step grows newcap by more than a
 // quarter, so that four steps (1.25^4 > 2) reach newLen.

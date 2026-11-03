@@ -2,7 +2,8 @@
 # Run regression/go tests with the Go toolchain as an oracle.
 #
 # Each test's main.go is built and run (for GOARCH=386 if the test uses
-# --32) with `go run`, using the real
+# --32) with `go run` (`tinygo run` if it uses --go-compiler tinygo),
+# using the real
 # package cprover (src/go/helper/cprover): Assert panics if its condition
 # is false and Nondet returns the zero value. So every expected
 # VERIFICATION SUCCESSFUL test must run to completion; for tests expecting
@@ -45,6 +46,17 @@ for dir in "$@"; do
   case " $options " in
     *" --32 "*) goarch=386 ;;
   esac
+  # Tests of TinyGo's choices (--go-compiler tinygo) run with TinyGo, and
+  # are skipped without it.
+  runner="go run"
+  case " $options " in
+    *" --go-compiler tinygo "*)
+      if ! command -v tinygo > /dev/null; then
+        echo "skip    $name: needs tinygo"
+        continue
+      fi
+      runner="tinygo run" ;;
+  esac
   # The test's directory is its package (and, with a go.mod, its module,
   # which may have further packages); it gets the real package cprover.
   rm -rf "$work/main"
@@ -54,19 +66,19 @@ for dir in "$@"; do
   (cd "$work/main" && GOTOOLCHAIN=local go mod edit \
     -require=cprover@v0.0.0 -replace=cprover="$work/cprover")
   output="$(cd "$work/main" && env GOTOOLCHAIN=local GOFLAGS=-mod=mod \
-    ${goarch:+GOARCH=$goarch} timeout 60 go run . 2>&1)"
+    ${goarch:+GOARCH=$goarch} timeout 300 $runner . 2>&1)"
   result=$?
   if echo "$expected" | grep -q '^\^VERIFICATION SUCCESSFUL\$$'; then
     if [ $result -eq 0 ]; then
       echo "ok      $name"
     else
-      echo "MISMATCH $name: expected to succeed, go run exited $result"
+      echo "MISMATCH $name: expected to succeed, $runner exited $result"
       echo "$output" | sed 's/^/    /' | head -5
       status=1
     fi
   else
     # Not a success test: report what Go does (e.g., the panic message).
-    echo "info    $name: go run exited $result: $(echo "$output" | head -1)"
+    echo "info    $name: $runner exited $result: $(echo "$output" | head -1)"
   fi
 done
 exit $status

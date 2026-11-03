@@ -264,11 +264,18 @@ Supported so far:
   decides between them. The array has room for the largest of these, so
   that its size is constant when the lengths are. gc's element sizes and
   whether elements have pointers come from the helper (`esize`, `eptrs`
-  of slice types). For other compilers and versions (gccgo, TinyGo,
-  GopherJS, other gc releases), any capacity that fits is possible.
-  `src/go/helper/runtime/rt_test.go` checks the model against the gc
-  that runs it (in ctest and `make -C regression/go test`, with and
-  without `-gcflags=all=-N`), so that changes of gc show up in CI.
+  of slice types). TinyGo 0.44 (`--go-compiler tinygo`, which cannot be
+  detected, as TinyGo uses the `go` command's standard library) gives
+  the smallest power of two above the new length (`rt.GrowCapTinyGo`),
+  also to slices that do not escape. For other compilers and versions
+  (gccgo and gollvm, which use libgo's Go 1.18 runtime, GopherJS, whose
+  rule `rt.go` documents, other gc releases), any capacity that fits is
+  possible. `src/go/helper/runtime/rt_test.go` checks the model against
+  the gc that runs it (with and without `-gcflags=all=-N`), and
+  `rt_tinygo_test.go` against TinyGo (`-opt=z` and `-opt=0`, if
+  installed), in ctest and `make -C regression/go test`; CI installs
+  TinyGo in one job. `scripts/go-frontend/run_with_go.sh` runs tests with
+  `--go-compiler tinygo` with `tinygo run`.
   Element ranges are copied as by CBMC's `memcpy` model: with
   `__CPROVER_array_copy` into a new array of the exact length and
   `__CPROVER_array_replace`, without loops and independent of overlaps.

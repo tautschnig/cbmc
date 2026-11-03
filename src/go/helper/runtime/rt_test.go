@@ -1,3 +1,5 @@
+//go:build !tinygo
+
 package rt
 
 // Checks of the capacities of append that the front-end uses (GrowCapGC,

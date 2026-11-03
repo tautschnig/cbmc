@@ -718,6 +718,14 @@ exprt go_convertert::append_capacity_choice(
   const source_locationt &location,
   code_blockt &grow)
 {
+  if(append_capacity == go_append_capacityt::TINYGO)
+  {
+    // The smallest power of two above the length, for all element types.
+    grow.add(code_frontend_assignt{
+      capacity, runtime_call("GrowCapTinyGo", {length}, location)});
+    return capacity;
+  }
+
   const irep_idt &size_value = slice_type.get("esize");
   if(append_capacity == go_append_capacityt::ANY || size_value.empty())
   {

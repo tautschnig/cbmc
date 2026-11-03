@@ -1068,9 +1068,9 @@ void cbmc_parse_optionst::help()
     "\n"
     "Go frontend options:\n"
     " {y--go-compiler} {ucompiler} \t model the choices of the Go compiler"
-    " {ucompiler} where the specification leaves them open: {ygc} (go1.27)"
-    " or {yany} (default: {ygc} if the {ygo} command is gc go1.27, else"
-    " {yany})\n"
+    " {ucompiler} where the specification leaves them open: {ygc} (go1.27),"
+    " {ytinygo} (0.44) or {yany} (default: {ygc} if the {ygo} command is gc"
+    " go1.27, else {yany})\n"
     "\n"
     "Platform options:\n"
     HELP_CONFIG_PLATFORM

@@ -1,0 +1,11 @@
+CORE
+main.go
+--go-compiler tinygo
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Appending_and_copying_slices: the capacities of append with
+--go-compiler tinygo are those of TinyGo 0.44.

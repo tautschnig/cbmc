@@ -58,7 +58,9 @@ enum class go_append_capacityt
   ANY,
   /// The capacities gc go1.27 may choose (rt.GrowCapGC, rt.StackCapGC and
   /// rt.RoundUpCapGC in helper/runtime/rt.go).
-  GC
+  GC,
+  /// The capacity TinyGo 0.44 chooses (rt.GrowCapTinyGo).
+  TINYGO
 };
 
 /// Converts one Go package.
