@@ -1,0 +1,15 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+Go front-end: package variable 'p' of type unsafe\.Pointer \(type unsafe\.Pointer\) is not supported yet$
+^\[go::main\.touch\.unsupported\.1\] line 15 Go front-end: package variable 'p' .*: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 24 counter: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR$
+--
+Uses of a package variable of an unsupported type are properties where they
+are; the declaration itself is not a conversion error.

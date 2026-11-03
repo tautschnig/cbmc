@@ -236,6 +236,9 @@ private:
   /// The messages about unsupported constructs in the body of the function
   /// that convert_function_body converts, or null outside of one.
   std::vector<std::string> *unsupported_in_body = nullptr;
+  /// The package-level variables whose types are unsupported, with what
+  /// to report for their uses (see declare_package_var).
+  std::map<irep_idt, std::string> unsupported_variables;
 
   /// The CBMC type of type-table index \p index; reports an error (at
   /// \p where) and returns nil if unsupported.

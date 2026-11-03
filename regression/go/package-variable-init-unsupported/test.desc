@@ -1,0 +1,14 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.\$init\.unsupported\.1\] line 13 Go front-end: .*unsafe\.Pointer.*: FAILURE$
+^\*\* 1 of [0-9]+ failed
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+^CONVERSION ERROR$
+--
+An unsupported initialiser of a package variable fails where package
+initialisation reaches it.

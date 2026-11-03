@@ -554,9 +554,12 @@ Errors are reported as follows:
   names the first of them. They are never dropped silently: a program that calls
   the function fails to verify, and only programs that do. This lets
   programs use packages (copied or real) of which some functions are not
-  supported. Unsupported constructs elsewhere (declarations, package
-  variable initialisers, entry-point parameters) end in `CONVERSION
-  ERROR`.
+  supported. Package variables are handled alike: a variable of an
+  unsupported type is reported as a warning, and each use of it is
+  reported as an unsupported construct of the function using it; an
+  unsupported initialiser fails a property where package initialisation
+  reaches it (so before `main`). Unsupported constructs elsewhere (other
+  declarations, entry-point parameters) end in `CONVERSION ERROR`.
 - If the helper is missing, CBMC says where it looks for it.
   The lookup order is `$CBMC_GO_HELPER`, then next to `cbmc`, then `PATH`.
 

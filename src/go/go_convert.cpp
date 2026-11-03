@@ -304,9 +304,23 @@ void go_convertert::declare_package_var(
   const irept &where)
 {
   const irept &object = parse_tree.object(object_id);
-  typet type = convert_type(object.get("type"), where);
+  typet type = type_converter(object.get("type"));
   if(type.is_nil())
+  {
+    // Not an error: uses of the variable, and its initialisation, fail a
+    // property of class "unsupported" (see variable and
+    // convert_package_init), so programs that do not use it are not
+    // affected.
+    const std::string what =
+      "package variable '" + object.get_string("name") + "' of type " +
+      parse_tree.type_entry(object.get("type")).get_string("str") + " (" +
+      type_converter.unsupported_reason + ")";
+    unsupported_variables[object_id] = what;
+    log.warning().source_location = location_of(where);
+    log.warning() << "Go front-end: " << what << " is not supported yet"
+                  << messaget::eom;
     return;
+  }
   symbolt symbol = make_symbol(
     symbol_id(object_id),
     object.get("name"),
@@ -559,6 +573,12 @@ exprt go_convertert::variable(const irept &ident)
     return std::move(result);
   }
   const symbolt *symbol = symbol_table.lookup(symbol_id(object_id));
+  const auto unsupported_variable = unsupported_variables.find(object_id);
+  if(symbol == nullptr && unsupported_variable != unsupported_variables.end())
+  {
+    unsupported(ident, unsupported_variable->second);
+    return nil_exprt{};
+  }
   if(symbol == nullptr)
   {
     // A variable of this package whose declaration failed has already been
@@ -1056,7 +1076,20 @@ void go_convertert::convert_package_init(
   // go/types computes this order (types.Info.InitOrder).
   for(const auto &init : package.init_order)
   {
+    // As in function bodies (convert_function_body), an unsupported
+    // initialiser fails a property of class "unsupported" when the
+    // initialisation reaches it.
+    std::vector<std::string> messages;
+    unsupported_in_body = &messages;
     exprt rhs = convert_expr(init.rhs);
+    unsupported_in_body = nullptr;
+    if(!messages.empty())
+    {
+      source_locationt location = location_of(init.rhs);
+      location.set_function(init_id);
+      body.append(unsupported_body(location, messages.front()));
+      break;
+    }
     if(rhs.is_nil())
       continue;
     // var a, b = f() initialises several variables from one call.
