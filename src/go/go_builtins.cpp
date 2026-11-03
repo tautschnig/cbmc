@@ -589,8 +589,8 @@ exprt go_convertert::convert_append(const irept &call)
   // large enough to fit the additional values, append allocates a new,
   // sufficiently large underlying array that fits both the existing slice
   // elements and the additional values. Otherwise, append re-uses the
-  // underlying array." The new capacity is not specified: any capacity
-  // that fits the elements is possible. "the result is independent of
+  // underlying array." The new capacity is not specified
+  // (append_capacity_choice). "the result is independent of
   // whether the memory referenced by the arguments overlaps."
   const source_locationt location = location_of(call);
   const typet type = expr_type(call);
@@ -678,14 +678,18 @@ exprt go_convertert::convert_append(const irept &call)
     result,
     struct_exprt{
       {component(slice, "data"), length, component(slice, "cap")}, type}});
-  // Otherwise: a new array of arbitrary sufficient capacity.
+  // Otherwise: a new array, of a capacity that append_capacity defines.
   code_blockt grow;
   const symbol_exprt capacity = new_temporary(int_type(), location, grow);
-  grow.add(code_frontend_assignt{
-    capacity, side_effect_expr_nondett{int_type(), location}});
-  grow.add(code_assumet{binary_relation_exprt{capacity, ID_ge, length}});
-  const exprt fresh =
-    allocate_elements(element, capacity, true, location, grow);
+  const exprt count = append_capacity_choice(
+    type_converter.underlying(call.get("_t")),
+    capacity,
+    length,
+    component(slice, "len"),
+    component(slice, "cap"),
+    location,
+    grow);
+  const exprt fresh = allocate_elements(element, count, true, location, grow);
   const symbol_exprt data = new_temporary(fresh.type(), location, grow);
   grow.add(code_frontend_assignt{data, fresh});
   copy_elements(
@@ -703,6 +707,71 @@ exprt go_convertert::convert_append(const irept &call)
     std::move(reuse),
     std::move(grow)});
   return with_prefix(std::move(result), block, location);
+}
+
+exprt go_convertert::append_capacity_choice(
+  const irept &slice_type,
+  const symbol_exprt &capacity,
+  const exprt &length,
+  const exprt &old_len,
+  const exprt &old_cap,
+  const source_locationt &location,
+  code_blockt &grow)
+{
+  const irep_idt &size_value = slice_type.get("esize");
+  if(append_capacity == go_append_capacityt::ANY || size_value.empty())
+  {
+    // Any capacity that fits the elements.
+    grow.add(code_frontend_assignt{
+      capacity, side_effect_expr_nondett{int_type(), location}});
+    grow.add(code_assumet{binary_relation_exprt{capacity, ID_ge, length}});
+    return capacity;
+  }
+
+  // gc go1.27: the capacity runtime.growslice chooses for elements of
+  // this size, unless the slice is backed by a stack buffer (which
+  // depends on gc's escape analysis): StackCapGC elements on the first
+  // append to an empty slice that fits, or RoundUpCapGC(length) when the
+  // slice fits. Both are at most StackCapGC, so that allocating
+  // max(growslice's, StackCapGC) elements gives a constant size whenever
+  // the lengths are constant.
+  const mp_integer element_size = string2integer(id2string(size_value));
+  const exprt size = from_integer(element_size, int_type());
+  const exprt pointers =
+    slice_type.get_bool("eptrs") ? exprt{true_exprt{}} : exprt{false_exprt{}};
+  const symbol_exprt grown = new_temporary(int_type(), location, grow);
+  grow.add(code_frontend_assignt{
+    grown,
+    runtime_call("GrowCapGC", {length, old_cap, size, pointers}, location)});
+  grow.add(code_frontend_assignt{capacity, grown});
+
+  const mp_integer stack_buffer_size = 32; // rt.stackBufferSize
+  if(element_size == 0 || element_size > stack_buffer_size)
+    return grown;
+  const exprt stack_cap =
+    from_integer(stack_buffer_size / element_size, int_type());
+  const binary_relation_exprt fits{length, ID_le, stack_cap};
+
+  code_ifthenelset whole_buffer{
+    and_exprt{
+      fits,
+      equal_exprt{old_len, from_integer(0, old_len.type())},
+      side_effect_expr_nondett{bool_typet{}, location}},
+    code_frontend_assignt{capacity, stack_cap}};
+  whole_buffer.add_source_location() = location;
+  grow.add(std::move(whole_buffer));
+  code_ifthenelset rounded_up{
+    and_exprt{fits, side_effect_expr_nondett{bool_typet{}, location}},
+    code_frontend_assignt{
+      capacity,
+      runtime_call("RoundUpCapGC", {length, size, pointers}, location)}};
+  rounded_up.add_source_location() = location;
+  grow.add(std::move(rounded_up));
+
+  return if_exprt{
+    and_exprt{fits, binary_relation_exprt{grown, ID_lt, stack_cap}},
+    stack_cap,
+    grown};
 }
 
 exprt go_convertert::convert_copy(const irept &call)

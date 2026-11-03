@@ -113,6 +113,8 @@ bool go_parse_treet::load_json(
   }
 
   go_version = json["go_version"].value;
+  compiler = json["compiler"]["name"].value;
+  compiler_version = json["compiler"]["version"].value;
   goarch = json["goarch"].value;
   package = json["package"].value;
   for(const auto &f : to_json_array(json["files"]))
@@ -145,6 +147,8 @@ bool go_parse_treet::load_json(
 void go_parse_treet::clear()
 {
   go_version.clear();
+  compiler.clear();
+  compiler_version.clear();
   goarch.clear();
   package.clear();
   files.clear();

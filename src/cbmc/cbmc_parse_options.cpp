@@ -171,6 +171,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
       "python-max-list-length", cmdline.get_value("python-max-list-length"));
   if(cmdline.isset("python-no-body-check"))
     options.set_option("python-no-body-check", true);
+  if(cmdline.isset("go-compiler"))
+    options.set_option("go-compiler", cmdline.get_value("go-compiler"));
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
   // Disable signed overflow checks for Python source files.
@@ -1063,6 +1065,12 @@ void cbmc_parse_optionst::help()
     HELP_CONFIG_C_CPP
     HELP_ANSI_C_LANGUAGE
     HELP_FUNCTIONS
+    "\n"
+    "Go frontend options:\n"
+    " {y--go-compiler} {ucompiler} \t model the choices of the Go compiler"
+    " {ucompiler} where the specification leaves them open: {ygc} (go1.27)"
+    " or {yany} (default: {ygc} if the {ygo} command is gc go1.27, else"
+    " {yany})\n"
     "\n"
     "Platform options:\n"
     HELP_CONFIG_PLATFORM

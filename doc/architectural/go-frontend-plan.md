@@ -250,8 +250,26 @@ Supported so far:
   to arrays, slices and strings, `make`, `append` (also `s...` and
   `[]byte` with `string...`), `copy` (also from strings), `clear`,
   `range`, `len`, `cap`, and comparison with nil. When `append` must
-  grow, the new capacity is nondeterministic, as the spec does not fix
-  it. Element ranges are copied as by CBMC's `memcpy` model: with
+  grow, the spec does not fix the new capacity. As the C front-end
+  follows the configured C compiler, the Go front-end follows the Go
+  compiler: the helper reports the compiler of the `go` command on PATH
+  (`go version`), and `--go-compiler gc|any` overrides it. For gc go1.27
+  the capacity is runtime.growslice's (`rt.GrowCapGC`: `nextslicecap`,
+  rounded up to a malloc size class, with the malloc header of
+  pointerful objects above 512 bytes) or, as gc may back slices that do
+  not escape by a 32-byte stack buffer, the whole buffer on the first
+  append to an empty slice that fits (`rt.StackCapGC`) or the length
+  rounded up to a size class (`rt.RoundUpCapGC`, as `growsliceBuf` and
+  `moveSliceNoCap`), chosen nondeterministically, as escape analysis
+  decides between them. The array has room for the largest of these, so
+  that its size is constant when the lengths are. gc's element sizes and
+  whether elements have pointers come from the helper (`esize`, `eptrs`
+  of slice types). For other compilers and versions (gccgo, TinyGo,
+  GopherJS, other gc releases), any capacity that fits is possible.
+  `src/go/helper/runtime/rt_test.go` checks the model against the gc
+  that runs it (in ctest and `make -C regression/go test`, with and
+  without `-gcflags=all=-N`), so that changes of gc show up in CI.
+  Element ranges are copied as by CBMC's `memcpy` model: with
   `__CPROVER_array_copy` into a new array of the exact length and
   `__CPROVER_array_replace`, without loops and independent of overlaps.
   Elements that contain pointers (strings, slices, pointers, function

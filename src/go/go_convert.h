@@ -50,6 +50,17 @@ bool contains_reference(
   const namespacet &ns,
   bool strings_too = true);
 
+/// The capacities that append may give the arrays it allocates, which
+/// Go1.27 §Appending_and_copying_slices leaves to the implementation.
+enum class go_append_capacityt
+{
+  /// Any capacity that fits the elements.
+  ANY,
+  /// The capacities gc go1.27 may choose (rt.GrowCapGC, rt.StackCapGC and
+  /// rt.RoundUpCapGC in helper/runtime/rt.go).
+  GC
+};
+
 /// Converts one Go package.
 class go_convertert
 {
@@ -57,6 +68,7 @@ public:
   go_convertert(
     symbol_table_baset &symbol_table,
     const go_parse_treet &parse_tree,
+    go_append_capacityt append_capacity,
     message_handlert &message_handler);
 
   /// \return true on error
@@ -88,6 +100,7 @@ public:
 private:
   symbol_table_baset &symbol_table;
   const go_parse_treet &parse_tree;
+  const go_append_capacityt append_capacity;
   messaget log;
   namespacet ns;
   go_type_convertert type_converter;
@@ -406,6 +419,20 @@ private:
   exprt convert_slice_expr(const irept &expr);
   exprt convert_make(const irept &call);
   exprt convert_append(const irept &call);
+  /// Add to \p grow the choice of the capacity of the array that append
+  /// allocates for \p length elements of a slice of type \p slice_type
+  /// that has length \p old_len and capacity \p old_cap, as
+  /// append_capacity defines (\p slice_type is the type entry's
+  /// underlying type).
+  /// \return the number of elements to allocate, at least the capacity
+  exprt append_capacity_choice(
+    const irept &slice_type,
+    const symbol_exprt &capacity,
+    const exprt &length,
+    const exprt &old_len,
+    const exprt &old_cap,
+    const source_locationt &location,
+    code_blockt &grow);
   exprt convert_copy(const irept &call);
   void convert_clear(const irept &call, code_blockt &dest);
   /// Conversions involving strings and slices (Go1.27 §Conversions); nil

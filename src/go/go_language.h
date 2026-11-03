@@ -14,7 +14,10 @@ Author: Michael Tautschnig
 
 #include <langapi/language.h>
 
+#include "go_convert.h"
 #include "go_parse_tree.h"
+
+#include <optional>
 
 /// Go front-end: parsing and type checking by `cbmc-go-helper` (go/parser
 /// and go/types), conversion by go_convertert. See
@@ -86,6 +89,14 @@ protected:
   go_parse_treet parse_tree;
   /// The function named by --function, or empty for main.main.
   std::string function_entry_point;
+  /// The compiler named by --go-compiler, or empty to use the one detected.
+  std::string go_compiler;
+
+  /// The capacities of append for go_compiler, or for the compiler the
+  /// helper detected (see append_capacity in go_language.cpp).
+  /// \return empty on error
+  std::optional<go_append_capacityt>
+  append_capacity(message_handlert &message_handler) const;
 };
 
 std::unique_ptr<languaget> new_go_language();

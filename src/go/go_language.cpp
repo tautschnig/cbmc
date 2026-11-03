@@ -42,6 +42,55 @@ void go_languaget::set_language_options(
   message_handlert &)
 {
   function_entry_point = options.get_option("function");
+  go_compiler = options.get_option("go-compiler");
+}
+
+/// Whether \p version (of gc) is go1.27 or a go1.27 release candidate or
+/// minor release, whose capacities of append rt.GrowCapGC and so on model
+/// (and helper/runtime/rt_test.go checks).
+static bool is_go1_27(const std::string &version)
+{
+  const std::string prefix = "go1.27";
+  if(version.compare(0, prefix.size(), prefix) != 0)
+    return false;
+  const std::string rest = version.substr(prefix.size());
+  return rest.empty() || rest[0] == '.' || rest.compare(0, 2, "rc") == 0;
+}
+
+std::optional<go_append_capacityt>
+go_languaget::append_capacity(message_handlert &message_handler) const
+{
+  // As the C front-end follows the compiler it is configured for, follow
+  // the Go compiler on PATH (the one that provides the standard library),
+  // unless --go-compiler names one: gc go1.27's capacities, or any
+  // capacity for other compilers (whose choices are not modelled).
+  messaget log{message_handler};
+  if(go_compiler == "gc")
+    return go_append_capacityt::GC;
+  if(go_compiler == "any")
+    return go_append_capacityt::ANY;
+  if(!go_compiler.empty())
+  {
+    log.error() << "--go-compiler: expected gc or any, got '" << go_compiler
+                << "'" << messaget::eom;
+    return {};
+  }
+
+  const std::string &name = parse_tree.compiler;
+  const std::string &version = parse_tree.compiler_version;
+  if(name == "gc" && is_go1_27(version))
+  {
+    log.status() << "Go compiler: gc " << version
+                 << " (capacities of append as gc's)" << messaget::eom;
+    return go_append_capacityt::GC;
+  }
+  log.warning() << "Go compiler: "
+                << (name.empty() ? std::string{"unknown"}
+                                 : name + " " + version)
+                << ": the capacities of append are only modelled for gc "
+                << "go1.27, any capacity is assumed (use --go-compiler gc "
+                << "for gc's)" << messaget::eom;
+  return go_append_capacityt::ANY;
 }
 
 std::string go_languaget::target_goarch()
@@ -199,7 +248,10 @@ bool go_languaget::typecheck(
     return true;
   if(parse_tree.files.empty())
     return false; // the files were converted with another file's package
-  return go_convertert{symbol_table, parse_tree, message_handler}();
+  const auto capacity = append_capacity(message_handler);
+  if(!capacity.has_value())
+    return true;
+  return go_convertert{symbol_table, parse_tree, *capacity, message_handler}();
 }
 
 bool go_languaget::generate_support_functions(

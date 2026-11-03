@@ -1,0 +1,15 @@
+CORE
+main.go
+--go-compiler gc
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 10 fits the elements: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 11 gc doubles: SUCCESS$
+^\[go::main\.main\.assertion\.3\] line 14 no stack buffer: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+gc go1.27 doubles the capacity beyond its 32-byte stack buffers, but may
+back the first append to a nil slice of ints by a stack buffer of four
+(depending on its escape analysis).

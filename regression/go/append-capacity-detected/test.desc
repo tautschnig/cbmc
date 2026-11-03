@@ -1,0 +1,12 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^Go compiler: gc go1\.27(\.[0-9]+|rc[0-9]+)? \(capacities of append as gc's\)$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+The tests run with gc go1.27 on PATH (src/go/helper/go.mod), whose
+capacities of append the front-end then models.

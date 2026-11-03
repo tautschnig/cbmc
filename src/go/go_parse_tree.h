@@ -51,6 +51,11 @@ class go_parse_treet
 public:
   /// Toolchain that produced the tree, e.g. "go1.27.3".
   std::string go_version;
+  /// The compiler of the `go` command that provided the standard library:
+  /// "gc", "gccgo", or empty if unknown.
+  std::string compiler;
+  /// Its version, e.g. "go1.27.3".
+  std::string compiler_version;
   /// Target architecture the package was type-checked for, e.g. "amd64".
   std::string goarch;
   /// Package path, "main" for a program.

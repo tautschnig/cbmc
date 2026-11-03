@@ -16,6 +16,7 @@
 // Output schema (version 1):
 //
 //	{ "version": 1, "go_version": "go1.27.3", "goarch": "amd64",
+//	  "compiler": {"name": "gc", "version": "go1.27.3"},
 //	  "package": "main", "files": ["/abs/main.go", ...],
 //	  "asts": [ <File node>, ... ],
 //	  "types": [ <type>, ... ],          // referenced by index
@@ -147,6 +148,7 @@ func (h *helperImporter) Import(path string) (*types.Package, error) {
 
 type encoder struct {
 	fset     *token.FileSet
+	sizes    types.Sizes
 	info     *types.Info
 	fileIdx  map[string]int
 	types    []any
@@ -701,6 +703,12 @@ func (e *encoder) typ(t types.Type) int {
 		entry = map[string]any{"k": "pointer", "elem": e.typ(x.Elem())}
 	case *types.Slice:
 		entry = map[string]any{"k": "slice", "elem": e.typ(x.Elem())}
+		// gc's size of the elements and whether they have pointers, on
+		// which gc's capacities of append depend (rt.GrowCapGC).
+		if size, pointers, ok := e.gcLayout(x.Elem()); ok {
+			entry["esize"] = size
+			entry["eptrs"] = pointers
+		}
 	case *types.Array:
 		entry = map[string]any{"k": "array", "elem": e.typ(x.Elem()),
 			"len": x.Len()}
@@ -1131,6 +1139,97 @@ func (e *encoder) withoutGenerics(f *ast.File, i int) *ast.File {
 	return &out
 }
 
+// gcLayout returns gc's size of t and whether t has pointers (as the
+// runtime's _type.Pointers: whether its ptrdata is not 0), unless t
+// involves type parameters.
+func (e *encoder) gcLayout(t types.Type) (size int64, pointers bool, ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	if hasTypeParams(t) {
+		return 0, false, false
+	}
+	return e.sizes.Sizeof(t), hasPointers(t), true
+}
+
+// hasTypeParams reports whether t involves type parameters.
+func hasTypeParams(t types.Type) bool {
+	switch x := t.(type) {
+	case *types.TypeParam:
+		return true
+	case *types.Named:
+		if args := x.TypeArgs(); args != nil {
+			for i := 0; i < args.Len(); i++ {
+				if hasTypeParams(args.At(i)) {
+					return true
+				}
+			}
+		}
+		return x.TypeParams().Len() > 0 && x.TypeArgs().Len() == 0
+	case *types.Alias:
+		return hasTypeParams(types.Unalias(x))
+	case *types.Array:
+		return hasTypeParams(x.Elem())
+	case *types.Struct:
+		for i := 0; i < x.NumFields(); i++ {
+			if hasTypeParams(x.Field(i).Type()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasPointers reports whether values of type t contain pointers for gc's
+// garbage collector: pointers, strings, slices, maps, channels, functions
+// and interfaces, and arrays (of positive length) and structs of these.
+func hasPointers(t types.Type) bool {
+	switch x := t.Underlying().(type) {
+	case *types.Basic:
+		return x.Kind() == types.String || x.Kind() == types.UnsafePointer
+	case *types.Array:
+		return x.Len() > 0 && hasPointers(x.Elem())
+	case *types.Struct:
+		for i := 0; i < x.NumFields(); i++ {
+			if hasPointers(x.Field(i).Type()) {
+				return true
+			}
+		}
+		return false
+	case *types.Pointer, *types.Slice, *types.Map, *types.Chan,
+		*types.Signature, *types.Interface:
+		return true
+	}
+	return false
+}
+
+// hostCompiler returns the compiler and version of the `go` command that
+// provides the standard library (see ensureGoOnPath), run in dir, from
+// `go version`, which prints `go version go1.27.3 linux/amd64` for gc and
+// `go version go1.18 gccgo (GCC) 13.2.0 linux/amd64` for gccgo. It is
+// empty if there is no `go` command.
+func hostCompiler(dir string) map[string]any {
+	cmd := exec.Command("go", "version")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	fields := strings.Fields(string(out))
+	if err != nil || len(fields) < 3 || fields[0] != "go" ||
+		fields[1] != "version" {
+		return map[string]any{"name": "", "version": ""}
+	}
+	name := "gc"
+	if strings.Contains(string(out), "gccgo") {
+		name = "gccgo"
+	}
+	version := fields[2]
+	if version == "devel" && len(fields) > 3 {
+		version = "devel " + fields[3]
+	}
+	return map[string]any{"name": name, "version": version}
+}
+
 // ensureGoOnPath makes the toolchain this helper was built with available to
 // the gc importer (which runs `go list -export`) even if `go` is not on
 // PATH at verification time.
@@ -1177,7 +1276,7 @@ func main() {
 	ensureGoOnPath()
 
 	fset := token.NewFileSet()
-	enc := &encoder{fset: fset, fileIdx: map[string]int{},
+	enc := &encoder{fset: fset, sizes: sizes, fileIdx: map[string]int{},
 		typeIdx: map[types.Type]int{}, objects: map[string]any{},
 		ids: map[types.Object]string{}, byKey: map[string][]int{},
 		ctxt: types.NewContext(), instances: map[string]*instance{},
@@ -1307,7 +1406,7 @@ func main() {
 	doc := map[string]any{"version": 1, "go_version": runtime.Version(),
 		"goarch": *goarch, "package": pkg.Path(), "files": names,
 		"asts": asts, "types": enc.types, "objects": enc.objects,
-		"packages": packages}
+		"packages": packages, "compiler": hostCompiler(filepath.Dir(names[0]))}
 
 	w := os.Stdout
 	if *out != "" {

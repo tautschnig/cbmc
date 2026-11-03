@@ -32,9 +32,11 @@ Author: Michael Tautschnig
 go_convertert::go_convertert(
   symbol_table_baset &symbol_table,
   const go_parse_treet &parse_tree,
+  go_append_capacityt append_capacity,
   message_handlert &message_handler)
   : symbol_table(symbol_table),
     parse_tree(parse_tree),
+    append_capacity(append_capacity),
     log(message_handler),
     ns(symbol_table),
     type_converter(parse_tree, symbol_table)

@@ -1,0 +1,11 @@
+CORE
+main.go
+--go-compiler gc
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Appending_and_copying_slices: the capacities of append with
+--go-compiler gc are those of gc go1.27.

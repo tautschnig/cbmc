@@ -188,6 +188,13 @@ NULL in a recursively nondet initialized struct
 .TP
 \fB\-\-function\fR name
 set main function name
+.SS "Go frontend options:"
+.TP
+\fB\-\-go\-compiler\fR \fIcompiler\fR
+the Go compiler whose choices the specification leaves open (the
+capacities of \fBappend\fR) are modelled: \fBgc\fR (go1.27) or \fBany\fR
+(any choice the specification allows); by default, \fBgc\fR if the
+\fBgo\fR command is gc go1.27, else \fBany\fR
 .SS "Platform options:"
 .TP
 \fB\-\-arch\fR \fIarch\fR

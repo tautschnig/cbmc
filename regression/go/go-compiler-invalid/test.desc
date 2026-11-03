@@ -1,0 +1,10 @@
+CORE
+main.go
+--go-compiler gcc
+^EXIT=6$
+^SIGNAL=0$
+^--go-compiler: expected gc or any, got 'gcc'$
+--
+^VERIFICATION
+--
+Unknown compilers are rejected.
