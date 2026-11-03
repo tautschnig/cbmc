@@ -199,6 +199,14 @@ source_locationt go_convertert::location_of(const irept &node) const
 
 void go_convertert::error(const irept &node, const std::string &message)
 {
+  if(unsupported_in_body != nullptr && !unsupported_in_body->empty())
+  {
+    // A consequence of the unsupported construct already reported, in a
+    // body that will not be used.
+    log.warning().source_location = go_location(node);
+    log.warning() << message << messaget::eom;
+    return;
+  }
   log.error().source_location = go_location(node);
   log.error() << message << messaget::eom;
   error_found = true;
@@ -206,7 +214,24 @@ void go_convertert::error(const irept &node, const std::string &message)
 
 void go_convertert::unsupported(const irept &node, const std::string &what)
 {
-  error(node, "Go front-end: " + what + " is not supported yet");
+  unsupported(go_location(node), what);
+}
+
+void go_convertert::unsupported(
+  const source_locationt &location,
+  const std::string &what)
+{
+  const std::string message = "Go front-end: " + what + " is not supported yet";
+  if(unsupported_in_body != nullptr)
+  {
+    log.warning().source_location = location;
+    log.warning() << message << messaget::eom;
+    unsupported_in_body->push_back(message);
+    return;
+  }
+  log.error().source_location = location;
+  log.error() << message << messaget::eom;
+  error_found = true;
 }
 
 typet go_convertert::convert_type(const irep_idt &index, const irept &where)
@@ -787,11 +812,48 @@ void go_convertert::convert_function_body(const irept &decl)
     return; // declaration failed and was reported
   if(is_intrinsic(object_id))
     return; // see finish_intrinsics
+  const irep_idt function = symbol_id(object_id);
+  const source_locationt location = location_of(decl);
+  std::vector<std::string> messages;
+  unsupported_in_body = &messages;
   convert_function(
-    symbol_id(object_id),
+    function,
     parse_tree.object(object_id).get("type"),
     go_field(decl, "Body"),
-    location_of(decl));
+    location);
+  unsupported_in_body = nullptr;
+  if(messages.empty())
+    return;
+
+  // Unsupported constructs are never dropped silently: calling the
+  // function fails a property that names the first of them. Programs
+  // that do not call it (such as most programs using a package that has
+  // it) are not affected.
+  log.warning().source_location = location;
+  log.warning() << "Go front-end: calls of " << function
+                << " fail (property class \"unsupported\")" << messaget::eom;
+  source_locationt function_location = location;
+  function_location.set_function(function);
+  symbol_table.get_writeable_ref(function).value =
+    unsupported_body(function_location, messages.front());
+}
+
+code_blockt go_convertert::unsupported_body(
+  const source_locationt &location,
+  const std::string &message)
+{
+  source_locationt property = location;
+  property.set_property_class("unsupported");
+  property.set_comment(message);
+  code_blockt body;
+  code_assertt fail{false_exprt{}};
+  fail.add_source_location() = property;
+  body.add(std::move(fail));
+  code_assumet stop{false_exprt{}};
+  stop.add_source_location() = location;
+  body.add(std::move(stop));
+  body.add_source_location() = location;
+  return body;
 }
 
 void go_convertert::convert_function(
@@ -2717,8 +2779,8 @@ exprt go_convertert::convert_call(const irept &call)
   {
     unsupported(
       call,
-      "calls to " + id2string(callee) + " (package " +
-        object.get_string("pkg") + ")");
+      "a call of " + id2string(callee) + " (package " +
+        object.get_string("pkg") + ", which has no model)");
     return nil_exprt{};
   }
 

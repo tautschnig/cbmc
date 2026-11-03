@@ -1,5 +1,7 @@
 // Methods of standard-library types without a model are reported, whether
-// called directly or through an interface.
+// called directly or through an interface, and calling them fails a
+// property; functions that are not called (direct) do not affect
+// verification.
 package main
 
 import (
@@ -7,9 +9,12 @@ import (
 	"strings"
 )
 
-func main() {
+func direct() {
 	var b strings.Builder
 	b.WriteString("x")
-	var s fmt.Stringer = &b
+}
+
+func main() {
+	var s fmt.Stringer = &strings.Builder{}
 	_ = s.String()
 }

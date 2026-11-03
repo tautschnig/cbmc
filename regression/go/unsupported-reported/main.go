@@ -1,4 +1,5 @@
-// An unsupported construct must be reported as an error: silently dropping
+// An unsupported construct must be reported, and calling the function that
+// has it must fail a property: silently dropping
 // it could make verification succeed vacuously.
 package main
 

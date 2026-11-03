@@ -203,7 +203,13 @@ private:
   void error(const irept &node, const std::string &message);
   /// Add \p symbol; a clash with an existing symbol is an error.
   void add_symbol(const symbolt &symbol);
+  /// Report that \p what (at \p node) is not supported: an error, except
+  /// in the body of a function (see convert_function_body).
   void unsupported(const irept &node, const std::string &what);
+  void unsupported(const source_locationt &location, const std::string &what);
+  /// The messages about unsupported constructs in the body of the function
+  /// that convert_function_body converts, or null outside of one.
+  std::vector<std::string> *unsupported_in_body = nullptr;
 
   /// The CBMC type of type-table index \p index; reports an error (at
   /// \p where) and returns nil if unsupported.
@@ -221,7 +227,16 @@ private:
     const irept &signature,
     const irep_idt &function,
     const source_locationt &location);
+  /// Convert the body of function declaration \p decl. If it has
+  /// constructs that are not supported, its body instead is a property of
+  /// class "unsupported" that fails, so that only programs that call it
+  /// fail to verify.
   void convert_function_body(const irept &decl);
+  /// Code that fails a property of class "unsupported" with description
+  /// \p message at \p location, and stops.
+  code_blockt unsupported_body(
+    const source_locationt &location,
+    const std::string &message);
   /// Convert \p body into the value of function \p function, whose
   /// go/types signature has type-table index \p signature_index.
   /// \p captured: for function literals, the objects of the variables it

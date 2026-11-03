@@ -1,0 +1,12 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+Go front-end: calls of go::main\.upper fail \(property class "unsupported"\)$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR$
+--
+Only calls of a function with an unsupported construct fail.

@@ -259,11 +259,10 @@ exprt go_convertert::method_receiver(
   {
     // A method of a standard-library type without a model.
     const irept &object = parse_tree.object(method_object);
-    log.error().source_location = location;
-    log.error() << "Go front-end: calls to " << method_object << " (package "
-                << object.get_string("pkg") << ") is not supported yet"
-                << messaget::eom;
-    error_found = true;
+    unsupported(
+      location,
+      "a call of " + id2string(method_object) + " (package " +
+        object.get_string("pkg") + ", which has no model)");
     return nil_exprt{};
   }
   const symbolt &method = *method_symbol;
@@ -748,14 +747,27 @@ void go_convertert::finish_interfaces()
         if(entry == nullptr)
           continue;
         code_blockt call_block;
+        // A method without a model fails a property when called (see
+        // convert_function_body).
+        std::vector<std::string> messages;
+        unsupported_in_body = &messages;
         const exprt receiver = method_receiver(
           unbox(iface, t.second),
           entry->find("path"),
           entry->get("obj"),
           location,
           call_block);
+        unsupported_in_body = nullptr;
         if(receiver.is_nil())
-          continue; // reported
+        {
+          if(!messages.empty())
+          {
+            body.add(code_ifthenelset{
+              type_test(iface, t.first),
+              unsupported_body(function.location, messages.front())});
+          }
+          continue;
+        }
         exprt::operandst arguments{params.begin() + 1, params.end()};
         exprt call = call_method(
           receiver,
