@@ -90,6 +90,19 @@ symbol_exprt go_convertert::map_find(
 {
   // The index of the entry with key \p key, or -1.
   const source_locationt location = location_of(where);
+  if(is_go_interface(key.type()))
+  {
+    // Go1.27 §Map_types: "If the key type is an interface type, these
+    // comparison operators must be defined for the dynamic key values;
+    // failure will cause a run-time panic." gc hashes the key, also for
+    // a nil or empty map. The message is gc's without the type.
+    add_panic(
+      dest,
+      as_condition(runtime_call("Comparable", {key}, location)),
+      "uncomparable",
+      "runtime error: hash of unhashable type",
+      location);
+  }
   const symbol_exprt found = new_temporary(int_type(), location, dest);
   dest.add(code_frontend_assignt{found, from_integer(-1, int_type())});
   const symbol_exprt i = new_temporary(int_type(), location, dest);
