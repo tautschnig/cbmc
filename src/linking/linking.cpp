@@ -1037,7 +1037,9 @@ void linkingt::copy_symbols(
   }
 
   // Apply type updates to initializers
-  for(auto it = main_symbol_table.begin(); it != main_symbol_table.end(); ++it)
+  for(auto it = main_symbol_table.begin();
+      !object_type_updates.empty() && it != main_symbol_table.end();
+      ++it)
   {
     if(
       !it->second.is_type && !it->second.is_macro &&
@@ -1099,17 +1101,23 @@ bool linkingt::link(const symbol_table_baset &src_symbol_table)
     }
   }
 
-  // rename within main symbol table
-  for(auto &symbol_pair : main_symbol_table)
+  // rename within main symbol table (which may be large, while the symbols
+  // to rename are usually none)
+  if(
+    !rename_main_symbol.expr_map.empty() ||
+    !rename_main_symbol.type_map.empty())
   {
-    symbolt tmp = symbol_pair.second;
-    bool unmodified = rename_main_symbol(tmp.value);
-    unmodified &= rename_main_symbol(tmp.type);
-    if(!unmodified)
+    for(auto &symbol_pair : main_symbol_table)
     {
-      symbolt *sym_ptr = main_symbol_table.get_writeable(symbol_pair.first);
-      CHECK_RETURN(sym_ptr);
-      *sym_ptr = std::move(tmp);
+      symbolt tmp = symbol_pair.second;
+      bool unmodified = rename_main_symbol(tmp.value);
+      unmodified &= rename_main_symbol(tmp.type);
+      if(!unmodified)
+      {
+        symbolt *sym_ptr = main_symbol_table.get_writeable(symbol_pair.first);
+        CHECK_RETURN(sym_ptr);
+        *sym_ptr = std::move(tmp);
+      }
     }
   }
 

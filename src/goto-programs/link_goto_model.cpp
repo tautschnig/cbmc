@@ -66,9 +66,16 @@ static bool link_functions(
     dest_functions.function_map.erase(fn_candidate);
   }
 
-  // rename symbols in existing functions
-  for(auto &dest_entry : dest_functions.function_map)
-    rename_symbols_in_function(dest_entry.second, rename_dest_symbol);
+  // rename symbols in existing functions (each linking of the library adds
+  // a few functions to a possibly large program: skip this if there is
+  // nothing to rename)
+  if(
+    !rename_dest_symbol.expr_map.empty() ||
+    !rename_dest_symbol.type_map.empty())
+  {
+    for(auto &dest_entry : dest_functions.function_map)
+      rename_symbols_in_function(dest_entry.second, rename_dest_symbol);
+  }
 
   // merge functions
   for(auto &gf_entry : src_functions.function_map)
