@@ -535,6 +535,14 @@ private:
     const source_locationt &loc);
 
   /// test_integer for strings whose int_value is not known.
+  /// For refined strings: the number of blanks at the start of \p payload,
+  /// or at its end if \p at_end, if at most refined_blanks, and
+  /// refined_blanks + 1 if more.
+  exprt refined_blank_count(
+    const exprt &payload,
+    bool at_end,
+    code_blockt &dest,
+    const source_locationt &loc);
   exprt parse_test_integer(
     const exprt &string,
     bool trailing_space,

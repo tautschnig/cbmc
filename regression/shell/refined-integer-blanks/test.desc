@@ -1,0 +1,11 @@
+CORE
+main.sh
+--shell-strings refined
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Up to two blanks around integers, with refined strings: the number is
+parsed after skipping them, rather than being over-approximated.

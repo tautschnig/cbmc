@@ -24,6 +24,8 @@
 #include <util/std_types.h>
 #include <util/string_expr.h>
 
+#include <cstdlib>
+
 // ------------------------------------------------------------------
 // Types
 
@@ -264,6 +266,9 @@ exprt is_blank(const exprt &c)
       binary_relation_exprt{c, ID_ge, from_integer('\t', c.type())},
       binary_relation_exprt{c, ID_le, from_integer('\r', c.type())}}};
 }
+
+/// The number of blanks around an integer that refined strings skip.
+const std::size_t refined_blanks = 2;
 } // namespace
 
 // ------------------------------------------------------------------
@@ -904,48 +909,78 @@ exprt shell_convertert::parse_test_integer(
   }
 
   // Refined strings: is_valid_long accepts an optional sign and decimal
-  // digits, up to 20 bytes. Blanks around the number, and numbers of more
-  // than 18 bytes (whose conversion the solver constrains to not
-  // overflow), are over-approximated by a nondeterministic result.
+  // digits, up to 20 bytes. Up to refined_blanks blanks before (and, if
+  // trailing_space, after) the number are skipped; more blanks, and
+  // numbers of more than 18 bytes (whose conversion the solver constrains
+  // to not overflow), are over-approximated by a nondeterministic result.
   const exprt length = payload_length(payload, dest, loc);
+  const exprt leading = refined_blank_count(payload, false, dest, loc);
+  const exprt trailing = trailing_space
+                           ? refined_blank_count(payload, true, dest, loc)
+                           : exprt{zero};
+  const exprt few_blanks = and_exprt{
+    binary_relation_exprt{
+      leading, ID_le, from_integer(refined_blanks, integer_type())},
+    binary_relation_exprt{
+      trailing, ID_le, from_integer(refined_blanks, integer_type())}};
+  const exprt number_length =
+    minus_exprt{length, plus_exprt{leading, trailing}};
+  const exprt start = if_exprt{few_blanks, leading, zero};
+  const exprt end = if_exprt{
+    and_exprt{few_blanks, binary_relation_exprt{number_length, ID_ge, zero}},
+    minus_exprt{length, trailing},
+    start};
+  const exprt number = payload_substring(payload, start, end, dest, loc);
   const exprt syntax = string_function(
-    ID_cprover_string_is_valid_long_func, {payload}, bool_typet{}, dest, loc);
-  const exprt is_short =
-    binary_relation_exprt{length, ID_le, from_integer(18, integer_type())};
+    ID_cprover_string_is_valid_long_func, {number}, bool_typet{}, dest, loc);
+  const exprt is_short = binary_relation_exprt{
+    number_length, ID_le, from_integer(18, integer_type())};
   // Parse a copy that is empty unless the number is short and valid, so
   // that the solver's axioms do not constrain other strings.
   const exprt guarded = payload_substring(
-    payload,
+    number,
     zero,
-    if_exprt{and_exprt{syntax, is_short}, length, zero},
+    if_exprt{and_exprt{syntax, is_short}, number_length, zero},
     dest,
     loc);
   const exprt parsed = string_function(
     ID_cprover_string_parse_int_func, {guarded}, integer_type(), dest, loc);
-  const exprt last = if_exprt{
-    binary_relation_exprt{length, ID_gt, zero},
-    minus_exprt{length, from_integer(1, integer_type())},
-    zero};
-  const exprt first_char = string_function(
-    ID_cprover_string_char_at_func,
-    {payload, zero},
-    unsigned_char_type(),
-    dest,
-    loc);
-  const exprt last_char = string_function(
-    ID_cprover_string_char_at_func,
-    {payload, last},
-    unsigned_char_type(),
-    dest,
-    loc);
-  const exprt edge_blank = and_exprt{
-    binary_relation_exprt{length, ID_gt, zero},
-    or_exprt{is_blank(first_char), is_blank(last_char)}};
   const exprt precise =
-    and_exprt{not_exprt{edge_blank}, or_exprt{is_short, not_exprt{syntax}}};
+    and_exprt{few_blanks, or_exprt{is_short, not_exprt{syntax}}};
   assign(
     dest, value, if_exprt{precise, parsed, nondet(integer_type(), loc)}, loc);
   return if_exprt{precise, syntax, nondet(bool_typet{}, loc)};
+}
+
+exprt shell_convertert::refined_blank_count(
+  const exprt &payload,
+  bool at_end,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  const exprt length = payload_length(payload, dest, loc);
+  // Nested choices: s[0] is not a blank ? 0 : s[1] is not ? 1 : ..., where
+  // the positions count from the end if at_end.
+  exprt count = from_integer(refined_blanks + 1, integer_type());
+  for(std::size_t k = refined_blanks + 1; k-- > 0;)
+  {
+    const exprt position =
+      at_end ? exprt{minus_exprt{length, from_integer(k + 1, integer_type())}}
+             : from_integer(k, integer_type());
+    const exprt c = string_function(
+      ID_cprover_string_char_at_func,
+      {payload, position},
+      unsigned_char_type(),
+      dest,
+      loc);
+    count = if_exprt{
+      and_exprt{
+        binary_relation_exprt{length, ID_gt, from_integer(k, integer_type())},
+        is_blank(c)},
+      count,
+      from_integer(k, integer_type())};
+  }
+  return count;
 }
 
 exprt shell_convertert::arith_integer(
@@ -1024,34 +1059,41 @@ exprt shell_convertert::parse_arith_integer(
     }
     else
     {
-      // Refined strings: is_valid_long rejected blanks, so the number
-      // starts at 0 or 1.
-      const exprt first = string_function(
-        ID_cprover_string_char_at_func,
-        {payload, zero},
-        unsigned_char_type(),
-        dest,
-        loc);
+      // Refined strings: the number starts after the leading blanks, which
+      // parse_test_integer only accepts if there are few.
+      const exprt length = payload_length(payload, dest, loc);
+      const exprt leading = refined_blank_count(payload, false, dest, loc);
+      const auto char_at = [&](const exprt &i)
+      {
+        return string_function(
+          ID_cprover_string_char_at_func,
+          {payload, i},
+          unsigned_char_type(),
+          dest,
+          loc);
+      };
+      const exprt first = char_at(leading);
       const exprt signed_number = or_exprt{
         equal_exprt{first, from_integer('-', unsigned_char_type())},
         equal_exprt{first, from_integer('+', unsigned_char_type())}};
-      const exprt start =
-        if_exprt{signed_number, from_integer(1, integer_type()), zero};
-      const exprt at_start = string_function(
-        ID_cprover_string_char_at_func,
-        {payload, start},
-        unsigned_char_type(),
-        dest,
-        loc);
-      const exprt length = payload_length(payload, dest, loc);
+      const exprt start = plus_exprt{
+        leading,
+        if_exprt{signed_number, from_integer(1, integer_type()), zero}};
+      const exprt one = from_integer(1, integer_type());
+      // A digit after the 0, as a 0 followed by blanks is zero.
+      const exprt next = char_at(plus_exprt{start, one});
       octal = and_exprt{
-        equal_exprt{at_start, from_integer('0', unsigned_char_type())},
-        binary_relation_exprt{
-          length, ID_gt, plus_exprt{start, from_integer(1, integer_type())}}};
+        equal_exprt{char_at(start), from_integer('0', unsigned_char_type())},
+        binary_relation_exprt{length, ID_gt, plus_exprt{start, one}},
+        and_exprt{
+          binary_relation_exprt{
+            next, ID_ge, from_integer('0', unsigned_char_type())},
+          binary_relation_exprt{
+            next, ID_le, from_integer('9', unsigned_char_type())}}};
     }
     valid = and_exprt{valid, not_exprt{octal}};
   }
-  if(native() && !any_space)
+  if(!any_space)
   {
     // bash allows only space, tab and newline around the number, rather
     // than the test utility's blanks, which add \v, \f and \r. Those
