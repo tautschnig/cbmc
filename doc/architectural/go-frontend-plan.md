@@ -998,12 +998,13 @@ use `MapOf`, `ArrayOf` or `ChanOf`, which find the program's types.
   that imports `strconv` takes 0.8 s (helper 0.35 s, 1.4 MB of JSON
   loaded in 0.15 s, symex 0.2 s), one that calls `reflect.TypeOf` 1.1 s
   (helper 0.5 s, 1.9 MB loaded in 0.17 s, symex 0.3 s, 15,000 steps,
-  before the bytes of string constants became const-qualified arrays,
-  which field sensitivity keeps whole: 10,000 steps now). The `encoding/json` round trip
-  takes 9 s: helper 1.3 s (of which `go list` for export data about
+  before the bytes of string constants and the type descriptors became
+  const-qualified, which field sensitivity keeps whole: 6,300 steps now).
+  The `encoding/json` round trip takes 8.7 s: helper 1.3 s (of which `go list` for export data about
   half), 7.6 MB of JSON loaded in 0.8 s, conversion 0.5 s, the GOTO
   passes 2.6 s (linking with the C library and function-pointer removal
-  among them) and symex 3.8 s.
+  among them) and symex 2.4 s (67,000 steps; 92,000 before the
+  descriptors became const).
 - **Loops in models need bounds**: string comparisons (`--unwindset
   go::cprover/rt.StringEqual.0:N` for long constants), map operations,
   `math.Sqrt` (54 iterations), the word loops of `math/big`,
@@ -1013,10 +1014,13 @@ use `MapOf`, `ArrayOf` or `ChanOf`, which find the program's types.
 
 ### 7.3 CBMC changes to upstream
 
-- goto-symex: arrays of const-qualified elements are not divided by field
+- goto-symex: objects of static lifetime declared as const-qualified
+  structs or arrays of const-qualified elements are not divided by field
   sensitivity (their constant value is propagated as a whole; writes after
-  casting away const stay sound), which the Go front-end uses for the bytes
-  of string constants; assignments of values of size zero are skipped.
+  casting away const stay sound; the decision uses the symbol table, not
+  expression types, whose qualifiers vary between uses in C++), which the
+  Go front-end uses for the bytes of string constants and for reflect
+  type descriptors; assignments of values of size zero are skipped.
 - goto-symex: propagation of values merged from constants
   (`regression/cbmc/symex-merged-constants`); typed dereferences for
   front-ends (`ID_C_typed_dereference`); sound value sets for pointers
