@@ -1222,6 +1222,8 @@ private:
     code_blockt &dest,
     const source_locationt &loc);
   void unset_ifs(code_blockt &dest, const source_locationt &loc);
+  /// Forget the value of IFS, and whether it is unset.
+  void forget_ifs();
   /// The value of IFS here, or nothing if it is unset. Where it is not
   /// known, the default value, which is then checked.
   std::optional<std::string>

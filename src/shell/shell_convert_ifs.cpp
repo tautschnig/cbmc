@@ -77,6 +77,12 @@ void shell_convertert::assign_ifs(
   assign(dest, ifs_unset(), false_exprt{}, loc);
 }
 
+void shell_convertert::forget_ifs()
+{
+  known_literals.erase("IFS");
+  known_literals.erase(ifs_unset_key);
+}
+
 void shell_convertert::unset_ifs(code_blockt &dest, const source_locationt &loc)
 {
   // Unset, IFS splits as by default.

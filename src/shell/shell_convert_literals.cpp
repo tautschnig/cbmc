@@ -85,6 +85,9 @@ void shell_convertert::forget_assigned(const shell_commandt &command)
     known_literals.clear();
   for(const auto &name : names)
     known_literals.erase(name);
+  // Whether IFS is unset is also forgotten (see shell_convert_ifs.cpp).
+  if(names.count("IFS") != 0)
+    forget_ifs();
 }
 
 void shell_convertert::collect_assigned(

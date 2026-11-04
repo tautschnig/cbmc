@@ -1,0 +1,12 @@
+CORE
+unset-branch.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] .*IFS has its default value here .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A compound command that assigns IFS forgets both its value and whether
+it is unset, so that IFS is not known after it.
