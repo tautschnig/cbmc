@@ -1,0 +1,11 @@
+CORE
+options.sh
+
+^EXIT=6$
+^SIGNAL=0$
+eval of set with an option that is not set elsewhere
+--
+^VERIFICATION
+--
+The options that set may enable are collected before conversion, so eval
+must not enable new ones.

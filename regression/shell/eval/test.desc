@@ -1,0 +1,11 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+eval of text that is known during conversion: literals, and variables
+whose values are known. The arguments are joined with spaces.

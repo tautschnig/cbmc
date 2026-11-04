@@ -1,0 +1,11 @@
+CORE
+unknown.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] file unknown.sh line 2 eval is not reached .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+eval of text that is not known during conversion is reported.

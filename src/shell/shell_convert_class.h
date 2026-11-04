@@ -1113,6 +1113,14 @@ private:
   /// Run \p convert into \p dest, and return whether it converted: an
   /// unsupported construct leaves \p dest, and the state of the
   /// conversion, as they were, without reporting it.
+  /// eval (XCU 2.15 eval).
+  void convert_eval(const shell_commandt &command, code_blockt &dest);
+  /// The value of \p word if it is known during conversion: literal text,
+  /// and the known values of variables. An unquoted expansion yields its
+  /// fields joined with spaces, as eval joins them.
+  std::optional<std::string> known_text(const shell_wordt &word) const;
+  /// The programs that eval parsed, which the converted code refers to.
+  std::vector<std::unique_ptr<shell_programt>> eval_programs;
   bool try_convert(
     const std::function<void(code_blockt &)> &convert,
     code_blockt &dest);

@@ -743,6 +743,16 @@ void shell_convertert::convert_simple(
     return;
   }
   const shell_command_kindt kind = classify(*name);
+  if(*name == "eval" && function_definitions.count(*name) == 0)
+  {
+    // A special builtin; a redirection that can fail would make the shell
+    // exit.
+    check_redirections(command, kind);
+    if(redirection_may_fail(command))
+      unsupported(loc, "eval with a redirection that can fail");
+    convert_eval(command, dest);
+    return;
+  }
   if(function_definitions.count(*name) == 0)
   {
     convert_non_function(command, kind, dest);
@@ -779,6 +789,9 @@ bool shell_convertert::try_convert(
   const bool saved_in_function = in_function;
   const std::string saved_function = current_function;
   const auto saved_literals = known_literals;
+  std::set<std::string> saved_dot_scripts;
+  for(const auto &entry : dot_scripts)
+    saved_dot_scripts.insert(entry.first);
   message_handlert &handler = log.get_message_handler();
   null_message_handlert quiet;
   log.set_message_handler(quiet);
@@ -798,6 +811,13 @@ bool shell_convertert::try_convert(
     in_function = saved_in_function;
     current_function = saved_function;
     known_literals = saved_literals;
+    for(auto it = dot_scripts.begin(); it != dot_scripts.end();)
+    {
+      if(saved_dot_scripts.count(it->first) == 0)
+        it = dot_scripts.erase(it);
+      else
+        ++it;
+    }
   }
   log.set_message_handler(handler);
   if(converted)
