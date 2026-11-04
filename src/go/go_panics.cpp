@@ -695,7 +695,8 @@ exprt go_convertert::saved_builtin_call(
   }
   if(callee == "delete")
   {
-    // "the type of the key k must be assignable to the key type of m".
+    // Go1.27 §Deletion_of_map_elements: "The value k must be assignable to
+    // the key type of m".
     const typet &header = to_pointer_type(values[0].type()).base_type();
     const typet &key =
       to_pointer_type(
