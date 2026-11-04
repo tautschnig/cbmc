@@ -49,6 +49,10 @@ void shell_convertert::add_initialize()
 
   set_status(init, 0, loc);
   assign(init, exited(), false_exprt{}, loc);
+  if(symbol_table.has_symbol("shell::ifs_default"))
+    assign(init, ifs_default(), true_exprt{}, loc);
+  if(symbol_table.has_symbol("shell::ifs_unset"))
+    assign(init, ifs_unset(), false_exprt{}, loc);
   initialize_options(init, loc);
   if(option_possible("errexit"))
     assign(init, errexit_ignored_in_caller(), false_exprt{}, loc);
@@ -117,6 +121,8 @@ void shell_convertert::operator()()
   declare_functions();
   declare_dot_scripts();
   code_blockt body;
+  // Every shell starts with the default IFS.
+  known_literals["IFS"] = " \t\n";
   convert_list(program.commands, body);
   add_main(std::move(body));
   convert_function_bodies();

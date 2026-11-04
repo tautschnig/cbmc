@@ -21,19 +21,13 @@ shell_convertert::known_text(const shell_wordt &word) const
   {
     if(const auto literal = known_literal(word.front()))
     {
+      const auto ifs = known_ifs();
+      if(!ifs.has_value())
+        return {};
       std::string joined;
-      std::size_t start = literal->find_first_not_of(" \t\n");
-      while(start != std::string::npos)
-      {
-        const std::size_t end = literal->find_first_of(" \t\n", start);
-        joined +=
-          (joined.empty() ? "" : " ") +
-          literal->substr(
-            start, end == std::string::npos ? std::string::npos : end - start);
-        start = end == std::string::npos
-                  ? end
-                  : literal->find_first_not_of(" \t\n", end);
-      }
+      for(const auto &field :
+          split_literal(*literal, *ifs, program.dialect == shell_dialectt::ZSH))
+        joined += (joined.empty() ? "" : " ") + field;
       if(joined.find_first_of("*?[") != std::string::npos)
         return {};
       return joined;

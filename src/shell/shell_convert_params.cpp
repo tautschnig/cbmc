@@ -190,14 +190,21 @@ exprt shell_convertert::join_positional_parameters(
   code_blockt &dest,
   const source_locationt &loc)
 {
+  // The fields are joined with the first byte of IFS, a space if it is
+  // unset, and nothing if it is empty.
+  std::string separator = " ";
+  if(const auto ifs = known_ifs())
+    separator = ifs->substr(0, 1);
+  else
+    ifs_for_splitting(dest, loc);
   const symbol_exprt result = temporary(string_type(), dest, loc);
   assign(dest, result, string_literal("", loc), loc);
   for(std::size_t i = 0; i < max_arguments; ++i)
   {
     code_blockt append;
     exprt joined = result;
-    if(i > 0)
-      joined = concat(joined, string_literal(" ", loc), append, loc);
+    if(i > 0 && !separator.empty())
+      joined = concat(joined, string_literal(separator, loc), append, loc);
     joined = concat(
       joined,
       value_of(

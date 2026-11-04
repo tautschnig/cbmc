@@ -8,6 +8,7 @@ SRC = shell_arith.cpp \
       shell_convert_dot.cpp \
       shell_convert_eval.cpp \
       shell_convert_functions.cpp \
+      shell_convert_ifs.cpp \
       shell_convert_options.cpp \
       shell_convert_params.cpp \
       shell_convert_strings.cpp \

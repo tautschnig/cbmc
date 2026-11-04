@@ -1426,42 +1426,77 @@ void shell_convertert::split_fields(
   code_blockt &dest,
   const source_locationt &loc)
 {
+  const std::string ifs = ifs_for_splitting(dest, loc);
   if(const auto literal = known_literal(part))
   {
     // A known value is split here.
-    std::size_t start = literal->find_first_not_of(" \t\n");
-    while(start != std::string::npos)
+    for(const auto &field :
+        split_literal(*literal, ifs, program.dialect == shell_dialectt::ZSH))
     {
-      std::size_t end = literal->find_first_of(" \t\n", start);
-      const std::string field = literal->substr(
-        start, end == std::string::npos ? std::string::npos : end - start);
       const exprt value = string_literal(field, loc);
       if(field.find_first_of("*?[") != std::string::npos)
         check_no_pattern_characters(value, part, dest);
       append_field(list, value, dest, loc);
-      start = end == std::string::npos
-                ? end
-                : literal->find_first_not_of(" \t\n", end);
     }
     return;
   }
   const exprt value =
     expand_part(part, shell_word_contextt::CASE_SUBJECT, false, false, dest);
   check_no_pattern_characters(value, part, dest);
+  if(!ifs_is_white(ifs) && !ifs_has_white(ifs))
+  {
+    // Each byte of IFS ends a field: the value has one field, or none if
+    // it is empty, unless it has such a byte.
+    const std::bitset<256> delimiters = ifs_set(ifs);
+    code_blockt whole, append, search;
+    append_field(list, value, append, loc);
+    add(
+      whole,
+      code_ifthenelset{not_exprt{is_empty(value)}, std::move(append)},
+      loc);
+    split_fields_delimited(list, payload_of(value), delimiters, search, loc);
+    add(
+      dest,
+      code_ifthenelset{
+        payload_contains_byte(payload_of(value), delimiters, dest, loc),
+        std::move(search),
+        std::move(whole)},
+      loc);
+    return;
+  }
+  if(!ifs_is_white(ifs))
+  {
+    // Splitting at other bytes together with IFS white space is only
+    // modelled for values without bytes of IFS: one field, or none.
+    check(
+      dest,
+      not_exprt{
+        payload_contains_byte(payload_of(value), ifs_set(ifs), dest, loc)},
+      "shell-unsupported",
+      "the value of the unquoted " + display({part}) +
+        " has no byte of IFS (field splitting at bytes other than space, "
+        "tab and newline is not supported here)",
+      loc);
+  }
   // Field splitting with the default IFS (XCU 2.6.5), which the script
   // cannot change (see variable()): the fields are the maximal runs of
   // bytes other than space, tab and newline. Most values have no blanks:
   // their one field (or none, for the empty value) needs no search.
-  std::bitset<256> blanks;
-  for(unsigned char c : {' ', '\t', '\n'})
-    blanks.set(c);
+  const std::bitset<256> blanks =
+    ifs_is_white(ifs) ? ifs_set(ifs) : std::bitset<256>{};
   code_blockt whole, append, search;
   append_field(list, value, append, loc);
   add(
     whole,
     code_ifthenelset{not_exprt{is_empty(value)}, std::move(append)},
     loc);
-  split_fields_searching(list, payload_of(value), search, loc);
+  if(blanks.none())
+  {
+    // No splitting: the value is one field, or none if it is empty.
+    dest.append(whole);
+    return;
+  }
+  split_fields_searching(list, payload_of(value), blanks, search, loc);
   add(
     dest,
     code_ifthenelset{
@@ -1476,14 +1511,14 @@ void shell_convertert::split_fields(
 void shell_convertert::split_fields_searching(
   const field_listt &list,
   const exprt &s,
+  const std::bitset<256> &blanks,
   code_blockt &dest,
   const source_locationt &loc)
 {
   pattern_contextt context{s, payload_length(s, dest, loc), {}, dest, loc};
   shell_pattern_elementt blank;
   blank.kind = shell_pattern_elementt::kindt::SET;
-  for(unsigned char c : {' ', '\t', '\n'})
-    blank.set.set(c);
+  blank.set = blanks;
   shell_pattern_elementt non_blank = blank;
   non_blank.set.flip();
   const exprt zero = from_integer(0, integer_type());
@@ -1561,6 +1596,94 @@ void shell_convertert::split_fields_searching(
       code_ifthenelset{
         binary_relation_exprt{start, ID_ge, zero}, std::move(field)},
       loc);
+  };
+  next_field(zero, 0, dest);
+}
+
+/// The fields of \p s, which has bytes of \p delimiters, which has no IFS
+/// white space: each delimiter ends a field (XCU 2.6.5), and fields can be
+/// empty. A delimiter at the end starts no further field, except in zsh,
+/// where it starts an empty one. Up to max_arguments + 1 fields are split
+/// off, so that check_field_list reports more.
+void shell_convertert::split_fields_delimited(
+  const field_listt &list,
+  const exprt &s,
+  const std::bitset<256> &delimiters,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  const bool trailing_field = program.dialect == shell_dialectt::ZSH;
+  const exprt length = payload_length(s, dest, loc);
+  shell_pattern_elementt delimiter;
+  delimiter.kind = shell_pattern_elementt::kindt::SET;
+  delimiter.set = delimiters;
+  shell_pattern_elementt other = delimiter;
+  other.set.flip();
+  const exprt zero = from_integer(0, integer_type());
+  if(native())
+  {
+    // The rest r of the value is f d r', where f has no delimiters, and d
+    // is one delimiter, or d and r' are empty at the end of the value.
+    regex_buildert re{symbol_table};
+    const exprt empty = payload_literal("");
+    exprt rest = s;
+    const symbol_exprt more = temporary(bool_typet{}, dest, loc);
+    assign(dest, more, true_exprt{}, loc);
+    for(std::size_t k = 0; k <= max_arguments; ++k)
+    {
+      const symbol_exprt field = temporary(payload_type(), dest, loc);
+      const symbol_exprt separator = temporary(payload_type(), dest, loc);
+      const symbol_exprt next = temporary(payload_type(), dest, loc);
+      add(
+        dest,
+        code_assumet{and_exprt{
+          equal_exprt{
+            rest,
+            payload_concat(
+              field, payload_concat(separator, next, dest, loc), dest, loc)},
+          re.matches(field, re.star(pattern_regex({other}))),
+          or_exprt{
+            re.matches(separator, pattern_regex({delimiter})),
+            and_exprt{
+              equal_exprt{separator, empty}, equal_exprt{next, empty}}}}},
+        loc);
+      code_blockt append;
+      append_field(list, make_value(field), append, loc);
+      add(dest, code_ifthenelset{more, std::move(append)}, loc);
+      // Another field follows a delimiter, unless it ends the value.
+      exprt follows = not_exprt{equal_exprt{separator, empty}};
+      if(!trailing_field)
+        follows = and_exprt{follows, not_exprt{equal_exprt{next, empty}}};
+      assign(dest, more, and_exprt{more, follows}, loc);
+      rest = next;
+    }
+    return;
+  }
+  // Each field is searched for only after the previous one was found, so
+  // that the searches past the last field are on paths of their own.
+  std::function<void(const exprt &, std::size_t, code_blockt &)> next_field =
+    [&](const exprt &start, std::size_t k, code_blockt &block)
+  {
+    pattern_contextt here{s, length, {}, block, loc};
+    // The field ends before the next delimiter, or at the end.
+    const symbol_exprt found = temporary(integer_type(), block, loc);
+    assign(block, found, core_index_of({delimiter}, start, here), loc);
+    const exprt end =
+      if_exprt{binary_relation_exprt{found, ID_lt, zero}, length, exprt{found}};
+    append_field(
+      list,
+      make_value(payload_substring(s, start, end, block, loc)),
+      block,
+      loc);
+    if(k == max_arguments)
+      return;
+    const exprt after = plus_exprt{found, from_integer(1, integer_type())};
+    exprt follows = binary_relation_exprt{found, ID_ge, zero};
+    if(!trailing_field)
+      follows = and_exprt{follows, binary_relation_exprt{after, ID_lt, length}};
+    code_blockt rest;
+    next_field(after, k + 1, rest);
+    add(block, code_ifthenelset{follows, std::move(rest)}, loc);
   };
   next_field(zero, 0, dest);
 }

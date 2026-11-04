@@ -66,7 +66,7 @@ void shell_convertert::check_parameter_name(
   const source_locationt &loc)
 {
   static const std::set<std::string> special_everywhere{
-    "LINENO", "RANDOM", "SECONDS", "OPTIND", "OPTARG", "IFS", "_"};
+    "LINENO", "RANDOM", "SECONDS", "OPTIND", "OPTARG", "_"};
   static const std::set<std::string> special_bash{
     "BASH_ARGC",    "BASH_ARGV",     "BASH_COMMAND", "BASH_LINENO",
     "BASH_SOURCE",  "BASH_SUBSHELL", "BASHPID",      "EPOCHREALTIME",
@@ -115,6 +115,12 @@ void shell_convertert::assign_variable(
   code_blockt &dest,
   const source_locationt &loc)
 {
+  if(name == "IFS")
+  {
+    check_parameter_name(name, loc);
+    assign_ifs(value, dest, loc);
+    return;
+  }
   // Expansion results are always set.
   assign(dest, variable(name, loc), value, loc);
   note_assignment(name, value);
@@ -163,14 +169,11 @@ void shell_convertert::convert_command(
   const std::size_t live = live_temporaries.size();
   // A loop's body and condition run again after what they assign; other
   // compound commands start from the current state (their branches are
-  // handled where they are converted).
+  // handled where they are converted). The words of a for loop are
+  // expanded before its first iteration: convert_for forgets after them.
   using kindt = shell_commandt::kindt;
-  if(
-    command.kind == kindt::WHILE || command.kind == kindt::UNTIL ||
-    command.kind == kindt::FOR)
-  {
+  if(command.kind == kindt::WHILE || command.kind == kindt::UNTIL)
     forget_assigned(command);
-  }
   if(command.background)
     convert_background(command, dest);
   else
@@ -460,6 +463,8 @@ void shell_convertert::convert_for_loop(
   assign(dest, index, from_integer(0, count_type()), loc);
   assign(dest, loop_status, from_integer(0, status_type()), loc);
 
+  // Each iteration runs after what the previous ones assigned.
+  forget_assigned(command);
   label(dest, head_label);
   code_blockt leave;
   goto_label(leave, break_label);
@@ -874,18 +879,10 @@ void shell_convertert::convert_dynamic_simple(
     if(quoted)
       fields.push_back(*literal);
     else
-    {
-      std::size_t start = literal->find_first_not_of(" \t\n");
-      while(start != std::string::npos)
-      {
-        const std::size_t end = literal->find_first_of(" \t\n", start);
-        fields.push_back(literal->substr(
-          start, end == std::string::npos ? std::string::npos : end - start));
-        start = end == std::string::npos
-                  ? end
-                  : literal->find_first_not_of(" \t\n", end);
-      }
-    }
+      fields = split_literal(
+        *literal,
+        ifs_for_splitting(dest, loc),
+        program.dialect == shell_dialectt::ZSH);
     shell_commandt copy = command;
     copy.words.erase(copy.words.begin());
     for(auto it = fields.rbegin(); it != fields.rend(); ++it)
@@ -1437,6 +1434,11 @@ void shell_convertert::convert_unset(
     auto name = static_text(command.words[i]);
     if(!name.has_value())
       unsupported(loc, "unset operand that is an expansion");
+    if(*name == "IFS")
+    {
+      unset_ifs(dest, loc);
+      continue;
+    }
     const symbol_exprt var = variable(*name, loc);
     known_literals.erase(*name);
     assign(dest, var, string_literal("", loc), loc);

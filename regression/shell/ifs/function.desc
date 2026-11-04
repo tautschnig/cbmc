@@ -1,0 +1,12 @@
+CORE
+function.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] .*IFS has its default value here .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Where IFS is not known, field splitting checks that it has its default
+value.

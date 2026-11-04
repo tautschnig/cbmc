@@ -1,0 +1,9 @@
+CORE
+unknown.sh
+
+^EXIT=6$
+^SIGNAL=0$
+assignment of a value that is not known here to IFS
+--
+^VERIFICATION
+--

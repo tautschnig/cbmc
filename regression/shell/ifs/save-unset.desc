@@ -1,0 +1,12 @@
+CORE
+save-unset.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] .*IFS is set to its default value here .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The expansion of IFS where it is not known is only supported where IFS
+is set to its default value, not where it is unset.

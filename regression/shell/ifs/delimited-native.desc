@@ -1,0 +1,12 @@
+CORE
+delimited-native.sh
+--shell-strings native --cvc5 --shell-max-arguments 3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Field splitting at an IFS without white space of values not known during
+conversion, with native strings: empty fields, a delimiter at the end,
+and fields that never contain a delimiter.

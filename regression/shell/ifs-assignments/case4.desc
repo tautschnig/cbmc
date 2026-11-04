@@ -3,9 +3,9 @@ case4.sh
 
 ^EXIT=6$
 ^SIGNAL=0$
-variable IFS, which the shell maintains
+assigning to IFS in an expansion
 --
 ^VERIFICATION
 --
-Field splitting relies on IFS keeping its default value, which every
-shell sets at startup: any way of assigning IFS is unsupported.
+Assignments to IFS of values that are not known during conversion
+are unsupported.

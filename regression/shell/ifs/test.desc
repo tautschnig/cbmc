@@ -1,0 +1,14 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+IFS with values known during conversion: field splitting at other bytes
+than blanks, empty fields, "$*" joined with the first byte of IFS, an
+empty and an unset IFS, and saving and restoring IFS. In the function,
+IFS is not known, and its default value is checked (and holds, as IFS
+is unset).

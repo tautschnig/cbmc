@@ -328,6 +328,9 @@ private:
   symbol_exprt variable(const std::string &name, const source_locationt &loc)
   {
     check_parameter_name(name, loc);
+    // IFS has no symbol (see shell_convert_ifs.cpp).
+    if(name == "IFS")
+      unsupported(loc, "this use of IFS");
     variables.insert(name);
     return global_symbol("shell::var::" + name, name, string_type());
   }
@@ -715,6 +718,13 @@ private:
   void split_fields_searching(
     const field_listt &list,
     const exprt &s,
+    const std::bitset<256> &blanks,
+    code_blockt &dest,
+    const source_locationt &loc);
+  void split_fields_delimited(
+    const field_listt &list,
+    const exprt &s,
+    const std::bitset<256> &delimiters,
     code_blockt &dest,
     const source_locationt &loc);
   /// Report the values of unquoted \p part that pathname expansion could
@@ -1152,6 +1162,37 @@ private:
     function_locals;
   /// In a function's body: the label of its end, which return jumps to.
   irep_idt function_end_label;
+  // IFS (shell_convert_ifs.cpp)
+  /// Whether IFS has its default value, where it is not known.
+  symbol_exprt ifs_default();
+  /// Whether IFS is unset, where it is not known.
+  symbol_exprt ifs_unset();
+  /// The value of IFS, if it is known here; the default if it is unset.
+  std::optional<std::string> known_ifs() const;
+  /// The value of IFS for field splitting here: the known value, or the
+  /// default, which is then checked.
+  std::string ifs_for_splitting(code_blockt &dest, const source_locationt &loc);
+  void assign_ifs(
+    const exprt &value,
+    code_blockt &dest,
+    const source_locationt &loc);
+  void unset_ifs(code_blockt &dest, const source_locationt &loc);
+  /// The value of IFS here, or nothing if it is unset. Where it is not
+  /// known, the default value, which is then checked.
+  std::optional<std::string>
+  ifs_value(code_blockt &dest, const source_locationt &loc);
+  /// The fields of \p value split with \p ifs (XCU 2.6.5).
+  /// A delimiter at the end ends a further, empty field if
+  /// \p trailing_field (zsh).
+  static std::vector<std::string> split_literal(
+    const std::string &value,
+    const std::string &ifs,
+    bool trailing_field);
+  /// Whether \p ifs has only space, tab and newline (or is empty).
+  static bool ifs_is_white(const std::string &ifs);
+  static bool ifs_has_white(const std::string &ifs);
+  /// The bytes of \p ifs.
+  static std::bitset<256> ifs_set(const std::string &ifs);
   /// eval (XCU 2.15 eval).
   void convert_eval(const shell_commandt &command, code_blockt &dest);
   /// The value of \p word if it is known during conversion: literal text,

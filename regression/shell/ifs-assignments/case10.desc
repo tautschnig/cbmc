@@ -7,5 +7,5 @@ printf -v, which assigns a variable
 --
 ^VERIFICATION
 --
-Field splitting relies on IFS keeping its default value, which every
-shell sets at startup: any way of assigning IFS is unsupported.
+printf -v could assign IFS (or any variable) a value that is not
+known during conversion.

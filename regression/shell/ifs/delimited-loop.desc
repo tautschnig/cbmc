@@ -1,0 +1,11 @@
+CORE
+delimited-loop.sh
+--shell-max-arguments 3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Field splitting at an IFS without white space of values not known during
+conversion yields fields without bytes of IFS.

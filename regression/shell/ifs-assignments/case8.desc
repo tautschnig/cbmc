@@ -1,11 +1,12 @@
 CORE
 case8.sh
 
-^EXIT=6$
+^EXIT=0$
 ^SIGNAL=0$
-variable IFS, which the shell maintains
+^VERIFICATION SUCCESSFUL$
 --
-^VERIFICATION
+^warning: ignoring
 --
-Field splitting relies on IFS keeping its default value, which every
-shell sets at startup: any way of assigning IFS is unsupported.
+Assignments of literals to IFS, in the shell itself, in a function
+and in a subshell, and unsetting IFS are supported: their values are
+known during conversion.

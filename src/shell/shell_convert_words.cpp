@@ -131,17 +131,18 @@ exprt shell_convertert::expand_part(
     // Field splitting with the default IFS (the script cannot change it,
     // see variable()) and pathname expansion leave a value without
     // blanks and pattern characters as it is; other values are reported.
+    const std::string ifs = ifs_for_splitting(dest, part.location);
     if(const auto literal = known_literal(part))
     {
-      if(literal->find_first_of(" \t\n") != std::string::npos)
+      if(literal->find_first_of(ifs) != std::string::npos)
       {
         check(
           dest,
           false_exprt{},
           "shell-unsupported",
           "the value of the unquoted " + display({part}) +
-            " has no space, tab or newline (field splitting, XCU 2.6.5, is "
-            "not supported here)",
+            " has no byte of IFS (field splitting, XCU 2.6.5, is not "
+            "supported here)",
           part.location);
       }
       const exprt value = string_literal(*literal, part.location);
@@ -151,18 +152,18 @@ exprt shell_convertert::expand_part(
     }
     const exprt value =
       expand_part(part, shell_word_contextt::CASE_SUBJECT, false, false, dest);
-    std::bitset<256> blanks;
-    for(unsigned char c : {' ', '\t', '\n'})
-      blanks.set(c);
-    check(
-      dest,
-      not_exprt{
-        payload_contains_byte(payload_of(value), blanks, dest, part.location)},
-      "shell-unsupported",
-      "the value of the unquoted " + display({part}) +
-        " has no space, tab or newline (field splitting, XCU 2.6.5, is "
-        "not supported)",
-      part.location);
+    if(!ifs.empty())
+    {
+      check(
+        dest,
+        not_exprt{payload_contains_byte(
+          payload_of(value), ifs_set(ifs), dest, part.location)},
+        "shell-unsupported",
+        "the value of the unquoted " + display({part}) +
+          " has no byte of IFS (field splitting, XCU 2.6.5, is not "
+          "supported here)",
+        part.location);
+    }
     check_no_pattern_characters(value, part, dest);
     return value;
   }
@@ -330,18 +331,36 @@ exprt shell_convertert::expand_parameter(
   }
   else
   {
-    if(const auto literal = known_literal(part))
+    if(part.text == "IFS")
+    {
+      const std::string &op = part.parameter_operator;
+      if(!op.empty() && op.back() == '=')
+        unsupported(loc, "assigning to IFS in an expansion");
+      // The value is a literal, which assignments keep track of; the
+      // operators below apply to it, or to an unset IFS.
+      const auto literal = ifs_value(dest, loc);
+      if(literal.has_value() && op.empty() && !part.parameter_length)
+        return string_literal(*literal, loc);
+      value =
+        literal.has_value() ? string_literal(*literal, loc) : unset_string(loc);
+      if(op.empty() || op[0] == '%' || op[0] == '#')
+        check_nounset(value, part.text, dest, loc);
+    }
+    else if(const auto literal = known_literal(part))
     {
       check_parameter_name(part.text, loc);
       return string_literal(*literal, loc);
     }
-    value = parameter(part);
-    assignable = value.id() == ID_symbol &&
-                 id2string(to_symbol_expr(value).get_identifier())
-                     .rfind("shell::var::", 0) == 0;
-    const std::string &op = part.parameter_operator;
-    if(op.empty() || op[0] == '%' || op[0] == '#')
-      check_nounset(value, part.text, dest, loc);
+    else
+    {
+      value = parameter(part);
+      assignable = value.id() == ID_symbol &&
+                   id2string(to_symbol_expr(value).get_identifier())
+                       .rfind("shell::var::", 0) == 0;
+      const std::string &op = part.parameter_operator;
+      if(op.empty() || op[0] == '%' || op[0] == '#')
+        check_nounset(value, part.text, dest, loc);
+    }
   }
 
   if(part.parameter_length)

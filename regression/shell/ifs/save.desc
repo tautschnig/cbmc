@@ -1,0 +1,12 @@
+CORE
+save.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^\[shell-unsupported\.[0-9]+\] .*IFS is set to its default value here .*: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+In a function, IFS is not known: its expansion is the default value,
+which is checked, so that it can be saved and restored.

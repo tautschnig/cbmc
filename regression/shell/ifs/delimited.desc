@@ -1,0 +1,12 @@
+CORE
+delimited.sh
+--shell-max-arguments 3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Field splitting at an IFS without white space of values not known during
+conversion: a delimiter at the end, and no delimiter. The refined string
+solver takes long for more searches in one program (see delimited-native).
