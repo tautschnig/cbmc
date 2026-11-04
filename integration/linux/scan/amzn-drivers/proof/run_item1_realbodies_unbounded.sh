@@ -1,0 +1,54 @@
+#!/bin/bash
+# Item 1 of the revised plan: ONE proof with the real callee bodies AND an
+# unbounded TX burst.  All five obligations at once.
+#
+# Needs the inner mbuf-chain walk bounded: the widened outer-loop contract
+# havocs the ring, so the chain ena_tx_map_mbuf walks is unconstrained and
+# symex follows it forever without a bound (this was misdiagnosed as a DFCC
+# performance problem -- see doc/dfcc-assigns-performance-2026-11.md).  The
+# unwinding assertion on that loop is checked, so the bound is complete for
+# this harness rather than a cut.
+#
+# Prerequisites: see run.sh.
+set -eu
+DPDK=${DPDK:-/tmp/dpdk}
+BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
+HERE=$(cd "$(dirname "$0")" && pwd)
+OUT=${OUT:-/tmp/ena-proof}
+BURST=${BURST:-1}; SEGS=${SEGS:-2}; RING=${RING:-2}
+SEGBOUND=$((SEGS + 2))
+mkdir -p "$OUT"
+[ -f "$OUT/flags.txt" ] || { echo "run run.sh first (it writes flags.txt)"; exit 1; }
+
+cd "$DPDK/build-ql"
+( ulimit -v 32000000
+  "$BIN/goto-cc" $(cat "$OUT/flags.txt") -DPEDANTIC \
+    -DMAX_BURST=$BURST -DMAX_SEGS=$SEGS -DRING_SIZE=$RING \
+    "$HERE/harness_tx_callees.c" -o "$OUT/i1.gb" )
+
+RM=""
+for f in rte_pktmbuf_free rte_pktmbuf_free_seg rte_pktmbuf_prefree_seg \
+         rte_pktmbuf_read rte_pktmbuf_alloc_bulk rte_pktmbuf_detach \
+         rte_mempool_put rte_mempool_put_bulk rte_mempool_get_bulk \
+         rte_mempool_generic_put rte_mempool_generic_get \
+         rte_mempool_do_generic_put rte_mempool_do_generic_get \
+         rte_mempool_cache_flush rte_mbuf_raw_free; do
+  RM="$RM --remove-function-body $f"
+done
+( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/i1.gb" "$OUT/i1_rm.gb" >/dev/null 2>&1 )
+( ulimit -v 32000000; "$BIN/goto-instrument" --add-library "$OUT/i1_rm.gb" "$OUT/i1_lib.gb" >/dev/null 2>&1 )
+( ulimit -v 32000000
+  "$BIN/goto-instrument" --no-malloc-may-fail \
+    --loop-contracts-file "$HERE/tx_loop_contract_wide.json" \
+    --dfcc main --apply-loop-contracts "$OUT/i1_lib.gb" "$OUT/i1_lc.gb" >/dev/null 2>&1 )
+
+( ulimit -v 60000000
+  timeout 900 "$BIN/cbmc" "$OUT/i1_lc.gb" --bounds-check --pointer-check \
+    --no-standard-checks \
+    --unwindset ena_tx_map_mbuf.0:$SEGBOUND --unwinding-assertions \
+    > "$OUT/item1.log" 2>&1 ) || true
+
+grep -E '^VERIFICATION|^\*\* ' "$OUT/item1.log"
+echo "obligations:"; grep -E 'main\.assertion' "$OUT/item1.log" | sed 's/^/  /'
+echo "loop contract + inner-loop bound:"
+grep -E 'ena_tx_map_mbuf\.unwind|loop_invariant_(base|step)\.1|loop_assigns\.1' "$OUT/item1.log" | sed 's/^/  /'

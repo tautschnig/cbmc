@@ -570,85 +570,66 @@ Next clauses for the map, in order: the free-discipline (`rte_pktmbuf_free`
 only on a driver-owned mbuf, which needs the cleanup harness so the frees are
 in scope), then DMA ownership (no CPU read of a buffer the device owns).
 
-### 8.5a Root cause of the assigns-clause cost (measured)
+### 8.5a Why the widened-assigns proof hung -- and the wrong answer I gave first
 
-Full write-up with environment, build instructions, raw output and threats to
-validity: **`dfcc-assigns-performance-2026-11.md`**. Summary below.
+**Corrected.** My first analysis of this blamed a quadratic cost in DFCC's
+write-set check and proposed reporting the encoding upstream. That was wrong.
+The full correction, with the controls that disprove it, is
+`dfcc-assigns-performance-2026-11.md`; the short version:
 
-"Assigns clauses are slow" is folklore; this pins it down. Benchmark:
-`proof/cbmc-limitations/dfcc_assigns_scaling.sh`, each block varying one
-dimension with everything else fixed.
+* **The real cause is an unbounded inner loop.** Running the hung proof with
+  `--verbosity 9` answers it immediately: 198 of 218 unwinding messages are
+  `ena_tx_map_mbuf.0`, the `while ((mbuf = mbuf->next) != NULL)` segment walk
+  at `ena_ethdev.c:3108`. The widened outer-loop contract havocs the ring, so
+  the chain that uncontracted inner loop walks is unconstrained, and with no
+  `--unwind` symex follows it forever. It was never a performance curve; it
+  was non-termination.
+* **DFCC was not at fault.** The superlinear growth I measured is present with
+  no DFCC, no contract and no loop at all: one dereference of a pointer that
+  may designate any of K objects costs 0.13 / 0.69 / 4.6 / 36.3 s for
+  K = 32 / 64 / 128 / 256 (`deref_k_targets.sh`), and the SSA is only linear
+  in K, so the time goes into intermediate expressions during symex.
+* **The ENA harness was never in that regime anyway.** Measured with
+  `goto-instrument --show-value-sets`, the largest points-to set anywhere in
+  the TX path is **2 objects**. I had inferred "K is large" from 83
+  static-lifetime symbols in the program, which is not the same quantity.
+* The 178 KB `object_whole(adapter)` target, which I had called a multiplier,
+  changes the formula by 513 variables out of 5.2 M.
 
-| dimension varied | measured |
-|---|---|
-| unrelated objects in the program, **concrete** write pointer | flat: 0.1s -> 0.2s for 4 -> 256 |
-| number of assigns targets, concrete pointer | linear: 0.1 / 0.1 / 0.4 / 0.9s for 1 / 4 / 16 / 32 |
-| number of writes in the loop body, concrete pointer | linear: 0.1 -> 0.8s for 1 -> 32 |
-| union-held target pointer, or symbolic *index* | no effect (0.1s) |
-| **size** of one `object_whole` target | linear in bytes: 0.1s @128B, 1.4s @32KB, 6.1s @128KB |
-| **objects a *symbolic* write pointer may designate (K)** | **superlinear: 0.1 / 0.3 / 1.2 / 16.5s for K = 2 / 8 / 32 / 128** |
-| precise target instead of `object_whole`, at K=128 | 11.5s vs 16.5s (~30%) |
+Two methodological lessons worth keeping. When a proof hangs, ask the tool
+what it is doing (`--verbosity 9`) before theorising about why. And a
+synthetic benchmark only transfers to the real case if you *measure* that the
+real case is in the same regime -- I inferred it instead.
 
-The last row but one is the dominant term: 4x the objects, 14x the time.
+### 8.5 Item 1 is done: real callee bodies and an unbounded burst together
 
-**Mechanism**, from `src/ansi-c/library/cprover_contracts.c:774-850`.
-`__CPROVER_contracts_write_set_check_assignment` runs at *every write* and
-does two things:
+With `--unwindset ena_tx_map_mbuf.0:4 --unwinding-assertions` added to bound
+the segment walk, the proof that was "blocked" completes:
 
-1. `set->allocated.elems[__CPROVER_POINTER_OBJECT(ptr)]` -- an array read at a
-   **symbolic index** whenever the written pointer's object is not pinned down;
-2. `SET_CHECK_ASSIGNMENT_LOOP`, a loop over every contract-assigns target,
-   each iteration evaluating `__CPROVER_same_object(elem->lb, ptr)` and two
-   `__CPROVER_POINTER_OFFSET` computations.
+```
+VERIFICATION SUCCESSFUL      0 of 1482 failed      12 s
+[main.assertion.1] API: sent <= nb_pkts: SUCCESS
+[main.assertion.2] INV preserved by eth_ena_xmit_pkts: SUCCESS
+[main.assertion.3] INV_wakeup: no packet left pushed without a doorbell: SUCCESS
+[main.assertion.4] OWN_UNIQUE: no mbuf owned by two tx_buffer_info slots: SUCCESS
+[main.assertion.5] OWN_TRANSFER: accepted mbuf recorded in its req_id slot: SUCCESS
+[ena_tx_map_mbuf.unwind.0] unwinding assertion loop 0: SUCCESS
+[eth_ena_xmit_pkts.loop_assigns.1] assigns clause inclusion: SUCCESS
+[eth_ena_xmit_pkts.loop_invariant_step.1] invariant after step: SUCCESS
+```
 
-When `ptr` is symbolic, CBMC's dereference case-splits over all K candidate
-objects, and *inside each case* step 1 is itself a K-way select. So the work
-per write is roughly **O(K^2 + K*T)** for K candidate objects and T targets,
-which is exactly the shape of the measurement.
+So all five obligations hold **simultaneously**, with the real
+`ena_xmit_mbuf` / `ena_tx_map_mbuf` bodies and an unbounded TX burst --
+the single configuration section 8.2a said was still missing. The inner
+loop's own unwinding assertion passes, so the bound of 4 is complete for this
+harness rather than a cut: with `MAX_SEGS=2` the chain cannot be longer.
 
-**Why the ENA harness hits it.** Three multipliers at once:
+Runner: `proof/run_item1_realbodies_unbounded.sh`.
 
-* K is large: the harness includes the whole DPDK translation unit, giving
-  **83 static-lifetime objects** plus dynamic ones;
-* the write pointers are genuinely symbolic -- `tx_buffer_info[req_id]` with a
-  symbolic `req_id`, and pointers read out of the anonymous unions. This is
-  where section 6c connects: the `byte_extract` on a union-held pointer very
-  likely widens the points-to set, which *feeds* the quadratic term rather
-  than being a separate problem;
-* one target is enormous: `sizeof(struct ena_adapter)` is **182144 bytes**
-  (it embeds `tx_ring[64]` and `rx_ring[64]`), so
-  `__CPROVER_object_whole(tx_ring->adapter)` alone is a 178 KB havoc plus a
-  178 KB CAR to compare against at every write.
-
-**What to do about it, in measured order of effect:**
-
-1. **Shrink K.** Keep the number of objects a write pointer may designate
-   small: don't pull in the whole TU if the proof does not need it, make
-   indices concrete where the property does not depend on them, and avoid
-   union-held pointers in the write path.
-2. **Never put a large aggregate in `object_whole`.** Name the fields actually
-   written. `object_whole(adapter)` is 178 KB of havoc for a function that
-   writes two of its fields.
-3. **Prefer precise targets to `object_whole`** -- worth ~30% at K=128, so
-   real but secondary.
-4. **CBMC-side:** the `allocated.elems[__CPROVER_POINTER_OBJECT(ptr)]`
-   encoding is the quadratic term. Unlike section 6c this *is* reduced to a
-   standalone benchmark, so it is reportable as it stands.
-
-### 8.5 Status of the widened TX loop assigns: blocked on performance
-
-Item 1 of the revised order -- one proof with the real callee bodies *and* an
-unbounded burst -- is attempted and does not currently go through. The loop's
-`assigns` clause has to cover the ring footprint
-(`__CPROVER_object_whole` of the ring, `tx_buffer_info`, the SQ and the
-adapter; `tx_loop_contract_wide.json`), and with that clause CBMC does not
-terminate within 2400 s, at ring size 4 or even 2. It is a performance wall
-rather than an ERROR, so the two complementary configurations of section 8.2a
-remain the state of the art: real bodies with a bounded burst, and an
-unbounded burst with the callees abstracted. Section 8.5a works out why, and
-the answer is not mainly the granularity of the clause: it is the number of
-objects a symbolic write pointer may designate, times a 178 KB
-`object_whole(adapter)` target.
+Remaining scope limits, unchanged by this: the geometry is small (ring 2,
+segments 2), and the inner walk is bounded by an unwinding assertion rather
+than carrying its own loop contract. Giving `ena_tx_map_mbuf.0` an invariant
+keyed on the mbuf chain would remove the last bound here.
 
 ### 8.3 What this changes in the plan
 
