@@ -1081,6 +1081,13 @@ private:
   }
   void convert_compound(const shell_commandt &command, code_blockt &dest);
   void convert_simple(const shell_commandt &command, code_blockt &dest);
+  void convert_dynamic_simple(const shell_commandt &command, code_blockt &dest);
+  /// Run \p convert into \p dest, and return whether it converted: an
+  /// unsupported construct leaves \p dest, and the state of the
+  /// conversion, as they were, without reporting it.
+  bool try_convert(
+    const std::function<void(code_blockt &)> &convert,
+    code_blockt &dest);
   void
   convert_assignments_only(const shell_commandt &command, code_blockt &dest);
   void convert_builtin(

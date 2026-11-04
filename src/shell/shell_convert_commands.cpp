@@ -5,43 +5,48 @@
 
 #include <goto-programs/goto_instruction_code.h>
 
+#include <algorithm>
+
 // ------------------------------------------------------------------
 // Commands
 
+/// The builtins that the converter models, by name.
+static const std::map<std::string, shell_command_kindt> builtins{
+  {":", shell_command_kindt::COLON},
+  {"true", shell_command_kindt::TRUE},
+  {"false", shell_command_kindt::FALSE},
+  {"test", shell_command_kindt::TEST},
+  {"[", shell_command_kindt::BRACKET},
+  {"exit", shell_command_kindt::EXIT},
+  {"export", shell_command_kindt::EXPORT},
+  {"unset", shell_command_kindt::UNSET},
+  {"break", shell_command_kindt::BREAK},
+  {"continue", shell_command_kindt::CONTINUE},
+  {"shift", shell_command_kindt::SHIFT},
+  {"set", shell_command_kindt::SET},
+  {"return", shell_command_kindt::RETURN},
+  {"exec", shell_command_kindt::EXEC},
+  {".", shell_command_kindt::DOT},
+  {CPROVER_PREFIX "assert", shell_command_kindt::ASSERT},
+  {CPROVER_PREFIX "assume", shell_command_kindt::ASSUME},
+  {"echo", shell_command_kindt::OUTPUT},
+  {"printf", shell_command_kindt::OUTPUT}};
+
+/// Builtins that change the shell environment (XCU 2.15 special
+/// builtins, regular builtins of XCU 1.7, and common extensions).
+static const std::set<std::string> unsupported_builtins{
+  "eval",      "readonly", "times",     "trap",     "cd",       "read",
+  "getopts",   "alias",    "unalias",   "umask",    "wait",     "jobs",
+  "fg",        "bg",       "command",   "type",     "hash",     "kill",
+  "ulimit",    "fc",       "newgrp",    "local",    "declare",  "typeset",
+  "source",    "let",      "shopt",     "builtin",  "enable",   "mapfile",
+  "readarray", "pushd",    "popd",      "dirs",     "disown",   "suspend",
+  "logout",    "nameref",  "autoload",  "setopt",   "unsetopt", "emulate",
+  "print",     "whence",   "functions", "zmodload", "caller",   "compgen",
+  "complete"};
+
 shell_command_kindt shell_convertert::classify(const std::string &name) const
 {
-  static const std::map<std::string, shell_command_kindt> builtins{
-    {":", shell_command_kindt::COLON},
-    {"true", shell_command_kindt::TRUE},
-    {"false", shell_command_kindt::FALSE},
-    {"test", shell_command_kindt::TEST},
-    {"[", shell_command_kindt::BRACKET},
-    {"exit", shell_command_kindt::EXIT},
-    {"export", shell_command_kindt::EXPORT},
-    {"unset", shell_command_kindt::UNSET},
-    {"break", shell_command_kindt::BREAK},
-    {"continue", shell_command_kindt::CONTINUE},
-    {"shift", shell_command_kindt::SHIFT},
-    {"set", shell_command_kindt::SET},
-    {"return", shell_command_kindt::RETURN},
-    {"exec", shell_command_kindt::EXEC},
-    {".", shell_command_kindt::DOT},
-    {CPROVER_PREFIX "assert", shell_command_kindt::ASSERT},
-    {CPROVER_PREFIX "assume", shell_command_kindt::ASSUME},
-    {"echo", shell_command_kindt::OUTPUT},
-    {"printf", shell_command_kindt::OUTPUT}};
-  // Builtins that change the shell environment (XCU 2.15 special
-  // builtins, regular builtins of XCU 1.7, and common extensions).
-  static const std::set<std::string> unsupported_builtins{
-    "eval",      "readonly", "times",     "trap",     "cd",       "read",
-    "getopts",   "alias",    "unalias",   "umask",    "wait",     "jobs",
-    "fg",        "bg",       "command",   "type",     "hash",     "kill",
-    "ulimit",    "fc",       "newgrp",    "local",    "declare",  "typeset",
-    "source",    "let",      "shopt",     "builtin",  "enable",   "mapfile",
-    "readarray", "pushd",    "popd",      "dirs",     "disown",   "suspend",
-    "logout",    "nameref",  "autoload",  "setopt",   "unsetopt", "emulate",
-    "print",     "whence",   "functions", "zmodload", "caller",   "compgen",
-    "complete"};
   const auto it = builtins.find(name);
   if(it != builtins.end())
     return it->second;
@@ -719,7 +724,10 @@ void shell_convertert::convert_simple(
   }
   auto name = static_text(command.words.front());
   if(!name.has_value())
-    unsupported(loc, "command name that is an expansion");
+  {
+    convert_dynamic_simple(command, dest);
+    return;
+  }
   const shell_command_kindt kind = classify(*name);
   if(function_definitions.count(*name) == 0)
   {
@@ -745,6 +753,189 @@ void shell_convertert::convert_simple(
       std::move(undefined),
       std::move(defined)},
     loc);
+}
+
+bool shell_convertert::try_convert(
+  const std::function<void(code_blockt &)> &convert,
+  code_blockt &dest)
+{
+  const std::size_t live = live_temporaries.size();
+  const auto saved_loops = loops;
+  const bool saved_errexit_ignored = errexit_ignored;
+  const bool saved_in_function = in_function;
+  const std::string saved_function = current_function;
+  message_handlert &handler = log.get_message_handler();
+  null_message_handlert quiet;
+  log.set_message_handler(quiet);
+  code_blockt block;
+  bool converted = true;
+  try
+  {
+    convert(block);
+  }
+  catch(const shell_conversion_errort &)
+  {
+    converted = false;
+    live_temporaries.erase(
+      live_temporaries.begin() + live, live_temporaries.end());
+    loops = saved_loops;
+    errexit_ignored = saved_errexit_ignored;
+    in_function = saved_in_function;
+    current_function = saved_function;
+  }
+  log.set_message_handler(handler);
+  if(converted)
+    dest.append(block);
+  return converted;
+}
+
+/// A simple command whose name is an expansion (XCU 2.9.1.1): the name is
+/// expanded first, as one field, and the command is the one of that name
+/// at run time. Each function of the script and each modelled builtin is
+/// a branch that converts the command with that name; a value that names
+/// an unsupported builtin is reported; other values run a utility.
+void shell_convertert::convert_dynamic_simple(
+  const shell_commandt &command,
+  code_blockt &dest)
+{
+  const source_locationt &loc = command.location;
+  if(contains_at(command.words.front()))
+  {
+    // "$@" as a command name runs its first field with the others as
+    // arguments.
+    unsupported(loc, "command name with $@");
+  }
+  const symbol_exprt name = temporary(string_type(), dest, loc);
+  assign(
+    dest,
+    name,
+    expand_word(command.words.front(), shell_word_contextt::FIELD, dest, loc),
+    loc);
+
+  // The names a branch is needed for: the functions and the builtins that
+  // contain the literal text of the word (for $dir/tool, none).
+  std::vector<std::string> literals;
+  for(const auto &part : command.words.front())
+  {
+    const auto text = static_text({part});
+    if(text.has_value() && !text->empty())
+      literals.push_back(*text);
+  }
+  std::set<std::string> names;
+  const auto add_name = [&](const std::string &candidate)
+  {
+    // __CPROVER_assert and __CPROVER_assume are written into scripts for
+    // verification; a shell would look such a name up as a utility.
+    if(candidate.rfind(CPROVER_PREFIX, 0) == 0)
+      return;
+    for(const auto &literal : literals)
+    {
+      if(candidate.find(literal) == std::string::npos)
+        return;
+    }
+    names.insert(candidate);
+  };
+  for(const auto &entry : function_definitions)
+    add_name(entry.first);
+  for(const auto &entry : builtins)
+    add_name(entry.first);
+  for(const auto &builtin : unsupported_builtins)
+    add_name(builtin);
+
+  // A copy of the command with a literal name, for each branch.
+  const auto with_name = [&command](const std::string &text)
+  {
+    shell_commandt copy = command;
+    shell_word_partt part;
+    part.kind = shell_word_partt::kindt::QUOTED_LITERAL;
+    part.text = text;
+    part.location = command.location;
+    copy.words.front() = {part};
+    return copy;
+  };
+
+  // Any other name runs a utility, whose words are only expanded for
+  // their side effects.
+  code_blockt otherwise;
+  convert_non_function(
+    with_name(CPROVER_PREFIX "shell_utility"),
+    shell_command_kindt::EXTERNAL,
+    otherwise);
+  std::vector<std::pair<exprt, code_blockt>> branches;
+  exprt::operandst unsupported_names;
+  std::string unsupported_texts;
+  // Refined strings compare the name with each candidate by its length
+  // and its bytes, read once each: string equalities of one unknown string
+  // with dozens of constants are hard for the string solver.
+  const exprt payload = payload_of(name);
+  const exprt name_length = string_length(name, dest, loc);
+  std::vector<exprt> bytes;
+  if(!native())
+  {
+    std::size_t longest = 0;
+    for(const auto &text : names)
+      longest = std::max(longest, text.size());
+    for(std::size_t i = 0; i < longest; ++i)
+    {
+      bytes.push_back(string_function(
+        ID_cprover_string_char_at_func,
+        {payload, from_integer(i, integer_type())},
+        unsigned_char_type(),
+        dest,
+        loc));
+    }
+  }
+  for(const auto &text : names)
+  {
+    exprt::operandst conditions{
+      equal_exprt{name_length, from_integer(text.size(), integer_type())}};
+    if(native())
+      conditions.push_back(equal(name, string_literal(text, loc), dest, loc));
+    else
+    {
+      for(std::size_t i = 0; i < text.size(); ++i)
+      {
+        conditions.push_back(equal_exprt{
+          bytes[i],
+          from_integer(
+            static_cast<unsigned char>(text[i]), unsigned_char_type())});
+      }
+    }
+    const exprt is_name = conjunction(conditions);
+    code_blockt branch;
+    if(
+      (classify(text) == shell_command_kindt::UNSUPPORTED_BUILTIN &&
+       function_definitions.count(text) == 0) ||
+      !try_convert(
+        [&](code_blockt &block) { convert_simple(with_name(text), block); },
+        branch))
+    {
+      // A builtin that is not supported, or a command that uses something
+      // unsupported with these arguments.
+      unsupported_names.push_back(is_name);
+      unsupported_texts += (unsupported_texts.empty() ? "" : ", ") + text;
+      continue;
+    }
+    branches.emplace_back(is_name, std::move(branch));
+  }
+  if(!unsupported_names.empty())
+  {
+    check(
+      dest,
+      not_exprt{disjunction(unsupported_names)},
+      "shell-unsupported",
+      "the command name " + display(command.words.front()) + " is none of " +
+        unsupported_texts + " (which are not supported here)",
+      loc);
+  }
+  for(auto it = branches.rbegin(); it != branches.rend(); ++it)
+  {
+    code_ifthenelset choice{
+      it->first, std::move(it->second), std::move(otherwise)};
+    otherwise = code_blockt{};
+    add(otherwise, std::move(choice), loc);
+  }
+  dest.append(otherwise);
 }
 
 void shell_convertert::convert_non_function(

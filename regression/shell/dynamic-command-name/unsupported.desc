@@ -1,0 +1,11 @@
+CORE
+unsupported.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] file unsupported.sh line 2 the command name "\$\{1\}" is none of .*eval.*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A command name that may be a builtin that is not supported is reported.

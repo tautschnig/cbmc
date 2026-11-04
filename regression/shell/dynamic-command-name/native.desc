@@ -1,0 +1,11 @@
+CORE
+main.sh
+--shell-strings native --cvc5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+A command name that is an expansion runs the function, builtin, or
+utility that its value names.
