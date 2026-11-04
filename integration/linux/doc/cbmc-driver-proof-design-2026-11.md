@@ -358,6 +358,14 @@ expected. Realistic shape for one driver:
   across drivers, and reusable wholesale between ENA and EFA on the kernel
   side.
 
+**Re-prioritised 2026-11-04.** The Velocity Labs run (179 findings at the
+same commit) shows this ordering was wrong: 61% of their findings are
+error-path-triggered, 21% concurrency-triggered, and lifetime dominates the
+classes, while bounds violations are 7%.  See
+`unveil-reconciliation-2026-11.md`; the order below is superseded by section 6
+of that document, which puts failure injection, the ownership ghost map and
+the full lifecycle automaton ahead of RX and cleanup.
+
 Staging, cheapest first:
 
 1. **Done:** TX path memory safety + API contract, all sequences, real code.
