@@ -991,15 +991,19 @@ use `MapOf`, `ArrayOf` or `ChanOf`, which find the program's types.
   11 MB now) and `date` (1.4 GB, now 43 MB) convert and verify in 6 s
   and 16 s, and the `stdlib-source-math-big` test takes 10 s instead
   of 54 s. Signatures (25,000 entries for `x/text`'s pipeline, 87.5 MB
-  of JSON) are still not shared, and unreachable functions are not
-  pruned in the helper. That is now most of the fixed cost: for a
-  program that calls `reflect.TypeOf` (2.5 s), the helper takes 0.6 s
-  and its 5.2 MB of JSON (1.3 MB of it `math`'s source, 1.2 MB the model
-  of reflect) another 0.6 s to load; conversion and the GOTO passes take
-  0.5 s and symex 0.5 s, half of whose 26,000 steps initialise the bytes
-  of string constants (mostly panic messages of the models) and a third
-  reflect's descriptors (of the method and pointer types only if the
-  program needs them).
+  of JSON) are still not shared. The helper prunes the functions and
+  methods that the program cannot reach (`prune.go`; a method is
+  reachable if reachable code names any method of its name, or all with
+  calls through reflect; `--go-keep-unreachable` keeps them). A program
+  that imports `strconv` takes 0.8 s (helper 0.35 s, 1.4 MB of JSON
+  loaded in 0.15 s, symex 0.2 s), one that calls `reflect.TypeOf` 1.1 s
+  (helper 0.5 s, 1.9 MB loaded in 0.17 s, symex 0.3 s, 15,000 steps,
+  about half of them the bytes of string constants, which field
+  sensitivity initialises one by one). The `encoding/json` round trip
+  takes 9 s: helper 1.3 s (of which `go list` for export data about
+  half), 7.6 MB of JSON loaded in 0.8 s, conversion 0.5 s, the GOTO
+  passes 2.6 s (linking with the C library and function-pointer removal
+  among them) and symex 3.8 s.
 - **Loops in models need bounds**: string comparisons (`--unwindset
   go::cprover/rt.StringEqual.0:N` for long constants), map operations,
   `math.Sqrt` (54 iterations), the word loops of `math/big`,
