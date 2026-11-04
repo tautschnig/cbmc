@@ -20,6 +20,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/c_types.h>
 #include <util/config.h>
 #include <util/cprover_prefix.h>
+#include <util/expr_initializer.h>
 #include <util/expr_iterator.h>
 #include <util/expr_util.h>
 #include <util/format_expr.h>
@@ -36,6 +37,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "dereference_callback.h"
 
+#include <algorithm>
 #include <deque>
 
 /// Returns true if \p expr is complicated enough that a local definition (using
@@ -224,10 +226,46 @@ exprt value_set_dereferencet::handle_dereference_base_case(
     dereference_callback.get_value_set(pointer);
 
   // get the values of these
-  const std::vector<exprt> retained_values =
-    make_range(points_to_set).filter([&](const exprt &value) {
-      return !should_ignore_value(value, exclude_null_derefs, language_mode);
-    });
+  std::vector<exprt> retained_values =
+    make_range(points_to_set)
+      .filter(
+        [&](const exprt &value) {
+          return !should_ignore_value(
+            value, exclude_null_derefs, language_mode);
+        });
+
+  if(typed_dereference)
+  {
+    // Only objects of the dereferenced type, at offset 0, are possible on
+    // feasible paths; unknown values keep the dereference general.
+    const bool unknown = std::any_of(
+      retained_values.begin(),
+      retained_values.end(),
+      [](const exprt &value)
+      { return value.id() == ID_unknown || value.id() == ID_invalid; });
+    if(!unknown)
+    {
+      std::vector<exprt> typed;
+      for(const exprt &value : retained_values)
+      {
+        const auto &o = to_object_descriptor_expr(value);
+        if(
+          o.root_object().id() != ID_null_object && o.offset() == 0 &&
+          dereference_type_compare(o.object().type(), type, ns))
+        {
+          typed.push_back(value);
+        }
+      }
+      if(typed.empty())
+      {
+        auto zero = zero_initializer(type, pointer.source_location(), ns);
+        if(zero.has_value())
+          return *zero;
+      }
+      else
+        retained_values = std::move(typed);
+    }
+  }
 
   exprt compare_against_pointer = pointer;
 

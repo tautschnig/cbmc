@@ -111,9 +111,15 @@ typet go_convertert::convert_type_of_basic(const std::string &kind)
 
 exprt go_convertert::unbox(const exprt &iface, const typet &type)
 {
-  return dereference_exprt{typecast_exprt{
+  // Unboxing is only reached (or its value used) where the dynamic type of
+  // iface is the type: its data then points to the start of an object of
+  // that type (see box), and goto-symex may drop the other objects of the
+  // pointer's value set, of the dynamic types of the other paths.
+  dereference_exprt result{typecast_exprt{
     iface_field(iface, "data"),
     pointer_typet{type, config.ansi_c.pointer_width}}};
+  result.set(ID_C_typed_dereference, true);
+  return std::move(result);
 }
 
 void declare_generated(

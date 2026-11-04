@@ -48,6 +48,16 @@ public:
 
   virtual ~value_set_dereferencet() { }
 
+  /// Dereference only objects of the type the pointer points to (see
+  /// ID_C_typed_dereference): the front-end guarantees that, wherever the
+  /// dereference is reached on a feasible path, the pointer points to the
+  /// start of an object of that type. Elsewhere (no such object in the
+  /// value set) the value is the zero value of the type.
+  void set_typed_dereference(bool typed)
+  {
+    typed_dereference = typed;
+  }
+
   /// Dereference the given pointer-expression. Any errors are
   /// reported to the callback method given in the constructor.
   /// \param pointer: A pointer-typed expression, to be dereferenced.
@@ -105,6 +115,7 @@ private:
   /// Flag indicating whether `value_set_dereferencet::dereference` should
   /// disregard an apparent attempt to dereference NULL
   const bool exclude_null_derefs;
+  bool typed_dereference = false;
   message_handlert &message_handler;
   valuet get_failure_value(const exprt &pointer, const typet &type);
   exprt handle_dereference_base_case(
