@@ -982,14 +982,24 @@ use `MapOf`, `ArrayOf` or `ChanOf`, which find the program's types.
   JSON, 1.5 s; `math/big`: 11 MB, 11 s, after sharing the entries of
   identical composite types in the helper, which made it 152 MB and
   29 s before). The helper sends array and slice literals of at least 16
-  integer or boolean constants as lists of values (`_cvals`) and omits
-  the operands of constant expressions, so generated tables are cheap:
+  constants (integers, booleans, floating-point numbers, and structs and
+  arrays of those) as lists of values (`_cvals`) and omits the operands
+  of constant expressions, so generated tables are cheap
+  (`internal/strconv`'s `pow10Tab` made every program importing
+  `strconv` take 5.2 s, now 1.5 s):
   the `x/text` harnesses for `unicode/runenames` (628 MB of JSON before,
   11 MB now) and `date` (1.4 GB, now 43 MB) convert and verify in 6 s
   and 16 s, and the `stdlib-source-math-big` test takes 10 s instead
   of 54 s. Signatures (25,000 entries for `x/text`'s pipeline, 87.5 MB
   of JSON) are still not shared, and unreachable functions are not
-  pruned in the helper.
+  pruned in the helper. That is now most of the fixed cost: for a
+  program that calls `reflect.TypeOf` (2.5 s), the helper takes 0.6 s
+  and its 5.2 MB of JSON (1.3 MB of it `math`'s source, 1.2 MB the model
+  of reflect) another 0.6 s to load; conversion and the GOTO passes take
+  0.5 s and symex 0.5 s, half of whose 26,000 steps initialise the bytes
+  of string constants (mostly panic messages of the models) and a third
+  reflect's descriptors (of the method and pointer types only if the
+  program needs them).
 - **Loops in models need bounds**: string comparisons (`--unwindset
   go::cprover/rt.StringEqual.0:N` for long constants), map operations,
   `math.Sqrt` (54 iterations), the word loops of `math/big`,
