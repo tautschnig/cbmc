@@ -572,6 +572,9 @@ in scope), then DMA ownership (no CPU read of a buffer the device owns).
 
 ### 8.5a Root cause of the assigns-clause cost (measured)
 
+Full write-up with environment, build instructions, raw output and threats to
+validity: **`dfcc-assigns-performance-2026-11.md`**. Summary below.
+
 "Assigns clauses are slow" is folklore; this pins it down. Benchmark:
 `proof/cbmc-limitations/dfcc_assigns_scaling.sh`, each block varying one
 dimension with everything else fixed.
