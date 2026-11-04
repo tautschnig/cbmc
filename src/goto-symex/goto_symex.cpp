@@ -49,7 +49,10 @@ void goto_symext::symex_assign(
   // An assignment of a value of size zero (an empty struct, or an array of
   // no elements) has no effect. Dereferencing a pointer to such an object
   // may even yield a constant rather than an lvalue.
+  const irep_idt &lhs_type_id = lhs.type().id();
   if(
+    (lhs_type_id == ID_struct || lhs_type_id == ID_struct_tag ||
+     lhs_type_id == ID_array) &&
     rhs.id() != ID_side_effect &&
     pointer_offset_bits(lhs.type(), ns) == mp_integer{0})
   {
