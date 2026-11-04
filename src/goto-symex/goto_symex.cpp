@@ -46,6 +46,16 @@ void goto_symext::symex_assign(
   exprt lhs = clean_expr(o_lhs, state, true);
   exprt rhs = clean_expr(o_rhs, state, false);
 
+  // An assignment of a value of size zero (an empty struct, or an array of
+  // no elements) has no effect. Dereferencing a pointer to such an object
+  // may even yield a constant rather than an lvalue.
+  if(
+    rhs.id() != ID_side_effect &&
+    pointer_offset_bits(lhs.type(), ns) == mp_integer{0})
+  {
+    return;
+  }
+
   DATA_INVARIANT_WITH_DIAGNOSTICS(
     lhs.type() == rhs.type(),
     "assignments must be type consistent, got",

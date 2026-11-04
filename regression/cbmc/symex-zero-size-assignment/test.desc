@@ -1,0 +1,14 @@
+CORE
+main.c
+
+^EXIT=0$
+^SIGNAL=0$
+^\[main\.assertion\.1\] line 14 reached: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+not handled
+--
+An assignment of a value of size zero has no effect; dereferencing a
+pointer to an object of size zero may yield a constant, which goto-symex
+must not treat as an lvalue.

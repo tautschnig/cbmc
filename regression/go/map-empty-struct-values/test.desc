@@ -1,0 +1,12 @@
+CORE
+main.go
+--unwind 4
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 13 set: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 18 slice: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+stores of values of size zero (map[K]struct{} and []struct{})
