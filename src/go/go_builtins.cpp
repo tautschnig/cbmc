@@ -1429,16 +1429,45 @@ exprt go_convertert::convert_constant_array_lit(
           .base_type()
       : to_array_type(type).element_type();
   const auto &values = go_list(lit, "_cvals");
+  // A value: a number ("b" and the IEEE 754 bits for floating-point
+  // types), a Boolean, or the list of the elements or fields of an array
+  // or a struct (see the helper's constantArray).
+  std::function<exprt(const irept &, const typet &)> value_of =
+    [&](const irept &value, const typet &type) -> exprt
+  {
+    const typet &followed = go_follow(ns, type);
+    if(followed.id() == ID_struct || followed.id() == ID_array)
+    {
+      const auto &items = value.get_sub();
+      exprt::operandst operands;
+      if(followed.id() == ID_struct)
+      {
+        const auto &components = to_struct_type(followed).components();
+        for(std::size_t i = 0; i < components.size(); ++i)
+          operands.push_back(value_of(items.at(i), components[i].type()));
+        return struct_exprt{std::move(operands), type};
+      }
+      const typet &item_type = to_array_type(followed).element_type();
+      for(const auto &item : items)
+        operands.push_back(value_of(item, item_type));
+      return array_exprt{std::move(operands), to_array_type(type)};
+    }
+    const std::string &text = value.id_string();
+    if(text == "true" || text == "false")
+      return from_integer(text == "true" ? 1 : 0, type);
+    if(!text.empty() && text[0] == 'b')
+    {
+      return constant_exprt{
+        integer2bvrep(
+          string2integer(text.substr(1)), to_floatbv_type(type).get_width()),
+        type};
+    }
+    return from_integer(string2integer(text), type);
+  };
   exprt::operandst elements;
   elements.reserve(values.size());
   for(const auto &value : values)
-  {
-    const std::string &text = value.id_string();
-    if(text == "true" || text == "false")
-      elements.push_back(from_integer(text == "true" ? 1 : 0, element));
-    else
-      elements.push_back(from_integer(string2integer(text), element));
-  }
+    elements.push_back(value_of(value, element));
   const array_typet array_type{
     element, from_integer(values.size(), c_index_type())};
   array_exprt array{std::move(elements), array_type};

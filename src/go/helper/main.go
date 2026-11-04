@@ -1556,10 +1556,13 @@ func main() {
 }
 
 // constantArray encodes an array or slice literal whose elements are
-// integer or boolean constants (e.g., generated tables) as the list of
-// their values, "_cvals", without element nodes: its length in elements
-// (the array's, or the slice's maximum index plus one), with "0" (false)
-// for missing elements. Nil if the literal is not such.
+// constants of integer, boolean or floating-point types, or arrays or
+// structs of such (e.g., generated tables), as the list of their values,
+// "_cvals", without element nodes: its length in elements (the array's,
+// or the slice's maximum index plus one), with zero values for missing
+// elements. An element of array or struct type is the list of its
+// elements or fields; a floating-point value is "b" and its IEEE 754 bits
+// (see floatConstant). Nil if the literal is not such.
 func (e *encoder) constantArray(c *ast.CompositeLit) map[string]any {
 	const minElements = 16 // smaller literals are encoded as usual
 	tv, ok := e.info.Types[c]
@@ -1577,50 +1580,22 @@ func (e *encoder) constantArray(c *ast.CompositeLit) map[string]any {
 	default:
 		return nil
 	}
-	b, ok := elem.Underlying().(*types.Basic)
-	if !ok || b.Info()&(types.IsInteger|types.IsBoolean) == 0 {
+	if !constantEncodable(elem, 0) {
 		return nil
 	}
-	values := map[int64]string{}
-	next, maxIndex := int64(0), int64(-1)
-	for _, el := range c.Elts {
-		v := el
-		if kv, ok := el.(*ast.KeyValueExpr); ok {
-			kt, ok := e.info.Types[kv.Key]
-			if !ok || kt.Value == nil {
-				return nil
-			}
-			i, ok := constant.Int64Val(constant.ToInt(kt.Value))
-			if !ok {
-				return nil
-			}
-			next, v = i, kv.Value
-		}
-		vt, ok := e.info.Types[v]
-		if !ok || vt.Value == nil {
-			return nil
-		}
-		if b.Info()&types.IsBoolean != 0 {
-			values[next] = strconv.FormatBool(constant.BoolVal(vt.Value))
-		} else {
-			values[next] = constant.ToInt(vt.Value).ExactString()
-		}
-		maxIndex = max(maxIndex, next)
-		next++
+	values, n, ok := e.constantElements(c, elem)
+	if !ok {
+		return nil
 	}
 	if length < 0 {
-		length = maxIndex + 1
-	}
-	zero := "0"
-	if b.Info()&types.IsBoolean != 0 {
-		zero = "false"
+		length = n
 	}
 	cvals := make([]any, length)
 	for i := range cvals {
 		if v, ok := values[int64(i)]; ok {
 			cvals[i] = v
 		} else {
-			cvals[i] = zero
+			cvals[i] = constantZero(elem)
 		}
 	}
 	out := map[string]any{"_k": "CompositeLit", "_t": e.typ(t),
@@ -1629,4 +1604,165 @@ func (e *encoder) constantArray(c *ast.CompositeLit) map[string]any {
 		out["_p"] = []int{e.fileIdx[p.Filename], p.Line, p.Column}
 	}
 	return out
+}
+
+// constantEncodable reports whether values of type t can be sent as
+// constants by constantArray: integers, booleans, floating-point numbers,
+// and arrays and structs of those (to a small depth).
+func constantEncodable(t types.Type, depth int) bool {
+	if depth > 3 {
+		return false
+	}
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		return u.Info()&(types.IsInteger|types.IsBoolean|types.IsFloat) != 0 &&
+			u.Info()&types.IsUntyped == 0
+	case *types.Array:
+		return u.Len() <= 64 && constantEncodable(u.Elem(), depth+1)
+	case *types.Struct:
+		for i := 0; i < u.NumFields(); i++ {
+			if !constantEncodable(u.Field(i).Type(), depth+1) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// constantZero is the encoding of the zero value of t (see constantArray).
+func constantZero(t types.Type) any {
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		switch {
+		case u.Info()&types.IsBoolean != 0:
+			return "false"
+		case u.Info()&types.IsFloat != 0:
+			return "b0"
+		}
+		return "0"
+	case *types.Array:
+		list := make([]any, u.Len())
+		for i := range list {
+			list[i] = constantZero(u.Elem())
+		}
+		return list
+	case *types.Struct:
+		list := make([]any, u.NumFields())
+		for i := range list {
+			list[i] = constantZero(u.Field(i).Type())
+		}
+		return list
+	}
+	return nil
+}
+
+// constantElements returns the encoded elements of the array or slice
+// literal c with elements of type elem, by index, and the number of
+// elements (the maximum index plus one).
+func (e *encoder) constantElements(c *ast.CompositeLit, elem types.Type) (map[int64]any, int64, bool) {
+	values := map[int64]any{}
+	next, maxIndex := int64(0), int64(-1)
+	for _, el := range c.Elts {
+		v := el
+		if kv, ok := el.(*ast.KeyValueExpr); ok {
+			kt, ok := e.info.Types[kv.Key]
+			if !ok || kt.Value == nil {
+				return nil, 0, false
+			}
+			i, ok := constant.Int64Val(constant.ToInt(kt.Value))
+			if !ok {
+				return nil, 0, false
+			}
+			next, v = i, kv.Value
+		}
+		value, ok := e.constantValue(v, elem)
+		if !ok {
+			return nil, 0, false
+		}
+		values[next] = value
+		maxIndex = max(maxIndex, next)
+		next++
+	}
+	return values, maxIndex + 1, true
+}
+
+// constantValue encodes expression x of type t (see constantArray).
+func (e *encoder) constantValue(x ast.Expr, t types.Type) (any, bool) {
+	x = ast.Unparen(x)
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		tv, ok := e.info.Types[x]
+		if !ok || tv.Value == nil {
+			return nil, false
+		}
+		switch {
+		case u.Info()&types.IsBoolean != 0:
+			return strconv.FormatBool(constant.BoolVal(tv.Value)), true
+		case u.Info()&types.IsFloat != 0:
+			if u.Kind() == types.Float32 {
+				f, _ := constant.Float32Val(constant.ToFloat(tv.Value))
+				return "b" + strconv.FormatUint(uint64(math.Float32bits(f)), 10), true
+			}
+			f, _ := constant.Float64Val(constant.ToFloat(tv.Value))
+			return "b" + strconv.FormatUint(math.Float64bits(f), 10), true
+		}
+		return constant.ToInt(tv.Value).ExactString(), true
+	case *types.Array:
+		lit, ok := x.(*ast.CompositeLit)
+		if !ok {
+			return nil, false
+		}
+		values, _, ok := e.constantElements(lit, u.Elem())
+		if !ok {
+			return nil, false
+		}
+		list := make([]any, u.Len())
+		for i := range list {
+			if v, ok := values[int64(i)]; ok {
+				list[i] = v
+			} else {
+				list[i] = constantZero(u.Elem())
+			}
+		}
+		return list, true
+	case *types.Struct:
+		lit, ok := x.(*ast.CompositeLit)
+		if !ok {
+			return nil, false
+		}
+		list := make([]any, u.NumFields())
+		for i := range list {
+			list[i] = constantZero(u.Field(i).Type())
+		}
+		for i, el := range lit.Elts {
+			field, v := i, el
+			if kv, ok := el.(*ast.KeyValueExpr); ok {
+				id, ok := kv.Key.(*ast.Ident)
+				if !ok {
+					return nil, false
+				}
+				field = -1
+				for j := 0; j < u.NumFields(); j++ {
+					if u.Field(j).Name() == id.Name {
+						field = j
+					}
+				}
+				if field < 0 {
+					return nil, false
+				}
+				v = kv.Value
+			}
+			if field >= u.NumFields() {
+				return nil, false
+			}
+			value, ok := e.constantValue(v, u.Field(field).Type())
+			if !ok {
+				return nil, false
+			}
+			list[field] = value
+		}
+		return list, true
+	}
+	return nil, false
 }
