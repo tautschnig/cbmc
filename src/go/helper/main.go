@@ -181,6 +181,10 @@ type encoder struct {
 	namedTypes   []types.Type // the types named by typeName,
 	typeNames    []string     // and their names
 	usedNames    map[string]bool
+	reflectUsed  []string // see reflectUses
+	// The entries that reflectInfo adds, and their depth (see
+	// derivedType).
+	reflectDerived map[int]int
 }
 
 // An instance of a generic function or method (Go1.27 §Instantiations),
@@ -1392,7 +1396,7 @@ func main() {
 		aliases:      map[types.Object]string{},
 		selObj:       map[*ast.Ident]types.Object{},
 		selPath:      map[*ast.SelectorExpr]selPath{},
-		usedNames:    map[string]bool{}}
+		usedNames:    map[string]bool{}, reflectDerived: map[int]int{}}
 	var files []*ast.File
 	var names []string
 	failed := false
@@ -1512,7 +1516,8 @@ func main() {
 	doc := map[string]any{"version": 1, "go_version": runtime.Version(),
 		"goarch": *goarch, "package": pkg.Path(), "files": names,
 		"asts": asts, "types": enc.types, "objects": enc.objects,
-		"packages": packages, "compiler": hostCompiler(filepath.Dir(names[0]))}
+		"packages": packages, "compiler": hostCompiler(filepath.Dir(names[0])),
+		"reflect_uses": enc.reflectUses()}
 
 	w := os.Stdout
 	if *out != "" {

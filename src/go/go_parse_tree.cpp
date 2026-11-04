@@ -116,6 +116,11 @@ bool go_parse_treet::load_json(
   compiler = json["compiler"]["name"].value;
   compiler_version = json["compiler"]["version"].value;
   goarch = json["goarch"].value;
+  if(json["reflect_uses"].is_array())
+  {
+    for(const auto &use : to_json_array(json["reflect_uses"]))
+      reflect_uses.insert(use.value);
+  }
   package = json["package"].value;
   for(const auto &f : to_json_array(json["files"]))
     files.push_back(f.value);
@@ -150,6 +155,7 @@ void go_parse_treet::clear()
   compiler.clear();
   compiler_version.clear();
   goarch.clear();
+  reflect_uses.clear();
   package.clear();
   files.clear();
   asts.clear();

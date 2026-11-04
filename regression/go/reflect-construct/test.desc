@@ -1,0 +1,15 @@
+CORE
+main.go
+--unwind 14
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 14 slice of: SUCCESS$
+^\[go::main\.main\.assertion\.3\] line 18 make slice of: SUCCESS$
+^\[go::main\.main\.assertion\.4\] line 20 map of: SUCCESS$
+^\[go::main\.main\.assertion\.5\] line 22 array of: SUCCESS$
+^\[go::main\.main\.assertion\.7\] line 27 shares the array: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+reflect: SliceOf, MapOf, ArrayOf and slices of arrays

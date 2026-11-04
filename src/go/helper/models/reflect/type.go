@@ -260,33 +260,55 @@ func PointerTo(t Type) Type {
 	return p
 }
 
-// SliceOf returns the slice type with element type t.
+// SliceOf returns the slice type with element type t. The model has
+// the slice types of the described types (see the helper's reflectInfo).
 func SliceOf(t Type) Type {
-	rt.Unsupported("reflect.SliceOf")
-	return nil
+	s := sliceOf(t.common())
+	if s == nil {
+		rt.Unsupported("reflect.SliceOf of a type whose slice type the model does not describe")
+	}
+	return s
 }
 
-// MapOf returns the map type with the given key and element types.
+// MapOf returns the map type with the given key and element types (if the
+// program has it).
 func MapOf(key, elem Type) Type {
-	rt.Unsupported("reflect.MapOf")
-	return nil
+	k := key.common()
+	if !k.comparable {
+		panic("reflect.MapOf: invalid key type " + k.str)
+	}
+	m := mapOf(k, elem.common())
+	if m == nil {
+		rt.Unsupported("reflect.MapOf of a map type that the program does not have")
+	}
+	return m
 }
 
-// ArrayOf returns the array type with the given length and element type.
+// ArrayOf returns the array type with the given length and element type
+// (if the program has it).
 func ArrayOf(length int, elem Type) Type {
-	rt.Unsupported("reflect.ArrayOf")
-	return nil
+	if length < 0 {
+		panic("reflect: negative length passed to ArrayOf")
+	}
+	a := arrayOf(length, elem.common())
+	if a == nil {
+		rt.Unsupported("reflect.ArrayOf of an array type that the program does not have")
+	}
+	return a
 }
 
 // ChanOf returns the channel type with the given direction and element
-// type.
+// type (if the program has it).
 func ChanOf(dir ChanDir, t Type) Type {
-	rt.Unsupported("reflect.ChanOf")
-	return nil
+	c := chanOf(dir, t.common())
+	if c == nil {
+		rt.Unsupported("reflect.ChanOf of a channel type that the program does not have")
+	}
+	return c
 }
 
 // FuncOf returns the function type with the given argument and result
-// types.
+// types (not modelled).
 func FuncOf(in, out []Type, variadic bool) Type {
 	rt.Unsupported("reflect.FuncOf")
 	return nil

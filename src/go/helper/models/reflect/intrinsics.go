@@ -69,3 +69,10 @@ func pointerAt(t int32, p unsafe.Pointer) unsafe.Pointer
 
 // setPointer sets the pointer at p (of a pointer type) to q.
 func setPointer(t int32, p unsafe.Pointer, q unsafe.Pointer)
+
+// sliceOf, mapOf, arrayOf and chanOf return the descriptor of the
+// described type of that kind with these components, or nil.
+func sliceOf(elem *rtype) *rtype
+func mapOf(key, elem *rtype) *rtype
+func arrayOf(n int, elem *rtype) *rtype
+func chanOf(dir ChanDir, elem *rtype) *rtype

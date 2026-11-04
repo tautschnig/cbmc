@@ -876,26 +876,43 @@ func (v Value) Slice(i, j int) Value {
 		*(*string)(cell) = s[i:j]
 		return Value{v.typ_, cell, v.flag & flagRO}
 	case Array:
-		rt.Unsupported("reflect.Value.Slice of an array")
+		if v.flag&flagAddr == 0 {
+			panic("reflect.Value.Slice: slice of unaddressable array")
+		}
+		if i < 0 || j < i || j > v.typ_.len {
+			panic("reflect.Value.Slice: slice index out of bounds")
+		}
+		st := SliceOf(v.typ_.elem).common()
+		cell := alloc(st.tid)
+		setSlice(st.tid, cell, element(v.ptr, v.typ_.elem, i), j-i, v.typ_.len-i)
+		return Value{st, cell, v.flag & flagRO}
 	}
 	panic(&ValueError{"reflect.Value.Slice", v.kind()})
 }
 
 // Slice3 is the 3-index form of the slice operation: it returns v[i:j:k].
 func (v Value) Slice3(i, j, k int) Value {
-	if v.kind() != Slice {
-		if v.kind() == Array {
-			rt.Unsupported("reflect.Value.Slice3 of an array")
+	st := v.typ_
+	var data unsafe.Pointer
+	var c int
+	switch v.kind() {
+	case Slice:
+		data, _, c = sliceHeader(v.typ_.tid, v.ptr)
+	case Array:
+		if v.flag&flagAddr == 0 {
+			panic("reflect.Value.Slice3: slice of unaddressable array")
 		}
+		st = SliceOf(v.typ_.elem).common()
+		data, c = v.ptr, v.typ_.len
+	default:
 		panic(&ValueError{"reflect.Value.Slice3", v.kind()})
 	}
-	data, _, c := sliceHeader(v.typ_.tid, v.ptr)
 	if i < 0 || j < i || k < j || k > c {
 		panic("reflect.Value.Slice3: slice index out of bounds")
 	}
-	cell := alloc(v.typ_.tid)
-	setSlice(v.typ_.tid, cell, element(data, v.typ_.elem, i), j-i, k-i)
-	return Value{v.typ_, cell, v.flag & flagRO}
+	cell := alloc(st.tid)
+	setSlice(st.tid, cell, element(data, v.typ_.elem, i), j-i, k-i)
+	return Value{st, cell, v.flag & flagRO}
 }
 
 // grown returns the slice v with n more elements (zero ones), sharing the

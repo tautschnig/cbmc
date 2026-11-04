@@ -39,6 +39,7 @@ Author: Michael Tautschnig
 
 #include <iosfwd>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -58,6 +59,9 @@ public:
   std::string compiler_version;
   /// Target architecture the package was type-checked for, e.g. "amd64".
   std::string goarch;
+  /// The functions and methods of package reflect that the program uses
+  /// ("SliceOf", "Value.Call", ...; see the helper's reflectUses).
+  std::set<std::string> reflect_uses;
   /// Package path, "main" for a program.
   std::string package;
   /// Absolute paths of the package's files, indexed by position records.

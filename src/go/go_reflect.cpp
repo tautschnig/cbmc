@@ -98,6 +98,21 @@ static unsigned reflect_kind(const irept &under)
   return 0;
 }
 
+/// The methods \p list (of a method set or an interface) sorted by name,
+/// as the descriptors list them.
+static std::vector<const irept *> sorted_methods(const irept::subt &list)
+{
+  std::vector<const irept *> sorted;
+  for(const auto &m : list)
+    sorted.push_back(&m);
+  std::stable_sort(
+    sorted.begin(),
+    sorted.end(),
+    [](const irept *a, const irept *b)
+    { return a->get_string("name") < b->get_string("name"); });
+  return sorted;
+}
+
 /// The value of struct type \p type with components \p values (by name),
 /// the others zero.
 static exprt struct_value(
@@ -306,14 +321,7 @@ exprt go_convertert::reflect_descriptor(
     const bool is_interface = under.get("k") == "interface";
     const auto &list =
       is_interface ? go_list(under, "methods") : go_list(entry, "mset");
-    std::vector<const irept *> sorted;
-    for(const auto &m : list)
-      sorted.push_back(&m);
-    std::stable_sort(
-      sorted.begin(),
-      sorted.end(),
-      [](const irept *a, const irept *b)
-      { return a->get_string("name") < b->get_string("name"); });
+    const std::vector<const irept *> sorted = sorted_methods(list);
     exprt::operandst methods;
     for(const irept *m : sorted)
     {
@@ -357,36 +365,77 @@ void go_convertert::finish_reflect()
     if(!index.empty())
       work.push_back(type_converter.type_id(index));
   };
-  while(!work.empty())
+  // With reflect.MapOf, ArrayOf, ChanOf or SliceOf, also the types of the
+  // program that these may return: those of the kind whose element (and
+  // key) types are described (see constructed below).
+  const auto uses = [&](const char *name)
+  { return parse_tree.reflect_uses.count(name) != 0; };
+  std::set<irep_idt> constructed_kinds;
+  if(uses("MapOf"))
+    constructed_kinds.insert("map");
+  if(uses("ArrayOf"))
+    constructed_kinds.insert("array");
+  if(uses("ChanOf"))
+    constructed_kinds.insert("chan");
+  if(uses("SliceOf") || uses("Value.Slice") || uses("Value.Slice3"))
+    constructed_kinds.insert("slice");
+  const auto is_described = [&](const irep_idt &index)
   {
-    const std::size_t tid = work.back();
-    work.pop_back();
-    if(described.count(tid) != 0)
-      continue;
-    const irep_idt index = type_converter.type_index(tid);
-    const irept &entry = parse_tree.type_entry(index);
-    if(entry.get("rstr").empty() && entry.get("size").empty())
-      continue; // not a type of values (see the helper's reflectInfo)
-    const typet type = type_converter(index);
-    if(type.is_nil())
-      continue;
-    described.emplace(tid, type);
-    const irept &under = type_converter.underlying(index);
-    add(under.get("elem"));
-    add(under.get("key"));
-    for(const auto &f : go_list(under, "fields"))
-      add(f.get("type"));
-    for(const char *which : {"params", "results"})
-      for(const auto &item : go_list(under, which))
-        add(item.get("type"));
-    for(const auto &m : go_list(under, "methods"))
-      add(m.get("type"));
-    for(const auto &m : go_list(entry, "mset"))
-      add(m.get("type"));
-    if(under.get("k") != "pointer")
-      add(entry.get("ptr"));
-    if(entry.get("k") == "named")
-      add(entry.get("under"));
+    return index.empty() || described.count(type_converter.type_id(index)) != 0;
+  };
+  for(bool more = true; more;)
+  {
+    more = false;
+    while(!work.empty())
+    {
+      const std::size_t tid = work.back();
+      work.pop_back();
+      if(described.count(tid) != 0)
+        continue;
+      const irep_idt index = type_converter.type_index(tid);
+      const irept &entry = parse_tree.type_entry(index);
+      if(entry.get("rstr").empty() && entry.get("size").empty())
+        continue; // not a type of values (see the helper's reflectInfo)
+      const typet type = type_converter(index);
+      if(type.is_nil())
+        continue;
+      described.emplace(tid, type);
+      const irept &under = type_converter.underlying(index);
+      add(under.get("elem"));
+      add(under.get("key"));
+      for(const auto &f : go_list(under, "fields"))
+        add(f.get("type"));
+      for(const char *which : {"params", "results"})
+        for(const auto &item : go_list(under, which))
+          add(item.get("type"));
+      for(const auto &m : go_list(under, "methods"))
+        add(m.get("type"));
+      for(const auto &m : go_list(entry, "mset"))
+        add(m.get("type"));
+      if(under.get("k") != "pointer")
+        add(entry.get("ptr"));
+      if(entry.get("k") == "named")
+        add(entry.get("under"));
+      add(entry.get("slice"));
+    }
+    if(constructed_kinds.empty())
+      break;
+    for(std::size_t i = 0; i < parse_tree.types.size(); ++i)
+    {
+      const irep_idt index = std::to_string(i);
+      const std::size_t tid = type_converter.type_id(index);
+      if(described.count(tid) != 0 || type_converter.type_index(tid) != index)
+        continue;
+      const irept &entry = parse_tree.type_entry(index);
+      const irep_idt &k = entry.get("k");
+      if(
+        constructed_kinds.count(k) != 0 && is_described(entry.get("elem")) &&
+        is_described(entry.get("key")))
+      {
+        work.push_back(tid);
+        more = true;
+      }
+    }
   }
 
   // The descriptors (declared first: they refer to each other).
@@ -487,6 +536,69 @@ void go_convertert::finish_reflect()
         code_frontend_returnt{null_pointer_exprt{to_pointer_type(result)}});
       function->value = std::move(body);
     }
+  }
+  // sliceOf(e) *rtype, mapOf(k, e), arrayOf(n, e), chanOf(dir, e): the
+  // descriptor of the described type of that kind with these components,
+  // or nil.
+  const auto descriptor_of = [&](std::size_t tid) -> exprt {
+    return address_of_exprt{symbol_exprt{descriptor_id(tid), rtype}};
+  };
+  const auto component_descriptor = [&](const irept &entry, const char *field)
+  { return descriptor_of(type_converter.type_id(entry.get(field))); };
+  for(const char *kind : {"slice", "map", "array", "chan"})
+  {
+    const irep_idt id = "go::reflect." + std::string{kind} + "Of";
+    symbolt *function = symbol_table.get_writeable(id);
+    if(function == nullptr || function->value.is_not_nil())
+      continue;
+    const std::vector<exprt> params = parameter_symbols(*function);
+    const typet result = to_code_type(function->type).return_type();
+    code_blockt body;
+    for(const auto &d : described)
+    {
+      const irep_idt index = type_converter.type_index(d.first);
+      const irept &entry = parse_tree.type_entry(index);
+      if(entry.get("k") != kind)
+        continue;
+      exprt::operandst conditions;
+      const exprt &elem = params.back();
+      conditions.push_back(equal_exprt{
+        elem,
+        typecast_exprt::conditional_cast(
+          component_descriptor(entry, "elem"), elem.type())});
+      if(std::string{kind} == "map")
+      {
+        conditions.push_back(equal_exprt{
+          params[0],
+          typecast_exprt::conditional_cast(
+            component_descriptor(entry, "key"), params[0].type())});
+      }
+      else if(std::string{kind} == "array")
+      {
+        conditions.push_back(equal_exprt{
+          params[0],
+          from_integer(
+            string2integer(entry.get_string("len")), params[0].type())});
+      }
+      else if(std::string{kind} == "chan")
+      {
+        const irep_idt &dir = entry.get("dir");
+        conditions.push_back(equal_exprt{
+          params[0],
+          from_integer(
+            dir == "recv"   ? 1
+            : dir == "send" ? 2
+                            : 3,
+            params[0].type())});
+      }
+      body.add(code_ifthenelset{
+        conjunction(std::move(conditions)),
+        code_frontend_returnt{
+          typecast_exprt::conditional_cast(descriptor_of(d.first), result)}});
+    }
+    body.add(
+      code_frontend_returnt{null_pointer_exprt{to_pointer_type(result)}});
+    function->value = std::move(body);
   }
   // ifaceType(i any) int32, ifaceData(i any) unsafe.Pointer.
   for(const char *name : {"go::reflect.ifaceType", "go::reflect.ifaceData"})
