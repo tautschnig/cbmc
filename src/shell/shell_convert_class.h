@@ -440,11 +440,11 @@ private:
   // ----------------------------------------------------------------
   // Strings (shell_convert_strings.cpp)
   //
-  // The operations below are written for each representation. Bounded
-  // strings call the C runtime; refined strings emit `cprover_string_*`
-  // applications whose results are fresh temporaries, so that each
-  // execution of an operation (in a loop or a function called twice)
-  // constrains new symbols; native strings are SMT-LIB String terms.
+  // The operations below are written for each representation. Refined
+  // strings emit `cprover_string_*` applications whose results are fresh
+  // temporaries, so that each execution of an operation (in a loop or a
+  // function called twice) constrains new symbols; native strings are
+  // SMT-LIB String terms.
 
   exprt string_literal(const std::string &text, const source_locationt &loc);
 
@@ -1113,6 +1113,10 @@ private:
   /// Run \p convert into \p dest, and return whether it converted: an
   /// unsupported construct leaves \p dest, and the state of the
   /// conversion, as they were, without reporting it.
+  /// The command builtin (XCU command): -v and -V, and running a builtin
+  /// or utility rather than a function.
+  void
+  convert_command_builtin(const shell_commandt &command, code_blockt &dest);
   /// eval (XCU 2.15 eval).
   void convert_eval(const shell_commandt &command, code_blockt &dest);
   /// The value of \p word if it is known during conversion: literal text,

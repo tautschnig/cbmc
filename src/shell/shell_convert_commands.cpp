@@ -753,6 +753,11 @@ void shell_convertert::convert_simple(
     convert_eval(command, dest);
     return;
   }
+  if(*name == "command" && function_definitions.count(*name) == 0)
+  {
+    convert_command_builtin(command, dest);
+    return;
+  }
   if(function_definitions.count(*name) == 0)
   {
     convert_non_function(command, kind, dest);
@@ -986,8 +991,10 @@ void shell_convertert::convert_dynamic_simple(
     const exprt is_name = conjunction(conditions);
     code_blockt branch;
     known_literals = before_dispatch;
+    // eval and command are converted by convert_simple.
     if(
       (classify(text) == shell_command_kindt::UNSUPPORTED_BUILTIN &&
+       text != "eval" && text != "command" &&
        function_definitions.count(text) == 0) ||
       !try_convert(
         [&](code_blockt &block) { convert_simple(with_name(text), block); },

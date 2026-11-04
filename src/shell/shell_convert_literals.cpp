@@ -110,7 +110,8 @@ void shell_convertert::collect_assigned(
     "source",
     "let",
     "mapfile",
-    "readarray"};
+    "readarray",
+    "command"};
   for(const auto &command : list)
   {
     // Subshells, pipelines and asynchronous lists do not change the

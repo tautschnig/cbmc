@@ -1,6 +1,7 @@
 SRC = shell_arith.cpp \
       shell_ast.cpp \
       shell_convert_arith.cpp \
+      shell_convert_command.cpp \
       shell_convert_commands.cpp \
       shell_convert_literals.cpp \
       shell_convert_dot.cpp \

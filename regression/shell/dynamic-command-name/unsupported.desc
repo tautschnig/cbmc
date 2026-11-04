@@ -3,7 +3,7 @@ unsupported.sh
 
 ^EXIT=10$
 ^SIGNAL=0$
-^\[shell-unsupported\.1\] file unsupported.sh line 2 the command name "\$\{1\}" is none of .*eval.*: FAILURE$
+^\[shell-unsupported\.1\] file unsupported.sh line 2 the command name "\$\{1\}" is none of .*trap.*: FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring
