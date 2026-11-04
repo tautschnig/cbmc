@@ -1,0 +1,11 @@
+CORE
+bash.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+bash reports return outside a function or dot script as an error, and
+continues.

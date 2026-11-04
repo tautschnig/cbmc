@@ -254,13 +254,38 @@ void shell_convertert::convert_return(
   code_blockt &dest)
 {
   const source_locationt &loc = command.location;
-  if(!in_function && !in_dot_script)
-  {
-    // dash exits; bash reports an error and continues.
-    unsupported(loc, "return outside a function or dot script");
-  }
   if(command.words.size() > 2)
     unsupported(loc, "return with several operands");
+  if(!in_function && !in_dot_script)
+  {
+    if(program.dialect == shell_dialectt::BASH)
+    {
+      // bash reports an error and continues.
+      for(std::size_t i = 1; i < command.words.size(); ++i)
+        expand_word(command.words[i], shell_word_contextt::IGNORED, dest, loc);
+      nondet_status(dest, 255, loc);
+      add(
+        dest,
+        code_assumet{notequal_exprt{status(), from_integer(0, status_type())}},
+        loc);
+      return;
+    }
+    // dash, busybox, mksh and zsh exit, as with exit; bash as sh exits
+    // with status 2.
+    if(command.words.size() == 2)
+      status_from_operand(command.words[1], "return", true, dest, loc);
+    if(program.dialect == shell_dialectt::POSIX)
+    {
+      assign(
+        dest,
+        status(),
+        if_exprt{
+          nondet(bool_typet{}, loc), status(), from_integer(2, status_type())},
+        loc);
+    }
+    exit_shell(dest, false, loc);
+    return;
+  }
   if(command.words.size() == 2)
     status_from_operand(command.words[1], "return", false, dest, loc);
   if(in_function && !function_end_label.empty())
