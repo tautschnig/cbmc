@@ -3,6 +3,8 @@
 
 #include "shell_convert_class.h"
 
+#include <cctype>
+
 // ------------------------------------------------------------------
 // Arithmetic
 
@@ -14,10 +16,61 @@ exprt shell_convertert::expand_arithmetic(
   const auto parsed = parse_shell_arithmetic(part.text, arith_options);
   if(!parsed.expression.has_value())
   {
-    log.error().source_location = loc;
-    log.error() << "arithmetic expansion $((" << part.text
-                << ")): " << parsed.error << messaget::eom;
-    throw shell_conversion_errort{};
+    log.warning().source_location = loc;
+    log.warning() << "arithmetic expansion $((" << part.text
+                  << ")): " << parsed.error << messaget::eom;
+    const std::string &text = part.text;
+    // The output of a command substitution, and the values of expansions
+    // that are part of a token, are text of the expression itself, which
+    // can be anything, including assignments.
+    if(
+      text.find("$(") != std::string::npos ||
+      text.find('`') != std::string::npos)
+    {
+      unsupported(loc, "command substitution in arithmetic expansion");
+    }
+    for(std::size_t i = 0; i + 1 < text.size(); ++i)
+    {
+      if(text[i] != '$')
+        continue;
+      const bool joined_before =
+        i > 0 && (std::isalnum(static_cast<unsigned char>(text[i - 1])) ||
+                  text[i - 1] == '_');
+      std::size_t end = i + 1;
+      if(text[end] == '{')
+        end = text.find('}', end) == std::string::npos
+                ? text.size()
+                : text.find('}', end) + 1;
+      else
+      {
+        while(end < text.size() &&
+              (std::isalnum(static_cast<unsigned char>(text[end])) ||
+               text[end] == '_'))
+        {
+          ++end;
+        }
+      }
+      const bool joined_after =
+        end < text.size() &&
+        (std::isalnum(static_cast<unsigned char>(text[end])) ||
+         text[end] == '_' || text[end] == '$');
+      if(joined_before || joined_after)
+      {
+        unsupported(
+          loc, "parameter expansion that is part of a token in arithmetic");
+      }
+    }
+    if(
+      program.dialect == shell_dialectt::POSIX &&
+      (text.find("++") != std::string::npos ||
+       text.find("--") != std::string::npos))
+    {
+      unsupported(
+        loc,
+        "postfix ++ or -- in arithmetic (dash rejects them, other shells "
+        "increment)");
+    }
+    unsupported(loc, "arithmetic expression that is not valid");
   }
   if(parsed.contains_increment_sequence)
   {

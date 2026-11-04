@@ -1,0 +1,13 @@
+CORE
+postfix.sh
+
+^EXIT=6$
+^SIGNAL=0$
+unsupported shell construct: postfix \+\+ or -- in arithmetic
+--
+^VERIFICATION
+--
+The text of arithmetic expansions is the result of parameter expansion
+and command substitution, which can be any expression: only expansions
+that are operands of their own are supported. dash rejects postfix ++,
+which other shells support.
