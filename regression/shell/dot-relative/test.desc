@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] file main.sh line 2 \. \./lib.sh is not reached .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A dot script that is found by a search of PATH or relative to the
+working directory is reported.

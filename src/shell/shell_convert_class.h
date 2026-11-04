@@ -754,8 +754,13 @@ private:
   std::map<std::string, std::unique_ptr<shell_programt>> dot_scripts;
   /// Whether a dot script's body is being converted.
   bool in_dot_script = false;
-  std::optional<std::string>
-  dot_script_path(const shell_commandt &command) const;
+  /// See shell_convert_dot.cpp.
+  std::vector<std::string>
+  dot_script_paths(const shell_commandt &command) const;
+  /// The literal values that each variable is assigned anywhere in the
+  /// script and its dot scripts.
+  std::map<std::string, std::set<std::string>> dot_candidates;
+  void collect_dot_candidates(const shell_command_listt &list);
   bool is_dot_command(const std::string &name) const;
   void collect_dot_scripts(const shell_command_listt &list);
   void collect_dot_scripts(const shell_word_partt &part);

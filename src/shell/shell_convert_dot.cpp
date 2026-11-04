@@ -18,16 +18,80 @@
 #include <fstream>
 #include <sstream>
 
-/// The literal path of the dot command \p command, if it has one.
-std::optional<std::string>
-shell_convertert::dot_script_path(const shell_commandt &command) const
+/// The paths that the file name of the dot command \p command may be,
+/// optimistically: each variable may have any literal value that it is
+/// assigned anywhere (see dot_candidates). Loading a script that does not
+/// run is harmless; convert_dot uses the value that is known where the
+/// command runs.
+std::vector<std::string>
+shell_convertert::dot_script_paths(const shell_commandt &command) const
 {
   if(command.kind != shell_commandt::kindt::SIMPLE || command.words.size() < 2)
     return {};
   const auto name = static_text(command.words.front());
   if(!name.has_value() || !is_dot_command(*name))
     return {};
-  return static_text(command.words[1]);
+  std::vector<std::string> paths{""};
+  const std::function<bool(const shell_wordt &)> append =
+    [&](const shell_wordt &word)
+  {
+    using kindt = shell_word_partt::kindt;
+    for(const auto &part : word)
+    {
+      std::vector<std::string> texts;
+      if(part.kind == kindt::DOUBLE_QUOTED)
+      {
+        if(!append(part.parts))
+          return false;
+        continue;
+      }
+      if(
+        part.kind == kindt::PARAMETER && part.parameter_operator.empty() &&
+        !part.parameter_length)
+      {
+        const auto found = dot_candidates.find(part.text);
+        if(found == dot_candidates.end())
+          return false;
+        texts.assign(found->second.begin(), found->second.end());
+      }
+      else if(const auto text = static_text({part}, true))
+        texts.push_back(*text);
+      else
+        return false;
+      std::vector<std::string> next;
+      for(const auto &path : paths)
+      {
+        for(const auto &text : texts)
+          next.push_back(path + text);
+      }
+      if(next.size() > 8)
+        return false;
+      paths = std::move(next);
+    }
+    return true;
+  };
+  if(!append(command.words[1]))
+    return {};
+  return paths;
+}
+
+void shell_convertert::collect_dot_candidates(const shell_command_listt &list)
+{
+  for(const auto &command : list)
+  {
+    for(const auto &assignment : command.assignments)
+    {
+      if(const auto value = static_text(assignment.value))
+        dot_candidates[assignment.name].insert(*value);
+    }
+    for(const auto *sub :
+        {&command.body, &command.condition, &command.else_body})
+    {
+      collect_dot_candidates(*sub);
+    }
+    for(const auto &item : command.case_items)
+      collect_dot_candidates(item.body);
+  }
 }
 
 bool shell_convertert::is_dot_command(const std::string &name) const
@@ -40,12 +104,10 @@ void shell_convertert::collect_dot_scripts(const shell_command_listt &list)
 {
   for(const auto &command : list)
   {
-    const auto path = dot_script_path(command);
-    if(
-      path.has_value() && !path->empty() && (*path)[0] == '/' &&
-      dot_scripts.count(*path) == 0)
+    for(const auto &path : dot_script_paths(command))
     {
-      load_dot_script(*path, command.location);
+      if(!path.empty() && path[0] == '/' && dot_scripts.count(path) == 0)
+        load_dot_script(path, command.location);
     }
     for(const auto *sub :
         {&command.body, &command.condition, &command.else_body})
@@ -104,6 +166,7 @@ void shell_convertert::load_dot_script(
     throw shell_conversion_errort{};
   }
   entry = std::move(dot);
+  collect_dot_candidates(entry->commands);
   collect_dot_scripts(entry->commands);
 }
 
@@ -173,23 +236,37 @@ void shell_convertert::convert_dot(
   code_blockt &dest)
 {
   const source_locationt &loc = command.location;
-  // The dot script may assign any variable.
-  known_literals.clear();
   const std::string name = *static_text(command.words.front());
   if(command.words.size() < 2)
     unsupported(loc, name + " without a file");
-  const auto path = dot_script_path(command);
-  if(!path.has_value())
-    unsupported(loc, name + " with a file name that is an expansion");
-  if(path->empty() || (*path)[0] != '/')
-  {
-    // Found by a search of PATH, or relative to the working directory.
-    unsupported(loc, name + " with a file name that is not an absolute path");
-  }
   const bool has_arguments = command.words.size() > 2;
   if(has_arguments && program.dialect == shell_dialectt::POSIX)
     unsupported(loc, "arguments to .");
+  const auto path = known_text(command.words[1]);
+  if(
+    !path.has_value() || path->empty() || (*path)[0] != '/' ||
+    dot_scripts.count(*path) == 0)
+  {
+    // A file whose name is not known here, or that is found by a search
+    // of PATH or relative to the working directory: its contents are not
+    // known.
+    known_literals.clear();
+    for(std::size_t i = 1; i < command.words.size(); ++i)
+      expand_word(command.words[i], shell_word_contextt::IGNORED, dest, loc);
+    check(
+      dest,
+      false_exprt{},
+      "shell-unsupported",
+      name + " " + display(command.words[1]) +
+        " is not reached (a dot script whose absolute path is not known "
+        "here is not supported)",
+      loc);
+    add(dest, code_assumet{false_exprt{}}, loc);
+    return;
+  }
 
+  // The dot script may assign any variable.
+  known_literals.clear();
   const auto &dot = dot_scripts.at(*path);
   if(dot == nullptr)
   {

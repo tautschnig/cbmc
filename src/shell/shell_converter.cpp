@@ -101,6 +101,7 @@ void shell_convertert::add_initialize()
 void shell_convertert::operator()()
 {
   add_value_type();
+  collect_dot_candidates(program.commands);
   collect_dot_scripts(program.commands);
   collect_function_definitions(program.commands);
   collect_options(program.commands);

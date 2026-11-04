@@ -1,0 +1,13 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: SUCCESS$
+^\[shell-unsupported\.1\] file main.sh line 12 \. "\$\{f\}" is not reached .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A dot script whose file name is a variable with a known value is run; one
+whose name is not known where it runs is reported.
