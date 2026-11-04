@@ -696,9 +696,10 @@ exprt go_convertert::function_value(
 
 // -------------------------------------------------------------- functions
 
-/// Collect the ids of the objects that \p node declares (`_def`) and the
-/// identifiers that refer to objects, including in nested function
-/// literals.
+/// Collect the ids of the objects that \p node declares (`_def`, and
+/// `_impl` for implicitly declared ones such as the per-clause variables of
+/// a type switch) and the identifiers that refer to objects, including in
+/// nested function literals.
 static void collect_objects(
   const irept &node,
   std::set<irep_idt> &declared,
@@ -711,6 +712,8 @@ static void collect_objects(
     else
       uses.push_back(&node);
   }
+  if(!node.get("_impl").empty())
+    declared.insert(node.get("_impl"));
   for(const auto &sub : node.get_sub())
     collect_objects(sub, declared, uses);
   for(const auto &named : node.get_named_sub())
