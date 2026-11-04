@@ -1,0 +1,12 @@
+CORE
+main.c
+--program-only
+^EXIT=0$
+^SIGNAL=0$
+x!0@1#[0-9]+ == \(\\guard#1 \? 2 : 1\)
+--
+marker#[0-9]+ == 42
+^warning: ignoring
+--
+A value merged from branches with constant values is propagated, so that
+the condition x == 3 simplifies to false and its branch is not executed.
