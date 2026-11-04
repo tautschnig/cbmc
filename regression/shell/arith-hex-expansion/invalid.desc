@@ -1,0 +1,11 @@
+CORE
+invalid.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] .*hexadecimal digits .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Values other than hexadecimal digits after 0x are reported.

@@ -1,0 +1,11 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+In arithmetic, 0x$x is a hexadecimal constant whose digits are the value
+of x, and ${x%p}, ${x#p} and their longest forms remove patterns.

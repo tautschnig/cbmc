@@ -1039,6 +1039,88 @@ exprt shell_convertert::parse_arith_integer(
   return or_exprt{empty, valid};
 }
 
+exprt shell_convertert::payload_byte(
+  const exprt &s,
+  const exprt &index,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  if(native())
+  {
+    // str.at yields a string of one character, or none past the end.
+    return string_function(
+      ID_cprover_string_to_code_func,
+      {string_function(
+        ID_cprover_string_char_at_func, {s, index}, payload_type(), dest, loc)},
+      integer_type(),
+      dest,
+      loc);
+  }
+  return typecast_exprt{
+    string_function(
+      ID_cprover_string_char_at_func,
+      {s, index},
+      unsigned_char_type(),
+      dest,
+      loc),
+    integer_type()};
+}
+
+exprt shell_convertert::parse_hex_digits(
+  const exprt &string,
+  const symbol_exprt &value,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  // At most 15 digits, which fit in 64-bit arithmetic.
+  const std::size_t max_digits = 15;
+  const exprt payload = payload_of(string);
+  const exprt length = payload_length(payload, dest, loc);
+  exprt::operandst valid{
+    binary_relation_exprt{length, ID_ge, from_integer(1, integer_type())},
+    binary_relation_exprt{
+      length, ID_le, from_integer(max_digits, integer_type())}};
+  exprt accumulated = from_integer(0, integer_type());
+  const auto in_range = [this](const exprt &b, char low, char high)
+  {
+    return and_exprt{
+      binary_relation_exprt{b, ID_ge, from_integer(low, integer_type())},
+      binary_relation_exprt{b, ID_le, from_integer(high, integer_type())}};
+  };
+  for(std::size_t i = 0; i < max_digits; ++i)
+  {
+    const exprt index = from_integer(i, integer_type());
+    const symbol_exprt byte = temporary(integer_type(), dest, loc);
+    assign(dest, byte, payload_byte(payload, index, dest, loc), loc);
+    const exprt decimal = in_range(byte, '0', '9');
+    const exprt lower = in_range(byte, 'a', 'f');
+    const exprt upper = in_range(byte, 'A', 'F');
+    const exprt digit = if_exprt{
+      decimal,
+      minus_exprt{byte, from_integer('0', integer_type())},
+      if_exprt{
+        lower,
+        minus_exprt{byte, from_integer('a' - 10, integer_type())},
+        minus_exprt{byte, from_integer('A' - 10, integer_type())}}};
+    const exprt inside = binary_relation_exprt{index, ID_lt, length};
+    valid.push_back(
+      or_exprt{not_exprt{inside}, or_exprt{decimal, or_exprt{lower, upper}}});
+    const symbol_exprt next = temporary(integer_type(), dest, loc);
+    assign(
+      dest,
+      next,
+      if_exprt{
+        inside,
+        plus_exprt{
+          mult_exprt{accumulated, from_integer(16, integer_type())}, digit},
+        accumulated},
+      loc);
+    accumulated = next;
+  }
+  assign(dest, value, accumulated, loc);
+  return conjunction(valid);
+}
+
 // ------------------------------------------------------------------
 // Patterns (XCU 2.14)
 //

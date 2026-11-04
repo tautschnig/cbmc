@@ -56,6 +56,9 @@ struct shell_arith_exprt
   std::string name;
   /// PARAMETER: the word of ${name<op>word}.
   std::string word;
+  /// PARAMETER: "0x" for a hexadecimal constant whose digits are the value,
+  /// as in $((0x$x)); otherwise empty.
+  std::string prefix;
   std::vector<shell_arith_exprt> operands;
   /// Byte offset of the expression in the parsed text.
   std::size_t offset = 0;

@@ -960,6 +960,19 @@ private:
     bool longest,
     code_blockt &dest,
     const source_locationt &loc);
+  /// The byte of payload \p s at \p index, as an integer.
+  exprt payload_byte(
+    const exprt &s,
+    const exprt &index,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// Whether \p string is 1 to 15 hexadecimal digits, whose value is then
+  /// assigned to \p value.
+  exprt parse_hex_digits(
+    const exprt &string,
+    const symbol_exprt &value,
+    code_blockt &dest,
+    const source_locationt &loc);
   /// Whether payload \p s contains a byte of \p set.
   exprt payload_contains_byte(
     const exprt &s,

@@ -161,13 +161,38 @@ exprt shell_convertert::arith(
       // and the parser only accepts literal words.
       part.parameter_operator = expr.op;
       shell_word_partt word;
-      word.kind = shell_word_partt::kindt::QUOTED_LITERAL;
+      // The word of pattern removal is a pattern, also in double quotes.
+      const bool pattern = expr.op[0] == '%' || expr.op[0] == '#';
+      word.kind = pattern ? shell_word_partt::kindt::LITERAL
+                          : shell_word_partt::kindt::QUOTED_LITERAL;
       word.text = expr.word;
       word.location = loc;
       part.parts.push_back(std::move(word));
     }
     const exprt string =
       expand_parameter(part, shell_word_contextt::FIELD, true, dest);
+    if(expr.prefix == "0x")
+    {
+      const symbol_exprt value = temporary(integer_type(), dest, loc);
+      check(
+        dest,
+        parse_hex_digits(string, value, dest, loc),
+        "shell-unsupported",
+        "the value of $" + expr.name + " is 1 to 15 hexadecimal digits in 0x$" +
+          expr.name + " (other values are not supported)",
+        loc);
+      if(arith_width() == 32)
+      {
+        check(
+          dest,
+          binary_relation_exprt{
+            value, ID_le, from_integer(2147483647LL, integer_type())},
+          "overflow",
+          "0x$" + expr.name + " fits in 32-bit arithmetic",
+          loc);
+      }
+      return arith_type_cast(value);
+    }
     check(
       dest,
       not_exprt{is_empty(string)},

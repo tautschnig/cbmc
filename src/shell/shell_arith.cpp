@@ -355,6 +355,20 @@ private:
       return result;
     }
 
+    if(
+      c == '0' && pos + 2 < text.size() &&
+      (text[pos + 1] == 'x' || text[pos + 1] == 'X') && text[pos + 2] == '$')
+    {
+      // 0x$x: the digits of a hexadecimal constant are the value of x.
+      pos += 3;
+      result.kind = kindt::PARAMETER;
+      result.prefix = "0x";
+      result.name = parse_parameter(result);
+      if(!at_end() && (is_name_char(text[pos]) || text[pos] == '$'))
+        error("expansion that is part of a token in arithmetic expression");
+      return result;
+    }
+
     if(std::isdigit(static_cast<unsigned char>(c)))
     {
       result.kind = kindt::CONSTANT;
@@ -447,9 +461,18 @@ private:
     std::string op;
     if(text[pos] == ':')
       op += text[pos++];
-    if(at_end() || std::string{"-=?+"}.find(text[pos]) == std::string::npos)
+    if(
+      at_end() || std::string{"-=?+%#"}.find(text[pos]) == std::string::npos ||
+      (!op.empty() && (text[pos] == '%' || text[pos] == '#')))
+    {
       error("unsupported parameter expansion in arithmetic expression");
+    }
     op += text[pos++];
+    // ${x%%p} and ${x##p}
+    if((op == "%" || op == "#") && !at_end() && text[pos] == op[0])
+    {
+      op += text[pos++];
+    }
     const std::size_t end = text.find('}', pos);
     if(end == std::string::npos)
       error("unterminated parameter expansion in arithmetic expression");
