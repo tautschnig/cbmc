@@ -723,6 +723,21 @@ private:
     const std::bitset<256> &blanks,
     code_blockt &dest,
     const source_locationt &loc);
+  /// The fields of \p value, the expansion of unquoted \p part, split
+  /// with \p ifs, after pathname expansion checks.
+  void split_value(
+    const field_listt &list,
+    const exprt &value,
+    const shell_word_partt &part,
+    std::string ifs,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// The fields of unquoted $@ as a whole word, \p part.
+  void split_positional_parameters(
+    const field_listt &list,
+    const shell_word_partt &part,
+    code_blockt &dest,
+    const source_locationt &loc);
   void split_fields_delimited(
     const field_listt &list,
     const exprt &s,
@@ -737,6 +752,18 @@ private:
     code_blockt &dest);
   static bool is_quoted_at(const shell_wordt &word);
   static bool contains_at(const shell_wordt &word);
+  /// The text before and after "$@" in \p word, for words with one $@,
+  /// which is double-quoted, such as x"a $@ b"y.
+  static std::optional<std::pair<shell_wordt, shell_wordt>>
+  split_at(const shell_wordt &word);
+  /// The fields of x"$@"y for the expansions of \p before (x) and
+  /// \p after (y): x$1, $2, ..., ${n}y, or the one field xy if n is 0.
+  void append_positional_parameters_between(
+    const field_listt &list,
+    const shell_wordt &before,
+    const shell_wordt &after,
+    code_blockt &dest,
+    const source_locationt &loc);
   /// "$*" outside field splitting: the positional parameters joined with
   /// spaces (the first character of the default IFS).
   exprt

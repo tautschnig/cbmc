@@ -1,0 +1,11 @@
+CORE
+unquoted-ifs.sh
+
+^EXIT=6$
+^SIGNAL=0$
+unquoted \$@ with an IFS other than white space
+--
+^VERIFICATION
+--
+With an IFS other than white space, shells differ in the empty fields
+between positional parameters.

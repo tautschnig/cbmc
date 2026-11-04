@@ -1,0 +1,16 @@
+CORE
+unquoted-dynamic.sh
+--shell-strings native --cvc5 --shell-max-arguments 1
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-argument-count\.[0-9]+\] .*: FAILURE$
+^\[shell-unsupported\.[0-9]+\] .* has no \*, \? or \[ .*: FAILURE$
+^\[assertion\.1\] .*: SUCCESS$
+^VERIFICATION FAILED$
+--
+^\[assertion\.[0-9]+\] .*: FAILURE$
+--
+Unquoted $@ with positional parameters not known during conversion: no
+field has a blank or is empty; more fields than --shell-max-arguments,
+and parameters with pattern characters, are reported. The solvers take
+time that grows fast with --shell-max-arguments.

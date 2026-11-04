@@ -1444,6 +1444,17 @@ void shell_convertert::split_fields(
   }
   const exprt value =
     expand_part(part, shell_word_contextt::CASE_SUBJECT, false, false, dest);
+  split_value(list, value, part, ifs, dest, loc);
+}
+
+void shell_convertert::split_value(
+  const field_listt &list,
+  const exprt &value,
+  const shell_word_partt &part,
+  std::string ifs,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
   check_no_pattern_characters(value, part, dest);
   const std::size_t null = ifs.find('\0');
   if(null != std::string::npos)

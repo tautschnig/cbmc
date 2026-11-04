@@ -1,0 +1,11 @@
+CORE
+unquoted.sh
+--shell-max-arguments 3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Unquoted $@ as a whole word: each positional parameter is a field, which
+field splitting splits, and empty ones yield no field.

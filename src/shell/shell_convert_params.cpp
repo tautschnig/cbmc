@@ -98,6 +98,133 @@ bool shell_convertert::is_quoted_at(const shell_wordt &word)
          !word[0].parts[0].parameter_length;
 }
 
+std::optional<std::pair<shell_wordt, shell_wordt>>
+shell_convertert::split_at(const shell_wordt &word)
+{
+  using kindt = shell_word_partt::kindt;
+  for(std::size_t i = 0; i < word.size(); ++i)
+  {
+    if(word[i].kind != kindt::DOUBLE_QUOTED)
+      continue;
+    const auto &inner = word[i].parts;
+    for(std::size_t j = 0; j < inner.size(); ++j)
+    {
+      const shell_word_partt &part = inner[j];
+      if(
+        part.kind != kindt::PARAMETER || part.text != "@" ||
+        !part.parameter_operator.empty() || part.parameter_length)
+      {
+        continue;
+      }
+      // The text before and after $@, each with its quotes.
+      shell_wordt before{word.begin(), word.begin() + i};
+      shell_wordt after{word.begin() + i + 1, word.end()};
+      shell_word_partt quoted_before = word[i];
+      quoted_before.parts.assign(inner.begin(), inner.begin() + j);
+      shell_word_partt quoted_after = word[i];
+      quoted_after.parts.assign(inner.begin() + j + 1, inner.end());
+      before.push_back(quoted_before);
+      after.insert(after.begin(), quoted_after);
+      if(contains_at(before) || contains_at(after))
+        return {};
+      return {{before, after}};
+    }
+  }
+  return {};
+}
+
+void shell_convertert::append_positional_parameters_between(
+  const field_listt &list,
+  const shell_wordt &before,
+  const shell_wordt &after,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  const exprt prefix =
+    expand_word(before, shell_word_contextt::FIELD, dest, loc);
+  const exprt suffix =
+    expand_word(after, shell_word_contextt::FIELD, dest, loc);
+  // Without positional parameters, the word is one field of the text
+  // around $@.
+  code_blockt none;
+  append_field(list, concat(prefix, suffix, none, loc), none, loc);
+  // Otherwise, the first parameter follows the text before, and the last
+  // one is followed by the text after.
+  code_blockt some;
+  const exprt last =
+    minus_exprt{argument_count(), from_integer(1, count_type())};
+  for(std::size_t i = 0; i < max_arguments; ++i)
+  {
+    code_blockt append;
+    const exprt index = from_integer(i, count_type());
+    const symbol_exprt field = temporary(string_type(), append, loc);
+    assign(
+      append,
+      field,
+      index_exprt{positional_array(), from_integer(i, index_type())},
+      loc);
+    if(i == 0)
+      assign(append, field, concat(prefix, field, append, loc), loc);
+    code_blockt at_end;
+    assign(at_end, field, concat(field, suffix, at_end, loc), loc);
+    add(
+      append,
+      code_ifthenelset{equal_exprt{index, last}, std::move(at_end)},
+      loc);
+    append_field(list, field, append, loc);
+    add(
+      some,
+      code_ifthenelset{
+        binary_relation_exprt{index, ID_lt, argument_count()},
+        std::move(append)},
+      loc);
+  }
+  add(
+    dest,
+    code_ifthenelset{
+      equal_exprt{argument_count(), from_integer(0, count_type())},
+      std::move(none),
+      std::move(some)},
+    loc);
+}
+
+void shell_convertert::split_positional_parameters(
+  const field_listt &list,
+  const shell_word_partt &part,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  // Each positional parameter is a field, which is then split as unquoted
+  // expansions are (XCU 2.5.2, 2.6.5); zsh does not split them, but also
+  // removes empty fields.
+  const std::string ifs = program.dialect == shell_dialectt::ZSH
+                            ? std::string{}
+                            : ifs_for_splitting(dest, loc);
+  if(!ifs_is_white(ifs))
+  {
+    // Shells differ in the empty fields between parameters.
+    unsupported(loc, "unquoted $@ with an IFS other than white space");
+  }
+  for(std::size_t i = 0; i < max_arguments; ++i)
+  {
+    code_blockt split;
+    split_value(
+      list,
+      index_exprt{positional_array(), from_integer(i, index_type())},
+      part,
+      ifs,
+      split,
+      loc);
+    add(
+      dest,
+      code_ifthenelset{
+        binary_relation_exprt{
+          from_integer(i, count_type()), ID_lt, argument_count()},
+        std::move(split)},
+      loc);
+  }
+}
+
 /// Whether \p word expands $@ anywhere.
 bool shell_convertert::contains_at(const shell_wordt &word)
 {
@@ -131,12 +258,23 @@ shell_convertert::field_listt shell_convertert::expand_fields(
       append_positional_parameters(list, dest, loc);
       dynamic = true;
     }
-    else if(contains_at(*it))
+    else if(const auto around = split_at(*it))
     {
-      // "x$@y" joins the first and last fields with the surrounding text;
-      // unquoted $@ is subject to field splitting.
-      unsupported(loc, "$@ other than as a whole word \"$@\"");
+      append_positional_parameters_between(
+        list, around->first, around->second, dest, loc);
+      dynamic = true;
     }
+    else if(
+      it->size() == 1 &&
+      it->front().kind == shell_word_partt::kindt::PARAMETER &&
+      it->front().text == "@" && it->front().parameter_operator.empty() &&
+      !it->front().parameter_length)
+    {
+      split_positional_parameters(list, it->front(), dest, loc);
+      dynamic = true;
+    }
+    else if(contains_at(*it))
+      unsupported(loc, "$@ other than as a whole word \"$@\" or $@");
     else if(is_splittable(*it))
     {
       split_fields(list, it->front(), dest, loc);

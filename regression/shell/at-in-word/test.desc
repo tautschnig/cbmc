@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+"$@" with text around it in the same word: the text before starts the
+first field, the text after ends the last one, and without positional
+parameters the word is one field of the text around $@.
