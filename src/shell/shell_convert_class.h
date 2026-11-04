@@ -829,6 +829,19 @@ private:
   // Patterns (XCU 2.14)
 
   shell_patternt compile_pattern(const shell_wordt &, const source_locationt &);
+  /// \p word with its unquoted parameter expansions, whose values are
+  /// patterns, replaced by their known values, or by quoted expansions
+  /// whose values are checked to have no pattern characters.
+  shell_wordt prepare_pattern(
+    const shell_wordt &word,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// Report \p value of unquoted \p part if it has pattern characters or
+  /// backslashes.
+  void check_literal_in_pattern(
+    const exprt &value,
+    const shell_word_partt &part,
+    code_blockt &dest);
   exprt literal_pattern_string(
     const shell_patternt &pattern,
     code_blockt &dest,

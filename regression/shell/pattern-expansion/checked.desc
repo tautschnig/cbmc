@@ -1,0 +1,13 @@
+CORE
+checked.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] .*has no \*, \?, \[ or \\ .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The value of an unquoted expansion in a pattern is a pattern, where
+shells differ in backslashes: values with pattern characters or
+backslashes are reported.

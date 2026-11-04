@@ -19,6 +19,76 @@ shell_patternt shell_convertert::compile_pattern(
   return *pattern;
 }
 
+shell_wordt shell_convertert::prepare_pattern(
+  const shell_wordt &word,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  using kindt = shell_word_partt::kindt;
+  shell_wordt result;
+  for(const auto &part : word)
+  {
+    if(
+      part.kind != kindt::PARAMETER || part.text == "@" || part.text == "*" ||
+      has_side_effects(part))
+    {
+      result.push_back(part);
+      continue;
+    }
+    // The value of an unquoted expansion is itself a pattern, where shells
+    // differ in backslashes, and zsh matches it literally: a value without
+    // pattern characters and backslashes matches literally in all of them.
+    if(const auto literal = known_literal(part))
+    {
+      if(literal->find('\\') == std::string::npos)
+      {
+        shell_word_partt text = part;
+        text.kind = program.dialect == shell_dialectt::ZSH
+                      ? kindt::QUOTED_LITERAL
+                      : kindt::LITERAL;
+        text.text = *literal;
+        text.parts.clear();
+        result.push_back(text);
+        continue;
+      }
+      result.push_back(part);
+      continue;
+    }
+    check_literal_in_pattern(
+      expand_part(part, shell_word_contextt::CASE_SUBJECT, false, false, dest),
+      part,
+      dest);
+    shell_word_partt quoted;
+    quoted.kind = kindt::DOUBLE_QUOTED;
+    quoted.location = part.location;
+    quoted.parts.push_back(part);
+    result.push_back(quoted);
+  }
+  (void)loc;
+  return result;
+}
+
+void shell_convertert::check_literal_in_pattern(
+  const exprt &value,
+  const shell_word_partt &part,
+  code_blockt &dest)
+{
+  if(program.dialect == shell_dialectt::ZSH)
+    return;
+  std::bitset<256> special;
+  for(unsigned char c : {'*', '?', '[', '\\'})
+    special.set(c);
+  check(
+    dest,
+    not_exprt{
+      payload_contains_byte(payload_of(value), special, dest, part.location)},
+    "shell-unsupported",
+    "the value of the unquoted " + display({part}) +
+      " has no *, ?, [ or \\ (as a pattern, shells differ in its "
+      "backslashes; it is not supported)",
+    part.location);
+}
+
 /// The string a literal pattern matches: its characters, and the values of
 /// its quoted expansions.
 exprt shell_convertert::literal_pattern_string(
@@ -61,7 +131,9 @@ exprt shell_convertert::pattern_matches(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  const shell_patternt pattern = compile_pattern(word, loc);
+  // The pattern refers to the parts of the prepared word.
+  const shell_wordt prepared = prepare_pattern(word, dest, loc);
+  const shell_patternt pattern = compile_pattern(prepared, loc);
   if(pattern.is_literal())
     return equal(
       subject, literal_pattern_string(pattern, dest, loc), dest, loc);
@@ -83,7 +155,9 @@ exprt shell_convertert::remove_pattern(
 {
   const bool prefix = op[0] == '#';
   const bool longest = op.size() == 2;
-  const shell_patternt pattern = compile_pattern(word, loc);
+  // The pattern refers to the parts of the prepared word.
+  const shell_wordt prepared = prepare_pattern(word, dest, loc);
+  const shell_patternt pattern = compile_pattern(prepared, loc);
   if(pattern.is_literal())
   {
     // A literal pattern matches one string: shortest and longest agree.

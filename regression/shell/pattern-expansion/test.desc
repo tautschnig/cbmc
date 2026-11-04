@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Unquoted expansions in patterns: known values are patterns, and other
+values are checked to have no pattern characters or backslashes, so
+that they match literally.

@@ -76,7 +76,12 @@ void shell_convertert::expand_pathnames(
   for(const auto &part : word)
   {
     if(part.kind == kindt::PARAMETER)
-      expand_part(part, shell_word_contextt::FIELD, false, false, dest);
+    {
+      check_literal_in_pattern(
+        expand_part(part, shell_word_contextt::FIELD, false, false, dest),
+        part,
+        dest);
+    }
   }
   const exprt text =
     expand_word(pattern, shell_word_contextt::CASE_SUBJECT, dest, loc);

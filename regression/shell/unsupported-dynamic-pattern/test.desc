@@ -1,12 +1,11 @@
 CORE
 main.sh
 
-^EXIT=6$
+^EXIT=0$
 ^SIGNAL=0$
-unsupported shell construct: unquoted expansion in a pattern \(its value would be a pattern\); quote it$
-^CONVERSION ERROR$
+^VERIFICATION SUCCESSFUL$
 --
-^VERIFICATION
+^warning: ignoring
 --
-The value of an unquoted expansion in a pattern is itself a pattern,
-which is not supported.
+The known value of an unquoted expansion in a pattern is itself a
+pattern; quoted, it matches literally.
