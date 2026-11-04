@@ -72,6 +72,7 @@ func (e *encoder) reflects() bool {
 // entry of the slice type of t if the program uses reflect.SliceOf.
 func (e *encoder) reflectInfo(t types.Type, entry map[string]any) {
 	index := e.typeIdx[t]
+	method := false
 	switch x := t.(type) {
 	case *types.Tuple, *types.TypeParam:
 		return
@@ -80,8 +81,15 @@ func (e *encoder) reflectInfo(t types.Type, entry map[string]any) {
 			return
 		}
 	case *types.Signature:
-		if x.Recv() != nil || x.TypeParams().Len() > 0 {
+		// Method values (types.Selection.Type) keep their receiver, which
+		// is not part of the type (Go1.27 §Type_identity).
+		if x.TypeParams().Len() > 0 {
 			return
+		}
+		if x.Recv() != nil {
+			t = types.NewSignatureType(nil, nil, nil, x.Params(),
+				x.Results(), x.Variadic())
+			method = true
 		}
 	case *types.Named:
 		if x.TypeParams().Len() > 0 && x.TypeArgs().Len() == 0 {
@@ -132,7 +140,7 @@ func (e *encoder) reflectInfo(t types.Type, entry map[string]any) {
 	// their own, except the pointer type to an added slice type (for
 	// reflect.New(reflect.SliceOf(t))), so that this ends.
 	derived := e.reflectDerived[index]
-	if derived > 1 {
+	if derived > 1 || method {
 		return
 	}
 	if derived == 0 && (e.usesReflect("SliceOf") ||

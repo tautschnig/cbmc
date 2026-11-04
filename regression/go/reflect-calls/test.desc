@@ -1,0 +1,16 @@
+CORE
+main.go
+--unwind 10
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.2\] line 37 call method: SUCCESS$
+^\[go::main\.main\.assertion\.4\] line 41 value method: SUCCESS$
+^\[go::main\.main\.assertion\.5\] line 43 variadic call: SUCCESS$
+^\[go::main\.main\.assertion\.7\] line 47 slice of: SUCCESS$
+^\[go::main\.main\.assertion\.9\] line 52 map of: SUCCESS$
+^\[go::main\.main\.assertion\.10\] line 55 array slice: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+reflect: Value.Call, method values, SliceOf, MapOf and slices of arrays

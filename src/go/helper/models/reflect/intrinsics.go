@@ -76,3 +76,11 @@ func sliceOf(elem *rtype) *rtype
 func mapOf(key, elem *rtype) *rtype
 func arrayOf(n int, elem *rtype) *rtype
 func chanOf(dir ChanDir, elem *rtype) *rtype
+
+// call calls the function value *fn (of type t) with the arguments
+// *args[i], and stores its results in *results[j].
+func call(t int32, fn unsafe.Pointer, args, results []unsafe.Pointer)
+
+// callMethod calls method i (an index of the descriptor's methods) of the
+// value *recv of type t, as call does.
+func callMethod(t int32, i int, recv unsafe.Pointer, args, results []unsafe.Pointer)

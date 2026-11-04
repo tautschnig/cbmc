@@ -942,7 +942,9 @@ bool go_convertert::is_intrinsic(const irep_idt &object_id)
     "reflect.sliceOf",
     "reflect.mapOf",
     "reflect.arrayOf",
-    "reflect.chanOf"};
+    "reflect.chanOf",
+    "reflect.call",
+    "reflect.callMethod"};
   return intrinsics.count(object_id) != 0;
 }
 

@@ -14,15 +14,20 @@ const (
 	flagAddr flag = 1 << iota
 	// flagRO: obtained through an unexported field.
 	flagRO
+	// flagMethod: a method value (see Value.Method); ptr points to (a copy
+	// of) the receiver, of type mrecv, and the method is mrecv.methods[mindex].
+	flagMethod
 )
 
 // Value is the reflection interface to a Go value: the descriptor of its
 // type (nil for the zero Value), a pointer to the value, and flags. Values
 // that are not addressable point to variables that are not changed.
 type Value struct {
-	typ_ *rtype
-	ptr  unsafe.Pointer
-	flag flag
+	typ_   *rtype
+	ptr    unsafe.Pointer
+	flag   flag
+	mrecv  *rtype
+	mindex int
 }
 
 func (v Value) kind() Kind {
@@ -61,14 +66,14 @@ func (v Value) mustBeAssignable(method string) {
 
 // at returns the value of type t at p, with flags fl.
 func at(t *rtype, p unsafe.Pointer, fl flag) Value {
-	return Value{t, p, fl}
+	return Value{typ_: t, ptr: p, flag: fl}
 }
 
 // copyOf returns a (non-addressable) copy of the value of type t at p.
 func copyOf(t *rtype, p unsafe.Pointer, fl flag) Value {
 	cell := alloc(t.tid)
 	assign(t.tid, cell, p)
-	return Value{t, cell, fl &^ flagAddr}
+	return Value{typ_: t, ptr: cell, flag: fl &^ flagAddr}
 }
 
 // element returns the pointer to element i of the array at p, of
@@ -86,7 +91,7 @@ func ValueOf(i any) Value {
 	if i == nil {
 		return Value{}
 	}
-	return Value{typeOf(ifaceType(i)), ifaceData(i), 0}
+	return Value{typ_: typeOf(ifaceType(i)), ptr: ifaceData(i), flag: 0}
 }
 
 // Indirect returns the value that v points to.
@@ -104,7 +109,7 @@ func Zero(typ Type) Value {
 		panic("reflect: Zero(nil)")
 	}
 	t := typ.common()
-	return Value{t, alloc(t.tid), 0}
+	return Value{typ_: t, ptr: alloc(t.tid), flag: 0}
 }
 
 // New returns a Value representing a pointer to a new zero value for the
@@ -120,7 +125,7 @@ func New(typ Type) Value {
 	}
 	cell := alloc(p.tid)
 	setPointer(p.tid, cell, alloc(t.tid))
-	return Value{p, cell, 0}
+	return Value{typ_: p, ptr: cell, flag: 0}
 }
 
 // NewAt returns a Value representing a pointer to a value of the
@@ -133,7 +138,7 @@ func NewAt(typ Type, p unsafe.Pointer) Value {
 	}
 	cell := alloc(pt.tid)
 	setPointer(pt.tid, cell, p)
-	return Value{pt, cell, 0}
+	return Value{typ_: pt, ptr: cell, flag: 0}
 }
 
 // MakeSlice creates a new zero-initialized slice value for the specified
@@ -154,7 +159,7 @@ func MakeSlice(typ Type, len, cap int) Value {
 	t := typ.common()
 	cell := alloc(t.tid)
 	makeSlice(t.tid, cell, len, cap)
-	return Value{t, cell, 0}
+	return Value{typ_: t, ptr: cell, flag: 0}
 }
 
 // SliceAt returns a Value representing a slice whose underlying data
@@ -178,7 +183,7 @@ func MakeMapWithSize(typ Type, n int) Value {
 	t := typ.common()
 	cell := alloc(t.tid)
 	makeMap(t.tid, cell)
-	return Value{t, cell, 0}
+	return Value{typ_: t, ptr: cell, flag: 0}
 }
 
 // MakeChan creates a new channel with the specified type and buffer size
@@ -252,6 +257,9 @@ func valueInterface(v Value, safe bool) any {
 	if safe && v.flag&flagRO != 0 {
 		panic("reflect.Value.Interface: cannot return value obtained from unexported field or method")
 	}
+	if v.flag&flagMethod != 0 {
+		rt.Unsupported("reflect.Value.Interface of a method value")
+	}
 	if v.typ_.kind == Interface {
 		return *(*any)(v.ptr)
 	}
@@ -278,7 +286,7 @@ func (v Value) Addr() Value {
 	}
 	cell := alloc(p.tid)
 	setPointer(p.tid, cell, v.ptr)
-	return Value{p, cell, v.flag & flagRO}
+	return Value{typ_: p, ptr: cell, flag: v.flag & flagRO}
 }
 
 // UnsafeAddr returns a pointer to v's data, as a uintptr.
@@ -310,7 +318,7 @@ func (v Value) Elem() Value {
 		if v.typ_.elem == nil {
 			rt.Unsupported("reflect.Value.Elem of a pointer whose element type the model does not describe")
 		}
-		return Value{v.typ_.elem, p, v.flag&flagRO | flagAddr}
+		return Value{typ_: v.typ_.elem, ptr: p, flag: v.flag&flagRO | flagAddr}
 	}
 	panic(&ValueError{"reflect.Value.Elem", v.kind()})
 }
@@ -501,14 +509,14 @@ func (v Value) Index(i int) Value {
 			panic("reflect: array index out of range")
 		}
 		et := v.typ_.elem
-		return Value{et, element(v.ptr, et, i), v.flag & (flagAddr | flagRO)}
+		return Value{typ_: et, ptr: element(v.ptr, et, i), flag: v.flag & (flagAddr | flagRO)}
 	case Slice:
 		data, n, _ := sliceHeader(v.typ_.tid, v.ptr)
 		if uint(i) >= uint(n) {
 			panic("reflect: slice index out of range")
 		}
 		et := v.typ_.elem
-		return Value{et, element(data, et, i), flagAddr | v.flag&flagRO}
+		return Value{typ_: et, ptr: element(data, et, i), flag: flagAddr | v.flag&flagRO}
 	case String:
 		s := *(*string)(v.ptr)
 		if uint(i) >= uint(len(s)) {
@@ -517,13 +525,16 @@ func (v Value) Index(i int) Value {
 		t := byteType()
 		cell := alloc(t.tid)
 		*(*byte)(cell) = s[i]
-		return Value{t, cell, v.flag & flagRO}
+		return Value{typ_: t, ptr: cell, flag: v.flag & flagRO}
 	}
 	panic(&ValueError{"reflect.Value.Index", v.kind()})
 }
 
 // IsNil reports whether its argument v is nil.
 func (v Value) IsNil() bool {
+	if v.flag&flagMethod != 0 {
+		return false
+	}
 	switch v.kind() {
 	case Chan, Func, Map, Pointer, UnsafePointer:
 		return pointerAt(v.typ_.tid, v.ptr) == nil
@@ -597,7 +608,7 @@ func (v Value) Field(i int) Value {
 	if f.pkgPath != "" {
 		fl |= flagRO
 	}
-	return Value{f.typ, unsafe.Add(v.ptr, f.off), fl}
+	return Value{typ_: f.typ, ptr: unsafe.Add(v.ptr, f.off), flag: fl}
 }
 
 // FieldByIndex returns the nested field corresponding to index.
@@ -688,18 +699,18 @@ func (v Value) assignTo(context string, dst *rtype) Value {
 		return v
 	case dst.kind == Interface:
 		if v.kind() == Interface && v.IsNil() {
-			return Value{dst, alloc(dst.tid), 0}
+			return Value{typ_: dst, ptr: alloc(dst.tid), flag: 0}
 		}
 		if !implements(dst, v.typ_) {
 			break
 		}
 		cell := alloc(dst.tid)
 		*(*any)(cell) = valueInterface(v, false)
-		return Value{dst, cell, 0}
+		return Value{typ_: dst, ptr: cell, flag: 0}
 	case assignable(dst, v.typ_):
 		cell := alloc(dst.tid)
 		assign(dst.tid, cell, v.ptr)
-		return Value{dst, cell, 0}
+		return Value{typ_: dst, ptr: cell, flag: 0}
 	}
 	panic(context + ": value of type " + v.typ_.str + " is not assignable to type " + dst.str)
 }
@@ -866,7 +877,7 @@ func (v Value) Slice(i, j int) Value {
 		}
 		cell := alloc(v.typ_.tid)
 		setSlice(v.typ_.tid, cell, element(data, v.typ_.elem, i), j-i, c-i)
-		return Value{v.typ_, cell, v.flag & flagRO}
+		return Value{typ_: v.typ_, ptr: cell, flag: v.flag & flagRO}
 	case String:
 		s := *(*string)(v.ptr)
 		if i < 0 || j < i || j > len(s) {
@@ -874,7 +885,7 @@ func (v Value) Slice(i, j int) Value {
 		}
 		cell := alloc(v.typ_.tid)
 		*(*string)(cell) = s[i:j]
-		return Value{v.typ_, cell, v.flag & flagRO}
+		return Value{typ_: v.typ_, ptr: cell, flag: v.flag & flagRO}
 	case Array:
 		if v.flag&flagAddr == 0 {
 			panic("reflect.Value.Slice: slice of unaddressable array")
@@ -885,7 +896,7 @@ func (v Value) Slice(i, j int) Value {
 		st := SliceOf(v.typ_.elem).common()
 		cell := alloc(st.tid)
 		setSlice(st.tid, cell, element(v.ptr, v.typ_.elem, i), j-i, v.typ_.len-i)
-		return Value{st, cell, v.flag & flagRO}
+		return Value{typ_: st, ptr: cell, flag: v.flag & flagRO}
 	}
 	panic(&ValueError{"reflect.Value.Slice", v.kind()})
 }
@@ -912,7 +923,7 @@ func (v Value) Slice3(i, j, k int) Value {
 	}
 	cell := alloc(st.tid)
 	setSlice(st.tid, cell, element(data, v.typ_.elem, i), j-i, k-i)
-	return Value{st, cell, v.flag & flagRO}
+	return Value{typ_: st, ptr: cell, flag: v.flag & flagRO}
 }
 
 // grown returns the slice v with n more elements (zero ones), sharing the
@@ -925,7 +936,7 @@ func (v Value) grown(n int) Value {
 		setSlice(t.tid, cell, data, l+n, c)
 		// The new elements are those of the array, as append keeps them
 		// (they are overwritten by the callers).
-		return Value{t, cell, 0}
+		return Value{typ_: t, ptr: cell, flag: 0}
 	}
 	newCap := c * 2
 	if newCap < l+n {
@@ -936,7 +947,7 @@ func (v Value) grown(n int) Value {
 	for i := 0; i < l; i++ {
 		assign(t.elem.tid, element(newData, t.elem, i), element(data, t.elem, i))
 	}
-	return Value{t, cell, 0}
+	return Value{typ_: t, ptr: cell, flag: 0}
 }
 
 // Grow increases the slice's capacity, if necessary, to guarantee space
@@ -1239,38 +1250,127 @@ func (v Value) NumMethod() int {
 	return v.typ_.NumMethod()
 }
 
-// Method returns a function value corresponding to v's i'th method (not
-// modelled).
+// Method returns a function value corresponding to v's i'th method.
 func (v Value) Method(i int) Value {
-	rt.Unsupported("reflect.Value.Method")
-	return Value{}
+	if v.typ_ == nil {
+		panic(&ValueError{"reflect.Value.Method", Invalid})
+	}
+	if v.flag&flagMethod != 0 || uint(i) >= uint(v.typ_.NumMethod()) {
+		panic("reflect: Method index out of range")
+	}
+	if v.typ_.kind == Interface {
+		if v.IsNil() {
+			panic("reflect: Method on nil interface value")
+		}
+		return v.Elem().MethodByName(v.typ_.methods[v.typ_.exportedMethod(i)].name)
+	}
+	j := v.typ_.exportedMethod(i)
+	recv := copyOf(v.typ_, v.ptr, 0)
+	return Value{typ_: v.typ_.methods[j].typ, ptr: recv.ptr,
+		flag: flagMethod | v.flag&flagRO, mrecv: v.typ_, mindex: j}
 }
 
 // MethodByName returns a function value corresponding to the method of v
-// with the given name (not modelled).
+// with the given name (the zero Value if there is none).
 func (v Value) MethodByName(name string) Value {
-	rt.Unsupported("reflect.Value.MethodByName")
+	if v.typ_ == nil {
+		panic(&ValueError{"reflect.Value.MethodByName", Invalid})
+	}
+	if v.flag&flagMethod != 0 {
+		panic("reflect: MethodByName of method value")
+	}
+	for i := 0; i < v.typ_.NumMethod(); i++ {
+		if v.typ_.methods[v.typ_.exportedMethod(i)].name == name {
+			return v.Method(i)
+		}
+	}
 	return Value{}
 }
 
 // Methods returns an iterator over each Method of v along with its
-// function value (not modelled).
+// function value.
 func (v Value) Methods() iter.Seq2[Method, Value] {
-	rt.Unsupported("reflect.Value.Methods")
-	return nil
+	return func(yield func(Method, Value) bool) {
+		for i := 0; i < v.NumMethod(); i++ {
+			if !yield(v.typ_.Method(i), v.Method(i)) {
+				return
+			}
+		}
+	}
 }
 
-// Call calls the function v with the input arguments in (not modelled).
+// Call calls the function v with the input arguments in.
 func (v Value) Call(in []Value) []Value {
-	rt.Unsupported("reflect.Value.Call")
-	return nil
+	v.mustBe(Func, "reflect.Value.Call")
+	return v.call("Call", in)
 }
 
-// CallSlice calls the variadic function v with the input arguments in
-// (not modelled).
+// CallSlice calls the variadic function v with the input arguments in,
+// assigning the slice in[len(in)-1] to v's final variadic argument.
 func (v Value) CallSlice(in []Value) []Value {
-	rt.Unsupported("reflect.Value.CallSlice")
-	return nil
+	v.mustBe(Func, "reflect.Value.CallSlice")
+	return v.call("CallSlice", in)
+}
+
+func (v Value) call(op string, in []Value) []Value {
+	t := v.typ_
+	isMethod := v.flag&flagMethod != 0
+	if !isMethod && pointerAt(t.tid, v.ptr) == nil {
+		panic("reflect: call of nil function")
+	}
+	isSlice := op == "CallSlice"
+	n := len(t.in)
+	isVariadic := t.variadic
+	if isSlice {
+		if !isVariadic {
+			panic("reflect: CallSlice of non-variadic function")
+		}
+		if len(in) < n {
+			panic("reflect: CallSlice with too few input arguments")
+		}
+		if len(in) > n {
+			panic("reflect: CallSlice with too many input arguments")
+		}
+	} else {
+		if isVariadic {
+			n--
+		}
+		if len(in) < n {
+			panic("reflect: Call with too few input arguments")
+		}
+		if !isVariadic && len(in) > n {
+			panic("reflect: Call with too many input arguments")
+		}
+	}
+	for _, x := range in {
+		if x.Kind() == Invalid {
+			panic("reflect: " + op + " using zero Value argument")
+		}
+	}
+	args := make([]unsafe.Pointer, len(t.in))
+	for i := 0; i < n; i++ {
+		args[i] = in[i].assignTo("reflect.Value.Call", t.in[i]).ptr
+	}
+	if !isSlice && isVariadic {
+		m := len(in) - n
+		slice := MakeSlice(t.in[n], m, m)
+		for i := 0; i < m; i++ {
+			slice.Index(i).Set(in[n+i])
+		}
+		args[n] = slice.ptr
+	}
+	out := make([]Value, len(t.out))
+	results := make([]unsafe.Pointer, len(t.out))
+	for j, rt := range t.out {
+		out[j] = Value{typ_: rt, ptr: alloc(rt.tid)}
+		results[j] = out[j].ptr
+	}
+	if isMethod {
+		callMethod(v.mrecv.tid, v.mindex, v.ptr, args, results)
+	} else {
+		call(t.tid, v.ptr, args, results)
+	}
+	return out
 }
 
 // Send sends x on the channel v (not modelled).
@@ -1307,7 +1407,7 @@ func (v Value) Convert(t Type) Value {
 		panic("reflect.Value.Convert: value of type " + v.typ_.str + " cannot be converted to type " + dst.str)
 	}
 	src := v.typ_
-	result := Value{dst, alloc(dst.tid), flagAddr}
+	result := Value{typ_: dst, ptr: alloc(dst.tid), flag: flagAddr}
 	switch {
 	case dst.kind == Interface:
 		*(*any)(result.ptr) = valueInterface(v, false)

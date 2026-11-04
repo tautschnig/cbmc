@@ -3,7 +3,7 @@ main.go
 
 ^EXIT=10$
 ^SIGNAL=0$
-^\[go::reflect\.Value\.Call\.unsupported\.1\] line \d+ reflect\.Value\.Call: FAILURE$
+^\[go::reflect\.MakeFunc\.unsupported\.1\] line \d+ reflect\.MakeFunc: FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring

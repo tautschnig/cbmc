@@ -887,6 +887,173 @@ void go_convertert::finish_reflect()
         code_frontend_assignt{at(p[1], type), typecast_exprt{p[2], type}});
       block.add(code_frontend_returnt{});
     });
+  // call(t, fn, args, results): calls the function value *fn of type t
+  // with the arguments *args[i], storing the results in *results[j].
+  // callMethod(t, i, recv, args, results): calls method i (in the order
+  // of the descriptor's methods) of the value *recv of type t.
+  const auto pointer_at = [&](const exprt &slice, std::size_t i)
+  {
+    const struct_typet &slice_type =
+      to_struct_type(go_follow(ns, slice.type()));
+    return dereference_exprt{plus_exprt{
+      member_exprt{slice, slice_type.get_component("data")},
+      from_integer(i, c_index_type())}};
+  };
+  // Code calling \p callee with the arguments from \p args, as the
+  // parameters of \p code require, and storing its results.
+  const auto call_and_store =
+    [&](
+      const std::function<exprt(exprt::operandst)> &callee,
+      const code_typet::parameterst &parameters,
+      const typet &return_type,
+      const exprt &args,
+      const exprt &results,
+      code_blockt &block)
+  {
+    exprt::operandst arguments;
+    for(std::size_t i = 0; i < parameters.size(); ++i)
+      arguments.push_back(at(pointer_at(args, i), parameters[i].type()));
+    exprt call = callee(std::move(arguments));
+    if(return_type.id() == ID_empty)
+      block.add(code_expressiont{std::move(call)});
+    else if(is_tuple(return_type))
+    {
+      const symbol_exprt tmp = new_temporary(return_type, location, block);
+      block.add(code_frontend_assignt{tmp, std::move(call)});
+      const auto &components = to_struct_type(return_type).components();
+      for(std::size_t j = 0; j < components.size(); ++j)
+      {
+        block.add(code_frontend_assignt{
+          at(pointer_at(results, j), components[j].type()),
+          member_exprt{tmp, components[j]}});
+      }
+    }
+    else
+    {
+      block.add(code_frontend_assignt{
+        at(pointer_at(results, 0), return_type), std::move(call)});
+    }
+    block.add(code_frontend_returnt{});
+  };
+  // Only if the program calls functions through reflect (these bodies
+  // call every function type and method of the described types).
+  if(!uses("Value.Call") && !uses("Value.CallSlice"))
+  {
+    for(const char *id : {"go::reflect.call", "go::reflect.callMethod"})
+    {
+      symbolt *function = symbol_table.get_writeable(id);
+      if(function != nullptr && function->value.is_nil())
+      {
+        function->value = unsupported_body(
+          function->location, "reflect: Value.Call (not used)");
+      }
+    }
+  }
+  generate(
+    "go::reflect.call",
+    [&](const typet &type) { return is_func_value(go_follow(ns, type)); },
+    [&](const typet &type, const std::vector<exprt> &p, code_blockt &block)
+    {
+      const symbol_exprt value = new_temporary(type, location, block);
+      block.add(code_frontend_assignt{value, at(p[1], type)});
+      const auto &components = to_struct_type(go_follow(ns, type)).components();
+      code_typet code =
+        to_code_type(to_pointer_type(components[0].type()).base_type());
+      code.parameters().erase(code.parameters().begin()); // $env
+      const member_exprt code_pointer{value, components[0]};
+      const member_exprt env{value, components[1]};
+      add_panic(
+        block,
+        notequal_exprt{
+          code_pointer,
+          null_pointer_exprt{to_pointer_type(code_pointer.type())}},
+        "nil-dereference",
+        "runtime error: invalid memory address or nil pointer dereference",
+        location);
+      call_and_store(
+        [&](exprt::operandst arguments)
+        {
+          arguments.insert(arguments.begin(), env);
+          return side_effect_expr_function_callt{
+            dereference_exprt{code_pointer},
+            std::move(arguments),
+            code.return_type(),
+            location};
+        },
+        code.parameters(),
+        code.return_type(),
+        p[2],
+        p[3],
+        block);
+    });
+  if(symbolt *function = symbol_table.get_writeable("go::reflect.callMethod"))
+  {
+    if(function->value.is_nil())
+    {
+      const std::vector<exprt> params = parameter_symbols(*function);
+      const typet result = to_code_type(function->type).return_type();
+      function_statet outer = std::move(state);
+      state = function_statet{};
+      state.function_id = function->name;
+      code_blockt body;
+      for(const auto &t : described)
+      {
+        if(is_go_interface(t.second))
+          continue;
+        const irept &entry =
+          parse_tree.type_entry(type_converter.type_index(t.first));
+        const auto methods = sorted_methods(go_list(entry, "mset"));
+        code_blockt type_block;
+        for(std::size_t j = 0; j < methods.size(); ++j)
+        {
+          const irept &m = *methods[j];
+          code_blockt block;
+          std::vector<std::string> messages;
+          unsupported_in_body = &messages;
+          const exprt receiver = method_receiver(
+            at(params[2], t.second),
+            m.find("path"),
+            m.get("obj"),
+            location,
+            block);
+          unsupported_in_body = nullptr;
+          if(receiver.is_nil())
+            continue;
+          const code_typet code =
+            to_code_type(type_converter.signature(m.get("type")));
+          call_and_store(
+            [&](exprt::operandst arguments)
+            {
+              return call_method(
+                receiver,
+                m.get("obj"),
+                m.get("type"),
+                std::move(arguments),
+                location);
+            },
+            code.parameters(),
+            code.return_type(),
+            params[3],
+            params[4],
+            block);
+          type_block.add(code_ifthenelset{
+            equal_exprt{params[1], from_integer(j, params[1].type())},
+            std::move(block)});
+        }
+        if(type_block.statements().empty())
+          continue;
+        body.add(code_ifthenelset{
+          equal_exprt{params[0], from_integer(t.first, params[0].type())},
+          std::move(type_block)});
+      }
+      body.append(unsupported_body(
+        function->location,
+        "reflect: a call of a method that the model does not describe"));
+      end_generated_function(body, result);
+      state = std::move(outer);
+      function->value = std::move(body);
+    }
+  }
   // makeSlice(t, s, len, cap): *s = make(T, len, cap).
   generate(
     "go::reflect.makeSlice",
