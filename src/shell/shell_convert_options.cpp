@@ -113,6 +113,18 @@ bool shell_convertert::set_option(
   return true;
 }
 
+void shell_convertert::check_option_possible(
+  const std::string &name,
+  bool on,
+  const source_locationt &loc)
+{
+  // The effects of options are only modelled where collect_options found
+  // that they may be enabled, as with set reached by a dynamic command
+  // name, it may not.
+  if(on && !option_possible(name))
+    unsupported(loc, "set enabling " + name + " where it is not expected");
+}
+
 std::vector<shell_wordt>::const_iterator shell_convertert::convert_set_option(
   std::vector<shell_wordt>::const_iterator arg,
   std::vector<shell_wordt>::const_iterator end,
@@ -138,12 +150,14 @@ std::vector<shell_wordt>::const_iterator shell_convertert::convert_set_option(
       const auto option = option_for_name(*name, program.dialect);
       if(!option.has_value())
         unsupported(loc, "set option " + *name);
+      check_option_possible(option->name, on, loc);
       set_option(option->name, on, dest, loc);
       continue;
     }
     const auto option = option_for_letter(text[i], program.dialect);
     if(!option.has_value())
       unsupported(loc, std::string{"set option -"} + text[i]);
+    check_option_possible(option->name, on, loc);
     set_option(option->name, on, dest, loc);
   }
   return arg;
@@ -160,21 +174,37 @@ void shell_convertert::collect_options(const shell_command_listt &list)
       const auto name = static_text(command.words.front());
       if(name.has_value() && *name == "set")
       {
+        // Options end at --, - or the first operand (XCU 2.15 set);
+        // later words are positional parameters.
         for(std::size_t i = 1; i < command.words.size(); ++i)
         {
           const auto text = static_text(command.words[i]);
-          if(!text.has_value() || text->empty() || (*text)[0] != '-')
-            continue;
+          if(
+            !text.has_value() || text->size() < 2 || *text == "--" ||
+            ((*text)[0] != '-' && (*text)[0] != '+'))
+          {
+            break;
+          }
+          // As in convert_set_option: each o takes the next word as the
+          // name of an option, and + disables options.
+          const bool on = (*text)[0] == '-';
+          std::size_t names = 0;
           for(char letter : text->substr(1))
           {
+            if(letter == 'o')
+            {
+              ++names;
+              continue;
+            }
             const auto option = option_for_letter(letter, program.dialect);
-            if(option.has_value())
+            if(on && option.has_value())
               possible_options.insert(option->name);
           }
-          if(i + 1 < command.words.size())
+          for(; names > 0 && i + 1 < command.words.size(); --names)
           {
-            const auto next = static_text(command.words[i + 1]);
-            if(next.has_value())
+            ++i;
+            const auto next = static_text(command.words[i]);
+            if(on && next.has_value())
               possible_options.insert(*next);
           }
         }

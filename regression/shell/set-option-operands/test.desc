@@ -1,0 +1,11 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+set -- -u does not enable nounset, while set -eo pipefail -u does, so
+that expanding an unset variable then makes the shell exit.

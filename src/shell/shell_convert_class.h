@@ -776,6 +776,10 @@ private:
   void convert_set(const shell_commandt &command, code_blockt &dest);
   /// Convert the option argument at \p arg of set.
   /// \return the next argument
+  void check_option_possible(
+    const std::string &name,
+    bool on,
+    const source_locationt &loc);
   std::vector<shell_wordt>::const_iterator convert_set_option(
     std::vector<shell_wordt>::const_iterator arg,
     std::vector<shell_wordt>::const_iterator end,
