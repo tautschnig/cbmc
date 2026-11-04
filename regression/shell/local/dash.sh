@@ -3,7 +3,7 @@ x=global
 f() {
   local x=inner y
   __CPROVER_assert "$x" = inner
-  __CPROVER_assert "$y" = outer
+  __CPROVER_assert "${y-unset}" = outer -o "${y-unset}" = unset
   g
   [ "$1" = early ] && return 3
   x=changed

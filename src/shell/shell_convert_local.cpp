@@ -105,13 +105,23 @@ void shell_convertert::convert_local(
     }
     else if(program.dialect == shell_dialectt::ZSH)
       assign_variable(name, string_literal("", loc), dest, loc);
-    else if(program.dialect != shell_dialectt::POSIX)
+    else
     {
-      // bash, busybox and mksh: unset in the function; dash keeps the
-      // value.
+      // bash (also as sh), busybox and mksh: unset in the function; dash
+      // keeps the value, so that in the POSIX dialect either may happen.
       const symbol_exprt var = variable(name, loc);
       known_literals.erase(name);
-      assign(dest, var, unset_string(loc), loc);
+      code_blockt unset;
+      assign(unset, var, unset_string(loc), loc);
+      if(program.dialect == shell_dialectt::POSIX)
+      {
+        add(
+          dest,
+          code_ifthenelset{nondet(bool_typet{}, loc), std::move(unset)},
+          loc);
+      }
+      else
+        dest.append(unset);
     }
   }
   set_status(dest, 0, loc);

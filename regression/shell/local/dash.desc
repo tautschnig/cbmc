@@ -9,4 +9,4 @@ dash.sh
 --
 local NAME makes NAME local to the function call, including recursive
 calls and early returns; without a value it is unset in bash and keeps
-its value in dash.
+its value in dash, and is unset in busybox and bash as sh.
