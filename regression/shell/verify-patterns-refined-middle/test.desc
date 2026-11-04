@@ -3,9 +3,10 @@ main.sh
 --shell-strings refined
 ^EXIT=6$
 ^SIGNAL=0$
-pattern with \? or a bracket expression between two stars with --shell-strings refined
+pattern that searches for a \? between other characters
 --
 ^warning: ignoring
 --
-A bracket expression between two stars would need a search for a byte
-in a set, which refined strings do not support.
+Finding the first occurrence of -?- would need a search for a sequence of
+sets of bytes, which refined strings do not support (native strings use
+regular expressions).

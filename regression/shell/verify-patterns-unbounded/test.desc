@@ -1,0 +1,12 @@
+CORE
+main.sh
+--shell-strings refined
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Patterns with ? and bracket expressions anywhere, and with quoted
+expansions next to pattern characters, in case and in pattern removal,
+with refined strings. The expected values are those of dash.

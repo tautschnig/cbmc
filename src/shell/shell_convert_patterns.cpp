@@ -2,11 +2,12 @@
 /// Shell converter: pattern matching (POSIX.1-2024 XCU 2.14), for case and
 /// for the pattern removal expansions ${x#p}, ${x##p}, ${x%p}, ${x%%p}.
 ///
-/// Each distinct pattern gets C matcher functions (shell_pattern.h), which
-/// are generated once and added to the symbol table. Patterns that only
-/// contain quoted expansions and ordinary characters are compared as
-/// strings instead. Patterns with both pattern characters and expansions
-/// are not supported yet.
+/// Patterns that only contain quoted expansions and ordinary characters are
+/// compared as strings. With bounded strings, each other distinct pattern
+/// gets C matcher functions (shell_pattern.h), which are generated once and
+/// added to the symbol table, and patterns with both pattern characters and
+/// expansions are not supported. The unbounded representations decompose
+/// patterns into segments between stars (shell_convert_strings.cpp).
 
 #include "shell_convert_class.h"
 
@@ -20,7 +21,7 @@ shell_patternt shell_convertert::compile_pattern(
   auto pattern = compile_shell_pattern(word, program.dialect, error);
   if(!pattern.has_value())
     unsupported(loc, error);
-  if(!pattern->is_literal() && !pattern->dynamic_parts.empty())
+  if(bounded() && !pattern->is_literal() && !pattern->dynamic_parts.empty())
   {
     unsupported(
       loc, "pattern with both pattern characters and quoted expansions");

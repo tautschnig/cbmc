@@ -1,0 +1,11 @@
+CORE
+refined.sh
+--shell-strings refined
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Pattern searches and removals for all values of the arguments, against
+equivalent formulations.

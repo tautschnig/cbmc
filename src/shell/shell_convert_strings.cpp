@@ -24,6 +24,8 @@
 #include <util/std_types.h>
 #include <util/string_expr.h>
 
+#include <algorithm>
+#include <bitset>
 #include <cstdlib>
 
 // ------------------------------------------------------------------
@@ -1117,38 +1119,141 @@ exprt shell_convertert::parse_arith_integer(
 // ------------------------------------------------------------------
 // Patterns (XCU 2.14)
 //
-// A pattern of characters and stars, L0*L1*...*Ln, matches s if s starts
-// with L0, ends with Ln, and L1, ..., Ln-1 occur in order in between; the
-// leftmost occurrence of each is the best choice. The pattern removal
-// expansions with one star choose the first or last occurrence of a
-// segment. Native strings match other patterns with regular expressions.
+// A pattern S0*S1*...*Sn, where the segments Si have no stars, matches s
+// if S0 is at the start of s, Sn at its end, and S1, ..., Sn-1 occur in
+// order in between, without overlapping: the leftmost occurrence of each
+// is the best choice. The pattern removal expansions choose the first or
+// last occurrence of the segment at the end that they search for.
+//
+// The segments at the start and the end are at known positions, so their
+// elements are matched one by one. The other segments are searched for:
+// a core of characters and quoted expansions with index_of, a single
+// bracket expression with index_of_set (refined) or regular expressions
+// (native), and cores with few bracket expressions as the alternatives of
+// the characters in them. The ?s around a core only need room.
 
-std::optional<std::vector<std::string>>
-shell_convertert::star_segments(const shell_patternt &pattern)
+namespace
 {
-  using kindt = shell_pattern_elementt::kindt;
-  std::vector<std::string> segments{1};
-  for(const auto &element : pattern.elements)
-  {
-    if(element.kind == kindt::CHARACTER)
-      segments.back() += static_cast<char>(element.character);
-    else if(element.kind == kindt::STAR)
-      segments.emplace_back();
-    else
-      return {};
-  }
-  return segments;
+/// The most literal alternatives a searched segment may have.
+const std::size_t max_pattern_alternatives = 16;
+
+using pattern_elementst = std::vector<shell_pattern_elementt>;
+using pattern_kindt = shell_pattern_elementt::kindt;
+
+bool has_kind(const pattern_elementst &elements, pattern_kindt kind)
+{
+  return std::any_of(
+    elements.begin(),
+    elements.end(),
+    [kind](const shell_pattern_elementt &e) { return e.kind == kind; });
 }
 
-exprt shell_convertert::pattern_regex(const shell_patternt &pattern)
+/// Whether \p elements are only characters and quoted expansions.
+bool is_literal(const pattern_elementst &elements)
 {
-  using kindt = shell_pattern_elementt::kindt;
+  return !has_kind(elements, pattern_kindt::ANY) &&
+         !has_kind(elements, pattern_kindt::SET);
+}
+
+/// The literal sequences that \p core, which has no ?, matches with the
+/// characters in its bracket expressions, or nothing if there are more
+/// than max_pattern_alternatives.
+std::optional<std::vector<pattern_elementst>>
+pattern_alternatives(const pattern_elementst &core)
+{
+  std::vector<pattern_elementst> result{1};
+  for(const auto &element : core)
+  {
+    if(element.kind != pattern_kindt::SET)
+    {
+      for(auto &alternative : result)
+        alternative.push_back(element);
+      continue;
+    }
+    if(element.set.count() * result.size() > max_pattern_alternatives)
+      return {};
+    std::vector<pattern_elementst> next;
+    for(unsigned c = 0; c < 256; ++c)
+    {
+      if(!element.set[c])
+        continue;
+      for(const auto &alternative : result)
+      {
+        next.push_back(alternative);
+        shell_pattern_elementt character;
+        character.character = static_cast<unsigned char>(c);
+        next.back().push_back(character);
+      }
+    }
+    result = std::move(next);
+  }
+  return result;
+}
+
+/// Whether byte \p c matches pattern element \p element, which is a
+/// character, ? or a bracket expression.
+exprt byte_matches(const shell_pattern_elementt &element, const exprt &c)
+{
+  if(element.kind == pattern_kindt::CHARACTER)
+    return equal_exprt{c, from_integer(element.character, c.type())};
+  if(element.kind == pattern_kindt::ANY)
+    return true_exprt{};
+  PRECONDITION(element.kind == pattern_kindt::SET);
+  // The union of the ranges of consecutive bytes in the set.
+  exprt::operandst ranges;
+  for(unsigned low = 0; low < 256; ++low)
+  {
+    if(!element.set[low])
+      continue;
+    unsigned high = low;
+    while(high + 1 < 256 && element.set[high + 1])
+      ++high;
+    if(low == high)
+      ranges.push_back(equal_exprt{c, from_integer(low, c.type())});
+    else
+    {
+      ranges.push_back(and_exprt{
+        binary_relation_exprt{c, ID_ge, from_integer(low, c.type())},
+        binary_relation_exprt{c, ID_le, from_integer(high, c.type())}});
+    }
+    low = high;
+  }
+  return disjunction(ranges);
+}
+
+/// The set of a bracket expression as the constant bit-vector that the
+/// index_of_set functions of the string solver take: bit i is set if the
+/// byte i is in the set.
+exprt set_mask(const std::bitset<256> &set)
+{
+  mp_integer mask = 0;
+  for(unsigned c = 0; c < 256; ++c)
+  {
+    if(set[c])
+      mask += power(2, c);
+  }
+  return from_integer(mask, unsignedbv_typet{256});
+}
+
+exprt minimum_of(const exprt &a, const exprt &b)
+{
+  return if_exprt{binary_relation_exprt{a, ID_le, b}, a, b};
+}
+
+exprt maximum_of(const exprt &a, const exprt &b)
+{
+  return if_exprt{binary_relation_exprt{a, ID_ge, b}, a, b};
+}
+} // namespace
+
+exprt shell_convertert::pattern_regex(const pattern_elementst &elements)
+{
   regex_buildert re{symbol_table};
   std::vector<exprt> sequence;
   std::string pending;
-  for(const auto &element : pattern.elements)
+  for(const auto &element : elements)
   {
-    if(element.kind == kindt::CHARACTER)
+    if(element.kind == pattern_kindt::CHARACTER)
     {
       pending += static_cast<char>(element.character);
       continue;
@@ -1158,11 +1263,11 @@ exprt shell_convertert::pattern_regex(const shell_patternt &pattern)
       sequence.push_back(re.literal(pending));
       pending.clear();
     }
-    if(element.kind == kindt::ANY)
+    if(element.kind == pattern_kindt::ANY)
       sequence.push_back(re.any());
-    else if(element.kind == kindt::STAR)
+    else if(element.kind == pattern_kindt::STAR)
       sequence.push_back(re.star(re.any()));
-    else if(element.kind == kindt::SET)
+    else if(element.kind == pattern_kindt::SET)
     {
       // The union of the ranges of consecutive bytes in the set.
       std::optional<exprt> set;
@@ -1188,139 +1293,556 @@ exprt shell_convertert::pattern_regex(const shell_patternt &pattern)
   return re.sequence(sequence);
 }
 
-/// Whether byte \p c matches pattern element \p element, which is a
-/// character, ? or a bracket expression.
-static exprt byte_matches(const shell_pattern_elementt &element, const exprt &c)
-{
-  using kindt = shell_pattern_elementt::kindt;
-  if(element.kind == kindt::CHARACTER)
-    return equal_exprt{c, from_integer(element.character, c.type())};
-  if(element.kind == kindt::ANY)
-    return true_exprt{};
-  PRECONDITION(element.kind == kindt::SET);
-  // The union of the ranges of consecutive bytes in the set.
-  exprt::operandst ranges;
-  for(unsigned low = 0; low < 256; ++low)
-  {
-    if(!element.set[low])
-      continue;
-    unsigned high = low;
-    while(high + 1 < 256 && element.set[high + 1])
-      ++high;
-    if(low == high)
-      ranges.push_back(equal_exprt{c, from_integer(low, c.type())});
-    else
-    {
-      ranges.push_back(and_exprt{
-        binary_relation_exprt{c, ID_ge, from_integer(low, c.type())},
-        binary_relation_exprt{c, ID_le, from_integer(high, c.type())}});
-    }
-    low = high;
-  }
-  return disjunction(ranges);
-}
-
-exprt shell_convertert::refined_pattern_matches(
+std::vector<shell_convertert::pattern_segmentt>
+shell_convertert::pattern_segments(
   const shell_patternt &pattern,
-  const exprt &s,
-  code_blockt &dest,
-  const source_locationt &loc)
+  pattern_contextt &context)
 {
-  using kindt = shell_pattern_elementt::kindt;
-  // The elements between the stars. The first and last segments are at
-  // known positions, so their bytes are matched one by one; a middle
-  // segment must be literal, as it is searched for.
-  std::vector<std::vector<shell_pattern_elementt>> segments{1};
+  for(const auto *part : pattern.dynamic_parts)
+  {
+    context.dynamic.push_back(payload_of(expand_part(
+      *part, shell_word_contextt::CASE_SUBJECT, true, false, context.dest)));
+  }
+
+  std::vector<pattern_elementst> parts{1};
   for(const auto &element : pattern.elements)
   {
-    if(element.kind == kindt::STAR)
-      segments.emplace_back();
-    else if(element.kind == kindt::DYNAMIC)
-      unsupported(loc, "pattern with an expansion and ? or a bracket");
+    if(element.kind == pattern_kindt::STAR)
+      parts.emplace_back();
     else
-      segments.back().push_back(element);
-  }
-  std::vector<std::string> middle;
-  for(std::size_t k = 1; k + 1 < segments.size(); ++k)
-  {
-    std::string text;
-    for(const auto &element : segments[k])
-    {
-      if(element.kind != kindt::CHARACTER)
-      {
-        unsupported(
-          loc,
-          "pattern with ? or a bracket expression between two stars with "
-          "--shell-strings refined");
-      }
-      text += static_cast<char>(element.character);
-    }
-    middle.push_back(std::move(text));
+      parts.back().push_back(element);
   }
 
-  const auto &first = segments.front();
-  const auto &last = segments.back();
-  const exprt length = payload_length(s, dest, loc);
-  const auto byte_at = [&](const exprt &position)
+  std::vector<pattern_segmentt> segments;
+  for(const auto &part : parts)
+  {
+    pattern_segmentt segment;
+    auto begin = part.begin();
+    auto end = part.end();
+    while(begin != end && begin->kind == pattern_kindt::ANY)
+    {
+      ++segment.lead;
+      ++begin;
+    }
+    while(end != begin && std::prev(end)->kind == pattern_kindt::ANY)
+    {
+      ++segment.trail;
+      --end;
+    }
+    segment.core.assign(begin, end);
+    // The width of the core: one for each byte, and the lengths of the
+    // quoted expansions.
+    std::size_t bytes = 0;
+    exprt::operandst widths;
+    for(const auto &element : segment.core)
+    {
+      if(element.kind == pattern_kindt::DYNAMIC)
+      {
+        widths.push_back(payload_length(
+          context.dynamic.at(element.dynamic_index),
+          context.dest,
+          context.loc));
+      }
+      else
+        ++bytes;
+    }
+    exprt core_width = from_integer(bytes, integer_type());
+    for(const auto &width : widths)
+      core_width = plus_exprt{core_width, width};
+    segment.core_width = core_width;
+    segment.width = plus_exprt{
+      core_width, from_integer(segment.lead + segment.trail, integer_type())};
+    segments.push_back(std::move(segment));
+  }
+  return segments;
+}
+
+exprt shell_convertert::elements_payload(
+  const pattern_elementst &elements,
+  const pattern_contextt &context)
+{
+  std::optional<exprt> result;
+  std::string pending;
+  auto append = [&](const exprt &payload)
+  {
+    result = result.has_value()
+               ? payload_concat(*result, payload, context.dest, context.loc)
+               : payload;
+  };
+  for(const auto &element : elements)
+  {
+    if(element.kind == pattern_kindt::CHARACTER)
+    {
+      pending += static_cast<char>(element.character);
+      continue;
+    }
+    PRECONDITION(element.kind == pattern_kindt::DYNAMIC);
+    if(!pending.empty())
+    {
+      append(payload_literal(pending));
+      pending.clear();
+    }
+    append(context.dynamic.at(element.dynamic_index));
+  }
+  if(!pending.empty() || !result.has_value())
+    append(payload_literal(pending));
+  return *result;
+}
+
+exprt shell_convertert::segment_at(
+  const pattern_segmentt &segment,
+  bool at_start,
+  const pattern_contextt &context)
+{
+  const exprt &s = context.s;
+  code_blockt &dest = context.dest;
+  const source_locationt &loc = context.loc;
+  if(segment.empty())
+    return true_exprt{};
+  if(segment.lead == 0 && segment.trail == 0 && is_literal(segment.core))
+  {
+    const exprt literal = elements_payload(segment.core, context);
+    return at_start ? payload_has_prefix(s, literal, dest, loc)
+                    : payload_has_suffix(s, literal, dest, loc);
+  }
+
+  exprt position = at_start ? from_integer(segment.lead, integer_type())
+                            : exprt{plus_exprt{
+                                minus_exprt{context.length, segment.width},
+                                from_integer(segment.lead, integer_type())}};
+  const auto advance = [&position](const exprt &width) {
+    position = plus_exprt{position, width};
+  };
+  const exprt one = from_integer(1, integer_type());
+  exprt::operandst conditions;
+  const auto &core = segment.core;
+  for(auto it = core.begin(); it != core.end();)
+  {
+    if(it->kind == pattern_kindt::DYNAMIC)
+    {
+      const exprt &value = context.dynamic.at(it->dynamic_index);
+      const exprt width = payload_length(value, dest, loc);
+      const exprt part =
+        payload_substring(s, position, plus_exprt{position, width}, dest, loc);
+      conditions.push_back(
+        native() ? exprt{equal_exprt{part, value}}
+                 : string_function(
+                     ID_cprover_string_equal_func,
+                     {part, value},
+                     bool_typet{},
+                     dest,
+                     loc));
+      advance(width);
+      ++it;
+    }
+    else if(native())
+    {
+      // The bytes up to the next quoted expansion, as a regular
+      // expression.
+      const auto run_end = std::find_if(
+        it,
+        core.end(),
+        [](const shell_pattern_elementt &e)
+        { return e.kind == pattern_kindt::DYNAMIC; });
+      const pattern_elementst run{it, run_end};
+      const exprt width = from_integer(run.size(), integer_type());
+      const exprt part =
+        payload_substring(s, position, plus_exprt{position, width}, dest, loc);
+      regex_buildert re{symbol_table};
+      conditions.push_back(re.matches(part, pattern_regex(run)));
+      advance(width);
+      it = run_end;
+    }
+    else
+    {
+      if(it->kind != pattern_kindt::ANY)
+      {
+        const exprt byte = string_function(
+          ID_cprover_string_char_at_func,
+          {s, position},
+          unsigned_char_type(),
+          dest,
+          loc);
+        conditions.push_back(byte_matches(*it, byte));
+      }
+      advance(one);
+      ++it;
+    }
+  }
+  return conjunction(conditions);
+}
+
+exprt shell_convertert::regex_index_of(
+  const pattern_elementst &core,
+  const exprt &from,
+  const pattern_contextt &context)
+{
+  PRECONDITION(native());
+  PRECONDITION(!core.empty() && !has_kind(core, pattern_kindt::DYNAMIC));
+  const exprt &s = context.s;
+  code_blockt &dest = context.dest;
+  const source_locationt &loc = context.loc;
+  const exprt minus_one = from_integer(-1, integer_type());
+  shell_pattern_elementt star;
+  star.kind = pattern_kindt::STAR;
+  regex_buildert re{symbol_table};
+  // The first occurrence starts at j if s[from, j + |core|) ends with an
+  // occurrence and s[from, j + |core| - 1) has none.
+  pattern_elementst ending{star};
+  ending.insert(ending.end(), core.begin(), core.end());
+  pattern_elementst containing = ending;
+  containing.push_back(star);
+  const exprt found = re.matches(
+    payload_substring(s, from, context.length, dest, loc),
+    pattern_regex(containing));
+  const symbol_exprt j = temporary(integer_type(), dest, loc);
+  const exprt end = plus_exprt{j, from_integer(core.size(), integer_type())};
+  const exprt before_end = minus_exprt{end, from_integer(1, integer_type())};
+  add(
+    dest,
+    code_assumet{if_exprt{
+      found,
+      and_exprt{
+        binary_relation_exprt{j, ID_ge, from},
+        binary_relation_exprt{end, ID_le, context.length},
+        re.matches(
+          payload_substring(s, from, end, dest, loc), pattern_regex(ending)),
+        not_exprt{re.matches(
+          payload_substring(s, from, before_end, dest, loc),
+          pattern_regex(containing))}},
+      equal_exprt{j, minus_one}}},
+    loc);
+  if(core.size() == 1 && core.front().kind == pattern_kindt::SET)
+  {
+    // For a bracket expression, also: s[from, |s|) is p r for p without
+    // bytes of the set, and r empty or starting with one. The solvers fail
+    // on different queries with either encoding alone, and on fewer with
+    // both.
+    shell_pattern_elementt outside = core.front();
+    outside.set.flip();
+    const symbol_exprt p = temporary(payload_type(), dest, loc);
+    const symbol_exprt r = temporary(payload_type(), dest, loc);
+    const exprt empty = payload_literal("");
+    add(
+      dest,
+      code_assumet{conjunction(
+        {equal_exprt{
+           payload_substring(s, from, context.length, dest, loc),
+           payload_concat(p, r, dest, loc)},
+         re.matches(p, re.star(pattern_regex({outside}))),
+         or_exprt{
+           equal_exprt{r, empty},
+           re.matches(r, pattern_regex({core.front(), star}))},
+         equal_exprt{
+           j,
+           if_exprt{
+             equal_exprt{r, empty},
+             minus_one,
+             plus_exprt{from, payload_length(p, dest, loc)}}}})},
+      loc);
+  }
+  return j;
+}
+
+exprt shell_convertert::regex_last_index_of(
+  const pattern_elementst &core,
+  const exprt &upto,
+  const pattern_contextt &context)
+{
+  PRECONDITION(native());
+  PRECONDITION(!core.empty() && !has_kind(core, pattern_kindt::DYNAMIC));
+  const exprt &s = context.s;
+  code_blockt &dest = context.dest;
+  const source_locationt &loc = context.loc;
+  const exprt zero = from_integer(0, integer_type());
+  const exprt one = from_integer(1, integer_type());
+  shell_pattern_elementt star;
+  star.kind = pattern_kindt::STAR;
+  regex_buildert re{symbol_table};
+  // The last occurrence at or before upto starts at x if s[x, end) starts
+  // with an occurrence and s[x + 1, end) has none, for the end
+  // upto + |core| of the latest occurrence, which the caller keeps within
+  // s.
+  pattern_elementst starting = core;
+  starting.push_back(star);
+  pattern_elementst containing{star};
+  containing.insert(containing.end(), starting.begin(), starting.end());
+  const exprt end = plus_exprt{upto, from_integer(core.size(), integer_type())};
+  const exprt found = re.matches(
+    payload_substring(s, zero, end, dest, loc), pattern_regex(containing));
+  const symbol_exprt x = temporary(integer_type(), dest, loc);
+  add(
+    dest,
+    code_assumet{if_exprt{
+      found,
+      and_exprt{
+        binary_relation_exprt{x, ID_ge, zero},
+        binary_relation_exprt{x, ID_le, upto},
+        re.matches(
+          payload_substring(s, x, end, dest, loc), pattern_regex(starting)),
+        not_exprt{re.matches(
+          payload_substring(s, plus_exprt{x, one}, end, dest, loc),
+          pattern_regex(containing))}},
+      equal_exprt{x, from_integer(-1, integer_type())}}},
+    loc);
+  if(core.size() == 1 && core.front().kind == pattern_kindt::SET)
+  {
+    // For a bracket expression, also: s[0, upto + 1) is a b for a empty or
+    // ending with a byte of the set, and b without any (see
+    // regex_index_of).
+    shell_pattern_elementt outside = core.front();
+    outside.set.flip();
+    const symbol_exprt a = temporary(payload_type(), dest, loc);
+    const symbol_exprt b = temporary(payload_type(), dest, loc);
+    const exprt empty = payload_literal("");
+    add(
+      dest,
+      code_assumet{conjunction(
+        {equal_exprt{
+           payload_substring(s, zero, plus_exprt{upto, one}, dest, loc),
+           payload_concat(a, b, dest, loc)},
+         re.matches(b, re.star(pattern_regex({outside}))),
+         or_exprt{
+           equal_exprt{a, empty},
+           re.matches(a, pattern_regex({star, core.front()}))},
+         equal_exprt{x, minus_exprt{payload_length(a, dest, loc), one}}})},
+      loc);
+  }
+  return x;
+}
+
+exprt shell_convertert::core_index_of(
+  const pattern_elementst &core,
+  const exprt &from,
+  const pattern_contextt &context)
+{
+  const exprt &s = context.s;
+  code_blockt &dest = context.dest;
+  const source_locationt &loc = context.loc;
+  if(is_literal(core))
+  {
+    return payload_index_of(
+      s, elements_payload(core, context), from, dest, loc);
+  }
+  const bool dynamic = has_kind(core, pattern_kindt::DYNAMIC);
+  if(native() && !dynamic)
+    return regex_index_of(core, from, context);
+  if(core.size() == 1 && core.front().kind == pattern_kindt::SET)
   {
     return string_function(
-      ID_cprover_string_char_at_func,
-      {s, position},
-      unsigned_char_type(),
+      ID_cprover_string_index_of_set_func,
+      {s, from, set_mask(core.front().set)},
+      integer_type(),
       dest,
       loc);
-  };
-
-  exprt::operandst conditions;
-  if(segments.size() == 1)
+  }
+  const auto alternatives = has_kind(core, pattern_kindt::ANY)
+                              ? std::nullopt
+                              : pattern_alternatives(core);
+  if(!alternatives.has_value())
   {
-    conditions.push_back(
-      equal_exprt{length, from_integer(first.size(), integer_type())});
+    unsupported(
+      loc,
+      "pattern that searches for a ? between other characters, or for "
+      "bracket expressions with many characters next to other characters" +
+        std::string{dynamic ? " or quoted expansions" : ""});
+  }
+  // The first occurrence of any alternative.
+  const exprt minus_one = from_integer(-1, integer_type());
+  std::optional<exprt> result;
+  for(const auto &alternative : *alternatives)
+  {
+    const exprt found = payload_index_of(
+      s, elements_payload(alternative, context), from, dest, loc);
+    if(!result.has_value())
+    {
+      result = found;
+      continue;
+    }
+    const symbol_exprt earliest = temporary(integer_type(), dest, loc);
+    assign(
+      dest,
+      earliest,
+      if_exprt{
+        equal_exprt{*result, minus_one},
+        found,
+        if_exprt{
+          equal_exprt{found, minus_one}, *result, minimum_of(*result, found)}},
+      loc);
+    result = earliest;
+  }
+  return *result;
+}
+
+exprt shell_convertert::core_last_index_of(
+  const pattern_elementst &core,
+  const exprt &upto,
+  bool anywhere,
+  const pattern_contextt &context)
+{
+  const exprt &s = context.s;
+  code_blockt &dest = context.dest;
+  const source_locationt &loc = context.loc;
+  // Searching backward from before -1 finds nothing; the string solver
+  // requires a position of at least -1.
+  const exprt minus_one = from_integer(-1, integer_type());
+  const exprt from = maximum_of(upto, minus_one);
+  if(is_literal(core))
+  {
+    return payload_last_index_of(
+      s, elements_payload(core, context), from, anywhere, dest, loc);
+  }
+  const bool dynamic = has_kind(core, pattern_kindt::DYNAMIC);
+  if(native() && !dynamic)
+    return regex_last_index_of(core, from, context);
+  if(core.size() == 1 && core.front().kind == pattern_kindt::SET)
+  {
+    return string_function(
+      ID_cprover_string_last_index_of_set_func,
+      {s, from, set_mask(core.front().set)},
+      integer_type(),
+      dest,
+      loc);
+  }
+  const auto alternatives = has_kind(core, pattern_kindt::ANY)
+                              ? std::nullopt
+                              : pattern_alternatives(core);
+  if(!alternatives.has_value())
+  {
+    unsupported(
+      loc,
+      "pattern that searches for a ? between other characters, or for "
+      "bracket expressions with many characters next to other characters" +
+        std::string{dynamic ? " or quoted expansions" : ""});
+  }
+  // The last occurrence of any alternative: -1 is less than any position.
+  std::optional<exprt> result;
+  for(const auto &alternative : *alternatives)
+  {
+    const exprt found = payload_last_index_of(
+      s, elements_payload(alternative, context), from, false, dest, loc);
+    if(!result.has_value())
+    {
+      result = found;
+      continue;
+    }
+    const symbol_exprt latest = temporary(integer_type(), dest, loc);
+    assign(dest, latest, maximum_of(*result, found), loc);
+    result = latest;
+  }
+  return *result;
+}
+
+exprt shell_convertert::segment_index_of(
+  const pattern_segmentt &segment,
+  const exprt &from,
+  const pattern_contextt &context)
+{
+  const exprt minus_one = from_integer(-1, integer_type());
+  if(segment.core.empty())
+  {
+    // Only ?s: the segment fits at from, or nowhere.
+    return if_exprt{
+      binary_relation_exprt{
+        plus_exprt{from, segment.width}, ID_le, context.length},
+      from,
+      minus_one};
+  }
+  // The ?s before the core need room before it, which they have after
+  // from; the ?s after it need room after it, and if the first occurrence
+  // of the core has none, no other has.
+  const exprt lead = from_integer(segment.lead, integer_type());
+  const exprt j = core_index_of(segment.core, plus_exprt{from, lead}, context);
+  const exprt end = plus_exprt{
+    plus_exprt{j, segment.core_width},
+    from_integer(segment.trail, integer_type())};
+  return if_exprt{
+    and_exprt{
+      binary_relation_exprt{j, ID_ge, from_integer(0, integer_type())},
+      binary_relation_exprt{end, ID_le, context.length}},
+    minus_exprt{j, lead},
+    minus_one};
+}
+
+exprt shell_convertert::segment_last_index_of(
+  const pattern_segmentt &segment,
+  const std::optional<exprt> &upto,
+  const pattern_contextt &context)
+{
+  const exprt minus_one = from_integer(-1, integer_type());
+  const exprt lead = from_integer(segment.lead, integer_type());
+  // The last start of the core at which the ?s after it have room.
+  const exprt latest = minus_exprt{
+    minus_exprt{context.length, segment.core_width},
+    from_integer(segment.trail, integer_type())};
+  const exprt core_upto =
+    upto.has_value() ? minimum_of(plus_exprt{*upto, lead}, latest) : latest;
+  if(segment.core.empty())
+  {
+    // Only ?s: the segment fits at the latest position, or nowhere.
+    const exprt start = minus_exprt{core_upto, lead};
+    return if_exprt{
+      binary_relation_exprt{start, ID_ge, from_integer(0, integer_type())},
+      start,
+      minus_one};
+  }
+  // The ?s before the core need room before it: if the last occurrence of
+  // the core has none, no other has.
+  const exprt j = core_last_index_of(
+    segment.core, core_upto, !upto.has_value() && segment.trail == 0, context);
+  return if_exprt{
+    binary_relation_exprt{j, ID_ge, lead}, minus_exprt{j, lead}, minus_one};
+}
+
+std::pair<exprt, exprt> shell_convertert::segment_chain(
+  std::vector<pattern_segmentt>::const_iterator begin,
+  std::vector<pattern_segmentt>::const_iterator end,
+  exprt from,
+  bool backward,
+  const pattern_contextt &context)
+{
+  // Once a segment does not occur, the positions that the later searches
+  // start from are meaningless, but their results do not matter.
+  exprt::operandst found;
+  const exprt zero = from_integer(0, integer_type());
+  const auto search = [&](const pattern_segmentt &segment)
+  {
+    if(segment.empty())
+      return;
+    const symbol_exprt position =
+      temporary(integer_type(), context.dest, context.loc);
+    if(backward)
+    {
+      assign(
+        context.dest,
+        position,
+        segment_last_index_of(
+          segment, minus_exprt{from, segment.width}, context),
+        context.loc);
+      from = position;
+    }
+    else
+    {
+      assign(
+        context.dest,
+        position,
+        segment_index_of(segment, from, context),
+        context.loc);
+      from = plus_exprt{position, segment.width};
+    }
+    found.push_back(binary_relation_exprt{position, ID_ge, zero});
+  };
+  if(backward)
+  {
+    for(auto it = end; it != begin;)
+      search(*--it);
   }
   else
   {
-    conditions.push_back(binary_relation_exprt{
-      length, ID_ge, from_integer(first.size() + last.size(), integer_type())});
+    for(auto it = begin; it != end; ++it)
+      search(*it);
   }
-  for(std::size_t k = 0; k < first.size(); ++k)
-  {
-    if(first[k].kind != kindt::ANY)
-    {
-      conditions.push_back(
-        byte_matches(first[k], byte_at(from_integer(k, integer_type()))));
-    }
-  }
-  if(segments.size() > 1)
-  {
-    for(std::size_t k = 0; k < last.size(); ++k)
-    {
-      if(last[k].kind != kindt::ANY)
-      {
-        const exprt position =
-          minus_exprt{length, from_integer(last.size() - k, integer_type())};
-        conditions.push_back(byte_matches(last[k], byte_at(position)));
-      }
-    }
-  }
-  exprt position = from_integer(first.size(), integer_type());
-  for(const auto &segment : middle)
-  {
-    if(segment.empty())
-      continue;
-    const exprt found =
-      payload_index_of(s, payload_literal(segment), position, dest, loc);
-    conditions.push_back(
-      binary_relation_exprt{found, ID_ge, from_integer(0, integer_type())});
-    position = plus_exprt{found, from_integer(segment.size(), integer_type())};
-  }
-  if(segments.size() > 2)
-  {
-    conditions.push_back(binary_relation_exprt{
-      position,
-      ID_le,
-      minus_exprt{length, from_integer(last.size(), integer_type())}});
-  }
-  return conjunction(conditions);
+  return {conjunction(found), from};
 }
 
 exprt shell_convertert::unbounded_pattern_matches(
@@ -1330,46 +1852,34 @@ exprt shell_convertert::unbounded_pattern_matches(
   const source_locationt &loc)
 {
   const exprt s = payload_of(subject);
-  const auto segments = star_segments(pattern);
-  if(!segments.has_value())
+  if(native() && pattern.dynamic_parts.empty())
   {
-    if(!native())
-      return refined_pattern_matches(pattern, s, dest, loc);
     regex_buildert re{symbol_table};
-    return re.matches(s, pattern_regex(pattern));
+    return re.matches(s, pattern_regex(pattern.elements));
   }
-  const std::string &first = segments->front();
-  const std::string &last = segments->back();
-  const exprt length = payload_length(s, dest, loc);
-  exprt::operandst conditions;
-  conditions.push_back(binary_relation_exprt{
-    length, ID_ge, from_integer(first.size() + last.size(), integer_type())});
-  if(!first.empty())
-    conditions.push_back(
-      payload_has_prefix(s, payload_literal(first), dest, loc));
-  if(!last.empty())
-    conditions.push_back(
-      payload_has_suffix(s, payload_literal(last), dest, loc));
-  exprt position = from_integer(first.size(), integer_type());
-  for(std::size_t k = 1; k + 1 < segments->size(); ++k)
+  pattern_contextt context{s, payload_length(s, dest, loc), {}, dest, loc};
+  const auto segments = pattern_segments(pattern, context);
+  const pattern_segmentt &first = segments.front();
+  if(segments.size() == 1)
   {
-    const std::string &segment = (*segments)[k];
-    if(segment.empty())
-      continue;
-    const exprt found =
-      payload_index_of(s, payload_literal(segment), position, dest, loc);
-    conditions.push_back(
-      binary_relation_exprt{found, ID_ge, from_integer(0, integer_type())});
-    position = plus_exprt{found, from_integer(segment.size(), integer_type())};
+    return and_exprt{
+      equal_exprt{context.length, first.width},
+      segment_at(first, true, context)};
   }
-  if(segments->size() > 2)
-  {
-    conditions.push_back(binary_relation_exprt{
-      position,
-      ID_le,
-      minus_exprt{length, from_integer(last.size(), integer_type())}});
-  }
-  return conjunction(conditions);
+  const pattern_segmentt &last = segments.back();
+  const exprt last_start = minus_exprt{context.length, last.width};
+  const auto chain = segment_chain(
+    std::next(segments.begin()),
+    std::prev(segments.end()),
+    first.width,
+    false,
+    context);
+  return conjunction(
+    {binary_relation_exprt{last_start, ID_ge, first.width},
+     segment_at(first, true, context),
+     segment_at(last, false, context),
+     chain.first,
+     binary_relation_exprt{chain.second, ID_le, last_start}});
 }
 
 exprt shell_convertert::unbounded_remove_pattern(
@@ -1380,77 +1890,99 @@ exprt shell_convertert::unbounded_remove_pattern(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  const auto segments = star_segments(pattern);
-  if(!segments.has_value() || segments->size() != 2)
-  {
-    unsupported(
-      loc,
-      "pattern removal with a pattern other than L*, *L, or L1*L2 with "
-      "unbounded strings");
-  }
-  // The pattern is a*b; the result is s[start, end).
-  const std::string &a = (*segments)[0];
-  const std::string &b = (*segments)[1];
   const exprt s = payload_of(value);
-  const exprt length = payload_length(s, dest, loc);
+  pattern_contextt context{s, payload_length(s, dest, loc), {}, dest, loc};
+  const exprt &length = context.length;
+  const auto segments = pattern_segments(pattern, context);
+  const pattern_segmentt &first = segments.front();
+  const pattern_segmentt &last = segments.back();
   const exprt zero = from_integer(0, integer_type());
-  const exprt a_size = from_integer(a.size(), integer_type());
-  const exprt b_size = from_integer(b.size(), integer_type());
-  // The bytes of s that neither a nor b may use.
-  const exprt free_length = minus_exprt{length, plus_exprt{a_size, b_size}};
 
+  // The result is s[start, end) if the pattern matches.
   exprt::operandst conditions;
-  conditions.push_back(binary_relation_exprt{free_length, ID_ge, zero});
   exprt start = zero;
   exprt end = length;
-  if(prefix)
+  if(segments.size() == 1)
   {
-    // Remove a ... b from the start: a is a prefix, and b's first (for the
-    // shortest) or last (for the longest) occurrence after it ends the
-    // match.
-    if(!a.empty())
-      conditions.push_back(
-        payload_has_prefix(s, payload_literal(a), dest, loc));
-    if(b.empty())
-      start = longest ? length : a_size;
+    // Shortest and longest agree.
+    conditions.push_back(binary_relation_exprt{length, ID_ge, first.width});
+    conditions.push_back(segment_at(first, prefix, context));
+    if(prefix)
+      start = first.width;
+    else
+      end = minus_exprt{length, first.width};
+  }
+  else if(prefix)
+  {
+    // The match starts with the first segment, which the middle ones
+    // follow; it ends with the first (shortest) or last (longest)
+    // occurrence of the last segment after them.
+    conditions.push_back(binary_relation_exprt{
+      length, ID_ge, plus_exprt{first.width, last.width}});
+    conditions.push_back(segment_at(first, true, context));
+    const auto chain = segment_chain(
+      std::next(segments.begin()),
+      std::prev(segments.end()),
+      first.width,
+      false,
+      context);
+    conditions.push_back(chain.first);
+    if(last.empty())
+    {
+      start = longest ? length : chain.second;
+      conditions.push_back(binary_relation_exprt{chain.second, ID_le, length});
+    }
     else
     {
-      const exprt found =
-        longest ? payload_last_index_of(
-                    s,
-                    payload_literal(b),
-                    minus_exprt{length, b_size},
-                    true,
-                    dest,
-                    loc)
-                : payload_index_of(s, payload_literal(b), a_size, dest, loc);
-      conditions.push_back(binary_relation_exprt{found, ID_ge, a_size});
-      start = plus_exprt{found, b_size};
+      const symbol_exprt found = temporary(integer_type(), dest, loc);
+      assign(
+        dest,
+        found,
+        longest ? segment_last_index_of(last, std::nullopt, context)
+                : segment_index_of(last, chain.second, context),
+        loc);
+      conditions.push_back(binary_relation_exprt{found, ID_ge, chain.second});
+      start = plus_exprt{found, last.width};
     }
   }
   else
   {
-    // Remove a ... b from the end: b is a suffix, and a's last (for the
-    // shortest) or first (for the longest) occurrence before it starts
-    // the match.
-    if(!b.empty())
-      conditions.push_back(
-        payload_has_suffix(s, payload_literal(b), dest, loc));
-    if(a.empty())
-      end = longest ? zero : exprt{minus_exprt{length, b_size}};
+    // The match ends with the last segment, which the middle ones precede;
+    // it starts with the last (shortest) or first (longest) occurrence of
+    // the first segment before them.
+    conditions.push_back(binary_relation_exprt{
+      length, ID_ge, plus_exprt{first.width, last.width}});
+    conditions.push_back(segment_at(last, false, context));
+    const auto chain = segment_chain(
+      std::next(segments.begin()),
+      std::prev(segments.end()),
+      minus_exprt{length, last.width},
+      true,
+      context);
+    conditions.push_back(chain.first);
+    if(first.empty())
+    {
+      end = longest ? zero : chain.second;
+      conditions.push_back(binary_relation_exprt{chain.second, ID_ge, zero});
+    }
     else
     {
-      const exprt bound = minus_exprt{length, plus_exprt{a_size, b_size}};
-      const exprt found =
-        longest ? payload_index_of(s, payload_literal(a), zero, dest, loc)
-                : payload_last_index_of(
-                    s, payload_literal(a), bound, b.empty(), dest, loc);
+      const symbol_exprt found = temporary(integer_type(), dest, loc);
+      assign(
+        dest,
+        found,
+        longest ? segment_index_of(first, zero, context)
+                : segment_last_index_of(
+                    first, minus_exprt{chain.second, first.width}, context),
+        loc);
       conditions.push_back(binary_relation_exprt{found, ID_ge, zero});
-      conditions.push_back(binary_relation_exprt{found, ID_le, bound});
+      conditions.push_back(binary_relation_exprt{
+        plus_exprt{found, first.width}, ID_le, chain.second});
       end = found;
     }
   }
-  const exprt matched = conjunction(conditions);
+  const symbol_exprt matched = temporary(bool_typet{}, dest, loc);
+  assign(dest, matched, conjunction(conditions), loc);
   const exprt rest = payload_substring(
     s,
     if_exprt{matched, start, zero},

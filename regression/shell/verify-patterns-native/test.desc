@@ -1,0 +1,12 @@
+CORE
+main.sh
+--shell-strings native --cvc5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Patterns that native strings search for with regular expressions: a ?
+between other characters, and bracket expressions with many characters
+next to other characters, which refined strings do not support.

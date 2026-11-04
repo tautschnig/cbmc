@@ -779,13 +779,95 @@ private:
     code_blockt &dest,
     const source_locationt &loc);
 
-  // Patterns for the unbounded representations, which decompose patterns
-  // of characters and * into literal segments.
+  // Patterns for the unbounded representations. A pattern S0*S1*...*Sn
+  // of segments Si without stars matches s if S0 is at the start of s, Sn
+  // at its end, and S1, ..., Sn-1 occur in order in between: the leftmost
+  // occurrence of each is the best choice.
 
-  /// The literal texts between the stars of \p pattern, or nothing if it has
-  /// ? or bracket expressions.
-  static std::optional<std::vector<std::string>>
-  star_segments(const shell_patternt &pattern);
+  /// A segment of a pattern between stars: `lead` ?s, a core of
+  /// characters, ?s, bracket expressions and quoted expansions that does
+  /// not start or end with ? (unless it is empty), and `trail` ?s.
+  struct pattern_segmentt
+  {
+    std::size_t lead = 0;
+    std::vector<shell_pattern_elementt> core;
+    std::size_t trail = 0;
+    /// The lengths of the core and of the whole segment.
+    exprt core_width;
+    exprt width;
+
+    bool empty() const
+    {
+      return lead == 0 && core.empty() && trail == 0;
+    }
+  };
+  /// What the matching of one pattern against one payload shares.
+  struct pattern_contextt
+  {
+    /// The payload that is matched, and its length.
+    exprt s;
+    exprt length;
+    /// The values of the quoted expansions of the pattern, as payloads.
+    std::vector<exprt> dynamic;
+    code_blockt &dest;
+    const source_locationt &loc;
+  };
+  /// Expand the quoted expansions of \p pattern into \p context, once each,
+  /// and split it into its segments.
+  std::vector<pattern_segmentt>
+  pattern_segments(const shell_patternt &pattern, pattern_contextt &context);
+  /// The payload of \p elements, which are characters and quoted
+  /// expansions.
+  exprt elements_payload(
+    const std::vector<shell_pattern_elementt> &elements,
+    const pattern_contextt &context);
+  /// Whether \p segment matches at the start (or the end) of the payload.
+  exprt segment_at(
+    const pattern_segmentt &segment,
+    bool at_start,
+    const pattern_contextt &context);
+  /// The start of the first occurrence of \p segment at or after \p from,
+  /// or -1 if there is none.
+  exprt segment_index_of(
+    const pattern_segmentt &segment,
+    const exprt &from,
+    const pattern_contextt &context);
+  /// The start of the last occurrence of \p segment at or before \p upto,
+  /// anywhere if there is no \p upto, or -1 if there is none.
+  exprt segment_last_index_of(
+    const pattern_segmentt &segment,
+    const std::optional<exprt> &upto,
+    const pattern_contextt &context);
+  exprt core_index_of(
+    const std::vector<shell_pattern_elementt> &core,
+    const exprt &from,
+    const pattern_contextt &context);
+  exprt core_last_index_of(
+    const std::vector<shell_pattern_elementt> &core,
+    const exprt &upto,
+    bool anywhere,
+    const pattern_contextt &context);
+  /// For native strings: the first (or last) occurrence of \p core, which
+  /// has no quoted expansions, by regular expression membership.
+  exprt regex_index_of(
+    const std::vector<shell_pattern_elementt> &core,
+    const exprt &from,
+    const pattern_contextt &context);
+  exprt regex_last_index_of(
+    const std::vector<shell_pattern_elementt> &core,
+    const exprt &upto,
+    const pattern_contextt &context);
+  /// The ends of the occurrences of the segments \p begin to \p end, which
+  /// occur in order from \p from on, each at its first occurrence (or, if
+  /// \p backward, in reverse order, each at its last occurrence and ending
+  /// at or before \p from). The result is whether they occur, and the end
+  /// (the start, if \p backward) of the last one.
+  std::pair<exprt, exprt> segment_chain(
+    std::vector<pattern_segmentt>::const_iterator begin,
+    std::vector<pattern_segmentt>::const_iterator end,
+    exprt from,
+    bool backward,
+    const pattern_contextt &context);
   exprt unbounded_pattern_matches(
     const shell_patternt &pattern,
     const exprt &subject,
@@ -798,15 +880,9 @@ private:
     bool longest,
     code_blockt &dest,
     const source_locationt &loc);
-  /// For native strings: the regular expression of \p pattern.
-  exprt pattern_regex(const shell_patternt &pattern);
-  /// For refined strings: whether payload \p s matches \p pattern, which has
-  /// ? or bracket expressions, only before the first or after the last *.
-  exprt refined_pattern_matches(
-    const shell_patternt &pattern,
-    const exprt &s,
-    code_blockt &dest,
-    const source_locationt &loc);
+  /// For native strings: the regular expression of \p elements, which have
+  /// no quoted expansions.
+  exprt pattern_regex(const std::vector<shell_pattern_elementt> &elements);
 
   // ----------------------------------------------------------------
   // Shell options (XCU 2.15 set)
