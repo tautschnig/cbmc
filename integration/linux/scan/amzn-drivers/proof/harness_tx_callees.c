@@ -202,5 +202,10 @@ int main(void)
 	/* ---- obligations ---- */
 	__CPROVER_assert(sent <= nb_pkts, "API: sent <= nb_pkts");
 	__CPROVER_assert(INV_RING(&ring), "INV preserved by eth_ena_xmit_pkts");
-	return 0;
+  /* INV_wakeup, checked here with the REAL ena_xmit_mbuf body, so the
+	 * mid-loop LLQ doorbell write is in scope too */
+  __CPROVER_assert(
+    !ring.pkts_without_db,
+    "INV_wakeup: no packet left pushed without a doorbell");
+  return 0;
 }

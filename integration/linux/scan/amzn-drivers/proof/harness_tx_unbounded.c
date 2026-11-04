@@ -68,7 +68,20 @@ int main(void)
 
 	__CPROVER_assert(sent <= nb_pkts, "API: sent <= nb_pkts");
 	__CPROVER_assert(INV(&ring), "INV preserved");
-	/* referenced so goto-instrument --add-library pulls in the model that
+
+  /*
+	 * INV_wakeup, the doorbell handshake: a lost wakeup is not a statement
+	 * about the future, it is a reachable state in which work is pending
+	 * and nobody is going to look at it.  Here the pending-work flag is
+	 * pkts_without_db, set by the TX loop for every accepted packet and
+	 * cleared only by a doorbell write, so the obligation on return is that
+	 * no packet is left pushed-but-not-rung.  Pure safety, no temporal
+	 * operator, and it costs one assertion.
+	 */
+  __CPROVER_assert(
+    !ring.pkts_without_db,
+    "INV_wakeup: no packet left pushed without a doorbell");
+  /* referenced so goto-instrument --add-library pulls in the model that
 	 * DFCC's write-set bookkeeping needs */
 	free(tx_pkts);
 	return 0;

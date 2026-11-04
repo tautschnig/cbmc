@@ -440,9 +440,20 @@ ranking-function synthesis side of the same story.
 `decreases` clause -- `nb_pkts - sent_idx` and `txq->ring_size - i`. Those
 are ranking functions, and CBMC discharges them as ordinary per-step safety
 obligations (`loop_decreases` properties). So the mechanism is not
-speculative here; it is in the two proofs that already pass. CBMC also ships
-`goto-synthesizer`, which synthesises loop invariants and variants, so some
-of this can be mechanised rather than hand-written.
+speculative here; it is in the two proofs that already pass.
+
+**Write the invariants and variants by hand and let CBMC check them.** CBMC
+ships `goto-synthesizer`, but synthesis is not expected to carry this
+workload and we should not plan around it. The evidence from stages 1-3 is
+that hand-writing is both tractable and the more useful half of the exercise:
+every clause we needed was identified *by a proof failure pointing at it* and
+then written in a few minutes (`db_addr != NULL`, `descs_per_entry >= 1`,
+the SQ accounting bound, the `req_id` indirection), and both ranking
+functions were obvious on inspection (`nb_pkts - sent_idx`,
+`txq->ring_size - i`). The failures do the search; a person writes the
+clause. That division of labour also produces the artefact worth reviewing
+with the driver owners -- an explicit statement of what a valid queue is --
+which a synthesised invariant would not.
 
 For a driver the shape is a **conditional** liveness statement, because
 unconditional liveness is simply false -- a dead device never completes
@@ -490,6 +501,37 @@ not "liveness" as a class but the cases where the fairness assumption on the
 device is doing the real work -- there the proof is only as good as that
 assumption, and it should be written at the top of the harness where a
 reviewer will see it.
+
+### 8.2a INV_wakeup demonstrated on the ENA TX doorbell handshake
+
+Done, and it cost one assertion. ENA's pending-work flag on the TX path is
+`pkts_without_db`: the TX loop sets it for every accepted packet, and only a
+doorbell write clears it (`ena_ethdev.c:3300-3306`, plus the mid-loop LLQ
+doorbell in `ena_xmit_mbuf`). The handshake obligation on return is therefore
+that nothing is left pushed-but-not-rung:
+
+```c
+__CPROVER_assert(!ring.pkts_without_db,
+                 "INV_wakeup: no packet left pushed without a doorbell");
+```
+
+It **holds**, in both configurations we have:
+
+| configuration | result |
+|---|---|
+| real `ena_xmit_mbuf`/`ena_tx_map_mbuf` bodies, burst <= 2 (stage 1) | SUCCESS, 1230 properties, 0 real failures |
+| callees abstracted, burst **unbounded** via the loop invariant (stage 2) | SUCCESS alongside `sent <= nb_pkts` and `INV` |
+
+The two configurations are complementary and neither alone is enough: the
+first has the mid-loop LLQ doorbell write in scope but bounds the burst, the
+second covers every burst length but abstracts the callee that writes that
+doorbell. Together they are reasonable evidence for the discipline; a single
+proof with the real body and an unbounded burst needs the loop's `assigns`
+clause widened to the ring footprint, which is the next increment.
+
+The point for the plan is the cost: a lost-wakeup class that we had written
+off as needing temporal logic turned into one assertion over a flag the
+driver already maintains.
 
 ### 8.3 What this changes in the plan
 
