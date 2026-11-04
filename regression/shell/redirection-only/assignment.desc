@@ -1,0 +1,11 @@
+CORE
+assignment.sh
+
+^EXIT=6$
+^SIGNAL=0$
+variable assignment with a redirection that can fail and no command name
+--
+^VERIFICATION
+--
+Where the redirection fails, bash keeps the assignment, and other shells
+do not make it.

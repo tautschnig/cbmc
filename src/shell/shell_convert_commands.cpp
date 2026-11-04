@@ -774,7 +774,38 @@ void shell_convertert::convert_assignments_only(
 {
   const source_locationt &loc = command.location;
   if(!command.redirects.empty())
-    unsupported(loc, "redirection without a command name");
+  {
+    check_redirections(command, shell_command_kindt::EXTERNAL);
+    // Redirections that cannot fail change nothing that is modelled.
+    if(redirection_may_fail(command))
+    {
+      // Where it fails, bash keeps the assignments, and other shells do
+      // not make them.
+      if(!command.assignments.empty())
+      {
+        unsupported(
+          loc,
+          "variable assignment with a redirection that can fail and no "
+          "command name");
+      }
+      // The redirections are made (opening or creating files), with a
+      // non-zero status where that fails.
+      code_blockt failure;
+      nondet_status(failure, 255, loc);
+      add(
+        failure,
+        code_assumet{notequal_exprt{status(), from_integer(0, status_type())}},
+        loc);
+      code_blockt success;
+      set_status(success, 0, loc);
+      add(
+        dest,
+        code_ifthenelset{
+          nondet(bool_typet{}, loc), std::move(failure), std::move(success)},
+        loc);
+      return;
+    }
+  }
   assign(dest, substitution_ran(), false_exprt{}, loc);
   for(const auto &assignment : command.assignments)
   {

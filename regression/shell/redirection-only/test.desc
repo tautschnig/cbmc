@@ -1,0 +1,11 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Redirections without a command name: ones that cannot fail change
+nothing, and others may fail with a non-zero status.
