@@ -486,13 +486,20 @@ void go_convertert::convert_send(const irept &stmt, code_blockt &dest)
 
 void go_convertert::convert_close(const irept &call, code_blockt &dest)
 {
-  // §Close: "Sending to or closing a closed channel causes a run-time
-  // panic. Closing the nil channel also causes a run-time panic."
   const source_locationt location = location_of(call);
   exprt chan = convert_expr(go_list(call, "Args").front());
   if(chan.is_nil())
     return;
-  chan = evaluate_once(chan, location, dest);
+  close_channel(evaluate_once(chan, location, dest), location, dest);
+}
+
+void go_convertert::close_channel(
+  const exprt &chan,
+  const source_locationt &location,
+  code_blockt &dest)
+{
+  // §Close: "Sending to or closing a closed channel causes a run-time
+  // panic. Closing the nil channel also causes a run-time panic."
   add_panic(
     dest,
     notequal_exprt{chan, null_pointer_exprt{to_pointer_type(chan.type())}},

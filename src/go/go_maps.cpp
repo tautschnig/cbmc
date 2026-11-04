@@ -305,7 +305,16 @@ void go_convertert::convert_delete(const irept &call, code_blockt &dest)
     return;
   map = evaluate_once(map, location, dest);
   key = evaluate_once(assign_cast(key, key_type(map.type())), location, dest);
-  const symbol_exprt found = map_find(map, key, call, dest);
+  delete_entry(map, key, call, dest);
+}
+
+void go_convertert::delete_entry(
+  const exprt &map,
+  const exprt &key,
+  const irept &where,
+  code_blockt &dest)
+{
+  const symbol_exprt found = map_find(map, key, where, dest);
   code_blockt remove;
   const exprt last =
     minus_exprt{field(map, "len"), from_integer(1, int_type())};

@@ -574,6 +574,13 @@ private:
   make_map(const typet &type, const source_locationt &, code_blockt &dest);
   exprt convert_map_lit(const irept &lit, const typet &type);
   void convert_delete(const irept &call, code_blockt &dest);
+  /// Code deleting the entry of \p map with key \p key (Go1.27
+  /// §Deletion_of_map_elements; neither has side effects).
+  void delete_entry(
+    const exprt &map,
+    const exprt &key,
+    const irept &where,
+    code_blockt &dest);
   void convert_map_range(
     const irept &stmt,
     const exprt &map,
@@ -814,6 +821,11 @@ private:
   exprt convert_receive(const irept &expr);
   void convert_send(const irept &stmt, code_blockt &dest);
   void convert_close(const irept &call, code_blockt &dest);
+  /// Code closing channel \p chan (which has no side effects).
+  void close_channel(
+    const exprt &chan,
+    const source_locationt &location,
+    code_blockt &dest);
   /// len or cap of channel \p chan, of type \p type.
   exprt chan_len(
     const exprt &chan,
@@ -871,6 +883,15 @@ private:
   /// The type of the nodes of the list of deferred calls.
   static struct_typet deferred_node_type();
   void convert_defer(const irept &stmt, code_blockt &dest);
+  /// The function value (of type func()) that performs the call \p call of
+  /// built-in function delete or close, with the arguments evaluated now
+  /// (code in \p prefix), through a generated function \p thunk_id; nil
+  /// on error.
+  exprt saved_builtin_call(
+    const irept &call,
+    const irep_idt &thunk_id,
+    const source_locationt &location,
+    code_blockt &prefix);
   /// The function value (of type func()) that performs \p call with the
   /// function value and arguments evaluated now (code in \p prefix),
   /// through a generated function \p thunk_id; nil on error.

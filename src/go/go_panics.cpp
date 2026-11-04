@@ -535,18 +535,19 @@ void go_convertert::convert_defer(const irept &stmt, code_blockt &dest)
       // deferred function", so it returns nil and does not stop a panic.
       return;
     }
-    return unsupported(call, "deferred calls of " + id2string(callee));
+    if(callee != "delete" && callee != "close")
+      return unsupported(call, "deferred calls of " + id2string(callee));
   }
   if(object.get("pkg") == "cprover")
     return unsupported(call, "deferred calls of " + id2string(callee));
 
   code_blockt prefix;
-  const exprt deferred = saved_call(
-    call,
-    id2string(state.function_id) + "$defer" +
-      std::to_string(state.defer_counter),
-    location,
-    prefix);
+  const irep_idt thunk_id = id2string(state.function_id) + "$defer" +
+                            std::to_string(state.defer_counter);
+  const exprt deferred =
+    object.get("kind") == "builtin"
+      ? saved_builtin_call(call, thunk_id, location, prefix)
+      : saved_call(call, thunk_id, location, prefix);
   if(deferred.is_nil())
     return;
 
@@ -660,6 +661,79 @@ exprt go_convertert::saved_call(
       std::move(call_arguments),
       code_type.return_type(),
       location}});
+    end_generated_function(body, empty_typet{});
+    state = std::move(outer);
+    symbol_table.get_writeable_ref(thunk_id).value = std::move(body);
+  }
+
+  const struct_typet function_type = deferred_function_type();
+  return struct_exprt{
+    {typecast_exprt::conditional_cast(
+       address_of_exprt{ns.lookup(thunk_id).symbol_expr()},
+       function_type.components()[0].type()),
+     typecast_exprt{env, function_type.components()[1].type()}},
+    function_type};
+}
+
+exprt go_convertert::saved_builtin_call(
+  const irept &call,
+  const irep_idt &thunk_id,
+  const source_locationt &location,
+  code_blockt &prefix)
+{
+  // As saved_call: the arguments, evaluated now, in an environment that a
+  // generated function performs the call with.
+  const irep_idt callee = callee_object(call);
+  const auto &args = go_list(call, "Args");
+  exprt::operandst values;
+  for(const auto &arg : args)
+  {
+    exprt value = convert_expr(arg);
+    if(value.is_nil())
+      return nil_exprt{};
+    values.push_back(std::move(value));
+  }
+  if(callee == "delete")
+  {
+    // "the type of the key k must be assignable to the key type of m".
+    const typet &header = to_pointer_type(values[0].type()).base_type();
+    const typet &key =
+      to_pointer_type(
+        to_struct_type(go_follow(ns, header)).get_component("keys").type())
+        .base_type();
+    values[1] = assign_cast(values[1], key);
+  }
+  struct_typet::componentst components;
+  for(std::size_t i = 0; i < values.size(); ++i)
+    components.emplace_back("a" + std::to_string(i), values[i].type());
+  const struct_typet env_type{std::move(components)};
+  const symbol_exprt env = new_heap_variable(
+    env_type, struct_exprt{std::move(values), env_type}, location, prefix);
+
+  declare_generated(
+    symbol_table,
+    thunk_id,
+    {go_type_convertert::env_pointer_type()},
+    empty_typet{});
+  {
+    const symbolt &thunk = ns.lookup(thunk_id);
+    const exprt env_param = parameter_symbols(thunk)[0];
+    function_statet outer = std::move(state);
+    state = function_statet{};
+    state.function_id = thunk_id;
+    code_blockt body;
+    const dereference_exprt saved{typecast_exprt{
+      env_param, pointer_typet{env_type, config.ansi_c.pointer_width}}};
+    std::vector<exprt> saved_values;
+    for(const auto &c : env_type.components())
+    {
+      saved_values.push_back(
+        evaluate_once(member_exprt{saved, c}, location, body));
+    }
+    if(callee == "delete")
+      delete_entry(saved_values[0], saved_values[1], call, body);
+    else
+      close_channel(saved_values[0], location, body);
     end_generated_function(body, empty_typet{});
     state = std::move(outer);
     symbol_table.get_writeable_ref(thunk_id).value = std::move(body);
