@@ -84,11 +84,24 @@ void shell_convertert::build_subshell_wrappers()
       assign(body, copy, global, loc);
       saved.emplace_back(global, copy);
     }
+    // Traps are reset in subshells (XCU 2.13), and the subshell's EXIT
+    // trap runs when it exits.
+    const bool traps = symbol_table.has_symbol("shell::run_exit_trap");
+    if(traps)
+      assign(body, exit_trap(), from_integer(0, exit_trap().type()), loc);
     add(
       body,
       code_function_callt{
         symbol_table.lookup_ref(subshell.identifier + "::body").symbol_expr()},
       loc);
+    if(traps)
+    {
+      add(
+        body,
+        code_function_callt{
+          symbol_table.lookup_ref("shell::run_exit_trap").symbol_expr()},
+        loc);
+    }
     // exit in the subshell only ends the subshell.
     for(const auto &pair : saved)
       assign(body, pair.first, pair.second, loc);

@@ -30,6 +30,7 @@ static const std::map<std::string, shell_command_kindt> builtins{
   {CPROVER_PREFIX "assert", shell_command_kindt::ASSERT},
   {CPROVER_PREFIX "assume", shell_command_kindt::ASSUME},
   {"read", shell_command_kindt::READ},
+  {"trap", shell_command_kindt::TRAP},
   {"cd", shell_command_kindt::CD},
   {"umask", shell_command_kindt::UMASK},
   {"type", shell_command_kindt::TYPE},
@@ -39,14 +40,14 @@ static const std::map<std::string, shell_command_kindt> builtins{
 /// Builtins that change the shell environment (XCU 2.15 special
 /// builtins, regular builtins of XCU 1.7, and common extensions).
 static const std::set<std::string> unsupported_builtins{
-  "eval",     "readonly", "times",     "trap",    "getopts",   "alias",
-  "unalias",  "wait",     "jobs",      "fg",      "bg",        "command",
-  "hash",     "kill",     "ulimit",    "fc",      "newgrp",    "local",
-  "declare",  "typeset",  "source",    "let",     "shopt",     "builtin",
-  "enable",   "mapfile",  "readarray", "pushd",   "popd",      "dirs",
-  "disown",   "suspend",  "logout",    "nameref", "autoload",  "setopt",
-  "unsetopt", "emulate",  "print",     "whence",  "functions", "zmodload",
-  "caller",   "compgen",  "complete"};
+  "eval",    "readonly",  "times",   "getopts",   "alias",    "unalias",
+  "wait",    "jobs",      "fg",      "bg",        "command",  "hash",
+  "kill",    "ulimit",    "fc",      "newgrp",    "local",    "declare",
+  "typeset", "source",    "let",     "shopt",     "builtin",  "enable",
+  "mapfile", "readarray", "pushd",   "popd",      "dirs",     "disown",
+  "suspend", "logout",    "nameref", "autoload",  "setopt",   "unsetopt",
+  "emulate", "print",     "whence",  "functions", "zmodload", "caller",
+  "compgen", "complete"};
 
 shell_command_kindt shell_convertert::classify(const std::string &name) const
 {
@@ -1205,7 +1206,7 @@ void shell_convertert::convert_non_function(
     kind == shell_command_kindt::CONTINUE ||
     kind == shell_command_kindt::SHIFT || kind == shell_command_kindt::SET ||
     kind == shell_command_kindt::RETURN || kind == shell_command_kindt::EXEC ||
-    kind == shell_command_kindt::DOT;
+    kind == shell_command_kindt::DOT || kind == shell_command_kindt::TRAP;
   with_redirections(
     command,
     special,
@@ -1231,7 +1232,7 @@ void shell_convertert::convert_builtin(
     kind == shell_command_kindt::CONTINUE ||
     kind == shell_command_kindt::SHIFT || kind == shell_command_kindt::SET ||
     kind == shell_command_kindt::RETURN || kind == shell_command_kindt::EXEC ||
-    kind == shell_command_kindt::DOT;
+    kind == shell_command_kindt::DOT || kind == shell_command_kindt::TRAP;
   if(
     !command.assignments.empty() && kind != shell_command_kindt::EXTERNAL &&
     kind != shell_command_kindt::OUTPUT && kind != shell_command_kindt::READ &&
@@ -1319,6 +1320,9 @@ void shell_convertert::convert_builtin(
     return;
   case shell_command_kindt::READ:
     convert_read(command, dest);
+    return;
+  case shell_command_kindt::TRAP:
+    convert_trap(command, dest);
     return;
   case shell_command_kindt::CD:
     convert_cd(command, dest);
@@ -1423,6 +1427,16 @@ void shell_convertert::convert_exit(
     unsupported(loc, "exit with several operands");
   if(command.words.size() == 2)
     status_from_operand(command.words[1], "exit", true, dest, loc);
+  else if(program.dialect != shell_dialectt::ZSH)
+  {
+    // In an EXIT trap's action, the status where the trap ran (XCU 2.15
+    // exit); zsh uses $?.
+    assign(
+      dest,
+      status(),
+      if_exprt{in_exit_trap(), exit_trap_status(), status()},
+      loc);
+  }
   exit_shell(dest, false, loc);
 }
 
@@ -1454,6 +1468,9 @@ void shell_convertert::convert_exec(
     expand_word(command.words[i], shell_word_contextt::IGNORED, dest, loc);
   // The utility's status, which is 127 if it is not found.
   nondet_status(dest, 255, loc);
+  // The shell no longer runs to run its EXIT trap, except in mksh.
+  if(program.dialect != shell_dialectt::MKSH)
+    assign(dest, exit_trap(), from_integer(0, exit_trap().type()), loc);
   exit_shell(dest, false, loc);
 }
 

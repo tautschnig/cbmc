@@ -152,6 +152,12 @@ bool shell_languaget::generate_support_functions(
   code_function_callt call_main{main.symbol_expr()};
   call_main.add_source_location() = main.location;
   body.add(std::move(call_main));
+  // The EXIT trap runs when the shell exits.
+  if(symbol_table.has_symbol("shell::run_exit_trap"))
+  {
+    body.add(code_function_callt{
+      symbol_table.lookup_ref("shell::run_exit_trap").symbol_expr()});
+  }
 
   symbolt start{
     goto_functionst::entry_point(),

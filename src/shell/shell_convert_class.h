@@ -82,6 +82,8 @@ enum class shell_command_kindt
   DOT,
   /// read, which assigns variables values that are not modelled.
   READ,
+  /// trap: see shell_convert_trap.cpp.
+  TRAP,
   /// cd, umask and type: see shell_convert_builtins.cpp.
   CD,
   UMASK,
@@ -1217,6 +1219,27 @@ private:
   /// or utility rather than a function.
   void
   convert_command_builtin(const shell_commandt &command, code_blockt &dest);
+  /// trap: see shell_convert_trap.cpp.
+  void convert_trap(const shell_commandt &command, code_blockt &dest);
+  symbol_exprt exit_trap();
+  symbol_exprt in_exit_trap();
+  symbol_exprt exit_trap_status();
+  /// The number of the EXIT trap action \p text, parsed when it is first
+  /// set.
+  unsigned
+  register_exit_trap(const std::string &text, const source_locationt &loc);
+  void convert_exit_traps();
+  /// shell::run_exit_trap, which runs the current EXIT trap.
+  void add_run_exit_trap();
+  struct exit_trapt
+  {
+    std::string text;
+    std::string identifier;
+    source_locationt location;
+    const shell_command_listt *commands = nullptr;
+  };
+  std::vector<exit_trapt> exit_traps;
+  source_locationt exit_trap_location;
   /// cd, umask and type: see shell_convert_builtins.cpp.
   void convert_cd(const shell_commandt &command, code_blockt &dest);
   void convert_umask(const shell_commandt &command, code_blockt &dest);
@@ -1303,6 +1326,13 @@ private:
   std::optional<std::string> known_text(const shell_wordt &word) const;
   /// The programs that eval parsed, which the converted code refers to.
   std::vector<std::unique_ptr<shell_programt>> eval_programs;
+  /// The commands of \p text, known during conversion, for eval or trap
+  /// (\p what): it must not define functions, enable options that set
+  /// does not enable elsewhere, or run other dot scripts.
+  const shell_command_listt &parse_known_text(
+    const std::string &text,
+    const std::string &what,
+    const source_locationt &loc);
   bool try_convert(
     const std::function<void(code_blockt &)> &convert,
     code_blockt &dest);

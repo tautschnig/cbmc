@@ -1,0 +1,11 @@
+CORE
+status.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+The exit status after an EXIT trap, also with exit without an operand,
+trap 0 resetting the trap, exec, which does not run it, and set -e.

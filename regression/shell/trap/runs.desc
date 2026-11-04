@@ -1,0 +1,11 @@
+CORE
+runs.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The EXIT trap runs at the end of the script.

@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+EXIT traps: the action runs at exit with $? the exit status; subshells
+reset traps and run their own; actions of other conditions never run,
+as no signal arrives.

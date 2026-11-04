@@ -88,6 +88,16 @@ void shell_convertert::convert_eval(
     text += (text.empty() ? "" : " ") + *word;
   }
 
+  const shell_command_listt &commands = parse_known_text(text, "eval", loc);
+  set_status(dest, 0, loc);
+  convert_list(commands, dest);
+}
+
+const shell_command_listt &shell_convertert::parse_known_text(
+  const std::string &text,
+  const std::string &what,
+  const source_locationt &loc)
+{
   // The commands of the text, which must outlive the conversion: they are
   // kept with the dot scripts.
   auto parsed = std::make_unique<shell_programt>();
@@ -96,7 +106,7 @@ void shell_convertert::convert_eval(
   if(parse_shell_source(
        text, parsed->filename, *parsed, log.get_message_handler()))
   {
-    unsupported(loc, "eval of text that does not parse: " + text);
+    unsupported(loc, what + " of text that does not parse: " + text);
   }
   // The text must not need what the conversion collected beforehand:
   // function definitions, options that set may enable, and dot scripts.
@@ -105,17 +115,16 @@ void shell_convertert::convert_eval(
   collect_function_definitions(parsed->commands);
   std::swap(definitions, function_definitions);
   if(!definitions.empty())
-    unsupported(loc, "eval of a function definition");
+    unsupported(loc, what + " of a function definition");
   const std::set<std::string> options_before = possible_options;
   collect_options(parsed->commands);
   if(possible_options != options_before)
-    unsupported(loc, "eval of set with an option that is not set elsewhere");
+    unsupported(loc, what + " of set with an option that is not set elsewhere");
   const std::size_t dots_before = dot_scripts.size();
   collect_dot_scripts(parsed->commands);
   if(dot_scripts.size() != dots_before)
-    unsupported(loc, "eval of a dot script that is not run elsewhere");
+    unsupported(loc, what + " of a dot script that is not run elsewhere");
 
-  set_status(dest, 0, loc);
-  convert_list(parsed->commands, dest);
   eval_programs.push_back(std::move(parsed));
+  return eval_programs.back()->commands;
 }

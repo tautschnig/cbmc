@@ -53,6 +53,10 @@ void shell_convertert::add_initialize()
     assign(init, ifs_default(), true_exprt{}, loc);
   if(symbol_table.has_symbol("shell::ifs_unset"))
     assign(init, ifs_unset(), false_exprt{}, loc);
+  if(symbol_table.has_symbol("shell::exit_trap"))
+    assign(init, exit_trap(), from_integer(0, exit_trap().type()), loc);
+  if(symbol_table.has_symbol("shell::in_exit_trap"))
+    assign(init, in_exit_trap(), false_exprt{}, loc);
   initialize_options(init, loc);
   if(option_possible("errexit"))
     assign(init, errexit_ignored_in_caller(), false_exprt{}, loc);
@@ -127,6 +131,8 @@ void shell_convertert::operator()()
   add_main(std::move(body));
   convert_function_bodies();
   convert_dot_scripts();
+  convert_exit_traps();
+  add_run_exit_trap();
   build_subshell_wrappers();
   add_initialize();
 }

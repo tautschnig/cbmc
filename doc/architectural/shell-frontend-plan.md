@@ -556,7 +556,9 @@ script can turn them on.
 **Additional assumptions**:
 - the script is run as a program, so its `#!` options apply;
 - the environment does not define functions (bash's `BASH_FUNC_*`), and
-  `ENV`/`BASH_ENV` do not cause startup files to run.
+  `ENV`/`BASH_ENV` do not cause startup files to run;
+- the script receives no signals, so that only `trap` actions on EXIT
+  run (when the shell or a subshell exits).
 
 **Differential checks.**
 - `scripts/shell-frontend/pattern_differential.py` compares 49,200

@@ -1,0 +1,12 @@
+CORE
+unknown.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] .*the action of the EXIT trap is known during conversion .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+An EXIT trap whose action is not known during conversion is reported
+where it would run.
