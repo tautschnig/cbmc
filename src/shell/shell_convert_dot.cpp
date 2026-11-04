@@ -140,6 +140,8 @@ void shell_convertert::convert_dot_scripts()
     loops.clear();
     const bool saved_in_dot = in_dot_script;
     const bool saved_in_function = in_function;
+    auto saved_literals = std::move(known_literals);
+    known_literals.clear();
     in_dot_script = true;
     in_function = false;
     current_function = identifier;
@@ -153,6 +155,7 @@ void shell_convertert::convert_dot_scripts()
 
     current_function = saved_function;
     in_function = saved_in_function;
+    known_literals = std::move(saved_literals);
     in_dot_script = saved_in_dot;
     loops = std::move(saved_loops);
     symbol_table.get_writeable_ref(identifier).value = std::move(body);
@@ -164,6 +167,8 @@ void shell_convertert::convert_dot(
   code_blockt &dest)
 {
   const source_locationt &loc = command.location;
+  // The dot script may assign any variable.
+  known_literals.clear();
   const std::string name = *static_text(command.words.front());
   if(command.words.size() < 2)
     unsupported(loc, name + " without a file");

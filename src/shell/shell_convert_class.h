@@ -137,6 +137,14 @@ private:
   std::set<std::string> variables;
   std::set<std::string> special_parameters;
 
+  /// The literal values of variables where the command being converted
+  /// runs: a variable is here if, on every path there, its last assignment
+  /// was of this literal. Writes update it (note_assignment), compound
+  /// commands forget the variables they may assign before and after them
+  /// (forget_assigned), and function calls, dot scripts and command names
+  /// that are expansions forget everything.
+  std::map<std::string, std::string> known_literals;
+
   /// The function whose body is being converted, for naming temporaries.
   std::string current_function = SHELL_MAIN_FUNCTION;
   /// Whether a shell function's body is being converted.
@@ -1181,6 +1189,30 @@ private:
   shell_command_kindt classify(const std::string &name) const;
   void check_parameter_name(const std::string &name, const source_locationt &);
 
+  // ----------------------------------------------------------------
+  // Literal values of variables (see known_literals)
+
+  /// The text of \p value if it is a literal, set value.
+  std::optional<std::string> literal_of(const exprt &value) const;
+  /// The text of \p payload if it is a literal.
+  std::optional<std::string> literal_payload(const exprt &payload) const;
+  /// The literal value of \p part, if it is $name or ${name} of a variable
+  /// whose value is known.
+  std::optional<std::string> known_literal(const shell_word_partt &part) const;
+  /// Record that \p name is assigned \p value.
+  void note_assignment(const std::string &name, const exprt &value);
+  /// Forget the variables that \p command may assign.
+  void forget_assigned(const shell_commandt &command);
+  /// Add the variables that \p list may assign to \p names; set \p any if
+  /// it may assign variables that are not known statically.
+  void collect_assigned(
+    const shell_command_listt &list,
+    std::set<std::string> &names,
+    bool &any) const;
+  void collect_assigned(
+    const shell_wordt &word,
+    std::set<std::string> &names,
+    bool &any) const;
   void assign_variable(
     const std::string &name,
     const exprt &value,

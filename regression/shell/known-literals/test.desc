@@ -1,0 +1,13 @@
+CORE
+main.sh
+--unwind 4
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+The literal values of variables that the converter uses hold on every
+path: across if and case branches, loops with break and continue,
+function calls, subshells, arithmetic and parameter assignments, unset,
+and command names that are expansions.

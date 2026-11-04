@@ -1421,6 +1421,25 @@ void shell_convertert::split_fields(
   code_blockt &dest,
   const source_locationt &loc)
 {
+  if(const auto literal = known_literal(part))
+  {
+    // A known value is split here.
+    std::size_t start = literal->find_first_not_of(" \t\n");
+    while(start != std::string::npos)
+    {
+      std::size_t end = literal->find_first_of(" \t\n", start);
+      const std::string field = literal->substr(
+        start, end == std::string::npos ? std::string::npos : end - start);
+      const exprt value = string_literal(field, loc);
+      if(field.find_first_of("*?[") != std::string::npos)
+        check_no_pattern_characters(value, part, dest);
+      append_field(list, value, dest, loc);
+      start = end == std::string::npos
+                ? end
+                : literal->find_first_not_of(" \t\n", end);
+    }
+    return;
+  }
   const exprt value =
     expand_part(part, shell_word_contextt::CASE_SUBJECT, false, false, dest);
   check_no_pattern_characters(value, part, dest);

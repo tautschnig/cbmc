@@ -134,10 +134,14 @@ void shell_convertert::convert_function_body(const shell_commandt &definition)
   current_function = identifier;
   const bool saved_in_function = in_function;
   in_function = true;
+  // Nothing is known about the variables where it is called.
+  auto saved_literals = std::move(known_literals);
+  known_literals.clear();
 
   code_blockt body;
   convert_list(definition.body, body);
 
+  known_literals = std::move(saved_literals);
   in_function = saved_in_function;
   current_function = saved_function;
   loops = std::move(saved_loops);
@@ -205,6 +209,8 @@ void shell_convertert::convert_function_call(
     assign(dest, errexit_ignored_in_caller(), true_exprt{}, loc);
   }
 
+  // The function may assign any variable.
+  known_literals.clear();
   const auto &definitions = function_definitions.at(name);
   for(std::size_t k = 1; k <= definitions.size(); ++k)
   {

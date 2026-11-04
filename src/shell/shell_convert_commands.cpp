@@ -117,6 +117,7 @@ void shell_convertert::assign_variable(
 {
   // Expansion results are always set.
   assign(dest, variable(name, loc), value, loc);
+  note_assignment(name, value);
 }
 
 code_ifthenelset shell_convertert::if_status_zero(bool zero, code_blockt block)
@@ -160,10 +161,14 @@ void shell_convertert::convert_command(
   code_blockt &dest)
 {
   const std::size_t live = live_temporaries.size();
+  if(command.kind != shell_commandt::kindt::SIMPLE)
+    forget_assigned(command);
   if(command.background)
     convert_background(command, dest);
   else
     convert_foreground(command, dest);
+  if(command.kind != shell_commandt::kindt::SIMPLE)
+    forget_assigned(command);
   // Temporaries hold values within one command. Ending them there keeps
   // goto-symex from merging their values at the join points of later
   // control flow (loops are labels and gotos in one block), which made
@@ -299,8 +304,11 @@ void shell_convertert::convert_if(
 {
   const source_locationt &loc = command.location;
   convert_condition(command.condition, dest);
+  // Both branches start from the state after the condition.
+  const auto after_condition = known_literals;
   code_blockt then_block;
   convert_list(command.body, then_block);
+  known_literals = after_condition;
   code_blockt else_block;
   if(command.else_body.empty())
   {
@@ -411,6 +419,8 @@ void shell_convertert::convert_for(
   for(const auto &item : items)
   {
     const irep_idt continue_label = new_label("continue");
+    // continue reaches the next iteration from anywhere in the body.
+    forget_assigned(command);
     code_blockt iteration;
     assign_variable(command.name, item, iteration, loc);
     loops.push_back({break_label, continue_label, loop_status});
@@ -549,9 +559,13 @@ void shell_convertert::convert_case(
   goto_label(matching, end_label);
   add(dest, std::move(matching), loc);
 
+  // Each item starts from the state after the matching, as items can be
+  // reached by jumps and fall-through.
+  const auto after_matching = known_literals;
   for(std::size_t i = 0; i < command.case_items.size(); ++i)
   {
     const auto &item = command.case_items[i];
+    known_literals = after_matching;
     label(dest, body_labels[i]);
     code_blockt body;
     set_status(body, 0, item.location);
@@ -764,6 +778,7 @@ bool shell_convertert::try_convert(
   const bool saved_errexit_ignored = errexit_ignored;
   const bool saved_in_function = in_function;
   const std::string saved_function = current_function;
+  const auto saved_literals = known_literals;
   message_handlert &handler = log.get_message_handler();
   null_message_handlert quiet;
   log.set_message_handler(quiet);
@@ -782,6 +797,7 @@ bool shell_convertert::try_convert(
     errexit_ignored = saved_errexit_ignored;
     in_function = saved_in_function;
     current_function = saved_function;
+    known_literals = saved_literals;
   }
   log.set_message_handler(handler);
   if(converted)
@@ -799,6 +815,49 @@ void shell_convertert::convert_dynamic_simple(
   code_blockt &dest)
 {
   const source_locationt &loc = command.location;
+  // A name whose value is known: the command with its fields as words.
+  const shell_wordt &first = command.words.front();
+  const bool quoted =
+    first.size() == 1 &&
+    first.front().kind == shell_word_partt::kindt::DOUBLE_QUOTED &&
+    first.front().parts.size() == 1;
+  const auto literal =
+    first.size() == 1
+      ? known_literal(quoted ? first.front().parts.front() : first.front())
+      : std::nullopt;
+  if(
+    literal.has_value() &&
+    (quoted || literal->find_first_of("*?[") == std::string::npos))
+  {
+    std::vector<std::string> fields;
+    if(quoted)
+      fields.push_back(*literal);
+    else
+    {
+      std::size_t start = literal->find_first_not_of(" \t\n");
+      while(start != std::string::npos)
+      {
+        const std::size_t end = literal->find_first_of(" \t\n", start);
+        fields.push_back(literal->substr(
+          start, end == std::string::npos ? std::string::npos : end - start));
+        start = end == std::string::npos
+                  ? end
+                  : literal->find_first_not_of(" \t\n", end);
+      }
+    }
+    shell_commandt copy = command;
+    copy.words.erase(copy.words.begin());
+    for(auto it = fields.rbegin(); it != fields.rend(); ++it)
+    {
+      shell_word_partt part;
+      part.kind = shell_word_partt::kindt::QUOTED_LITERAL;
+      part.text = *it;
+      part.location = first.front().location;
+      copy.words.insert(copy.words.begin(), shell_wordt{part});
+    }
+    convert_simple(copy, dest);
+    return;
+  }
   if(contains_at(command.words.front()))
   {
     // "$@" as a command name runs its first field with the others as
@@ -854,6 +913,9 @@ void shell_convertert::convert_dynamic_simple(
     return copy;
   };
 
+  // Each branch starts from the state before the command; the branches may
+  // change any variable.
+  const auto before_dispatch = known_literals;
   // Any other name runs a utility, whose words are only expanded for
   // their side effects.
   code_blockt otherwise;
@@ -903,6 +965,7 @@ void shell_convertert::convert_dynamic_simple(
     }
     const exprt is_name = conjunction(conditions);
     code_blockt branch;
+    known_literals = before_dispatch;
     if(
       (classify(text) == shell_command_kindt::UNSUPPORTED_BUILTIN &&
        function_definitions.count(text) == 0) ||
@@ -928,6 +991,7 @@ void shell_convertert::convert_dynamic_simple(
         unsupported_texts + " (which are not supported here)",
       loc);
   }
+  known_literals.clear();
   for(auto it = branches.rbegin(); it != branches.rend(); ++it)
   {
     code_ifthenelset choice{
@@ -1331,6 +1395,7 @@ void shell_convertert::convert_unset(
     if(!name.has_value())
       unsupported(loc, "unset operand that is an expansion");
     const symbol_exprt var = variable(*name, loc);
+    known_literals.erase(*name);
     assign(dest, var, string_literal("", loc), loc);
     assign(dest, set_of(var), from_integer(0, component_type("set")), loc);
   }

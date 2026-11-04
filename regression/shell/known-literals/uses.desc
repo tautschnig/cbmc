@@ -1,0 +1,11 @@
+CORE
+uses.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+A command name whose value is known is split into the command's name and
+first arguments, and a known list is split during conversion.

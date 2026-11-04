@@ -131,6 +131,24 @@ exprt shell_convertert::expand_part(
     // Field splitting with the default IFS (the script cannot change it,
     // see variable()) and pathname expansion leave a value without
     // blanks and pattern characters as it is; other values are reported.
+    if(const auto literal = known_literal(part))
+    {
+      if(literal->find_first_of(" \t\n") != std::string::npos)
+      {
+        check(
+          dest,
+          false_exprt{},
+          "shell-unsupported",
+          "the value of the unquoted " + display({part}) +
+            " has no space, tab or newline (field splitting, XCU 2.6.5, is "
+            "not supported here)",
+          part.location);
+      }
+      const exprt value = string_literal(*literal, part.location);
+      if(literal->find_first_of("*?[") != std::string::npos)
+        check_no_pattern_characters(value, part, dest);
+      return value;
+    }
     const exprt value =
       expand_part(part, shell_word_contextt::CASE_SUBJECT, false, false, dest);
     std::bitset<256> blanks;
@@ -312,6 +330,11 @@ exprt shell_convertert::expand_parameter(
   }
   else
   {
+    if(const auto literal = known_literal(part))
+    {
+      check_parameter_name(part.text, loc);
+      return string_literal(*literal, loc);
+    }
     value = parameter(part);
     assignable = value.id() == ID_symbol &&
                  id2string(to_symbol_expr(value).get_identifier())
@@ -372,6 +395,7 @@ exprt shell_convertert::expand_parameter_operator(
         unsupported(loc, "assigning to a special or positional parameter");
       // Expansion results are always set.
       assign(use_word, parameter, word, loc);
+      known_literals.erase(part.text);
     }
     assign(use_word, result, word, loc);
     add(
