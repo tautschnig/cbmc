@@ -1558,7 +1558,7 @@ func (v Value) Seq() iter.Seq[Value] {
 		return func(yield func(Value) bool) {
 			n := v.Int()
 			for i := int64(0); i < n; i++ {
-				x := New(v.typ_).Elem()
+				x := Value{typ_: v.typ_, ptr: alloc(v.typ_.tid), flag: flagAddr}
 				x.SetInt(i)
 				if !yield(copyOf(x.typ_, x.ptr, 0)) {
 					return
@@ -1569,7 +1569,7 @@ func (v Value) Seq() iter.Seq[Value] {
 		return func(yield func(Value) bool) {
 			n := v.Uint()
 			for i := uint64(0); i < n; i++ {
-				x := New(v.typ_).Elem()
+				x := Value{typ_: v.typ_, ptr: alloc(v.typ_.tid), flag: flagAddr}
 				x.SetUint(i)
 				if !yield(copyOf(x.typ_, x.ptr, 0)) {
 					return
@@ -1579,7 +1579,8 @@ func (v Value) Seq() iter.Seq[Value] {
 	case Array, Slice, String:
 		return func(yield func(Value) bool) {
 			for i := 0; i < v.Len(); i++ {
-				x := New(TypeOf(0)).Elem()
+				it := TypeOf(0).common()
+				x := Value{typ_: it, ptr: alloc(it.tid), flag: flagAddr}
 				x.SetInt(int64(i))
 				if !yield(copyOf(x.typ_, x.ptr, 0)) {
 					return
@@ -1606,7 +1607,8 @@ func (v Value) Seq2() iter.Seq2[Value, Value] {
 	case Array, Slice:
 		return func(yield func(Value, Value) bool) {
 			for i := 0; i < v.Len(); i++ {
-				x := New(TypeOf(0)).Elem()
+				it := TypeOf(0).common()
+				x := Value{typ_: it, ptr: alloc(it.tid), flag: flagAddr}
 				x.SetInt(int64(i))
 				if !yield(copyOf(x.typ_, x.ptr, 0), v.Index(i)) {
 					return

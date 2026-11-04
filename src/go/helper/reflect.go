@@ -148,8 +148,23 @@ func (e *encoder) reflectInfo(t types.Type, entry map[string]any) {
 		e.derivedType(types.NewSlice(t), 1)
 		entry["slice"] = e.typ(types.NewSlice(t))
 	}
+	if !e.usesPointerTypes() {
+		return
+	}
 	e.derivedType(types.NewPointer(t), derived+1)
 	entry["ptr"] = e.typ(types.NewPointer(t))
+}
+
+// usesPointerTypes reports whether the program uses the members of reflect
+// that make pointer types (see the front-end's finish_reflect).
+func (e *encoder) usesPointerTypes() bool {
+	for _, name := range []string{"New", "NewAt", "Value.Addr", "PtrTo",
+		"PointerTo"} {
+		if e.usesReflect(name) {
+			return true
+		}
+	}
+	return false
 }
 
 // derivedType records that t is added to the type table for a link of

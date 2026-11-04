@@ -379,6 +379,16 @@ void go_convertert::finish_reflect()
     constructed_kinds.insert("chan");
   if(uses("SliceOf") || uses("Value.Slice") || uses("Value.Slice3"))
     constructed_kinds.insert("slice");
+  // The types of methods (for Type.Method and method values) and the
+  // pointer types (for New, Addr, ...) only if the program may need them:
+  // they make up most of the descriptors otherwise.
+  const bool method_types = uses("Value.Method") ||
+                            uses("Value.MethodByName") ||
+                            uses("Value.Methods") || uses("Type.Method") ||
+                            uses("Type.MethodByName") || uses("Type.Methods");
+  const bool pointer_types = uses("New") || uses("NewAt") ||
+                             uses("Value.Addr") || uses("PtrTo") ||
+                             uses("PointerTo");
   const auto is_described = [&](const irep_idt &index)
   {
     return index.empty() || described.count(type_converter.type_id(index)) != 0;
@@ -408,11 +418,14 @@ void go_convertert::finish_reflect()
       for(const char *which : {"params", "results"})
         for(const auto &item : go_list(under, which))
           add(item.get("type"));
-      for(const auto &m : go_list(under, "methods"))
-        add(m.get("type"));
-      for(const auto &m : go_list(entry, "mset"))
-        add(m.get("type"));
-      if(under.get("k") != "pointer")
+      if(method_types)
+      {
+        for(const auto &m : go_list(under, "methods"))
+          add(m.get("type"));
+        for(const auto &m : go_list(entry, "mset"))
+          add(m.get("type"));
+      }
+      if(pointer_types && under.get("k") != "pointer")
         add(entry.get("ptr"));
       if(entry.get("k") == "named")
         add(entry.get("under"));
