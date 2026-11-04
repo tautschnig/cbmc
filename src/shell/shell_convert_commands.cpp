@@ -317,6 +317,21 @@ void shell_convertert::convert_if(
     loc);
 }
 
+/// Convert \p body into a block of its own in \p dest. Jumps out of it, such
+/// as break and continue, then skip no declarations of temporaries in the
+/// scope of their target, which goto_convert would otherwise implement with
+/// __CPROVER_going_to flags, and symbolic execution with merges whose values
+/// the string solver would traverse as trees.
+void shell_convertert::convert_body(
+  const shell_command_listt &body,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  code_blockt block;
+  convert_list(body, block);
+  add(dest, std::move(block), loc);
+}
+
 /// while and until loops (XCU 2.9.4.5, 2.9.4.6) as gotos, so that break
 /// and continue with a count can leave several loops.
 void shell_convertert::convert_while(
@@ -339,7 +354,7 @@ void shell_convertert::convert_while(
   add(dest, if_status_zero(is_until, std::move(leave)), loc);
 
   loops.push_back({break_label, continue_label, loop_status});
-  convert_list(command.body, dest);
+  convert_body(command.body, dest, loc);
   loops.pop_back();
   assign(dest, loop_status, status(), loc);
   goto_label(dest, continue_label);
@@ -395,10 +410,12 @@ void shell_convertert::convert_for(
   for(const auto &item : items)
   {
     const irep_idt continue_label = new_label("continue");
-    assign_variable(command.name, item, dest, loc);
+    code_blockt iteration;
+    assign_variable(command.name, item, iteration, loc);
     loops.push_back({break_label, continue_label, loop_status});
-    convert_list(command.body, dest);
+    convert_body(command.body, iteration, loc);
     loops.pop_back();
+    add(dest, std::move(iteration), loc);
     assign(dest, loop_status, status(), loc);
     label(dest, continue_label);
   }
@@ -436,15 +453,17 @@ void shell_convertert::convert_for_loop(
         binary_relation_exprt{index, ID_ge, items.count}},
       std::move(leave)},
     loc);
+  code_blockt iteration;
   assign_variable(
     command.name,
     index_exprt{
       items.array, typecast_exprt::conditional_cast(index, index_type())},
-    dest,
+    iteration,
     loc);
   loops.push_back({break_label, continue_label, loop_status});
-  convert_list(command.body, dest);
+  convert_body(command.body, iteration, loc);
   loops.pop_back();
+  add(dest, std::move(iteration), loc);
   assign(dest, loop_status, status(), loc);
   label(dest, continue_label);
   assign(dest, index, plus_exprt{index, from_integer(1, count_type())}, loc);
@@ -507,32 +526,38 @@ void shell_convertert::convert_case(
       command.case_word, shell_word_contextt::CASE_SUBJECT, dest, loc),
     loc);
 
+  // The matching code and each body are blocks of their own, so that the
+  // jumps between them skip no declarations (see convert_body).
   const irep_idt end_label = new_label("esac");
   std::vector<irep_idt> body_labels;
+  code_blockt matching;
   for(const auto &item : command.case_items)
   {
     body_labels.push_back(new_label("case_body"));
     for(const auto &pattern : item.patterns)
     {
       const exprt matches =
-        case_pattern_matches(pattern, subject, dest, item.location);
+        case_pattern_matches(pattern, subject, matching, item.location);
       code_blockt jump;
       goto_label(jump, body_labels.back());
-      add(dest, code_ifthenelset{matches, std::move(jump)}, item.location);
+      add(matching, code_ifthenelset{matches, std::move(jump)}, item.location);
     }
   }
   // No pattern matched: the status is zero.
-  set_status(dest, 0, loc);
-  goto_label(dest, end_label);
+  set_status(matching, 0, loc);
+  goto_label(matching, end_label);
+  add(dest, std::move(matching), loc);
 
   for(std::size_t i = 0; i < command.case_items.size(); ++i)
   {
     const auto &item = command.case_items[i];
     label(dest, body_labels[i]);
-    set_status(dest, 0, item.location);
-    convert_list(item.body, dest);
+    code_blockt body;
+    set_status(body, 0, item.location);
+    convert_list(item.body, body);
     if(item.terminator == ";;" || i + 1 == command.case_items.size())
-      goto_label(dest, end_label);
+      goto_label(body, end_label);
+    add(dest, std::move(body), item.location);
   }
   label(dest, end_label);
 }

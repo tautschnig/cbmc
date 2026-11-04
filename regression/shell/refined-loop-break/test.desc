@@ -1,0 +1,11 @@
+CORE
+main.sh
+--shell-strings refined --show-goto-functions
+^EXIT=0$
+^SIGNAL=0$
+--
+__CPROVER_going_to
+--
+The bodies of loops are blocks of their own, so that break and continue
+skip no declarations of temporaries, which goto_convert would implement
+with __CPROVER_going_to flags.

@@ -1,0 +1,14 @@
+CORE
+main.sh
+--shell-strings refined
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+The arms of case are blocks of their own, so that the jumps to them skip
+no declarations of temporaries: goto_convert would implement those with
+__CPROVER_going_to flags, whose merges made the pointers of the strings
+exponentially large trees, which took the string solver over 200 seconds
+and 4 GB for these six arms.

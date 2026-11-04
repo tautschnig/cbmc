@@ -1132,6 +1132,10 @@ private:
   void convert_pipeline(const shell_commandt &command, code_blockt &dest);
   void convert_background(const shell_commandt &command, code_blockt &dest);
   void convert_if(const shell_commandt &command, code_blockt &dest);
+  void convert_body(
+    const shell_command_listt &body,
+    code_blockt &dest,
+    const source_locationt &loc);
   void convert_while(const shell_commandt &command, code_blockt &dest);
   void convert_for(const shell_commandt &command, code_blockt &dest);
   void convert_for_loop(
