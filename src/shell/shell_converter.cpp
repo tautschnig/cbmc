@@ -122,7 +122,7 @@ void shell_convertert::operator()()
   declare_dot_scripts();
   code_blockt body;
   // Every shell starts with the default IFS.
-  known_literals["IFS"] = " \t\n";
+  known_literals["IFS"] = initial_ifs();
   convert_list(program.commands, body);
   add_main(std::move(body));
   convert_function_bodies();

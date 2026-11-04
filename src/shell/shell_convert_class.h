@@ -1165,6 +1165,8 @@ private:
   // IFS (shell_convert_ifs.cpp)
   /// Whether IFS has its default value, where it is not known.
   symbol_exprt ifs_default();
+  /// The value of IFS at startup.
+  std::string initial_ifs() const;
   /// Whether IFS is unset, where it is not known.
   symbol_exprt ifs_unset();
   /// The value of IFS, if it is known here; the default if it is unset.

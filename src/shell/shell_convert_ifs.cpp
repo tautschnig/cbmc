@@ -15,6 +15,14 @@ static const char ifs_unset_key[] = "IFS unset";
 
 static const char default_ifs[] = " \t\n";
 
+std::string shell_convertert::initial_ifs() const
+{
+  // zsh adds a null byte, which is not IFS white space.
+  if(program.dialect == shell_dialectt::ZSH)
+    return std::string{" \t\n\0", 4};
+  return default_ifs;
+}
+
 symbol_exprt shell_convertert::ifs_default()
 {
   return global_symbol("shell::ifs_default", "ifs_default", bool_typet{});
@@ -28,7 +36,7 @@ symbol_exprt shell_convertert::ifs_unset()
 std::optional<std::string> shell_convertert::known_ifs() const
 {
   if(known_literals.count(ifs_unset_key) != 0)
-    return std::string{default_ifs};
+    return initial_ifs();
   const auto found = known_literals.find("IFS");
   if(found == known_literals.end())
     return {};
@@ -48,7 +56,7 @@ std::string shell_convertert::ifs_for_splitting(
     "IFS has its default value here (field splitting with an IFS that is "
     "not known here is not supported)",
     loc);
-  return default_ifs;
+  return initial_ifs();
 }
 
 void shell_convertert::assign_ifs(
@@ -64,7 +72,7 @@ void shell_convertert::assign_ifs(
   assign(
     dest,
     ifs_default(),
-    *literal == default_ifs ? exprt{true_exprt{}} : exprt{false_exprt{}},
+    *literal == initial_ifs() ? exprt{true_exprt{}} : exprt{false_exprt{}},
     loc);
   assign(dest, ifs_unset(), false_exprt{}, loc);
 }
@@ -95,7 +103,7 @@ shell_convertert::ifs_value(code_blockt &dest, const source_locationt &loc)
     "IFS is set to its default value here (the expansion of an IFS that is "
     "not known here is not supported)",
     loc);
-  return std::string{default_ifs};
+  return initial_ifs();
 }
 
 std::vector<std::string> shell_convertert::split_known_parameter(

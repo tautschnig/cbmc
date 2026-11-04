@@ -1429,7 +1429,7 @@ void shell_convertert::split_fields(
   // zsh only splits command substitutions (see split_known_parameter).
   const bool split = program.dialect != shell_dialectt::ZSH ||
                      part.kind != shell_word_partt::kindt::PARAMETER;
-  const std::string ifs = split ? ifs_for_splitting(dest, loc) : "";
+  std::string ifs = split ? ifs_for_splitting(dest, loc) : "";
   if(const auto literal = known_literal(part))
   {
     // A known value is split here.
@@ -1445,6 +1445,22 @@ void shell_convertert::split_fields(
   const exprt value =
     expand_part(part, shell_word_contextt::CASE_SUBJECT, false, false, dest);
   check_no_pattern_characters(value, part, dest);
+  const std::size_t null = ifs.find('\0');
+  if(null != std::string::npos)
+  {
+    // The default IFS of zsh: splitting at null bytes is not modelled.
+    std::bitset<256> null_byte;
+    null_byte.set(0);
+    check(
+      dest,
+      not_exprt{payload_contains_byte(payload_of(value), null_byte, dest, loc)},
+      "shell-unsupported",
+      "the value of the unquoted " + display({part}) +
+        " has no null byte (field splitting at a null byte in IFS is not "
+        "supported)",
+      loc);
+    ifs.erase(null, 1);
+  }
   if(!ifs_is_white(ifs) && !ifs_has_white(ifs))
   {
     // Each byte of IFS ends a field: the value has one field, or none if
