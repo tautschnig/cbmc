@@ -161,8 +161,16 @@ void shell_convertert::convert_command(
   code_blockt &dest)
 {
   const std::size_t live = live_temporaries.size();
-  if(command.kind != shell_commandt::kindt::SIMPLE)
+  // A loop's body and condition run again after what they assign; other
+  // compound commands start from the current state (their branches are
+  // handled where they are converted).
+  using kindt = shell_commandt::kindt;
+  if(
+    command.kind == kindt::WHILE || command.kind == kindt::UNTIL ||
+    command.kind == kindt::FOR)
+  {
     forget_assigned(command);
+  }
   if(command.background)
     convert_background(command, dest);
   else
@@ -566,6 +574,9 @@ void shell_convertert::convert_case(
   {
     const auto &item = command.case_items[i];
     known_literals = after_matching;
+    // Falling through from the previous item, after what it assigned.
+    if(i > 0 && command.case_items[i - 1].terminator != ";;")
+      forget_assigned(command);
     label(dest, body_labels[i]);
     code_blockt body;
     set_status(body, 0, item.location);

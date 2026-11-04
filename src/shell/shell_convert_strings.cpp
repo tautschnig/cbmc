@@ -613,6 +613,11 @@ exprt shell_convertert::concat(
   code_blockt &dest,
   const source_locationt &loc)
 {
+  // Literals, such as known values, are joined here.
+  const auto literal_a = literal_of(a);
+  const auto literal_b = literal_of(b);
+  if(literal_a.has_value() && literal_b.has_value())
+    return string_literal(*literal_a + *literal_b, loc);
   return make_value(payload_concat(payload_of(a), payload_of(b), dest, loc));
 }
 
