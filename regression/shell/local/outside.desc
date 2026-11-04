@@ -1,0 +1,9 @@
+CORE
+outside.sh
+
+^EXIT=6$
+^SIGNAL=0$
+local outside a function
+--
+^VERIFICATION
+--

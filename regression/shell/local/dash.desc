@@ -1,0 +1,12 @@
+CORE
+dash.sh
+--unwind 4
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+local NAME makes NAME local to the function call, including recursive
+calls and early returns; without a value it is unset in bash and keeps
+its value in dash.

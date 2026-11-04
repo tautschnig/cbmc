@@ -138,8 +138,18 @@ void shell_convertert::convert_function_body(const shell_commandt &definition)
   auto saved_literals = std::move(known_literals);
   known_literals.clear();
 
+  // The variables that the body makes local are restored at its end,
+  // which its returns jump to.
+  auto saved_locals = std::move(function_locals);
+  const irep_idt saved_end = function_end_label;
+  function_end_label = new_label("function_end");
   code_blockt body;
+  save_locals(definition.body, body, definition.location);
   convert_list(definition.body, body);
+  label(body, function_end_label);
+  restore_locals(body, definition.location);
+  function_locals = std::move(saved_locals);
+  function_end_label = saved_end;
 
   known_literals = std::move(saved_literals);
   in_function = saved_in_function;
@@ -253,7 +263,10 @@ void shell_convertert::convert_return(
     unsupported(loc, "return with several operands");
   if(command.words.size() == 2)
     status_from_operand(command.words[1], "return", false, dest, loc);
-  add(dest, code_frontend_returnt{}, loc);
+  if(in_function && !function_end_label.empty())
+    goto_label(dest, function_end_label);
+  else
+    add(dest, code_frontend_returnt{}, loc);
 }
 
 /// Set the status to the operand of exit or return: an unsigned decimal

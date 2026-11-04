@@ -4,6 +4,7 @@ SRC = shell_arith.cpp \
       shell_convert_command.cpp \
       shell_convert_commands.cpp \
       shell_convert_literals.cpp \
+      shell_convert_local.cpp \
       shell_convert_dot.cpp \
       shell_convert_eval.cpp \
       shell_convert_functions.cpp \

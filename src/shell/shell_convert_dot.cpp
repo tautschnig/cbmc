@@ -144,6 +144,10 @@ void shell_convertert::convert_dot_scripts()
     known_literals.clear();
     in_dot_script = true;
     in_function = false;
+    auto saved_locals = std::move(function_locals);
+    function_locals.reset();
+    const irep_idt saved_end = function_end_label;
+    function_end_label.clear();
     current_function = identifier;
 
     code_blockt body;
@@ -157,6 +161,8 @@ void shell_convertert::convert_dot_scripts()
     in_function = saved_in_function;
     known_literals = std::move(saved_literals);
     in_dot_script = saved_in_dot;
+    function_end_label = saved_end;
+    function_locals = std::move(saved_locals);
     loops = std::move(saved_loops);
     symbol_table.get_writeable_ref(identifier).value = std::move(body);
   }

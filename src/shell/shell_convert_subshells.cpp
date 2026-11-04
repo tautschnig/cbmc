@@ -34,10 +34,17 @@ void shell_convertert::run_in_subshell(
   auto saved_loops = std::move(loops);
   loops.clear();
   current_function = body_identifier;
-  // The subshell's changes to variables are lost when it ends.
+  // The subshell's changes to variables are lost when it ends; a return
+  // in it ends the subshell.
   const auto saved_literals = known_literals;
+  auto saved_locals = std::move(function_locals);
+  function_locals.reset();
+  const irep_idt saved_end = function_end_label;
+  function_end_label.clear();
   code_blockt body;
   convert(body);
+  function_end_label = saved_end;
+  function_locals = std::move(saved_locals);
   known_literals = saved_literals;
   current_function = saved_function;
   loops = std::move(saved_loops);

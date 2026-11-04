@@ -1117,6 +1117,29 @@ private:
   /// or utility rather than a function.
   void
   convert_command_builtin(const shell_commandt &command, code_blockt &dest);
+  /// local: see shell_convert_local.cpp.
+  void convert_local(const shell_commandt &command, code_blockt &dest);
+  /// NAME and the value of NAME=value, if \p word has this form with a
+  /// literal NAME.
+  static std::optional<std::pair<std::string, std::optional<shell_wordt>>>
+  local_operand(const shell_wordt &word);
+  void collect_local_names(
+    const shell_command_listt &list,
+    std::set<std::string> &names);
+  /// Save the variables that \p body makes local, at the start of the
+  /// function's body.
+  void save_locals(
+    const shell_command_listt &body,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// Restore the variables that were made local, at the end of the body.
+  void restore_locals(code_blockt &dest, const source_locationt &loc);
+  /// In a function's body: the saved value of each variable that it may
+  /// make local, and whether it did.
+  std::optional<std::map<std::string, std::pair<symbol_exprt, symbol_exprt>>>
+    function_locals;
+  /// In a function's body: the label of its end, which return jumps to.
+  irep_idt function_end_label;
   /// eval (XCU 2.15 eval).
   void convert_eval(const shell_commandt &command, code_blockt &dest);
   /// The value of \p word if it is known during conversion: literal text,
