@@ -871,51 +871,68 @@ sites), almost all of them calls without a model.
 
 ### 7.2 Performance and scalability
 
-- **`errors.Is` on errors of several possible dynamic types grows
-  exponentially with `--unwind`** (3 s at 2, out of memory at 3, for a
-  variable that holds one of two error types). Interface method calls
-  dispatch on the type id; when the id is a merge of several values,
-  goto-symex explores every type's branch at each level of the
-  `Unwrap` recursion, and the value sets of the data pointers mix the
-  objects of all of them. This affects ordinary programs, not only the
-  models. Possible remedies: dispatch through the value set of the
-  data pointer (as function-pointer removal does), or keep the type id
-  in the pointer's object (a typed pointer per dynamic type).
+- **`errors.Is` on errors of several possible dynamic types.** For two
+  types this is fixed (out of memory at `--unwind 3` before, 0.14 s
+  now) by three changes: `unbox` reads the boxed value through a typed
+  dereference (`ID_C_typed_dereference`), so that the value sets of the
+  data pointer do not mix the objects of all dynamic types; the returns
+  of unwinding functions are zero values rather than nondeterministic
+  ones; and goto-symex propagates values merged from at most 8
+  constants (`(g ? c1 : c2)`), so that type-id comparisons simplify.
+  Three types (`errors-is-several-types`) still grow exponentially with
+  `--unwind` (36 s at 3): each level of the `Unwrap` recursion explores
+  the branch of every type. Dispatch through the value set of the data
+  pointer (as function-pointer removal does) remains a possible remedy;
+  pointer-typed type ids and type ids stored in the boxed object did
+  not help in experiments.
 - **`append` with a nondeterministic capacity** (gc's capacities are not
   determined, §5) gives a slice several possible underlying arrays,
-  which multiplies the objects that later accesses may refer to (the
-  `fmt.Errorf` model needed a preallocated slice to verify in 0.5 s
-  instead of running out of memory).
-- **Objects**: every conversion to an interface allocates the value, so
-  programs exhaust CBMC's default 256 objects quickly (`sync-map` needs
-  `--object-bits 10`). The front-end could raise the default, or box
-  values without allocation where they are not shared.
+  which multiplies the objects that later accesses may refer to: 16
+  appends to a `[]int` take 98 s with gc's capacities and 0.4 s with
+  `--go-compiler tinygo` (114 s for `[]any`). gc's escape analysis
+  (`-gcflags=-m`, or `-json=0,file://dir`) tells which slices stay on
+  the stack, whose capacities are then determined, but inlined copies
+  of a function make the mapping to source positions ambiguous.
+- **Objects**: every conversion to an interface allocates the value.
+  Go programs now default to 16 object bits (at most half the pointer
+  width), as Java programs do; `sync-map` no longer needs
+  `--object-bits`. Boxing without allocation where values are not
+  shared would reduce the objects further.
 - **Concurrency** is costly in the solver: two goroutines that update a
-  `map[any]any` under a mutex take 294 s and 12 GB; the timer test
-  (`stdlib-time-timers`, THOROUGH) 200 s; the deadlock check
-  multiplies solver time by 3 to 5 in the concurrency tests (§5).
-  goto-symex repeats symbolic execution while the value sets of shared
-  objects grow.
+  `map[any]any` under a mutex take about 300 s and 12 GB (22 million
+  variables, 94 million clauses), dominated by the constraints of
+  `memory_model`. The shared reads are mostly of the map's key and
+  value arrays and of the work of `$interface_equal`, which dispatches
+  over all dynamic types. The panic state is already thread-local. The
+  timer test (`stdlib-time-timers`, THOROUGH) takes 200 s, and the
+  deadlock check multiplies solver time by 3 to 5 in the concurrency
+  tests (§5).
 - **The fixed cost of source models**: every program converts all of
   the source models it imports transitively (`strings` alone: 2.4 MB of
   JSON, 1.5 s; `math/big`: 11 MB, 11 s, after sharing the entries of
   identical composite types in the helper, which made it 152 MB and
-  29 s before). Signatures (25,000 entries for `x/text`'s pipeline) are
-  still not shared. Generated tables dominate large packages
-  (`x/text/collate/tables.go` is 69 MB of JSON, and the two packages
-  that do not convert are tables); constant composite literals could be
-  encoded as flat arrays of values, and unreachable functions pruned in
-  the helper.
+  29 s before). The helper sends array and slice literals of at least 16
+  integer or boolean constants as lists of values (`_cvals`) and omits
+  the operands of constant expressions, so generated tables are cheap:
+  the `x/text` harnesses for `unicode/runenames` (628 MB of JSON before,
+  11 MB now) and `date` (1.4 GB, now 43 MB) convert and verify in 6 s
+  and 16 s, and the `stdlib-source-math-big` test takes 10 s instead
+  of 54 s. Signatures (25,000 entries for `x/text`'s pipeline, 87.5 MB
+  of JSON) are still not shared, and unreachable functions are not
+  pruned in the helper.
 - **Loops in models need bounds**: string comparisons (`--unwindset
   go::cprover/rt.StringEqual.0:N` for long constants), map operations,
-  `math.Sqrt` (54 iterations), the word loops of `math/big` (one
-  decimal conversion takes 33 s), `time.ParseDuration`, `strings`'
-  searches. Users have to tune `--unwind`; models could avoid loops
-  where CBMC has the operation (e.g., floating-point square root).
+  `math.Sqrt` (54 iterations), the word loops of `math/big`,
+  `time.ParseDuration`, `strings`' searches. Users have to tune
+  `--unwind`; models could avoid loops where CBMC has the operation
+  (e.g., floating-point square root).
 
 ### 7.3 CBMC changes to upstream
 
-- goto-symex: sound value sets for pointers shared between threads,
+- goto-symex: propagation of values merged from constants
+  (`regression/cbmc/symex-merged-constants`); typed dereferences for
+  front-ends (`ID_C_typed_dereference`); sound value sets for pointers
+  shared between threads,
   with repeated symbolic execution (`shared_value_summaryt`); objects of
   a previous run that keep their names when their types differ (no C
   regression test reproduces it; the Go test `sync-map-concurrent`
