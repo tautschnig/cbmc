@@ -1046,6 +1046,41 @@ bounds the inputs of refined strings only.
   properties, as CBMC solves once per newly failed property; the
   differential tests use small scripts.
 
+### 7.7 Field splitting, dynamic command names, eval (2026-11-05)
+
+- **IFS.** Every shell sets IFS to space, tab and newline at startup,
+  whatever the environment says (checked for dash, bash, busybox, mksh
+  and zsh). Every access to a variable now goes through one accessor that
+  rejects IFS and the other variables the shell maintains, and bash's
+  `printf -v` is unsupported (a first operand that is an expansion is
+  checked to have no `-v`). Field splitting then only needs the default
+  IFS.
+- **Single fields.** An unquoted expansion where one field is needed (an
+  operand of `test`, say) is supported, with properties that report the
+  values that field splitting, pathname expansion, or the removal of an
+  empty field would change.
+- **Lists of fields.** A single unquoted expansion in `for` items,
+  function arguments and `set --` is split: refined strings search with
+  `index_of_set`, each field only after the previous one was found;
+  native strings decompose the value, which is much harder for the
+  solvers.
+- **Command names that are expansions** run what the value names: a branch
+  per function and modelled builtin, a property for unsupported builtins,
+  and a utility otherwise. Refined strings compare the name byte by byte:
+  string equalities of one unknown string with 60 constants took over
+  100 seconds for `"$1" x`, and now take 5.
+- **Literal values.** The converter tracks which variables hold a known
+  literal (forgetting, at compound commands, what they may assign, and
+  everything at calls), so that their expansions, splitting, and use as
+  command names need no solver: `cmd="greet you"; $cmd` calls `greet`.
+- **eval** of text known during conversion is parsed and converted in
+  place; of other text (mostly `eval "$(cmd)"`), it is reported as a
+  property, and the path ends.
+- **Census.** 746 of 1,652 installed scripts convert, against 606. Of the
+  140 new ones, most fail properties that field splitting, pathname
+  expansion or `eval` report; 24 are not decided with `--unwind 3` in 120
+  seconds, as their field splitting is costly for the solvers.
+
 ---
 
 ## 8. Bibliographic details for key references
