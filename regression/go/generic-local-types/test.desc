@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 16 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+not supported yet
+--
+Go1.27 §Declarations_and_scope: local types of generic functions

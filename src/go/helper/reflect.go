@@ -106,13 +106,22 @@ func (e *encoder) reflectInfo(t types.Type, entry map[string]any) {
 	switch x := t.(type) {
 	case *types.Named:
 		name := x.Obj().Name()
-		if args := x.TypeArgs(); args.Len() > 0 {
+		args := typeList(x.TypeArgs())
+		local, isLocal := e.localArgs[x]
+		if isLocal {
+			// gc names a type declared in an instance of a generic
+			// function or method after that instance's type arguments.
+			args = local
+		}
+		if len(args) > 0 {
 			var list []string
-			for j := 0; j < args.Len(); j++ {
-				list = append(list, types.TypeString(args.At(j),
-					(*types.Package).Path))
+			for _, a := range args {
+				list = append(list, types.TypeString(a, (*types.Package).Path))
 			}
 			name += "[" + strings.Join(list, ",") + "]"
+		}
+		if isLocal {
+			entry["rstr"] = qualifier(x.Obj().Pkg()) + "." + name
 		}
 		entry["rname"] = name
 		if p := x.Obj().Pkg(); p != nil {

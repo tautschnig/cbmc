@@ -186,14 +186,20 @@ type encoder struct {
 	genericDecls map[*types.Func]*ast.FuncDecl
 	declFile     map[*ast.FuncDecl]int
 	localIDs     map[localKey]string
-	aliases      map[types.Object]string     // instances' copies of local objects
-	selObj       map[*ast.Ident]types.Object // re-resolved selectors and keys
-	selPath      map[*ast.SelectorExpr]selPath
-	loader       *loader
-	namedTypes   []types.Type // the types named by typeName,
-	typeNames    []string     // and their names
-	usedNames    map[string]bool
-	reflectUsed  []string // see reflectUses
+	aliases      map[types.Object]string // instances' copies of local objects
+	// Type entries of local named types of instances whose underlying type
+	// was not yet known when the entry was built (see localNamed).
+	pendingUnder map[*types.Named][]int
+	// The type arguments of the instance that declares a local named type
+	// (see localNamed), which reflect shows in its name.
+	localArgs   map[*types.Named][]types.Type
+	selObj      map[*ast.Ident]types.Object // re-resolved selectors and keys
+	selPath     map[*ast.SelectorExpr]selPath
+	loader      *loader
+	namedTypes  []types.Type // the types named by typeName,
+	typeNames   []string     // and their names
+	usedNames   map[string]bool
+	reflectUsed []string // see reflectUses
 	// The entries that reflectInfo adds, and their depth (see
 	// derivedType).
 	reflectDerived map[int]int
@@ -256,14 +262,10 @@ func (e *encoder) objID(o types.Object) string {
 		}
 	}
 	if e.cur.isLocal(o) {
-		key := localKey{o, e.cur}
-		if id, ok := e.localIDs[key]; ok {
-			return id
+		id, fresh := e.localID(o)
+		if fresh {
+			e.objects[id] = e.objectEntry(o)
 		}
-		id := fmt.Sprintf("%s.%s#%d@%s", pkg, o.Name(), len(e.localIDs),
-			e.cur.id)
-		e.localIDs[key] = id
-		e.objects[id] = e.objectEntry(o)
 		return id
 	}
 	// Objects of generic declarations may also occur outside instances, in
@@ -299,6 +301,50 @@ func (e *encoder) objID(o types.Object) string {
 	e.ids[o] = id
 	e.objects[id] = e.objectEntry(o)
 	return id
+}
+
+// localID is the id of o, an object declared in the current instance's
+// generic declaration, in that instance, and whether it is new (then the
+// caller adds its object entry).
+func (e *encoder) localID(o types.Object) (string, bool) {
+	key := localKey{o, e.cur}
+	if id, ok := e.localIDs[key]; ok {
+		return id, false
+	}
+	pkg := ""
+	if o.Pkg() != nil {
+		pkg = o.Pkg().Path()
+	}
+	id := fmt.Sprintf("%s.%s#%d@%s", pkg, o.Name(), len(e.localIDs), e.cur.id)
+	e.localIDs[key] = id
+	return id, true
+}
+
+// localNamed is the current instance's copy of x, a named type declared in
+// its generic declaration (Go1.27 §Declarations_and_scope: "The scope of a
+// type identifier declared inside a function begins at the identifier in
+// the TypeSpec and ends at the end of the innermost containing block"): a
+// named type of its own, whose underlying type has the instance's type
+// arguments, and whose object has the instance's id of x's. (gc also gives
+// each instance its own type.) Local types have neither type parameters
+// nor methods of their own (methods are declared at package level).
+func (e *encoder) localNamed(x *types.Named) types.Type {
+	tn := types.NewTypeName(x.Obj().Pos(), x.Obj().Pkg(), x.Obj().Name(), nil)
+	n := types.NewNamed(tn, nil, nil)
+	e.localArgs[n] = e.cur.args
+	// Before substituting in the underlying type, which may refer to x.
+	e.cur.memo[x] = n
+	id, fresh := e.localID(x.Obj())
+	e.aliases[tn] = id
+	n.SetUnderlying(e.subst(x.Underlying()))
+	for _, i := range e.pendingUnder[n] {
+		e.types[i].(map[string]any)["under"] = e.typ(n.Underlying())
+	}
+	delete(e.pendingUnder, n)
+	if fresh {
+		e.objects[id] = e.objectEntry(x.Obj())
+	}
+	return n
 }
 
 // recvNamed is the named type of a method's receiver.
@@ -480,6 +526,9 @@ func (e *encoder) substType(t types.Type) types.Type {
 	case *types.Alias:
 		return e.subst(types.Unalias(t))
 	case *types.Named:
+		if e.cur.isLocal(x.Obj()) && x.TypeArgs().Len() == 0 {
+			return e.localNamed(x)
+		}
 		args := typeList(x.TypeArgs())
 		changed := false
 		for i, a := range args {
@@ -729,14 +778,21 @@ func (e *encoder) typ(t types.Type) int {
 	case *types.Basic:
 		entry = map[string]any{"k": "basic", "kind": basicNames[x.Kind()]}
 	case *types.Named:
-		if e.cur.isLocal(x.Obj()) {
-			// Its underlying type would need substituting as well.
+		if _, copied := e.aliases[x.Obj()]; !copied && e.cur.isLocal(x.Obj()) {
+			// Not substituted (see localNamed): the type of the generic
+			// declaration itself.
 			entry = map[string]any{"k": "unknown",
 				"reason": "type declarations in generic functions"}
 			break
 		}
-		entry = map[string]any{"k": "named", "obj": e.objID(x.Obj()),
-			"under": e.typ(x.Underlying())}
+		entry = map[string]any{"k": "named", "obj": e.objID(x.Obj())}
+		if x.Underlying() == nil {
+			// A local type of an instance that refers to itself, met while
+			// localNamed substitutes in its underlying type.
+			e.pendingUnder[x] = append(e.pendingUnder[x], i)
+		} else {
+			entry["under"] = e.typ(x.Underlying())
+		}
 		if args := x.TypeArgs(); args.Len() > 0 {
 			var targs []int
 			for j := 0; j < args.Len(); j++ {
@@ -1418,6 +1474,8 @@ func main() {
 		genericDecls: map[*types.Func]*ast.FuncDecl{},
 		declFile:     map[*ast.FuncDecl]int{},
 		localIDs:     map[localKey]string{},
+		pendingUnder: map[*types.Named][]int{},
+		localArgs:    map[*types.Named][]types.Type{},
 		aliases:      map[types.Object]string{},
 		selObj:       map[*ast.Ident]types.Object{},
 		selPath:      map[*ast.SelectorExpr]selPath{},
