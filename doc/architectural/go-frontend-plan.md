@@ -402,7 +402,8 @@ Supported so far:
   inputs each (strings with ASCII, multi-byte, invalid and space
   characters; floats including zeros, infinities, NaNs and boundary
   values; NaN payloads excepted). Modelled: `errors` (`New`, `Is`,
-  `Unwrap`, `AsType`; not `As`, which needs reflection), `strings`
+  `Unwrap`, `AsType`, `Join`, and `As`, with the intrinsics
+  `rt.AsTarget` and `rt.AsAssign` instead of reflectlite), `strings`
   (now the real package with these functions replaced, see below:
   `Compare`, `Contains`, `ContainsRune`, `Count`, `Cut`, `CutPrefix`,
   `CutSuffix`, `Fields`, `HasPrefix`, `HasSuffix`, `Index`, `IndexByte`,
@@ -446,7 +447,14 @@ Supported so far:
   formatting is the earlier model's), `strings` (`strings.Builder`,
   `Replacer`, ...), `bytes` (`bytes.Buffer`, ...), `unicode/utf8`, `io`,
   `encoding/binary` (whose `Read`, `Write` and `Size` use reflection, and
-  are reported when called), `math` (the files of an architecture without
+  are reported when called), `encoding/json` (go1's implementation,
+  which go1.27 builds without `GOEXPERIMENT=jsonv2`: the helper uses the
+  standard library's export data built without that experiment, so that
+  the real package's types are those of the source; its behaviour
+  differs from go1.27's default, json/v2 underneath, in details such as
+  error messages), `encoding/base64` (with `NewEncoding`'s loop over the
+  64 symbols unrolled, as the package's initialisation calls it),
+  `math` (the files of an architecture without
   assembly, so the functions are portable Go, with the bit conversions
   and rounding of the earlier model; `Sqrt` is a loop of up to 54
   iterations), `math/big` (its pure-Go arithmetic), `time` (see below),
@@ -467,6 +475,12 @@ Supported so far:
   `rt.SliceSwap` (the length of a slice of any type in an interface
   value and swapping its elements, for `sort.Slice`) and the IEEE 754 bit
   conversions (byte extraction).
+  In the models (`cprover/...`, and the replaced packages below), the
+  capacities of `append` are gc's for slices on the heap: the stack
+  buffers of slices that do not escape are not considered (the models'
+  internal capacities are not observable), so that the arrays of their
+  buffers stay unique (marshalling a struct with `encoding/json` and
+  unmarshalling the result: out of time after 20 minutes, 20 s now).
   `sync` and `sync/atomic` are *replaced* by their models: their types
   keep state in internal fields that function models cannot reach, so
   programs are type-checked against the models (and only their API is
@@ -494,6 +508,41 @@ Supported so far:
   sections) and `rt.Fatal` (property class `fatal`, for gc's fatal
   errors such as "sync: unlock of unlocked mutex", which `recover`
   cannot stop); blocking operations assume that they can proceed.
+- `reflect` is replaced by its model (`models/reflect`, with
+  `go_reflect.cpp`). A type is a descriptor (`reflect.rtype`), a global
+  that the front-end builds for each type a reflected value may have:
+  the dynamic types of interface values and the types they refer to
+  (elements, keys, fields, parameters, results, method types, underlying
+  types, and the pointer type of each, which the helper adds to the type
+  table for `New` and `Addr`; with `SliceOf`, also the slice type of
+  each). The described types are dynamic types (`Value.Interface` may
+  box them). Descriptors hold what reflect reports, from the helper
+  (gc's spelling with package names, `Name`, `PkgPath`, gc's sizes,
+  alignments and field offsets, tags, method sets sorted by name), and
+  the front-end's own layout (the size of a value and the offsets of
+  fields in CBMC's structs) for the model's address arithmetic. Type
+  identity is identity of descriptors. A `Value` is the descriptor of
+  its type, a pointer to the value (to an immutable copy if it is not
+  addressable) and flags (addressable, obtained through an unexported
+  field, method value). The model reads and writes values of basic types
+  through `unsafe` pointers; the rest are intrinsics of the model whose
+  bodies test the type id against each described type: making interface
+  values, copying, allocating, `==`, the map operations, the headers of
+  slices, maps and channels, finding a constructed type (`SliceOf`,
+  `MapOf`, `ArrayOf`, `ChanOf`), and calling functions and methods
+  (`Value.Call`, method values; generated only if the program calls
+  through reflect, as the helper records in `reflect_uses`). Modelled:
+  `Type` (kinds, strings, elements, fields with tags and embedded-field
+  search, methods, `Implements`, `AssignableTo`, `ConvertibleTo`,
+  overflow checks, iterators), `Value` (reading and setting, `Elem`,
+  `Field*`, `Index`, `Slice`, `Len`, `Cap`, `IsNil`, `IsZero`,
+  `Convert`, `Addr`, `Pointer`, `UnsafeAddr`, maps, `Append`, `Copy`,
+  `Grow`, `Call`, `Method`), `New`, `NewAt`, `Zero`, `MakeSlice`,
+  `MakeMap`, `Indirect`, `DeepEqual`, `Swapper`, `TypeFor`,
+  `TypeAssert`, `VisibleFields`, `StructTag`; operations that it does
+  not support fail a property of class `unsupported`
+  (`rt.Unsupported`), see §7.1. `SliceHeader` and `StringHeader` work
+  through the support of `unsafe`.
 - Deadlocks (property class `deadlock`, gc's "all goroutines are asleep
   - deadlock!"; `--go-no-deadlock-check` disables them). At each
   blocking operation (channel operations, `select` without `default`,
@@ -827,12 +876,17 @@ sites), almost all of them calls without a model.
 ### 7.1 Soundness and required features
 
 - **Data races** are not reported (§6, phase 10). Required.
-- **`reflect`** has no model: 12,356 call sites in 108 packages, by far
-  the largest gap (also `internal/reflectlite`, `errors.As`, the
-  reflection paths of `encoding/json`, `encoding/binary.Read`/`Write`,
-  `fmt`'s formatting of nested values). A model needs the helper's type
-  table at run time (kinds, fields, methods, element types), much as
-  `rt.SliceLen`/`rt.SliceSwap` use the dynamic types.
+- **`reflect`** is modelled (§5), but not completely: `Select`,
+  `MakeFunc`, `FuncOf`, `StructOf`, the channel operations of `Value`,
+  `Method.Func` and `Method.Type` of non-interface types, and
+  `Value.Interface` of method values are reported; `MapOf`, `ArrayOf`
+  and `ChanOf` find only the types the program has; `MapKeys` and
+  `MapRange` visit the entries in the map's order (gc's is
+  unspecified, so this misses executions); `DeepEqual` does not detect
+  cycles. Loops over tags (`StructTag.Lookup`, `strconv.Unquote`, and
+  encoding/json's `isValidTag`, with a 28-character `ContainsRune`)
+  need loop bounds of the tags' lengths. `fmt` does not use it yet (the
+  formatting of nested values), nor `encoding/binary.Read`/`Write`.
 - **Arbitrary results of models** are sound but imprecise: the text of
   `fmt`'s printing functions, `unicode` beyond Latin-1 (also
   inconsistent between calls for the same rune), the wall clock and the
@@ -850,18 +904,18 @@ sites), almost all of them calls without a model.
   that refer to themselves other than through structs or function types
   (`type T []T`, `type P *P`), type declarations in generic functions,
   closures that capture type parameters (25 corpus sites), deferred
-  built-in calls, `goto` out of and `defer` in range-over-function
+  calls of built-in functions other than `delete` and `close`, `goto`
+  out of and `defer` in range-over-function
   bodies, package variables of unmodelled packages (`os.Stdout`,
-  `os.Args`, `base64.StdEncoding`, ...).
+  `os.Args`, ...).
 - **Unmodelled packages** by corpus call sites: `go/types` (1,737),
   `syscall` (1,234, mostly in the file-reading functions of `time`'s and
   `os`'s sources, reached only through them), `go/ast` (666), `os`
-  (598), `encoding/json` (with `jsontext` and its internals, about
-  1,000), `bufio` (410), `runtime` (290), `go/token`, `log`, `image`,
+  (598), `bufio` (410), `runtime` (290), `go/token`, `log`, `image`,
   `regexp`, `net`, `net/http`, `path/filepath`, `encoding/asn1`. Several
   are plain Go and could be source models as `strings` and `io` are
-  (`bufio`, `path/filepath` with `os` stubs, `regexp`, `encoding/json`
-  once `reflect` is modelled); `os` and `syscall` need models of the
+  (`bufio`, `path/filepath` with `os` stubs, `regexp`, `text/template`
+  now that `reflect` is modelled); `os` and `syscall` need models of the
   environment (files, arguments, environment variables).
 - **Models track one Go release.** Source models are the GOROOT source
   of the toolchain, but the function models, the overrides and the
@@ -889,7 +943,9 @@ sites), almost all of them calls without a model.
   determined, §5) gives a slice several possible underlying arrays,
   which multiplies the objects that later accesses may refer to: 16
   appends to a `[]int` take 98 s with gc's capacities and 0.4 s with
-  `--go-compiler tinygo` (114 s for `[]any`). gc's escape analysis
+  `--go-compiler tinygo` (114 s for `[]any`). The models use heap
+  capacities (§5), so this only concerns the program's own slices.
+  gc's escape analysis
   (`-gcflags=-m`, or `-json=0,file://dir`) tells which slices stay on
   the stack, whose capacities are then determined, but inlined copies
   of a function make the mapping to source positions ambiguous.
