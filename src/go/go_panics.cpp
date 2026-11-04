@@ -468,9 +468,13 @@ void go_convertert::end_function_panics(code_blockt &body)
   {
     if(!state.has_defers)
     {
-      // Only reached when panicking; the caller ignores the value.
+      // Only reached when panicking; the caller ignores the value. The zero
+      // value rather than an arbitrary one, which goto-symex would merge
+      // into the result of the normal return (e.g., an arbitrary dynamic
+      // type of an interface result, which makes every method dispatch on
+      // it consider every type).
       ret = code_frontend_returnt{
-        side_effect_expr_nondett{state.return_type, location}};
+        *zero_initializer(state.return_type, location, ns)};
     }
     else if(state.named_results.empty())
       ret = code_frontend_returnt{state.result_variable};
@@ -498,8 +502,8 @@ void go_convertert::end_generated_function(code_blockt &body, const typet &type)
   if(type.id() == ID_empty)
     body.add(code_frontend_returnt{});
   else
-    body.add(code_frontend_returnt{
-      side_effect_expr_nondett{type, source_locationt{}}});
+    body.add(
+      code_frontend_returnt{*zero_initializer(type, source_locationt{}, ns)});
 }
 
 struct_typet go_convertert::deferred_node_type()

@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 6 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 42 wrapped: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+errors.Is on an error of one of two dynamic types (ran out of memory)

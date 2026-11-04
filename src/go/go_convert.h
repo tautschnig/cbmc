@@ -864,7 +864,7 @@ private:
   /// return, appended to \p body.
   void end_function_panics(code_blockt &body);
   /// The end of a generated function that may panic, returning \p type.
-  static void end_generated_function(code_blockt &body, const typet &type);
+  void end_generated_function(code_blockt &body, const typet &type);
   /// The type of the nodes of the list of deferred calls.
   static struct_typet deferred_node_type();
   void convert_defer(const irept &stmt, code_blockt &dest);
