@@ -213,6 +213,62 @@ Note what is *not* on the list: the number of driver operations, the
 reachable ring states, and the device's choices. Those are all universally
 quantified already.
 
+## 6a. Stages 1 and 2: done
+
+**Stage 1 -- callee contracts discharged.**
+`scan/amzn-drivers/proof/harness_tx_callees.c`, `run_stage1_callees.sh`.
+The real bodies of `eth_ena_xmit_pkts`, `ena_xmit_mbuf`, `ena_tx_map_mbuf`
+and `ena_tx_mbuf_prepare` are now verified rather than assumed; the
+assumption boundary moved out to the DPDK mbuf/mempool API and the
+`ena_com` layer. **1229 properties pass**, no real failures.
+
+Getting there required four invariant clauses that are not obvious from
+reading the code -- each was found by a proof failure, which is the
+argument for doing this at all:
+
+1. `io_sq->db_addr != NULL` -- the doorbell register must be mapped;
+   `ena_com_write_sq_doorbell` writes through it unconditionally.
+2. `llq_info.descs_per_entry >= 1` -- `ena_com_sq_have_enough_space` and
+   `ena_com_is_doorbell_needed` **divide** by it. `ena_com_config_dev_mode`
+   sets it to `desc_list_entry_size / 16` with the entry size in
+   {128,192,256}, so it is >= 8 in practice; the only guard on the entry
+   size is a multiple-of-8 check, so a configuration with
+   `llq_ring_entry_size_value < 16` would divide by zero. Worth flagging to
+   the driver owners as a fragility, not a bug.
+3. `(u16)(tail - next_to_comp) <= q_depth - 1` -- the SQ accounting bound.
+   `ena_com_free_q_entries` returns `q_depth - 1 - used` as a *signed int*,
+   so without this clause it goes negative and makes the `ena_tx_cleanup`
+   branch of `eth_ena_xmit_pkts` reachable from a state the driver never
+   reaches.
+4. `empty_tx_reqs[i] < ring_size`, and every `tx_buffer_info` slot either
+   free or referencing a live mbuf -- the `req_id` indirection.
+
+Plus one harness lesson worth recording: `__CPROVER_havoc_object(&a[i])`
+havocs the **whole enclosing object**, so havocking inside a loop that
+builds a linked structure wipes the pointers written on earlier iterations.
+
+**Stage 2 -- burst bound removed.**
+`harness_tx_unbounded.c`, `tx_loop_contract.json`,
+`run_stage2_unbounded.sh`. `nb_pkts` is unconstrained over the whole
+`uint16_t` range and the TX loop is discharged by a loop invariant supplied
+**out of band** via `goto-instrument --loop-contracts-file`, so no driver
+source is annotated. CBMC is invoked with **no `--unwind` at all**;
+`loop_invariant_base`, `loop_invariant_step` and `loop_assigns` all pass,
+and 336 properties verify.
+
+Two things worth noting. `--add-library` must run *before* `--dfcc`, or the
+contracts library has no model for `free`. And the contract is load-bearing,
+not decoration: the control run on the same program without it fails the
+unwinding assertion at the TX loop (`[eth_ena_xmit_pkts.unwind.0] ...
+FAILURE`), i.e. the loop genuinely is not bounded by any small constant.
+
+So of the six assumptions in section 6, (1) is discharged for the TX path
+and (3) is gone. What remains for this path: the DPDK mbuf API and
+`ena_com` stubs, single-threadedness, and -- under DFCC -- that an
+abstracted callee is reported as `undefined function should be unreachable`
+rather than silently assumed, which is the tool being honest about an
+abstraction we chose.
+
 ## 7. Effort, and a staged plan
 
 Per-driver effort is much higher than the kernel-wide taint sweep, as
@@ -230,8 +286,9 @@ expected. Realistic shape for one driver:
 Staging, cheapest first:
 
 1. **Done:** TX path memory safety + API contract, all sequences, real code.
-2. Discharge the three callee contracts; add the loop invariant to remove
-   `MAX_BURST`; link `ena_com` so the ring accounting in `INV` is proved.
+2. **Done (section 6a):** callee contracts discharged for the TX path; the
+   burst bound removed with a loop invariant. Still to do here: link
+   `ena_com` so the ring accounting in `INV` is proved rather than assumed.
 3. Same schema for the RX path, then `tx_cleanup`, then the control path
    (`queue_setup`/`start`/`stop`), including the base case: prove
    `ena_tx_queue_setup` establishes `INV`.
