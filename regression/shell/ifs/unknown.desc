@@ -1,9 +1,12 @@
 CORE
 unknown.sh
 
-^EXIT=6$
+^EXIT=10$
 ^SIGNAL=0$
-assignment of a value that is not known here to IFS
+^\[shell-unsupported\.1\] .*IFS has its default value here .*: FAILURE$
+^VERIFICATION FAILED$
 --
-^VERIFICATION
+^warning: ignoring
 --
+After an assignment of a value not known during conversion, field
+splitting checks that IFS has its default value.

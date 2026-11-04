@@ -3,10 +3,11 @@
 ///
 /// Every shell sets IFS to space, tab and newline at startup. IFS has no
 /// symbol: its value is tracked during conversion, as a known literal
-/// (see known_literals), and assignments of other than literals are not
-/// supported. Where its value is not known, as at the start of a
-/// function, the ghost symbol shell::ifs_default records whether IFS has
-/// its default value, which field splitting there checks.
+/// (see known_literals). Where its value is not known, as at the start of
+/// a function or after an assignment of a value not known during
+/// conversion, the ghost symbols shell::ifs_default and shell::ifs_unset
+/// record whether IFS splits as by default and whether it is unset, which
+/// field splitting and the expansion of IFS check.
 
 #include "shell_convert_class.h"
 
@@ -66,7 +67,17 @@ void shell_convertert::assign_ifs(
 {
   const auto literal = literal_of(value);
   if(!literal.has_value())
-    unsupported(loc, "assignment of a value that is not known here to IFS");
+  {
+    // Not known here: what depends on IFS checks that it is the default.
+    forget_ifs();
+    assign(
+      dest,
+      ifs_default(),
+      equal(value, string_literal(initial_ifs(), loc), dest, loc),
+      loc);
+    assign(dest, ifs_unset(), false_exprt{}, loc);
+    return;
+  }
   known_literals["IFS"] = *literal;
   known_literals.erase(ifs_unset_key);
   assign(

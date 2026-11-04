@@ -1,11 +1,11 @@
 CORE
 case6.sh
 
-^EXIT=6$
+^EXIT=0$
 ^SIGNAL=0$
-assignment of a value that is not known here to IFS
+^VERIFICATION SUCCESSFUL$
 --
-^VERIFICATION
+^warning: ignoring
 --
-Assignments to IFS of values that are not known during conversion
-are unsupported.
+Assignments to IFS of values not known during conversion are supported:
+what depends on IFS afterwards checks that it has its default value.
