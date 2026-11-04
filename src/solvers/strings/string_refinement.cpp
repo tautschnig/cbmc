@@ -1877,6 +1877,12 @@ static exprt negation_of_not_contains_constraint(
   const symbol_exprt &univ_var,
   const std::function<exprt(const exprt &)> &get)
 {
+  // If the premise is false, as for a constraint on a path that the model
+  // does not take, the negation is false. The bounds of such a constraint
+  // are unconstrained, and can be too far apart to unroll.
+  const exprt premise = get(constraint.premise);
+  if(premise.is_false())
+    return false_exprt{};
   // If the for all is vacuously true, the negation is false.
   const auto lbe = numeric_cast_v<mp_integer>(
     to_constant_expr(get(constraint.exists_lower_bound)));
@@ -1892,7 +1898,7 @@ static exprt negation_of_not_contains_constraint(
   // actually be negative as it is initially unconstrained) then there is
   // nothing to do (and the reserve call would fail).
   if(ube < lbe)
-    return and_exprt(univ_bounds, get(constraint.premise));
+    return and_exprt(univ_bounds, premise);
 
   std::vector<exprt> conjuncts;
   conjuncts.reserve(numeric_cast_v<std::size_t>(ube - lbe));
@@ -1905,7 +1911,7 @@ static exprt negation_of_not_contains_constraint(
     conjuncts.push_back(equal_exprt(s0_char, s1_char));
   }
   const exprt equal_strings = conjunction(conjuncts);
-  return and_exprt(univ_bounds, get(constraint.premise), equal_strings);
+  return and_exprt(univ_bounds, premise, equal_strings);
 }
 
 /// Debugging function which outputs the different steps an axiom goes through

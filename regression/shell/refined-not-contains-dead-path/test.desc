@@ -1,0 +1,14 @@
+CORE
+main.sh
+--shell-strings refined
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+vector::reserve
+--
+The checks of pattern_differential.py for the pattern "$d"b*?. A
+not-contains axiom whose premise is false in a model, as on a path that
+the model does not take, has unconstrained bounds: unrolling its negation
+for a model with bounds 2^63 apart made the solver throw.
