@@ -874,7 +874,18 @@ func (e *encoder) node(n ast.Node) any {
 		out["_p"] = []int{e.fileIdx[p.Filename], p.Line, p.Column}
 	}
 	e.resolveInInstance(n)
-	for i := 0; i < v.NumField(); i++ {
+	// The operands of a constant expression (e.g., of a concatenation of
+	// thousands of string literals in a generated table) are not needed:
+	// the converter uses its value ("_cv", below). Encoding them would
+	// repeat the value of each partial result.
+	skipFields := false
+	switch x := n.(type) {
+	case *ast.BinaryExpr, *ast.ParenExpr, *ast.UnaryExpr:
+		if tv, ok := e.info.Types[x.(ast.Expr)]; ok && tv.Value != nil {
+			skipFields = true
+		}
+	}
+	for i := 0; i < v.NumField() && !skipFields; i++ {
 		f, name := v.Field(i), v.Type().Field(i).Name
 		switch name {
 		case "Obj", "Scope", "Unresolved", "Imports", "Comments", "Doc",
