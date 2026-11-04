@@ -879,10 +879,7 @@ void shell_convertert::convert_dynamic_simple(
     if(quoted)
       fields.push_back(*literal);
     else
-      fields = split_literal(
-        *literal,
-        ifs_for_splitting(dest, loc),
-        program.dialect == shell_dialectt::ZSH);
+      fields = split_known_parameter(*literal, ifs_for_splitting(dest, loc));
     shell_commandt copy = command;
     copy.words.erase(copy.words.begin());
     for(auto it = fields.rbegin(); it != fields.rend(); ++it)

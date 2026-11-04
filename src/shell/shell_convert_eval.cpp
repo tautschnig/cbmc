@@ -25,8 +25,7 @@ shell_convertert::known_text(const shell_wordt &word) const
       if(!ifs.has_value())
         return {};
       std::string joined;
-      for(const auto &field :
-          split_literal(*literal, *ifs, program.dialect == shell_dialectt::ZSH))
+      for(const auto &field : split_known_parameter(*literal, *ifs))
         joined += (joined.empty() ? "" : " ") + field;
       if(joined.find_first_of("*?[") != std::string::npos)
         return {};

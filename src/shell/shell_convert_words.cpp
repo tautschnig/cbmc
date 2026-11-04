@@ -131,10 +131,14 @@ exprt shell_convertert::expand_part(
     // Field splitting with the default IFS (the script cannot change it,
     // see variable()) and pathname expansion leave a value without
     // blanks and pattern characters as it is; other values are reported.
-    const std::string ifs = ifs_for_splitting(dest, part.location);
+    // zsh only splits command substitutions (see split_known_parameter).
+    const std::string ifs =
+      program.dialect == shell_dialectt::ZSH && part.kind == kindt::PARAMETER
+        ? std::string{}
+        : ifs_for_splitting(dest, part.location);
     if(const auto literal = known_literal(part))
     {
-      if(literal->find_first_of(ifs) != std::string::npos)
+      if(!ifs.empty() && literal->find_first_of(ifs) != std::string::npos)
       {
         check(
           dest,
@@ -189,6 +193,11 @@ void shell_convertert::check_no_pattern_characters(
   const shell_word_partt &part,
   code_blockt &dest)
 {
+  // zsh does not apply pathname expansion to the results of expansions
+  // (unless GLOB_SUBST is set, which setopt, which is not supported,
+  // would do).
+  if(program.dialect == shell_dialectt::ZSH)
+    return;
   std::bitset<256> pattern;
   for(unsigned char c : {'*', '?', '['})
     pattern.set(c);

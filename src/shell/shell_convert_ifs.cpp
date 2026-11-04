@@ -98,10 +98,21 @@ shell_convertert::ifs_value(code_blockt &dest, const source_locationt &loc)
   return std::string{default_ifs};
 }
 
+std::vector<std::string> shell_convertert::split_known_parameter(
+  const std::string &value,
+  const std::string &ifs) const
+{
+  // zsh does not split parameter expansions (unless SH_WORD_SPLIT is set,
+  // which setopt and emulate, which are not supported, would do).
+  if(program.dialect == shell_dialectt::ZSH)
+    return value.empty() ? std::vector<std::string>{}
+                         : std::vector<std::string>{value};
+  return split_literal(value, ifs);
+}
+
 std::vector<std::string> shell_convertert::split_literal(
   const std::string &value,
-  const std::string &ifs,
-  bool trailing_field)
+  const std::string &ifs)
 {
   if(ifs.empty())
     return value.empty() ? std::vector<std::string>{}
@@ -138,9 +149,6 @@ std::vector<std::string> shell_convertert::split_literal(
     }
     fields.push_back(current);
     current.clear();
-    // Only IFS white space is ignored at the end.
-    if(i == n && trailing_field && !is_white(value[i - 1]))
-      fields.push_back("");
   }
   if(!current.empty())
     fields.push_back(current);

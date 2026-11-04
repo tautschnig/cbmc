@@ -1426,12 +1426,14 @@ void shell_convertert::split_fields(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  const std::string ifs = ifs_for_splitting(dest, loc);
+  // zsh only splits command substitutions (see split_known_parameter).
+  const bool split = program.dialect != shell_dialectt::ZSH ||
+                     part.kind != shell_word_partt::kindt::PARAMETER;
+  const std::string ifs = split ? ifs_for_splitting(dest, loc) : "";
   if(const auto literal = known_literal(part))
   {
     // A known value is split here.
-    for(const auto &field :
-        split_literal(*literal, ifs, program.dialect == shell_dialectt::ZSH))
+    for(const auto &field : split_known_parameter(*literal, ifs))
     {
       const exprt value = string_literal(field, loc);
       if(field.find_first_of("*?[") != std::string::npos)

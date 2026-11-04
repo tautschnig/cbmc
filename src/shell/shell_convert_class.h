@@ -1182,12 +1182,12 @@ private:
   std::optional<std::string>
   ifs_value(code_blockt &dest, const source_locationt &loc);
   /// The fields of \p value split with \p ifs (XCU 2.6.5).
-  /// A delimiter at the end ends a further, empty field if
-  /// \p trailing_field (zsh).
-  static std::vector<std::string> split_literal(
-    const std::string &value,
-    const std::string &ifs,
-    bool trailing_field);
+  static std::vector<std::string>
+  split_literal(const std::string &value, const std::string &ifs);
+  /// The fields of the known \p value of an unquoted parameter expansion
+  /// in a list of fields, split with \p ifs where the shell splits them.
+  std::vector<std::string>
+  split_known_parameter(const std::string &value, const std::string &ifs) const;
   /// Whether \p ifs has only space, tab and newline (or is empty).
   static bool ifs_is_white(const std::string &ifs);
   static bool ifs_has_white(const std::string &ifs);

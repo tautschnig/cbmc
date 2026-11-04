@@ -1,0 +1,12 @@
+CORE
+main.zsh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^\[shell-unsupported
+--
+zsh does not split the results of parameter expansions, and does not
+apply pathname expansion to them; empty ones still yield no field.
