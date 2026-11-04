@@ -916,7 +916,9 @@ bool go_convertert::is_intrinsic(const irep_idt &object_id)
     "cprover/rt.Float64bits",
     "cprover/rt.Float64frombits",
     "cprover/rt.Float32bits",
-    "cprover/rt.Float32frombits"};
+    "cprover/rt.Float32frombits",
+    "cprover/rt.AsTarget",
+    "cprover/rt.AsAssign"};
   return intrinsics.count(object_id) != 0;
 }
 
@@ -1047,5 +1049,132 @@ void go_convertert::finish_intrinsics()
         make_byte_extract(x, from_integer(0, c_index_type()), result)}}};
       function->value = std::move(body);
     }
+  }
+}
+
+void go_convertert::finish_errors_as()
+{
+  // AsTarget(target any) int and AsAssign(target any, err error) bool, for
+  // errors.As (models/errors), over the dynamic pointer types *T: what
+  // reflectlite does there.
+  symbolt *target_check = symbol_table.get_writeable("go::cprover/rt.AsTarget");
+  symbolt *assign = symbol_table.get_writeable("go::cprover/rt.AsAssign");
+  if(target_check != nullptr && target_check->value.is_not_nil())
+    target_check = nullptr;
+  if(assign != nullptr && assign->value.is_not_nil())
+    assign = nullptr;
+  if(target_check == nullptr && assign == nullptr)
+    return;
+
+  // Whether the type with id tid has method Error() string (Go1.27
+  // §Errors) in its method set.
+  const auto has_error_method = [&](std::size_t tid)
+  {
+    const irept &entry = parse_tree.type_entry(type_converter.type_index(tid));
+    for(const auto &m : go_list(entry, "mset"))
+    {
+      if(m.get("name") != "Error")
+        continue;
+      const irept &signature = type_converter.underlying(m.get("type"));
+      const auto &results = go_list(signature, "results");
+      if(
+        go_list(signature, "params").empty() && results.size() == 1 &&
+        type_converter.basic_kind(results.front().get("type")) == "string")
+      {
+        return true;
+      }
+    }
+    return false;
+  };
+  // The dynamic types that are pointers *T (not maps, channels or
+  // unsafe.Pointer), with the type id of T.
+  std::vector<std::pair<std::size_t, std::size_t>> pointers;
+  for(const auto &t : dynamic_types)
+  {
+    if(
+      t.second.id() != ID_pointer || is_go_map(t.second) ||
+      is_go_chan(t.second))
+      continue;
+    const std::size_t base = go_type_id(to_pointer_type(t.second).base_type());
+    if(base != 0)
+      pointers.emplace_back(t.first, base);
+  }
+  if(target_check != nullptr)
+  {
+    // 0: a valid target; 1: not a non-nil pointer; 2: *target is neither
+    // an interface nor implements error.
+    const exprt target = parameter_symbols(*target_check)[0];
+    const typet result = to_code_type(target_check->type).return_type();
+    const exprt type = iface_field(target, "type");
+    code_blockt body;
+    for(const auto &p : pointers)
+    {
+      const typet &pointer = dynamic_types.at(p.first);
+      const bool is_interface =
+        type_converter.underlying(type_converter.type_index(p.second))
+          .get("k") == "interface";
+      const bool valid = is_interface || has_error_method(p.second);
+      const exprt value = unbox(target, pointer);
+      body.add(code_ifthenelset{
+        equal_exprt{type, from_integer(p.first, type.type())},
+        code_frontend_returnt{if_exprt{
+          equal_exprt{value, null_pointer_exprt{to_pointer_type(pointer)}},
+          from_integer(1, result),
+          from_integer(valid ? 0 : 2, result)}}});
+    }
+    body.add(code_frontend_returnt{from_integer(1, result)});
+    target_check->value = std::move(body);
+  }
+
+  if(assign != nullptr)
+  {
+    // If err's dynamic type is assignable to T (Go1.27 §Assignability:
+    // identical, or implementing interface T), *target = err.
+    const std::vector<exprt> params = parameter_symbols(*assign);
+    const exprt &target = params[0];
+    const exprt &err = params[1];
+    const typet result = to_code_type(assign->type).return_type();
+    const exprt type = iface_field(target, "type");
+    const exprt err_type = iface_field(err, "type");
+    function_statet outer = std::move(state);
+    state = function_statet{};
+    state.function_id = assign->name;
+    code_blockt body;
+    for(const auto &p : pointers)
+    {
+      const typet &pointer = dynamic_types.at(p.first);
+      const typet &base = to_pointer_type(pointer).base_type();
+      const irep_idt base_index = type_converter.type_index(p.second);
+      const bool is_interface =
+        type_converter.underlying(base_index).get("k") == "interface";
+      const dereference_exprt destination{unbox(target, pointer)};
+      code_blockt branch;
+      code_blockt store;
+      exprt condition;
+      if(is_interface)
+      {
+        condition = and_exprt{
+          notequal_exprt{err_type, from_integer(0, err_type.type())},
+          implements(err_type, base_index)};
+        store.add(code_frontend_assignt{
+          destination, typecast_exprt::conditional_cast(err, base)});
+      }
+      else
+      {
+        condition =
+          equal_exprt{err_type, from_integer(p.second, err_type.type())};
+        store.add(code_frontend_assignt{destination, unbox(err, base)});
+      }
+      store.add(code_frontend_returnt{from_integer(1, result)});
+      branch.add(code_ifthenelset{condition, std::move(store)});
+      branch.add(code_frontend_returnt{from_integer(0, result)});
+      body.add(code_ifthenelset{
+        equal_exprt{type, from_integer(p.first, type.type())},
+        std::move(branch)});
+    }
+    body.add(code_frontend_returnt{from_integer(0, result)});
+    end_generated_function(body, result);
+    state = std::move(outer);
+    assign->value = std::move(body);
   }
 }

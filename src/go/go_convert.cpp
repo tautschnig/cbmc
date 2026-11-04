@@ -1298,6 +1298,7 @@ bool go_convertert::operator()()
   convert_program_init();
   convert_entry();
   finish_nondet_interfaces();
+  finish_errors_as();
   finish_interfaces();
   finish_intrinsics();
   finish_panics();

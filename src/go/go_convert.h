@@ -888,6 +888,9 @@ private:
   /// Generate the bodies of the intrinsics, once the dynamic types of
   /// interface values are known.
   void finish_intrinsics();
+  /// The bodies of rt.AsTarget and rt.AsAssign (errors.As, see
+  /// models/errors), over the dynamic pointer types.
+  void finish_errors_as();
   /// The function `go::$check_panics`, called after the top-level
   /// function, with a property per panic site.
   void finish_panics();

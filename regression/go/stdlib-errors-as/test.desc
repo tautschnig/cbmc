@@ -1,0 +1,13 @@
+CORE
+main.go
+--unwind 4
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 25 concrete target: SUCCESS$
+^\[go::main\.main\.assertion\.3\] line 29 interface target: SUCCESS$
+^\[go::main\.main\.assertion\.4\] line 31 value target: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+errors.As with the intrinsics rt.AsTarget and rt.AsAssign

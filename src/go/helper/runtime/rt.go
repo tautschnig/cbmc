@@ -263,6 +263,16 @@ func SliceSwap(x any, i, j int)
 // §Type_identity); package sync/atomic uses unsafe for this.
 func SameType(x, y any) bool
 
+// AsTarget checks target for errors.As: 0 if it is a non-nil pointer to
+// an interface type or to a type that implements error, 1 if it is not a
+// non-nil pointer, 2 otherwise (package errors uses reflection for this).
+func AsTarget(target any) int
+
+// AsAssign sets *target to err if err's dynamic type is assignable to the
+// element type of target's pointer type (Go1.27 §Assignability), and
+// reports whether it did (errors.As; target is valid, see AsTarget).
+func AsAssign(target any, err error) bool
+
 // Float64bits returns the IEEE 754 binary representation of f, as
 // math.Float64bits.
 func Float64bits(f float64) uint64
