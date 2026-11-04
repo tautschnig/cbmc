@@ -1,0 +1,11 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+test with more than four arguments: -a, -o, ! and parentheses, with the
+statuses that dash gives (computed with dash).

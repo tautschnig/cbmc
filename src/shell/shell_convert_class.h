@@ -1025,6 +1025,13 @@ private:
     std::optional<std::string> text;
   };
 
+  symbol_exprt test_expression(
+    const std::vector<test_argumentt> &args,
+    std::size_t &i,
+    std::size_t end,
+    int level,
+    code_blockt &dest,
+    const source_locationt &loc);
   void test(
     std::vector<test_argumentt> args,
     code_blockt &dest,
