@@ -2401,13 +2401,14 @@ exprt go_convertert::convert_access(const irept &expr, access_partst &parts)
   const source_locationt location = location_of(expr);
   const irep_idt &kind = expr.id();
 
-  if(kind == "ParenExpr")
-    return convert_access(go_field(expr, "X"), parts);
-
   // A constant (e.g., the receiver of time.Second.String()) is a value, not
-  // a variable.
+  // a variable. (The helper does not send the operands of constant
+  // expressions, parenthesised ones included.)
   if(!expr.get("_cv").empty() && !expr.get_bool("_tx"))
     return convert_expr(expr);
+
+  if(kind == "ParenExpr")
+    return convert_access(go_field(expr, "X"), parts);
 
   if(kind == "Ident" && expr.get("Name") != "_")
     return variable(expr);
