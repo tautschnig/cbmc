@@ -570,6 +570,68 @@ Next clauses for the map, in order: the free-discipline (`rte_pktmbuf_free`
 only on a driver-owned mbuf, which needs the cleanup harness so the frees are
 in scope), then DMA ownership (no CPU read of a buffer the device owns).
 
+### 8.5a Root cause of the assigns-clause cost (measured)
+
+"Assigns clauses are slow" is folklore; this pins it down. Benchmark:
+`proof/cbmc-limitations/dfcc_assigns_scaling.sh`, each block varying one
+dimension with everything else fixed.
+
+| dimension varied | measured |
+|---|---|
+| unrelated objects in the program, **concrete** write pointer | flat: 0.1s -> 0.2s for 4 -> 256 |
+| number of assigns targets, concrete pointer | linear: 0.1 / 0.1 / 0.4 / 0.9s for 1 / 4 / 16 / 32 |
+| number of writes in the loop body, concrete pointer | linear: 0.1 -> 0.8s for 1 -> 32 |
+| union-held target pointer, or symbolic *index* | no effect (0.1s) |
+| **size** of one `object_whole` target | linear in bytes: 0.1s @128B, 1.4s @32KB, 6.1s @128KB |
+| **objects a *symbolic* write pointer may designate (K)** | **superlinear: 0.1 / 0.3 / 1.2 / 16.5s for K = 2 / 8 / 32 / 128** |
+| precise target instead of `object_whole`, at K=128 | 11.5s vs 16.5s (~30%) |
+
+The last row but one is the dominant term: 4x the objects, 14x the time.
+
+**Mechanism**, from `src/ansi-c/library/cprover_contracts.c:774-850`.
+`__CPROVER_contracts_write_set_check_assignment` runs at *every write* and
+does two things:
+
+1. `set->allocated.elems[__CPROVER_POINTER_OBJECT(ptr)]` -- an array read at a
+   **symbolic index** whenever the written pointer's object is not pinned down;
+2. `SET_CHECK_ASSIGNMENT_LOOP`, a loop over every contract-assigns target,
+   each iteration evaluating `__CPROVER_same_object(elem->lb, ptr)` and two
+   `__CPROVER_POINTER_OFFSET` computations.
+
+When `ptr` is symbolic, CBMC's dereference case-splits over all K candidate
+objects, and *inside each case* step 1 is itself a K-way select. So the work
+per write is roughly **O(K^2 + K*T)** for K candidate objects and T targets,
+which is exactly the shape of the measurement.
+
+**Why the ENA harness hits it.** Three multipliers at once:
+
+* K is large: the harness includes the whole DPDK translation unit, giving
+  **83 static-lifetime objects** plus dynamic ones;
+* the write pointers are genuinely symbolic -- `tx_buffer_info[req_id]` with a
+  symbolic `req_id`, and pointers read out of the anonymous unions. This is
+  where section 6c connects: the `byte_extract` on a union-held pointer very
+  likely widens the points-to set, which *feeds* the quadratic term rather
+  than being a separate problem;
+* one target is enormous: `sizeof(struct ena_adapter)` is **182144 bytes**
+  (it embeds `tx_ring[64]` and `rx_ring[64]`), so
+  `__CPROVER_object_whole(tx_ring->adapter)` alone is a 178 KB havoc plus a
+  178 KB CAR to compare against at every write.
+
+**What to do about it, in measured order of effect:**
+
+1. **Shrink K.** Keep the number of objects a write pointer may designate
+   small: don't pull in the whole TU if the proof does not need it, make
+   indices concrete where the property does not depend on them, and avoid
+   union-held pointers in the write path.
+2. **Never put a large aggregate in `object_whole`.** Name the fields actually
+   written. `object_whole(adapter)` is 178 KB of havoc for a function that
+   writes two of its fields.
+3. **Prefer precise targets to `object_whole`** -- worth ~30% at K=128, so
+   real but secondary.
+4. **CBMC-side:** the `allocated.elems[__CPROVER_POINTER_OBJECT(ptr)]`
+   encoding is the quadratic term. Unlike section 6c this *is* reduced to a
+   standalone benchmark, so it is reportable as it stands.
+
 ### 8.5 Status of the widened TX loop assigns: blocked on performance
 
 Item 1 of the revised order -- one proof with the real callee bodies *and* an
@@ -580,8 +642,10 @@ adapter; `tx_loop_contract_wide.json`), and with that clause CBMC does not
 terminate within 2400 s, at ring size 4 or even 2. It is a performance wall
 rather than an ERROR, so the two complementary configurations of section 8.2a
 remain the state of the art: real bodies with a bounded burst, and an
-unbounded burst with the callees abstracted. Worth retrying with a narrower
-assigns clause naming individual fields instead of whole objects.
+unbounded burst with the callees abstracted. Section 8.5a works out why, and
+the answer is not mainly the granularity of the clause: it is the number of
+objects a symbolic write pointer may designate, times a 178 KB
+`object_whole(adapter)` target.
 
 ### 8.3 What this changes in the plan
 
