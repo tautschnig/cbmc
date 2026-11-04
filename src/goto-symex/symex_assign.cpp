@@ -283,7 +283,7 @@ void symex_assignt::assign_non_struct_symbol(
     current_assignment_type);
 
   const ssa_exprt &l1_lhs = assignment.lhs;
-  if(state.field_sensitivity.is_divisible(l1_lhs, false))
+  if(state.field_sensitivity.is_divisible(ns, l1_lhs, false))
   {
     // Split composite symbol lhs into its components
     state.field_sensitivity.field_assignments(
@@ -303,9 +303,14 @@ void symex_assignt::assign_symbol(
   const exprt &rhs,
   const exprt::operandst &guard)
 {
-  // Shortcut the common case of a whole-struct initializer:
-  if(rhs.id() == ID_struct)
+  // Shortcut the common case of a whole-struct initializer (of a struct
+  // that field sensitivity divides, see field_sensitivityt):
+  if(
+    rhs.id() == ID_struct &&
+    state.field_sensitivity.is_divisible(ns, lhs, true))
+  {
     assign_from_struct(lhs, full_lhs, to_struct_expr(rhs), guard);
+  }
   else
     assign_non_struct_symbol(lhs, full_lhs, rhs, guard);
 }

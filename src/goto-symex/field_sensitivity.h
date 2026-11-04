@@ -99,15 +99,22 @@ inline field_sensitive_ssa_exprt &to_field_sensitive_ssa_expr(exprt &expr)
 /// expression.
 /// When `index` is not a constant, `array[index]` is replaced by
 ///  `{array[[0]]; array[[1]]; …index]`.
-/// Note that this process does not apply to arrays whose size is not constant,
-/// arrays whose size exceed the bound \c max_field_sensitivity_array_size,
-/// and arrays of const-qualified elements: these are typically tables that
-/// are initialised with constants and never written, whose constant value
-/// is propagated as a whole, which is as precise as propagating the values
-/// of their elements and saves an assignment per element. Writes to them,
-/// which casting away const permits in C, remain sound: they update the
-/// array as a whole, as for arrays that are too large.
+/// Note that this process does not apply to arrays whose size is not constant
+/// or whose size exceed the bound \c max_field_sensitivity_array_size.
 /// See \ref field_sensitivityt::apply.
+///
+/// ### Constant objects
+/// Neither member access nor array access divides an object of static
+/// lifetime that is declared as a const-qualified struct or as an array of
+/// const-qualified elements. These are typically tables that are initialised
+/// with constants and never written, whose constant value is propagated as a
+/// whole, which is as precise as propagating the values of their fields or
+/// elements and saves an assignment per field or element. Writes to them,
+/// which casting away const permits in C, remain sound: they update the
+/// object as a whole, as for arrays that are too large. The decision rests
+/// on the declaration in the symbol table, not on the type of an expression,
+/// as the qualifiers of the latter may differ between uses of the same
+/// object, while all uses must agree on whether the object is divided.
 ///
 /// ### Symbols representing arrays
 /// In an rvalue, a symbol `array` which has array type will be replaced by
@@ -208,13 +215,16 @@ public:
   /// (returns false) or a composite object made of several SSA expressions as
   /// components (such as a struct with each member becoming an individual SSA
   /// expression, return true in this case).
+  /// \param ns: a namespace, to look up the object that \p expr is part of
   /// \param expr: the expression to evaluate
   /// \param disjoined_fields_only: whether to expand unions (`false`) or not
   ///   (`true`)
   /// \return False, if and only if, \p expr would be a single field-sensitive
   /// SSA expression.
-  [[nodiscard]] bool
-  is_divisible(const ssa_exprt &expr, bool disjoined_fields_only) const;
+  [[nodiscard]] bool is_divisible(
+    const namespacet &ns,
+    const ssa_exprt &expr,
+    bool disjoined_fields_only) const;
 
 private:
   const std::size_t max_field_sensitivity_array_size;

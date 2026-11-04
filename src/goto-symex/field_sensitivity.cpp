@@ -19,12 +19,24 @@ Author: Michael Tautschnig
 
 #define ENABLE_ARRAY_FIELD_SENSITIVITY
 
-/// Whether \p type is that of an array of const-qualified elements, which
-/// is not divided into its elements (see field_sensitivityt).
-static bool is_const_array(const typet &type)
+/// Whether the object that \p ssa_expr is (part of) is kept whole (see
+/// field_sensitivityt): an object of static lifetime whose declared type is
+/// a const-qualified struct or an array of const-qualified elements. The
+/// decision rests on the symbol table rather than on the type of
+/// \p ssa_expr, as the latter may differ in its qualifiers between uses of
+/// the same object (for example, in C++ an argument converted to a const
+/// parameter type), while the decision must be the same for all of them.
+static bool is_undivided_constant(const namespacet &ns, const ssa_exprt &expr)
 {
-  return type.id() == ID_array &&
-         to_array_type(type).element_type().get_bool(ID_C_constant);
+  const symbolt *symbol;
+  if(ns.lookup(expr.get_object_name(), symbol) || !symbol->is_static_lifetime)
+    return false;
+
+  const typet &type = symbol->type;
+  if(type.id() == ID_array)
+    return to_array_type(type).element_type().get_bool(ID_C_constant);
+  return (type.id() == ID_struct || type.id() == ID_struct_tag) &&
+         type.get_bool(ID_C_constant);
 }
 
 exprt field_sensitivityt::apply(
@@ -198,6 +210,7 @@ exprt field_sensitivityt::apply(
 
     if(
       is_ssa_expr(member.struct_op()) &&
+      !is_undivided_constant(ns, to_ssa_expr(member.struct_op())) &&
       (member.struct_op().type().id() == ID_struct ||
        member.struct_op().type().id() == ID_struct_tag ||
        member.struct_op().type().id() == ID_union ||
@@ -238,7 +251,8 @@ exprt field_sensitivityt::apply(
 
     if(
       is_ssa_expr(index.array()) && index.array().type().id() == ID_array &&
-      !is_const_array(index.array().type()) && index.index().is_constant())
+      !is_undivided_constant(ns, to_ssa_expr(index.array())) &&
+      index.index().is_constant())
     {
       // place the entire index expression, not just the array operand, in an
       // SSA expression
@@ -304,6 +318,9 @@ exprt field_sensitivityt::get_fields(
   const ssa_exprt &ssa_expr,
   bool disjoined_fields_only) const
 {
+  if(is_undivided_constant(ns, ssa_expr))
+    return ssa_expr;
+
   if(
     ssa_expr.type().id() == ID_struct ||
     ssa_expr.type().id() == ID_struct_tag ||
@@ -349,7 +366,7 @@ exprt field_sensitivityt::get_fields(
   }
 #ifdef ENABLE_ARRAY_FIELD_SENSITIVITY
   else if(
-    ssa_expr.type().id() == ID_array && !is_const_array(ssa_expr.type()) &&
+    ssa_expr.type().id() == ID_array &&
     to_array_type(ssa_expr.type()).size().is_constant())
   {
     const mp_integer mp_array_size = numeric_cast_v<mp_integer>(
@@ -416,7 +433,7 @@ void field_sensitivityt::field_assignments(
     // Erase the composite symbol from our working state. Note that we need to
     // have it in the propagation table and the value set while doing the field
     // assignments, thus we cannot skip putting it in there above.
-    if(is_divisible(lhs, true))
+    if(is_divisible(ns, lhs, true))
     {
       state.propagation.erase_if_exists(lhs.get_identifier());
       state.value_set.erase_symbol(lhs, ns);
@@ -477,7 +494,7 @@ void field_sensitivityt::field_assignments_rec(
     // Erase the composite symbol from our working state. Note that we need to
     // have it in the propagation table and the value set while doing the field
     // assignments, thus we cannot skip putting it in there above.
-    if(is_divisible(l1_lhs, true))
+    if(is_divisible(ns, l1_lhs, true))
     {
       state.propagation.erase_if_exists(l1_lhs.get_identifier());
       state.value_set.erase_symbol(l1_lhs, ns);
@@ -693,15 +710,19 @@ void field_sensitivityt::field_assignments_rec(
 }
 
 bool field_sensitivityt::is_divisible(
+  const namespacet &ns,
   const ssa_exprt &expr,
   bool disjoined_fields_only) const
 {
+  if(is_undivided_constant(ns, expr))
+    return false;
+
   if(expr.type().id() == ID_struct || expr.type().id() == ID_struct_tag)
     return true;
 
 #ifdef ENABLE_ARRAY_FIELD_SENSITIVITY
   if(
-    expr.type().id() == ID_array && !is_const_array(expr.type()) &&
+    expr.type().id() == ID_array &&
     to_array_type(expr.type()).size().is_constant() &&
     numeric_cast_v<mp_integer>(to_constant_expr(
       to_array_type(expr.type()).size())) <= max_field_sensitivity_array_size)

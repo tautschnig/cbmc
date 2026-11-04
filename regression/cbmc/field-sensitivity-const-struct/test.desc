@@ -1,0 +1,12 @@
+CORE
+main.c
+--program-only
+^EXIT=0$
+^SIGNAL=0$
+mutable_cfg#\d+\.\.height
+--
+^warning: ignoring
+[ (]cfg#\d+\.\.
+--
+The const struct of static lifetime is assigned as a whole (no
+cfg#N..field symbols, unlike the mutable one).

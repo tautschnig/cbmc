@@ -1,0 +1,16 @@
+CORE
+main.c
+
+^EXIT=10$
+^SIGNAL=0$
+^\[main\.assertion\.1\] line 21 assertion origin\.y == v: SUCCESS$
+^\[main\.assertion\.2\] line 22 assertion origin\.x == 0: SUCCESS$
+^\[main\.assertion\.3\] line 24 assertion origin\.x == v && origin\.y == 1: SUCCESS$
+^\[main\.assertion\.4\] line 25 assertion origin\.x == 0: FAILURE$
+^\*\* 1 of \d+ failed
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Writes to a const-qualified struct (after casting away const) are modelled
+although field sensitivity keeps the struct whole.
