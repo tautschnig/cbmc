@@ -788,13 +788,13 @@ exprt shell_convertert::environment_string(
 
 exprt shell_convertert::test_integer(
   const exprt &string,
-  bool trailing_space,
+  trailing_blankst trailing,
   const symbol_exprt &value,
   code_blockt &dest,
   const source_locationt &loc)
 {
   if(bounded())
-    return parse_test_integer(string, trailing_space, value, dest, loc);
+    return parse_test_integer(string, trailing, value, dest, loc);
   // Strings made from integers need no parsing. The parser is in a branch
   // of its own, which symbolic execution skips when the string is known to
   // be an integer, as for counters: the parser's string constraints are
@@ -808,7 +808,7 @@ exprt shell_convertert::test_integer(
   code_blockt parse;
   const symbol_exprt parsed = temporary(integer_type(), parse, loc);
   const exprt parsed_valid =
-    parse_test_integer(string, trailing_space, parsed, parse, loc);
+    parse_test_integer(string, trailing, parsed, parse, loc);
   assign(parse, value, parsed, loc);
   assign(parse, valid, parsed_valid, loc);
   add(dest, code_ifthenelset{known, std::move(use_int), std::move(parse)}, loc);
@@ -817,18 +817,17 @@ exprt shell_convertert::test_integer(
 
 exprt shell_convertert::parse_test_integer(
   const exprt &string,
-  bool trailing_space,
+  trailing_blankst trailing,
   const symbol_exprt &value,
   code_blockt &dest,
   const source_locationt &loc)
 {
-  const typet &bool_type = c_bool_type();
   if(bounded())
   {
     const symbol_exprt valid = call(
       SHELL_RT_TEST_INTEGER,
       {string,
-       from_integer(trailing_space ? 1 : 0, bool_type),
+       from_integer(static_cast<int>(trailing), unsigned_char_type()),
        address_of_exprt{value}},
       dest,
       loc);
@@ -846,18 +845,22 @@ exprt shell_convertert::parse_test_integer(
     const exprt blanks = re.star(blank);
     const exprt sign = re.optional(re.either(re.literal("-"), re.literal("+")));
     const exprt digits = re.plus(re.range('0', '9'));
+    const exprt trailing_blanks =
+      trailing == trailing_blankst::SPACE_TAB
+        ? re.star(re.either(re.literal(" "), re.literal("\t")))
+        : blanks;
     std::vector<exprt> sequence{blanks, sign, digits};
-    if(trailing_space)
-      sequence.push_back(blanks);
+    if(trailing != trailing_blankst::NONE)
+      sequence.push_back(trailing_blanks);
     const exprt syntax = re.matches(payload, re.sequence(sequence));
 
     const symbol_exprt leading = temporary(payload_type(), dest, loc);
     const symbol_exprt sign_part = temporary(payload_type(), dest, loc);
     const symbol_exprt digit_part = temporary(payload_type(), dest, loc);
-    const symbol_exprt trailing = temporary(payload_type(), dest, loc);
+    const symbol_exprt trailing_part = temporary(payload_type(), dest, loc);
     exprt rebuilt = payload_concat(leading, sign_part, dest, loc);
     rebuilt = payload_concat(rebuilt, digit_part, dest, loc);
-    rebuilt = payload_concat(rebuilt, trailing, dest, loc);
+    rebuilt = payload_concat(rebuilt, trailing_part, dest, loc);
     // Most numbers are plain digits, or a sign and digits, which need no
     // decomposition: z3 is slow to convert parts of a string that are only
     // determined by a word equation, even for constants.
@@ -878,9 +881,9 @@ exprt shell_convertert::parse_test_integer(
            re.matches(leading, blanks),
            re.matches(sign_part, sign),
            re.matches(digit_part, digits),
-           trailing_space
-             ? re.matches(trailing, blanks)
-             : exprt{equal_exprt{trailing, payload_literal("")}}})}},
+           trailing != trailing_blankst::NONE
+             ? re.matches(trailing_part, trailing_blanks)
+             : exprt{equal_exprt{trailing_part, payload_literal("")}}})}},
       loc);
     // The magnitude, of the Int sort, so that values out of range are
     // detected rather than wrapped.
@@ -912,25 +915,28 @@ exprt shell_convertert::parse_test_integer(
 
   // Refined strings: is_valid_long accepts an optional sign and decimal
   // digits, up to 20 bytes. Up to refined_blanks blanks before (and, if
-  // trailing_space, after) the number are skipped; more blanks, and
-  // numbers of more than 18 bytes (whose conversion the solver constrains
-  // to not overflow), are over-approximated by a nondeterministic result.
+  // trailing blanks are allowed, after) the number are skipped; more
+  // blanks, and numbers of more than 18 bytes (whose conversion the solver
+  // constrains to not overflow), are over-approximated by a
+  // nondeterministic result.
   const exprt length = payload_length(payload, dest, loc);
-  const exprt leading = refined_blank_count(payload, false, dest, loc);
-  const exprt trailing = trailing_space
-                           ? refined_blank_count(payload, true, dest, loc)
-                           : exprt{zero};
+  const exprt leading = refined_blank_count(payload, false, false, dest, loc);
+  const exprt trailing_count =
+    trailing != trailing_blankst::NONE
+      ? refined_blank_count(
+          payload, true, trailing == trailing_blankst::SPACE_TAB, dest, loc)
+      : exprt{zero};
   const exprt few_blanks = and_exprt{
     binary_relation_exprt{
       leading, ID_le, from_integer(refined_blanks, integer_type())},
     binary_relation_exprt{
-      trailing, ID_le, from_integer(refined_blanks, integer_type())}};
+      trailing_count, ID_le, from_integer(refined_blanks, integer_type())}};
   const exprt number_length =
-    minus_exprt{length, plus_exprt{leading, trailing}};
+    minus_exprt{length, plus_exprt{leading, trailing_count}};
   const exprt start = if_exprt{few_blanks, leading, zero};
   const exprt end = if_exprt{
     and_exprt{few_blanks, binary_relation_exprt{number_length, ID_ge, zero}},
-    minus_exprt{length, trailing},
+    minus_exprt{length, trailing_count},
     start};
   const exprt number = payload_substring(payload, start, end, dest, loc);
   const exprt syntax = string_function(
@@ -957,6 +963,7 @@ exprt shell_convertert::parse_test_integer(
 exprt shell_convertert::refined_blank_count(
   const exprt &payload,
   bool at_end,
+  bool space_tab,
   code_blockt &dest,
   const source_locationt &loc)
 {
@@ -978,7 +985,10 @@ exprt shell_convertert::refined_blank_count(
     count = if_exprt{
       and_exprt{
         binary_relation_exprt{length, ID_gt, from_integer(k, integer_type())},
-        is_blank(c)},
+        space_tab ? exprt{or_exprt{
+                      equal_exprt{c, from_integer(' ', c.type())},
+                      equal_exprt{c, from_integer('\t', c.type())}}}
+                  : is_blank(c)},
       count,
       from_integer(k, integer_type())};
   }
@@ -1041,7 +1051,8 @@ exprt shell_convertert::parse_arith_integer(
   const exprt zero = from_integer(0, integer_type());
   const exprt empty = is_empty(string);
   const symbol_exprt number = temporary(integer_type(), dest, loc);
-  exprt valid = parse_test_integer(string, true, number, dest, loc);
+  exprt valid =
+    parse_test_integer(string, trailing_blankst::ANY, number, dest, loc);
   if(leading_zero_octal)
   {
     // A leading zero followed by more digits is octal.
@@ -1064,7 +1075,8 @@ exprt shell_convertert::parse_arith_integer(
       // Refined strings: the number starts after the leading blanks, which
       // parse_test_integer only accepts if there are few.
       const exprt length = payload_length(payload, dest, loc);
-      const exprt leading = refined_blank_count(payload, false, dest, loc);
+      const exprt leading =
+        refined_blank_count(payload, false, false, dest, loc);
       const auto char_at = [&](const exprt &i)
       {
         return string_function(

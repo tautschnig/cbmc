@@ -274,7 +274,8 @@ void shell_convertert::status_from_operand(
 
   const exprt string = expand_word(word, shell_word_contextt::FIELD, dest, loc);
   const symbol_exprt value = temporary(integer_type(), dest, loc);
-  const exprt valid = test_integer(string, false, value, dest, loc);
+  const exprt valid =
+    test_integer(string, trailing_blankst::NONE, value, dest, loc);
   check(
     dest,
     and_exprt{

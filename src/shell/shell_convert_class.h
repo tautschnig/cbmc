@@ -515,12 +515,22 @@ private:
   /// A variable as inherited from the environment: set or unset.
   exprt environment_string(code_blockt &dest, const source_locationt &loc);
 
+  /// The white space that may follow an integer operand of the test
+  /// utility, which may always start with isspace() bytes: none (zsh),
+  /// space and tab (bash), or isspace() bytes (dash).
+  enum class trailing_blankst
+  {
+    NONE,
+    SPACE_TAB,
+    ANY
+  };
+
   /// The integer that \p string denotes, stored in \p value, and whether it
-  /// is valid, for the test utility's integer operands (with trailing white
-  /// space if \p trailing_space) and for exit and return.
+  /// is valid, for the test utility's integer operands (followed by
+  /// \p trailing blanks) and for exit and return.
   exprt test_integer(
     const exprt &string,
-    bool trailing_space,
+    trailing_blankst trailing,
     const symbol_exprt &value,
     code_blockt &dest,
     const source_locationt &loc);
@@ -537,15 +547,17 @@ private:
   /// test_integer for strings whose int_value is not known.
   /// For refined strings: the number of blanks at the start of \p payload,
   /// or at its end if \p at_end, if at most refined_blanks, and
-  /// refined_blanks + 1 if more.
+  /// refined_blanks + 1 if more. Blanks are isspace() bytes, or only space
+  /// and tab if \p space_tab.
   exprt refined_blank_count(
     const exprt &payload,
     bool at_end,
+    bool space_tab,
     code_blockt &dest,
     const source_locationt &loc);
   exprt parse_test_integer(
     const exprt &string,
-    bool trailing_space,
+    trailing_blankst trailing,
     const symbol_exprt &value,
     code_blockt &dest,
     const source_locationt &loc);

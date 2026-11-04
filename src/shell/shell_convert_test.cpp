@@ -249,8 +249,12 @@ void shell_convertert::integer_test(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  // zsh rejects trailing white space; dash, bash, and mksh accept it.
-  const bool trailing = program.dialect != shell_dialectt::ZSH;
+  // zsh rejects trailing white space; bash accepts space and tab, dash
+  // isspace() bytes, and mksh some (assumed to be isspace() bytes).
+  const trailing_blankst trailing =
+    program.dialect == shell_dialectt::ZSH    ? trailing_blankst::NONE
+    : program.dialect == shell_dialectt::BASH ? trailing_blankst::SPACE_TAB
+                                              : trailing_blankst::ANY;
   const symbol_exprt l = temporary(integer_type(), dest, loc);
   const symbol_exprt r = temporary(integer_type(), dest, loc);
   const exprt l_valid = test_integer(lhs, trailing, l, dest, loc);

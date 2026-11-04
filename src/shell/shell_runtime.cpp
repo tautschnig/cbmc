@@ -232,12 +232,13 @@ private:
 
   /// An operand of the test utility's integer comparisons (dash and bash):
   /// optional white space, an optional sign, decimal digits, and optional
-  /// white space if \p trailing_space. Values outside the range of long
-  /// long are invalid.
+  /// white space as \p trailing says: none (0), space and tab (1), or
+  /// isspace() bytes (2), the values of trailing_blankst. Values outside
+  /// the range of long long are invalid.
   void test_integer()
   {
     begin("_Bool " SHELL_RT_TEST_INTEGER "(struct " SHELL_STRING_TAG
-          " s, _Bool trailing_space, long long *value)");
+          " s, unsigned char trailing, long long *value)");
     out << "  unsigned char state = 0;\n"
         << "  _Bool negative = 0;\n"
         << "  _Bool overflow = 0;\n"
@@ -261,8 +262,8 @@ private:
           << "      state = 2;\n";
       accumulate(10, "c - '0'");
       out << "    }\n"
-          << "    else if((state == 2 || state == 3) && space && "
-             "trailing_space)\n"
+          << "    else if((state == 2 || state == 3) && (trailing == 2 ? "
+             "space : trailing == 1 && (c == ' ' || c == '\\t')))\n"
           << "      state = 3;\n"
           << "    else\n"
           << "      state = 4;\n"
