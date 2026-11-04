@@ -509,7 +509,12 @@ Supported so far:
   errors such as "sync: unlock of unlocked mutex", which `recover`
   cannot stop); blocking operations assume that they can proceed.
 - `reflect` is replaced by its model (`models/reflect`, with
-  `go_reflect.cpp`). A type is a descriptor (`reflect.rtype`), a global
+  `go_reflect.cpp`). Unlike `sync`, programs are type-checked against
+  the real package (from export data), as other standard-library
+  packages' signatures mention its types (`encoding/gob`,
+  `text/template`, ...); the encoding maps the real package's functions,
+  methods and types to the model's of the same names, and type identity
+  in the type table is modulo this mapping. A type is a descriptor (`reflect.rtype`), a global
   that the front-end builds for each type a reflected value may have:
   the dynamic types of interface values and the types they refer to
   (elements, keys, fields, parameters, results, method types, underlying
@@ -868,10 +873,19 @@ and `guard_panic`), which made phase 7 a local change.
 Collected while converting a corpus of real code (195 third-party
 packages of 40 modules, and copies of 165 standard-library packages,
 `~/go-scratch/corpus`, a harness per package that imports it). All of
-them now convert, except `golang.org/x/text/date` and
-`golang.org/x/text/unicode/runenames` (the helper runs out of memory).
-Unsupported constructs are reported where they are reached (25,108
-sites), almost all of them calls without a model.
+the third-party packages convert, and all standard-library copies except
+those of `encoding/json` (v1 over v2), `encoding/json/v2` and
+`encoding/json/jsontext`, which need the jsonv2 experiment that the
+helper turns off (§5; so programs that import `encoding/json/v2` are not
+supported). Unsupported constructs are reported where they are reached:
+15,781 sites (25,108 before reflect was modelled, of which 12,375 were
+calls of reflect; 19 calls of `internal/reflectlite` remain), almost all
+of them calls without a model (`go/types`, `syscall`, `unicode`'s
+tables, `os`, `go/ast`, `bufio`, `regexp`, `text/template/parse`, ...).
+By the study of reflect's uses in the builds of the 100 most popular Go
+applications (`~/go-scratch/reflect-study`), 97% of the packages that
+use reflect use only members that the model supports, and a further 2.7%
+use `MapOf`, `ArrayOf` or `ChanOf`, which find the program's types.
 
 ### 7.1 Soundness and required features
 
