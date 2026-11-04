@@ -1224,6 +1224,8 @@ private:
     const std::optional<std::string> &ifs,
     code_blockt &dest,
     const source_locationt &loc);
+  /// The status of command -v and type for a name that is not found.
+  exprt not_found_status(code_blockt &dest, const source_locationt &loc);
   /// local: see shell_convert_local.cpp.
   void convert_local(const shell_commandt &command, code_blockt &dest);
   /// NAME and the value of NAME=value, if \p word has this form with a

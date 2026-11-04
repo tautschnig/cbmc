@@ -3,6 +3,25 @@
 
 #include "shell_convert_class.h"
 
+exprt shell_convertert::not_found_status(
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  // dash and busybox: 127; bash (also as sh), mksh and zsh: 1.
+  if(program.dialect != shell_dialectt::POSIX)
+    return from_integer(1, status_type());
+  const symbol_exprt status = temporary(status_type(), dest, loc);
+  assign(
+    dest,
+    status,
+    if_exprt{
+      nondet(bool_typet{}, loc),
+      from_integer(127, status_type()),
+      from_integer(1, status_type())},
+    loc);
+  return status;
+}
+
 /// Builtins that every modelled dialect has, which command -v finds.
 static bool is_builtin_everywhere(const std::string &name)
 {
@@ -97,8 +116,7 @@ void shell_convertert::convert_command_builtin(
     dest,
     [&](code_blockt &block)
     {
-      const unsigned missing =
-        program.dialect == shell_dialectt::POSIX ? 127 : 1;
+      const exprt missing = not_found_status(block, loc);
       const shell_wordt &word = command.words[first];
       const auto name = known_text(word);
       // Whether a utility of this name exists is not known: found or not.
@@ -108,10 +126,7 @@ void shell_convertert::convert_command_builtin(
       assign(
         maybe,
         status(),
-        if_exprt{
-          found,
-          from_integer(0, status_type()),
-          from_integer(missing, status_type())},
+        if_exprt{found, from_integer(0, status_type()), missing},
         loc);
       if(!name.has_value())
       {

@@ -8,5 +8,5 @@ main.sh
 ^warning: ignoring
 --
 command -v finds functions and builtins, and utilities may or may not
-exist (dash's status for a missing one is 127); command NAME does not
-run functions.
+exist (the status for a missing one is 127 in dash and busybox, and 1
+in bash, also as sh); command NAME does not run functions.

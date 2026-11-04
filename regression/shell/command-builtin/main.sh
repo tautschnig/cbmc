@@ -7,7 +7,7 @@ __CPROVER_assert "$?" = 0
 if command -v dpkg-maintscript-helper > /dev/null 2>&1; then
   found=yes
 else
-  __CPROVER_assert "$?" = 127
+  __CPROVER_assert "$?" = 127 -o "$?" = 1
 fi
 r=none
 command f 2> /dev/null
