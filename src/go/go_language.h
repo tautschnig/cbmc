@@ -93,6 +93,9 @@ protected:
   std::string go_compiler;
   /// Whether deadlocks are reported (not with --go-no-deadlock-check).
   bool deadlock_check = true;
+  /// Whether the helper keeps the functions of imported packages that the
+  /// program cannot reach (--go-keep-unreachable; it prunes them otherwise).
+  bool keep_unreachable = false;
   /// Bounds of arbitrary values with references (--max-nondet-tree-depth,
   /// --min-null-tree-depth).
   object_factory_parameterst nondet_parameters;

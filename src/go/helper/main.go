@@ -1379,6 +1379,8 @@ func ensureGoOnPath() {
 func main() {
 	goarch := flag.String("goarch", runtime.GOARCH, "target GOARCH")
 	out := flag.String("o", "", "output file (default: stdout)")
+	noPrune := flag.Bool("no-prune", false,
+		"keep the functions that the program cannot reach (see prune)")
 	syntaxOnly := flag.Bool("syntax", false,
 		"only check the syntax of the files (no output)")
 	flag.Parse()
@@ -1533,6 +1535,9 @@ func main() {
 		file := asts[enc.declFile[inst.decl]].(map[string]any)
 		decls, _ := file["Decls"].([]any)
 		file["Decls"] = append(decls, decl)
+	}
+	if !*noPrune {
+		prune(asts, packages, enc.types, pkg.Path())
 	}
 	doc := map[string]any{"version": 1, "go_version": runtime.Version(),
 		"goarch": *goarch, "package": pkg.Path(), "files": names,

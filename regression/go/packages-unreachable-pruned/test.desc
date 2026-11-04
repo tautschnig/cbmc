@@ -1,0 +1,13 @@
+CORE
+main.go
+
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 12 twice: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+os\.Getenv
+lib\.Home
+--
+unreachable functions of imported packages are not converted

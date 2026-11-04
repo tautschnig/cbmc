@@ -1,0 +1,12 @@
+CORE
+main.go
+--go-keep-unreachable
+^EXIT=0$
+^SIGNAL=0$
+Go front-end: a call of os\.Getenv \(package os, which has no model\) is not supported yet$
+^\[go::main\.main\.assertion\.1\] line 12 twice: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+with --go-keep-unreachable, unreachable functions are converted (and reported)

@@ -44,6 +44,7 @@ void go_languaget::set_language_options(
   function_entry_point = options.get_option("function");
   go_compiler = options.get_option("go-compiler");
   deadlock_check = !options.get_bool_option("go-no-deadlock-check");
+  keep_unreachable = options.get_bool_option("go-keep-unreachable");
   nondet_parameters.set(options);
 }
 
@@ -231,6 +232,8 @@ bool go_languaget::load_pending(message_handlert &message_handler)
 
   temporary_filet json_file{"cbmc_go_", ".json"};
   std::vector<std::string> arguments{"-goarch", goarch, "-o", json_file()};
+  if(keep_unreachable)
+    arguments.push_back("-no-prune");
   arguments.insert(arguments.end(), paths.begin(), paths.end());
   if(run_helper(arguments, message_handler))
     return true;

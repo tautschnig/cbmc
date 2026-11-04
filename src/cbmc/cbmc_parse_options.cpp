@@ -175,6 +175,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("go-compiler", cmdline.get_value("go-compiler"));
   if(cmdline.isset("go-no-deadlock-check"))
     options.set_option("go-no-deadlock-check", true);
+  if(cmdline.isset("go-keep-unreachable"))
+    options.set_option("go-keep-unreachable", true);
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
   // Disable signed overflow checks for Python source files.
@@ -1075,6 +1077,9 @@ void cbmc_parse_optionst::help()
     " go1.27, else {yany})\n"
     " {y--go-no-deadlock-check} \t do not report deadlocks (all goroutines"
     " blocked)\n"
+    " {y--go-keep-unreachable} \t convert also the functions of imported"
+    " packages that the program cannot reach (e.g., to survey unsupported"
+    " constructs)\n"
     "\n"
     "Platform options:\n"
     HELP_CONFIG_PLATFORM
