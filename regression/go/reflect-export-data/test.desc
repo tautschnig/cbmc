@@ -1,0 +1,13 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 16 model: SUCCESS$
+^\[go::main\.main\.unsupported\.\d+\] line \d+ Go front-end: a call of encoding/gob\.Encoder\.EncodeValue .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+^CONVERSION ERROR$
+--
+the program is type-checked against the real reflect, whose uses map to the model

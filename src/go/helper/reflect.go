@@ -160,3 +160,110 @@ func (e *encoder) derivedType(t types.Type, depth int) {
 		e.reflectDerived[i] = depth
 	}
 }
+
+// identical is types.Identical, for which the types of a package in
+// checkedAgainstReal are those of its model (see replacementType): the
+// program's types mention the real ones, the model's own code its.
+func (e *encoder) identical(x, y types.Type) bool {
+	if types.Identical(x, y) {
+		return true
+	}
+	if e.loader == nil || !e.reflects() {
+		return false
+	}
+	return types.Identical(e.replaced(x), e.replaced(y))
+}
+
+// replaced returns t with the named types of the packages in
+// checkedAgainstReal replaced by their models' (see replacementType).
+func (e *encoder) replaced(t types.Type) types.Type {
+	if r, ok := e.replacedCache[t]; ok {
+		return r
+	}
+	e.replacedCache[t] = t // recursive types end here
+	r := e.replace(t)
+	e.replacedCache[t] = r
+	return r
+}
+
+func (e *encoder) replace(t types.Type) types.Type {
+	tuple := func(tup *types.Tuple) (*types.Tuple, bool) {
+		if tup == nil {
+			return nil, false
+		}
+		changed := false
+		var vars []*types.Var
+		for i := 0; i < tup.Len(); i++ {
+			v := tup.At(i)
+			vt := e.replaced(v.Type())
+			if vt != v.Type() {
+				changed = true
+				v = types.NewParam(v.Pos(), v.Pkg(), v.Name(), vt)
+			}
+			vars = append(vars, v)
+		}
+		return types.NewTuple(vars...), changed
+	}
+	switch x := types.Unalias(t).(type) {
+	case *types.Named:
+		if n := x.Obj().Pkg(); n != nil && checkedAgainstReal[n.Path()] {
+			if r := e.replacementType(x); r != nil {
+				return r
+			}
+		}
+		return t
+	case *types.Pointer:
+		if el := e.replaced(x.Elem()); el != x.Elem() {
+			return types.NewPointer(el)
+		}
+	case *types.Slice:
+		if el := e.replaced(x.Elem()); el != x.Elem() {
+			return types.NewSlice(el)
+		}
+	case *types.Array:
+		if el := e.replaced(x.Elem()); el != x.Elem() {
+			return types.NewArray(el, x.Len())
+		}
+	case *types.Map:
+		k, v := e.replaced(x.Key()), e.replaced(x.Elem())
+		if k != x.Key() || v != x.Elem() {
+			return types.NewMap(k, v)
+		}
+	case *types.Chan:
+		if el := e.replaced(x.Elem()); el != x.Elem() {
+			return types.NewChan(x.Dir(), el)
+		}
+	case *types.Signature:
+		if x.TypeParams().Len() > 0 {
+			return t
+		}
+		params, pc := tuple(x.Params())
+		results, rc := tuple(x.Results())
+		if pc || rc {
+			return types.NewSignatureType(nil, nil, nil, params, results,
+				x.Variadic())
+		}
+	case *types.Tuple:
+		if r, changed := tuple(x); changed {
+			return r
+		}
+	case *types.Struct:
+		changed := false
+		var fields []*types.Var
+		var tags []string
+		for i := 0; i < x.NumFields(); i++ {
+			f := x.Field(i)
+			ft := e.replaced(f.Type())
+			if ft != f.Type() {
+				changed = true
+				f = types.NewField(f.Pos(), f.Pkg(), f.Name(), ft, f.Embedded())
+			}
+			fields = append(fields, f)
+			tags = append(tags, x.Tag(i))
+		}
+		if changed {
+			return types.NewStruct(fields, tags)
+		}
+	}
+	return t
+}

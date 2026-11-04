@@ -41,6 +41,14 @@ const modelPrefix = "cprover/std/"
 var replaced = map[string]bool{"sync": true, "sync/atomic": true,
 	"reflect": true}
 
+// Replaced packages that the program is type-checked against the real
+// package of (from export data) nevertheless: their types occur in the
+// signatures of other standard-library packages (reflect.Value in
+// encoding/gob, ...), which must be the same types. The encoding then maps
+// the real package's functions, methods and types to the model's of the
+// same names (see model, modelMethod and replacementType).
+var checkedAgainstReal = map[string]bool{"reflect": true}
+
 // loadReplacement loads the model that replaces standard-library package
 // path (see replaced).
 func (l *loader) loadReplacement(path string) (*types.Package, error) {
@@ -278,6 +286,9 @@ func (l *loader) model(f *types.Func) *types.Func {
 	if f.Pkg() == nil || isMethod(f) {
 		return nil
 	}
+	if r := l.replacementFunc(f); r != nil {
+		return r
+	}
 	m := l.models[f.Pkg().Path()]
 	if m == nil {
 		return nil
@@ -288,6 +299,22 @@ func (l *loader) model(f *types.Func) *types.Func {
 	if mf == nil || !types.Identical(l.enc.realSignature(mf.Type()), f.Type()) {
 		return nil
 	}
+	return mf
+}
+
+// replacementFunc returns the function of the model of a package in
+// checkedAgainstReal that function f of the real package stands for (the
+// function of the same name), or nil.
+func (l *loader) replacementFunc(f *types.Func) *types.Func {
+	path := f.Pkg().Path()
+	if !checkedAgainstReal[path] {
+		return nil
+	}
+	sp := l.byPath[path]
+	if sp == nil || sp.pkg == f.Pkg() {
+		return nil
+	}
+	mf, _ := sp.pkg.Scope().Lookup(f.Name()).(*types.Func)
 	return mf
 }
 
@@ -496,6 +523,9 @@ func (l *loader) modelVar(v *types.Var) *types.Var {
 func (e *encoder) genericModel(f *types.Func, inst types.Instance) *types.Func {
 	if f == nil || e.loader == nil || isMethod(f) || f.Pkg() == nil {
 		return nil
+	}
+	if r := e.loader.replacementFunc(f); r != nil && e.genericDecls[r] != nil {
+		return r
 	}
 	m := e.loader.models[f.Pkg().Path()]
 	if m == nil {

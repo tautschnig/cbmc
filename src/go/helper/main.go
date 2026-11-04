@@ -118,6 +118,18 @@ func (h *helperImporter) Import(path string) (*types.Package, error) {
 		return h.loader.runtime()
 	}
 	if path != cproverPath {
+		// The model is loaded (as path, see loadReplacement), but packages
+		// are type-checked against the real package.
+		if checkedAgainstReal[path] {
+			if _, err := h.loader.loadReplacement(path); err != nil {
+				return nil, err
+			}
+			pkg, err := h.std.Import(path)
+			if err == nil {
+				h.loader.real[path] = pkg
+			}
+			return pkg, err
+		}
 		if pkg, ok, err := h.loader.importSource(path); ok {
 			return pkg, err
 		}
@@ -185,6 +197,7 @@ type encoder struct {
 	// The entries that reflectInfo adds, and their depth (see
 	// derivedType).
 	reflectDerived map[int]int
+	replacedCache  map[types.Type]types.Type // see replaced
 }
 
 // An instance of a generic function or method (Go1.27 §Instantiations),
@@ -695,7 +708,7 @@ func (e *encoder) typ(t types.Type) int {
 	case *types.Pointer, *types.Slice, *types.Array, *types.Map, *types.Chan:
 		key = t.String()
 		for _, j := range e.structural[key] {
-			if types.Identical(e.typeList[j], t) {
+			if e.identical(e.typeList[j], t) {
 				e.typeIdx[t] = j
 				return j
 			}
@@ -817,7 +830,7 @@ func (e *encoder) completeTypes() {
 		entry := e.types[i].(map[string]any)
 		canonical := i
 		for _, j := range byKey[key(t)] {
-			if types.Identical(e.typeList[j], t) {
+			if e.identical(e.typeList[j], t) {
 				canonical = j
 				break
 			}
@@ -1403,7 +1416,8 @@ func main() {
 		aliases:      map[types.Object]string{},
 		selObj:       map[*ast.Ident]types.Object{},
 		selPath:      map[*ast.SelectorExpr]selPath{},
-		usedNames:    map[string]bool{}, reflectDerived: map[int]int{}}
+		usedNames:    map[string]bool{}, reflectDerived: map[int]int{},
+		replacedCache: map[types.Type]types.Type{}}
 	var files []*ast.File
 	var names []string
 	failed := false
