@@ -1,0 +1,11 @@
+CORE
+unmatched.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A pattern that matches no pathname is left as it is.

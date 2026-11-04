@@ -1,0 +1,10 @@
+CORE
+zsh.zsh
+
+^EXIT=6$
+^SIGNAL=0$
+pathname expansion in zsh
+--
+^VERIFICATION
+--
+zsh reports patterns that match nothing (NOMATCH), which is not modelled.

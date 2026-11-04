@@ -1,0 +1,16 @@
+CORE
+main.sh
+--shell-max-arguments 2
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-argument-count\.[0-9]+\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+^\[assertion\.[0-9]+\] .*: FAILURE$
+^\[shell-unsupported\.[0-9]+\] .*: FAILURE$
+--
+Pathname expansion in lists of fields: each pathname matches the pattern
+as a case pattern, and quoted pattern characters are matched literally.
+The number of pathnames is not bounded, which shell-argument-count
+reports.

@@ -1,0 +1,14 @@
+CORE
+quoted.sh
+--shell-max-arguments 2
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-argument-count\.[0-9]+\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+^\[assertion\.[0-9]+\] .*: FAILURE$
+^\[shell-unsupported\.[0-9]+\] .*: FAILURE$
+--
+Pathname expansion with expansions in the pattern: quoted ones, and
+unquoted ones that yield one field, are matched literally.

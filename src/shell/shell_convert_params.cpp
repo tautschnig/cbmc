@@ -280,6 +280,11 @@ shell_convertert::field_listt shell_convertert::expand_fields(
       split_fields(list, it->front(), dest, loc);
       dynamic = true;
     }
+    else if(const auto pattern = pathname_pattern(*it))
+    {
+      expand_pathnames(list, *it, *pattern, dest, loc);
+      dynamic = true;
+    }
     else
     {
       append_field(

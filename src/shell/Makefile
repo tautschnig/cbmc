@@ -11,6 +11,7 @@ SRC = shell_arith.cpp \
       shell_convert_ifs.cpp \
       shell_convert_options.cpp \
       shell_convert_params.cpp \
+      shell_convert_pathnames.cpp \
       shell_convert_read.cpp \
       shell_convert_strings.cpp \
       shell_convert_patterns.cpp \

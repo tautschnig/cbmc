@@ -732,6 +732,18 @@ private:
     std::string ifs,
     code_blockt &dest,
     const source_locationt &loc);
+  /// For a word in a list of fields that pathname expansion applies to:
+  /// the pattern, with its unquoted parameter expansions quoted (see
+  /// shell_convert_pathnames.cpp).
+  std::optional<shell_wordt> pathname_pattern(const shell_wordt &word) const;
+  /// The fields of \p word, whose pattern is \p pattern, after pathname
+  /// expansion.
+  void expand_pathnames(
+    const field_listt &list,
+    const shell_wordt &word,
+    const shell_wordt &pattern,
+    code_blockt &dest,
+    const source_locationt &loc);
   /// The fields of unquoted $@ as a whole word, \p part.
   void split_positional_parameters(
     const field_listt &list,

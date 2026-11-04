@@ -1,14 +1,13 @@
 CORE
 main.sh
-
+--shell-max-arguments 2
 ^EXIT=10$
 ^SIGNAL=0$
-^\[shell-unsupported\.1\] file main.sh line 3 noglob \(set -f\) is on where pathname expansion would apply to '\*' \(pathname expansion is not supported\): SUCCESS$
 ^\[assertion\.1\] file main.sh line 4 assertion "\$\{1\}" = "\*": SUCCESS$
-^\[shell-unsupported\.2\] file main.sh line 6 noglob \(set -f\) is on where pathname expansion would apply to '\*' \(pathname expansion is not supported\): FAILURE$
+^\[assertion\.2\] file main.sh line 7 assertion "\$\{1\}" = "\*": FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring
 --
-With set -f, pattern characters are literal. Pathname expansion is not
-modelled, which is reported where it would apply.
+With set -f, pattern characters are literal; otherwise, pathname
+expansion may yield pathnames.
