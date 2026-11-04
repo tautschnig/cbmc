@@ -403,6 +403,11 @@ public:
       int_width = pointer_width;
       uintptr_width = pointer_width;
     }
+
+    /// Go programs create many objects: each conversion of a value to an
+    /// interface type allocates a copy of it, as gc does for values that
+    /// escape. (As for Java; on 32-bit targets, half the pointer width.)
+    static const std::size_t default_object_bits = 16;
   } go;
 
   struct bv_encodingt

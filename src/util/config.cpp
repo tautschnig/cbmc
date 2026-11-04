@@ -19,6 +19,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "string_utils.h"
 #include "symbol_table_base.h"
 
+#include <algorithm>
 #include <climits>
 #include <cstdlib>
 
@@ -1444,6 +1445,11 @@ void configt::set_object_bits_from_symbol_table(
       bv_encoding.object_bits=ansi_c.default_object_bits;
     else if(entry_point_symbol.mode==ID_cpp)
       bv_encoding.object_bits=cpp.default_object_bits;
+    else if(entry_point_symbol.mode == "go")
+    {
+      const std::size_t go_bits = go.default_object_bits;
+      bv_encoding.object_bits = std::min(go_bits, ansi_c.pointer_width / 2);
+    }
     DATA_INVARIANT(
       0<bv_encoding.object_bits && bv_encoding.object_bits<ansi_c.pointer_width,
       "object_bits should fit into pointer width");
