@@ -29,21 +29,21 @@ static const std::map<std::string, shell_command_kindt> builtins{
   {".", shell_command_kindt::DOT},
   {CPROVER_PREFIX "assert", shell_command_kindt::ASSERT},
   {CPROVER_PREFIX "assume", shell_command_kindt::ASSUME},
+  {"read", shell_command_kindt::READ},
   {"echo", shell_command_kindt::OUTPUT},
   {"printf", shell_command_kindt::OUTPUT}};
 
 /// Builtins that change the shell environment (XCU 2.15 special
 /// builtins, regular builtins of XCU 1.7, and common extensions).
 static const std::set<std::string> unsupported_builtins{
-  "eval",      "readonly", "times",     "trap",     "cd",       "read",
-  "getopts",   "alias",    "unalias",   "umask",    "wait",     "jobs",
-  "fg",        "bg",       "command",   "type",     "hash",     "kill",
-  "ulimit",    "fc",       "newgrp",    "local",    "declare",  "typeset",
-  "source",    "let",      "shopt",     "builtin",  "enable",   "mapfile",
-  "readarray", "pushd",    "popd",      "dirs",     "disown",   "suspend",
-  "logout",    "nameref",  "autoload",  "setopt",   "unsetopt", "emulate",
-  "print",     "whence",   "functions", "zmodload", "caller",   "compgen",
-  "complete"};
+  "eval",    "readonly",  "times",    "trap",     "cd",      "getopts",
+  "alias",   "unalias",   "umask",    "wait",     "jobs",    "fg",
+  "bg",      "command",   "type",     "hash",     "kill",    "ulimit",
+  "fc",      "newgrp",    "local",    "declare",  "typeset", "source",
+  "let",     "shopt",     "builtin",  "enable",   "mapfile", "readarray",
+  "pushd",   "popd",      "dirs",     "disown",   "suspend", "logout",
+  "nameref", "autoload",  "setopt",   "unsetopt", "emulate", "print",
+  "whence",  "functions", "zmodload", "caller",   "compgen", "complete"};
 
 shell_command_kindt shell_convertert::classify(const std::string &name) const
 {
@@ -1145,7 +1145,8 @@ void shell_convertert::convert_builtin(
     kind == shell_command_kindt::DOT;
   if(
     !command.assignments.empty() && kind != shell_command_kindt::EXTERNAL &&
-    kind != shell_command_kindt::OUTPUT && !special)
+    kind != shell_command_kindt::OUTPUT && kind != shell_command_kindt::READ &&
+    !special)
   {
     // Shells differ in whether these assignments persist.
     unsupported(loc, "variable assignment before a regular builtin");
@@ -1226,6 +1227,9 @@ void shell_convertert::convert_builtin(
     return;
   case shell_command_kindt::DOT:
     convert_dot(command, dest);
+    return;
+  case shell_command_kindt::READ:
+    convert_read(command, dest);
     return;
   case shell_command_kindt::COLON:
   case shell_command_kindt::TRUE:

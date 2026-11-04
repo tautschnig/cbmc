@@ -1,0 +1,11 @@
+CORE
+main.sh
+--shell-strings native --cvc5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+read with native strings: the variables but the last have no byte of
+IFS with -r, none has a newline, and other variables keep their values.

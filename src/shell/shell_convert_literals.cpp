@@ -102,7 +102,6 @@ void shell_convertert::collect_assigned(
     "local",
     "declare",
     "typeset",
-    "read",
     "getopts",
     "printf",
     "eval",
@@ -123,19 +122,41 @@ void shell_convertert::collect_assigned(
     {
       continue;
     }
+    // Assignments before utilities and regular builtins only last for
+    // them.
+    std::optional<std::string> name;
+    if(command.kind == kindt::SIMPLE && !command.words.empty())
+      name = static_text(command.words.front());
+    bool temporary = false;
+    if(name.has_value() && function_definitions.count(*name) == 0)
+    {
+      const auto kind = classify(*name);
+      temporary = kind == shell_command_kindt::EXTERNAL ||
+                  kind == shell_command_kindt::OUTPUT ||
+                  kind == shell_command_kindt::READ;
+    }
     for(const auto &assignment : command.assignments)
     {
-      names.insert(assignment.name);
+      if(!temporary)
+        names.insert(assignment.name);
       collect_assigned(assignment.value, names, any);
     }
     if(command.kind == kindt::SIMPLE && !command.words.empty())
     {
-      const auto name = static_text(command.words.front());
       if(
         !name.has_value() || assigning.count(*name) != 0 ||
         function_definitions.count(*name) != 0)
       {
         any = true;
+      }
+      else if(*name == "read")
+      {
+        // The names read assigns, if they are literal.
+        const auto operands = read_operands(command);
+        if(operands.has_value())
+          names.insert(operands->second.begin(), operands->second.end());
+        else
+          any = true;
       }
     }
     if(command.kind == kindt::FOR)

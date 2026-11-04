@@ -1,0 +1,10 @@
+CORE
+options.sh
+
+^EXIT=6$
+^SIGNAL=0$
+read other than read \[-r\] \[--\] NAME\.\.\.
+--
+^VERIFICATION
+--
+Options other than -r differ between shells.

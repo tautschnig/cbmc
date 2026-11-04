@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+read with -r: the variables but the last have no byte of IFS, none has a
+newline, and other variables keep their values. An assignment of IFS
+before read only lasts for it.

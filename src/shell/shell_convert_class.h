@@ -77,6 +77,8 @@ enum class shell_command_kindt
   RETURN,
   EXEC,
   DOT,
+  /// read, which assigns variables values that are not modelled.
+  READ,
   ASSERT,
   ASSUME,
   /// echo and printf: output only; their status is nondeterministic, as
@@ -1139,6 +1141,20 @@ private:
   /// or utility rather than a function.
   void
   convert_command_builtin(const shell_commandt &command, code_blockt &dest);
+  /// read: see shell_convert_read.cpp.
+  void convert_read(const shell_commandt &command, code_blockt &dest);
+  /// Whether read has -r, and its names, if its operands are -r, --, and
+  /// names, all literal text.
+  static std::optional<std::pair<bool, std::vector<std::string>>>
+  read_operands(const shell_commandt &command);
+  /// A value that read assigns: to the last of the variables if \p last,
+  /// with -r if \p raw, splitting with \p ifs where it is known.
+  exprt read_value(
+    bool raw,
+    bool last,
+    const std::optional<std::string> &ifs,
+    code_blockt &dest,
+    const source_locationt &loc);
   /// local: see shell_convert_local.cpp.
   void convert_local(const shell_commandt &command, code_blockt &dest);
   /// NAME and the value of NAME=value, if \p word has this form with a

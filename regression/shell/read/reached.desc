@@ -1,0 +1,11 @@
+CORE
+reached.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The value that read assigns is not known.
