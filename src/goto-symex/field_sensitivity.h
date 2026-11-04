@@ -100,7 +100,13 @@ inline field_sensitive_ssa_exprt &to_field_sensitive_ssa_expr(exprt &expr)
 /// When `index` is not a constant, `array[index]` is replaced by
 ///  `{array[[0]]; array[[1]]; …index]`.
 /// Note that this process does not apply to arrays whose size is not constant,
-/// and arrays whose size exceed the bound \c max_field_sensitivity_array_size.
+/// arrays whose size exceed the bound \c max_field_sensitivity_array_size,
+/// and arrays of const-qualified elements: these are typically tables that
+/// are initialised with constants and never written, whose constant value
+/// is propagated as a whole, which is as precise as propagating the values
+/// of their elements and saves an assignment per element. Writes to them,
+/// which casting away const permits in C, remain sound: they update the
+/// array as a whole, as for arrays that are too large.
 /// See \ref field_sensitivityt::apply.
 ///
 /// ### Symbols representing arrays

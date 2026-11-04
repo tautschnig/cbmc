@@ -1,0 +1,15 @@
+CORE
+main.c
+
+^EXIT=10$
+^SIGNAL=0$
+^\[main\.assertion\.1\] line 16 assertion table\[1\] == 20: SUCCESS$
+^\[main\.assertion\.2\] line 17 assertion i == 1 \|\| table\[i\] == 10: SUCCESS$
+^\[main\.assertion\.3\] line 18 assertion table\[0\] == 1: FAILURE$
+^\*\* 1 of \d+ failed
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Writes to an array of const-qualified elements (after casting away const)
+are modelled although field sensitivity keeps the array whole.

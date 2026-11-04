@@ -19,6 +19,14 @@ Author: Michael Tautschnig
 
 #define ENABLE_ARRAY_FIELD_SENSITIVITY
 
+/// Whether \p type is that of an array of const-qualified elements, which
+/// is not divided into its elements (see field_sensitivityt).
+static bool is_const_array(const typet &type)
+{
+  return type.id() == ID_array &&
+         to_array_type(type).element_type().get_bool(ID_C_constant);
+}
+
 exprt field_sensitivityt::apply(
   const namespacet &ns,
   goto_symex_statet &state,
@@ -230,7 +238,7 @@ exprt field_sensitivityt::apply(
 
     if(
       is_ssa_expr(index.array()) && index.array().type().id() == ID_array &&
-      index.index().is_constant())
+      !is_const_array(index.array().type()) && index.index().is_constant())
     {
       // place the entire index expression, not just the array operand, in an
       // SSA expression
@@ -341,7 +349,7 @@ exprt field_sensitivityt::get_fields(
   }
 #ifdef ENABLE_ARRAY_FIELD_SENSITIVITY
   else if(
-    ssa_expr.type().id() == ID_array &&
+    ssa_expr.type().id() == ID_array && !is_const_array(ssa_expr.type()) &&
     to_array_type(ssa_expr.type()).size().is_constant())
   {
     const mp_integer mp_array_size = numeric_cast_v<mp_integer>(
@@ -693,7 +701,7 @@ bool field_sensitivityt::is_divisible(
 
 #ifdef ENABLE_ARRAY_FIELD_SENSITIVITY
   if(
-    expr.type().id() == ID_array &&
+    expr.type().id() == ID_array && !is_const_array(expr.type()) &&
     to_array_type(expr.type()).size().is_constant() &&
     numeric_cast_v<mp_integer>(to_constant_expr(
       to_array_type(expr.type()).size())) <= max_field_sensitivity_array_size)

@@ -1,0 +1,13 @@
+CORE
+main.c
+--program-only
+^EXIT=0$
+^SIGNAL=0$
+mutable_table#\d+\[\[5\]\]
+--
+^warning: ignoring
+[ (]table#\d+\[\[[0-9]+\]\]
+--
+The const table is assigned as a whole (no table#N[[k]] symbols, unlike
+the mutable one), and the read table[2] is propagated, so that the first
+assertion's condition does not mention the table.
