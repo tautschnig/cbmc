@@ -484,8 +484,15 @@ void go_convertert::finish_reflect()
     {
       if(!applies(t.second))
         continue;
+      // A branch with an unsupported construct (e.g., a comparison that
+      // the front-end does not support) fails when reached.
       code_blockt block;
+      std::vector<std::string> messages;
+      unsupported_in_body = &messages;
       branch(t.second, params, block);
+      unsupported_in_body = nullptr;
+      if(!messages.empty())
+        block = unsupported_body(function->location, messages.front());
       body.add(code_ifthenelset{
         equal_exprt{params[0], from_integer(t.first, params[0].type())},
         std::move(block)});

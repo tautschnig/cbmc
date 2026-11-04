@@ -879,10 +879,20 @@ void go_convertert::finish_interfaces()
       code_blockt compare;
       if(is_comparable(t.second))
       {
-        compare.add(code_frontend_returnt{typecast_exprt{
-          as_condition(equality(
-            unbox(params[0], t.second), unbox(params[1], t.second), irept{})),
-          result_type}});
+        // A comparison that the front-end does not support fails when
+        // reached.
+        std::vector<std::string> messages;
+        unsupported_in_body = &messages;
+        exprt equal = equality(
+          unbox(params[0], t.second), unbox(params[1], t.second), irept{});
+        unsupported_in_body = nullptr;
+        if(messages.empty())
+        {
+          compare.add(code_frontend_returnt{
+            typecast_exprt{as_condition(std::move(equal)), result_type}});
+        }
+        else
+          compare = unsupported_body(function.location, messages.front());
       }
       else
       {

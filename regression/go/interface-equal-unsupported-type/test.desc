@@ -1,0 +1,14 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 22 other comparison: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 23 reflection: SUCCESS$
+^\[go::\$interface_equal\.unsupported\.1\] Go front-end: comparing large arrays of structs with blank fields is not supported yet: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+^CONVERSION ERROR$
+--
+an unsupported comparison of a dynamic type fails where it is reached
