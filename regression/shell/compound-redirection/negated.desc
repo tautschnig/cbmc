@@ -1,0 +1,11 @@
+CORE
+negated.sh
+
+^EXIT=6$
+^SIGNAL=0$
+! before a compound command whose redirection can fail
+--
+^VERIFICATION
+--
+bash keeps the non-zero status of the failed redirection; other shells
+make it 0.

@@ -199,8 +199,62 @@ void shell_convertert::convert_foreground(
   code_blockt &dest)
 {
   using kindt = shell_commandt::kindt;
-  if(!command.redirects.empty() && command.kind != kindt::SIMPLE)
-    unsupported(command.location, "redirection of a compound command");
+  if(
+    !command.redirects.empty() && command.kind != kindt::SIMPLE &&
+    redirection_may_fail(command))
+  {
+    if(
+      command.kind == kindt::FUNCTION_DEFINITION ||
+      command.kind == kindt::PIPELINE || command.kind == kindt::AND ||
+      command.kind == kindt::OR)
+    {
+      // A function definition's redirections apply where it is called.
+      unsupported(command.location, "redirection of a compound command");
+    }
+    check_redirections(command, shell_command_kindt::EXTERNAL);
+    // A failed redirection skips the compound command with a non-zero
+    // status, in all shells; under -e, all but busybox then exit, other
+    // than for subshells, where they all do.
+    code_blockt failure;
+    nondet_status(failure, 255, command.location);
+    add(
+      failure,
+      code_assumet{notequal_exprt{status(), from_integer(0, status_type())}},
+      command.location);
+    if(command.negated)
+    {
+      // bash keeps the status of the failure; other shells make it 0.
+      unsupported(
+        command.location,
+        "! before a compound command whose redirection can fail");
+    }
+    if(
+      program.dialect == shell_dialectt::POSIX &&
+      command.kind != kindt::SUBSHELL)
+    {
+      code_blockt leave;
+      check_errexit(leave, command.location);
+      add(
+        failure,
+        code_ifthenelset{
+          nondet(bool_typet{}, command.location), std::move(leave)},
+        command.location);
+    }
+    else
+      check_errexit(failure, command.location);
+    shell_commandt inner = command;
+    inner.redirects.clear();
+    code_blockt success;
+    convert_foreground(inner, success);
+    add(
+      dest,
+      code_ifthenelset{
+        nondet(bool_typet{}, command.location),
+        std::move(failure),
+        std::move(success)},
+      command.location);
+    return;
+  }
 
   // -e is ignored in a pipeline beginning with ! (XCU 2.15 set).
   const bool saved_errexit_ignored = errexit_ignored;

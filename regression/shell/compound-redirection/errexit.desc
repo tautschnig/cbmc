@@ -1,0 +1,12 @@
+CORE
+errexit.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Under -e, busybox continues after a failed redirection of a compound
+command, and other shells exit; the POSIX dialect covers both.

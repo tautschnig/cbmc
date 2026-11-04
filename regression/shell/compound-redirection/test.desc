@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Redirections of compound commands: one that can fail skips the command
+with a non-zero status; one to /dev/null or duplicating a standard
+descriptor cannot fail.
