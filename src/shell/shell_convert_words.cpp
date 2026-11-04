@@ -22,7 +22,42 @@ exprt shell_convertert::expand_word(
     }
     return string_literal("", loc);
   }
-  return expand_parts(word, context, false, true, dest);
+  const exprt value = expand_parts(word, context, false, true, dest);
+  if(context == shell_word_contextt::FIELD && may_vanish(word))
+  {
+    // A word of only unquoted expansions that are empty yields no field
+    // (XCU 2.6.5), which the caller would need to model.
+    check(
+      dest,
+      not_exprt{is_empty(value)},
+      "shell-unsupported",
+      "the unquoted " + display(word) +
+        " is not empty (an empty one yields no field, which is not "
+        "supported here)",
+      loc);
+  }
+  return value;
+}
+
+/// Whether \p word may yield no field: it has no quoted parts and no
+/// literal text, so that it is empty if its expansions are.
+bool shell_convertert::may_vanish(const shell_wordt &word)
+{
+  using kindt = shell_word_partt::kindt;
+  for(const auto &part : word)
+  {
+    if(
+      part.kind == kindt::QUOTED_LITERAL || part.kind == kindt::DOUBLE_QUOTED ||
+      (part.kind == kindt::LITERAL && !part.text.empty()) ||
+      part.kind == kindt::ARITHMETIC ||
+      (part.kind == kindt::PARAMETER &&
+       (part.text == "?" || part.text == "#") &&
+       part.parameter_operator.empty()))
+    {
+      return false;
+    }
+  }
+  return true;
 }
 
 exprt shell_convertert::expand_parts(
@@ -93,10 +128,39 @@ exprt shell_convertert::expand_part(
     part.kind != kindt::LITERAL && part.kind != kindt::QUOTED_LITERAL &&
     part.kind != kindt::DOUBLE_QUOTED && !single_field)
   {
-    unsupported(
-      part.location,
-      "unquoted expansion where field splitting would matter (XCU 2.6.5); "
-      "quote it");
+    // Field splitting with the default IFS (the script cannot change it,
+    // see variable()) and pathname expansion leave a value without
+    // blanks and pattern characters as it is; other values are reported.
+    const exprt value =
+      expand_part(part, shell_word_contextt::CASE_SUBJECT, false, false, dest);
+    std::bitset<256> blanks;
+    for(unsigned char c : {' ', '\t', '\n'})
+      blanks.set(c);
+    check(
+      dest,
+      not_exprt{
+        payload_contains_byte(payload_of(value), blanks, dest, part.location)},
+      "shell-unsupported",
+      "the value of the unquoted " + display({part}) +
+        " has no space, tab or newline (field splitting, XCU 2.6.5, is "
+        "not supported)",
+      part.location);
+    std::bitset<256> pattern;
+    for(unsigned char c : {'*', '?', '['})
+      pattern.set(c);
+    exprt no_pattern = not_exprt{
+      payload_contains_byte(payload_of(value), pattern, dest, part.location)};
+    if(option_possible("noglob"))
+      no_pattern = or_exprt{option("noglob"), no_pattern};
+    check(
+      dest,
+      no_pattern,
+      "shell-unsupported",
+      "the value of the unquoted " + display({part}) +
+        " has no *, ? or [ (pathname expansion, XCU 2.6.6, is not "
+        "supported)",
+      part.location);
+    return value;
   }
   switch(part.kind)
   {

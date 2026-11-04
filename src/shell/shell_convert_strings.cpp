@@ -1390,6 +1390,31 @@ exprt shell_convertert::segment_at(
   return conjunction(conditions);
 }
 
+exprt shell_convertert::payload_contains_byte(
+  const exprt &s,
+  const std::bitset<256> &set,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  shell_pattern_elementt element;
+  element.kind = pattern_kindt::SET;
+  element.set = set;
+  if(native())
+  {
+    shell_pattern_elementt star;
+    star.kind = pattern_kindt::STAR;
+    regex_buildert re{symbol_table};
+    return re.matches(s, pattern_regex({star, element, star}));
+  }
+  const exprt found = string_function(
+    ID_cprover_string_index_of_set_func,
+    {s, from_integer(0, integer_type()), set_mask(set)},
+    integer_type(),
+    dest,
+    loc);
+  return binary_relation_exprt{found, ID_ge, from_integer(0, integer_type())};
+}
+
 exprt shell_convertert::regex_index_of(
   const pattern_elementst &core,
   const exprt &from,

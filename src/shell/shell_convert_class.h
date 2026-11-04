@@ -29,6 +29,7 @@
 #include "shell_converter.h"
 #include "shell_pattern.h"
 
+#include <bitset>
 #include <functional>
 #include <map>
 #include <memory>
@@ -656,6 +657,9 @@ private:
 
   /// The word as written, for property descriptions.
   static std::string display(const shell_wordt &word);
+  /// Whether \p word may yield no field: it has only unquoted
+  /// expansions, which may all be empty.
+  static bool may_vanish(const shell_wordt &word);
 
   // ----------------------------------------------------------------
   // Positional parameters and lists of fields (XCU 2.5.1, 2.5.2)
@@ -853,6 +857,12 @@ private:
     const exprt &value,
     bool prefix,
     bool longest,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// Whether payload \p s contains a byte of \p set.
+  exprt payload_contains_byte(
+    const exprt &s,
+    const std::bitset<256> &set,
     code_blockt &dest,
     const source_locationt &loc);
   /// For native strings: the regular expression of \p elements, which have
