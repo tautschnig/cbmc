@@ -1,0 +1,15 @@
+{
+  "functions": [
+    {
+      "eth_ena_xmit_pkts": [
+        {
+          "loop_id": "0",
+          "invariants": "(sent_idx <= nb_pkts) && (nb_pkts == __CPROVER_loop_entry(nb_pkts)) && (__CPROVER_same_object(tx_pkts, __CPROVER_loop_entry(tx_pkts)))",
+          "assigns": "sent_idx, __CPROVER_object_whole(tx_ring), __CPROVER_object_whole(tx_ring->tx_buffer_info), __CPROVER_object_whole(tx_ring->ena_com_io_sq), __CPROVER_object_whole(tx_ring->adapter)",
+          "decreases": "nb_pkts - sent_idx",
+          "symbol_map": "sent_idx,eth_ena_xmit_pkts::1::sent_idx; nb_pkts,eth_ena_xmit_pkts::nb_pkts; tx_pkts,eth_ena_xmit_pkts::tx_pkts; tx_ring,eth_ena_xmit_pkts::1::tx_ring"
+        }
+      ]
+    }
+  ]
+}

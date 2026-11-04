@@ -31,6 +31,12 @@
 #endif
 #define SEG_BUF_LEN 64
 
+/* Ownership probes: two arbitrary slot indices, fixed before the call and
+ * used in both the assumed and the asserted form of the ownership invariant.
+ * Proving the two-slot instance for nondeterministic indices is universal
+ * quantification over every pair of slots. */
+uint16_t g_p1, g_p2;
+
 /* nondet via uninitialised locals: a bodyless function would be flagged
  * "undefined function should be unreachable" by the DFCC instrumentation */
 static uint16_t nd_u16(void) { uint16_t v; return v; }
@@ -64,6 +70,23 @@ static bool INV_COM(const struct ena_com_io_sq *sq)
 	       sq->llq_info.descs_per_entry <= 16 &&
 	       sq->llq_info.descs_num_before_header <= 16 &&
 	       sq->llq_info.disable_meta_caching == false;
+}
+
+/*
+ * OWN_UNIQUE: the first clause of the ownership map.  A tx_buffer_info slot
+ * owns at most one mbuf and no mbuf is owned by two slots, so an accepted
+ * packet can never be freed twice and never silently dropped by being
+ * overwritten in place.  This is the class that the taint pipeline cannot
+ * express at all and that dominates the Unveil findings (UAF, double-free,
+ * leak = 25%).
+ */
+static bool OWN_UNIQUE(const struct ena_ring *r, uint16_t p1, uint16_t p2)
+{
+	struct ena_tx_buffer *tbi = r->tx_buffer_info;
+
+	if (p1 >= r->ring_size || p2 >= r->ring_size || p1 == p2)
+		return true;
+	return !(tbi[p1].mbuf != NULL && tbi[p1].mbuf == tbi[p2].mbuf);
 }
 
 static bool INV_RING(const struct ena_ring *r)
@@ -178,7 +201,10 @@ int main(void)
 		empty_tx_reqs[i] = nd_u16();
 		__CPROVER_assume(empty_tx_reqs[i] < RING_SIZE);
 	}
+	g_p1 = nd_u16();
+	g_p2 = nd_u16();
 	__CPROVER_assume(INV_RING(&ring));
+	__CPROVER_assume(OWN_UNIQUE(&ring, g_p1, g_p2));
 
 	/* ---- caller contract: tx_pkts holds exactly nb_pkts mbufs ---- */
 	nb_pkts = nd_u16();
@@ -196,16 +222,48 @@ int main(void)
 		if (i < nb_pkts)
 			tx_pkts[i] = make_wf_mbuf(nsegs);
 
+	/*
+	 * Ownership disjointness across the API boundary.  This is part of the
+	 * rte_eth_tx_burst contract and the proof needs it stated: once the
+	 * driver accepts an mbuf it owns it, and the application must not hand
+	 * the same mbuf back while it is still in flight.  Without this clause
+	 * OWN_UNIQUE is genuinely violable -- a slot already holding tx_pkts[i]
+	 * plus xmit recording it again gives two owners, which on cleanup is a
+	 * double free.  So the clause is not a convenience; it is the obligation
+	 * the application carries, and it is worth telling the driver owners
+	 * that nothing in the driver detects a violation of it.
+	 */
+	for (i = 0; i < MAX_BURST; i++)
+		if (i < nb_pkts) {
+			if (g_p1 < RING_SIZE)
+				__CPROVER_assume(tx_buffer_info[g_p1].mbuf != tx_pkts[i]);
+			if (g_p2 < RING_SIZE)
+				__CPROVER_assume(tx_buffer_info[g_p2].mbuf != tx_pkts[i]);
+		}
+
+	/* the slot xmit will take for the first packet, captured before the
+	 * call so the ownership transfer can be stated precisely */
+	uint16_t ntu0 = ring.next_to_use;
+	uint16_t req0 = empty_tx_reqs[ntu0];
+
 	/* ---- one arbitrary operation ---- */
 	sent = eth_ena_xmit_pkts(&ring, tx_pkts, nb_pkts);
 
 	/* ---- obligations ---- */
 	__CPROVER_assert(sent <= nb_pkts, "API: sent <= nb_pkts");
 	__CPROVER_assert(INV_RING(&ring), "INV preserved by eth_ena_xmit_pkts");
-  /* INV_wakeup, checked here with the REAL ena_xmit_mbuf body, so the
+	/* INV_wakeup, checked here with the REAL ena_xmit_mbuf body, so the
 	 * mid-loop LLQ doorbell write is in scope too */
-  __CPROVER_assert(
-    !ring.pkts_without_db,
-    "INV_wakeup: no packet left pushed without a doorbell");
-  return 0;
+	__CPROVER_assert(!ring.pkts_without_db,
+			 "INV_wakeup: no packet left pushed without a doorbell");
+
+	/* ownership map, part 1: uniqueness is preserved */
+	__CPROVER_assert(OWN_UNIQUE(&ring, g_p1, g_p2),
+			 "OWN_UNIQUE: no mbuf owned by two tx_buffer_info slots");
+	/* ownership map, part 2: an accepted packet is transferred into the
+	 * slot the free list named, so it is neither lost nor duplicated */
+	if (sent >= 1)
+		__CPROVER_assert(ring.tx_buffer_info[req0].mbuf == tx_pkts[0],
+				 "OWN_TRANSFER: accepted mbuf recorded in its req_id slot");
+	return 0;
 }

@@ -533,6 +533,56 @@ The point for the plan is the cost: a lost-wakeup class that we had written
 off as needing temporal logic turned into one assertion over a flag the
 driver already maintains.
 
+### 8.4 Ownership map, part 1: uniqueness and transfer (done)
+
+The class we could not express at all -- use-after-free, double-free and lost
+buffers, 25% of the Unveil findings -- starts with two clauses on the TX
+path, both hand-written and both now proved against the real
+`ena_xmit_mbuf`/`ena_tx_map_mbuf` bodies:
+
+* **`OWN_UNIQUE`** -- no mbuf is owned by two `tx_buffer_info` slots, so an
+  accepted packet can be neither freed twice nor silently dropped by being
+  overwritten in place. Stated over *two* arbitrary slot indices fixed before
+  the call, so proving the single pair is universal quantification over all
+  pairs (the same trick as the single probe index in stage 3).
+* **`OWN_TRANSFER`** -- an accepted packet is recorded in exactly the slot the
+  free list named (`empty_tx_reqs[next_to_use]` captured before the call), so
+  ownership moves from application to driver at a known place rather than
+  being assumed.
+
+Result with the real bodies: **1295 properties, 0 real failures**, with
+`OWN_UNIQUE` and `OWN_TRANSFER` joining `sent <= nb_pkts`, `INV` preservation
+and `INV_wakeup`.
+
+**`OWN_UNIQUE` failed first, and the counterexample was the point.** From an
+arbitrary `INV`-state, a slot may already hold the very mbuf the application
+is about to submit; `eth_ena_xmit_pkts` then records it a second time and two
+slots own one buffer, which on cleanup is a double free. That is not a driver
+bug -- the `rte_eth_tx_burst` contract says the application must not hand back
+an mbuf that is still in flight -- but it is an **obligation the application
+carries that nothing in the driver detects**, and it had to be written down as
+an explicit precondition before the proof would go through. Worth raising with
+the driver owners: a buggy or malicious application re-submitting an in-flight
+mbuf gets a silent double-free, and this is exactly the shape of the
+Unveil class-B findings.
+
+Next clauses for the map, in order: the free-discipline (`rte_pktmbuf_free`
+only on a driver-owned mbuf, which needs the cleanup harness so the frees are
+in scope), then DMA ownership (no CPU read of a buffer the device owns).
+
+### 8.5 Status of the widened TX loop assigns: blocked on performance
+
+Item 1 of the revised order -- one proof with the real callee bodies *and* an
+unbounded burst -- is attempted and does not currently go through. The loop's
+`assigns` clause has to cover the ring footprint
+(`__CPROVER_object_whole` of the ring, `tx_buffer_info`, the SQ and the
+adapter; `tx_loop_contract_wide.json`), and with that clause CBMC does not
+terminate within 2400 s, at ring size 4 or even 2. It is a performance wall
+rather than an ERROR, so the two complementary configurations of section 8.2a
+remain the state of the art: real bodies with a bounded burst, and an
+unbounded burst with the callees abstracted. Worth retrying with a narrower
+assigns clause naming individual fields instead of whole objects.
+
 ### 8.3 What this changes in the plan
 
 Add to the revised order in `unveil-reconciliation-2026-11.md`:

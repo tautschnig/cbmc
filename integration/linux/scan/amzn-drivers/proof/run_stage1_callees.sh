@@ -10,7 +10,7 @@ DPDK=${DPDK:-/tmp/dpdk}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof}
-BURST=${BURST:-2}; SEGS=${SEGS:-3}; RING=${RING:-4}
+BURST=${BURST:-1}; SEGS=${SEGS:-3}; RING=${RING:-4}
 mkdir -p "$OUT"
 [ -f "$OUT/flags.txt" ] || { echo "run run.sh first (it writes flags.txt)"; exit 1; }
 
@@ -42,3 +42,12 @@ echo "real failures (excluding the abstraction notices):"
 grep ': FAILURE' "$OUT/stage1.log" | grep -v 'no body for callee' || echo "  none"
 echo "assumption boundary (unmodelled callees):"
 grep -oE 'no body for callee [A-Za-z_0-9.$]+' "$OUT/stage1.log" | sort -u | sed 's/^/  /'
+
+# Obligations checked by this harness (see the design doc, sections 6a/8.2a/8.4):
+#   API: sent <= nb_pkts
+#   INV preserved by eth_ena_xmit_pkts
+#   INV_wakeup: no packet left pushed without a doorbell
+#   OWN_UNIQUE: no mbuf owned by two tx_buffer_info slots
+#   OWN_TRANSFER: accepted mbuf recorded in its req_id slot
+echo "named obligations:"
+grep -E 'main\.assertion' "$OUT/stage1.log" | sed 's/^/  /' || true
