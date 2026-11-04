@@ -1,35 +1,58 @@
-# Why a DFCC assigns clause gets expensive: measurement and root cause
+# Why the widened ENA TX loop contract did not terminate: measurement and root cause
 
-**Date:** 2026-11-04
-**Author:** investigation run in `integration/linux/` on the amzn-drivers ENA
-proof (see `cbmc-driver-proof-design-2026-11.md` section 8.5a for the short
-version; this document is the long, reproducible one).
-**Status:** root cause identified and reduced to a standalone benchmark. The
-benchmark needs nothing but CBMC and a C compiler. The driver-scale part needs
-DPDK and amzn-drivers.
+**Date:** 2026-11-04 (revised; supersedes the version of the same date in
+commit `fef2085d469`)
+**Context:** the amzn-drivers ENA proof, `cbmc-driver-proof-design-2026-11.md`
+sections 8.5 and 8.5a.
+**Status:** root cause found and confirmed by fixing it. The non-termination was
+**not** caused by the assigns clause. It was an unbounded inner loop in a
+callee. Bounding that loop alone made the proof finish in about 10 s.
 
-## 1. Claim
+## 0. Correction to the first version of this document
 
-Under dynamic frame condition checking (`goto-instrument --dfcc
---apply-loop-contracts`), the cost of an `__CPROVER_assigns` clause is
-dominated by **how many distinct objects a symbolic write pointer in the loop
-body may designate**, not by the number of assigns targets, the number of
-writes, or the number of objects in the program. The relationship is
-superlinear: 4x the candidate objects cost 14x the time in our measurements.
+The first version (commit `fef2085d469`) concluded that DFCC's write-set check
+had a quadratic cost in the number of objects a symbolic write pointer may
+designate, attributed it to `set->allocated.elems[__CPROVER_POINTER_OBJECT(ptr)]`
+in `cprover_contracts.c`, said the ENA harness hit that term through three
+multipliers, and proposed reporting the encoding upstream. Further measurement
+disproved all four claims:
 
-Two secondary terms matter in practice: the **byte size** of an
-`__CPROVER_object_whole` target (linear), and target granularity
-(`object_whole` versus a precise target, worth about 30%).
+| first-version claim | what the measurements show |
+|---|---|
+| the superlinear cost is DFCC's write-set check | the same growth appears with **no DFCC, no contract and no loop**: one dereference of a K-target pointer (section 4) |
+| the encoding `allocated.elems[POINTER_OBJECT(ptr)]` is the quadratic term | DFCC's share of symex time *falls* as K grows (8.5x at K=2, 1.3x at K=128) |
+| the ENA harness has symbolic write pointers with large points-to sets | the largest points-to set anywhere in the ENA TX path is **2** objects (section 5) |
+| the widened clause is too expensive, especially `object_whole(adapter)` | the same clause, 178 KB adapter target included, verifies in **10 s** once an unrelated inner loop is bounded (section 6) |
 
-The mechanism is that the write-set membership check runs at every write and
-contains an array read indexed by the written pointer's *object id*; when that
-id is symbolic, CBMC's dereference case-splits over all candidate objects and
-the array read inside each case is itself a case split, giving roughly
-`O(K^2 + K*T)` work per write for `K` candidate objects and `T` targets.
+The first version was wrong because it inferred a mechanism from a scaling
+curve without a baseline. It never ran the same program without DFCC, and it
+never measured the ENA points-to sets. It reasoned from static object counts
+instead. Sections 4 and 5 are the two missing controls. The upstream-report
+suggestion is withdrawn: it would have sent the CBMC maintainers to the wrong
+code.
 
-## 2. Environment used
+## 1. Summary
 
-Recorded so differences on another host can be attributed.
+* **The ENA proof's non-termination was an unbounded inner loop.** The widened
+  contract on the outer TX loop of `eth_ena_xmit_pkts` havocs the ring, so the
+  `mbuf->next` chain walked by the callee `ena_tx_map_mbuf`
+  (`while ((mbuf = mbuf->next) != NULL)`, `ena_ethdev.c:3108`) is unconstrained
+  inside the havocked loop body. That inner loop has no contract, and the run
+  gave no `--unwind`, so symex unwound it without bound: 2269 iterations of
+  `ena_tx_map_mbuf.0` against at most 4 of any other loop, until the run was
+  killed. With `--unwindset ena_tx_map_mbuf.0:4 --unwinding-assertions` the
+  proof finishes in 10 s and **the unwinding assertion passes**, so the bound is
+  complete for this harness.
+* **The superlinear scaling the first benchmark found is real but is not a DFCC
+  cost.** It is CBMC symex dereferencing a pointer that may designate any of K
+  objects. One dereference costs about 7x per doubling of K, with or without
+  contracts.
+* **What DFCC does add, measurably, is formula size.** At K=128 an
+  `__CPROVER_object_whole(p)` target produces 2.74 M clauses and the precise
+  target `p[0].buf[0]` produces 0.15 M, about 18x. In the ENA case this did not
+  matter (section 6).
+
+## 2. Environment
 
 | item | value |
 |---|---|
@@ -41,53 +64,49 @@ Recorded so differences on another host can be attributed.
 | OS | Ubuntu 22.04.5 LTS, x86_64 |
 | CPU | Intel Xeon Platinum 8259CL @ 2.50GHz, 96 threads |
 | RAM | 755 GiB |
-| DPDK (driver-scale part only) | v24.11, tag checkout |
-| amzn-drivers (driver-scale part only) | `9d5ca40` |
+| profiler | perf 6.8.12, `--call-graph dwarf` |
+| DPDK (section 5-6 only) | v24.11 |
+| amzn-drivers (section 5-6 only) | `9d5ca40` |
 
-**The benchmark in section 4 does not need our local CBMC changes.** It is
-plain C using only `__CPROVER_assigns`, `__CPROVER_loop_invariant` and
-`__CPROVER_decreases`, so an upstream CBMC 6.9.0 build should reproduce it.
-The one cherry-pick this tree carries (`b9db4fd70b1`, constructor/destructor
-attribute with a priority argument, upstream PR #8747) is needed **only** for
-section 6, because DPDK's `RTE_PMD_REGISTER_PCI` uses
-`__attribute__((constructor(prio)))`.
+Every timing is wall-clock from a single run on an idle machine, with
+`ulimit -v 32000000` (≈32 GiB) and a `timeout`. Repeated runs agreed to within
+about 5% (compare the two runs of section 4). Read the *shape* of each curve,
+not the absolute seconds.
 
-Timings are wall-clock from a single run each, on an idle machine, with
-`ulimit -v 32000000` (≈32 GiB) and `timeout 900`. They are stable to about
-±10% here; treat the *shape* of the scaling as the result, not the absolute
-seconds.
+Sections 3-4 need nothing but a CBMC build. Sections 5-6 also need upstream
+PR #8747 (constructor/destructor priority attribute), because DPDK's
+`RTE_PMD_REGISTER_PCI` uses `__attribute__((constructor(prio)))`.
 
-## 3. Building CBMC
+### Building CBMC
 
 ```sh
 git clone https://github.com/diffblue/cbmc.git && cd cbmc
 git submodule update --init
 cmake -S . -Bbuild -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build --parallel $(nproc)
-# binaries in build/bin: cbmc, goto-cc, goto-instrument
 ```
 
-For section 6 only, also apply upstream PR #8747:
+For sections 5-6 only:
 
 ```sh
 git fetch https://github.com/diffblue/cbmc.git pull/8747/head:pr8747
-git cherry-pick 317d889dadf        # C front-end: constructor/destructor priority
-cmake -S . -Bbuild                 # REQUIRED: the PR adds a new source file that
-                                   # an existing build directory will not glob
+git cherry-pick 317d889dadf
+cmake -S . -Bbuild        # REQUIRED: the PR adds a source file an existing
+                          # build directory will not glob; skipping this gives
+                          # an undefined-symbol link error
 cmake --build build --parallel $(nproc)
 ```
 
-## 4. The benchmark
+## 3. Single-dimension scaling of DFCC loop contracts
 
-`integration/linux/scan/amzn-drivers/proof/cbmc-limitations/dfcc_assigns_scaling.sh`
+Scripts are in `integration/linux/scan/amzn-drivers/proof/cbmc-limitations/`.
+Each takes `BIN=/path/to/cbmc/build/bin`.
 
-```sh
-BIN=/path/to/cbmc/build/bin \
-  integration/linux/scan/amzn-drivers/proof/cbmc-limitations/dfcc_assigns_scaling.sh
-```
+### 3.1 Four single-dimension families — `dfcc_assigns_scaling.sh`
 
-It generates four families of single-loop C programs in a temp directory, and
-for each one runs
+Each program has one loop with an unbounded trip count (`n` nondet), an
+invariant `i <= n`, a variant `n - i`, and an `__CPROVER_assigns` clause. The
+pipeline is
 
 ```sh
 goto-cc prog.c -o b.gb
@@ -95,28 +114,7 @@ goto-instrument --no-malloc-may-fail --dfcc main --apply-loop-contracts b.gb b_l
 cbmc b_lc.gb --no-standard-checks
 ```
 
-timing the `cbmc` step. Every program has exactly one contract-carrying loop
-with an invariant (`i <= n`) and a variant (`n - i`), and an unbounded trip
-count (`n` is nondeterministic), so CBMC never unrolls it -- the loop is
-discharged by the contract. `--no-standard-checks` keeps the comparison to
-the frame-condition machinery rather than the usual assertion set.
-
-Each family varies exactly one dimension:
-
-1. **unrelated objects, concrete write pointer** -- `N` global arrays exist;
-   the loop assigns and writes only `o0`, by name.
-2. **number of assigns targets** -- the clause names `T` `object_whole`
-   targets; the body still writes only `o0`.
-3. **`object_whole` target size** -- one target, whose object grows from 128 B
-   to 128 KB; one write.
-4. **objects a symbolic write pointer may designate** -- a pointer `p` is set
-   from one of `K` distinct globals under a nondeterministic `switch`, the
-   clause is `object_whole(p)`, and the body writes `p[0].buf[0]`. CBMC
-   therefore cannot pin down which object is written.
-
-## 5. Results
-
-Full output of one run (`== (n)` headings are the script's):
+and each family varies one dimension:
 
 ```
 == (1) unrelated objects, concrete write pointer ==
@@ -141,198 +139,387 @@ K=32            1.3s  VERIFICATION SUCCESSFUL
 K=128          16.5s  VERIFICATION SUCCESSFUL
 ```
 
-Two further one-off measurements, from an earlier session of the same
-benchmark harness (commands in section 5.1):
+Family 4 is the only steep one. In family 4 a pointer `p` is set from one of K
+distinct globals under a nondet `switch`, the clause is
+`__CPROVER_object_whole(p)`, and the body writes `p[0].buf[0]`.
 
-* **writes in the loop body**, concrete pointer, 8 targets: 0.1 / 0.2 / 0.2 /
-  0.3 / 0.4 / 0.8 s for 1 / 2 / 4 / 8 / 16 / 32 writes -- linear.
-* **a union-held target pointer, or a symbolic write *index* into a known
-  object**: no measurable effect, 0.1 s in all four combinations of
-  {union, no union} x {symbolic index, constant index}.
-* **precise target instead of `object_whole` at K=128**: 11.5 s versus 16.5 s,
-  i.e. about 30% off, with the same `VERIFICATION SUCCESSFUL`.
+### 3.2 Family 4 by phase — `dfcc_assigns_phases.sh`
 
-Reading of the table:
-
-* dimensions (1) and (2) and the write count are flat or linear and cheap;
-* (3) is linear in bytes, and large enough to matter for real aggregates;
-* (4) is the dominant term. From K=32 to K=128 the object count grows 4x and
-  the time grows 12.7x, which is the signature of a quadratic term.
-
-### 5.1 Reproducing the two one-off measurements
-
-The script covers families 1-4. For the write-count sweep and the
-union/symbolic-index controls, the generators are short enough to inline; both
-were run with the same `goto-cc` / `goto-instrument` / `cbmc` pipeline as the
-script. The write-count sweep is family 2 with the body repeated `W` times
-writing `o[W % T]`; the union control is
-
-```c
-struct ring {
-  union { struct inner *a; struct inner *b; };   /* or a plain pointer */
-  unsigned size;
-};
-...
-__CPROVER_assigns(i, __CPROVER_object_whole(r.a))
-...
-{ unsigned k = nd(); if (k < N) r.a[k].buf[0] = (int)i; }   /* or r.a[0]... */
-```
-
-and the precise-target variant of family 4 replaces
-`__CPROVER_object_whole(p)` with `p[0].buf[0]`.
-
-## 6. The mechanism, in the source
-
-`src/ansi-c/library/cprover_contracts.c`, function
-`__CPROVER_contracts_write_set_check_assignment` (line 774 in this tree; the
-non-`__CPROVER_DFCC_DEBUG_LIB` branch starting at line 799 is the one used by
-default). DFCC inserts a call to it **for every write** in a
-contract-carrying region. The relevant body, abridged:
-
-```c
-  // is ptr pointing within some a locally allocated object ?
-  if(set->allocated.elems[__CPROVER_POINTER_OBJECT(ptr)] != 0)
-    return 1;
-  ...
-  __CPROVER_contracts_car_t *elem = set->contract_assigns.elems;
-  __CPROVER_size_t idx = set->contract_assigns.max_elems;
-  __CPROVER_bool incl = 0;
-SET_CHECK_ASSIGNMENT_LOOP:
-  while(idx != 0)
-  {
-    incl |=
-      (int)elem->is_writable & (int)__CPROVER_same_object(elem->lb, ptr) &
-      (__CPROVER_POINTER_OFFSET(elem->lb) <= offset) &
-      (__CPROVER_POINTER_OFFSET(ub) <= __CPROVER_POINTER_OFFSET(elem->ub));
-    ++elem;
-    --idx;
-  }
-  return incl;
-```
-
-Two costs per write:
-
-1. `set->allocated.elems[__CPROVER_POINTER_OBJECT(ptr)]` -- an array read
-   whose **index is the written pointer's object id**. If the pointer is
-   concrete the index folds to a constant and this is free. If it is symbolic
-   the read becomes a selection over the array, i.e. a case split whose width
-   is the number of objects CBMC must consider.
-2. `SET_CHECK_ASSIGNMENT_LOOP` -- a loop over all `T` targets, each iteration
-   evaluating `__CPROVER_same_object(elem->lb, ptr)` and two
-   `__CPROVER_POINTER_OFFSET` computations on a symbolic pointer.
-
-On top of that, CBMC's own dereference of a symbolic pointer case-splits over
-the `K` candidate objects *before* reaching this function. Inside each of
-those `K` cases, cost 1 is itself `K`-wide and cost 2 is `T`-wide. Net
-`O(K^2 + K*T)` per write, matching the measured shape: flat in unrelated
-objects when the pointer is concrete (K = 1 regardless of how many objects
-exist), linear in `T`, and quadratic in `K`.
-
-The relevant instrumentation on the CBMC side lives in
-`src/goto-instrument/contracts/instrument_spec_assigns.cpp` (inserting the
-checks) and `src/goto-instrument/contracts/dynamic-frames/` (the write-set
-representation).
-
-## 7. The driver-scale case: why the ENA proof hit it
-
-Context: `integration/linux/scan/amzn-drivers/proof/harness_tx_callees.c` with
-`tx_loop_contract_wide.json`, i.e. the attempt to prove the ENA TX path with
-the real callee bodies *and* an unbounded burst. It does not terminate within
-2400 s at ring size 4, nor at ring size 2. Setup instructions are in
-`proof/run.sh` and `proof/run_stage2_unbounded.sh`.
-
-Three multipliers coincide:
-
-**K is large.** The harness includes the whole DPDK ENA translation unit.
-Counting static-lifetime non-function symbols in the linked goto binary:
+Same program as family 4, with CBMC's own phase timers (`--verbosity 9`) and
+formula size. `VARIANT=whole` (default), `precise` (target `p[0].buf[0]`), or
+`nodfcc` (same program, no contract, `--unwind 2`).
 
 ```sh
-goto-instrument --show-symbol-table w1_lib.gb 2>/dev/null | awk '
-/^Symbol\.\.\.\.\.\.: /{sym=$2; stat=0; isfn=0}
-/^Type\.\.\.\.\.\.\.\.: .*\(/{isfn=1}
-/^Flags\.\.\.\.\.\.\.: .*static_lifetime/{stat=1}
-/^$/{ if(sym!="" && stat==1 && isfn==0) n++; sym="" }
-END{print "static-lifetime non-function symbols:", n}'
-# => 83
+KS="2 4 8 16 32 64 128 256" VARIANT=whole   ./dfcc_assigns_phases.sh
+KS="2 8 32 64 128 256"      VARIANT=nodfcc  ./dfcc_assigns_phases.sh
+KS="2 8 32 64 128"          VARIANT=precise ./dfcc_assigns_phases.sh
 ```
 
-plus dynamically allocated objects.
+`VARIANT=whole`:
 
-**The write pointers are symbolic.** The loop body writes
-`tx_ring->tx_buffer_info[req_id]` where `req_id = empty_tx_reqs[next_to_use]`
-is symbolic, and `tx_buffer_info` is itself a pointer read out of an anonymous
-union in `struct ena_ring` (`ena_ethdev.h:158-167`).
+```
+K         total    symex  convert   solver      steps       vars     clauses  result
+2           0.1 0.0357957 0.0188894 0.0470749        985      26812       48533  VERIFICATION SUCCESSFUL
+4           0.2 0.0456105 0.0315272 0.0674109       1395      41308       91820  VERIFICATION SUCCESSFUL
+8           0.3 0.0702549 0.0577542 0.104874       2215      70301      175499  VERIFICATION SUCCESSFUL
+16          0.5 0.145228 0.109023  0.20423       3855     128294      343450  VERIFICATION SUCCESSFUL
+32          1.3 0.438139 0.218859 0.533406       7135     244294      680203  VERIFICATION SUCCESSFUL
+64          3.8  1.96221 0.446948  1.28483      13695     476326     1359189  VERIFICATION SUCCESSFUL
+128        16.9  11.9945 0.986079  3.61693      26815     940452     2738892  VERIFICATION SUCCESSFUL
+256        87.5  87.1425                        53055                         TIMEOUT
+```
 
-**One target is enormous.**
+The K=256 row is **not a timeout**. CBMC aborted after about 90 s, during SSA
+conversion, with
+
+```
+too many addressed objects: maximum number of objects is set to 2^n=256 (with n=8);
+use the `--object-bits n` option to increase the maximum number
+```
+
+DFCC's instrumentation adds objects of its own, so K=256 user objects exceed
+the default 8 object bits. The script prints `TIMEOUT` for any run that lacks a
+`VERIFICATION` line. Read that column with this in mind.
+
+`VARIANT=nodfcc` (no convert/solver columns because every property is decided
+during symex and the solver is never invoked):
+
+```
+K         total    symex  convert   solver      steps       vars     clauses  result
+2           0.0 0.00419307                          238                         VERIFICATION SUCCESSFUL
+8           0.0 0.0161516                          790                         VERIFICATION SUCCESSFUL
+32          0.2 0.214636                         2998                         VERIFICATION SUCCESSFUL
+64          1.3  1.28607                         5942                         VERIFICATION SUCCESSFUL
+128         9.4  9.31424                        11830                         VERIFICATION SUCCESSFUL
+256        75.0  74.8766                        23606                         VERIFICATION SUCCESSFUL
+```
+
+`VARIANT=precise`:
+
+```
+K         total    symex  convert   solver      steps       vars     clauses  result
+2           0.1 0.0312422 0.00637897 0.032666        769      14520        7326  VERIFICATION SUCCESSFUL
+8           0.1 0.0473564 0.0100531 0.0399795       1339      21529       12626  VERIFICATION SUCCESSFUL
+32          0.5 0.248021 0.0244373 0.174081       3619      49602       31890  VERIFICATION SUCCESSFUL
+64          2.0  1.38837 0.0498919 0.525636       6659      87074       63708  VERIFICATION SUCCESSFUL
+128        11.1  9.14028 0.100633  1.76612      12739     162080      149075  VERIFICATION SUCCESSFUL
+```
+
+Reading the three tables together:
+
+| K | symex, no DFCC | symex, `object_whole` | DFCC symex overhead | clauses, `object_whole` | clauses, precise |
+|---|---|---|---|---|---|
+| 2 | 0.004 s | 0.036 s | 8.5x | 48,533 | 7,326 |
+| 32 | 0.21 s | 0.44 s | 2.0x | 680,203 | 31,890 |
+| 64 | 1.29 s | 1.96 s | 1.5x | 1,359,189 | 63,708 |
+| 128 | 9.31 s | 11.99 s | 1.3x | 2,738,892 | 149,075 |
+
+* **Symex dominates and grows about 7x per doubling of K** (64 to 128: 7.2x
+  without DFCC, 6.1x with it). The symex step count grows only 2x per doubling.
+* **DFCC's overhead on symex shrinks as K grows.** It is a constant-ish
+  addition on top of a cost that exists without it, not the source of the
+  growth.
+* **DFCC's real, attributable cost is clause count.** It is linear in K, and
+  `object_whole` gives 7-18x the clauses of a precise target.
+
+## 4. The control: one dereference, no DFCC — `deref_k_targets.sh`
+
+The no-DFCC baseline already shows the growth, so the next step is to strip
+everything else away. Three programs, no loop, no contract, `--object-bits 12`
+so that K=256 fits:
+
+* **A** — a K-way `switch` assigns `p`, and `p` is never dereferenced;
+* **B** — the same `switch`, followed by one write `p[0].buf[0] = 1`;
+* **C** — `p` loaded from a K-entry pointer table (no `switch`), followed by
+  the same write.
 
 ```sh
-# from the DPDK build directory, with the PMD's own include flags
-printf '#include "ena_ethdev.h"\n#include <stdio.h>\nint main(void){printf("%%zu\\n", sizeof(struct ena_adapter));}\n' \
-  | gcc $(cat flags.txt) -DPEDANTIC -x c - -o /tmp/sz && /tmp/sz
-# => 182144
+KS="32 64 128 256" ./deref_k_targets.sh
 ```
 
-`struct ena_adapter` is **182144 bytes** because it embeds
-`tx_ring[ENA_MAX_NUM_IO_QUEUES]` and `rx_ring[...]`. The widened clause
-contains `__CPROVER_object_whole(tx_ring->adapter)`, so every write in the
-loop body is checked against a 178 KB candidate-assignable-range, and loop
-entry havocs all 178 KB. By family (3) a single 128 KB `object_whole` target
-already costs 6.1 s with *one* trivial write.
+```
+case                                symex    steps  result
+K=32   A switch, no deref         0.04187     2817  VERIFICATION SUCCESSFUL
+K=64   A switch, no deref         0.08501     5601  VERIFICATION SUCCESSFUL
+K=128  A switch, no deref         0.17426    11169  VERIFICATION SUCCESSFUL
+K=256  A switch, no deref         0.36960    22305  VERIFICATION SUCCESSFUL
+K=32   B switch + deref           0.12672     2881  VERIFICATION SUCCESSFUL
+K=64   B switch + deref           0.68654     5729  VERIFICATION SUCCESSFUL
+K=128  B switch + deref           4.81298    11425  VERIFICATION SUCCESSFUL
+K=256  B switch + deref            37.855    22817  VERIFICATION SUCCESSFUL
+K=32   C table + deref            0.12584     2750  VERIFICATION SUCCESSFUL
+K=64   C table + deref            0.70236     5470  VERIFICATION SUCCESSFUL
+K=128  C table + deref            4.78515    10655  VERIFICATION SUCCESSFUL
+K=256  C table + deref            37.8102    21279  VERIFICATION SUCCESSFUL
+```
 
-## 8. A probable link to the other open CBMC item
+* A is linear (2.1x per doubling), so building the pointer is cheap.
+* B and C agree to within 2%, so the cost does not depend on how the pointer
+  was produced.
+* One dereference of a K-target pointer costs 5.4-7.9x per doubling of K. That
+  is the whole superlinear term of section 3.
 
-`cbmc-driver-proof-design-2026-11.md` section 6c records a separate symptom:
-accesses through the same anonymous unions produce
-`byte_extract_little_endian(txq->$anon0, ...)` and property status **ERROR**
-under DFCC, and that one is **not** reduced to a minimal reproducer (two
-attempts in this directory both pass).
+**Where the time goes.** `perf record --call-graph dwarf` on program C at K=64
+shows about 65% of the run under
 
-These may be one problem rather than two. A `byte_extract` on a union-held
-pointer plausibly degrades CBMC's points-to information for that pointer,
-which would widen `K` -- the dominant term here. Worth testing explicitly
-when reducing 6c: compare the candidate-object count for a pointer read from
-a union against the same pointer held in a plain field.
+```
+goto_symext::symex_assign
+ symex_assignt::assign_rec / assign_non_struct_symbol
+  symex_assignt::assign_if
+   simplify_exprt::simplify_if_preorder
+    simplify_expr_with_value_sett::simplify_inequality
+```
 
-## 9. What this does and does not establish
+with the leaf time in `irept` reference counting (`sharing_treet::remove_ref`,
+`detach`), `irept::find`, and `malloc`/`free`. Symex builds a K-way
+`if`-chain for the dereference, and the simplifier rewrites it.
+
+Two checks rule out the obvious readings:
+
+* **The simplifier is not wasted work.** `--no-simplify` makes program C far
+  slower: 42 s at K=32 instead of 0.13 s, 194 s at K=64, and over 600 s at
+  K=128. The simplifier is what keeps the expression small.
+* **The output is not large.** The SSA program `--program-only` prints grows
+  linearly: 45 KB, 93 KB and 199 KB for K = 8, 16, 32, with the longest line
+  217, 358 and 710 characters. The superlinear time goes into building and
+  simplifying *intermediate* expressions that end up linear in size.
+
+This is a property of CBMC's ordinary symbolic execution of pointer
+dereferences. It does not involve DFCC.
+
+## 5. The ENA harness is not in the K-target regime
+
+The first version claimed the ENA harness hit section 4's term because it
+includes the whole DPDK translation unit (83 static-lifetime objects) and
+writes through symbolic pointers. Both facts are true, but they are the wrong
+measurement. What matters is how many objects each *write pointer* may
+designate, and that can be read off directly:
+
+```sh
+goto-instrument --show-value-sets w2_lib.gb > vs.txt     # ~33 MB
+```
+
+Parsing every value-set line inside `eth_ena_xmit_pkts`, `ena_xmit_mbuf` and
+`ena_tx_map_mbuf`, the **largest points-to set is 2 objects**. The data
+pointers in the TX path are single-target, for example
+
+```
+main::1::ring.$anon1.tx_buffer_info = { <main::1::tx_buffer_info[0], 0, struct tag-ena_tx_buffer> }
+main::1::tx_pkts$object             = { <segs[0], 0, struct tag-rte_mbuf> }
+```
+
+The harness allocates each structure as one static object. A symbolic
+*index* into a single known object does not change cost measurably, and
+neither does holding the pointer in an anonymous union:
+`dfcc_union_index_control.sh` runs the four combinations of {pointer held in a
+union, plain pointer} x {symbolic index, constant index} under a DFCC loop
+contract, and all four take 0.1 s. So K is 1 or 2
+in the code under proof, and section 4's term cannot explain anything there.
+
+This also weakens the first version's suggested link to the
+anonymous-union `ERROR` item (`cbmc-driver-proof-design-2026-11.md` section
+6c). A union-held pointer did not widen the points-to set here:
+`ring.$anon1.tx_buffer_info` resolves to exactly one object. The two problems
+are probably independent.
+
+## 6. The actual root cause, and confirmation
+
+### 6.1 What the run was doing
+
+The non-terminating run, rerun in the background with `--verbosity 9`:
+
+```sh
+cbmc w2_na.gb --bounds-check --pointer-check --no-standard-checks --verbosity 9
+```
+
+Of the 2281 `Unwinding loop` messages before the run was killed, **2269 are
+`ena_tx_map_mbuf.0`**. Every other loop appears at most 4 times. The log ends
+mid-unwind:
+
+```
+Unwinding loop ena_tx_map_mbuf.0 iteration 2269 file .../ena_ethdev.c line 3108 function ena_tx_map_mbuf thread 0
+```
+
+Line 3108 is the segment walk in the callee:
+
+```c
+	while ((mbuf = mbuf->next) != NULL) {
+		seg_len = mbuf->data_len;
+		...
+	}
+```
+
+### 6.2 Why it is unbounded
+
+The harness builds a well-formed mbuf chain of at most `MAX_SEGS` segments
+(`make_wf_mbuf`), so without a loop contract the chain is finite and
+`--unwind 16` covered it (stage 1 of the design doc). The widened contract on
+the outer loop changes that. DFCC havocs every assigns target at the loop head,
+and `__CPROVER_object_whole(tx_ring->tx_buffer_info)` covers the
+`tx_buffer_info[req_id].mbuf` slots, so the pointers the loop body reaches are
+no longer the harness's well-formed chain. The *inner* loop in
+`ena_tx_map_mbuf` has no contract of its own, and the command had no
+`--unwind`, so symex follows `mbuf->next` indefinitely.
+
+The cost was never in the assigns clause. It came from what the havoc lets the
+uncontracted inner loop do.
+
+### 6.3 Confirmation by fixing it
+
+Adding only a bound for that one loop, with the unwinding assertion turned on
+so the bound must be shown sufficient:
+
+```sh
+cbmc w2_na.gb --bounds-check --pointer-check --no-standard-checks \
+     --unwindset ena_tx_map_mbuf.0:4 --unwinding-assertions --verbosity 9
+```
+
+| clause | result | wall | symex | solver | variables | clauses |
+|---|---|---|---|---|---|---|
+| widened, **without** `object_whole(adapter)` (`tx_loop_contract_noadapter.json`) | **VERIFICATION SUCCESSFUL**, 0 of 1408 failed | 13.2 s | 1.90 s | 9.34 s | 5,232,958 | 2,358,315 |
+| widened, **with** the 178 KB `object_whole(adapter)` (`tx_loop_contract_wide.json`) | **VERIFICATION SUCCESSFUL**, 0 of 1414 failed | 10.4 s | 1.90 s | 6.64 s | 5,233,471 | 2,358,991 |
+
+Both runs pass `ena_tx_map_mbuf.unwind.0`, so 4 iterations cover every
+execution of the inner loop under this harness. The bound is complete here, not
+a cut. Both also discharge the outer loop's contract: `loop_invariant_base`,
+`loop_invariant_step`, `loop_decreases` and `loop_assigns` all `SUCCESS`.
+
+The 178 KB adapter target changes the formula by 513 variables and 676 clauses
+out of millions. **The large `object_whole` target was not a material cost
+either.** The first version's family-3 result (6.1 s for one 128 KB target)
+still holds for that program shape. It does not carry over to the ENA harness,
+where the havoc is dominated by other targets and the target is never written.
+
+### 6.4 The same fix with the current harness
+
+The two runs in 6.3 used a goto binary built from an earlier version of the
+stage-1 harness, before the ownership clauses existed. Re-running section 7's
+commands verbatim against the harness now in the repository
+(`proof/harness_tx_callees.c`, same geometry `MAX_BURST=2 MAX_SEGS=2
+RING_SIZE=2`, `tx_loop_contract_wide.json`) gives
+
+```
+** 0 of 1482 failed (1 iterations)
+VERIFICATION SUCCESSFUL
+  main.assertion.1 API: sent <= nb_pkts: SUCCESS
+  main.assertion.2 INV preserved by eth_ena_xmit_pkts: SUCCESS
+  main.assertion.3 INV_wakeup: no packet left pushed without a doorbell: SUCCESS
+  main.assertion.4 OWN_UNIQUE: no mbuf owned by two tx_buffer_info slots: SUCCESS
+  main.assertion.5 OWN_TRANSFER: accepted mbuf recorded in its req_id slot: SUCCESS
+[ena_tx_map_mbuf.unwind.0] line 3108 unwinding assertion loop 0: SUCCESS
+```
+
+in 13.3 s. So the one proof that combines the real callee bodies, an unbounded
+TX burst, and all five named obligations, including the two ownership clauses,
+now goes through. Two qualifications: the ring and segment geometry are still
+small (2 and 2), and the inner segment walk is bounded at 4 with an unwinding
+assertion rather than discharged by its own loop contract.
+
+## 7. Reproducing sections 5-6
+
+Prerequisites, from `proof/run.sh`: DPDK v24.11 checked out at `/tmp/dpdk` with
+`amzn-drivers/userspace/dpdk/ena` copied over `drivers/net/ena`, configured as
+`build-ql`, and `flags.txt` extracted from its `compile_commands.json`.
+
+```sh
+P=integration/linux/scan/amzn-drivers/proof
+cd /tmp/dpdk/build-ql
+goto-cc $(cat /tmp/ena-proof/flags.txt) -DPEDANTIC \
+  -DMAX_BURST=2 -DMAX_SEGS=2 -DRING_SIZE=2 $P/harness_tx_callees.c -o w2.gb
+
+RM=""
+for f in rte_pktmbuf_free rte_pktmbuf_free_seg rte_pktmbuf_prefree_seg \
+         rte_pktmbuf_read rte_pktmbuf_alloc_bulk rte_pktmbuf_detach \
+         rte_mempool_put rte_mempool_put_bulk rte_mempool_get_bulk \
+         rte_mempool_generic_put rte_mempool_generic_get \
+         rte_mempool_do_generic_put rte_mempool_do_generic_get \
+         rte_mempool_cache_flush rte_mbuf_raw_free; do
+  RM="$RM --remove-function-body $f"
+done
+goto-instrument $RM w2.gb w2_rm.gb
+goto-instrument --add-library w2_rm.gb w2_lib.gb           # must precede --dfcc
+goto-instrument --no-malloc-may-fail \
+  --loop-contracts-file $P/tx_loop_contract_wide.json \
+  --dfcc main --apply-loop-contracts w2_lib.gb w2_lc.gb
+
+# section 6.1: does not terminate; watch it unwind ena_tx_map_mbuf.0
+cbmc w2_lc.gb --bounds-check --pointer-check --no-standard-checks --verbosity 9
+
+# section 6.3: terminates in ~10 s, VERIFICATION SUCCESSFUL
+cbmc w2_lc.gb --bounds-check --pointer-check --no-standard-checks \
+     --unwindset ena_tx_map_mbuf.0:4 --unwinding-assertions
+
+# section 5: points-to set sizes
+goto-instrument --show-value-sets w2_lib.gb > vs.txt
+```
+
+Two notes for anyone rerunning this. The repository's
+`harness_tx_callees.c` includes the ownership clauses, so the expected result
+is the 1482-property run of section 6.4, not the 1408/1414 of section 6.3.
+And the `--show-value-sets` output is about 33 MB, with one block per program
+location. The 2-object maximum came from scanning the
+`<object, offset, type>` entries for variables in the three TX functions.
+
+## 8. What this does and does not establish
 
 Established:
 
-* the scaling in section 5, on this host, for this CBMC build and these
-  program shapes;
-* that the write-set check is per-write and contains the symbolic-index array
-  read and the per-target loop quoted in section 6;
-* that the ENA harness sits in the regime where all three multipliers apply,
-  with the three numbers measured (83 objects, symbolic write pointers,
-  182144-byte target).
+* the ENA widened-contract proof did not terminate because the uncontracted
+  inner loop `ena_tx_map_mbuf.0` was unwound without bound under the outer
+  loop's havoc; bounding it, with the unwinding assertion proving the bound
+  sufficient, makes the proof pass in 10-13 s, including with the current
+  harness and its ownership clauses (sections 6.3, 6.4);
+* the assigns clause, including its 178 KB `object_whole` target, contributes
+  negligibly to that proof (section 6.3);
+* the superlinear cost in the first benchmark is CBMC symex dereferencing a
+  K-target pointer, present without DFCC; DFCC's added symex share falls from
+  8.5x to 1.3x as K grows (sections 3.2 and 4);
+* DFCC's attributable cost is clause count, linear in K, and 7-18x larger for
+  `object_whole` than for a precise target (section 3.2);
+* the ENA TX path's write pointers have points-to sets of at most 2 (section 5).
 
 Not established:
 
-* that `O(K^2 + K*T)` is the exact complexity -- the measurements are
-  consistent with a quadratic term in `K` but four data points do not pin an
-  exponent, and no profiling was done to attribute time between symex and SAT;
-* that the quadratic term is the *only* reason the ENA proof times out --
-  it is sufficient to explain it, but the proof was never made to terminate,
-  so the explanation is not confirmed by fixing it;
-* anything about other solvers, other CBMC versions, or 32-bit hosts;
-* the section 8 link, which is a hypothesis.
+* the exact complexity of the dereference cost. About 7x per doubling suggests
+  a cubic term, but four points do not pin an exponent, and no single function
+  in the profile accounts for it on its own;
+* whether section 4's cost is an inefficiency worth reporting. It may be the
+  expected price of value-set-based dereferencing with simplification. Before
+  calling it a bug it needs comparing against the theoretical size of the
+  K-way case split, and the profile should be read by someone who knows
+  `symex_assignt::assign_if`;
+* why the havoc leaves the chain *unbounded* rather than merely longer. The
+  run does not show whether the havocked `mbuf` can form a cycle or is a fresh
+  unbounded chain, and `--unwinding-assertions` at 4 only shows that the
+  harness's own chains are covered once the bound is in place;
+* anything about other solvers, CBMC versions, or hosts.
 
-## 10. Suggested actions
+## 9. What this changes
 
-In measured order of effect. These are proposals for discussion, not a
-decision:
+For the ENA proof, which matters most:
 
-1. **Shrink `K`.** Keep the set of objects a write pointer may designate
-   small: avoid pulling a whole translation unit into a proof that does not
-   need it, make indices concrete where the property does not depend on them,
-   and keep union-held pointers out of the write path.
-2. **Never put a large aggregate in `object_whole`.** Name the fields actually
-   written. 178 KB of havoc for a function that writes a handful of fields is
-   pure waste.
-3. **Prefer precise targets to `object_whole`** -- about 30% at K=128, real
-   but secondary.
-4. **Report the encoding upstream.** The
-   `set->allocated.elems[__CPROVER_POINTER_OBJECT(ptr)]` read is the
-   quadratic term, and unlike section 6c this is reduced to a self-contained
-   benchmark that runs on an unmodified CBMC. A possible direction for a fix
-   is to avoid the object-id-indexed array for the locally-allocated test, but
-   that is for the CBMC maintainers to judge.
+1. **Item 1 of the revised plan is done, not blocked.** One proof with the
+   real callee bodies, an unbounded TX burst, and all five named obligations
+   including `OWN_UNIQUE` and `OWN_TRANSFER` passes in 13 s (section 6.4). The
+   fix is to bound (or give a contract to) the inner segment walk, with
+   `--unwinding-assertions` so the bound is checked. The next steps are the
+   larger geometry, and a loop contract on `ena_tx_map_mbuf.0` in place of the
+   unwind bound.
+2. **Diagnosis practice:** when a contract-based proof does not terminate, run
+   it with `--verbosity 9` and count `Unwinding loop` lines per loop *before*
+   suspecting the contract machinery. In this case that one check would have
+   located the cause immediately.
+
+On the earlier action list:
+
+* **"shrink K"** — not relevant to the ENA proof (K ≤ 2 there). Still good
+  advice for harnesses that really do dereference many-target pointers.
+* **"never put a large aggregate in `object_whole`"** — not supported for the
+  ENA proof (513 extra variables). The general cost of section 3.1 family 3
+  still holds where a large target is *written*.
+* **"prefer precise targets"** — supported as a formula-size reduction (7-18x
+  fewer clauses in section 3.2). The time effect is secondary.
+* **"report the encoding upstream"** — **withdrawn.** The cost it targeted is
+  not in DFCC. If anything goes upstream it is section 4 (one K-target
+  dereference, no contracts). That needs the analysis listed under "not
+  established" before filing.
