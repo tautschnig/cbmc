@@ -344,6 +344,34 @@ interaction with DFCC's write-set instrumentation. Worth reducing properly,
 because "property status ERROR" on real driver code is exactly the kind of
 silent gap this whole exercise is meant to eliminate.
 
+## 6d. Lifecycle failure injection: first results
+
+Two factual results from starting the re-prioritised plan, both worth
+recording because one of them corrects a guess of mine.
+
+* **The TX error path is already covered.** `ena_com_prepare_tx` lives in a
+  separate translation unit, so it is bodyless and returns a nondeterministic
+  value; the stage-1 proof therefore already explores the
+  `if (unlikely(rc))` failure branch in `ena_xmit_mbuf`, including
+  `ena_trigger_reset`. Failure injection was free here, which is the argument
+  for doing it everywhere.
+* **A double-destroy I predicted does not exist.** Reading
+  `ena_queue_start`/`ena_queue_start_all`, the RX populate failure path
+  destroys the IO queue and leaves `ring->configured == 1`, and a later
+  `ena_queue_stop_all` tests only `configured` -- which looks like a second
+  `ena_com_destroy_io_queue` on the same queue. It is not a bug:
+  `ena_com_io_queue_free` NULLs `cdesc_addr.virt_addr`,
+  `desc_addr.virt_addr` and `bounce_buf_ctrl.base_buffer` after freeing each,
+  so the second call is a no-op. (`ena_queue_start_all`'s `while (i--)` also
+  correctly skips the queue that failed.) Hand-reasoning produced a
+  plausible-looking bug that the code already defends against -- which is
+  precisely why the proof, not the reasoning, is the deliverable.
+* **Still open:** on the `ena_com_get_io_handlers` failure path
+  `ena_create_io_queue` destroys the queue but `ring->ena_com_io_sq` and
+  `ring->ena_com_io_cq` keep whatever that call left in them, while
+  `ring->configured` stays 1. Whether any later path reads them is the next
+  obligation, and it needs the ownership map rather than more reading.
+
 ## 7. Effort, and a staged plan
 
 Per-driver effort is much higher than the kernel-wide taint sweep, as
@@ -387,7 +415,95 @@ well-specified API and no kernel headers, so the environment model is small;
 the Linux drivers inherit the specification work but need a much larger stub
 layer.
 
-## 8. Honest framing of the word "proof"
+## 8. Liveness: reachable with ranking functions, and mostly not liveness at all
+
+My earlier claim that "13% of their findings are liveness, which a bounded
+model checker cannot state" was too pessimistic. Two corrections, in
+increasing order of how much they buy.
+
+### 8.1 A ranking function reduces liveness to safety, exactly as induction reduces unboundedness
+
+The same move that removed the bound on the number of operations removes the
+bound on time. For termination, a **variant** (ranking function) `V(s)` into
+a well-founded order with `V(s') < V(s)` on every step is a *safety* property
+per step, and well-foundedness supplies the global conclusion. For general
+liveness there is the standard liveness-to-safety reduction of Biere, Artho
+and Schuppan (FMICS 2002) -- record a saved state and a progress flag, and a
+liveness violation becomes a reachable "the loop closed without progress"
+state -- and for liveness under fairness the termination-based treatment of
+Cook, Gotsman, Podelski, Rybalchenko and Vardi (POPL 2007). Podelski and
+Rybalchenko's transition invariants and the Terminator line of work are the
+ranking-function synthesis side of the same story.
+
+**We are already doing this.** The loop contracts in
+`tx_loop_contract.json` and `setup_loop_contract.json` each carry a
+`decreases` clause -- `nb_pkts - sent_idx` and `txq->ring_size - i`. Those
+are ranking functions, and CBMC discharges them as ordinary per-step safety
+obligations (`loop_decreases` properties). So the mechanism is not
+speculative here; it is in the two proofs that already pass. CBMC also ships
+`goto-synthesizer`, which synthesises loop invariants and variants, so some
+of this can be mechanised rather than hand-written.
+
+For a driver the shape is a **conditional** liveness statement, because
+unconditional liveness is simply false -- a dead device never completes
+anything. The obligation is:
+
+> assuming the device eventually completes a posted descriptor (a fairness
+> assumption on the environment, stated explicitly), the driver eventually
+> frees the buffer and advances the consumer index.
+
+and it is discharged by a variant over the driver's own state: on every step
+in which the goal is unmet, `(descriptors outstanding, polls remaining)`
+strictly decreases. The admin path is the easy case -- `ena_com_wait_for_comp`
+already has a timeout, so the property is plain loop termination with a
+variant, which is what `decreases` does.
+
+### 8.2 Most of the "lost event / stuck queue" class is a safety invariant in disguise
+
+This is the bigger correction. A lost wakeup is not a statement about the
+future; it is a *reachable state* in which work exists and nobody is going to
+look at it. Written as an invariant:
+
+```
+INV_wakeup:  work_pending  ==>  (interrupt armed  \/  poll scheduled)
+```
+
+Any interleaving that disarms the notification after the producer's last
+check violates `INV_wakeup` in the state reached, with no temporal operator
+anywhere. Same for the doorbell handshake (`pkts_without_db` set but no
+doorbell write and no cleanup scheduled), and the same for deadlock, which is
+a safety property over a ghost lock-order variable: "never acquire a lock
+ranked below one already held". Their "hard lockup of a CPU when a completion
+MSI-X interrupts a `cq->lock` holder" is exactly that shape.
+
+So the triage of their classes E (7) and F (17) is:
+
+* **deadlock / lockup** -> safety, via a ghost lock-order invariant;
+* **lost event / stuck queue** -> safety, via the `INV_wakeup` handshake
+  invariant above;
+* **genuine unbounded-delay progress** (a completion that is merely slow, not
+  lost) -> conditional liveness with a ranking function, per 8.1.
+
+With those three in place the expressible share of their findings goes from
+the ~80% in the reconciliation note to roughly 93%. The honest residual is
+not "liveness" as a class but the cases where the fairness assumption on the
+device is doing the real work -- there the proof is only as good as that
+assumption, and it should be written at the top of the harness where a
+reviewer will see it.
+
+### 8.3 What this changes in the plan
+
+Add to the revised order in `unveil-reconciliation-2026-11.md`:
+
+* after the ownership ghost map, add the **`INV_wakeup` handshake invariant**
+  and the **ghost lock-order invariant**; both are cheap (a few ghost
+  variables) and between them cover classes E and F;
+* keep ranking functions for the genuine progress properties, reusing the
+  `decreases` mechanism already in the loop contracts;
+* state the device-fairness assumption explicitly in any harness that needs
+  it, and never let it be implicit.
+
+## 9. Honest framing of the word "proof"
 
 What the pilot establishes: *for all* states satisfying `INV`, *for all*
 burst lengths up to 6, *for all* device behaviours, and *for all* numbers of

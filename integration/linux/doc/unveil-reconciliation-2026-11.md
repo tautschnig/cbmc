@@ -122,10 +122,32 @@ property, not a promise to prove it:
 | **API automaton extended to teardown/reset/remove** | C, K | 47 (26%) |
 | **Bounded concurrency** for the pairs that actually overlap (xmit vs `ena_down`, IRQ vs lock holder, devlink vs reset) | E + the 21% race-triggered | ~39 (21%) |
 | Already in scope today | G, I, J, parts of H | ~25 (14%) |
-| **Liveness** (no lost completion, no stuck queue, progress) | E, F | 24 (13%) -- *not* a CBMC fit |
+| **`INV_wakeup` handshake invariant + ghost lock-order invariant** | most of E, F | 24 (13%) |
+| **Ranking functions** for genuine unbounded-delay progress | residual of E, F | small |
 
-Taken together, the first four would bring the expressible share from roughly
-14% to about 80%, with liveness the honest residual.
+Taken together these bring the expressible share from roughly 14% to about
+93%.
+
+**Correction to an earlier claim.** I previously wrote that classes E and F
+are liveness and therefore outside CBMC. That was wrong twice over. A ranking
+function reduces liveness to a per-step safety obligation exactly as induction
+reduces unbounded sequences -- and we are already doing it, since the
+`decreases` clauses in `tx_loop_contract.json` and `setup_loop_contract.json`
+are ranking functions that CBMC discharges as `loop_decreases` properties.
+More importantly, most of class F is not liveness at all: a lost wakeup is a
+*reachable state* in which work is pending and nobody will look at it, i.e. a
+violation of `work_pending ==> (interrupt armed \/ poll scheduled)`, and a
+deadlock is a violation of a ghost lock-order invariant. Both are safety.
+Section 8 of `cbmc-driver-proof-design-2026-11.md` has the detail and the
+references (Biere/Artho/Schuppan's liveness-to-safety reduction;
+Cook/Gotsman/Podelski/Rybalchenko/Vardi for liveness under fairness;
+Podelski/Rybalchenko transition invariants for the synthesis side).
+
+The honest residual is no longer a class of properties but a single
+*assumption*: conditional liveness needs a fairness assumption on the device
+("a posted descriptor is eventually completed"), without which the property
+is simply false. That assumption should sit at the top of any harness that
+relies on it.
 
 ## 6. Revised plan
 
@@ -151,8 +173,12 @@ Revised:
 5. **Bounded concurrency** for the specific overlapping pairs.
 6. **FreeBSD ENA**: at minimum build the CodeQL database and run the existing
    finders; 32 findings sit in a component we have never analysed.
-7. Treat liveness as out of scope for CBMC and say so, rather than claiming a
-   "full correctness proof" that silently excludes it.
+7. Add the `INV_wakeup` handshake invariant and the ghost lock-order
+   invariant (cheap, a few ghost variables, between them cover classes E and
+   F), and use ranking functions for the genuine progress properties, reusing
+   the `decreases` mechanism already in the loop contracts. State the
+   device-fairness assumption explicitly wherever conditional liveness is
+   claimed.
 
 ## 7. What this means for the confidence goal
 
@@ -160,11 +186,14 @@ A full *safety* proof of a driver -- memory safety, ownership and lifetime,
 ring and ABI invariants, under arbitrary device behaviour, arbitrary operation
 sequences and injected failures -- looks achievable with the schema we have,
 and stages 1-3 are evidence that the mechanics work on real code. A full
-*correctness* proof in the sense that would cover all 179 findings does not,
-because 13% of them are liveness properties that a bounded model checker
-cannot state. The honest target is: **safety and functional-state correctness
-by CBMC proof, liveness by other means**, with the boundary written down
-rather than glossed.
+*correctness* proof covering essentially all of their classes now also looks
+reachable, because the liveness-shaped findings reduce to safety: handshake
+and lock-order invariants for lost wakeups and deadlocks, ranking functions
+for genuine progress (section 8 of the design doc). The honest target is
+**safety and functional-state correctness by CBMC proof, with conditional
+liveness under an explicit device-fairness assumption** -- the boundary being
+that assumption, written down, rather than a class of properties we cannot
+state.
 
 One more caveat worth keeping in view: these 179 findings are unreviewed by
 maintainers, and each is a counterexample in *their model* plus a userspace
