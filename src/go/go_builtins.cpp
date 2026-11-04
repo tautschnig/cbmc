@@ -99,13 +99,18 @@ exprt go_convertert::string_constant(
     name += "_" + std::to_string(c);
   if(name.size() > 200)
     name = "go::$string#" + std::to_string(std::hash<std::string>{}(bytes));
+  // Go1.27 §String_types: "Strings are immutable": the bytes are
+  // const-qualified, so that goto-symex keeps the array whole (see
+  // field_sensitivityt) rather than assigning each byte.
+  typet byte_type = unsignedbv_typet{8};
+  byte_type.set(ID_C_constant, true);
   const array_typet array_type{
-    unsignedbv_typet{8}, from_integer(bytes.size(), c_index_type())};
+    byte_type, from_integer(bytes.size(), c_index_type())};
   if(!symbol_table.has_symbol(name))
   {
     exprt::operandst elements;
     for(const unsigned char c : bytes)
-      elements.push_back(from_integer(c, unsignedbv_typet{8}));
+      elements.push_back(from_integer(c, byte_type));
     symbolt symbol{name, array_type, "go"};
     symbol.base_name = name;
     symbol.is_static_lifetime = true;
