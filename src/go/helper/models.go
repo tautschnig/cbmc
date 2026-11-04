@@ -131,6 +131,12 @@ var sourceModels = map[string]struct {
 	"sort":          {overrides: true},
 	"hash/fnv":      {},
 	"unicode/utf16": {},
+	// NewEncoding without loops (the package's initialisation calls it).
+	"encoding/base64": {overrides: true},
+	// The implementation of go1 (without GOEXPERIMENT=jsonv2), on the
+	// model of reflect.
+	"encoding/json": {files: []string{"decode.go", "encode.go", "fold.go",
+		"indent.go", "scanner.go", "stream.go", "tables.go", "tags.go"}},
 }
 
 // parseSourceModel parses the files of the source model of path (see

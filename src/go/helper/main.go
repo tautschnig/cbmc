@@ -1382,6 +1382,13 @@ func main() {
 		os.Exit(2)
 	}
 	os.Setenv("GOARCH", *goarch) // stdlib build constraints follow the target
+	// The standard library's export data without the jsonv2 experiment,
+	// whose encoding/json is the source of its model (see sourceModels).
+	experiments := "nojsonv2"
+	if prev := os.Getenv("GOEXPERIMENT"); prev != "" {
+		experiments = prev + "," + experiments
+	}
+	os.Setenv("GOEXPERIMENT", experiments)
 	ensureGoOnPath()
 
 	fset := token.NewFileSet()

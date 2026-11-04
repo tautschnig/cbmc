@@ -1,0 +1,13 @@
+CORE
+main.go
+--unwind 24 --unwindset go::cprover/std/strings.ContainsRune.0:30,go::cprover/rt.StringEqual.0:30
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 19 marshal: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 22 unmarshal: SUCCESS$
+^\[go::main\.main\.assertion\.3\] line 25 syntax error: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+encoding/json from source: Marshal and Unmarshal of a tagged struct
