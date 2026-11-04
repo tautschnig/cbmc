@@ -41,6 +41,7 @@ Author: Michael Tautschnig
 #include "go_parse_tree.h"
 
 #include <algorithm>
+#include <cstring>
 
 /// The type of lengths, capacities and indices: int.
 static signedbv_typet int_type()
@@ -1302,6 +1303,19 @@ exprt go_convertert::append_capacity_choice(
   const mp_integer stack_buffer_size = 32; // rt.stackBufferSize
   if(element_size == 0 || element_size > stack_buffer_size)
     return grown;
+  // In the models of the standard library (and the runtime), slices are
+  // taken to be on the heap, as those that outlive their function are: the
+  // capacities are then determined, rather than depending on escape
+  // analysis, which keeps the arrays of the models' buffers (e.g., of
+  // encoding/json) unique. The capacities of their internal slices are not
+  // observable.
+  const std::string &function = id2string(state.function_id);
+  for(const char *prefix :
+      {"go::cprover/", "go::reflect.", "go::sync.", "go::sync/atomic."})
+  {
+    if(function.compare(0, std::strlen(prefix), prefix) == 0)
+      return grown;
+  }
   const exprt stack_cap =
     from_integer(stack_buffer_size / element_size, int_type());
   const binary_relation_exprt fits{length, ID_le, stack_cap};
