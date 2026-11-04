@@ -1,0 +1,15 @@
+{
+  "functions": [
+    {
+      "ena_tx_queue_setup": [
+        {
+          "loop_id": "6",
+          "invariants": "(i <= txq->ring_size) && ((g_probe_idx < i) ==> (txq->empty_tx_reqs[g_probe_idx] == g_probe_idx))",
+          "assigns": "i, __CPROVER_object_whole(txq->empty_tx_reqs)",
+          "decreases": "txq->ring_size - i",
+          "symbol_map": "i,ena_tx_queue_setup::1::i; txq,ena_tx_queue_setup::1::txq; g_probe_idx,g_probe_idx"
+        }
+      ]
+    }
+  ]
+}

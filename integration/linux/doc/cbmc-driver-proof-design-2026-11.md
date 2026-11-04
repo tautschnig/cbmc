@@ -269,6 +269,81 @@ abstracted callee is reported as `undefined function should be unreachable`
 rather than silently assumed, which is the tool being honest about an
 abstraction we chose.
 
+## 6b. Stage 3: the base case
+
+`scan/amzn-drivers/proof/harness_setup_basecase.c`, `run_stage3_basecase.sh`.
+
+**VERIFICATION SUCCESSFUL: 8595 properties, 0 failures, and no unmodelled
+callees at all** -- the only run in this series where the assumption list for
+the environment is empty. The obligation that matters:
+
+```
+[main.assertion.1] base case: ena_tx_queue_setup establishes INV_CONFIGURED: SUCCESS
+```
+
+This closes the induction for the configured state: the step proofs assume
+`INV`, and setup is now shown to establish it rather than assumed to.
+
+The lifecycle forced `INV` to be split, which matches the API automaton of
+section 2 and is worth stating as part of the specification:
+
+* `INV_CONFIGURED` -- geometry (`size_mask == ring_size - 1`, power-of-two
+  ring), indices zeroed, the three allocations non-NULL, every
+  `empty_tx_reqs` slot a valid `tx_buffer_info` index, every slot free
+  (`rte_zmalloc_socket` zeroes). Established by `ena_tx_queue_setup`.
+* `INV_STARTED` = `INV_CONFIGURED` + the `ena_com` clauses (`db_addr`
+  mapped, `q_depth == ring_size`, `descs_per_entry >= 1`, the SQ accounting
+  bound). Established by `ena_queue_start`, which is the next base-case
+  increment.
+
+Two results that are specification findings rather than proof mechanics:
+
+* **`tx_free_thresh <= ring_size` is NOT established by setup, so it does not
+  belong in `INV`.** When `tx_conf->tx_free_thresh != 0` the driver takes the
+  application's value unchecked, and `rte_eth_tx_queue_setup` does not
+  validate it either. The consequence is benign -- `available_desc <
+  tx_free_thresh` is then always true, so `ena_tx_cleanup` runs on every
+  burst -- but it is a performance cliff an application can trigger, and my
+  first `INV` asserted something false about the driver.
+* **The per-slot clauses are proved for an arbitrary index**, not by a loop:
+  `g_probe_idx` is a nondeterministic global fixed before the call and used
+  in both the invariant and the post-condition. Proving the single instance
+  for a nondeterministic index *is* universal quantification over the index,
+  and it avoids `__CPROVER_forall`, which CBMC silently ignores when it comes
+  from a loop-contracts file (`warning: ignoring forall`).
+
+Scope to be honest about: the ring size is concrete (8) because the init loop
+is unrolled. Generalising over the ring size needs the loop-contract route,
+which is blocked by the next item.
+
+## 6c. A CBMC limitation worth chasing
+
+`struct ena_ring` holds `empty_tx_reqs` and `tx_buffer_info` in two
+**anonymous unions** (`ena_ethdev.h:158-167`). Accesses through them compile
+to `byte_extract_little_endian(txq->$anon0, ...)`, and in the stage-3 setting
+that produced property status **ERROR** -- neither proved nor refuted -- in
+two configurations:
+
+* under DFCC with a loop contract on the init loop, where the *driver's own*
+  `txq->empty_tx_reqs[i] = i` reported ERROR, and the loop-contract
+  obligations (`loop_invariant_step`, `loop_decreases`, `assigns`) came back
+  ERROR with it;
+* without DFCC, when the allocator stub returned `malloc`'d memory.
+
+Pointing the allocator at static pools made all of it go away, which is why
+stage 3 does that.
+
+This is a **symptom, not a reduced reproducer**, and it should not be filed as
+a bug until it is one. Two reductions are checked in under
+`proof/cbmc-limitations/`, and both currently **pass**: a union-held pointer
+to `malloc`'d memory dereferenced directly, and the fuller shape (union inside
+a struct inside an array, pointer from an allocator-like function, symbolic
+index, init loop). So the trigger is something these do not yet capture --
+candidates are the allocation size, the number of unwindings, or the
+interaction with DFCC's write-set instrumentation. Worth reducing properly,
+because "property status ERROR" on real driver code is exactly the kind of
+silent gap this whole exercise is meant to eliminate.
+
 ## 7. Effort, and a staged plan
 
 Per-driver effort is much higher than the kernel-wide taint sweep, as
@@ -289,9 +364,9 @@ Staging, cheapest first:
 2. **Done (section 6a):** callee contracts discharged for the TX path; the
    burst bound removed with a loop invariant. Still to do here: link
    `ena_com` so the ring accounting in `INV` is proved rather than assumed.
-3. Same schema for the RX path, then `tx_cleanup`, then the control path
-   (`queue_setup`/`start`/`stop`), including the base case: prove
-   `ena_tx_queue_setup` establishes `INV`.
+3. **Done (section 6b):** the base case -- `ena_tx_queue_setup` establishes
+   `INV_CONFIGURED`. Next: `ena_queue_start` establishes `INV_STARTED`, then
+   the RX path and `tx_cleanup` under the same schema.
 4. Add the ownership ghost map -> lifetime safety (class 2), which is the
    class we currently cannot find at all.
 5. Port to the Linux ENA and EFA drivers. EFA first for the ABI-invariant
