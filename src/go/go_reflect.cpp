@@ -40,6 +40,16 @@ Author: Michael Tautschnig
 
 static const irep_idt rtype_id = "go::reflect.rtype";
 
+/// The type of descriptors: the model's rtype, const-qualified, as
+/// descriptors are never written, so that goto-symex keeps them whole (see
+/// field_sensitivityt).
+static struct_tag_typet descriptor_type()
+{
+  struct_tag_typet type{rtype_id};
+  type.set(ID_C_constant, true);
+  return type;
+}
+
 static irep_idt descriptor_id(std::size_t tid)
 {
   return "go::reflect.$type." + std::to_string(tid);
@@ -167,7 +177,9 @@ static exprt static_slice(
        from_integer(0, length_type)},
       slice_type};
   }
-  const typet &element = to_pointer_type(data_type).base_type();
+  // The elements are never written either.
+  typet element = to_pointer_type(data_type).base_type();
+  element.set(ID_C_constant, true);
   const array_typet array_type{element, from_integer(n, c_index_type())};
   symbolt symbol{array_id, array_type, "go"};
   symbol.base_name = array_id;
@@ -193,7 +205,7 @@ exprt go_convertert::reflect_descriptor(
   const irept &entry = parse_tree.type_entry(index);
   const irept &under = type_converter.underlying(index);
   const typet &type = described.at(tid);
-  const struct_tag_typet rtype{rtype_id};
+  const struct_tag_typet rtype = descriptor_type();
   const pointer_typet rtype_pointer{rtype, config.ansi_c.pointer_width};
   // A pointer to the descriptor of the type at type-table index i, or nil
   // (for types the model does not describe).
@@ -452,7 +464,7 @@ void go_convertert::finish_reflect()
   }
 
   // The descriptors (declared first: they refer to each other).
-  const struct_tag_typet rtype{rtype_id};
+  const struct_tag_typet rtype = descriptor_type();
   for(const auto &t : described)
   {
     symbolt symbol{descriptor_id(t.first), rtype, "go"};
