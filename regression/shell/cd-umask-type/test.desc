@@ -1,0 +1,15 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.[0-9]+\] file main.sh line 15 .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+^\[assertion\.[0-9]+\] file main.sh line ([0-9]|1[0-4]) .*: FAILURE$
+--
+cd may fail, and otherwise sets PWD to an absolute pathname; umask with
+a literal mask succeeds. Whether a utility exists is not known, so that
+type nosuch-xyz may succeed; as for echo, writing the description can
+fail.

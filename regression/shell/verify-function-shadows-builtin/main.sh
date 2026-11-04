@@ -1,5 +1,5 @@
 #!/bin/sh
 if [ "$1" = a ]; then
-  cd() { :; }
+  hash() { :; }
 fi
-cd /tmp
+hash ls

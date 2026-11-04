@@ -30,20 +30,23 @@ static const std::map<std::string, shell_command_kindt> builtins{
   {CPROVER_PREFIX "assert", shell_command_kindt::ASSERT},
   {CPROVER_PREFIX "assume", shell_command_kindt::ASSUME},
   {"read", shell_command_kindt::READ},
+  {"cd", shell_command_kindt::CD},
+  {"umask", shell_command_kindt::UMASK},
+  {"type", shell_command_kindt::TYPE},
   {"echo", shell_command_kindt::OUTPUT},
   {"printf", shell_command_kindt::OUTPUT}};
 
 /// Builtins that change the shell environment (XCU 2.15 special
 /// builtins, regular builtins of XCU 1.7, and common extensions).
 static const std::set<std::string> unsupported_builtins{
-  "eval",    "readonly",  "times",    "trap",     "cd",      "getopts",
-  "alias",   "unalias",   "umask",    "wait",     "jobs",    "fg",
-  "bg",      "command",   "type",     "hash",     "kill",    "ulimit",
-  "fc",      "newgrp",    "local",    "declare",  "typeset", "source",
-  "let",     "shopt",     "builtin",  "enable",   "mapfile", "readarray",
-  "pushd",   "popd",      "dirs",     "disown",   "suspend", "logout",
-  "nameref", "autoload",  "setopt",   "unsetopt", "emulate", "print",
-  "whence",  "functions", "zmodload", "caller",   "compgen", "complete"};
+  "eval",     "readonly", "times",     "trap",    "getopts",   "alias",
+  "unalias",  "wait",     "jobs",      "fg",      "bg",        "command",
+  "hash",     "kill",     "ulimit",    "fc",      "newgrp",    "local",
+  "declare",  "typeset",  "source",    "let",     "shopt",     "builtin",
+  "enable",   "mapfile",  "readarray", "pushd",   "popd",      "dirs",
+  "disown",   "suspend",  "logout",    "nameref", "autoload",  "setopt",
+  "unsetopt", "emulate",  "print",     "whence",  "functions", "zmodload",
+  "caller",   "compgen",  "complete"};
 
 shell_command_kindt shell_convertert::classify(const std::string &name) const
 {
@@ -1316,6 +1319,15 @@ void shell_convertert::convert_builtin(
     return;
   case shell_command_kindt::READ:
     convert_read(command, dest);
+    return;
+  case shell_command_kindt::CD:
+    convert_cd(command, dest);
+    return;
+  case shell_command_kindt::UMASK:
+    convert_umask(command, dest);
+    return;
+  case shell_command_kindt::TYPE:
+    convert_type(command, dest);
     return;
   case shell_command_kindt::COLON:
   case shell_command_kindt::TRUE:

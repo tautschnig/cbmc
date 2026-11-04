@@ -59,6 +59,9 @@ enum class shell_word_contextt
   IGNORED
 };
 
+/// Whether \p name is a builtin in all shells (shell_convert_command.cpp).
+bool is_builtin_everywhere(const std::string &name);
+
 /// What a simple command's name refers to.
 enum class shell_command_kindt
 {
@@ -79,6 +82,10 @@ enum class shell_command_kindt
   DOT,
   /// read, which assigns variables values that are not modelled.
   READ,
+  /// cd, umask and type: see shell_convert_builtins.cpp.
+  CD,
+  UMASK,
+  TYPE,
   ASSERT,
   ASSUME,
   /// echo and printf: output only; their status is nondeterministic, as
@@ -1210,6 +1217,10 @@ private:
   /// or utility rather than a function.
   void
   convert_command_builtin(const shell_commandt &command, code_blockt &dest);
+  /// cd, umask and type: see shell_convert_builtins.cpp.
+  void convert_cd(const shell_commandt &command, code_blockt &dest);
+  void convert_umask(const shell_commandt &command, code_blockt &dest);
+  void convert_type(const shell_commandt &command, code_blockt &dest);
   /// read: see shell_convert_read.cpp.
   void convert_read(const shell_commandt &command, code_blockt &dest);
   /// Whether read has -r, and its names, if its operands are -r, --, and

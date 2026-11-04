@@ -23,7 +23,7 @@ exprt shell_convertert::not_found_status(
 }
 
 /// Builtins that every modelled dialect has, which command -v finds.
-static bool is_builtin_everywhere(const std::string &name)
+bool is_builtin_everywhere(const std::string &name)
 {
   static const std::set<std::string> names{
     ":",       "break",    "continue", ".",    "eval",    "exec",  "exit",

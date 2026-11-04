@@ -152,6 +152,11 @@ void shell_convertert::collect_assigned(
       {
         any = true;
       }
+      else if(*name == "cd")
+      {
+        names.insert("PWD");
+        names.insert("OLDPWD");
+      }
       else if(*name == "read")
       {
         // The names read assigns, if they are literal.

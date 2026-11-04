@@ -3,7 +3,7 @@ main.sh
 
 ^EXIT=10$
 ^SIGNAL=0$
-^\[shell-unsupported\.1\] file main.sh line 5 'cd' is a function here \(the builtin 'cd' is not supported\): FAILURE$
+^\[shell-unsupported\.1\] file main.sh line 5 'hash' is a function here \(the builtin 'hash' is not supported\): FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring
