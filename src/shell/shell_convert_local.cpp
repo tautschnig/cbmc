@@ -96,6 +96,28 @@ void shell_convertert::convert_local(
       unsupported(
         loc, "local of a name that the function's body does not show");
     assign(dest, local->second.second, true_exprt{}, loc);
+    if(name == "IFS" && !operand->second.has_value())
+    {
+      // As for other names; IFS is not known after either.
+      if(program.dialect == shell_dialectt::ZSH)
+        assign_ifs(string_literal("", loc), dest, loc);
+      else
+      {
+        code_blockt unset;
+        unset_ifs(unset, loc);
+        if(program.dialect == shell_dialectt::POSIX)
+        {
+          add(
+            dest,
+            code_ifthenelset{nondet(bool_typet{}, loc), std::move(unset)},
+            loc);
+          forget_ifs();
+        }
+        else
+          dest.append(unset);
+      }
+      continue;
+    }
     if(operand->second.has_value())
     {
       // Not subject to field splitting in any shell.
@@ -137,6 +159,24 @@ void shell_convertert::save_locals(
   function_locals.emplace();
   for(const auto &name : names)
   {
+    if(name == "IFS")
+    {
+      // IFS has no symbol: its ghost state is saved (see
+      // shell_convert_ifs.cpp); what is known about it is forgotten where
+      // the function is called.
+      const symbol_exprt made_local = temporary(bool_typet{}, dest, loc);
+      assign(dest, made_local, false_exprt{}, loc);
+      for(const symbol_exprt &ghost : {ifs_default(), ifs_unset()})
+      {
+        const symbol_exprt saved = temporary(bool_typet{}, dest, loc);
+        assign(dest, saved, ghost, loc);
+        function_locals->emplace(
+          name + " " + id2string(ghost.get_identifier()),
+          std::make_pair(saved, made_local));
+      }
+      function_locals->emplace(name, std::make_pair(made_local, made_local));
+      continue;
+    }
     const symbol_exprt saved = temporary(string_type(), dest, loc);
     assign(dest, saved, variable(name, loc), loc);
     const symbol_exprt made_local = temporary(bool_typet{}, dest, loc);
@@ -151,8 +191,21 @@ void shell_convertert::restore_locals(
 {
   for(const auto &entry : *function_locals)
   {
+    if(entry.first == "IFS")
+      continue;
     code_blockt restore;
-    assign(restore, variable(entry.first, loc), entry.second.first, loc);
+    const std::size_t space = entry.first.find(' ');
+    if(space != std::string::npos)
+    {
+      // The ghost state of IFS.
+      assign(
+        restore,
+        symbol_table.lookup_ref(entry.first.substr(space + 1)).symbol_expr(),
+        entry.second.first,
+        loc);
+    }
+    else
+      assign(restore, variable(entry.first, loc), entry.second.first, loc);
     add(dest, code_ifthenelset{entry.second.second, std::move(restore)}, loc);
   }
 }
