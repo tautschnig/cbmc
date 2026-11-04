@@ -28,7 +28,6 @@
 #include "shell_ast.h"
 #include "shell_converter.h"
 #include "shell_pattern.h"
-#include "shell_runtime.h"
 
 #include <functional>
 #include <map>
@@ -160,14 +159,11 @@ private:
   // ----------------------------------------------------------------
   // Types and symbols
 
-  /// The type of shell values: a struct with a `set` flag. Bounded strings
-  /// are the runtime's struct (shell_runtime.h); the other representations
-  /// use a struct of the flag and a `value` of payload_type().
+  /// The type of shell values: a struct of a `set` flag and a `value` of
+  /// payload_type().
   typet string_type() const
   {
-    return struct_tag_typet{
-      bounded() ? irep_idt{"tag-" SHELL_STRING_TAG}
-                : irep_idt{"tag-" SHELL_VALUE_TAG}};
+    return struct_tag_typet{"tag-" SHELL_VALUE_TAG};
   }
 
   const struct_typet &string_struct() const
@@ -180,11 +176,6 @@ private:
     return string_struct().get_component(name).type();
   }
 
-  bool bounded() const
-  {
-    return strings == shell_string_representationt::BOUNDED;
-  }
-
   bool native() const
   {
     return strings == shell_string_representationt::NATIVE;
@@ -194,13 +185,11 @@ private:
   /// strings, and a refined string {length, content} for refinement.
   typet payload_type() const;
 
-  /// Add the type symbol of string_type() for the unbounded
-  /// representations.
+  /// Add the type symbol of string_type().
   void add_value_type();
 
   member_exprt payload_of(const exprt &string) const
   {
-    PRECONDITION(!bounded());
     return member_exprt{string, "value", payload_type()};
   }
 
@@ -254,12 +243,6 @@ private:
   member_exprt set_of(const exprt &string) const
   {
     return member_exprt{string, "set", component_type("set")};
-  }
-
-  member_exprt length_of(const exprt &string) const
-  {
-    PRECONDITION(bounded());
-    return member_exprt{string, "length", component_type("length")};
   }
 
   exprt is_set(const exprt &string) const
@@ -394,25 +377,6 @@ private:
     add(dest, code_frontend_assignt{lhs, std::move(rhs)}, assign_loc);
   }
 
-  /// Call runtime function \p name, storing the result in a temporary.
-  symbol_exprt call(
-    const irep_idt &name,
-    exprt::operandst arguments,
-    code_blockt &dest,
-    const source_locationt &loc)
-  {
-    const symbolt &function = symbol_table.lookup_ref(name);
-    const typet &return_type = to_code_type(function.type).return_type();
-    const symbol_exprt result = temporary(return_type, dest, loc);
-    assign(
-      dest,
-      result,
-      side_effect_expr_function_callt{
-        function.symbol_expr(), std::move(arguments), return_type, loc},
-      loc);
-    return result;
-  }
-
   exprt nondet(const typet &type, const source_locationt &loc)
   {
     return side_effect_expr_nondett{type, loc};
@@ -476,12 +440,9 @@ private:
   /// The value of a parameter: its contents if set, else the empty string.
   /// Unset unbounded values have an empty payload (see
   /// environment_string), so their value is a copy with the flag set.
-  exprt value_of(const exprt &parameter, const source_locationt &loc)
+  exprt value_of(const exprt &parameter, const source_locationt &)
   {
-    if(!bounded())
-      return set_value(parameter);
-    return if_exprt{
-      is_set(parameter), parameter, string_literal("", loc), string_type()};
+    return set_value(parameter);
   }
 
   exprt concat(
@@ -571,7 +532,7 @@ private:
     code_blockt &dest,
     const source_locationt &loc);
 
-  // Primitive operations on payloads, for the unbounded representations.
+  // Primitive operations on payloads.
 
   /// Apply string function \p id to \p arguments; the result, of type
   /// \p type (a payload, Boolean, or integer_type()), is a temporary.
@@ -770,14 +731,11 @@ private:
   // ----------------------------------------------------------------
   // Patterns (XCU 2.14)
 
-  /// Prefixes of the matcher functions, by pattern signature.
-  std::map<std::string, std::string> pattern_matchers;
   shell_patternt compile_pattern(const shell_wordt &, const source_locationt &);
   exprt literal_pattern_string(
     const shell_patternt &pattern,
     code_blockt &dest,
     const source_locationt &loc);
-  const std::string &pattern_prefix(const shell_patternt &pattern);
   exprt pattern_matches(
     const shell_wordt &pattern,
     const exprt &subject,
@@ -791,7 +749,7 @@ private:
     code_blockt &dest,
     const source_locationt &loc);
 
-  // Patterns for the unbounded representations. A pattern S0*S1*...*Sn
+  // Patterns. A pattern S0*S1*...*Sn
   // of segments Si without stars matches s if S0 is at the start of s, Sn
   // at its end, and S1, ..., Sn-1 occur in order in between: the leftmost
   // occurrence of each is the best choice.

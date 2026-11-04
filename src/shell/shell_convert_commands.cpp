@@ -164,14 +164,11 @@ void shell_convertert::convert_command(
   // goto-symex from merging their values at the join points of later
   // control flow (loops are labels and gotos in one block), which made
   // the string solvers reason about if-expressions over strings.
-  if(!bounded())
+  for(std::size_t i = live; i < live_temporaries.size(); ++i)
   {
-    for(std::size_t i = live; i < live_temporaries.size(); ++i)
-    {
-      code_deadt dead{live_temporaries[i]};
-      dead.add_source_location() = command.location;
-      dest.add(std::move(dead));
-    }
+    code_deadt dead{live_temporaries[i]};
+    dead.add_source_location() = command.location;
+    dest.add(std::move(dead));
   }
   live_temporaries.erase(
     live_temporaries.begin() + live, live_temporaries.end());

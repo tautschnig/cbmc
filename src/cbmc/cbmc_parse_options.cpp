@@ -56,6 +56,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <langapi/language.h>
 #include <langapi/mode.h>
 #include <pointer-analysis/add_failed_symbols.h>
+#include <shell/shell_converter.h>
 
 #include "c_test_input_generator.h"
 
@@ -292,8 +293,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option(
       "shell-max-arguments", cmdline.get_value("shell-max-arguments"));
   // Shell strings: native SMT-LIB strings whenever an SMT solver with the
-  // theory of strings is chosen, else bounded strings; refined strings
-  // need the string refinement solver.
+  // theory of strings is chosen, else refined strings, which need the
+  // string refinement solver. As the input language is not known yet,
+  // refinement is enabled for the default in doit, for shell programs.
   {
     const bool string_solver = cmdline.isset("z3") || cmdline.isset("cvc5");
     std::string shell_strings = cmdline.get_value("shell-strings");
@@ -319,6 +321,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     }
     if(!shell_strings.empty())
       options.set_option("shell-strings", shell_strings);
+    else if(cmdline.isset("smt2") || cmdline.isset("incremental-smt2-solver"))
+      options.set_option("shell-strings-need-sat", true);
   }
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
@@ -443,8 +447,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("no-array-field-sensitivity", true);
   }
 
-  if(cmdline.isset("reachability-slice") &&
-     cmdline.isset("reachability-slice-fb"))
+  if(
+    cmdline.isset("reachability-slice") &&
+    cmdline.isset("reachability-slice-fb"))
   {
     log.error()
       << "--reachability-slice and --reachability-slice-fb must not be "
@@ -527,9 +532,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("no-simplify"))
     options.set_option("simplify", false);
 
-  if(cmdline.isset("stop-on-fail") ||
-     cmdline.isset("dimacs") ||
-     cmdline.isset("outfile"))
+  if(
+    cmdline.isset("stop-on-fail") || cmdline.isset("dimacs") ||
+    cmdline.isset("outfile"))
     options.set_option("stop-on-fail", true);
 
   if(
@@ -687,8 +692,7 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("symex-coverage-report"))
   {
     options.set_option(
-      "symex-coverage-report",
-      cmdline.get_value("symex-coverage-report"));
+      "symex-coverage-report", cmdline.get_value("symex-coverage-report"));
     options.set_option("paths-symex-explore-all", true);
   }
 
@@ -748,8 +752,7 @@ int cbmc_parse_optionst::doit()
   // Unwinding of transition systems is done by hw-cbmc.
   //
 
-  if(cmdline.isset("module") ||
-     cmdline.isset("gen-interface"))
+  if(cmdline.isset("module") || cmdline.isset("gen-interface"))
   {
     log.error() << "This version of CBMC has no support for "
                    " hardware modules. Please use hw-cbmc."
@@ -810,7 +813,7 @@ int cbmc_parse_optionst::doit()
       return CPROVER_EXIT_INCORRECT_TASK;
     }
 
-    std::string filename=cmdline.args[0];
+    std::string filename = cmdline.args[0];
 
     std::ifstream infile(widen_if_needed(filename));
 
@@ -821,10 +824,9 @@ int cbmc_parse_optionst::doit()
       return CPROVER_EXIT_INCORRECT_TASK;
     }
 
-    std::unique_ptr<languaget> language=
-      get_language_from_filename(filename);
+    std::unique_ptr<languaget> language = get_language_from_filename(filename);
 
-    if(language==nullptr)
+    if(language == nullptr)
     {
       log.error() << "failed to figure out type of file '" << filename << "'"
                   << messaget::eom;
@@ -848,11 +850,28 @@ int cbmc_parse_optionst::doit()
   int get_goto_program_ret =
     get_goto_program(goto_model, options, cmdline, ui_message_handler);
 
-  if(get_goto_program_ret!=-1)
+  if(get_goto_program_ret != -1)
     return get_goto_program_ret;
 
-  if(cmdline.isset("show-claims") || // will go away
-     cmdline.isset("show-properties")) // use this one
+  // Shell programs have refined strings unless --shell-strings, --cvc5 or
+  // --z3 chose otherwise.
+  if(
+    !options.is_set("shell-strings") &&
+    goto_model.symbol_table.has_symbol(SHELL_MAIN_FUNCTION))
+  {
+    if(options.get_bool_option("shell-strings-need-sat"))
+    {
+      log.error() << "shell scripts need the SAT back end with refined "
+                     "strings, or --cvc5 or --z3"
+                  << messaget::eom;
+      return CPROVER_EXIT_USAGE_ERROR;
+    }
+    options.set_option("refine-strings", true);
+  }
+
+  if(
+    cmdline.isset("show-claims") ||   // will go away
+    cmdline.isset("show-properties")) // use this one
   {
     show_properties(goto_model, ui_message_handler);
     return CPROVER_EXIT_SUCCESS;
@@ -1321,14 +1340,15 @@ void cbmc_parse_optionst::help()
     " nested mutable containers\n"
     "Shell scripts:\n"
     " {y--shell-max-string-length} {un} \t "
-    "bound the length of shell strings to {un} bytes (default: 64)\n"
+    "bound the length of the inputs of shell scripts with refined strings "
+    "to {un} bytes (default: 64)\n"
     " {y--shell-max-arguments} {un} \t "
     "bound the number of positional parameters and of fields in a list to "
     "{un} (default: 8)\n"
-    " {y--shell-strings} {ubounded}|{urefined}|{unative} \t "
-    "represent shell strings as bounded byte arrays, for the string "
-    "refinement solver, or as SMT-LIB strings (the default with {y--cvc5} "
-    "or {y--z3}; else bounded is the default)\n"
+    " {y--shell-strings} {urefined}|{unative} \t "
+    "represent shell strings for the string refinement solver (the "
+    "default), or as SMT-LIB strings (the default with {y--cvc5} or "
+    "{y--z3})\n"
     "\n"
     "Platform options:\n"
     HELP_CONFIG_PLATFORM

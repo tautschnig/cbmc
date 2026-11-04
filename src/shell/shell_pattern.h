@@ -46,10 +46,6 @@ struct shell_patternt
   /// is a part of a word of the IR.
   std::vector<const shell_word_partt *> dynamic_parts;
 
-  /// A text that identifies the pattern up to the values of its dynamic
-  /// parts, to share matchers between equal patterns.
-  std::string signature() const;
-
   /// Whether the pattern has no *, ?, or bracket expression: it then
   /// matches exactly the string it denotes.
   bool is_literal() const;
@@ -61,29 +57,5 @@ std::optional<shell_patternt> compile_shell_pattern(
   const shell_wordt &word,
   shell_dialectt dialect,
   std::string &error);
-
-/// Names of the matcher functions for a pattern, given the name prefix.
-/// match(s, d...) is whether s matches; the remove_* functions return s
-/// without the shortest or longest matching prefix or suffix.
-struct shell_pattern_functionst
-{
-  std::string match;
-  std::string remove_shortest_prefix;
-  std::string remove_longest_prefix;
-  std::string remove_shortest_suffix;
-  std::string remove_longest_suffix;
-};
-
-shell_pattern_functionst shell_pattern_function_names(const std::string &);
-
-/// C code of the matcher functions for \p pattern, which must have no
-/// dynamic parts, named after \p prefix, for strings of at most
-/// \p max_length bytes. Each function takes the subject string. Matching
-/// is by a table over positions of the string and of the pattern, which
-/// is unrolled, as the rest of the runtime.
-std::string shell_pattern_matcher_source(
-  const shell_patternt &pattern,
-  const std::string &prefix,
-  std::size_t max_length);
 
 #endif // CPROVER_SHELL_SHELL_PATTERN_H

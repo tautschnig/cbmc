@@ -3,9 +3,10 @@
 
 Each kernel directory holds main.sh. Kernels whose name ends in -fail must
 fail; the others must succeed. All configurations use the shell front-end
-(--shell-strings): bounded strings of 16, 64 and 256 bytes, refined strings
-for the string refinement solver (inputs of at most 64 or 1000 bytes), and
-native SMT-LIB strings with z3 and cvc5.
+(--shell-strings): refined strings for the string refinement solver
+(inputs of at most 64 or 1000 bytes), and native SMT-LIB strings with z3
+and cvc5. (results.txt and results.tsv also have bounded strings of 16,
+64 and 256 bytes, which the front end no longer has.)
 
 Usage: run_kernels.py CBMC [JOBS]
        run_kernels.py --table
@@ -32,10 +33,6 @@ COMMON = ['--unwind', '10', '--unwinding-assertions']
 
 def configurations(cbmc):
     configs = []
-    for n in (16, 64, 256):
-        configs.append(
-            (f'bounded-N{n}', 'main.sh',
-             [cbmc, '--shell-max-string-length', str(n)] + COMMON))
     for n in (64, 1000):
         configs.append(
             (f'refined-in{n}', 'main.sh',

@@ -1,8 +1,8 @@
 /// \file
 /// Conversion of the shell IR into symbols and code for CBMC.
 ///
-/// Every shell value is a bounded string (see shell_runtime.h). The script
-/// becomes the function shell::main; shell variables are static-lifetime
+/// Every shell value is a struct of a string and its set flag (see
+/// shell_convert_strings.cpp). The script becomes the function shell::main; shell variables are static-lifetime
 /// symbols initialised from a nondeterministic environment. The exit
 /// status of the last command is the symbol shell::status.
 ///
@@ -17,7 +17,6 @@
 #include <util/symbol_table_base.h>
 
 #include "shell_converter.h"
-#include "shell_runtime.h"
 
 const irep_idt &shell_mode()
 {
@@ -101,8 +100,7 @@ void shell_convertert::add_initialize()
 
 void shell_convertert::operator()()
 {
-  if(!bounded())
-    add_value_type();
+  add_value_type();
   collect_dot_scripts(program.commands);
   collect_function_definitions(program.commands);
   collect_options(program.commands);
@@ -132,12 +130,6 @@ bool shell_convert(
   symbol_table_baset &symbol_table,
   message_handlert &message_handler)
 {
-  if(
-    options.strings == shell_string_representationt::BOUNDED &&
-    add_shell_runtime(options.max_string_length, symbol_table, message_handler))
-  {
-    return true;
-  }
   try
   {
     shell_convertert{program, options, symbol_table, message_handler}();

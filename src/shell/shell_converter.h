@@ -4,6 +4,7 @@
 #ifndef CPROVER_SHELL_SHELL_CONVERTER_H
 #define CPROVER_SHELL_SHELL_CONVERTER_H
 
+#include <util/cprover_prefix.h>
 #include <util/irep.h>
 
 #include <cstddef>
@@ -24,13 +25,14 @@ const irep_idt &shell_mode();
 /// Default for --shell-max-arguments.
 #define SHELL_DEFAULT_MAX_ARGUMENTS 8
 
+/// Struct tag of shell values: `set` (_Bool), `value`, a refined string or
+/// an SMT-LIB string, and `is_int` and `int_value` for strings that are the
+/// decimal representation of an integer.
+#define SHELL_VALUE_TAG CPROVER_PREFIX "shell_value"
+
 /// How shell strings are represented (--shell-strings).
 enum class shell_string_representationt
 {
-  /// A C struct with a byte array of --shell-max-string-length bytes, and
-  /// runtime functions written in C (shell_runtime.h). Works with any back
-  /// end.
-  BOUNDED,
   /// Unbounded strings for the string refinement solver (--refine-strings):
   /// `cprover_string_*` function applications over refined strings.
   REFINED,
@@ -43,13 +45,13 @@ enum class shell_string_representationt
 /// would exceed them fail a property.
 struct shell_convert_optionst
 {
-  /// Shell values are strings of at most this many bytes.
+  /// With refined strings, inputs are strings of at most this many bytes.
   std::size_t max_string_length = SHELL_DEFAULT_MAX_STRING_LENGTH;
   /// There are at most this many positional parameters, and lists of
   /// fields (such as the arguments of a function call) have at most this
   /// many elements.
   std::size_t max_arguments = SHELL_DEFAULT_MAX_ARGUMENTS;
-  shell_string_representationt strings = shell_string_representationt::BOUNDED;
+  shell_string_representationt strings = shell_string_representationt::REFINED;
 };
 
 /// Convert \p program into `shell::main` and the variable symbols it uses,

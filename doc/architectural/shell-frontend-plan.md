@@ -1000,6 +1000,52 @@ Measured after the solver fixes of 7.3 and the commits that followed
 **Proposal:** make `--shell-strings refined` the SAT default, and keep
 `bounded` as an option for the patterns above.
 
+### 7.6 Removing bounded strings (2026-11-05)
+
+Rather than keep bounded strings for the patterns of 7.5, the unbounded
+representations now support all patterns, and bounded strings, with their
+C runtime (`shell_runtime.cpp`) and generated pattern matchers, are gone.
+`--shell-strings` is `refined` (the default, with the SAT back end) or
+`native` (the default with `--cvc5` or `--z3`); `--shell-max-string-length`
+bounds the inputs of refined strings only.
+
+- **Patterns.** A pattern `S0*S1*...*Sn` matches with `S0` and `Sn` at
+  known positions, checked element by element, and the middle segments at
+  their first occurrences; the removals then take the first or last
+  occurrence of the segment at the end that they search for. A segment is
+  searched for by its core, without the `?`s around it: a literal core,
+  which may include quoted expansions, with `index_of`; one bracket
+  expression with the solver's new `index_of_set` (refined) or regular
+  expressions (native); and up to 16 literal alternatives of the
+  characters of the bracket expressions. Native strings search for other
+  cores without expansions with regular expressions. Refined strings do
+  not support a `?` inside a searched core, such as `*-?-*`.
+- **Jumps.** The items of `case` and the bodies of loops are blocks, so
+  that the jumps to them, and `break` and `continue`, skip no declarations:
+  goto_convert implemented those with `__CPROVER_going_to` flags, whose
+  merges made string pointers exponentially large trees for the string
+  solver. With this, `csv-loop` and `csv-loop-fail` verify (8 and 26 s),
+  so the 24 kernels without `${#x}` in `$((...))` are all correct with
+  refined strings, and of the
+  three slow scripts of 7.5, one takes 2 s rather than 90 s, and two 26 and
+  55 s rather than 117 and 109 s.
+- **Differential tests.** `pattern_differential.py` and
+  `runtime_differential.py` assert what dash and bash compute, one input
+  per arm of a `case`, and check the assertions in both modes, telling
+  over-approximations from wrong results. They found that bash accepts
+  only space and tab after a `test` integer (now modelled), and a crash of
+  the string solver on not-contains axioms of dead paths (fixed). Of 239
+  patterns with 14 values in 5 operations, 16,275 checks agree with refined
+  strings and 16,450 with native strings, none mismatch, and 6 (refined)
+  and 3 (native) patterns are unsupported. Of 3,000 integer strings, none
+  mismatch.
+- **Census.** No installed script converts with bounded strings only: 597
+  convert with bounded strings, 606 (a superset) with refined strings.
+- **Still slow with refined strings.** A script's solving time grows about
+  quadratically with the number of `case` arms that have failed
+  properties, as CBMC solves once per newly failed property; the
+  differential tests use small scripts.
+
 ---
 
 ## 8. Bibliographic details for key references

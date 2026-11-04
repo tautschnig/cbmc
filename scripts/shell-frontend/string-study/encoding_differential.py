@@ -12,6 +12,11 @@ Arithmetic on values the front-end does not support (octal or hexadecimal
 constants, for instance) fails the shell-arithmetic property instead; that
 is sound, and counted separately.
 
+A batch of cases is one script, so that a pattern the front end does not
+support, or a solver timeout, is an error for its whole batch.
+../pattern_differential.py and ../runtime_differential.py check each input
+on a path of its own, and tell over-approximations from wrong results.
+
 Usage: encoding_differential.py CBMC [CASES] [SEED]
 """
 
@@ -24,18 +29,13 @@ import sys
 import tempfile
 
 CONFIGS = {
-    'bounded': ['--shell-strings', 'bounded'],
     'refined': ['--shell-strings', 'refined', '--refine-strings'],
     'native-z3': ['--shell-strings', 'native', '--z3'],
     'native-cvc5': ['--shell-strings', 'native', '--cvc5'],
 }
-# Encodings the unbounded representations do not support (conversion
-# errors), by feature.
-UNSUPPORTED = {
-    'refined': {'question', 'removal-multi'},
-    'native-z3': {'removal-multi'},
-    'native-cvc5': {'removal-multi'},
-}
+# Encodings that the representations do not support (conversion errors),
+# by feature.
+UNSUPPORTED = {}
 BATCH = 40
 
 

@@ -1,9 +1,8 @@
 /// \file
 /// Shell converter: the representations of strings (--shell-strings).
 ///
-/// Bounded strings are C structs handled by the runtime (shell_runtime.h).
-/// The unbounded representations wrap a payload in a struct with the `set`
-/// flag, which needs no byte-level layout because shell has no way to
+/// Both representations wrap a payload in a struct with the `set` flag,
+/// which needs no byte-level layout because shell has no way to
 /// reinterpret memory:
 ///   * refined: a refined string {length, content} for the string
 ///     refinement solver. Operations are `cprover_string_*` applications
@@ -12,8 +11,10 @@
 ///   * native: the SMT-LIB String sort; operations are terms that
 ///     smt2_conv lowers to str.* and re.* operators.
 ///
-/// Neither unbounded representation limits the length of strings, so
-/// --shell-max-string-length does not apply to them.
+/// Neither representation limits the length of the strings that a script
+/// builds. Refined strings bound the inputs (the environment, arguments,
+/// command output) to --shell-max-string-length bytes, as the solver only
+/// checks its models up to a length.
 
 #include "shell_convert_class.h"
 
@@ -33,7 +34,6 @@
 
 typet shell_convertert::payload_type() const
 {
-  PRECONDITION(!bounded());
   if(native())
     return string_typet{};
   return refined_string_typet{
@@ -106,7 +106,6 @@ exprt shell_convertert::make_int_value(exprt payload, const exprt &value) const
 
 exprt shell_convertert::set_value(const exprt &value) const
 {
-  PRECONDITION(!bounded());
   return struct_exprt{
     {from_integer(1, c_bool_type()),
      payload_of(value),
@@ -117,7 +116,6 @@ exprt shell_convertert::set_value(const exprt &value) const
 
 exprt shell_convertert::known_int(const exprt &value) const
 {
-  PRECONDITION(!bounded());
   return notequal_exprt{
     member_exprt{value, "is_int", c_bool_type()},
     from_integer(0, c_bool_type())};
@@ -283,7 +281,6 @@ exprt shell_convertert::string_function(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  PRECONDITION(!bounded());
   exprt::operandst operands;
   // Refined strings are results through two output arguments, the length
   // and content of the result.
@@ -571,11 +568,6 @@ exprt shell_convertert::payload_last_index_of(
 
 exprt shell_convertert::is_empty(const exprt &string) const
 {
-  if(bounded())
-  {
-    return equal_exprt{
-      length_of(string), from_integer(0, component_type("length"))};
-  }
   if(native())
     return equal_exprt{payload_of(string), payload_literal("")};
   return equal_exprt{
@@ -584,54 +576,21 @@ exprt shell_convertert::is_empty(const exprt &string) const
 
 exprt shell_convertert::string_literal(
   const std::string &text,
-  const source_locationt &loc)
+  const source_locationt &)
 {
-  if(!bounded())
+  // Decimal numbers without leading zeros (which are octal in some
+  // contexts) are integers whose value is known.
+  const bool decimal =
+    !text.empty() && text.size() <= 18 &&
+    text.find_first_not_of("0123456789") == std::string::npos &&
+    (text[0] != '0' || text.size() == 1);
+  if(decimal)
   {
-    // Decimal numbers without leading zeros (which are octal in some
-    // contexts) are integers whose value is known.
-    const bool decimal =
-      !text.empty() && text.size() <= 18 &&
-      text.find_first_not_of("0123456789") == std::string::npos &&
-      (text[0] != '0' || text.size() == 1);
-    if(decimal)
-    {
-      return make_int_value(
-        payload_literal(text),
-        from_integer(string2integer(text), integer_type()));
-    }
-    return make_value(payload_literal(text));
+    return make_int_value(
+      payload_literal(text),
+      from_integer(string2integer(text), integer_type()));
   }
-  if(text.size() > max_length)
-  {
-    log.error().source_location = loc;
-    log.error() << "string literal of " << text.size()
-                << " bytes exceeds --shell-max-string-length " << max_length
-                << messaget::eom;
-    throw shell_conversion_errort{};
-  }
-  const array_typet &data_type = to_array_type(component_type("data"));
-  exprt::operandst bytes;
-  for(std::size_t i = 0; i < max_length; ++i)
-  {
-    const unsigned char c =
-      i < text.size() ? static_cast<unsigned char>(text[i]) : 0;
-    bytes.push_back(from_integer(c, data_type.element_type()));
-  }
-  // Follow the components of the C struct, which include padding.
-  exprt::operandst operands;
-  for(const auto &component : string_struct().components())
-  {
-    if(component.get_name() == "set")
-      operands.push_back(from_integer(1, component.type()));
-    else if(component.get_name() == "length")
-      operands.push_back(from_integer(text.size(), component.type()));
-    else if(component.get_name() == "data")
-      operands.push_back(array_exprt{std::move(bytes), data_type});
-    else
-      operands.push_back(from_integer(0, component.type()));
-  }
-  return struct_exprt{std::move(operands), string_type()};
+  return make_value(payload_literal(text));
 }
 
 exprt shell_convertert::unset_string(const source_locationt &loc)
@@ -654,21 +613,7 @@ exprt shell_convertert::concat(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  if(!bounded())
-  {
-    return make_value(payload_concat(payload_of(a), payload_of(b), dest, loc));
-  }
-  check(
-    dest,
-    binary_relation_exprt{
-      plus_exprt{length_of(a), length_of(b)},
-      ID_le,
-      from_integer(max_length, component_type("length"))},
-    "shell-string-length",
-    "string exceeds --shell-max-string-length (" + std::to_string(max_length) +
-      ")",
-    loc);
-  return call(SHELL_RT_CONCAT, {a, b}, dest, loc);
+  return make_value(payload_concat(payload_of(a), payload_of(b), dest, loc));
 }
 
 exprt shell_convertert::equal(
@@ -679,17 +624,12 @@ exprt shell_convertert::equal(
 {
   if(native())
     return equal_exprt{payload_of(a), payload_of(b)};
-  if(!bounded())
-  {
-    return string_function(
-      ID_cprover_string_equal_func,
-      {payload_of(a), payload_of(b)},
-      bool_typet{},
-      dest,
-      loc);
-  }
-  const symbol_exprt result = call(SHELL_RT_EQUAL, {a, b}, dest, loc);
-  return notequal_exprt{result, from_integer(0, result.type())};
+  return string_function(
+    ID_cprover_string_equal_func,
+    {payload_of(a), payload_of(b)},
+    bool_typet{},
+    dest,
+    loc);
 }
 
 exprt shell_convertert::from_integer_expr(
@@ -698,8 +638,6 @@ exprt shell_convertert::from_integer_expr(
   const source_locationt &loc)
 {
   const exprt v = typecast_exprt::conditional_cast(value, integer_type());
-  if(bounded())
-    return call(SHELL_RT_FROM_INTEGER, {v}, dest, loc);
   if(!native())
   {
     return make_int_value(
@@ -727,8 +665,6 @@ exprt shell_convertert::string_length(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  if(bounded())
-    return typecast_exprt{length_of(string), integer_type()};
   return payload_length(payload_of(string), dest, loc);
 }
 
@@ -736,8 +672,6 @@ exprt shell_convertert::nondet_string(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  if(bounded())
-    return call(SHELL_RT_NONDET_STRING, {}, dest, loc);
   const symbol_exprt payload = temporary(payload_type(), dest, loc);
   if(native())
   {
@@ -757,7 +691,7 @@ exprt shell_convertert::nondet_string(
       code_assumet{and_exprt{
         binary_relation_exprt{length, ID_ge, from_integer(0, integer_type())},
         // The solver checks its models only for strings of at most 2^26
-        // bytes; inputs are bounded as with bounded strings.
+        // bytes; inputs have at most --shell-max-string-length bytes.
         binary_relation_exprt{
           length, ID_le, from_integer(max_length, integer_type())}}},
       loc);
@@ -769,8 +703,6 @@ exprt shell_convertert::environment_string(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  if(bounded())
-    return call(SHELL_RT_ENVIRONMENT, {}, dest, loc);
   // An unset value has an empty payload, which value_of relies on.
   const exprt value = nondet_string(dest, loc);
   const symbol_exprt set = temporary(bool_typet{}, dest, loc);
@@ -793,8 +725,6 @@ exprt shell_convertert::test_integer(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  if(bounded())
-    return parse_test_integer(string, trailing, value, dest, loc);
   // Strings made from integers need no parsing. The parser is in a branch
   // of its own, which symbolic execution skips when the string is known to
   // be an integer, as for counters: the parser's string constraints are
@@ -822,17 +752,6 @@ exprt shell_convertert::parse_test_integer(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  if(bounded())
-  {
-    const symbol_exprt valid = call(
-      SHELL_RT_TEST_INTEGER,
-      {string,
-       from_integer(static_cast<int>(trailing), unsigned_char_type()),
-       address_of_exprt{value}},
-      dest,
-      loc);
-    return notequal_exprt{valid, from_integer(0, valid.type())};
-  }
   const exprt payload = payload_of(string);
   const exprt zero = from_integer(0, integer_type());
 
@@ -1003,19 +922,6 @@ exprt shell_convertert::arith_integer(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  const typet &bool_type = c_bool_type();
-  if(bounded())
-  {
-    const symbol_exprt valid = call(
-      SHELL_RT_ARITH_INTEGER,
-      {string,
-       from_integer(leading_zero_octal ? 1 : 0, bool_type),
-       from_integer(any_space ? 1 : 0, bool_type),
-       address_of_exprt{value}},
-      dest,
-      loc);
-    return notequal_exprt{valid, from_integer(0, valid.type())};
-  }
   // As in test_integer, the parser is in a branch that symbolic execution
   // skips for strings known to be integers.
   const symbol_exprt valid = temporary(bool_typet{}, dest, loc);

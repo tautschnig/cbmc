@@ -22,7 +22,6 @@
 #include <json/json_parser.h>
 
 #include "shell_converter.h"
-#include "shell_runtime.h"
 #include "shfmt_parser.h"
 
 #include <cstdlib>
@@ -123,11 +122,10 @@ void shell_languaget::set_language_options(
     convert_options.strings = shell_string_representationt::REFINED;
   else if(strings == "native")
     convert_options.strings = shell_string_representationt::NATIVE;
-  else if(!strings.empty() && strings != "bounded")
+  else if(!strings.empty())
   {
     messaget log{message_handler};
-    log.error() << "--shell-strings must be bounded, refined, or native; "
-                   "using bounded"
+    log.error() << "--shell-strings must be refined or native; using refined"
                 << messaget::eom;
   }
 }
@@ -203,43 +201,8 @@ bool shell_languaget::to_expr(
 
 std::string expr2shell(const exprt &expr, const namespacet &ns)
 {
-  // A constant string, as in a trace: 'text', or <unset>.
-  if(
-    expr.id() == ID_struct && expr.type().id() == ID_struct_tag &&
-    to_struct_tag_type(expr.type()).get_identifier() == "tag-" SHELL_STRING_TAG)
-  {
-    const struct_typet &type = ns.follow_tag(to_struct_tag_type(expr.type()));
-    if(type.components().size() != expr.operands().size())
-      return expr2c(expr, ns);
-    const auto &operands = expr.operands();
-    const auto set =
-      numeric_cast<mp_integer>(operands[type.component_number("set")]);
-    const auto length =
-      numeric_cast<mp_integer>(operands[type.component_number("length")]);
-    const exprt &data = operands[type.component_number("data")];
-    if(set.has_value() && *set == 0)
-      return "<unset>";
-    if(
-      length.has_value() && data.id() == ID_array &&
-      *length <= data.operands().size())
-    {
-      std::string text;
-      for(std::size_t i = 0; i < length->to_ulong(); ++i)
-      {
-        const auto c = numeric_cast<mp_integer>(data.operands()[i]);
-        if(!c.has_value())
-          return expr2c(expr, ns);
-        text += static_cast<char>(c->to_ulong());
-      }
-      // Single quotes, as the shell would need to read the value back.
-      std::string quoted = "'";
-      for(char c : text)
-        quoted += c == '\'' ? std::string{"'\\''"} : std::string{c};
-      return quoted + "'";
-    }
-  }
-  // The same for unbounded strings, of which only native strings have
-  // constant contents.
+  // A constant string, as in a trace: 'text', or <unset>. Only native
+  // strings have constant contents.
   if(
     expr.id() == ID_struct && expr.type().id() == ID_struct_tag &&
     to_struct_tag_type(expr.type()).get_identifier() ==

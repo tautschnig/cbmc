@@ -332,22 +332,14 @@ void shell_convertert::initialize_positional_parameters(
       positional_array(), from_integer(i, index_type())};
     const exprt present = binary_relation_exprt{
       from_integer(i, count_type()), ID_lt, argument_count()};
-    if(!bounded())
-    {
-      // Without a branch, which would make the string a choice between two
-      // strings: the string solvers then index into every alternative.
-      // Unset values are empty (see environment_string).
-      const exprt value = nondet_string(init, loc);
-      add(init, code_assumet{or_exprt{present, is_empty(value)}}, loc);
-      exprt set_value = value;
-      to_struct_expr(set_value).operands()[0] =
-        typecast_exprt{present, c_bool_type()};
-      assign(init, element, set_value, loc);
-      continue;
-    }
-    code_blockt set, unset;
-    assign(set, element, nondet_string(set, loc), loc);
-    assign(unset, element, unset_string(loc), loc);
-    add(init, code_ifthenelset{present, std::move(set), std::move(unset)}, loc);
+    // Without a branch, which would make the string a choice between two
+    // strings: the string solvers then index into every alternative.
+    // Unset values are empty (see environment_string).
+    const exprt value = nondet_string(init, loc);
+    add(init, code_assumet{or_exprt{present, is_empty(value)}}, loc);
+    exprt set_value = value;
+    to_struct_expr(set_value).operands()[0] =
+      typecast_exprt{present, c_bool_type()};
+    assign(init, element, set_value, loc);
   }
 }

@@ -3,10 +3,13 @@ main.sh
 --shell-max-string-length 30
 ^EXIT=10$
 ^SIGNAL=0$
-^\[shell-string-length\.1\] file main.sh line 2 string exceeds --shell-max-string-length \(30\): FAILURE$
+^\[assertion\.1\] file main.sh line 3 .*: SUCCESS$
+^\[assertion\.2\] file main.sh line 4 .*: SUCCESS$
+^\[assertion\.3\] file main.sh line 5 .*: FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring
+shell-string-length
 --
 Inputs are at most --shell-max-string-length bytes; strings that the
-script builds and that would exceed the bound are reported.
+script builds are not bounded.
