@@ -647,6 +647,9 @@ func (e *encoder) objectEntry(o types.Object) map[string]any {
 		}
 	case *types.Func:
 		entry["kind"] = "func"
+		if isMethod(x) {
+			entry["method"] = true
+		}
 		if x.Signature().TypeParams().Len() > 0 {
 			return entry // generic, only used instantiated
 		}
@@ -1537,7 +1540,10 @@ func main() {
 		file["Decls"] = append(decls, decl)
 	}
 	if !*noPrune {
-		prune(asts, packages, enc.types, pkg.Path())
+		// Calls through reflect reach methods without naming them.
+		keepMethods := enc.usesReflect("Value.Call") ||
+			enc.usesReflect("Value.CallSlice")
+		prune(asts, packages, enc.types, pkg.Path(), enc.objects, keepMethods)
 	}
 	doc := map[string]any{"version": 1, "go_version": runtime.Version(),
 		"goarch": *goarch, "package": pkg.Path(), "files": names,

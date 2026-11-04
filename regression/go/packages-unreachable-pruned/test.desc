@@ -3,11 +3,13 @@ main.go
 
 ^EXIT=0$
 ^SIGNAL=0$
-^\[go::main\.main\.assertion\.1\] line 12 twice: SUCCESS$
+^\[go::main\.main\.assertion\.1\] line 13 twice: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 15 method through an interface: SUCCESS$
 ^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring
 os\.Getenv
 lib\.Home
+lib\.Disc\.Env
 --
 unreachable functions of imported packages are not converted

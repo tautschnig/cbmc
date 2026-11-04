@@ -9,17 +9,20 @@ import "strings"
 // not load and convert them: most of the source models are functions that
 // a program does not call (math's for a program that uses strconv).
 //
-// The roots are the functions of the program's own package (main, and the
-// entry function of --function; unsupported constructs in them are
-// reported even where unreachable), the init functions, the initialisers of package
-// variables (packages), every method (interface dispatch, method sets and
-// reflection reach methods without naming them), and the runtime package
-// cprover/rt (whose functions the front-end calls by name). A function is
+// The roots are the functions and methods of the program's own package
+// (main, and the entry function of --function; unsupported constructs in
+// them are reported even where unreachable), the init functions, the
+// initialisers of package variables (packages), and the runtime package
+// cprover/rt (whose functions the front-end calls by name). Methods are
+// reached by name (see below), or all of them with keepMethods (when the
+// program calls methods through reflect, which names none). A function is
 // reachable if a reachable declaration or initialiser refers to its object
 // id (in "_obj", "_impl" or a selection's "obj"), which covers calls,
 // function values, and the helper's rewrites (instances, models, Errorf).
-func prune(asts []any, packages []any, types []any, mainPkg string) {
+func prune(asts []any, packages []any, types []any, mainPkg string,
+	objects map[string]any, keepMethods bool) {
 	funcs := map[string]map[string]any{}
+	methodsByName := map[string][]string{}
 	var roots []string
 	for _, a := range asts {
 		file, _ := a.(map[string]any)
@@ -35,7 +38,12 @@ func prune(asts []any, packages []any, types []any, mainPkg string) {
 				continue
 			}
 			funcs[id] = decl
-			if decl["Recv"] != nil || strings.HasPrefix(id, mainPkg+".") ||
+			if decl["Recv"] != nil {
+				name, _ := name["Name"].(string)
+				methodsByName[name] = append(methodsByName[name], id)
+			}
+			if (keepMethods && decl["Recv"] != nil) ||
+				strings.HasPrefix(id, mainPkg+".") ||
 				strings.Contains(id, ".init#") ||
 				strings.HasPrefix(id, runtimePath+".") {
 				roots = append(roots, id)
@@ -78,16 +86,11 @@ func prune(asts []any, packages []any, types []any, mainPkg string) {
 			refer(i)
 		}
 	}
-	// Methods in method sets (of types of the type table) as well.
-	for _, t := range types {
-		entry, _ := t.(map[string]any)
-		mset, _ := entry["mset"].([]any)
-		for _, m := range mset {
-			if id, ok := m.(map[string]any)["obj"].(string); ok {
-				work = append(work, id)
-			}
-		}
-	}
+	// A method that the program refers to (in particular, a method of an
+	// interface that it calls) may be called through any interface value
+	// whose dynamic type has a method of that name: all methods of that
+	// name are reachable.
+	names := map[string]bool{}
 	for len(work) > 0 {
 		id := work[len(work)-1]
 		work = work[:len(work)-1]
@@ -97,6 +100,14 @@ func prune(asts []any, packages []any, types []any, mainPkg string) {
 		reached[id] = true
 		if decl, ok := funcs[id]; ok {
 			refer(decl)
+		}
+		if entry, ok := objects[id].(map[string]any); ok &&
+			entry["kind"] == "func" && entry["method"] == true {
+			name, _ := entry["name"].(string)
+			if !names[name] {
+				names[name] = true
+				work = append(work, methodsByName[name]...)
+			}
 		}
 	}
 	for _, a := range asts {
