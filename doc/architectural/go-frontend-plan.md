@@ -998,8 +998,8 @@ use `MapOf`, `ArrayOf` or `ChanOf`, which find the program's types.
   that imports `strconv` takes 0.8 s (helper 0.35 s, 1.4 MB of JSON
   loaded in 0.15 s, symex 0.2 s), one that calls `reflect.TypeOf` 1.1 s
   (helper 0.5 s, 1.9 MB loaded in 0.17 s, symex 0.3 s, 15,000 steps,
-  about half of them the bytes of string constants, which field
-  sensitivity initialises one by one). The `encoding/json` round trip
+  before the bytes of string constants became const-qualified arrays,
+  which field sensitivity keeps whole: 10,000 steps now). The `encoding/json` round trip
   takes 9 s: helper 1.3 s (of which `go list` for export data about
   half), 7.6 MB of JSON loaded in 0.8 s, conversion 0.5 s, the GOTO
   passes 2.6 s (linking with the C library and function-pointer removal
@@ -1013,6 +1013,10 @@ use `MapOf`, `ArrayOf` or `ChanOf`, which find the program's types.
 
 ### 7.3 CBMC changes to upstream
 
+- goto-symex: arrays of const-qualified elements are not divided by field
+  sensitivity (their constant value is propagated as a whole; writes after
+  casting away const stay sound), which the Go front-end uses for the bytes
+  of string constants; assignments of values of size zero are skipped.
 - goto-symex: propagation of values merged from constants
   (`regression/cbmc/symex-merged-constants`); typed dereferences for
   front-ends (`ID_C_typed_dereference`); sound value sets for pointers
