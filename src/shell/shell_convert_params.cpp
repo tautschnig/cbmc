@@ -137,6 +137,11 @@ shell_convertert::field_listt shell_convertert::expand_fields(
       // unquoted $@ is subject to field splitting.
       unsupported(loc, "$@ other than as a whole word \"$@\"");
     }
+    else if(is_splittable(*it))
+    {
+      split_fields(list, it->front(), dest, loc);
+      dynamic = true;
+    }
     else
     {
       append_field(
@@ -150,6 +155,20 @@ shell_convertert::field_listt shell_convertert::expand_fields(
   if(dynamic || static_cast<std::size_t>(end - begin) > max_arguments)
     check_field_list(list, dest, loc);
   return list;
+}
+
+bool shell_convertert::is_splittable(const shell_wordt &word)
+{
+  using kindt = shell_word_partt::kindt;
+  if(word.size() != 1)
+    return false;
+  const shell_word_partt &part = word.front();
+  if(part.kind == kindt::COMMAND_SUBSTITUTION)
+    return true;
+  // $? and $# are decimal numbers, which field splitting leaves as they
+  // are; $@ and $* are fields of their own.
+  return part.kind == kindt::PARAMETER && part.text != "?" &&
+         part.text != "#" && part.text != "@" && part.text != "*";
 }
 
 void shell_convertert::check_field_list(

@@ -1,0 +1,11 @@
+CORE
+native.sh
+--shell-strings native --cvc5 --shell-max-arguments 2
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Field splitting with native strings. The solvers take time that grows
+fast with --shell-max-arguments, the number of fields split off.

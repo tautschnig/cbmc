@@ -145,21 +145,7 @@ exprt shell_convertert::expand_part(
         " has no space, tab or newline (field splitting, XCU 2.6.5, is "
         "not supported)",
       part.location);
-    std::bitset<256> pattern;
-    for(unsigned char c : {'*', '?', '['})
-      pattern.set(c);
-    exprt no_pattern = not_exprt{
-      payload_contains_byte(payload_of(value), pattern, dest, part.location)};
-    if(option_possible("noglob"))
-      no_pattern = or_exprt{option("noglob"), no_pattern};
-    check(
-      dest,
-      no_pattern,
-      "shell-unsupported",
-      "the value of the unquoted " + display({part}) +
-        " has no *, ? or [ (pathname expansion, XCU 2.6.6, is not "
-        "supported)",
-      part.location);
+    check_no_pattern_characters(value, part, dest);
     return value;
   }
   switch(part.kind)
@@ -177,6 +163,27 @@ exprt shell_convertert::expand_part(
     return expand_arithmetic(part, dest);
   }
   UNREACHABLE;
+}
+
+void shell_convertert::check_no_pattern_characters(
+  const exprt &value,
+  const shell_word_partt &part,
+  code_blockt &dest)
+{
+  std::bitset<256> pattern;
+  for(unsigned char c : {'*', '?', '['})
+    pattern.set(c);
+  exprt no_pattern = not_exprt{
+    payload_contains_byte(payload_of(value), pattern, dest, part.location)};
+  if(option_possible("noglob"))
+    no_pattern = or_exprt{option("noglob"), no_pattern};
+  check(
+    dest,
+    no_pattern,
+    "shell-unsupported",
+    "the value of the unquoted " + display({part}) +
+      " has no *, ? or [ (pathname expansion, XCU 2.6.6, is not supported)",
+    part.location);
 }
 
 /// Quote removal for unquoted text (XCU 2.2.1, 2.6.7), rejecting text

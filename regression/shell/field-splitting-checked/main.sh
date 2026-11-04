@@ -6,4 +6,4 @@ case "$1" in
   *) __CPROVER_assert $1 = "$1" ;;
 esac
 y=$1
-for a in $y; do :; done
+[ $y = x ]

@@ -695,6 +695,26 @@ private:
     std::vector<shell_wordt>::const_iterator end,
     code_blockt &dest,
     const source_locationt &loc);
+  /// Whether \p word is a single unquoted expansion, which field
+  /// splitting may split into several fields (or none).
+  static bool is_splittable(const shell_wordt &word);
+  /// Append the fields of the unquoted expansion \p part to \p list.
+  void split_fields(
+    const field_listt &list,
+    const shell_word_partt &part,
+    code_blockt &dest,
+    const source_locationt &loc);
+  void split_fields_searching(
+    const field_listt &list,
+    const exprt &s,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// Report the values of unquoted \p part that pathname expansion could
+  /// change.
+  void check_no_pattern_characters(
+    const exprt &value,
+    const shell_word_partt &part,
+    code_blockt &dest);
   static bool is_quoted_at(const shell_wordt &word);
   static bool contains_at(const shell_wordt &word);
   /// "$*" outside field splitting: the positional parameters joined with
@@ -1160,6 +1180,7 @@ private:
 
   shell_command_kindt classify(const std::string &name) const;
   void check_parameter_name(const std::string &name, const source_locationt &);
+
   void assign_variable(
     const std::string &name,
     const exprt &value,

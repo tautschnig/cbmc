@@ -1415,6 +1415,132 @@ exprt shell_convertert::payload_contains_byte(
   return binary_relation_exprt{found, ID_ge, from_integer(0, integer_type())};
 }
 
+void shell_convertert::split_fields(
+  const field_listt &list,
+  const shell_word_partt &part,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  const exprt value =
+    expand_part(part, shell_word_contextt::CASE_SUBJECT, false, false, dest);
+  check_no_pattern_characters(value, part, dest);
+  // Field splitting with the default IFS (XCU 2.6.5), which the script
+  // cannot change (see variable()): the fields are the maximal runs of
+  // bytes other than space, tab and newline. Most values have no blanks:
+  // their one field (or none, for the empty value) needs no search.
+  std::bitset<256> blanks;
+  for(unsigned char c : {' ', '\t', '\n'})
+    blanks.set(c);
+  code_blockt whole, append, search;
+  append_field(list, value, append, loc);
+  add(
+    whole,
+    code_ifthenelset{not_exprt{is_empty(value)}, std::move(append)},
+    loc);
+  split_fields_searching(list, payload_of(value), search, loc);
+  add(
+    dest,
+    code_ifthenelset{
+      payload_contains_byte(payload_of(value), blanks, dest, loc),
+      std::move(search),
+      std::move(whole)},
+    loc);
+}
+
+/// The fields of \p s, which has blanks. Up to max_arguments + 1 fields
+/// are split off, so that check_field_list reports more.
+void shell_convertert::split_fields_searching(
+  const field_listt &list,
+  const exprt &s,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  pattern_contextt context{s, payload_length(s, dest, loc), {}, dest, loc};
+  shell_pattern_elementt blank;
+  blank.kind = shell_pattern_elementt::kindt::SET;
+  for(unsigned char c : {' ', '\t', '\n'})
+    blank.set.set(c);
+  shell_pattern_elementt non_blank = blank;
+  non_blank.set.flip();
+  const exprt zero = from_integer(0, integer_type());
+  if(native())
+  {
+    // The rest r of the value is b f r', where b are blanks, and f is the
+    // next field, which r' is empty after, or starts with a blank; f and r'
+    // are empty when only blanks are left.
+    regex_buildert re{symbol_table};
+    shell_pattern_elementt star;
+    star.kind = shell_pattern_elementt::kindt::STAR;
+    const exprt empty = payload_literal("");
+    exprt rest = s;
+    for(std::size_t k = 0; k <= max_arguments; ++k)
+    {
+      const symbol_exprt blanks = temporary(payload_type(), dest, loc);
+      const symbol_exprt field = temporary(payload_type(), dest, loc);
+      const symbol_exprt next = temporary(payload_type(), dest, loc);
+      add(
+        dest,
+        code_assumet{and_exprt{
+          equal_exprt{
+            rest,
+            payload_concat(
+              blanks, payload_concat(field, next, dest, loc), dest, loc)},
+          re.matches(blanks, re.star(pattern_regex({blank}))),
+          or_exprt{
+            and_exprt{
+              re.matches(field, re.plus(pattern_regex({non_blank}))),
+              or_exprt{
+                equal_exprt{next, empty},
+                re.matches(next, pattern_regex({blank, star}))}},
+            and_exprt{equal_exprt{field, empty}, equal_exprt{next, empty}}}}},
+        loc);
+      code_blockt append;
+      append_field(list, make_value(field), append, loc);
+      add(
+        dest,
+        code_ifthenelset{
+          not_exprt{equal_exprt{field, empty}}, std::move(append)},
+        loc);
+      rest = next;
+    }
+    return;
+  }
+  // Each field is searched for only after the previous one was found, so
+  // that the searches past the last field are on paths of their own.
+  std::function<void(const exprt &, std::size_t, code_blockt &)> next_field =
+    [&](const exprt &position, std::size_t k, code_blockt &block)
+  {
+    pattern_contextt here{s, context.length, {}, block, loc};
+    // The next field starts at the next byte that is not a blank, and ends
+    // before the next blank after it, or at the end.
+    const symbol_exprt start = temporary(integer_type(), block, loc);
+    assign(block, start, core_index_of({non_blank}, position, here), loc);
+    code_blockt field;
+    pattern_contextt in_field{s, context.length, {}, field, loc};
+    const symbol_exprt end = temporary(integer_type(), field, loc);
+    assign(field, end, core_index_of({blank}, start, in_field), loc);
+    assign(
+      field,
+      end,
+      if_exprt{
+        binary_relation_exprt{end, ID_lt, zero}, context.length, exprt{end}},
+      loc);
+    append_field(
+      list,
+      make_value(payload_substring(s, start, end, field, loc)),
+      field,
+      loc);
+    if(k < max_arguments)
+      next_field(end, k + 1, field);
+    add(
+      block,
+      code_ifthenelset{
+        binary_relation_exprt{start, ID_ge, zero}, std::move(field)},
+      loc);
+  };
+  next_field(zero, 0, dest);
+}
+
 exprt shell_convertert::regex_index_of(
   const pattern_elementst &core,
   const exprt &from,

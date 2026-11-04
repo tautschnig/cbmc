@@ -372,7 +372,7 @@ void shell_convertert::convert_for(
   // "for name; do" is "for name in "$@"; do" (XCU 2.9.4.2).
   bool dynamic = !command.has_in;
   for(const auto &word : command.for_items)
-    dynamic |= contains_at(word);
+    dynamic |= contains_at(word) || is_splittable(word);
   if(dynamic)
   {
     field_listt items = [&]()
