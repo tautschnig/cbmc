@@ -205,7 +205,8 @@ void shell_convertert::convert_exit_traps()
 
 void shell_convertert::add_run_exit_trap()
 {
-  if(!symbol_table.has_symbol("shell::exit_trap"))
+  // Without a trap on EXIT, the trap is never set (exec only clears it).
+  if(exit_trap_location.get_file().empty())
     return;
   // The location of the first trap on EXIT.
   const source_locationt loc = exit_trap_location;
