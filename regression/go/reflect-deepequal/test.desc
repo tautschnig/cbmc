@@ -1,0 +1,14 @@
+CORE
+main.go
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 19 equal: SUCCESS$
+^\[go::main\.main\.assertion\.3\] line 24 map element differs: SUCCESS$
+^\[go::main\.main\.assertion\.4\] line 27 interface differs: SUCCESS$
+^\[go::main\.main\.assertion\.5\] line 28 nil and empty: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+reflect.DeepEqual on pointers, maps, slices and interfaces

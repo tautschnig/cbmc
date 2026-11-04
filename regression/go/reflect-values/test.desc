@@ -1,0 +1,16 @@
+CORE
+main.go
+--unwind 14
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 21 read fields: SUCCESS$
+^\[go::main\.main\.assertion\.5\] line 29 set fields: SUCCESS$
+^\[go::main\.main\.assertion\.10\] line 43 interface element: SUCCESS$
+^\[go::main\.main\.assertion\.11\] line 45 set interface: SUCCESS$
+^\[go::main\.main\.assertion\.14\] line 53 convert truncates: SUCCESS$
+^\[go::main\.main\.assertion\.19\] line 63 addr: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+reflect: reading and setting values, conversions, New and Zero

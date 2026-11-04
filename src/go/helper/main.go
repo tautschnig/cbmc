@@ -749,9 +749,13 @@ func (e *encoder) typ(t types.Type) int {
 		var fields []any
 		for j := 0; j < x.NumFields(); j++ {
 			f := x.Field(j)
-			fields = append(fields, map[string]any{"name": f.Name(),
+			field := map[string]any{"name": f.Name(),
 				"type": e.typ(f.Type()), "embedded": f.Embedded(),
-				"obj": e.objID(f)})
+				"obj": e.objID(f)}
+			if tag := x.Tag(j); tag != "" {
+				field["tag"] = tag
+			}
+			fields = append(fields, field)
 		}
 		entry = map[string]any{"k": "struct", "fields": fields}
 	case *types.Tuple:
@@ -818,6 +822,9 @@ func (e *encoder) completeTypes() {
 			byKey[key(t)] = append(byKey[key(t)], i)
 		}
 		entry["tid"] = canonical
+		if canonical == i && e.reflects() {
+			e.reflectInfo(t, entry)
+		}
 		if types.IsInterface(t) {
 			continue
 		}

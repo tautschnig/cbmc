@@ -1,0 +1,17 @@
+CORE
+main.go
+--unwind 30
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 28 named struct: SUCCESS$
+^\[go::main\.main\.assertion\.4\] line 32 tag: SUCCESS$
+^\[go::main\.main\.assertion\.8\] line 38 map: SUCCESS$
+^\[go::main\.main\.assertion\.13\] line 45 pointer methods: SUCCESS$
+^\[go::main\.main\.assertion\.14\] line 47 implements: SUCCESS$
+^\[go::main\.main\.assertion\.17\] line 50 bytes to string: SUCCESS$
+^\[go::main\.main\.assertion\.18\] line 52 func: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+reflect: kinds, names, fields, tags, methods and type relations

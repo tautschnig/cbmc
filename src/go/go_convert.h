@@ -888,9 +888,21 @@ private:
   /// Generate the bodies of the intrinsics, once the dynamic types of
   /// interface values are known.
   void finish_intrinsics();
+  /// The type descriptors of the model of package reflect
+  /// (models/reflect), for every type a reflected value may have, and the
+  /// bodies of the model's intrinsics (go_reflect.cpp); nothing if the
+  /// program does not use reflect. The described types become dynamic
+  /// types of interface values.
+  void finish_reflect();
   /// The bodies of rt.AsTarget and rt.AsAssign (errors.As, see
   /// models/errors), over the dynamic pointer types.
   void finish_errors_as();
+  /// The value of the descriptor (`reflect.rtype`) of the type with id
+  /// \p tid, see finish_reflect.
+  exprt reflect_descriptor(
+    std::size_t tid,
+    const std::map<std::size_t, typet> &described,
+    const source_locationt &location);
   /// The function `go::$check_panics`, called after the top-level
   /// function, with a property per panic site.
   void finish_panics();

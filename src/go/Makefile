@@ -6,6 +6,7 @@ SRC = expr2go.cpp \
       go_interfaces.cpp \
       go_language.cpp \
       go_maps.cpp \
+      go_reflect.cpp \
       go_panics.cpp \
       go_parse_tree.cpp \
       go_range_func.cpp \

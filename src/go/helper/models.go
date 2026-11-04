@@ -38,7 +38,8 @@ const modelPrefix = "cprover/std/"
 // API the model declares is available. Their types have methods that
 // operate on state the real types keep in internal fields, which models of
 // functions alone (see model) cannot reach.
-var replaced = map[string]bool{"sync": true, "sync/atomic": true}
+var replaced = map[string]bool{"sync": true, "sync/atomic": true,
+	"reflect": true}
 
 // loadReplacement loads the model that replaces standard-library package
 // path (see replaced).

@@ -591,3 +591,8 @@ func sizeClass(size uintptr) uintptr {
 	}
 	return size
 }
+
+// Unsupported reports, with constant description what, an operation that
+// a model does not support: a failing property (of class "unsupported",
+// as for calls of functions without a model), after which the path stops.
+func Unsupported(what string) { panic(what) }

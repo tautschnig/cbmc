@@ -1,0 +1,15 @@
+CORE
+main.go
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.3\] line 16 store: SUCCESS$
+^\[go::main\.main\.assertion\.5\] line 24 range: SUCCESS$
+^\[go::main\.main\.assertion\.6\] line 28 interface keys: SUCCESS$
+^\[go::main\.main\.assertion\.8\] line 40 append: SUCCESS$
+^\[go::main\.main\.assertion\.10\] line 45 copy: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+reflect: maps and slices (lookups, updates, iteration, Append, Copy)

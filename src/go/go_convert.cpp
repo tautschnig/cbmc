@@ -1298,6 +1298,7 @@ bool go_convertert::operator()()
   convert_program_init();
   convert_entry();
   finish_nondet_interfaces();
+  finish_reflect();
   finish_errors_as();
   finish_interfaces();
   finish_intrinsics();
@@ -2713,6 +2714,20 @@ bool go_convertert::convert_intrinsic_call(const irept &call, code_blockt &dest)
       true,
       location,
       dest);
+    return true;
+  }
+
+  if(callee == "cprover/rt.Unsupported")
+  {
+    // An operation that a model does not support fails a property (as
+    // calls of functions without a model do) and stops the path.
+    if(args.size() != 1 || args.front().get("_cvk") != "string")
+    {
+      unsupported(call, "a non-constant description of rt.Unsupported");
+      return true;
+    }
+    const std::string text = args.front().get_string("_cv");
+    dest.append(unsupported_body(location, text.substr(1, text.size() - 2)));
     return true;
   }
 

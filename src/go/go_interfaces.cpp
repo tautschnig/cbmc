@@ -918,7 +918,27 @@ bool go_convertert::is_intrinsic(const irep_idt &object_id)
     "cprover/rt.Float32bits",
     "cprover/rt.Float32frombits",
     "cprover/rt.AsTarget",
-    "cprover/rt.AsAssign"};
+    "cprover/rt.AsAssign",
+    // models/reflect (see go_reflect.cpp)
+    "reflect.typeOf",
+    "reflect.ifaceType",
+    "reflect.ifaceData",
+    "reflect.makeIface",
+    "reflect.box",
+    "reflect.assign",
+    "reflect.alloc",
+    "reflect.equal",
+    "reflect.mapFind",
+    "reflect.mapStore",
+    "reflect.mapDelete",
+    "reflect.makeMap",
+    "reflect.makeSlice",
+    "reflect.sliceHeader",
+    "reflect.setSlice",
+    "reflect.mapHeader",
+    "reflect.chanLenCap",
+    "reflect.pointerAt",
+    "reflect.setPointer"};
   return intrinsics.count(object_id) != 0;
 }
 

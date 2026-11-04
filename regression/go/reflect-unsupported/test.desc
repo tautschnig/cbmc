@@ -1,0 +1,11 @@
+CORE
+main.go
+
+^EXIT=10$
+^SIGNAL=0$
+^\[go::reflect\.Value\.Call\.unsupported\.1\] line \d+ reflect\.Value\.Call: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+an unsupported operation of the model of reflect is a failing property

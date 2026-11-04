@@ -1,0 +1,16 @@
+CORE
+main.go
+--unwind 6 --unwindset go::cprover/rt.StringEqual.0:60
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 21 value error: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 22 message: SUCCESS$
+^\[go::main\.main\.assertion\.3\] line 24 unaddressable: SUCCESS$
+^\[go::main\.main\.assertion\.4\] line 26 unexported: SUCCESS$
+^\[go::reflect\.Value\.Len\.panic\.\d+\] line \d+ panic: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+unwinding assertion.*: FAILURE$
+--
+reflect panics as the real package does (recovered, and one unrecovered)
