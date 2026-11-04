@@ -1,0 +1,11 @@
+CORE
+dynamic-printf.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] .*printf's first operand has no -v.*: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+printf -v NAME assigns NAME in bash: a first operand that may be -v is
+reported.

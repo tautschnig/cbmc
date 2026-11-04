@@ -312,8 +312,13 @@ private:
     return global_symbol("shell::args", "@", field_array_type());
   }
 
-  symbol_exprt variable(const std::string &name)
+  /// The symbol of shell variable \p name. Every access to a variable
+  /// goes through here, which rejects the variables that the shell
+  /// maintains (check_parameter_name): field splitting, in particular,
+  /// relies on IFS keeping its default value.
+  symbol_exprt variable(const std::string &name, const source_locationt &loc)
   {
+    check_parameter_name(name, loc);
     variables.insert(name);
     return global_symbol("shell::var::" + name, name, string_type());
   }

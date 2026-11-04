@@ -90,9 +90,10 @@ exprt shell_convertert::arith(
       program.dialect == shell_dialectt::BASH ||
       program.dialect == shell_dialectt::ZSH)
     {
-      check_nounset(variable(expr.name), expr.name, dest, loc);
+      check_nounset(variable(expr.name, loc), expr.name, dest, loc);
     }
-    return arith_read(expr.name, value_of(variable(expr.name), loc), dest, loc);
+    return arith_read(
+      expr.name, value_of(variable(expr.name, loc), loc), dest, loc);
   case kindt::PARAMETER:
   {
     // $x is expanded before the expression is evaluated (XCU 2.6.4); an
@@ -430,7 +431,7 @@ exprt shell_convertert::arith_assignment(
     const symbol_exprt rhs_value = temporary(rhs.type(), dest, loc);
     assign(dest, rhs_value, rhs, loc);
     const exprt current =
-      arith_read(expr.name, value_of(variable(expr.name), loc), dest, loc);
+      arith_read(expr.name, value_of(variable(expr.name, loc), loc), dest, loc);
     const std::string op = expr.op.substr(0, expr.op.size() - 1);
     assign(dest, value, arith_binary(op, current, rhs_value, dest, loc), loc);
   }
@@ -446,7 +447,7 @@ exprt shell_convertert::arith_increment(
   const std::string &name = expr.operands[0].name;
   check_parameter_name(name, loc);
   const exprt current =
-    arith_read(name, value_of(variable(name), loc), dest, loc);
+    arith_read(name, value_of(variable(name, loc), loc), dest, loc);
   const symbol_exprt old_value = temporary(current.type(), dest, loc);
   assign(dest, old_value, current, loc);
   const exprt one = from_integer(1, current.type());

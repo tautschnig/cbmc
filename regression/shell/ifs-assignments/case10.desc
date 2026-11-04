@@ -1,0 +1,11 @@
+CORE
+case10.sh
+
+^EXIT=6$
+^SIGNAL=0$
+printf -v, which assigns a variable
+--
+^VERIFICATION
+--
+Field splitting relies on IFS keeping its default value, which every
+shell sets at startup: any way of assigning IFS is unsupported.

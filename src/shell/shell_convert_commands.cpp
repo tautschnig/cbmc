@@ -110,9 +110,8 @@ void shell_convertert::assign_variable(
   code_blockt &dest,
   const source_locationt &loc)
 {
-  check_parameter_name(name, loc);
   // Expansion results are always set.
-  assign(dest, variable(name), value, loc);
+  assign(dest, variable(name, loc), value, loc);
 }
 
 code_ifthenelset shell_convertert::if_status_zero(bool zero, code_blockt block)
@@ -774,6 +773,42 @@ void shell_convertert::convert_non_function(
   }
   check_redirections(command, kind);
   if(
+    name == "printf" && command.words.size() > 1 &&
+    (program.dialect == shell_dialectt::BASH ||
+     program.dialect == shell_dialectt::ZSH))
+  {
+    // printf -v NAME assigns NAME rather than printing.
+    const auto first = static_text(command.words[1]);
+    if(first.has_value())
+    {
+      if(first->rfind("-v", 0) == 0)
+        unsupported(loc, "printf -v, which assigns a variable");
+    }
+    else if(has_side_effects(command.words[1]))
+      unsupported(loc, "printf with a first operand with side effects");
+    else
+    {
+      // Expanding it twice is the same as once, as it has no side effects.
+      // Unquoted, it may split into several fields; that none of them
+      // starts with -v holds if the value has no -v at all.
+      const exprt value = expand_word(
+        command.words[1], shell_word_contextt::CASE_SUBJECT, dest, loc);
+      const exprt found = payload_index_of(
+        payload_of(value),
+        payload_literal("-v"),
+        from_integer(0, integer_type()),
+        dest,
+        loc);
+      check(
+        dest,
+        binary_relation_exprt{found, ID_lt, from_integer(0, integer_type())},
+        "shell-unsupported",
+        "printf's first operand has no -v (printf -v, which assigns a "
+        "variable, is not supported)",
+        loc);
+    }
+  }
+  if(
     kind == shell_command_kindt::EXTERNAL ||
     kind == shell_command_kindt::OUTPUT)
   {
@@ -1104,8 +1139,7 @@ void shell_convertert::convert_unset(
     auto name = static_text(command.words[i]);
     if(!name.has_value())
       unsupported(loc, "unset operand that is an expansion");
-    check_parameter_name(*name, loc);
-    const symbol_exprt var = variable(*name);
+    const symbol_exprt var = variable(*name, loc);
     assign(dest, var, string_literal("", loc), loc);
     assign(dest, set_of(var), from_integer(0, component_type("set")), loc);
   }

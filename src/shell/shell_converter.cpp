@@ -77,7 +77,7 @@ void shell_convertert::add_initialize()
   // Variables not yet assigned are inherited from the environment.
   for(const auto &name : variables)
   {
-    const symbol_exprt var = variable(name);
+    const symbol_exprt var = variable(name, loc);
     assign(init, var, environment_string(init, loc), loc);
   }
   // $0, $$, and $- are set; their values depend on how the shell was run.

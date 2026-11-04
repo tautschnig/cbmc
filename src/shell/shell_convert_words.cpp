@@ -213,8 +213,7 @@ exprt shell_convertert::parameter(const shell_word_partt &part)
     return special(name);
   if(name == "!")
     unsupported(part.location, "special parameter $!");
-  check_parameter_name(name, part.location);
-  return variable(name);
+  return variable(name, part.location);
 }
 
 exprt shell_convertert::expand_parameter(
