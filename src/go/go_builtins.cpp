@@ -1400,6 +1400,50 @@ void go_convertert::convert_clear(const irept &call, code_blockt &dest)
     std::move(zero)});
 }
 
+exprt go_convertert::convert_constant_array_lit(
+  const irept &lit,
+  const typet &type)
+{
+  // Generated tables (e.g., of package unicode or x/text) are literals of
+  // thousands of constants: the helper sends their values, which form one
+  // array constant instead of an assignment per element.
+  const source_locationt location = location_of(lit);
+  const bool is_slice = is_go_slice(type);
+  const typet &element =
+    is_slice
+      ? to_pointer_type(to_struct_type(type).get_component("data").type())
+          .base_type()
+      : to_array_type(type).element_type();
+  const auto &values = go_list(lit, "_cvals");
+  exprt::operandst elements;
+  elements.reserve(values.size());
+  for(const auto &value : values)
+  {
+    const std::string &text = value.id_string();
+    if(text == "true" || text == "false")
+      elements.push_back(from_integer(text == "true" ? 1 : 0, element));
+    else
+      elements.push_back(from_integer(string2integer(text), element));
+  }
+  const array_typet array_type{
+    element, from_integer(values.size(), c_index_type())};
+  array_exprt array{std::move(elements), array_type};
+  array.add_source_location() = location;
+  if(!is_slice)
+    return typecast_exprt::conditional_cast(std::move(array), type);
+  // "A slice literal describes the entire underlying array literal": a new
+  // array, with the literal's values.
+  code_blockt block;
+  const symbol_exprt pointer =
+    new_heap_variable(array_type, array, location, block);
+  const exprt data = address_of_exprt{
+    index_exprt{dereference_exprt{pointer}, from_integer(0, c_index_type())},
+    to_pointer_type(to_struct_type(type).get_component("data").type())};
+  const exprt length = from_integer(values.size(), int_type());
+  return with_prefix(
+    struct_exprt{{data, length, length}, type}, block, location);
+}
+
 exprt go_convertert::convert_slice_lit(const irept &lit, const typet &type)
 {
   // Go1.27 §Composite_literals: "A slice literal describes the entire

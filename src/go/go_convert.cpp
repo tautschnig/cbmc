@@ -3979,6 +3979,8 @@ exprt go_convertert::convert_composite_lit(const irept &lit)
   if(type.is_nil())
     return nil_exprt{};
   const irep_idt &k = literal_type.get("k");
+  if(lit.find("_cvals").is_not_nil())
+    return convert_constant_array_lit(lit, type);
   if(k == "slice")
     return convert_slice_lit(lit, type);
   if(k == "map")

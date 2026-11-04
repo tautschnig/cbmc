@@ -1,0 +1,13 @@
+CORE
+main.go
+--unwind 25
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 19 concatenation: SUCCESS$
+^\[go::main\.main\.assertion\.4\] line 22 sparse slice: SUCCESS$
+^\[go::main\.main\.assertion\.6\] line 25 mutable: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+array and slice literals of constants, and constant expressions

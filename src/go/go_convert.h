@@ -510,6 +510,9 @@ private:
   /// A call of the function \p name (Add, Slice, SliceData, String,
   /// StringData) of package unsafe (Go1.27 §Package_unsafe).
   exprt convert_unsafe_call(const irept &call, const irep_idt &name);
+  /// An array or slice literal of integer or boolean constants that the
+  /// helper encodes as their values ("_cvals"): one array constant.
+  exprt convert_constant_array_lit(const irept &lit, const typet &type);
   /// A conversion of \p value to \p type that involves unsafe.Pointer, or
   /// nil if it does not.
   exprt convert_unsafe_conversion(const exprt &value, const typet &type);

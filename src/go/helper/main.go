@@ -868,6 +868,11 @@ func (e *encoder) node(n ast.Node) any {
 	if n == nil || reflect.ValueOf(n).IsNil() {
 		return nil
 	}
+	if c, ok := n.(*ast.CompositeLit); ok {
+		if out := e.constantArray(c); out != nil {
+			return out
+		}
+	}
 	v := reflect.ValueOf(n).Elem()
 	out := map[string]any{"_k": v.Type().Name()}
 	if p := e.fset.Position(n.Pos()); p.IsValid() {
@@ -1515,4 +1520,80 @@ func main() {
 		fmt.Fprintln(os.Stderr, strings.TrimSpace(err.Error()))
 		os.Exit(2)
 	}
+}
+
+// constantArray encodes an array or slice literal whose elements are
+// integer or boolean constants (e.g., generated tables) as the list of
+// their values, "_cvals", without element nodes: its length in elements
+// (the array's, or the slice's maximum index plus one), with "0" (false)
+// for missing elements. Nil if the literal is not such.
+func (e *encoder) constantArray(c *ast.CompositeLit) map[string]any {
+	const minElements = 16 // smaller literals are encoded as usual
+	tv, ok := e.info.Types[c]
+	if !ok || len(c.Elts) < minElements {
+		return nil
+	}
+	t := e.subst(tv.Type)
+	var elem types.Type
+	length := int64(-1)
+	switch u := t.Underlying().(type) {
+	case *types.Array:
+		elem, length = u.Elem(), u.Len()
+	case *types.Slice:
+		elem = u.Elem()
+	default:
+		return nil
+	}
+	b, ok := elem.Underlying().(*types.Basic)
+	if !ok || b.Info()&(types.IsInteger|types.IsBoolean) == 0 {
+		return nil
+	}
+	values := map[int64]string{}
+	next, maxIndex := int64(0), int64(-1)
+	for _, el := range c.Elts {
+		v := el
+		if kv, ok := el.(*ast.KeyValueExpr); ok {
+			kt, ok := e.info.Types[kv.Key]
+			if !ok || kt.Value == nil {
+				return nil
+			}
+			i, ok := constant.Int64Val(constant.ToInt(kt.Value))
+			if !ok {
+				return nil
+			}
+			next, v = i, kv.Value
+		}
+		vt, ok := e.info.Types[v]
+		if !ok || vt.Value == nil {
+			return nil
+		}
+		if b.Info()&types.IsBoolean != 0 {
+			values[next] = strconv.FormatBool(constant.BoolVal(vt.Value))
+		} else {
+			values[next] = constant.ToInt(vt.Value).ExactString()
+		}
+		maxIndex = max(maxIndex, next)
+		next++
+	}
+	if length < 0 {
+		length = maxIndex + 1
+	}
+	zero := "0"
+	if b.Info()&types.IsBoolean != 0 {
+		zero = "false"
+	}
+	cvals := make([]any, length)
+	for i := range cvals {
+		if v, ok := values[int64(i)]; ok {
+			cvals[i] = v
+		} else {
+			cvals[i] = zero
+		}
+	}
+	out := map[string]any{"_k": "CompositeLit", "_t": e.typ(t),
+		"_cvals": cvals}
+	if p := e.fset.Position(c.Pos()); p.IsValid() {
+		out["_p"] = []int{e.fileIdx[p.Filename], p.Line, p.Column}
+	}
+	return out
 }
