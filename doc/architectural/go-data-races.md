@@ -179,3 +179,103 @@ Open question for review: whether a race should also stop the path (as
 gc does), which keeps later properties from failing because of torn
 reads of multi-word values (interfaces, slices, strings), at the price
 of not checking anything after the first race on that path.
+
+## 8. Spike results (branch go-race-spike)
+
+The spike is a goto-level pass (`src/go/go_race_check.cpp`, option
+`--go-race-check`) rather than front-end hooks: it instruments the goto
+program after conversion. Accesses are flagged at the first byte of each
+scalar part, which avoids shadow memory's replication over bytes of
+pointer type.
+
+**Oracle.** 341 harnesses, one per `TestRace…`/`TestNoRace…` function of
+`runtime/race/testdata`, with a stub `testing` package
+(`~/go-scratch/race/oracle`: `gen.py`, `run2.sh`). As ground truth,
+every harness was also built with `go build -race` and run five times:
+gc agrees with the names on 337, and the other 4 fail under the stub
+(`t.Skip`, `t.Fatal`). The check uses `--unwind 4`, 8 GiB and 600 s per
+harness.
+
+| | found / clean | missed / reported | solver out of memory | timeout |
+|---|---|---|---|---|
+| 224 `TestRace…` | 171 | 32 | 15 | 6 |
+| 117 `TestNoRace…` | 108 | **0** | 0 | 9 |
+
+Before the fixes below: 110 found, 92 missed, 17 crashes, 1 false
+report.
+
+**The 32 misses, by cause:**
+
+- 19: range accesses of built-ins (`copy`, `append`, string conversions;
+  also in source models such as `bytes.Buffer`). These are not
+  instrumented yet (§5).
+- 4: races "ordered" only by non-synchronising operations: polling
+  `len(c)`, a failed `select` send, `time.Sleep`. These are inherent to
+  DRF-SC adjacency. Under SC the accesses are never adjacent, while gc's
+  happens-before relation does not order them.
+- 3: large arrays (`[1000]*int` keys) are flagged at their first byte
+  only, beyond 32 elements.
+- 1: `delete` of an absent key is no write (gc's `mapdelete` writes the
+  map unconditionally).
+- 1: operations of the `sync` model are not accesses (`mu = Mutex{}`
+  racing with `mu.Lock()`).
+- 3: harnesses that are not valid under the stub (see above), and 1 that
+  has not been analysed.
+
+**Bugs the spike found outside the check itself:**
+
+- goto-symex (`8d3b69c931`): renaming produced conditionals and byte
+  updates of inconsistent types after a phi node of an array size symbol
+  (invariant failure).
+- Shadow memory (`97f789ce71`): objects of pointer type were not
+  accessible through `char *`, so the flags of every captured pointer,
+  channel and map were silently dropped.
+- Shadow memory is not thread-aware (§4). Making the shadow symbols
+  static-lifetime and not thread-local suffices for the oracle.
+
+**Semantics the oracle settled:**
+
+- `_ = x` reads `x`.
+- `close` is a write of the channel and a send a read; the fields of the
+  channel's header are not accesses.
+- Map operations are accesses of the map's header.
+- Atomic operations announce, but do not check: they race with plain
+  accesses only.
+- Setting or resetting a flag must be atomic. It is a read-modify-write
+  of the shadow object, and a lost update caused false races.
+- Checks must take the place of the instruction, so that jumps to it are
+  checked.
+
+**Flag storage, measured:**
+
+| program | no check | option A (shadow memory) | option B (flag arrays) |
+|---|---|---|---|
+| `go_pipeline` (profiling benchmark): steps | 58,289 | 65,440 | 203,641 |
+| `go_pipeline`: decision procedure | 34 s | 55–62 s | 551 s |
+| map read/write in two goroutines: decision procedure | 10 s | out of memory (also at 24 GiB) | 13 s |
+| `r1` probe | | 0.6 s | 359 s |
+
+Option A is about 10× faster than option B on the probes and the
+benchmark. It fails on programs that grow maps, however: the 15
+solver-memory errors are map and `append` harnesses. The memory goes
+into array-theory constraints (`arrayst::add_array_constraints_comprehension`,
+64-bit `mod` dividers in byte-operator lowering), and 12,000 of the
+16,000 read-from constraints are on the shadow object of the map header.
+I have not isolated the cause further.
+
+**Recommendation.** Keep option A, with three pieces of further work:
+
+1. Instrument built-ins as ranges (19 misses). Shadow memory needs a
+   range form for this (set/get over `n` bytes of a variable-size
+   object), or the check needs bounded loops.
+2. Investigate the shadow-memory blow-up on growing maps before
+   upstreaming the thread-aware shadow memory.
+3. Treat `sync` operations as accesses of the lock (gc does).
+
+The 4 inherent misses are a documented limitation of the adjacency
+approach. Detecting them would need a happens-before relation that
+excludes non-synchronising communication, which this approach was
+chosen to avoid (§3).
+
+Open questions for review, unchanged: option A or B, and whether a race
+ends the path.
