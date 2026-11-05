@@ -5,9 +5,10 @@
 (`integration/linux/doc/cbmc-driver-proof-design-2026-11.md`). Both issues
 blocked that work; both are reduced to self-contained C files that need
 nothing from the driver.
-**Status:** issue A has a mitigation implemented in this tree
-(`--report-unreachable-properties`); issue B is unmitigated and is the harder
-of the two.
+**Status:** both unmitigated. An attempted mitigation for issue A
+(`--report-unreachable-properties`) was implemented, found to be wrong, and
+**reverted** -- see "Attempted mitigation, withdrawn" under issue A. Issue B
+is the harder of the two and still has no user-side workaround.
 
 ## Environment
 
@@ -89,21 +90,51 @@ ratio and the wording:
 
 1. Word the message to say the path was cut.
 2. Report properties that became unreachable *only* because of a generated
-   stub as `UNKNOWN`/`UNREACHABLE` rather than `SUCCESS`. This tree implements
-   a version of (2) as the opt-in `--report-unreachable-properties`
-   (`src/goto-checker/bmc_util.{h,cpp}`, two regression tests under
-   `regression/cbmc/report-unreachable-properties*`). On the reproducer the
-   downstream assertion becomes `UNREACHABLE`. Whether it should be the
-   default is open: as a default it would change the reported status of
-   properties in unreached loop iterations and dead branches across many
-   existing tests.
+   stub as `UNKNOWN`/`UNREACHABLE` rather than `SUCCESS`. **The fix has to be
+   in symex, not in the property-status post-pass** -- see below for why.
+
+### Attempted mitigation, withdrawn
+
+We implemented (2) as an opt-in `--report-unreachable-properties` in
+`src/goto-checker/bmc_util.{h,cpp}`, and it is **reverted** (commit
+`a2406e6c055` reverting `08ec62caff5`). Recording why, because the dead end is
+informative:
+
+The patch had two halves. The sound half inspected an assertion *step* in the
+equation and reported `NOT_REACHABLE` when its guard is `false` (for every
+step of that property). The unsound half mapped `NOT_CHECKED` -- a property
+with **no** step in the equation -- to `NOT_REACHABLE`.
+
+The unsound half is wrong because symex discharges an assertion whose
+condition is statically true **without emitting a step at all**, so "absent
+from the equation" does not imply "never reached". Minimal demonstration:
+
+```c
+int a = 1;
+__CPROVER_assert(a == 1, "reachable but statically true");   /* -> UNREACHABLE */
+```
+
+That is a false `UNREACHABLE` on a plainly reachable assertion, which is worse
+than the problem it was meant to fix, because it would discredit genuine
+reports. On the ENA harness it labelled **1064 of 1303** properties
+`UNREACHABLE`.
+
+And removing the unsound half makes the patch useless for issue A: with
+`assume(false)` the downstream assertion also never reaches the equation, so
+the sound half does not see it either. The remaining signal is exactly the one
+CBMC's own comment describes as unavailable: *"This could be a NOT_CHECKED,
+NOT_REACHABLE or PASS, but the equation doesn't give us precise
+information."*
+
+So a real fix needs symex to distinguish "skipped because the path was cut"
+from "statically discharged" -- for instance by recording, when a path is cut
+by an `assume(false)` originating from a generated stub, which properties
+were abandoned. That information exists at symex time and is lost by the
+time the property statuses are computed.
 
 ### Not established
 
-Whether making it the default breaks existing regression tests -- not
-measured. The full suite has not been run against the mitigation; only
-`regression/contracts-dfcc` (identical results with and without) and the two
-new tests.
+Whether a symex-side fix is practical; we did not attempt one.
 
 ---
 

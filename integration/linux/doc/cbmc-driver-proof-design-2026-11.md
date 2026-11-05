@@ -787,7 +787,9 @@ Mitigations we now apply, in order of reliability: an independent
 on reading the property list correctly; treating any
 `undefined function should be unreachable` failure as a **hard stop** rather
 than a known-abstraction note; and `--cover location` on the functions the
-proof claims to exercise.
+proof claims to exercise. An attempted CBMC-side mitigation was withdrawn --
+see "Attempted mitigation, withdrawn" in `dfcc-issues-2026-11.md`; the
+reachability witness and coverage are what we actually rely on.
 
 Whether CBMC should change is for the maintainers, but the options look like:
 word the message to say the path was cut, and/or suppress or mark as
