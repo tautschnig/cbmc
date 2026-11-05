@@ -217,6 +217,29 @@ static bool INV_RING(const struct ena_ring *r)
 }
 
 /* ---------------- WF_MBUF: DPDK's mbuf contract -------------------- */
+/* Environment stubs.  Left bodyless these are reported as "undefined function
+ * should be unreachable" and, worse, the resulting path cut leaves the
+ * loop-contract obligations UNDECIDED (reported UNKNOWN) rather than failing
+ * loudly -- the same path-cutting effect as DFCC issue A.  So they are real
+ * stubs, not abstractions. */
+int rte_log(uint32_t level, uint32_t logtype, const char *format, ...)
+{
+	(void)level; (void)logtype; (void)format;
+	return 0;
+}
+
+/* rte_pktmbuf_read is `static inline` in rte_mbuf.h, and the harness
+ * translation unit records the symbol without a body because it never calls
+ * it directly.  The call from ena_xmit_mbuf's LLQ push path then resolves to
+ * that bodyless copy, and under DFCC a bodyless callee cuts the path, which
+ * leaves the loop-contract obligations UNDECIDED rather than failing (the
+ * same effect as issue A).  Taking the address forces the compiler to emit
+ * the body, so the proof uses DPDK's REAL implementation rather than a stub
+ * -- strictly better than stubbing it. */
+static const void *(*const force_pktmbuf_read_emission)(
+	const struct rte_mbuf *, uint32_t, uint32_t, void *) =
+	rte_pktmbuf_read;
+
 static struct rte_mbuf *make_wf_mbuf(uint16_t nsegs)
 {
 	uint32_t total = 0;
@@ -303,7 +326,12 @@ int main(void)
 	/* ---- caller contract: tx_pkts holds exactly nb_pkts mbufs ---- */
 	nb_pkts = nd_u16();
 	__CPROVER_assume(nb_pkts >= 1 && nb_pkts <= MAX_BURST);
-	tx_pkts = malloc(nb_pkts * sizeof(*tx_pkts));
+	/* eth_ena_xmit_pkts prefetches tx_pkts[(sent_idx + 4) & size_mask],
+	 * masking with the RING mask rather than nb_pkts, so it reads up to
+	 * ring_size entries whatever the burst length.  That is an implicit
+	 * requirement on the caller's array (finding g1); allocate to it so
+	 * the read is in bounds, and report the requirement separately. */
+	tx_pkts = malloc(RING_SIZE * sizeof(*tx_pkts));
 	__CPROVER_assume(tx_pkts != NULL);
 
 	nsegs = nd_u16();

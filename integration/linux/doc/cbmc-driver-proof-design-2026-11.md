@@ -956,3 +956,59 @@ with the **ring** mask, not the burst length, so whenever
 This is the `g1_dpdk_tx_prefetch` finding, now confirmed from the proof side
 rather than from taint analysis. It is a read, so the impact is limited, but
 it is out of bounds and can fault at a page boundary.
+
+### The invariant is now inductive -- with one hole
+
+Adding the in-flight disjointness clause closed the step case. Two clauses
+were needed, and the reason each is needed is worth stating because neither is
+a mechanical fix.
+
+**In-flight disjointness at the probe slots.** `OWN_UNIQUE` can only break if
+the body writes `tx_pkts[sent_idx]` into `req_id` while the *other* probe slot
+already holds that same mbuf. So the step needs
+`tx_buffer_info[g_pN].mbuf != tx_pkts[sent_idx]` for both probes. The harness
+already assumed this, but only at `g_p1` / `g_p2`, and an assumption at a
+nondeterministic index cannot be instantiated at the slot the driver actually
+writes -- the harness says so itself at the `INV_SLOT` definition. It has to
+be carried by the invariant to survive the havoc.
+
+**The producer index is pinned before the first accept.** `OWN_TRANSFER` names
+the slot `empty_tx_reqs[loop_entry(next_to_use)]`. In the step case the havoc
+untethers `next_to_use` from its loop-entry value, so the body may take a
+different slot. The missing fact is
+`sent_idx >= 1 || next_to_use == loop_entry(next_to_use)`: before any packet is
+accepted the producer index has not moved.
+
+**Result at ring 8 / segs 2 / burst 1:** all 22 loop-contract properties
+(2 base, 11 step, 2 assigns, 1 decreases, inner-loop unwinding) **SUCCESS**,
+all six obligations SUCCESS, the vacuity witness still FAILURE, and
+**zero UNKNOWN and zero ERROR** in 2282 properties.
+
+**The hole, stated plainly.** `rte_pktmbuf_read` is `static inline` in
+`rte_mbuf.h`; the harness translation unit carries the symbol without a body,
+and the call from `ena_xmit_mbuf`'s LLQ push path resolves to that bodyless
+copy. Its `undefined function should be unreachable` property **FAILS**, which
+means the path is reached, so DFCC cuts it with `assume(false)` and the
+obligations are **not checked on the LLQ-push sub-path**. By issue A that cut
+is silent. Taking the function's address did not force emission. So the
+current claim is: the obligations hold on the paths that do not push through
+`rte_pktmbuf_read`, and the LLQ-push sub-path is unverified. Closing it needs
+a linked definition in a separate translation unit, like `rdtsc_stub.c`.
+
+Note also that `rte_pktmbuf_free` and `rte_pktmbuf_free_bulk` are bodyless
+with their property reported **SUCCESS**, i.e. never reached -- which on the
+xmit path is expected, but is exactly the reading issue A makes unreliable, so
+it rests on the vacuity witness rather than on that SUCCESS.
+
+### Why the earlier runs showed UNKNOWN everywhere
+
+Before the stubs were added, 1280 of 2282 properties were UNKNOWN, including
+every `loop_invariant_step`. That was not undecidability: checked one at a
+time with `--property`, the step clauses came back SUCCESS. The failures
+elsewhere in the body cut the paths that the step assertions sit on. Stock
+CBMC prints **SUCCESS** for a statically discharged or genuinely unreachable
+assertion (verified with a three-case probe), so UNKNOWN here meant
+"undecided because the path was cut", and a run with failures in it silently
+degrades the loop-contract verdicts. Practical consequence for this proof:
+**a loop-contract obligation is only meaningful in a run whose other
+properties all pass**, which is now the case bar the one hole above.
