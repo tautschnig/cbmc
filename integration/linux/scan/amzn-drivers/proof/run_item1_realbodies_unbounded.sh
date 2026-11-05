@@ -50,7 +50,7 @@ for V in 0 1; do
   ( ulimit -v 32000000; "$BIN/goto-instrument" --add-library "$OUT/i1${TAG}_rm.gb" "$OUT/i1${TAG}_lib.gb" >/dev/null 2>&1 )
   ( ulimit -v 32000000
     "$BIN/goto-instrument" --no-malloc-may-fail \
-      --loop-contracts-file "$HERE/tx_loop_contract_fields_direct.json" \
+      --loop-contracts-file "$HERE/tx_loop_contract_fields.json" \
       --dfcc main --apply-loop-contracts "$OUT/i1${TAG}_lib.gb" "$OUT/i1${TAG}_lc.gb" >/dev/null 2>&1 )
 done
 

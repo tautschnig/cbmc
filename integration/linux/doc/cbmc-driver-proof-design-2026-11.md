@@ -884,3 +884,75 @@ assumptions in section 6. That is a genuine proof of a precisely stated
 theorem, and it is strictly more than "no bug found up to depth k". It is
 not a proof that the ENA driver is correct, and we should not say that until
 sections 6.1-6.6 are discharged and the specification covers classes 2-9.
+
+## Next obstacle after the issue-B fix: the invariant, not the tool
+
+With `e1fd15a9ef2` (issue-B fix) cherry-picked, the real-callee-bodies
+configuration at ring 8 / segs 2 went from 25 failures to 6. Every step was a
+missing invariant clause, not a CBMC defect. Worth recording because the
+diagnosis was wrong twice before it was right.
+
+**`next_to_use` was in the frame but not in the invariant.** The seven
+`assigns` failures on writes through `tx_info` / `ena_buf` had nothing to do
+with the anonymous union. The counterexample says it plainly:
+
+```
+next_to_use = 32768        <- in the assigns clause, so havoc'd
+req_id      = 15525        <- empty_tx_reqs[32768], read out of bounds
+tx_info     = &tx_buffer_info + 4719600
+```
+
+The loop contract havocs `tx_ring->next_to_use`, the body then computes
+`req_id = empty_tx_reqs[next_to_use]` from an unconstrained index, and the
+derived `tx_info` lands far outside the CAR, so the frame check correctly
+fails. Adding `next_to_use <= size_mask` to the invariant fixed `INV` and all
+seven. **The rule, again: whatever the frame destroys, the invariant must
+restore.** Minimal cases for derived pointers at a symbolic index, with and
+without an anonymous union, both pass -- see `cbmc-limitations/car_deriv.c`
+and `car_union.c`.
+
+Adding per-slot and ownership clauses at the probe indices then made
+`INV_SLOT`, `OWN_UNIQUE` and `OWN_TRANSFER` follow, the last needing the
+entry-to-slot link `sent_idx >= 1 ==> tx_buffer_info[empty_tx_reqs[
+loop_entry(next_to_use)]].mbuf == tx_pkts[0]`, which the loop abstraction
+otherwise loses. One of those clauses was first written with
+`num_of_bufs <= 19`; `ENA_PKT_MAX_BUFS` is **17**, and 19 is the unrelated F2
+frag-count value. The weaker bound let a slot satisfy the invariant and fail
+the obligation.
+
+### Not proven -- the invariant is not inductive
+
+All six obligations report SUCCESS **and that does not mean they are proven.**
+Two `loop_invariant_step` clauses FAIL, so the loop contract is not a valid
+abstraction and the obligations rest on an invariant the body does not
+preserve. The honest status is: the obligations *follow from* the invariant,
+and the invariant is *not established*.
+
+The reason is substantive rather than mechanical. To preserve `OWN_UNIQUE`
+across one iteration, the body writes `tx_pkts[sent_idx]` into a free slot,
+which requires that this mbuf is **not already owned by another slot**. The
+harness assumes that of the initial state, but the step case starts from an
+arbitrary invariant-satisfying state where the assumption is gone, and no
+clause states it. It cannot be maintained by the driver alone: it is a
+hypothesis about the **caller**, and it is exactly the third driver-contract
+finding (re-submitting an in-flight mbuf is undetected and silently
+double-frees). Closing it means adding the disjointness of in-flight mbufs to
+the invariant as an explicit application obligation.
+
+### Also, correcting an earlier claim
+
+This configuration is **not** an unbounded burst. `nb_pkts` is capped at
+`MAX_BURST` because `tx_pkts` is `malloc(nb_pkts * ...)` and each entry must
+be a concretely initialised well-formed mbuf. Unboundedness in the burst
+belongs to stage 2 (`harness_tx_unbounded.c`), where the callees are
+abstracted. The two cannot yet be had together.
+
+### A genuine driver finding, reproduced inside the proof
+
+`eth_ena_xmit_pkts.pointer_dereference` fails on
+`tx_pkts[(sent_idx + 4) & tx_ring->size_mask]`: the prefetch masks the index
+with the **ring** mask, not the burst length, so whenever
+`nb_pkts < ring_size` the driver reads past the end of the caller's array.
+This is the `g1_dpdk_tx_prefetch` finding, now confirmed from the proof side
+rather than from taint analysis. It is a read, so the impact is limited, but
+it is out of bounds and can fault at a page boundary.
