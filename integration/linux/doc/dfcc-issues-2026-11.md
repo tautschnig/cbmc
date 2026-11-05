@@ -272,3 +272,67 @@ checks are inserted).
 side. A is annoying but has a mitigation in this tree and a clear fix
 direction, and its danger is mostly addressed by always running an
 independent reachability witness, which we now do.
+
+---
+
+## Independent review of the issue-B fix (branch `dfcc-skipped-loop-locals`)
+
+Reviewed `7fc769d7ea2` by rebuilding the branch in its own worktree and
+re-running everything from scratch rather than relying on the branch's own
+notes.
+
+**The explanation matches the black-box evidence.** `get_write_set` already
+resolved through loops without a contract via
+`get_first_id_not_skipped_or_top_level_id`; `get_local_set` and
+`get_tracked_set` did not, so `must_check_lhs` saw a callee local as
+non-local and checked it against a write set that could not contain it. That
+accounts for every observation in the issue-B section above without needing
+any of them as an extra assumption: it requires a loop in the callee (a
+skipped loop exists), it requires `--apply-loop-contracts` (otherwise nothing
+is skipped), it hits locals declared outside the loop *and* the loop's own
+counter, and it leaves address-taken locals alone (they are in the tracked
+set).
+
+**Verified, with the fix:**
+
+| check | result |
+|---|---|
+| `dfcc_callee_locals_in_loop` (minimal case) | spurious `a` / `k` checks **removed**, SUCCESSFUL |
+| `dfcc_callee_param_in_loop_assigns` | spurious `m` / `acc` checks removed, SUCCESSFUL |
+| `dfcc_callee_locals_pass` (control) | still SUCCESSFUL |
+| **soundness check written for this review** | a write from the same uncontracted loop to a global the caller's clause omits is **still reported FAILURE**, while the callee's `a` and `k` are not checked |
+| the branch's two new regression tests | both pass |
+| `regression/contracts-dfcc`, fix vs develop | identical failure sets except `loop_contracts_callee_uncontracted_loop_locals`, which develop fails and the fix repairs. **Nothing newly broken.** |
+
+Note the spurious properties are *removed* rather than merely passing, which
+is the right shape: the callee's locals are recognised as local at the scope
+the instruction resolves to.
+
+**Effect on the ENA proof** (ring 8, segs 2, burst 1, real callee bodies,
+unbounded burst via the loop contract):
+
+* the `ena_tx_map_mbuf` locals failures (`mbuf`, `seg_len`, `ena_buf`,
+  `delta`) are **gone**;
+* the vacuity witness still fails, so the accept path is live;
+* **`INV_wakeup` now verifies SUCCESS** where it was previously vacuous --
+  the first obligation this unblocks.
+
+**Still failing, and not attributable to this fix:** `INV`, `INV_SLOT`,
+`OWN_UNIQUE`, `OWN_TRANSFER`, with `loop_invariant_step` UNKNOWN. Seven
+`assigns` failures remain, all on writes through `tx_info` / `ena_buf`
+(`tx_info->mbuf`, `->num_of_bufs`, `->tx_descs`, `->timestamp`,
+`ena_buf->paddr`, `->len`) which `__CPROVER_object_whole(tx_ring->tx_buffer_info)`
+ought to cover.
+
+The branch's notes suggest the anonymous union in `struct ena_ring` may be
+responsible. **Tested and not supported:** naming the harness's file-scope
+`tx_buffer_info` array directly in the clause, bypassing the union read
+entirely (`tx_loop_contract_fields_direct.json`), gives a byte-identical
+outcome -- 25 of 1646, same seven assigns failures. So that hypothesis should
+not be carried forward without further evidence; the cause of the remaining
+seven is open.
+
+**Verdict:** the fix is correct, well-scoped, sound on the controls I could
+devise, and regression-clean. It resolves issue B as reported. It is not
+sufficient to close out the ENA obligations, and the next obstacle on that
+path is still unidentified.

@@ -37,6 +37,9 @@
 #ifndef SEGS_ASSUMED
 #define SEGS_ASSUMED 1
 #endif
+#ifndef SLOTS_BY_LOOP
+#  define SLOTS_BY_LOOP 0
+#endif
 #ifndef VACUITY_CHECK
 #  define VACUITY_CHECK 0
 #endif
@@ -162,14 +165,30 @@ static bool INV_SLOT(const struct ena_ring *r, uint16_t p)
  * the harness's own arrays so it does not go through the anonymous-union
  * fields.  __CPROVER_forall needs a side-effect-free expression, hence the
  * inlined body rather than a call to INV_SLOT. */
-#define INV_SLOTS_ASSUME(etr, tbi)                                             \
-  __CPROVER_assume(__CPROVER_forall {                                          \
-    unsigned _i;                                                               \
-    _i<RING_SIZE ==>(                                                          \
-      (etr)[_i] < RING_SIZE &&                                                 \
-      ((tbi)[_i].mbuf == 0 || (tbi)[_i].mbuf == &segs[0]) &&                   \
-      (tbi)[_i].num_of_bufs <= ENA_PKT_MAX_BUFS)                               \
-  })
+#if SLOTS_BY_LOOP
+/* Explicit loop form, for measuring the cost of the quantifier against an
+ * unrolled conjunction at small ring sizes. */
+#  define INV_SLOTS_ASSUME(etr, tbi)                                           \
+    do                                                                         \
+    {                                                                          \
+      for(unsigned _i = 0; _i < RING_SIZE; _i++)                               \
+      {                                                                        \
+        __CPROVER_assume((etr)[_i] < RING_SIZE);                               \
+        __CPROVER_assume(                                                      \
+          (tbi)[_i].mbuf == 0 || (tbi)[_i].mbuf == &segs[0]);                  \
+        __CPROVER_assume((tbi)[_i].num_of_bufs <= ENA_PKT_MAX_BUFS);            \
+      }                                                                        \
+    } while(0)
+#else
+#  define INV_SLOTS_ASSUME(etr, tbi)                                           \
+    __CPROVER_assume(__CPROVER_forall {                                        \
+      unsigned _i;                                                             \
+      _i < RING_SIZE ==> ((etr)[_i] < RING_SIZE &&                             \
+                          ((tbi)[_i].mbuf == 0 ||                              \
+                           (tbi)[_i].mbuf == &segs[0]) &&                      \
+                          (tbi)[_i].num_of_bufs <= ENA_PKT_MAX_BUFS)           \
+    })
+#endif
 
 static bool INV_RING(const struct ena_ring *r)
 {

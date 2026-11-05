@@ -1,0 +1,15 @@
+{
+  "functions": [
+    {
+      "eth_ena_xmit_pkts": [
+        {
+          "loop_id": "0",
+          "invariants": "(sent_idx <= nb_pkts) && (nb_pkts == __CPROVER_loop_entry(nb_pkts)) && (__CPROVER_same_object(tx_pkts, __CPROVER_loop_entry(tx_pkts))) && (((tx_ring->ena_com_io_sq->tail - tx_ring->ena_com_io_sq->next_to_comp) & 0xffff) <= tx_ring->ena_com_io_sq->q_depth - 1)",
+          "assigns": "sent_idx, tx_ring->pkts_without_db, tx_ring->next_to_use, tx_ring->tx_stats, __CPROVER_object_whole(tbi_static), tx_ring->adapter->trigger_reset, tx_ring->adapter->reset_reason, tx_ring->ena_com_io_sq->tail, tx_ring->ena_com_io_sq->entries_in_tx_burst_left, __CPROVER_object_whole(tx_ring->ena_com_io_sq->db_addr)",
+          "decreases": "nb_pkts - sent_idx",
+          "symbol_map": "sent_idx,eth_ena_xmit_pkts::1::sent_idx; nb_pkts,eth_ena_xmit_pkts::nb_pkts; tx_pkts,eth_ena_xmit_pkts::tx_pkts; tx_ring,eth_ena_xmit_pkts::1::tx_ring; tbi_static,tx_buffer_info"
+        }
+      ]
+    }
+  ]
+}
