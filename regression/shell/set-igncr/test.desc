@@ -1,0 +1,10 @@
+CORE
+main.bash
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+On Unix platforms, bash rejects set -o igncr with status 2 and goes on.

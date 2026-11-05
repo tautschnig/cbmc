@@ -9,6 +9,8 @@
 
 #include "shell_convert_class.h"
 
+#include <util/config.h>
+
 namespace
 {
 enum class option_effectt
@@ -148,6 +150,16 @@ std::vector<shell_wordt>::const_iterator shell_convertert::convert_set_option(
         unsupported(loc, "set -o with an expanded name");
       ++arg;
       const auto option = option_for_name(*name, program.dialect);
+      if(
+        !option.has_value() && *name == "igncr" &&
+        program.dialect == shell_dialectt::BASH &&
+        config.shell.platform != configt::shellt::platformt::CYGWIN)
+      {
+        // bash has igncr on Cygwin only. Elsewhere set reports the
+        // invalid name, and stops with status 2.
+        invalid_set_option = true;
+        return end;
+      }
       if(!option.has_value())
         unsupported(loc, "set option " + *name);
       check_option_possible(option->name, on, loc);

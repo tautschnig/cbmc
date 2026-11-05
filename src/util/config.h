@@ -397,6 +397,20 @@ public:
     std::list<std::string> include_paths;
   } verilog;
 
+  /// Shell scripts: the platform, whose shells may differ.
+  struct shellt
+  {
+    enum class platformt
+    {
+      /// Linux, macOS and the BSDs.
+      UNIX,
+      /// Cygwin and the shells derived from it (MSYS2, Git for Windows),
+      /// which run scripts on Windows. Their bash has the option igncr.
+      CYGWIN
+    };
+    platformt platform = platformt::UNIX;
+  } shell;
+
   struct javat
   {
     typedef std::list<std::string> classpatht;

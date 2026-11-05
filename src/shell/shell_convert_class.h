@@ -846,6 +846,9 @@ private:
     const std::string &name,
     bool on,
     const source_locationt &loc);
+  /// Set by convert_set_option where bash rejects the name of an option
+  /// that it has on other platforms only.
+  bool invalid_set_option = false;
   std::vector<shell_wordt>::const_iterator convert_set_option(
     std::vector<shell_wordt>::const_iterator arg,
     std::vector<shell_wordt>::const_iterator end,

@@ -1027,6 +1027,10 @@ bool configt::set(const cmdlinet &cmdline)
     os=cmdline.get_value("os");
   }
 
+  // Shell scripts on Windows run in Cygwin or a shell derived from it.
+  shell.platform =
+    os == "windows" ? shellt::platformt::CYGWIN : shellt::platformt::UNIX;
+
   if(os=="windows")
   {
     // Cygwin uses GCC throughout, use i386-linux
@@ -1118,6 +1122,10 @@ bool configt::set(const cmdlinet &cmdline)
     ansi_c.gcc__float128_type = true;
 
   set_arch(arch);
+
+  // Shell scripts on Windows run in Cygwin or a shell derived from it.
+  shell.platform =
+    os == "windows" ? shellt::platformt::CYGWIN : shellt::platformt::UNIX;
 
   if(os=="windows")
   {

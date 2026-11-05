@@ -1,0 +1,11 @@
+CORE
+main.bash
+--os windows
+^EXIT=6$
+^SIGNAL=0$
+set option igncr
+--
+^VERIFICATION
+--
+On Windows, scripts run in Cygwin or a shell derived from it, whose bash
+has igncr, which changes how lines are read: not modelled.

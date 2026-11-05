@@ -583,6 +583,12 @@ void shell_convertert::convert_set(
       break;
     }
     first = convert_set_option(first, end, dest, loc);
+    if(invalid_set_option)
+    {
+      invalid_set_option = false;
+      set_status(dest, 2, loc);
+      return;
+    }
   }
   if(replace)
     set_positional_parameters(expand_fields(first, end, dest, loc), dest, loc);
