@@ -254,6 +254,19 @@ The shell front-end's sites, in order of the census:
 5. Other front-ends: Python (`getattr`, `setattr`, `exec`), TypeScript
    (`eval`, computed properties), JBMC (`Class.forName`, `getMethod`).
 
+## Status
+
+- Step 1 is implemented for the shell front-end's dynamic command names.
+  - Each one is a site `shell-command-name:FILE:LINE:COLUMN`.
+  - `cbmc --show-dynamic-sites` lists the sites, and
+    `cbmc --dynamic-resolutions FILE` reads a JSON object of candidates.
+  - A resolved name dispatches over its candidates only. A value outside
+    them fails the property class `shell-dynamic-site`.
+- The marker function must not be interned in programs without sites.
+  Interning one more identifier in every program changed the order of
+  identifiers, which made the 24 refined string kernels take 216 s rather
+  than 39 s.
+
 ## Open questions
 
 - Should a front-end re-convert in place, or should each round build a fresh

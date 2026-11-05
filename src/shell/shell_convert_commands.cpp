@@ -3,6 +3,7 @@
 
 #include "shell_convert_class.h"
 
+#include <goto-programs/dynamic_sites.h>
 #include <goto-programs/goto_instruction_code.h>
 
 #include <algorithm>
@@ -1461,9 +1462,21 @@ void shell_convertert::convert_dynamic_simple(
     name,
     expand_word(command.words.front(), shell_word_contextt::FIELD, dest, loc),
     loc);
+  // A dynamic site (see goto-programs/dynamic_sites.h): with a resolution,
+  // the name is one of its candidates, which is checked.
+  const irep_idt site = "shell-command-name:" + id2string(loc.get_file()) +
+                        ":" + id2string(loc.get_line()) + ":" +
+                        id2string(loc.get_column());
+  add(
+    dest,
+    dynamic_site_marker(site, name, shell_mode(), symbol_table, loc),
+    loc);
+  const auto resolution = resolutions.find(site);
+  const bool resolved = resolution != resolutions.end();
 
-  // The names a branch is needed for: the functions and the builtins that
-  // contain the literal text of the word (for $dir/tool, none).
+  // The names a branch is needed for: the candidates of the resolution;
+  // otherwise the functions and the builtins that contain the literal text
+  // of the word (for $dir/tool, none).
   std::vector<std::string> literals;
   for(const auto &part : command.words.front())
   {
@@ -1485,12 +1498,17 @@ void shell_convertert::convert_dynamic_simple(
     }
     names.insert(candidate);
   };
-  for(const auto &entry : function_definitions)
-    add_name(entry.first);
-  for(const auto &entry : builtins)
-    add_name(entry.first);
-  for(const auto &builtin : unsupported_builtins)
-    add_name(builtin);
+  if(resolved)
+    names = resolution->second;
+  else
+  {
+    for(const auto &entry : function_definitions)
+      add_name(entry.first);
+    for(const auto &entry : builtins)
+      add_name(entry.first);
+    for(const auto &builtin : unsupported_builtins)
+      add_name(builtin);
+  }
 
   // A copy of the command with a literal name, for each branch.
   const auto with_name = [&command](const std::string &text)
@@ -1508,12 +1526,31 @@ void shell_convertert::convert_dynamic_simple(
   // change any variable.
   const auto before_dispatch = known_literals;
   // Any other name runs a utility, whose words are only expanded for
-  // their side effects.
+  // their side effects; with a resolution, there is no other name.
   code_blockt otherwise;
-  convert_non_function(
-    with_name(CPROVER_PREFIX "shell_utility"),
-    shell_command_kindt::EXTERNAL,
-    otherwise);
+  if(resolved)
+  {
+    std::string candidates;
+    for(const auto &text : names)
+      candidates += (candidates.empty() ? "" : ", ") + text;
+    source_locationt check_loc = loc;
+    check_loc.set_property_class("shell-dynamic-site");
+    check_loc.set_comment(
+      "the command name " + display(command.words.front()) +
+      " is one of the candidates of " + id2string(site) + ": " +
+      (candidates.empty() ? std::string{"none"} : candidates));
+    code_assertt assertion{false_exprt{}};
+    assertion.add_source_location() = check_loc;
+    otherwise.add(std::move(assertion));
+    add(otherwise, code_assumet{false_exprt{}}, loc);
+  }
+  else
+  {
+    convert_non_function(
+      with_name(CPROVER_PREFIX "shell_utility"),
+      shell_command_kindt::EXTERNAL,
+      otherwise);
+  }
   std::vector<std::pair<exprt, code_blockt>> branches;
   exprt::operandst unsupported_names;
   std::string unsupported_texts;

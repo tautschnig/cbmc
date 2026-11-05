@@ -1,0 +1,10 @@
+CORE
+main.sh
+--show-dynamic-sites
+^EXIT=0$
+^SIGNAL=0$
+^shell-command-name:main.sh:10:1: file main.sh line 10 column 1$
+--
+^warning: ignoring
+--
+A command name that is an expansion is a dynamic site.

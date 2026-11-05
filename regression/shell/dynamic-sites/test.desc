@@ -1,0 +1,12 @@
+CORE
+main.sh
+--dynamic-resolutions all.json
+^EXIT=0$
+^SIGNAL=0$
+^\[shell-dynamic-site\.1\] .* is one of the candidates of shell-command-name:main.sh:10:1: greet, true: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+With a resolution, the command name is converted for its candidates only,
+and is checked to be one of them.

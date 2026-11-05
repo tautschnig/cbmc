@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+shell-dynamic-site
+--
+Without a resolution, the command name dispatches over all functions and
+builtins, and any other name runs a utility.

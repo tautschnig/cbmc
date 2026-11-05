@@ -127,6 +127,7 @@ public:
       max_length(options.max_string_length),
       max_arguments(options.max_arguments),
       strings(options.strings),
+      resolutions(options.resolutions),
       symbol_table(symbol_table),
       ns(symbol_table),
       log(message_handler),
@@ -141,6 +142,8 @@ private:
   const std::size_t max_length;
   const std::size_t max_arguments;
   const shell_string_representationt strings;
+  /// The candidates of dynamic sites.
+  const dynamic_resolutionst &resolutions;
   symbol_table_baset &symbol_table;
   namespacet ns;
   messaget log;

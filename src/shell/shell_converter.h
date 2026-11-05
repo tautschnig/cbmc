@@ -7,6 +7,8 @@
 #include <util/cprover_prefix.h>
 #include <util/irep.h>
 
+#include <goto-programs/dynamic_sites.h>
+
 #include <cstddef>
 
 class message_handlert;
@@ -52,6 +54,8 @@ struct shell_convert_optionst
   /// many elements.
   std::size_t max_arguments = SHELL_DEFAULT_MAX_ARGUMENTS;
   shell_string_representationt strings = shell_string_representationt::REFINED;
+  /// The candidates of dynamic sites (--dynamic-resolutions).
+  dynamic_resolutionst resolutions;
 };
 
 /// Convert \p program into `shell::main` and the variable symbols it uses,

@@ -1,0 +1,12 @@
+CORE
+main.sh
+--dynamic-resolutions missing.json --shell-strings native --cvc5
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-dynamic-site\.1\] .*: greet: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A value that is not among the candidates is reported, so that a resolution
+that misses one cannot hide behaviour.
