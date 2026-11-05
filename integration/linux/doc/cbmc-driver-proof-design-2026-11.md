@@ -626,10 +626,66 @@ harness rather than a cut: with `MAX_SEGS=2` the chain cannot be longer.
 
 Runner: `proof/run_item1_realbodies_unbounded.sh`.
 
-Remaining scope limits, unchanged by this: the geometry is small (ring 2,
-segments 2), and the inner walk is bounded by an unwinding assertion rather
-than carrying its own loop contract. Giving `ena_tx_map_mbuf.0` an invariant
-keyed on the mbuf chain would remove the last bound here.
+### 8.5b Segment count: the full legal range, and what happens past it
+
+Scaling the segment geometry (`run_item1_realbodies_unbounded.sh` with
+`SEGS=`), the five obligations hold across the whole range an application is
+allowed to submit:
+
+| `MAX_SEGS` | time | result |
+|---|---|---|
+| 6 | 21 s | SUCCESSFUL, 5/5 obligations, inner unwinding assertion SUCCESS |
+| 12 | 39 s | SUCCESSFUL, 5/5, inner bound complete |
+| 17 | 41 s | SUCCESSFUL, 5/5, inner bound complete |
+
+`ENA_PKT_MAX_BUFS` is 17 and the harness sets `sgl_size` to it, so
+`MAX_SEGS=17` covers every legal chain length. The "small geometry"
+qualification on segments is therefore gone; what remains small is the ring
+(see below).
+
+**Chasing the bound to its source turned up a real obligation split.**
+`ena_tx_map_mbuf` walks the `->next` chain doing `ena_buf++` per segment with
+no bound of its own (`ena_ethdev.c:3108-3122`). The only thing keeping it
+inside `tx_info->bufs[ENA_PKT_MAX_BUFS]` is the caller's guarantee about the
+chain length, and that guarantee comes from `eth_ena_prep_pkts`, the
+`rte_eth_tx_prepare` callback -- which DPDK lets an application **skip**.
+A focused obligation (`harness_map_segs.c`, `run_map_segs.sh`) settles it:
+
+```
+SEGS_LEGAL=1 (chain <= sgl_size)   num_of_bufs stays within tx_info->bufs[]: SUCCESS
+SEGS_LEGAL=0 (chain >  sgl_size)   num_of_bufs stays within tx_info->bufs[]: FAILURE
+                                   ena_buf->paddr  pointer outside object bounds: FAILURE
+                                   ena_buf->len    pointer outside object bounds: FAILURE
+```
+
+So the bound is **not** a property of the driver; it is an obligation on the
+application, and violating it is an out-of-bounds write inside
+`struct ena_tx_buffer` rather than a clean rejection. In fairness to the
+driver the limit *is* advertised -- `dev_info->tx_desc_lim.nb_seg_max` is set
+to `min(ENA_PKT_MAX_BUFS, ...)` at `ena_ethdev.c:2657` -- so an application
+that respects the advertised limits is safe, and the first row above is the
+proof of that. But `eth_ena_xmit_pkts` itself re-checks nothing, so the
+failure mode for an application bug is memory corruption in the PMD instead
+of a dropped packet. Worth raising with the driver owners as a robustness
+question: a `nb_segs > sgl_size` check in `ena_xmit_mbuf` would make the
+rejection explicit, and it is the same shape as the `tx_free_thresh` and
+in-flight-mbuf obligations the invariants already surfaced.
+
+Note the first attempt at this experiment was vacuous and the proof said so:
+at ring size 2 the `ena_com_sq_have_enough_space(io_sq, nb_segs + 2)` check
+rejects any long chain before `ena_tx_map_mbuf` is reached, so the overflow
+is unreachable through `eth_ena_xmit_pkts` on a small ring. Isolating
+`ena_tx_map_mbuf` was what made the question answerable; the end-to-end
+version at ring 32 did not finish in 2400 s.
+
+Remaining scope limits: the ring is still small (2) in the end-to-end proof,
+because `INV_RING`'s per-slot loops scale with it, and the inner walk is
+bounded by a checked unwinding assertion rather than carrying its own loop
+contract. A contract for `ena_tx_map_mbuf.0` needs a ranking function over
+the chain, which has no counter to decrease -- the natural measure is the
+remaining chain length, which is not materialised in the driver's state. The
+cheaper route to dropping the bound is the `nb_segs` precondition above,
+since `nb_segs` *is* materialised and bounded by 17.
 
 ### 8.3 What this changes in the plan
 
