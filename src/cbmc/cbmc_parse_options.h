@@ -74,7 +74,7 @@ class optionst;
   "(python-max-string-length):" \
   "(python-max-list-length):" \
   "(python-no-body-check)" \
-  "(go-compiler):(go-no-deadlock-check)(go-keep-unreachable)" \
+  "(go-compiler):(go-no-deadlock-check)(go-keep-unreachable)(go-race-check)" \
   "(claim):(show-claims)(floatbv)(all-claims)(all-properties)" // legacy, and will eventually disappear // NOLINT(whitespace/line_length)
 // clang-format on
 

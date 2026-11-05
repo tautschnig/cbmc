@@ -58,6 +58,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <langapi/mode.h>
 #include <pointer-analysis/add_failed_symbols.h>
 
+#include <go/go_race_check.h>
+
 #include "c_test_input_generator.h"
 
 #include <cstdlib> // exit()
@@ -177,6 +179,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("go-no-deadlock-check", true);
   if(cmdline.isset("go-keep-unreachable"))
     options.set_option("go-keep-unreachable", true);
+  if(cmdline.isset("go-race-check"))
+    options.set_option("go-race-check", true);
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
   // Disable signed overflow checks for Python source files.
@@ -947,6 +951,10 @@ bool cbmc_parse_optionst::process_goto_program(
                  << messaget::eom;
     nondet_static(goto_model);
   }
+
+  // Go data races (spike, opt-in)
+  if(options.get_bool_option("go-race-check"))
+    go_race_check(goto_model, log.get_message_handler());
 
   // add failed symbols
   // needs to be done before pointer analysis
