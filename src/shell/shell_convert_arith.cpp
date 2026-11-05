@@ -74,8 +74,9 @@ exprt shell_convertert::expand_arithmetic(
         "__cprover_arithmetic_" + std::to_string(arithmetic_substitutions++);
       assign_variable(
         name, expand_command_substitution(substitution, dest), dest, loc);
-      text.replace(at, end + 1 - at, "$" + name);
-      at += name.size() + 1;
+      // Braced, so that text after it is not part of the name.
+      text.replace(at, end + 1 - at, "${" + name + "}");
+      at += name.size() + 3;
       replaced = true;
     }
     if(replaced)
