@@ -397,6 +397,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("slice-formula"))
     options.set_option("slice-formula", true);
 
+  if(cmdline.isset("report-unreachable-properties"))
+    options.set_option("report-unreachable-properties", true);
+
   if(cmdline.isset("arrays-uf-always"))
     options.set_option("arrays-uf", "always");
   else if(cmdline.isset("arrays-uf-never"))

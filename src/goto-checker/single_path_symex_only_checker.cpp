@@ -161,7 +161,10 @@ void single_path_symex_only_checkert::update_properties(
     update_properties_from_goto_model(properties, goto_model);
 
   update_properties_status_from_symex_target_equation(
-    properties, updated_properties, equation);
+    properties,
+    updated_properties,
+    equation,
+    options.get_bool_option("report-unreachable-properties"));
 }
 
 void single_path_symex_only_checkert::final_update_properties(
@@ -169,7 +172,10 @@ void single_path_symex_only_checkert::final_update_properties(
   std::unordered_set<irep_idt> &updated_properties)
 {
   // For now, we assume that NOT_REACHED properties are PASS.
-  update_status_of_not_checked_properties(properties, updated_properties);
+  update_status_of_not_checked_properties(
+    properties,
+    updated_properties,
+    options.get_bool_option("report-unreachable-properties"));
 
   // For now, we assume that UNKNOWN properties are PASS.
   update_status_of_unknown_properties(properties, updated_properties);

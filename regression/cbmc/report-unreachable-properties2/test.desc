@@ -1,0 +1,11 @@
+CORE
+main.c
+
+^\[main\.assertion\.1\] line 12 dead branch: SUCCESS$
+^\[main\.assertion\.2\] line 19 reachable and true: SUCCESS$
+^EXIT=0$
+^SIGNAL=0$
+--
+--
+Default behaviour: an unreached property is reported as SUCCESS. This pins the
+historical behaviour so that --report-unreachable-properties stays opt-in.

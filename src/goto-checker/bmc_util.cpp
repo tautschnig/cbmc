@@ -216,8 +216,25 @@ void slice(
 void update_properties_status_from_symex_target_equation(
   propertiest &properties,
   std::unordered_set<irep_idt> &updated_properties,
-  const symex_target_equationt &equation)
+  const symex_target_equationt &equation,
+  bool report_unreachable)
 {
+  // A property may have more than one assertion step, for instance one per
+  // unwound loop iteration. It is only unreachable when every one of them is,
+  // so collect the reachable ones first. Mixing NOT_REACHABLE into a property
+  // that also has a reachable step would violate the precondition of
+  // property_statust::operator|=.
+  std::unordered_set<irep_idt> reachable_properties;
+
+  if(report_unreachable)
+  {
+    for(const auto &step : equation.SSA_steps)
+    {
+      if(step.is_assert() && !step.guard.is_false())
+        reachable_properties.insert(step.property_id);
+    }
+  }
+
   for(const auto &step : equation.SSA_steps)
   {
     if(!step.is_assert())
@@ -228,8 +245,12 @@ void update_properties_status_from_symex_target_equation(
 
     // Don't update status of properties that are constant 'false';
     // we wouldn't have traces for them.
-    const auto status = step.cond_expr == true ? property_statust::PASS
-                                               : property_statust::UNKNOWN;
+    const auto status =
+      (report_unreachable && step.guard.is_false() &&
+       reachable_properties.find(property_id) == reachable_properties.end())
+        ? property_statust::NOT_REACHABLE
+      : step.cond_expr == true ? property_statust::PASS
+                               : property_statust::UNKNOWN;
     auto emplace_result = properties.emplace(
       property_id, property_infot{step.source.pc, step.comment, status});
 
@@ -251,15 +272,20 @@ void update_properties_status_from_symex_target_equation(
 
 void update_status_of_not_checked_properties(
   propertiest &properties,
-  std::unordered_set<irep_idt> &updated_properties)
+  std::unordered_set<irep_idt> &updated_properties,
+  bool report_unreachable)
 {
   for(auto &property_pair : properties)
   {
     if(property_pair.second.status == property_statust::NOT_CHECKED)
     {
-      // This could be a NOT_CHECKED, NOT_REACHABLE or PASS,
-      // but the equation doesn't give us precise information.
-      property_pair.second.status = property_statust::PASS;
+      // A property that does not occur in the equation at all was not
+      // reached. Historically this was reported as PASS, which is
+      // indistinguishable from "checked and holds"; NOT_REACHABLE says what
+      // actually happened.
+      property_pair.second.status = report_unreachable
+                                      ? property_statust::NOT_REACHABLE
+                                      : property_statust::PASS;
       updated_properties.insert(property_pair.first);
     }
   }
