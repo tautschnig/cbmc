@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+In sh, ++x is +(+x) and x++ a syntax error, which makes the shell exit,
+as in dash, or both increment x, as in bash run as sh and busybox; the
+shell is one or the other throughout.

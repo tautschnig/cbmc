@@ -57,6 +57,8 @@ void shell_convertert::add_initialize()
     assign(init, exit_trap(), from_integer(0, exit_trap().type()), loc);
   if(symbol_table.has_symbol("shell::in_exit_trap"))
     assign(init, in_exit_trap(), false_exprt{}, loc);
+  if(symbol_table.has_symbol("shell::posix_increments"))
+    assign(init, posix_increments(), nondet(bool_typet{}, loc), loc);
   initialize_options(init, loc);
   initialize_getopts(init, loc);
   initialize_arrays(init, loc);

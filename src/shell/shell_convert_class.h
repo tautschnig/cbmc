@@ -1466,6 +1466,14 @@ private:
   void exit_shell(code_blockt &dest, bool failure, const source_locationt &);
   /// shell::exited: set once the shell has exited, so that each function
   /// returns to its caller in turn.
+  /// shell::posix_increments: in sh, whether the shell has the increment
+  /// operators of bash and busybox in arithmetic, rather than none, as
+  /// dash; chosen at startup.
+  symbol_exprt posix_increments()
+  {
+    return global_symbol(
+      "shell::posix_increments", "posix_increments", bool_typet{});
+  }
   symbol_exprt exited()
   {
     return global_symbol("shell::exited", "exited", bool_typet{});

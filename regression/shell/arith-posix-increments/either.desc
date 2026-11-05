@@ -1,0 +1,11 @@
+CORE
+either.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+In sh, ++x may increment x, as in bash run as sh and busybox.

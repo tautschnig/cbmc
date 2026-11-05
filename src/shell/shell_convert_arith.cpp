@@ -87,6 +87,51 @@ exprt shell_convertert::expand_arithmetic(
     }
   }
   const auto parsed = parse_shell_arithmetic(part.text, arith_options);
+  if(
+    program.dialect == shell_dialectt::POSIX &&
+    (part.text.find("++") != std::string::npos ||
+     part.text.find("--") != std::string::npos))
+  {
+    // dash has no increment operators: ++x is +(+x), and x++ is a syntax
+    // error; bash run as sh and busybox increment. Where they differ,
+    // either happens, as chosen once for the shell.
+    shell_arith_optionst incrementing = arith_options;
+    incrementing.increment_mode = shell_arith_increment_modet::LENIENT;
+    const auto other = parse_shell_arithmetic(part.text, incrementing);
+    const bool same =
+      parsed.expression.has_value() && other.expression.has_value() &&
+      to_string(*parsed.expression) == to_string(*other.expression);
+    if(!same && (parsed.expression.has_value() || other.expression.has_value()))
+    {
+      const symbol_exprt result = temporary(string_type(), dest, loc);
+      const auto evaluate = [&](const shell_arith_parse_resultt &p)
+      {
+        code_blockt block;
+        if(p.expression.has_value())
+        {
+          assign(
+            block,
+            result,
+            from_integer_expr(arith(*p.expression, block, loc), block, loc),
+            loc);
+        }
+        else
+        {
+          // A syntax error makes the shell exit.
+          exit_shell(block, true, loc);
+        }
+        return block;
+      };
+      code_blockt as_dash = evaluate(parsed);
+      code_blockt as_bash = evaluate(other);
+      add(
+        dest,
+        code_ifthenelset{
+          posix_increments(), std::move(as_bash), std::move(as_dash)},
+        loc);
+      return result;
+    }
+  }
   if(!parsed.expression.has_value())
   {
     log.warning().source_location = loc;
@@ -133,25 +178,7 @@ exprt shell_convertert::expand_arithmetic(
           loc, "parameter expansion that is part of a token in arithmetic");
       }
     }
-    if(
-      program.dialect == shell_dialectt::POSIX &&
-      (text.find("++") != std::string::npos ||
-       text.find("--") != std::string::npos))
-    {
-      unsupported(
-        loc,
-        "postfix ++ or -- in arithmetic (dash rejects them, other shells "
-        "increment)");
-    }
     unsupported(loc, "arithmetic expression that is not valid");
-  }
-  if(parsed.contains_increment_sequence)
-  {
-    log.warning().source_location = loc;
-    log.warning() << "'++' and '--' in $((" << part.text
-                  << ")) are two sign operators in POSIX mode (as in dash), "
-                     "but increment operators in other shells"
-                  << messaget::eom;
   }
   return from_integer_expr(arith(*parsed.expression, dest, loc), dest, loc);
 }
