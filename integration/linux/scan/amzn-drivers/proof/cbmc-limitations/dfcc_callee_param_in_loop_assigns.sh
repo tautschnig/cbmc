@@ -31,3 +31,22 @@ for f in dfcc_callee_locals_pass dfcc_callee_param_in_loop_assigns; do
       --unwindset callee.0:6 --unwinding-assertions 2>&1 |
       grep -E "callee\.assigns|^VERIFICATION" | sed 's/^/  /' ) || true
 done
+
+# The narrowed trigger and the decisive control (issue B of
+# doc/dfcc-issues-2026-11.md): it needs a loop inside the callee, AND it only
+# happens when loop contracts are applied.
+echo
+echo "== dfcc_callee_locals_in_loop: --dfcc WITHOUT --apply-loop-contracts"
+"$BIN/goto-cc" "$HERE/dfcc_callee_locals_in_loop.c" -o b.gb 2>/dev/null
+"$BIN/goto-instrument" --no-malloc-may-fail --dfcc main b.gb b_nolc.gb >/dev/null 2>&1
+( ulimit -v 16000000
+  timeout 300 "$BIN/cbmc" b_nolc.gb --no-standard-checks \
+    --unwindset main.0:3,callee.0:5 2>&1 |
+    grep -E "callee\.assigns|^VERIFICATION" | sed 's/^/  /' ) || true
+echo "== dfcc_callee_locals_in_loop: --dfcc WITH --apply-loop-contracts"
+"$BIN/goto-instrument" --no-malloc-may-fail --dfcc main --apply-loop-contracts \
+    b.gb b_lc.gb >/dev/null 2>&1
+( ulimit -v 16000000
+  timeout 300 "$BIN/cbmc" b_lc.gb --no-standard-checks \
+    --unwindset callee.0:5 2>&1 |
+    grep -E "callee\.assigns|^VERIFICATION" | sed 's/^/  /' ) || true
