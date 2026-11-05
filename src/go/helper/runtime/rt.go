@@ -297,6 +297,13 @@ func AtomicBegin() {}
 // AtomicEnd ends the atomic section that AtomicBegin started.
 func AtomicEnd() {}
 
+// RaceRead and RaceWrite are an access (a read or a write) of the variable
+// that p points to for the data-race check (--go-race-check), as the race
+// package's Read and Write annotate one under gc's -race; otherwise they
+// do nothing.
+func RaceRead(p any)  {}
+func RaceWrite(p any) {}
+
 // AtomicBeginWhen starts an atomic section once cond holds, as
 // AtomicBegin: the goroutine blocks until then (only the executions in
 // which cond holds continue), and if all goroutines block forever, the

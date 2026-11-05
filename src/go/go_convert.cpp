@@ -2713,6 +2713,35 @@ bool go_convertert::convert_intrinsic_call(const irept &call, code_blockt &dest)
     return true;
   }
 
+  if(callee == "cprover/rt.RaceRead" || callee == "cprover/rt.RaceWrite")
+  {
+    // A call of go::$race_read or go::$race_write (functions without
+    // effect) with the pointer, which the data-race check
+    // (go_race_check.cpp) takes as an access of the variable it points to.
+    exprt pointer = convert_expr(args.front());
+    if(pointer.is_nil())
+      return true;
+    if(pointer.type().id() != ID_pointer)
+    {
+      unsupported(args.front(), "rt.RaceRead/RaceWrite of a non-pointer");
+      return true;
+    }
+    const irep_idt id =
+      callee == "cprover/rt.RaceWrite" ? "go::$race_write" : "go::$race_read";
+    const pointer_typet parameter = pointer_type(empty_typet{});
+    if(!symbol_table.has_symbol(id))
+    {
+      declare_generated(symbol_table, id, {parameter}, empty_typet{});
+      symbol_table.get_writeable_ref(id).value = code_blockt{};
+    }
+    dest.add(code_expressiont{side_effect_expr_function_callt{
+      ns.lookup(id).symbol_expr(),
+      {typecast_exprt::conditional_cast(pointer, parameter)},
+      empty_typet{},
+      location}});
+    return true;
+  }
+
   if(callee == "cprover/rt.AtomicBeginWhen")
   {
     // Begin an atomic section once the condition holds (block until then).
