@@ -8,11 +8,83 @@
 // ------------------------------------------------------------------
 // Arithmetic
 
+/// The end of the command substitution that starts at \p start in
+/// \p text, just after "$(", skipping quoted text and nested parentheses;
+/// npos if there is none.
+static std::size_t substitution_end(const std::string &text, std::size_t start)
+{
+  int depth = 1;
+  for(std::size_t i = start; i < text.size(); ++i)
+  {
+    const char c = text[i];
+    if(c == '\\')
+      ++i;
+    else if(c == '\'')
+    {
+      i = text.find('\'', i + 1);
+      if(i == std::string::npos)
+        return i;
+    }
+    else if(c == '"')
+    {
+      for(++i; i < text.size() && text[i] != '"'; ++i)
+      {
+        if(text[i] == '\\')
+          ++i;
+      }
+    }
+    else if(c == '(')
+      ++depth;
+    else if(c == ')' && --depth == 0)
+      return i;
+  }
+  return std::string::npos;
+}
+
 exprt shell_convertert::expand_arithmetic(
   const shell_word_partt &part,
   code_blockt &dest)
 {
   const source_locationt &loc = part.location;
+  // The output of a command substitution is text of the expression: each
+  // one runs first, and stands for an operand, which must be an integer
+  // constant (the output could otherwise be any expression, even an
+  // assignment).
+  if(
+    part.text.find("$(") != std::string::npos &&
+    part.text.find("$((") == std::string::npos)
+  {
+    std::string text = part.text;
+    std::size_t at = 0;
+    bool replaced = false;
+    while((at = text.find("$(", at)) != std::string::npos)
+    {
+      const std::size_t end = substitution_end(text, at + 2);
+      if(end == std::string::npos)
+        break;
+      const std::string commands = text.substr(at + 2, end - (at + 2));
+      // As for eval: function definitions, options and dot scripts would
+      // have to be collected beforehand.
+      shell_word_partt substitution;
+      substitution.kind = shell_word_partt::kindt::COMMAND_SUBSTITUTION;
+      substitution.location = loc;
+      substitution.commands = std::make_shared<shell_command_listt>(
+        parse_known_text(commands, "command substitution in arithmetic", loc));
+      const std::string name =
+        "__cprover_arithmetic_" + std::to_string(arithmetic_substitutions++);
+      assign_variable(
+        name, expand_command_substitution(substitution, dest), dest, loc);
+      text.replace(at, end + 1 - at, "$" + name);
+      at += name.size() + 1;
+      replaced = true;
+    }
+    if(replaced)
+    {
+      shell_word_partt copy = part;
+      copy.text = text;
+      return expand_arithmetic(copy, dest);
+    }
+  }
   const auto parsed = parse_shell_arithmetic(part.text, arith_options);
   if(!parsed.expression.has_value())
   {

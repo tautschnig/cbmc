@@ -1422,6 +1422,8 @@ private:
   std::optional<std::string> known_text(const shell_wordt &word) const;
   /// The programs that eval parsed, which the converted code refers to.
   std::vector<std::unique_ptr<shell_programt>> eval_programs;
+  /// The number of command substitutions in arithmetic so far.
+  std::size_t arithmetic_substitutions = 0;
   /// The commands of \p text, known during conversion, for eval or trap
   /// (\p what): it must not define functions, enable options that set
   /// does not enable elsewhere, or run other dot scripts.

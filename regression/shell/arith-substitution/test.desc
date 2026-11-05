@@ -1,0 +1,14 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-arithmetic\.[0-9]+\] .*value of \$__cprover_arithmetic_0 is an integer constant .*: FAILURE$
+^\[assertion\.1\] .*: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A command substitution in arithmetic runs first, and its output, which
+is not modelled, is checked to be an integer constant (it could
+otherwise be any expression, even an assignment).
