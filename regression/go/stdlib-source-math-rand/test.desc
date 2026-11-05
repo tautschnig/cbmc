@@ -1,0 +1,20 @@
+CORE
+main.go
+--unwind 6 --unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 23 Intn is in \[0,n\): SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 25 Float64 is in \[0,1\): SUCCESS$
+^\[go::main\.main\.assertion\.3\] line 31 Perm is a permutation: SUCCESS$
+^\[go::main\.main\.assertion\.4\] line 34 Shuffle keeps the elements: SUCCESS$
+^\[go::main\.main\.assertion\.5\] line 37 a seeded source: SUCCESS$
+^\[go::main\.main\.assertion\.6\] line 40 a program's source: SUCCESS$
+^\[go::main\.main\.assertion\.7\] line 41 sampled as gc does: \(3>>32\)&1: SUCCESS$
+^\[go::main\.main\.assertion\.8\] line 43 the values are arbitrary: FAILURE$
+^\*\* 1 of \d+ failed
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+not supported yet
+--
+math/rand from its own source, with arbitrary generators

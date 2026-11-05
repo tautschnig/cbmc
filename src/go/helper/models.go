@@ -84,8 +84,9 @@ func (l *loader) loadModel(path string) error {
 // models, so that the real package's types (from export data) are not
 // affected.
 //
-// With overrides, the functions of models/<path> replace those of the same
-// names in the source (and imports that no longer have uses are dropped).
+// With overrides, the functions, methods and package-level variables of
+// models/<path> replace those of the same names (and receiver base types)
+// in the source (and imports that no longer have uses are dropped).
 var sourceModels = map[string]struct {
 	files     []string
 	tags      []string
@@ -147,6 +148,10 @@ var sourceModels = map[string]struct {
 		"indent.go", "scanner.go", "stream.go", "tables.go", "tags.go"}},
 	"bufio": {},
 	"path":  {},
+	// The generator of rng.go (models/math/rand: arbitrary values), and
+	// the GODEBUG settings at their defaults (without internal/godebug).
+	"math/rand": {files: []string{"exp.go", "normal.go", "rand.go",
+		"zipf.go"}, overrides: true},
 }
 
 // parseSourceModel parses the files of the source model of path (see
@@ -175,8 +180,17 @@ func (l *loader) parseSourceModel(path string) ([]*ast.File, error) {
 		}
 		for _, f := range overrides {
 			for _, d := range f.Decls {
-				if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil {
-					replaced[fd.Name.Name] = true
+				switch d := d.(type) {
+				case *ast.FuncDecl:
+					replaced[funcKey(d)] = true
+				case *ast.GenDecl:
+					if d.Tok == token.VAR {
+						for _, spec := range d.Specs {
+							for _, name := range spec.(*ast.ValueSpec).Names {
+								replaced[name.Name] = true
+							}
+						}
+					}
 				}
 			}
 		}
@@ -197,14 +211,49 @@ func (l *loader) parseSourceModel(path string) ([]*ast.File, error) {
 	return append(files, overrides...), nil
 }
 
-// override removes the functions named in replaced from f, and the
-// imports that then have no uses.
+// funcKey names a function or method declaration for override: F, or T.M
+// for a method M with receiver base type T.
+func funcKey(d *ast.FuncDecl) string {
+	if d.Recv == nil || len(d.Recv.List) == 0 {
+		return d.Name.Name
+	}
+	t := d.Recv.List[0].Type
+	if star, ok := t.(*ast.StarExpr); ok {
+		t = star.X
+	}
+	switch x := t.(type) {
+	case *ast.IndexExpr:
+		t = x.X
+	case *ast.IndexListExpr:
+		t = x.X
+	}
+	if id, ok := t.(*ast.Ident); ok {
+		return id.Name + "." + d.Name.Name
+	}
+	return d.Name.Name
+}
+
+// override removes the functions, methods and package-level variables
+// named in replaced (see funcKey) from f, and the imports that then have
+// no uses.
 func override(f *ast.File, replaced map[string]bool) {
 	var decls []ast.Decl
 	for _, d := range f.Decls {
-		if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil &&
-			replaced[fd.Name.Name] {
+		if fd, ok := d.(*ast.FuncDecl); ok && replaced[funcKey(fd)] {
 			continue
+		}
+		if gd, ok := d.(*ast.GenDecl); ok && gd.Tok == token.VAR {
+			// Variables declared together are replaced together.
+			var specs []ast.Spec
+			for _, spec := range gd.Specs {
+				if vs := spec.(*ast.ValueSpec); !replaced[vs.Names[0].Name] {
+					specs = append(specs, spec)
+				}
+			}
+			if len(specs) == 0 {
+				continue
+			}
+			gd.Specs = specs
 		}
 		decls = append(decls, d)
 	}
