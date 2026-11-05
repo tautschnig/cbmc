@@ -612,10 +612,27 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
       };
       const auto flags_of = [&](const accesst &a)
       { return a.write ? write_flags : read_flags; };
-      for(const auto &a : accesses)
-        guarded(a.guard, [&] { set_flag(flags_of(a), a.lvalue, true); });
-      for(const auto &a : accesses)
-        guarded(a.guard, [&] { set_flag(flags_of(a), a.lvalue, false); });
+      // Setting a flag updates the shadow memory (or the flag array) of the
+      // object as a whole: an update of another goroutine in between would
+      // be lost, and so a flag that was reset could be set again.
+      const auto atomically = [&](auto &&emit)
+      {
+        before.add(goto_programt::make_atomic_begin(location));
+        emit();
+        before.add(goto_programt::make_atomic_end(location));
+      };
+      atomically(
+        [&]
+        {
+          for(const auto &a : accesses)
+            guarded(a.guard, [&] { set_flag(flags_of(a), a.lvalue, true); });
+        });
+      atomically(
+        [&]
+        {
+          for(const auto &a : accesses)
+            guarded(a.guard, [&] { set_flag(flags_of(a), a.lvalue, false); });
+        });
       if(with_checks)
       {
         for(const auto &a : accesses)
