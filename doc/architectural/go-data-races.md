@@ -1,0 +1,181 @@
+# Data-race detection for the Go front-end: design
+
+Status: proposal (plan §6, phase 10). Nothing here is implemented yet.
+
+## 1. What must be reported
+
+GoMem §Memory_model: "A read-write data race on memory location x
+consists of a read-like memory operation r on x and a write-like memory
+operation w on x, at least one of which is non-synchronizing, which are
+unordered by happens before". Write-write races are defined in the same
+way. A memory location is a variable, a struct field or an array element
+(GoMem: "a read of an array, struct, or complex number may be
+implemented as a read of each individual sub-value"), so two goroutines
+that write different elements of one slice do not race.
+
+The happens-before edges are those of GoMem: `go` statements, channel
+operations (including "the kth receive from a channel with capacity C is
+synchronized before the completion of the k+Cth send"), `sync.Mutex` and
+`RWMutex`, `Once`, `sync/atomic` (sequentially consistent), and, from the
+package documentation, `WaitGroup` and `Cond`.
+
+The result is a property per access site, of class `data-race`, failing
+if a race involving that access is possible within the unwinding bound.
+gc's race detector reports a race and terminates ("An implementation may
+always react to a data race by reporting the race and terminating the
+program", GoMem); so may we, so behaviour after a race does not matter.
+
+## 2. What the front-end already provides
+
+- Goroutines are CBMC threads (`__CPROVER_ASYNC_1`, `convert_go`), and
+  goto-symex encodes their interleavings sequentially consistently.
+- Every synchronising operation of the models (channels, `select`,
+  `sync`, `sync/atomic`) is an atomic section (`rt.AtomicBegin`,
+  `rt.AtomicBeginWhen`, `block_until`), and blocking is `assume`. So the
+  happens-before edges of §1 hold in every interleaving the encoding
+  admits, without being represented explicitly.
+- Shared data are mostly heap objects (escaping variables, closure
+  environments, slices, maps, channel buffers), symex dynamic objects
+  rather than named globals.
+
+## 3. Approach: conflicting accesses that can be adjacent
+
+By the classic result behind DRF-SC (Adve and Hill; Boehm and Adve), a
+program has a data race if and only if it has a sequentially consistent
+execution in which two conflicting accesses, at least one not
+synchronising, are adjacent. Since the encoding already enumerates all
+SC interleavings (within the bounds), it suffices to make adjacency
+observable. That is the scheme of goto-instrument's `--race-check`
+(`src/goto-instrument/race_check.cpp`), per location instead of per
+named object:
+
+```
+write of x:  W[x] := 1; <the write>; W[x] := 0; assert(!W[x] && !R[x])
+read of x:   R[x] := 1; <the read>;  R[x] := 0; assert(!W[x])
+```
+
+Another goroutine scheduled between a set and a reset makes the
+assertion of a conflicting access fail. One flag per location and kind
+suffices even with several readers, as the checker explores the
+interleaving in which the racing pair is adjacent. Accesses inside the
+models' atomic sections are synchronising: they are not flagged
+themselves, but still check the flags (GoMem counts an atomic access
+racing with a plain one as a race).
+
+A probe confirms the scheme in CBMC (`~/go-scratch/race-probe`,
+`flag_threads.c`): with a shared flag array per element, the racy access
+is found and an access to another element is not flagged.
+
+### Rejected alternatives
+
+- **goto-instrument `--race-check`** as is: it excludes heap objects
+  (`symex_dynamic::dynamic_object*`, so almost all Go data), names
+  objects statically (no array elements: "we don't distinguish the array
+  elements for now", `rw_set.cpp`), instruments assignments only (not
+  reads in conditions or arguments), and needs points-to sets before
+  symex.
+- **A happens-before query in goto-symex's partial-order encoding**
+  (`partial_order_concurrency`, `memory_model_sc`): precise and without
+  instrumentation, but the encoding has no happens-before relation of
+  its own (only one total order), nor a notion of synchronising
+  accesses; a new memory model with hb clocks and pairwise
+  "unordered" queries over events of the same object, with offset
+  comparisons for elements, is a much larger change to symex and to
+  the formula.
+
+## 4. Where the flags live
+
+The flags must be per byte (or element) of every object, heap objects
+included, and visible to all threads.
+
+**Option A (preferred): CBMC shadow memory, made thread-aware.**
+`__CPROVER_field_decl_global("W", (_Bool)0)` and `__CPROVER_set_field`
+/ `__CPROVER_get_field` give byte-granular fields for globals, locals
+and heap objects (initialised at `ID_allocate`), resolved through the
+value sets of the access, which the front-end has exactly (the address
+of the accessed lvalue). It does not work across threads today: the
+probe `sm_threads.c` misses the race, because the shadow symbols
+(`SM__…`, `get_fresh_aux_symbol`) are not shared, so their accesses are
+not shared events, and the registry of shadowed objects
+(`shadow_memory_statet::address_fields`) is per symex state, which each
+thread copies at spawn. The fix belongs in goto-symex (and helps C
+programs too): shadow symbols shared (static lifetime), and a registry
+that objects allocated by any thread join (with the repetition that
+multi-path symex already does for the shared value summary). Costs: each
+access adds a few shared events and a case split over its value set.
+
+**Option B (fallback, front-end only): a global flag array indexed by
+pointer.** `W[POINTER_OBJECT(p) * 2^offset_bits + POINTER_OFFSET(p)]`
+in one unbounded array, which the array theory handles. No symex changes,
+but every flag access is to the same shared object, so the memory model
+relates all of them pairwise: likely quadratic in the number of
+instrumented accesses.
+
+Both are behind the same hooks (§5), so the choice can be revisited.
+
+## 5. Instrumentation in the front-end
+
+As gc does for `-race` (calls of `runtime.raceread`/`racewrite`), the
+converter inserts hooks `rt.RaceRead(p, n)` / `rt.RaceWrite(p, n)`
+(intrinsics, §4) around accesses through addresses:
+
+- loads and stores of package variables, of heap variables (escaping
+  locals and captured variables: `state.heap_objects`), and through
+  pointers, slices (elements), maps (the map as a whole, as gc's
+  "concurrent map read and map write" fatal error), struct fields and
+  array elements of those; not locals on the stack or temporaries;
+- built-ins as ranges: `copy` (reads of `src[:n]`, writes of `dst[:n]`),
+  `append` (writes of the new elements; reads of the copied ones),
+  `clear`, `delete`, map assignment and lookup, `len` and `cap` of maps
+  and channels;
+- the source models of the standard library (plain Go, instrumented as
+  gc instruments the standard library under `-race`), but not the code
+  inside atomic sections, nor `cprover/rt`, `sync`, `sync/atomic` and
+  the channel code, which synchronise (their accesses to user memory,
+  e.g. `atomic.StoreInt32(&x, 1)`, only check the flags);
+- not reads of objects that are never written after initialisation
+  (const descriptors, string bytes, constant tables).
+
+When no goroutine can be started (no reachable `go` statement, including
+the timer goroutines of `time`), nothing is instrumented, so sequential
+programs pay nothing. `--go-no-race-check` turns the check off, as
+`--go-no-deadlock-check` does for deadlocks.
+
+Happens-before edges that the models do not reproduce precisely today
+must be fixed with them, since a missing edge is a false race and an
+extra edge a missed one: `TryLock` "may be considered to be able to
+return false even when the mutex l is unlocked" (the model never fails
+spuriously: fine, an extra behaviour is not needed for races); `Once`'s
+completion before every return of `Do` (the model's mutex gives it);
+`WaitGroup.Done` before the `Wait` it unblocks (the model's
+`AtomicBeginWhen(n == 0)` gives it).
+
+## 6. Validation
+
+- `src/runtime/race/testdata` has 372 tests named `TestRace…` and
+  `TestNoRace…` (channels, mutexes, `sync`, maps, slices, `select`,
+  closures, `atomic`, `rangefunc`), a labelled oracle: each becomes a
+  harness; `TestRace…` must fail a `data-race` property and `TestNoRace…`
+  must not, within a stated bound. Tests that need unmodelled packages
+  (`os`, `runtime` internals, cgo) are excluded and counted.
+- Regression tests per edge of §1, in both directions (the race without
+  the synchronisation, and none with it), and the C probes for the
+  shadow-memory fix in goto-symex.
+- Profiling (plan §7.2): the concurrency benchmarks of
+  `scripts/profile_cbmc.py --auto-concurrency` with the check on and off.
+
+## 7. Steps
+
+1. goto-symex: thread-aware shadow memory (Option A), with C tests and
+   profiling; or decide for Option B if that proves too invasive.
+2. Front-end hooks and their implementation; instrumentation of user
+   code; the switch and the no-goroutine shortcut.
+3. Built-ins and maps as ranges; source models instrumented; atomic
+   operations as checking-only.
+4. The runtime/race corpus as an oracle; fix model edges where it
+   disagrees.
+
+Open question for review: whether a race should also stop the path (as
+gc does), which keeps later properties from failing because of torn
+reads of multi-word values (interfaces, slices, strings), at the price
+of not checking anything after the first race on that path.
