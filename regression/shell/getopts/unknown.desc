@@ -1,0 +1,14 @@
+CORE
+unknown.sh
+--unwind 4 --shell-max-arguments 2 --shell-strings native --cvc5
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: SUCCESS$
+^\[assertion\.2\] .*: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+With arguments not known during conversion, getopts yields the letters
+of the option string or "?", and ends with "?". The loop may run more
+often than the unwinding bound.

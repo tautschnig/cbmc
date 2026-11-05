@@ -31,6 +31,7 @@ static const std::map<std::string, shell_command_kindt> builtins{
   {CPROVER_PREFIX "assume", shell_command_kindt::ASSUME},
   {"read", shell_command_kindt::READ},
   {"trap", shell_command_kindt::TRAP},
+  {"getopts", shell_command_kindt::GETOPTS},
   {"cd", shell_command_kindt::CD},
   {"umask", shell_command_kindt::UMASK},
   {"type", shell_command_kindt::TYPE},
@@ -40,14 +41,14 @@ static const std::map<std::string, shell_command_kindt> builtins{
 /// Builtins that change the shell environment (XCU 2.15 special
 /// builtins, regular builtins of XCU 1.7, and common extensions).
 static const std::set<std::string> unsupported_builtins{
-  "eval",    "readonly",  "times",   "getopts",   "alias",    "unalias",
-  "wait",    "jobs",      "fg",      "bg",        "command",  "hash",
-  "kill",    "ulimit",    "fc",      "newgrp",    "local",    "declare",
-  "typeset", "source",    "let",     "shopt",     "builtin",  "enable",
-  "mapfile", "readarray", "pushd",   "popd",      "dirs",     "disown",
-  "suspend", "logout",    "nameref", "autoload",  "setopt",   "unsetopt",
-  "emulate", "print",     "whence",  "functions", "zmodload", "caller",
-  "compgen", "complete"};
+  "eval",      "readonly", "times",     "alias",    "unalias",  "wait",
+  "jobs",      "fg",       "bg",        "command",  "hash",     "kill",
+  "ulimit",    "fc",       "newgrp",    "local",    "declare",  "typeset",
+  "source",    "let",      "shopt",     "builtin",  "enable",   "mapfile",
+  "readarray", "pushd",    "popd",      "dirs",     "disown",   "suspend",
+  "logout",    "nameref",  "autoload",  "setopt",   "unsetopt", "emulate",
+  "print",     "whence",   "functions", "zmodload", "caller",   "compgen",
+  "complete"};
 
 shell_command_kindt shell_convertert::classify(const std::string &name) const
 {
@@ -70,7 +71,7 @@ void shell_convertert::check_parameter_name(
   const source_locationt &loc)
 {
   static const std::set<std::string> special_everywhere{
-    "LINENO", "RANDOM", "SECONDS", "OPTIND", "OPTARG", "_"};
+    "LINENO", "RANDOM", "SECONDS", "_"};
   static const std::set<std::string> special_bash{
     "BASH_ARGC",    "BASH_ARGV",     "BASH_COMMAND", "BASH_LINENO",
     "BASH_SOURCE",  "BASH_SUBSHELL", "BASHPID",      "EPOCHREALTIME",
@@ -1323,6 +1324,9 @@ void shell_convertert::convert_builtin(
     return;
   case shell_command_kindt::TRAP:
     convert_trap(command, dest);
+    return;
+  case shell_command_kindt::GETOPTS:
+    convert_getopts(command, dest);
     return;
   case shell_command_kindt::CD:
     convert_cd(command, dest);

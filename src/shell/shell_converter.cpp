@@ -58,6 +58,7 @@ void shell_convertert::add_initialize()
   if(symbol_table.has_symbol("shell::in_exit_trap"))
     assign(init, in_exit_trap(), false_exprt{}, loc);
   initialize_options(init, loc);
+  initialize_getopts(init, loc);
   if(option_possible("errexit"))
     assign(init, errexit_ignored_in_caller(), false_exprt{}, loc);
   assign(init, substitution_status(), from_integer(0, status_type()), loc);
@@ -86,7 +87,11 @@ void shell_convertert::add_initialize()
   for(const auto &name : variables)
   {
     const symbol_exprt var = variable(name, loc);
-    assign(init, var, environment_string(init, loc), loc);
+    // Every shell sets OPTIND to 1 at startup.
+    if(name == "OPTIND")
+      assign(init, var, string_literal("1", loc), loc);
+    else
+      assign(init, var, environment_string(init, loc), loc);
   }
   // $0, $$, and $- are set; their values depend on how the shell was run.
   for(const auto &name : special_parameters)

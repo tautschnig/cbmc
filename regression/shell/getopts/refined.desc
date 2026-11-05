@@ -1,0 +1,11 @@
+CORE
+refined.sh
+--shell-max-arguments 3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+getopts with refined strings: an option with its argument in the next
+word, and shift by OPTIND - 1.

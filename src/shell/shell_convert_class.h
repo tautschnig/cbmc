@@ -84,6 +84,8 @@ enum class shell_command_kindt
   READ,
   /// trap: see shell_convert_trap.cpp.
   TRAP,
+  /// getopts: see shell_convert_getopts.cpp.
+  GETOPTS,
   /// cd, umask and type: see shell_convert_builtins.cpp.
   CD,
   UMASK,
@@ -1219,6 +1221,13 @@ private:
   /// or utility rather than a function.
   void
   convert_command_builtin(const shell_commandt &command, code_blockt &dest);
+  /// getopts: see shell_convert_getopts.cpp.
+  void convert_getopts(const shell_commandt &command, code_blockt &dest);
+  symbol_exprt getopts_ind();
+  symbol_exprt getopts_char();
+  symbol_exprt getopts_optind();
+  void initialize_getopts(code_blockt &init, const source_locationt &loc);
+  bool getopts_used = false;
   /// trap: see shell_convert_trap.cpp.
   void convert_trap(const shell_commandt &command, code_blockt &dest);
   symbol_exprt exit_trap();

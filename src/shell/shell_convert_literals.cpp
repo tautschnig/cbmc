@@ -105,7 +105,6 @@ void shell_convertert::collect_assigned(
     "local",
     "declare",
     "typeset",
-    "getopts",
     "printf",
     "eval",
     ".",
@@ -151,6 +150,18 @@ void shell_convertert::collect_assigned(
         function_definitions.count(*name) != 0)
       {
         any = true;
+      }
+      else if(*name == "getopts")
+      {
+        names.insert("OPTIND");
+        names.insert("OPTARG");
+        const auto target = command.words.size() > 2
+                              ? static_text(command.words[2])
+                              : std::nullopt;
+        if(target.has_value())
+          names.insert(*target);
+        else
+          any = true;
       }
       else if(*name == "cd")
       {

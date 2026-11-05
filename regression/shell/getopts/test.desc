@@ -1,0 +1,12 @@
+CORE
+main.sh
+--unwind 8 --shell-max-arguments 6 --shell-strings native --cvc5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+getopts with grouped options, arguments in the same or the next word,
+--, unknown options and missing arguments with a leading colon, and
+OPTIND reset by the script.
