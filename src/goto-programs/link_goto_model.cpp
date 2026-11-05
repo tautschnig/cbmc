@@ -24,6 +24,10 @@ static void rename_symbols_in_function(
   goto_functionst::goto_functiont &function,
   const rename_symbolt &rename_symbol)
 {
+  // Avoid un-sharing every instruction when there is nothing to rename.
+  if(rename_symbol.expr_map.empty() && rename_symbol.type_map.empty())
+    return;
+
   for(auto &identifier : function.parameter_identifiers)
   {
     auto entry = rename_symbol.expr_map.find(identifier);
