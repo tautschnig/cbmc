@@ -54,6 +54,42 @@ uint16_t g_p1, g_p2;
 
 /* nondet via uninitialised locals: a bodyless function would be flagged
  * "undefined function should be unreachable" by the DFCC instrumentation */
+static uint16_t nd_u16(void);
+
+/*
+ * ena_com_prepare_tx lives in ena_eth_com.c, which is not compiled in, so it
+ * is bodyless -- and under DFCC a bodyless callee becomes an unreachable
+ * stub, which kills every path through it.  That, not a weak invariant, is
+ * what made the accept path unreachable and the accept-path obligations
+ * vacuous: the only way out of the TX loop was ena_xmit_mbuf's error break.
+ *
+ * The stub states the contract the driver relies on: on success it consumes
+ * at most the number of descriptors ena_xmit_mbuf checked space for
+ * (num_bufs + 2, see ena_ethdev.c:3140) and advances the SQ producer by that
+ * much.  Keeping to that bound is what preserves the SQ accounting clause of
+ * INV; a stub that advanced further would (correctly) break it.
+ */
+int ena_com_prepare_tx(
+  struct ena_com_io_sq *io_sq,
+  struct ena_com_tx_ctx *ena_tx_ctx,
+  int *nb_hw_desc)
+{
+  int rc;
+  uint16_t descs;
+
+  rc = (int)nd_u16();
+  if (rc != 0)
+    return rc;                      /* the device/queue rejected the request */
+
+  descs = nd_u16();
+  __CPROVER_assume(descs >= 1 && descs <= (uint16_t)ena_tx_ctx->num_bufs + 2);
+  __CPROVER_assume(
+    (uint16_t)(io_sq->tail + descs - io_sq->next_to_comp) <= io_sq->q_depth - 1);
+  *nb_hw_desc = (int)descs;
+  io_sq->tail = (uint16_t)(io_sq->tail + descs);
+  return 0;
+}
+
 static uint16_t nd_u16(void) { uint16_t v; return v; }
 static uint8_t nd_u8(void) { uint8_t v; return v; }
 

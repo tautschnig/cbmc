@@ -672,6 +672,75 @@ paths that execute, and almost none do". A proof needs a reachability
 obligation next to every safety obligation, or it can be satisfied by an
 empty program. Coverage is not a nicety here; it is part of the claim.
 
+### 8.6 Closing the vacuity trap: the accept path, and what it costs
+
+Re-establishing the baseline honestly, as 8.5 said was needed. Two bodyless
+callees were keeping the accept path unreachable, and fixing them turned the
+obligations from "all pass" to "most fail" -- which is the point.
+
+**Why the accept path was dead.** Not a weak invariant, which is what I had
+assumed. Measurement first: with `nb_pkts == 1` proved, `sent == 0` proved,
+`sent == 1` refuted and `sent >= nb_pkts` refuted, the loop was exiting only
+through `ena_xmit_mbuf`'s error `break`. The cause is that under DFCC a
+**bodyless callee becomes an unreachable stub**, so every path through one is
+cut, and two sat on the success path:
+
+* `ena_com_prepare_tx` -- lives in `ena_eth_com.c`, which is not compiled in.
+  Now stubbed in the harness with the contract the driver relies on: on
+  success it consumes at most the `num_bufs + 2` descriptors
+  `ena_xmit_mbuf` checked space for (`ena_ethdev.c:3140`) and advances the SQ
+  producer by that much. Staying inside that bound is exactly what preserves
+  the SQ accounting clause of `INV`.
+* `__builtin_ia32_rdtsc` -- reached by `tx_info->timestamp =
+  rte_get_timer_cycles()` on the success path (`ena_ethdev.c:3187`). It cannot
+  be stubbed with `-D` (that collides with gcc's own `__rdtsc` in
+  `ia32intrin.h`) nor from inside the harness TU, so `rdtsc_stub.c` defines it
+  and is linked in separately. `goto-cc` accepts defining the builtin.
+
+With both in place the vacuity witness finally **FAILS**, i.e. a packet can be
+accepted and the obligations are about something.
+
+**And then four of six fail.**
+
+| obligation | before (vacuous) | now (accept path live) |
+|---|---|---|
+| `sent <= nb_pkts` | SUCCESS | SUCCESS |
+| `INV_wakeup` | SUCCESS | SUCCESS |
+| `INV` preserved | SUCCESS | **FAILURE** |
+| `INV_SLOT` preserved | SUCCESS | **FAILURE** |
+| `OWN_UNIQUE` | SUCCESS | **FAILURE** |
+| `OWN_TRANSFER` | SUCCESS | **FAILURE** |
+
+**The cause, measured not guessed.** The failing properties are
+`INV_COM.pointer_dereference.* sq->next_to_comp / sq->q_depth: FAILURE` -- the
+post-loop invariant *dereferences* `ring.ena_com_io_sq`, and the assigns
+clause `__CPROVER_object_whole(tx_ring)` havocs the whole ring object
+**including its pointer fields** (`ena_com_io_sq`, `ena_com_io_cq`,
+`tx_buffer_info`, `adapter`, `push_buf_intermediate_buf`). After the loop
+those pointers are arbitrary, so any invariant that follows them is
+unprovable. Strengthening the invariant with the geometry and SQ-accounting
+clauses was not enough and the step obligations come back `UNKNOWN`.
+
+**Two consequences worth carrying forward.**
+
+1. A havoc'd frame needs *pointer-stability* clauses in the invariant --
+   `tx_ring->ena_com_io_sq == __CPROVER_loop_entry(tx_ring->ena_com_io_sq)`
+   and so on for every pointer the invariant dereferences. Frame conditions
+   and invariants are not independent: whatever the frame destroys, the
+   invariant must restore.
+2. This retrospectively justifies the precise-assigns work (actions 2 and 3)
+   on grounds stronger than hygiene. Had the clause named only the fields the
+   loop actually writes -- `pkts_without_db`, `next_to_use`, `tx_stats` --
+   the ring's pointer fields would never have been havoc'd and the invariant
+   would have survived for free. `object_whole` on an aggregate that contains
+   pointers is actively hostile to proving anything about what those pointers
+   reach.
+
+So the next step is a *precise* assigns clause plus pointer-stability
+invariant clauses, not a bigger invariant over a whole-object havoc. The
+state of evidence meanwhile: `sent <= nb_pkts` and `INV_wakeup` hold on a
+live accept path at ring 8, segments 2, burst 1; the other four are open.
+
 ### 8.3 What this changes in the plan
 
 Add to the revised order in `unveil-reconciliation-2026-11.md`:
