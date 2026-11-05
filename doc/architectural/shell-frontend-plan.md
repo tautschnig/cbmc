@@ -1184,12 +1184,19 @@ scripts of the census.
   - `shopt`, `alias`, `declare`, `typeset`, `setopt` and `emulate`;
   - `$"..."`, as translations could introduce expansions;
   - PIPESTATUS;
-  - `set -o igncr` (Cygwin);
   - `read` options;
   - 4 scripts that shfmt rejects (bash syntax under `#!/bin/sh`).
+- **Platforms.** `configt::shellt::platform` is Unix (Linux, macOS, the
+  BSDs) or Cygwin, which `--os windows` selects. bash has `igncr` on
+  Cygwin only: on Unix `set -o igncr` fails with status 2; on Cygwin,
+  enabling it is unsupported.
 - **Locale.** Matching and `${#x}` are by bytes, as in the C locale. In
   UTF-8 locales, bash, busybox, mksh and zsh count characters instead;
-  this is not modelled.
+  this is not modelled yet. Allowing both lengths for `${#x}` (bytes for
+  ASCII, otherwise from a quarter of the bytes to all of them) is sound
+  but loses too much: `${#t}` of `t="$s$x"` with an ASCII `s` of 10
+  bytes may then be below 10. Counting the ASCII bytes would keep that
+  bound. `?` and bracket expressions would need the same.
 
 ---
 
