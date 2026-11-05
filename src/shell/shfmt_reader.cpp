@@ -6,6 +6,7 @@
 
 #include "shfmt_reader.h"
 
+#include <util/cprover_prefix.h>
 #include <util/json.h>
 #include <util/message.h>
 #include <util/string2int.h>
@@ -359,6 +360,63 @@ private:
       command.kind = kindt::FUNCTION_DEFINITION;
       command.name = cmd["Name"]["Value"].value;
       command.body.push_back(read_statement(cmd["Body"]));
+    }
+    else if(t == "ArithmCmd")
+    {
+      // (( expression )): a builtin of its own (see shell_convert_arith.cpp).
+      reject_fields(
+        cmd, {{"Unsigned", "((# ...)) unsigned arithmetic (mksh)"}});
+      auto left = string2optional_size_t(cmd["Left"]["Offset"].value);
+      auto right = string2optional_size_t(cmd["Right"]["Offset"].value);
+      if(
+        !left.has_value() || !right.has_value() || *left + 2 > *right ||
+        *right > source.size() || source.compare(*left, 2, "((") != 0)
+      {
+        unsupported(cmd, "arithmetic command with unexpected source offsets");
+      }
+      command.kind = kindt::SIMPLE;
+      shell_word_partt name;
+      name.kind = shell_word_partt::kindt::QUOTED_LITERAL;
+      name.text = CPROVER_PREFIX "shell_arithmetic_command";
+      name.location = command.location;
+      shell_word_partt expression;
+      expression.kind = shell_word_partt::kindt::QUOTED_LITERAL;
+      expression.text = source.substr(*left + 2, *right - (*left + 2));
+      expression.location = command.location;
+      command.words = {{name}, {expression}};
+    }
+    else if(t == "LetClause")
+    {
+      // let expression...: the same builtin, with each word an expression.
+      command.kind = kindt::SIMPLE;
+      shell_word_partt name;
+      name.kind = shell_word_partt::kindt::QUOTED_LITERAL;
+      name.text = CPROVER_PREFIX "shell_arithmetic_command";
+      name.location = command.location;
+      command.words = {{name}};
+      for(const auto &expression : array(cmd["Exprs"]))
+      {
+        // A quoted operand is a word; others are arithmetic expressions,
+        // whose text is in the source.
+        if(type(expression) == "Word")
+        {
+          command.words.push_back(read_word(expression));
+          continue;
+        }
+        auto start = string2optional_size_t(expression["Pos"]["Offset"].value);
+        auto end = string2optional_size_t(expression["End"]["Offset"].value);
+        if(
+          !start.has_value() || !end.has_value() || *start > *end ||
+          *end > source.size())
+        {
+          unsupported(cmd, "let with unexpected source offsets");
+        }
+        shell_word_partt text;
+        text.kind = shell_word_partt::kindt::QUOTED_LITERAL;
+        text.text = source.substr(*start, *end - *start);
+        text.location = command.location;
+        command.words.push_back({text});
+      }
     }
     else if(t == "DeclClause")
       read_declaration(cmd, command);

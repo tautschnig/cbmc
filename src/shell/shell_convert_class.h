@@ -84,6 +84,8 @@ enum class shell_command_kindt
   READ,
   /// trap: see shell_convert_trap.cpp.
   TRAP,
+  /// (( expression )) and let (bash, mksh and zsh).
+  ARITHMETIC_COMMAND,
   /// getopts: see shell_convert_getopts.cpp.
   GETOPTS,
   /// cd, umask and type: see shell_convert_builtins.cpp.
@@ -1246,6 +1248,8 @@ private:
   symbol_exprt getopts_optind();
   void initialize_getopts(code_blockt &init, const source_locationt &loc);
   bool getopts_used = false;
+  void
+  convert_arithmetic_command(const shell_commandt &command, code_blockt &dest);
   /// trap: see shell_convert_trap.cpp.
   void convert_trap(const shell_commandt &command, code_blockt &dest);
   symbol_exprt exit_trap();

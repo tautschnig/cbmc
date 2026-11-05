@@ -83,6 +83,44 @@ exprt shell_convertert::expand_arithmetic(
   return from_integer_expr(arith(*parsed.expression, dest, loc), dest, loc);
 }
 
+void shell_convertert::convert_arithmetic_command(
+  const shell_commandt &command,
+  code_blockt &dest)
+{
+  const source_locationt &loc = command.location;
+  if(command.words.size() < 2)
+    unsupported(loc, "let without an expression");
+  // (( expression )) and let expression...: each expression is evaluated;
+  // the status is 0 if the last one is not zero, and 1 otherwise.
+  exprt last;
+  for(std::size_t i = 1; i < command.words.size(); ++i)
+  {
+    const auto text = static_text(command.words[i]);
+    if(!text.has_value())
+      unsupported(loc, "let with an expression that is an expansion");
+    const auto parsed = parse_shell_arithmetic(*text, arith_options);
+    if(!parsed.expression.has_value())
+    {
+      log.warning().source_location = loc;
+      log.warning() << "arithmetic command ((" << *text
+                    << ")): " << parsed.error << messaget::eom;
+      unsupported(loc, "arithmetic command that the parser rejects");
+    }
+    const symbol_exprt value = temporary(
+      arith_type_cast(from_integer(0, integer_type())).type(), dest, loc);
+    assign(dest, value, arith(*parsed.expression, dest, loc), loc);
+    last = value;
+  }
+  assign(
+    dest,
+    status(),
+    if_exprt{
+      equal_exprt{last, from_integer(0, last.type())},
+      from_integer(1, status_type()),
+      from_integer(0, status_type())},
+    loc);
+}
+
 exprt shell_convertert::arith_type_cast(const exprt &value) const
 {
   const typet type = native()              ? integer_type()

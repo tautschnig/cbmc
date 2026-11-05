@@ -1,0 +1,11 @@
+CORE
+main.bash
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+(( expression )) and let evaluate arithmetic expressions; the status is
+0 if the last value is not zero, and 1 otherwise.

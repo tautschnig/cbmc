@@ -32,6 +32,8 @@ static const std::map<std::string, shell_command_kindt> builtins{
   {CPROVER_PREFIX "assume", shell_command_kindt::ASSUME},
   {"read", shell_command_kindt::READ},
   {"trap", shell_command_kindt::TRAP},
+  {CPROVER_PREFIX "shell_arithmetic_command",
+   shell_command_kindt::ARITHMETIC_COMMAND},
   {"getopts", shell_command_kindt::GETOPTS},
   {"cd", shell_command_kindt::CD},
   {"umask", shell_command_kindt::UMASK},
@@ -1524,6 +1526,9 @@ void shell_convertert::convert_builtin(
     return;
   case shell_command_kindt::TRAP:
     convert_trap(command, dest);
+    return;
+  case shell_command_kindt::ARITHMETIC_COMMAND:
+    convert_arithmetic_command(command, dest);
     return;
   case shell_command_kindt::GETOPTS:
     convert_getopts(command, dest);

@@ -110,6 +110,7 @@ void shell_convertert::collect_assigned(
     ".",
     "source",
     "let",
+    CPROVER_PREFIX "shell_arithmetic_command",
     "mapfile",
     "readarray",
     "command"};
