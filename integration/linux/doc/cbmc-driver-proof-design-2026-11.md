@@ -601,91 +601,76 @@ what it is doing (`--verbosity 9`) before theorising about why. And a
 synthetic benchmark only transfers to the real case if you *measure* that the
 real case is in the same regime -- I inferred it instead.
 
-### 8.5 Item 1 is done: real callee bodies and an unbounded burst together
+### 8.5 Vacuity audit: two earlier claims retracted
 
-With `--unwindset ena_tx_map_mbuf.0:4 --unwinding-assertions` added to bound
-the segment walk, the proof that was "blocked" completes:
+Attacking the ring-size limit meant scaling the geometry, and that exposed
+something worse than a performance limit. **Two results I reported were
+vacuous.** Both are retracted here; the tooling that catches this is now in
+the harness.
 
-```
-VERIFICATION SUCCESSFUL      0 of 1482 failed      12 s
-[main.assertion.1] API: sent <= nb_pkts: SUCCESS
-[main.assertion.2] INV preserved by eth_ena_xmit_pkts: SUCCESS
-[main.assertion.3] INV_wakeup: no packet left pushed without a doorbell: SUCCESS
-[main.assertion.4] OWN_UNIQUE: no mbuf owned by two tx_buffer_info slots: SUCCESS
-[main.assertion.5] OWN_TRANSFER: accepted mbuf recorded in its req_id slot: SUCCESS
-[ena_tx_map_mbuf.unwind.0] unwinding assertion loop 0: SUCCESS
-[eth_ena_xmit_pkts.loop_assigns.1] assigns clause inclusion: SUCCESS
-[eth_ena_xmit_pkts.loop_invariant_step.1] invariant after step: SUCCESS
-```
+**The reachability gate.** `ena_xmit_mbuf` requires
+`ena_com_free_q_entries(io_sq) >= nb_segs + 2`, and
+`free = q_depth - 1 - used <= ring_size - 1`. So a k-segment packet is only
+ever accepted when **`ring_size >= k + 3`**:
 
-So all five obligations hold **simultaneously**, with the real
-`ena_xmit_mbuf` / `ena_tx_map_mbuf` bodies and an unbounded TX burst --
-the single configuration section 8.2a said was still missing. The inner
-loop's own unwinding assertion passes, so the bound of 4 is complete for this
-harness rather than a cut: with `MAX_SEGS=2` the chain cannot be longer.
+| ring_size | max exercisable segments |
+|---|---|
+| 2 | none -- no packet is ever accepted |
+| 4 | 1 |
+| 8 | 5 |
+| 32 | 29 |
 
-Runner: `proof/run_item1_realbodies_unbounded.sh`.
+Measured, not just derived: `cbmc --cover location` on the ring-2 binary
+reports **0 of 105** coverage goals in `ena_tx_map_mbuf` satisfied, and 0 of
+13 on the chain-walk lines. At ring 8 it is 29/105 and 3/13.
 
-### 8.5b Segment count: the full legal range, and what happens past it
+**Retraction 1 -- the segment-range table in 8.5b is meaningless.** Those runs
+(`MAX_SEGS` 6 / 12 / 17, all "VERIFICATION SUCCESSFUL, 5/5 obligations") were
+at `RING=2`, where no packet is accepted at all. The segment parameter was
+irrelevant because execution never passed the space check. "Covers the full
+legal segment range" was wrong; it covered nothing past that check.
 
-Scaling the segment geometry (`run_item1_realbodies_unbounded.sh` with
-`SEGS=`), the five obligations hold across the whole range an application is
-allowed to submit:
+**Retraction 2 -- "item 1 is done" was wrong.** The claim was that one proof
+held with the real callee bodies *and* an unbounded burst. It was run at
+`RING=2`, so `ena_tx_map_mbuf`'s body, though linked in, never executed. The
+proof genuinely covered `eth_ena_xmit_pkts` and `ena_xmit_mbuf` up to the
+space check and nothing beyond.
 
-| `MAX_SEGS` | time | result |
-|---|---|---|
-| 6 | 21 s | SUCCESSFUL, 5/5 obligations, inner unwinding assertion SUCCESS |
-| 12 | 39 s | SUCCESSFUL, 5/5, inner bound complete |
-| 17 | 41 s | SUCCESSFUL, 5/5, inner bound complete |
-
-`ENA_PKT_MAX_BUFS` is 17 and the harness sets `sgl_size` to it, so
-`MAX_SEGS=17` covers every legal chain length. The "small geometry"
-qualification on segments is therefore gone; what remains small is the ring
-(see below).
-
-**Chasing the bound to its source turned up a real obligation split.**
-`ena_tx_map_mbuf` walks the `->next` chain doing `ena_buf++` per segment with
-no bound of its own (`ena_ethdev.c:3108-3122`). The only thing keeping it
-inside `tx_info->bufs[ENA_PKT_MAX_BUFS]` is the caller's guarantee about the
-chain length, and that guarantee comes from `eth_ena_prep_pkts`, the
-`rte_eth_tx_prepare` callback -- which DPDK lets an application **skip**.
-A focused obligation (`harness_map_segs.c`, `run_map_segs.sh`) settles it:
+**And the unbounded-burst configuration is vacuous for the accept path at any
+ring size.** With the wide loop contract applied, the harness *proves*
+`sent == 0`, and `sent == 1` is refutable -- so no packet is ever accepted:
 
 ```
-SEGS_LEGAL=1 (chain <= sgl_size)   num_of_bufs stays within tx_info->bufs[]: SUCCESS
-SEGS_LEGAL=0 (chain >  sgl_size)   num_of_bufs stays within tx_info->bufs[]: FAILURE
-                                   ena_buf->paddr  pointer outside object bounds: FAILURE
-                                   ena_buf->len    pointer outside object bounds: FAILURE
+assert(sent == 0)   SUCCESS      <- nothing is accepted
+assert(sent == 1)   FAILURE
 ```
 
-So the bound is **not** a property of the driver; it is an obligation on the
-application, and violating it is an out-of-bounds write inside
-`struct ena_tx_buffer` rather than a clean rejection. In fairness to the
-driver the limit *is* advertised -- `dev_info->tx_desc_lim.nb_seg_max` is set
-to `min(ENA_PKT_MAX_BUFS, ...)` at `ena_ethdev.c:2657` -- so an application
-that respects the advertised limits is safe, and the first row above is the
-proof of that. But `eth_ena_xmit_pkts` itself re-checks nothing, so the
-failure mode for an application bug is memory corruption in the PMD instead
-of a dropped packet. Worth raising with the driver owners as a robustness
-question: a `nb_segs > sgl_size` check in `ena_xmit_mbuf` would make the
-rejection explicit, and it is the same shape as the `tx_free_thresh` and
-in-flight-mbuf obligations the invariants already surfaced.
+The loop invariant (`sent_idx <= nb_pkts` plus frame conditions) is too weak
+to carry accept-path information across the contract, so every obligation
+about an accepted packet -- `OWN_TRANSFER`'s `sent >= 1` branch, the
+interesting case of `OWN_UNIQUE`, the force of `INV_wakeup` -- is empty in
+that configuration. The bounded-burst configurations without a loop contract
+do not have this problem, because the real loop executes; they are the ones
+whose results stand, subject to the ring >= segs+3 rule above.
 
-Note the first attempt at this experiment was vacuous and the proof said so:
-at ring size 2 the `ena_com_sq_have_enough_space(io_sq, nb_segs + 2)` check
-rejects any long chain before `ena_tx_map_mbuf` is reached, so the overflow
-is unreachable through `eth_ena_xmit_pkts` on a small ring. Isolating
-`ena_tx_map_mbuf` was what made the question answerable; the end-to-end
-version at ring 32 did not finish in 2400 s.
+**What now has evidence, stated precisely.** Real-body, bounded-burst,
+non-DFCC runs at `RING=4, SEGS=3`: the five obligations hold for
+single-segment packets (ring 4 admits k=1), which is narrow but not vacuous.
+Everything claimed beyond that is withdrawn pending re-measurement.
 
-Remaining scope limits: the ring is still small (2) in the end-to-end proof,
-because `INV_RING`'s per-slot loops scale with it, and the inner walk is
-bounded by a checked unwinding assertion rather than carrying its own loop
-contract. A contract for `ena_tx_map_mbuf.0` needs a ranking function over
-the chain, which has no counter to decrease -- the natural measure is the
-remaining chain length, which is not materialised in the driver's state. The
-cheaper route to dropping the bound is the `nb_segs` precondition above,
-since `nb_segs` *is* materialised and bounded by 17.
+**The durable fix: a vacuity witness in the harness.** `VACUITY_CHECK=1`
+compiles the same harness with `assert(sent == 0)`, which **must FAIL** for
+the proof to be about anything; a SUCCESS means the accept path is
+unreachable. `run_item1_realbodies_unbounded.sh` builds and runs both
+variants and prints the witness, and warns when `RING < SEGS + 3`. The
+harness carries a `#warning` for the same condition.
+
+The lesson is the one from 8.5a in a sharper form. There I theorised instead
+of asking the tool what it was doing; here I read `VERIFICATION SUCCESSFUL`
+as "the property holds on this code" when it meant "the property holds on the
+paths that execute, and almost none do". A proof needs a reachability
+obligation next to every safety obligation, or it can be satisfied by an
+empty program. Coverage is not a nicety here; it is part of the claim.
 
 ### 8.3 What this changes in the plan
 

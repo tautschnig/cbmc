@@ -10,6 +10,14 @@
  *   WF_MBUF   -- DPDK's mbuf contract: nb_segs equals the ->next chain
  *                length, each segment's data lies inside its buffer
  *
+ * VACUITY_CHECK=1 turns the harness into its own vacuity witness: it asserts
+ * sent == 0, which is EXPECTED TO FAIL.  If it succeeds, no packet is ever
+ * accepted and every obligation about the accept path is vacuous.  This
+ * matters because ena_xmit_mbuf requires
+ * ena_com_free_q_entries(io_sq) >= nb_segs + 2 and free <= ring_size - 1, so a
+ * k-segment packet needs RING_SIZE >= k + 3.  At RING_SIZE=2 nothing is ever
+ * accepted and the proof is empty.
+ *
  * SEGS_ASSUMED selects which API contract we assume the application honours:
  *   1 = the app ran rte_eth_tx_prepare (or otherwise respects the advertised
  *       tx_max_num_segs), so nb_segs <= sgl_size
@@ -28,6 +36,13 @@
 #endif
 #ifndef SEGS_ASSUMED
 #define SEGS_ASSUMED 1
+#endif
+#ifndef VACUITY_CHECK
+#  define VACUITY_CHECK 0
+#endif
+#if RING_SIZE < MAX_SEGS + 3
+#  warning                                                                     \
+    "RING_SIZE < MAX_SEGS + 3: packets with MAX_SEGS segments can never be accepted (see VACUITY_CHECK)"
 #endif
 #define SEG_BUF_LEN 64
 
@@ -89,6 +104,37 @@ static bool OWN_UNIQUE(const struct ena_ring *r, uint16_t p1, uint16_t p2)
 	return !(tbi[p1].mbuf != NULL && tbi[p1].mbuf == tbi[p2].mbuf);
 }
 
+/*
+ * The per-slot invariant, stated for one slot.  Asserting it at a
+ * nondeterministic index is universal quantification over slots; assuming it
+ * needs the real quantifier (INV_SLOTS_ASSUME), because a hypothesis cannot
+ * be instantiated at a single point and then used elsewhere.
+ */
+static bool INV_SLOT(const struct ena_ring *r, uint16_t p)
+{
+  uint16_t *etr = r->empty_tx_reqs;
+  struct ena_tx_buffer *tbi = r->tx_buffer_info;
+
+  if(p >= r->ring_size)
+    return true;
+  return etr[p] < r->ring_size &&
+         (tbi[p].mbuf == NULL || tbi[p].mbuf == &segs[0]) &&
+         tbi[p].num_of_bufs <= ENA_PKT_MAX_BUFS;
+}
+
+/* The same clauses as a quantified assumption over every slot.  Written over
+ * the harness's own arrays so it does not go through the anonymous-union
+ * fields.  __CPROVER_forall needs a side-effect-free expression, hence the
+ * inlined body rather than a call to INV_SLOT. */
+#define INV_SLOTS_ASSUME(etr, tbi)                                             \
+  __CPROVER_assume(__CPROVER_forall {                                          \
+    unsigned _i;                                                               \
+    _i<RING_SIZE ==>(                                                          \
+      (etr)[_i] < RING_SIZE &&                                                 \
+      ((tbi)[_i].mbuf == 0 || (tbi)[_i].mbuf == &segs[0]) &&                   \
+      (tbi)[_i].num_of_bufs <= ENA_PKT_MAX_BUFS)                               \
+  })
+
 static bool INV_RING(const struct ena_ring *r)
 {
 	bool ok = INV_COM(r->ena_com_io_sq) &&
@@ -105,18 +151,14 @@ static bool INV_RING(const struct ena_ring *r)
 		  r->next_to_clean <= r->size_mask &&
 		  /* SQ accounting */
 		  r->ena_com_io_sq->q_depth == r->ring_size;
-	/* the req_id indirection: every free-list entry indexes tx_buffer_info */
-	for (uint16_t i = 0; i < RING_SIZE; i++)
-		ok = ok && r->empty_tx_reqs[i] < r->ring_size;
-	/* every tx_buffer_info slot is either free or references a live mbuf,
-	 * and its segment count fits the descriptor array.  Abstracted here to
-	 * a one-element mbuf pool; the driver's real invariant is that an
-	 * in-flight slot points to an mbuf owned by the queue. */
-	for (uint16_t i = 0; i < RING_SIZE; i++)
-		ok = ok && (r->tx_buffer_info[i].mbuf == NULL ||
-			    r->tx_buffer_info[i].mbuf == &segs[0]) &&
-		     r->tx_buffer_info[i].num_of_bufs <= ENA_PKT_MAX_BUFS;
-	return ok;
+  /* The per-slot clauses moved out of here.  They used to be two loops
+	 * over RING_SIZE, which made every proof cost grow with the ring size
+	 * for no benefit: the operation touches at most MAX_BURST slots, and the
+	 * *preserved* property is about an arbitrary slot.  They are now a
+	 * quantified assumption (INV_SLOTS_ASSUME) plus an assertion at one
+	 * nondeterministic index (INV_SLOT), which is equivalent and costs O(1)
+	 * in the ring size. */
+  return ok;
 }
 
 /* ---------------- WF_MBUF: DPDK's mbuf contract -------------------- */
@@ -196,15 +238,12 @@ int main(void)
 	io_sq.llq_info.descs_num_before_header = nd_u16();
 	io_sq.llq_info.disable_meta_caching = false;
 	__CPROVER_assume(INV_COM(&io_sq));
-	adapter.state = ENA_ADAPTER_STATE_RUNNING;
-	for (i = 0; i < RING_SIZE; i++) {
-		empty_tx_reqs[i] = nd_u16();
-		__CPROVER_assume(empty_tx_reqs[i] < RING_SIZE);
-	}
-	g_p1 = nd_u16();
+  adapter.state = ENA_ADAPTER_STATE_RUNNING;
+  g_p1 = nd_u16();
 	g_p2 = nd_u16();
 	__CPROVER_assume(INV_RING(&ring));
-	__CPROVER_assume(OWN_UNIQUE(&ring, g_p1, g_p2));
+  INV_SLOTS_ASSUME(empty_tx_reqs, tx_buffer_info);
+  __CPROVER_assume(OWN_UNIQUE(&ring, g_p1, g_p2));
 
 	/* ---- caller contract: tx_pkts holds exactly nb_pkts mbufs ---- */
 	nb_pkts = nd_u16();
@@ -250,9 +289,16 @@ int main(void)
 	sent = eth_ena_xmit_pkts(&ring, tx_pkts, nb_pkts);
 
 	/* ---- obligations ---- */
-	__CPROVER_assert(sent <= nb_pkts, "API: sent <= nb_pkts");
+#if VACUITY_CHECK
+  /* expected to FAIL; a SUCCESS here means the harness proves nothing
+	 * about the accept path */
+  __CPROVER_assert(sent == 0, "vacuity witness: a packet can be accepted");
+#endif
+  __CPROVER_assert(sent <= nb_pkts, "API: sent <= nb_pkts");
 	__CPROVER_assert(INV_RING(&ring), "INV preserved by eth_ena_xmit_pkts");
-	/* INV_wakeup, checked here with the REAL ena_xmit_mbuf body, so the
+  __CPROVER_assert(
+    INV_SLOT(&ring, g_p1), "INV_SLOT preserved for an arbitrary ring slot");
+  /* INV_wakeup, checked here with the REAL ena_xmit_mbuf body, so the
 	 * mid-loop LLQ doorbell write is in scope too */
 	__CPROVER_assert(!ring.pkts_without_db,
 			 "INV_wakeup: no packet left pushed without a doorbell");
