@@ -17,9 +17,14 @@ Author: Michael Tautschnig
 /// accesses can be adjacent in some sequentially consistent interleaving,
 /// which is a data race (GoMem §Memory_model, DRF-SC).
 ///
-/// The flags are two shared unbounded arrays indexed by the accessed
-/// address (object and offset). Accesses in atomic sections (the models of
+/// The flags are fields of shadow memory (or, with GO_RACE_FLAGS=arrays,
+/// two shared unbounded arrays indexed by the accessed address). Accesses
+/// in atomic sections (the models of
 /// channels, sync and sync/atomic) synchronise: they are not announced.
+/// An access of an entry or the header of a map is one of the map's header,
+/// as in gc. Accesses of values of size zero, and expression statements,
+/// are none. Accesses in operands of `&&`, `||` and `?:` are made only
+/// when the operand is evaluated.
 /// Spike limitations: an access is keyed by its first byte only; accesses
 /// of the runtime and sync models are not checked at all.
 
@@ -30,17 +35,19 @@ Author: Michael Tautschnig
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
 #include <util/cprover_prefix.h>
-#include <util/string_constant.h>
 #include <util/fresh_symbol.h>
 #include <util/message.h>
 #include <util/pointer_expr.h>
 #include <util/pointer_offset_size.h>
 #include <util/std_expr.h>
+#include <util/string_constant.h>
 #include <util/symbol_table_base.h>
 
 #include <goto-programs/goto_model.h>
 
 #include <linking/static_lifetime_init.h>
+
+#include "go_types.h"
 
 #include <cstdlib>
 #include <vector>
@@ -96,55 +103,146 @@ static bool is_shared_lvalue(const namespacet &ns, const exprt &expr)
   return false;
 }
 
-/// The accesses of \p expr, which is read (or written if \p write):
-/// maximal shared lvalues, and the reads in their addresses.
+/// An access of shared memory, made only if \p guard holds.
+struct accesst
+{
+  exprt lvalue;
+  bool write;
+  exprt guard;
+};
+
+static exprt skip_typecasts(exprt expr)
+{
+  while(expr.id() == ID_typecast)
+    expr = to_typecast_expr(expr).op();
+  return expr;
+}
+
+/// If \p expr is a part of a map's representation (go_maps.cpp: a header
+/// field, or an entry of the keys or vals arrays), the map, else nil. As in
+/// gc, whose map operations announce an access of the map as a whole
+/// (runtime.mapaccess1 calls racereadpc on the map), such an access is one
+/// of the header: the entry arrays are replaced as the map grows, and
+/// flagging their entries would key accesses on locations that change.
+static exprt map_of_part(const exprt &expr)
+{
+  if(expr.id() == ID_member)
+  {
+    const exprt compound = to_member_expr(expr).compound();
+    if(compound.id() == ID_dereference)
+    {
+      const exprt &map = to_dereference_expr(compound).pointer();
+      if(is_go_map(map.type()))
+        return map;
+    }
+    return nil_exprt{};
+  }
+  if(expr.id() != ID_dereference)
+    return nil_exprt{};
+  exprt pointer = skip_typecasts(to_dereference_expr(expr).pointer());
+  if(pointer.id() == ID_plus && pointer.operands().size() == 2)
+    pointer = skip_typecasts(to_plus_expr(pointer).op0());
+  if(pointer.id() != ID_member)
+    return nil_exprt{};
+  const irep_idt &name = to_member_expr(pointer).get_component_name();
+  if(name != "keys" && name != "vals")
+    return nil_exprt{};
+  return map_of_part(pointer);
+}
+
+/// The accesses of \p expr, which is read (or written if \p write) if
+/// \p guard holds: maximal shared lvalues, and the reads in their
+/// addresses. The operands of `&&`, `||` and `?:` after the first are
+/// evaluated only conditionally (Go1.27 §Logical_operators).
 static void collect(
   const namespacet &ns,
   const exprt &expr,
   bool write,
-  std::vector<exprt> &reads,
-  std::vector<exprt> &writes)
+  const exprt &guard,
+  std::vector<accesst> &accesses)
 {
   if(expr.id() == ID_address_of)
   {
     // Only the address: the operands of index expressions and pointers.
     const exprt &object = to_address_of_expr(expr).object();
     if(object.id() == ID_dereference)
-      collect(ns, to_dereference_expr(object).pointer(), false, reads, writes);
+      collect(
+        ns, to_dereference_expr(object).pointer(), false, guard, accesses);
     else if(object.id() == ID_index)
     {
-      collect(ns, address_of_exprt{to_index_expr(object).array()}, false, reads,
-              writes);
-      collect(ns, to_index_expr(object).index(), false, reads, writes);
+      collect(
+        ns,
+        address_of_exprt{to_index_expr(object).array()},
+        false,
+        guard,
+        accesses);
+      collect(ns, to_index_expr(object).index(), false, guard, accesses);
     }
     else if(object.id() == ID_member)
       collect(
         ns,
         address_of_exprt{to_member_expr(object).compound()},
         false,
-        reads,
-        writes);
+        guard,
+        accesses);
     return;
   }
-  if(expr.id() == ID_side_effect || expr.id() == ID_pointer_object ||
-     expr.id() == ID_pointer_offset || expr.id() == ID_object_size)
+  if(
+    expr.id() == ID_side_effect || expr.id() == ID_pointer_object ||
+    expr.id() == ID_pointer_offset || expr.id() == ID_object_size)
   {
     return;
   }
   if(is_shared_lvalue(ns, expr))
   {
+    const exprt map = map_of_part(expr);
+    if(map.is_not_nil())
+    {
+      accesses.push_back({dereference_exprt{map}, write, guard});
+      collect(ns, map, false, guard, accesses);
+      return;
+    }
     // Values of size zero (empty structs, zero-length arrays) have no
     // memory to race on.
     const auto size = pointer_offset_size(expr.type(), ns);
     if(size.has_value() && *size == 0)
       return;
-    (write ? writes : reads).push_back(expr);
+    accesses.push_back({expr, write, guard});
     // The reads that compute its address.
-    collect(ns, address_of_exprt{expr}, false, reads, writes);
+    collect(ns, address_of_exprt{expr}, false, guard, accesses);
+    return;
+  }
+  if(expr.id() == ID_and || expr.id() == ID_or)
+  {
+    // a && b && c: b only if a, c only if a && b (|| with negations).
+    exprt g = guard;
+    for(const auto &op : expr.operands())
+    {
+      collect(ns, op, false, g, accesses);
+      g = and_exprt{g, expr.id() == ID_and ? op : not_exprt{op}};
+    }
+    return;
+  }
+  if(expr.id() == ID_if)
+  {
+    const if_exprt &if_expr = to_if_expr(expr);
+    collect(ns, if_expr.cond(), false, guard, accesses);
+    collect(
+      ns,
+      if_expr.true_case(),
+      false,
+      and_exprt{guard, if_expr.cond()},
+      accesses);
+    collect(
+      ns,
+      if_expr.false_case(),
+      false,
+      and_exprt{guard, not_exprt{if_expr.cond()}},
+      accesses);
     return;
   }
   for(const auto &op : expr.operands())
-    collect(ns, op, false, reads, writes);
+    collect(ns, op, false, guard, accesses);
 }
 
 /// The index of the flags of the location that \p lvalue denotes.
@@ -164,8 +262,7 @@ static exprt flag_index(const exprt &lvalue)
 static symbol_exprt
 flags_symbol(symbol_table_baset &symbol_table, const char *id)
 {
-  const array_typet type{
-    bool_typet{}, infinity_exprt{unsignedbv_typet{64}}};
+  const array_typet type{bool_typet{}, infinity_exprt{unsignedbv_typet{64}}};
   if(!symbol_table.has_symbol(id))
   {
     symbolt symbol{id, type, "go"};
@@ -237,9 +334,7 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
   const symbol_exprt get_field = shadow_function(
     goto_model.symbol_table, CPROVER_PREFIX "get_field", signedbv_typet{32});
   const symbol_exprt field_decl = shadow_function(
-    goto_model.symbol_table,
-    CPROVER_PREFIX "field_decl_global",
-    empty_typet{});
+    goto_model.symbol_table, CPROVER_PREFIX "field_decl_global", empty_typet{});
   // Bodiless, as the C library's declarations: goto-symex implements them.
   for(const auto &function : {set_field, get_field, field_decl})
     goto_model.goto_functions.function_map[function.get_identifier()];
@@ -251,8 +346,8 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
   // The flags start clear (__CPROVER_initialize was generated before they
   // were added).
   {
-    auto init = goto_model.goto_functions.function_map.find(
-      INITIALIZE_FUNCTION);
+    auto init =
+      goto_model.goto_functions.function_map.find(INITIALIZE_FUNCTION);
     if(init != goto_model.goto_functions.function_map.end())
     {
       goto_programt &body = init->second.body;
@@ -300,6 +395,9 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
       continue;
     goto_programt &body = f.second.body;
     std::size_t atomic_depth = 0;
+    // Generated instructions (e.g., of map operations) may have no location:
+    // their checks get the last one before them.
+    source_locationt last_location;
     for(auto it = body.instructions.begin(); it != body.instructions.end();
         ++it)
     {
@@ -316,33 +414,41 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
       }
       if(atomic_depth > 0)
         continue;
+      if(!it->source_location().get_file().empty())
+        last_location = it->source_location();
 
-      std::vector<exprt> reads, writes;
+      std::vector<accesst> accesses;
+      const exprt always = true_exprt{};
       if(it->is_assign())
       {
-        collect(ns, it->assign_lhs(), true, reads, writes);
-        collect(ns, it->assign_rhs(), false, reads, writes);
+        collect(ns, it->assign_lhs(), true, always, accesses);
+        collect(ns, it->assign_rhs(), false, always, accesses);
       }
       else if(it->is_function_call())
       {
         if(it->call_lhs().is_not_nil())
-          collect(ns, it->call_lhs(), true, reads, writes);
+          collect(ns, it->call_lhs(), true, always, accesses);
         for(const auto &argument : it->call_arguments())
-          collect(ns, argument, false, reads, writes);
-        collect(ns, it->call_function(), false, reads, writes);
+          collect(ns, argument, false, always, accesses);
+        collect(ns, it->call_function(), false, always, accesses);
       }
       else if(it->is_set_return_value())
-        collect(ns, it->return_value(), false, reads, writes);
-      else if(
-        it->is_goto() || it->is_assume() || it->is_assert())
-        collect(ns, it->condition(), false, reads, writes);
-      else if(it->is_other())
-        collect(ns, it->code(), false, reads, writes);
-      if(reads.empty() && writes.empty())
+        collect(ns, it->return_value(), false, always, accesses);
+      else if(it->is_goto() || it->is_assume() || it->is_assert())
+        collect(ns, it->condition(), false, always, accesses);
+      else if(it->is_other() && it->code().get_statement() != ID_expression)
+      {
+        // An expression statement (`_ = x`) discards a value without
+        // effects: gc loads nothing, and neither does this.
+        collect(ns, it->code(), false, always, accesses);
+      }
+      if(accesses.empty())
         continue;
 
       ++instrumented;
-      const source_locationt &location = it->source_location();
+      const source_locationt &location =
+        it->source_location().get_file().empty() ? last_location
+                                                 : it->source_location();
       goto_programt before;
       const auto set_flag =
         [&](const exprt &flags, const exprt &lvalue, bool value)
@@ -392,16 +498,8 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
         return notequal_exprt{
           tmp.symbol_expr(), from_integer(0, signedbv_typet{32})};
       };
-      for(const auto &w : writes)
-        announce(write_flags, w);
-      for(const auto &r : reads)
-        announce(read_flags, r);
-      for(const auto &w : writes)
-        withdraw(write_flags, w);
-      for(const auto &r : reads)
-        withdraw(read_flags, r);
-      const auto check = [&](const exprt &condition, const exprt &lvalue,
-                             const char *what)
+      const auto check =
+        [&](const exprt &condition, const exprt &lvalue, const char *what)
       {
         source_locationt annotated = location;
         annotated.set_property_class("data-race");
@@ -409,14 +507,48 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
         annotated.set_comment(std::string{"data race ("} + what + ")");
         before.add(goto_programt::make_assertion(condition, annotated));
       };
-      for(const auto &w : writes)
+      // Each operation of an access only if the access is made.
+      const auto guarded = [&](const exprt &guard, auto &&emit)
       {
-        const exprt written = flag(write_flags, w);
-        const exprt read = flag(read_flags, w);
-        check(and_exprt{not_exprt{written}, not_exprt{read}}, w, "write");
+        if(guard.is_true())
+        {
+          emit();
+          return;
+        }
+        goto_programt::targett skip_jump = before.add(
+          goto_programt::make_incomplete_goto(not_exprt{guard}, location));
+        emit();
+        goto_programt::targett skip =
+          before.add(goto_programt::make_skip(location));
+        skip_jump->complete_goto(skip);
+      };
+      for(const auto &a : accesses)
+        guarded(
+          a.guard,
+          [&] { announce(a.write ? write_flags : read_flags, a.lvalue); });
+      for(const auto &a : accesses)
+        guarded(
+          a.guard,
+          [&] { withdraw(a.write ? write_flags : read_flags, a.lvalue); });
+      for(const auto &a : accesses)
+      {
+        guarded(
+          a.guard,
+          [&]
+          {
+            if(a.write)
+            {
+              const exprt written = flag(write_flags, a.lvalue);
+              const exprt read = flag(read_flags, a.lvalue);
+              check(
+                and_exprt{not_exprt{written}, not_exprt{read}},
+                a.lvalue,
+                "write");
+            }
+            else
+              check(not_exprt{flag(write_flags, a.lvalue)}, a.lvalue, "read");
+          });
       }
-      for(const auto &r : reads)
-        check(not_exprt{flag(write_flags, r)}, r, "read");
       body.destructive_insert(it, before);
     }
     body.update();
