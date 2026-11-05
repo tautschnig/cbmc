@@ -32,6 +32,8 @@ Author: Michael Tautschnig
 #include "go_convert.h"
 #include "go_parse_tree.h"
 
+#include <functional>
+
 /// Name of the flag of calls after which add_panic_checks does not unwind
 /// (the calls that start a goroutine).
 #define ID_C_go_no_unwind "#go_no_unwind"
@@ -59,6 +61,7 @@ symbol_exprt go_convertert::defer_token()
 }
 
 const irep_idt go_convertert::check_panics_id = "go::$check_panics";
+const irep_idt go_convertert::defer_list_id = "$defers";
 
 void go_convertert::declare_panic_state()
 {
@@ -299,12 +302,16 @@ namespace
 /// the function literals in it).
 struct defer_scant
 {
+  /// Whether a RangeStmt ranges over a function.
+  std::function<bool(const irept &)> is_range_func;
   std::size_t defers = 0;
   bool defer_in_loop = false;
+  /// Whether a defer statement is in the body of a range over a function.
+  bool defer_in_range_func = false;
   bool has_goto = false;
   bool calls_recover = false;
 
-  void scan(const irept &node, bool in_loop)
+  void scan(const irept &node, bool in_loop, bool in_range_func = false)
   {
     const irep_idt &kind = node.id();
     if(kind == "FuncLit")
@@ -313,6 +320,7 @@ struct defer_scant
     {
       ++defers;
       defer_in_loop |= in_loop;
+      defer_in_range_func |= in_range_func;
     }
     else if(kind == "BranchStmt" && node.get("Tok") == "goto")
       has_goto = true;
@@ -323,10 +331,12 @@ struct defer_scant
       calls_recover = true;
     }
     const bool loop = in_loop || kind == "ForStmt" || kind == "RangeStmt";
+    const bool range_func =
+      in_range_func || (kind == "RangeStmt" && is_range_func(node));
     for(const auto &sub : node.get_sub())
-      scan(sub, loop);
+      scan(sub, loop, range_func);
     for(const auto &named : node.get_named_sub())
-      scan(named.second, loop || named.first == "Body");
+      scan(named.second, loop || named.first == "Body", range_func);
   }
 };
 } // namespace
@@ -359,6 +369,11 @@ void go_convertert::begin_function_panics(
   code_blockt &dest)
 {
   defer_scant scan;
+  scan.is_range_func = [this](const irept &range)
+  {
+    return type_converter.underlying(go_field(range, "X").get("_t")).get("k") ==
+           "signature";
+  };
   scan.scan(body_node, false);
   const source_locationt location = location_of(body_node);
   const auto local = [&](const typet &type, const exprt &value)
@@ -383,7 +398,10 @@ void go_convertert::begin_function_panics(
     dest.add(std::move(clear));
   }
 
-  if(scan.defers == 0)
+  // Go1.27 §Defer_statements: the defer statements of the body of a range
+  // over a function belong to the function containing the loop, and add
+  // to its list (see convert_defer).
+  if(scan.defers == 0 || state.range_body)
     return;
   state.has_defers = true;
   // A defer statement that may execute more than once (in a loop, or with
@@ -392,7 +410,16 @@ void go_convertert::begin_function_panics(
   if(state.defer_list)
   {
     const pointer_typet list_type = go_type_convertert::env_pointer_type();
-    state.defer_head = local(list_type, null_pointer_exprt{list_type});
+    if(scan.defer_in_range_func)
+    {
+      // On the heap, as the bodies (yield functions) add to it.
+      const symbol_exprt list = new_heap_variable(
+        list_type, null_pointer_exprt{list_type}, location, dest);
+      state.heap_pointers[defer_list_id] = list;
+      state.defer_head = dereference_exprt{list};
+    }
+    else
+      state.defer_head = local(list_type, null_pointer_exprt{list_type});
   }
   else
   {
@@ -521,10 +548,6 @@ void go_convertert::convert_defer(const irept &stmt, code_blockt &dest)
   // saved anew but the actual function is not invoked."
   const irept &call = go_field(stmt, "Call");
   const source_locationt location = location_of(stmt);
-  // Go1.27 §Defer_statements: the deferred call belongs to the function
-  // containing a range over a function, not to its yield function.
-  if(state.range_body)
-    return unsupported(stmt, "defer in the body of a range over a function");
   const irep_idt callee = callee_object(call);
   const irept &object = parse_tree.object(callee);
   if(object.get("kind") == "builtin")
@@ -553,16 +576,19 @@ void go_convertert::convert_defer(const irept &stmt, code_blockt &dest)
 
   for(auto &statement : prefix.statements())
     dest.add(std::move(statement));
-  if(state.defer_list)
+  if(state.defer_list || state.range_body)
   {
+    // Go1.27 §Defer_statements: the deferred call belongs to the function
+    // containing a range over a function, not to its yield function: it
+    // goes on that function's list (begin_function_panics).
+    const exprt head =
+      state.range_body
+        ? exprt{dereference_exprt{state.heap_pointers.at(defer_list_id)}}
+        : state.defer_head;
     const struct_typet node_type = deferred_node_type();
     const symbol_exprt node = new_heap_variable(
-      node_type,
-      struct_exprt{{deferred, state.defer_head}, node_type},
-      location,
-      dest);
-    dest.add(code_frontend_assignt{
-      state.defer_head, typecast_exprt{node, state.defer_head.type()}});
+      node_type, struct_exprt{{deferred, head}, node_type}, location, dest);
+    dest.add(code_frontend_assignt{head, typecast_exprt{node, head.type()}});
   }
   else
   {

@@ -125,11 +125,16 @@ void go_convertert::range_body_branch(const irept &stmt, code_blockt &dest)
 {
   // A break or continue statement without target in the body: the loop
   // itself (with no label, or its label), or a statement around it, which
-  // the loop leaves to after f returns.
+  // the loop leaves to after f returns. Likewise a goto statement to a
+  // label outside the body (even that of the loop, which then starts
+  // anew).
   const bool is_break = stmt.get("Tok") == "break";
+  const bool is_goto = stmt.get("Tok") == "goto";
   const irept &label = go_field(stmt, "Label");
   const source_locationt location = location_of(stmt);
-  if(label.is_nil() || label.get("_obj") == state.range_body->label_object)
+  if(
+    !is_goto &&
+    (label.is_nil() || label.get("_obj") == state.range_body->label_object))
   {
     return range_body_exit(
       is_break ? RANGE_EXIT_BREAK : RANGE_EXIT_NONE, location, dest);
@@ -237,6 +242,16 @@ void go_convertert::convert_range_func(
     captured.push_back(body->results_id);
     captured_types.push_back(return_type);
     pointers.push_back(*results_ptr);
+  }
+  // The list of deferred calls of the function containing the loop, if
+  // the body has defer statements (see begin_function_panics).
+  const auto defers = state.heap_pointers.find(defer_list_id);
+  if(defers != state.heap_pointers.end())
+  {
+    captured.push_back(defer_list_id);
+    captured_types.push_back(
+      to_pointer_type(defers->second.type()).base_type());
+    pointers.push_back(defers->second);
   }
 
   // The start of the body: check that the iteration may continue, then

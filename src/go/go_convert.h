@@ -164,11 +164,16 @@ private:
     /// The labels declared in the body (the targets of goto statements
     /// that stay in it).
     std::set<irep_idt> labels;
-    /// The break and continue statements with labels outside the loop, as
-    /// the exit code (index + first_branch_exit) after the loop: their
-    /// statements, to convert after the loop.
+    /// The break, continue and goto statements with labels outside the
+    /// loop, as the exit code (index + first_branch_exit) after the loop:
+    /// their statements, to convert after the loop.
     std::vector<irept> *branches = nullptr;
   };
+
+  /// The id (in heap_pointers and environments) of the list of deferred
+  /// calls of a function whose ranges over functions have defer statements
+  /// in their bodies, which add to that list.
+  static const irep_idt defer_list_id;
 
   /// State of the function being converted; saved while converting the
   /// body of a function literal (Go1.27 §Function_literals).
@@ -409,8 +414,8 @@ private:
     std::size_t exit,
     const source_locationt &location,
     code_blockt &dest);
-  /// A break or continue statement in the body of a range over a function
-  /// whose target is not in it.
+  /// A break, continue or goto statement in the body of a range over a
+  /// function whose target is not in it.
   void range_body_branch(const irept &stmt, code_blockt &dest);
   void convert_expr_stmt(const irept &stmt, code_blockt &dest);
   /// Calls that are statements only (panic, cprover.Assert, ...): appends

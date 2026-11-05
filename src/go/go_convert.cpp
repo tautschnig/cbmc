@@ -1397,12 +1397,13 @@ void go_convertert::convert_branch(const irept &stmt, code_blockt &dest)
 
   if(tok == "goto")
   {
+    // Out of the body of a range over a function: after f returns (see
+    // range_body_branch).
     if(
       state.range_body &&
       state.range_body->labels.count(label.get("_obj")) == 0)
     {
-      return unsupported(
-        stmt, "goto out of the body of a range over a function");
+      return range_body_branch(stmt, dest);
     }
     // Go1.27 §Goto_statements: go/types has checked that the jump neither
     // enters a block nor skips variable declarations.
