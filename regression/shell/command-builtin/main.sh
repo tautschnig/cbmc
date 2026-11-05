@@ -17,3 +17,8 @@ __CPROVER_assert "$?" = 0
 name=f
 command -v "$name" > /dev/null
 __CPROVER_assert "$?" = 0
+# Assignments before command -v do not persist.
+unset X
+X=1 PATH= command -v f > /dev/null
+__CPROVER_assert "$?" = 0
+__CPROVER_assert "${X-unset}" = unset

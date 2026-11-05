@@ -39,8 +39,6 @@ void shell_convertert::convert_command_builtin(
   code_blockt &dest)
 {
   const source_locationt &loc = command.location;
-  if(!command.assignments.empty())
-    unsupported(loc, "variable assignment before command");
   // The options: -p (the default PATH, which does not change the model),
   // -v and -V (describe NAME instead of running it).
   bool describe = false;
@@ -70,6 +68,20 @@ void shell_convertert::convert_command_builtin(
       else if(letter != 'p')
         unsupported(loc, "command -" + std::string{letter});
     }
+  }
+
+  // Assignments before command -v or -V, as in PATH= command -v NAME, do
+  // not persist in any shell, and only change how a utility is looked
+  // up, which is not modelled.
+  for(const auto &assignment : command.assignments)
+  {
+    if(
+      !describe || assignment.is_array || assignment.append ||
+      !assignment.index.empty() || has_side_effects(assignment.value))
+    {
+      unsupported(loc, "variable assignment before command");
+    }
+    check_parameter_name(assignment.name, assignment.location);
   }
 
   if(!describe)
