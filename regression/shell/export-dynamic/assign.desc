@@ -1,0 +1,13 @@
+CORE
+assign.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: SUCCESS$
+^\[shell-unsupported\.1\] .*export is not reached .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+export "NAME=value" assigns NAME; an assignment to a variable whose
+name is not known is reported where it is reached.

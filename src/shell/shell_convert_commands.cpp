@@ -1783,6 +1783,49 @@ void shell_convertert::convert_export(
       }
       continue;
     }
+    // "NAME=value": the same as NAME="value".
+    if(
+      word.size() == 1 &&
+      word[0].kind == shell_word_partt::kindt::DOUBLE_QUOTED &&
+      !word[0].parts.empty() &&
+      word[0].parts[0].kind == shell_word_partt::kindt::LITERAL)
+    {
+      const std::string &text = word[0].parts[0].text;
+      const std::size_t equals = text.find('=');
+      const std::string name = text.substr(0, equals);
+      if(
+        equals != std::string::npos && !name.empty() &&
+        !std::isdigit(static_cast<unsigned char>(name[0])) &&
+        name.find_first_not_of("abcdefghijklmnopqrstuvwxyz"
+                               "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_") ==
+          std::string::npos &&
+        text.find('\\') == std::string::npos)
+      {
+        shell_wordt value_word = word;
+        value_word[0].parts[0].text = text.substr(equals + 1);
+        const exprt value =
+          expand_word(value_word, shell_word_contextt::ASSIGNMENT, dest, loc);
+        assign_variable(name, value, dest, loc);
+        continue;
+      }
+    }
+    // A NAME=value whose name is not known here, as eval of text not known
+    // here (see convert_eval).
+    if(
+      !word.empty() && word[0].kind != shell_word_partt::kindt::LITERAL &&
+      contains_equals(word))
+    {
+      expand_word(word, shell_word_contextt::IGNORED, dest, loc);
+      check(
+        dest,
+        false_exprt{},
+        "shell-unsupported",
+        "export is not reached (export of a variable whose name is not "
+        "known here is not supported)",
+        loc);
+      add(dest, code_assumet{false_exprt{}}, loc);
+      return;
+    }
     // NAME or NAME=value, where the name is literal text.
     if(word.empty() || word[0].kind != shell_word_partt::kindt::LITERAL)
       unsupported(loc, "export operand that is not NAME or NAME=value");
