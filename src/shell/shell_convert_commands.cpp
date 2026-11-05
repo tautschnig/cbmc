@@ -131,6 +131,14 @@ void shell_convertert::assign_variable(
     assign_ifs(value, dest, loc);
     return;
   }
+  if(arrays.count(name) != 0)
+  {
+    // Element 0 of an array.
+    check_parameter_name(name, loc);
+    assign_array_element(
+      name, from_integer(0, integer_type()), value, dest, loc);
+    return;
+  }
   // bash overwrites _ after each command; in other shells it is an
   // ordinary variable. Reading it is not supported, so that what is
   // assigned does not matter.
@@ -491,8 +499,11 @@ void shell_convertert::convert_for(
   // "for name; do" is "for name in "$@"; do" (XCU 2.9.4.2).
   bool dynamic = !command.has_in;
   for(const auto &word : command.for_items)
+  {
+    bool quoted;
     dynamic |= contains_at(word) || is_splittable(word) ||
-               pathname_pattern(word).has_value();
+               pathname_pattern(word).has_value() || is_array_at(word, quoted);
+  }
   // A list of single fields is unrolled below, each iteration with what
   // is known about its value; where that would copy a large body many
   // times, it is a loop over an array of the fields instead.
@@ -948,11 +959,30 @@ void shell_convertert::convert_assignments_only(
   assign(dest, substitution_ran(), false_exprt{}, loc);
   for(const auto &assignment : command.assignments)
   {
-    const exprt value = expand_word(
+    if(arrays.count(assignment.name) != 0)
+    {
+      convert_array_assignment(assignment, dest);
+      known_literals.erase(assignment.name);
+      continue;
+    }
+    if(assignment.is_array || !assignment.index.empty())
+      unsupported(
+        assignment.location, "array assignment of " + assignment.name);
+    exprt value = expand_word(
       assignment.value,
       shell_word_contextt::ASSIGNMENT,
       dest,
       assignment.location);
+    // name+=value appends to the value.
+    if(assignment.append)
+    {
+      value = concat(
+        value_of(
+          variable(assignment.name, assignment.location), assignment.location),
+        value,
+        dest,
+        assignment.location);
+    }
     assign_variable(assignment.name, value, dest, assignment.location);
   }
   // The status is that of the last command substitution, or zero
@@ -976,6 +1006,14 @@ void shell_convertert::convert_simple(
   {
     convert_assignments_only(command, dest);
     return;
+  }
+  for(const auto &assignment : command.assignments)
+  {
+    if(assignment.is_array || assignment.append || !assignment.index.empty())
+    {
+      unsupported(
+        assignment.location, "array or += assignment before a command name");
+    }
   }
   auto name = static_text(command.words.front());
   if(!name.has_value())
@@ -1064,6 +1102,22 @@ void shell_convertert::convert_at_command(
 {
   const source_locationt &loc = command.location;
   using kindt = shell_word_partt::kindt;
+  // "${name[@]}" and further words: the fields of the words replace the
+  // positional parameters while the command runs, which is then "$@".
+  const bool fields = !is_quoted_at(command.words.front());
+  std::optional<std::pair<symbol_exprt, symbol_exprt>> outer;
+  if(fields)
+  {
+    const field_listt list =
+      expand_fields(command.words.begin(), command.words.end(), dest, loc);
+    outer.emplace(
+      temporary(field_array_type(), dest, loc),
+      temporary(count_type(), dest, loc));
+    assign(dest, outer->first, positional_array(), loc);
+    assign(dest, outer->second, argument_count(), loc);
+    assign(dest, positional_array(), list.array, loc);
+    assign(dest, argument_count(), list.count, loc);
+  }
   // Without positional parameters, there is no command name.
   code_blockt none;
   {
@@ -1124,7 +1178,13 @@ void shell_convertert::convert_at_command(
   quoted.kind = kindt::DOUBLE_QUOTED;
   quoted.location = loc;
   quoted.parts.push_back(name);
-  copy.words = {{quoted}, command.words.front()};
+  shell_word_partt at;
+  at.kind = kindt::PARAMETER;
+  at.text = "@";
+  at.location = loc;
+  shell_word_partt quoted_at = quoted;
+  quoted_at.parts = {at};
+  copy.words = {{quoted}, {quoted_at}};
   convert_dynamic_simple(copy, some);
   assign(some, positional_array(), saved_array, loc);
   assign(some, argument_count(), saved_count, loc);
@@ -1135,6 +1195,11 @@ void shell_convertert::convert_at_command(
       std::move(none),
       std::move(some)},
     loc);
+  if(outer.has_value())
+  {
+    assign(dest, positional_array(), outer->first, loc);
+    assign(dest, argument_count(), outer->second, loc);
+  }
 }
 
 bool shell_convertert::try_convert(
@@ -1224,6 +1289,18 @@ void shell_convertert::convert_dynamic_simple(
     }
     convert_simple(copy, dest);
     return;
+  }
+  {
+    bool quoted = false;
+    if(
+      is_array_at(command.words.front(), quoted) && quoted &&
+      arrays.count(command.words.front().front().parts.front().text) != 0)
+    {
+      // "${name[@]}" as a command name: the first element runs with the
+      // others and the further words as arguments.
+      convert_at_command(command, dest);
+      return;
+    }
   }
   if(contains_at(command.words.front()))
   {
@@ -1992,6 +2069,14 @@ void shell_convertert::convert_unset(
     if(*name == "IFS")
     {
       unset_ifs(dest, loc);
+      continue;
+    }
+    if(name->find('[') != std::string::npos)
+      unsupported(loc, "unset of an array element");
+    if(arrays.count(*name) != 0)
+    {
+      assign(
+        dest, array_symbols(*name).count, from_integer(0, count_type()), loc);
       continue;
     }
     const symbol_exprt var = variable(*name, loc);

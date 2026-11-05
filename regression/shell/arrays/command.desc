@@ -1,0 +1,11 @@
+CORE
+command.bash
+--shell-max-arguments 4
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+"${cmd[@]}" as a command name runs the first element, with the other
+elements and the further words as arguments.

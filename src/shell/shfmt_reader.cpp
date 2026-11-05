@@ -599,14 +599,24 @@ private:
   shell_assignmentt read_assignment(const jsont &assign)
   {
     reject_fields(
-      assign,
-      {{"Append", "+= assignment (bash/mksh/zsh)"},
-       {"Naked", "assignment without '=' (declaration builtin)"},
-       {"Index", "array element assignment (bash/mksh/zsh)"},
-       {"Array", "array assignment (bash/mksh/zsh)"}});
+      assign, {{"Naked", "assignment without '=' (declaration builtin)"}});
     shell_assignmentt result;
     result.location = location(assign);
     result.name = assign["Name"]["Value"].value;
+    result.append = flag(assign, "Append");
+    if(assign["Index"].is_object())
+      result.index = read_index(assign["Index"]);
+    if(assign["Array"].is_object())
+    {
+      result.is_array = true;
+      for(const auto &element : array(assign["Array"]["Elems"]))
+      {
+        if(element["Index"].is_object())
+          unsupported(element, "array element with a subscript [i]=value");
+        if(element["Value"].is_object())
+          result.elements.push_back(read_word(element["Value"]));
+      }
+    }
     if(assign["Value"].is_object())
       result.value = read_word(assign["Value"]);
     return result;
@@ -753,13 +763,18 @@ private:
        {"GlobSubst", "${~...} (zsh)"},
        {"RcExpand", "${^...} (zsh)"},
        {"NestedParam", "nested parameter expansion (zsh)"},
-       {"Index", "array subscript (bash/mksh/zsh)"},
        {"Subscripts", "array subscripts (zsh)"},
        {"Modifiers", "parameter modifiers (zsh)"},
        {"Slice", "substring expansion ${var:offset:length} (bash/mksh/zsh)"},
        {"Names", "${!prefix*} name expansion (bash/mksh)"}});
     result.text = part["Param"]["Value"].value;
     result.parameter_length = flag(part, "Length");
+    if(part["Index"].is_object())
+    {
+      result.index = read_index(part["Index"]);
+      if(result.index.empty())
+        unsupported(part, "empty array subscript");
+    }
     const jsont &repl = part["Repl"];
     if(repl.is_object())
     {
@@ -800,6 +815,27 @@ private:
   }
 
   /// The raw text between "$((" and "))", taken from the source.
+  /// An array subscript: a word, or an arithmetic expression, whose text
+  /// is in the source.
+  shell_wordt read_index(const jsont &index)
+  {
+    if(type(index) == "Word")
+      return read_word(index);
+    auto start = string2optional_size_t(index["Pos"]["Offset"].value);
+    auto end = string2optional_size_t(index["End"]["Offset"].value);
+    if(
+      !start.has_value() || !end.has_value() || *start > *end ||
+      *end > source.size())
+    {
+      unsupported(index, "array subscript with unexpected source offsets");
+    }
+    shell_word_partt text;
+    text.kind = shell_word_partt::kindt::QUOTED_LITERAL;
+    text.text = source.substr(*start, *end - *start);
+    text.location = location(index);
+    return {text};
+  }
+
   shell_testt read_test(const jsont &x, std::vector<shell_wordt> &words)
   {
     using kindt = shell_testt::kindt;

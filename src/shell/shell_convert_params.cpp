@@ -253,9 +253,18 @@ shell_convertert::field_listt shell_convertert::expand_fields(
   bool dynamic = false;
   for(auto it = begin; it != end; ++it)
   {
+    bool array_quoted = false;
     if(is_quoted_at(*it))
     {
       append_positional_parameters(list, dest, loc);
+      dynamic = true;
+    }
+    else if(
+      is_array_at(*it, array_quoted) &&
+      arrays.count(
+        array_quoted ? it->front().parts.front().text : it->front().text) != 0)
+    {
+      append_array_elements(list, *it, array_quoted, dest, loc);
       dynamic = true;
     }
     else if(const auto around = split_at(*it))

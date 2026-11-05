@@ -1,3 +1,3 @@
 #!/bin/bash
-[[ -n $x ]] && echo set
-arr=(1 2 3)
+cat <(ls)
+x=$[1 + 1]

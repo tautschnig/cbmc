@@ -352,6 +352,9 @@ private:
     // RANDOM has no symbol either (see expand_parameter).
     if(name == "RANDOM")
       unsupported(loc, "this use of RANDOM");
+    // Nor do arrays (see shell_convert_arrays.cpp).
+    if(arrays.count(name) != 0)
+      unsupported(loc, "this use of the array " + name);
     variables.insert(name);
     return global_symbol("shell::var::" + name, name, string_type());
   }
@@ -1285,6 +1288,45 @@ private:
   };
   std::vector<exit_trapt> exit_traps;
   source_locationt exit_trap_location;
+  /// Indexed arrays: see shell_convert_arrays.cpp.
+  std::set<std::string> arrays;
+  std::set<std::string> array_names_used;
+  void collect_arrays(const shell_command_listt &list);
+  void collect_arrays(const shell_wordt &word);
+  field_listt array_symbols(const std::string &name);
+  void initialize_arrays(code_blockt &init, const source_locationt &loc);
+  exprt array_index(
+    const shell_wordt &index,
+    code_blockt &dest,
+    const source_locationt &loc);
+  exprt array_element(
+    const field_listt &array,
+    const exprt &index,
+    code_blockt &dest,
+    const source_locationt &loc);
+  void assign_array_element(
+    const std::string &name,
+    const exprt &index,
+    const exprt &value,
+    code_blockt &dest,
+    const source_locationt &loc);
+  void convert_array_assignment(
+    const shell_assignmentt &assignment,
+    code_blockt &dest);
+  /// Whether \p word is "${name[@]}", or unquoted ${name[@]} or ${name[*]},
+  /// and whether it is quoted.
+  static bool is_array_at(const shell_wordt &word, bool &quoted);
+  void append_array_elements(
+    const field_listt &list,
+    const shell_wordt &word,
+    bool quoted,
+    code_blockt &dest,
+    const source_locationt &loc);
+  exprt expand_array_parameter(
+    const shell_word_partt &part,
+    shell_word_contextt context,
+    bool quoted,
+    code_blockt &dest);
   /// The number of commands in \p list, including nested ones.
   static std::size_t command_size(const shell_command_listt &list);
   /// "$@" as a whole command: $1 runs with the others as arguments.

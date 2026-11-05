@@ -350,6 +350,11 @@ exprt shell_convertert::expand_parameter(
   bool quoted,
   code_blockt &dest)
 {
+  if(arrays.count(part.text) != 0)
+    return expand_array_parameter(part, context, quoted, dest);
+  if(!part.index.empty())
+    unsupported(
+      part.location, "array subscript of a name not seen as an array");
   const source_locationt &loc = part.location;
   exprt value;
   bool assignable = false;

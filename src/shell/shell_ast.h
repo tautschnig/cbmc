@@ -67,6 +67,10 @@ struct shell_word_partt
   /// PARAMETER: ${#parameter}, the string length (XCU 2.6.2).
   bool parameter_length = false;
 
+  /// PARAMETER: the subscript of ${name[subscript]} (bash, mksh): "@",
+  /// "*", or an arithmetic expression; empty without one.
+  std::vector<shell_word_partt> index;
+
   /// PARAMETER with the operators "/", "//", "/#" and "/%" of
   /// ${parameter/pattern/string} (bash, mksh, zsh): the string, whose
   /// pattern is in \ref parts.
@@ -109,6 +113,14 @@ struct shell_assignmentt
 {
   std::string name;
   shell_wordt value;
+  /// name+=value (bash, mksh, zsh): append to the value or the array.
+  bool append = false;
+  /// name=(elements) (bash, mksh, zsh): an array of these words.
+  bool is_array = false;
+  std::vector<shell_wordt> elements;
+  /// name[index]=value: the subscript, an arithmetic expression; empty
+  /// without one.
+  shell_wordt index;
   source_locationt location;
 };
 

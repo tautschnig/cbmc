@@ -3,7 +3,8 @@ main.bash
 --show-parse-tree
 ^EXIT=6$
 ^SIGNAL=0$
-^file main.bash line 3 column 1: unsupported shell construct: array assignment \(bash/mksh/zsh\)$
+^file main.bash line 2 column 5: unsupported shell construct: process substitution \(bash/zsh\)$
+^file main.bash line 3 column 3: unsupported shell construct: \$\[\.\.\.\] arithmetic \(bash\)$
 ^PARSING ERROR$
 --
 ^program

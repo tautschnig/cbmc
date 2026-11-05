@@ -59,6 +59,7 @@ void shell_convertert::add_initialize()
     assign(init, in_exit_trap(), false_exprt{}, loc);
   initialize_options(init, loc);
   initialize_getopts(init, loc);
+  initialize_arrays(init, loc);
   if(option_possible("errexit"))
     assign(init, errexit_ignored_in_caller(), false_exprt{}, loc);
   assign(init, substitution_status(), from_integer(0, status_type()), loc);
@@ -129,12 +130,14 @@ void shell_convertert::operator()()
   collect_dot_scripts(program.commands);
   collect_function_definitions(program.commands);
   collect_options(program.commands);
+  collect_arrays(program.commands);
   for(const auto &dot : dot_scripts)
   {
     if(dot.second != nullptr)
     {
       collect_function_definitions(dot.second->commands);
       collect_options(dot.second->commands);
+      collect_arrays(dot.second->commands);
     }
   }
   nounset_possible = option_possible("nounset");

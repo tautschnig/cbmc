@@ -1,0 +1,12 @@
+CORE
+sparse.bash
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.[0-9]+\] .*stays dense.*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Arrays are dense: assigning beyond the element after the last one is
+reported.

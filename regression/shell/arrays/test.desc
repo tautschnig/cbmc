@@ -1,0 +1,12 @@
+CORE
+main.bash
+--shell-max-arguments 5 --unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Indexed arrays in bash and mksh: assignment of lists, +=, elements at
+arithmetic subscripts, $a as element 0, "${a[@]}" in lists of fields,
+${a[*]}, ${#a[@]}, and unset.
