@@ -207,6 +207,12 @@ static bool is_through_parameter(const namespacet &ns, const exprt &lvalue)
          symbol->is_parameter;
 }
 
+static void leaves_of(
+  const namespacet &ns,
+  const exprt &lvalue,
+  std::size_t &budget,
+  std::vector<exprt> &leaves);
+
 /// The accesses of \p expr, which is read (or written if \p write) if
 /// \p guard holds: maximal shared lvalues, and the reads in their
 /// addresses. The operands of `&&`, `||` and `?:` after the first are
@@ -266,7 +272,12 @@ static void collect(
     const auto size = pointer_offset_size(expr.type(), ns);
     if(size.has_value() && *size == 0)
       return;
-    accesses.push_back({expr, write, guard});
+    // Values of size zero do not get here; scalar parts each get a flag.
+    std::size_t budget = 64;
+    std::vector<exprt> leaves;
+    leaves_of(ns, expr, budget, leaves);
+    for(const auto &leaf : leaves)
+      accesses.push_back({leaf, write, guard});
     // The reads that compute its address.
     collect(ns, address_of_exprt{expr}, false, guard, accesses);
     return;
@@ -358,6 +369,72 @@ static exprt byte_address(const exprt &lvalue)
 {
   return typecast_exprt{
     address_of_exprt{lvalue}, pointer_type(unsigned_char_type())};
+}
+
+/// The locations of an access of \p lvalue, appended to \p leaves: the
+/// first bytes of its scalar parts (struct members, array elements), so
+/// that `s = S{}` conflicts with `s.f.x = 1`. Arrays of more than
+/// max_elements elements, or beyond \p budget leaves, are keyed by their
+/// first byte (SPIKE: a race on a later element of a large array, as on
+/// BigKey's [1000]*int, is missed).
+static void leaves_of(
+  const namespacet &ns,
+  const exprt &lvalue,
+  std::size_t &budget,
+  std::vector<exprt> &leaves)
+{
+  static const std::size_t max_elements = 32;
+  const typet &type = lvalue.type();
+  if(budget > 1 && (type.id() == ID_struct || type.id() == ID_struct_tag))
+  {
+    const struct_typet &struct_type =
+      type.id() == ID_struct_tag ? ns.follow_tag(to_struct_tag_type(type))
+                                 : to_struct_type(type);
+    std::vector<exprt> members;
+    for(const auto &component : struct_type.components())
+    {
+      if(component.get_is_padding())
+        continue;
+      const auto size = pointer_offset_size(component.type(), ns);
+      if(size.has_value() && *size == 0)
+        continue;
+      members.push_back(member_exprt{lvalue, component});
+    }
+    if(!members.empty() && members.size() <= budget)
+    {
+      budget -= members.size();
+      for(const auto &member : members)
+      {
+        ++budget;
+        leaves_of(ns, member, budget, leaves);
+      }
+      return;
+    }
+  }
+  if(budget > 1 && type.id() == ID_array)
+  {
+    const auto &array_type = to_array_type(type);
+    const auto size = numeric_cast<mp_integer>(array_type.size());
+    if(
+      size.has_value() && *size > 0 && *size <= max_elements && *size <= budget)
+    {
+      const std::size_t n = numeric_cast_v<std::size_t>(*size);
+      budget -= n;
+      for(std::size_t i = 0; i < n; ++i)
+      {
+        ++budget;
+        leaves_of(
+          ns,
+          index_exprt{lvalue, from_integer(i, array_type.index_type())},
+          budget,
+          leaves);
+      }
+      return;
+    }
+  }
+  if(budget > 0)
+    --budget;
+  leaves.push_back(lvalue);
 }
 
 /// The name of shadow-memory field \p name, as the API takes it.
