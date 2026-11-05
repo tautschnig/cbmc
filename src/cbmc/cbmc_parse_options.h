@@ -17,6 +17,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/ui_message.h>
 #include <util/validation_interface.h>
 
+#include <goto-programs/dynamic_sites.h>
 #include <goto-programs/goto_model.h>
 #include <goto-programs/goto_trace.h>
 
@@ -96,6 +97,7 @@ class optionst;
   "(shell-max-string-length):" \
   "(shell-max-arguments):" \
   "(shell-strings):" \
+  OPT_DYNAMIC_SITES \
   "(claim):(show-claims)(floatbv)(all-claims)(all-properties)" // legacy, and will eventually disappear // NOLINT(whitespace/line_length)
 // clang-format on
 

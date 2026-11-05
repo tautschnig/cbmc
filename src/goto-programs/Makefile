@@ -2,6 +2,7 @@ SRC = adjust_float_expressions.cpp \
       class_hierarchy.cpp \
       class_identifier.cpp \
       compute_called_functions.cpp \
+      dynamic_sites.cpp \
       elf_reader.cpp \
       ensure_one_backedge_per_target.cpp \
       goto_check.cpp \

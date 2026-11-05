@@ -292,6 +292,11 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("shell-max-arguments"))
     options.set_option(
       "shell-max-arguments", cmdline.get_value("shell-max-arguments"));
+  if(cmdline.isset("show-dynamic-sites"))
+    options.set_option("show-dynamic-sites", true);
+  if(cmdline.isset("dynamic-resolutions"))
+    options.set_option(
+      "dynamic-resolutions", cmdline.get_value("dynamic-resolutions"));
   // Shell strings: native SMT-LIB strings whenever an SMT solver with the
   // theory of strings is chosen, else refined strings, which need the
   // string refinement solver. As the input language is not known yet,
@@ -1075,6 +1080,12 @@ int cbmc_parse_optionst::get_goto_program(
   if(cbmc_parse_optionst::process_goto_program(goto_model, options, log))
     return CPROVER_EXIT_INTERNAL_ERROR;
 
+  if(cmdline.isset("show-dynamic-sites"))
+  {
+    show_dynamic_sites(goto_model, ui_message_handler);
+    return CPROVER_EXIT_SUCCESS;
+  }
+
   if(cmdline.isset("validate-goto-model"))
   {
     goto_model.validate();
@@ -1159,6 +1170,12 @@ bool cbmc_parse_optionst::process_goto_program(
     link_to_library(
       goto_model, log.get_message_handler(), cprover_c_library_factory);
   }
+
+  // Front-ends convert some functions only when the library is linked, so
+  // that dynamic sites are complete only now. The conversion of each site
+  // follows its marker, which only identifies it.
+  if(!options.get_bool_option("show-dynamic-sites"))
+    remove_dynamic_site_markers(goto_model);
 
   // Common removal of types and complex constructs
   if(::process_goto_program(goto_model, options, log))
@@ -1349,6 +1366,7 @@ void cbmc_parse_optionst::help()
     "represent shell strings for the string refinement solver (the "
     "default), or as SMT-LIB strings (the default with {y--cvc5} or "
     "{y--z3})\n"
+    HELP_DYNAMIC_SITES
     "\n"
     "Platform options:\n"
     HELP_CONFIG_PLATFORM
