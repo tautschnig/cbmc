@@ -165,6 +165,9 @@ var sourceModels = map[string]struct {
 	"internal/filepathlite": {},
 	"io/fs":                 {},
 	"internal/oserror":      {},
+	// The standard logger writes to a model of os.Stderr (models/log).
+	"log":          {overrides: true},
+	"log/internal": {},
 }
 
 // parseSourceModel parses the files of the source model of path (see

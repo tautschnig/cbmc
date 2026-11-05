@@ -1,0 +1,10 @@
+CORE
+main.go
+--unwind 8 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+log from its own source
