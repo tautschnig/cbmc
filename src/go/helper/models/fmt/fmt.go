@@ -1,7 +1,8 @@
 // Package fmt models the printing functions of the standard library's fmt
 // (go1.27) for verification: the formatted text is not modelled, so it is
-// an arbitrary string of at most 4 GiB (except for Sprint of a single
-// string, which is that string). As fmt does, the functions call the Error or String
+// an arbitrary string of at most 4 GiB (except for the default format of a
+// single string, which is that string: Sprint, Fprint, Append, and their
+// ln variants, which add a newline). As fmt does, the functions call the Error or String
 // method of each argument that has one (Printf does so for every
 // argument, whatever its verb, which includes the cases in which fmt calls
 // them), and recover from panics in them. The number of bytes written and
@@ -93,17 +94,31 @@ func Printf(format string, a ...any) (n int, err error) {
 // Sprint formats using the default formats for its operands and returns
 // the resulting string.
 func Sprint(a ...any) string {
-	if len(a) == 1 {
-		if s, ok := a[0].(string); ok {
-			return s
-		}
+	if s, ok := single(a); ok {
+		return s
 	}
 	return text(a)
 }
 
+// single returns the text of a if a is a single string, whose default
+// format is the string itself.
+func single(a []any) (string, bool) {
+	if len(a) == 1 {
+		if s, ok := a[0].(string); ok {
+			return s, true
+		}
+	}
+	return "", false
+}
+
 // Sprintln formats using the default formats for its operands and returns
 // the resulting string.
-func Sprintln(a ...any) string { return text(a) }
+func Sprintln(a ...any) string {
+	if s, ok := single(a); ok {
+		return s + "\n"
+	}
+	return text(a)
+}
 
 // Sprintf formats according to a format specifier and returns the
 // resulting string.
@@ -112,13 +127,13 @@ func Sprintf(format string, a ...any) string { return text(a) }
 // Fprint formats using the default formats for its operands and writes to
 // w.
 func Fprint(w io.Writer, a ...any) (n int, err error) {
-	return w.Write([]byte(text(a)))
+	return w.Write([]byte(Sprint(a...)))
 }
 
 // Fprintln formats using the default formats for its operands and writes
 // to w.
 func Fprintln(w io.Writer, a ...any) (n int, err error) {
-	return w.Write([]byte(text(a)))
+	return w.Write([]byte(Sprintln(a...)))
 }
 
 // Fprintf formats according to a format specifier and writes to w.
@@ -128,11 +143,13 @@ func Fprintf(w io.Writer, format string, a ...any) (n int, err error) {
 
 // Append formats using the default formats for its operands, appends the
 // result to the byte slice, and returns the updated slice.
-func Append(b []byte, a ...any) []byte { return append(b, text(a)...) }
+func Append(b []byte, a ...any) []byte { return append(b, Sprint(a...)...) }
 
 // Appendln formats using the default formats for its operands, appends the
 // result to the byte slice, and returns the updated slice.
-func Appendln(b []byte, a ...any) []byte { return append(b, text(a)...) }
+func Appendln(b []byte, a ...any) []byte {
+	return append(b, Sprintln(a...)...)
+}
 
 // Appendf formats according to a format specifier, appends the result to
 // the byte slice, and returns the updated slice.
