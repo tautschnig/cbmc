@@ -216,4 +216,18 @@ void shell_convertert::convert_background(
     dest,
     [&](code_blockt &body) { convert_foreground(command, body); });
   set_status(dest, 0, command.location);
+  // $! is the process ID of the asynchronous list.
+  {
+    const source_locationt &loc = command.location;
+    const symbol_exprt pid = temporary(integer_type(), dest, loc);
+    assign(dest, pid, nondet(integer_type(), loc), loc);
+    add(
+      dest,
+      code_assumet{and_exprt{
+        binary_relation_exprt{pid, ID_ge, from_integer(1, integer_type())},
+        binary_relation_exprt{
+          pid, ID_le, from_integer(4194304, integer_type())}}},
+      loc);
+    assign(dest, special("!"), from_integer_expr(pid, dest, loc), loc);
+  }
 }

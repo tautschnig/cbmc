@@ -308,10 +308,8 @@ exprt shell_convertert::parameter(const shell_word_partt &part)
       return unset_string(part.location);
     return positional_parameter(std::stoul(name.substr(first)), part.location);
   }
-  if(name == "$" || name == "-")
+  if(name == "$" || name == "-" || name == "!")
     return special(name);
-  if(name == "!")
-    unsupported(part.location, "special parameter $!");
   return variable(name, part.location);
 }
 

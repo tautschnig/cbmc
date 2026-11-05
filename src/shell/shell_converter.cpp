@@ -97,7 +97,18 @@ void shell_convertert::add_initialize()
   for(const auto &name : special_parameters)
   {
     const symbol_exprt param = special(name);
-    assign(init, param, nondet_string(init, loc), loc);
+    // Before any asynchronous list, $! is unset, and 0 in zsh.
+    if(name == "!")
+    {
+      assign(
+        init,
+        param,
+        program.dialect == shell_dialectt::ZSH ? string_literal("0", loc)
+                                               : unset_string(loc),
+        loc);
+    }
+    else
+      assign(init, param, nondet_string(init, loc), loc);
   }
 
   const std::string init_name = CPROVER_PREFIX "initialize";
