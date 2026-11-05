@@ -1083,7 +1083,7 @@ bounds the inputs of refined strings only.
   expansion or `eval` report; 24 are not decided with `--unwind 3` in 120
   seconds, as their field splitting is costly for the solvers.
 
-### 7.8 The remaining census blockers (2026-11-06)
+### 7.8 The remaining census blockers (2026-11-06, updated 2026-11-07)
 
 Each construct below was the first unsupported one of at least 20
 scripts of the census.
@@ -1139,12 +1139,57 @@ scripts of the census.
   - assignments before a function call, which all shells restore after
     it;
   - `(( ))` and `let`.
-- **Census.** 1,543 of 1,652 scripts convert, against 746. One script
-  (ufw-init) now exceeds the census's 60 s conversion limit: dynamic
-  command names in loops are converted once per modelled builtin. Each
-  remaining blocker affects at most 9 scripts. Most are bash extensions
-  (arrays, `[[ ]]`, `${var/pattern/string}`, process substitution), or
-  command substitutions in arithmetic.
+- **Bash extensions** (bash, and mksh or zsh where they agree):
+  - `[[ ]]` without `=~`;
+  - `${x/p/s}` with a literal pattern (also `/#` and `/%`);
+  - `${x:o:l}` with non-negative operands;
+  - dense, global arrays of at most N elements, including `"${a[@]}"`
+    as a command;
+  - process substitution, `$[...]` and `time`.
+- **Arithmetic.**
+  - Each `$(...)` runs first, and its output must be an integer
+    constant.
+  - `${#name}` is the length of the value.
+  - In sh, `++` and `--` follow dash (where `++x` is `+(+x)` and `x++`
+    a syntax error) or bash and busybox, which increment. The choice is
+    made once, at startup (`shell::posix_increments`).
+  - With -u, bash and zsh report unset names, also in `x += 1` and
+    `x++`.
+- **-u in redirections** depends on the shell and the command:
+  - a redirection target of a utility makes dash, busybox and mksh
+    exit, while bash and zsh go on;
+  - a here-document of a utility lets every shell go on;
+  - a here-document of a regular builtin or compound command lets
+    dash, busybox and mksh go on, while bash and zsh exit;
+  - otherwise every shell exits.
+  Where a shell goes on, the word is expanded in a subshell.
+- **UID, EUID and PPID** are decimal numbers in bash. In sh,
+  assignments either succeed (dash, busybox) or make the shell exit
+  (bash run as sh).
+- **Others:**
+  - pathname expansion in an operand of `test`;
+  - `"$@"` and `$@` as a command name with further words;
+  - assignments before `command -v`;
+  - `type "$x"`.
+- **Shell programs use 16 object bits** (`src/util/config.cpp`): scripts
+  with many strings had too many addressed objects for the default.
+- **Linking.** `link_to_library` links each library function in its
+  own round. Every round walked all existing functions with empty
+  rename maps, un-sharing every instruction. Skipping that walk cut the
+  conversion of a 197-line script from 70 s to 16 s, which removed all
+  census timeouts.
+- **Census.** 1,584 of 1,652 scripts convert, against 746. Each
+  remaining blocker affects at most 4 scripts:
+  - refined-string patterns with `?`;
+  - `shopt`, `alias`, `declare`, `typeset`, `setopt` and `emulate`;
+  - `$"..."`, as translations could introduce expansions;
+  - PIPESTATUS;
+  - `set -o igncr` (Cygwin);
+  - `read` options;
+  - 4 scripts that shfmt rejects (bash syntax under `#!/bin/sh`).
+- **Locale.** Matching and `${#x}` are by bytes, as in the C locale. In
+  UTF-8 locales, bash, busybox, mksh and zsh count characters instead;
+  this is not modelled.
 
 ---
 
