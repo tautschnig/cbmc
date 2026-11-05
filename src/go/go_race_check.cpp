@@ -203,7 +203,9 @@ static void collect(
       return;
     }
     // Values of size zero (empty structs, zero-length arrays) have no
-    // memory to race on.
+    // memory to race on; nor do functions (`*(f.code)`).
+    if(expr.type().id() == ID_code)
+      return;
     const auto size = pointer_offset_size(expr.type(), ns);
     if(size.has_value() && *size == 0)
       return;
@@ -549,7 +551,12 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
               check(not_exprt{flag(write_flags, a.lvalue)}, a.lvalue, "read");
           });
       }
-      body.destructive_insert(it, before);
+      // Jumps to the instruction must reach its checks (as the branch of a
+      // dispatcher of function values to the call does): the checks take
+      // its place, and it follows them.
+      const auto inserted = before.instructions.size();
+      body.insert_before_swap(it, before);
+      std::advance(it, inserted);
     }
     body.update();
   }
