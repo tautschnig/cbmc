@@ -150,6 +150,63 @@ static exprt map_of_part(const exprt &expr)
   return map_of_part(pointer);
 }
 
+/// If \p lhs, assigned in an atomic section, is the effect of a channel
+/// operation that gc's race detector takes as an access of the channel
+/// (runtime/chan.go: closechan writes it, chansend reads it), the channel,
+/// a symbol that holds it during the section, else nil. These are, in
+/// go_channels.cpp, `c.closed = 1` of close, and the write of the value
+/// into the buffer of a send; \p write is set to the kind of access.
+static exprt chan_of_operation(const exprt &lhs, bool &write)
+{
+  const auto chan_of_field = [](const exprt &expr, const char *name) -> exprt
+  {
+    if(
+      expr.id() != ID_member ||
+      to_member_expr(expr).get_component_name() != name)
+    {
+      return nil_exprt{};
+    }
+    const exprt &compound = to_member_expr(expr).compound();
+    if(compound.id() != ID_dereference)
+      return nil_exprt{};
+    const exprt &chan = to_dereference_expr(compound).pointer();
+    if(chan.id() != ID_symbol || !is_go_chan(chan.type()))
+      return nil_exprt{};
+    return chan;
+  };
+  const exprt closed = chan_of_field(lhs, "closed");
+  if(closed.is_not_nil())
+  {
+    write = true;
+    return closed;
+  }
+  if(lhs.id() != ID_dereference)
+    return nil_exprt{};
+  exprt pointer = skip_typecasts(to_dereference_expr(lhs).pointer());
+  if(pointer.id() == ID_plus && pointer.operands().size() == 2)
+    pointer = skip_typecasts(to_plus_expr(pointer).op0());
+  write = false;
+  return chan_of_field(pointer, "buf");
+}
+
+/// Whether \p lvalue is accessed through a parameter: `*addr`, `x.v` of a
+/// method of a pointer receiver x, the accesses of sync/atomic's model.
+static bool is_through_parameter(const namespacet &ns, const exprt &lvalue)
+{
+  if(lvalue.id() == ID_member)
+    return is_through_parameter(ns, to_member_expr(lvalue).compound());
+  if(lvalue.id() == ID_index)
+    return is_through_parameter(ns, to_index_expr(lvalue).array());
+  if(lvalue.id() != ID_dereference)
+    return false;
+  const exprt pointer = skip_typecasts(to_dereference_expr(lvalue).pointer());
+  if(pointer.id() != ID_symbol)
+    return false;
+  const symbolt *symbol;
+  return !ns.lookup(to_symbol_expr(pointer).get_identifier(), symbol) &&
+         symbol->is_parameter;
+}
+
 /// The accesses of \p expr, which is read (or written if \p write) if
 /// \p guard holds: maximal shared lvalues, and the reads in their
 /// addresses. The operands of `&&`, `||` and `?:` after the first are
@@ -393,31 +450,207 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
   std::size_t instrumented = 0;
   for(auto &f : goto_model.goto_functions.function_map)
   {
-    if(!is_checked_function(f.first))
+    // In the model of sync/atomic, the accesses of its atomic sections are
+    // announced, without checks: they race with plain accesses (which check
+    // the flags), not with each other.
+    const bool is_atomic_model =
+      id2string(f.first).rfind("go::sync/atomic.", 0) == 0;
+    const bool checked = is_checked_function(f.first);
+    if(!checked && !is_atomic_model)
       continue;
     goto_programt &body = f.second.body;
+
+    // The instrumentation of accesses at location, made only if their guards
+    // hold, with checks if with_checks.
+    const auto instrument = [&](
+                              const std::vector<accesst> &accesses,
+                              bool with_checks,
+                              const source_locationt &location)
+    {
+      goto_programt before;
+      const auto set_flag =
+        [&](const exprt &flags, const exprt &lvalue, bool value)
+      {
+        if(use_shadow)
+        {
+          const char *name = flags == write_flags ? "W" : "R";
+          before.add(goto_programt::make_function_call(
+            code_function_callt{
+              set_field,
+              {byte_address(lvalue),
+               field_name(name),
+               from_integer(value ? 1 : 0, signedbv_typet{32})}},
+            location));
+          return;
+        }
+        before.add(goto_programt::make_assignment(
+          index_exprt{flags, flag_index(lvalue)},
+          value ? exprt{true_exprt{}} : exprt{false_exprt{}},
+          location));
+      };
+      // The flag of kind flags of lvalue, as a condition.
+      const auto flag = [&](const exprt &flags, const exprt &lvalue) -> exprt
+      {
+        if(!use_shadow)
+          return index_exprt{flags, flag_index(lvalue)};
+        const char *name = flags == write_flags ? "W" : "R";
+        symbolt &tmp = get_fresh_aux_symbol(
+          signedbv_typet{32},
+          id2string(f.first),
+          "race$",
+          location,
+          "go",
+          goto_model.symbol_table);
+        before.add(goto_programt::make_decl(tmp.symbol_expr(), location));
+        before.add(goto_programt::make_function_call(
+          code_function_callt{
+            tmp.symbol_expr(),
+            get_field,
+            {byte_address(lvalue), field_name(name)}},
+          location));
+        return notequal_exprt{
+          tmp.symbol_expr(), from_integer(0, signedbv_typet{32})};
+      };
+      const auto check = [&](const exprt &condition, const char *what)
+      {
+        source_locationt annotated = location;
+        annotated.set_property_class("data-race");
+        annotated.set_comment(std::string{"data race ("} + what + ")");
+        before.add(goto_programt::make_assertion(condition, annotated));
+      };
+      // Each operation of an access only if the access is made.
+      const auto guarded = [&](const exprt &guard, auto &&emit)
+      {
+        if(guard.is_true())
+        {
+          emit();
+          return;
+        }
+        goto_programt::targett skip_jump = before.add(
+          goto_programt::make_incomplete_goto(not_exprt{guard}, location));
+        emit();
+        goto_programt::targett skip =
+          before.add(goto_programt::make_skip(location));
+        skip_jump->complete_goto(skip);
+      };
+      const auto flags_of = [&](const accesst &a)
+      { return a.write ? write_flags : read_flags; };
+      for(const auto &a : accesses)
+        guarded(a.guard, [&] { set_flag(flags_of(a), a.lvalue, true); });
+      for(const auto &a : accesses)
+        guarded(a.guard, [&] { set_flag(flags_of(a), a.lvalue, false); });
+      if(with_checks)
+      {
+        for(const auto &a : accesses)
+        {
+          guarded(
+            a.guard,
+            [&]
+            {
+              if(a.write)
+              {
+                const exprt written = flag(write_flags, a.lvalue);
+                const exprt read = flag(read_flags, a.lvalue);
+                check(and_exprt{not_exprt{written}, not_exprt{read}}, "write");
+              }
+              else
+                check(not_exprt{flag(write_flags, a.lvalue)}, "read");
+            });
+        }
+      }
+      ++instrumented;
+      return before;
+    };
+    // Jumps to the instruction at target must reach its instrumentation (as
+    // the branch of a dispatcher of function values to the call does): the
+    // instrumentation takes its place, and it follows. The result is the
+    // instruction.
+    const auto insert_before =
+      [&body](goto_programt::targett target, goto_programt &before)
+    {
+      const auto inserted = before.instructions.size();
+      body.insert_before_swap(target, before);
+      std::advance(target, inserted);
+      return target;
+    };
+
     std::size_t atomic_depth = 0;
+    // The beginning of the current atomic section, and the accesses that
+    // are made just before it: channel operations as gc's race detector
+    // sees them, and atomic operations.
+    goto_programt::targett section_begin = body.instructions.end();
+    std::vector<accesst> section_accesses;
     // Generated instructions (e.g., of map operations) may have no location:
     // their checks get the last one before them.
     source_locationt last_location;
     for(auto it = body.instructions.begin(); it != body.instructions.end();
         ++it)
     {
+      if(!it->source_location().get_file().empty())
+        last_location = it->source_location();
       if(it->is_atomic_begin())
       {
-        ++atomic_depth;
+        if(atomic_depth++ == 0)
+        {
+          section_begin = it;
+          section_accesses.clear();
+        }
         continue;
       }
       if(it->is_atomic_end())
       {
-        if(atomic_depth > 0)
-          --atomic_depth;
+        // A section may have several exits (a panic path ends it early):
+        // an end followed by another one before the next beginning is one.
+        const auto is_early_exit = [&]
+        {
+          for(auto next = std::next(it); next != body.instructions.end();
+              ++next)
+          {
+            if(next->is_atomic_begin())
+              return false;
+            if(next->is_atomic_end())
+              return true;
+          }
+          return false;
+        };
+        if(atomic_depth == 1 && is_early_exit())
+          continue;
+        if(atomic_depth > 0 && --atomic_depth == 0 && !section_accesses.empty())
+        {
+          goto_programt before =
+            instrument(section_accesses, checked, last_location);
+          insert_before(section_begin, before);
+        }
         continue;
       }
       if(atomic_depth > 0)
+      {
+        if(it->is_assign())
+        {
+          if(checked)
+          {
+            bool write = false;
+            const exprt chan = chan_of_operation(it->assign_lhs(), write);
+            if(chan.is_not_nil())
+            {
+              section_accesses.push_back(
+                {dereference_exprt{chan}, write, true_exprt{}});
+            }
+          }
+          else
+          {
+            std::vector<accesst> accesses;
+            collect(ns, it->assign_lhs(), true, true_exprt{}, accesses);
+            collect(ns, it->assign_rhs(), false, true_exprt{}, accesses);
+            for(const auto &a : accesses)
+              if(is_through_parameter(ns, a.lvalue))
+                section_accesses.push_back(a);
+          }
+        }
         continue;
-      if(!it->source_location().get_file().empty())
-        last_location = it->source_location();
+      }
+      if(!checked)
+        continue;
 
       std::vector<accesst> accesses;
       const exprt always = true_exprt{};
@@ -447,116 +680,12 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
       if(accesses.empty())
         continue;
 
-      ++instrumented;
-      const source_locationt &location =
+      goto_programt before = instrument(
+        accesses,
+        true,
         it->source_location().get_file().empty() ? last_location
-                                                 : it->source_location();
-      goto_programt before;
-      const auto set_flag =
-        [&](const exprt &flags, const exprt &lvalue, bool value)
-      {
-        if(use_shadow)
-        {
-          const char *name = flags == write_flags ? "W" : "R";
-          before.add(goto_programt::make_function_call(
-            code_function_callt{
-              set_field,
-              {byte_address(lvalue),
-               field_name(name),
-               from_integer(value ? 1 : 0, signedbv_typet{32})}},
-            location));
-          return;
-        }
-        before.add(goto_programt::make_assignment(
-          index_exprt{flags, flag_index(lvalue)},
-          value ? exprt{true_exprt{}} : exprt{false_exprt{}},
-          location));
-      };
-      const auto announce = [&](const exprt &flags, const exprt &lvalue)
-      { set_flag(flags, lvalue, true); };
-      const auto withdraw = [&](const exprt &flags, const exprt &lvalue)
-      { set_flag(flags, lvalue, false); };
-      // The flag of kind flags of lvalue, as a condition.
-      std::size_t tmp_counter = 0;
-      const auto flag = [&](const exprt &flags, const exprt &lvalue) -> exprt
-      {
-        if(!use_shadow)
-          return index_exprt{flags, flag_index(lvalue)};
-        const char *name = flags == write_flags ? "W" : "R";
-        symbolt &tmp = get_fresh_aux_symbol(
-          signedbv_typet{32},
-          id2string(f.first),
-          "race$" + std::to_string(++tmp_counter),
-          location,
-          "go",
-          goto_model.symbol_table);
-        before.add(goto_programt::make_decl(tmp.symbol_expr(), location));
-        before.add(goto_programt::make_function_call(
-          code_function_callt{
-            tmp.symbol_expr(),
-            get_field,
-            {byte_address(lvalue), field_name(name)}},
-          location));
-        return notequal_exprt{
-          tmp.symbol_expr(), from_integer(0, signedbv_typet{32})};
-      };
-      const auto check =
-        [&](const exprt &condition, const exprt &lvalue, const char *what)
-      {
-        source_locationt annotated = location;
-        annotated.set_property_class("data-race");
-        (void)lvalue;
-        annotated.set_comment(std::string{"data race ("} + what + ")");
-        before.add(goto_programt::make_assertion(condition, annotated));
-      };
-      // Each operation of an access only if the access is made.
-      const auto guarded = [&](const exprt &guard, auto &&emit)
-      {
-        if(guard.is_true())
-        {
-          emit();
-          return;
-        }
-        goto_programt::targett skip_jump = before.add(
-          goto_programt::make_incomplete_goto(not_exprt{guard}, location));
-        emit();
-        goto_programt::targett skip =
-          before.add(goto_programt::make_skip(location));
-        skip_jump->complete_goto(skip);
-      };
-      for(const auto &a : accesses)
-        guarded(
-          a.guard,
-          [&] { announce(a.write ? write_flags : read_flags, a.lvalue); });
-      for(const auto &a : accesses)
-        guarded(
-          a.guard,
-          [&] { withdraw(a.write ? write_flags : read_flags, a.lvalue); });
-      for(const auto &a : accesses)
-      {
-        guarded(
-          a.guard,
-          [&]
-          {
-            if(a.write)
-            {
-              const exprt written = flag(write_flags, a.lvalue);
-              const exprt read = flag(read_flags, a.lvalue);
-              check(
-                and_exprt{not_exprt{written}, not_exprt{read}},
-                a.lvalue,
-                "write");
-            }
-            else
-              check(not_exprt{flag(write_flags, a.lvalue)}, a.lvalue, "read");
-          });
-      }
-      // Jumps to the instruction must reach its checks (as the branch of a
-      // dispatcher of function values to the call does): the checks take
-      // its place, and it follows them.
-      const auto inserted = before.instructions.size();
-      body.insert_before_swap(it, before);
-      std::advance(it, inserted);
+                                                 : it->source_location());
+      it = insert_before(it, before);
     }
     body.update();
   }
