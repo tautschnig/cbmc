@@ -1510,6 +1510,12 @@ void configt::set_object_bits_from_symbol_table(
       bv_encoding.object_bits=ansi_c.default_object_bits;
     else if(entry_point_symbol.mode==ID_cpp)
       bv_encoding.object_bits=cpp.default_object_bits;
+    else if(entry_point_symbol.mode == "shell")
+    {
+      // Shell scripts have a string object for each literal, which loops
+      // and branches multiply.
+      bv_encoding.object_bits = 16;
+    }
     DATA_INVARIANT(
       0<bv_encoding.object_bits && bv_encoding.object_bits<ansi_c.pointer_width,
       "object_bits should fit into pointer width");
