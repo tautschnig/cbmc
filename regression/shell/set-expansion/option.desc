@@ -1,0 +1,11 @@
+CORE
+option.sh
+--shell-max-arguments 1
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.[0-9]+\] .* does not start with - or \+ .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A first field that starts with - or + would be an option.

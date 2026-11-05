@@ -526,10 +526,41 @@ void shell_convertert::convert_set(
     const auto text = static_text(*first);
     if(!text.has_value())
     {
-      unsupported(
-        loc,
-        "set argument that is an expansion before the positional "
-        "parameters (it could be an option)");
+      // The fields replace the positional parameters, if there are any and
+      // the first is not an option; without fields, set writes the
+      // variables.
+      const field_listt list = expand_fields(first, end, dest, loc);
+      code_blockt replace_them;
+      const symbol_exprt field = temporary(string_type(), replace_them, loc);
+      assign(
+        replace_them,
+        field,
+        index_exprt{list.array, from_integer(0, index_type())},
+        loc);
+      check(
+        replace_them,
+        not_exprt{or_exprt{
+          payload_has_prefix(
+            payload_of(field), payload_literal("-"), replace_them, loc),
+          payload_has_prefix(
+            payload_of(field), payload_literal("+"), replace_them, loc)}},
+        "shell-unsupported",
+        "the first field of " + display(*first) +
+          " does not start with - or + (it would be an option)",
+        loc);
+      set_positional_parameters(list, replace_them, loc);
+      set_status(replace_them, 0, loc);
+      code_blockt list_variables;
+      nondet_status(list_variables, 255, loc);
+      add(
+        dest,
+        code_ifthenelset{
+          binary_relation_exprt{
+            list.count, ID_gt, from_integer(0, count_type())},
+          std::move(replace_them),
+          std::move(list_variables)},
+        loc);
+      return;
     }
     if(*text == "--")
     {
