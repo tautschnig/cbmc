@@ -168,6 +168,13 @@ var sourceModels = map[string]struct {
 	// The standard logger writes to a model of os.Stderr (models/log).
 	"log":          {overrides: true},
 	"log/internal": {},
+	// Executing templates works, but symbolic execution of the parser
+	// and of reflection makes even small templates slow (16 s for
+	// "hi {{.}}!"; minutes for a few actions).
+	"text/template":       {},
+	"text/template/parse": {},
+	"internal/fmtsort":    {},
+	"maps":                {},
 }
 
 // parseSourceModel parses the files of the source model of path (see
@@ -362,8 +369,9 @@ func (l *loader) model(f *types.Func) *types.Func {
 	}
 	mf, _ := m.Scope().Lookup(f.Name()).(*types.Func)
 	// The signature of a source model's function mentions the model's own
-	// types, which stand for the real ones (see realType).
-	if mf == nil || !types.Identical(l.enc.realSignature(mf.Type()), f.Type()) {
+	// types, which stand for the real ones (see realType), and reflect's
+	// model's, which the real ones stand for (see identical).
+	if mf == nil || !l.enc.identical(l.enc.realSignature(mf.Type()), f.Type()) {
 		return nil
 	}
 	return mf

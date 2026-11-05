@@ -1,0 +1,11 @@
+THOROUGH
+main.go
+--unwind 12 --unwindset go::cprover/std/text/template/parse.Tree.hasFunction.0:24 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+not supported yet: FAILURE$
+--
+text/template from its own source (THOROUGH: about 1 min with --validate-goto-model)
