@@ -172,7 +172,9 @@ void shell_convertert::collect_assigned(
       {
         // The names read assigns, if they are literal.
         const auto operands = read_operands(command);
-        if(operands.has_value())
+        if(operands.has_value() && operands->second.empty())
+          names.insert("REPLY");
+        else if(operands.has_value())
           names.insert(operands->second.begin(), operands->second.end());
         else
           any = true;

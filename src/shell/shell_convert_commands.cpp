@@ -79,7 +79,7 @@ void shell_convertert::check_parameter_name(
     "EPOCHSECONDS", "FUNCNAME",      "GROUPS",       "HISTCMD",
     "PIPESTATUS",   "SRANDOM",       "UID",          "EUID",
     "PPID",         "SHELLOPTS",     "BASHOPTS",     "BASH_REMATCH",
-    "DIRSTACK",     "REPLY"};
+    "DIRSTACK"};
   static const std::set<std::string> special_zsh{
     "status",
     "argv",
@@ -91,19 +91,12 @@ void shell_convertert::check_parameter_name(
     "fpath",
     "cdpath",
     "manpath",
-    "REPLY",
     "reply",
     "PPID",
     "EPOCHSECONDS",
     "EPOCHREALTIME"};
   static const std::set<std::string> special_mksh{
-    "KSH_VERSION",
-    "BASHPID",
-    "EPOCHREALTIME",
-    "PPID",
-    "PIPESTATUS",
-    "USER_ID",
-    "REPLY"};
+    "KSH_VERSION", "BASHPID", "EPOCHREALTIME", "PPID", "PIPESTATUS", "USER_ID"};
   bool special = special_everywhere.count(name) != 0;
   if(program.dialect == shell_dialectt::BASH)
     special |= special_bash.count(name) != 0;

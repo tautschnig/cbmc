@@ -82,10 +82,14 @@ void shell_convertert::convert_read(
     unsupported(loc, "read other than read [-r] [--] NAME...");
   const bool raw = operands->first;
   const std::vector<std::string> &names = operands->second;
-  // Without names, bash, busybox, mksh and zsh assign REPLY; dash reports
-  // an error.
-  if(names.empty())
+  // Without names, bash, busybox, mksh and zsh assign REPLY (the whole
+  // line in bash and busybox, without leading and trailing IFS white
+  // space in mksh and zsh: either way a value without newlines); dash
+  // reports an error, which is unsupported.
+  std::vector<std::string> reply{"REPLY"};
+  if(names.empty() && program.dialect == shell_dialectt::POSIX)
     unsupported(loc, "read without a variable name");
+  const std::vector<std::string> &targets = names.empty() ? reply : names;
 
   // Assignments before read only last for it in all shells (XCU 2.9.1.2):
   // IFS, with a value known here, changes how read splits the line;
@@ -99,7 +103,9 @@ void shell_convertert::convert_read(
       dest,
       assignment.location);
     check_parameter_name(assignment.name, assignment.location);
-    if(std::find(names.begin(), names.end(), assignment.name) != names.end())
+    if(
+      std::find(targets.begin(), targets.end(), assignment.name) !=
+      targets.end())
     {
       unsupported(
         assignment.location, "assignment before read of a variable it reads");
@@ -118,11 +124,11 @@ void shell_convertert::convert_read(
 
   // Successful: a line was read, and each variable is assigned.
   code_blockt success;
-  for(std::size_t i = 0; i < names.size(); ++i)
+  for(std::size_t i = 0; i < targets.size(); ++i)
   {
-    const bool last = i + 1 == names.size();
+    const bool last = i + 1 == targets.size();
     assign_variable(
-      names[i], read_value(raw, last, ifs, success, loc), success, loc);
+      targets[i], read_value(raw, last, ifs, success, loc), success, loc);
   }
   set_status(success, 0, loc);
   const auto after_success = known_literals;
@@ -131,12 +137,12 @@ void shell_convertert::convert_read(
   // each variable is assigned what was read, if anything, or kept (as
   // bash does where the input cannot be read).
   code_blockt failure;
-  for(std::size_t i = 0; i < names.size(); ++i)
+  for(std::size_t i = 0; i < targets.size(); ++i)
   {
-    const bool last = i + 1 == names.size();
+    const bool last = i + 1 == targets.size();
     code_blockt assign_it;
     assign_variable(
-      names[i], read_value(raw, last, ifs, assign_it, loc), assign_it, loc);
+      targets[i], read_value(raw, last, ifs, assign_it, loc), assign_it, loc);
     add(
       failure,
       code_ifthenelset{nondet(bool_typet{}, loc), std::move(assign_it)},

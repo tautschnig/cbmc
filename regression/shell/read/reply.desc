@@ -1,0 +1,11 @@
+CORE
+reply.bash
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+In bash, mksh and zsh, read without names assigns REPLY, which is
+otherwise an ordinary variable.
