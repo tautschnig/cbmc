@@ -87,10 +87,26 @@ void shell_convertert::add_initialize()
   // Variables not yet assigned are inherited from the environment.
   for(const auto &name : variables)
   {
-    const symbol_exprt var = variable(name, loc);
+    const symbol_exprt var =
+      is_bash_readonly_id(name) ? bash_readonly_id(name) : variable(name, loc);
     // Every shell sets OPTIND to 1 at startup.
     if(name == "OPTIND")
       assign(init, var, string_literal("1", loc), loc);
+    else if(
+      is_bash_readonly_id(name) && program.dialect == shell_dialectt::BASH)
+    {
+      // A user or process ID.
+      const symbol_exprt id = temporary(integer_type(), init, loc);
+      assign(init, id, nondet(integer_type(), loc), loc);
+      add(
+        init,
+        code_assumet{and_exprt{
+          binary_relation_exprt{id, ID_ge, from_integer(0, integer_type())},
+          binary_relation_exprt{
+            id, ID_le, from_integer(4294967295LL, integer_type())}}},
+        loc);
+      assign(init, var, from_integer_expr(id, init, loc), loc);
+    }
     else
       assign(init, var, environment_string(init, loc), loc);
   }

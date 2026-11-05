@@ -1,0 +1,10 @@
+CORE
+assign.sh
+
+^EXIT=6$
+^SIGNAL=0$
+variable UID other than read, which is read-only in bash
+--
+^VERIFICATION
+--
+dash allows assigning UID, which is read-only in bash run as sh.

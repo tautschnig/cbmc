@@ -92,6 +92,11 @@ shell_command_kindt shell_convertert::classify(const std::string &name) const
   return shell_command_kindt::EXTERNAL;
 }
 
+bool shell_convertert::is_bash_readonly_id(const std::string &name)
+{
+  return name == "UID" || name == "EUID" || name == "PPID";
+}
+
 /// Reject variables that shells maintain specially, whose values and
 /// assignments would need modelling.
 void shell_convertert::check_parameter_name(
@@ -108,6 +113,8 @@ void shell_convertert::check_parameter_name(
     "PPID",         "SHELLOPTS",     "BASHOPTS",     "BASH_REMATCH",
     "DIRSTACK"};
   static const std::set<std::string> special_zsh{
+    "UID",
+    "EUID",
     "status",
     "argv",
     "pipestatus",
@@ -125,6 +132,12 @@ void shell_convertert::check_parameter_name(
   static const std::set<std::string> special_mksh{
     "KSH_VERSION", "BASHPID", "EPOCHREALTIME", "PPID", "PIPESTATUS", "USER_ID"};
   bool special = special_everywhere.count(name) != 0;
+  // Read-only in bash, also when run as sh; expand_parameter reads them.
+  if(program.dialect == shell_dialectt::POSIX && is_bash_readonly_id(name))
+  {
+    unsupported(
+      loc, "variable " + name + " other than read, which is read-only in bash");
+  }
   if(program.dialect == shell_dialectt::BASH)
     special |= special_bash.count(name) != 0;
   else if(program.dialect == shell_dialectt::ZSH)

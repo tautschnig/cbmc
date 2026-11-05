@@ -359,6 +359,16 @@ private:
     return global_symbol("shell::var::" + name, name, string_type());
   }
 
+  /// UID, EUID and PPID: read-only variables in bash, which sets them to
+  /// decimal numbers at startup.
+  static bool is_bash_readonly_id(const std::string &name);
+  /// The value of UID, EUID or PPID, in bash or sh, which may be bash.
+  symbol_exprt bash_readonly_id(const std::string &name)
+  {
+    variables.insert(name);
+    return global_symbol("shell::var::" + name, name, string_type());
+  }
+
   symbol_exprt special(const std::string &name)
   {
     special_parameters.insert(name);

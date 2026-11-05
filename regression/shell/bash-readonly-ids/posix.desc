@@ -1,0 +1,12 @@
+CORE
+posix.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+dash and busybox do not set UID or EUID, which come from the
+environment; bash run as sh sets them.

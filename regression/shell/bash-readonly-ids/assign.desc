@@ -1,0 +1,10 @@
+CORE
+assign.bash
+
+^EXIT=6$
+^SIGNAL=0$
+variable EUID, which the shell maintains
+--
+^VERIFICATION
+--
+EUID is read-only in bash.

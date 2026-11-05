@@ -1,0 +1,10 @@
+CORE
+main.bash
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+bash sets UID, EUID and PPID to decimal numbers, which are read-only.

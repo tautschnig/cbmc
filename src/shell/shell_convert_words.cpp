@@ -451,6 +451,14 @@ exprt shell_convertert::expand_parameter(
       check_parameter_name(part.text, loc);
       return string_literal(*literal, loc);
     }
+    else if(
+      is_bash_readonly_id(part.text) &&
+      (program.dialect == shell_dialectt::BASH ||
+       program.dialect == shell_dialectt::POSIX))
+    {
+      // Read-only (in bash): not assignable here.
+      value = bash_readonly_id(part.text);
+    }
     else
     {
       value = parameter(part);
