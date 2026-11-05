@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+${#*} is $# in bash, mksh and zsh and the length of "$*" in dash and
+busybox; ${*:-word} and ${*:+word} test "$*", and ${*+word} holds with
+positional parameters in all shells.

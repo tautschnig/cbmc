@@ -328,6 +328,15 @@ exprt shell_convertert::expand_parameter(
     value = from_integer_expr(status(), dest, loc);
   else if(part.text == "#")
     value = from_integer_expr(argument_count(), dest, loc);
+  else if(
+    (part.text == "*" &&
+     (part.parameter_length || !part.parameter_operator.empty())) ||
+    (part.text == "@" && part.parameter_length &&
+     part.parameter_operator.empty()))
+  {
+    // ${#@} is ${#*} in all shells.
+    return expand_star_operator(part, context, quoted, dest);
+  }
   else if(part.text == "@" || part.text == "*")
   {
     if(part.parameter_length || !part.parameter_operator.empty())
@@ -382,6 +391,69 @@ exprt shell_convertert::expand_parameter(
     return value_of(value, loc);
   return expand_parameter_operator(
     part, value, assignable, context, quoted, dest);
+}
+
+/// ${#*}, and ${*<op>word} for -, +, :- and :+. The shells differ: dash
+/// and busybox take the length of "$*", bash, mksh and zsh $#; for - and
+/// +, * is set in dash, busybox and zsh, and in bash and mksh only with
+/// positional parameters. With a colon, all agree that "$*" is used. The
+/// POSIX dialect, which also stands for bash run as sh, allows either.
+exprt shell_convertert::expand_star_operator(
+  const shell_word_partt &part,
+  shell_word_contextt context,
+  bool quoted,
+  code_blockt &dest)
+{
+  const source_locationt &loc = part.location;
+  const std::string &op = part.parameter_operator;
+  const exprt joined = join_positional_parameters(dest, loc);
+  const exprt some = binary_relation_exprt{
+    argument_count(), ID_gt, from_integer(0, count_type())};
+  const bool dash_like = program.dialect == shell_dialectt::POSIX;
+  const bool bash_like = program.dialect == shell_dialectt::BASH ||
+                         program.dialect == shell_dialectt::MKSH ||
+                         program.dialect == shell_dialectt::POSIX;
+  if(part.parameter_length)
+  {
+    if(!op.empty())
+      unsupported(loc, "${#parameter} with an operator");
+    const exprt length =
+      from_integer_expr(string_length(joined, dest, loc), dest, loc);
+    const exprt count = from_integer_expr(argument_count(), dest, loc);
+    const symbol_exprt result = temporary(string_type(), dest, loc);
+    if(program.dialect == shell_dialectt::POSIX)
+    {
+      code_blockt use_count, use_length;
+      assign(use_count, result, count, loc);
+      assign(use_length, result, length, loc);
+      add(
+        dest,
+        code_ifthenelset{
+          nondet(bool_typet{}, loc),
+          std::move(use_count),
+          std::move(use_length)},
+        loc);
+    }
+    else
+      assign(dest, result, count, loc);
+    return result;
+  }
+  if(op != "-" && op != "+" && op != ":-" && op != ":+")
+    unsupported(loc, "${*} with the operator " + op);
+  // * as a parameter: its value is "$*", and whether it is set differs.
+  const symbol_exprt parameter = temporary(string_type(), dest, loc);
+  assign(dest, parameter, joined, loc);
+  if(op[0] != ':' && bash_like)
+  {
+    exprt unset = not_exprt{some};
+    if(dash_like)
+      unset = and_exprt{nondet(bool_typet{}, loc), unset};
+    code_blockt make_unset;
+    assign(make_unset, parameter, unset_string(loc), loc);
+    add(dest, code_ifthenelset{unset, std::move(make_unset)}, loc);
+  }
+  return expand_parameter_operator(
+    part, parameter, false, context, quoted, dest);
 }
 
 /// ${parameter<op>word} for the operators of XCU 2.6.2 except pattern

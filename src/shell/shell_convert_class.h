@@ -661,6 +661,11 @@ private:
     bool quoted,
     code_blockt &dest);
 
+  exprt expand_star_operator(
+    const shell_word_partt &part,
+    shell_word_contextt context,
+    bool quoted,
+    code_blockt &dest);
   exprt expand_parameter_operator(
     const shell_word_partt &part,
     const exprt &parameter,
