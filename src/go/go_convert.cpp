@@ -1384,9 +1384,15 @@ void go_convertert::convert_labeled(const irept &stmt, code_blockt &dest)
     convert_select(inner, labelled, label.get("_obj"));
   else
     convert_statement(inner, labelled);
-  code_labelt result{label.get("Name"), std::move(labelled)};
+  // The label marks the start of the statement's code, which stays in the
+  // enclosing block: a labelled statement does not open a scope of its
+  // own, so that the variables it declares (`L: x := ...`) remain in scope
+  // for the statements after it.
+  code_labelt result{label.get("Name"), code_skipt{}};
   result.add_source_location() = location_of(stmt);
   dest.add(std::move(result));
+  for(auto &statement : labelled.statements())
+    dest.add(std::move(statement));
 }
 
 void go_convertert::convert_branch(const irept &stmt, code_blockt &dest)
