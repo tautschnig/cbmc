@@ -954,6 +954,85 @@ void shell_convertert::convert_simple(
     loc);
 }
 
+void shell_convertert::convert_at_command(
+  const shell_commandt &command,
+  code_blockt &dest)
+{
+  const source_locationt &loc = command.location;
+  using kindt = shell_word_partt::kindt;
+  // Without positional parameters, there is no command name.
+  code_blockt none;
+  {
+    shell_commandt copy = command;
+    copy.words.clear();
+    convert_assignments_only(copy, none);
+  }
+  // Otherwise $1 is the name, and the others are the arguments: the
+  // parameters are shifted while the command runs. Builtins that use or
+  // change them would see the shifted ones, and break, continue and
+  // return would leave before they are restored.
+  code_blockt some;
+  const std::string hidden = "__cprover_at_command";
+  const exprt first =
+    index_exprt{positional_array(), from_integer(0, index_type())};
+  assign(some, variable(hidden, loc), first, loc);
+  known_literals.erase(hidden);
+  exprt::operandst others;
+  for(const char *name :
+      {"set", "shift", "getopts", ".", "source", "break", "continue", "return"})
+    others.push_back(
+      not_exprt{equal(first, string_literal(name, loc), some, loc)});
+  check(
+    some,
+    conjunction(others),
+    "shell-unsupported",
+    "the command \"$@\" is none of set, shift, getopts, ., source, break, "
+    "continue and return (which are not supported here)",
+    loc);
+  const symbol_exprt saved_array = temporary(field_array_type(), some, loc);
+  const symbol_exprt saved_count = temporary(count_type(), some, loc);
+  assign(some, saved_array, positional_array(), loc);
+  assign(some, saved_count, argument_count(), loc);
+  for(std::size_t i = 0; i < max_arguments; ++i)
+  {
+    const index_exprt element{
+      positional_array(), from_integer(i, index_type())};
+    assign(
+      some,
+      element,
+      i + 1 < max_arguments
+        ? exprt{index_exprt{
+            positional_array(), from_integer(i + 1, index_type())}}
+        : unset_string(loc),
+      loc);
+  }
+  assign(
+    some,
+    argument_count(),
+    minus_exprt{argument_count(), from_integer(1, count_type())},
+    loc);
+  shell_commandt copy = command;
+  shell_word_partt name;
+  name.kind = kindt::PARAMETER;
+  name.text = hidden;
+  name.location = loc;
+  shell_word_partt quoted;
+  quoted.kind = kindt::DOUBLE_QUOTED;
+  quoted.location = loc;
+  quoted.parts.push_back(name);
+  copy.words = {{quoted}, command.words.front()};
+  convert_dynamic_simple(copy, some);
+  assign(some, positional_array(), saved_array, loc);
+  assign(some, argument_count(), saved_count, loc);
+  add(
+    dest,
+    code_ifthenelset{
+      equal_exprt{argument_count(), from_integer(0, count_type())},
+      std::move(none),
+      std::move(some)},
+    loc);
+}
+
 bool shell_convertert::try_convert(
   const std::function<void(code_blockt &)> &convert,
   code_blockt &dest)
@@ -1046,6 +1125,11 @@ void shell_convertert::convert_dynamic_simple(
   {
     // "$@" as a command name runs its first field with the others as
     // arguments.
+    if(is_quoted_at(command.words.front()) && command.words.size() == 1)
+    {
+      convert_at_command(command, dest);
+      return;
+    }
     unsupported(loc, "command name with $@");
   }
   const symbol_exprt name = temporary(string_type(), dest, loc);

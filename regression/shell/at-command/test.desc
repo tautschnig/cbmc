@@ -1,0 +1,11 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+"$@" as a whole command runs $1 with the other positional parameters as
+arguments, and nothing, with status 0, without positional parameters.

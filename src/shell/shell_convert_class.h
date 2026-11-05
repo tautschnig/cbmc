@@ -1253,6 +1253,8 @@ private:
   };
   std::vector<exit_trapt> exit_traps;
   source_locationt exit_trap_location;
+  /// "$@" as a whole command: $1 runs with the others as arguments.
+  void convert_at_command(const shell_commandt &command, code_blockt &dest);
   /// cd, umask and type: see shell_convert_builtins.cpp.
   void convert_cd(const shell_commandt &command, code_blockt &dest);
   void convert_umask(const shell_commandt &command, code_blockt &dest);
