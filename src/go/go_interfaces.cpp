@@ -26,6 +26,7 @@ Author: Michael Tautschnig
 #include <util/c_types.h>
 #include <util/config.h>
 #include <util/expr_initializer.h>
+#include <util/expr_util.h>
 #include <util/pointer_expr.h>
 #include <util/std_code.h>
 #include <util/symbol_table_base.h>
@@ -60,6 +61,20 @@ exprt go_convertert::assign_cast(exprt value, const typet &type)
     if(value.id() == "go_nil")
       return go_cast(value, type, ns);
     return box(value, value.source_location());
+  }
+  // A struct and the tag naming it (e.g., a function type that refers to
+  // itself, see named_signature, and its signature) are converted field by
+  // field (see go_cast), which uses the value once per field: evaluate a
+  // value with side effects (such as a call) once.
+  if(
+    value.type() != type && has_subexpr(value, ID_side_effect) &&
+    (type.id() == ID_struct_tag || value.type().id() == ID_struct_tag) &&
+    go_follow(ns, type).id() == ID_struct)
+  {
+    const source_locationt location = value.source_location();
+    code_blockt prefix;
+    const exprt once = evaluate_once(value, location, prefix);
+    return with_prefix(go_cast(once, type, ns), prefix, location);
   }
   return go_cast(std::move(value), type, ns);
 }
