@@ -1,0 +1,12 @@
+CORE
+inc-bash.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^\[assertion\.1\] .*: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+With -u, bash exits where arithmetic reads an unset name, also in
+x += 1 and x++.

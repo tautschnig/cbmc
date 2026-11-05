@@ -1129,6 +1129,12 @@ private:
     const shell_arith_exprt &expr,
     code_blockt &dest,
     const source_locationt &loc);
+  /// With -u, the error of reading \p name in arithmetic while it is
+  /// unset, in the shells that report it.
+  void arith_nounset(
+    const std::string &name,
+    code_blockt &dest,
+    const source_locationt &loc);
   exprt arith_assignment(
     const shell_arith_exprt &expr,
     code_blockt &dest,

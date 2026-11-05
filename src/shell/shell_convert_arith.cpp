@@ -289,13 +289,7 @@ exprt shell_convertert::arith(
         loc);
     }
     check_parameter_name(expr.name, loc);
-    // bash and zsh apply -u to names in arithmetic; dash and mksh do not.
-    if(
-      program.dialect == shell_dialectt::BASH ||
-      program.dialect == shell_dialectt::ZSH)
-    {
-      check_nounset(variable(expr.name, loc), expr.name, dest, loc);
-    }
+    arith_nounset(expr.name, dest, loc);
     return arith_read(
       expr.name, value_of(variable(expr.name, loc), loc), dest, loc);
   case kindt::PARAMETER:
@@ -648,6 +642,31 @@ exprt shell_convertert::arith_conditional(
   return result;
 }
 
+void shell_convertert::arith_nounset(
+  const std::string &name,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  // bash and zsh apply -u to the names that arithmetic reads, also in
+  // x += 1 and x++; dash, busybox and mksh do not, and sh may be either.
+  if(
+    program.dialect == shell_dialectt::BASH ||
+    program.dialect == shell_dialectt::ZSH)
+  {
+    check_nounset(variable(name, loc), name, dest, loc);
+  }
+  else if(
+    program.dialect == shell_dialectt::POSIX && option_possible("nounset"))
+  {
+    code_blockt as_bash;
+    check_nounset(variable(name, loc), name, as_bash, loc);
+    add(
+      dest,
+      code_ifthenelset{nondet(bool_typet{}, loc), std::move(as_bash)},
+      loc);
+  }
+}
+
 exprt shell_convertert::arith_assignment(
   const shell_arith_exprt &expr,
   code_blockt &dest,
@@ -662,6 +681,7 @@ exprt shell_convertert::arith_assignment(
   {
     const symbol_exprt rhs_value = temporary(rhs.type(), dest, loc);
     assign(dest, rhs_value, rhs, loc);
+    arith_nounset(expr.name, dest, loc);
     const exprt current =
       arith_read(expr.name, value_of(variable(expr.name, loc), loc), dest, loc);
     const std::string op = expr.op.substr(0, expr.op.size() - 1);
@@ -678,6 +698,7 @@ exprt shell_convertert::arith_increment(
 {
   const std::string &name = expr.operands[0].name;
   check_parameter_name(name, loc);
+  arith_nounset(name, dest, loc);
   const exprt current =
     arith_read(name, value_of(variable(name, loc), loc), dest, loc);
   const symbol_exprt old_value = temporary(current.type(), dest, loc);

@@ -1,0 +1,12 @@
+CORE
+arith-sh.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+With -u, dash and busybox go on where arithmetic reads an unset name;
+bash run as sh exits.
