@@ -54,24 +54,44 @@ protected:
     }
     else if(expr.id() == ID_with)
     {
-      // this is bad
-#if 0
-      for(const auto &op : expr.operands())
-      {
-        if(!is_constant(op))
-          return false;
-      }
-
-      return true;
-#else
-      return false;
-#endif
+      // Propagating arbitrary updates (whose operands may be large or
+      // symbolic) is bad; constant updates of constant arrays are not.
+      return is_constant_array_update(expr);
     }
 
     return can_forward_propagatet::is_constant(expr);
   }
 
 private:
+  /// The maximum number of updates of a constant array value (see
+  /// is_constant_array_update).
+  static constexpr std::size_t max_array_updates = 64;
+
+  /// Whether \p expr is an array value that updates a constant array (such
+  /// as `array_of(0)`) at constant indices with constant values, at most
+  /// max_array_updates times, e.g. the contents of a buffer after a copy
+  /// of constant data into it. Reads at constant indices then simplify to
+  /// constants. The bound keeps the expressions small: a value that would
+  /// exceed it is not propagated, and later updates start a new chain.
+  bool is_constant_array_update(const exprt &expr) const
+  {
+    std::size_t updates = 0;
+    const exprt *value = &expr;
+    while(value->id() == ID_with)
+    {
+      const with_exprt &with = to_with_expr(*value);
+      if(
+        with.type().id() != ID_array || ++updates > max_array_updates ||
+        with.operands().size() != 3 || !is_constant(with.where()) ||
+        !is_constant(with.new_value()))
+      {
+        return false;
+      }
+      value = &with.old();
+    }
+    return is_constant(*value);
+  }
+
   /// Whether \p expr is a constant, or `c ? a : b` with \p a and \p b
   /// such, with at most 8 constants in total (counted in \p leaves).
   bool is_merged_constant(const exprt &expr, std::size_t &leaves) const

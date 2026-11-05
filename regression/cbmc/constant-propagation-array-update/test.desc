@@ -1,0 +1,12 @@
+CORE
+main.c
+--program-only --unwind 5
+^EXIT=0$
+^SIGNAL=0$
+dynamic_object#\d+ == ARRAY_OF\(0\) WITH \[0l:=107\]
+--
+^warning: ignoring
+\\guard#\d+ == .*dynamic_object#\d+\[
+--
+Reads of the buffer at constant indices simplify to constants: no guard
+of the loop refers to the buffer.

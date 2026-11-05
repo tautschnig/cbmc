@@ -1,0 +1,12 @@
+CORE
+main.c
+--unwind 5 --unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
+^\[main\.assertion\.1\] line 15 assertion i == 3: SUCCESS$
+^\[main\.assertion\.2\] line 16 assertion buf\[4\] == 'r' && buf\[8\] == 0: SUCCESS$
+^\[main\.assertion\.3\] line 18 assertion buf\[1\] == '=': FAILURE$
+^\*\* 1 of \d+ failed
+^VERIFICATION FAILED$
+--
+^warning: ignoring
