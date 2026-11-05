@@ -500,6 +500,37 @@ bool shell_convertert::has_side_effects(const shell_word_partt &part) const
   UNREACHABLE;
 }
 
+bool shell_convertert::has_state_side_effects(const shell_wordt &word) const
+{
+  using kindt = shell_word_partt::kindt;
+  for(const auto &part : word)
+  {
+    if(part.kind == kindt::COMMAND_SUBSTITUTION)
+      continue;
+    if(part.kind == kindt::DOUBLE_QUOTED)
+    {
+      if(has_state_side_effects(part.parts))
+        return true;
+      continue;
+    }
+    if(has_side_effects(part))
+    {
+      // A parameter expansion whose word has the side effects.
+      if(
+        part.kind == kindt::PARAMETER && !nounset_possible &&
+        (part.parameter_operator.empty() ||
+         (part.parameter_operator.back() != '=' &&
+          part.parameter_operator.back() != '?')) &&
+        !has_state_side_effects(part.parts))
+      {
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 bool shell_convertert::has_side_effects(const shell_wordt &word) const
 {
   for(const auto &part : word)

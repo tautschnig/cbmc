@@ -109,7 +109,7 @@ void shell_convertert::convert_command_builtin(
   // command -v NAME: status 0 if NAME is a function, builtin, or utility.
   if(command.words.size() != first + 1)
     unsupported(loc, "command -v without exactly one name");
-  check_redirections(command, shell_command_kindt::EXTERNAL);
+  check_redirections(command, shell_command_kindt::COLON, dest);
   with_redirections(
     command,
     false,

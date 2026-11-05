@@ -1,0 +1,12 @@
+CORE
+utility.sh
+
+^EXIT=6$
+^SIGNAL=0$
+redirection of a utility with an expansion with side effects
+--
+^VERIFICATION
+--
+bash and zsh expand the redirections of utilities in the child process,
+so that the assignment does not persist; dash, busybox and mksh expand
+them in the shell.

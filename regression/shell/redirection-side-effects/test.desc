@@ -1,0 +1,12 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Expansions with side effects in redirections: command substitutions in
+here-documents of utilities, and assignments in redirections of
+builtins, which all shells make in the shell.

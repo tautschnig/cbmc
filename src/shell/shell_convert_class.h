@@ -675,6 +675,9 @@ private:
 
   bool has_side_effects(const shell_word_partt &part) const;
   bool has_side_effects(const shell_wordt &word) const;
+  /// Whether \p word has side effects other than command substitutions,
+  /// which change nothing in the shell.
+  bool has_state_side_effects(const shell_wordt &word) const;
 
   /// The text of \p word if it has no expansions, after quote removal.
   static std::optional<std::string>
@@ -1399,8 +1402,10 @@ private:
     const exprt &subject,
     code_blockt &dest,
     const source_locationt &loc);
-  void
-  check_redirections(const shell_commandt &command, shell_command_kindt kind);
+  void check_redirections(
+    const shell_commandt &command,
+    shell_command_kindt kind,
+    code_blockt &dest);
   /// Whether a redirection of \p command can fail: opening a file,
   /// rather than duplicating a standard descriptor or /dev/null.
   static bool redirection_may_fail(const shell_commandt &command);

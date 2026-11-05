@@ -216,7 +216,7 @@ void shell_convertert::convert_foreground(
       // A function definition's redirections apply where it is called.
       unsupported(command.location, "redirection of a compound command");
     }
-    check_redirections(command, shell_command_kindt::EXTERNAL);
+    check_redirections(command, shell_command_kindt::COLON, dest);
     // A failed redirection skips the compound command with a non-zero
     // status, in all shells; under -e, all but busybox then exit, other
     // than for subshells, where they all do.
@@ -694,21 +694,54 @@ static bool is_harmless_redirection(const shell_redirectt &redirect)
 
 void shell_convertert::check_redirections(
   const shell_commandt &command,
-  shell_command_kindt kind)
+  shell_command_kindt kind,
+  code_blockt &dest)
 {
+  // For utilities, bash and zsh expand the redirections in the child
+  // process, and dash, busybox and mksh in the shell: only command
+  // substitutions, which change nothing in the shell either way, are the
+  // same. Other commands expand them in the shell.
+  const bool external = kind == shell_command_kindt::EXTERNAL;
+  bool expanded = false;
   for(const auto &redirect : command.redirects)
   {
-    if(
-      has_side_effects(redirect.target) ||
-      has_side_effects(redirect.here_document))
+    for(const shell_wordt *word : {&redirect.target, &redirect.here_document})
     {
-      // Shells differ in whether these expansions happen in the shell or
-      // in the child process.
-      unsupported(
-        redirect.location, "redirection with an expansion with side effects");
+      if(!has_side_effects(*word))
+        continue;
+      if(external && has_state_side_effects(*word))
+      {
+        unsupported(
+          redirect.location,
+          "redirection of a utility with an expansion with side effects");
+      }
+      expanded = true;
     }
   }
-  (void)kind;
+  if(!expanded)
+    return;
+  // The words are expanded first (XCU 2.9.1.1), which only matters where
+  // both have side effects.
+  bool words = false;
+  for(const auto &word : command.words)
+    words |= has_side_effects(word);
+  for(const auto &assignment : command.assignments)
+    words |= has_side_effects(assignment.value);
+  if(words)
+  {
+    unsupported(
+      command.location,
+      "expansions with side effects in both the words and the redirections");
+  }
+  for(const auto &redirect : command.redirects)
+  {
+    for(const shell_wordt *word : {&redirect.target, &redirect.here_document})
+    {
+      if(has_side_effects(*word))
+        expand_word(
+          *word, shell_word_contextt::IGNORED, dest, redirect.location);
+    }
+  }
 }
 
 bool shell_convertert::redirection_may_fail(const shell_commandt &command)
@@ -780,7 +813,20 @@ void shell_convertert::convert_assignments_only(
   const source_locationt &loc = command.location;
   if(!command.redirects.empty())
   {
-    check_redirections(command, shell_command_kindt::EXTERNAL);
+    // The status would be that of the last command substitution, also
+    // in the redirections.
+    for(const auto &redirect : command.redirects)
+    {
+      if(
+        has_side_effects(redirect.target) ||
+        has_side_effects(redirect.here_document))
+      {
+        unsupported(
+          redirect.location,
+          "redirection with an expansion with side effects and no command "
+          "name");
+      }
+    }
     // Redirections that cannot fail change nothing that is modelled.
     if(redirection_may_fail(command))
     {
@@ -854,7 +900,7 @@ void shell_convertert::convert_simple(
   {
     // A special builtin; a redirection that can fail would make the shell
     // exit.
-    check_redirections(command, kind);
+    check_redirections(command, kind, dest);
     if(redirection_may_fail(command))
       unsupported(loc, "eval with a redirection that can fail");
     convert_eval(command, dest);
@@ -878,7 +924,19 @@ void shell_convertert::convert_simple(
 
   // Functions are found before regular builtins and utilities
   // (XCU 2.9.1.4), but only once their definition has run.
-  check_redirections(command, kind);
+  // The branches below would expand the redirections each.
+  for(const auto &redirect : command.redirects)
+  {
+    if(
+      has_side_effects(redirect.target) ||
+      has_side_effects(redirect.here_document))
+    {
+      unsupported(
+        redirect.location,
+        "redirection with an expansion with side effects of a command that "
+        "may be a function");
+    }
+  }
   code_blockt undefined, defined;
   convert_non_function(command, kind, undefined);
   with_redirections(
@@ -1154,7 +1212,7 @@ void shell_convertert::convert_non_function(
     add(dest, code_assumet{false_exprt{}}, loc);
     return;
   }
-  check_redirections(command, kind);
+  check_redirections(command, kind, dest);
   if(
     name == "printf" && command.words.size() > 1 &&
     (program.dialect == shell_dialectt::BASH ||
