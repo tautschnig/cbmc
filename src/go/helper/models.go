@@ -145,6 +145,8 @@ var sourceModels = map[string]struct {
 	// model of reflect.
 	"encoding/json": {files: []string{"decode.go", "encode.go", "fold.go",
 		"indent.go", "scanner.go", "stream.go", "tables.go", "tags.go"}},
+	"bufio": {},
+	"path":  {},
 }
 
 // parseSourceModel parses the files of the source model of path (see

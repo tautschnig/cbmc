@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 12 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+not supported yet
+--
+path from its own source
