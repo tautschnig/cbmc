@@ -49,6 +49,7 @@ Author: Michael Tautschnig
 
 #include "go_types.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <vector>
 
@@ -258,6 +259,16 @@ static void collect(
   }
   if(is_shared_lvalue(ns, expr))
   {
+    // The entries a map search reads (go_maps.cpp, map_find) are covered by
+    // the operation's read of the map's header.
+    if(expr.id() == ID_dereference)
+    {
+      exprt pointer = skip_typecasts(to_dereference_expr(expr).pointer());
+      if(pointer.id() == ID_plus && pointer.operands().size() == 2)
+        pointer = skip_typecasts(to_plus_expr(pointer).op0());
+      if(pointer.type().get_bool(ID_C_go_map_entries))
+        return;
+    }
     // The fields of a channel's header are the runtime's (go_channels.cpp);
     // the operations on the channel are accesses of it (chan_of_operation).
     if(
@@ -789,6 +800,23 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
       }
       if(accesses.empty())
         continue;
+      // One access per location and guard: a write covers a read.
+      {
+        std::vector<accesst> unique;
+        for(const auto &a : accesses)
+        {
+          auto same = std::find_if(
+            unique.begin(),
+            unique.end(),
+            [&](const accesst &u)
+            { return u.lvalue == a.lvalue && u.guard == a.guard; });
+          if(same == unique.end())
+            unique.push_back(a);
+          else
+            same->write = same->write || a.write;
+        }
+        accesses.swap(unique);
+      }
 
       goto_programt before = instrument(
         accesses,

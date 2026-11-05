@@ -105,18 +105,26 @@ symbol_exprt go_convertert::map_find(
   }
   const symbol_exprt found = new_temporary(int_type(), location, dest);
   dest.add(code_frontend_assignt{found, from_integer(-1, int_type())});
+  code_blockt search;
+  // The search reads the header once, then the entries through a snapshot
+  // of the keys pointer whose type is marked: the data-race check
+  // (go_race_check.cpp) takes the header reads as the operation's access
+  // of the map, as gc does, and ignores the reads of entries, which would
+  // otherwise be instrumented in every unwinding of the search.
+  typet keys_type = field(map, "keys").type();
+  keys_type.set(ID_C_go_map_entries, true);
+  const symbol_exprt keys = new_temporary(keys_type, location, search);
+  search.add(code_frontend_assignt{keys, field(map, "keys")});
+  const symbol_exprt count = new_temporary(int_type(), location, search);
+  search.add(code_frontend_assignt{count, field(map, "len")});
   const symbol_exprt i = new_temporary(int_type(), location, dest);
-  const exprt candidate = dereference_exprt{plus_exprt{field(map, "keys"), i}};
+  const exprt candidate = dereference_exprt{plus_exprt{keys, i}};
   exprt same = as_condition(equality(candidate, key, where));
   code_blockt hit;
   hit.add(code_frontend_assignt{found, i});
   hit.add(code_breakt{});
-  code_blockt search;
   search.add(counting_loop(
-    i,
-    field(map, "len"),
-    code_ifthenelset{std::move(same), std::move(hit)},
-    location));
+    i, count, code_ifthenelset{std::move(same), std::move(hit)}, location));
   dest.add(code_ifthenelset{
     notequal_exprt{map, null_pointer_exprt{to_pointer_type(map.type())}},
     std::move(search)});

@@ -35,6 +35,8 @@ class symbol_table_baset;
 #define ID_C_go_slice "#go_slice"
 /// Name of the comment marking the header struct of maps.
 #define ID_C_go_map "#go_map"
+/// On the type of a snapshot of a map's keys pointer in a search (go_maps.cpp).
+#define ID_C_go_map_entries "#go_map_entries"
 /// Name of the comment marking the struct that represents a complex number.
 #define ID_C_go_complex "#go_complex"
 /// Name of the comment marking the struct that represents interface values.
