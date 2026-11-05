@@ -1,7 +1,7 @@
 // Package fmt models the printing functions of the standard library's fmt
 // (go1.27) for verification: the formatted text is not modelled, so it is
-// an arbitrary string (except for Sprint of a single string, which is
-// that string). As fmt does, the functions call the Error or String
+// an arbitrary string of at most 4 GiB (except for Sprint of a single
+// string, which is that string). As fmt does, the functions call the Error or String
 // method of each argument that has one (Printf does so for every
 // argument, whatever its verb, which includes the cases in which fmt calls
 // them), and recover from panics in them. The number of bytes written and
@@ -55,10 +55,18 @@ func result() (n int, err error) {
 	return n, err
 }
 
+// maxText bounds the length of formatted text: formatting operands
+// produces text of at most this many bytes (4 GiB), so that appending it
+// to other data does not exceed the length of slices, which gc's fmt
+// would not reach in practice either.
+const maxText = 1 << 32
+
 // text is the formatted text of a, which is not modelled.
 func text(a []any) string {
 	methods(a)
-	return cprover.Nondet[string]()
+	s := cprover.Nondet[string]()
+	cprover.Assume(len(s) <= maxText)
+	return s
 }
 
 // Print formats using the default formats for its operands and writes to
