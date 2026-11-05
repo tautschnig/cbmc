@@ -506,6 +506,20 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
   const symbol_exprt read_flags =
     flags_symbol(goto_model.symbol_table, read_flags_id);
 
+  // Set by shadow memory when it cannot resolve an object
+  // (SHADOW_MEMORY_INCOMPLETE in goto-symex/shadow_memory.h).
+  const symbol_exprt incomplete{
+    CPROVER_PREFIX "shadow_memory_incomplete", bool_typet{}};
+  if(!goto_model.symbol_table.has_symbol(incomplete.get_identifier()))
+  {
+    symbolt symbol{incomplete.get_identifier(), bool_typet{}, "C"};
+    symbol.base_name = incomplete.get_identifier();
+    symbol.is_static_lifetime = true;
+    symbol.is_lvalue = true;
+    symbol.value = false_exprt{};
+    goto_model.symbol_table.add(symbol);
+  }
+
   // The flags start clear (__CPROVER_initialize was generated before they
   // were added).
   {
@@ -521,6 +535,9 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
           goto_programt::make_assignment(
             flags, array_of_exprt{false_exprt{}, to_array_type(flags.type())}));
       }
+      body.insert_before(
+        body.instructions.begin(),
+        goto_programt::make_assignment(incomplete, false_exprt{}));
     }
   }
 
@@ -678,6 +695,19 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
                 check(not_exprt{flag(write_flags, a.lvalue)}, "read");
             });
         }
+      }
+      if(use_shadow)
+      {
+        // Shadow memory that cannot resolve an accessed object (its value
+        // set is unknown, or the object has no shadow memory) loses the
+        // flags: say so rather than miss a race.
+        source_locationt annotated = location;
+        annotated.set_property_class("data-race");
+        annotated.set_comment(
+          "data race check: shadow memory does not resolve the accessed "
+          "object");
+        before.add(
+          goto_programt::make_assertion(not_exprt{incomplete}, annotated));
       }
       ++instrumented;
       return before;
