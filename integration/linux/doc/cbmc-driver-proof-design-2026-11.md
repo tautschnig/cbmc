@@ -741,6 +741,60 @@ invariant clauses, not a bigger invariant over a whole-object havoc. The
 state of evidence meanwhile: `sent <= nb_pkts` and `INV_wakeup` hold on a
 live accept path at ring 8, segments 2, burst 1; the other four are open.
 
+### 8.7 DFCC does warn about a bodyless callee -- but the warning is drowned
+
+Raised as a question: if DFCC turns a bodyless callee into an unreachable
+stub, shouldn't that come with a property failure, as plain CBMC's
+`no body for callee` does? **It does.** The problem is not a missing
+diagnostic; it is that the diagnostic sits next to a pile of meaningless
+passes.
+
+From the source: both
+`contracts/dynamic-frames/dfcc.cpp:491` and `dfcc_instrument.cpp:440` select
+the `"assert-false-assume-false"` body generator, which emits
+`assert(false); assume(false);`
+(`generate_function_bodies.cpp:108-129`). The `assert(false)` is the
+property; the `assume(false)` cuts the path.
+
+Reduced to ten lines (`cbmc-limitations/dfcc_bodyless_callee_cuts_path.c`
+and its `.sh`): one call to a declared-but-undefined function, followed by a
+**deliberately false** `assert(0)`.
+
+| | bodyless-call property | downstream `assert(0)` |
+|---|---|---|
+| plain CBMC | `no body for callee undefined_fn`: FAILURE | **FAILURE** (checked) |
+| with DFCC | `undefined function should be unreachable`: FAILURE | **SUCCESS** |
+
+So under DFCC a literal `assert(0)` is reported as SUCCESS. Three things make
+this easy to walk into, and I walked into all three:
+
+1. **The ratio.** One failure, next to arbitrarily many vacuous SUCCESSes.
+   In the ENA harness two bodyless callees (`ena_com_prepare_tx`,
+   `__builtin_ia32_rdtsc`) silently emptied every accept-path obligation
+   while 1482 properties reported SUCCESS.
+2. **The wording.** "undefined function should be unreachable" reads as a
+   claim about the program -- *this code should not be reachable* -- rather
+   than as a statement about the model: *I have no body, so I cut the path,
+   and nothing after this point was checked*. Section 6 of this document
+   previously described exactly this message as "the tool being honest about
+   an abstraction we chose", which is how I came to ignore it.
+3. **The asymmetry with plain CBMC.** The same goto binary verified with and
+   without `--dfcc` differs in coverage enormously, and the only visible
+   difference is which of two similarly-worded properties appears.
+
+Mitigations we now apply, in order of reliability: an independent
+**reachability witness** (`VACUITY_CHECK`, section 8.5) which does not depend
+on reading the property list correctly; treating any
+`undefined function should be unreachable` failure as a **hard stop** rather
+than a known-abstraction note; and `--cover location` on the functions the
+proof claims to exercise.
+
+Whether CBMC should change is for the maintainers, but the options look like:
+word the message to say the path was cut, and/or suppress or mark as
+`UNKNOWN` the properties that became unreachable only because of a generated
+stub. The reproducer is self-contained and runs on an unmodified CBMC, so
+unlike the earlier performance report this one is ready to file as it stands.
+
 ### 8.3 What this changes in the plan
 
 Add to the revised order in `unveil-reconciliation-2026-11.md`:
