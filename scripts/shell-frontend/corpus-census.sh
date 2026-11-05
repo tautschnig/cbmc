@@ -48,6 +48,14 @@ convert_one() {
     grep -v 'CONVERSION ERROR' |
     sed -E 's/^file [^ ]+ line [0-9]+ column [0-9]+: //;
             s/^unsupported shell construct: //') || true
+  if [ -z "$reason" ] && [ "$status" = 124 ]; then
+    reason="timeout"
+  elif [ -z "$reason" ]; then
+    # shfmt's diagnostics: "file:line:column: message"
+    reason=$(printf '%s\n' "$output" |
+      grep -m1 -E '^[^ :]+:[0-9]+:[0-9]+: ' |
+      sed -E 's/^[^ :]+:[0-9]+:[0-9]+: /parse error: /') || true
+  fi
   printf '%s\t%s\t%s\n' "$(basename "$file")" "$status" "$reason"
 }
 export -f convert_one
