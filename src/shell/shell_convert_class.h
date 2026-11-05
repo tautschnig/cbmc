@@ -1285,6 +1285,8 @@ private:
   };
   std::vector<exit_trapt> exit_traps;
   source_locationt exit_trap_location;
+  /// The number of commands in \p list, including nested ones.
+  static std::size_t command_size(const shell_command_listt &list);
   /// "$@" as a whole command: $1 runs with the others as arguments.
   void convert_at_command(const shell_commandt &command, code_blockt &dest);
   /// cd, umask and type: see shell_convert_builtins.cpp.
@@ -1434,7 +1436,8 @@ private:
   void convert_for_loop(
     const shell_commandt &command,
     const field_listt &items,
-    code_blockt &dest);
+    code_blockt &dest,
+    std::size_t bound);
   void convert_case(const shell_commandt &command, code_blockt &dest);
   exprt case_pattern_matches(
     const shell_wordt &pattern,

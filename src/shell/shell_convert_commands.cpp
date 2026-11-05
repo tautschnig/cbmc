@@ -454,6 +454,31 @@ void shell_convertert::convert_while(
   label(dest, break_label);
 }
 
+std::size_t shell_convertert::command_size(const shell_command_listt &list)
+{
+  std::size_t size = 0;
+  for(const auto &command : list)
+  {
+    ++size;
+    for(const auto *sub :
+        {&command.body, &command.condition, &command.else_body})
+    {
+      size += command_size(*sub);
+    }
+    for(const auto &item : command.case_items)
+      size += command_size(item.body);
+    for(const auto &word : command.words)
+    {
+      for(const auto &part : word)
+      {
+        if(part.commands != nullptr)
+          size += command_size(*part.commands);
+      }
+    }
+  }
+  return size;
+}
+
 void shell_convertert::convert_for(
   const shell_commandt &command,
   code_blockt &dest)
@@ -468,6 +493,30 @@ void shell_convertert::convert_for(
   for(const auto &word : command.for_items)
     dynamic |= contains_at(word) || is_splittable(word) ||
                pathname_pattern(word).has_value();
+  // A list of single fields is unrolled below, each iteration with what
+  // is known about its value; where that would copy a large body many
+  // times, it is a loop over an array of the fields instead.
+  if(
+    !dynamic && command.for_items.size() > 3 &&
+    command.for_items.size() * command_size(command.body) > 200)
+  {
+    const std::size_t n = command.for_items.size();
+    const array_typet type{string_type(), from_integer(n, index_type())};
+    const field_listt items{
+      temporary(type, dest, loc), temporary(count_type(), dest, loc)};
+    for(std::size_t i = 0; i < n; ++i)
+    {
+      assign(
+        dest,
+        index_exprt{items.array, from_integer(i, index_type())},
+        expand_word(
+          command.for_items[i], shell_word_contextt::FIELD, dest, loc),
+        loc);
+    }
+    assign(dest, items.count, from_integer(n, count_type()), loc);
+    convert_for_loop(command, items, dest, n);
+    return;
+  }
   if(dynamic)
   {
     field_listt items = [&]()
@@ -482,7 +531,7 @@ void shell_convertert::convert_for(
       append_positional_parameters(list, dest, loc);
       return list;
     }();
-    convert_for_loop(command, items, dest);
+    convert_for_loop(command, items, dest, max_arguments);
     return;
   }
 
@@ -528,7 +577,8 @@ void shell_convertert::convert_for(
 void shell_convertert::convert_for_loop(
   const shell_commandt &command,
   const field_listt &items,
-  code_blockt &dest)
+  code_blockt &dest,
+  std::size_t bound)
 {
   const source_locationt &loc = command.location;
   const irep_idt break_label = new_label("break");
@@ -548,18 +598,27 @@ void shell_convertert::convert_for_loop(
     dest,
     code_ifthenelset{
       or_exprt{
-        binary_relation_exprt{
-          index, ID_ge, from_integer(max_arguments, count_type())},
+        binary_relation_exprt{index, ID_ge, from_integer(bound, count_type())},
         binary_relation_exprt{index, ID_ge, items.count}},
       std::move(leave)},
     loc);
   code_blockt iteration;
-  assign_variable(
-    command.name,
-    index_exprt{
-      items.array, typecast_exprt::conditional_cast(index, index_type())},
-    iteration,
-    loc);
+  // The item is read at a constant index: the refined string solver does
+  // not support strings read at symbolic indices.
+  const symbol_exprt item = temporary(string_type(), iteration, loc);
+  assign(iteration, item, unset_string(loc), loc);
+  for(std::size_t i = 0; i < bound; ++i)
+  {
+    code_blockt read;
+    assign(
+      read, item, index_exprt{items.array, from_integer(i, index_type())}, loc);
+    add(
+      iteration,
+      code_ifthenelset{
+        equal_exprt{index, from_integer(i, count_type())}, std::move(read)},
+      loc);
+  }
+  assign_variable(command.name, item, iteration, loc);
   loops.push_back({break_label, continue_label, loop_status});
   convert_body(command.body, iteration, loc);
   loops.pop_back();
