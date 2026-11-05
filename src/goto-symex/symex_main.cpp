@@ -298,6 +298,9 @@ switch_to_thread(goto_symex_statet &state, const unsigned int thread_nb)
   // assumption made unreachable):
   state.reachable = true;
   state.atomic_section_id = state.threads[thread_nb].atomic_section_id;
+  // The state of its locals at the spawn, which merging the spawning
+  // thread's paths may have dropped.
+  state.restore_thread_locals(state.threads[thread_nb]);
 }
 
 void goto_symext::symex_threaded_step(

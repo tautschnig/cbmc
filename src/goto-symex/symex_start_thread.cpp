@@ -167,4 +167,6 @@ void goto_symext::symex_start_thread(statet &state)
       target}
       .assign_symbol(lhs, expr_skeletont{}, rhs, lhs_conditions);
   }
+
+  state.save_thread_locals(state.threads[new_thread_nr]);
 }

@@ -190,6 +190,14 @@ public:
     call_stackt call_stack;
     std::map<irep_idt, unsigned> function_frame;
     unsigned atomic_section_id = 0;
+    /// The state of the thread's copies of the spawning frame's locals at
+    /// the spawn (L2 names, constants, value sets): the spawning path may
+    /// end unreachable (e.g., at an unwinding bound) before the thread is
+    /// executed, and merging drops what that path assigned.
+    std::vector<std::pair<irep_idt, std::pair<ssa_exprt, std::size_t>>>
+      initial_level2;
+    std::vector<std::pair<irep_idt, exprt>> initial_propagation;
+    std::vector<std::pair<irep_idt, value_sett::entryt>> initial_value_set;
     explicit threadt(guard_managert &guard_manager)
       : guard(true_exprt(), guard_manager)
     {
@@ -197,6 +205,11 @@ public:
   };
 
   std::vector<threadt> threads;
+
+  /// Saves the state of \p thread's locals (see threadt::initial_level2).
+  void save_thread_locals(threadt &thread) const;
+  /// Restores the state saved by save_thread_locals.
+  void restore_thread_locals(const threadt &thread);
 
   enum class write_is_shared_resultt
   {

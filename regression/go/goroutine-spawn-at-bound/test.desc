@@ -1,0 +1,16 @@
+CORE
+main.go
+--unwind 3
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main.main.unwind.0\] .* unwinding assertion loop 0: FAILURE$
+^\[go::main.main\$lit1.assertion.1\] .* argument as passed: SUCCESS$
+^\*\* 1 of \d+ failed
+^VERIFICATION FAILED$
+--
+dereferenced function pointer must be .*: FAILURE
+index out of range: FAILURE
+--
+The locals that a goroutine copies from the spawning frame used to be lost
+when the spawning path ended unreachable (at the unwinding bound) before the
+goroutine was executed: its argument was then unconstrained.

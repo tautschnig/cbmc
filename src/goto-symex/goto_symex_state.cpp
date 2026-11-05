@@ -28,6 +28,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "simplify_expr_with_value_set.h"
 #include "symex_target_equation.h"
 
+#include <unordered_set>
+
 goto_symex_statet::goto_symex_statet(
   const symex_targett::sourcet &_source,
   std::size_t max_field_sensitive_array_size,
@@ -917,4 +919,64 @@ ssa_exprt goto_symex_statet::declare(ssa_exprt ssa, const namespacet &ns)
   record_events.pop();
 
   return ssa;
+}
+
+/// \p identifier without the suffix of a field ("..f").
+static irep_idt object_of(const irep_idt &identifier)
+{
+  const std::string &name = id2string(identifier);
+  const auto fields = name.find("..");
+  return fields == std::string::npos ? identifier
+                                     : irep_idt{name.substr(0, fields)};
+}
+
+void goto_symex_statet::save_thread_locals(threadt &thread) const
+{
+  // The thread's names are those of L0 index its number: the copies of the
+  // spawning frame's locals, and thread-local variables.
+  const std::string thread_nr = std::to_string(&thread - threads.data());
+  std::unordered_set<irep_idt> objects;
+  symex_renaming_levelt::viewt level2_view;
+  level2.current_names.get_view(level2_view);
+  for(const auto &pair : level2_view)
+  {
+    if(id2string(pair.second.first.get_level_0()) != thread_nr)
+      continue;
+    thread.initial_level2.emplace_back(pair.first, pair.second);
+    objects.insert(object_of(pair.first));
+  }
+
+  sharing_mapt<irep_idt, exprt>::viewt propagation_view;
+  propagation.get_view(propagation_view);
+  for(const auto &pair : propagation_view)
+  {
+    if(objects.count(object_of(pair.first)) != 0)
+      thread.initial_propagation.emplace_back(pair.first, pair.second);
+  }
+
+  value_sett::valuest::viewt value_set_view;
+  value_set.values.get_view(value_set_view);
+  for(const auto &pair : value_set_view)
+  {
+    if(objects.count(pair.second.identifier) != 0)
+      thread.initial_value_set.emplace_back(pair.first, pair.second);
+  }
+}
+void goto_symex_statet::restore_thread_locals(const threadt &thread)
+{
+  for(const auto &pair : thread.initial_level2)
+  {
+    auto value = pair.second;
+    level2.current_names.insert_or_replace(pair.first, std::move(value));
+  }
+  for(const auto &pair : thread.initial_propagation)
+  {
+    exprt value = pair.second;
+    propagation.insert_or_replace(pair.first, std::move(value));
+  }
+  for(const auto &pair : thread.initial_value_set)
+  {
+    auto value = pair.second;
+    value_set.values.insert_or_replace(pair.first, std::move(value));
+  }
 }
