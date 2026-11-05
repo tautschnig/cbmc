@@ -36,6 +36,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <ansi-c/goto-conversion/link_to_library.h>
 #include <assembler/remove_asm.h>
 #include <cpp/cprover_library.h>
+#include <go/go_race_check.h>
 #include <goto-checker/all_properties_verifier.h>
 #include <goto-checker/all_properties_verifier_with_fault_localization.h>
 #include <goto-checker/all_properties_verifier_with_trace_storage.h>
@@ -57,8 +58,6 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <langapi/language.h>
 #include <langapi/mode.h>
 #include <pointer-analysis/add_failed_symbols.h>
-
-#include <go/go_race_check.h>
 
 #include "c_test_input_generator.h"
 
