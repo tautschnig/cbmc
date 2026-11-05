@@ -1120,12 +1120,31 @@ scripts of the census.
   at constant indices. The refined solver is also sensitive to the order
   of identifiers: interning three unused names made the csv-loop kernel
   take 40 s rather than 3 s.
-- **Census.** 1,450 of 1,652 scripts convert, against 746. One script
+- **Smaller blockers** (each fewer than 20 scripts):
+  - redirections whose expansions have side effects;
+  - `"$@"` as a command;
+  - `${#*}` and `${*:-w}`;
+  - `x="$@"`;
+  - assignments to `_`;
+  - `export $names` and `export -n`;
+  - `set $x`;
+  - `REPLY`;
+  - `$!`;
+  - `~` and `~/path`;
+  - `RANDOM`;
+  - `eval` with a redirection that can fail;
+  - `break` outside a loop;
+  - `print` (mksh, zsh);
+  - `&>`;
+  - assignments before a function call, which all shells restore after
+    it;
+  - `(( ))` and `let`.
+- **Census.** 1,543 of 1,652 scripts convert, against 746. One script
   (ufw-init) now exceeds the census's 60 s conversion limit: dynamic
-  command names in loops are converted once per modelled builtin.
-  The next blockers each affect fewer than 20 scripts: redirections
-  with expansions that have side effects (19), `$@` as a command name
-  (15), `${*...}` with an operator (12), and `$_` (10).
+  command names in loops are converted once per modelled builtin. Each
+  remaining blocker affects at most 9 scripts. Most are bash extensions
+  (arrays, `[[ ]]`, `${var/pattern/string}`, process substitution), or
+  command substitutions in arithmetic.
 
 ---
 
