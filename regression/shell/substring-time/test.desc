@@ -1,0 +1,11 @@
+CORE
+main.bash
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Substring expansion with operands that are not negative, and time,
+whose output is not modelled.

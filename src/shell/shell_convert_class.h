@@ -671,6 +671,10 @@ private:
     bool quoted,
     code_blockt &dest);
 
+  exprt substring_expansion(
+    const shell_word_partt &part,
+    const exprt &value,
+    code_blockt &dest);
   exprt substitute_pattern(
     const shell_word_partt &part,
     const exprt &value,

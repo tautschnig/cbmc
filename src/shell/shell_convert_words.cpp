@@ -458,8 +458,11 @@ exprt shell_convertert::expand_parameter(
                    id2string(to_symbol_expr(value).get_identifier())
                        .rfind("shell::var::", 0) == 0;
       const std::string &op = part.parameter_operator;
-      if(op.empty() || op[0] == '%' || op[0] == '#' || op[0] == '/')
+      if(
+        op.empty() || op[0] == '%' || op[0] == '#' || op[0] == '/' || op == ":")
+      {
         check_nounset(value, part.text, dest, loc);
+      }
     }
   }
 
@@ -554,6 +557,8 @@ exprt shell_convertert::expand_parameter_operator(
     return remove_pattern(value_of(parameter, loc), op, part.parts, dest, loc);
   if(op[0] == '/')
     return substitute_pattern(part, value_of(parameter, loc), dest);
+  if(op == ":")
+    return substring_expansion(part, value_of(parameter, loc), dest);
 
   const bool colon = op[0] == ':';
   const char kind = op.back();
@@ -906,4 +911,51 @@ exprt shell_convertert::substitute_pattern(
     add(dest, code_ifthenelset{more, std::move(round)}, loc);
   }
   return result;
+}
+
+/// ${parameter:offset} and ${parameter:offset:length} (bash, mksh, zsh)
+/// with an offset and a length that are not negative (where they are,
+/// mksh differs).
+exprt shell_convertert::substring_expansion(
+  const shell_word_partt &part,
+  const exprt &value,
+  code_blockt &dest)
+{
+  const source_locationt &loc = part.location;
+  const auto operand = [&](const shell_wordt &word)
+  {
+    const auto text = static_text(word);
+    if(!text.has_value())
+      unsupported(loc, "substring expansion operand that is an expansion");
+    const auto parsed = parse_shell_arithmetic(*text, arith_options);
+    if(!parsed.expression.has_value())
+      unsupported(loc, "substring expansion operand that is not valid");
+    const symbol_exprt number = temporary(integer_type(), dest, loc);
+    assign(
+      dest,
+      number,
+      typecast_exprt::conditional_cast(
+        arith(*parsed.expression, dest, loc), integer_type()),
+      loc);
+    check(
+      dest,
+      binary_relation_exprt{number, ID_ge, from_integer(0, integer_type())},
+      "shell-unsupported",
+      "the operand " + *text +
+        " of the substring expansion is not negative (shells differ for "
+        "negative ones)",
+      loc);
+    return number;
+  };
+  const exprt payload = payload_of(value);
+  const exprt length = payload_length(payload, dest, loc);
+  const exprt offset = operand(part.parts);
+  const auto minimum = [](const exprt &a, const exprt &b) {
+    return if_exprt{binary_relation_exprt{a, ID_le, b}, a, b};
+  };
+  const exprt start = minimum(offset, length);
+  exprt end = length;
+  if(!part.replacement.empty())
+    end = minimum(plus_exprt{start, operand(part.replacement)}, length);
+  return make_value(payload_substring(payload, start, end, dest, loc));
 }

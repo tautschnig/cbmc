@@ -1,0 +1,11 @@
+CORE
+negative.bash
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] .*is not negative.*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Negative offsets and lengths, for which mksh differs, are reported.

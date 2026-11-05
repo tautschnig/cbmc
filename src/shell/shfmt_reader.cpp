@@ -429,6 +429,26 @@ private:
         command.words.push_back({text});
       }
     }
+    else if(t == "TimeClause")
+    {
+      // time pipeline: the pipeline, whose times are written to standard
+      // error, which is not modelled; without a pipeline, the times of
+      // the shell.
+      command.kind = kindt::BRACE_GROUP;
+      if(cmd["Stmt"].is_object())
+        command.body.push_back(read_statement(cmd["Stmt"]));
+      else
+      {
+        shell_commandt colon;
+        colon.location = command.location;
+        shell_word_partt name;
+        name.kind = shell_word_partt::kindt::LITERAL;
+        name.text = ":";
+        name.location = command.location;
+        colon.words = {{name}};
+        command.body.push_back(std::move(colon));
+      }
+    }
     else if(t == "DeclClause")
       read_declaration(cmd, command);
     else
@@ -769,7 +789,6 @@ private:
        {"NestedParam", "nested parameter expansion (zsh)"},
        {"Subscripts", "array subscripts (zsh)"},
        {"Modifiers", "parameter modifiers (zsh)"},
-       {"Slice", "substring expansion ${var:offset:length} (bash/mksh/zsh)"},
        {"Names", "${!prefix*} name expansion (bash/mksh)"}});
     result.text = part["Param"]["Value"].value;
     result.parameter_length = flag(part, "Length");
@@ -778,6 +797,17 @@ private:
       result.index = read_index(part["Index"]);
       if(result.index.empty())
         unsupported(part, "empty array subscript");
+    }
+    const jsont &slice = part["Slice"];
+    if(slice.is_object())
+    {
+      // ${x:offset} and ${x:offset:length}, whose operands are arithmetic
+      // expressions.
+      result.parameter_operator = ":";
+      result.parts = read_index(slice["Offset"]);
+      if(slice["Length"].is_object())
+        result.replacement = read_index(slice["Length"]);
+      return;
     }
     const jsont &repl = part["Repl"];
     if(repl.is_object())

@@ -73,7 +73,8 @@ struct shell_word_partt
 
   /// PARAMETER with the operators "/", "//", "/#" and "/%" of
   /// ${parameter/pattern/string} (bash, mksh, zsh): the string, whose
-  /// pattern is in \ref parts.
+  /// pattern is in \ref parts. With ":", ${parameter:offset:length}: the
+  /// length, whose offset is in \ref parts.
   std::vector<shell_word_partt> replacement;
 
   /// COMMAND_SUBSTITUTION: the command list. A shared pointer, as
