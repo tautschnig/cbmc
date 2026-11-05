@@ -1,7 +1,7 @@
 /// \file
 /// Shell converter: regular builtins whose effects on the file system and
-/// the process are not modelled: cd (XCU cd), umask (XCU umask), and type
-/// (XCU type).
+/// the process are not modelled: cd (XCU cd), umask (XCU umask), type
+/// (XCU type), and kill (XCU kill).
 
 #include "shell_convert_class.h"
 
@@ -111,4 +111,87 @@ void shell_convertert::convert_type(
     code_ifthenelset{
       conjunction(found), std::move(all_found), std::move(some_missing)},
     loc);
+}
+
+void shell_convertert::convert_kill(
+  const shell_commandt &command,
+  code_blockt &dest)
+{
+  const source_locationt &loc = command.location;
+  // kill -l lists signals; kill -0 sends none, and only tells whether the
+  // processes exist. Other signals must not reach the shell itself, which
+  // is assumed to receive none (see shell_convert_trap.cpp).
+  std::size_t first = 1;
+  bool signal = true;
+  if(first < command.words.size())
+  {
+    // An expansion is a process, which is checked below not to start with
+    // - (as an option or a process group would).
+    const std::string option =
+      static_text(command.words[first]).value_or(std::string{});
+    if(option == "-l" || option == "-L")
+    {
+      for(std::size_t i = 1; i < command.words.size(); ++i)
+        expand_word(command.words[i], shell_word_contextt::IGNORED, dest, loc);
+      nondet_status(dest, 255, loc);
+      return;
+    }
+    if(option == "-s" || option == "-n")
+    {
+      if(first + 1 >= command.words.size())
+        unsupported(loc, "kill -s without a signal");
+      const auto name = static_text(command.words[first + 1]);
+      if(!name.has_value())
+        unsupported(loc, "kill with a signal that is an expansion");
+      signal = *name != "0";
+      first += 2;
+    }
+    else if(option.size() > 1 && option[0] == '-' && option != "--")
+    {
+      signal = option != "-0";
+      ++first;
+    }
+    if(
+      first < command.words.size() &&
+      static_text(command.words[first]) == std::string{"--"})
+    {
+      ++first;
+    }
+  }
+  if(first >= command.words.size())
+    unsupported(loc, "kill without a process");
+  const field_listt pids = expand_fields(
+    command.words.begin() + first, command.words.end(), dest, loc);
+  if(signal)
+  {
+    for(std::size_t i = 0; i < max_arguments; ++i)
+    {
+      code_blockt checked;
+      const symbol_exprt pid = temporary(string_type(), checked, loc);
+      assign(
+        checked,
+        pid,
+        index_exprt{pids.array, from_integer(i, index_type())},
+        loc);
+      check(
+        checked,
+        and_exprt{
+          not_exprt{equal(pid, value_of(special("$"), loc), checked, loc)},
+          not_exprt{equal(pid, string_literal("0", loc), checked, loc)},
+          not_exprt{payload_has_prefix(
+            payload_of(pid), payload_literal("-"), checked, loc)}},
+        "shell-unsupported",
+        "kill does not signal the shell itself, as $$, 0 or a process group "
+        "would (signals to the shell are not supported)",
+        loc);
+      add(
+        dest,
+        code_ifthenelset{
+          binary_relation_exprt{
+            from_integer(i, count_type()), ID_lt, pids.count},
+          std::move(checked)},
+        loc);
+    }
+  }
+  nondet_status(dest, 255, loc);
 }

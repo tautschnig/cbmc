@@ -90,6 +90,7 @@ enum class shell_command_kindt
   CD,
   UMASK,
   TYPE,
+  KILL,
   ASSERT,
   ASSUME,
   /// echo and printf: output only; their status is nondeterministic, as
@@ -1253,6 +1254,7 @@ private:
   void convert_cd(const shell_commandt &command, code_blockt &dest);
   void convert_umask(const shell_commandt &command, code_blockt &dest);
   void convert_type(const shell_commandt &command, code_blockt &dest);
+  void convert_kill(const shell_commandt &command, code_blockt &dest);
   /// read: see shell_convert_read.cpp.
   void convert_read(const shell_commandt &command, code_blockt &dest);
   /// Whether read has -r, and its names, if its operands are -r, --, and

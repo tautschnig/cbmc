@@ -35,20 +35,20 @@ static const std::map<std::string, shell_command_kindt> builtins{
   {"cd", shell_command_kindt::CD},
   {"umask", shell_command_kindt::UMASK},
   {"type", shell_command_kindt::TYPE},
+  {"kill", shell_command_kindt::KILL},
   {"echo", shell_command_kindt::OUTPUT},
   {"printf", shell_command_kindt::OUTPUT}};
 
 /// Builtins that change the shell environment (XCU 2.15 special
 /// builtins, regular builtins of XCU 1.7, and common extensions).
 static const std::set<std::string> unsupported_builtins{
-  "eval",      "readonly", "times",     "alias",    "unalias",  "wait",
-  "jobs",      "fg",       "bg",        "command",  "hash",     "kill",
-  "ulimit",    "fc",       "newgrp",    "local",    "declare",  "typeset",
-  "source",    "let",      "shopt",     "builtin",  "enable",   "mapfile",
-  "readarray", "pushd",    "popd",      "dirs",     "disown",   "suspend",
-  "logout",    "nameref",  "autoload",  "setopt",   "unsetopt", "emulate",
-  "print",     "whence",   "functions", "zmodload", "caller",   "compgen",
-  "complete"};
+  "eval",    "readonly",  "times",    "alias",    "unalias", "wait",
+  "jobs",    "fg",        "bg",       "command",  "hash",    "ulimit",
+  "fc",      "newgrp",    "local",    "declare",  "typeset", "source",
+  "let",     "shopt",     "builtin",  "enable",   "mapfile", "readarray",
+  "pushd",   "popd",      "dirs",     "disown",   "suspend", "logout",
+  "nameref", "autoload",  "setopt",   "unsetopt", "emulate", "print",
+  "whence",  "functions", "zmodload", "caller",   "compgen", "complete"};
 
 shell_command_kindt shell_convertert::classify(const std::string &name) const
 {
@@ -1336,6 +1336,9 @@ void shell_convertert::convert_builtin(
     return;
   case shell_command_kindt::TYPE:
     convert_type(command, dest);
+    return;
+  case shell_command_kindt::KILL:
+    convert_kill(command, dest);
     return;
   case shell_command_kindt::COLON:
   case shell_command_kindt::TRUE:

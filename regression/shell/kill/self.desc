@@ -1,0 +1,12 @@
+CORE
+self.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] .*kill does not signal the shell itself.*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A process that is not known may be the shell itself, which is assumed
+to receive no signals.
