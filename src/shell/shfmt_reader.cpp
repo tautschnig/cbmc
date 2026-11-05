@@ -279,7 +279,26 @@ private:
     command.negated = flag(statement, "Negated");
     command.background = flag(statement, "Background");
     for(const auto &redirect : array(statement["Redirs"]))
-      command.redirects.push_back(read_redirect(redirect));
+    {
+      // bash and zsh: &>word and &>>word are >word 2>&1 and >>word 2>&1.
+      const std::string &op = redirect["Op"].value;
+      if((op == "&>" || op == "&>>") && !redirect["N"].is_object())
+      {
+        shell_redirectt output = read_redirect(redirect, op.substr(1));
+        shell_redirectt error = output;
+        error.op = ">&";
+        error.fd = 2;
+        shell_word_partt one;
+        one.kind = shell_word_partt::kindt::LITERAL;
+        one.text = "1";
+        one.location = output.location;
+        error.target = {one};
+        command.redirects.push_back(std::move(output));
+        command.redirects.push_back(std::move(error));
+        continue;
+      }
+      command.redirects.push_back(read_redirect(redirect, op));
+    }
     return command;
   }
 
@@ -524,14 +543,14 @@ private:
     return result;
   }
 
-  shell_redirectt read_redirect(const jsont &redirect)
+  shell_redirectt read_redirect(const jsont &redirect, const std::string &op)
   {
     static const std::set<std::string> posix_ops{
       "<", ">", ">|", ">>", "<&", ">&", "<>", "<<", "<<-"};
 
     shell_redirectt result;
     result.location = location(redirect);
-    result.op = redirect["Op"].value;
+    result.op = op;
     if(posix_ops.count(result.op) == 0)
       unsupported(redirect, "redirection operator '" + result.op + "'");
 

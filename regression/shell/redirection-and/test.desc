@@ -1,0 +1,10 @@
+CORE
+main.bash
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+bash's &> and &>> redirect standard output and standard error.
