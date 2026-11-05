@@ -1,0 +1,14 @@
+CORE
+type.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.[0-9]+\] file type.sh line 5 .*: SUCCESS$
+^\[assertion\.1\] .*: SUCCESS$
+^\[shell-unsupported\.[0-9]+\] file type.sh line 7 .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+type with a quoted expansion has one operand, whose lookup is not known;
+an operand that starts with - would be an option, which is reported.

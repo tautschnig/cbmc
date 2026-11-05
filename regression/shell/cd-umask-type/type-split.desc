@@ -1,0 +1,10 @@
+CORE
+type-split.sh
+
+^EXIT=6$
+^SIGNAL=0$
+type with an operand that may be several fields
+--
+^VERIFICATION
+--
+An unquoted expansion may yield several operands, or none.

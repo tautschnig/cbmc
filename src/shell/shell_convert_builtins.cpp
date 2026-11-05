@@ -82,8 +82,42 @@ void shell_convertert::convert_type(
   for(std::size_t i = 1; i < command.words.size(); ++i)
   {
     const auto name = static_text(command.words[i]);
+    if(!name.has_value())
+    {
+      // One field, which could name a function, a builtin or a utility:
+      // expansions must be quoted.
+      const shell_wordt &word = command.words[i];
+      bool unquoted = false;
+      for(const auto &part : word)
+      {
+        unquoted |= part.kind != shell_word_partt::kindt::LITERAL &&
+                    part.kind != shell_word_partt::kindt::QUOTED_LITERAL &&
+                    part.kind != shell_word_partt::kindt::DOUBLE_QUOTED;
+      }
+      bool quoted_array = false;
+      if(
+        unquoted || pathname_pattern(word).has_value() || contains_at(word) ||
+        is_array_at(word, quoted_array))
+      {
+        unsupported(loc, "type with an operand that may be several fields");
+      }
+      const exprt value =
+        expand_word(word, shell_word_contextt::FIELD, dest, loc);
+      check(
+        dest,
+        not_exprt{payload_has_prefix(
+          payload_of(value), payload_literal("-"), dest, loc)},
+        "shell-unsupported",
+        "the operand " + display(word) +
+          " of type does not start with - (it would be an option)",
+        loc);
+      const symbol_exprt exists = temporary(bool_typet{}, dest, loc);
+      assign(dest, exists, nondet(bool_typet{}, loc), loc);
+      found.push_back(exists);
+      continue;
+    }
     // Options differ between shells.
-    if(!name.has_value() || name->empty() || (*name)[0] == '-')
+    if(name->empty() || (*name)[0] == '-')
       unsupported(loc, "type with an operand other than a literal name");
     if(is_builtin_everywhere(*name))
       continue;
