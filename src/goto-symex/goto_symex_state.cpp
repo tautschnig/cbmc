@@ -288,6 +288,26 @@ goto_symex_statet::rename(exprt expr, const namespacet &ns)
     {
       expr.type() = to_with_expr(expr).old().type();
     }
+    // The same holds for the operand of a byte update (whose type is that of
+    // the operand by definition), and then for a conditional whose operands
+    // agree, as when assigning to such a symbol under a guard: e.g., shadow
+    // memory of a dynamic object whose size symbol was merged at a phi node.
+    if(
+      can_cast_expr<byte_update_exprt>(c_expr) &&
+      can_cast_type<array_typet>(c_expr.type()) &&
+      can_cast_type<array_typet>(to_byte_update_expr(c_expr).op().type()) &&
+      c_expr.type() != to_byte_update_expr(c_expr).op().type())
+    {
+      expr.type() = to_byte_update_expr(expr).op().type();
+    }
+    const auto *c_if_expr = expr_try_dynamic_cast<if_exprt>(c_expr);
+    if(
+      c_if_expr && can_cast_type<array_typet>(c_if_expr->type()) &&
+      c_if_expr->true_case().type() == c_if_expr->false_case().type() &&
+      c_if_expr->type() != c_if_expr->true_case().type())
+    {
+      expr.type() = to_if_expr(expr).true_case().type();
+    }
     INVARIANT_WITH_DIAGNOSTICS(
       expr.id() != ID_with ||
         c_expr.type() == to_with_expr(c_expr).old().type(),

@@ -1,0 +1,14 @@
+CORE
+main.c
+--no-standard-checks
+^EXIT=10$
+^SIGNAL=0$
+^\[main.assertion.1\] .* set: SUCCESS$
+^\[main.assertion.2\] .* unset: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Setting shadow memory through a conditional of dynamic objects, one of whose
+size symbols changed at a phi node, used to fail the invariant that the
+operands of a renamed conditional have its type.
