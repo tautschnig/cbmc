@@ -211,6 +211,10 @@ private:
     exprt may_recover = nil_exprt{};
     /// If the function is the yield function of a range over a function.
     std::shared_ptr<range_bodyt> range_body;
+    /// In the function performing a deferred call of a built-in function
+    /// (saved_builtin_call), the arguments evaluated at the defer
+    /// statement, which `$saved` nodes of the call refer to.
+    exprt::operandst saved_arguments;
   };
   function_statet state;
 
@@ -884,9 +888,9 @@ private:
   static struct_typet deferred_node_type();
   void convert_defer(const irept &stmt, code_blockt &dest);
   /// The function value (of type func()) that performs the call \p call of
-  /// built-in function delete or close, with the arguments evaluated now
-  /// (code in \p prefix), through a generated function \p thunk_id; nil
-  /// on error.
+  /// a built-in function permitted in statement context, with the
+  /// arguments evaluated now (code in \p prefix), through a generated
+  /// function \p thunk_id; nil on error.
   exprt saved_builtin_call(
     const irept &call,
     const irep_idt &thunk_id,

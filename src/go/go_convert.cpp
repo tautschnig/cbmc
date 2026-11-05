@@ -4228,6 +4228,13 @@ exprt go_convertert::convert_expr_value(const irept &expr)
   }
 
   const irep_idt &kind = expr.id();
+  if(kind == "$saved")
+  {
+    // An argument of a deferred call of a built-in function, evaluated
+    // at the defer statement (see saved_builtin_call).
+    return state.saved_arguments.at(
+      numeric_cast_v<std::size_t>(string2integer(expr.get_string("n"))));
+  }
   if(
     kind == "Ident" && parse_tree.object(expr.get("_obj")).get("kind") == "nil")
   {

@@ -1,0 +1,14 @@
+CORE
+main.go
+--unwind 5
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 13 the goroutine closed the channel: SUCCESS$
+^\[go::main\.main\.assertion\.2\] line 22 a goroutine deleted an entry: SUCCESS$
+^\[go::main\.main\$go\d+\.panic\.1\] line 26 panic: boom: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+not supported yet
+--
+Go1.27 §Go_statements: go statements calling built-in functions

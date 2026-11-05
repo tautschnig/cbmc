@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 5 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+not supported yet
+--
+Go1.27 §Defer_statements: deferred calls of clear, copy, panic, print, println

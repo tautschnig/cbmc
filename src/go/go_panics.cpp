@@ -535,8 +535,8 @@ void go_convertert::convert_defer(const irept &stmt, code_blockt &dest)
       // deferred function", so it returns nil and does not stop a panic.
       return;
     }
-    if(callee != "delete" && callee != "close")
-      return unsupported(call, "deferred calls of " + id2string(callee));
+    // Go1.27 §Defer_statements: "Calls of built-in functions are
+    // restricted as for expression statements", which go/types checks.
   }
   if(object.get("pkg") == "cprover")
     return unsupported(call, "deferred calls of " + id2string(callee));
@@ -682,27 +682,24 @@ exprt go_convertert::saved_builtin_call(
   code_blockt &prefix)
 {
   // As saved_call: the arguments, evaluated now, in an environment that a
-  // generated function performs the call with.
-  const irep_idt callee = callee_object(call);
-  const auto &args = go_list(call, "Args");
+  // generated function performs the call with. That function converts the
+  // call with each argument that is not a constant (whose evaluation has
+  // no effects) replaced by a `$saved` node, which stands for its value.
+  irept saved_call = call;
   exprt::operandst values;
-  for(const auto &arg : args)
+  for(auto &arg : saved_call.add("Args").get_sub())
   {
+    if(!arg.get("_cv").empty())
+      continue;
     exprt value = convert_expr(arg);
     if(value.is_nil())
       return nil_exprt{};
+    irept placeholder{"$saved"};
+    placeholder.set("n", std::to_string(values.size()));
+    placeholder.set("_t", arg.get("_t"));
+    placeholder.add(ID_C_source_location) = arg.find(ID_C_source_location);
+    arg = std::move(placeholder);
     values.push_back(std::move(value));
-  }
-  if(callee == "delete")
-  {
-    // Go1.27 §Deletion_of_map_elements: "The value k must be assignable to
-    // the key type of m".
-    const typet &header = to_pointer_type(values[0].type()).base_type();
-    const typet &key =
-      to_pointer_type(
-        to_struct_type(go_follow(ns, header)).get_component("keys").type())
-        .base_type();
-    values[1] = assign_cast(values[1], key);
   }
   struct_typet::componentst components;
   for(std::size_t i = 0; i < values.size(); ++i)
@@ -725,16 +722,22 @@ exprt go_convertert::saved_builtin_call(
     code_blockt body;
     const dereference_exprt saved{typecast_exprt{
       env_param, pointer_typet{env_type, config.ansi_c.pointer_width}}};
-    std::vector<exprt> saved_values;
     for(const auto &c : env_type.components())
     {
-      saved_values.push_back(
+      state.saved_arguments.push_back(
         evaluate_once(member_exprt{saved, c}, location, body));
     }
-    if(callee == "delete")
-      delete_entry(saved_values[0], saved_values[1], call, body);
-    else
-      close_channel(saved_values[0], location, body);
+    // Go1.27 §Expression_statements: copy's result is discarded.
+    if(!convert_intrinsic_call(saved_call, body))
+    {
+      const exprt value = convert_expr(saved_call);
+      if(value.is_nil())
+      {
+        state = std::move(outer);
+        return nil_exprt{};
+      }
+      body.add(expression_statement(value, location));
+    }
     end_generated_function(body, empty_typet{});
     state = std::move(outer);
     symbol_table.get_writeable_ref(thunk_id).value = std::move(body);
@@ -761,13 +764,21 @@ void go_convertert::convert_go(const irept &stmt, code_blockt &dest)
   const source_locationt location = location_of(stmt);
   const irep_idt callee = callee_object(call);
   const irept &object = parse_tree.object(callee);
-  if(object.get("kind") == "builtin" || object.get("pkg") == "cprover")
+  if(object.get("pkg") == "cprover")
     return unsupported(call, "go statements calling " + id2string(callee));
+  // Go1.27 §Go_statements: "Calls of built-in functions are restricted as
+  // for expression statements." recover returns nil in a new goroutine
+  // (there is no panic it could stop), so the goroutine does nothing.
+  if(callee == "recover")
+    return;
 
   code_blockt prefix;
   const irep_idt thunk_id =
     id2string(state.function_id) + "$go" + std::to_string(state.go_counter++);
-  const exprt function = saved_call(call, thunk_id, location, prefix);
+  const exprt function =
+    object.get("kind") == "builtin"
+      ? saved_builtin_call(call, thunk_id, location, prefix)
+      : saved_call(call, thunk_id, location, prefix);
   if(function.is_nil())
     return;
   // The thread calls the generated function directly (rather than through
