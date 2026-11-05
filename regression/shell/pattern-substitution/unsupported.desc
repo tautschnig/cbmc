@@ -1,0 +1,11 @@
+CORE
+unsupported.bash
+
+^EXIT=6$
+^SIGNAL=0$
+pattern substitution .* with pattern characters
+--
+^VERIFICATION
+--
+/ and // with pattern characters, whose longest leftmost matches are
+not modelled, are unsupported.

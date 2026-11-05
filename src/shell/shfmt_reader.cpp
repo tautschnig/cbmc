@@ -757,10 +757,33 @@ private:
        {"Subscripts", "array subscripts (zsh)"},
        {"Modifiers", "parameter modifiers (zsh)"},
        {"Slice", "substring expansion ${var:offset:length} (bash/mksh/zsh)"},
-       {"Repl", "pattern substitution ${var/pattern/string} (bash/mksh/zsh)"},
        {"Names", "${!prefix*} name expansion (bash/mksh)"}});
     result.text = part["Param"]["Value"].value;
     result.parameter_length = flag(part, "Length");
+    const jsont &repl = part["Repl"];
+    if(repl.is_object())
+    {
+      // ${x/pattern/string}, ${x//...}, and ${x/#...} and ${x/%...},
+      // whose # and % shfmt leaves at the start of the pattern.
+      result.parameter_operator = flag(repl, "All") ? "//" : "/";
+      if(repl["Orig"].is_object())
+        result.parts = read_word(repl["Orig"]);
+      if(
+        result.parameter_operator == "/" && !result.parts.empty() &&
+        result.parts.front().kind == shell_word_partt::kindt::LITERAL &&
+        !result.parts.front().text.empty() &&
+        (result.parts.front().text[0] == '#' ||
+         result.parts.front().text[0] == '%'))
+      {
+        result.parameter_operator += result.parts.front().text[0];
+        result.parts.front().text.erase(0, 1);
+        if(result.parts.front().text.empty())
+          result.parts.erase(result.parts.begin());
+      }
+      if(repl["With"].is_object())
+        result.replacement = read_word(repl["With"]);
+      return;
+    }
     const jsont &exp = part["Exp"];
     if(exp.is_object())
     {

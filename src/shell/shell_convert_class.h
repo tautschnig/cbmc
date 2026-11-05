@@ -668,6 +668,10 @@ private:
     bool quoted,
     code_blockt &dest);
 
+  exprt substitute_pattern(
+    const shell_word_partt &part,
+    const exprt &value,
+    code_blockt &dest);
   exprt expand_star_operator(
     const shell_word_partt &part,
     shell_word_contextt context,

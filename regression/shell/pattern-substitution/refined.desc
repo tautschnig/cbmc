@@ -1,0 +1,11 @@
+CORE
+refined.bash
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Pattern substitution with refined strings, where // replaces each match
+in a round of its own, which the solver takes long for.

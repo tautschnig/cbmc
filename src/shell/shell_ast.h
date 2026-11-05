@@ -67,6 +67,11 @@ struct shell_word_partt
   /// PARAMETER: ${#parameter}, the string length (XCU 2.6.2).
   bool parameter_length = false;
 
+  /// PARAMETER with the operators "/", "//", "/#" and "/%" of
+  /// ${parameter/pattern/string} (bash, mksh, zsh): the string, whose
+  /// pattern is in \ref parts.
+  std::vector<shell_word_partt> replacement;
+
   /// COMMAND_SUBSTITUTION: the command list. A shared pointer, as
   /// shell_commandt is incomplete here.
   std::shared_ptr<shell_command_listt> commands;

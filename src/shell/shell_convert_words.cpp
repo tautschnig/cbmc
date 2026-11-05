@@ -453,7 +453,7 @@ exprt shell_convertert::expand_parameter(
                    id2string(to_symbol_expr(value).get_identifier())
                        .rfind("shell::var::", 0) == 0;
       const std::string &op = part.parameter_operator;
-      if(op.empty() || op[0] == '%' || op[0] == '#')
+      if(op.empty() || op[0] == '%' || op[0] == '#' || op[0] == '/')
         check_nounset(value, part.text, dest, loc);
     }
   }
@@ -547,6 +547,8 @@ exprt shell_convertert::expand_parameter_operator(
   const std::string &op = part.parameter_operator;
   if(op == "%" || op == "%%" || op == "#" || op == "##")
     return remove_pattern(value_of(parameter, loc), op, part.parts, dest, loc);
+  if(op[0] == '/')
+    return substitute_pattern(part, value_of(parameter, loc), dest);
 
   const bool colon = op[0] == ':';
   const char kind = op.back();
@@ -751,6 +753,152 @@ std::string shell_convertert::display(const shell_wordt &parts)
       result += "$((" + part.text + "))";
       break;
     }
+  }
+  return result;
+}
+
+/// ${parameter/pattern/string} and its forms //, /# and /% (bash, mksh,
+/// zsh): the first, every, a leading or a trailing longest match of the
+/// pattern is replaced. /# and /% take any pattern; / and // only
+/// patterns without pattern characters.
+exprt shell_convertert::substitute_pattern(
+  const shell_word_partt &part,
+  const exprt &value,
+  code_blockt &dest)
+{
+  const source_locationt &loc = part.location;
+  const std::string &op = part.parameter_operator;
+  // zsh reads quotes in the pattern differently.
+  if(program.dialect == shell_dialectt::ZSH)
+    unsupported(loc, "pattern substitution in zsh");
+  // The string. bash 5.2 replaces an unquoted & with the match, and
+  // treats backslashes in it differently from mksh and zsh.
+  for(const auto &p : part.replacement)
+  {
+    if(
+      (p.kind == shell_word_partt::kindt::LITERAL ||
+       p.kind == shell_word_partt::kindt::QUOTED_LITERAL) &&
+      p.text.find_first_of("&\\") != std::string::npos)
+    {
+      unsupported(loc, "pattern substitution with & or \\ in the string");
+    }
+  }
+  const exprt replacement = expand_parts(
+    part.replacement, shell_word_contextt::ASSIGNMENT, true, false, dest);
+  {
+    std::bitset<256> special;
+    special.set('&');
+    special.set('\\');
+    check(
+      dest,
+      not_exprt{
+        payload_contains_byte(payload_of(replacement), special, dest, loc)},
+      "shell-unsupported",
+      "the string of " + display({part}) +
+        " has no & or \\ (in which shells differ)",
+      loc);
+  }
+  const exprt payload = payload_of(value);
+  const symbol_exprt result = temporary(string_type(), dest, loc);
+  if(op == "/#" || op == "/%")
+  {
+    // The rest after removing the longest match, if there is one.
+    const exprt rest =
+      remove_pattern(value, op == "/#" ? "##" : "%%", part.parts, dest, loc);
+    const exprt empty_match =
+      pattern_matches(part.parts, string_literal("", loc), dest, loc);
+    const exprt matched =
+      or_exprt{not_exprt{equal(rest, value, dest, loc)}, empty_match};
+    code_blockt replace;
+    assign(
+      replace,
+      result,
+      op == "/#" ? concat(replacement, rest, replace, loc)
+                 : concat(rest, replacement, replace, loc),
+      loc);
+    code_blockt keep;
+    assign(keep, result, value, loc);
+    add(
+      dest,
+      code_ifthenelset{matched, std::move(replace), std::move(keep)},
+      loc);
+    return result;
+  }
+  // / and //: a literal pattern.
+  const shell_wordt prepared = prepare_pattern(part.parts, dest, loc);
+  const shell_patternt pattern = compile_pattern(prepared, loc);
+  if(!pattern.is_literal())
+    unsupported(
+      loc,
+      "pattern substitution ${x" + op +
+        "pattern/string} with "
+        "pattern characters");
+  const exprt needle = payload_of(literal_pattern_string(pattern, dest, loc));
+  const exprt zero = from_integer(0, integer_type());
+  const exprt needle_length = payload_length(needle, dest, loc);
+  assign(dest, result, value, loc);
+  if(native())
+  {
+    // SMT-LIB's str.replace and str.replace_all, where the pattern is not
+    // empty (it then matches nothing).
+    code_blockt replace;
+    assign(
+      replace,
+      result,
+      make_value(string_function(
+        op == "//" ? ID_cprover_string_replace_all_func
+                   : ID_cprover_string_replace_func,
+        {payload, needle, payload_of(replacement)},
+        payload_type(),
+        replace,
+        loc)),
+      loc);
+    add(
+      dest,
+      code_ifthenelset{
+        binary_relation_exprt{needle_length, ID_gt, zero}, std::move(replace)},
+      loc);
+    return result;
+  }
+  // An empty pattern matches nothing. Each round replaces the first match
+  // at or after a position; as strings have at most max_length bytes, so
+  // many rounds replace every match.
+  const std::size_t rounds = op == "//" ? max_length : 1;
+  const symbol_exprt from = temporary(integer_type(), dest, loc);
+  assign(dest, from, zero, loc);
+  const symbol_exprt more = temporary(bool_typet{}, dest, loc);
+  assign(dest, more, binary_relation_exprt{needle_length, ID_gt, zero}, loc);
+  for(std::size_t k = 0; k < rounds; ++k)
+  {
+    code_blockt round;
+    const exprt current = payload_of(result);
+    const symbol_exprt found = temporary(integer_type(), round, loc);
+    assign(
+      round, found, payload_index_of(current, needle, from, round, loc), loc);
+    code_blockt replace;
+    const exprt length = payload_length(current, replace, loc);
+    const exprt before =
+      make_value(payload_substring(current, zero, found, replace, loc));
+    const exprt after = make_value(payload_substring(
+      current, plus_exprt{found, needle_length}, length, replace, loc));
+    const exprt joined =
+      concat(concat(before, replacement, replace, loc), after, replace, loc);
+    assign(
+      replace,
+      from,
+      plus_exprt{found, string_length(replacement, replace, loc)},
+      loc);
+    assign(replace, result, joined, loc);
+    code_blockt stop;
+    assign(stop, more, false_exprt{}, loc);
+    add(
+      round,
+      code_ifthenelset{
+        binary_relation_exprt{found, ID_ge, zero},
+        std::move(replace),
+        std::move(stop)},
+      loc);
+    add(dest, code_ifthenelset{more, std::move(round)}, loc);
   }
   return result;
 }

@@ -1,0 +1,12 @@
+CORE
+main.bash
+--shell-strings native --cvc5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Pattern substitution in bash, mksh and zsh: the first (/) or every (//)
+match of a literal pattern, and the longest leading (/#) or trailing
+(/%) match of any pattern, are replaced.
