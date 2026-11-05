@@ -789,3 +789,44 @@ func (e *encoder) errorfCall(c *ast.CallExpr, out map[string]any) {
 	}
 	out["Args"] = append(args, out["Args"].([]any)...)
 }
+
+// inLibraryModel reports whether pos is in the source of a model of the
+// standard library: an embedded model (models/<path>) or the GOROOT
+// source of a source model (see sourceModels), but not the program.
+func (e *encoder) inLibraryModel(pos token.Pos) bool {
+	name := e.fset.Position(pos).Filename
+	return strings.HasPrefix(name, modelPrefix) ||
+		strings.HasPrefix(name, filepath.Join(build.Default.GOROOT, "src")+
+			string(filepath.Separator))
+}
+
+// poolShortcut returns, for method Get or Put of the model of sync.Pool,
+// the variant that ignores the pool (getFresh, putNothing), or nil. The
+// models of the standard library call those instead (see node): sync.Pool
+// may treat a pool as empty in Get and drop items at any time, and the
+// objects that the library's own pools hold are internal to it, so this
+// keeps one of gc's behaviours (the one where the pool is never used),
+// while the nondeterministic reuse of objects would merge the states of
+// their uses (e.g., of the machines of regexp, or json's encoders).
+func (l *loader) poolShortcut(f *types.Func) *types.Func {
+	if !isMethod(f) || f.Pkg() == nil || f.Pkg().Path() != "sync" {
+		return nil
+	}
+	n := recvNamed(f)
+	if n == nil || n.Obj().Name() != "Pool" {
+		return nil
+	}
+	var name string
+	switch f.Name() {
+	case "Get":
+		name = "getFresh"
+	case "Put":
+		name = "putNothing"
+	default:
+		return nil
+	}
+	m, _, _ := types.LookupFieldOrMethod(types.NewPointer(n), false,
+		n.Obj().Pkg(), name)
+	mf, _ := m.(*types.Func)
+	return mf
+}

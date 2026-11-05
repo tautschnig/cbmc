@@ -66,3 +66,24 @@ func (p *Pool) Get() any {
 	}
 	return x
 }
+
+// getFresh is Get for the pools of the standard-library models (see the
+// helper's poolShortcut): it ignores the pool, as Get may, so that the
+// objects these pools hold are not shared between uses, which would merge
+// their states.
+func (p *Pool) getFresh() any {
+	_ = *p
+	if p.New != nil {
+		return p.New()
+	}
+	return nil
+}
+
+// putNothing is Put for the pools of the standard-library models (see
+// getFresh): it drops x, as the pool may at any time.
+func (p *Pool) putNothing(x any) {
+	if x == nil {
+		return
+	}
+	_ = *p
+}

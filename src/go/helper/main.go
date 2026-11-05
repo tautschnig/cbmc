@@ -1052,6 +1052,12 @@ func (e *encoder) node(n ast.Node) any {
 				o = m
 			}
 		}
+		if f, ok := o.(*types.Func); ok && e.loader != nil &&
+			e.info.Defs[id] == nil && e.inLibraryModel(id.Pos()) {
+			if m := e.loader.poolShortcut(f); m != nil {
+				o = m
+			}
+		}
 		if inst, ok := e.info.Instances[id]; ok {
 			// Go1.27 §Instantiations: "A generic function, method, or type
 			// is instantiated by substituting type arguments for the type
