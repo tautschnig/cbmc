@@ -1,0 +1,11 @@
+CORE
+bash.bash
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+In bash, a failed redirection of eval only skips it.

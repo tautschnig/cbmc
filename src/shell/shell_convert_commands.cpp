@@ -906,9 +906,25 @@ void shell_convertert::convert_simple(
     // A special builtin; a redirection that can fail would make the shell
     // exit.
     check_redirections(command, kind, dest);
-    if(redirection_may_fail(command))
-      unsupported(loc, "eval with a redirection that can fail");
-    convert_eval(command, dest);
+    if(!redirection_may_fail(command))
+    {
+      convert_eval(command, dest);
+      return;
+    }
+    // A failed redirection makes the shell exit, except in bash (outside
+    // POSIX mode) and zsh, where eval does not run: what it assigns is
+    // then not known.
+    with_redirections(
+      command,
+      true,
+      dest,
+      [&](code_blockt &block) { convert_eval(command, block); });
+    if(
+      program.dialect == shell_dialectt::BASH ||
+      program.dialect == shell_dialectt::ZSH)
+    {
+      known_literals.clear();
+    }
     return;
   }
   if(*name == "local" && function_definitions.count(*name) == 0)
