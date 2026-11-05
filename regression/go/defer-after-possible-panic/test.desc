@@ -1,0 +1,12 @@
+CORE
+main.go
+--unwind 6 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Go1.27 §Defer_statements: deferred calls where a panic may precede the
+defer statement. Before the fix, symbolic execution called every function
+of type func() there, exponentially in the unwinding bound.

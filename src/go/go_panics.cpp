@@ -485,8 +485,28 @@ void go_convertert::end_function_panics(code_blockt &body)
   for(auto slot = state.defer_slots.rbegin(); slot != state.defer_slots.rend();
       ++slot)
   {
+    // The environment of a deferred call is never null (saved_call and
+    // saved_builtin_call allocate it), but the slot's is until the defer
+    // statement executes. Testing it, in a pointer variable of its own,
+    // rather than only the flag lets symbolic execution drop null from its
+    // value set in the call: otherwise, where the defer statement may not
+    // have executed (e.g., after a possible panic), the generated function
+    // reads its saved function value from an invalid object, and the call
+    // considers every function of type func().
     code_blockt call;
-    run(slot->second, call);
+    const auto &components = to_struct_type(slot->second.type()).components();
+    const symbol_exprt env =
+      new_temporary(components[1].type(), location, call);
+    call.add(
+      code_frontend_assignt{env, member_exprt{slot->second, components[1]}});
+    code_blockt run_call;
+    run(
+      struct_exprt{
+        {member_exprt{slot->second, components[0]}, env}, slot->second.type()},
+      run_call);
+    call.add(code_ifthenelset{
+      notequal_exprt{env, null_pointer_exprt{to_pointer_type(env.type())}},
+      std::move(run_call)});
     body.add(code_ifthenelset{slot->first, std::move(call)});
   }
 
