@@ -258,6 +258,22 @@ static void collect(
   }
   if(is_shared_lvalue(ns, expr))
   {
+    // The fields of a channel's header are the runtime's (go_channels.cpp);
+    // the operations on the channel are accesses of it (chan_of_operation).
+    if(
+      expr.id() == ID_member &&
+      to_member_expr(expr).compound().id() == ID_dereference &&
+      is_go_chan(
+        to_dereference_expr(to_member_expr(expr).compound()).pointer().type()))
+    {
+      collect(
+        ns,
+        to_dereference_expr(to_member_expr(expr).compound()).pointer(),
+        false,
+        guard,
+        accesses);
+      return;
+    }
     const exprt map = map_of_part(expr);
     if(map.is_not_nil())
     {
