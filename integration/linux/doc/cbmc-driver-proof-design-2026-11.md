@@ -795,6 +795,71 @@ word the message to say the path was cut, and/or suppress or mark as
 stub. The reproducer is self-contained and runs on an unmodified CBMC, so
 unlike the earlier performance report this one is ready to file as it stands.
 
+### 8.8 Status after the vacuity fix: the envelope is currently unestablished
+
+Honest status, and it is worse than section 8.6 implied. With the accept path
+live and `--report-unreachable-properties` in use, **no configuration
+currently establishes the obligation set**:
+
+| configuration | outcome |
+|---|---|
+| DFCC, field-precise assigns, ring 8, segs 2 | `INV`, `INV_SLOT`, `OWN_UNIQUE`, `OWN_TRANSFER` FAIL; `INV_wakeup` **UNREACHABLE** |
+| non-DFCC, real bodies, ring 8, segs 2 | times out (1800 s) |
+| non-DFCC, real bodies, ring 8, segs 5 | every obligation **ERROR** (solver undecided) |
+| non-DFCC, real bodies, ring 4, segs 1 | did not finish in 1800 s with the current harness |
+
+The field-precise assigns clause (`tx_loop_contract_fields.json`) did what it
+was supposed to -- it names only the fields the loop writes, so the ring's
+pointer fields are no longer havoc'd -- but it did not rescue the obligations,
+because of the next item. And the new UNREACHABLE status immediately earned
+its keep: `INV_wakeup` had been reporting SUCCESS in that configuration and is
+in fact never reached.
+
+Note the geometry rule from 8.5 bites hard here: `ring >= segs + 3` means a
+ring of 4 admits only single-segment packets, so the cheap configurations are
+also the least interesting ones, and the interesting ones do not finish.
+
+### 8.9 A second DFCC obstacle, reduced
+
+`cbmc-limitations/dfcc_callee_param_in_loop_assigns.{c,sh}`, with a passing
+control alongside it (`dfcc_callee_locals_pass.c`):
+
+```
+callee writes its locals, no loop in callee      -> SUCCESS
+callee has a loop and assigns its own PARAMETER
+  in the loop condition                          -> FAILURE
+     [callee.assigns.1] Check that m is assignable: FAILURE
+     [callee.assigns.2] Check that acc is assignable: SUCCESS
+```
+
+A callee's parameter belongs to the callee's frame, not the caller's, yet DFCC
+requires the **caller's** loop assigns clause to cover it -- and the caller
+cannot express that, because callee locals are not nameable from the caller's
+contract. A plain local written in the loop body is fine; it is specifically
+the parameter assigned in the loop condition.
+
+This is exactly `ena_tx_map_mbuf`'s shape:
+`while ((mbuf = mbuf->next) != NULL)` assigns its own parameter. So proving
+the TX path with the real `ena_tx_map_mbuf` body *under an outer loop
+contract* is blocked on a CBMC bug, not on specification work. Unlike the
+performance claim I withdrew, this is reduced to a self-contained reproducer
+with a passing control, so it is reportable as it stands.
+
+**What that means for the plan.** The two complementary configurations of
+8.2a are not a stepping stone to one combined proof; they are the best
+available until this is fixed:
+
+* real callee bodies, **bounded** burst, no loop contract -- no DFCC
+  involvement, so no obstacle, but it needs a geometry that both admits
+  packets (`ring >= segs + 3`) and finishes;
+* **unbounded** burst via the loop contract, callees abstracted -- no callee
+  parameters in the region, so no obstacle, but the accept path is then only
+  as real as the stubs.
+
+The immediate next step is therefore not more invariant work. It is to find a
+geometry in the first configuration that both admits packets and completes,
+and to report the two DFCC issues.
+
 ### 8.3 What this changes in the plan
 
 Add to the revised order in `unveil-reconciliation-2026-11.md`:
