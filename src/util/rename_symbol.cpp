@@ -28,6 +28,9 @@ void rename_symbolt::insert(
 
 bool rename_symbolt::rename(exprt &dest) const
 {
+  if(expr_map.empty() && type_map.empty())
+    return true;
+
   bool result=true;
 
   for(auto it = dest.depth_begin(), end = dest.depth_end(); it != end; ++it)
