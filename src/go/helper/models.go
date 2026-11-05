@@ -152,6 +152,12 @@ var sourceModels = map[string]struct {
 	// the GODEBUG settings at their defaults (without internal/godebug).
 	"math/rand": {files: []string{"exp.go", "normal.go", "rand.go",
 		"zipf.go"}, overrides: true},
+	// The table of metacharacters is a constant (the package's
+	// initialisation computes it otherwise).
+	"regexp": {overrides: true},
+	// The Unicode tables of package unicode are not modelled: parsing
+	// \p{...} classes is reported where it is reached.
+	"regexp/syntax": {},
 }
 
 // parseSourceModel parses the files of the source model of path (see

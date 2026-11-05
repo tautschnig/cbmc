@@ -6,15 +6,15 @@ package main
 
 import (
 	"fmt"
-	"regexp"
+	"go/token"
 )
 
 func direct() {
-	var r regexp.Regexp
-	_ = r.NumSubexp()
+	var p token.Position
+	_ = p.IsValid()
 }
 
 func main() {
-	var s fmt.Stringer = &regexp.Regexp{}
+	var s fmt.Stringer = token.Position{}
 	_ = s.String()
 }

@@ -1,0 +1,10 @@
+CORE
+main.go
+--unwind 10 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+regexp from its own source

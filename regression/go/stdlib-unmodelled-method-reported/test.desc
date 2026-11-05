@@ -3,9 +3,9 @@ main.go
 
 ^EXIT=10$
 ^SIGNAL=0$
-Go front-end: a call of regexp\.Regexp\.NumSubexp \(package regexp, which has no model\) is not supported yet$
-Go front-end: a call of regexp\.Regexp\.String \(package regexp, which has no model\) is not supported yet$
-^\[go::\$method\.[0-9]+\.String\.unsupported\.1\] Go front-end: a call of regexp\.Regexp\.String \(package regexp, which has no model\) is not supported yet: FAILURE$
+Go front-end: a call of go/token\.Position\.IsValid \(package go/token, which has no model\) is not supported yet$
+Go front-end: a call of go/token\.Position\.String \(package go/token, which has no model\) is not supported yet$
+^\[go::\$method\.[0-9]+\.String\.unsupported\.1\] Go front-end: a call of go/token\.Position\.String \(package go/token, which has no model\) is not supported yet: FAILURE$
 ^\*\* 1 of [0-9]+ failed
 ^VERIFICATION FAILED$
 --

@@ -1,0 +1,13 @@
+CORE
+main.go
+--unwind 10
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.assertion\.1\] line 13 classes without tables work: SUCCESS$
+^\[go::cprover/std/regexp/syntax\.unicodeTable\.unsupported\.1\] line \d+ Go front-end: variable 'Cn' of package unicode is not supported yet: FAILURE$
+^\*\* 1 of \d+ failed
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+regexp: \p{...} classes are reported where they are parsed
