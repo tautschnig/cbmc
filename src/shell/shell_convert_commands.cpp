@@ -58,6 +58,14 @@ shell_command_kindt shell_convertert::classify(const std::string &name) const
     return it->second;
   if(name == "source" && program.dialect != shell_dialectt::POSIX)
     return shell_command_kindt::DOT;
+  // print is an output builtin in mksh and zsh, and a utility elsewhere.
+  if(name == "print")
+  {
+    return program.dialect == shell_dialectt::MKSH ||
+               program.dialect == shell_dialectt::ZSH
+             ? shell_command_kindt::OUTPUT
+             : shell_command_kindt::EXTERNAL;
+  }
   if(unsupported_builtins.count(name) != 0)
     return shell_command_kindt::UNSUPPORTED_BUILTIN;
   if(name.rfind(CPROVER_PREFIX, 0) == 0)
@@ -1331,6 +1339,22 @@ void shell_convertert::convert_non_function(
     return;
   }
   check_redirections(command, kind, dest);
+  if(
+    name == "print" && program.dialect == shell_dialectt::ZSH &&
+    command.words.size() > 1)
+  {
+    // zsh's print -v NAME assigns NAME rather than printing.
+    for(std::size_t i = 1; i < command.words.size(); ++i)
+    {
+      const auto word = static_text(command.words[i]);
+      if(!word.has_value())
+        unsupported(loc, "zsh print with an option that is an expansion");
+      if(*word == "--" || word->empty() || (*word)[0] != '-')
+        break;
+      if(word->find('v') != std::string::npos)
+        unsupported(loc, "print -v, which assigns a variable");
+    }
+  }
   if(
     name == "printf" && command.words.size() > 1 &&
     (program.dialect == shell_dialectt::BASH ||

@@ -1,0 +1,10 @@
+CORE
+zsh.zsh
+
+^EXIT=6$
+^SIGNAL=0$
+print -v, which assigns a variable
+--
+^VERIFICATION
+--
+zsh's print -v assigns a variable.

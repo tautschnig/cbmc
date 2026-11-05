@@ -1,0 +1,10 @@
+CORE
+main.mksh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+print is an output builtin in mksh and zsh.
