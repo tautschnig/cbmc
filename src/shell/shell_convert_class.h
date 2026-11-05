@@ -1477,9 +1477,14 @@ private:
   /// dash; chosen at startup.
   symbol_exprt posix_increments()
   {
+    posix_increments_used = true;
     return global_symbol(
       "shell::posix_increments", "posix_increments", bool_typet{});
   }
+  /// Whether posix_increments() was used: looking the symbol up would
+  /// intern its name, which changes the order of identifiers, to which
+  /// the refined string solver is sensitive.
+  bool posix_increments_used = false;
   symbol_exprt exited()
   {
     return global_symbol("shell::exited", "exited", bool_typet{});
