@@ -345,6 +345,9 @@ private:
     // IFS has no symbol (see shell_convert_ifs.cpp).
     if(name == "IFS")
       unsupported(loc, "this use of IFS");
+    // RANDOM has no symbol either (see expand_parameter).
+    if(name == "RANDOM")
+      unsupported(loc, "this use of RANDOM");
     variables.insert(name);
     return global_symbol("shell::var::" + name, name, string_type());
   }

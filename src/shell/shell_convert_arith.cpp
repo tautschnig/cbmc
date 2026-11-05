@@ -137,6 +137,19 @@ exprt shell_convertert::arith(
     return from_integer(expr.value, type);
   }
   case kindt::VARIABLE:
+    if(expr.name == "RANDOM")
+    {
+      // Each read is a new number (see expand_parameter).
+      shell_word_partt part;
+      part.kind = shell_word_partt::kindt::PARAMETER;
+      part.text = expr.name;
+      part.location = loc;
+      return arith_read(
+        expr.name,
+        expand_parameter(part, shell_word_contextt::ASSIGNMENT, true, dest),
+        dest,
+        loc);
+    }
     check_parameter_name(expr.name, loc);
     // bash and zsh apply -u to names in arithmetic; dash and mksh do not.
     if(

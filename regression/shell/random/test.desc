@@ -1,0 +1,11 @@
+CORE
+main.bash
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+In bash, mksh and zsh, RANDOM expands to a number from 0 to 32767;
+assigning it seeds it.

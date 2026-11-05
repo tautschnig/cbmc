@@ -72,7 +72,7 @@ void shell_convertert::check_parameter_name(
   const source_locationt &loc)
 {
   static const std::set<std::string> special_everywhere{
-    "LINENO", "RANDOM", "SECONDS", "_"};
+    "LINENO", "SECONDS", "_"};
   static const std::set<std::string> special_bash{
     "BASH_ARGC",    "BASH_ARGV",     "BASH_COMMAND", "BASH_LINENO",
     "BASH_SOURCE",  "BASH_SUBSHELL", "BASHPID",      "EPOCHREALTIME",
@@ -124,6 +124,10 @@ void shell_convertert::assign_variable(
   // ordinary variable. Reading it is not supported, so that what is
   // assigned does not matter.
   if(name == "_")
+    return;
+  // Assigning RANDOM seeds it, except in dash, where it is an ordinary
+  // variable: its expansions do not depend on it (see expand_parameter).
+  if(name == "RANDOM")
     return;
   // Expansion results are always set.
   assign(dest, variable(name, loc), value, loc);

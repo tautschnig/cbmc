@@ -1,0 +1,12 @@
+CORE
+sh.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+In dash, RANDOM is an ordinary variable, which may come from the
+environment with any value.

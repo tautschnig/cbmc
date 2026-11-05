@@ -415,6 +415,32 @@ exprt shell_convertert::expand_parameter(
       if(op.empty() || op[0] == '%' || op[0] == '#')
         check_nounset(value, part.text, dest, loc);
     }
+    else if(part.text == "RANDOM")
+    {
+      // A new number from 0 to 32767 at each expansion, except in dash,
+      // where RANDOM is an ordinary variable: the POSIX dialect allows
+      // any value, set or unset.
+      if(
+        !part.parameter_operator.empty() &&
+        part.parameter_operator.back() == '=')
+        unsupported(loc, "assigning to RANDOM in an expansion");
+      if(program.dialect == shell_dialectt::POSIX)
+        value = environment_string(dest, loc);
+      else
+      {
+        const symbol_exprt number = temporary(integer_type(), dest, loc);
+        assign(dest, number, nondet(integer_type(), loc), loc);
+        add(
+          dest,
+          code_assumet{and_exprt{
+            binary_relation_exprt{
+              number, ID_ge, from_integer(0, integer_type())},
+            binary_relation_exprt{
+              number, ID_le, from_integer(32767, integer_type())}}},
+          loc);
+        value = from_integer_expr(number, dest, loc);
+      }
+    }
     else if(const auto literal = known_literal(part))
     {
       check_parameter_name(part.text, loc);
