@@ -1,0 +1,11 @@
+CORE
+main.bash
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Process substitution runs its list in a subshell and expands to a
+/dev/fd file name; bash's $[...] is $((...)).

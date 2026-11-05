@@ -1,3 +1,3 @@
 #!/bin/bash
-cat <(ls)
-x=$[1 + 1]
+echo ${!x}
+coproc cat

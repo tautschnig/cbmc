@@ -729,16 +729,20 @@ private:
     else if(t == "ArithmExp")
     {
       reject_fields(
-        part,
-        {{"Bracket", "$[...] arithmetic (bash)"},
-         {"Unsigned", "$((# ...)) unsigned arithmetic (mksh)"}});
+        part, {{"Unsigned", "$((# ...)) unsigned arithmetic (mksh)"}});
       result.kind = kindt::ARITHMETIC;
-      result.text = arithmetic_source(part);
+      // $[expression] is an old form of $((expression)) in bash.
+      result.text = arithmetic_source(part, flag(part, "Bracket"));
     }
     else if(t == "ExtGlob")
       unsupported(part, "extended glob pattern (bash/mksh/zsh)");
     else if(t == "ProcSubst")
-      unsupported(part, "process substitution (bash/zsh)");
+    {
+      result.kind = kindt::COMMAND_SUBSTITUTION;
+      result.process_substitution = true;
+      result.commands =
+        std::make_shared<shell_command_listt>(read_statements(part["Stmts"]));
+    }
     else if(t == "BraceExp")
       unsupported(part, "brace expansion (bash/mksh/zsh)");
     else
@@ -887,18 +891,19 @@ private:
     return result;
   }
 
-  std::string arithmetic_source(const jsont &part)
+  std::string arithmetic_source(const jsont &part, bool bracket = false)
   {
     auto left = string2optional_size_t(part["Left"]["Offset"].value);
     auto right = string2optional_size_t(part["Right"]["Offset"].value);
+    const std::string open = bracket ? "$[" : "$((";
     if(
-      !left.has_value() || !right.has_value() || *left + 3 > *right ||
-      *right > source.size() || source.compare(*left, 3, "$((") != 0)
+      !left.has_value() || !right.has_value() || *left + open.size() > *right ||
+      *right > source.size() || source.compare(*left, open.size(), open) != 0)
     {
       unsupported(part, "arithmetic expansion with unexpected source offsets");
       return {};
     }
-    return source.substr(*left + 3, *right - (*left + 3));
+    return source.substr(*left + open.size(), *right - (*left + open.size()));
   }
 };
 } // namespace

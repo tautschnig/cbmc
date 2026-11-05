@@ -125,6 +125,33 @@ exprt shell_convertert::expand_command_substitution(
   code_blockt &dest)
 {
   const source_locationt &loc = part.location;
+  if(part.process_substitution)
+  {
+    // <(list) and >(list) run the list asynchronously, as list & does,
+    // and expand to the name of a file connected to it (/dev/fd/N in
+    // bash and zsh on Linux).
+    run_in_subshell(
+      loc,
+      dest,
+      [&](code_blockt &body)
+      {
+        if(part.commands != nullptr)
+          convert_list(*part.commands, body);
+      });
+    const symbol_exprt fd = temporary(integer_type(), dest, loc);
+    assign(dest, fd, nondet(integer_type(), loc), loc);
+    add(
+      dest,
+      code_assumet{and_exprt{
+        binary_relation_exprt{fd, ID_ge, from_integer(3, integer_type())},
+        binary_relation_exprt{fd, ID_le, from_integer(65535, integer_type())}}},
+      loc);
+    return concat(
+      string_literal("/dev/fd/", loc),
+      from_integer_expr(fd, dest, loc),
+      dest,
+      loc);
+  }
   // dash, mksh, busybox, and yash keep $? until the command completes;
   // bash and zsh set it to the status of the substitution at once.
   const bool keep_status = program.dialect == shell_dialectt::POSIX ||

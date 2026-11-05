@@ -80,6 +80,10 @@ struct shell_word_partt
   /// shell_commandt is incomplete here.
   std::shared_ptr<shell_command_listt> commands;
 
+  /// COMMAND_SUBSTITUTION: <(list) or >(list), process substitution
+  /// (bash, zsh), rather than $(list).
+  bool process_substitution = false;
+
   source_locationt location;
 };
 
