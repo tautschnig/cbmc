@@ -1083,6 +1083,50 @@ bounds the inputs of refined strings only.
   expansion or `eval` report; 24 are not decided with `--unwind 3` in 120
   seconds, as their field splitting is costly for the solvers.
 
+### 7.8 The remaining census blockers (2026-11-06)
+
+Each construct below was the first unsupported one of at least 20
+scripts of the census.
+- **IFS** (supersedes 7.7's restriction). Its value is tracked during
+  conversion. Where it is not known, as in a function or after
+  `IFS="$saved"`, the ghosts `shell::ifs_default` and `shell::ifs_unset`
+  record whether it splits as by default, which splitting and `$IFS`
+  check. Values not known during conversion are split at an IFS of white
+  space, or of bytes that are not white space; mixed IFS values are
+  checked to be absent. `local IFS` saves and restores the ghosts.
+- **`read [-r] NAME...`** assigns values without newlines, and with -r
+  the variables but the last get no byte of IFS. `IFS= read` changes the
+  splitting for that read only.
+- **`$@`.** `x"$@"y` follows dash, bash, busybox, mksh and zsh, which
+  agree. Unquoted `$@` splits each parameter.
+- **Redirections** of compound commands, and of commands without a
+  name, may fail with a non-zero status. No shell exits, although XCU
+  2.8.1 says it shall.
+- **Pathname expansion** in lists of fields yields the word itself, or
+  1 to N+1 unknown pathnames that match it as a case pattern. Unquoted
+  expansions in patterns are checked to have no pattern characters or
+  backslashes, which shells treat differently.
+- **Builtins:** `cd`, `umask`, `type`, `kill`, `getopts` (with OPTIND,
+  OPTARG and its own position in grouped options), `return` at the top
+  level, `trap` (only EXIT traps run: the script is assumed to receive
+  no signals, see the assumptions in 7.1).
+- **Dialects.** The POSIX dialect stands for dash, busybox, and bash run
+  as sh. Several models had followed dash alone: `command -v` and `type`
+  for missing names (bash: 1), `local x` (busybox and bash unset x),
+  `shift` too far (busybox and bash continue). Each now allows every
+  behaviour.
+- **Refined strings** do not support strings read at symbolic array
+  indices, which `getopts` and `shift $n` first did. Those reads are now
+  at constant indices. The refined solver is also sensitive to the order
+  of identifiers: interning three unused names made the csv-loop kernel
+  take 40 s rather than 3 s.
+- **Census.** 1,450 of 1,652 scripts convert, against 746. One script
+  (ufw-init) now exceeds the census's 60 s conversion limit: dynamic
+  command names in loops are converted once per modelled builtin.
+  The next blockers each affect fewer than 20 scripts: redirections
+  with expansions that have side effects (19), `$@` as a command name
+  (15), `${*...}` with an operator (12), and `$_` (10).
+
 ---
 
 ## 8. Bibliographic details for key references
