@@ -51,27 +51,37 @@ Author: Michael Tautschnig
 
 #include <algorithm>
 #include <cstdlib>
+#include <map>
 #include <unordered_set>
 #include <vector>
 
 static const char *const write_flags_id = "go::$race_w";
 static const char *const read_flags_id = "go::$race_r";
 
-/// Whether \p function_id is a Go function whose accesses are checked.
-static bool is_checked_function(const irep_idt &function_id)
+/// How the accesses of a function are instrumented.
+enum class modet
+{
+  /// Not at all (not Go, or the check's own functions).
+  NONE,
+  /// Every access is announced and checked: the program, the runtime
+  /// helpers (cprover/rt) and the front-end's generated functions.
+  CHECKED,
+  /// The models of sync and sync/atomic, which synchronise: the accesses
+  /// through parameters in their atomic sections are announced without
+  /// checks (they race with plain accesses, not with each other), and
+  /// outside atomic sections only rt.RaceRead/RaceWrite are accesses (as
+  /// gc's annotations of the real implementations).
+  MODEL
+};
+
+static modet mode_of(const irep_idt &function_id)
 {
   const std::string id = id2string(function_id);
-  if(id.rfind("go::", 0) != 0)
-    return false;
-  // The runtime and the models that synchronise; the front-end's generated
-  // functions (dispatchers, equality, panics).
-  for(const char *prefix :
-      {"go::cprover/rt.", "go::sync.", "go::sync/atomic.", "go::$"})
-  {
-    if(id.rfind(prefix, 0) == 0)
-      return false;
-  }
-  return true;
+  if(id.rfind("go::", 0) != 0 || id == "go::$race_fields")
+    return modet::NONE;
+  if(id.rfind("go::sync.", 0) == 0 || id.rfind("go::sync/atomic.", 0) == 0)
+    return modet::MODEL;
+  return modet::CHECKED;
 }
 
 /// The local variables whose address is taken (SPIKE: set by go_race_check
@@ -606,14 +616,10 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
   std::size_t instrumented = 0;
   for(auto &f : goto_model.goto_functions.function_map)
   {
-    // In the model of sync/atomic, the accesses of its atomic sections are
-    // announced, without checks: they race with plain accesses (which check
-    // the flags), not with each other.
-    const bool is_atomic_model =
-      id2string(f.first).rfind("go::sync/atomic.", 0) == 0;
-    const bool checked = is_checked_function(f.first);
-    if(!checked && !is_atomic_model)
+    const modet mode = mode_of(f.first);
+    if(mode == modet::NONE)
       continue;
+    const bool checked = mode == modet::CHECKED;
     goto_programt &body = f.second.body;
 
     // The instrumentation of accesses at location, made only if their guards
@@ -760,12 +766,54 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
       return target;
     };
 
-    std::size_t atomic_depth = 0;
-    // The beginning of the current atomic section, and the accesses that
-    // are made just before it: channel operations as gc's race detector
-    // sees them, and atomic operations.
-    goto_programt::targett section_begin = body.instructions.end();
-    std::vector<accesst> section_accesses;
+    // For each instruction, the ATOMIC_BEGIN of the outermost atomic
+    // section it is in (end() if none), by a forward data flow: sections
+    // may have several exits on different paths (a panic path, say), so
+    // that their extent is not a range of instructions.
+    std::map<const goto_programt::instructiont *, goto_programt::targett>
+      section_of;
+    {
+      using statet = std::pair<std::size_t, goto_programt::targett>;
+      std::map<const goto_programt::instructiont *, statet> before_state;
+      std::vector<std::pair<goto_programt::targett, statet>> work;
+      if(!body.instructions.empty())
+        work.push_back(
+          {body.instructions.begin(), {0, body.instructions.end()}});
+      while(!work.empty())
+      {
+        auto [target, in] = work.back();
+        work.pop_back();
+        if(!before_state.emplace(&*target, in).second)
+          continue;
+        statet out = in;
+        if(target->is_atomic_begin())
+        {
+          if(out.first++ == 0)
+            out.second = target;
+        }
+        else if(target->is_atomic_end() && out.first > 0)
+        {
+          if(--out.first == 0)
+            out.second = body.instructions.end();
+        }
+        for(const auto &successor : body.get_successors(target))
+          work.push_back({successor, out});
+      }
+      for(const auto &entry : before_state)
+        section_of.emplace(entry.first, entry.second.second);
+    }
+    const auto section_at = [&](goto_programt::targett target)
+    {
+      auto found = section_of.find(&*target);
+      return found == section_of.end() ? body.instructions.end()
+                                       : found->second;
+    };
+    // The accesses that are made just before each section: channel
+    // operations as gc's race detector sees them, and atomic operations.
+    std::map<
+      const goto_programt::instructiont *,
+      std::pair<goto_programt::targett, std::vector<accesst>>>
+      section_accesses;
     // Generated instructions (e.g., of map operations) may have no location:
     // their checks get the last one before them.
     source_locationt last_location;
@@ -774,43 +822,13 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
     {
       if(!it->source_location().get_file().empty())
         last_location = it->source_location();
-      if(it->is_atomic_begin())
-      {
-        if(atomic_depth++ == 0)
-        {
-          section_begin = it;
-          section_accesses.clear();
-        }
+      if(it->is_atomic_begin() || it->is_atomic_end())
         continue;
-      }
-      if(it->is_atomic_end())
+      const goto_programt::targett section = section_at(it);
+      if(section != body.instructions.end())
       {
-        // A section may have several exits (a panic path ends it early):
-        // an end followed by another one before the next beginning is one.
-        const auto is_early_exit = [&]
-        {
-          for(auto next = std::next(it); next != body.instructions.end();
-              ++next)
-          {
-            if(next->is_atomic_begin())
-              return false;
-            if(next->is_atomic_end())
-              return true;
-          }
-          return false;
-        };
-        if(atomic_depth == 1 && is_early_exit())
-          continue;
-        if(atomic_depth > 0 && --atomic_depth == 0 && !section_accesses.empty())
-        {
-          goto_programt before =
-            instrument(section_accesses, checked, last_location);
-          insert_before(section_begin, before);
-        }
-        continue;
-      }
-      if(atomic_depth > 0)
-      {
+        auto &entry = section_accesses[&*section];
+        entry.first = section;
         if(it->is_assign())
         {
           if(checked)
@@ -819,7 +837,7 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
             const exprt chan = chan_of_operation(it->assign_lhs(), write);
             if(chan.is_not_nil())
             {
-              section_accesses.push_back(
+              entry.second.push_back(
                 {dereference_exprt{chan}, write, true_exprt{}});
             }
           }
@@ -830,17 +848,33 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
             collect(ns, it->assign_rhs(), false, true_exprt{}, accesses);
             for(const auto &a : accesses)
               if(is_through_parameter(ns, a.lvalue))
-                section_accesses.push_back(a);
+                entry.second.push_back(a);
           }
         }
         continue;
       }
-      if(!checked)
-        continue;
-
       std::vector<accesst> accesses;
       const exprt always = true_exprt{};
-      if(it->is_assign())
+      // rt.RaceRead/RaceWrite (go_convert.cpp): calls of go::$race_read and
+      // go::$race_write with the variable's address.
+      const irep_idt callee =
+        it->is_function_call() && it->call_function().id() == ID_symbol
+          ? to_symbol_expr(it->call_function()).get_identifier()
+          : irep_idt{};
+      if(
+        (callee == "go::$race_read" || callee == "go::$race_write") &&
+        it->call_arguments().size() == 1)
+      {
+        collect(
+          ns,
+          dereference_exprt{skip_typecasts(it->call_arguments().front())},
+          callee == "go::$race_write",
+          always,
+          accesses);
+      }
+      else if(!checked)
+        continue;
+      else if(it->is_assign())
       {
         collect(ns, it->assign_lhs(), true, always, accesses);
         collect(ns, it->assign_rhs(), false, always, accesses);
@@ -889,6 +923,14 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
         it->source_location().get_file().empty() ? last_location
                                                  : it->source_location());
       it = insert_before(it, before);
+    }
+    for(auto &entry : section_accesses)
+    {
+      if(entry.second.second.empty())
+        continue;
+      goto_programt before = instrument(
+        entry.second.second, checked, entry.second.first->source_location());
+      insert_before(entry.second.first, before);
     }
     body.update();
   }
