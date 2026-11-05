@@ -1,0 +1,10 @@
+CORE
+bash.bash
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+In bash, break in a function called from a loop does nothing.

@@ -586,7 +586,20 @@ void shell_convertert::convert_break_continue(
     n = std::stoul(*text);
   }
   if(loops.empty())
-    unsupported(loc, "break or continue outside a loop");
+  {
+    // Outside a loop, dash, bash, busybox and mksh do nothing, with status
+    // 0 (zsh does not), except that busybox leaves the loop that calls a
+    // function or dot script with break or continue.
+    if(
+      program.dialect == shell_dialectt::ZSH ||
+      ((in_function || in_dot_script) &&
+       program.dialect == shell_dialectt::POSIX))
+    {
+      unsupported(loc, "break or continue outside a loop");
+    }
+    set_status(dest, 0, loc);
+    return;
+  }
   // A count larger than the number of loops leaves the outermost one.
   const shell_loop_labelst &target =
     loops[loops.size() - std::min(n, loops.size())];

@@ -1,0 +1,11 @@
+CORE
+function.sh
+
+^EXIT=6$
+^SIGNAL=0$
+break or continue outside a loop
+--
+^VERIFICATION
+--
+In a function called from a loop, break leaves that loop in busybox and
+does nothing in dash and bash as sh.
