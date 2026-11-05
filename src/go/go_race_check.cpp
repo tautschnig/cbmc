@@ -51,6 +51,7 @@ Author: Michael Tautschnig
 
 #include <algorithm>
 #include <cstdlib>
+#include <unordered_set>
 #include <vector>
 
 static const char *const write_flags_id = "go::$race_w";
@@ -73,6 +74,26 @@ static bool is_checked_function(const irep_idt &function_id)
   return true;
 }
 
+/// The local variables whose address is taken (SPIKE: set by go_race_check
+/// for the duration of the pass).
+static std::unordered_set<irep_idt> address_taken;
+
+/// Adds the symbols whose address \p expr takes to address_taken.
+static void find_address_taken(const exprt &expr)
+{
+  expr.visit_pre(
+    [](const exprt &e)
+    {
+      if(e.id() != ID_address_of)
+        return;
+      const exprt *object = &to_address_of_expr(e).object();
+      while(object->id() == ID_member || object->id() == ID_index)
+        object = &object->operands().front();
+      if(object->id() == ID_symbol)
+        address_taken.insert(to_symbol_expr(*object).get_identifier());
+    });
+}
+
 /// Whether \p symbol may be accessed by more than one goroutine.
 static bool is_shared_symbol(const namespacet &ns, const symbol_exprt &symbol)
 {
@@ -85,8 +106,13 @@ static bool is_shared_symbol(const namespacet &ns, const symbol_exprt &symbol)
   const symbolt *s;
   if(ns.lookup(id, s))
     return false;
-  return s->is_static_lifetime && !s->is_thread_local && !s->is_type &&
-         s->type.id() != ID_code;
+  if(s->is_type || s->type.id() == ID_code)
+    return false;
+  // A local whose address is taken may be accessed through the address by
+  // another goroutine.
+  if(address_taken.count(id) != 0)
+    return true;
+  return s->is_static_lifetime && !s->is_thread_local;
 }
 
 /// Whether \p expr is an lvalue in memory that other goroutines may
@@ -566,6 +592,15 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
     goto_functiont &function =
       goto_model.goto_functions.function_map[fields_id];
     function.body.swap(body);
+  }
+
+  address_taken.clear();
+  for(const auto &f : goto_model.goto_functions.function_map)
+  {
+    for(const auto &instruction : f.second.body.instructions)
+    {
+      instruction.apply([](const exprt &e) { find_address_taken(e); });
+    }
   }
 
   std::size_t instrumented = 0;
