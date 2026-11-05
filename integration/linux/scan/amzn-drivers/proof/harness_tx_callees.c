@@ -228,17 +228,6 @@ int rte_log(uint32_t level, uint32_t logtype, const char *format, ...)
 	return 0;
 }
 
-/* rte_pktmbuf_read is `static inline` in rte_mbuf.h, and the harness
- * translation unit records the symbol without a body because it never calls
- * it directly.  The call from ena_xmit_mbuf's LLQ push path then resolves to
- * that bodyless copy, and under DFCC a bodyless callee cuts the path, which
- * leaves the loop-contract obligations UNDECIDED rather than failing (the
- * same effect as issue A).  Taking the address forces the compiler to emit
- * the body, so the proof uses DPDK's REAL implementation rather than a stub
- * -- strictly better than stubbing it. */
-static const void *(*const force_pktmbuf_read_emission)(
-	const struct rte_mbuf *, uint32_t, uint32_t, void *) =
-	rte_pktmbuf_read;
 
 static struct rte_mbuf *make_wf_mbuf(uint16_t nsegs)
 {

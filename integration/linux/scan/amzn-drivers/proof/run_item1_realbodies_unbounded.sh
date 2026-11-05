@@ -29,8 +29,12 @@ mkdir -p "$OUT"
 
 cd "$DPDK/build-ql"
 RM=""
+# rte_pktmbuf_read is deliberately NOT in this list: it is packet-data access
+# on the LLQ push path, not mempool machinery.  Removing its body cut that
+# sub-path silently (DFCC issue A), so the body is supplied instead by
+# pktmbuf_read_stub.c, which forwards to DPDK's own inline definition.
 for f in rte_pktmbuf_free rte_pktmbuf_free_seg rte_pktmbuf_prefree_seg \
-         rte_pktmbuf_read rte_pktmbuf_alloc_bulk rte_pktmbuf_detach \
+         rte_pktmbuf_alloc_bulk rte_pktmbuf_detach \
          rte_mempool_put rte_mempool_put_bulk rte_mempool_get_bulk \
          rte_mempool_generic_put rte_mempool_generic_get \
          rte_mempool_do_generic_put rte_mempool_do_generic_get \
@@ -45,7 +49,7 @@ for V in 0 1; do
   ( ulimit -v 32000000
     "$BIN/goto-cc" $(cat "$OUT/flags.txt") -DPEDANTIC \
       -DMAX_BURST=$BURST -DMAX_SEGS=$SEGS -DRING_SIZE=$RING -DVACUITY_CHECK=$V \
-      "$HERE/harness_tx_callees.c" "$HERE/rdtsc_stub.c" -o "$OUT/i1$TAG.gb" )
+      "$HERE/harness_tx_callees.c" "$HERE/rdtsc_stub.c" "$HERE/pktmbuf_read_stub.c" -o "$OUT/i1$TAG.gb" )
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/i1$TAG.gb" "$OUT/i1${TAG}_rm.gb" >/dev/null 2>&1 )
   ( ulimit -v 32000000; "$BIN/goto-instrument" --add-library "$OUT/i1${TAG}_rm.gb" "$OUT/i1${TAG}_lib.gb" >/dev/null 2>&1 )
   ( ulimit -v 32000000
