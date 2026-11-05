@@ -9,6 +9,9 @@ of the system and the surrounding infrastructure.
 ## Symex ready goto form
 \subpage symex-ready-goto
 
+## Resolving program structure that depends on string values
+\subpage dynamic-structure-resolution
+
 ## Release & Packaging
 
 * \subpage release-process
