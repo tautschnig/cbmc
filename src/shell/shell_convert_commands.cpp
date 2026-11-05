@@ -1727,14 +1727,45 @@ void shell_convertert::convert_test_command(
     --end;
   }
   std::vector<test_argumentt> args;
+  // An operand with pathname expansion yields one or more fields.
+  std::optional<field_listt> glob_fields;
   for(std::size_t i = 1; i < end; ++i)
   {
     const auto &word = command.words[i];
+    if(pathname_pattern(word).has_value())
+    {
+      if(glob_fields.has_value())
+        unsupported(loc, "test with several operands with pathname expansion");
+      glob_fields = expand_fields(
+        command.words.begin() + i, command.words.begin() + i + 1, dest, loc);
+      // A pathname may be any text, even an operator.
+      args.push_back(
+        {index_exprt{glob_fields->array, from_integer(0, index_type())}, {}});
+      continue;
+    }
     args.push_back(
       {expand_word(word, shell_word_contextt::FIELD, dest, loc),
        static_text(word)});
   }
-  test(std::move(args), dest, loc);
+  if(!glob_fields.has_value())
+  {
+    test(std::move(args), dest, loc);
+    return;
+  }
+  // With several pathnames the arguments are others; their results are
+  // unspecified or errors, but a pathname may be an operator: any status
+  // of test.
+  code_blockt one;
+  test(std::move(args), one, loc);
+  code_blockt several;
+  nondet_status(several, 2, loc);
+  add(
+    dest,
+    code_ifthenelset{
+      equal_exprt{glob_fields->count, from_integer(1, count_type())},
+      std::move(one),
+      std::move(several)},
+    loc);
 }
 
 /// __CPROVER_assert and __CPROVER_assume take the arguments of test.

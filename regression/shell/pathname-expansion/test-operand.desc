@@ -1,0 +1,14 @@
+CORE
+test-operand.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: SUCCESS$
+^\[assertion\.2\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+^\[shell-unsupported\.[0-9]+\] .*: FAILURE$
+--
+An operand of test with pathname expansion: one pathname, or the word
+itself, is tested; several pathnames make test fail or report an error.
