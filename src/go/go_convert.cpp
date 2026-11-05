@@ -2894,6 +2894,58 @@ exprt go_convertert::convert_unsafe_conversion(
   return nil_exprt{};
 }
 
+exprt go_convertert::convert_slice_to_array(
+  const exprt &value,
+  const typet &type,
+  const source_locationt &location)
+{
+  // Go1.27 §Conversions_from_slice_to_array_or_array_pointer: "Converting a
+  // slice to an array yields an array containing the elements of the
+  // underlying array of the slice. Similarly, converting a slice to an
+  // array pointer yields a pointer to the underlying array of the slice. In
+  // both cases, if the length of the slice is less than the length of the
+  // array, a run-time panic occurs."
+  if(!is_go_slice(value.type()))
+    return nil_exprt{};
+  const bool to_pointer = type.id() == ID_pointer;
+  const typet &array = to_pointer ? to_pointer_type(type).base_type() : type;
+  if(array.id() != ID_array)
+    return nil_exprt{};
+  const array_typet &array_type = to_array_type(array);
+  const auto length = numeric_cast<mp_integer>(array_type.size());
+  if(!length.has_value())
+    return nil_exprt{};
+
+  code_blockt prefix;
+  const exprt slice = evaluate_once(value, location, prefix);
+  const struct_typet &slice_type = to_struct_type(slice.type());
+  const member_exprt len{slice, slice_type.get_component("len")};
+  const member_exprt data{slice, slice_type.get_component("data")};
+  // gc's message also has the slice's length.
+  add_panic(
+    prefix,
+    binary_relation_exprt{len, ID_ge, from_integer(*length, len.type())},
+    "slice-to-array",
+    "runtime error: cannot convert slice to array or pointer to array "
+    "with length " +
+      integer2string(*length),
+    location);
+  const pointer_typet pointer{array_type, config.ansi_c.pointer_width};
+  exprt result;
+  if(to_pointer)
+  {
+    // The data pointer: nil for a nil slice ("t1 == nil" for
+    // "(*[0]string)(t)").
+    result = typecast_exprt{data, pointer};
+  }
+  else if(*length == 0)
+    result = *zero_initializer(array_type, location, ns);
+  else
+    result = dereference_exprt{typecast_exprt{data, pointer}};
+  result.add_source_location() = location;
+  return with_prefix(std::move(result), prefix, location);
+}
+
 exprt go_convertert::convert_conversion(const irept &call)
 {
   // Go1.27 §Conversions: "When converting between integer types, if the
@@ -2931,6 +2983,9 @@ exprt go_convertert::convert_conversion(const irept &call)
     result.add_source_location() = location_of(call);
     return with_go_type(std::move(result), type);
   }
+  result = convert_slice_to_array(value, type, location_of(call));
+  if(result.is_not_nil())
+    return with_go_type(std::move(result), type);
   result = convert_composite(value, type, ns);
   if(result.is_nil())
   {

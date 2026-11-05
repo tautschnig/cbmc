@@ -525,6 +525,13 @@ private:
   /// A conversion of \p value to \p type that involves unsafe.Pointer, or
   /// nil if it does not.
   exprt convert_unsafe_conversion(const exprt &value, const typet &type);
+  /// A conversion of the slice \p value to the array or array pointer type
+  /// \p type (Go1.27 §Conversions_from_slice_to_array_or_array_pointer),
+  /// or nil if it is not one.
+  exprt convert_slice_to_array(
+    const exprt &value,
+    const typet &type,
+    const source_locationt &location);
   exprt convert_append(const irept &call);
   /// Add to \p grow the choice of the capacity of the array that append
   /// allocates for \p length elements of a slice of type \p slice_type

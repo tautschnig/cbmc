@@ -1,0 +1,11 @@
+CORE
+main.go
+--unwind 6 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+not supported yet
+--
+Go1.27 §Conversions_from_slice_to_array_or_array_pointer
