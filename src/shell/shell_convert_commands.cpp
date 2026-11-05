@@ -1089,6 +1089,24 @@ void shell_convertert::convert_assignments_only(
       shell_word_contextt::ASSIGNMENT,
       dest,
       assignment.location);
+    if(
+      program.dialect == shell_dialectt::POSIX && !assignment.append &&
+      is_bash_readonly_id(assignment.name))
+    {
+      // dash and busybox assign it; for bash run as sh it is read-only,
+      // and the error makes the shell exit.
+      code_blockt as_dash;
+      assign(as_dash, bash_readonly_id(assignment.name), value, loc);
+      code_blockt as_bash;
+      exit_shell(as_bash, true, loc);
+      add(
+        dest,
+        code_ifthenelset{
+          nondet(bool_typet{}, loc), std::move(as_bash), std::move(as_dash)},
+        loc);
+      known_literals.erase(assignment.name);
+      continue;
+    }
     // name+=value appends to the value.
     if(assignment.append)
     {

@@ -1,10 +1,11 @@
 CORE
 assign.sh
 
-^EXIT=6$
+^EXIT=0$
 ^SIGNAL=0$
-variable UID other than read, which is read-only in bash
+^VERIFICATION SUCCESSFUL$
 --
-^VERIFICATION
+^warning: ignoring
 --
-dash allows assigning UID, which is read-only in bash run as sh.
+dash and busybox assign UID and EUID; bash run as sh makes them
+read-only, and the assignment error makes the shell exit.
