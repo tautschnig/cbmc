@@ -186,20 +186,25 @@ func (e *encoder) derivedType(t types.Type, depth int) {
 }
 
 // identical is types.Identical, for which the types of a package in
-// checkedAgainstReal are those of its model (see replacementType): the
-// program's types mention the real ones, the model's own code its.
+// checkedAgainstReal are those of its model (see replacementType), and
+// those of a source model those of the real package (see realType): the
+// program's types mention the real ones, the model's own code its. (For
+// example, the signature of a method of an interface type that a source
+// model declares mentions the model's types, while the method sets of the
+// real types that implement it, from export data, mention the real ones.)
 func (e *encoder) identical(x, y types.Type) bool {
 	if types.Identical(x, y) {
 		return true
 	}
-	if e.loader == nil || !e.reflects() {
+	if e.loader == nil {
 		return false
 	}
 	return types.Identical(e.replaced(x), e.replaced(y))
 }
 
 // replaced returns t with the named types of the packages in
-// checkedAgainstReal replaced by their models' (see replacementType).
+// checkedAgainstReal replaced by their models' (see replacementType), and
+// those of source models by the real packages' (see realType).
 func (e *encoder) replaced(t types.Type) types.Type {
 	if r, ok := e.replacedCache[t]; ok {
 		return r
@@ -235,7 +240,7 @@ func (e *encoder) replace(t types.Type) types.Type {
 				return r
 			}
 		}
-		return t
+		return e.realType(x)
 	case *types.Pointer:
 		if el := e.replaced(x.Elem()); el != x.Elem() {
 			return types.NewPointer(el)
