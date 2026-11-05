@@ -1,0 +1,12 @@
+CORE
+builtin-here-sh.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+^\[shell-unsupported\.[0-9]+\] .*: FAILURE$
+--
+For a regular builtin, dash and busybox fail the redirection; bash run as sh exits.

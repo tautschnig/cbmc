@@ -1492,9 +1492,12 @@ private:
     const exprt &subject,
     code_blockt &dest,
     const source_locationt &loc);
+  /// Expand the redirections of \p command for their side effects; \p kind
+  /// is that of the command, which is a special builtin if \p special.
   void check_redirections(
     const shell_commandt &command,
     shell_command_kindt kind,
+    bool special,
     code_blockt &dest);
   /// Whether a redirection of \p command can fail: opening a file,
   /// rather than duplicating a standard descriptor or /dev/null.

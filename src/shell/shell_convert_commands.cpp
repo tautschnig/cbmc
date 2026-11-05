@@ -54,6 +54,22 @@ static const std::set<std::string> unsupported_builtins{
   "nameref", "autoload",  "setopt",   "unsetopt", "emulate", "print",
   "whence",  "functions", "zmodload", "caller",   "compgen", "complete"};
 
+/// Whether \p kind is a special builtin (XCU 2.15).
+static bool is_special(shell_command_kindt kind)
+{
+  return kind == shell_command_kindt::COLON ||
+         kind == shell_command_kindt::EXIT ||
+         kind == shell_command_kindt::EXPORT ||
+         kind == shell_command_kindt::UNSET ||
+         kind == shell_command_kindt::BREAK ||
+         kind == shell_command_kindt::CONTINUE ||
+         kind == shell_command_kindt::SHIFT ||
+         kind == shell_command_kindt::SET ||
+         kind == shell_command_kindt::RETURN ||
+         kind == shell_command_kindt::EXEC ||
+         kind == shell_command_kindt::DOT || kind == shell_command_kindt::TRAP;
+}
+
 shell_command_kindt shell_convertert::classify(const std::string &name) const
 {
   const auto it = builtins.find(name);
@@ -238,7 +254,7 @@ void shell_convertert::convert_foreground(
       // A function definition's redirections apply where it is called.
       unsupported(command.location, "redirection of a compound command");
     }
-    check_redirections(command, shell_command_kindt::COLON, dest);
+    check_redirections(command, shell_command_kindt::COLON, false, dest);
     // A failed redirection skips the compound command with a non-zero
     // status, in all shells; under -e, all but busybox then exit, other
     // than for subshells, where they all do.
@@ -794,51 +810,138 @@ static bool is_harmless_redirection(const shell_redirectt &redirect)
 void shell_convertert::check_redirections(
   const shell_commandt &command,
   shell_command_kindt kind,
+  bool special,
   code_blockt &dest)
 {
   // For utilities, bash and zsh expand the redirections in the child
   // process, and dash, busybox and mksh in the shell: only command
   // substitutions, which change nothing in the shell either way, are the
-  // same. Other commands expand them in the shell.
+  // same, and the checks of -u (see below). Other commands expand them in
+  // the shell.
   const bool external = kind == shell_command_kindt::EXTERNAL;
   bool expanded = false;
+  // Words whose only side effects that change the shell are the checks
+  // of -u.
+  std::vector<const shell_wordt *> nounset_only;
   for(const auto &redirect : command.redirects)
   {
     for(const shell_wordt *word : {&redirect.target, &redirect.here_document})
     {
       if(!has_side_effects(*word))
         continue;
-      if(external && has_state_side_effects(*word))
+      expanded = true;
+      if(!has_state_side_effects(*word))
+        continue;
+      const bool saved = nounset_possible;
+      nounset_possible = false;
+      const bool others = has_state_side_effects(*word);
+      nounset_possible = saved;
+      if(!others)
+        nounset_only.push_back(word);
+      else if(external)
       {
         unsupported(
           redirect.location,
           "redirection of a utility with an expansion with side effects");
       }
-      expanded = true;
     }
   }
   if(!expanded)
     return;
   // The words are expanded first (XCU 2.9.1.1), which only matters where
-  // both have side effects.
+  // both have side effects, other than where all of them are the checks
+  // of -u, which make the shell exit in either order.
+  const auto only_nounset = [this](const shell_wordt &word)
+  {
+    const bool saved = nounset_possible;
+    nounset_possible = false;
+    const bool others = has_side_effects(word);
+    nounset_possible = saved;
+    return !others;
+  };
   bool words = false;
+  bool all_nounset = true;
   for(const auto &word : command.words)
+  {
     words |= has_side_effects(word);
+    all_nounset &= only_nounset(word);
+  }
   for(const auto &assignment : command.assignments)
+  {
     words |= has_side_effects(assignment.value);
-  if(words)
+    all_nounset &= only_nounset(assignment.value);
+  }
+  for(const auto &redirect : command.redirects)
+  {
+    all_nounset &=
+      only_nounset(redirect.target) && only_nounset(redirect.here_document);
+  }
+  if(words && !all_nounset)
   {
     unsupported(
       command.location,
       "expansions with side effects in both the words and the redirections");
   }
+  const bool posix = program.dialect == shell_dialectt::POSIX;
+  const bool mksh = program.dialect == shell_dialectt::MKSH;
+  const bool bash_or_zsh = !posix && !mksh;
   for(const auto &redirect : command.redirects)
   {
     for(const shell_wordt *word : {&redirect.target, &redirect.here_document})
     {
-      if(has_side_effects(*word))
-        expand_word(
-          *word, shell_word_contextt::IGNORED, dest, redirect.location);
+      if(!has_side_effects(*word))
+        continue;
+      const source_locationt &rloc = redirect.location;
+      const auto in_shell = [&](code_blockt &block)
+      { expand_word(*word, shell_word_contextt::IGNORED, block, rloc); };
+      // With -u, an unset parameter is an error. Where it makes the shell
+      // exit, the word is expanded in the shell; where the shell goes on,
+      // in a subshell, after which the command runs or fails.
+      bool may_exit = true;
+      bool may_go_on = false;
+      if(
+        std::find(nounset_only.begin(), nounset_only.end(), word) !=
+        nounset_only.end())
+      {
+        const bool here_document = word == &redirect.here_document;
+        if(external && here_document)
+        {
+          // Every shell expands the here-document of a utility apart.
+          may_exit = false;
+          may_go_on = true;
+        }
+        else if(external)
+        {
+          // bash and zsh fail in the child process.
+          may_exit = !bash_or_zsh;
+          may_go_on = !mksh;
+        }
+        else if(here_document && !special)
+        {
+          // A failed redirection for dash, busybox and mksh.
+          may_exit = !mksh;
+          may_go_on = !bash_or_zsh;
+        }
+      }
+      if(!may_go_on)
+      {
+        in_shell(dest);
+        continue;
+      }
+      code_blockt apart;
+      run_in_subshell(rloc, apart, in_shell);
+      if(!may_exit)
+      {
+        dest.append(apart);
+        continue;
+      }
+      code_blockt shell;
+      in_shell(shell);
+      add(
+        dest,
+        code_ifthenelset{
+          nondet(bool_typet{}, rloc), std::move(apart), std::move(shell)},
+        rloc);
     }
   }
 }
@@ -1026,7 +1129,7 @@ void shell_convertert::convert_simple(
   {
     // A special builtin; a redirection that can fail would make the shell
     // exit.
-    check_redirections(command, kind, dest);
+    check_redirections(command, kind, true, dest);
     if(!redirection_may_fail(command))
     {
       convert_eval(command, dest);
@@ -1477,7 +1580,7 @@ void shell_convertert::convert_non_function(
     add(dest, code_assumet{false_exprt{}}, loc);
     return;
   }
-  check_redirections(command, kind, dest);
+  check_redirections(command, kind, is_special(kind), dest);
   if(
     name == "print" && program.dialect == shell_dialectt::ZSH &&
     command.words.size() > 1)
@@ -1539,14 +1642,7 @@ void shell_convertert::convert_non_function(
     convert_builtin(kind, command, dest);
     return;
   }
-  const bool special =
-    kind == shell_command_kindt::COLON || kind == shell_command_kindt::EXIT ||
-    kind == shell_command_kindt::EXPORT || kind == shell_command_kindt::UNSET ||
-    kind == shell_command_kindt::BREAK ||
-    kind == shell_command_kindt::CONTINUE ||
-    kind == shell_command_kindt::SHIFT || kind == shell_command_kindt::SET ||
-    kind == shell_command_kindt::RETURN || kind == shell_command_kindt::EXEC ||
-    kind == shell_command_kindt::DOT || kind == shell_command_kindt::TRAP;
+  const bool special = is_special(kind);
   with_redirections(
     command,
     special,
@@ -1565,14 +1661,7 @@ void shell_convertert::convert_builtin(
   // the command, as for other builtins.
   const bool persistent_assignments = program.dialect != shell_dialectt::BASH &&
                                       program.dialect != shell_dialectt::ZSH;
-  const bool special =
-    kind == shell_command_kindt::COLON || kind == shell_command_kindt::EXIT ||
-    kind == shell_command_kindt::EXPORT || kind == shell_command_kindt::UNSET ||
-    kind == shell_command_kindt::BREAK ||
-    kind == shell_command_kindt::CONTINUE ||
-    kind == shell_command_kindt::SHIFT || kind == shell_command_kindt::SET ||
-    kind == shell_command_kindt::RETURN || kind == shell_command_kindt::EXEC ||
-    kind == shell_command_kindt::DOT || kind == shell_command_kindt::TRAP;
+  const bool special = is_special(kind);
   if(
     !command.assignments.empty() && kind != shell_command_kindt::EXTERNAL &&
     kind != shell_command_kindt::OUTPUT && kind != shell_command_kindt::READ &&

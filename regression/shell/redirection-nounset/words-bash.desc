@@ -1,0 +1,13 @@
+CORE
+words-bash.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+^\[shell-unsupported\.[0-9]+\] .*: FAILURE$
+--
+The words are expanded first; their -u checks make the shell exit in
+either order.

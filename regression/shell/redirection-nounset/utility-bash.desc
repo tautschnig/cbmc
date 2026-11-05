@@ -1,0 +1,12 @@
+CORE
+utility-bash.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+^\[shell-unsupported\.[0-9]+\] .*: FAILURE$
+--
+bash expands it in the child process, which fails.

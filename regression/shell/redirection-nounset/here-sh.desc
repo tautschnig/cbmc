@@ -1,0 +1,12 @@
+CORE
+here-sh.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+^\[shell-unsupported\.[0-9]+\] .*: FAILURE$
+--
+Every shell expands the here-document of a utility apart from the shell.
