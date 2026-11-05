@@ -1,0 +1,14 @@
+CORE
+main.c
+--no-standard-checks
+^EXIT=10$
+^SIGNAL=0$
+^\[main.assertion.1\] .* known object: SUCCESS$
+^\[main.assertion.2\] .* integer address: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A program that declares __CPROVER_shadow_memory_incomplete learns that
+set_field or get_field could not resolve an object, rather than losing the
+field value silently.

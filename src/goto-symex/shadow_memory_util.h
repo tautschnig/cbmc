@@ -192,12 +192,15 @@ bool check_value_set_contains_only_null_ptr(
 ///    set, then we get back an `if e1 then e2 else (if e3 else e4...`
 ///    expression, where `e1`, `e3`, ... are guards (conditions) and `e2`, `e4`,
 ///    etc are the possible values of the object within the value set.
+///    \p complete is set to false if some object of the value set (or
+///    "unknown") has no shadow memory to take the value from.
 std::optional<exprt> get_shadow_memory(
   const exprt &expr,
   const std::vector<exprt> &value_set,
   const std::vector<shadow_memory_statet::shadowed_addresst> &addresses,
   const namespacet &ns,
   const messaget &log,
-  size_t &mux_size);
+  size_t &mux_size,
+  bool &complete);
 
 #endif // CPROVER_GOTO_SYMEX_SHADOW_MEMORY_UTIL_H

@@ -12,6 +12,7 @@ Author: Peter Schrammel
 #ifndef CPROVER_GOTO_SYMEX_SHADOW_MEMORY_H
 #define CPROVER_GOTO_SYMEX_SHADOW_MEMORY_H
 
+#include <util/cprover_prefix.h>
 #include <util/expr.h>
 #include <util/message.h>
 
@@ -24,6 +25,12 @@ Author: Peter Schrammel
 #define SHADOW_MEMORY_GET_FIELD "get_field"
 #define SHADOW_MEMORY_SET_FIELD "set_field"
 #define SHADOW_MEMORY_SYMBOL_PREFIX "__SM"
+/// A Boolean variable that, if the program declares it, set_field and
+/// get_field set when they cannot resolve the shadow memory of some object
+/// the pointer may point to (the value set is unknown or contains an
+/// object without shadow memory): a client can assert that it stays false
+/// rather than miss a lost field value.
+#define SHADOW_MEMORY_INCOMPLETE CPROVER_PREFIX "shadow_memory_incomplete"
 
 class code_function_callt;
 class abstract_goto_modelt;
@@ -130,6 +137,10 @@ private:
     const exprt &expr,
     const irep_idt &field_name,
     const typet &field_type);
+
+  /// Records in SHADOW_MEMORY_INCOMPLETE, if declared, that a field could
+  /// not be resolved.
+  void mark_incomplete(goto_symex_statet &state);
 
 private:
   const std::function<void(goto_symex_statet &, const exprt &, const exprt)>

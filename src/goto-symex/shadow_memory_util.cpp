@@ -1153,8 +1153,10 @@ std::optional<exprt> get_shadow_memory(
   const std::vector<shadow_memory_statet::shadowed_addresst> &addresses,
   const namespacet &ns,
   const messaget &log,
-  size_t &mux_size)
+  size_t &mux_size,
+  bool &complete)
 {
+  complete = true;
   std::vector<std::pair<exprt, exprt>> conds_values;
   for(const auto &matched_object : value_set)
   {
@@ -1162,6 +1164,7 @@ std::optional<exprt> get_shadow_memory(
     {
       log.warning() << "Shadow memory: value set contains unknown for "
                     << format(expr) << messaget::eom;
+      complete = false;
       continue;
     }
     if(
@@ -1170,12 +1173,14 @@ std::optional<exprt> get_shadow_memory(
     {
       log.warning() << "Shadow memory: value set contains integer_address for "
                     << format(expr) << messaget::eom;
+      complete = false;
       continue;
     }
     if(matched_object.type().get_bool(ID_C_is_failed_symbol))
     {
       log.warning() << "Shadow memory: value set contains failed symbol for "
                     << format(expr) << messaget::eom;
+      complete = false;
       continue;
     }
 
@@ -1183,7 +1188,19 @@ std::optional<exprt> get_shadow_memory(
     auto per_value_set_conds_values = get_shadow_memory_for_matched_object(
       expr, matched_object, addresses, ns, log, exact_match);
 
-    if(!per_value_set_conds_values.empty())
+    if(per_value_set_conds_values.empty())
+    {
+      // An object without shadow memory (of this field), or of an
+      // incompatible type: its shadow memory is not set. NULL is the
+      // caller's (dereferencing it fails).
+      if(
+        to_object_descriptor_expr(matched_object).root_object().id() !=
+        ID_null_object)
+      {
+        complete = false;
+      }
+    }
+    else
     {
       if(exact_match)
       {

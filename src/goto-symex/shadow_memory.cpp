@@ -130,8 +130,11 @@ void shadow_memoryt::symex_set_field(
   // build lhs
   const exprt &rhs = value;
   size_t mux_size = 0;
+  bool complete = true;
   std::optional<exprt> maybe_lhs =
-    get_shadow_memory(expr, value_set, addresses, ns, log, mux_size);
+    get_shadow_memory(expr, value_set, addresses, ns, log, mux_size, complete);
+  if(!complete)
+    mark_incomplete(state);
 
   // add to equation
   if(maybe_lhs.has_value())
@@ -182,6 +185,7 @@ void shadow_memoryt::symex_set_field(
   {
     log.warning() << "Shadow memory: cannot set_field for " << format(expr)
                   << messaget::eom;
+    mark_incomplete(state);
   }
 }
 
@@ -243,6 +247,7 @@ void shadow_memoryt::symex_get_field(
     {
       log.warning() << "Shadow memory: value set contains unknown for "
                     << format(expr) << messaget::eom;
+      mark_incomplete(state);
       continue;
     }
     // Ignore "integer_address"
@@ -252,6 +257,7 @@ void shadow_memoryt::symex_get_field(
     {
       log.warning() << "Shadow memory: value set contains integer_address for "
                     << format(expr) << messaget::eom;
+      mark_incomplete(state);
       continue;
     }
     // Ignore "ID_C_is_failed_symbol" (another incarnation of invalid pointer)
@@ -261,6 +267,7 @@ void shadow_memoryt::symex_get_field(
     {
       log.warning() << "Shadow memory: value set contains failed symbol for "
                     << format(expr) << messaget::eom;
+      mark_incomplete(state);
       continue;
     }
 
@@ -277,6 +284,14 @@ void shadow_memoryt::symex_get_field(
       lhs.type(),
       exact_match);
 
+    if(
+      per_matched_object_conds_values.empty() &&
+      to_object_descriptor_expr(matched_object).root_object().id() !=
+        ID_null_object)
+    {
+      // An object without shadow memory (of this field).
+      mark_incomplete(state);
+    }
     // If we have an exact match we discard all the previous conditions and
     // create an assignment. Then we'll break
     if(exact_match)
@@ -325,6 +340,7 @@ void shadow_memoryt::symex_get_field(
     // the initialization value of the shadow-memory.
     log.warning() << "Shadow memory: cannot get_field for " << format(expr)
                   << messaget::eom;
+    mark_incomplete(state);
     symex_assign(
       state,
       lhs,
@@ -540,4 +556,15 @@ void shadow_memoryt::convert_field_declaration(
 
   // record the field's initial value (and type)
   fields[field_name] = expr;
+}
+
+void shadow_memoryt::mark_incomplete(goto_symex_statet &state)
+{
+  const symbolt *symbol;
+  if(ns.lookup(SHADOW_MEMORY_INCOMPLETE, symbol))
+    return;
+  symex_assign(
+    state,
+    symbol->symbol_expr(),
+    typecast_exprt::conditional_cast(true_exprt{}, symbol->type));
 }
