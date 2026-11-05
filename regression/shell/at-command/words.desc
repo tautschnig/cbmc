@@ -1,0 +1,12 @@
+CORE
+words.sh
+--shell-strings native --cvc5 --shell-max-arguments 4
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+"$@" and $@ with further words: the first field of all the words is the
+command, with the other fields as arguments; without positional
+parameters the first further word is the command.

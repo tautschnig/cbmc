@@ -1205,9 +1205,11 @@ void shell_convertert::convert_at_command(
 {
   const source_locationt &loc = command.location;
   using kindt = shell_word_partt::kindt;
-  // "${name[@]}" and further words: the fields of the words replace the
-  // positional parameters while the command runs, which is then "$@".
-  const bool fields = !is_quoted_at(command.words.front());
+  // "${name[@]}", $@, or "$@" and further words: the fields of the words
+  // replace the positional parameters while the command runs, which is
+  // then "$@".
+  const bool fields =
+    !is_quoted_at(command.words.front()) || command.words.size() > 1;
   std::optional<std::pair<symbol_exprt, symbol_exprt>> outer;
   if(fields)
   {
@@ -1407,9 +1409,15 @@ void shell_convertert::convert_dynamic_simple(
   }
   if(contains_at(command.words.front()))
   {
-    // "$@" as a command name runs its first field with the others as
-    // arguments.
-    if(is_quoted_at(command.words.front()) && command.words.size() == 1)
+    // "$@" or $@ as a command name runs its first field, of all the
+    // words, with the others as arguments.
+    const shell_wordt &front = command.words.front();
+    const bool unquoted_at =
+      front.size() == 1 &&
+      front[0].kind == shell_word_partt::kindt::PARAMETER &&
+      front[0].text == "@" && front[0].parameter_operator.empty() &&
+      !front[0].parameter_length && front[0].index.empty();
+    if(is_quoted_at(front) || unquoted_at)
     {
       convert_at_command(command, dest);
       return;
