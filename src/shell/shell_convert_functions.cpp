@@ -195,16 +195,51 @@ void shell_convertert::convert_function_call(
 {
   const source_locationt &loc = command.location;
   const std::string name = *static_text(command.words.front());
-  if(!command.assignments.empty())
-  {
-    // Whether they persist after the function returns is unspecified
-    // (XCU 2.9.1.2).
-    unsupported(loc, "variable assignment before a function call");
-  }
-
   // The function's positional parameters are its arguments (XCU 2.9.5).
   const field_listt arguments =
     expand_fields(command.words.begin() + 1, command.words.end(), dest, loc);
+
+  // Assignments before the call: whether they persist after it is
+  // unspecified (XCU 2.9.1.2), but dash, bash, busybox, mksh and zsh all
+  // restore the previous values, also where the function assigned them.
+  // They are made after the arguments are expanded.
+  std::vector<std::pair<symbol_exprt, symbol_exprt>> saved_variables;
+  if(!command.assignments.empty())
+  {
+    bool words = false;
+    for(std::size_t i = 1; i < command.words.size(); ++i)
+      words |= has_side_effects(command.words[i]);
+    for(const auto &assignment : command.assignments)
+    {
+      if(words && has_side_effects(assignment.value))
+      {
+        unsupported(
+          loc,
+          "expansions with side effects in both the arguments and the "
+          "assignments of a function call");
+      }
+      if(
+        assignment.name == "IFS" || assignment.name == "_" ||
+        assignment.name == "RANDOM")
+      {
+        unsupported(
+          loc, "assignment of " + assignment.name + " before a function call");
+      }
+      const symbol_exprt var = variable(assignment.name, loc);
+      const symbol_exprt saved = temporary(string_type(), dest, loc);
+      assign(dest, saved, var, loc);
+      saved_variables.emplace_back(var, saved);
+    }
+    for(const auto &assignment : command.assignments)
+    {
+      const exprt value = expand_word(
+        assignment.value,
+        shell_word_contextt::ASSIGNMENT,
+        dest,
+        assignment.location);
+      assign_variable(assignment.name, value, dest, assignment.location);
+    }
+  }
   const symbol_exprt saved_array = temporary(field_array_type(), dest, loc);
   const symbol_exprt saved_count = temporary(count_type(), dest, loc);
   assign(dest, saved_array, positional_array(), loc);
@@ -246,6 +281,8 @@ void shell_convertert::convert_function_call(
   assign(dest, argument_count(), saved_count, loc);
   if(errexit_ignored && option_possible("errexit"))
     assign(dest, errexit_ignored_in_caller(), saved_ignored, loc);
+  for(const auto &entry : saved_variables)
+    assign(dest, entry.first, entry.second, loc);
 }
 
 /// return [n] (XCU 2.15 return).
