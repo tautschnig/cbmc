@@ -1,0 +1,11 @@
+CORE
+main.sh
+--shell-max-arguments 3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+shift with an expansion as operand; shifting by more than $# exits in
+dash, and fails with status 1 in busybox and bash as sh.

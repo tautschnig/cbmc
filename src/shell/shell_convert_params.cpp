@@ -383,63 +383,116 @@ void shell_convertert::convert_shift(
   const source_locationt &loc = command.location;
   if(command.words.size() > 2)
     unsupported(loc, "shift with several operands");
-  std::size_t n = 1;
+  // The operand: a literal number, or an expansion, as in
+  // shift $((OPTIND - 1)), whose value is a decimal number.
+  exprt n = from_integer(1, integer_type());
   if(command.words.size() == 2)
   {
     const auto text = static_text(command.words[1]);
     if(
-      !text.has_value() || text->empty() || text->size() > 9 ||
-      text->find_first_not_of("0123456789") != std::string::npos)
+      text.has_value() && !text->empty() && text->size() <= 9 &&
+      text->find_first_not_of("0123456789") == std::string::npos)
     {
-      unsupported(loc, "shift operand other than a decimal number");
+      n = from_integer(std::stoul(*text), integer_type());
     }
-    n = std::stoul(*text);
+    else if(text.has_value())
+      unsupported(loc, "shift operand other than a decimal number");
+    else
+    {
+      const exprt value =
+        expand_word(command.words[1], shell_word_contextt::FIELD, dest, loc);
+      const symbol_exprt number = temporary(integer_type(), dest, loc);
+      check(
+        dest,
+        parse_test_integer(value, trailing_blankst::NONE, number, dest, loc),
+        "shell-unsupported",
+        "the operand of shift is a decimal number (other values are not "
+        "supported)",
+        loc);
+      check(
+        dest,
+        binary_relation_exprt{number, ID_ge, from_integer(0, integer_type())},
+        "shell-unsupported",
+        "the operand of shift is not negative (shells differ for negative "
+        "ones)",
+        loc);
+      n = number;
+    }
   }
 
   // Shifting by more than $# is an error. dash, mksh, and posh exit, as
-  // POSIX requires for special builtins (XCU 2.8.1); bash, zsh, busybox,
-  // and yash fail with status 1.
+  // POSIX requires for special builtins (XCU 2.8.1); bash (also as sh),
+  // zsh, busybox, and yash fail with status 1.
   code_blockt error;
-  if(
-    program.dialect == shell_dialectt::POSIX ||
-    program.dialect == shell_dialectt::MKSH)
+  code_blockt leave;
+  exit_shell(leave, true, loc);
+  if(program.dialect == shell_dialectt::MKSH)
+    error = std::move(leave);
+  else if(program.dialect == shell_dialectt::POSIX)
   {
-    exit_shell(error, true, loc);
+    code_blockt fail;
+    set_status(fail, 1, loc);
+    add(
+      error,
+      code_ifthenelset{
+        nondet(bool_typet{}, loc), std::move(leave), std::move(fail)},
+      loc);
   }
   else
     set_status(error, 1, loc);
 
   code_blockt shift;
   const exprt args = positional_array();
+  // In increasing order, each element reads one that is not yet moved,
+  // at a constant index: the refined string solver does not support
+  // strings read at symbolic indices.
   for(std::size_t i = 0; i < max_arguments; ++i)
   {
     const index_exprt element{args, from_integer(i, index_type())};
-    if(i + n < max_arguments)
+    if(n.is_constant())
     {
+      const std::size_t k =
+        numeric_cast_v<std::size_t>(to_constant_expr(n)) + i;
       assign(
         shift,
         element,
-        index_exprt{args, from_integer(i + n, index_type())},
+        k < max_arguments
+          ? exprt{index_exprt{args, from_integer(k, index_type())}}
+          : unset_string(loc),
+        loc);
+      continue;
+    }
+    code_blockt moved;
+    assign(moved, element, unset_string(loc), loc);
+    for(std::size_t k = i; k < max_arguments; ++k)
+    {
+      code_blockt read;
+      assign(
+        read, element, index_exprt{args, from_integer(k, index_type())}, loc);
+      add(
+        moved,
+        code_ifthenelset{
+          equal_exprt{n, from_integer(k - i, integer_type())}, std::move(read)},
         loc);
     }
-    else
-      assign(shift, element, unset_string(loc), loc);
+    shift.append(moved);
   }
-  assign(
-    shift,
-    argument_count(),
-    minus_exprt{argument_count(), from_integer(n, count_type())},
-    loc);
+  const exprt shifted =
+    n.is_constant()
+      ? from_integer(
+          numeric_cast_v<mp_integer>(to_constant_expr(n)), count_type())
+      : typecast_exprt::conditional_cast(n, count_type());
+  assign(shift, argument_count(), minus_exprt{argument_count(), shifted}, loc);
   set_status(shift, 0, loc);
 
-  add(
-    dest,
-    code_ifthenelset{
-      binary_relation_exprt{
-        argument_count(), ID_lt, from_integer(n, count_type())},
-      std::move(error),
-      std::move(shift)},
-    loc);
+  const exprt too_far =
+    n.is_constant()
+      ? binary_relation_exprt{argument_count(), ID_lt, shifted}
+      : binary_relation_exprt{
+          typecast_exprt::conditional_cast(argument_count(), integer_type()),
+          ID_lt,
+          n};
+  add(dest, code_ifthenelset{too_far, std::move(error), std::move(shift)}, loc);
 }
 
 /// set (XCU 2.15 set): without arguments it lists variables, which is
