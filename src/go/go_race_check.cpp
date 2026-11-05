@@ -22,8 +22,8 @@ Author: Michael Tautschnig
 /// in atomic sections (the models of
 /// channels, sync and sync/atomic) synchronise: they are not announced.
 /// An access of an entry or the header of a map is one of the map's header,
-/// as in gc. Accesses of values of size zero, and expression statements,
-/// are none. Accesses in operands of `&&`, `||` and `?:` are made only
+/// as in gc. Accesses of values of size zero are none; `_ = x` reads x.
+/// Accesses in operands of `&&`, `||` and `?:` are made only
 /// when the operand is evaluated.
 /// Spike limitations: an access is keyed by its first byte only; accesses
 /// of the runtime and sync models are not checked at all.
@@ -436,10 +436,10 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
         collect(ns, it->return_value(), false, always, accesses);
       else if(it->is_goto() || it->is_assume() || it->is_assert())
         collect(ns, it->condition(), false, always, accesses);
-      else if(it->is_other() && it->code().get_statement() != ID_expression)
+      else if(it->is_other())
       {
-        // An expression statement (`_ = x`) discards a value without
-        // effects: gc loads nothing, and neither does this.
+        // Including expression statements (`_ = x`), which gc's race
+        // detector reports as reads.
         collect(ns, it->code(), false, always, accesses);
       }
       if(accesses.empty())
