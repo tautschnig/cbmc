@@ -1,0 +1,15 @@
+CORE dfcc-only
+main.c
+--no-malloc-may-fail --dfcc main --apply-loop-contracts _ --unwindset callee.0:4 --unwinding-assertions
+^\[callee.assigns.\d+\] line \d+ Check that h is assignable: FAILURE$
+^\[callee.assigns.\d+\] line \d+ Check that g\[.*0\] is assignable: SUCCESS$
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+Check that a is assignable
+Check that k is assignable
+--
+Checks that the fix for callee-local variables in uncontracted loops does not
+hide genuine frame violations: a write to a global that the caller's loop
+assigns clause omits must still fail.

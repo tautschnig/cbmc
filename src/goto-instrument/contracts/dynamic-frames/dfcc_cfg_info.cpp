@@ -590,12 +590,21 @@ dfcc_cfg_infot::dfcc_cfg_infot(
     goto_function.parameter_identifiers.begin(),
     goto_function.parameter_identifiers.end());
 
+  // Declarations inside loops without a contract also belong to the top-level
+  // scope: such loops are not abstracted, so their instructions are checked
+  // against the top-level write set (see get_write_set), and their locals must
+  // be considered local at that scope too (see get_local_set).
   for(auto target = goto_function.body.instructions.begin();
       target != goto_function.body.instructions.end();
       target++)
   {
-    if(target->is_decl() && dfcc_is_loop_top_level(target))
+    if(
+      target->is_decl() &&
+      is_top_level_id(
+        get_first_id_not_skipped_or_top_level_id(*dfcc_get_loop_id(target))))
+    {
       top_level_local.insert(target->decl_symbol().identifier());
+    }
   }
 
   top_level_tracked =
@@ -682,7 +691,7 @@ dfcc_cfg_infot::get_tracked_set(goto_programt::const_targett target) const
   PRECONDITION(
     loop_id_opt.has_value() &&
     is_valid_loop_or_top_level_id(loop_id_opt.value()));
-  auto loop_id = loop_id_opt.value();
+  auto loop_id = get_first_id_not_skipped_or_top_level_id(loop_id_opt.value());
   if(is_top_level_id(loop_id))
   {
     return top_level_tracked;
@@ -700,7 +709,7 @@ dfcc_cfg_infot::get_local_set(goto_programt::const_targett target) const
   PRECONDITION(
     loop_id_opt.has_value() &&
     is_valid_loop_or_top_level_id(loop_id_opt.value()));
-  auto loop_id = loop_id_opt.value();
+  auto loop_id = get_first_id_not_skipped_or_top_level_id(loop_id_opt.value());
   if(is_top_level_id(loop_id))
   {
     return top_level_local;
