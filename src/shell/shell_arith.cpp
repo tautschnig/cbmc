@@ -423,6 +423,15 @@ private:
     {
       ++pos;
       std::string name;
+      // ${#name}: the length, other than ${#}, which is $#.
+      if(
+        pos + 1 < text.size() && text[pos] == '#' &&
+        (std::isdigit(static_cast<unsigned char>(text[pos + 1])) ||
+         is_name_start(text[pos + 1])))
+      {
+        ++pos;
+        result.length = true;
+      }
       if(!at_end() && std::isdigit(static_cast<unsigned char>(text[pos])))
       {
         while(!at_end() && std::isdigit(static_cast<unsigned char>(text[pos])))
@@ -435,6 +444,8 @@ private:
         std::string{"@*#?-$!"}.find(text[pos]) != std::string::npos)
         name = text.substr(pos++, 1);
       if(name.empty() || at_end())
+        error("unsupported parameter expansion in arithmetic expression");
+      if(text[pos] != '}' && result.length)
         error("unsupported parameter expansion in arithmetic expression");
       if(text[pos] != '}')
         parse_parameter_operator(result);
@@ -559,6 +570,8 @@ std::string to_string(const shell_arith_exprt &expr)
   case kindt::VARIABLE:
     return expr.name;
   case kindt::PARAMETER:
+    if(expr.length)
+      return "${#" + expr.name + "}";
     if(!expr.op.empty())
       return "${" + expr.name + expr.op + expr.word + "}";
     return "$" + expr.name;

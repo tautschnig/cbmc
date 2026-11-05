@@ -96,6 +96,9 @@ TEST_CASE("shell arithmetic: variables and parameters", "[shell]")
   REQUIRE(parse("${x%1} + ${y##0}", posix) == "(${x%1} + ${y##0})");
   REQUIRE(is_error("${x:%1}", posix));
   REQUIRE(is_error("${x:-1", posix));
+  REQUIRE(parse("${#x} - ${#1}", posix) == "(${#x} - ${#1})");
+  REQUIRE(parse("${#}", posix) == "$#");
+  REQUIRE(is_error("${#x:-1}", posix));
   REQUIRE(is_error("$", posix));
 }
 

@@ -279,6 +279,7 @@ exprt shell_convertert::arith(
     part.kind = shell_word_partt::kindt::PARAMETER;
     part.text = expr.name;
     part.location = loc;
+    part.parameter_length = expr.length;
     if(!expr.op.empty())
     {
       // The expression is expanded as if in double quotes (XCU 2.6.4),
@@ -317,13 +318,15 @@ exprt shell_convertert::arith(
       }
       return arith_type_cast(value);
     }
+    const std::string shown =
+      expr.length ? "${#" + expr.name + "}" : "$" + expr.name;
     check(
       dest,
       not_exprt{is_empty(string)},
       "shell-arithmetic",
-      "$" + expr.name + " is empty in arithmetic expansion",
+      shown + " is empty in arithmetic expansion",
       loc);
-    return arith_read("$" + expr.name, string, dest, loc);
+    return arith_read(shown, string, dest, loc);
   }
   case kindt::UNARY:
   {

@@ -34,7 +34,8 @@ struct shell_arith_exprt
     /// An unexpanded parameter expansion, as in $(($x + 1)); \ref name
     /// is the parameter (a name, a digit string, or one of @*#?-$!).
     /// For ${name<op>word}, \ref op is one of :- - := = :? ? :+ + and
-    /// \ref word is the word, which is literal text.
+    /// \ref word is the word, which is literal text. ${#name} sets
+    /// \ref length.
     PARAMETER,
     /// A prefix operator (+ - ~ ! ++ --); operands[0].
     UNARY,
@@ -56,6 +57,8 @@ struct shell_arith_exprt
   std::string name;
   /// PARAMETER: the word of ${name<op>word}.
   std::string word;
+  /// PARAMETER: ${#name}, the length of the value.
+  bool length = false;
   /// PARAMETER: "0x" for a hexadecimal constant whose digits are the value,
   /// as in $((0x$x)); otherwise empty.
   std::string prefix;
