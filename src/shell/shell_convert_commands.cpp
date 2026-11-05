@@ -126,6 +126,11 @@ void shell_convertert::assign_variable(
     assign_ifs(value, dest, loc);
     return;
   }
+  // bash overwrites _ after each command; in other shells it is an
+  // ordinary variable. Reading it is not supported, so that what is
+  // assigned does not matter.
+  if(name == "_")
+    return;
   // Expansion results are always set.
   assign(dest, variable(name, loc), value, loc);
   note_assignment(name, value);
@@ -445,7 +450,9 @@ void shell_convertert::convert_for(
   code_blockt &dest)
 {
   const source_locationt &loc = command.location;
-  check_parameter_name(command.name, loc);
+  // Assignments to _ are allowed (see assign_variable).
+  if(command.name != "_")
+    check_parameter_name(command.name, loc);
 
   // "for name; do" is "for name in "$@"; do" (XCU 2.9.4.2).
   bool dynamic = !command.has_in;

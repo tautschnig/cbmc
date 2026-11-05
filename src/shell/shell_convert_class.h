@@ -800,6 +800,12 @@ private:
   /// spaces (the first character of the default IFS).
   exprt
   join_positional_parameters(code_blockt &dest, const source_locationt &loc);
+  exprt join_positional_parameters(
+    const std::string &separator,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// "$@" in an assignment in bash and mksh.
+  exprt join_with_spaces(code_blockt &dest, const source_locationt &loc);
   void set_positional_parameters(
     const field_listt &list,
     code_blockt &dest,

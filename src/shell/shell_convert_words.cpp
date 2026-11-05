@@ -342,9 +342,31 @@ exprt shell_convertert::expand_parameter(
     if(part.parameter_length || !part.parameter_operator.empty())
       unsupported(loc, "${" + part.text + "} with an operator");
     // "$@" as a whole word is expanded by expand_fields; elsewhere, its
-    // result is unspecified unless it is subject to field splitting.
+    // result is unspecified unless it is subject to field splitting. In
+    // assignments, bash and mksh join the fields with spaces, and dash,
+    // busybox and zsh with the first byte of IFS, as for $*: the same
+    // where that is a space.
     if(part.text == "@")
-      unsupported(loc, "$@ where it does not expand to a list of fields");
+    {
+      if(context != shell_word_contextt::ASSIGNMENT)
+        unsupported(loc, "$@ where it does not expand to a list of fields");
+      const auto ifs = known_ifs();
+      if(
+        ifs.has_value() && (ifs->empty() || (*ifs)[0] != ' ') &&
+        program.dialect != shell_dialectt::BASH &&
+        program.dialect != shell_dialectt::MKSH)
+      {
+        unsupported(loc, "$@ in an assignment where IFS starts with no space");
+      }
+    }
+    if(
+      part.text == "@" && program.dialect != shell_dialectt::BASH &&
+      program.dialect != shell_dialectt::MKSH)
+    {
+      return join_positional_parameters(dest, loc);
+    }
+    if(part.text == "@")
+      return join_with_spaces(dest, loc);
     return join_positional_parameters(dest, loc);
   }
   else

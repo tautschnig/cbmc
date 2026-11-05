@@ -1,0 +1,10 @@
+CORE
+underscore.sh
+
+^EXIT=6$
+^SIGNAL=0$
+variable _, which the shell maintains
+--
+^VERIFICATION
+--
+bash sets _ to the last argument of the previous command.

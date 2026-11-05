@@ -1,0 +1,11 @@
+CORE
+ifs.sh
+
+^EXIT=6$
+^SIGNAL=0$
+\$@ in an assignment where IFS starts with no space
+--
+^VERIFICATION
+--
+With an IFS that does not start with a space, shells join "$@" in an
+assignment differently.

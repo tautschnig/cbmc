@@ -329,6 +329,13 @@ void shell_convertert::check_field_list(
     loc);
 }
 
+exprt shell_convertert::join_with_spaces(
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  return join_positional_parameters(" ", dest, loc);
+}
+
 exprt shell_convertert::join_positional_parameters(
   code_blockt &dest,
   const source_locationt &loc)
@@ -340,6 +347,14 @@ exprt shell_convertert::join_positional_parameters(
     separator = ifs->substr(0, 1);
   else
     ifs_for_splitting(dest, loc);
+  return join_positional_parameters(separator, dest, loc);
+}
+
+exprt shell_convertert::join_positional_parameters(
+  const std::string &separator,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
   const symbol_exprt result = temporary(string_type(), dest, loc);
   assign(dest, result, string_literal("", loc), loc);
   for(std::size_t i = 0; i < max_arguments; ++i)
