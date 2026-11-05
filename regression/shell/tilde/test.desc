@@ -1,0 +1,11 @@
+CORE
+main.sh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+~ and ~/path at the start of a word expand to HOME, whose value is not
+split.

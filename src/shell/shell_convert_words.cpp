@@ -82,9 +82,40 @@ exprt shell_convertert::expand_parts(
     pending_text.clear();
   };
 
-  for(const auto &part : parts)
+  for(std::size_t index = 0; index < parts.size(); ++index)
   {
+    const shell_word_partt &part = parts[index];
     using kindt = shell_word_partt::kindt;
+    if(
+      part.kind == kindt::LITERAL && !quoted && first &&
+      context != shell_word_contextt::IGNORED && !part.text.empty() &&
+      part.text[0] == '~')
+    {
+      // Tilde expansion (XCU 2.6.1) of ~ alone, or before a slash: the
+      // value of HOME, where it is set (where it is not, shells differ).
+      const std::size_t slash = part.text.find('/');
+      const bool alone = part.text.size() == 1 && index + 1 == parts.size();
+      if(slash != 1 && !alone)
+        unsupported(part.location, "tilde expansion (XCU 2.6.1)");
+      if(!pending_text.empty())
+        flush_text();
+      const symbol_exprt home = variable("HOME", part.location);
+      check(
+        dest,
+        is_set(home),
+        "shell-unsupported",
+        "HOME is set where ~ is expanded (shells differ where it is not)",
+        part.location);
+      const exprt value = value_of(home, part.location);
+      result = result.has_value() ? concat(*result, value, dest, part.location)
+                                  : value;
+      shell_word_partt rest = part;
+      rest.text = part.text.substr(1);
+      pending_loc = part.location;
+      pending_text += unquoted_literal(rest, context, false, dest);
+      first = false;
+      continue;
+    }
     if(part.kind == kindt::LITERAL || part.kind == kindt::QUOTED_LITERAL)
     {
       if(pending_text.empty())

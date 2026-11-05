@@ -1,0 +1,12 @@
+CORE
+unset.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] .*HOME is set where ~ is expanded.*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Where HOME is unset, dash, busybox and mksh leave ~, bash uses the home
+directory of the user, and zsh an empty string.
