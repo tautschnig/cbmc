@@ -158,6 +158,13 @@ var sourceModels = map[string]struct {
 	// The Unicode tables of package unicode are not modelled: parsing
 	// \p{...} classes is reported where it is reached.
 	"regexp/syntax": {},
+	// The functions that use the file system (Glob, Walk, WalkDir, Abs,
+	// EvalSymlinks) call package os, which has no model, and are reported
+	// where they are reached.
+	"path/filepath":         {overrides: true},
+	"internal/filepathlite": {},
+	"io/fs":                 {},
+	"internal/oserror":      {},
 }
 
 // parseSourceModel parses the files of the source model of path (see
