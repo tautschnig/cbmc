@@ -99,15 +99,10 @@ void multi_path_symex_only_checkert::update_properties(
   if(options.get_bool_option("symex-driven-lazy-loading"))
     update_properties_from_goto_model(properties, goto_model);
 
-  const bool report_unreachable =
-    options.get_bool_option("report-unreachable-properties");
-
   update_properties_status_from_symex_target_equation(
-    properties, updated_properties, equation, report_unreachable);
+    properties, updated_properties, equation);
   // Since we will not symex any further we can decide the status
   // of all properties that do not occur in the equation now.
-  // The default is PASS; --report-unreachable-properties says NOT_REACHABLE
-  // instead, because such a property was never reached.
-  update_status_of_not_checked_properties(
-    properties, updated_properties, report_unreachable);
+  // The current behavior is PASS.
+  update_status_of_not_checked_properties(properties, updated_properties);
 }
