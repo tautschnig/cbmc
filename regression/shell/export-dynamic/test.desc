@@ -1,0 +1,14 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.[0-9]+\] file main.sh line 5 .* of export is a name .*: SUCCESS$
+^\[shell-unsupported\.[0-9]+\] file main.sh line 6 .* of export is a name .*: FAILURE$
+^\[assertion\.1\] .*: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+export of names that are expansions changes nothing that is modelled
+where they are names; "A B" is not a name, which is reported.

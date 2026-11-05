@@ -6,6 +6,7 @@
 #include <goto-programs/goto_instruction_code.h>
 
 #include <algorithm>
+#include <cctype>
 
 // ------------------------------------------------------------------
 // Commands
@@ -1652,9 +1653,86 @@ void shell_convertert::convert_export(
   code_blockt &dest)
 {
   const source_locationt &loc = command.location;
-  for(std::size_t i = 1; i < command.words.size(); ++i)
+  std::size_t start = 1;
+  if(command.words.size() > 1)
+  {
+    const auto option = static_text(command.words[1]);
+    if(option == std::string{"-p"} && command.words.size() == 2)
+    {
+      // Writes the exported variables, which can fail.
+      nondet_status(dest, 255, loc);
+      return;
+    }
+    if(option == std::string{"-n"})
+    {
+      // bash and busybox stop exporting the names; dash and mksh report
+      // an error, and exit.
+      if(program.dialect == shell_dialectt::MKSH)
+      {
+        exit_shell(dest, true, loc);
+        return;
+      }
+      if(program.dialect == shell_dialectt::ZSH)
+        unsupported(loc, "export -n in zsh");
+      if(program.dialect == shell_dialectt::POSIX)
+      {
+        code_blockt leave;
+        exit_shell(leave, true, loc);
+        add(
+          dest,
+          code_ifthenelset{nondet(bool_typet{}, loc), std::move(leave)},
+          loc);
+      }
+      for(std::size_t i = 2; i < command.words.size(); ++i)
+      {
+        if(!static_text(command.words[i]).has_value())
+          unsupported(loc, "export -n of a name that is an expansion");
+      }
+      set_status(dest, 0, loc);
+      return;
+    }
+    if(option == std::string{"--"})
+      start = 2;
+  }
+  for(std::size_t i = start; i < command.words.size(); ++i)
   {
     const shell_wordt &word = command.words[i];
+    if(
+      !word.empty() && word[0].kind != shell_word_partt::kindt::LITERAL &&
+      !contains_equals(word))
+    {
+      // Names that are expansions: exporting only matters to child
+      // processes, which are not modelled, if the values are names (with
+      // =, they would assign; an invalid name is an error).
+      const field_listt names = expand_fields(
+        command.words.begin() + i, command.words.begin() + i + 1, dest, loc);
+      for(std::size_t k = 0; k < max_arguments; ++k)
+      {
+        code_blockt checked;
+        const symbol_exprt field = temporary(string_type(), checked, loc);
+        assign(
+          checked,
+          field,
+          index_exprt{names.array, from_integer(k, index_type())},
+          loc);
+        check(
+          checked,
+          is_name(field, checked, loc),
+          "shell-unsupported",
+          "the operand " + display(word) +
+            " of export is a name (assignments and invalid names are not "
+            "supported here)",
+          loc);
+        add(
+          dest,
+          code_ifthenelset{
+            binary_relation_exprt{
+              from_integer(k, count_type()), ID_lt, names.count},
+            std::move(checked)},
+          loc);
+      }
+      continue;
+    }
     // NAME or NAME=value, where the name is literal text.
     if(word.empty() || word[0].kind != shell_word_partt::kindt::LITERAL)
       unsupported(loc, "export operand that is not NAME or NAME=value");
@@ -1685,6 +1763,50 @@ void shell_convertert::convert_export(
     assign_variable(name, value, dest, loc);
   }
   set_status(dest, 0, loc);
+}
+
+bool shell_convertert::contains_equals(const shell_wordt &word)
+{
+  using kindt = shell_word_partt::kindt;
+  for(const auto &part : word)
+  {
+    if(
+      (part.kind == kindt::LITERAL || part.kind == kindt::QUOTED_LITERAL) &&
+      part.text.find('=') != std::string::npos)
+    {
+      return true;
+    }
+    if(part.kind == kindt::DOUBLE_QUOTED && contains_equals(part.parts))
+      return true;
+  }
+  return false;
+}
+
+exprt shell_convertert::is_name(
+  const exprt &value,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  std::bitset<256> other;
+  for(unsigned c = 0; c < 256; ++c)
+  {
+    if(!(std::isalnum(static_cast<int>(c)) || c == '_') || c >= 128)
+      other.set(c);
+  }
+  std::bitset<256> digits;
+  for(char c = '0'; c <= '9'; ++c)
+    digits.set(static_cast<unsigned char>(c));
+  const exprt payload = payload_of(value);
+  const exprt first = make_value(payload_substring(
+    payload,
+    from_integer(0, integer_type()),
+    from_integer(1, integer_type()),
+    dest,
+    loc));
+  return and_exprt{
+    not_exprt{is_empty(value)},
+    not_exprt{payload_contains_byte(payload, other, dest, loc)},
+    not_exprt{payload_contains_byte(payload_of(first), digits, dest, loc)}};
 }
 
 void shell_convertert::convert_unset(

@@ -1391,6 +1391,11 @@ private:
   }
   void convert_export(const shell_commandt &command, code_blockt &dest);
   void convert_unset(const shell_commandt &command, code_blockt &dest);
+  /// Whether \p word has an = in its literal text.
+  static bool contains_equals(const shell_wordt &word);
+  /// Whether \p value is a name (XBD 3.216).
+  exprt
+  is_name(const exprt &value, code_blockt &dest, const source_locationt &loc);
   void convert_break_continue(
     const shell_commandt &command,
     bool is_break,
