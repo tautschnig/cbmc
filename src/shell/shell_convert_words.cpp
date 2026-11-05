@@ -645,8 +645,12 @@ bool shell_convertert::has_side_effects(const shell_word_partt &part) const
     const std::string &op = part.parameter_operator;
     if(!op.empty() && (op.back() == '=' || op.back() == '?'))
       return true;
-    // With -u, expanding an unset parameter makes the shell exit.
-    if(op.empty() && nounset_possible && part.text != "@" && part.text != "*")
+    // With -u, expanding an unset parameter makes the shell exit; the
+    // operators are those for which expand_part checks it.
+    if(
+      (op.empty() || op[0] == '%' || op[0] == '#' || op[0] == '/' ||
+       op == ":") &&
+      nounset_possible && part.text != "@" && part.text != "*")
     {
       return true;
     }
