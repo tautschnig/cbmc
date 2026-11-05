@@ -1,0 +1,10 @@
+CORE
+regex.bash
+
+^EXIT=6$
+^SIGNAL=0$
+\[\[ \.\.\. \]\] operator =~
+--
+^VERIFICATION
+--
+Regular expression matching is not supported.

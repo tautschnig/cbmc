@@ -7,6 +7,7 @@ SRC = shell_arith.cpp \
       shell_convert_literals.cpp \
       shell_convert_local.cpp \
       shell_convert_dot.cpp \
+      shell_convert_double_bracket.cpp \
       shell_convert_eval.cpp \
       shell_convert_functions.cpp \
       shell_convert_getopts.cpp \

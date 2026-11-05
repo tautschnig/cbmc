@@ -34,6 +34,7 @@ static const std::map<std::string, shell_command_kindt> builtins{
   {"trap", shell_command_kindt::TRAP},
   {CPROVER_PREFIX "shell_arithmetic_command",
    shell_command_kindt::ARITHMETIC_COMMAND},
+  {CPROVER_PREFIX "shell_double_bracket", shell_command_kindt::DOUBLE_BRACKET},
   {"getopts", shell_command_kindt::GETOPTS},
   {"cd", shell_command_kindt::CD},
   {"umask", shell_command_kindt::UMASK},
@@ -1529,6 +1530,9 @@ void shell_convertert::convert_builtin(
     return;
   case shell_command_kindt::ARITHMETIC_COMMAND:
     convert_arithmetic_command(command, dest);
+    return;
+  case shell_command_kindt::DOUBLE_BRACKET:
+    convert_double_bracket(command, dest);
     return;
   case shell_command_kindt::GETOPTS:
     convert_getopts(command, dest);

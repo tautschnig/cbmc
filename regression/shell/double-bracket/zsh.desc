@@ -1,0 +1,10 @@
+CORE
+zsh.zsh
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+In zsh, an unquoted expansion on the right of == matches literally.

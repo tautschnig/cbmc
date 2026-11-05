@@ -385,6 +385,17 @@ private:
       expression.location = command.location;
       command.words = {{name}, {expression}};
     }
+    else if(t == "TestClause")
+    {
+      // [[ expression ]]: a builtin of its own (see shell_convert_test.cpp).
+      command.kind = kindt::SIMPLE;
+      shell_word_partt name;
+      name.kind = shell_word_partt::kindt::QUOTED_LITERAL;
+      name.text = CPROVER_PREFIX "shell_double_bracket";
+      name.location = command.location;
+      command.words = {{name}};
+      command.test.push_back(read_test(cmd["X"], command.words));
+    }
     else if(t == "LetClause")
     {
       // let expression...: the same builtin, with each word an expression.
@@ -766,6 +777,57 @@ private:
   }
 
   /// The raw text between "$((" and "))", taken from the source.
+  shell_testt read_test(const jsont &x, std::vector<shell_wordt> &words)
+  {
+    using kindt = shell_testt::kindt;
+    shell_testt result;
+    result.location = location(x);
+    const std::string t = type(x);
+    if(t == "ParenTest")
+      return read_test(x["X"], words);
+    if(t == "Word")
+    {
+      result.kind = kindt::WORD;
+      result.word = read_word(x);
+      words.push_back(result.word);
+      return result;
+    }
+    result.op = x["Op"].value;
+    if(t == "UnaryTest")
+    {
+      result.kind = kindt::UNARY;
+      if(result.op == "!")
+        result.operands.push_back(read_test(x["X"], words));
+      else
+      {
+        if(type(x["X"]) != "Word")
+          unsupported(x, "[[ ... ]] operator with an expression operand");
+        result.word = read_word(x["X"]);
+        words.push_back(result.word);
+      }
+      return result;
+    }
+    if(t == "BinaryTest")
+    {
+      result.kind = kindt::BINARY;
+      if(result.op == "&&" || result.op == "||")
+      {
+        result.operands.push_back(read_test(x["X"], words));
+        result.operands.push_back(read_test(x["Y"], words));
+        return result;
+      }
+      if(type(x["X"]) != "Word" || type(x["Y"]) != "Word")
+        unsupported(x, "[[ ... ]] operator with an expression operand");
+      result.word = read_word(x["X"]);
+      result.right = read_word(x["Y"]);
+      words.push_back(result.word);
+      words.push_back(result.right);
+      return result;
+    }
+    unsupported(x, "[[ ... ]] expression of type " + t);
+    return result;
+  }
+
   std::string arithmetic_source(const jsont &part)
   {
     auto left = string2optional_size_t(part["Left"]["Offset"].value);

@@ -1,0 +1,12 @@
+CORE
+main.bash
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+[[ ... ]] in bash: no field splitting, patterns on the right of == (an
+unquoted expansion is a pattern), arithmetic in integer comparisons,
+-v, and && and || that skip their right operand.

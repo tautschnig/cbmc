@@ -117,6 +117,30 @@ struct shell_case_itemt
   source_locationt location;
 };
 
+/// An expression of a [[ ... ]] test (bash, mksh, zsh).
+struct shell_testt
+{
+  enum class kindt
+  {
+    /// A word on its own: whether it is not empty.
+    WORD,
+    /// op word, as in -n word; ! operands[0].
+    UNARY,
+    /// word op word, as in a == b; operands[0] && operands[1], and ||.
+    BINARY
+  };
+  kindt kind = kindt::WORD;
+  std::string op;
+  /// WORD and UNARY other than !: the operand; BINARY other than && and
+  /// ||: the left operand.
+  shell_wordt word;
+  /// BINARY other than && and ||: the right operand.
+  shell_wordt right;
+  /// !, && and ||: the operands.
+  std::vector<shell_testt> operands;
+  source_locationt location;
+};
+
 /// A command (XCU 2.9). Which members are used depends on \ref kind,
 /// as documented on each member.
 struct shell_commandt
@@ -164,6 +188,9 @@ struct shell_commandt
   std::vector<shell_assignmentt> assignments;
   /// SIMPLE: the command name and arguments.
   std::vector<shell_wordt> words;
+  /// SIMPLE: for [[ ... ]], the expression, whose words are also the
+  /// arguments (so that what looks at words sees them).
+  std::vector<shell_testt> test;
 
   /// The main command list of compound commands; the elements of a
   /// PIPELINE; the two operands of AND/OR.

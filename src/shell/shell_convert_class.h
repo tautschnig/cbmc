@@ -86,6 +86,8 @@ enum class shell_command_kindt
   TRAP,
   /// (( expression )) and let (bash, mksh and zsh).
   ARITHMETIC_COMMAND,
+  /// [[ expression ]]: see shell_convert_double_bracket.cpp.
+  DOUBLE_BRACKET,
   /// getopts: see shell_convert_getopts.cpp.
   GETOPTS,
   /// cd, umask and type: see shell_convert_builtins.cpp.
@@ -1250,6 +1252,14 @@ private:
   bool getopts_used = false;
   void
   convert_arithmetic_command(const shell_commandt &command, code_blockt &dest);
+  /// [[ expression ]]: see shell_convert_double_bracket.cpp.
+  void convert_double_bracket(const shell_commandt &command, code_blockt &dest);
+  /// Whether \p test holds, with its side effects in \p dest.
+  exprt double_bracket(const shell_testt &test, code_blockt &dest);
+  exprt double_bracket_integer(
+    const shell_wordt &word,
+    code_blockt &dest,
+    const source_locationt &loc);
   /// trap: see shell_convert_trap.cpp.
   void convert_trap(const shell_commandt &command, code_blockt &dest);
   symbol_exprt exit_trap();
