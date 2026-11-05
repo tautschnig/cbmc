@@ -458,9 +458,20 @@ Supported so far:
   assembly, so the functions are portable Go, with the bit conversions
   and rounding of the earlier model; `Sqrt` is a loop of up to 54
   iterations), `math/big` (its pure-Go arithmetic), `time` (see below),
-  `encoding/hex`, `hash/fnv` and `unicode/utf16`. Variables of source models (e.g. `io.EOF`,
-  `binary.BigEndian`) are the real ones. Files of `models/<path>` then replace the functions
-  of the same names. The named types of a source model are encoded as
+  `encoding/hex`, `hash/fnv`, `unicode/utf16`, `bufio`, `path`,
+  `path/filepath` and `io/fs` (whose file-system functions call `os`,
+  and are reported where they are reached), `regexp` and
+  `regexp/syntax` (`\p{...}` classes need the Unicode tables, which are
+  not modelled, and are reported), `log` (the standard logger writes to
+  a model of `os.Stderr`), `math/rand` (whose generators give arbitrary
+  values, for every seed) and `text/template` (slow: 16 s for
+  `hi {{.}}!`). Variables of source models (e.g. `io.EOF`,
+  `binary.BigEndian`) are the real ones. Files of `models/<path>` then
+  replace the functions, methods and package-level variables of the
+  same names. The models of the library call variants of `sync.Pool`'s
+  `Get` and `Put` that ignore the pool (both are behaviours of the real
+  pool), as the nondeterministic reuse of their internal objects merged
+  the states of their uses. The named types of a source model are encoded as
   the real package's types (with the model's methods), so that the
   program's type assertions and switches see the values the model
   creates (e.g. `*strconv.NumError`) as with gc. Functions without a
@@ -902,13 +913,17 @@ use `MapOf`, `ArrayOf` or `ChanOf`, which find the program's types.
   need loop bounds of the tags' lengths. `fmt` does not use it yet (the
   formatting of nested values), nor `encoding/binary.Read`/`Write`.
 - **Arbitrary results of models** are sound but imprecise: the text of
-  `fmt`'s printing functions, `unicode` beyond Latin-1 (also
+  `fmt`'s printing functions (except the default format of a single
+  string), the values of `math/rand`'s generators for every seed (a
+  program that relies on a seed's sequence may fail), `unicode` beyond Latin-1 (also
   inconsistent between calls for the same rune), the wall clock and the
   local time zone of `time`, `sync.Pool`, `sync.Map.Range` for keys stored
   meanwhile, `fmt.Errorf` with non-constant formats (any wrapping).
   Properties that depend on them may fail where gc's behaviour would
   satisfy them.
-- **Approximations that are not over-approximations**: `atomic.Value`'s
+- **Approximations that are not over-approximations**: `fmt`'s text has
+  at most 4 GiB; the library's own pools are never reused (one of the
+  real pool's behaviours); `atomic.Value`'s
   comparison and swap are one atomic step (gc's `CompareAndSwap` can
   fail on a concurrent store of an equal value); copying a `sync.Cond`
   is not detected; `unsafe.Slice` does not check that the memory wraps
@@ -916,21 +931,22 @@ use `MapOf`, `ArrayOf` or `ChanOf`, which find the program's types.
   and no function values or channels (§5).
 - **Unsupported constructs left in user code** (other than calls): types
   that refer to themselves other than through structs or function types
-  (`type T []T`, `type P *P`), type declarations in generic functions,
-  closures that capture type parameters (25 corpus sites), deferred
-  calls of built-in functions other than `delete` and `close`, `goto`
-  out of and `defer` in range-over-function
-  bodies, package variables of unmodelled packages (`os.Stdout`,
-  `os.Args`, ...).
+  (`type T []T`, `type P *P`; none in the 9,187 files of the module
+  cache and GOROOT), and package variables of unmodelled packages
+  (`os.Stdout`, `os.Args`, ...). (Type declarations in generic
+  functions, type-switch variables in closures, which the corpus
+  reported as captures, deferred and `go` calls of all built-ins,
+  `defer` and `goto` in range-over-function bodies and conversions from
+  slices to arrays are supported now.)
 - **Unmodelled packages** by corpus call sites: `go/types` (1,737),
   `syscall` (1,234, mostly in the file-reading functions of `time`'s and
   `os`'s sources, reached only through them), `go/ast` (666), `os`
   (598), `bufio` (410), `runtime` (290), `go/token`, `log`, `image`,
   `regexp`, `net`, `net/http`, `path/filepath`, `encoding/asn1`. Several
-  are plain Go and could be source models as `strings` and `io` are
-  (`bufio`, `path/filepath` with `os` stubs, `regexp`, `text/template`
-  now that `reflect` is modelled); `os` and `syscall` need models of the
-  environment (files, arguments, environment variables).
+  are plain Go and are source models now (`bufio`, `path/filepath`,
+  `regexp`, `log`, `text/template`, `math/rand`); `os` and `syscall`
+  need models of the environment (files, arguments, environment
+  variables).
 - **Models track one Go release.** Source models are the GOROOT source
   of the toolchain, but the function models, the overrides and the
   copied tables (`unicode`'s `properties` and `asciiFold`, the
@@ -1014,6 +1030,9 @@ use `MapOf`, `ArrayOf` or `ChanOf`, which find the program's types.
 
 ### 7.3 CBMC changes to upstream
 
+- goto-symex: constant updates of constant arrays (`array_of(0) with
+  [0:=c0] ...`, at most 64) are propagated, as the contents of a buffer
+  after a copy of constant data (bufio's 4096-byte buffers).
 - goto-symex: objects of static lifetime declared as const-qualified
   structs or arrays of const-qualified elements are not divided by field
   sensitivity (their constant value is propagated as a whole; writes after
