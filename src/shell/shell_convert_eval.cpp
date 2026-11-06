@@ -268,7 +268,11 @@ const shell_command_listt &shell_convertert::parse_known_text(
   // The commands of the text, which must outlive the conversion: they are
   // kept with the dot scripts.
   auto parsed = std::make_unique<shell_programt>();
-  parsed->filename = id2string(loc.get_file());
+  // A file of its own, so that the locations in the text (and the
+  // dynamic sites in it) differ from those of the script's own commands.
+  parsed->filename = id2string(loc.get_file()) + "#" + what + "-" +
+                     id2string(loc.get_line()) + "-" +
+                     id2string(loc.get_column());
   parsed->dialect = program.dialect;
   if(parse_shell_source(
        text, parsed->filename, *parsed, log.get_message_handler()))

@@ -15,8 +15,10 @@
 /// - in double quotes: no ", \, $ or `;
 /// - in single quotes (or $'...'): no ' or \.
 ///
-/// A hole anywhere else (a command name, a variable name, an arithmetic
-/// expression, a here-document) makes the template unusable here.
+/// A hole in a command name makes it a dynamic command name (see
+/// convert_dynamic_simple). A hole anywhere else (a variable name, an
+/// arithmetic expression, a here-document) makes the template unusable
+/// here.
 
 #include "shell_convert_class.h"
 
@@ -222,13 +224,9 @@ public:
       for(auto &element : assignment.elements)
         rewrite(element, false);
     }
-    for(std::size_t i = 0; i < command.words.size(); ++i)
-    {
-      // A hole in the command name is not supported here.
-      if(i == 0 && mentions(command.words[i]))
-        failed = true;
-      rewrite(command.words[i], false);
-    }
+    // A hole in the command name makes it a dynamic command name.
+    for(auto &word : command.words)
+      rewrite(word, false);
     for(auto &test : command.test)
       rewrite(test);
     for(auto &redirect : command.redirects)

@@ -1,0 +1,12 @@
+CORE
+template-command.sh
+--resolve-dynamic-sites --show-dynamic-sites
+^EXIT=0$
+^SIGNAL=0$
+^shell-eval:template-command.sh:5:1: .*: \{ \*"/msg hello" \}$
+^shell-command-name:template-command.sh#eval-5-1:1:1: .*: \{ \*"/msg" \}$
+--
+^warning: ignoring
+--
+The text of eval is parsed as a file of its own, so that its dynamic
+sites have identifiers of their own.
