@@ -93,6 +93,7 @@ protected:
   std::string go_compiler;
   /// Whether deadlocks are reported (not with --go-no-deadlock-check).
   bool deadlock_check = true;
+  bool race_check = false;
   /// Whether the helper keeps the functions of imported packages that the
   /// program cannot reach (--go-keep-unreachable; it prunes them otherwise).
   bool keep_unreachable = false;

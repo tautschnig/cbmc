@@ -304,6 +304,12 @@ func AtomicEnd() {}
 func RaceRead(p any)  {}
 func RaceWrite(p any) {}
 
+// RaceObserve is an observation of the state that p points to which does
+// not synchronise (TryLock failing): the data-race check reports that the
+// races it orders are not detected, if it can be concurrent with a change
+// of that state.
+func RaceObserve(p any) {}
+
 // AtomicBeginWhen starts an atomic section once cond holds, as
 // AtomicBegin: the goroutine blocks until then (only the executions in
 // which cond holds continue), and if all goroutines block forever, the

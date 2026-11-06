@@ -43,6 +43,10 @@ func (m *Mutex) TryLock() bool {
 	ok := !m.locked
 	m.locked = true
 	rt.AtomicEnd()
+	if !ok {
+		// A failing TryLock does not synchronise with the Lock it observes.
+		rt.RaceObserve(&m.locked)
+	}
 	return ok
 }
 

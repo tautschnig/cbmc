@@ -534,6 +534,20 @@ exprt go_convertert::chan_len(
   code_blockt prefix;
   const exprt c = evaluate_once(chan, location, prefix);
   const exprt cap = field(c, "cap");
+  if(!is_cap)
+  {
+    // The length observes the channel's state without synchronising
+    // (Go1.27 §Channel_types; the memory model has no edge for it).
+    code_blockt observe;
+    race_marker(
+      "go::$race_observe",
+      address_of_exprt{field(c, "count")},
+      location,
+      observe);
+    prefix.add(code_ifthenelset{
+      notequal_exprt{c, null_pointer_exprt{to_pointer_type(c.type())}},
+      std::move(observe)});
+  }
   const exprt value =
     is_cap ? exprt{cap}
            : exprt{if_exprt{
@@ -796,7 +810,27 @@ void go_convertert::convert_select(
   {
     const caset &c = cases[i];
     code_blockt clause;
-    if(!c.chan.is_nil())
+    if(c.chan.is_nil())
+    {
+      // The default case observes that no communication can proceed,
+      // without synchronising with the operations that made it so.
+      for(const caset &other : cases)
+      {
+        if(other.chan.is_nil())
+          continue;
+        code_blockt observe;
+        race_marker(
+          "go::$race_observe",
+          address_of_exprt{field(other.chan, "count")},
+          location,
+          observe);
+        clause.add(code_ifthenelset{
+          notequal_exprt{
+            other.chan, null_pointer_exprt{to_pointer_type(other.chan.type())}},
+          std::move(observe)});
+      }
+    }
+    else
     {
       code_blockt blocking;
       if(c.is_send)

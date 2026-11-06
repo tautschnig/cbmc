@@ -322,6 +322,12 @@ void go_convertert::delete_entry(
   const irept &where,
   code_blockt &dest)
 {
+  // gc's mapdelete writes the map also when there is no such entry.
+  code_blockt write;
+  race_marker("go::$race_write", map, location_of(where), write);
+  dest.add(code_ifthenelset{
+    notequal_exprt{map, null_pointer_exprt{to_pointer_type(map.type())}},
+    std::move(write)});
   const symbol_exprt found = map_find(map, key, where, dest);
   code_blockt remove;
   const exprt last =

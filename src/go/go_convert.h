@@ -84,6 +84,10 @@ struct go_convert_optionst
   std::string entry_function;
   /// Whether deadlocks are reported (not with --go-no-deadlock-check).
   bool deadlock_check = true;
+  /// Whether the data-race check (--go-race-check) instruments the program:
+  /// then accesses that are not plain loads and stores are marked
+  /// (race_marker).
+  bool race_check = false;
 };
 
 /// Converts one Go package.
@@ -129,6 +133,7 @@ private:
   const object_factory_parameterst nondet_parameters;
   const std::string entry_function;
   const bool deadlock_check;
+  const bool race_check;
   messaget log;
   namespacet ns;
   go_type_convertert type_converter;
@@ -848,6 +853,16 @@ private:
     bool is_cap,
     const typet &type,
     const source_locationt &location);
+  /// A call of the generated function \p id (go::$race_read,
+  /// go::$race_write or go::$race_observe, with empty bodies) with
+  /// \p pointer: an access of *pointer for the data-race check
+  /// (go_race_check.cpp), and no effect otherwise; nothing without
+  /// --go-race-check.
+  void race_marker(
+    const irep_idt &id,
+    const exprt &pointer,
+    const source_locationt &location,
+    code_blockt &dest);
   void convert_chan_range(
     const irept &stmt,
     const exprt &chan,

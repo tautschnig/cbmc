@@ -40,6 +40,7 @@ go_convertert::go_convertert(
     nondet_parameters(options.nondet),
     entry_function(options.entry_function),
     deadlock_check(options.deadlock_check),
+    race_check(options.race_check),
     log(message_handler),
     ns(symbol_table),
     type_converter(parse_tree, symbol_table)
@@ -2713,32 +2714,27 @@ bool go_convertert::convert_intrinsic_call(const irept &call, code_blockt &dest)
     return true;
   }
 
-  if(callee == "cprover/rt.RaceRead" || callee == "cprover/rt.RaceWrite")
+  if(
+    callee == "cprover/rt.RaceRead" || callee == "cprover/rt.RaceWrite" ||
+    callee == "cprover/rt.RaceObserve")
   {
-    // A call of go::$race_read or go::$race_write (functions without
-    // effect) with the pointer, which the data-race check
-    // (go_race_check.cpp) takes as an access of the variable it points to.
     exprt pointer = convert_expr(args.front());
     if(pointer.is_nil())
       return true;
     if(pointer.type().id() != ID_pointer)
     {
-      unsupported(args.front(), "rt.RaceRead/RaceWrite of a non-pointer");
+      unsupported(
+        args.front(),
+        "rt." + id2string(callee).substr(11) + " of a non-pointer");
       return true;
     }
-    const irep_idt id =
-      callee == "cprover/rt.RaceWrite" ? "go::$race_write" : "go::$race_read";
-    const pointer_typet parameter = pointer_type(empty_typet{});
-    if(!symbol_table.has_symbol(id))
-    {
-      declare_generated(symbol_table, id, {parameter}, empty_typet{});
-      symbol_table.get_writeable_ref(id).value = code_blockt{};
-    }
-    dest.add(code_expressiont{side_effect_expr_function_callt{
-      ns.lookup(id).symbol_expr(),
-      {typecast_exprt::conditional_cast(pointer, parameter)},
-      empty_typet{},
-      location}});
+    race_marker(
+      callee == "cprover/rt.RaceWrite"  ? "go::$race_write"
+      : callee == "cprover/rt.RaceRead" ? "go::$race_read"
+                                        : "go::$race_observe",
+      pointer,
+      location,
+      dest);
     return true;
   }
 
@@ -4370,4 +4366,25 @@ exprt go_convertert::convert_expr_value(const irept &expr)
 
   unsupported(expr, "expression " + id2string(kind));
   return nil_exprt{};
+}
+
+void go_convertert::race_marker(
+  const irep_idt &id,
+  const exprt &pointer,
+  const source_locationt &location,
+  code_blockt &dest)
+{
+  if(!race_check)
+    return;
+  const pointer_typet parameter = pointer_type(empty_typet{});
+  if(!symbol_table.has_symbol(id))
+  {
+    declare_generated(symbol_table, id, {parameter}, empty_typet{});
+    symbol_table.get_writeable_ref(id).value = code_blockt{};
+  }
+  dest.add(code_expressiont{side_effect_expr_function_callt{
+    ns.lookup(id).symbol_expr(),
+    {typecast_exprt::conditional_cast(pointer, parameter)},
+    empty_typet{},
+    location}});
 }

@@ -44,6 +44,7 @@ void go_languaget::set_language_options(
   function_entry_point = options.get_option("function");
   go_compiler = options.get_option("go-compiler");
   deadlock_check = !options.get_bool_option("go-no-deadlock-check");
+  race_check = options.get_bool_option("go-race-check");
   keep_unreachable = options.get_bool_option("go-keep-unreachable");
   nondet_parameters.set(options);
 }
@@ -265,6 +266,7 @@ bool go_languaget::typecheck(
   options.nondet = nondet_parameters;
   options.entry_function = function_entry_point;
   options.deadlock_check = deadlock_check;
+  options.race_check = race_check;
   return go_convertert{symbol_table, parse_tree, options, message_handler}();
 }
 

@@ -36,6 +36,10 @@ func (rw *RWMutex) TryRLock() bool {
 		rw.readers++
 	}
 	rt.AtomicEnd()
+	if !ok {
+		// A failing TryRLock does not synchronise with what it observes.
+		rt.RaceObserve(rw)
+	}
 	return ok
 }
 
@@ -68,6 +72,10 @@ func (rw *RWMutex) TryLock() bool {
 		rw.writer = true
 	}
 	rt.AtomicEnd()
+	if !ok {
+		// A failing TryLock does not synchronise with what it observes.
+		rt.RaceObserve(rw)
+	}
 	return ok
 }
 
