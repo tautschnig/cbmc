@@ -321,3 +321,40 @@ property.
 - The observation check also fails where gc reports nothing
   (`TestNoRaceChanCloseLen`, `TestNoRaceCloseHappensBeforeRead`). These
   are inconclusive results, not race reports.
+
+## 10. Solver out-of-memory failures
+
+Run I (section 9's fixes) had 26 harnesses that failed for lack of solver
+memory or crashed, and 28 timeouts. Most of the causes are not specific to
+the race check; they also affect concurrent Go programs that grow slices or
+maps.
+
+| Cause | Fix |
+|---|---|
+| Byte operators between arrays of the same element type, of symbolic size, lowered through bytes: a comprehension with divisions by the element size, instantiated for every index (a two-goroutine `append` beyond capacity: out of memory at 24 GiB) | lowered element by element (`357c121d83`); also when only one size is symbolic (`ec006be75e`: ten `struct{x, y int}` copied between goroutines went from 10 million variables and 168 s to 73,000 and 0.4 s). Both also fix spurious failures (`array_copy_symbolic_size`, `array_replace_constant_from_symbolic`) |
+| `simplify_byte_update` built one `with` per element of the value, 8,000 deep for a `[1000]*int` map key into an empty map's array, which overflowed the stack | empty arrays are not updated, and chains of more than 256 elements are left to lowering (`8c5154f7ef`) |
+| Shadow memory of a dynamic array typed with its size symbol, mismatched when reused from the previous symex run | unbounded shadow arrays (`ac23ea0997`) |
+| The race checks read the flags of every byte of an access (82,113 instead of 36,441 steps) | the first byte suffices for the check (`969b834200`): of two overlapping accesses, the check of the one starting later can be scheduled to see the other's flags |
+
+**Run J on the whole oracle, `--unwind 4`:**
+
+| | found / clean | inconclusive (incomplete, unwind) | error | timeout | silent / false |
+|---|---|---|---|---|---|
+| 224 racy tests | 203 (run I: 177) | 7 | 3 (run I: 24) | 8 (run I: 14) | 3* |
+| 117 race-free tests | 79 | 26 | 1 | 10 | 1** |
+
+\* `TestRaceIssue51618`, `TestRaceIssue5567` and `TestRaceRangeFuncIterator`
+are not valid under the stub `testing` package (gc fails them too).
+
+\*\* `TestNoRaceSliceWriteCopy`, from the coarse whole-object accesses.
+
+The oracle took 37,535 s in total (run I: 50,125 s).
+
+**Remaining errors:**
+
+- Very large values: `[1000]*int` keys and values copied into maps
+  (`TestRaceMapBigKeyInsert`, `BigValInsert`; the array theory compares
+  64,000-bit elements). `TestRaceNestedArrayCopy` copies a 16 MB array
+  and fails without the race check too.
+- 2,047 goroutines (`TestNoRaceDeferAtomicStore`): the memory model's
+  constraints.
