@@ -2170,6 +2170,20 @@ void go_convertert::convert_range(
     }
   }
 
+  // Go1.27 §For_range: without iteration variables and with an empty body,
+  // the iterations do nothing (and decoding the code points of a string
+  // cannot fail), so the loop is the evaluation of x above.
+  const auto is_blank = [](const irept &node) {
+    return node.is_nil() || (node.id() == "Ident" && node.get("Name") == "_");
+  };
+  if(
+    label_object.empty() && is_blank(key_node) && is_blank(value_node) &&
+    go_list(go_field(stmt, "Body"), "List").empty())
+  {
+    dest.add(std::move(scope));
+    return;
+  }
+
   // The loop, with a hidden index.
   const irep_idt index_id = id2string(state.function_id) + "::$range" +
                             std::to_string(state.label_counter);
