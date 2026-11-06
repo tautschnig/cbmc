@@ -1,0 +1,14 @@
+CORE
+main.c
+--no-standard-checks
+^EXIT=10$
+^SIGNAL=0$
+^\[main.assertion.1\] .* pointer to a known object: SUCCESS$
+^\[main.assertion.2\] .* pointer from an input: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+An object of the value set that has no shadow memory makes the resolution
+incomplete. For a failed symbol, only if the pointer points to it, as CBMC's
+dereferencing does.

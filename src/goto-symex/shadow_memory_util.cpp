@@ -20,6 +20,7 @@ Author: Peter Schrammel
 #include <util/invariant.h>
 #include <util/namespace.h>
 #include <util/pointer_offset_size.h>
+#include <util/pointer_predicates.h>
 #include <util/simplify_expr.h>
 #include <util/ssa_expr.h>
 #include <util/std_expr.h>
@@ -1151,6 +1152,12 @@ get_shadow_memory_for_matched_object(
   return result;
 }
 
+exprt failed_symbol_condition(const exprt &expr, const exprt &matched_object)
+{
+  const exprt &root = to_object_descriptor_expr(matched_object).root_object();
+  return same_object(expr, address_of_exprt{root, pointer_type(root.type())});
+}
+
 std::optional<exprt> get_shadow_memory(
   const exprt &expr,
   const std::vector<exprt> &value_set,
@@ -1158,9 +1165,8 @@ std::optional<exprt> get_shadow_memory(
   const namespacet &ns,
   const messaget &log,
   size_t &mux_size,
-  bool &complete)
+  exprt::operandst &incomplete)
 {
-  complete = true;
   std::vector<std::pair<exprt, exprt>> conds_values;
   for(const auto &matched_object : value_set)
   {
@@ -1168,7 +1174,7 @@ std::optional<exprt> get_shadow_memory(
     {
       log.warning() << "Shadow memory: value set contains unknown for "
                     << format(expr) << messaget::eom;
-      complete = false;
+      incomplete.push_back(true_exprt{});
       continue;
     }
     if(
@@ -1177,14 +1183,14 @@ std::optional<exprt> get_shadow_memory(
     {
       log.warning() << "Shadow memory: value set contains integer_address for "
                     << format(expr) << messaget::eom;
-      complete = false;
+      incomplete.push_back(true_exprt{});
       continue;
     }
     if(matched_object.type().get_bool(ID_C_is_failed_symbol))
     {
       log.warning() << "Shadow memory: value set contains failed symbol for "
                     << format(expr) << messaget::eom;
-      complete = false;
+      incomplete.push_back(failed_symbol_condition(expr, matched_object));
       continue;
     }
 
@@ -1201,7 +1207,7 @@ std::optional<exprt> get_shadow_memory(
         to_object_descriptor_expr(matched_object).root_object().id() !=
         ID_null_object)
       {
-        complete = false;
+        incomplete.push_back(true_exprt{});
       }
     }
     else

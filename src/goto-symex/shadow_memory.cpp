@@ -175,11 +175,9 @@ void shadow_memoryt::symex_set_field(
   // build lhs
   const exprt &rhs = value;
   size_t mux_size = 0;
-  bool complete = true;
-  std::optional<exprt> maybe_lhs =
-    get_shadow_memory(expr, value_set, addresses, ns, log, mux_size, complete);
-  if(!complete)
-    mark_incomplete(state);
+  exprt::operandst incomplete;
+  std::optional<exprt> maybe_lhs = get_shadow_memory(
+    expr, value_set, addresses, ns, log, mux_size, incomplete);
 
   // add to equation
   if(maybe_lhs.has_value())
@@ -230,8 +228,10 @@ void shadow_memoryt::symex_set_field(
   {
     log.warning() << "Shadow memory: cannot set_field for " << format(expr)
                   << messaget::eom;
-    mark_incomplete(state);
+    if(incomplete.empty())
+      incomplete.push_back(true_exprt{});
   }
+  mark_incomplete(state, incomplete);
 }
 
 // Function synopsis
@@ -271,6 +271,7 @@ void shadow_memoryt::symex_get_field(
   shadow_memory_log_value_set(ns, log, value_set);
 
   std::vector<std::pair<exprt, exprt>> rhs_conds_values;
+  exprt::operandst incomplete;
   const null_pointer_exprt null_pointer(to_pointer_type(expr.type()));
   // Used to give a default value for invalid pointers and other usages
   const exprt &field_init_expr = get_field_init_expr(field_name, state);
@@ -292,7 +293,7 @@ void shadow_memoryt::symex_get_field(
     {
       log.warning() << "Shadow memory: value set contains unknown for "
                     << format(expr) << messaget::eom;
-      mark_incomplete(state);
+      incomplete.push_back(true_exprt{});
       continue;
     }
     // Ignore "integer_address"
@@ -302,17 +303,16 @@ void shadow_memoryt::symex_get_field(
     {
       log.warning() << "Shadow memory: value set contains integer_address for "
                     << format(expr) << messaget::eom;
-      mark_incomplete(state);
+      incomplete.push_back(true_exprt{});
       continue;
     }
-    // Ignore "ID_C_is_failed_symbol" (another incarnation of invalid pointer)
-    // TODO: check if this is obsolete (or removed by
-    //  replace_invalid_object_by_null) or add default value
+    // A failed symbol (the target of a pointer whose value is not known)
+    // has no shadow memory: incomplete if expr points to it.
     if(matched_object.type().get_bool(ID_C_is_failed_symbol))
     {
       log.warning() << "Shadow memory: value set contains failed symbol for "
                     << format(expr) << messaget::eom;
-      mark_incomplete(state);
+      incomplete.push_back(failed_symbol_condition(expr, matched_object));
       continue;
     }
 
@@ -335,7 +335,7 @@ void shadow_memoryt::symex_get_field(
         ID_null_object)
     {
       // An object without shadow memory (of this field).
-      mark_incomplete(state);
+      incomplete.push_back(true_exprt{});
     }
     // If we have an exact match we discard all the previous conditions and
     // create an assignment. Then we'll break
@@ -385,12 +385,14 @@ void shadow_memoryt::symex_get_field(
     // the initialization value of the shadow-memory.
     log.warning() << "Shadow memory: cannot get_field for " << format(expr)
                   << messaget::eom;
-    mark_incomplete(state);
+    if(incomplete.empty())
+      incomplete.push_back(true_exprt{});
     symex_assign(
       state,
       lhs,
       typecast_exprt::conditional_cast(field_init_expr, lhs.type()));
   }
+  mark_incomplete(state, incomplete);
 }
 
 // TODO: the following 4 functions (`symex_field_static_init`,
@@ -603,15 +605,24 @@ void shadow_memoryt::convert_field_declaration(
   fields[field_name] = expr;
 }
 
-void shadow_memoryt::mark_incomplete(goto_symex_statet &state)
+void shadow_memoryt::mark_incomplete(
+  goto_symex_statet &state,
+  const exprt::operandst &conditions)
 {
   const symbolt *symbol;
-  if(ns.lookup(SHADOW_MEMORY_INCOMPLETE, symbol))
+  if(conditions.empty() || ns.lookup(SHADOW_MEMORY_INCOMPLETE, symbol))
     return;
+  exprt condition = disjunction(conditions);
+  if(!condition.is_true())
+  {
+    condition = or_exprt{
+      typecast_exprt::conditional_cast(symbol->symbol_expr(), bool_typet{}),
+      std::move(condition)};
+  }
   symex_assign(
     state,
     symbol->symbol_expr(),
-    typecast_exprt::conditional_cast(true_exprt{}, symbol->type));
+    typecast_exprt::conditional_cast(condition, symbol->type));
 }
 
 std::vector<shadow_memory_statet::shadowed_addresst>

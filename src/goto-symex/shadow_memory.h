@@ -157,8 +157,10 @@ private:
     const typet &object_type);
 
   /// Records in SHADOW_MEMORY_INCOMPLETE, if declared, that a field could
-  /// not be resolved.
-  void mark_incomplete(goto_symex_statet &state);
+  /// not be resolved if any of \p conditions holds (nothing if there are
+  /// none).
+  void
+  mark_incomplete(goto_symex_statet &state, const exprt::operandst &conditions);
 
   /// The objects with shadow memory for field \p field_name: those that
   /// \p state registered, then those of other threads and paths
