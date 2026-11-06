@@ -101,7 +101,18 @@ void goto_inlinet::parameter_assignments(
         }
         else
         {
-          UNREACHABLE;
+          // An argument that cannot be converted to the parameter type. This
+          // can arise when the callee's parameters have changed since the
+          // call was created, for example when instrumentation has added a
+          // parameter to a variadic function, so that a variadic argument
+          // now binds to it.
+          log.warning().source_location = source_location;
+          log.warning() << "call to '" << function_name << "': "
+                        << "argument type does not match parameter '"
+                        << symbol.base_name << "', "
+                        << "inserting non-deterministic value" << messaget::eom;
+
+          actual = side_effect_expr_nondett(parameter_type, source_location);
         }
       }
 
