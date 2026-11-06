@@ -1,0 +1,15 @@
+CORE
+main.go
+--unwind 3 --unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.panic\.5\] line 42 panic: expected failure: FAILURE$
+^\*\* 1 of \d+ failed
+^VERIFICATION FAILED$
+--
+unwinding assertion.*: FAILURE
+^warning: ignoring
+--
+Elements are copied by __CPROVER_array_copy and __CPROVER_array_replace,
+whose byte operators are lowered element by element between arrays of the
+same element type, so pointers keep what they point to.

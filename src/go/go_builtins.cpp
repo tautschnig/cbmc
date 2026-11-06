@@ -185,44 +185,17 @@ void go_convertert::copy_elements(
     typecast_exprt::conditional_cast(source, dest.type()), location, copy);
   const exprt buffer = evaluate_once(
     allocate_elements(element, count, false, location, copy), location, copy);
-  if(!contains_reference(element, ns))
-  {
-    // Without loops, as CBMC's model of memcpy: __CPROVER_array_copy into
-    // the new array, then __CPROVER_array_replace. These copy bytes.
-    codet array_copy{ID_array_copy, {buffer, from}};
-    array_copy.add_source_location() = location;
-    copy.add(std::move(array_copy));
-    codet array_replace{ID_array_replace, {to, buffer}};
-    array_replace.add_source_location() = location;
-    copy.add(std::move(array_replace));
-  }
-  else
-  {
-    // Pointers rebuilt from bytes would lose what they point to, so
-    // elements that contain pointers (strings, slices, pointers, function
-    // values) are copied one by one, which needs count loop iterations.
-    const auto loop = [&](const exprt &target, const exprt &origin)
-    {
-      const symbol_exprt i = new_temporary(count.type(), location, copy);
-      code_frontend_assignt step{
-        dereference_exprt{plus_exprt{target, i}},
-        dereference_exprt{plus_exprt{origin, i}}};
-      step.add_source_location() = location;
-      code_blockt advance;
-      advance.add(
-        code_frontend_assignt{i, plus_exprt{i, from_integer(1, count.type())}});
-      code_fort for_loop{
-        code_frontend_assignt{i, from_integer(0, count.type())},
-        binary_relation_exprt{i, ID_lt, count},
-        side_effect_expr_statement_expressiont{
-          std::move(advance), empty_typet{}, location},
-        std::move(step)};
-      for_loop.add_source_location() = location;
-      copy.add(std::move(for_loop));
-    };
-    loop(buffer, from);
-    loop(to, buffer);
-  }
+  // Without loops, as CBMC's model of memcpy: __CPROVER_array_copy into the
+  // new array, then __CPROVER_array_replace. These copy bytes, also of
+  // elements with pointers: the byte operators between arrays of the same
+  // element type are lowered element by element (lower_byte_operators.cpp),
+  // so the pointers keep what they point to.
+  codet array_copy{ID_array_copy, {buffer, from}};
+  array_copy.add_source_location() = location;
+  copy.add(std::move(array_copy));
+  codet array_replace{ID_array_replace, {to, buffer}};
+  array_replace.add_source_location() = location;
+  copy.add(std::move(array_replace));
   code_ifthenelset if_any{
     binary_relation_exprt{count, ID_gt, from_integer(0, count.type())},
     std::move(copy)};
