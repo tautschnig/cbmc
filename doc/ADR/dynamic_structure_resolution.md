@@ -282,6 +282,51 @@ The shell front-end's sites, in order of the census:
     - 5 that timed out end with a solver error, and 3 that ended with
       one time out;
     - all 21 residual assertions that were decided hold.
+- Precision work (29 Oct 2026), measured on the same 244 scripts (804 site
+  occurrences):
+
+  | Version | Resolved | Unreachable | Unresolved | Cost: median, 90th percentile, maximum |
+  |---|---|---|---|---|
+  | first analysis | 92 | 255 | 457 | 2.1, 2.9, 4.0 |
+  | summaries, saved copies, arrays | 131 | 255 | 405 | 2.3, 6.7, 49 (2 time outs at 120 s) |
+  | and constants, worklist | 131 | 275 | 398 | 2.0, 3.4, 7.9 |
+
+  - Must-assigned symbols are computed per function from summaries: a
+    function starts with what holds at all its reachable calls, and a call
+    adds what the callee assigns where it returns. Most of the gain comes
+    from this.
+  - A local `t` whose only assignments are `t := x` is a saved copy of
+    `x` (as `local` makes); the restore gives `x` the assigned status it
+    had where it was saved.
+  - Arrays of shell values are tracked with their elements joined.
+  - Constant scalars, such as `shell::fn::NAME` (whether a function is
+    defined), `shell::exited` and `shell::exit_trap`, are tracked per
+    instruction, and prune the branches they decide. Compared with the
+    version before, 4 distinct sites become resolved and 12 unreachable,
+    and the 2 scripts that timed out finish. A summary keeps only the
+    constants that the function (or its callees) may write.
+  - The interprocedural iteration is a worklist in post-order of the call
+    graph, in which entries, call facts and summaries only lose facts once
+    they exist. Recomputing entries in each round, as the first version
+    did, did not terminate on one script once constants were tracked.
+  - Constants are in a `sharing_mapt`, as each instruction has its own
+    copy; with `std::map`, copying them took 40% of the time.
+  - `ait` makes the state of an instruction that no trace reached on
+    demand, as the only owner of it. Keeping a reference to it after
+    dropping the pointer read freed memory, and made about one run in 400
+    find a resolved site unresolved. Precision measurements before this
+    fix were off by up to 37 distinct sites.
+  - What remains unresolved, by distinct sites (339 of 713): 120 variables
+    assigned other expansions, 85 words with literal text and an
+    expansion, 54 positional parameters, 32 variables never assigned in
+    the script (environment), 15 assigned command substitutions, 15
+    variables assigned only literals that are still read with their
+    environment value on some path, 7 command substitutions and 11 others.
+    117 distinct sites are resolved and 257 unreachable.
+  - Verification of the 130 scripts with a resolved or unreachable site
+    (cvc5, `--unwind 2`, 180 s and 5 GB each): 60 finish, 56 time out and
+    14 run out of memory; all 265 residual assertions that were decided
+    hold.
 - The marker function must not be interned in programs without sites.
   Interning one more identifier in every program changed the order of
   identifiers, which made the 24 refined string kernels take 216 s rather
