@@ -322,3 +322,30 @@ hidden so that the gap is visible in the harness itself.
 
 Mitigation is cheap and local: bound each offset by the mapped length of the
 corresponding BAR before forming the pointer.
+
+### F8/F9 are in shared code and affect all three ENA drivers
+
+`ena_com.c` is the shared base layer, vendored into each driver, so this is
+one defect in one file that ships three times, not three findings:
+
+| variant | path | lines |
+|---|---|---|
+| DPDK ENA PMD | `drivers/net/ena/base/ena_com.c` | 1317, 1322 |
+| Linux ENA | `kernel/linux/common/ena_com/ena_com.c` | 1358, 1363 |
+| FreeBSD ENA | `kernel/fbsd/ena/ena-com/ena_com.c` | 1359, 1364 |
+
+Normalising whitespace, the FreeBSD and DPDK copies of `ena_com.c` differ by
+289 of about 3500 lines, roughly 8%, and the differences are dominated by a
+macro refactor (`ENA_FIELD_PREP` replacing open-coded mask-and-shift). None of
+the differences touch the doorbell derivation, the req_id handling, `q_depth`
+or `next_to_comp`.
+
+Two consequences. For reporting: one fix to the shared layer covers all three
+drivers, which makes it a much better-value fix than its per-driver
+appearance suggests. For the proof: the ena_com invariants we have already
+established (`INV_COM`, `INV_SQ_ACCOUNTING`, the `ena_com_comp_ack` behaviour
+in the cleanup proof) are about code that is substantially identical in all
+three variants, so that part of the work transfers. What does not transfer is
+the OS glue -- `ena_ethdev.c` for DPDK, `ena_netdev.c` for Linux,
+`ena.c`/`ena_datapath.c` for FreeBSD -- which is where the FreeBSD findings
+we have no coverage for will be.
