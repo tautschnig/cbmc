@@ -1,0 +1,11 @@
+CORE
+main.go
+--go-race-check --unwind 3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+shadow memory does not resolve the accessed object: FAILURE
+^warning: ignoring
+--
+From TestNoRaceAfterFunc2 of Go's runtime/race tests.

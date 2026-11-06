@@ -41,6 +41,7 @@ Author: Michael Tautschnig
 #include <util/message.h>
 #include <util/pointer_expr.h>
 #include <util/pointer_offset_size.h>
+#include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/string_constant.h>
 #include <util/symbol_table_base.h>
@@ -170,6 +171,21 @@ static exprt skip_typecasts(exprt expr)
   while(expr.id() == ID_typecast)
     expr = to_typecast_expr(expr).op();
   return expr;
+}
+
+/// Whether \p lvalue is in an object that a pointer in \p fresh points to
+/// (one that an atomic section allocated).
+static bool
+is_fresh(const exprt &lvalue, const std::unordered_set<irep_idt> &fresh)
+{
+  const exprt *object = &lvalue;
+  while(object->id() == ID_member || object->id() == ID_index)
+    object = &object->operands().front();
+  if(object->id() != ID_dereference)
+    return false;
+  const exprt pointer = skip_typecasts(to_dereference_expr(*object).pointer());
+  return pointer.id() == ID_symbol &&
+         fresh.count(to_symbol_expr(pointer).get_identifier()) != 0;
 }
 
 /// If \p expr is a part of a map's representation (go_maps.cpp: a header
@@ -910,6 +926,9 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
       const goto_programt::instructiont *,
       std::pair<goto_programt::targett, std::vector<accesst>>>
       section_accesses;
+    // The pointers to the objects that each section allocates.
+    std::map<const goto_programt::instructiont *, std::unordered_set<irep_idt>>
+      section_fresh;
     // Generated instructions (e.g., of map operations) may have no location:
     // their checks get the last one before them.
     source_locationt last_location;
@@ -955,13 +974,27 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
             }
             // Any other access in the section (state of models, such as the
             // clock of time) is atomic: announced, not checked. The
-            // channel's buffer is the runtime's.
+            // channel's buffer is the runtime's. Accesses of objects that
+            // the section allocates (such as the value of a run-time error)
+            // are not shared yet, and their pointers are not assigned at
+            // the section's start, where it is announced.
+            if(
+              it->assign_rhs().id() == ID_side_effect &&
+              to_side_effect_expr(it->assign_rhs()).get_statement() ==
+                ID_allocate &&
+              it->assign_lhs().id() == ID_symbol)
+            {
+              section_fresh[&*section].insert(
+                to_symbol_expr(it->assign_lhs()).get_identifier());
+            }
             std::vector<accesst> accesses;
             collect(ns, it->assign_lhs(), true, true_exprt{}, accesses);
             collect(ns, it->assign_rhs(), false, true_exprt{}, accesses);
             for(auto &a : accesses)
             {
-              if(is_chan_buffer(a.lvalue))
+              if(
+                is_chan_buffer(a.lvalue) ||
+                is_fresh(a.lvalue, section_fresh[&*section]))
                 continue;
               a.announce_only = true;
               entry.second.push_back(a);
