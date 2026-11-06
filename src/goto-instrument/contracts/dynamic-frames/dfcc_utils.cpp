@@ -142,7 +142,9 @@ const symbolt &dfcc_utilst::create_new_parameter_symbol(
   return symbol;
 }
 
-/// \brief Adds the given symbol as parameter to the given code_typet.
+/// \brief Adds the given symbol as parameter to the given code_typet: as the
+/// last parameter, unless the function is variadic. Then it is the first, as
+/// va_start takes the arguments that follow the last declared parameter.
 static void add_parameter(const symbolt &symbol, code_typet &code_type)
 {
   PRECONDITION(symbol.is_parameter);
@@ -150,7 +152,9 @@ static void add_parameter(const symbolt &symbol, code_typet &code_type)
   parameter.set_base_name(symbol.base_name);
   parameter.set_identifier(symbol.name);
   auto &parameters = code_type.parameters();
-  parameters.insert(parameters.end(), parameter);
+  parameters.insert(
+    code_type.has_ellipsis() ? parameters.begin() : parameters.end(),
+    parameter);
 }
 
 void dfcc_utilst::add_parameter(
