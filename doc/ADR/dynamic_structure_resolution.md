@@ -327,6 +327,15 @@ The shell front-end's sites, in order of the census:
     (cvc5, `--unwind 2`, 180 s and 5 GB each): 60 finish, 56 time out and
     14 run out of memory; all 265 residual assertions that were decided
     hold.
+- Languages of candidates (29 Oct 2026). A resolution may include all
+  strings that contain a text (`{"values": [...], "containing": "/"}`).
+  The analysis tracks this one language, for `/`: any string concatenated
+  with strings that all contain a slash contains one. The shell front-end
+  converts such a command name as a utility, with branches for functions
+  whose names have a slash (bash, zsh). On the 244 scripts, 60 more
+  distinct sites are resolved (177 of 713), and resolved occurrences rise
+  from 131 to 196 of 804; the 36 decided residual assertions of the 48
+  scripts with such sites hold.
 - The marker function must not be interned in programs without sites.
   Interning one more identifier in every program changed the order of
   identifiers, which made the 24 refined string kernels take 216 s rather
