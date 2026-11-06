@@ -1492,7 +1492,11 @@ public:
   {
     UNQUOTED,
     DOUBLE_QUOTED,
-    SINGLE_QUOTED
+    SINGLE_QUOTED,
+    /// In the name of a variable, after its start.
+    NAME,
+    /// At the start of the name of a variable.
+    NAME_START
   };
 
 private:
@@ -1508,6 +1512,31 @@ private:
   };
   /// The number of ghost variables of holes so far.
   std::size_t holes_so_far = 0;
+  /// The ghost variables of the holes in names of variables, by their
+  /// placeholders, which stay in the names (see expand_indirect_parameter).
+  std::map<std::string, std::string> name_holes;
+  /// The names of the variables that the script expands or assigns.
+  std::set<std::string> variable_names;
+  void collect_variable_names(const shell_command_listt &list);
+  void collect_variable_names(const std::vector<shell_word_partt> &parts);
+  /// The placeholder and ghost variable of the hole in \p name, if any.
+  std::optional<std::pair<std::string, std::string>>
+  indirect_name(const std::string &name) const;
+  /// The variables whose names \p name, with a hole, matches, with the
+  /// parts for the hole.
+  std::vector<std::pair<std::string, std::string>>
+  indirect_candidates(const std::string &name) const;
+  /// A parameter expansion whose name has a hole: a branch for each
+  /// variable of the script whose name matches.
+  exprt expand_indirect_parameter(
+    const shell_word_partt &part,
+    shell_word_contextt context,
+    bool quoted,
+    code_blockt &dest);
+  /// An assignment without a command name whose name has a hole.
+  /// \return false if no name has a hole
+  bool
+  convert_indirect_assignment(const shell_commandt &command, code_blockt &dest);
   /// The code of \p pattern for eval or trap (\p what), or nothing if a
   /// hole is not in a word, or the text is not supported.
   std::optional<template_codet> parse_template(

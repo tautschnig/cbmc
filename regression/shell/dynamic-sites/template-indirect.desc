@@ -1,0 +1,19 @@
+CORE
+template-indirect.sh
+--resolve-dynamic-sites --cvc5
+^EXIT=10$
+^SIGNAL=0$
+^Dynamic sites: 2 resolved, 0 unreachable, 0 unresolved \(3 rounds\)$
+^\[shell-dynamic-site\.1\] .* "value=\$\{kopt_"\*"\}": SUCCESS$
+^\[shell-unsupported\.1\] .* the parts of the text of eval for the holes of "value=\$\{kopt_"\*"\}" are words .*: FAILURE$
+^\[assertion\.1\] .* = /dev/sda1: SUCCESS$
+^\[shell-unsupported\.2\] .* the parts of the text of eval for the holes of \*"=on" are words .*: SUCCESS$
+^\[assertion\.2\] .* = on: SUCCESS$
+^\[shell-unsupported\.3\] .* the name of the assignment to \* is of a variable of the script .*: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Holes in the names of variables: the expansion and the assignment
+dispatch over the script's variables whose names match. The name from
+the second argument may be anything, which is reported at line 5.

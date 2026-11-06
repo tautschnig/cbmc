@@ -1026,6 +1026,8 @@ void shell_convertert::convert_assignments_only(
   const shell_commandt &command,
   code_blockt &dest)
 {
+  if(convert_indirect_assignment(command, dest))
+    return;
   const source_locationt &loc = command.location;
   if(!command.redirects.empty())
   {

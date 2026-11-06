@@ -149,10 +149,12 @@ void shell_convertert::operator()()
   collect_function_definitions(program.commands);
   collect_options(program.commands);
   collect_arrays(program.commands);
+  collect_variable_names(program.commands);
   for(const auto &dot : dot_scripts)
   {
     if(dot.second != nullptr)
     {
+      collect_variable_names(dot.second->commands);
       collect_function_definitions(dot.second->commands);
       collect_options(dot.second->commands);
       collect_arrays(dot.second->commands);

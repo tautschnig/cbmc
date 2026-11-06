@@ -16,9 +16,13 @@
 /// - in single quotes (or $'...'): no ' or \.
 ///
 /// A hole in a command name makes it a dynamic command name (see
-/// convert_dynamic_simple). A hole anywhere else (a variable name, an
-/// arithmetic expression, a here-document) makes the template unusable
-/// here.
+/// convert_dynamic_simple). A hole in the name of a parameter expansion, or
+/// of an assignment without a command name, is an indirect variable: its
+/// part is a name (letters, digits and _, not starting with a digit at the
+/// start of the name), and the expansion or assignment dispatches over the
+/// script's variables whose names match (see expand_indirect_parameter). A
+/// hole anywhere else (an arithmetic expression, a here-document) makes the
+/// template unusable here.
 
 #include "shell_convert_class.h"
 
@@ -176,8 +180,10 @@ public:
         rewrite(part.parts, true);
       else if(part.kind == kindt::PARAMETER)
       {
-        // A hole in the name of a variable, or in an index, is not a word.
-        if(mentions(part.text) || mentions(part.index))
+        // A hole in the name of a variable is an indirect variable; one in
+        // an index is not supported.
+        name_hole(part.text);
+        if(mentions(part.index))
           failed = true;
         rewrite(part.parts, in_double_quotes);
         rewrite(part.replacement, in_double_quotes);
@@ -196,6 +202,18 @@ public:
       result.push_back(std::move(part));
     }
     parts = std::move(result);
+  }
+
+  /// Record the hole in the name \p name, if it has one.
+  void name_hole(const std::string &name)
+  {
+    const auto hole = next(name, 0);
+    if(!hole.has_value())
+      return;
+    // One hole per name.
+    if(next(name, hole->second + 1).has_value())
+      failed = true;
+    found(hole->first, hole->second == 0 ? classt::NAME_START : classt::NAME);
   }
 
   void rewrite(shell_testt &test)
@@ -218,7 +236,11 @@ public:
       failed = true;
     for(auto &assignment : command.assignments)
     {
-      if(mentions(assignment.name) || mentions(assignment.index))
+      // An indirect assignment, only without a command name.
+      if(mentions(assignment.name) && !command.words.empty())
+        failed = true;
+      name_hole(assignment.name);
+      if(mentions(assignment.index))
         failed = true;
       rewrite(assignment.value, false);
       for(auto &element : assignment.elements)
@@ -265,8 +287,9 @@ shell_convertert::parse_template(
     text += pattern[i];
     if(i + 1 == pattern.size())
       break;
-    placeholders.push_back("CPROVERHOLE" + std::to_string(i) + "X");
-    code.ghosts.push_back("__cprover_hole_" + std::to_string(holes_so_far++));
+    const std::string number = std::to_string(holes_so_far++);
+    placeholders.push_back("CPROVERHOLE" + number + "X");
+    code.ghosts.push_back("__cprover_hole_" + number);
     text += placeholders.back();
   }
   for(const auto &part : pattern)
@@ -302,7 +325,18 @@ shell_convertert::parse_template(
                  return false;
                code.classes[i] = *rewrite.classes[i];
              }
-             return !rewrite.failed;
+             if(rewrite.failed)
+               return false;
+             for(std::size_t i = 0; i < placeholders.size(); ++i)
+             {
+               if(
+                 code.classes[i] == hole_classt::NAME ||
+                 code.classes[i] == hole_classt::NAME_START)
+               {
+                 name_holes[placeholders[i]] = code.ghosts[i];
+               }
+             }
+             return true;
            });
        },
        unused))
@@ -384,6 +418,27 @@ exprt shell_convertert::template_parts(
       for(const unsigned char c : {'\'', '\\'})
         forbidden.set(c);
       break;
+    case hole_classt::NAME:
+    case hole_classt::NAME_START:
+      forbidden.set();
+      for(int c = 0; c < 256; ++c)
+      {
+        if(std::isalnum(c) || c == '_')
+          forbidden.reset(c);
+      }
+      conditions.push_back(binary_relation_exprt{
+        payload_length(parts[i], dest, loc), ID_gt, zero});
+      if(code.classes[i] == hole_classt::NAME_START)
+      {
+        std::bitset<256> digits;
+        for(int c = '0'; c <= '9'; ++c)
+          digits.set(c);
+        const exprt first = payload_substring(
+          parts[i], zero, from_integer(1, integer_type()), dest, loc);
+        conditions.push_back(
+          not_exprt{payload_contains_byte(first, digits, dest, loc)});
+      }
+      break;
     }
     conditions.push_back(
       not_exprt{payload_contains_byte(parts[i], forbidden, dest, loc)});
@@ -399,4 +454,304 @@ void shell_convertert::assign_template_parts(
 {
   for(std::size_t i = 0; i < parts.size(); ++i)
     assign_variable(code.ghosts[i], make_value(parts[i]), dest, loc);
+}
+
+std::optional<std::pair<std::string, std::string>>
+shell_convertert::indirect_name(const std::string &name) const
+{
+  const auto at = name.find("CPROVERHOLE");
+  if(at == std::string::npos)
+    return {};
+  const auto end = name.find('X', at);
+  if(end == std::string::npos)
+    return {};
+  const std::string placeholder = name.substr(at, end + 1 - at);
+  const auto ghost = name_holes.find(placeholder);
+  if(ghost == name_holes.end())
+    return {};
+  return std::make_pair(placeholder, ghost->second);
+}
+
+std::vector<std::pair<std::string, std::string>>
+shell_convertert::indirect_candidates(const std::string &name) const
+{
+  std::vector<std::pair<std::string, std::string>> result;
+  const auto hole = indirect_name(name);
+  const std::size_t at = name.find(hole->first);
+  const std::string prefix = name.substr(0, at);
+  const std::string suffix = name.substr(at + hole->first.size());
+  for(const auto &candidate : variable_names)
+  {
+    if(
+      candidate.size() <= prefix.size() + suffix.size() ||
+      candidate.compare(0, prefix.size(), prefix) != 0 ||
+      candidate.compare(
+        candidate.size() - suffix.size(), suffix.size(), suffix) != 0)
+    {
+      continue;
+    }
+    const std::string part = candidate.substr(
+      prefix.size(), candidate.size() - prefix.size() - suffix.size());
+    result.emplace_back(candidate, part);
+  }
+  return result;
+}
+
+/// \p text with the placeholder \p placeholder as *.
+static std::string with_star(std::string text, const std::string &placeholder)
+{
+  const auto at = text.find(placeholder);
+  if(at != std::string::npos)
+    text.replace(at, placeholder.size(), "*");
+  return text;
+}
+
+exprt shell_convertert::expand_indirect_parameter(
+  const shell_word_partt &part,
+  shell_word_contextt context,
+  bool quoted,
+  code_blockt &dest)
+{
+  const source_locationt &loc = part.location;
+  const auto hole = indirect_name(part.text);
+  shell_word_partt ghost;
+  ghost.kind = shell_word_partt::kindt::PARAMETER;
+  ghost.text = hole->second;
+  ghost.location = loc;
+  const exprt name =
+    expand_parameter(ghost, shell_word_contextt::CASE_SUBJECT, true, dest);
+  const symbol_exprt result = temporary(string_type(), dest, loc);
+  // Another name is of a variable that the script does not use otherwise:
+  // set from the environment, or not set.
+  code_blockt otherwise;
+  {
+    // A fresh value for each expansion: different names may be expanded
+    // here and elsewhere.
+    shell_word_partt unknown = part;
+    unknown.text = "__cprover_other_variable";
+    if(
+      part.parameter_operator == "=" || part.parameter_operator == ":=" ||
+      part.parameter_operator == "?" || part.parameter_operator == ":?")
+    {
+      check(
+        otherwise,
+        false_exprt{},
+        "shell-unsupported",
+        "the name in " + with_star(display({part}), hole->first) +
+          " is of a variable of the script (others are not supported with "
+          "this operator)",
+        loc);
+      add(otherwise, code_assumet{false_exprt{}}, loc);
+    }
+    else
+    {
+      assign(
+        otherwise,
+        variable(unknown.text, loc),
+        environment_string(otherwise, loc),
+        loc);
+      assign(
+        otherwise,
+        result,
+        expand_parameter(unknown, context, quoted, otherwise),
+        loc);
+    }
+  }
+  const auto candidates = indirect_candidates(part.text);
+  for(auto it = candidates.rbegin(); it != candidates.rend(); ++it)
+  {
+    shell_word_partt direct = part;
+    direct.text = it->first;
+    code_blockt branch;
+    if(!try_convert(
+         [&](code_blockt &block)
+         {
+           assign(
+             block,
+             result,
+             expand_parameter(direct, context, quoted, block),
+             loc);
+         },
+         branch))
+    {
+      check(
+        branch,
+        false_exprt{},
+        "shell-unsupported",
+        "the name in " + with_star(display({part}), hole->first) + " is not " +
+          it->first + " (whose expansion is not supported here)",
+        loc);
+      add(branch, code_assumet{false_exprt{}}, loc);
+    }
+    code_ifthenelset choice{
+      equal(name, string_literal(it->second, loc), dest, loc),
+      std::move(branch),
+      std::move(otherwise)};
+    otherwise = code_blockt{};
+    add(otherwise, std::move(choice), loc);
+  }
+  dest.append(otherwise);
+  return result;
+}
+
+bool shell_convertert::convert_indirect_assignment(
+  const shell_commandt &command,
+  code_blockt &dest)
+{
+  std::size_t indirect = 0;
+  const shell_assignmentt *assignment = nullptr;
+  for(const auto &a : command.assignments)
+  {
+    if(indirect_name(a.name).has_value())
+    {
+      ++indirect;
+      assignment = &a;
+    }
+  }
+  if(indirect == 0)
+    return false;
+  const source_locationt &loc = command.location;
+  if(indirect > 1 || command.assignments.size() > 1)
+    unsupported(loc, "more than one assignment with an indirect name");
+  const auto hole = indirect_name(assignment->name);
+  shell_word_partt ghost;
+  ghost.kind = shell_word_partt::kindt::PARAMETER;
+  ghost.text = hole->second;
+  ghost.location = loc;
+  const exprt name =
+    expand_parameter(ghost, shell_word_contextt::CASE_SUBJECT, true, dest);
+  // Assigning a variable that the script does not use otherwise would not
+  // be seen by a later expansion of it by an indirect name, nor by text
+  // that is parsed later.
+  code_blockt otherwise;
+  check(
+    otherwise,
+    false_exprt{},
+    "shell-unsupported",
+    "the name of the assignment to " +
+      with_star(assignment->name, hole->first) +
+      " is of a variable of the script (others are not supported)",
+    loc);
+  add(otherwise, code_assumet{false_exprt{}}, loc);
+  const auto before = known_literals;
+  const auto candidates = indirect_candidates(assignment->name);
+  for(auto it = candidates.rbegin(); it != candidates.rend(); ++it)
+  {
+    shell_commandt direct = command;
+    direct.assignments.front().name = it->first;
+    code_blockt branch;
+    known_literals = before;
+    if(!try_convert(
+         [&](code_blockt &block) { convert_assignments_only(direct, block); },
+         branch))
+    {
+      check(
+        branch,
+        false_exprt{},
+        "shell-unsupported",
+        "the name of the assignment is not " + it->first +
+          " (whose assignment is not supported here)",
+        loc);
+      add(branch, code_assumet{false_exprt{}}, loc);
+    }
+    code_ifthenelset choice{
+      equal(name, string_literal(it->second, loc), dest, loc),
+      std::move(branch),
+      std::move(otherwise)};
+    otherwise = code_blockt{};
+    add(otherwise, std::move(choice), loc);
+  }
+  dest.append(otherwise);
+  known_literals.clear();
+  return true;
+}
+
+/// Whether \p text is a name (XCU 3.216).
+static bool is_variable_name(const std::string &text)
+{
+  if(text.empty() || std::isdigit(static_cast<unsigned char>(text[0])))
+    return false;
+  for(const char c : text)
+  {
+    if(!std::isalnum(static_cast<unsigned char>(c)) && c != '_')
+      return false;
+  }
+  return true;
+}
+
+void shell_convertert::collect_variable_names(
+  const std::vector<shell_word_partt> &parts)
+{
+  for(const auto &part : parts)
+  {
+    if(
+      part.kind == shell_word_partt::kindt::PARAMETER &&
+      is_variable_name(part.text))
+      variable_names.insert(part.text);
+    collect_variable_names(part.parts);
+    collect_variable_names(part.index);
+    collect_variable_names(part.replacement);
+    if(part.commands != nullptr)
+      collect_variable_names(*part.commands);
+  }
+}
+
+void shell_convertert::collect_variable_names(const shell_command_listt &list)
+{
+  static const std::set<std::string> declaring{
+    "read",
+    "getopts",
+    "export",
+    "local",
+    "readonly",
+    "declare",
+    "typeset",
+    "unset"};
+  for(const auto &command : list)
+  {
+    if(
+      is_variable_name(command.name) &&
+      command.kind == shell_commandt::kindt::FOR)
+      variable_names.insert(command.name);
+    for(const auto &assignment : command.assignments)
+    {
+      if(is_variable_name(assignment.name))
+        variable_names.insert(assignment.name);
+      collect_variable_names(assignment.value);
+      for(const auto &element : assignment.elements)
+        collect_variable_names(element);
+    }
+    const auto name =
+      command.words.empty() ? std::nullopt : static_text(command.words.front());
+    for(const auto &word : command.words)
+    {
+      collect_variable_names(word);
+      if(name.has_value() && declaring.count(*name) != 0)
+      {
+        if(const auto text = static_text(word))
+        {
+          const std::string before = text->substr(0, text->find('='));
+          if(is_variable_name(before))
+            variable_names.insert(before);
+        }
+      }
+    }
+    for(const auto &redirect : command.redirects)
+    {
+      collect_variable_names(redirect.target);
+      collect_variable_names(redirect.here_document);
+    }
+    collect_variable_names(command.body);
+    collect_variable_names(command.condition);
+    collect_variable_names(command.else_body);
+    for(const auto &item : command.for_items)
+      collect_variable_names(item);
+    collect_variable_names(command.case_word);
+    for(const auto &item : command.case_items)
+    {
+      for(const auto &pattern : item.patterns)
+        collect_variable_names(pattern);
+      collect_variable_names(item.body);
+    }
+  }
 }

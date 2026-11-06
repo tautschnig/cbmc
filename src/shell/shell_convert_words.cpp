@@ -350,6 +350,8 @@ exprt shell_convertert::expand_parameter(
   bool quoted,
   code_blockt &dest)
 {
+  if(indirect_name(part.text).has_value())
+    return expand_indirect_parameter(part, context, quoted, dest);
   if(arrays.count(part.text) != 0)
     return expand_array_parameter(part, context, quoted, dest);
   if(!part.index.empty())
