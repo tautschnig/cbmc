@@ -398,3 +398,71 @@ decided all properties and nothing was left UNKNOWN. A patch warning on
 and then **withdrawn**, because a warning whose triggering condition cannot
 be demonstrated should not be proposed upstream. Recording the observation
 here so it is not lost; it needs a reproducer before it is reportable.
+
+---
+
+## Review of the fixes (branch `cut-path-reporting`)
+
+Three commits, reviewed by building the branch in its own worktree and
+re-running our reproducers and the ENA proof against it.
+
+`b165698b344` follow returns to callers and continue past `assume(false)`;
+`0ae5f19be61` make the assert-false-assume-false body assertion fatal;
+`76dd7385f20` add `--report-unreachable-properties`, decided during symex.
+
+**The soundness trap is avoided.** Our own withdrawn attempt
+(`08ec62caff5`) decided this from the equation and treated "not in the
+equation" as "unreachable", which mislabels assertions symex discharges
+statically. The three-case probe that exposed that bug now behaves correctly
+with the option on:
+
+| case | status |
+|---|---|
+| reachable, statically true (`int a = 1; assert(a == 1)`) | SUCCESS |
+| reachable, trivially true but symbolic (`b == b`) | SUCCESS |
+| assertion of `false` guarded by a statically false condition | SUCCESS, excluded by design |
+
+Deciding it in symex is the right place, and is what we argued for when
+withdrawing our patch: symex knows, at the moment it cuts a path, which
+properties it is abandoning.
+
+**Issue A is fixed.** The reproducer's downstream `assert(0)` after a bodyless
+callee now **FAILS** where it previously reported SUCCESS. Under DFCC it is
+reported UNKNOWN rather than SUCCESS -- not as good as a failure, but no
+longer a false proof.
+
+**Issue C is fixed.** With the option, the loop-contract properties of a loop
+whose body is cut by a bodyless callee are reported **UNREACHABLE** instead of
+SUCCESS -- exactly the behaviour we asked for. Even with the option off the
+verdicts become UNKNOWN rather than SUCCESS, because the body assertion is now
+fatal. The branch also adds a `Check step was unwound for loop ...` property,
+which directly detects the "the step case never ran" vacuity that issue C made
+invisible.
+
+**Regression-clean.** `contracts-dfcc` gives an identical failing set with the
+branch and with develop (138 each, no newly failing and no newly passing).
+`regression/cbmc` likewise, and the branch's three new
+`report-unreachable-properties` tests pass.
+
+### What it says about our own proof
+
+The TX step was re-run against the fixed binary with
+`--report-unreachable-properties`, which is the strictest setting available:
+**VERIFICATION SUCCESSFUL, 0 of 2388, all six obligations SUCCESS, vacuity
+witness still FAILURE, and every loop-contract property SUCCESS including the
+new `Check step was unwound`.** A tool that now detects vacuous contract
+verdicts finds none in it. That is the strongest independent check the proof
+has had.
+
+268 properties are reported UNREACHABLE, with a warning giving the count, and
+the breakdown is a useful audit of scope rather than a problem:
+`ena_tx_mbuf_prepare` 190 (a separate dev_ops entry point, not called by
+xmit), **`ena_tx_cleanup` 50** (a separate operation -- precisely why the
+cleanup harness is being written), `ena_tx_map_mbuf` 14 (segment and error
+paths beyond segs 2), `ena_com_comp_ack` 7 (reached only via cleanup). The one
+UNREACHABLE unwinding assertion is inside CBMC's own DFCC write-set library,
+not in the driver; `ena_tx_map_mbuf.unwind.0` is SUCCESS, so our inner-loop
+bound is still real.
+
+Those 268 were previously counted as SUCCESS, which is the concrete
+justification for reporting obligations rather than property totals.
