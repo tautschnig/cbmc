@@ -72,7 +72,8 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
   bool use_counter_example,
   const union_find_replacet &symbol_resolve,
   const std::unordered_map<string_not_contains_constraintt, symbol_exprt>
-    &not_contain_witnesses);
+    &not_contain_witnesses,
+  const index_set_pairt &index_sets);
 
 static void initial_index_set(
   index_set_pairt &index_set,
@@ -1114,7 +1115,8 @@ string_refinementt::dec_solve(const exprt &assumption)
       ns,
       config_.use_counter_example,
       symbol_resolve,
-      not_contain_witnesses);
+      not_contain_witnesses,
+      index_sets);
     if(satisfied)
     {
       log.debug() << "check_SAT: the model is correct" << messaget::eom;
@@ -1171,7 +1173,8 @@ string_refinementt::dec_solve(const exprt &assumption)
         ns,
         config_.use_counter_example,
         symbol_resolve,
-        not_contain_witnesses);
+        not_contain_witnesses,
+        index_sets);
       if(satisfied)
       {
         log.debug() << "check_SAT: the model is correct" << messaget::eom;
@@ -1955,7 +1958,8 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
   bool use_counter_example,
   const union_find_replacet &symbol_resolve,
   const std::unordered_map<string_not_contains_constraintt, symbol_exprt>
-    &not_contain_witnesses)
+    &not_contain_witnesses,
+  const index_set_pairt &index_sets)
 {
   stream << "string_refinementt::check_axioms:" << messaget::eom;
 
@@ -2098,6 +2102,63 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
             ::instantiate_not_contains(axiom, indices, not_contain_witnesses))
         {
           lemmas.push_back(std::move(counter));
+        }
+
+        // The instance above is at one position of the existential, by the
+        // witness function, which the solver is free to choose again. Where
+        // the existential range is small in the model, also its instance at
+        // all positions of that range, which excludes the model at val:
+        // premise and val in range, with the range as in the model, imply
+        // that s0[val + m] != s1[m] for some m in it. As the model can move
+        // the occurrence by changing lengths, the same also at each index
+        // term of s0 whose value in the model is val.
+        const auto lower = numeric_cast<mp_integer>(
+          simplify_expr(get(axiom.exists_lower_bound), ns));
+        const auto upper = numeric_cast<mp_integer>(
+          simplify_expr(get(axiom.exists_upper_bound), ns));
+        constexpr std::size_t max_unrolled_range = 64;
+        if(
+          lower.has_value() && upper.has_value() && *lower <= *upper &&
+          *upper - *lower <= max_unrolled_range)
+        {
+          const typet &index_type = val.type();
+          std::set<exprt> positions{val};
+          const auto value = numeric_cast<mp_integer>(val);
+          const auto terms = index_sets.cumulative.find(axiom.s0.content());
+          if(value.has_value() && terms != index_sets.cumulative.end())
+          {
+            for(const auto &term : terms->second)
+            {
+              if(
+                term.type() == index_type &&
+                numeric_cast<mp_integer>(simplify_expr(get(term), ns)) == value)
+              {
+                positions.insert(term);
+              }
+            }
+          }
+          for(const auto &position : positions)
+          {
+            exprt::operandst differ;
+            for(mp_integer m = *lower; m < *upper; ++m)
+            {
+              const exprt m_expr = from_integer(m, index_type);
+              differ.push_back(notequal_exprt{
+                axiom.s0[simplify_sum(plus_exprt{position, m_expr})],
+                axiom.s1[m_expr]});
+            }
+            lemmas.push_back(implies_exprt{
+              conjunction(
+                {axiom.premise,
+                 binary_relation_exprt{axiom.univ_lower_bound, ID_le, position},
+                 binary_relation_exprt{axiom.univ_upper_bound, ID_gt, position},
+                 equal_exprt{
+                   axiom.exists_lower_bound, from_integer(*lower, index_type)},
+                 equal_exprt{
+                   axiom.exists_upper_bound,
+                   from_integer(*upper, index_type)}}),
+              disjunction(differ)});
+          }
         }
       }
       return {false, lemmas};

@@ -1,0 +1,11 @@
+CORE
+ab.sh
+--shell-strings refined
+^EXIT=0$
+^SIGNAL=0$
+^\[assertion\.1\] .* 0 = 2: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+As main.sh, with the literal at the end of the value.

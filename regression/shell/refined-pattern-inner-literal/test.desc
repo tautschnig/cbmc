@@ -1,0 +1,16 @@
+CORE
+main.sh
+--shell-strings refined
+^EXIT=0$
+^SIGNAL=0$
+^\[assertion\.1\] .* 0 = 1: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+A pattern with a literal of two or more bytes between stars matches a
+value that has it after an unknown part. The string solver found the
+literal's index_of to be -1: each counter-example instance of its
+not-contains constraint was at one position chosen by the witness
+function, which the next model moved, until it gave up and took the model
+as a counterexample.
