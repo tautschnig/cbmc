@@ -1326,8 +1326,10 @@ private:
   symbol_exprt exit_trap_status();
   /// The number of the EXIT trap action \p text, parsed when it is first
   /// set.
-  unsigned
-  register_exit_trap(const std::string &text, const source_locationt &loc);
+  unsigned register_exit_trap(
+    const std::string &text,
+    const source_locationt &loc,
+    const shell_command_listt *commands = nullptr);
   void convert_exit_traps();
   /// shell::run_exit_trap, which runs the current EXIT trap.
   void add_run_exit_trap();
@@ -1475,9 +1477,58 @@ private:
   /// The commands of \p text, known during conversion, for eval or trap
   /// (\p what): it must not define functions, enable options that set
   /// does not enable elsewhere, or run other dot scripts.
+  /// \p rewrite, if given, changes the commands after parsing; if it
+  /// returns false, they are not supported.
   const shell_command_listt &parse_known_text(
     const std::string &text,
     const std::string &what,
+    const source_locationt &loc,
+    const std::function<bool(shell_command_listt &)> &rewrite = nullptr);
+
+public:
+  /// What the part of a value for a hole of a template may be, by the
+  /// position of the hole (see shell_convert_templates.cpp).
+  enum class hole_classt
+  {
+    UNQUOTED,
+    DOUBLE_QUOTED,
+    SINGLE_QUOTED
+  };
+
+private:
+  /// The code of a template candidate: its commands, in which each hole is
+  /// a quoted reference to a ghost variable.
+  struct template_codet
+  {
+    /// The text with $ghost for each hole, unique to this template.
+    std::string text;
+    std::vector<std::string> ghosts;
+    std::vector<hole_classt> classes;
+    const shell_command_listt *commands = nullptr;
+  };
+  /// The number of ghost variables of holes so far.
+  std::size_t holes_so_far = 0;
+  /// The code of \p pattern for eval or trap (\p what), or nothing if a
+  /// hole is not in a word, or the text is not supported.
+  std::optional<template_codet> parse_template(
+    const dynamic_templatet &pattern,
+    const std::string &what,
+    const source_locationt &loc);
+  /// Whether \p value is \p pattern with parts in the classes of its holes:
+  /// those parts, by the first occurrence of each literal part, are
+  /// \p parts.
+  exprt template_parts(
+    const dynamic_templatet &pattern,
+    const template_codet &code,
+    const exprt &value,
+    std::vector<exprt> &parts,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// Set the ghost variables of \p code to \p parts.
+  void assign_template_parts(
+    const template_codet &code,
+    const std::vector<exprt> &parts,
+    code_blockt &dest,
     const source_locationt &loc);
   bool try_convert(
     const std::function<void(code_blockt &)> &convert,

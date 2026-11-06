@@ -183,19 +183,23 @@ void shell_convertert::convert_dynamic_trap(
                         id2string(loc.get_column());
   add(
     dest,
-    dynamic_site_marker(site, text, shell_mode(), symbol_table, loc),
+    dynamic_site_marker(site, text, shell_mode(), symbol_table, loc, true),
     loc);
   const auto resolution = resolutions.find(site);
   const auto set_trap = [&](code_blockt &block, unsigned number)
   { assign(block, exit_trap(), from_integer(number, exit_trap_type()), loc); };
-  if(resolution == resolutions.end() || resolution->second.has_holes())
+  if(resolution == resolutions.end())
   {
     set_trap(dest, unknown_exit_trap);
     return;
   }
   std::string candidates;
-  for(const auto &candidate : resolution->second.values())
-    candidates += (candidates.empty() ? "" : ", ") + candidate;
+  for(const auto &pattern : resolution->second.templates)
+  {
+    candidates +=
+      (candidates.empty() ? "" : ", ") +
+      (pattern.size() == 1 ? pattern.front() : template_to_string(pattern));
+  }
   code_blockt otherwise;
   {
     source_locationt check_loc = loc;
@@ -208,10 +212,10 @@ void shell_convertert::convert_dynamic_trap(
     otherwise.add(std::move(assertion));
     add(otherwise, code_assumet{false_exprt{}}, loc);
   }
-  const auto &values = resolution->second.values();
-  for(auto it = values.rbegin(); it != values.rend(); ++it)
+  // The strings first, then the templates with holes.
+  std::vector<std::pair<exprt, code_blockt>> branches;
+  for(const auto &candidate : resolution->second.values())
   {
-    const std::string &candidate = *it;
     code_blockt branch;
     unsigned number = 0;
     if(!candidate.empty())
@@ -225,10 +229,42 @@ void shell_convertert::convert_dynamic_trap(
       }
     }
     set_trap(branch, number);
-    code_ifthenelset choice{
+    branches.emplace_back(
       equal(text, string_literal(candidate, loc), dest, loc),
-      std::move(branch),
-      std::move(otherwise)};
+      std::move(branch));
+  }
+  for(const auto &pattern : resolution->second.with_holes())
+  {
+    code_blockt branch;
+    const auto code = parse_template(pattern, "trap", loc);
+    if(!code.has_value())
+      set_trap(branch, unknown_exit_trap);
+    else
+    {
+      std::vector<exprt> parts;
+      const exprt in_classes =
+        template_parts(pattern, *code, text, parts, branch, loc);
+      check(
+        branch,
+        in_classes,
+        "shell-unsupported",
+        "the parts of the action of trap for the holes of " +
+          template_to_string(pattern) +
+          " are words without blanks, quotes or other special characters "
+          "(other parts are not supported)",
+        loc);
+      add(branch, code_assumet{in_classes}, loc);
+      // The action reads the parts when it runs.
+      assign_template_parts(*code, parts, branch, loc);
+      set_trap(branch, register_exit_trap(code->text, loc, code->commands));
+    }
+    branches.emplace_back(
+      template_matches(pattern, text, dest, loc), std::move(branch));
+  }
+  for(auto it = branches.rbegin(); it != branches.rend(); ++it)
+  {
+    code_ifthenelset choice{
+      it->first, std::move(it->second), std::move(otherwise)};
     otherwise = code_blockt{};
     add(otherwise, std::move(choice), loc);
   }
@@ -237,7 +273,8 @@ void shell_convertert::convert_dynamic_trap(
 
 unsigned shell_convertert::register_exit_trap(
   const std::string &text,
-  const source_locationt &loc)
+  const source_locationt &loc,
+  const shell_command_listt *commands)
 {
   for(std::size_t i = 0; i < exit_traps.size(); ++i)
   {
@@ -250,7 +287,8 @@ unsigned shell_convertert::register_exit_trap(
   trap.text = text;
   trap.identifier = "shell::exit_trap#" + std::to_string(exit_traps.size() + 1);
   trap.location = loc;
-  trap.commands = &parse_known_text(text, "trap", loc);
+  trap.commands =
+    commands != nullptr ? commands : &parse_known_text(text, "trap", loc);
   symbolt function{
     trap.identifier, code_typet{{}, empty_typet{}}, shell_mode()};
   function.base_name = trap.identifier;

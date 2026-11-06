@@ -96,7 +96,16 @@ std::string template_to_string(const dynamic_templatet &pattern)
     if(i != 0)
       result += '*';
     if(!pattern[i].empty() || pattern.size() == 1)
-      result += '"' + pattern[i] + '"';
+    {
+      result += '"';
+      for(const char c : pattern[i])
+      {
+        if(c == '"' || c == '\\')
+          result += '\\';
+        result += c;
+      }
+      result += '"';
+    }
   }
   return result;
 }

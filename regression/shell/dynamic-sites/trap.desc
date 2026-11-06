@@ -4,9 +4,9 @@ trap.sh
 ^EXIT=0$
 ^SIGNAL=0$
 ^shell-trap:trap.sh:7:1: .*: \{ ":", "done=yes" \}$
-^shell-trap:trap.sh:9:1: .*: unresolved$
+^shell-trap:trap.sh:9:1: .*: \{ "rm -f "\* \}$
 --
 ^warning: ignoring
 --
 The action of a trap on EXIT is a dynamic site. A text with an unknown
-part, such as a file name from mktemp, stays unresolved.
+part, such as a file name from mktemp, is a template.

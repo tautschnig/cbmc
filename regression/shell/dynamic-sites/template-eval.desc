@@ -1,0 +1,20 @@
+CORE
+template-eval.sh
+--resolve-dynamic-sites --cvc5
+^EXIT=10$
+^SIGNAL=0$
+^Dynamic sites: 2 resolved, 0 unreachable, 0 unresolved \(3 rounds\)$
+^\[shell-dynamic-site\.1\] .* "echo installing "\*" >&2", "echo installing "\*" >/dev/null": SUCCESS$
+^\[shell-unsupported\.1\] .* the parts of the text of eval for the holes of "echo installing "\*" >&2" are words .*: FAILURE$
+^\[shell-dynamic-site\.2\] .* "value=\\""\*"\\"": SUCCESS$
+^\[shell-unsupported\.3\] .* the parts of the text of eval for the holes of "value=\\""\*"\\"" are words .*: SUCCESS$
+^\[assertion\.1\] .*: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A template with holes for the text of eval: each hole is a quoted
+reference to a ghost variable that holds its part of the text. The part
+is checked to be a word without special characters for its position: an
+argument may have blanks (line 8); after that check, the part in double
+quotes at line 9 holds, and the assignment is the one of the text.

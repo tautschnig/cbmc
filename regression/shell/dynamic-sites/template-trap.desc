@@ -1,0 +1,13 @@
+CORE
+template-trap.sh
+--resolve-dynamic-sites --trace
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-dynamic-site\.1\] .* "rm -f "\*: SUCCESS$
+^\[shell-unsupported\.1\] .* the parts of the action of trap for the holes of "rm -f "\* are words .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The part of the action for its hole comes from an argument, which may have
+a blank.

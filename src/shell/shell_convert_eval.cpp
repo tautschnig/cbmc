@@ -118,12 +118,13 @@ void shell_convertert::convert_dynamic_eval(
         assign(block, *text, make_value(joined), loc);
         add(
           block,
-          dynamic_site_marker(site, *text, shell_mode(), symbol_table, loc),
+          dynamic_site_marker(
+            site, *text, shell_mode(), symbol_table, loc, true),
           loc);
       },
       dest);
   const auto resolution = expanded ? resolutions.find(site) : resolutions.end();
-  if(resolution == resolutions.end() || resolution->second.has_holes())
+  if(resolution == resolutions.end())
   {
     if(!expanded)
     {
@@ -149,8 +150,12 @@ void shell_convertert::convert_dynamic_eval(
   // A branch for each candidate; any other text fails the check of the
   // site.
   std::string candidates;
-  for(const auto &candidate : resolution->second.values())
-    candidates += (candidates.empty() ? "" : ", ") + candidate;
+  for(const auto &pattern : resolution->second.templates)
+  {
+    candidates +=
+      (candidates.empty() ? "" : ", ") +
+      (pattern.size() == 1 ? pattern.front() : template_to_string(pattern));
+  }
   code_blockt otherwise;
   {
     source_locationt check_loc = loc;
@@ -163,17 +168,17 @@ void shell_convertert::convert_dynamic_eval(
     otherwise.add(std::move(assertion));
     add(otherwise, code_assumet{false_exprt{}}, loc);
   }
-  const auto &values = resolution->second.values();
-  for(auto it = values.rbegin(); it != values.rend(); ++it)
+  // Run \p commands in \p branch, or report that \p what is not supported.
+  const auto run = [&](
+                     const std::function<const shell_command_listt &()> &parse,
+                     const std::string &what,
+                     code_blockt &branch)
   {
-    const std::string &candidate = *it;
-    code_blockt branch;
     known_literals.clear();
     if(!try_convert(
          [&](code_blockt &block)
          {
-           const shell_command_listt &commands =
-             parse_known_text(candidate, "eval", loc);
+           const shell_command_listt &commands = parse();
            set_status(block, 0, loc);
            convert_list(commands, block);
          },
@@ -183,15 +188,70 @@ void shell_convertert::convert_dynamic_eval(
         branch,
         false_exprt{},
         "shell-unsupported",
-        "the text of eval is not " + candidate +
+        "the text of eval is not " + what +
           " (eval of text that cannot be converted here is not supported)",
         loc);
       add(branch, code_assumet{false_exprt{}}, loc);
     }
-    code_ifthenelset choice{
+  };
+  // The strings first, then the templates with holes.
+  std::vector<std::pair<exprt, code_blockt>> branches;
+  for(const auto &candidate : resolution->second.values())
+  {
+    code_blockt branch;
+    run(
+      [&]() -> const shell_command_listt &
+      { return parse_known_text(candidate, "eval", loc); },
+      candidate,
+      branch);
+    branches.emplace_back(
       equal(*text, string_literal(candidate, loc), dest, loc),
-      std::move(branch),
-      std::move(otherwise)};
+      std::move(branch));
+  }
+  for(const auto &pattern : resolution->second.with_holes())
+  {
+    const std::string what = template_to_string(pattern);
+    code_blockt branch;
+    const auto code = parse_template(pattern, "eval", loc);
+    if(!code.has_value())
+    {
+      check(
+        branch,
+        false_exprt{},
+        "shell-unsupported",
+        "the text of eval is not " + what +
+          " (eval of a template with a hole that is not in a word is not "
+          "supported)",
+        loc);
+      add(branch, code_assumet{false_exprt{}}, loc);
+    }
+    else
+    {
+      std::vector<exprt> parts;
+      const exprt in_classes =
+        template_parts(pattern, *code, *text, parts, branch, loc);
+      check(
+        branch,
+        in_classes,
+        "shell-unsupported",
+        "the parts of the text of eval for the holes of " + what +
+          " are words without blanks, quotes or other special characters "
+          "(other parts are not supported)",
+        loc);
+      add(branch, code_assumet{in_classes}, loc);
+      assign_template_parts(*code, parts, branch, loc);
+      run(
+        [&]() -> const shell_command_listt & { return *code->commands; },
+        what,
+        branch);
+    }
+    branches.emplace_back(
+      template_matches(pattern, *text, dest, loc), std::move(branch));
+  }
+  for(auto it = branches.rbegin(); it != branches.rend(); ++it)
+  {
+    code_ifthenelset choice{
+      it->first, std::move(it->second), std::move(otherwise)};
     otherwise = code_blockt{};
     add(otherwise, std::move(choice), loc);
   }
@@ -202,7 +262,8 @@ void shell_convertert::convert_dynamic_eval(
 const shell_command_listt &shell_convertert::parse_known_text(
   const std::string &text,
   const std::string &what,
-  const source_locationt &loc)
+  const source_locationt &loc,
+  const std::function<bool(shell_command_listt &)> &rewrite)
 {
   // The commands of the text, which must outlive the conversion: they are
   // kept with the dot scripts.
@@ -214,6 +275,8 @@ const shell_command_listt &shell_convertert::parse_known_text(
   {
     unsupported(loc, what + " of text that does not parse: " + text);
   }
+  if(rewrite && !rewrite(parsed->commands))
+    unsupported(loc, what + " of a template with a hole that is not a word");
   // The text must not need what the conversion collected beforehand:
   // function definitions, options that set may enable, and dot scripts.
   std::map<std::string, std::vector<const shell_commandt *>> definitions;
