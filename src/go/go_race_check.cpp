@@ -155,6 +155,10 @@ struct accesst
   /// If not empty, the description of the check (an observation that does
   /// not synchronise).
   std::string comment = {};
+  /// For an access of an atomic section: announced right after the section
+  /// rather than right before it (a change of a channel's state, which an
+  /// observation after another section may follow).
+  bool after = false;
 };
 
 /// The largest access whose bytes are flagged one by one; a larger one (or
@@ -748,23 +752,22 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
         emit();
         before.add(goto_programt::make_atomic_end(location));
       };
-      for(bool value : {true, false})
+      const auto set_all = [&](bool value)
       {
-        atomically(
-          [&]
-          {
-            for(const auto &a : accesses)
-              guarded(
-                a.guard,
-                [&]
-                {
-                  for(const auto &[pointer, name] : announced(a))
-                    set_flag(pointer, name, value);
-                });
-          });
-      }
-      if(with_checks)
+        for(const auto &a : accesses)
+          guarded(
+            a.guard,
+            [&]
+            {
+              for(const auto &[pointer, name] : announced(a))
+                set_flag(pointer, name, value);
+            });
+      };
+      // The checks, of the flags of conflicting accesses.
+      const auto emit_checks = [&]
       {
+        if(!with_checks)
+          return;
         for(const auto &a : accesses)
         {
           if(a.announce_only)
@@ -809,7 +812,10 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
                       (a.range ? ", whole object" : "") + ")");
             });
         }
-      }
+      };
+      for(bool value : {true, false})
+        atomically([&] { set_all(value); });
+      emit_checks();
       {
         // Shadow memory that cannot resolve an accessed object (its value
         // set is unknown, or the object has no shadow memory) loses the
@@ -844,6 +850,11 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
     // that their extent is not a range of instructions.
     std::map<const goto_programt::instructiont *, goto_programt::targett>
       section_of;
+    // For each section (its ATOMIC_BEGIN), the ATOMIC_ENDs that end it.
+    std::map<
+      const goto_programt::instructiont *,
+      std::vector<goto_programt::targett>>
+      section_ends;
     {
       using statet = std::pair<std::size_t, goto_programt::targett>;
       std::map<const goto_programt::instructiont *, statet> before_state;
@@ -866,7 +877,10 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
         else if(target->is_atomic_end() && out.first > 0)
         {
           if(--out.first == 0)
+          {
+            section_ends[&*out.second].push_back(target);
             out.second = body.instructions.end();
+          }
         }
         for(const auto &successor : body.get_successors(target))
           work.push_back({successor, out});
@@ -926,6 +940,7 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
             {
               accesst change{chan_state(changed), true, true_exprt{}};
               change.announce_only = true;
+              change.after = true;
               entry.second.push_back(change);
             }
             // Any other access in the section (state of models, such as the
@@ -1069,13 +1084,32 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
                                                  : it->source_location());
       it = insert_before(it, before);
     }
+    // The accesses of a section are announced (and checked) right before
+    // it, as of a single instruction; changes of a channel's state right
+    // after it, so that an observation after another goroutine's section
+    // (a select's default case after a send filled the channel) can be
+    // adjacent to them.
     for(auto &entry : section_accesses)
     {
-      if(entry.second.second.empty())
-        continue;
-      goto_programt before = instrument(
-        entry.second.second, checked, entry.second.first->source_location());
-      insert_before(entry.second.first, before);
+      std::vector<accesst> before_accesses, after_accesses;
+      for(const auto &a : entry.second.second)
+        (a.after ? after_accesses : before_accesses).push_back(a);
+      const source_locationt &location = entry.second.first->source_location();
+      if(!after_accesses.empty())
+      {
+        for(const auto &end : section_ends[entry.first])
+        {
+          goto_programt after = instrument(after_accesses, checked, location);
+          // Only after the end: a jump to the next instruction did not
+          // execute the section.
+          body.destructive_insert(std::next(end), after);
+        }
+      }
+      if(!before_accesses.empty())
+      {
+        goto_programt before = instrument(before_accesses, checked, location);
+        insert_before(entry.second.first, before);
+      }
     }
     body.update();
   }
