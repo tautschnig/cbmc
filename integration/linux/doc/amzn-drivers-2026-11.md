@@ -497,3 +497,30 @@ the failures include bodyless `device_printf`, `__mtx_lock_flags` and
 the `INV_DEV_LLQ` clause the DPDK work already identified and which this
 harness does not yet assume. Making those obligations stand needs stubs for
 the three kernel functions and the `INV_DEV_LLQ` assumption, then a re-run.
+
+**Update: the stubs and the assumption were added, and the obligations are
+still not established.** Two things happened that are worth recording.
+
+First, a near miss. With the stubs and `INV_DEV_LLQ` in place the run reported
+VERIFICATION SUCCESSFUL, 0 of 17773, with all four obligations SUCCESS -- and
+it was **vacuous**. `ena_dev` is a zero-initialised static, so
+`descs_per_entry` is 0 and `__CPROVER_assume(descs_per_entry >= 1)` is a
+contradiction that silently killed every path. A `__CPROVER_assert(0, ...)`
+witness passed, which is what caught it; F11's own property had quietly
+flipped from FAILURE to SUCCESS, which was the visible symptom. Hoisting the
+havoc fixed it, and the harness now carries a permanent switchable vacuity
+witness, which FAILS as it must. The second trap was the same one already
+documented for `make_wf_mbuf`: `__CPROVER_havoc_object` havocs the **whole
+enclosing object**, so havocking `llq_info` after writing the CQ pointers
+wiped them.
+
+Second, the cost is structural. FreeBSD's cleanup loop is bounded by
+`ENA_TX_BUDGET` (128) rather than by the ring size, so a sound
+`--unwinding-assertions` run needs `--unwind 129`; `--unwind 6` with full
+checks exceeds 2400 s. Loop contracts are the right answer and the contract is
+written, but `--dfcc` cannot be applied to FreeBSD kernel code at all because
+the CPROVER library's `malloc`/`free` collide with the kernel's three- and
+two-argument versions -- see `proof/fbsd/README-fbsd-build.md`. So these four
+obligations stand as written-and-reachable, not proven. F11 is unaffected: it
+is a FAILURE with a concrete trace, which path cutting elsewhere cannot
+manufacture.

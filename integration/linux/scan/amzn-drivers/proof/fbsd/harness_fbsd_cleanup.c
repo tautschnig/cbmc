@@ -38,6 +38,7 @@ static int nd_int(void) { int v; return v; }
 
 /* ---------------- ghost state for the ownership discipline -------------- */
 static struct mbuf *g_watch;      /* an arbitrary mbuf to follow */
+uint16_t g_probe;                 /* an arbitrary slot index */
 static unsigned g_free_calls;     /* times g_watch was freed */
 static unsigned g_dma_loaded;     /* ghost: is g_watch's mapping loaded? */
 static bool g_freed_while_mapped; /* ghost: class A violation witness */
@@ -52,6 +53,45 @@ static struct mbuf pool_mbuf[RING_SIZE];
 
 /* The completion queue descriptor ring.  Device-writable memory. */
 static struct ena_eth_io_tx_cdesc pool_cdesc[RING_SIZE];
+
+/*
+ * Kernel functions with no body in this build.  Left undefined they are
+ * turned into assert(false); assume(false), which CUTS the paths they sit on
+ * and silently degrades every obligation downstream (DFCC issues A and C).
+ * device_printf sits on the invalid-req_id path, and the mutex pair wraps the
+ * ring-state update at the end of cleanup, so all three are directly on the
+ * paths this proof is about.
+ */
+int device_printf(device_t dev, const char *fmt, ...)
+{
+  (void)dev;
+  (void)fmt;
+  return 0;
+}
+
+void __mtx_lock_flags(
+  volatile uintptr_t *c,
+  int opts,
+  const char *file,
+  int line)
+{
+  (void)c;
+  (void)opts;
+  (void)file;
+  (void)line;
+}
+
+void __mtx_unlock_flags(
+  volatile uintptr_t *c,
+  int opts,
+  const char *file,
+  int line)
+{
+  (void)c;
+  (void)opts;
+  (void)file;
+  (void)line;
+}
 
 /*
  * m_freem is the only place this path releases an mbuf, so the free discipline
@@ -96,6 +136,12 @@ int main(void)
   unsigned i;
   bool rc;
 
+  /* Havoc the device-side state ONCE, before any field is written.
+   * __CPROVER_havoc_object havocs the WHOLE enclosing object, so doing this
+   * after the assignments below wipes them -- which silently made this
+   * harness vacuous until the vacuity witness caught it. */
+  __CPROVER_havoc_object(&ena_dev);
+
   /* ---- a started TX queue in a consistent state ---- */
   tx_ring.adapter = &adapter;
   tx_ring.que = &que;
@@ -117,6 +163,15 @@ int main(void)
 
   tx_ring.next_to_clean = nd_u16() & (RING_SIZE - 1);
 
+  /*
+   * INV_DEV_LLQ, carried over from the DPDK proof (ena_inv.h): a valid
+   * LLQ-mode SQ has descs_per_entry >= 1, because ena_com_sq_have_enough_space
+   * divides by it.  Established by ena_com_config_dev_mode at device init,
+   * which this harness does not perform, so it is assumed here.
+   */
+  __CPROVER_assume(ena_dev.io_sq_queues[0].llq_info.descs_per_entry >= 1);
+  __CPROVER_assume(ena_dev.io_sq_queues[0].llq_info.descs_per_entry <= 16);
+
   /* ---- arbitrary slot occupancy, one distinct mbuf per slot ---- */
   for(i = 0; i < RING_SIZE; i++)
   {
@@ -134,6 +189,7 @@ int main(void)
    */
   __CPROVER_havoc_object(pool_cdesc);
 
+  g_probe = nd_u16() % RING_SIZE;
   g_watch = &pool_mbuf[nd_u16() % RING_SIZE];
   g_free_calls = 0;
   g_dma_loaded = 1; /* an in-flight packet has its mapping loaded */
@@ -143,6 +199,14 @@ int main(void)
   (void)rc;
 
   /* ---- obligations ---- */
+#if VACUITY_CHECK
+  /* must FAIL: a SUCCESS here means main never reaches the obligations and
+   * every one of them is about an unreachable state.  A contradictory
+   * __CPROVER_assume is the usual cause -- it happened here once, when
+   * descs_per_entry was assumed >= 1 on a zero-initialised static. */
+  __CPROVER_assert(0, "vacuity witness: the obligations are reachable");
+#endif
+
   __CPROVER_assert(
     !g_freed_while_mapped,
     "DMA_UNMAPPED_BEFORE_FREE: no mbuf is released while the device can "
@@ -153,8 +217,8 @@ int main(void)
     "INV_NTC: the consumer index stays inside the ring");
 
   __CPROVER_assert(
-    g_free_calls == 0 || g_watch == NULL ||
-      pool_tbi[nd_u16() % RING_SIZE].mbuf != g_watch,
+    g_free_calls == 0 || g_probe >= RING_SIZE ||
+      pool_tbi[g_probe].mbuf != g_watch,
     "OWN_NO_DANGLING: no slot still owns a released mbuf");
 
   return 0;

@@ -1,0 +1,15 @@
+{
+  "functions": [
+    {
+      "ena_tx_cleanup": [
+        {
+          "loop_id": "1",
+          "invariants": "(next_to_clean < tx_ring->ring_size) && (budget >= 0 && budget <= 128) && (commit >= 1 && commit <= 32) && (!g_freed_while_mapped) && (g_free_calls <= 1) && (g_free_calls == 0 || g_probe >= tx_ring->ring_size || tx_ring->tx_buffer_info[g_probe].mbuf != g_watch)",
+          "assigns": "budget, commit, next_to_clean, total_done, req_id, rc, tx_ring->next_to_clean, __CPROVER_object_whole(tx_ring->tx_buffer_info), __CPROVER_object_whole(tx_ring->free_tx_ids), g_free_calls, g_dma_loaded, g_freed_while_mapped, __CPROVER_object_whole(&ena_dev)",
+          "decreases": "budget",
+          "symbol_map": "budget,ena_tx_cleanup::1::budget; commit,ena_tx_cleanup::1::commit; next_to_clean,ena_tx_cleanup::1::next_to_clean; total_done,ena_tx_cleanup::1::total_done; req_id,ena_tx_cleanup::1::req_id; rc,ena_tx_cleanup::1::rc; tx_ring,ena_tx_cleanup::tx_ring"
+        }
+      ]
+    }
+  ]
+}
