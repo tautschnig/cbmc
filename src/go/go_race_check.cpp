@@ -262,6 +262,13 @@ static exprt chan_of_state_change(const exprt &lhs)
   return chan;
 }
 
+/// Whether \p lvalue is an element of a channel's buffer.
+static bool is_chan_buffer(const exprt &lvalue)
+{
+  bool write = false;
+  return chan_of_operation(lvalue, write).is_not_nil() && !write;
+}
+
 /// The location of the state of channel \p chan for observations: its
 /// count field (see go_convertert::chan_len).
 static exprt chan_state(const exprt &chan)
@@ -920,6 +927,19 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
               accesst change{chan_state(changed), true, true_exprt{}};
               change.announce_only = true;
               entry.second.push_back(change);
+            }
+            // Any other access in the section (state of models, such as the
+            // clock of time) is atomic: announced, not checked. The
+            // channel's buffer is the runtime's.
+            std::vector<accesst> accesses;
+            collect(ns, it->assign_lhs(), true, true_exprt{}, accesses);
+            collect(ns, it->assign_rhs(), false, true_exprt{}, accesses);
+            for(auto &a : accesses)
+            {
+              if(is_chan_buffer(a.lvalue))
+                continue;
+              a.announce_only = true;
+              entry.second.push_back(a);
             }
           }
           else
