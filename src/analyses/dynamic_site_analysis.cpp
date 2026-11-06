@@ -285,7 +285,9 @@ bool is_marker(const goto_programt::instructiont &instruction)
          instruction.call_function().id() == ID_symbol &&
          id2string(to_symbol_expr(instruction.call_function()).identifier()) ==
            DYNAMIC_SITE_FUNCTION &&
-         instruction.call_arguments().size() == 2;
+         (instruction.call_arguments().size() == 2 ||
+          (instruction.call_arguments().size() == 3 &&
+           instruction.call_arguments()[2].is_constant()));
 }
 
 /// Constant values of scalar symbols (see trackingt::scalars).
@@ -1392,12 +1394,21 @@ dynamic_resolutionst analyse_dynamic_sites(
       const irep_idt site =
         to_constant_expr(it->call_arguments()[0]).get_value();
       const auto before = assigned_before(entry.first, it);
-      const valuet value = !before.has_value()
-                             ? no_value()
-                             : values.eval(
-                                 it->call_arguments()[1],
-                                 *before,
-                                 entry.first == INITIALIZE_FUNCTION);
+      valuet value = !before.has_value()
+                       ? no_value()
+                       : values.eval(
+                           it->call_arguments()[1],
+                           *before,
+                           entry.first == INITIALIZE_FUNCTION);
+      // A language that the site cannot use: any string.
+      const auto &arguments = it->call_arguments();
+      if(
+        value.has_value() && value->containing.has_value() &&
+        (arguments.size() < 3 ||
+         to_constant_expr(arguments[2]).get_value() != *value->containing))
+      {
+        value.reset();
+      }
       const auto found = sites.find(site);
       if(found == sites.end())
         sites.emplace(site, value);

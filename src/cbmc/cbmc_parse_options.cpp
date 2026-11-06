@@ -1076,8 +1076,9 @@ static void resolve_dynamic_sites(
   round_options.set_option("dynamic-sites-analysis", true);
   const std::size_t bound = 16;
   const unsigned max_rounds = 5;
-  // The only language that a front-end uses so far: the command names that
-  // contain a slash, which name utilities in a shell.
+  // The language of the strings that contain this text is tracked; each
+  // site says whether it can use it. The only one so far: shell command
+  // names with a slash, which name utilities.
   const std::string infix = "/";
   dynamic_resolutionst resolutions;
   // Sites whose values may be any string stay unresolved, so that the

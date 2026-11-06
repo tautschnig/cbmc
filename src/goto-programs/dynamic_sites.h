@@ -35,7 +35,10 @@ class symbol_table_baset;
 class ui_message_handlert;
 
 /// The function that marks a dynamic site: its arguments are a constant
-/// of string type, the site's identifier, and the value.
+/// of string type, the site's identifier, the value, and optionally a
+/// constant of string type, the text of the language of all strings that
+/// contain it, which the front-end can use as candidates for the site (see
+/// dynamic_resolutiont::containing).
 #define DYNAMIC_SITE_FUNCTION CPROVER_PREFIX "dynamic_site"
 
 #define OPT_DYNAMIC_SITES                                                      \
@@ -113,7 +116,9 @@ bool parse_dynamic_resolutions(
 std::string dynamic_resolutions_to_json(
   const dynamic_resolutionst &resolutions);
 
-/// The call that marks dynamic site \p site_id, whose value is \p value.
+/// The call that marks dynamic site \p site_id, whose value is \p value;
+/// the front-end can use the strings that contain \p containing as
+/// candidates, unless it is empty.
 /// Declares DYNAMIC_SITE_FUNCTION in \p symbol_table, without a body, with
 /// a parameter for the identifier followed by an ellipsis, so that each
 /// front-end can pass values of its own type.
@@ -122,7 +127,8 @@ code_function_callt dynamic_site_marker(
   const exprt &value,
   const irep_idt &mode,
   symbol_table_baset &symbol_table,
-  const source_locationt &location);
+  const source_locationt &location,
+  const std::string &containing = "");
 
 /// Show the dynamic sites of \p goto_model: the identifier and location of
 /// each, and its candidates in \p resolutions, if given.

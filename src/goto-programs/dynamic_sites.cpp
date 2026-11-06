@@ -172,7 +172,8 @@ code_function_callt dynamic_site_marker(
   const exprt &value,
   const irep_idt &mode,
   symbol_table_baset &symbol_table,
-  const source_locationt &location)
+  const source_locationt &location,
+  const std::string &containing)
 {
   if(!symbol_table.has_symbol(DYNAMIC_SITE_FUNCTION))
   {
@@ -203,6 +204,8 @@ code_function_callt dynamic_site_marker(
   function.add_source_location() = location;
   code_function_callt call{
     function, {constant_exprt{site_id, string_typet{}}, value}};
+  if(!containing.empty())
+    call.arguments().push_back(constant_exprt{containing, string_typet{}});
   call.add_source_location() = location;
   return call;
 }

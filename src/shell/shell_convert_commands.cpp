@@ -1469,7 +1469,7 @@ void shell_convertert::convert_dynamic_simple(
                         id2string(loc.get_column());
   add(
     dest,
-    dynamic_site_marker(site, name, shell_mode(), symbol_table, loc),
+    dynamic_site_marker(site, name, shell_mode(), symbol_table, loc, "/"),
     loc);
   // A language of candidates is used if it is that of the names that
   // contain a slash: those name a utility (XCU 2.9.1.4), except in bash and
