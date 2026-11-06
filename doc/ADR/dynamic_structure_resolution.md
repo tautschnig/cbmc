@@ -443,6 +443,53 @@ sites whose value may be any string:
 - 55 are positional parameters, which need values of function arguments;
 - 32 are never assigned, so their values come from the environment.
 
+## Spike: templates (6 Nov 2026)
+
+A restricted regular language: a finite union of templates
+L0 Σ* L1 … Σ* Ln, literal parts with holes, at most 5 holes and 16
+templates. Concatenation is exact; an unknown value is a hole, and
+adjacent holes merge. The spike (branch `spike-templates`) replaced the
+value domain by this one and printed the templates of each site; the
+script `scripts/shell-frontend/spike-classify-templates.py` parsed each
+template with placeholders for its holes and classified where the holes
+sit.
+
+On the 188 census scripts with `.`, `eval` or `trap` sites, templates
+(rather than any string) are found for 120 of the 157 unresolved `eval`
+sites, all 11 `trap` sites and 84 of the 88 `.` sites. For the `eval`
+and `trap` sites, by the worst hole of their templates:
+
+| Hole position | eval | trap |
+|---|---|---|
+| a word, or part of one, as an argument or assignment value | 52 | 10 |
+| the command name (`$cmd "$1"`, `$dir/msg`) | 32 | |
+| a variable name (`${kopt_HOLE}`, `${HOLE+set}`, `_set=$HOLE`) | 28 | |
+| other | | 1 |
+| does not parse (quoting through `sed "s/'/'\\''/g"`) | 8 | |
+
+What follows for the design:
+
+- The value domain becomes finite unions of templates; the finite sets
+  of strings and "contains /" (Σ* / Σ*) are special cases.
+- The front-end parses each candidate template once, with each hole a
+  placeholder, and derives the token class of each hole from its
+  position: a word without blanks or metacharacters (unquoted), without
+  `"`, `$`, `` ` `` or `\` (in double quotes), or without `'` (in single
+  quotes). Each hole is then a quoted reference to a ghost variable that
+  holds its part of the value, and the residual assertion checks that the
+  value is the template with parts in their classes. The classes exclude
+  the characters that the literals start with, so that the parts are
+  determined.
+- A hole as a command name becomes a dynamic command name site, which
+  exists. This covers 84 of the 131 sites (64%).
+- A hole in a variable name is an indirect variable: its candidates are
+  the script's variables whose names match, and any other name reads an
+  unset variable or one from the environment. This covers 28 more (85%
+  in all).
+- `.` sites gain nothing: a template path names no file to read.
+- Text built with `sed` to quote values needs transducers (the papers'
+  approach), and stays unresolved.
+
 ## Open questions
 
 - Settled by the spikes: each round builds a fresh `goto_modelt`, and
