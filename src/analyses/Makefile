@@ -9,6 +9,7 @@ SRC = ai.cpp \
       dependence_graph.cpp \
       dirty.cpp \
       does_remove_const.cpp \
+      dynamic_site_analysis.cpp \
       escape_analysis.cpp \
       flow_insensitive_analysis.cpp \
       global_may_alias.cpp \
