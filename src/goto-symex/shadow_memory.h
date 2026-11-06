@@ -15,8 +15,13 @@ Author: Peter Schrammel
 #include <util/cprover_prefix.h>
 #include <util/expr.h>
 #include <util/message.h>
+#include <util/symbol.h>
 
 #include "shadow_memory_field_definitions.h"
+#include "shadow_memory_state.h"
+
+#include <map>
+#include <vector>
 
 #define SHADOW_MEMORY_PREFIX "SM__"
 #define SHADOW_MEMORY_FIELD_DECL "field_decl"
@@ -98,6 +103,18 @@ public:
     const exprt &lhs,
     const exprt::operandst &arguments);
 
+  /// A new run of symbolic execution starts: the registrations of all
+  /// threads and paths of the previous run become those that a pointer may
+  /// refer to before the object's shadow memory is registered in this run
+  /// (by a thread that symbolic execution executes later); names agree
+  /// across runs (see goto_symext::fresh_object_symbol), and add_field
+  /// reuses their shadow symbols.
+  void begin_run()
+  {
+    previous_addresses = std::move(all_addresses);
+    all_addresses.clear();
+  }
+
   /// Symbolically executes a __CPROVER_set_field call
   /// \param state The symex state
   /// \param arguments The call arguments
@@ -142,11 +159,31 @@ private:
   /// not be resolved.
   void mark_incomplete(goto_symex_statet &state);
 
+  /// The objects with shadow memory for field \p field_name: those that
+  /// \p state registered, then those of other threads and paths
+  /// (all_addresses), which a pointer that another thread wrote may point
+  /// to.
+  std::vector<shadow_memory_statet::shadowed_addresst>
+  addresses_of(goto_symex_statet &state, const irep_idt &field_name);
+
 private:
   const std::function<void(goto_symex_statet &, const exprt &, const exprt)>
     symex_assign;
   const namespacet &ns;
   messaget log;
+  /// Every registration of shadow memory, of any thread and path: the
+  /// registry of a state (shadow_memory_statet::address_fields) has those
+  /// of its path only, as each thread starts with a copy of the spawning
+  /// thread's.
+  std::map<
+    irep_idt,
+    std::vector<std::pair<shadow_memory_statet::shadowed_addresst, symbolt>>>
+    all_addresses;
+  /// all_addresses of the previous run.
+  std::map<
+    irep_idt,
+    std::vector<std::pair<shadow_memory_statet::shadowed_addresst, symbolt>>>
+    previous_addresses;
 };
 
 #endif // CPROVER_GOTO_SYMEX_SHADOW_MEMORY_H

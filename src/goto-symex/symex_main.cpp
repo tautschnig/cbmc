@@ -483,6 +483,7 @@ symbol_tablet goto_symext::symex_from_entry_point_of(
   {
     shared_value_summary.begin_run();
     object_counters.clear();
+    shadow_memory.begin_run();
     auto state = initialize_entry_point_state(get_goto_function);
     // Initialize declared shadow memory fields
     state->shadow_memory.fields = fields;

@@ -25,6 +25,8 @@ Author: Peter Schrammel
 #include "goto_symex_state.h"
 #include "shadow_memory_util.h"
 
+#include <unordered_set>
+
 void shadow_memoryt::initialize_shadow_memory(
   goto_symex_statet &state,
   exprt expr,
@@ -70,22 +72,48 @@ const symbol_exprt &shadow_memoryt::add_field(
   const irep_idt &field_name,
   const typet &field_type)
 {
-  const auto &function_symbol = ns.lookup(state.source.function_id);
-  symbolt &new_symbol = get_fresh_aux_symbol(
-    field_type,
-    id2string(state.source.function_id),
-    SHADOW_MEMORY_PREFIX + from_expr(expr) + "__" + id2string(field_name),
-    state.source.pc->source_location(),
-    function_symbol.mode,
-    state.symbol_table);
-  // SPIKE: shadow memory shared between threads, as the memory it shadows.
-  new_symbol.is_thread_local = false;
-  new_symbol.is_static_lifetime = true;
-  symbol_exprt new_symbol_expr = new_symbol.symbol_expr();
+  // The shadow symbol of the same object in the previous run, which threads
+  // that symbolic execution executed earlier in this run may refer to.
+  const symbolt *previous = nullptr;
+  const auto previous_field = previous_addresses.find(field_name);
+  if(previous_field != previous_addresses.end())
+  {
+    for(const auto &entry : previous_field->second)
+    {
+      if(entry.first.address == expr && entry.second.type == field_type)
+      {
+        previous = &entry.second;
+        break;
+      }
+    }
+  }
+  const symbol_exprt new_symbol_expr = [&]()
+  {
+    if(previous != nullptr)
+    {
+      if(!state.symbol_table.has_symbol(previous->name))
+        state.symbol_table.insert(*previous);
+      return previous->symbol_expr();
+    }
+    const auto &function_symbol = ns.lookup(state.source.function_id);
+    symbolt &new_symbol = get_fresh_aux_symbol(
+      field_type,
+      id2string(state.source.function_id),
+      SHADOW_MEMORY_PREFIX + from_expr(expr) + "__" + id2string(field_name),
+      state.source.pc->source_location(),
+      function_symbol.mode,
+      state.symbol_table);
+    // SPIKE: shadow memory shared between threads, as the memory it shadows.
+    new_symbol.is_thread_local = false;
+    new_symbol.is_static_lifetime = true;
+    return new_symbol.symbol_expr();
+  }();
 
   auto &addresses = state.shadow_memory.address_fields[field_name];
   addresses.push_back(
     shadow_memory_statet::shadowed_addresst{expr, new_symbol_expr});
+  all_addresses[field_name].emplace_back(
+    addresses.back(), ns.lookup(new_symbol_expr.get_identifier()));
 
   return addresses.back().shadow;
 }
@@ -111,7 +139,7 @@ void shadow_memoryt::symex_set_field(
   INVARIANT(
     state.shadow_memory.address_fields.count(field_name) == 1,
     id2string(field_name) + " should exist");
-  const auto &addresses = state.shadow_memory.address_fields.at(field_name);
+  const auto addresses = addresses_of(state, field_name);
 
   // get value set
   replace_invalid_object_by_null(expr);
@@ -216,7 +244,7 @@ void shadow_memoryt::symex_get_field(
   INVARIANT(
     state.shadow_memory.address_fields.count(field_name) == 1,
     id2string(field_name) + " should exist");
-  const auto &addresses = state.shadow_memory.address_fields.at(field_name);
+  const auto addresses = addresses_of(state, field_name);
 
   // Return null (invalid object) instead of auto-object or invalid-object.
   // This will "polish" expr from invalid and auto-obj
@@ -567,4 +595,31 @@ void shadow_memoryt::mark_incomplete(goto_symex_statet &state)
     state,
     symbol->symbol_expr(),
     typecast_exprt::conditional_cast(true_exprt{}, symbol->type));
+}
+
+std::vector<shadow_memory_statet::shadowed_addresst>
+shadow_memoryt::addresses_of(
+  goto_symex_statet &state,
+  const irep_idt &field_name)
+{
+  std::vector<shadow_memory_statet::shadowed_addresst> result =
+    state.shadow_memory.address_fields.at(field_name);
+  std::unordered_set<irep_idt> known;
+  for(const auto &address : result)
+    known.insert(address.shadow.get_identifier());
+  for(const auto *registry : {&all_addresses, &previous_addresses})
+  {
+    const auto field = registry->find(field_name);
+    if(field == registry->end())
+      continue;
+    for(const auto &entry : field->second)
+    {
+      if(!known.insert(entry.first.shadow.get_identifier()).second)
+        continue;
+      if(!state.symbol_table.has_symbol(entry.second.name))
+        state.symbol_table.insert(entry.second);
+      result.push_back(entry.first);
+    }
+  }
+  return result;
 }

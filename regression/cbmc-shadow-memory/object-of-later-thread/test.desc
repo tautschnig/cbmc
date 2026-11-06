@@ -1,0 +1,16 @@
+CORE
+main.c
+--no-standard-checks
+^EXIT=0$
+^SIGNAL=0$
+^\[main.assertion.1\] .* shadow memory resolved: SUCCESS$
+^\[main.assertion.2\] .* set: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Symbolic execution runs threads one after another, each starting with a copy
+of its spawning thread's registry of shadow memory: an object that a thread
+executed later allocates and publishes had no shadow memory for the earlier
+one. The registrations of all threads and paths (of this and the previous
+run of symbolic execution) are considered.
