@@ -236,14 +236,15 @@ void shell_convertert::convert_dynamic_trap(
   for(const auto &pattern : resolution->second.with_holes())
   {
     code_blockt branch;
+    template_partst parts;
+    const exprt matches =
+      template_decomposition(pattern, text, parts, dest, loc);
     const auto code = parse_template(pattern, "trap", loc);
     if(!code.has_value())
       set_trap(branch, unknown_exit_trap);
     else
     {
-      std::vector<exprt> parts;
-      const exprt in_classes =
-        template_parts(pattern, *code, text, parts, branch, loc);
+      const exprt in_classes = template_parts(*code, parts, branch, loc);
       check(
         branch,
         in_classes,
@@ -258,8 +259,7 @@ void shell_convertert::convert_dynamic_trap(
       assign_template_parts(*code, parts, branch, loc);
       set_trap(branch, register_exit_trap(code->text, loc, code->commands));
     }
-    branches.emplace_back(
-      template_matches(pattern, text, dest, loc), std::move(branch));
+    branches.emplace_back(matches, std::move(branch));
   }
   for(auto it = branches.rbegin(); it != branches.rend(); ++it)
   {

@@ -212,6 +212,9 @@ void shell_convertert::convert_dynamic_eval(
   {
     const std::string what = template_to_string(pattern);
     code_blockt branch;
+    template_partst parts;
+    const exprt matches =
+      template_decomposition(pattern, *text, parts, dest, loc);
     const auto code = parse_template(pattern, "eval", loc);
     if(!code.has_value())
     {
@@ -227,9 +230,7 @@ void shell_convertert::convert_dynamic_eval(
     }
     else
     {
-      std::vector<exprt> parts;
-      const exprt in_classes =
-        template_parts(pattern, *code, *text, parts, branch, loc);
+      const exprt in_classes = template_parts(*code, parts, branch, loc);
       check(
         branch,
         in_classes,
@@ -245,8 +246,7 @@ void shell_convertert::convert_dynamic_eval(
         what,
         branch);
     }
-    branches.emplace_back(
-      template_matches(pattern, *text, dest, loc), std::move(branch));
+    branches.emplace_back(matches, std::move(branch));
   }
   for(auto it = branches.rbegin(); it != branches.rend(); ++it)
   {

@@ -627,14 +627,21 @@ exprt shell_convertert::equal(
   code_blockt &dest,
   const source_locationt &loc)
 {
+  return payload_equal(payload_of(a), payload_of(b), dest, loc);
+}
+
+exprt shell_convertert::payload_equal(
+  const exprt &a,
+  const exprt &b,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  // Refined payloads are a length and a pointer: equal_exprt would compare
+  // the pointers.
   if(native())
-    return equal_exprt{payload_of(a), payload_of(b)};
+    return equal_exprt{a, b};
   return string_function(
-    ID_cprover_string_equal_func,
-    {payload_of(a), payload_of(b)},
-    bool_typet{},
-    dest,
-    loc);
+    ID_cprover_string_equal_func, {a, b}, bool_typet{}, dest, loc);
 }
 
 exprt shell_convertert::from_integer_expr(
@@ -1475,6 +1482,22 @@ exprt shell_convertert::segment_at(
     }
   }
   return conjunction(conditions);
+}
+
+exprt shell_convertert::payload_index_of_set(
+  const exprt &s,
+  const exprt &from,
+  const std::bitset<256> &set,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  PRECONDITION(!native());
+  return string_function(
+    ID_cprover_string_index_of_set_func,
+    {s, from, set_mask(set)},
+    integer_type(),
+    dest,
+    loc);
 }
 
 exprt shell_convertert::payload_contains_byte(

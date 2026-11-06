@@ -151,7 +151,10 @@ exprt shell_convertert::template_matches(
   }
   if(pattern.size() == 2 && pattern[0].empty() && pattern[1].empty())
     return true_exprt{};
-  return unbounded_pattern_matches(glob, subject, dest, loc);
+  if(native())
+    return unbounded_pattern_matches(glob, subject, dest, loc);
+  template_partst parts;
+  return template_decomposition(pattern, subject, parts, dest, loc);
 }
 
 exprt shell_convertert::pattern_matches(

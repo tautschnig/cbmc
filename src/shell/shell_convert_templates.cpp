@@ -348,51 +348,83 @@ shell_convertert::parse_template(
   return code;
 }
 
-exprt shell_convertert::template_parts(
+exprt shell_convertert::template_decomposition(
   const dynamic_templatet &pattern,
-  const template_codet &code,
   const exprt &value,
-  std::vector<exprt> &parts,
+  template_partst &parts,
   code_blockt &dest,
   const source_locationt &loc)
 {
+  // For refined strings: a prefix test, the first occurrence of each inner
+  // part, and the comparison of the last bytes with the last part. Other
+  // encodings were slower: substring comparisons for the prefix, the
+  // suffix test, rebuilding the value by concatenation, and index_of for
+  // the prefix (the first took 161 s on a minimal eval, rather than 1 s).
   const exprt v = payload_of(value);
+  parts.value = v;
   const exprt length = payload_length(v, dest, loc);
-  const exprt zero = from_integer(0, integer_type());
   const auto size = [this](const std::string &text) -> exprt
   { return from_integer(text.size(), integer_type()); };
   exprt::operandst conditions;
-  // The first part is a prefix.
   if(!pattern.front().empty())
   {
-    conditions.push_back(equal_exprt{
-      payload_index_of(v, payload_literal(pattern.front()), zero, dest, loc),
-      zero});
+    conditions.push_back(
+      payload_has_prefix(v, payload_literal(pattern.front()), dest, loc));
   }
   exprt start = size(pattern.front());
-  // Each inner part at its first occurrence after the previous one.
   for(std::size_t i = 1; i + 1 < pattern.size(); ++i)
   {
     const exprt at =
       payload_index_of(v, payload_literal(pattern[i]), start, dest, loc);
-    conditions.push_back(binary_relation_exprt{at, ID_ge, zero});
-    parts.push_back(payload_substring(v, start, at, dest, loc));
+    conditions.push_back(
+      binary_relation_exprt{at, ID_ge, from_integer(0, integer_type())});
+    parts.bounds.emplace_back(start, at);
     start = plus_exprt{at, size(pattern[i])};
   }
-  // The last part is a suffix after them.
   const exprt end = minus_exprt{length, size(pattern.back())};
   conditions.push_back(binary_relation_exprt{end, ID_ge, start});
   if(!pattern.back().empty())
   {
-    conditions.push_back(equal_exprt{
+    conditions.push_back(payload_equal(
       payload_substring(v, end, length, dest, loc),
-      payload_literal(pattern.back())});
+      payload_literal(pattern.back()),
+      dest,
+      loc));
   }
-  parts.push_back(payload_substring(v, start, end, dest, loc));
+  parts.bounds.emplace_back(start, end);
+  return conjunction(conditions);
+}
 
-  // Each part in its class.
-  for(std::size_t i = 0; i < parts.size(); ++i)
+exprt shell_convertert::template_parts(
+  const template_codet &code,
+  const template_partst &parts,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  // For refined strings, on the bytes of the value between the bounds of
+  // each part, rather than on substrings, which the string refinement
+  // solver decides more slowly (13 s rather than 4 s with two templates).
+  const exprt &v = parts.value;
+  const exprt zero = from_integer(0, integer_type());
+  exprt::operandst conditions;
+  for(std::size_t i = 0; i < parts.bounds.size(); ++i)
   {
+    const exprt &start = parts.bounds[i].first;
+    const exprt &end = parts.bounds[i].second;
+    // No byte of \p set in [start, end).
+    const auto none_of = [&](const std::bitset<256> &set) -> exprt
+    {
+      // Native strings match a regular expression on the part.
+      if(native())
+      {
+        return not_exprt{payload_contains_byte(
+          payload_substring(v, start, end, dest, loc), set, dest, loc)};
+      }
+      const exprt found = payload_index_of_set(v, start, set, dest, loc);
+      return or_exprt{
+        binary_relation_exprt{found, ID_lt, zero},
+        binary_relation_exprt{found, ID_ge, end}};
+    };
     std::bitset<256> forbidden;
     switch(code.classes[i])
     {
@@ -407,8 +439,7 @@ exprt shell_convertert::template_parts(
           forbidden.reset(c);
         }
       }
-      conditions.push_back(binary_relation_exprt{
-        payload_length(parts[i], dest, loc), ID_gt, zero});
+      conditions.push_back(binary_relation_exprt{end, ID_gt, start});
       break;
     case hole_classt::DOUBLE_QUOTED:
       for(const unsigned char c : {'"', '\\', '$', '`'})
@@ -426,34 +457,37 @@ exprt shell_convertert::template_parts(
         if(std::isalnum(c) || c == '_')
           forbidden.reset(c);
       }
-      conditions.push_back(binary_relation_exprt{
-        payload_length(parts[i], dest, loc), ID_gt, zero});
+      conditions.push_back(binary_relation_exprt{end, ID_gt, start});
       if(code.classes[i] == hole_classt::NAME_START)
       {
-        std::bitset<256> digits;
-        for(int c = '0'; c <= '9'; ++c)
-          digits.set(c);
-        const exprt first = payload_substring(
-          parts[i], zero, from_integer(1, integer_type()), dest, loc);
-        conditions.push_back(
-          not_exprt{payload_contains_byte(first, digits, dest, loc)});
+        const exprt first = payload_byte(v, start, dest, loc);
+        conditions.push_back(not_exprt{and_exprt{
+          binary_relation_exprt{first, ID_ge, from_integer('0', first.type())},
+          binary_relation_exprt{
+            first, ID_le, from_integer('9', first.type())}}});
       }
       break;
     }
-    conditions.push_back(
-      not_exprt{payload_contains_byte(parts[i], forbidden, dest, loc)});
+    conditions.push_back(none_of(forbidden));
   }
   return conjunction(conditions);
 }
 
 void shell_convertert::assign_template_parts(
   const template_codet &code,
-  const std::vector<exprt> &parts,
+  const template_partst &parts,
   code_blockt &dest,
   const source_locationt &loc)
 {
-  for(std::size_t i = 0; i < parts.size(); ++i)
-    assign_variable(code.ghosts[i], make_value(parts[i]), dest, loc);
+  for(std::size_t i = 0; i < parts.bounds.size(); ++i)
+  {
+    assign_variable(
+      code.ghosts[i],
+      make_value(payload_substring(
+        parts.value, parts.bounds[i].first, parts.bounds[i].second, dest, loc)),
+      dest,
+      loc);
+  }
 }
 
 std::optional<std::pair<std::string, std::string>>

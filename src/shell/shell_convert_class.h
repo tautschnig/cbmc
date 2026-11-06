@@ -513,6 +513,12 @@ private:
     const exprt &b,
     code_blockt &dest,
     const source_locationt &loc);
+  /// Whether payloads \p a and \p b are the same string.
+  exprt payload_equal(
+    const exprt &a,
+    const exprt &b,
+    code_blockt &dest,
+    const source_locationt &loc);
 
   /// The decimal representation of \p value.
   exprt from_integer_expr(
@@ -1060,6 +1066,14 @@ private:
     code_blockt &dest,
     const source_locationt &loc);
   /// Whether payload \p s contains a byte of \p set.
+  /// For refined strings: the first index at or after \p from of a byte of
+  /// \p set in payload \p s, or -1.
+  exprt payload_index_of_set(
+    const exprt &s,
+    const exprt &from,
+    const std::bitset<256> &set,
+    code_blockt &dest,
+    const source_locationt &loc);
   exprt payload_contains_byte(
     const exprt &s,
     const std::bitset<256> &set,
@@ -1543,20 +1557,31 @@ private:
     const dynamic_templatet &pattern,
     const std::string &what,
     const source_locationt &loc);
-  /// Whether \p value is \p pattern with parts in the classes of its holes:
-  /// those parts, by the first occurrence of each literal part, are
-  /// \p parts.
-  exprt template_parts(
+  /// The parts of a value for the holes of a template: the value's
+  /// payload, and the bounds [start, end) of each part in it.
+  struct template_partst
+  {
+    exprt value;
+    std::vector<std::pair<exprt, exprt>> bounds;
+  };
+  /// Whether \p value is in the language of \p pattern; its parts for the
+  /// holes, by the first occurrence of each literal part, are \p parts.
+  exprt template_decomposition(
     const dynamic_templatet &pattern,
-    const template_codet &code,
     const exprt &value,
-    std::vector<exprt> &parts,
+    template_partst &parts,
+    code_blockt &dest,
+    const source_locationt &loc);
+  /// Whether \p parts are in the classes of the holes of \p code.
+  exprt template_parts(
+    const template_codet &code,
+    const template_partst &parts,
     code_blockt &dest,
     const source_locationt &loc);
   /// Set the ghost variables of \p code to \p parts.
   void assign_template_parts(
     const template_codet &code,
-    const std::vector<exprt> &parts,
+    const template_partst &parts,
     code_blockt &dest,
     const source_locationt &loc);
   bool try_convert(

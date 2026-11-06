@@ -1,0 +1,14 @@
+CORE
+template-refined.sh
+--resolve-dynamic-sites
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-dynamic-site\.1\] .* "echo installing "\*" >&2": SUCCESS$
+^\[shell-unsupported\.1\] .* the parts of the text of eval for the holes of "echo installing "\*" >&2" are words .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+With refined strings, the value matches a template with a suffix. The
+suffix was compared as a payload (a length and a pointer) rather than as
+a string, so that it never matched.
