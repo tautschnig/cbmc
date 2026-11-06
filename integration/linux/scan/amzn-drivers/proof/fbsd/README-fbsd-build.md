@@ -106,3 +106,30 @@ FreeBSD driver, not just this one.
 Until then the FreeBSD cleanup obligations can only be stated as bounded
 claims, and they are **not** currently established -- see the note in
 `amzn-drivers-2026-11.md`.
+
+**Correction (follow-up analysis).** The allocator messages above are
+warnings, not the failure. Plain `cbmc` on the same goto binary prints the
+same two conflicts and carries on: linking attaches the library's
+`malloc(size)` and `free(ptr)` bodies to the kernel's declarations, and the
+surplus arguments (`M_DEVBUF`, the flags) are ignored. What actually stopped
+`goto-instrument --dfcc main --apply-loop-contracts --loop-contracts-file
+fbsd_cleanup_loop_contract.json` was an invariant failure much later, in
+`goto_inline_class.cpp` (`parameter_assignments`), on the variadic
+`device_printf(dev, fmt, ...)`: DFCC appended its write-set argument after the
+variadic arguments, so a `uint16_t` argument bound to the write-set pointer
+parameter while loop-assigns inference inlined the callees of
+`ena_tx_cleanup`.
+
+The allocator signature does matter under DFCC, but differently: the
+write-set argument was appended after `M_DEVBUF`, so it bound to `M_DEVBUF`
+and every kernel `malloc`/`free` failed the write-set checks. The cleanup
+harness never calls them (they are removed as unused), so this did not affect
+it.
+
+Both are fixed on branch `dfcc-variadic-write-set` (DFCC now passes the write
+set at the position of the write-set parameter, which comes first for
+variadic functions, and the inliner no longer aborts on a mismatched
+argument). With that build the loop contract is applied without error. A run
+with `--unwind 5 --unwinding-assertions --sat-solver cadical` at ring 4 did
+not finish within 1800 s, so the obligations are still not established.
+
