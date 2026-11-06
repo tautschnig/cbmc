@@ -118,6 +118,11 @@ void shell_languaget::set_language_options(
     convert_options.max_arguments,
     message_handler);
   convert_options.resolutions.clear();
+  convert_options.mark_text_sites =
+    options.get_bool_option("dynamic-sites-analysis") ||
+    options.get_bool_option("resolve-dynamic-sites") ||
+    options.get_bool_option("show-dynamic-sites") ||
+    !options.get_option("dynamic-resolutions").empty();
   const std::string resolutions = options.get_option("dynamic-resolutions");
   if(!resolutions.empty())
   {

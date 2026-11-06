@@ -1,0 +1,15 @@
+CORE
+eval.sh
+--resolve-dynamic-sites
+^EXIT=0$
+^SIGNAL=0$
+^Dynamic sites: 1 resolved, 0 unreachable, 0 unresolved \(2 rounds\)$
+^\[shell-dynamic-site\.1\] .* the text of eval is one of the candidates of shell-eval:eval.sh:7:1: mode=fast, mode=slow: SUCCESS$
+^\[assertion\.1\] .*: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+eval is not reached
+^warning: ignoring
+--
+The text of eval is a dynamic site: each candidate is parsed and run in
+its own branch.

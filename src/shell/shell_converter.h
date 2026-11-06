@@ -56,6 +56,10 @@ struct shell_convert_optionst
   shell_string_representationt strings = shell_string_representationt::REFINED;
   /// The candidates of dynamic sites (--dynamic-resolutions).
   dynamic_resolutionst resolutions;
+  /// Whether to mark the text of eval and the file of dot commands as
+  /// dynamic sites, which expands them as values; otherwise they are
+  /// converted as before, only for their side effects.
+  bool mark_text_sites = false;
 };
 
 /// Convert \p program into `shell::main` and the variable symbols it uses,

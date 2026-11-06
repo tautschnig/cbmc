@@ -1,0 +1,10 @@
+CORE
+eval-unresolved.sh
+--resolve-dynamic-sites --show-dynamic-sites
+^EXIT=0$
+^SIGNAL=0$
+^shell-eval:eval-unresolved.sh:3:1: .*: unresolved$
+--
+^warning: ignoring
+--
+An eval of text from the arguments stays unresolved.

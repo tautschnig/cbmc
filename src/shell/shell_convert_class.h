@@ -128,6 +128,7 @@ public:
       max_arguments(options.max_arguments),
       strings(options.strings),
       resolutions(options.resolutions),
+      mark_text_sites(options.mark_text_sites),
       symbol_table(symbol_table),
       ns(symbol_table),
       log(message_handler),
@@ -144,6 +145,8 @@ private:
   const shell_string_representationt strings;
   /// The candidates of dynamic sites.
   const dynamic_resolutionst &resolutions;
+  /// See shell_convert_optionst::mark_text_sites.
+  const bool mark_text_sites;
   symbol_table_baset &symbol_table;
   namespacet ns;
   messaget log;
@@ -884,6 +887,8 @@ private:
   void declare_dot_scripts();
   void convert_dot_scripts();
   void convert_dot(const shell_commandt &command, code_blockt &dest);
+  /// eval of text that is not known during conversion: a dynamic site.
+  void convert_dynamic_eval(const shell_commandt &command, code_blockt &dest);
   /// Run the dot script \p path, which was read, for \p command.
   void convert_dot_script(
     const shell_commandt &command,

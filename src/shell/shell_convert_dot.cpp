@@ -286,7 +286,7 @@ void shell_convertert::convert_dot(
                         !resolution->second.containing.has_value();
   known_literals.clear();
   std::optional<symbol_exprt> file;
-  if(!path.has_value())
+  if(!path.has_value() && mark_text_sites)
   {
     file = temporary(string_type(), dest, loc);
     assign(
