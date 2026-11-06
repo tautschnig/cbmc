@@ -1821,53 +1821,52 @@ static exprt lower_byte_update_array_vector_unbounded(
       subtype},
     ns);
 
-  // The number of target array/vector elements being replaced, not including
-  // a possible partial update at the end of the updated range, which is handled
-  // below: (non_const_update_bound + (subtype_size - 1)) / subtype_size to
-  // round up to the nearest multiple of subtype_size.
-  div_exprt updated_elements{
-    plus_exprt{
-      typecast_exprt::conditional_cast(
-        non_const_update_bound, subtype_size.type()),
-      minus_exprt{subtype_size, from_integer(1, subtype_size.type())}},
-    subtype_size};
-
-  // The last element to be updated: first_index + updated_elements - 1
-  plus_exprt last_index{
-    first_index,
+  // The last element to be updated: the one that holds the last updated byte,
+  // at src.offset() + non_const_update_bound - 1. (With an empty update, this
+  // is first_index - 1, or first_index, whose update first_update_value then
+  // leaves unchanged.)
+  div_exprt last_index{
     minus_exprt{
-      std::move(updated_elements), from_integer(1, first_index.type())}};
-
-  // The size of a partial update at the end of the updated range, may be zero.
-  mod_exprt tail_size{
-    typecast_exprt::conditional_cast(
-      minus_exprt{
+      plus_exprt{
+        src.offset(),
         typecast_exprt::conditional_cast(
-          non_const_update_bound, initial_bytes.type()),
-        initial_bytes},
-      subtype_size.type()),
+          non_const_update_bound, src.offset().type())},
+      from_integer(1, src.offset().type())},
     subtype_size};
 
-  // The bound where updates end, which is conditional on the partial update
-  // being empty.
+  // The bound where updates end.
   binary_predicate_exprt upper_bound{
     typecast_exprt::conditional_cast(
       array_comprehension_index, last_index.type()),
-    ID_ge,
-    if_exprt{
-      equal_exprt{tail_size, from_integer(0, tail_size.type())},
-      last_index,
-      plus_exprt{last_index, from_integer(1, last_index.type())}}};
+    ID_gt,
+    last_index};
 
-  // The actual value of a partial update at the end.
+  // The actual value of a (possibly partial) update at the end: the tail_size
+  // bytes of value_as_byte_array from offset last_index * subtype_size -
+  // src.offset() on, at offset 0 of the element (a negative offset would
+  // select the leading bytes of the update value, see the bit-vector case of
+  // lower_byte_update).
+  const exprt last_start = minus_exprt{
+    mult_exprt{
+      typecast_exprt::conditional_cast(last_index, src.offset().type()),
+      typecast_exprt::conditional_cast(subtype_size, src.offset().type())},
+    src.offset()};
+  const exprt tail_size = minus_exprt{
+    typecast_exprt::conditional_cast(
+      non_const_update_bound, src.offset().type()),
+    last_start};
   exprt last_update_value = lower_byte_update(
     byte_update_exprt{
       src.id(),
       index_exprt{src.op(), last_index},
-      unary_minus_exprt{mult_exprt{
-        typecast_exprt::conditional_cast(last_index, subtype_size.type()),
-        subtype_size}},
-      value_as_byte_array,
+      from_integer(0, src.offset().type()),
+      byte_extract_exprt{
+        extract_opcode,
+        value_as_byte_array,
+        last_start,
+        src.get_bits_per_byte(),
+        array_typet{
+          to_array_type(value_as_byte_array.type()).element_type(), tail_size}},
       src.get_bits_per_byte()},
     ns);
 

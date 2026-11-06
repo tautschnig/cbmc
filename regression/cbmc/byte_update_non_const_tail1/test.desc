@@ -1,0 +1,14 @@
+CORE
+main.c
+--no-standard-checks
+^EXIT=0$
+^SIGNAL=0$
+^\[main.assertion.1\] .* long exact: SUCCESS$
+^\[main.assertion.2\] .* int exact: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+The last element that a byte update of symbolic size touches was computed
+without the offset of the update, and its partial update took the leading
+bytes of the update value.
