@@ -1,0 +1,13 @@
+CORE
+trap-verify.sh
+--resolve-dynamic-sites
+^EXIT=0$
+^SIGNAL=0$
+^Dynamic sites: 1 resolved, 0 unreachable, 0 unresolved \(2 rounds\)$
+^\[shell-dynamic-site\.1\] .* the action of trap is one of the candidates of shell-trap:trap-verify.sh:7:1: :, exit 3: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+other actions are not supported.*: FAILURE
+^warning: ignoring
+--
+Each candidate action of the trap is converted, and runs at exit.

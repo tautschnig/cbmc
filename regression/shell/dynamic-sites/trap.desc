@@ -1,0 +1,12 @@
+CORE
+trap.sh
+--resolve-dynamic-sites --show-dynamic-sites
+^EXIT=0$
+^SIGNAL=0$
+^shell-trap:trap.sh:7:1: .*: \{ ":", "done=yes" \}$
+^shell-trap:trap.sh:9:1: .*: unresolved$
+--
+^warning: ignoring
+--
+The action of a trap on EXIT is a dynamic site. A text with an unknown
+part, such as a file name from mktemp, stays unresolved.

@@ -889,6 +889,12 @@ private:
   void convert_dot(const shell_commandt &command, code_blockt &dest);
   /// eval of text that is not known during conversion: a dynamic site.
   void convert_dynamic_eval(const shell_commandt &command, code_blockt &dest);
+  /// The action of a trap on EXIT that is not known during conversion: a
+  /// dynamic site.
+  void convert_dynamic_trap(
+    const shell_wordt &action,
+    code_blockt &dest,
+    const source_locationt &loc);
   /// Run the dot script \p path, which was read, for \p command.
   void convert_dot_script(
     const shell_commandt &command,

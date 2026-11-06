@@ -10,6 +10,7 @@
 
 #include "shell_convert_class.h"
 
+#include <goto-programs/dynamic_sites.h>
 #include <goto-programs/goto_instruction_code.h>
 
 #include <cctype>
@@ -122,19 +123,29 @@ void shell_convertert::convert_trap(
     if(exit_trap_location.get_file().empty())
       exit_trap_location = loc;
     unsigned number = 0;
+    bool assigned = false;
     if(!reset)
     {
       const auto text = known_text(command.words[first]);
       if(!text.has_value())
       {
-        expand_word(
-          command.words[first], shell_word_contextt::IGNORED, dest, loc);
-        number = unknown_exit_trap;
+        if(mark_text_sites)
+        {
+          convert_dynamic_trap(command.words[first], dest, loc);
+          assigned = true;
+        }
+        else
+        {
+          expand_word(
+            command.words[first], shell_word_contextt::IGNORED, dest, loc);
+          number = unknown_exit_trap;
+        }
       }
       else if(!text->empty())
         number = register_exit_trap(*text, loc);
     }
-    assign(dest, exit_trap(), from_integer(number, exit_trap_type()), loc);
+    if(!assigned)
+      assign(dest, exit_trap(), from_integer(number, exit_trap_type()), loc);
   }
   else if(!reset)
   {
@@ -149,6 +160,81 @@ void shell_convertert::convert_trap(
     nondet_status(dest, 1, loc);
   else
     set_status(dest, 0, loc);
+}
+
+void shell_convertert::convert_dynamic_trap(
+  const shell_wordt &action,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  // A dynamic site (see goto-programs/dynamic_sites.h): with a resolution,
+  // each candidate is an action; any other text fails the check of the
+  // site. A candidate that cannot be converted, or a site without a
+  // resolution, is an action that is not known, which is reported where it
+  // would run.
+  const symbol_exprt text = temporary(string_type(), dest, loc);
+  assign(
+    dest,
+    text,
+    expand_word(action, shell_word_contextt::FIELD, dest, loc),
+    loc);
+  const irep_idt site = "shell-trap:" + id2string(loc.get_file()) + ":" +
+                        id2string(loc.get_line()) + ":" +
+                        id2string(loc.get_column());
+  add(
+    dest,
+    dynamic_site_marker(site, text, shell_mode(), symbol_table, loc),
+    loc);
+  const auto resolution = resolutions.find(site);
+  const auto set_trap = [&](code_blockt &block, unsigned number)
+  { assign(block, exit_trap(), from_integer(number, exit_trap_type()), loc); };
+  if(
+    resolution == resolutions.end() ||
+    resolution->second.containing.has_value())
+  {
+    set_trap(dest, unknown_exit_trap);
+    return;
+  }
+  std::string candidates;
+  for(const auto &candidate : resolution->second.values)
+    candidates += (candidates.empty() ? "" : ", ") + candidate;
+  code_blockt otherwise;
+  {
+    source_locationt check_loc = loc;
+    check_loc.set_property_class("shell-dynamic-site");
+    check_loc.set_comment(
+      "the action of trap is one of the candidates of " + id2string(site) +
+      ": " + (candidates.empty() ? std::string{"none"} : candidates));
+    code_assertt assertion{false_exprt{}};
+    assertion.add_source_location() = check_loc;
+    otherwise.add(std::move(assertion));
+    add(otherwise, code_assumet{false_exprt{}}, loc);
+  }
+  const auto &values = resolution->second.values;
+  for(auto it = values.rbegin(); it != values.rend(); ++it)
+  {
+    const std::string &candidate = *it;
+    code_blockt branch;
+    unsigned number = 0;
+    if(!candidate.empty())
+    {
+      code_blockt unused;
+      if(!try_convert(
+           [&](code_blockt &) { number = register_exit_trap(candidate, loc); },
+           unused))
+      {
+        number = unknown_exit_trap;
+      }
+    }
+    set_trap(branch, number);
+    code_ifthenelset choice{
+      equal(text, string_literal(candidate, loc), dest, loc),
+      std::move(branch),
+      std::move(otherwise)};
+    otherwise = code_blockt{};
+    add(otherwise, std::move(choice), loc);
+  }
+  dest.append(otherwise);
 }
 
 unsigned shell_convertert::register_exit_trap(
