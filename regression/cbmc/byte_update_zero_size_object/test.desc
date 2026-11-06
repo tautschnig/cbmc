@@ -1,0 +1,13 @@
+CORE
+main.c
+--no-standard-checks
+^EXIT=10$
+^SIGNAL=0$
+^\[main.assertion.1\] .* not reached: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A byte update of an object of no bytes changes nothing. Simplifying it used to
+build a chain of one with_exprt per byte of the update value (8000), which
+overflowed the stack when the chain was compared.

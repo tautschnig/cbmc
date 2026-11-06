@@ -2271,9 +2271,24 @@ simplify_exprt::simplify_byte_update(const byte_update_exprt &expr)
   // is guaranteed to be a multiple of the array-element width
   if(auto array_type = type_try_dynamic_cast<array_typet>(root.type()))
   {
+    // An array of no elements has nothing to update.
+    if(
+      array_type->size().is_constant() &&
+      to_constant_expr(array_type->size()).is_zero())
+    {
+      return changed(root);
+    }
+
     auto el_size = pointer_offset_bits(array_type->element_type(), ns);
 
-    if(el_size.has_value() && *el_size > 0 && *val_size % *el_size == 0)
+    // A chain of one with_exprt per element is linear in the number of
+    // elements the value covers, and as deep: beyond
+    // max_with_chain_elements elements (a 1000-pointer value into a byte
+    // array is 8000), the update is left to the solver's lowering.
+    static const mp_integer max_with_chain_elements = 256;
+    if(
+      el_size.has_value() && *el_size > 0 && *val_size % *el_size == 0 &&
+      *val_size / *el_size <= max_with_chain_elements)
     {
       if(
         offset_int.has_value() &&
