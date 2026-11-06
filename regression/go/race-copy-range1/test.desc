@@ -1,0 +1,15 @@
+CORE
+main.go
+--go-race-check --unwind 3 --unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\$lit2\.data-race\.\d+\] line 19 data race \(write\): FAILURE$
+^VERIFICATION FAILED$
+--
+^\[go::main\.main\$lit1\.data-race\.\d+\] .*: FAILURE$
+whole object
+^warning: ignoring
+--
+The accesses of copy are of the count elements at either pointer (range
+markers), flagged byte by byte with a symbolic size, rather than of the whole
+objects (TestNoRaceSliceWriteCopy of the race oracle).

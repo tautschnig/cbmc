@@ -160,6 +160,12 @@ struct accesst
   /// rather than right before it (a change of a channel's state, which an
   /// observation after another section may follow).
   bool after = false;
+  /// For a range of bytes (of a range marker): the symbol that the size of
+  /// lvalue's type is, and its value, which the instrumentation assigns
+  /// first (so that the size is the same where the flags are set, checked
+  /// and reset).
+  exprt size_symbol = nil_exprt{};
+  exprt size_value = nil_exprt{};
 };
 
 /// The largest access whose bytes are flagged one by one; a larger one (or
@@ -473,11 +479,30 @@ static symbol_exprt shadow_function(
   return symbol_exprt{id, type};
 }
 
+/// Whether \p lvalue is the range of bytes of a range marker
+/// (go::$race_read_range, go::$race_write_range): an array of unsigned
+/// chars of non-constant size.
+static bool is_byte_range(const exprt &lvalue)
+{
+  return lvalue.type().id() == ID_array &&
+         to_array_type(lvalue.type()).element_type() == unsigned_char_type() &&
+         !to_array_type(lvalue.type()).size().is_constant();
+}
+
+/// The address of \p lvalue: the pointer of a range of bytes (whose type,
+/// of symbolic size, goto-symex does not keep through &*).
+static exprt address_of_lvalue(const exprt &lvalue)
+{
+  if(is_byte_range(lvalue) && lvalue.id() == ID_dereference)
+    return to_dereference_expr(lvalue).pointer();
+  return address_of_exprt{lvalue};
+}
+
 /// The address of the first byte of \p lvalue.
 static exprt byte_address(const exprt &lvalue)
 {
   return typecast_exprt{
-    address_of_exprt{lvalue}, pointer_type(unsigned_char_type())};
+    address_of_lvalue(lvalue), pointer_type(unsigned_char_type())};
 }
 
 /// The address of the bytes of \p lvalue, as an array of unsigned chars:
@@ -486,6 +511,10 @@ static exprt byte_address(const exprt &lvalue)
 /// start (also through unsafe.Pointer conversions).
 static exprt bytes_address(const namespacet &ns, const exprt &lvalue)
 {
+  // A range of a range marker, as an array of unsigned chars of symbolic
+  // size, is already one.
+  if(is_byte_range(lvalue))
+    return address_of_lvalue(lvalue);
   const auto size = pointer_offset_size(lvalue.type(), ns);
   if(!size.has_value() || *size <= 1)
     return byte_address(lvalue);
@@ -573,6 +602,8 @@ static void leaves_of(
 /// whole object: its size is unknown or larger than max_flagged_bytes.
 static bool needs_range(const namespacet &ns, const exprt &lvalue)
 {
+  if(is_byte_range(lvalue))
+    return false;
   const auto size = pointer_offset_size(lvalue.type(), ns);
   return !size.has_value() || *size > max_flagged_bytes;
 }
@@ -691,6 +722,15 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
                               const source_locationt &location)
     {
       goto_programt before;
+      for(const auto &a : accesses)
+      {
+        if(a.size_symbol.is_nil())
+          continue;
+        before.add(
+          goto_programt::make_decl(to_symbol_expr(a.size_symbol), location));
+        before.add(goto_programt::make_assignment(
+          a.size_symbol, a.size_value, location));
+      }
       // Field name of the flag at the address pointer.
       const auto set_flag =
         [&](const exprt &pointer, const char *name, bool value)
@@ -1047,6 +1087,34 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
           }
         }
       }
+      else if(
+        (callee == "go::$race_read_range" ||
+         callee == "go::$race_write_range") &&
+        it->call_arguments().size() == 2)
+      {
+        // copy_elements (go_builtins.cpp): the given number of bytes at the
+        // pointer, as an array of unsigned chars of that (symbolic) size.
+        const exprt &pointer = it->call_arguments()[0];
+        const exprt &size = it->call_arguments()[1];
+        collect(ns, pointer, false, always, accesses);
+        collect(ns, size, false, always, accesses);
+        const symbolt &size_symbol = get_fresh_aux_symbol(
+          size.type(),
+          id2string(f.first),
+          "race$size",
+          it->source_location(),
+          "go",
+          goto_model.symbol_table);
+        const array_typet bytes{
+          unsigned_char_type(), size_symbol.symbol_expr()};
+        accesst a{
+          dereference_exprt{typecast_exprt{pointer, pointer_type(bytes)}},
+          callee == "go::$race_write_range",
+          always};
+        a.size_symbol = size_symbol.symbol_expr();
+        a.size_value = size;
+        accesses.push_back(a);
+      }
       else if(!checked)
         continue;
       else if(it->is_assign())
@@ -1066,6 +1134,10 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
         collect(ns, it->return_value(), false, always, accesses);
       else if(it->is_goto() || it->is_assume() || it->is_assert())
         collect(ns, it->condition(), false, always, accesses);
+      else if(it->is_other() && it->code().get_bool(ID_C_go_race_ranges))
+      {
+        // Its accesses are those of the range markers before it.
+      }
       else if(
         it->is_other() && (it->code().get_statement() == ID_array_copy ||
                            it->code().get_statement() == ID_array_replace ||

@@ -4575,3 +4575,27 @@ void go_convertert::race_marker(
     empty_typet{},
     location}});
 }
+
+void go_convertert::race_range_marker(
+  const irep_idt &id,
+  const exprt &pointer,
+  const exprt &size,
+  const source_locationt &location,
+  code_blockt &dest)
+{
+  if(!race_check)
+    return;
+  const pointer_typet parameter = pointer_type(empty_typet{});
+  if(!symbol_table.has_symbol(id))
+  {
+    declare_generated(
+      symbol_table, id, {parameter, size_type()}, empty_typet{});
+    symbol_table.get_writeable_ref(id).value = code_blockt{};
+  }
+  dest.add(code_expressiont{side_effect_expr_function_callt{
+    ns.lookup(id).symbol_expr(),
+    {typecast_exprt::conditional_cast(pointer, parameter),
+     typecast_exprt::conditional_cast(size, size_type())},
+    empty_typet{},
+    location}});
+}

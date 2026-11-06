@@ -46,6 +46,10 @@ class symbol_table_baset;
 #define ID_C_go_tid "#go_tid"
 /// Name of the comment marking the header struct of channels.
 #define ID_C_go_chan "#go_chan"
+/// On a bulk operation (__CPROVER_array_copy, __CPROVER_array_replace) whose
+/// accesses range markers (go::$race_read_range, go::$race_write_range)
+/// describe for the data-race check.
+#define ID_C_go_race_ranges "#go_race_ranges"
 /// Name of the comment marking the code types of variadic functions.
 #define ID_C_go_variadic "#go_variadic"
 

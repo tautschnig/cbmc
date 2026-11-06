@@ -878,6 +878,14 @@ private:
     const exprt &pointer,
     const source_locationt &location,
     code_blockt &dest);
+  /// As race_marker, for an access of the \p size bytes at \p pointer
+  /// (go::$race_read_range or go::$race_write_range).
+  void race_range_marker(
+    const irep_idt &id,
+    const exprt &pointer,
+    const exprt &size,
+    const source_locationt &location,
+    code_blockt &dest);
   void convert_chan_range(
     const irept &stmt,
     const exprt &chan,

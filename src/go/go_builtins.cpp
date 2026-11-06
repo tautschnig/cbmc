@@ -34,6 +34,7 @@ Author: Michael Tautschnig
 #include <util/mp_arith.h>
 #include <util/pointer_expr.h>
 #include <util/pointer_offset_size.h>
+#include <util/simplify_expr.h>
 #include <util/std_code.h>
 #include <util/symbol_table_base.h>
 
@@ -190,11 +191,34 @@ void go_convertert::copy_elements(
   // elements with pointers: the byte operators between arrays of the same
   // element type are lowered element by element (lower_byte_operators.cpp),
   // so the pointers keep what they point to.
+  //
+  // For the data-race check, the accesses are of the count elements at
+  // either pointer (rather than of the whole objects, as for other bulk
+  // operations), unless their size is a constant too large to flag byte by
+  // byte. The new array is not shared.
+  const auto element_size = size_of_expr(element, ns);
+  CHECK_RETURN(element_size.has_value());
+  const exprt bytes = simplify_expr(
+    mult_exprt{
+      typecast_exprt::conditional_cast(count, size_type()),
+      typecast_exprt::conditional_cast(*element_size, size_type())},
+    ns);
+  const auto constant_bytes = numeric_cast<mp_integer>(bytes);
+  const bool ranges =
+    race_check && (!constant_bytes.has_value() || *constant_bytes <= 1024);
+  if(ranges)
+    race_range_marker("go::$race_read_range", from, bytes, location, copy);
   codet array_copy{ID_array_copy, {buffer, from}};
   array_copy.add_source_location() = location;
+  if(ranges)
+    array_copy.set(ID_C_go_race_ranges, true);
   copy.add(std::move(array_copy));
+  if(ranges)
+    race_range_marker("go::$race_write_range", to, bytes, location, copy);
   codet array_replace{ID_array_replace, {to, buffer}};
   array_replace.add_source_location() = location;
+  if(ranges)
+    array_replace.set(ID_C_go_race_ranges, true);
   copy.add(std::move(array_replace));
   code_ifthenelset if_any{
     binary_relation_exprt{count, ID_gt, from_integer(0, count.type())},
