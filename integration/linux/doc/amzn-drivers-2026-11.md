@@ -349,3 +349,71 @@ three variants, so that part of the work transfers. What does not transfer is
 the OS glue -- `ena_ethdev.c` for DPDK, `ena_netdev.c` for Linux,
 `ena.c`/`ena_datapath.c` for FreeBSD -- which is where the FreeBSD findings
 we have no coverage for will be.
+
+## F10: NULL dereference releasing a queue whose setup failed (DPDK ENA)
+
+Found by asking the error-path question rather than the invariant question:
+*if the operation fails, what does it leave behind?*
+
+`ena_tx_queue_release()` (`ena_ethdev.c:1010`) begins
+
+```c
+struct ena_ring *ring = dev->data->tx_queues[qid];
+
+rte_free(ring->push_buf_intermediate_buf);
+rte_free(ring->tx_buffer_info);
+rte_free(ring->empty_tx_reqs);
+```
+
+with no NULL check on `ring`, while `ena_tx_queue_setup()` publishes the ring
+into `dev->data->tx_queues[queue_idx]` **only on success**
+(`ena_ethdev.c`, immediately before `return 0`). `ena_rx_queue_release()` has
+the same shape.
+
+The sequence is ordinary DPDK usage, and every link was checked:
+
+1. `rte_eth_dev_configure(port, nb_rx, nb_tx)` calls
+   `eth_dev_tx_queue_config(dev, nb_tx_q)` (`rte_ethdev.c:1550`), which sets
+   `dev->data->nb_tx_queues` and allocates a **zeroed** `tx_queues` array.
+2. `rte_eth_dev_tx_queue_setup(port, 0, ...)` reaches ENA's setup, an
+   allocation fails, it returns `-ENOMEM`, and `tx_queues[0]` stays NULL.
+3. The application, having seen the error, calls `rte_eth_dev_close(port)`.
+   `rte_eth_dev_close` (`rte_ethdev.c:1940`) calls
+   `(*dev->dev_ops->dev_close)(dev)` directly, with no per-queue NULL
+   handling.
+4. ENA's close calls `ena_rx_queue_release_all(dev)` and
+   `ena_tx_queue_release_all(dev)` (`ena_ethdev.c:920-921`), which loop
+   `i < dev->data->nb_tx_queues` -- still 1 -- and call the release above.
+5. `ring` is NULL and `ring->push_buf_intermediate_buf` dereferences it.
+
+Confirmed by proof, not by reading alone. `harness_setup_errorpath.c` injects
+the allocation failures that are already modelled in the setup base case and
+then performs step 4. With the release suppressed, VERIFICATION SUCCESSFUL,
+0 of 7402, and all three frame obligations hold. With the release performed,
+45 properties fail, every one of them in `ena_tx_queue_release`, including
+
+```
+dereference failure: pointer NULL in ring->push_buf_intermediate_buf: FAILURE
+dereference failure: pointer NULL in ring->$anon1: FAILURE   (empty_tx_reqs)
+dereference failure: pointer NULL in ring->$anon0: FAILURE   (tx_buffer_info)
+```
+
+Severity is a NULL-page dereference during error recovery, so denial of
+service rather than memory corruption, and it needs an allocation failure to
+trigger. The fix is a two-line NULL check in each of the two release
+functions, or publishing the ring before the allocations and clearing the slot
+on failure.
+
+### What the same harness proves about the failure paths that are correct
+
+Three obligations hold, which is worth stating because the interesting part of
+an error path is usually what it *does* clean up:
+
+| obligation | result |
+|---|---|
+| `ERR_NO_PUBLISH` -- a failed setup does not publish the ring | SUCCESS |
+| `ERR_NOT_CONFIGURED` -- a failed setup does not mark the ring configured | SUCCESS |
+| `ERR_NO_LEAK` -- a failed setup releases everything it allocated (ghost allocation counter, so this is Unveil class D for this function) | SUCCESS |
+
+So `ena_tx_queue_setup` unwinds its own allocations correctly on every failure
+path; the defect is entirely in what the *release* function assumes.
