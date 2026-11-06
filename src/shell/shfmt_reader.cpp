@@ -698,7 +698,34 @@ private:
     return false;
   }
 
+  /// A word; ${1+"$@"} on its own, an idiom for old shells in which "$@"
+  /// without positional parameters was one empty field, is "$@" in all
+  /// shells (XCU 2.5.2, 2.6.2).
   shell_wordt read_word(const jsont &word)
+  {
+    shell_wordt result = read_word_parts(word);
+    using kindt = shell_word_partt::kindt;
+    if(
+      result.size() == 1 && result[0].kind == kindt::PARAMETER &&
+      result[0].text == "1" && result[0].parameter_operator == "+" &&
+      !result[0].parameter_length && result[0].index.empty() &&
+      result[0].parts.size() == 1 &&
+      result[0].parts[0].kind == kindt::DOUBLE_QUOTED &&
+      result[0].parts[0].parts.size() == 1 &&
+      result[0].parts[0].parts[0].kind == kindt::PARAMETER &&
+      result[0].parts[0].parts[0].text == "@" &&
+      result[0].parts[0].parts[0].parameter_operator.empty() &&
+      !result[0].parts[0].parts[0].parameter_length &&
+      result[0].parts[0].parts[0].index.empty())
+    {
+      shell_word_partt quoted = result[0].parts[0];
+      quoted.location = result[0].location;
+      return {std::move(quoted)};
+    }
+    return result;
+  }
+
+  shell_wordt read_word_parts(const jsont &word)
   {
     shell_wordt result;
     for(const auto &part : array(word["Parts"]))

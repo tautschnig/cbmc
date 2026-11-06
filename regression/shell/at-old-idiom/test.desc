@@ -1,0 +1,13 @@
+CORE
+main.sh
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .* "\$\{1\}" = x: SUCCESS$
+^VERIFICATION FAILED$
+--
+unsupported shell construct
+^warning: ignoring
+--
+${1+"$@"}, an idiom for old shells, is "$@". (The argument count property
+fails: x and eight parameters are nine fields.)
