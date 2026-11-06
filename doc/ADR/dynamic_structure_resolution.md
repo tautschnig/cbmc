@@ -336,6 +336,33 @@ The shell front-end's sites, in order of the census:
   distinct sites are resolved (177 of 713), and resolved occurrences rise
   from 131 to 196 of 804; the 36 decided residual assertions of the 48
   scripts with such sites hold.
+- Sites for `.`, `eval` and `trap` text (29 Oct 2026). Each site's marker
+  says whether it can use the language of names with a slash (only
+  command names can). They are marked only with a dynamic-site option, so
+  that the default model is unchanged: marking expands the words as
+  values, which adds properties.
+  - `.` with a file name that is an expansion: `shell-dot:...`. Each
+    candidate with an absolute path is read and run in its branch. On the
+    69 census scripts with such commands (119 distinct sites): 5 resolved,
+    26 unreachable, 88 unresolved, mostly from the environment
+    (`$HOME/.byoburc`, `${DPKG_DATADIR:-...}`) or the arguments.
+  - `eval` of text not known during conversion: `shell-eval:...`, the
+    arguments as one field each, joined with spaces. Each candidate text
+    is parsed and converted in its branch. On 115 scripts (306 distinct
+    sites): 25 resolved, 124 unreachable, 157 unresolved. Resolved are
+    mostly xdg-utils' `eval '...'$xdg_redirect_output`.
+  - The action of a trap on EXIT: `shell-trap:...`; each candidate becomes
+    an action. All 11 distinct sites in 48 scripts stay unresolved, as the
+    actions are templates such as `"rm -f $tmp"`.
+  - Indirect expansion `${!name}` does not occur in the census; the
+    indirection there is through `eval` (`eval "echo \${$1+set}"`).
+  - What this shows for languages: for text that becomes code, a finite set
+    of strings or a glob is not what is needed. The texts are templates of
+    literal code with holes that hold values (`rm -f HOLE`). A candidate
+    of that form can be converted with each hole as a quoted reference to
+    a ghost variable that holds its value at the site, which is exact if
+    the residual assertion checks that the value is a single word without
+    metacharacters, the token class of the hole.
 - The marker function must not be interned in programs without sites.
   Interning one more identifier in every program changed the order of
   identifiers, which made the 24 refined string kernels take 216 s rather
