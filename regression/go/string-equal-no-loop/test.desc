@@ -1,0 +1,16 @@
+CORE
+main.go
+--unwind 1 --unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.panic\.1\] line 10 panic: equal strings: SUCCESS$
+^\[go::main\.main\.panic\.2\] line 13 panic: different strings: SUCCESS$
+^\[go::main\.main\.panic\.3\] line 21 panic: exact: SUCCESS$
+^\[go::main\.main\.panic\.4\] line 24 panic: expected failure: FAILURE$
+^\[go::main\.main\.panic\.5\] line 28 panic: interface: SUCCESS$
+^\[go::main\.main\.panic\.6\] line 32 panic: interface of another type: SUCCESS$
+^\*\* 1 of \d+ failed
+^VERIFICATION FAILED$
+--
+unwinding assertion.*: FAILURE
+^warning: ignoring

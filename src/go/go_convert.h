@@ -496,6 +496,13 @@ private:
   /// Calls of the generated helper functions $string_equal and
   /// $string_concat (see go_builtins.cpp).
   exprt string_equal(const exprt &a, const exprt &b, const source_locationt &);
+  /// Interface value \p iface == string \p string, if \p string is a short
+  /// constant (else nil): its dynamic type is that of \p string, and its
+  /// bytes are those of the constant.
+  exprt interface_string_equal(
+    const exprt &iface,
+    const exprt &string,
+    const source_locationt &location);
   exprt string_concat(const exprt &a, const exprt &b, const source_locationt &);
   /// A call of function \p name of the runtime package cprover/rt.
   exprt runtime_call(

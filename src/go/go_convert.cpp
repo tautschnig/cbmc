@@ -3744,8 +3744,16 @@ exprt go_convertert::convert_comparison(
     // X and t's dynamic value is equal to x." Comparing the interface value
     // that holds x is equivalent.
     const typet iface = go_type_convertert::interface_type();
-    exprt result =
-      interface_equal(assign_cast(x, iface), assign_cast(y, iface), location);
+    exprt result = nil_exprt{};
+    if(is_go_interface(x.type()) && is_go_string(go_follow(ns, y.type())))
+      result = interface_string_equal(x, y, location);
+    else if(is_go_interface(y.type()) && is_go_string(go_follow(ns, x.type())))
+      result = interface_string_equal(y, x, location);
+    if(result.is_nil())
+    {
+      result =
+        interface_equal(assign_cast(x, iface), assign_cast(y, iface), location);
+    }
     if(op == "!=")
       result = not_exprt{result};
     return at_location(std::move(result), location);
@@ -4038,6 +4046,25 @@ exprt go_convertert::convert_binary(const irept &expr)
     op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" ||
     op == ">=")
   {
+    // A string constant compared with an interface value has been converted
+    // to the interface type: compare the string itself (see
+    // interface_string_equal).
+    const auto as_string = [&](const irept &node, exprt &value)
+    {
+      if(
+        node.get("_cvk") == "string" && is_go_interface(value.type()) &&
+        !node.get_bool("_tx"))
+      {
+        exprt string =
+          convert_constant(node, go_type_convertert::string_type());
+        if(string.is_not_nil())
+          value = std::move(string);
+      }
+    };
+    if((op == "==" || op == "!=") && is_go_interface(x.type()))
+      as_string(y_node, y);
+    if((op == "==" || op == "!=") && is_go_interface(y.type()))
+      as_string(x_node, x);
     return convert_comparison(op, x, y, expr);
   }
 

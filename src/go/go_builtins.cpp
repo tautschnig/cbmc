@@ -34,6 +34,7 @@ Author: Michael Tautschnig
 #include <util/mp_arith.h>
 #include <util/pointer_expr.h>
 #include <util/pointer_offset_size.h>
+#include <util/prefix.h>
 #include <util/simplify_expr.h>
 #include <util/std_code.h>
 #include <util/symbol_table_base.h>
@@ -243,6 +244,51 @@ exprt go_convertert::runtime_call(
     function.symbol_expr(), std::move(arguments), code.return_type(), location};
 }
 
+/// The bytes of \p value if it is a string constant (string_constant, after
+/// conversions), or nothing.
+static std::optional<std::string>
+constant_string_bytes(const exprt &value, const namespacet &ns)
+{
+  const exprt *e = &value;
+  while(e->id() == ID_typecast)
+    e = &to_typecast_expr(*e).op();
+  if(e->id() != ID_struct || e->operands().size() != 2)
+    return {};
+  const exprt &data = e->operands()[0];
+  const auto length = numeric_cast<mp_integer>(e->operands()[1]);
+  if(!length.has_value())
+    return {};
+  if(*length == 0 && data.id() == ID_constant)
+    return std::string{};
+  if(
+    data.id() != ID_address_of ||
+    to_address_of_expr(data).object().id() != ID_index)
+  {
+    return {};
+  }
+  const exprt &array = to_index_expr(to_address_of_expr(data).object()).array();
+  const symbolt *symbol;
+  if(
+    array.id() != ID_symbol ||
+    !has_prefix(
+      id2string(to_symbol_expr(array).get_identifier()), "go::$string") ||
+    ns.lookup(to_symbol_expr(array).get_identifier(), symbol) ||
+    symbol->value.id() != ID_array ||
+    symbol->value.operands().size() != *length)
+  {
+    return {};
+  }
+  std::string bytes;
+  for(const auto &element : symbol->value.operands())
+  {
+    const auto byte = numeric_cast<unsigned>(element);
+    if(!byte.has_value())
+      return {};
+    bytes.push_back(static_cast<char>(*byte));
+  }
+  return bytes;
+}
+
 exprt go_convertert::string_equal(
   const exprt &a,
   const exprt &b,
@@ -250,8 +296,61 @@ exprt go_convertert::string_equal(
 {
   // Go1.27 §Comparison_operators: "String types are comparable and
   // ordered. Two string values are compared lexically byte-wise."
-  // (rt.StringEqual)
+  // Against a short constant: byte by byte (the bytes are read only if the
+  // lengths are equal), without a loop.
+  for(const auto &[constant, other] : {std::pair{&a, &b}, std::pair{&b, &a}})
+  {
+    const auto bytes = constant_string_bytes(*constant, ns);
+    if(!bytes.has_value() || bytes->size() > 64)
+      continue;
+    code_blockt block;
+    const exprt value = evaluate_once(*other, location, block);
+    exprt::operandst conjuncts{equal_exprt{
+      component(value, "len"), from_integer(bytes->size(), int_type())}};
+    for(std::size_t i = 0; i < bytes->size(); ++i)
+    {
+      const exprt byte = dereference_exprt{
+        plus_exprt{component(value, "data"), from_integer(i, c_index_type())}};
+      conjuncts.push_back(equal_exprt{
+        byte,
+        from_integer(static_cast<unsigned char>((*bytes)[i]), byte.type())});
+    }
+    return with_prefix(conjunction(std::move(conjuncts)), block, location);
+  }
+  // Otherwise with a loop (rt.StringEqual). Comparing copies of the bytes
+  // as arrays (__CPROVER_array_equal of arrays of a common symbolic
+  // length) needs no loop, but made programs that compare many strings
+  // (encoding/json) forty times slower.
   return as_condition(runtime_call("StringEqual", {a, b}, location));
+}
+
+exprt go_convertert::interface_string_equal(
+  const exprt &iface,
+  const exprt &string,
+  const source_locationt &location)
+{
+  // Go1.27 §Comparison_operators: "A value x of non-interface type X and a
+  // value t of interface type T can be compared if type X is comparable and
+  // X implements T. They are equal if t's dynamic type is identical to X and
+  // t's dynamic value is equal to x." For a short constant x (as in
+  // `recover() == "message"`), so that string_equal compares its bytes
+  // without a loop.
+  const auto bytes = constant_string_bytes(string, ns);
+  if(!bytes.has_value() || bytes->size() > 64)
+    return nil_exprt{};
+  std::size_t tid = go_type_id(string.type());
+  if(tid == 0)
+    tid = type_converter.basic_type_id("string");
+  code_blockt block;
+  const exprt value = evaluate_once(iface, location, block);
+  const struct_typet iface_type = go_type_convertert::interface_type();
+  const member_exprt type{value, iface_type.components()[0]};
+  return with_prefix(
+    and_exprt{
+      equal_exprt{type, from_integer(tid, type.type())},
+      string_equal(unbox(value, string.type()), string, location)},
+    block,
+    location);
 }
 
 exprt go_convertert::string_concat(
