@@ -17,8 +17,10 @@ Author: Michael Tautschnig
 /// accesses can be adjacent in some sequentially consistent interleaving,
 /// which is a data race (GoMem §Memory_model, DRF-SC).
 ///
-/// The flags are fields of shadow memory (or, with GO_RACE_FLAGS=arrays,
-/// two shared unbounded arrays indexed by the accessed address). Accesses
+/// The flags are fields of shadow memory: W and R at the first byte of
+/// each accessed scalar, OW and OR at the first byte of its object, and RW
+/// and RR there for accesses of whole objects (bulk operations): an access
+/// of a whole object conflicts with any access of the object. Accesses
 /// in atomic sections (the models of
 /// channels, sync and sync/atomic) synchronise: they are not announced.
 /// An access of an entry or the header of a map is one of the map's header,
@@ -54,9 +56,6 @@ Author: Michael Tautschnig
 #include <map>
 #include <unordered_set>
 #include <vector>
-
-static const char *const write_flags_id = "go::$race_w";
-static const char *const read_flags_id = "go::$race_r";
 
 /// How the accesses of a function are instrumented.
 enum class modet
@@ -146,7 +145,21 @@ struct accesst
   exprt lvalue;
   bool write;
   exprt guard;
+  /// Of the whole object that contains lvalue (a bulk operation, or an
+  /// aggregate too large to flag by parts), rather than of lvalue's first
+  /// byte.
+  bool range = false;
+  /// Announced only, not checked: an atomic operation, or a change of a
+  /// channel's state.
+  bool announce_only = false;
+  /// If not empty, the description of the check (an observation that does
+  /// not synchronise).
+  std::string comment = {};
 };
+
+/// The largest access whose bytes are flagged one by one; a larger one (or
+/// one of unknown size) is an access of the whole object.
+static const std::size_t max_flagged_bytes = 64;
 
 static exprt skip_typecasts(exprt expr)
 {
@@ -163,6 +176,13 @@ static exprt skip_typecasts(exprt expr)
 /// flagging their entries would key accesses on locations that change.
 static exprt map_of_part(const exprt &expr)
 {
+  // The header as a whole (go::$race_write of a map, in delete).
+  if(
+    expr.id() == ID_dereference &&
+    is_go_map(skip_typecasts(to_dereference_expr(expr).pointer()).type()))
+  {
+    return skip_typecasts(to_dereference_expr(expr).pointer());
+  }
   if(expr.id() == ID_member)
   {
     const exprt compound = to_member_expr(expr).compound();
@@ -226,6 +246,30 @@ static exprt chan_of_operation(const exprt &lhs, bool &write)
   return chan_of_field(pointer, "buf");
 }
 
+/// If \p lhs, assigned in an atomic section, is a field of a channel's
+/// header (a send, receive or close changes the channel's state), the
+/// channel (a symbol), else nil.
+static exprt chan_of_state_change(const exprt &lhs)
+{
+  if(lhs.id() != ID_member)
+    return nil_exprt{};
+  const exprt &compound = to_member_expr(lhs).compound();
+  if(compound.id() != ID_dereference)
+    return nil_exprt{};
+  const exprt &chan = to_dereference_expr(compound).pointer();
+  if(chan.id() != ID_symbol || !is_go_chan(chan.type()))
+    return nil_exprt{};
+  return chan;
+}
+
+/// The location of the state of channel \p chan for observations: its
+/// count field (see go_convertert::chan_len).
+static exprt chan_state(const exprt &chan)
+{
+  const auto &header = to_struct_type(to_pointer_type(chan.type()).base_type());
+  return member_exprt{dereference_exprt{chan}, header.get_component("count")};
+}
+
 /// Whether \p lvalue is accessed through a parameter: `*addr`, `x.v` of a
 /// method of a pointer receiver x, the accesses of sync/atomic's model.
 static bool is_through_parameter(const namespacet &ns, const exprt &lvalue)
@@ -249,6 +293,7 @@ static void leaves_of(
   const exprt &lvalue,
   std::size_t &budget,
   std::vector<exprt> &leaves);
+static bool needs_range(const namespacet &ns, const exprt &lvalue);
 
 /// The accesses of \p expr, which is read (or written if \p write) if
 /// \p guard holds: maximal shared lvalues, and the reads in their
@@ -335,12 +380,18 @@ static void collect(
     const auto size = pointer_offset_size(expr.type(), ns);
     if(size.has_value() && *size == 0)
       return;
-    // Values of size zero do not get here; scalar parts each get a flag.
+    // Up to max_flagged_bytes bytes are flagged as one access; a larger
+    // aggregate by its parts (so that `s = S{}` on a large struct does not
+    // become an access of a whole slice's array that contains s), and parts
+    // that are still too large as accesses of the whole object.
     std::size_t budget = 64;
     std::vector<exprt> leaves;
-    leaves_of(ns, expr, budget, leaves);
+    if(size.has_value() && *size <= max_flagged_bytes)
+      leaves.push_back(expr);
+    else
+      leaves_of(ns, expr, budget, leaves);
     for(const auto &leaf : leaves)
-      accesses.push_back({leaf, write, guard});
+      accesses.push_back({leaf, write, guard, needs_range(ns, leaf)});
     // The reads that compute its address.
     collect(ns, address_of_exprt{expr}, false, guard, accesses);
     return;
@@ -378,36 +429,6 @@ static void collect(
     collect(ns, op, false, guard, accesses);
 }
 
-/// The index of the flags of the location that \p lvalue denotes.
-static exprt flag_index(const exprt &lvalue)
-{
-  const unsignedbv_typet index_type{64};
-  const address_of_exprt address{lvalue};
-  const exprt object = typecast_exprt{
-    pointer_object_exprt{address, unsignedbv_typet{64}}, index_type};
-  const exprt offset = typecast_exprt{
-    pointer_offset_exprt{address, signedbv_typet{64}}, index_type};
-  return bitor_exprt{
-    shl_exprt{object, from_integer(32, index_type)},
-    bitand_exprt{offset, from_integer(0xffffffff, index_type)}};
-}
-
-static symbol_exprt
-flags_symbol(symbol_table_baset &symbol_table, const char *id)
-{
-  const array_typet type{bool_typet{}, infinity_exprt{unsignedbv_typet{64}}};
-  if(!symbol_table.has_symbol(id))
-  {
-    symbolt symbol{id, type, "go"};
-    symbol.base_name = id;
-    symbol.is_static_lifetime = true;
-    symbol.is_lvalue = true;
-    symbol.value = array_of_exprt{false_exprt{}, type};
-    symbol_table.add(symbol);
-  }
-  return symbol_exprt{id, type};
-}
-
 /// A function symbol of the shadow-memory API (goto-symex implements it).
 static symbol_exprt shadow_function(
   symbol_table_baset &symbol_table,
@@ -425,21 +446,42 @@ static symbol_exprt shadow_function(
   return symbol_exprt{id, type};
 }
 
-/// The address of the first byte of \p lvalue: shadow memory replicates a
-/// value over the bytes of the pointee's type, which does not work for
-/// types with pointers (SPIKE: only the first byte is flagged).
+/// The address of the first byte of \p lvalue.
 static exprt byte_address(const exprt &lvalue)
 {
   return typecast_exprt{
     address_of_exprt{lvalue}, pointer_type(unsigned_char_type())};
 }
 
+/// The address of the bytes of \p lvalue, as an array of unsigned chars:
+/// set_field flags each of them, and get_field is the disjunction of their
+/// flags, so that accesses that overlap conflict at whichever offsets they
+/// start (also through unsafe.Pointer conversions).
+static exprt bytes_address(const namespacet &ns, const exprt &lvalue)
+{
+  const auto size = pointer_offset_size(lvalue.type(), ns);
+  if(!size.has_value() || *size <= 1)
+    return byte_address(lvalue);
+  const array_typet bytes{
+    unsigned_char_type(), from_integer(*size, size_type())};
+  return typecast_exprt{address_of_exprt{lvalue}, pointer_type(bytes)};
+}
+
+/// The address of the first byte of the object that \p byte (an unsigned
+/// char pointer) points into.
+static exprt object_address(const exprt &byte)
+{
+  return minus_exprt{
+    byte,
+    typecast_exprt::conditional_cast(
+      pointer_offset_exprt{byte, signed_size_type()}, signed_size_type())};
+}
+
 /// The locations of an access of \p lvalue, appended to \p leaves: the
 /// first bytes of its scalar parts (struct members, array elements), so
 /// that `s = S{}` conflicts with `s.f.x = 1`. Arrays of more than
-/// max_elements elements, or beyond \p budget leaves, are keyed by their
-/// first byte (SPIKE: a race on a later element of a large array, as on
-/// BigKey's [1000]*int, is missed).
+/// max_elements elements, or parts beyond \p budget leaves, remain
+/// aggregates, which needs_range makes accesses of the whole object.
 static void leaves_of(
   const namespacet &ns,
   const exprt &lvalue,
@@ -500,6 +542,14 @@ static void leaves_of(
   leaves.push_back(lvalue);
 }
 
+/// Whether an access of \p lvalue (a leaf of leaves_of) is one of the
+/// whole object: its size is unknown or larger than max_flagged_bytes.
+static bool needs_range(const namespacet &ns, const exprt &lvalue)
+{
+  const auto size = pointer_offset_size(lvalue.type(), ns);
+  return !size.has_value() || *size > max_flagged_bytes;
+}
+
 /// The name of shadow-memory field \p name, as the API takes it.
 static exprt field_name(const std::string &name)
 {
@@ -524,10 +574,6 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
   if(!may_start_goroutine(goto_model))
     return;
   const namespacet ns{goto_model.symbol_table};
-  // SPIKE: the flags in shadow memory (option A) or in two global arrays
-  // (option B, with GO_RACE_FLAGS=arrays).
-  const char *mode = std::getenv("GO_RACE_FLAGS");
-  const bool use_shadow = mode == nullptr || std::string{mode} != "arrays";
   const symbol_exprt set_field = shadow_function(
     goto_model.symbol_table, CPROVER_PREFIX "set_field", empty_typet{});
   const symbol_exprt get_field = shadow_function(
@@ -537,10 +583,6 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
   // Bodiless, as the C library's declarations: goto-symex implements them.
   for(const auto &function : {set_field, get_field, field_decl})
     goto_model.goto_functions.function_map[function.get_identifier()];
-  const symbol_exprt write_flags =
-    flags_symbol(goto_model.symbol_table, write_flags_id);
-  const symbol_exprt read_flags =
-    flags_symbol(goto_model.symbol_table, read_flags_id);
 
   // Set by shadow memory when it cannot resolve an object
   // (SHADOW_MEMORY_INCOMPLETE in goto-symex/shadow_memory.h).
@@ -556,21 +598,14 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
     goto_model.symbol_table.add(symbol);
   }
 
-  // The flags start clear (__CPROVER_initialize was generated before they
-  // were added).
+  // Shadow memory resolves every object (__CPROVER_initialize was generated
+  // before the variable was added).
   {
     auto init =
       goto_model.goto_functions.function_map.find(INITIALIZE_FUNCTION);
     if(init != goto_model.goto_functions.function_map.end())
     {
       goto_programt &body = init->second.body;
-      for(const auto &flags : {write_flags, read_flags})
-      {
-        body.insert_before(
-          body.instructions.begin(),
-          goto_programt::make_assignment(
-            flags, array_of_exprt{false_exprt{}, to_array_type(flags.type())}));
-      }
       body.insert_before(
         body.instructions.begin(),
         goto_programt::make_assignment(incomplete, false_exprt{}));
@@ -580,11 +615,10 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
   // The fields of shadow memory, which goto-symex collects from calls of
   // __CPROVER_field_decl_global anywhere before it starts: in a function
   // that is never called (executing the call fails a "no body" property).
-  if(use_shadow)
   {
     const irep_idt fields_id = "go::$race_fields";
     goto_programt body;
-    for(const char *name : {"W", "R"})
+    for(const char *name : {"W", "R", "OW", "OR", "RW", "RR"})
     {
       body.add(goto_programt::make_function_call(code_function_callt{
         field_decl,
@@ -630,32 +664,21 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
                               const source_locationt &location)
     {
       goto_programt before;
+      // Field name of the flag at the address pointer.
       const auto set_flag =
-        [&](const exprt &flags, const exprt &lvalue, bool value)
+        [&](const exprt &pointer, const char *name, bool value)
       {
-        if(use_shadow)
-        {
-          const char *name = flags == write_flags ? "W" : "R";
-          before.add(goto_programt::make_function_call(
-            code_function_callt{
-              set_field,
-              {byte_address(lvalue),
-               field_name(name),
-               from_integer(value ? 1 : 0, signedbv_typet{32})}},
-            location));
-          return;
-        }
-        before.add(goto_programt::make_assignment(
-          index_exprt{flags, flag_index(lvalue)},
-          value ? exprt{true_exprt{}} : exprt{false_exprt{}},
+        before.add(goto_programt::make_function_call(
+          code_function_callt{
+            set_field,
+            {pointer,
+             field_name(name),
+             from_integer(value ? 1 : 0, signedbv_typet{32})}},
           location));
       };
-      // The flag of kind flags of lvalue, as a condition.
-      const auto flag = [&](const exprt &flags, const exprt &lvalue) -> exprt
+      // The flag at pointer, as a condition.
+      const auto flag = [&](const exprt &pointer, const char *name) -> exprt
       {
-        if(!use_shadow)
-          return index_exprt{flags, flag_index(lvalue)};
-        const char *name = flags == write_flags ? "W" : "R";
         symbolt &tmp = get_fresh_aux_symbol(
           signedbv_typet{32},
           id2string(f.first),
@@ -666,18 +689,16 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
         before.add(goto_programt::make_decl(tmp.symbol_expr(), location));
         before.add(goto_programt::make_function_call(
           code_function_callt{
-            tmp.symbol_expr(),
-            get_field,
-            {byte_address(lvalue), field_name(name)}},
+            tmp.symbol_expr(), get_field, {pointer, field_name(name)}},
           location));
         return notequal_exprt{
           tmp.symbol_expr(), from_integer(0, signedbv_typet{32})};
       };
-      const auto check = [&](const exprt &condition, const char *what)
+      const auto check = [&](const exprt &condition, const std::string &what)
       {
         source_locationt annotated = location;
         annotated.set_property_class("data-race");
-        annotated.set_comment(std::string{"data race ("} + what + ")");
+        annotated.set_comment(what);
         before.add(goto_programt::make_assertion(condition, annotated));
       };
       // Each operation of an access only if the access is made.
@@ -695,49 +716,93 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
           before.add(goto_programt::make_skip(location));
         skip_jump->complete_goto(skip);
       };
-      const auto flags_of = [&](const accesst &a)
-      { return a.write ? write_flags : read_flags; };
-      // Setting a flag updates the shadow memory (or the flag array) of the
-      // object as a whole: an update of another goroutine in between would
-      // be lost, and so a flag that was reset could be set again.
+      // The flags an access sets: W or R at its first byte and OW or OR at
+      // its object's, or RW or RR at its object's for a whole object.
+      const auto announced = [&](const accesst &a)
+      {
+        const exprt byte = byte_address(a.lvalue);
+        const exprt base = object_address(byte);
+        std::vector<std::pair<exprt, const char *>> result;
+        if(a.range)
+          result.emplace_back(base, a.write ? "RW" : "RR");
+        else
+        {
+          result.emplace_back(bytes_address(ns, a.lvalue), a.write ? "W" : "R");
+          result.emplace_back(base, a.write ? "OW" : "OR");
+        }
+        return result;
+      };
+      // Setting a flag updates the shadow memory of the object as a whole:
+      // an update of another goroutine in between would be lost, and so a
+      // flag that was reset could be set again.
       const auto atomically = [&](auto &&emit)
       {
         before.add(goto_programt::make_atomic_begin(location));
         emit();
         before.add(goto_programt::make_atomic_end(location));
       };
-      atomically(
-        [&]
-        {
-          for(const auto &a : accesses)
-            guarded(a.guard, [&] { set_flag(flags_of(a), a.lvalue, true); });
-        });
-      atomically(
-        [&]
-        {
-          for(const auto &a : accesses)
-            guarded(a.guard, [&] { set_flag(flags_of(a), a.lvalue, false); });
-        });
+      for(bool value : {true, false})
+      {
+        atomically(
+          [&]
+          {
+            for(const auto &a : accesses)
+              guarded(
+                a.guard,
+                [&]
+                {
+                  for(const auto &[pointer, name] : announced(a))
+                    set_flag(pointer, name, value);
+                });
+          });
+      }
       if(with_checks)
       {
         for(const auto &a : accesses)
         {
+          if(a.announce_only)
+            continue;
           guarded(
             a.guard,
             [&]
             {
-              if(a.write)
+              // The conflicting flags: a write conflicts with both kinds.
+              const exprt byte = byte_address(a.lvalue);
+              const exprt base = object_address(byte);
+              std::vector<std::pair<exprt, const char *>> conflicts;
+              if(a.range)
               {
-                const exprt written = flag(write_flags, a.lvalue);
-                const exprt read = flag(read_flags, a.lvalue);
-                check(and_exprt{not_exprt{written}, not_exprt{read}}, "write");
+                conflicts.emplace_back(base, "OW");
+                conflicts.emplace_back(base, "RW");
+                if(a.write)
+                {
+                  conflicts.emplace_back(base, "OR");
+                  conflicts.emplace_back(base, "RR");
+                }
               }
               else
-                check(not_exprt{flag(write_flags, a.lvalue)}, "read");
+              {
+                const exprt bytes = bytes_address(ns, a.lvalue);
+                conflicts.emplace_back(bytes, "W");
+                conflicts.emplace_back(base, "RW");
+                if(a.write)
+                {
+                  conflicts.emplace_back(bytes, "R");
+                  conflicts.emplace_back(base, "RR");
+                }
+              }
+              exprt::operandst none;
+              for(const auto &[pointer, name] : conflicts)
+                none.push_back(not_exprt{flag(pointer, name)});
+              check(
+                conjunction(none),
+                !a.comment.empty()
+                  ? a.comment
+                  : std::string{"data race ("} + (a.write ? "write" : "read") +
+                      (a.range ? ", whole object" : "") + ")");
             });
         }
       }
-      if(use_shadow)
       {
         // Shadow memory that cannot resolve an accessed object (its value
         // set is unknown, or the object has no shadow memory) loses the
@@ -837,8 +902,24 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
             const exprt chan = chan_of_operation(it->assign_lhs(), write);
             if(chan.is_not_nil())
             {
+              // At the cap field: the count field is the channel's state
+              // (chan_state).
+              const auto &header =
+                to_struct_type(to_pointer_type(chan.type()).base_type());
               entry.second.push_back(
-                {dereference_exprt{chan}, write, true_exprt{}});
+                {member_exprt{
+                   dereference_exprt{chan}, header.get_component("cap")},
+                 write,
+                 true_exprt{}});
+            }
+            // A change of a channel's state, which observations (len,
+            // select's default case) check: at the count field.
+            const exprt changed = chan_of_state_change(it->assign_lhs());
+            if(changed.is_not_nil())
+            {
+              accesst change{chan_state(changed), true, true_exprt{}};
+              change.announce_only = true;
+              entry.second.push_back(change);
             }
           }
           else
@@ -862,7 +943,8 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
           ? to_symbol_expr(it->call_function()).get_identifier()
           : irep_idt{};
       if(
-        (callee == "go::$race_read" || callee == "go::$race_write") &&
+        (callee == "go::$race_read" || callee == "go::$race_write" ||
+         callee == "go::$race_observe") &&
         it->call_arguments().size() == 1)
       {
         collect(
@@ -871,6 +953,21 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
           callee == "go::$race_write",
           always,
           accesses);
+        if(callee == "go::$race_observe")
+        {
+          // Not an access of the program's: a check that no change of the
+          // observed state can be concurrent, as the observation does not
+          // synchronise with it, and the accesses it orders are not checked
+          // against each other.
+          for(auto &a : accesses)
+          {
+            a.comment =
+              "data race check incomplete: an observation that does not "
+              "synchronise (len of a channel, a select's default case, a "
+              "failing TryLock) may be concurrent with the change it "
+              "observes; races that it orders are not detected";
+          }
+        }
       }
       else if(!checked)
         continue;
@@ -891,6 +988,30 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
         collect(ns, it->return_value(), false, always, accesses);
       else if(it->is_goto() || it->is_assume() || it->is_assert())
         collect(ns, it->condition(), false, always, accesses);
+      else if(
+        it->is_other() && (it->code().get_statement() == ID_array_copy ||
+                           it->code().get_statement() == ID_array_replace ||
+                           it->code().get_statement() == ID_array_set ||
+                           it->code().get_statement() == ID_havoc_object))
+      {
+        // Bulk operations (copy_elements, the C library's memcpy model): of
+        // the whole objects their pointers point into. The first operand
+        // is written, a second pointer one read.
+        const auto &operands = it->code().operands();
+        for(std::size_t i = 0; i < operands.size(); ++i)
+        {
+          const exprt pointer = skip_typecasts(operands[i]);
+          if(pointer.type().id() != ID_pointer)
+          {
+            collect(ns, operands[i], false, always, accesses);
+            continue;
+          }
+          collect(ns, pointer, false, always, accesses);
+          accesst a{dereference_exprt{pointer}, i == 0, always};
+          a.range = true;
+          accesses.push_back(a);
+        }
+      }
       else if(it->is_other())
       {
         // Including expression statements (`_ = x`), which gc's race
@@ -908,7 +1029,11 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
             unique.begin(),
             unique.end(),
             [&](const accesst &u)
-            { return u.lvalue == a.lvalue && u.guard == a.guard; });
+            {
+              return u.lvalue == a.lvalue && u.guard == a.guard &&
+                     u.range == a.range && u.announce_only == a.announce_only &&
+                     u.comment == a.comment;
+            });
           if(same == unique.end())
             unique.push_back(a);
           else
