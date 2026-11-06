@@ -35,26 +35,41 @@ Author: Michael Tautschnig
 
 namespace
 {
-/// A set of strings, or nothing for any string.
-using valuet = std::optional<std::set<std::string>>;
+/// A set of strings: values, and possibly all strings that contain
+/// trackingt::infix (see dynamic_resolutiont); nothing for any string.
+using valuet = std::optional<dynamic_resolutiont>;
 
 /// The empty set: no value (unreached, or not assigned).
 valuet no_value()
 {
-  return std::set<std::string>{};
+  return dynamic_resolutiont{};
+}
+
+/// The set of just \p value.
+valuet single(const std::string &value)
+{
+  dynamic_resolutiont result;
+  result.values.insert(value);
+  return result;
 }
 
 /// The symbols the analysis tracks, and how values are combined.
 class trackingt
 {
 public:
-  trackingt(const goto_modelt &goto_model, std::size_t bound)
-    : ns(goto_model.symbol_table), bound(bound)
+  trackingt(
+    const goto_modelt &goto_model,
+    std::size_t bound,
+    const std::string &infix)
+    : ns(goto_model.symbol_table), bound(bound), infix(infix)
   {
   }
 
   const namespacet ns;
   const std::size_t bound;
+  /// The text of the languages of all strings that contain it, or empty
+  /// for none.
+  const std::string infix;
   /// Symbols whose values may reach a site.
   std::unordered_set<irep_idt> relevant;
   /// Symbols whose address is taken: they may change through pointers.
@@ -64,24 +79,53 @@ public:
   {
     if(!a.has_value() || !b.has_value())
       return {};
-    std::set<std::string> result = *a;
-    result.insert(b->begin(), b->end());
-    if(result.size() > bound)
+    dynamic_resolutiont result = *a;
+    if(!join_dynamic_resolution(result, *b) || result.values.size() > bound)
       return {};
     return result;
   }
 
+  /// Whether each string of \p value contains the infix.
+  bool all_contain(const valuet &value) const
+  {
+    if(!value.has_value() || infix.empty())
+      return false;
+    for(const auto &x : value->values)
+    {
+      if(x.find(infix) == std::string::npos)
+        return false;
+    }
+    return true;
+  }
+
   valuet concat(const valuet &a, const valuet &b) const
   {
+    if((a.has_value() && a->empty()) || (b.has_value() && b->empty()))
+      return no_value();
     if(!a.has_value() || !b.has_value())
-      return {};
-    std::set<std::string> result;
-    for(const auto &x : *a)
     {
-      for(const auto &y : *b)
+      // Any string, concatenated with strings that all contain the infix,
+      // contains it.
+      if(all_contain(a.has_value() ? a : b))
       {
-        result.insert(x + y);
-        if(result.size() > bound)
+        dynamic_resolutiont result;
+        result.containing = infix;
+        return result;
+      }
+      return {};
+    }
+    dynamic_resolutiont result;
+    if(a->containing.has_value() || b->containing.has_value())
+      result.containing = infix;
+    for(const auto &x : a->values)
+    {
+      for(const auto &y : b->values)
+      {
+        std::string xy = x + y;
+        if(result.containing.has_value() && xy.find(infix) != std::string::npos)
+          continue;
+        result.values.insert(std::move(xy));
+        if(result.values.size() > bound)
           return {};
       }
     }
@@ -876,8 +920,7 @@ public:
     bool in_initialize) const
   {
     if(expr.is_constant() && expr.type().id() == ID_string)
-      return std::set<std::string>{
-        id2string(to_constant_expr(expr).get_value())};
+      return single(id2string(to_constant_expr(expr).get_value()));
     if(expr.id() == ID_symbol)
     {
       if(!tracking.is_string_like(expr.type()))
@@ -1218,11 +1261,12 @@ void prepare_marker_function(goto_modelt &goto_model)
 dynamic_resolutionst analyse_dynamic_sites(
   goto_modelt &goto_model,
   std::size_t bound,
+  const std::string &infix,
   dynamic_site_statisticst &statistics)
 {
   statistics = dynamic_site_statisticst{};
   prepare_marker_function(goto_model);
-  trackingt tracking{goto_model, bound};
+  trackingt tracking{goto_model, bound, infix};
   collect_relevant(goto_model, tracking);
   if(tracking.relevant.empty())
     return {};

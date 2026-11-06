@@ -1,0 +1,14 @@
+CORE
+slash.sh
+--dynamic-resolutions slash.json
+^EXIT=0$
+^SIGNAL=0$
+^\[shell-dynamic-site\.1\] .* a name with /: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+shell-dynamic-site\.2
+^warning: ignoring
+--
+A resolution as an object with a language; a language other than the
+names with a slash cannot be used for a command name, so that site is
+converted as unresolved.

@@ -30,6 +30,7 @@ Author: Michael Tautschnig
 
 #include <cstddef>
 #include <set>
+#include <string>
 
 class goto_modelt;
 
@@ -45,11 +46,14 @@ struct dynamic_site_statisticst
 };
 
 /// The candidates of the dynamic sites of \p goto_model: sets of at most
-/// \p bound strings. A site whose value may be any string is absent.
+/// \p bound strings, and, unless \p infix is empty, possibly all strings
+/// that contain \p infix (such as an unknown directory followed by
+/// "/tool"). A site whose value may be any string is absent.
 /// Adds an empty body for DYNAMIC_SITE_FUNCTION to \p goto_model.
 dynamic_resolutionst analyse_dynamic_sites(
   goto_modelt &goto_model,
   std::size_t bound,
+  const std::string &infix,
   dynamic_site_statisticst &statistics);
 
 #endif // CPROVER_ANALYSES_DYNAMIC_SITE_ANALYSIS_H

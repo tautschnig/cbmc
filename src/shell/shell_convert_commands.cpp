@@ -1471,8 +1471,16 @@ void shell_convertert::convert_dynamic_simple(
     dest,
     dynamic_site_marker(site, name, shell_mode(), symbol_table, loc),
     loc);
+  // A language of candidates is used if it is that of the names that
+  // contain a slash: those name a utility (XCU 2.9.1.4), except in bash and
+  // zsh, which also allow such names for functions, and look functions up
+  // first.
   const auto resolution = resolutions.find(site);
-  const bool resolved = resolution != resolutions.end();
+  const bool resolved = resolution != resolutions.end() &&
+                        (!resolution->second.containing.has_value() ||
+                         *resolution->second.containing == "/");
+  const bool slash_utilities =
+    resolved && resolution->second.containing.has_value();
 
   // The names a branch is needed for: the candidates of the resolution;
   // otherwise the functions and the builtins that contain the literal text
@@ -1499,7 +1507,17 @@ void shell_convertert::convert_dynamic_simple(
     names.insert(candidate);
   };
   if(resolved)
-    names = resolution->second;
+  {
+    names = resolution->second.values;
+    if(slash_utilities)
+    {
+      for(const auto &entry : function_definitions)
+      {
+        if(entry.first.find('/') != std::string::npos)
+          names.insert(entry.first);
+      }
+    }
+  }
   else
   {
     for(const auto &entry : function_definitions)
@@ -1531,8 +1549,11 @@ void shell_convertert::convert_dynamic_simple(
   if(resolved)
   {
     std::string candidates;
-    for(const auto &text : names)
+    for(const auto &text : resolution->second.values)
       candidates += (candidates.empty() ? "" : ", ") + text;
+    if(slash_utilities)
+      candidates +=
+        (candidates.empty() ? "" : ", or ") + std::string{"a name with /"};
     source_locationt check_loc = loc;
     check_loc.set_property_class("shell-dynamic-site");
     check_loc.set_comment(
@@ -1543,6 +1564,28 @@ void shell_convertert::convert_dynamic_simple(
     assertion.add_source_location() = check_loc;
     otherwise.add(std::move(assertion));
     add(otherwise, code_assumet{false_exprt{}}, loc);
+    if(slash_utilities)
+    {
+      // Another name with a slash runs a utility.
+      code_blockt utility;
+      known_literals = before_dispatch;
+      convert_non_function(
+        with_name(CPROVER_PREFIX "shell_utility"),
+        shell_command_kindt::EXTERNAL,
+        utility);
+      const exprt slash = payload_index_of(
+        payload_of(name),
+        payload_literal("/"),
+        from_integer(0, integer_type()),
+        dest,
+        loc);
+      code_ifthenelset choice{
+        binary_relation_exprt{slash, ID_ge, from_integer(0, integer_type())},
+        std::move(utility),
+        std::move(otherwise)};
+      otherwise = code_blockt{};
+      add(otherwise, std::move(choice), loc);
+    }
   }
   else
   {

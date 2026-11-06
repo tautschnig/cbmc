@@ -1,0 +1,13 @@
+CORE
+slash.sh
+--resolve-dynamic-sites --show-dynamic-sites
+^EXIT=0$
+^SIGNAL=0$
+^shell-command-name:slash.sh:5:1: .*: containing "/"$
+^shell-command-name:slash.sh:11:1: .*: containing "/"$
+--
+: unresolved$
+^warning: ignoring
+--
+An unknown string followed by a slash, or a literal with a slash, contains
+a slash; such values name a utility.

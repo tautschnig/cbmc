@@ -1076,6 +1076,9 @@ static void resolve_dynamic_sites(
   round_options.set_option("dynamic-sites-analysis", true);
   const std::size_t bound = 16;
   const unsigned max_rounds = 5;
+  // The only language that a front-end uses so far: the command names that
+  // contain a slash, which name utilities in a shell.
+  const std::string infix = "/";
   dynamic_resolutionst resolutions;
   // Sites whose values may be any string stay unresolved, so that the
   // resolutions only grow.
@@ -1099,7 +1102,7 @@ static void resolve_dynamic_sites(
         break;
       }
       const dynamic_resolutionst found =
-        analyse_dynamic_sites(model, bound, statistics);
+        analyse_dynamic_sites(model, bound, infix, statistics);
       dynamic_resolutionst next = resolutions;
       for(const auto &site : statistics.unresolved)
         unresolved.insert(site);
@@ -1108,9 +1111,12 @@ static void resolve_dynamic_sites(
         if(unresolved.count(site.first) != 0)
           continue;
         auto &candidates = next[site.first];
-        candidates.insert(site.second.begin(), site.second.end());
-        if(candidates.size() > bound)
+        if(
+          !join_dynamic_resolution(candidates, site.second) ||
+          candidates.values.size() > bound)
+        {
           unresolved.insert(site.first);
+        }
       }
       for(const auto &site : unresolved)
         next.erase(site);

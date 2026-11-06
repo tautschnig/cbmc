@@ -25,6 +25,21 @@ Author: Michael Tautschnig
 #include <optional>
 #include <sstream>
 
+/// Read the strings of the JSON array \p json into \p values.
+/// \return true on error
+static bool strings_from_json(const jsont &json, std::set<std::string> &values)
+{
+  if(!json.is_array())
+    return true;
+  for(const auto &value : to_json_array(json))
+  {
+    if(!value.is_string())
+      return true;
+    values.insert(value.value);
+  }
+  return false;
+}
+
 /// Read \p resolutions from \p json, read from \p filename.
 static bool resolutions_from_json(
   const jsont &json,
@@ -37,31 +52,68 @@ static bool resolutions_from_json(
   {
     log.error() << filename
                 << ": dynamic resolutions must be a JSON object that maps "
-                   "site identifiers to arrays of strings"
+                   "site identifiers to their candidates"
                 << messaget::eom;
     return true;
   }
   for(const auto &entry : to_json_object(json))
   {
-    if(!entry.second.is_array())
+    auto &resolution = resolutions[entry.first];
+    bool error = false;
+    if(entry.second.is_array())
+      error = strings_from_json(entry.second, resolution.values);
+    else if(entry.second.is_object())
+    {
+      for(const auto &field : to_json_object(entry.second))
+      {
+        if(field.first == "values")
+          error |= strings_from_json(field.second, resolution.values);
+        else if(field.first == "containing" && field.second.is_string())
+          resolution.containing = field.second.value;
+        else
+          error = true;
+      }
+    }
+    else
+      error = true;
+    if(error)
     {
       log.error() << filename << ": the candidates of " << entry.first
-                  << " must be an array of strings" << messaget::eom;
+                  << " must be an array of strings, or an object with an "
+                     "array of strings \"values\" and a string "
+                     "\"containing\""
+                  << messaget::eom;
       return true;
-    }
-    auto &candidates = resolutions[entry.first];
-    for(const auto &candidate : to_json_array(entry.second))
-    {
-      if(!candidate.is_string())
-      {
-        log.error() << filename << ": the candidates of " << entry.first
-                    << " must be strings" << messaget::eom;
-        return true;
-      }
-      candidates.insert(candidate.value);
     }
   }
   return false;
+}
+
+bool join_dynamic_resolution(
+  dynamic_resolutiont &resolution,
+  const dynamic_resolutiont &other)
+{
+  if(other.containing.has_value())
+  {
+    if(
+      resolution.containing.has_value() &&
+      *resolution.containing != *other.containing)
+    {
+      return false;
+    }
+    resolution.containing = other.containing;
+  }
+  resolution.values.insert(other.values.begin(), other.values.end());
+  if(resolution.containing.has_value())
+  {
+    for(auto it = resolution.values.begin(); it != resolution.values.end();)
+    {
+      it = it->find(*resolution.containing) != std::string::npos
+             ? resolution.values.erase(it)
+             : std::next(it);
+    }
+  }
+  return true;
 }
 
 bool read_dynamic_resolutions(
@@ -98,10 +150,17 @@ std::string dynamic_resolutions_to_json(const dynamic_resolutionst &resolutions)
   json_objectt json;
   for(const auto &site : resolutions)
   {
-    json_arrayt candidates;
-    for(const auto &candidate : site.second)
-      candidates.push_back(json_stringt{candidate});
-    json[id2string(site.first)] = std::move(candidates);
+    json_arrayt values;
+    for(const auto &value : site.second.values)
+      values.push_back(json_stringt{value});
+    if(!site.second.containing.has_value())
+      json[id2string(site.first)] = std::move(values);
+    else
+    {
+      json[id2string(site.first)] = json_objectt{
+        {"values", std::move(values)},
+        {"containing", json_stringt{*site.second.containing}}};
+    }
   }
   std::ostringstream out;
   out << json;
@@ -189,7 +248,7 @@ void show_dynamic_sites(
   // The candidates of a site, or nothing if there are no resolutions or
   // the site has none (any value).
   const auto candidates =
-    [resolutions](const irep_idt &site) -> const std::set<std::string> *
+    [resolutions](const irep_idt &site) -> const dynamic_resolutiont *
   {
     if(resolutions == nullptr)
       return nullptr;
@@ -211,14 +270,22 @@ void show_dynamic_sites(
           log.result() << ": unresolved";
         else
         {
-          log.result() << ": {";
-          bool first = true;
-          for(const auto &candidate : *found)
+          log.result() << ": ";
+          if(!found->values.empty() || !found->containing.has_value())
           {
-            log.result() << (first ? " \"" : ", \"") << candidate << '"';
-            first = false;
+            log.result() << '{';
+            bool first = true;
+            for(const auto &candidate : found->values)
+            {
+              log.result() << (first ? " \"" : ", \"") << candidate << '"';
+              first = false;
+            }
+            log.result() << " }";
+            if(found->containing.has_value())
+              log.result() << " or ";
           }
-          log.result() << " }";
+          if(found->containing.has_value())
+            log.result() << "containing \"" << *found->containing << '"';
         }
       }
       log.result() << messaget::eom;
@@ -241,9 +308,11 @@ void show_dynamic_sites(
         {
           json_site["resolved"] = jsont::json_boolean(true);
           json_arrayt json_candidates;
-          for(const auto &candidate : *found)
+          for(const auto &candidate : found->values)
             json_candidates.push_back(json_stringt{candidate});
           json_site["candidates"] = std::move(json_candidates);
+          if(found->containing.has_value())
+            json_site["containing"] = json_stringt{*found->containing};
         }
       }
       json_sites.push_back(std::move(json_site));
@@ -266,8 +335,10 @@ void show_dynamic_sites(
         xml_site.set_attribute_bool("resolved", found != nullptr);
         if(found != nullptr)
         {
-          for(const auto &candidate : *found)
+          for(const auto &candidate : found->values)
             xml_site.new_element("candidate").data = candidate;
+          if(found->containing.has_value())
+            xml_site.new_element("containing").data = *found->containing;
         }
       }
     }
