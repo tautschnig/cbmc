@@ -12,6 +12,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "cbmc_parse_options.h"
 
 #include <util/config.h>
+#include <util/exception_utils.h>
 #include <util/exit_codes.h>
 #include <util/help_formatter.h>
 #include <util/invariant.h>
@@ -29,6 +30,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/show_symbol_table.h>
 #include <goto-programs/write_goto_binary.h>
 
+#include <analyses/dynamic_site_analysis.h>
 #include <ansi-c/c_preprocess.h>
 #include <ansi-c/cprover_library.h>
 #include <ansi-c/gcc_version.h>
@@ -294,6 +296,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
       "shell-max-arguments", cmdline.get_value("shell-max-arguments"));
   if(cmdline.isset("show-dynamic-sites"))
     options.set_option("show-dynamic-sites", true);
+  if(cmdline.isset("resolve-dynamic-sites"))
+    options.set_option("resolve-dynamic-sites", true);
   if(cmdline.isset("dynamic-resolutions"))
     options.set_option(
       "dynamic-resolutions", cmdline.get_value("dynamic-resolutions"));
@@ -1054,6 +1058,83 @@ bool cbmc_parse_optionst::set_properties()
   return false;
 }
 
+/// Find candidates for the dynamic sites of the program by a fixpoint of
+/// conversion and analysis (see doc/ADR/dynamic_structure_resolution.md),
+/// and pass them to the final conversion through \p final_options.
+static void resolve_dynamic_sites(
+  const cmdlinet &cmdline,
+  const optionst &options,
+  message_handlert &message_handler,
+  optionst &final_options)
+{
+  messaget log{message_handler};
+  log.status() << "Resolving dynamic sites" << messaget::eom;
+  // Each round converts the program for the candidates found so far, as
+  // front-ends do for analysis (shell scripts with native strings), and
+  // keeps the markers of the sites.
+  optionst round_options = options;
+  round_options.set_option("dynamic-sites-analysis", true);
+  const std::size_t bound = 16;
+  const unsigned max_rounds = 5;
+  dynamic_resolutionst resolutions;
+  // Sites whose values may be any string stay unresolved, so that the
+  // resolutions only grow.
+  std::set<irep_idt> unresolved;
+  dynamic_site_statisticst statistics;
+  unsigned round = 0;
+  null_message_handlert quiet;
+  messaget quiet_log{quiet};
+  while(round < max_rounds)
+  {
+    ++round;
+    round_options.set_option(
+      "dynamic-resolutions-json", dynamic_resolutions_to_json(resolutions));
+    try
+    {
+      goto_modelt model =
+        initialize_goto_model(cmdline.args, quiet, round_options);
+      if(cbmc_parse_optionst::process_goto_program(
+           model, round_options, quiet_log))
+      {
+        break;
+      }
+      const dynamic_resolutionst found =
+        analyse_dynamic_sites(model, bound, statistics);
+      dynamic_resolutionst next = resolutions;
+      for(const auto &site : statistics.unresolved)
+        unresolved.insert(site);
+      for(const auto &site : found)
+      {
+        if(unresolved.count(site.first) != 0)
+          continue;
+        auto &candidates = next[site.first];
+        candidates.insert(site.second.begin(), site.second.end());
+        if(candidates.size() > bound)
+          unresolved.insert(site.first);
+      }
+      for(const auto &site : unresolved)
+        next.erase(site);
+      if(next == resolutions)
+        break;
+      resolutions = std::move(next);
+    }
+    catch(const cprover_exception_baset &)
+    {
+      // The final conversion reports the error.
+      break;
+    }
+  }
+  std::size_t finite = 0, unreached = 0;
+  for(const auto &site : resolutions)
+    ++(site.second.empty() ? unreached : finite);
+  log.status() << "Dynamic sites: " << finite << " resolved, " << unreached
+               << " unreachable, " << unresolved.size() << " unresolved ("
+               << round << (round == 1 ? " round" : " rounds") << ")"
+               << messaget::eom;
+  final_options.set_option(
+    "dynamic-resolutions-json", dynamic_resolutions_to_json(resolutions));
+}
+
 int cbmc_parse_optionst::get_goto_program(
   goto_modelt &goto_model,
   const optionst &options,
@@ -1067,7 +1148,12 @@ int cbmc_parse_optionst::get_goto_program(
     return CPROVER_EXIT_INCORRECT_TASK;
   }
 
-  goto_model = initialize_goto_model(cmdline.args, ui_message_handler, options);
+  optionst final_options = options;
+  if(options.get_bool_option("resolve-dynamic-sites"))
+    resolve_dynamic_sites(cmdline, options, ui_message_handler, final_options);
+
+  goto_model =
+    initialize_goto_model(cmdline.args, ui_message_handler, final_options);
 
   update_max_malloc_size(goto_model, ui_message_handler);
 
@@ -1174,8 +1260,12 @@ bool cbmc_parse_optionst::process_goto_program(
   // Front-ends convert some functions only when the library is linked, so
   // that dynamic sites are complete only now. The conversion of each site
   // follows its marker, which only identifies it.
-  if(!options.get_bool_option("show-dynamic-sites"))
+  if(
+    !options.get_bool_option("show-dynamic-sites") &&
+    !options.get_bool_option("dynamic-sites-analysis"))
+  {
     remove_dynamic_site_markers(goto_model);
+  }
 
   // Common removal of types and complex constructs
   if(::process_goto_program(goto_model, options, log))

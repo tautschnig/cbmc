@@ -262,6 +262,26 @@ The shell front-end's sites, in order of the census:
     `cbmc --dynamic-resolutions FILE` reads a JSON object of candidates.
   - A resolved name dispatches over its candidates only. A value outside
     them fails the property class `shell-dynamic-site`.
+- The analysis of step 3 is implemented for these sites.
+  - `cbmc --resolve-dynamic-sites` runs the fixpoint, at most 5 rounds,
+    with sets of at most 16 strings; `analyse_dynamic_sites` is in
+    `src/analyses`. It reports, for example, `Dynamic sites: 1 resolved,
+    0 unreachable, 0 unresolved (2 rounds)`.
+  - Front-ends convert for the analysis when the option
+    `dynamic-sites-analysis` is set; shell scripts then use native
+    strings.
+  - On the 244 census scripts with dynamic command names: 92 sites
+    resolved, 255 unreachable, 457 unresolved; 1 round for 136 scripts
+    and 2 for 108.
+  - Cost: 2.1 times a plain conversion at the median, 2.9 at the 90th
+    percentile, 4.0 at most; at most 0.85 GB.
+  - Verification of the 54 scripts with resolved sites (cvc5,
+    `--unwind 2`, 180 s each):
+    - 15 finish either way, with the same verdicts, 243 properties
+      rather than 540, and 55 s rather than 53 s;
+    - 5 that timed out end with a solver error, and 3 that ended with
+      one time out;
+    - all 21 residual assertions that were decided hold.
 - The marker function must not be interned in programs without sites.
   Interning one more identifier in every program changed the order of
   identifiers, which made the 24 refined string kernels take 216 s rather

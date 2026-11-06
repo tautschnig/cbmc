@@ -1,0 +1,13 @@
+CORE
+environment.sh
+--resolve-dynamic-sites
+^EXIT=10$
+^SIGNAL=0$
+^Dynamic sites: 0 resolved, 1 unreachable, 1 unresolved \(2 rounds\)$
+^\[shell-dynamic-site\.1\] file environment.sh line 7 .*: none: SUCCESS$
+--
+^warning: ignoring
+shell-dynamic-site\.2
+--
+A value from the environment leaves the site unresolved, converted for
+all names; a site after exit is unreachable, so that no name is converted.

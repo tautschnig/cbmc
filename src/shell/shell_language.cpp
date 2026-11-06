@@ -117,15 +117,26 @@ void shell_languaget::set_language_options(
     1000,
     convert_options.max_arguments,
     message_handler);
+  convert_options.resolutions.clear();
   const std::string resolutions = options.get_option("dynamic-resolutions");
   if(!resolutions.empty())
   {
-    convert_options.resolutions.clear();
     read_dynamic_resolutions(
       resolutions, message_handler, convert_options.resolutions);
   }
+  // Those found by --resolve-dynamic-sites.
+  const std::string found = options.get_option("dynamic-resolutions-json");
+  if(!found.empty())
+  {
+    parse_dynamic_resolutions(
+      found, message_handler, convert_options.resolutions);
+  }
   const std::string strings = options.get_option("shell-strings");
-  if(strings == "refined")
+  // The analysis of dynamic sites works on native strings, which are
+  // values rather than pointers to arrays.
+  if(options.get_bool_option("dynamic-sites-analysis"))
+    convert_options.strings = shell_string_representationt::NATIVE;
+  else if(strings == "refined")
     convert_options.strings = shell_string_representationt::REFINED;
   else if(strings == "native")
     convert_options.strings = shell_string_representationt::NATIVE;

@@ -37,11 +37,14 @@ class ui_message_handlert;
 /// of string type, the site's identifier, and the value.
 #define DYNAMIC_SITE_FUNCTION CPROVER_PREFIX "dynamic_site"
 
-#define OPT_DYNAMIC_SITES "(dynamic-resolutions):(show-dynamic-sites)"
+#define OPT_DYNAMIC_SITES                                                      \
+  "(dynamic-resolutions):(show-dynamic-sites)(resolve-dynamic-sites)"
 
 #define HELP_DYNAMIC_SITES                                                     \
   " {y--show-dynamic-sites} \t show the places where a string's value "        \
   "decides the structure of the program\n"                                     \
+  " {y--resolve-dynamic-sites} \t find the candidates of dynamic sites by "    \
+  "analysing the program, and check that the values are among them\n"          \
   " {y--dynamic-resolutions} {ufile} \t read the candidates of dynamic sites " \
   "from the JSON object {ufile}, which maps site identifiers to arrays of "    \
   "strings; the values at the sites are checked to be among them\n"

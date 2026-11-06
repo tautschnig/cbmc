@@ -1,0 +1,14 @@
+CORE
+assigned.sh
+--resolve-dynamic-sites
+^EXIT=10$
+^SIGNAL=0$
+^Dynamic sites: 1 resolved, 0 unreachable, 1 unresolved \(2 rounds\)$
+^\[shell-dynamic-site\.1\] file assigned.sh line 9 .*: cat, echo: SUCCESS$
+--
+^warning: ignoring
+shell-dynamic-site\.2
+--
+tool is assigned on every path before the site, so that its value is one
+of the literals; other is not, so that it may be any value from the
+environment.
