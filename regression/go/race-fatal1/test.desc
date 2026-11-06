@@ -1,0 +1,21 @@
+CORE
+main.go
+--go-race-check --unwind 3 --unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.data-race\.1\] line 9 data race \(write\): SUCCESS$
+^\[go::main\.main\.data-race\.\d+\] line 18 data race \(write\): FAILURE$
+^\[go::main\.main\$lit1\.data-race\.1\] line 12 data race \(write\): FAILURE$
+^\[go::main\.main\.data-race\.\d+\] line 20 data race \(write\): UNKNOWN$
+^\[go::main\.main\.panic\.1\] line 22 panic: after: UNKNOWN$
+^\[go::main\.main\$lit1\.panic\.1\] line 14 panic: in the goroutine: UNKNOWN$
+^VERIFICATION FAILED$
+--
+^\[.*\]: SUCCESS.*line (1[2-9]|2[0-9]) .*$
+^\[.*\] line (1[2-9]|2[0-9]) .*: SUCCESS$
+^warning: ignoring
+--
+A data race is a fatal property: a racy read of a value of more than one word
+may observe a torn value, which can corrupt memory arbitrarily. Properties
+that may be checked after a race, in any goroutine, are UNKNOWN; the access
+before the go statement keeps its status.

@@ -705,11 +705,15 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
         return notequal_exprt{
           tmp.symbol_expr(), from_integer(0, signedbv_typet{32})};
       };
+      // A race is fatal: per the Go memory model, a racy read of a value of
+      // more than one word may observe a torn value, which can corrupt memory
+      // arbitrarily, and we do not model that.
       const auto check = [&](const exprt &condition, const std::string &what)
       {
         source_locationt annotated = location;
         annotated.set_property_class("data-race");
         annotated.set_comment(what);
+        annotated.property_fatal(true);
         before.add(goto_programt::make_assertion(condition, annotated));
       };
       // Each operation of an access only if the access is made.
