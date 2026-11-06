@@ -200,6 +200,18 @@ cannot be detected, as it uses the \fBgo\fR command's standard library)
 \fB\-\-go\-no\-deadlock\-check\fR
 do not report deadlocks (all goroutines blocked), which the check
 otherwise does at some cost for programs with goroutines
+.TP
+\fB\-\-go\-keep\-unreachable\fR
+convert also the functions of imported packages that the program cannot
+reach (e.g., to survey unsupported constructs); they are pruned otherwise
+.TP
+\fB\-\-go\-race\-check\fR
+report data races as the Go memory model defines them: a property (of class
+\fBdata\-race\fR) per access that fails if the access may race with an
+access of another goroutine within the unwinding bounds. A race is fatal:
+properties that may be checked after it are reported as UNKNOWN. Properties
+\fBdata race check incomplete\fR and \fBshadow memory does not resolve
+the accessed object\fR fail where the check cannot tell
 .SS "Platform options:"
 .TP
 \fB\-\-arch\fR \fIarch\fR

@@ -120,7 +120,8 @@ const symbol_exprt &shadow_memoryt::add_field(
       state.source.pc->source_location(),
       function_symbol.mode,
       state.symbol_table);
-    // SPIKE: shadow memory shared between threads, as the memory it shadows.
+    // Shadow memory is shared between threads, as the memory it shadows (a
+    // flag that one thread sets is visible to the others).
     new_symbol.is_thread_local = false;
     new_symbol.is_static_lifetime = true;
     return new_symbol.symbol_expr();

@@ -1,34 +1,44 @@
 /*******************************************************************\
 
-Module: Go front-end: data races (spike)
+Module: Go front-end: data races
 
 Author: Michael Tautschnig
 
 \*******************************************************************/
 
 /// \file
-/// Data races (spike, see doc/architectural/go-data-races.md): before each
+/// Data races (see doc/architectural/go-data-races.md): before each
 /// instruction of a Go function that accesses memory that other goroutines
-/// may access (package variables, and anything through a pointer), the
-/// access is announced in a flag per location and kind (read, write),
-/// which is reset right away; then the flags of the conflicting kinds are
-/// checked. Another goroutine scheduled between the set and the reset
-/// fails the check of a conflicting access: that is, two conflicting
-/// accesses can be adjacent in some sequentially consistent interleaving,
-/// which is a data race (GoMem §Memory_model, DRF-SC).
+/// may access (package variables, locals whose address is taken, and
+/// anything through a pointer), the access is announced in flags per
+/// location and kind (read, write), which are reset right away; then the
+/// flags of the conflicting kinds are checked. Another goroutine scheduled
+/// between the set and the reset fails the check of a conflicting access:
+/// that is, two conflicting accesses can be adjacent in some sequentially
+/// consistent interleaving, which is a data race (GoMem §Memory_model,
+/// DRF-SC). A failing check is a fatal property: properties that may be
+/// checked after it are UNKNOWN.
 ///
-/// The flags are fields of shadow memory: W and R at the first byte of
-/// each accessed scalar, OW and OR at the first byte of its object, and RW
-/// and RR there for accesses of whole objects (bulk operations): an access
-/// of a whole object conflicts with any access of the object. Accesses
-/// in atomic sections (the models of
-/// channels, sync and sync/atomic) synchronise: they are not announced.
-/// An access of an entry or the header of a map is one of the map's header,
-/// as in gc. Accesses of values of size zero are none; `_ = x` reads x.
-/// Accesses in operands of `&&`, `||` and `?:` are made only
-/// when the operand is evaluated.
-/// Spike limitations: an access is keyed by its first byte only; accesses
-/// of the runtime and sync models are not checked at all.
+/// The flags are fields of shadow memory: W and R at every byte of each
+/// accessed scalar (or of the range of a copy), OW and OR at the first byte
+/// of its object, and RW and RR there for accesses of whole objects (bulk
+/// operations, and parts larger than max_flagged_bytes): an access of a
+/// whole object conflicts with any access of the object. A check reads the
+/// first byte of the access only: of two overlapping accesses, the one that
+/// starts later finds the other's flag.
+///
+/// Accesses in the atomic sections of the models (channels, sync,
+/// sync/atomic, time) synchronise: they are announced, not checked; outside
+/// them, the models' accesses are rt.RaceRead and rt.RaceWrite (gc's
+/// annotations). An access of an entry or the header of a map is one of the
+/// map's header, as in gc. Accesses of values of size zero are none;
+/// `_ = x` reads x. Accesses in operands of `&&`, `||` and `?:` are made
+/// only when the operand is evaluated.
+///
+/// Where the check cannot tell, a property fails rather than a race being
+/// missed: observations that do not synchronise (rt.RaceObserve: len of a
+/// channel, a select's default case, a failing TryLock), and objects that
+/// shadow memory does not resolve (__CPROVER_shadow_memory_incomplete).
 
 #include "go_race_check.h"
 
@@ -84,8 +94,8 @@ static modet mode_of(const irep_idt &function_id)
   return modet::CHECKED;
 }
 
-/// The local variables whose address is taken (SPIKE: set by go_race_check
-/// for the duration of the pass).
+/// The local variables whose address is taken (set by go_race_check for the
+/// duration of the pass).
 static std::unordered_set<irep_idt> address_taken;
 
 /// Adds the symbols whose address \p expr takes to address_taken.

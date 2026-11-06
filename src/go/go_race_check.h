@@ -1,6 +1,6 @@
 /*******************************************************************\
 
-Module: Go front-end: data races (spike)
+Module: Go front-end: data races
 
 Author: Michael Tautschnig
 

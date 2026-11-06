@@ -951,7 +951,7 @@ bool cbmc_parse_optionst::process_goto_program(
     nondet_static(goto_model);
   }
 
-  // Go data races (spike, opt-in)
+  // Go data races (opt-in, see doc/architectural/go-data-races.md)
   if(options.get_bool_option("go-race-check"))
     go_race_check(goto_model, log.get_message_handler());
 
@@ -1087,6 +1087,8 @@ void cbmc_parse_optionst::help()
     " {y--go-keep-unreachable} \t convert also the functions of imported"
     " packages that the program cannot reach (e.g., to survey unsupported"
     " constructs)\n"
+    " {y--go-race-check} \t report data races (Go memory model): a property"
+    " per access that fails if the access may race with another one\n"
     "\n"
     "Platform options:\n"
     HELP_CONFIG_PLATFORM
