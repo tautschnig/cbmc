@@ -1808,11 +1808,184 @@ void go_convertert::convert_if(const irept &stmt, code_blockt &dest)
   dest.add(std::move(scope));
 }
 
+/// The package of the Go object \p object, without the prefix of the
+/// front-end's models of the standard library ("cprover/std/").
+static std::string standard_package(const irept &object)
+{
+  const std::string &package = object.get_string("pkg");
+  const std::string prefix = "cprover/std/";
+  return has_prefix(package, prefix) ? package.substr(prefix.size()) : package;
+}
+
+bool go_convertert::is_read_only(const irept &node)
+{
+  const irep_idt &kind = node.id();
+  if(kind == "Ident" || kind == "BasicLit")
+    return true;
+  if(kind == "ParenExpr" || kind == "SelectorExpr" || kind == "StarExpr")
+    return is_read_only(go_field(node, "X"));
+  if(kind == "UnaryExpr")
+    return node.get("Op") != "<-" && is_read_only(go_field(node, "X"));
+  if(kind == "BinaryExpr")
+  {
+    return is_read_only(go_field(node, "X")) &&
+           is_read_only(go_field(node, "Y"));
+  }
+  if(kind == "IndexExpr")
+  {
+    return is_read_only(go_field(node, "X")) &&
+           is_read_only(go_field(node, "Index"));
+  }
+  if(kind != "CallExpr")
+    return false;
+  for(const auto &argument : go_list(node, "Args"))
+  {
+    if(!is_read_only(argument))
+      return false;
+  }
+  const irept &fun = go_field(node, "Fun");
+  const irep_idt callee = callee_object(node);
+  if(callee.empty())
+    return false;
+  const irept &object = parse_tree.object(callee);
+  // A conversion.
+  if(object.get("kind") == "type")
+    return true;
+  // An atomic load, such as atomic.LoadInt32(&x) or x.Load().
+  return object.get("kind") == "func" &&
+         standard_package(object) == "sync/atomic" &&
+         has_prefix(object.get_string("name"), "Load") &&
+         (fun.id() != "SelectorExpr" || is_read_only(go_field(fun, "X")));
+}
+
+bool go_convertert::is_spin_wait(const irept &stmt)
+{
+  if(go_field(stmt, "Init").is_not_nil() || go_field(stmt, "Post").is_not_nil())
+  {
+    return false;
+  }
+  const irept *cond = &go_field(stmt, "Cond");
+  if(cond->is_nil())
+    return false;
+  if(!is_read_only(*cond))
+  {
+    // !CompareAndSwap...(...): an iteration that continues the loop is one
+    // in which the compare-and-swap fails and writes nothing.
+    while(cond->id() == "ParenExpr")
+      cond = &go_field(*cond, "X");
+    if(cond->id() != "UnaryExpr" || cond->get("Op") != "!")
+      return false;
+    cond = &go_field(*cond, "X");
+    while(cond->id() == "ParenExpr")
+      cond = &go_field(*cond, "X");
+    if(cond->id() != "CallExpr")
+      return false;
+    const irep_idt callee = callee_object(*cond);
+    if(callee.empty())
+      return false;
+    const irept &object = parse_tree.object(callee);
+    const irept &fun = go_field(*cond, "Fun");
+    if(
+      object.get("kind") != "func" ||
+      standard_package(object) != "sync/atomic" ||
+      !has_prefix(object.get_string("name"), "CompareAndSwap") ||
+      (fun.id() == "SelectorExpr" && !is_read_only(go_field(fun, "X"))))
+    {
+      return false;
+    }
+    for(const auto &argument : go_list(*cond, "Args"))
+    {
+      if(!is_read_only(argument))
+        return false;
+    }
+  }
+  for(const auto &statement : go_list(go_field(stmt, "Body"), "List"))
+  {
+    if(statement.id() != "ExprStmt")
+      return false;
+    const irept &call = go_field(statement, "X");
+    if(call.id() != "CallExpr")
+      return false;
+    const irep_idt callee = callee_object(call);
+    if(callee.empty())
+      return false;
+    const irept &object = parse_tree.object(callee);
+    const std::string package = standard_package(object);
+    const irep_idt &name = object.get("name");
+    if(
+      object.get("kind") != "func" || object.get_bool("method") ||
+      !((package == "runtime" && name == "Gosched") ||
+        (package == "time" && name == "Sleep")))
+    {
+      return false;
+    }
+    for(const auto &argument : go_list(call, "Args"))
+    {
+      if(!is_read_only(argument))
+        return false;
+    }
+  }
+  return true;
+}
+
+void go_convertert::convert_spin_wait(const irept &stmt, code_blockt &dest)
+{
+  // An iteration of a spin-wait loop that continues the loop writes no
+  // memory that other goroutines can observe (is_spin_wait; time.Sleep
+  // advances the monotonic clock, which any later reading may advance
+  // further anyway). Removing such iterations from an execution then
+  // leaves an execution, in which any two accesses that were adjacent
+  // remain adjacent, and properties keep their outcome, unless they are
+  // checked in a removed iteration. So one iteration that continues the
+  // loop, at any point, followed by an evaluation of the condition that
+  // ends it, has the executions of the loop that matter: each of them
+  // keeps the iteration of one property or one access of a race. An
+  // execution in which the loop never ends is one in which the goroutine
+  // spins forever, which an assumption that never holds models as for
+  // blocked goroutines (block_until): only the goroutine stops.
+  const source_locationt location = location_of(stmt);
+  const irept &cond_node = go_field(stmt, "Cond");
+  const irep_idt done =
+    "$await" + std::to_string(state.label_counter++) + "$done";
+  code_blockt scope;
+
+  exprt first = convert_expr(cond_node);
+  if(first.is_nil())
+    return;
+  code_blockt iteration;
+  code_ifthenelset ends{not_exprt{as_condition(first)}, code_gotot{done}};
+  ends.add_source_location() = location;
+  iteration.add(std::move(ends));
+  code_blockt body = convert_block(go_field(stmt, "Body"));
+  for(auto &code : body.statements())
+    iteration.add(std::move(code));
+  code_ifthenelset maybe{
+    side_effect_expr_nondett{bool_typet{}, location}, std::move(iteration)};
+  maybe.add_source_location() = location;
+  scope.add(std::move(maybe));
+
+  exprt last = convert_expr(cond_node);
+  if(last.is_nil())
+    return;
+  const symbol_exprt continues = new_temporary(bool_typet{}, location, scope);
+  scope.add(code_frontend_assignt{continues, as_condition(last)});
+  code_assumet ended{not_exprt{continues}};
+  ended.add_source_location() = location;
+  scope.add(std::move(ended));
+  scope.add(code_labelt{done, code_skipt{}});
+  dest.add(std::move(scope));
+}
+
 void go_convertert::convert_for(
   const irept &stmt,
   code_blockt &dest,
   const irep_idt &label_object)
 {
+  if(label_object.empty() && is_spin_wait(stmt))
+  {
+    convert_spin_wait(stmt, dest);
+    return;
+  }
   // Go1.27 §For_statements, §For_clause: init runs once before the loop;
   // the condition is evaluated before each iteration (absent means true);
   // the post statement runs after each iteration, including when the body

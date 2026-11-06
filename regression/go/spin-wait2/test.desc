@@ -1,0 +1,14 @@
+CORE
+main.go
+--go-race-check --unwind 1 --unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\$lit1\.data-race\.\d+\] line 9 data race \(write\): FAILURE$
+^\[go::main\.main\.data-race\.\d+\] line 11 data race \(read\): FAILURE$
+^VERIFICATION FAILED$
+--
+unwinding assertion.*: FAILURE
+^warning: ignoring
+--
+The iteration that continues the loop keeps the read of the condition that
+races.

@@ -1,0 +1,13 @@
+CORE
+main.go
+--unwind 1 --unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\$lit1\.panic\.1\] line 13 panic: other goroutine: FAILURE$
+^VERIFICATION FAILED$
+--
+unwinding assertion.*: FAILURE
+^warning: ignoring
+--
+The goroutine spinning forever is modelled by an assumption that never holds,
+as for blocked goroutines.

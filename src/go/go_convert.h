@@ -375,6 +375,21 @@ private:
     const irept &stmt,
     code_blockt &dest,
     const irep_idt &label_object = irep_idt{});
+  /// Whether evaluating the Go expression \p node writes no memory: reads,
+  /// operators other than receives, conversions, and the atomic loads of
+  /// sync/atomic (see convert_spin_wait).
+  bool is_read_only(const irept &node);
+  /// Whether \p stmt is a spin-wait loop, `for c { body }` without init or
+  /// post statement, where an iteration that does not end the loop writes
+  /// no memory that other goroutines can observe: c is read-only or the
+  /// negation of a sync/atomic compare-and-swap (which writes only when it
+  /// succeeds, ending the loop), and the body only calls runtime.Gosched
+  /// and time.Sleep with read-only arguments.
+  bool is_spin_wait(const irept &stmt);
+  /// A spin-wait loop \p stmt (is_spin_wait) as an await: at most one
+  /// iteration that continues the loop, then an assumption that the
+  /// condition fails, so that no loop is left to unwind.
+  void convert_spin_wait(const irept &stmt, code_blockt &dest);
   void convert_range(
     const irept &stmt,
     code_blockt &dest,

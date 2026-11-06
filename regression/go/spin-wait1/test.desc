@@ -1,0 +1,15 @@
+CORE
+main.go
+--go-race-check --unwind 1 --unwinding-assertions
+^EXIT=0$
+^SIGNAL=0$
+^\[go::main\.main\.panic\.1\] line 32 panic: unreachable: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+unwinding assertion.*: FAILURE
+^warning: ignoring
+--
+A loop `for c { body }` whose iterations that continue it write nothing
+(an atomic load, or a failing compare-and-swap, and a body of
+runtime.Gosched or time.Sleep calls) is converted to at most one such
+iteration followed by an assumption that c is false.
