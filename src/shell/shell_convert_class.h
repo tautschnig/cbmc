@@ -925,6 +925,13 @@ private:
     const shell_patternt &pattern,
     code_blockt &dest,
     const source_locationt &loc);
+  /// Whether \p subject is in the language of the template \p pattern
+  /// (see goto-programs/dynamic_sites.h).
+  exprt template_matches(
+    const dynamic_templatet &pattern,
+    const exprt &subject,
+    code_blockt &dest,
+    const source_locationt &loc);
   exprt pattern_matches(
     const shell_wordt &pattern,
     const exprt &subject,

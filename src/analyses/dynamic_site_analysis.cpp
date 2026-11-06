@@ -35,8 +35,8 @@ Author: Michael Tautschnig
 
 namespace
 {
-/// A set of strings: values, and possibly all strings that contain
-/// trackingt::infix (see dynamic_resolutiont); nothing for any string.
+/// A finite union of templates (see dynamic_resolutiont); nothing for any
+/// string.
 using valuet = std::optional<dynamic_resolutiont>;
 
 /// The empty set: no value (unreached, or not assigned).
@@ -49,7 +49,7 @@ valuet no_value()
 valuet single(const std::string &value)
 {
   dynamic_resolutiont result;
-  result.values.insert(value);
+  result.insert(value);
   return result;
 }
 
@@ -57,19 +57,16 @@ valuet single(const std::string &value)
 class trackingt
 {
 public:
-  trackingt(
-    const goto_modelt &goto_model,
-    std::size_t bound,
-    const std::string &infix)
-    : ns(goto_model.symbol_table), bound(bound), infix(infix)
+  trackingt(const goto_modelt &goto_model, std::size_t bound)
+    : ns(goto_model.symbol_table), bound(bound)
   {
   }
 
   const namespacet ns;
+  /// At most this many templates per value.
   const std::size_t bound;
-  /// The text of the languages of all strings that contain it, or empty
-  /// for none.
-  const std::string infix;
+  /// At most this many holes per template.
+  static constexpr std::size_t max_holes = 5;
   /// Symbols whose values may reach a site.
   std::unordered_set<irep_idt> relevant;
   /// Symbols whose address is taken: they may change through pointers.
@@ -80,56 +77,46 @@ public:
     if(!a.has_value() || !b.has_value())
       return {};
     dynamic_resolutiont result = *a;
-    if(!join_dynamic_resolution(result, *b) || result.values.size() > bound)
+    join_dynamic_resolution(result, *b);
+    if(result.templates.size() > bound)
       return {};
     return result;
   }
 
-  /// Whether each string of \p value contains the infix.
-  bool all_contain(const valuet &value) const
-  {
-    if(!value.has_value() || infix.empty())
-      return false;
-    for(const auto &x : value->values)
-    {
-      if(x.find(infix) == std::string::npos)
-        return false;
-    }
-    return true;
-  }
-
+  /// The concatenation of the languages \p a and \p b, where any string
+  /// is the template of one hole.
   valuet concat(const valuet &a, const valuet &b) const
   {
-    if((a.has_value() && a->empty()) || (b.has_value() && b->empty()))
-      return no_value();
-    if(!a.has_value() || !b.has_value())
-    {
-      // Any string, concatenated with strings that all contain the infix,
-      // contains it.
-      if(all_contain(a.has_value() ? a : b))
-      {
-        dynamic_resolutiont result;
-        result.containing = infix;
-        return result;
-      }
-      return {};
-    }
+    const dynamic_templatet hole{"", ""};
+    const std::set<dynamic_templatet> any{hole};
+    const auto &x = a.has_value() ? a->templates : any;
+    const auto &y = b.has_value() ? b->templates : any;
     dynamic_resolutiont result;
-    if(a->containing.has_value() || b->containing.has_value())
-      result.containing = infix;
-    for(const auto &x : a->values)
+    for(const auto &s : x)
     {
-      for(const auto &y : b->values)
+      for(const auto &t : y)
       {
-        std::string xy = x + y;
-        if(result.containing.has_value() && xy.find(infix) != std::string::npos)
-          continue;
-        result.values.insert(std::move(xy));
-        if(result.values.size() > bound)
+        dynamic_templatet st = s;
+        st.back() += t.front();
+        st.insert(st.end(), t.begin() + 1, t.end());
+        // An empty part between two holes: one hole.
+        dynamic_templatet merged{st.front()};
+        for(std::size_t i = 1; i < st.size(); ++i)
+        {
+          if(st[i].empty() && i + 1 < st.size())
+            continue;
+          merged.push_back(st[i]);
+        }
+        if(merged == hole || merged.size() > max_holes + 1)
           return {};
+        result.templates.insert(std::move(merged));
       }
     }
-    return result;
+    dynamic_resolutiont joined;
+    join_dynamic_resolution(joined, result);
+    if(joined.templates.size() > bound)
+      return {};
+    return joined;
   }
 
   /// The component of type string of the struct type \p type, if it has
@@ -1263,12 +1250,11 @@ void prepare_marker_function(goto_modelt &goto_model)
 dynamic_resolutionst analyse_dynamic_sites(
   goto_modelt &goto_model,
   std::size_t bound,
-  const std::string &infix,
   dynamic_site_statisticst &statistics)
 {
   statistics = dynamic_site_statisticst{};
   prepare_marker_function(goto_model);
-  trackingt tracking{goto_model, bound, infix};
+  trackingt tracking{goto_model, bound};
   collect_relevant(goto_model, tracking);
   if(tracking.relevant.empty())
     return {};
@@ -1400,12 +1386,12 @@ dynamic_resolutionst analyse_dynamic_sites(
                            it->call_arguments()[1],
                            *before,
                            entry.first == INITIALIZE_FUNCTION);
-      // A language that the site cannot use: any string.
+      // Templates with holes at a site that cannot use them: any string.
       const auto &arguments = it->call_arguments();
       if(
-        value.has_value() && value->containing.has_value() &&
+        value.has_value() && value->has_holes() &&
         (arguments.size() < 3 ||
-         to_constant_expr(arguments[2]).get_value() != *value->containing))
+         to_constant_expr(arguments[2]).get_value() != DYNAMIC_SITE_TEMPLATES))
       {
         value.reset();
       }

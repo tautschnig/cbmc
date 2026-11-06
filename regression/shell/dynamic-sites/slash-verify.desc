@@ -4,10 +4,11 @@ slash.sh
 ^EXIT=0$
 ^SIGNAL=0$
 ^Dynamic sites: 2 resolved, 0 unreachable, 0 unresolved \(2 rounds\)$
-^\[shell-dynamic-site\.1\] .* a name with /: SUCCESS$
-^\[shell-dynamic-site\.2\] .* a name with /: SUCCESS$
+^\[shell-dynamic-site\.1\] .* \*"/tool": SUCCESS$
+^\[shell-dynamic-site\.2\] .* \*"/more", /usr/bin/less: SUCCESS$
 ^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring
 --
-The residual assertions hold: each value contains a slash.
+The residual assertions hold: each value is in the language of its
+candidates.

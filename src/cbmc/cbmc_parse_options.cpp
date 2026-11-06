@@ -1076,10 +1076,6 @@ static void resolve_dynamic_sites(
   round_options.set_option("dynamic-sites-analysis", true);
   const std::size_t bound = 16;
   const unsigned max_rounds = 5;
-  // The language of the strings that contain this text is tracked; each
-  // site says whether it can use it. The only one so far: shell command
-  // names with a slash, which name utilities.
-  const std::string infix = "/";
   dynamic_resolutionst resolutions;
   // Sites whose values may be any string stay unresolved, so that the
   // resolutions only grow.
@@ -1103,7 +1099,7 @@ static void resolve_dynamic_sites(
         break;
       }
       const dynamic_resolutionst found =
-        analyse_dynamic_sites(model, bound, infix, statistics);
+        analyse_dynamic_sites(model, bound, statistics);
       dynamic_resolutionst next = resolutions;
       for(const auto &site : statistics.unresolved)
         unresolved.insert(site);
@@ -1112,12 +1108,9 @@ static void resolve_dynamic_sites(
         if(unresolved.count(site.first) != 0)
           continue;
         auto &candidates = next[site.first];
-        if(
-          !join_dynamic_resolution(candidates, site.second) ||
-          candidates.values.size() > bound)
-        {
+        join_dynamic_resolution(candidates, site.second);
+        if(candidates.templates.size() > bound)
           unresolved.insert(site.first);
-        }
       }
       for(const auto &site : unresolved)
         next.erase(site);

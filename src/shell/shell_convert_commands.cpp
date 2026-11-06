@@ -1469,18 +1469,14 @@ void shell_convertert::convert_dynamic_simple(
                         id2string(loc.get_column());
   add(
     dest,
-    dynamic_site_marker(site, name, shell_mode(), symbol_table, loc, "/"),
+    dynamic_site_marker(site, name, shell_mode(), symbol_table, loc, true),
     loc);
-  // A language of candidates is used if it is that of the names that
-  // contain a slash: those name a utility (XCU 2.9.1.4), except in bash and
-  // zsh, which also allow such names for functions, and look functions up
-  // first.
+  // With templates with holes, the functions and builtins whose names they
+  // match get branches, and other names that they match run a utility.
   const auto resolution = resolutions.find(site);
-  const bool resolved = resolution != resolutions.end() &&
-                        (!resolution->second.containing.has_value() ||
-                         *resolution->second.containing == "/");
-  const bool slash_utilities =
-    resolved && resolution->second.containing.has_value();
+  const bool resolved = resolution != resolutions.end();
+  const std::set<dynamic_templatet> holes =
+    resolved ? resolution->second.with_holes() : std::set<dynamic_templatet>{};
 
   // The names a branch is needed for: the candidates of the resolution;
   // otherwise the functions and the builtins that contain the literal text
@@ -1508,15 +1504,20 @@ void shell_convertert::convert_dynamic_simple(
   };
   if(resolved)
   {
-    names = resolution->second.values;
-    if(slash_utilities)
+    names = resolution->second.values();
+    dynamic_resolutiont templates;
+    templates.templates = holes;
+    const auto add_matching = [&](const std::string &candidate)
     {
-      for(const auto &entry : function_definitions)
-      {
-        if(entry.first.find('/') != std::string::npos)
-          names.insert(entry.first);
-      }
-    }
+      if(templates.contains(candidate))
+        names.insert(candidate);
+    };
+    for(const auto &entry : function_definitions)
+      add_matching(entry.first);
+    for(const auto &entry : builtins)
+      add_matching(entry.first);
+    for(const auto &builtin : unsupported_builtins)
+      add_matching(builtin);
   }
   else
   {
@@ -1549,11 +1550,12 @@ void shell_convertert::convert_dynamic_simple(
   if(resolved)
   {
     std::string candidates;
-    for(const auto &text : resolution->second.values)
-      candidates += (candidates.empty() ? "" : ", ") + text;
-    if(slash_utilities)
+    for(const auto &pattern : resolution->second.templates)
+    {
       candidates +=
-        (candidates.empty() ? "" : ", or ") + std::string{"a name with /"};
+        (candidates.empty() ? "" : ", ") +
+        (pattern.size() == 1 ? pattern.front() : template_to_string(pattern));
+    }
     source_locationt check_loc = loc;
     check_loc.set_property_class("shell-dynamic-site");
     check_loc.set_comment(
@@ -1564,25 +1566,20 @@ void shell_convertert::convert_dynamic_simple(
     assertion.add_source_location() = check_loc;
     otherwise.add(std::move(assertion));
     add(otherwise, code_assumet{false_exprt{}}, loc);
-    if(slash_utilities)
+    if(!holes.empty())
     {
-      // Another name with a slash runs a utility.
+      // Another name that a template matches runs a utility.
       code_blockt utility;
       known_literals = before_dispatch;
       convert_non_function(
         with_name(CPROVER_PREFIX "shell_utility"),
         shell_command_kindt::EXTERNAL,
         utility);
-      const exprt slash = payload_index_of(
-        payload_of(name),
-        payload_literal("/"),
-        from_integer(0, integer_type()),
-        dest,
-        loc);
+      exprt::operandst matches;
+      for(const auto &pattern : holes)
+        matches.push_back(template_matches(pattern, name, dest, loc));
       code_ifthenelset choice{
-        binary_relation_exprt{slash, ID_ge, from_integer(0, integer_type())},
-        std::move(utility),
-        std::move(otherwise)};
+        disjunction(matches), std::move(utility), std::move(otherwise)};
       otherwise = code_blockt{};
       add(otherwise, std::move(choice), loc);
     }

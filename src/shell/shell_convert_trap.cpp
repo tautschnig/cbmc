@@ -188,15 +188,13 @@ void shell_convertert::convert_dynamic_trap(
   const auto resolution = resolutions.find(site);
   const auto set_trap = [&](code_blockt &block, unsigned number)
   { assign(block, exit_trap(), from_integer(number, exit_trap_type()), loc); };
-  if(
-    resolution == resolutions.end() ||
-    resolution->second.containing.has_value())
+  if(resolution == resolutions.end() || resolution->second.has_holes())
   {
     set_trap(dest, unknown_exit_trap);
     return;
   }
   std::string candidates;
-  for(const auto &candidate : resolution->second.values)
+  for(const auto &candidate : resolution->second.values())
     candidates += (candidates.empty() ? "" : ", ") + candidate;
   code_blockt otherwise;
   {
@@ -210,7 +208,7 @@ void shell_convertert::convert_dynamic_trap(
     otherwise.add(std::move(assertion));
     add(otherwise, code_assumet{false_exprt{}}, loc);
   }
-  const auto &values = resolution->second.values;
+  const auto &values = resolution->second.values();
   for(auto it = values.rbegin(); it != values.rend(); ++it)
   {
     const std::string &candidate = *it;

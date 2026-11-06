@@ -123,9 +123,7 @@ void shell_convertert::convert_dynamic_eval(
       },
       dest);
   const auto resolution = expanded ? resolutions.find(site) : resolutions.end();
-  if(
-    resolution == resolutions.end() ||
-    resolution->second.containing.has_value())
+  if(resolution == resolutions.end() || resolution->second.has_holes())
   {
     if(!expanded)
     {
@@ -151,7 +149,7 @@ void shell_convertert::convert_dynamic_eval(
   // A branch for each candidate; any other text fails the check of the
   // site.
   std::string candidates;
-  for(const auto &candidate : resolution->second.values)
+  for(const auto &candidate : resolution->second.values())
     candidates += (candidates.empty() ? "" : ", ") + candidate;
   code_blockt otherwise;
   {
@@ -165,7 +163,7 @@ void shell_convertert::convert_dynamic_eval(
     otherwise.add(std::move(assertion));
     add(otherwise, code_assumet{false_exprt{}}, loc);
   }
-  const auto &values = resolution->second.values;
+  const auto &values = resolution->second.values();
   for(auto it = values.rbegin(); it != values.rend(); ++it)
   {
     const std::string &candidate = *it;

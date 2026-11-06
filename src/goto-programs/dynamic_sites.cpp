@@ -25,19 +25,98 @@ Author: Michael Tautschnig
 #include <optional>
 #include <sstream>
 
-/// Read the strings of the JSON array \p json into \p values.
-/// \return true on error
-static bool strings_from_json(const jsont &json, std::set<std::string> &values)
+bool template_matches(
+  const dynamic_templatet &pattern,
+  const std::string &value)
 {
-  if(!json.is_array())
-    return true;
-  for(const auto &value : to_json_array(json))
+  if(pattern.empty())
+    return false;
+  if(pattern.size() == 1)
+    return value == pattern.front();
+  // The first part is a prefix, the last a suffix, and the others occur
+  // in order between them; taking the first occurrence of each is enough.
+  const std::string &first = pattern.front();
+  const std::string &last = pattern.back();
+  if(
+    value.size() < first.size() + last.size() ||
+    value.compare(0, first.size(), first) != 0 ||
+    value.compare(value.size() - last.size(), last.size(), last) != 0)
   {
-    if(!value.is_string())
+    return false;
+  }
+  std::size_t from = first.size();
+  const std::size_t end = value.size() - last.size();
+  for(std::size_t i = 1; i + 1 < pattern.size(); ++i)
+  {
+    const std::size_t found = value.find(pattern[i], from);
+    if(found == std::string::npos || found + pattern[i].size() > end)
+      return false;
+    from = found + pattern[i].size();
+  }
+  return true;
+}
+
+bool dynamic_resolutiont::contains(const std::string &value) const
+{
+  for(const auto &pattern : templates)
+  {
+    if(template_matches(pattern, value))
       return true;
-    values.insert(value.value);
   }
   return false;
+}
+
+std::set<std::string> dynamic_resolutiont::values() const
+{
+  std::set<std::string> result;
+  for(const auto &pattern : templates)
+  {
+    if(pattern.size() == 1)
+      result.insert(pattern.front());
+  }
+  return result;
+}
+
+std::set<dynamic_templatet> dynamic_resolutiont::with_holes() const
+{
+  std::set<dynamic_templatet> result;
+  for(const auto &pattern : templates)
+  {
+    if(pattern.size() > 1)
+      result.insert(pattern);
+  }
+  return result;
+}
+
+std::string template_to_string(const dynamic_templatet &pattern)
+{
+  std::string result;
+  for(std::size_t i = 0; i < pattern.size(); ++i)
+  {
+    if(i != 0)
+      result += '*';
+    if(!pattern[i].empty() || pattern.size() == 1)
+      result += '"' + pattern[i] + '"';
+  }
+  return result;
+}
+
+void join_dynamic_resolution(
+  dynamic_resolutiont &resolution,
+  const dynamic_resolutiont &other)
+{
+  resolution.templates.insert(other.templates.begin(), other.templates.end());
+  const auto holes = resolution.with_holes();
+  for(auto it = resolution.templates.begin(); it != resolution.templates.end();)
+  {
+    bool subsumed = false;
+    if(it->size() == 1)
+    {
+      for(const auto &pattern : holes)
+        subsumed |= template_matches(pattern, it->front());
+    }
+    it = subsumed ? resolution.templates.erase(it) : std::next(it);
+  }
 }
 
 /// Read \p resolutions from \p json, read from \p filename.
@@ -59,61 +138,37 @@ static bool resolutions_from_json(
   for(const auto &entry : to_json_object(json))
   {
     auto &resolution = resolutions[entry.first];
-    bool error = false;
-    if(entry.second.is_array())
-      error = strings_from_json(entry.second, resolution.values);
-    else if(entry.second.is_object())
+    bool error = !entry.second.is_array();
+    if(!error)
     {
-      for(const auto &field : to_json_object(entry.second))
+      for(const auto &candidate : to_json_array(entry.second))
       {
-        if(field.first == "values")
-          error |= strings_from_json(field.second, resolution.values);
-        else if(field.first == "containing" && field.second.is_string())
-          resolution.containing = field.second.value;
+        if(candidate.is_string())
+          resolution.insert(candidate.value);
+        else if(candidate.is_array() && !to_json_array(candidate).empty())
+        {
+          dynamic_templatet pattern;
+          for(const auto &part : to_json_array(candidate))
+          {
+            error |= !part.is_string();
+            pattern.push_back(part.value);
+          }
+          resolution.templates.insert(std::move(pattern));
+        }
         else
           error = true;
       }
     }
-    else
-      error = true;
     if(error)
     {
       log.error() << filename << ": the candidates of " << entry.first
-                  << " must be an array of strings, or an object with an "
-                     "array of strings \"values\" and a string "
-                     "\"containing\""
+                  << " must be an array of strings, and of arrays of strings "
+                     "for templates"
                   << messaget::eom;
       return true;
     }
   }
   return false;
-}
-
-bool join_dynamic_resolution(
-  dynamic_resolutiont &resolution,
-  const dynamic_resolutiont &other)
-{
-  if(other.containing.has_value())
-  {
-    if(
-      resolution.containing.has_value() &&
-      *resolution.containing != *other.containing)
-    {
-      return false;
-    }
-    resolution.containing = other.containing;
-  }
-  resolution.values.insert(other.values.begin(), other.values.end());
-  if(resolution.containing.has_value())
-  {
-    for(auto it = resolution.values.begin(); it != resolution.values.end();)
-    {
-      it = it->find(*resolution.containing) != std::string::npos
-             ? resolution.values.erase(it)
-             : std::next(it);
-    }
-  }
-  return true;
 }
 
 bool read_dynamic_resolutions(
@@ -150,17 +205,20 @@ std::string dynamic_resolutions_to_json(const dynamic_resolutionst &resolutions)
   json_objectt json;
   for(const auto &site : resolutions)
   {
-    json_arrayt values;
-    for(const auto &value : site.second.values)
-      values.push_back(json_stringt{value});
-    if(!site.second.containing.has_value())
-      json[id2string(site.first)] = std::move(values);
-    else
+    json_arrayt candidates;
+    for(const auto &pattern : site.second.templates)
     {
-      json[id2string(site.first)] = json_objectt{
-        {"values", std::move(values)},
-        {"containing", json_stringt{*site.second.containing}}};
+      if(pattern.size() == 1)
+        candidates.push_back(json_stringt{pattern.front()});
+      else
+      {
+        json_arrayt parts;
+        for(const auto &part : pattern)
+          parts.push_back(json_stringt{part});
+        candidates.push_back(std::move(parts));
+      }
     }
+    json[id2string(site.first)] = std::move(candidates);
   }
   std::ostringstream out;
   out << json;
@@ -173,7 +231,7 @@ code_function_callt dynamic_site_marker(
   const irep_idt &mode,
   symbol_table_baset &symbol_table,
   const source_locationt &location,
-  const std::string &containing)
+  bool templates)
 {
   if(!symbol_table.has_symbol(DYNAMIC_SITE_FUNCTION))
   {
@@ -204,8 +262,11 @@ code_function_callt dynamic_site_marker(
   function.add_source_location() = location;
   code_function_callt call{
     function, {constant_exprt{site_id, string_typet{}}, value}};
-  if(!containing.empty())
-    call.arguments().push_back(constant_exprt{containing, string_typet{}});
+  if(templates)
+  {
+    call.arguments().push_back(
+      constant_exprt{DYNAMIC_SITE_TEMPLATES, string_typet{}});
+  }
   call.add_source_location() = location;
   return call;
 }
@@ -273,22 +334,15 @@ void show_dynamic_sites(
           log.result() << ": unresolved";
         else
         {
-          log.result() << ": ";
-          if(!found->values.empty() || !found->containing.has_value())
+          log.result() << ": {";
+          bool first = true;
+          for(const auto &candidate : found->templates)
           {
-            log.result() << '{';
-            bool first = true;
-            for(const auto &candidate : found->values)
-            {
-              log.result() << (first ? " \"" : ", \"") << candidate << '"';
-              first = false;
-            }
-            log.result() << " }";
-            if(found->containing.has_value())
-              log.result() << " or ";
+            log.result() << (first ? " " : ", ")
+                         << template_to_string(candidate);
+            first = false;
           }
-          if(found->containing.has_value())
-            log.result() << "containing \"" << *found->containing << '"';
+          log.result() << " }";
         }
       }
       log.result() << messaget::eom;
@@ -311,11 +365,19 @@ void show_dynamic_sites(
         {
           json_site["resolved"] = jsont::json_boolean(true);
           json_arrayt json_candidates;
-          for(const auto &candidate : found->values)
-            json_candidates.push_back(json_stringt{candidate});
+          for(const auto &candidate : found->templates)
+          {
+            if(candidate.size() == 1)
+              json_candidates.push_back(json_stringt{candidate.front()});
+            else
+            {
+              json_arrayt parts;
+              for(const auto &part : candidate)
+                parts.push_back(json_stringt{part});
+              json_candidates.push_back(std::move(parts));
+            }
+          }
           json_site["candidates"] = std::move(json_candidates);
-          if(found->containing.has_value())
-            json_site["containing"] = json_stringt{*found->containing};
         }
       }
       json_sites.push_back(std::move(json_site));
@@ -338,10 +400,17 @@ void show_dynamic_sites(
         xml_site.set_attribute_bool("resolved", found != nullptr);
         if(found != nullptr)
         {
-          for(const auto &candidate : found->values)
-            xml_site.new_element("candidate").data = candidate;
-          if(found->containing.has_value())
-            xml_site.new_element("containing").data = *found->containing;
+          for(const auto &candidate : found->templates)
+          {
+            xmlt &xml_candidate = xml_site.new_element("candidate");
+            if(candidate.size() == 1)
+              xml_candidate.data = candidate.front();
+            else
+            {
+              for(const auto &part : candidate)
+                xml_candidate.new_element("part").data = part;
+            }
+          }
         }
       }
     }

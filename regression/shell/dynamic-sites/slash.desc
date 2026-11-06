@@ -3,8 +3,8 @@ slash.sh
 --resolve-dynamic-sites --show-dynamic-sites
 ^EXIT=0$
 ^SIGNAL=0$
-^shell-command-name:slash.sh:5:1: .*: containing "/"$
-^shell-command-name:slash.sh:11:1: .*: containing "/"$
+^shell-command-name:slash.sh:5:1: .*: \{ \*"/tool" \}$
+^shell-command-name:slash.sh:11:1: .*: \{ \*"/more", "/usr/bin/less" \}$
 --
 : unresolved$
 ^warning: ignoring

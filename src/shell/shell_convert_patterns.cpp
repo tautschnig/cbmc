@@ -125,6 +125,35 @@ exprt shell_convertert::literal_pattern_string(
   return *result;
 }
 
+exprt shell_convertert::template_matches(
+  const dynamic_templatet &pattern,
+  const exprt &subject,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  if(pattern.size() == 1)
+    return equal(subject, string_literal(pattern.front(), loc), dest, loc);
+  shell_patternt glob;
+  for(std::size_t i = 0; i < pattern.size(); ++i)
+  {
+    if(i != 0)
+    {
+      shell_pattern_elementt star;
+      star.kind = shell_pattern_elementt::kindt::STAR;
+      glob.elements.push_back(star);
+    }
+    for(const char c : pattern[i])
+    {
+      shell_pattern_elementt character;
+      character.character = static_cast<unsigned char>(c);
+      glob.elements.push_back(character);
+    }
+  }
+  if(pattern.size() == 2 && pattern[0].empty() && pattern[1].empty())
+    return true_exprt{};
+  return unbounded_pattern_matches(glob, subject, dest, loc);
+}
+
 exprt shell_convertert::pattern_matches(
   const shell_wordt &word,
   const exprt &subject,

@@ -118,10 +118,8 @@ void shell_convertert::collect_dot_scripts(const shell_command_listt &list)
                               : resolutions.end();
     if(resolution != resolutions.end())
     {
-      paths.insert(
-        paths.end(),
-        resolution->second.values.begin(),
-        resolution->second.values.end());
+      const auto values = resolution->second.values();
+      paths.insert(paths.end(), values.begin(), values.end());
     }
     for(const auto &path : paths)
     {
@@ -282,8 +280,8 @@ void shell_convertert::convert_dot(
   // that were read are run.
   const irep_idt site = dot_site(loc);
   const auto resolution = resolutions.find(site);
-  const bool resolved = resolution != resolutions.end() &&
-                        !resolution->second.containing.has_value();
+  const bool resolved =
+    resolution != resolutions.end() && !resolution->second.has_holes();
   known_literals.clear();
   std::optional<symbol_exprt> file;
   if(!path.has_value() && mark_text_sites)
@@ -321,7 +319,7 @@ void shell_convertert::convert_dot(
   // With a resolution: a branch for each candidate; any other value fails
   // the check of the site.
   std::string candidates;
-  for(const auto &text : resolution->second.values)
+  for(const auto &text : resolution->second.values())
     candidates += (candidates.empty() ? "" : ", ") + text;
   code_blockt otherwise;
   {
@@ -337,9 +335,8 @@ void shell_convertert::convert_dot(
     add(otherwise, code_assumet{false_exprt{}}, loc);
   }
   shell_commandt copy = command;
-  for(auto it = resolution->second.values.rbegin();
-      it != resolution->second.values.rend();
-      ++it)
+  const auto values = resolution->second.values();
+  for(auto it = values.rbegin(); it != values.rend(); ++it)
   {
     const std::string &text = *it;
     code_blockt branch;

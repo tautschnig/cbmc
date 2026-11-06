@@ -1,0 +1,16 @@
+CORE
+template-names.sh
+--resolve-dynamic-sites
+^EXIT=0$
+^SIGNAL=0$
+^Dynamic sites: 2 resolved, 0 unreachable, 0 unresolved \(2 rounds\)$
+^\[shell-dynamic-site\.1\] .* \*"_run": SUCCESS$
+^\[assertion\.1\] .* = yes: SUCCESS$
+^\[shell-dynamic-site\.2\] .* "kde"\*"-config": SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+A command name whose candidates are templates: the functions and
+builtins whose names they match get branches, and other names they match
+run a utility.

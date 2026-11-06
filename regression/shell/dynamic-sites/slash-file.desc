@@ -3,12 +3,10 @@ slash.sh
 --dynamic-resolutions slash.json
 ^EXIT=0$
 ^SIGNAL=0$
-^\[shell-dynamic-site\.1\] .* a name with /: SUCCESS$
+^\[shell-dynamic-site\.1\] .* \*"/"\*: SUCCESS$
+^\[shell-dynamic-site\.2\] .* \*"/more", /usr/bin/less: SUCCESS$
 ^VERIFICATION SUCCESSFUL$
 --
-shell-dynamic-site\.2
 ^warning: ignoring
 --
-A resolution as an object with a language; a language other than the
-names with a slash cannot be used for a command name, so that site is
-converted as unresolved.
+Resolutions from a file, with templates as arrays of their parts.

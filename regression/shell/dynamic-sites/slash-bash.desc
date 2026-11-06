@@ -3,11 +3,11 @@ slash-bash.sh
 --resolve-dynamic-sites
 ^EXIT=0$
 ^SIGNAL=0$
-^\[shell-dynamic-site\.1\] .* a name with /: SUCCESS$
+^\[shell-dynamic-site\.1\] .* \*"/run": SUCCESS$
 ^\[assertion\.1\] .* "\$\{reached\}" = yes: SUCCESS$
 ^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring
 --
-A resolution to the names with a slash still calls a function whose name
-has a slash.
+A template still calls a function whose name it matches, here one with a
+slash.

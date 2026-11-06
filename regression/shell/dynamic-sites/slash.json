@@ -1,2 +1,2 @@
-{ "shell-command-name:slash.sh:5:1": { "values": [], "containing": "/" },
-  "shell-command-name:slash.sh:11:1": { "values": ["/usr/bin/less"], "containing": "x" } }
+{ "shell-command-name:slash.sh:5:1": [["", "/", ""]],
+  "shell-command-name:slash.sh:11:1": ["/usr/bin/less", ["", "/more"]] }
