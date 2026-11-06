@@ -27,6 +27,7 @@ Author: Michael Tautschnig
 #include <map>
 #include <optional>
 #include <set>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace
@@ -103,29 +104,72 @@ public:
     return result;
   }
 
-  /// Whether symbols of type \p type hold a string.
+  /// Whether symbols of type \p type hold a string, or an array of
+  /// strings, whose elements are joined (smashed).
   bool is_string_like(const typet &type) const
   {
+    if(type.id() == ID_array)
+      return is_string_like(to_array_type(type).element_type());
     return type.id() == ID_string || string_component(type).has_value();
   }
 
-  /// The symbol that \p lhs writes the string of, if it is tracked.
-  std::optional<irep_idt> written(const exprt &lhs) const
+  /// The symbol that \p lhs writes the string of, if it is tracked; with
+  /// \p weak set if it writes one element of an array.
+  std::optional<irep_idt> written(const exprt &lhs, bool &weak) const
   {
+    weak = false;
+    if(lhs.id() == ID_index)
+    {
+      const exprt &array = to_index_expr(lhs).array();
+      if(array.id() == ID_symbol && is_string_like(array.type()))
+      {
+        weak = true;
+        return tracked(to_symbol_expr(array).identifier());
+      }
+      return {};
+    }
     if(lhs.id() == ID_symbol && is_string_like(lhs.type()))
       return tracked(to_symbol_expr(lhs).identifier());
     if(lhs.id() == ID_member)
     {
       const auto &member = to_member_expr(lhs);
       const auto component = string_component(member.compound().type());
-      if(
-        component.has_value() && member.get_component_name() == *component &&
-        member.compound().id() == ID_symbol)
+      if(component.has_value() && member.get_component_name() == *component)
       {
-        return tracked(to_symbol_expr(member.compound()).identifier());
+        if(member.compound().id() == ID_symbol)
+          return tracked(to_symbol_expr(member.compound()).identifier());
+        // The string of an element.
+        bool element = false;
+        const auto array = written(member.compound(), element);
+        weak = element;
+        return element ? array : std::nullopt;
       }
     }
     return {};
+  }
+
+  /// Functions with a body.
+  std::unordered_set<irep_idt> bodies;
+
+  /// Local variables t whose only assignments are t := x, for one symbol
+  /// x of the same type: saved copies of x. x := t then restores the value
+  /// of x where t was assigned, and whether x was assigned there.
+  std::unordered_map<irep_idt, irep_idt> copy_of;
+
+  /// The symbol whose saved copy \p rhs restores into \p lhs, if it is
+  /// a restore x := t of a copy t of x.
+  bool is_restore(const exprt &lhs, const exprt &rhs) const
+  {
+    if(lhs.id() != ID_symbol || rhs.id() != ID_symbol)
+      return false;
+    const auto found = copy_of.find(to_symbol_expr(rhs).identifier());
+    return found != copy_of.end() &&
+           found->second == to_symbol_expr(lhs).identifier();
+  }
+
+  bool has_body(const irep_idt &id) const
+  {
+    return bodies.count(id) != 0;
   }
 
   /// Whether \p id is a local variable (neither static nor a parameter).
@@ -153,6 +197,18 @@ const symbol_exprt *root_symbol(const exprt &lhs)
   return e->id() == ID_symbol ? &to_symbol_expr(*e) : nullptr;
 }
 
+/// The root symbol of \p lhs through members and indices, if any.
+const symbol_exprt *base_symbol(const exprt &lhs)
+{
+  const exprt *e = &lhs;
+  while(e->id() == ID_member || e->id() == ID_index)
+  {
+    e = e->id() == ID_member ? &to_member_expr(*e).compound()
+                             : &to_index_expr(*e).array();
+  }
+  return e->id() == ID_symbol ? &to_symbol_expr(*e) : nullptr;
+}
+
 bool is_marker(const goto_programt::instructiont &instruction)
 {
   return instruction.is_function_call() &&
@@ -162,20 +218,29 @@ bool is_marker(const goto_programt::instructiont &instruction)
          instruction.call_arguments().size() == 2;
 }
 
-/// The symbols that are definitely assigned (outside __CPROVER_initialize),
-/// among the relevant ones: static-lifetime ones, interprocedurally, where
-/// the domain is bottom where the program cannot be; or local ones,
-/// within one function, across whose calls they do not change.
+/// What each function definitely assigns, for its callers: absent while
+/// the function is not known to return.
+using summariest = std::map<irep_idt, std::set<irep_idt>>;
+
+/// The relevant symbols that are definitely assigned (outside
+/// __CPROVER_initialize) within one function, starting from the symbols
+/// assigned at all its calls; a call adds what the callee definitely
+/// assigns. Bottom where the function cannot be.
 class assigned_domaint : public ai_domain_baset
 {
 public:
-  assigned_domaint(const trackingt &tracking, bool locals)
-    : tracking(tracking), locals(locals)
+  assigned_domaint(
+    const trackingt &tracking,
+    const summariest &summaries,
+    const std::set<irep_idt> &entry)
+    : tracking(tracking), summaries(summaries), entry(entry)
   {
   }
 
   bool bottom = true;
   std::set<irep_idt> assigned;
+  /// Copies t of x (see trackingt::copy_of) made where x was assigned.
+  std::set<irep_idt> saved_assigned;
 
   void transform(
     const irep_idt &function_from,
@@ -188,22 +253,66 @@ public:
     const auto &instruction = *from->current_location();
     const symbol_exprt *symbol = nullptr;
     if(instruction.is_assign())
-      symbol = root_symbol(instruction.assign_lhs());
-    else if(
-      instruction.is_function_call() && instruction.call_lhs().is_not_nil())
     {
-      symbol = root_symbol(instruction.call_lhs());
+      const exprt &lhs = instruction.assign_lhs();
+      const exprt &rhs = instruction.assign_rhs();
+      if(tracking.is_restore(lhs, rhs))
+      {
+        // x is as assigned as it was where it was saved.
+        const irep_idt &x = to_symbol_expr(lhs).identifier();
+        if(saved_assigned.count(to_symbol_expr(rhs).identifier()) != 0)
+          assigned.insert(x);
+        else
+          assigned.erase(x);
+        return;
+      }
+      if(
+        lhs.id() == ID_symbol &&
+        tracking.copy_of.count(to_symbol_expr(lhs).identifier()) != 0)
+      {
+        const irep_idt &t = to_symbol_expr(lhs).identifier();
+        if(assigned.count(tracking.copy_of.at(t)) != 0)
+          saved_assigned.insert(t);
+        else
+          saved_assigned.erase(t);
+      }
+      symbol = root_symbol(lhs);
+    }
+    else if(instruction.is_function_call())
+    {
+      // The callee returns, having assigned at least its summary;
+      // without a summary it does not return (yet).
+      const exprt &function = instruction.call_function();
+      if(function.id() == ID_symbol)
+      {
+        const auto summary =
+          summaries.find(to_symbol_expr(function).identifier());
+        if(summary != summaries.end())
+          assigned.insert(summary->second.begin(), summary->second.end());
+        else if(tracking.has_body(to_symbol_expr(function).identifier()))
+        {
+          make_bottom();
+          return;
+        }
+      }
+      if(instruction.call_lhs().is_not_nil())
+        symbol = root_symbol(instruction.call_lhs());
     }
     else if(instruction.is_decl())
+    {
       assigned.erase(instruction.decl_symbol().identifier());
+      saved_assigned.erase(instruction.decl_symbol().identifier());
+    }
     else if(instruction.is_dead())
+    {
       assigned.erase(instruction.dead_symbol().identifier());
+      saved_assigned.erase(instruction.dead_symbol().identifier());
+    }
     // The values that __CPROVER_initialize assigns are joined at reads
     // that the program did not assign.
     if(
       symbol != nullptr && function_from != INITIALIZE_FUNCTION &&
-      tracking.relevant.count(symbol->identifier()) != 0 &&
-      tracking.is_local(symbol->identifier()) == locals)
+      tracking.relevant.count(symbol->identifier()) != 0)
     {
       assigned.insert(symbol->identifier());
     }
@@ -213,15 +322,19 @@ public:
   {
     bottom = true;
     assigned.clear();
+    saved_assigned.clear();
   }
   void make_top() override
   {
     bottom = false;
     assigned.clear();
+    saved_assigned.clear();
   }
   void make_entry() override
   {
-    make_top();
+    bottom = false;
+    assigned = entry;
+    saved_assigned.clear();
   }
   bool is_bottom() const override
   {
@@ -240,43 +353,200 @@ public:
     {
       bottom = false;
       assigned = other.assigned;
+      saved_assigned = other.saved_assigned;
       return true;
     }
     bool changed = false;
-    for(auto it = assigned.begin(); it != assigned.end();)
+    for(auto *pair : {&assigned, &saved_assigned})
     {
-      if(other.assigned.count(*it) == 0)
+      const auto &theirs =
+        pair == &assigned ? other.assigned : other.saved_assigned;
+      for(auto it = pair->begin(); it != pair->end();)
       {
-        it = assigned.erase(it);
-        changed = true;
+        if(theirs.count(*it) == 0)
+        {
+          it = pair->erase(it);
+          changed = true;
+        }
+        else
+          ++it;
       }
-      else
-        ++it;
     }
     return changed;
   }
 
 private:
   const trackingt &tracking;
-  const bool locals;
+  const summariest &summaries;
+  const std::set<irep_idt> &entry;
 };
 
 class assigned_domain_factoryt : public ai_domain_factoryt<assigned_domaint>
 {
 public:
-  assigned_domain_factoryt(const trackingt &tracking, bool locals)
-    : tracking(tracking), locals(locals)
+  assigned_domain_factoryt(
+    const trackingt &tracking,
+    const summariest &summaries,
+    const std::set<irep_idt> &entry)
+    : tracking(tracking), summaries(summaries), entry(entry)
   {
   }
 
   std::unique_ptr<statet> make(locationt) const override
   {
-    return std::make_unique<assigned_domaint>(tracking, locals);
+    return std::make_unique<assigned_domaint>(tracking, summaries, entry);
   }
 
 private:
   const trackingt &tracking;
-  const bool locals;
+  const summariest &summaries;
+  const std::set<irep_idt> &entry;
+};
+
+/// Must-assigned symbols at each instruction of each function, by
+/// summaries: a function is reached if a reachable call reaches it, and
+/// starts with the symbols assigned at all its reachable calls.
+class must_assignedt
+{
+public:
+  must_assignedt(const goto_modelt &goto_model, const trackingt &tracking)
+    : goto_model(goto_model), tracking(tracking)
+  {
+  }
+
+  void operator()()
+  {
+    const auto &functions = goto_model.goto_functions.function_map;
+    // Calls through function pointers may reach any function.
+    bool indirect = false;
+    for(const auto &entry : functions)
+    {
+      for(const auto &instruction : entry.second.body.instructions)
+      {
+        indirect |= instruction.is_function_call() &&
+                    instruction.call_function().id() != ID_symbol;
+      }
+    }
+    std::map<irep_idt, std::set<irep_idt>> entries;
+    if(indirect)
+    {
+      for(const auto &entry : functions)
+      {
+        if(entry.second.body_available())
+          entries[entry.first];
+      }
+    }
+    else
+      entries[goto_functionst::entry_point()];
+    bool changed = true;
+    while(changed)
+    {
+      changed = false;
+      std::map<irep_idt, std::set<irep_idt>> next_entries;
+      if(indirect)
+      {
+        for(const auto &entry : entries)
+          next_entries[entry.first];
+      }
+      else
+        next_entries[goto_functionst::entry_point()];
+      analyses.clear();
+      for(const auto &entry : entries)
+      {
+        const auto function = functions.find(entry.first);
+        if(function == functions.end() || !function->second.body_available())
+          continue;
+        entry_sets[entry.first] = entry.second;
+        auto analysis = std::make_unique<ait<assigned_domaint>>(
+          std::make_unique<assigned_domain_factoryt>(
+            tracking, summaries, entry_sets[entry.first]));
+        (*analysis)(entry.first, function->second, tracking.ns);
+        const auto &body = function->second.body;
+        for(auto it = body.instructions.begin(); it != body.instructions.end();
+            ++it)
+        {
+          const auto &state = get(*analysis, it);
+          if(state.bottom)
+            continue;
+          if(it->is_end_function())
+          {
+            // Locals are dead at the end.
+            std::set<irep_idt> summary;
+            for(const auto &id : state.assigned)
+            {
+              if(!tracking.is_local(id))
+                summary.insert(id);
+            }
+            const auto old = summaries.find(entry.first);
+            if(old == summaries.end() || old->second != summary)
+            {
+              summaries[entry.first] = summary;
+              changed = true;
+            }
+          }
+          if(!it->is_function_call() || it->call_function().id() != ID_symbol)
+          {
+            continue;
+          }
+          const irep_idt &callee =
+            to_symbol_expr(it->call_function()).identifier();
+          std::set<irep_idt> at_call;
+          for(const auto &id : state.assigned)
+          {
+            if(!tracking.is_local(id))
+              at_call.insert(id);
+          }
+          const auto found = next_entries.find(callee);
+          if(found == next_entries.end())
+            next_entries.emplace(callee, std::move(at_call));
+          else
+          {
+            std::set<irep_idt> both;
+            for(const auto &id : found->second)
+            {
+              if(at_call.count(id) != 0)
+                both.insert(id);
+            }
+            found->second = std::move(both);
+          }
+        }
+        analyses.emplace(entry.first, std::move(analysis));
+      }
+      if(next_entries != entries)
+      {
+        entries = std::move(next_entries);
+        changed = true;
+      }
+    }
+  }
+
+  /// The symbols definitely assigned before \p it in \p function, or
+  /// nothing where the program cannot be.
+  std::optional<std::set<irep_idt>>
+  before(const irep_idt &function, goto_programt::const_targett it) const
+  {
+    const auto analysis = analyses.find(function);
+    if(analysis == analyses.end())
+      return {};
+    const auto &state = get(*analysis->second, it);
+    if(state.bottom)
+      return {};
+    return state.assigned;
+  }
+
+private:
+  const goto_modelt &goto_model;
+  const trackingt &tracking;
+  summariest summaries;
+  std::map<irep_idt, std::set<irep_idt>> entry_sets;
+  std::map<irep_idt, std::unique_ptr<ait<assigned_domaint>>> analyses;
+
+  static const assigned_domaint &
+  get(const ait<assigned_domaint> &analysis, goto_programt::const_targett it)
+  {
+    return static_cast<const assigned_domaint &>(
+      *analysis.abstract_state_before(it));
+  }
 };
 
 /// Flow-insensitive values of the tracked symbols.
@@ -361,6 +631,23 @@ public:
       if(!component.has_value() || member.get_component_name() != *component)
         return {};
       return eval(member.compound(), assigned, in_initialize);
+    }
+    if(expr.id() == ID_index)
+    {
+      // Any element: the joined elements of the array.
+      const exprt &array = to_index_expr(expr).array();
+      if(!tracking.is_string_like(array.type()))
+        return {};
+      return eval(array, assigned, in_initialize);
+    }
+    if(expr.id() == ID_array_of)
+      return eval(to_array_of_expr(expr).what(), assigned, in_initialize);
+    if(expr.id() == ID_array)
+    {
+      valuet result = no_value();
+      for(const auto &element : expr.operands())
+        result = tracking.join(result, eval(element, assigned, in_initialize));
+      return result;
     }
     if(expr.id() == ID_if)
     {
@@ -447,7 +734,7 @@ void collect_relevant(const goto_modelt &goto_model, trackingt &tracking)
       {
         if(instruction.is_assign())
         {
-          const symbol_exprt *symbol = root_symbol(instruction.assign_lhs());
+          const symbol_exprt *symbol = base_symbol(instruction.assign_lhs());
           if(
             symbol == nullptr ||
             tracking.relevant.count(symbol->identifier()) == 0)
@@ -485,6 +772,51 @@ void collect_relevant(const goto_modelt &goto_model, trackingt &tracking)
   }
 }
 
+/// Local variables whose only assignments copy one symbol of the same
+/// type (see trackingt::copy_of).
+void collect_copies(const goto_modelt &goto_model, trackingt &tracking)
+{
+  std::unordered_map<irep_idt, std::optional<irep_idt>> sources;
+  for(const auto &entry : goto_model.goto_functions.function_map)
+  {
+    for(const auto &instruction : entry.second.body.instructions)
+    {
+      const symbol_exprt *lhs = nullptr;
+      if(instruction.is_assign())
+        lhs = root_symbol(instruction.assign_lhs());
+      else if(
+        instruction.is_function_call() && instruction.call_lhs().is_not_nil())
+      {
+        lhs = root_symbol(instruction.call_lhs());
+      }
+      if(lhs == nullptr || !tracking.is_local(lhs->identifier()))
+        continue;
+      std::optional<irep_idt> source;
+      if(
+        instruction.is_assign() && lhs == &instruction.assign_lhs() &&
+        instruction.assign_rhs().id() == ID_symbol &&
+        instruction.assign_rhs().type() == lhs->type())
+      {
+        source = to_symbol_expr(instruction.assign_rhs()).identifier();
+      }
+      const auto found = sources.find(lhs->identifier());
+      if(found == sources.end())
+        sources.emplace(lhs->identifier(), source);
+      else if(found->second != source)
+        found->second.reset();
+    }
+  }
+  for(const auto &entry : sources)
+  {
+    if(
+      entry.second.has_value() && *entry.second != entry.first &&
+      tracking.address_taken.count(entry.first) == 0)
+    {
+      tracking.copy_of.emplace(entry.first, *entry.second);
+    }
+  }
+}
+
 /// Give DYNAMIC_SITE_FUNCTION an empty body and its parameters, which the
 /// abstract interpreter needs to analyse calls of it.
 void prepare_marker_function(goto_modelt &goto_model)
@@ -514,43 +846,18 @@ dynamic_resolutionst analyse_dynamic_sites(
   if(tracking.relevant.empty())
     return {};
 
-  // Reachability and must-assigned symbols at each instruction: global
-  // ones over the whole program, and the locals of each function within
-  // it.
-  ait<assigned_domaint> assigned{
-    std::make_unique<assigned_domain_factoryt>(tracking, false)};
-  assigned(goto_model);
-  std::map<irep_idt, std::unique_ptr<ait<assigned_domaint>>> local_assigned;
   for(const auto &entry : goto_model.goto_functions.function_map)
   {
-    if(!entry.second.body_available())
-      continue;
-    auto analysis = std::make_unique<ait<assigned_domaint>>(
-      std::make_unique<assigned_domain_factoryt>(tracking, true));
-    (*analysis)(entry.first, entry.second, tracking.ns);
-    local_assigned.emplace(entry.first, std::move(analysis));
+    if(entry.second.body_available())
+      tracking.bodies.insert(entry.first);
   }
-  // The symbols definitely assigned before \p it in \p function, or
-  // nothing where the program cannot be.
+  collect_copies(goto_model, tracking);
+  // Reachability and must-assigned symbols at each instruction.
+  must_assignedt must_assigned{goto_model, tracking};
+  must_assigned();
   const auto assigned_before =
-    [&](
-      const irep_idt &function,
-      goto_programt::const_targett it) -> std::optional<std::set<irep_idt>>
-  {
-    const auto &global = static_cast<const assigned_domaint &>(
-      *assigned.abstract_state_before(it));
-    if(global.bottom)
-      return {};
-    std::set<irep_idt> result = global.assigned;
-    const auto local = local_assigned.find(function);
-    if(local != local_assigned.end())
-    {
-      const auto &state = static_cast<const assigned_domaint &>(
-        *local->second->abstract_state_before(it));
-      result.insert(state.assigned.begin(), state.assigned.end());
-    }
-    return result;
-  };
+    [&must_assigned](const irep_idt &function, goto_programt::const_targett it)
+  { return must_assigned.before(function, it); };
 
   // Flow-insensitive values, to a fixpoint.
   valuest values{tracking};
@@ -571,19 +878,37 @@ dynamic_resolutionst analyse_dynamic_sites(
         const std::set<irep_idt> &assigned_here = *before;
         if(it->is_assign())
         {
-          const auto id = tracking.written(it->assign_lhs());
+          // A restore puts back a value that x had.
+          if(tracking.is_restore(it->assign_lhs(), it->assign_rhs()))
+            continue;
+          bool weak = false;
+          const auto id = tracking.written(it->assign_lhs(), weak);
           if(id.has_value())
           {
+            // Element writes join into the array's elements; the array's
+            // other elements keep their values, which a whole write of
+            // the array also joined in. Both are joins here.
             changed |= values.add(
               in_initialize,
               *id,
               values.eval(it->assign_rhs(), assigned_here, in_initialize));
           }
-          else if(const auto *symbol = root_symbol(it->assign_lhs()))
+          else if(const auto *symbol = base_symbol(it->assign_lhs()))
           {
-            // A write of the whole of a tracked symbol of another shape.
+            // A write of a tracked symbol in another way: any value,
+            // unless it writes only other components of a struct.
+            const exprt &lhs = it->assign_lhs();
+            bool other_component = false;
+            if(lhs.id() == ID_member)
+            {
+              const auto component = tracking.string_component(
+                to_member_expr(lhs).compound().type());
+              other_component =
+                component.has_value() &&
+                to_member_expr(lhs).get_component_name() != *component;
+            }
             if(
-              symbol == &it->assign_lhs() &&
+              !other_component &&
               tracking.tracked(symbol->identifier()).has_value())
             {
               changed |= values.add(in_initialize, symbol->identifier(), {});
