@@ -1168,7 +1168,18 @@ int cbmc_parse_optionst::get_goto_program(
 
   if(cmdline.isset("show-dynamic-sites"))
   {
-    show_dynamic_sites(goto_model, ui_message_handler);
+    // With --resolve-dynamic-sites, also the candidates found.
+    dynamic_resolutionst resolutions;
+    const bool resolved = options.get_bool_option("resolve-dynamic-sites");
+    if(resolved)
+    {
+      parse_dynamic_resolutions(
+        final_options.get_option("dynamic-resolutions-json"),
+        ui_message_handler,
+        resolutions);
+    }
+    show_dynamic_sites(
+      goto_model, resolved ? &resolutions : nullptr, ui_message_handler);
     return CPROVER_EXIT_SUCCESS;
   }
 

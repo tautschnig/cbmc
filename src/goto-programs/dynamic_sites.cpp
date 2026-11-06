@@ -170,6 +170,7 @@ static irep_idt marked_site(const goto_programt::instructiont &instruction)
 
 void show_dynamic_sites(
   const goto_modelt &goto_model,
+  const dynamic_resolutionst *resolutions,
   ui_message_handlert &message_handler)
 {
   // Each site once, although conversion may copy it (into functions,
@@ -185,13 +186,42 @@ void show_dynamic_sites(
     }
   }
 
+  // The candidates of a site, or nothing if there are no resolutions or
+  // the site has none (any value).
+  const auto candidates =
+    [resolutions](const irep_idt &site) -> const std::set<std::string> *
+  {
+    if(resolutions == nullptr)
+      return nullptr;
+    const auto found = resolutions->find(site);
+    return found == resolutions->end() ? nullptr : &found->second;
+  };
+
   messaget log{message_handler};
   switch(message_handler.get_ui())
   {
   case ui_message_handlert::uit::PLAIN:
     for(const auto &site : sites)
     {
-      log.result() << site.first << ": " << site.second << messaget::eom;
+      log.result() << site.first << ": " << site.second;
+      if(resolutions != nullptr)
+      {
+        const auto *found = candidates(site.first);
+        if(found == nullptr)
+          log.result() << ": unresolved";
+        else
+        {
+          log.result() << ": {";
+          bool first = true;
+          for(const auto &candidate : *found)
+          {
+            log.result() << (first ? " \"" : ", \"") << candidate << '"';
+            first = false;
+          }
+          log.result() << " }";
+        }
+      }
+      log.result() << messaget::eom;
     }
     break;
   case ui_message_handlert::uit::JSON_UI:
@@ -199,9 +229,24 @@ void show_dynamic_sites(
     json_arrayt json_sites;
     for(const auto &site : sites)
     {
-      json_sites.push_back(json_objectt{
+      json_objectt json_site{
         {"site", json_stringt{site.first}},
-        {"sourceLocation", json(site.second)}});
+        {"sourceLocation", json(site.second)}};
+      if(resolutions != nullptr)
+      {
+        const auto *found = candidates(site.first);
+        if(found == nullptr)
+          json_site["resolved"] = jsont::json_boolean(false);
+        else
+        {
+          json_site["resolved"] = jsont::json_boolean(true);
+          json_arrayt json_candidates;
+          for(const auto &candidate : *found)
+            json_candidates.push_back(json_stringt{candidate});
+          json_site["candidates"] = std::move(json_candidates);
+        }
+      }
+      json_sites.push_back(std::move(json_site));
     }
     log.result() << json_objectt{{"dynamicSites", std::move(json_sites)}};
     log.result() << messaget::eom;
@@ -215,6 +260,16 @@ void show_dynamic_sites(
       xmlt &xml_site = xml_sites.new_element("site");
       xml_site.set_attribute("id", id2string(site.first));
       xml_site.new_element(xml(site.second));
+      if(resolutions != nullptr)
+      {
+        const auto *found = candidates(site.first);
+        xml_site.set_attribute_bool("resolved", found != nullptr);
+        if(found != nullptr)
+        {
+          for(const auto &candidate : *found)
+            xml_site.new_element("candidate").data = candidate;
+        }
+      }
     }
     log.result() << xml_sites << messaget::eom;
     break;

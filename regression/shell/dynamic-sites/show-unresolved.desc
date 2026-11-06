@@ -1,0 +1,10 @@
+CORE
+environment.sh
+--resolve-dynamic-sites --show-dynamic-sites
+^EXIT=0$
+^SIGNAL=0$
+^shell-command-name:environment.sh:.*: unresolved$
+--
+^warning: ignoring
+--
+A site whose name may be any value is shown as unresolved.

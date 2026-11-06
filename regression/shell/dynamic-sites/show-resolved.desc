@@ -1,0 +1,11 @@
+CORE
+main.sh
+--resolve-dynamic-sites --show-dynamic-sites
+^EXIT=0$
+^SIGNAL=0$
+^shell-command-name:main.sh:10:1: file main.sh line 10 column 1: \{ "greet", "true" \}$
+--
+^warning: ignoring
+--
+With --resolve-dynamic-sites, --show-dynamic-sites also shows the
+candidates of each site.

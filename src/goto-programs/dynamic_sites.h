@@ -82,9 +82,10 @@ code_function_callt dynamic_site_marker(
   const source_locationt &location);
 
 /// Show the dynamic sites of \p goto_model: the identifier and location of
-/// each.
+/// each, and its candidates in \p resolutions, if given.
 void show_dynamic_sites(
   const goto_modelt &goto_model,
+  const dynamic_resolutionst *resolutions,
   ui_message_handlert &message_handler);
 
 /// Replace the markers of dynamic sites by skips, and remove
