@@ -368,6 +368,37 @@ The shell front-end's sites, in order of the census:
   identifiers, which made the 24 refined string kernels take 216 s rather
   than 39 s.
 
+- Templates (6 Nov 2026). Candidates are a regular language of a
+  restricted shape: a finite union of at most 16 templates
+  L0 Σ* L1 … Σ* Ln of at most 5 holes, with concatenation exact. Finite
+  sets are templates without holes, and "contains /" is Σ* / Σ*. In JSON,
+  a candidate is a string or the array of a template's parts.
+  - Command names: the functions and builtins whose names a template
+    matches get branches, and other names it matches run a utility. On
+    the 244 scripts, 218 distinct sites are resolved (99 with templates)
+    rather than 181, and 245 stay unresolved rather than 282.
+  - The text of eval and trap: each hole of a template becomes a quoted
+    reference to a ghost variable that holds its part, checked to be in
+    the class of its position (see `shell_convert_templates.cpp`); a
+    hole in a command name makes a dynamic command name, and one in the
+    name of a variable dispatches over the script's variables. Parsed
+    text has a file name of its own (`FILE#eval-LINE-COLUMN`), so that
+    its sites have identifiers of their own.
+  - On the 135 scripts with unknown eval and EXIT trap text: 137 eval
+    sites and all 11 trap sites have templates, and 36 eval sites stay
+    unresolved (157 before). Of the template candidates, 544 are usable,
+    20 have a hole elsewhere, and 14 do not convert for other reasons
+    (such as `${1+"$@"}`).
+  - Verifying the 70 scripts with usable templates (cvc5, `--unwind 2`,
+    180 s) decides 336 site assertions, which all hold, and 297 class
+    checks, of which 12 fail: `eval set -- $VAR`, whose values have
+    blanks by design (it needs a model of field splitting of the parts),
+    and trap actions with file names from `mktemp`, whose output the model
+    does not restrict (it needs specifications of utilities' output).
+  - With refined strings, the decomposition of a value into parts is
+    slow: a test that cvc5 decides in seconds did not finish in 30
+    minutes.
+
 ## Spikes (5 Nov 2026)
 
 Measured on the 244 census scripts that convert and have dynamic command
@@ -442,37 +473,6 @@ sites whose value may be any string:
   regular languages;
 - 55 are positional parameters, which need values of function arguments;
 - 32 are never assigned, so their values come from the environment.
-
-- Templates (6 Nov 2026). Candidates are a regular language of a
-  restricted shape: a finite union of at most 16 templates
-  L0 Σ* L1 … Σ* Ln of at most 5 holes, with concatenation exact. Finite
-  sets are templates without holes, and "contains /" is Σ* / Σ*. In JSON,
-  a candidate is a string or the array of a template's parts.
-  - Command names: the functions and builtins whose names a template
-    matches get branches, and other names it matches run a utility. On
-    the 244 scripts, 218 distinct sites are resolved (99 with templates)
-    rather than 181, and 245 stay unresolved rather than 282.
-  - The text of eval and trap: each hole of a template becomes a quoted
-    reference to a ghost variable that holds its part, checked to be in
-    the class of its position (see `shell_convert_templates.cpp`); a
-    hole in a command name makes a dynamic command name, and one in the
-    name of a variable dispatches over the script's variables. Parsed
-    text has a file name of its own (`FILE#eval-LINE-COLUMN`), so that
-    its sites have identifiers of their own.
-  - On the 135 scripts with unknown eval and EXIT trap text: 137 eval
-    sites and all 11 trap sites have templates, and 36 eval sites stay
-    unresolved (157 before). Of the template candidates, 544 are usable,
-    20 have a hole elsewhere, and 14 do not convert for other reasons
-    (such as `${1+"$@"}`).
-  - Verifying the 70 scripts with usable templates (cvc5, `--unwind 2`,
-    180 s) decides 336 site assertions, which all hold, and 297 class
-    checks, of which 12 fail: `eval set -- $VAR`, whose values have
-    blanks by design (it needs a model of field splitting of the parts),
-    and trap actions with file names from `mktemp`, whose output the model
-    does not restrict (it needs specifications of utilities' output).
-  - With refined strings, the decomposition of a value into parts is
-    slow: a test that cvc5 decides in seconds did not finish in 30
-    minutes.
 
 ## Spike: templates (6 Nov 2026)
 
