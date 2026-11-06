@@ -426,6 +426,40 @@ The shell front-end's sites, in order of the census:
     sets grow to about 300 terms and the SAT problem to 780 000
     variables over 8 refinements.
 
+- Utility output, split holes and quoted holes (7 Nov 2026).
+  - The output of a command substitution that is one call of a specified
+    utility follows its specification, an assumption about the utility
+    that the platform provides (`shell_convert_utilities.cpp`). The first
+    is `mktemp`, as the union of GNU, BSD and busybox outputs. With it,
+    `trap "rm -f $f" EXIT` for `f=$(mktemp /dev/shm/x.XXXX)` is shown to
+    be one word; without a template, `$TMPDIR` may have a blank, which is
+    reported.
+  - An unquoted hole in a word that is split into fields may hold several
+    words, and becomes an unquoted reference, so that `eval "set -- -v
+    $opts"` splits as parsing would. cvc5 is slow on field splitting of
+    unknown values (214 s for `set -- -v $x`, 8 s with refined strings),
+    so 8 census scripts with `eval set -- "$(getopt ...)"` time out at
+    180 s with cvc5 where the class check failed at once before. Their
+    texts are getopt output, with quoted words: they need a specification
+    of getopt's output and a class of quoted word lists.
+  - With native strings, a hole in single quotes may hold `'\''`, as
+    quoting a value for the shell makes; its ghost variable holds the
+    part with each `'\''` replaced by `'`. The string refinement solver
+    did not decide this in 300 s (cvc5: 4 s), so refined strings keep the
+    stricter class. The census texts with such holes (zgrep and
+    relatives) build the quoted list in a loop, which no template
+    describes.
+  - `${1+"$@"}` alone is `"$@"`; it was not supported.
+  - On the 70 census scripts with usable templates, 4 class checks fail
+    rather than 12 (two trap actions with names from `mktemp` without a
+    template, or with a variable template, and `eval "echo
+    \${XDG_$1_DIR:-...}"` with an argument that may not be a name); 33
+    rather than 24 time out.
+  - The string refinement solver reports `case "$1ab" in *ab*)` as not
+    matching (a false alarm, also before these changes): its not-contains
+    constraints for index_of do not converge, and it then treats the
+    model as a counterexample. This is in the solver (#4).
+
 ## Spikes (5 Nov 2026)
 
 Measured on the 244 census scripts that convert and have dynamic command
