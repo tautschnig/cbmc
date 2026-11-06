@@ -4,7 +4,7 @@ template-trap.sh
 ^EXIT=10$
 ^SIGNAL=0$
 ^\[shell-dynamic-site\.1\] .* "rm -f "\*: SUCCESS$
-^\[shell-unsupported\.1\] .* the parts of the action of trap for the holes of "rm -f "\* are words .*: FAILURE$
+^\[shell-unsupported\.1\] .* the parts of the action of trap for the holes of "rm -f "\* have no character .*: FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring

@@ -1,0 +1,15 @@
+CORE
+template-quoted.sh
+--resolve-dynamic-sites --cvc5
+^EXIT=0$
+^SIGNAL=0$
+^\[shell-dynamic-site\.1\] .*: SUCCESS$
+^\[shell-unsupported\.1\] .* the parts of the text of eval for the holes of .* have no character .*: SUCCESS$
+^\[assertion\.1\] .* = "pre\$\{x\}'z": SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+A hole in single quotes whose part has '\'', as quoting a value for the
+shell makes: the ghost variable holds the part with each '\'' replaced
+by '. (With refined strings, a part with ' is reported instead.)

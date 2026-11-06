@@ -236,7 +236,7 @@ void shell_convertert::convert_dynamic_eval(
         in_classes,
         "shell-unsupported",
         "the parts of the text of eval for the holes of " + what +
-          " are words without blanks, quotes or other special characters "
+          " have no character that their positions give a meaning "
           "(other parts are not supported)",
         loc);
       add(branch, code_assumet{in_classes}, loc);

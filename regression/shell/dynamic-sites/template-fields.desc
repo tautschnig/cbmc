@@ -1,0 +1,16 @@
+CORE
+template-fields.sh
+--resolve-dynamic-sites
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-dynamic-site\.1\] .*: SUCCESS$
+^\[shell-unsupported\.1\] .* the parts of the text of eval for the holes of "set -- -v "\* have no character .*: SUCCESS$
+^\[assertion\.1\] .* = -v: SUCCESS$
+^\[shell-argument-count\.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The hole's part is split into fields with the default IFS, as parsing the
+text would: here, lower-case words and blanks. (cvc5 is slow on field
+splitting of unknown values, with or without eval.)

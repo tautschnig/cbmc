@@ -1484,6 +1484,80 @@ exprt shell_convertert::segment_at(
   return conjunction(conditions);
 }
 
+exprt shell_convertert::payload_replace_all(
+  const exprt &payload,
+  const std::string &needle,
+  const std::string &replacement,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  PRECONDITION(!needle.empty());
+  if(native())
+  {
+    return string_function(
+      ID_cprover_string_replace_all_func,
+      {payload, payload_literal(needle), payload_literal(replacement)},
+      payload_type(),
+      dest,
+      loc);
+  }
+  // Each round replaces the first occurrence at or after a position; as
+  // inputs have at most max_length bytes, that many rounds replace each.
+  const exprt zero = from_integer(0, integer_type());
+  const exprt needle_length = from_integer(needle.size(), integer_type());
+  const exprt replacement_length =
+    from_integer(replacement.size(), integer_type());
+  const symbol_exprt result = temporary(payload_type(), dest, loc);
+  assign(dest, result, payload, loc);
+  const symbol_exprt from = temporary(integer_type(), dest, loc);
+  assign(dest, from, zero, loc);
+  const symbol_exprt more = temporary(bool_typet{}, dest, loc);
+  assign(dest, more, true_exprt{}, loc);
+  const std::size_t rounds = max_length / needle.size() + 1;
+  for(std::size_t k = 0; k < rounds; ++k)
+  {
+    code_blockt round;
+    const symbol_exprt found = temporary(integer_type(), round, loc);
+    assign(
+      round,
+      found,
+      payload_index_of(result, payload_literal(needle), from, round, loc),
+      loc);
+    code_blockt replace;
+    const exprt length = payload_length(result, replace, loc);
+    const exprt joined = payload_concat(
+      payload_concat(
+        payload_substring(result, zero, found, replace, loc),
+        payload_literal(replacement),
+        replace,
+        loc),
+      payload_substring(
+        result, plus_exprt{found, needle_length}, length, replace, loc),
+      replace,
+      loc);
+    assign(replace, from, plus_exprt{found, replacement_length}, loc);
+    assign(replace, result, joined, loc);
+    code_blockt stop;
+    assign(stop, more, false_exprt{}, loc);
+    add(
+      round,
+      code_ifthenelset{
+        binary_relation_exprt{found, ID_ge, zero},
+        std::move(replace),
+        std::move(stop)},
+      loc);
+    add(dest, code_ifthenelset{more, std::move(round)}, loc);
+  }
+  // Any occurrence left (in a longer string) is reported.
+  check(
+    dest,
+    not_exprt{more},
+    "shell-unsupported",
+    "a string of at most --shell-max-string-length bytes is replaced in",
+    loc);
+  return result;
+}
+
 exprt shell_convertert::payload_index_of_set(
   const exprt &s,
   const exprt &from,

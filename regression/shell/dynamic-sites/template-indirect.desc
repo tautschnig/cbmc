@@ -5,9 +5,9 @@ template-indirect.sh
 ^SIGNAL=0$
 ^Dynamic sites: 2 resolved, 0 unreachable, 0 unresolved \(3 rounds\)$
 ^\[shell-dynamic-site\.1\] .* "value=\$\{kopt_"\*"\}": SUCCESS$
-^\[shell-unsupported\.1\] .* the parts of the text of eval for the holes of "value=\$\{kopt_"\*"\}" are words .*: FAILURE$
+^\[shell-unsupported\.1\] .* the parts of the text of eval for the holes of "value=\$\{kopt_"\*"\}" have no character .*: FAILURE$
 ^\[assertion\.1\] .* = /dev/sda1: SUCCESS$
-^\[shell-unsupported\.2\] .* the parts of the text of eval for the holes of \*"=on" are words .*: SUCCESS$
+^\[shell-unsupported\.2\] .* the parts of the text of eval for the holes of \*"=on" have no character .*: SUCCESS$
 ^\[assertion\.2\] .* = on: SUCCESS$
 ^\[shell-unsupported\.3\] .* the name of the assignment to \* is of a variable of the script .*: SUCCESS$
 ^VERIFICATION FAILED$

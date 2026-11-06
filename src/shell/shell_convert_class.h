@@ -1073,6 +1073,14 @@ private:
     code_blockt &dest,
     const source_locationt &loc);
   /// Whether payload \p s contains a byte of \p set.
+  /// \p payload with each occurrence of \p needle, from the left, replaced
+  /// by \p replacement.
+  exprt payload_replace_all(
+    const exprt &payload,
+    const std::string &needle,
+    const std::string &replacement,
+    code_blockt &dest,
+    const source_locationt &loc);
   /// For refined strings: the first index at or after \p from of a byte of
   /// \p set in payload \p s, or -1.
   exprt payload_index_of_set(
@@ -1512,6 +1520,8 @@ public:
   enum class hole_classt
   {
     UNQUOTED,
+    /// Unquoted in a word that is split into fields.
+    FIELDS,
     DOUBLE_QUOTED,
     SINGLE_QUOTED,
     /// In the name of a variable, after its start.

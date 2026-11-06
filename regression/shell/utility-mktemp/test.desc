@@ -4,9 +4,9 @@ main.sh
 ^EXIT=10$
 ^SIGNAL=0$
 ^\[assertion\.1\] .* 0 = 1: SUCCESS$
-^\[shell-unsupported\.1\] .* the parts of the action of trap for the holes of "rm -f /dev/shm/\.vigpg-"\* are words .*: SUCCESS$
+^\[shell-unsupported\.1\] .* the parts of the action of trap for the holes of "rm -f /dev/shm/\.vigpg-"\* have no character .*: SUCCESS$
 ^\[assertion\.2\] .* 0 = 2: SUCCESS$
-^\[shell-unsupported\.[0-9]+\] .* the parts of the action of trap for the holes of "rm -rf "\*"tmp\."\* are words .*: FAILURE$
+^\[shell-unsupported\.[0-9]+\] .* the parts of the action of trap for the holes of "rm -rf "\*"tmp\."\* have no character .*: FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring

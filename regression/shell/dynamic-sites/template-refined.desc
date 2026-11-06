@@ -4,7 +4,7 @@ template-refined.sh
 ^EXIT=10$
 ^SIGNAL=0$
 ^\[shell-dynamic-site\.1\] .* "echo installing "\*" >&2": SUCCESS$
-^\[shell-unsupported\.1\] .* the parts of the text of eval for the holes of "echo installing "\*" >&2" are words .*: FAILURE$
+^\[shell-unsupported\.1\] .* the parts of the text of eval for the holes of "echo installing "\*" >&2" have no character .*: FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring

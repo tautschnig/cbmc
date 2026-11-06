@@ -12,8 +12,15 @@
 /// - unquoted: a non-empty string of letters, digits and _ . / : + @ % = -
 ///   (no blanks, quotes, expansions, operators, pattern or brace
 ///   characters, and no tilde);
+/// - unquoted in a word that is split into fields (a command's words, and
+///   the words of for): also spaces and tabs, possibly empty, as the
+///   reference is then unquoted, so that field splitting with the default
+///   IFS makes the same words as parsing the text;
 /// - in double quotes: no ", \, $ or `;
-/// - in single quotes (or $'...'): no ' or \.
+/// - in single quotes (or $'...'): no ' or \, except, with native strings,
+///   in '\'' (which ends the quotes, adds a quoted ', and starts them
+///   again, as quoting a value for the shell does); the ghost variable then
+///   holds the part with each '\'' replaced by '.
 ///
 /// A hole in a command name makes it a dynamic command name (see
 /// convert_dynamic_simple). A hole in the name of a parameter expansion, or
@@ -112,7 +119,10 @@ public:
     return result;
   }
 
-  void rewrite(std::vector<shell_word_partt> &parts, bool in_double_quotes)
+  void rewrite(
+    std::vector<shell_word_partt> &parts,
+    bool in_double_quotes,
+    bool fields = false)
   {
     using kindt = shell_word_partt::kindt;
     std::vector<shell_word_partt> result;
@@ -150,7 +160,9 @@ public:
           reference.kind = kindt::PARAMETER;
           reference.text = ghosts[hole->first];
           reference.location = part.location;
-          if(in_double_quotes)
+          const bool split =
+            fields && !in_double_quotes && part.kind == kindt::LITERAL;
+          if(in_double_quotes || split)
             result.push_back(std::move(reference));
           else
           {
@@ -164,6 +176,7 @@ public:
             hole->first,
             part.kind == kindt::QUOTED_LITERAL ? classt::SINGLE_QUOTED
             : in_double_quotes                 ? classt::DOUBLE_QUOTED
+            : split                            ? classt::FIELDS
                                                : classt::UNQUOTED);
           from = hole->second + placeholders[hole->first].size();
         }
@@ -185,8 +198,8 @@ public:
         name_hole(part.text);
         if(mentions(part.index))
           failed = true;
-        rewrite(part.parts, in_double_quotes);
-        rewrite(part.replacement, in_double_quotes);
+        rewrite(part.parts, in_double_quotes, fields);
+        rewrite(part.replacement, in_double_quotes, fields);
       }
       else if(part.kind == kindt::COMMAND_SUBSTITUTION)
       {
@@ -246,9 +259,20 @@ public:
       for(auto &element : assignment.elements)
         rewrite(element, false);
     }
-    // A hole in the command name makes it a dynamic command name.
-    for(auto &word : command.words)
-      rewrite(word, false);
+    // A hole in the command name makes it a dynamic command name. The
+    // words are split into fields, except the arguments of declaration
+    // utilities, which some shells expand as assignments (XCU 2.9.1.1).
+    static const std::set<std::string> declaration{
+      "export", "readonly", "local", "declare", "typeset"};
+    bool declares = false;
+    if(!command.words.empty() && command.words.front().size() == 1)
+    {
+      const auto &front = command.words.front().front();
+      declares = front.kind == shell_word_partt::kindt::LITERAL &&
+                 declaration.count(front.text) != 0;
+    }
+    for(std::size_t i = 0; i < command.words.size(); ++i)
+      rewrite(command.words[i], false, i == 0 || !declares);
     for(auto &test : command.test)
       rewrite(test);
     for(auto &redirect : command.redirects)
@@ -261,7 +285,7 @@ public:
     rewrite(command.condition);
     rewrite(command.else_body);
     for(auto &item : command.for_items)
-      rewrite(item, false);
+      rewrite(item, false, true);
     rewrite(command.case_word, false);
     for(auto &item : command.case_items)
     {
@@ -441,6 +465,18 @@ exprt shell_convertert::template_parts(
       }
       conditions.push_back(binary_relation_exprt{end, ID_gt, start});
       break;
+    case hole_classt::FIELDS:
+      forbidden.set();
+      for(int c = 0; c < 256; ++c)
+      {
+        if(
+          std::isalnum(c) ||
+          std::string{"_./:+@%=- \t"}.find(char(c)) != std::string::npos)
+        {
+          forbidden.reset(c);
+        }
+      }
+      break;
     case hole_classt::DOUBLE_QUOTED:
       for(const unsigned char c : {'"', '\\', '$', '`'})
         forbidden.set(c);
@@ -448,6 +484,16 @@ exprt shell_convertert::template_parts(
     case hole_classt::SINGLE_QUOTED:
       for(const unsigned char c : {'\'', '\\'})
         forbidden.set(c);
+      // With native strings, also '\'', which the string refinement solver
+      // decides slowly (a probe timed out at 300 s rather than taking 4 s).
+      if(native())
+      {
+        const exprt rest = payload_replace_all(
+          payload_substring(v, start, end, dest, loc), "'\\''", "", dest, loc);
+        conditions.push_back(
+          not_exprt{payload_contains_byte(rest, forbidden, dest, loc)});
+        continue;
+      }
       break;
     case hole_classt::NAME:
     case hole_classt::NAME_START:
@@ -481,12 +527,12 @@ void shell_convertert::assign_template_parts(
 {
   for(std::size_t i = 0; i < parts.bounds.size(); ++i)
   {
-    assign_variable(
-      code.ghosts[i],
-      make_value(payload_substring(
-        parts.value, parts.bounds[i].first, parts.bounds[i].second, dest, loc)),
-      dest,
-      loc);
+    exprt part = payload_substring(
+      parts.value, parts.bounds[i].first, parts.bounds[i].second, dest, loc);
+    // In single quotes, '\'' is a quoted ' (see template_parts).
+    if(code.classes[i] == hole_classt::SINGLE_QUOTED && native())
+      part = payload_replace_all(part, "'\\''", "'", dest, loc);
+    assign_variable(code.ghosts[i], make_value(part), dest, loc);
   }
 }
 

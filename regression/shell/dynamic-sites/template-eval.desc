@@ -5,9 +5,9 @@ template-eval.sh
 ^SIGNAL=0$
 ^Dynamic sites: 2 resolved, 0 unreachable, 0 unresolved \(3 rounds\)$
 ^\[shell-dynamic-site\.1\] .* "echo installing "\*" >&2", "echo installing "\*" >/dev/null": SUCCESS$
-^\[shell-unsupported\.1\] .* the parts of the text of eval for the holes of "echo installing "\*" >&2" are words .*: FAILURE$
+^\[shell-unsupported\.1\] .* the parts of the text of eval for the holes of "echo installing "\*" >&2" have no character .*: FAILURE$
 ^\[shell-dynamic-site\.2\] .* "value=\\""\*"\\"": SUCCESS$
-^\[shell-unsupported\.3\] .* the parts of the text of eval for the holes of "value=\\""\*"\\"" are words .*: SUCCESS$
+^\[shell-unsupported\.3\] .* the parts of the text of eval for the holes of "value=\\""\*"\\"" have no character .*: SUCCESS$
 ^\[assertion\.1\] .*: SUCCESS$
 ^VERIFICATION FAILED$
 --
