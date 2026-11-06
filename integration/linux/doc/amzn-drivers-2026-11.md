@@ -417,3 +417,83 @@ an error path is usually what it *does* clean up:
 
 So `ena_tx_queue_setup` unwinds its own allocations correctly on every failure
 path; the defect is entirely in what the *release* function assumes.
+
+## F11: device-controlled out-of-bounds read in the FreeBSD TX cleanup path
+
+FreeBSD only, confirmed by proof with a concrete counterexample. The DPDK
+driver does **not** have this: its `validate_tx_req_id` range-checks before
+indexing, and its cleanup loop breaks on error before dereferencing.
+
+Three pieces have to be read together.
+
+`ena_com_tx_comp_req_id_get` (shared, `ena-com/ena_eth_com.h`) writes the
+device's value into `*req_id` **before** rejecting it:
+
+```c
+*req_id = READ_ONCE16(cdesc->req_id);
+if (unlikely(*req_id >= io_cq->q_depth)) {
+        ena_trc_err(..., "Invalid req id %d\n", cdesc->req_id);
+        return ENA_COM_INVAL;            /* *req_id already holds the bad value */
+}
+```
+
+FreeBSD's `validate_tx_req_id` (`ena.c:573`) does **no range check at all** --
+it only inspects the return code and triggers a device reset:
+
+```c
+if (unlikely(tx_req_id_rc != 0)) { ... ena_trigger_reset(...); return (EFAULT); }
+return (0);
+```
+
+and `ena_get_tx_req_id` (`ena_datapath.c:211`) then dereferences regardless of
+what validation said:
+
+```c
+int rc = ena_com_tx_comp_req_id_get(io_cq, req_id);
+if (unlikely(rc == ENA_COM_TRY_AGAIN))
+        return (EAGAIN);
+rc = validate_tx_req_id(tx_ring, *req_id, rc);
+if (unlikely(tx_ring->tx_buffer_info[*req_id].mbuf == NULL)) {   /* line 222 */
+```
+
+So when the device reports a `req_id` outside the ring, the driver reads
+`tx_buffer_info[req_id]` anyway.
+
+**Proven, with a counterexample.** `harness_fbsd_cleanup.c` makes the
+completion-descriptor ring nondeterministic -- it is device-written memory --
+and lets the real `ena_com` code run on it. At ring 4, `--unwind 6`,
+`--sat-solver cadical`:
+
+```
+[ena_get_tx_req_id.pointer_dereference.29] dereference failure:
+  pointer outside object bounds in (tx_buffer_info + *req_id)->mbuf: FAILURE
+```
+
+with the trace giving `req_id = 65535`, i.e. a read about
+`65535 * sizeof(struct ena_tx_buffer)` bytes past a four-entry array. No
+unwinding assertion failed in that run, so the bound was adequate. At
+`--unwind 2` the same property reports SUCCESS because the path is not
+reached -- a reminder that a passing bounded property means nothing until the
+unwinding assertions pass.
+
+Impact is an out-of-bounds **read** at a device-chosen offset, up to 64 Ki
+slots past the array: a panic on an unmapped page, and otherwise a branch on
+out-of-bounds kernel memory. It is not a write. A device reset is triggered on
+this path anyway, so the fix costs nothing: check the range before
+dereferencing, or return early when `validate_tx_req_id` fails.
+
+`ena_netmap.c:816` calls the same validator and deserves the same review.
+
+### Not established in the same run
+
+The run also reported 30 failures, and four obligations in the harness --
+`FREE_ONCE`, `DMA_UNMAPPED_BEFORE_FREE` (no mbuf released while its DMA
+mapping is still loaded, which is Unveil class A), `INV_NTC` and
+`OWN_NO_DANGLING` -- report SUCCESS. **Those SUCCESSes are not claimed.** By
+our own issue-C rule a verdict from a run containing failures is degraded, and
+the failures include bodyless `device_printf`, `__mtx_lock_flags` and
+`__mtx_unlock_flags`, which cut paths. Two further failures are the
+`descs_per_entry` division by zero in `ena_com_sq_have_enough_space`, which is
+the `INV_DEV_LLQ` clause the DPDK work already identified and which this
+harness does not yet assume. Making those obligations stand needs stubs for
+the three kernel functions and the `INV_DEV_LLQ` assumption, then a re-run.
