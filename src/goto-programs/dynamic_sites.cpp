@@ -97,9 +97,13 @@ code_function_callt dynamic_site_marker(
     function.location = location;
     symbol_table.add(function);
   }
+  // The location of each call, rather than of the symbol, which is that of
+  // the first site.
+  symbol_exprt function =
+    symbol_table.lookup_ref(DYNAMIC_SITE_FUNCTION).symbol_expr();
+  function.add_source_location() = location;
   code_function_callt call{
-    symbol_table.lookup_ref(DYNAMIC_SITE_FUNCTION).symbol_expr(),
-    {constant_exprt{site_id, string_typet{}}, value}};
+    function, {constant_exprt{site_id, string_typet{}}, value}};
   call.add_source_location() = location;
   return call;
 }
