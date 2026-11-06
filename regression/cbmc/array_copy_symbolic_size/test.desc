@@ -1,0 +1,15 @@
+CORE
+main.c
+--no-standard-checks
+^EXIT=10$
+^SIGNAL=0$
+^\[main.assertion.1\] .* replaced: SUCCESS$
+^\[main.assertion.2\] .* kept: SUCCESS$
+^\[main.assertion.3\] .* copied: SUCCESS$
+^\[main.assertion.4\] .* arbitrary: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+array_copy and array_replace between arrays of the same element type and
+symbolic sizes are lowered element by element rather than through bytes.

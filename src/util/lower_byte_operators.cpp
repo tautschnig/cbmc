@@ -1212,8 +1212,121 @@ static std::optional<exprt> lower_byte_extract_complex(
 
 /// rewrite byte extraction from an array to byte extraction from a
 /// concatenation of array index expressions
+/// If \p array_type and \p other_type are arrays of the same element type,
+/// of a known non-zero size in bytes, and \p offset (in bytes) is a
+/// multiple of that size, the offset in elements, else nil. Then a byte
+/// operator between them is one of whole elements, whose lowering need not
+/// go through bytes: the byte-wise lowering of arrays of symbolic size is an
+/// array comprehension over the bytes of each element, with divisions by
+/// the element size, which the array theory instantiates for every index.
+static exprt element_offset(
+  const typet &array_type,
+  const typet &other_type,
+  const exprt &offset,
+  std::size_t bits_per_byte,
+  const namespacet &ns)
+{
+  // Arrays of constant size are lowered element by element already (and
+  // callers rely on array expressions for them).
+  if(
+    array_type.id() != ID_array || other_type.id() != ID_array ||
+    to_array_type(array_type).size().is_constant())
+  {
+    return nil_exprt{};
+  }
+  const typet &element = to_array_type(array_type).element_type();
+  if(element != to_array_type(other_type).element_type())
+    return nil_exprt{};
+  const auto element_bits = pointer_offset_bits(element, ns);
+  if(
+    !element_bits.has_value() || *element_bits == 0 ||
+    *element_bits % bits_per_byte != 0 || element.id() == ID_bool ||
+    element.id() == ID_c_bit_field)
+  {
+    return nil_exprt{};
+  }
+  const mp_integer element_bytes = *element_bits / bits_per_byte;
+  const exprt size = from_integer(element_bytes, offset.type());
+  if(!simplify_expr(mod_exprt{offset, size}, ns).is_zero())
+    return nil_exprt{};
+  return simplify_expr(div_exprt{offset, size}, ns);
+}
+
+/// A byte extract of an array from an array of the same element type at a
+/// whole number of elements (see element_offset), element by element.
+static std::optional<exprt>
+lower_byte_extract_elements(const byte_extract_exprt &src, const namespacet &ns)
+{
+  const exprt index_offset = element_offset(
+    src.type(), src.op().type(), src.offset(), src.get_bits_per_byte(), ns);
+  if(index_offset.is_nil())
+    return {};
+  const array_typet &type = to_array_type(src.type());
+  const typet &op_index_type = to_array_type(src.op().type()).index_type();
+  static std::size_t counter = 0;
+  const symbol_exprt index{
+    "$array_comprehension_index_e" + std::to_string(++counter),
+    type.index_type()};
+  // Beyond the end of op, the elements are unconstrained, as are its bytes
+  // there.
+  // At offset 0 (the usual case: a copy of a whole array), the indices of
+  // the result are those of op, so that the array theory does not add
+  // index terms.
+  exprt op_index = typecast_exprt::conditional_cast(index, op_index_type);
+  if(!index_offset.is_zero())
+  {
+    op_index = plus_exprt{
+      op_index, typecast_exprt::conditional_cast(index_offset, op_index_type)};
+  }
+  return array_comprehension_exprt{
+    index, index_exprt{src.op(), simplify_expr(op_index, ns)}, type};
+}
+
+/// A byte update of an array with an array of the same element type at a
+/// whole number of elements (see element_offset), element by element.
+static std::optional<exprt>
+lower_byte_update_elements(const byte_update_exprt &src, const namespacet &ns)
+{
+  const exprt index_offset = element_offset(
+    src.type(), src.value().type(), src.offset(), src.get_bits_per_byte(), ns);
+  if(index_offset.is_nil())
+    return {};
+  const array_typet &type = to_array_type(src.type());
+  const array_typet &value_type = to_array_type(src.value().type());
+  const typet &index_type = type.index_type();
+  static std::size_t counter = 0;
+  const symbol_exprt index{
+    "$array_comprehension_index_ue" + std::to_string(++counter), index_type};
+  const exprt first =
+    typecast_exprt::conditional_cast(index_offset, index_type);
+  const exprt end = simplify_expr(
+    plus_exprt{
+      first, typecast_exprt::conditional_cast(value_type.size(), index_type)},
+    ns);
+  // At offset 0, the indices of value are those of the result (see
+  // lower_byte_extract_elements).
+  const exprt value_index = simplify_expr(
+    typecast_exprt::conditional_cast(
+      first.is_zero() ? exprt{index} : exprt{minus_exprt{index, first}},
+      value_type.index_type()),
+    ns);
+  exprt in_value = binary_relation_exprt{index, ID_lt, end};
+  if(!first.is_zero())
+    in_value = and_exprt{binary_relation_exprt{index, ID_ge, first}, in_value};
+  return array_comprehension_exprt{
+    index,
+    if_exprt{
+      in_value,
+      index_exprt{src.value(), value_index},
+      index_exprt{src.op(), index}},
+    type};
+}
+
 exprt lower_byte_extract(const byte_extract_exprt &src, const namespacet &ns)
 {
+  if(auto elements = lower_byte_extract_elements(src, ns))
+    return *elements;
+
   // General notes about endianness and the bit-vector conversion:
   // A single byte with value 0b10001000 is stored (in irept) as
   // exactly this string literal, and its bit-vector encoding will be
@@ -2554,6 +2667,20 @@ exprt lower_byte_update(const byte_update_exprt &src, const namespacet &ns)
   // invalid pointers).
   if(src.type().id() == ID_empty || src.value().type().id() == ID_empty)
     return src.op();
+
+  // An update of an array of no elements (a dynamic object of size zero, say)
+  // changes nothing; lowering it byte by byte would build a chain as long
+  // as the update value.
+  if(
+    src.type().id() == ID_array &&
+    to_array_type(src.type()).size().is_constant() &&
+    to_constant_expr(to_array_type(src.type()).size()).is_zero())
+  {
+    return src.op();
+  }
+
+  if(auto elements = lower_byte_update_elements(src, ns))
+    return *elements;
 
   // byte_update lowering proceeds as follows:
   // 1) Determine the size of the update, with the size of the object to be
