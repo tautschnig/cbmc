@@ -267,14 +267,85 @@ The shell front-end's sites, in order of the census:
   identifiers, which made the 24 refined string kernels take 216 s rather
   than 39 s.
 
+## Spikes (5 Nov 2026)
+
+Measured on the 244 census scripts that convert and have dynamic command
+names (790 site occurrences), with a throwaway driver in `cbmc` and
+up to 5 rounds.
+
+**A. `variable-sensitivity` as the domain.** It does not handle strings:
+values of `string` type crash the interval and constant code paths
+(`constant_interval_exprt`, `to_constant_expr`). Supporting them would
+need a new abstract value kind throughout the framework. The analysis
+interface also needs two things from the marker: a body (an empty one
+suffices) and named parameters with symbols, which
+`dynamic_site_marker` now creates.
+
+**B. A dedicated string domain** (sets of at most 16 strings, or any
+string), over `ait` with the native representation. The table compares
+four variants on the census; values are summed over scripts.
+
+| Variant | Finished | Finite | Unreached | Any | Analysis time | Max memory |
+|---|---|---|---|---|---|---|
+| flow-sensitive, `std::map` | 217 of 244 | 94 | 248 | 339 | — | 3.9 GB (out of memory) |
+| flow-sensitive, `sharing_mapt`, only symbols that reach a site | 242 | 102 | 248 | 431 | 451 s | 3.9 GB |
+| same, with a call-stack history of 1 | 202 | 80 | 284 | 231 | 499 s | 3.9 GB |
+| flow-insensitive values, plus must-assigned and reachability | 244 | 90 | 269 | 425 | 43 s | 0.9 GB |
+
+- The flow-insensitive variant is ten times cheaper and never fails. It
+  is nearly as precise: 90 finite sites against 102.
+- Call-stack histories resolve some sites, such as values saved and
+  restored around subshells, but fail on 42 scripts.
+- The flow-insensitive variant needs one shell-independent refinement.
+  A static-lifetime symbol that `__CPROVER_initialize` sets from the
+  environment takes its flow-insensitive value only where the program
+  has assigned it on every path; elsewhere it is any string. That is a
+  must-assigned analysis.
+
+**C. Residual assertions catch analysis bugs.** A first flow-insensitive
+version ignored the environment. Of the 53 residual assertions decided
+in time, 9 failed, each a real case of a value that the candidates
+missed, such as `zcat=${ZCAT:-zstdcat}`. With the fix, all decided
+residual assertions hold (20 of 20). This confirms section 3: the model
+stays sound when the analysis is wrong.
+
+**D. The fixpoint.**
+- Rounds: 1 for 119 scripts, 2 for 112 and 3 for 13. None needed more.
+- Each round converts with native strings. The final conversion uses
+  the representation the user chose; site identifiers are the same in
+  both.
+- With the flow-sensitive variant, the loop took 1.7 times as long as a
+  single conversion at the median, 2.6 times at the 90th percentile and
+  3.8 times at most. Conversion dominates.
+
+**E. Verification.** The 39 scripts with finite sites were run with
+cvc5 and `--unwind 2`, at 180 s each.
+- 3 scripts that timed out without resolutions finished with them.
+- No script went the other way.
+- The scripts had 372 properties rather than 447, as dispatches have
+  fewer branches.
+
+**Decisions** (revising sections 2 and 4):
+- A dedicated string domain in `src/analyses`, not `variable-sensitivity`.
+- The flow-insensitive value analysis with must-assigned and
+  reachability first. Flow sensitivity and call-stack histories may
+  follow where the data show that they pay off.
+- A fresh `goto_modelt` each round, with native strings for the rounds.
+- Resolutions are joined across rounds, and a site whose value may be
+  any string stays unresolved. This makes rounds monotone.
+
+**What the remaining sites need.** By a syntactic classification of the
+sites whose value may be any string:
+- 161 assign expansions (command substitutions and parameters);
+- 103 are words with literal text, such as `$lib/ugc`, which need
+  regular languages;
+- 55 are positional parameters, which need values of function arguments;
+- 32 are never assigned, so their values come from the environment.
+
 ## Open questions
 
-- Should a front-end re-convert in place, or should each round build a fresh
-  `goto_modelt`? The shell front-end's state is per conversion, which favours
-  a fresh model.
-- How should the shell's string structure (set flag, value, integer cache)
-  appear to the domain: as a struct with a string member, or as a dedicated
-  abstract object?
-- Which candidate bound N, and which nesting bound?
+- Settled by the spikes: each round builds a fresh `goto_modelt`, and
+  the domain sees shell values as structs whose string member it tracks.
+- Which candidate bound N (the spikes used 16), and which nesting bound?
 - Whether to report, per site, why it remained unresolved. This would help
   to direct the work on precision.
