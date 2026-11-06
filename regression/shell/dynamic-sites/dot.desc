@@ -1,0 +1,12 @@
+CORE
+dot.sh
+--resolve-dynamic-sites --show-dynamic-sites
+^EXIT=0$
+^SIGNAL=0$
+^shell-dot:dot.sh:5:3: .*: unresolved$
+^shell-dot:dot.sh:7:3: .*: unresolved$
+--
+^warning: ignoring
+--
+Dot commands whose files are expansions are dynamic sites; these may be
+any file.

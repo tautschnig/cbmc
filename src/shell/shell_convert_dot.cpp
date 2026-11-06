@@ -11,6 +11,7 @@
 
 #include <util/unicode.h>
 
+#include <goto-programs/dynamic_sites.h>
 #include <goto-programs/goto_instruction_code.h>
 
 #include "shfmt_parser.h"
@@ -104,7 +105,25 @@ void shell_convertert::collect_dot_scripts(const shell_command_listt &list)
 {
   for(const auto &command : list)
   {
-    for(const auto &path : dot_script_paths(command))
+    std::vector<std::string> paths = dot_script_paths(command);
+    // The candidates of the dynamic site of the file name, if resolved. The
+    // identifier is only made for dot commands: interning more identifiers
+    // changes their order, to which the string solver is sensitive.
+    const auto name = command.kind == shell_commandt::kindt::SIMPLE &&
+                          command.words.size() >= 2 && !resolutions.empty()
+                        ? static_text(command.words.front())
+                        : std::nullopt;
+    const auto resolution = name.has_value() && is_dot_command(*name)
+                              ? resolutions.find(dot_site(command.location))
+                              : resolutions.end();
+    if(resolution != resolutions.end())
+    {
+      paths.insert(
+        paths.end(),
+        resolution->second.values.begin(),
+        resolution->second.values.end());
+    }
+    for(const auto &path : paths)
     {
       if(!path.empty() && path[0] == '/' && dot_scripts.count(path) == 0)
         load_dot_script(path, command.location);
@@ -168,6 +187,12 @@ void shell_convertert::load_dot_script(
   entry = std::move(dot);
   collect_dot_candidates(entry->commands);
   collect_dot_scripts(entry->commands);
+}
+
+irep_idt shell_convertert::dot_site(const source_locationt &loc)
+{
+  return "shell-dot:" + id2string(loc.get_file()) + ":" +
+         id2string(loc.get_line()) + ":" + id2string(loc.get_column());
 }
 
 std::string shell_convertert::dot_identifier(const std::string &path)
@@ -244,15 +269,43 @@ void shell_convertert::convert_dot(
     unsupported(loc, "arguments to .");
   const auto path = known_text(command.words[1]);
   if(
-    !path.has_value() || path->empty() || (*path)[0] != '/' ||
-    dot_scripts.count(*path) == 0)
+    path.has_value() && !path->empty() && (*path)[0] == '/' &&
+    dot_scripts.count(*path) != 0)
   {
-    // A file whose name is not known here, or that is found by a search
-    // of PATH or relative to the working directory: its contents are not
-    // known.
-    known_literals.clear();
+    convert_dot_script(command, *path, dest);
+    return;
+  }
+
+  // A file whose name is not known here, or that is found by a search of
+  // PATH or relative to the working directory: a dynamic site (see
+  // goto-programs/dynamic_sites.h), whose candidates with an absolute path
+  // that were read are run.
+  const irep_idt site = dot_site(loc);
+  const auto resolution = resolutions.find(site);
+  const bool resolved = resolution != resolutions.end() &&
+                        !resolution->second.containing.has_value();
+  known_literals.clear();
+  std::optional<symbol_exprt> file;
+  if(!path.has_value())
+  {
+    file = temporary(string_type(), dest, loc);
+    assign(
+      dest,
+      *file,
+      expand_word(command.words[1], shell_word_contextt::FIELD, dest, loc),
+      loc);
+    add(
+      dest,
+      dynamic_site_marker(site, *file, shell_mode(), symbol_table, loc),
+      loc);
+  }
+  if(!resolved || !file.has_value())
+  {
     for(std::size_t i = 1; i < command.words.size(); ++i)
-      expand_word(command.words[i], shell_word_contextt::IGNORED, dest, loc);
+    {
+      if(i != 1 || !file.has_value())
+        expand_word(command.words[i], shell_word_contextt::IGNORED, dest, loc);
+    }
     check(
       dest,
       false_exprt{},
@@ -265,9 +318,73 @@ void shell_convertert::convert_dot(
     return;
   }
 
+  // With a resolution: a branch for each candidate; any other value fails
+  // the check of the site.
+  std::string candidates;
+  for(const auto &text : resolution->second.values)
+    candidates += (candidates.empty() ? "" : ", ") + text;
+  code_blockt otherwise;
+  {
+    source_locationt check_loc = loc;
+    check_loc.set_property_class("shell-dynamic-site");
+    check_loc.set_comment(
+      "the file " + display(command.words[1]) + " of " + name +
+      " is one of the candidates of " + id2string(site) + ": " +
+      (candidates.empty() ? std::string{"none"} : candidates));
+    code_assertt assertion{false_exprt{}};
+    assertion.add_source_location() = check_loc;
+    otherwise.add(std::move(assertion));
+    add(otherwise, code_assumet{false_exprt{}}, loc);
+  }
+  shell_commandt copy = command;
+  for(auto it = resolution->second.values.rbegin();
+      it != resolution->second.values.rend();
+      ++it)
+  {
+    const std::string &text = *it;
+    code_blockt branch;
+    if(!text.empty() && text[0] == '/' && dot_scripts.count(text) != 0)
+    {
+      shell_word_partt part;
+      part.kind = shell_word_partt::kindt::QUOTED_LITERAL;
+      part.text = text;
+      part.location = command.words[1].front().location;
+      copy.words[1] = {part};
+      convert_dot_script(copy, text, branch);
+    }
+    else
+    {
+      check(
+        branch,
+        false_exprt{},
+        "shell-unsupported",
+        name + " " + display(command.words[1]) + " is not " + text +
+          " (a dot script whose absolute path is not known here is not "
+          "supported)",
+        loc);
+      add(branch, code_assumet{false_exprt{}}, loc);
+    }
+    code_ifthenelset choice{
+      equal(*file, string_literal(text, loc), dest, loc),
+      std::move(branch),
+      std::move(otherwise)};
+    otherwise = code_blockt{};
+    add(otherwise, std::move(choice), loc);
+  }
+  dest.append(otherwise);
+  known_literals.clear();
+}
+
+void shell_convertert::convert_dot_script(
+  const shell_commandt &command,
+  const std::string &path,
+  code_blockt &dest)
+{
+  const source_locationt &loc = command.location;
+  const bool has_arguments = command.words.size() > 2;
   // The dot script may assign any variable.
   known_literals.clear();
-  const auto &dot = dot_scripts.at(*path);
+  const auto &dot = dot_scripts.at(path);
   if(dot == nullptr)
   {
     // Not found: an error of a special builtin (XCU 2.8.1), but bash and
@@ -300,7 +417,7 @@ void shell_convertert::convert_dot(
   add(
     dest,
     code_function_callt{
-      symbol_table.lookup_ref(dot_identifier(*path)).symbol_expr()},
+      symbol_table.lookup_ref(dot_identifier(path)).symbol_expr()},
     loc);
   code_blockt leave;
   add(leave, code_frontend_returnt{}, loc);

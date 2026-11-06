@@ -884,6 +884,14 @@ private:
   void declare_dot_scripts();
   void convert_dot_scripts();
   void convert_dot(const shell_commandt &command, code_blockt &dest);
+  /// Run the dot script \p path, which was read, for \p command.
+  void convert_dot_script(
+    const shell_commandt &command,
+    const std::string &path,
+    code_blockt &dest);
+  /// The identifier of the dynamic site of the file name of the dot
+  /// command at \p loc.
+  static irep_idt dot_site(const source_locationt &loc);
 
   // ----------------------------------------------------------------
   // Patterns (XCU 2.14)

@@ -1,0 +1,15 @@
+CORE
+main.sh
+--resolve-dynamic-sites
+^EXIT=0$
+^SIGNAL=0$
+^Dynamic sites: 1 resolved, 0 unreachable, 0 unresolved \(2 rounds\)$
+^\[assertion\.1\] .*: SUCCESS$
+^\[shell-dynamic-site\.1\] file main.sh line 12 the file "\$\{f\}" of \. is one of the candidates of shell-dot:main.sh:12:1: /dev/null, /nonexistent/cbmc-shell-test.sh: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+shell-unsupported
+^warning: ignoring
+--
+The file name of a dot command is a dynamic site: with its candidates,
+each is read (one does not exist) and run in its branch.
