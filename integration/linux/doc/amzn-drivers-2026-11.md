@@ -280,3 +280,45 @@ Queries: build DBs as above, then for each DB run the 8 asset queries and
 2. An emulated ENA/EFA device in QEMU would turn the injected values into
    an end-to-end PoC.
 3. UBSAN run for F7.
+
+## F8/F9: device-supplied BAR offsets used unvalidated (DPDK ENA)
+
+Found while writing the base case for `ena_queue_start`, not by the taint
+pipeline: proving the queue-start post-condition requires an assumption about
+device-supplied data, and that assumption turned out to mark an unvalidated
+trust boundary.
+
+`ena_com_create_io_sq()` derives the doorbell register pointer from the admin
+completion descriptor the **device** writes (`drivers/net/ena/base/ena_com.c`):
+
+```c
+io_sq->db_addr = (u32 __iomem *)((uintptr_t)ena_dev->reg_bar +
+	(uintptr_t)cmd_completion.sq_doorbell_offset);   /* F8 */
+
+if (io_sq->mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV)
+	io_sq->desc_addr.pbuf_dev_addr =
+		(u8 __iomem *)((uintptr_t)ena_dev->mem_bar +
+		cmd_completion.llq_descriptors_offset);          /* F9 */
+```
+
+`sq_doorbell_offset` and `llq_descriptors_offset` appear **nowhere else in the
+tree** -- confirmed by grep over `drivers/net/ena/`: their only occurrences are
+these two points of use. Neither is checked against the size of the BAR it is
+added to.
+
+Consequences. `db_addr` is written on every TX burst
+(`ena_com_write_sq_doorbell`), so F8 gives a device-controlled write target at
+an arbitrary offset from the register BAR. F9 is worse in kind: the LLQ push
+path `memcpy`s descriptor and header bytes to `pbuf_dev_addr`, so a
+device-chosen offset relocates a bulk copy. Both are the same class as F1
+(EFA `db_bar_idx` feeding `pci_resource_start`), which we already confirmed
+dynamically, and the same class the device census was built to find.
+
+This is why the base-case harness carries an explicit
+`ASSUME_DEVICE_HONEST_DOORBELL` switch: without that assumption `db_addr` is
+an arbitrary pointer and the invariant is unprovable, which is the proof
+restating the finding. The assumption is named and compiled in rather than
+hidden so that the gap is visible in the harness itself.
+
+Mitigation is cheap and local: bound each offset by the mapped length of the
+corresponding BAR before forming the pointer.

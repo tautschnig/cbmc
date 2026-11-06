@@ -24,6 +24,7 @@
  *   0 = the app called rte_eth_tx_burst directly, which DPDK permits
  */
 #include "../dpdk/drivers/net/ena/ena_ethdev.c"
+#include "ena_inv.h"
 
 #ifndef MAX_BURST
 #define MAX_BURST 2
@@ -101,30 +102,6 @@ static struct rte_mbuf segs[MAX_SEGS];
 static uint8_t seg_bufs[MAX_SEGS][SEG_BUF_LEN];
 
 /* ---------------- INV: what a valid ENA TX queue is ---------------- */
-/*
- * INV_COM: the ena_com-layer invariant.  Discovered by proof failure, not by
- * reading the code: ena_com_sq_have_enough_space() and
- * ena_com_is_doorbell_needed() divide by llq_info.descs_per_entry, so a valid
- * LLQ-mode SQ must have descs_per_entry >= 1.  ena_com_config_dev_mode()
- * establishes this (descs_per_entry = desc_list_entry_size / 16 with
- * desc_list_entry_size in {128,192,256}); proving THAT is part of the base
- * case.  Worth noting the fragility: a driver that ever configured
- * llq_ring_entry_size_value < 16 would divide by zero here, and only the
- * `& 0x7` multiple-of-8 check stands in the way.
- */
-static bool INV_COM(const struct ena_com_io_sq *sq)
-{
-	/* SQ accounting: no more descriptors in flight than the ring holds.
-	 * Also discovered by proof failure -- ena_com_free_q_entries() returns
-	 * `q_depth - (u16)(tail - next_to_comp) - 1` as an int, so without this
-	 * clause it can go negative and make the cleanup branch of
-	 * eth_ena_xmit_pkts reachable from a state the driver never reaches. */
-	return (uint16_t)(sq->tail - sq->next_to_comp) <= sq->q_depth - 1 &&
-	       sq->llq_info.descs_per_entry >= 1 &&
-	       sq->llq_info.descs_per_entry <= 16 &&
-	       sq->llq_info.descs_num_before_header <= 16 &&
-	       sq->llq_info.disable_meta_caching == false;
-}
 
 /*
  * OWN_UNIQUE: the first clause of the ownership map.  A tx_buffer_info slot
@@ -190,31 +167,6 @@ static bool INV_SLOT(const struct ena_ring *r, uint16_t p)
     })
 #endif
 
-static bool INV_RING(const struct ena_ring *r)
-{
-	bool ok = INV_COM(r->ena_com_io_sq) &&
-		  r->adapter != NULL &&
-		  r->ena_com_io_sq != NULL && r->ena_com_io_cq != NULL &&
-		  r->ena_com_io_sq->db_addr != NULL &&
-		  r->tx_buffer_info != NULL && r->empty_tx_reqs != NULL &&
-		  r->push_buf_intermediate_buf != NULL &&
-		  /* geometry, established by ena_tx_queue_setup */
-		  r->size_mask == r->ring_size - 1 &&
-		  rte_is_power_of_2(r->ring_size) &&
-		  r->sgl_size <= ENA_PKT_MAX_BUFS &&
-		  r->next_to_use <= r->size_mask &&
-		  r->next_to_clean <= r->size_mask &&
-		  /* SQ accounting */
-		  r->ena_com_io_sq->q_depth == r->ring_size;
-  /* The per-slot clauses moved out of here.  They used to be two loops
-	 * over RING_SIZE, which made every proof cost grow with the ring size
-	 * for no benefit: the operation touches at most MAX_BURST slots, and the
-	 * *preserved* property is about an arbitrary slot.  They are now a
-	 * quantified assumption (INV_SLOTS_ASSUME) plus an assertion at one
-	 * nondeterministic index (INV_SLOT), which is equivalent and costs O(1)
-	 * in the ring size. */
-  return ok;
-}
 
 /* ---------------- WF_MBUF: DPDK's mbuf contract -------------------- */
 /* Environment stubs.  Left bodyless these are reported as "undefined function
@@ -308,7 +260,7 @@ int main(void)
   adapter.state = ENA_ADAPTER_STATE_RUNNING;
   g_p1 = nd_u16();
 	g_p2 = nd_u16();
-	__CPROVER_assume(INV_RING(&ring));
+	__CPROVER_assume(INV_STARTED(&ring));
   INV_SLOTS_ASSUME(empty_tx_reqs, tx_buffer_info);
   __CPROVER_assume(OWN_UNIQUE(&ring, g_p1, g_p2));
 
@@ -367,7 +319,7 @@ int main(void)
   __CPROVER_assert(sent == 0, "vacuity witness: a packet can be accepted");
 #endif
   __CPROVER_assert(sent <= nb_pkts, "API: sent <= nb_pkts");
-	__CPROVER_assert(INV_RING(&ring), "INV preserved by eth_ena_xmit_pkts");
+	__CPROVER_assert(INV_STARTED(&ring), "INV_STARTED preserved by eth_ena_xmit_pkts");
   __CPROVER_assert(
     INV_SLOT(&ring, g_p1), "INV_SLOT preserved for an arbitrary ring slot");
   /* INV_wakeup, checked here with the REAL ena_xmit_mbuf body, so the

@@ -1012,3 +1012,56 @@ assertion (verified with a three-case probe), so UNKNOWN here meant
 degrades the loop-contract verdicts. Practical consequence for this proof:
 **a loop-contract obligation is only meaningful in a run whose other
 properties all pass**, which is now the case bar the one hole above.
+
+## Connecting the induction: status of the ena_queue_start base case
+
+The gap was real and is now explicit. The data-path step assumes
+`INV_STARTED`; `ena_tx_queue_setup` establishes only `INV_CONFIGURED`. A
+proven base case and a proven step that do not compose prove nothing about
+operation sequences, so this is the load-bearing piece.
+
+**Landed.** The predicates now live in one place, `ena_inv.h`
+(`INV_DEV_LLQ`, `INV_SQ_ACCOUNTING`, `INV_COM`, `INV_GEOMETRY`,
+`INV_CONFIGURED`, `INV_STARTED`), and `harness_tx_callees.c` includes it
+instead of carrying its own copies. The step now literally assumes and
+asserts the same `INV_STARTED` the base case will have to establish, so the
+two halves cannot drift apart again -- which is exactly how the gap arose.
+The TX step was re-verified after the refactor: VERIFICATION SUCCESSFUL,
+0 of 2388, vacuity witness still FAILURE, zero UNKNOWN.
+
+**Written but not yet discharged.** `harness_start_basecase.c` sets up the
+post-state of setup, assumes `INV_CONFIGURED` and `INV_DEV_LLQ`, calls
+`ena_queue_start`, and asserts `INV_STARTED` on success plus an error-path
+obligation that a failed start leaves no usable producer state. It compiles
+and symex completes, but the SAT conversion does not finish within 1800 s.
+
+Two cost problems were found and one is solved:
+
+1. **Solved: control-plane proofs must not havoc structures holding function
+   pointers.** `__CPROVER_havoc_object(&dev)` makes `dev_ops`,
+   `tx_pkt_prepare` and `tx_pkt_burst` arbitrary, and CBMC's function-pointer
+   removal then admits the whole dev_ops table as a call target, so symex
+   wanders into `eth_ena_prep_pkts`, `eth_ena_xmit_pkts` and
+   `__rte_raw_cksum` -- thousands of unwindings of code queue start never
+   calls. Zero-initialised statics plus targeted havoc of just the fields the
+   proof quantifies over fixes it, and is more honest about what is being
+   generalised. Removing the datapath and statistics bodies confirms they are
+   off the path: no `no body for callee` is reported for any of them.
+
+2. **Open: the ena_com queue arrays.** `ena_com_create_io_queue` memsets
+   `io_sq_queues[qid]` and `io_cq_queues[qid]` out of
+   `ENA_TOTAL_NUM_QUEUES`-sized arrays inside a 182144-byte
+   `struct ena_adapter`, and the DMA allocation underneath is unmodelled.
+   That is what the solver is chewing on. The next thing to try is a contract
+   for `ena_com_create_io_queue` and `ena_com_get_io_handlers` -- the stage-1
+   callee-contract pattern -- which localises the remaining gap to two named
+   ena_com post-conditions instead of an open-ended cost problem.
+
+**Finding, recorded separately as F8/F9.** The admin-command boundary is
+modelled soundly: `ena_com_execute_admin_command` returns an arbitrary status
+with an arbitrary completion payload, because the completion is written by an
+untrusted device. Under that model `db_addr` is an arbitrary pointer, since
+the driver derives it as `reg_bar + cmd_completion.sq_doorbell_offset` without
+any bound check. The harness therefore needs a named
+`ASSUME_DEVICE_HONEST_DOORBELL` assumption to make `INV_STARTED` provable at
+all, and that assumption is the finding.
