@@ -89,6 +89,26 @@ SOSP 2026).
   JavaScript* (PLDI 2009), cited by Jensen et al., compute residual checks
   for code that is only known at run time.
 
+Specifications of utilities, which the residual properties of templates
+call for (what `mktemp` prints), also have prior work:
+
+- CoLiS (Jeannerod, Marché, Régis-Gianas, Sighireanu, Treinen; VSTTE 2017,
+  TACAS 2020, STTT 2022) specifies UNIX utilities by their effects on a
+  file system, as feature-tree constraints, and symbolically executes
+  Debian maintainer scripts with them; it reported over 150 policy
+  violations.
+- RT (OSDI 2026) types the standard input and output of commands as
+  regular languages, with transductions, and checks pipelines against
+  them.
+- SaSh (SOSP 2026) symbolically executes shell programs, with the effects
+  of external commands on a file-system model and an abstract domain for
+  word expansion.
+
+What differs here: the specifications would be used inside a bounded
+model checker with the whole shell semantics, for the values that
+utilities print, as preconditions of the residual properties of dynamic
+sites, which keep the model sound whatever the specifications omit.
+
 ## Decision
 
 A **fixpoint of conversion and analysis**, combining the three approaches:
@@ -395,9 +415,16 @@ The shell front-end's sites, in order of the census:
     blanks by design (it needs a model of field splitting of the parts),
     and trap actions with file names from `mktemp`, whose output the model
     does not restrict (it needs specifications of utilities' output).
-  - With refined strings, the decomposition of a value into parts is
-    slow: a test that cvc5 decides in seconds did not finish in 30
-    minutes.
+  - With refined strings, the decomposition of a value into parts was
+    slow, and wrong for a last part: it compared payloads (a length and a
+    pointer) rather than strings. With the comparison fixed and the
+    encodings measured (a prefix test, the last bytes compared with the
+    last part, classes checked on the value from each part's start), the
+    template-eval test takes 68 s rather than not finishing in 30
+    minutes; cvc5 takes 3 s. What remains is the string solver's
+    instantiation of quantified axioms: with two templates, the index
+    sets grow to about 300 terms and the SAT problem to 780 000
+    variables over 8 refinements.
 
 ## Spikes (5 Nov 2026)
 
