@@ -336,3 +336,65 @@ seven is open.
 devise, and regression-clean. It resolves issue B as reported. It is not
 sufficient to close out the ENA obligations, and the next obstacle on that
 path is still unidentified.
+
+---
+
+## Issue C: a loop contract is reported as proved on a cut path
+
+Reproducer: `proof/cbmc-limitations/dfcc_loop_contract_vacuous_on_cut_path.{c,sh}`.
+
+A loop whose body calls a bodyless callee reports **every** loop-contract
+property SUCCESS, even though the callee's `assume(false)` cuts every path
+through the body, so the invariant's step case and the assigns check were
+never exercised on a real execution:
+
+```
+[helper.assertion.1] undefined function should be unreachable: FAILURE
+[main.loop_assigns.1]       Check assigns clause inclusion for loop main.0: SUCCESS
+[main.loop_assigns.2]       Check assigns clause inclusion for loop main.0: SUCCESS
+[main.loop_decreases.1]     Check variant decreases after step for loop main.0: SUCCESS
+[main.loop_invariant_base.1] Check invariant before entry for loop main.0: SUCCESS
+[main.loop_invariant_base.2] Check invariant before entry for loop main.0: SUCCESS
+[main.loop_invariant_step.1] Check invariant after step for loop main.0: SUCCESS
+VERIFICATION FAILED
+```
+
+This is issue A specialised to loop contracts, and it is worse in effect. For
+a plain assertion, a cut path yields a SUCCESS that a careful reader may
+discount. For a loop contract, the SUCCESS is the entire evidence that the
+abstraction replacing the loop is sound, and every obligation downstream of
+the loop rests on it. The only signal that anything is wrong is a failure
+attributed to the *callee*, in a different function, which is easy to
+dismiss as a known-abstraction note -- we did exactly that for weeks, and it
+is how the LLQ-push sub-path of the ENA proof went unverified while reporting
+six obligations SUCCESS.
+
+**Suggested fix.** The same symex-side information issue A needs: when a path
+is cut by an `assume(false)` originating from a generated stub, record which
+properties were abandoned. A loop-contract property that was abandoned on
+every path should not be reported SUCCESS. Short of that, a warning naming the
+loop and the stub would be enough to stop the misreading.
+
+**Practical mitigation, which is what we now rely on:** treat any
+`undefined function should be unreachable` FAILURE as a hard stop rather than
+a note, and require an independent reachability witness plus `--cover location`
+on the functions the proof claims to exercise.
+
+### Related, observed but NOT reproduced
+
+At ENA scale we also saw 1280 of 2282 properties reported **UNKNOWN**,
+including every `loop_invariant_step`, in runs that had four unrelated
+failures; checked individually with `--property`, those same step properties
+came back SUCCESS. The mechanism is presumably that equation generation stops
+once a failure is found, so properties not yet decided keep the initial
+UNKNOWN status instead of being swept by
+`update_status_of_unknown_properties`.
+
+We could **not** reduce this to a small reproducer: in every small case tried
+(failure inside a contracted loop body, a second uncontracted loop under
+`--incremental-loop`, `--stop-on-fail`, a removed callee in the body) CBMC
+decided all properties and nothing was left UNKNOWN. A patch warning on
+"loop-contract property UNKNOWN while other properties failed" was written
+and then **withdrawn**, because a warning whose triggering condition cannot
+be demonstrated should not be proposed upstream. Recording the observation
+here so it is not lost; it needs a reproducer before it is reportable.
