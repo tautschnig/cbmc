@@ -279,3 +279,45 @@ chosen to avoid (§3).
 
 Open questions for review, unchanged: option A or B, and whether a race
 ends the path.
+
+## 9. No silent misses
+
+Review of the spike (section 8): the check must find every potential
+race within the bounds, or fail a property that says it cannot. Like
+CBMC's unwinding assertions, it must not quietly under-approximate. Each
+way the spike could miss a race is now closed, or turned into a failing
+property.
+
+| Gap | Now |
+|---|---|
+| Shadow memory cannot resolve an object (unknown value set, no shadow memory) and drops the flag with a warning | `__CPROVER_shadow_memory_incomplete` is set (goto-symex, `6f0e9ce28c`), and every instrumented access asserts it is false: "data race check: shadow memory does not resolve the accessed object" |
+| An object allocated by a thread that symex runs later had no shadow memory in earlier threads | registrations of all threads and paths, and of the previous symex run, are consulted (`99d23955dd`) |
+| Bytes of pointer-typed objects not accessible through `char *` or `char[N] *` | fixed in shadow memory (`97f789ce71`, `7cdcc55c4e`) |
+| A goroutine started in the last unwound iteration read unconstrained arguments (spurious failures) | symex saves and restores a thread's names at its start (`6b95e60032`) |
+| Only the first byte of an access was flagged | all bytes are flagged (`unsigned char (*)[N]`), so overlapping accesses conflict wherever they start, also through `unsafe.Pointer` |
+| Arrays over 32 elements, and parts beyond the budget, were flagged at their first byte | parts over 64 bytes, and bulk operations (`array_copy`, `array_replace`, `array_set`, `havoc_object`: `copy`, `append`), are accesses of the whole object (RW/RR flags), which conflict with any access of the object (OW/OR) |
+| `cprover/rt` helpers and generated `go::$` functions were not instrumented | they are; `sync` and `sync/atomic` are models: their atomic sections are announced without checks, and outside them only `rt.RaceRead`/`RaceWrite` count (gc's annotations, such as `WaitGroup`'s `sema`) |
+| Other accesses in atomic sections (model state) were not announced | announced, without checks |
+| Locals whose address is taken | shared; shadow memory has no local fields, so these fail the incompleteness check |
+| `delete` of an absent key was no write | a write of the map, as gc's `mapdelete` |
+| Observations that do not synchronise (`len(c)`, a `select`'s default case, a failing `TryLock`) order accesses in every SC interleaving without a happens-before edge, so the races they order were missed (`TestRaceChanSendLen`, `RecvLen`, `SendSend`) | "data race check incomplete: an observation that does not synchronise ... may be concurrent with the change it observes": a check that no change of the observed state (announced after each channel section, and by the sync models' sections) is concurrent with it |
+| Unwinding bounds, unsupported constructs, solver limits | loud as before: unwinding assertions, `unsupported` properties, and errors or timeouts |
+
+**Remaining assumptions, which I believe are sound:**
+
+- Synchronisation lives only in the models' atomic sections (channels,
+  `sync`, `sync/atomic`).
+- An observation that only shows another operation has not happened yet
+  (an atomic load of an initial value, a `select` that finds a case
+  ready) creates no false ordering under adjacency. Only observations
+  that a change has happened do, and these are the ones marked.
+- The model of `time` lets the clock jump forward arbitrarily, so reading
+  it never forces an order between goroutines.
+- Accesses in a model's atomic section are announced at the section's
+  start, with addresses evaluated there; the models do not assign the
+  pointers they access within a section.
+- Accesses of whole objects are coarse: `copy(a[:5], b)` is reported as
+  racing with `a[7] = 1` (`TestNoRaceSliceWriteCopy`).
+- The observation check also fails where gc reports nothing
+  (`TestNoRaceChanCloseLen`, `TestNoRaceCloseHappensBeforeRead`). These
+  are inconclusive results, not race reports.
