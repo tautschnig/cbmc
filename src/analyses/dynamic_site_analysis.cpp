@@ -465,7 +465,8 @@ public:
         for(auto it = body.instructions.begin(); it != body.instructions.end();
             ++it)
         {
-          const auto &state = get(*analysis, it);
+          const auto state_ptr = get(*analysis, it);
+          const assigned_domaint &state = *state_ptr;
           if(state.bottom)
             continue;
           if(it->is_end_function())
@@ -528,7 +529,8 @@ public:
     const auto analysis = analyses.find(function);
     if(analysis == analyses.end())
       return {};
-    const auto &state = get(*analysis->second, it);
+    const auto state_ptr = get(*analysis->second, it);
+    const assigned_domaint &state = *state_ptr;
     if(state.bottom)
       return {};
     return state.assigned;
@@ -541,11 +543,13 @@ private:
   std::map<irep_idt, std::set<irep_idt>> entry_sets;
   std::map<irep_idt, std::unique_ptr<ait<assigned_domaint>>> analyses;
 
-  static const assigned_domaint &
+  /// The state before \p it; held by the pointer, as the state of an
+  /// instruction that was not reached is made on demand.
+  static std::shared_ptr<const assigned_domaint>
   get(const ait<assigned_domaint> &analysis, goto_programt::const_targett it)
   {
-    return static_cast<const assigned_domaint &>(
-      *analysis.abstract_state_before(it));
+    return std::static_pointer_cast<const assigned_domaint>(
+      analysis.abstract_state_before(it));
   }
 };
 
