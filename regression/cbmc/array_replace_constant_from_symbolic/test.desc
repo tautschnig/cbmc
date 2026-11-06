@@ -1,0 +1,15 @@
+CORE
+main.c
+--no-standard-checks
+^EXIT=0$
+^SIGNAL=0$
+^\[main.assertion.1\] .* replaced: SUCCESS$
+^\[main.assertion.2\] .* kept: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+A byte update of an array of constant size with an array of the same element
+type and symbolic size is lowered element by element: through bytes, the
+solver needed ten million variables for ten such elements copied between Go
+goroutines.

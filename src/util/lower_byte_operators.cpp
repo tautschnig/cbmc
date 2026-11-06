@@ -15,6 +15,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "namespace.h"
 #include "narrow.h"
 #include "pointer_offset_size.h"
+#include "replace_expr.h"
 #include "simplify_expr.h"
 #include "string_constant.h"
 
@@ -1226,11 +1227,11 @@ static exprt element_offset(
   std::size_t bits_per_byte,
   const namespacet &ns)
 {
-  // Arrays of constant size are lowered element by element already (and
-  // callers rely on array expressions for them).
+  // Arrays of constant sizes are lowered element by element already.
   if(
     array_type.id() != ID_array || other_type.id() != ID_array ||
-    to_array_type(array_type).size().is_constant())
+    (to_array_type(array_type).size().is_constant() &&
+     to_array_type(other_type).size().is_constant()))
   {
     return nil_exprt{};
   }
@@ -1250,6 +1251,29 @@ static exprt element_offset(
   if(!simplify_expr(mod_exprt{offset, size}, ns).is_zero())
     return nil_exprt{};
   return simplify_expr(div_exprt{offset, size}, ns);
+}
+
+/// The array of type \p type whose element at index i is \p element with
+/// \p index replaced by i: an array expression if the size is constant (as
+/// callers expect of arrays of constant size), else a comprehension.
+static exprt elementwise_array(
+  const symbol_exprt &index,
+  const exprt &element,
+  const array_typet &type,
+  const namespacet &ns)
+{
+  const auto size = numeric_cast<std::size_t>(type.size());
+  if(!size.has_value())
+    return array_comprehension_exprt{index, element, type};
+  exprt::operandst elements;
+  elements.reserve(*size);
+  for(std::size_t i = 0; i < *size; ++i)
+  {
+    exprt e = element;
+    replace_expr(index, from_integer(i, index.type()), e);
+    elements.push_back(simplify_expr(std::move(e), ns));
+  }
+  return array_exprt{std::move(elements), type};
 }
 
 /// A byte extract of an array from an array of the same element type at a
@@ -1278,8 +1302,8 @@ lower_byte_extract_elements(const byte_extract_exprt &src, const namespacet &ns)
     op_index = plus_exprt{
       op_index, typecast_exprt::conditional_cast(index_offset, op_index_type)};
   }
-  return array_comprehension_exprt{
-    index, index_exprt{src.op(), simplify_expr(op_index, ns)}, type};
+  return elementwise_array(
+    index, index_exprt{src.op(), simplify_expr(op_index, ns)}, type, ns);
 }
 
 /// A byte update of an array with an array of the same element type at a
@@ -1313,13 +1337,14 @@ lower_byte_update_elements(const byte_update_exprt &src, const namespacet &ns)
   exprt in_value = binary_relation_exprt{index, ID_lt, end};
   if(!first.is_zero())
     in_value = and_exprt{binary_relation_exprt{index, ID_ge, first}, in_value};
-  return array_comprehension_exprt{
+  return elementwise_array(
     index,
     if_exprt{
       in_value,
       index_exprt{src.value(), value_index},
       index_exprt{src.op(), index}},
-    type};
+    type,
+    ns);
 }
 
 exprt lower_byte_extract(const byte_extract_exprt &src, const namespacet &ns)
