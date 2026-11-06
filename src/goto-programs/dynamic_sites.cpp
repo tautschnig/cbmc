@@ -77,8 +77,20 @@ code_function_callt dynamic_site_marker(
 {
   if(!symbol_table.has_symbol(DYNAMIC_SITE_FUNCTION))
   {
-    code_typet type{{code_typet::parametert{string_typet{}}}, empty_typet{}};
+    // Named parameters: analyses bind arguments to them.
+    code_typet::parametert site{string_typet{}};
+    site.set_identifier(DYNAMIC_SITE_FUNCTION "::site");
+    site.set_base_name("site");
+    code_typet type{{site}, empty_typet{}};
     type.make_ellipsis();
+    symbolt parameter{site.get_identifier(), site.type(), mode};
+    parameter.base_name = site.get_base_name();
+    parameter.is_parameter = true;
+    parameter.is_lvalue = true;
+    parameter.is_thread_local = true;
+    parameter.is_file_local = true;
+    parameter.location = location;
+    symbol_table.add(parameter);
     symbolt function{DYNAMIC_SITE_FUNCTION, type, mode};
     function.base_name = DYNAMIC_SITE_FUNCTION;
     function.pretty_name = DYNAMIC_SITE_FUNCTION;
@@ -185,5 +197,11 @@ void remove_dynamic_site_markers(goto_modelt &goto_model)
   if(!identifier.has_value())
     return;
   goto_model.goto_functions.function_map.erase(*identifier);
+  for(const auto &parameter :
+      to_code_type(goto_model.symbol_table.lookup_ref(*identifier).type)
+        .parameters())
+  {
+    goto_model.symbol_table.remove(parameter.get_identifier());
+  }
   goto_model.symbol_table.remove(*identifier);
 }
