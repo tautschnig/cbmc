@@ -1148,3 +1148,63 @@ Ring 4 completes in a few minutes. Ring 8 did not finish in 2400 s on the
 first attempt, because cleanup iterates the ring acking descriptors and the
 `INV_DESC_SUM` computation adds a second pass, so cost grows with ring size
 faster than the xmit step does.
+
+## Widening the geometry (task #4)
+
+Each point below is a separate run of the full pipeline, and each required the
+vacuity witness to FAIL, so none of them is a proof about an empty path.
+
+| ring | segs | burst | verdict |
+|---|---|---|---|
+| 8 | 2 | 1 | VERIFICATION SUCCESSFUL, 0 of 2388 |
+| 16 | 2 | 1 | VERIFICATION SUCCESSFUL, 0 of 2388 |
+| 8 | 3 | 1 | VERIFICATION SUCCESSFUL, 0 of 2388 |
+| 8 | 2 | **2** | **VERIFICATION FAILED, 2 of 2388** |
+
+### Why the property count does not change with the geometry
+
+It looked wrong, and it is not. Comparing the two runs at segs 2 and segs 3,
+the property *name* sets are identical (2388 each, zero differing). That is
+because CBMC assigns a property id per goto **instruction**, not per
+unwinding, so unrolling a loop more times adds SSA steps to existing
+properties rather than new properties. The models do differ -- the goto
+binaries are 1147567 and 1147575 bytes -- and the burst-2 row below proves
+behavioural sensitivity to the geometry. Worth recording because an invariant
+property count is exactly the kind of thing that should prompt a check: an
+earlier run in this session reported a stale log as a fresh verdict, and the
+runner now deletes its log before each run and reports a missing verdict
+instead of exiting silently.
+
+### Burst 2 fails, and it is the finding rather than a harness artefact
+
+The two failing properties are `loop_invariant_step.9` and `.10`, which are
+the in-flight disjointness clauses added for the two probe slots:
+`tx_buffer_info[g_pN].mbuf != tx_pkts[sent_idx]`.
+
+The cause is that `make_wf_mbuf` always returns `&segs[0]`, so with
+`MAX_BURST = 2` the harness hands `eth_ena_xmit_pkts` **the same mbuf twice in
+one burst**. The driver accepts both, records the same pointer in two
+`tx_buffer_info` slots, and `OWN_UNIQUE` is genuinely violated -- which on
+cleanup is a double free of one mbuf.
+
+That is driver-contract finding 2 restated, and this is the first time the
+proof *exhibits* it rather than assuming it away: at burst 1 the clause is
+vacuously true because there is no second packet, which is exactly why it
+passed before. Nothing in `eth_ena_xmit_pkts` detects the duplicate, so the
+only thing standing between an application bug and a double free is the
+application.
+
+To prove the burst >= 2 case *under* the application obligation, the harness
+needs one distinct mbuf chain per burst entry -- `make_wf_mbuf` taking a slot
+index into a per-packet pool -- plus the pairwise distinctness assumption
+stated over the burst, which is cheap because `MAX_BURST` is small and
+concrete. That is the next concrete step, and it is a harness change, not a
+specification problem.
+
+### Cleanup at ring 8
+
+Still does not finish: two attempts at 2400 s both ended in the solver, the
+second reported honestly by the runner as `NO VERDICT` rather than silently.
+Cleanup cost grows with ring size faster than the xmit step because it
+iterates the ring acking descriptors and `INV_DESC_SUM` adds a second pass
+over the slots. Ring 4 remains the proven point for cleanup.

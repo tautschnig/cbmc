@@ -15,6 +15,7 @@ DPDK=${DPDK:-/tmp/dpdk}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof}
+EXTRA_CBMC=${EXTRA_CBMC:-}
 BURST=${BURST:-1}; SEGS=${SEGS:-2}; RING=${RING:-8}
 # ena_xmit_mbuf needs free >= nb_segs + 2 and free <= RING - 1, so a
 # SEGS-segment packet is only ever accepted when RING >= SEGS + 3.  Below that
@@ -58,12 +59,18 @@ for V in 0 1; do
       --dfcc main --apply-loop-contracts "$OUT/i1${TAG}_lib.gb" "$OUT/i1${TAG}_lc.gb" >/dev/null 2>&1 )
 done
 
+rm -f "$OUT/item1.log" "$OUT/item1_vac.log"
 ( ulimit -v 60000000
-  timeout 900 "$BIN/cbmc" "$OUT/i1_lc.gb" --bounds-check --pointer-check \
+  timeout 2400 "$BIN/cbmc" "$OUT/i1_lc.gb" --bounds-check --pointer-check \
     --no-standard-checks \
-    --unwindset ena_tx_map_mbuf.0:$SEGBOUND --unwinding-assertions \
+    --unwindset ena_tx_map_mbuf.0:$SEGBOUND --unwinding-assertions $EXTRA_CBMC \
     > "$OUT/item1.log" 2>&1 ) || true
 
+if ! grep -qE '^VERIFICATION' "$OUT/item1.log"; then
+  echo "NO VERDICT: cbmc did not finish (timeout or memory cap).  Last lines:"
+  tail -3 "$OUT/item1.log" 2>/dev/null | sed 's/^/  /'
+  exit 1
+fi
 grep -E '^VERIFICATION|^\*\* ' "$OUT/item1.log"
 echo "obligations:"; grep -E 'main\.assertion' "$OUT/item1.log" | sed 's/^/  /'
 echo "vacuity witness (must be FAILURE, else the accept path is unreachable):"
