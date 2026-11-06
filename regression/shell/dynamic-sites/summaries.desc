@@ -1,0 +1,16 @@
+CORE
+summaries.sh
+--resolve-dynamic-sites --show-dynamic-sites
+^EXIT=0$
+^SIGNAL=0$
+^shell-command-name:summaries.sh:8:1: .*: \{ "cat", "echo" \}$
+^shell-command-name:summaries.sh:15:1: .*: \{ "cat", "echo" \}$
+--
+: unresolved$
+^warning: ignoring
+--
+setup assigns pager on every path where it returns, and the shell's
+lookup of setup is known to find the function (its state is a constant),
+so that pager does not have its value from the environment at line 8.
+The restore at line 14 puts back a value assigned by the script. The
+values themselves are flow-insensitive: both sites get both literals.

@@ -15,6 +15,9 @@ Author: Michael Tautschnig
 #include <util/mathematical_expr.h>
 #include <util/namespace.h>
 #include <util/pointer_expr.h>
+#include <util/replace_symbol.h>
+#include <util/sharing_map.h>
+#include <util/simplify_expr.h>
 #include <util/std_expr.h>
 #include <util/symbol.h>
 
@@ -186,6 +189,29 @@ public:
       return {};
     return id;
   }
+
+  /// Scalar symbols whose constant values may decide branches: those in
+  /// conditions, and those assigned to them.
+  std::unordered_set<irep_idt> scalars;
+  /// The scalar symbols of static lifetime that each function, or its
+  /// callees, may write.
+  std::unordered_map<irep_idt, std::unordered_set<irep_idt>> writes;
+  /// Whether there are calls through function pointers, which may write
+  /// any symbol.
+  bool indirect = false;
+
+  /// Whether \p id is of static lifetime.
+  bool is_global(const irep_idt &id) const
+  {
+    const symbolt *symbol = nullptr;
+    return !ns.lookup(id, symbol) && symbol->is_static_lifetime;
+  }
+
+  bool is_scalar(const typet &type) const
+  {
+    return type.id() == ID_bool || type.id() == ID_c_bool ||
+           type.id() == ID_signedbv || type.id() == ID_unsignedbv;
+  }
 };
 
 /// The root symbol of \p lhs through members, if any.
@@ -218,21 +244,81 @@ bool is_marker(const goto_programt::instructiont &instruction)
          instruction.call_arguments().size() == 2;
 }
 
-/// What each function definitely assigns, for its callers: absent while
-/// the function is not known to return.
-using summariest = std::map<irep_idt, std::set<irep_idt>>;
+/// Constant values of scalar symbols (see trackingt::scalars).
+/// Shared, as each instruction has its own copy.
+using constantst = sharing_mapt<irep_idt, exprt>;
+
+/// Remove from \p ours the constants that \p theirs lacks or differs on.
+/// \return whether any were removed.
+bool meet_constants(constantst &ours, const constantst &theirs)
+{
+  std::vector<irep_idt> lost;
+  for(const auto &item : ours.get_delta_view(theirs, false))
+  {
+    if(!item.is_in_both_maps() || item.m != item.get_other_map_value())
+      lost.push_back(item.k);
+  }
+  for(const auto &id : lost)
+    ours.erase(id);
+  return !lost.empty();
+}
+
+bool equal_constants(const constantst &a, const constantst &b)
+{
+  if(a.size() != b.size())
+    return false;
+  for(const auto &item : a.get_delta_view(b, false))
+  {
+    if(!item.is_in_both_maps() || item.m != item.get_other_map_value())
+      return false;
+  }
+  return true;
+}
+
+/// What holds where a function starts (at all its calls), or where it
+/// returns (for its callers): definitely assigned relevant symbols, and
+/// constant scalars.
+struct factst
+{
+  std::set<irep_idt> assigned;
+  constantst constants;
+
+  bool operator==(const factst &other) const
+  {
+    return assigned == other.assigned &&
+           equal_constants(constants, other.constants);
+  }
+  bool operator!=(const factst &other) const
+  {
+    return !(*this == other);
+  }
+
+  /// Keep what also holds in \p other.
+  void meet(const factst &other)
+  {
+    for(auto it = assigned.begin(); it != assigned.end();)
+      it = other.assigned.count(*it) == 0 ? assigned.erase(it) : std::next(it);
+    meet_constants(constants, other.constants);
+  }
+};
+
+/// What each function definitely assigns, and the constants where it
+/// returns, for its callers: absent while the function is not known to
+/// return.
+using summariest = std::map<irep_idt, factst>;
 
 /// The relevant symbols that are definitely assigned (outside
 /// __CPROVER_initialize) within one function, starting from the symbols
 /// assigned at all its calls; a call adds what the callee definitely
-/// assigns. Bottom where the function cannot be.
+/// assigns. Also the constant values of scalars, which prune branches
+/// whose condition they decide. Bottom where the function cannot be.
 class assigned_domaint : public ai_domain_baset
 {
 public:
   assigned_domaint(
     const trackingt &tracking,
     const summariest &summaries,
-    const std::set<irep_idt> &entry)
+    const factst &entry)
     : tracking(tracking), summaries(summaries), entry(entry)
   {
   }
@@ -241,21 +327,84 @@ public:
   std::set<irep_idt> assigned;
   /// Copies t of x (see trackingt::copy_of) made where x was assigned.
   std::set<irep_idt> saved_assigned;
+  constantst constants;
+
+  /// \p expr with the constants substituted, simplified.
+  exprt evaluate(exprt expr) const
+  {
+    replace_symbolt replace;
+    for(const auto &id : find_symbol_identifiers(expr))
+    {
+      const auto found = constants.find(id);
+      if(found.has_value())
+        replace.insert(symbol_exprt{id, found->get().type()}, found->get());
+    }
+    replace(expr);
+    return simplify_expr(std::move(expr), tracking.ns);
+  }
+
+  /// Track the value that \p lhs gets from \p rhs, if it is a scalar.
+  void assign_constant(const exprt &lhs, const exprt &rhs)
+  {
+    const symbol_exprt *symbol = base_symbol(lhs);
+    if(symbol == nullptr)
+      return;
+    const irep_idt &id = symbol->identifier();
+    if(&lhs == symbol && rhs.is_not_nil() && tracking.scalars.count(id) != 0)
+    {
+      exprt value = evaluate(rhs);
+      if(value.is_constant())
+      {
+        constants.insert_or_replace(id, std::move(value));
+        return;
+      }
+    }
+    constants.erase_if_exists(id);
+  }
 
   void transform(
     const irep_idt &function_from,
     trace_ptrt from,
     const irep_idt &,
-    trace_ptrt,
+    trace_ptrt to,
     ai_baset &,
     const namespacet &) override
   {
     const auto &instruction = *from->current_location();
     const symbol_exprt *symbol = nullptr;
+    if(instruction.is_goto())
+    {
+      // A branch that the constants decide against cannot be taken; with
+      // the target the next instruction, both edges are the same.
+      const auto location = from->current_location();
+      const auto target = instruction.get_target();
+      if(target != std::next(location))
+      {
+        const bool taken = to->current_location() == target;
+        const exprt condition = evaluate(instruction.condition());
+        if(taken ? condition.is_false() : condition.is_true())
+          make_bottom();
+      }
+      return;
+    }
+    if(instruction.is_assume())
+    {
+      if(evaluate(instruction.condition()).is_false())
+        make_bottom();
+      return;
+    }
+    if(instruction.is_other())
+    {
+      // It may write the symbols it mentions.
+      for(const auto &id : find_symbol_identifiers(instruction.code()))
+        constants.erase_if_exists(id);
+      return;
+    }
     if(instruction.is_assign())
     {
       const exprt &lhs = instruction.assign_lhs();
       const exprt &rhs = instruction.assign_rhs();
+      assign_constant(lhs, rhs);
       if(tracking.is_restore(lhs, rhs))
       {
         // x is as assigned as it was where it was saved.
@@ -283,13 +432,38 @@ public:
       // The callee returns, having assigned at least its summary;
       // without a summary it does not return (yet).
       const exprt &function = instruction.call_function();
+      if(instruction.call_lhs().is_not_nil())
+        assign_constant(instruction.call_lhs(), nil_exprt{});
+      if(function.id() != ID_symbol)
+      {
+        // The callee may write any symbol of static lifetime.
+        std::vector<irep_idt> globals;
+        for(const auto &constant : constants.get_view())
+        {
+          if(tracking.is_global(constant.first))
+            globals.push_back(constant.first);
+        }
+        for(const auto &id : globals)
+          constants.erase(id);
+      }
       if(function.id() == ID_symbol)
       {
-        const auto summary =
-          summaries.find(to_symbol_expr(function).identifier());
+        const irep_idt &callee = to_symbol_expr(function).identifier();
+        const auto summary = summaries.find(callee);
         if(summary != summaries.end())
-          assigned.insert(summary->second.begin(), summary->second.end());
-        else if(tracking.has_body(to_symbol_expr(function).identifier()))
+        {
+          assigned.insert(
+            summary->second.assigned.begin(), summary->second.assigned.end());
+          const auto writes = tracking.writes.find(callee);
+          if(writes != tracking.writes.end())
+          {
+            for(const auto &id : writes->second)
+              constants.erase_if_exists(id);
+          }
+          for(const auto &constant : summary->second.constants.get_view())
+            constants.insert_or_replace(constant.first, constant.second);
+        }
+        else if(tracking.has_body(callee))
         {
           make_bottom();
           return;
@@ -302,11 +476,13 @@ public:
     {
       assigned.erase(instruction.decl_symbol().identifier());
       saved_assigned.erase(instruction.decl_symbol().identifier());
+      constants.erase_if_exists(instruction.decl_symbol().identifier());
     }
     else if(instruction.is_dead())
     {
       assigned.erase(instruction.dead_symbol().identifier());
       saved_assigned.erase(instruction.dead_symbol().identifier());
+      constants.erase_if_exists(instruction.dead_symbol().identifier());
     }
     // The values that __CPROVER_initialize assigns are joined at reads
     // that the program did not assign.
@@ -323,18 +499,21 @@ public:
     bottom = true;
     assigned.clear();
     saved_assigned.clear();
+    constants.clear();
   }
   void make_top() override
   {
     bottom = false;
     assigned.clear();
     saved_assigned.clear();
+    constants.clear();
   }
   void make_entry() override
   {
     bottom = false;
-    assigned = entry;
+    assigned = entry.assigned;
     saved_assigned.clear();
+    constants = entry.constants;
   }
   bool is_bottom() const override
   {
@@ -342,7 +521,7 @@ public:
   }
   bool is_top() const override
   {
-    return !bottom && assigned.empty();
+    return !bottom && assigned.empty() && constants.empty();
   }
 
   bool merge(const assigned_domaint &other, trace_ptrt, trace_ptrt)
@@ -354,6 +533,7 @@ public:
       bottom = false;
       assigned = other.assigned;
       saved_assigned = other.saved_assigned;
+      constants = other.constants;
       return true;
     }
     bool changed = false;
@@ -372,13 +552,32 @@ public:
           ++it;
       }
     }
+    changed |= meet_constants(constants, other.constants);
     return changed;
+  }
+
+  /// The facts of non-local symbols, for callees and callers.
+  factst facts() const
+  {
+    factst result;
+    for(const auto &id : assigned)
+    {
+      if(!tracking.is_local(id))
+        result.assigned.insert(id);
+    }
+    result.constants = constants;
+    for(const auto &constant : constants.get_view())
+    {
+      if(!tracking.is_global(constant.first))
+        result.constants.erase(constant.first);
+    }
+    return result;
   }
 
 private:
   const trackingt &tracking;
   const summariest &summaries;
-  const std::set<irep_idt> &entry;
+  const factst &entry;
 };
 
 class assigned_domain_factoryt : public ai_domain_factoryt<assigned_domaint>
@@ -387,7 +586,7 @@ public:
   assigned_domain_factoryt(
     const trackingt &tracking,
     const summariest &summaries,
-    const std::set<irep_idt> &entry)
+    const factst &entry)
     : tracking(tracking), summaries(summaries), entry(entry)
   {
   }
@@ -400,12 +599,13 @@ public:
 private:
   const trackingt &tracking;
   const summariest &summaries;
-  const std::set<irep_idt> &entry;
+  const factst &entry;
 };
 
-/// Must-assigned symbols at each instruction of each function, by
-/// summaries: a function is reached if a reachable call reaches it, and
-/// starts with the symbols assigned at all its reachable calls.
+/// Must-assigned symbols and constants at each instruction of each
+/// function, by summaries: a function is reached if a reachable call
+/// reaches it, and starts with the facts that hold at all its reachable
+/// calls.
 class must_assignedt
 {
 public:
@@ -417,106 +617,175 @@ public:
   void operator()()
   {
     const auto &functions = goto_model.goto_functions.function_map;
-    // Calls through function pointers may reach any function.
-    bool indirect = false;
+    // The callers of each function, to analyse again when its summary
+    // changes.
+    std::map<irep_idt, std::set<irep_idt>> callers, callees;
     for(const auto &entry : functions)
     {
       for(const auto &instruction : entry.second.body.instructions)
       {
-        indirect |= instruction.is_function_call() &&
-                    instruction.call_function().id() != ID_symbol;
+        if(
+          instruction.is_function_call() &&
+          instruction.call_function().id() == ID_symbol)
+        {
+          const irep_idt &callee =
+            to_symbol_expr(instruction.call_function()).identifier();
+          callers[callee].insert(entry.first);
+          callees[entry.first].insert(callee);
+        }
       }
     }
-    std::map<irep_idt, std::set<irep_idt>> entries;
-    if(indirect)
+    // Roots start with no facts: the entry point, or with calls through
+    // function pointers, which may reach any function, all functions.
+    std::set<irep_idt> roots;
+    if(tracking.indirect)
     {
       for(const auto &entry : functions)
       {
         if(entry.second.body_available())
-          entries[entry.first];
+          roots.insert(entry.first);
       }
     }
     else
-      entries[goto_functionst::entry_point()];
-    bool changed = true;
-    while(changed)
+      roots.insert(goto_functionst::entry_point());
+    for(const auto &root : roots)
+      entry_sets[root];
+    // Analyse callees before their callers (in post-order of the call
+    // graph), so that a caller sees the changes of several callees' summaries
+    // at once.
+    std::map<irep_idt, std::size_t> order;
+    std::set<irep_idt> visited;
+    for(const auto &root : roots)
     {
-      changed = false;
-      std::map<irep_idt, std::set<irep_idt>> next_entries;
-      if(indirect)
+      std::vector<std::pair<irep_idt, bool>> stack{{root, false}};
+      while(!stack.empty())
       {
-        for(const auto &entry : entries)
-          next_entries[entry.first];
-      }
-      else
-        next_entries[goto_functionst::entry_point()];
-      analyses.clear();
-      for(const auto &entry : entries)
-      {
-        const auto function = functions.find(entry.first);
-        if(function == functions.end() || !function->second.body_available())
-          continue;
-        entry_sets[entry.first] = entry.second;
-        auto analysis = std::make_unique<ait<assigned_domaint>>(
-          std::make_unique<assigned_domain_factoryt>(
-            tracking, summaries, entry_sets[entry.first]));
-        (*analysis)(entry.first, function->second, tracking.ns);
-        const auto &body = function->second.body;
-        for(auto it = body.instructions.begin(); it != body.instructions.end();
-            ++it)
+        const auto top = stack.back();
+        stack.pop_back();
+        if(top.second)
         {
-          const auto state_ptr = get(*analysis, it);
-          const assigned_domaint &state = *state_ptr;
-          if(state.bottom)
-            continue;
-          if(it->is_end_function())
+          order.emplace(top.first, order.size());
+          continue;
+        }
+        if(!visited.insert(top.first).second)
+          continue;
+        stack.emplace_back(top.first, true);
+        for(const auto &callee : callees[top.first])
+        {
+          if(visited.count(callee) == 0)
+            stack.emplace_back(callee, false);
+        }
+      }
+    }
+    const auto rank = [&order](const irep_idt &name)
+    {
+      const auto found = order.find(name);
+      return found == order.end() ? order.size() : found->second;
+    };
+    std::set<std::pair<std::size_t, irep_idt>> worklist;
+    const auto schedule = [&worklist, &rank](const irep_idt &name)
+    { worklist.emplace(rank(name), name); };
+    for(const auto &root : roots)
+      schedule(root);
+    // The facts at the reachable calls from each caller to each callee.
+    std::map<irep_idt, std::map<irep_idt, factst>> call_facts;
+    // Entries, call facts and summaries only lose facts once they exist,
+    // so that the iteration terminates; when it does, each entry holds at
+    // all reachable calls, and each summary where the function returns.
+    while(!worklist.empty())
+    {
+      const irep_idt name = worklist.begin()->second;
+      worklist.erase(worklist.begin());
+      const auto function = functions.find(name);
+      if(function == functions.end() || !function->second.body_available())
+        continue;
+      // Not reached (yet).
+      const auto entry_facts = entry_sets.find(name);
+      if(entry_facts == entry_sets.end())
+        continue;
+      auto analysis = std::make_unique<ait<assigned_domaint>>(
+        std::make_unique<assigned_domain_factoryt>(
+          tracking, summaries, entry_facts->second));
+      (*analysis)(name, function->second, tracking.ns);
+      std::map<irep_idt, factst> at_calls;
+      const auto &body = function->second.body;
+      for(auto it = body.instructions.begin(); it != body.instructions.end();
+          ++it)
+      {
+        const auto state_ptr = get(*analysis, it);
+        const assigned_domaint &state = *state_ptr;
+        if(state.bottom)
+          continue;
+        if(it->is_end_function())
+        {
+          // Locals are dead at the end. Constants that the function does
+          // not write are the callers' own.
+          factst summary = state.facts();
+          const auto &writes = tracking.writes.at(name);
+          std::vector<irep_idt> own;
+          for(const auto &constant : summary.constants.get_view())
           {
-            // Locals are dead at the end.
-            std::set<irep_idt> summary;
-            for(const auto &id : state.assigned)
-            {
-              if(!tracking.is_local(id))
-                summary.insert(id);
-            }
-            const auto old = summaries.find(entry.first);
-            if(old == summaries.end() || old->second != summary)
-            {
-              summaries[entry.first] = summary;
-              changed = true;
-            }
+            if(writes.count(constant.first) == 0)
+              own.push_back(constant.first);
           }
-          if(!it->is_function_call() || it->call_function().id() != ID_symbol)
+          for(const auto &id : own)
+            summary.constants.erase(id);
+          const auto old = summaries.find(name);
+          if(old != summaries.end())
+            summary.meet(old->second);
+          if(old == summaries.end() || old->second != summary)
           {
-            continue;
-          }
-          const irep_idt &callee =
-            to_symbol_expr(it->call_function()).identifier();
-          std::set<irep_idt> at_call;
-          for(const auto &id : state.assigned)
-          {
-            if(!tracking.is_local(id))
-              at_call.insert(id);
-          }
-          const auto found = next_entries.find(callee);
-          if(found == next_entries.end())
-            next_entries.emplace(callee, std::move(at_call));
-          else
-          {
-            std::set<irep_idt> both;
-            for(const auto &id : found->second)
-            {
-              if(at_call.count(id) != 0)
-                both.insert(id);
-            }
-            found->second = std::move(both);
+            summaries[name] = std::move(summary);
+            for(const auto &caller : callers[name])
+              schedule(caller);
           }
         }
-        analyses.emplace(entry.first, std::move(analysis));
+        if(!it->is_function_call() || it->call_function().id() != ID_symbol)
+          continue;
+        const irep_idt &callee =
+          to_symbol_expr(it->call_function()).identifier();
+        const auto found = at_calls.find(callee);
+        if(found == at_calls.end())
+          at_calls.emplace(callee, state.facts());
+        else
+          found->second.meet(state.facts());
       }
-      if(next_entries != entries)
+      analyses[name] = std::move(analysis);
+      for(auto &call : at_calls)
       {
-        entries = std::move(next_entries);
-        changed = true;
+        const irep_idt &callee = call.first;
+        auto &facts = call_facts[name];
+        const auto old = facts.find(callee);
+        if(old != facts.end())
+        {
+          call.second.meet(old->second);
+          if(call.second == old->second)
+            continue;
+        }
+        facts[callee] = call.second;
+        if(roots.count(callee) != 0)
+          continue;
+        // The entry of the callee: the facts at all its reachable calls.
+        std::optional<factst> entry;
+        for(const auto &caller : callers[callee])
+        {
+          const auto from = call_facts.find(caller);
+          if(from == call_facts.end())
+            continue;
+          const auto at = from->second.find(callee);
+          if(at == from->second.end())
+            continue;
+          if(entry.has_value())
+            entry->meet(at->second);
+          else
+            entry = at->second;
+        }
+        const auto current = entry_sets.find(callee);
+        if(current == entry_sets.end() || current->second != *entry)
+        {
+          entry_sets[callee] = std::move(*entry);
+          schedule(callee);
+        }
       }
     }
   }
@@ -540,7 +809,7 @@ private:
   const goto_modelt &goto_model;
   const trackingt &tracking;
   summariest summaries;
-  std::map<irep_idt, std::set<irep_idt>> entry_sets;
+  std::map<irep_idt, factst> entry_sets;
   std::map<irep_idt, std::unique_ptr<ait<assigned_domaint>>> analyses;
 
   /// The state before \p it; held by the pointer, as the state of an
@@ -821,6 +1090,114 @@ void collect_copies(const goto_modelt &goto_model, trackingt &tracking)
   }
 }
 
+/// Scalars that decide conditions (see trackingt::scalars), and what each
+/// function may write of them (see trackingt::writes).
+void collect_scalars(const goto_modelt &goto_model, trackingt &tracking)
+{
+  const auto &functions = goto_model.goto_functions.function_map;
+  const auto add = [&tracking](const exprt &expr)
+  {
+    bool grew = false;
+    for(const auto &id : find_symbol_identifiers(expr))
+    {
+      const symbolt *symbol = nullptr;
+      if(
+        tracking.address_taken.count(id) == 0 &&
+        !tracking.ns.lookup(id, symbol) && tracking.is_scalar(symbol->type))
+      {
+        grew |= tracking.scalars.insert(id).second;
+      }
+    }
+    return grew;
+  };
+  for(const auto &entry : functions)
+  {
+    for(const auto &instruction : entry.second.body.instructions)
+    {
+      if(instruction.is_goto() || instruction.is_assume())
+        add(instruction.condition());
+      tracking.indirect |= instruction.is_function_call() &&
+                           instruction.call_function().id() != ID_symbol;
+    }
+  }
+  bool grew = true;
+  while(grew)
+  {
+    grew = false;
+    for(const auto &entry : functions)
+    {
+      for(const auto &instruction : entry.second.body.instructions)
+      {
+        if(
+          instruction.is_assign() &&
+          instruction.assign_lhs().id() == ID_symbol &&
+          tracking.scalars.count(
+            to_symbol_expr(instruction.assign_lhs()).identifier()) != 0)
+        {
+          grew |= add(instruction.assign_rhs());
+        }
+      }
+    }
+  }
+
+  // The scalars of static lifetime that each function writes itself, and
+  // the functions it calls.
+  std::unordered_set<irep_idt> globals;
+  for(const auto &id : tracking.scalars)
+  {
+    if(tracking.is_global(id))
+      globals.insert(id);
+  }
+  std::unordered_map<irep_idt, std::unordered_set<irep_idt>> callees;
+  for(const auto &entry : functions)
+  {
+    auto &writes = tracking.writes[entry.first];
+    const auto write = [&](const exprt &lhs)
+    {
+      for(const auto &id : find_symbol_identifiers(lhs))
+      {
+        if(globals.count(id) != 0)
+          writes.insert(id);
+      }
+    };
+    for(const auto &instruction : entry.second.body.instructions)
+    {
+      if(instruction.is_assign())
+        write(instruction.assign_lhs());
+      else if(instruction.is_other())
+        write(instruction.code());
+      else if(instruction.is_function_call())
+      {
+        write(instruction.call_lhs());
+        if(instruction.call_function().id() == ID_symbol)
+        {
+          callees[entry.first].insert(
+            to_symbol_expr(instruction.call_function()).identifier());
+        }
+        else
+          writes = globals;
+      }
+    }
+  }
+  bool more = true;
+  while(more)
+  {
+    more = false;
+    for(const auto &entry : callees)
+    {
+      auto &writes = tracking.writes[entry.first];
+      for(const auto &callee : entry.second)
+      {
+        const auto found = tracking.writes.find(callee);
+        if(found == tracking.writes.end() || found->first == entry.first)
+          continue;
+        for(const auto &id : found->second)
+          more |= writes.insert(id).second;
+      }
+    }
+  }
+}
+
 /// Give DYNAMIC_SITE_FUNCTION an empty body and its parameters, which the
 /// abstract interpreter needs to analyse calls of it.
 void prepare_marker_function(goto_modelt &goto_model)
@@ -856,6 +1233,7 @@ dynamic_resolutionst analyse_dynamic_sites(
       tracking.bodies.insert(entry.first);
   }
   collect_copies(goto_model, tracking);
+  collect_scalars(goto_model, tracking);
   // Reachability and must-assigned symbols at each instruction.
   must_assignedt must_assigned{goto_model, tracking};
   must_assigned();

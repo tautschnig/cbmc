@@ -1,0 +1,14 @@
+CORE
+defined-later.sh
+--resolve-dynamic-sites --show-dynamic-sites
+^EXIT=0$
+^SIGNAL=0$
+^shell-command-name:defined-later.sh:8:1: .*: \{ "", "cat", "x" \}$
+--
+"b"
+^warning: ignoring
+--
+Whether a function is defined is a constant at each instruction, so that
+the call of g before its definition is known not to call it, and pager
+does not get "b". The site itself may call g, as $pager may be g, with
+the argument x and no second one.
