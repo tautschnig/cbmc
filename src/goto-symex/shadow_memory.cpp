@@ -38,13 +38,14 @@ void shadow_memoryt::initialize_shadow_memory(
   for(const auto &field_pair : fields)
   {
     const symbol_exprt &shadow = add_field(state, expr, field_pair.first, type);
+    const typet &shadow_type = shadow.type();
 
     if(
       field_pair.second.id() == ID_typecast &&
       to_typecast_expr(field_pair.second).op() == 0)
     {
       const auto zero_value =
-        zero_initializer(type, expr.source_location(), ns);
+        zero_initializer(shadow_type, expr.source_location(), ns);
       CHECK_RETURN(zero_value.has_value());
 
       symex_assign(state, shadow, *zero_value);
@@ -53,7 +54,7 @@ void shadow_memoryt::initialize_shadow_memory(
     {
       exprt init_expr = field_pair.second;
       const auto init_value =
-        expr_initializer(type, expr.source_location(), ns, init_expr);
+        expr_initializer(shadow_type, expr.source_location(), ns, init_expr);
       CHECK_RETURN(init_value.has_value());
 
       symex_assign(state, shadow, *init_value);
@@ -70,8 +71,24 @@ const symbol_exprt &shadow_memoryt::add_field(
   goto_symex_statet &state,
   const exprt &expr,
   const irep_idt &field_name,
-  const typet &field_type)
+  const typet &object_type)
 {
+  // An array of symbolic size gets shadow memory of unbounded size: its type
+  // does not refer to the object's size symbol, whose L2 index the shadow
+  // symbol's type would otherwise be fixed to at its first renaming, which
+  // may precede the allocation in this run (see below).
+  const typet field_type = [&]() -> typet
+  {
+    if(
+      object_type.id() == ID_array &&
+      !to_array_type(object_type).size().is_constant())
+    {
+      const auto &array_type = to_array_type(object_type);
+      return array_typet{
+        array_type.element_type(), infinity_exprt{array_type.size().type()}};
+    }
+    return object_type;
+  }();
   // The shadow symbol of the same object in the previous run, which threads
   // that symbolic execution executed earlier in this run may refer to.
   const symbolt *previous = nullptr;

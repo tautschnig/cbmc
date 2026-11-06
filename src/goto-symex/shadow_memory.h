@@ -147,13 +147,14 @@ private:
   /// \param state The symex state
   /// \param expr The expression for which shadow memory should be allocated
   /// \param field_name The field name
-  /// \param field_type The field type
+  /// \param object_type The type of the shadowed object (the shadow memory
+  ///   of an array of symbolic size is unbounded)
   /// \return The resulting shadow memory symbol expression
   const symbol_exprt &add_field(
     goto_symex_statet &state,
     const exprt &expr,
     const irep_idt &field_name,
-    const typet &field_type);
+    const typet &object_type);
 
   /// Records in SHADOW_MEMORY_INCOMPLETE, if declared, that a field could
   /// not be resolved.
