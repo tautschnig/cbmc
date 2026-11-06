@@ -23,6 +23,7 @@ SRC = shell_arith.cpp \
       shell_convert_templates.cpp \
       shell_convert_test.cpp \
       shell_convert_trap.cpp \
+      shell_convert_utilities.cpp \
       shell_convert_words.cpp \
       shell_converter.cpp \
       shell_dialect.cpp \

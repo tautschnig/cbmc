@@ -182,7 +182,9 @@ exprt shell_convertert::expand_command_substitution(
   if(keep_status)
     assign(dest, status(), previous, loc);
   assign(dest, substitution_ran(), true_exprt{}, loc);
-  // The output is not modelled.
+  // The output is modelled for specified utilities only.
+  if(const auto output = utility_output(part, dest))
+    return *output;
   return nondet_string(dest, loc);
 }
 

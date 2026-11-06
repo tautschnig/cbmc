@@ -1,0 +1,18 @@
+CORE
+main.sh
+--resolve-dynamic-sites --cvc5
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\] .* 0 = 1: SUCCESS$
+^\[shell-unsupported\.1\] .* the parts of the action of trap for the holes of "rm -f /dev/shm/\.vigpg-"\* are words .*: SUCCESS$
+^\[assertion\.2\] .* 0 = 2: SUCCESS$
+^\[shell-unsupported\.[0-9]+\] .* the parts of the action of trap for the holes of "rm -rf "\*"tmp\."\* are words .*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The specification of mktemp: a template's name has no blanks, so that
+the first trap's action is a word; without a template, the name is in
+$TMPDIR, which may have one. (With refined strings, the pattern */tmp.*
+is not decided: the string solver treats such models as counterexamples
+when its not-contains constraints do not converge.)

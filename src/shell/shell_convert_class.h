@@ -893,6 +893,13 @@ private:
   void declare_dot_scripts();
   void convert_dot_scripts();
   void convert_dot(const shell_commandt &command, code_blockt &dest);
+  /// The output of command substitution \p part by the specification of
+  /// its utility, if it is one call of a specified utility, after the
+  /// substitution ran (see shell_convert_utilities.cpp).
+  std::optional<exprt>
+  utility_output(const shell_word_partt &part, code_blockt &dest);
+  std::optional<exprt>
+  mktemp_output(const shell_commandt &command, code_blockt &dest);
   /// eval of text that is not known during conversion: a dynamic site.
   void convert_dynamic_eval(const shell_commandt &command, code_blockt &dest);
   /// The action of a trap on EXIT that is not known during conversion: a
