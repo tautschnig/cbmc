@@ -1,0 +1,12 @@
+CORE
+main.c
+--no-standard-checks
+^EXIT=0$
+^SIGNAL=0$
+^\[main.assertion.1\] .* exact range: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Dereferencing the pointer to the range renames the size of its type, which
+the array of copies of the field value that set_field assigns must take.

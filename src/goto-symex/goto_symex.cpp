@@ -59,6 +59,18 @@ void goto_symext::symex_assign(
     return;
   }
 
+  // Dereferencing may have renamed the symbols in the size of an array type
+  // of the left-hand side (as for shadow memory's flags of a range of
+  // symbolic size). An array of copies of a value has any size.
+  if(
+    rhs.id() == ID_array_of && lhs.type() != rhs.type() &&
+    lhs.type().id() == ID_array && rhs.type().id() == ID_array &&
+    to_array_type(lhs.type()).element_type() ==
+      to_array_type(rhs.type()).element_type())
+  {
+    rhs.type() = lhs.type();
+  }
+
   DATA_INVARIANT_WITH_DIAGNOSTICS(
     lhs.type() == rhs.type(),
     "assignments must be type consistent, got",
