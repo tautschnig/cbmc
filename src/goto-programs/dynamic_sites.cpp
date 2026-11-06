@@ -23,20 +23,16 @@ Author: Michael Tautschnig
 #include "goto_model.h"
 
 #include <optional>
+#include <sstream>
 
-bool read_dynamic_resolutions(
+/// Read \p resolutions from \p json, read from \p filename.
+static bool resolutions_from_json(
+  const jsont &json,
   const std::string &filename,
   message_handlert &message_handler,
   dynamic_resolutionst &resolutions)
 {
   messaget log{message_handler};
-  jsont json;
-  if(parse_json(filename, message_handler, json))
-  {
-    log.error() << "failed to read dynamic resolutions from " << filename
-                << messaget::eom;
-    return true;
-  }
   if(!json.is_object())
   {
     log.error() << filename
@@ -66,6 +62,50 @@ bool read_dynamic_resolutions(
     }
   }
   return false;
+}
+
+bool read_dynamic_resolutions(
+  const std::string &filename,
+  message_handlert &message_handler,
+  dynamic_resolutionst &resolutions)
+{
+  jsont json;
+  if(parse_json(filename, message_handler, json))
+  {
+    messaget log{message_handler};
+    log.error() << "failed to read dynamic resolutions from " << filename
+                << messaget::eom;
+    return true;
+  }
+  return resolutions_from_json(json, filename, message_handler, resolutions);
+}
+
+bool parse_dynamic_resolutions(
+  const std::string &text,
+  message_handlert &message_handler,
+  dynamic_resolutionst &resolutions)
+{
+  std::istringstream in{text};
+  jsont json;
+  if(parse_json(in, "<dynamic resolutions>", message_handler, json))
+    return true;
+  return resolutions_from_json(
+    json, "<dynamic resolutions>", message_handler, resolutions);
+}
+
+std::string dynamic_resolutions_to_json(const dynamic_resolutionst &resolutions)
+{
+  json_objectt json;
+  for(const auto &site : resolutions)
+  {
+    json_arrayt candidates;
+    for(const auto &candidate : site.second)
+      candidates.push_back(json_stringt{candidate});
+    json[id2string(site.first)] = std::move(candidates);
+  }
+  std::ostringstream out;
+  out << json;
+  return out.str();
 }
 
 code_function_callt dynamic_site_marker(

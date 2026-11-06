@@ -56,6 +56,17 @@ bool read_dynamic_resolutions(
   message_handlert &message_handler,
   dynamic_resolutionst &resolutions);
 
+/// Read \p resolutions from the JSON text \p text.
+/// \return true on error
+bool parse_dynamic_resolutions(
+  const std::string &text,
+  message_handlert &message_handler,
+  dynamic_resolutionst &resolutions);
+
+/// \p resolutions as JSON text, as read by parse_dynamic_resolutions.
+std::string dynamic_resolutions_to_json(
+  const dynamic_resolutionst &resolutions);
+
 /// The call that marks dynamic site \p site_id, whose value is \p value.
 /// Declares DYNAMIC_SITE_FUNCTION in \p symbol_table, without a body, with
 /// a parameter for the identifier followed by an ellipsis, so that each
