@@ -21,9 +21,12 @@ package documentation, `WaitGroup` and `Cond`.
 
 The result is a property per access site, of class `data-race`, failing
 if a race involving that access is possible within the unwinding bound.
-gc's race detector reports a race and terminates ("An implementation may
-always react to a data race by reporting the race and terminating the
-program", GoMem); so may we, so behaviour after a race does not matter.
+GoMem allows an implementation to react to a race by reporting it and
+terminating the program. Otherwise, a racy read of a value of more than
+one word may observe a torn value and corrupt memory arbitrarily. gc's
+race detector reports and continues by default (`halt_on_error=0`). We
+report the race, and properties that may be checked after it are UNKNOWN
+(section 11).
 
 ## 2. What the front-end already provides
 
@@ -358,3 +361,42 @@ The oracle took 37,535 s in total (run I: 50,125 s).
   and fails without the race check too.
 - 2,047 goroutines (`TestNoRaceDeferAtomicStore`): the memory model's
   constraints.
+
+## 11. After a race
+
+The Go specification says nothing about races; the memory model (GoMem)
+does. An implementation may report a race and halt. If it does not, a read
+of a word-sized or smaller location observes some write that precedes it
+or is concurrent with it. A read of a larger value may observe a torn
+value, which can lead to arbitrary memory corruption. Our encoding never
+tears values. A property proven after a race would then only hold if
+nothing was corrupted, which is a quiet under-approximation.
+
+The data-race assertions are therefore *fatal* properties, as CBMC uses
+for undefined behaviour in C (`8261ea72ce`). Symex continues past them,
+and after the solver has run, proven properties that may be checked after
+a refuted fatal property are reported as UNKNOWN. Ending the path at a
+race (an assumption after each check) was the alternative. It would
+prune the state space, but properties after the race would still say
+SUCCESS, proven on race-free paths only.
+
+The computation of what follows a refuted fatal property
+(`goto-checker/fatal_assertions.cpp`) missed code in two cases, and both
+are fixed in general, also for C (`627d2df578`):
+
+- the code after the call sites of the function holding the property,
+  once it returns; and
+- the code of other threads, which does not follow the property in the
+  control-flow graph: the code of the main goroutine after a `go`
+  statement, or a goroutine started earlier. When a fatal property is
+  refuted, the computation now also starts from every `START_THREAD`
+  instruction. When code runs concurrently with or after the race, at
+  least two threads exist, and all such code is reachable from some
+  `START_THREAD`. Only code that runs before the first goroutine starts
+  keeps its status.
+
+The properties that say the check is incomplete ("data race check
+incomplete: ...", "shadow memory does not resolve the accessed object")
+are not fatal, as they do not say a race happened. A racy harness now
+reports the race and UNKNOWN for nearly every other property;
+`regression/go/race-fatal1` shows this.
