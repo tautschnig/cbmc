@@ -1065,3 +1065,86 @@ the driver derives it as `reg_bar + cmd_completion.sq_doorbell_offset` without
 any bound check. The harness therefore needs a named
 `ASSUME_DEVICE_HONEST_DOORBELL` assumption to make `INV_STARTED` provable at
 all, and that assumption is the finding.
+
+## The second operation: ena_tx_cleanup
+
+With only xmit, "all operation sequences" is a sequence of one operation type,
+which is not a sequence. Cleanup is also the only place the TX path releases
+an mbuf, so double-free, use-after-free and leaked descriptors are decided
+here -- the classes the taint pipeline cannot express and 25% of the Unveil
+findings.
+
+`harness_cleanup.c` takes an arbitrary `INV_STARTED` state with arbitrary slot
+occupancy, performs one `ena_tx_cleanup`, and discharges five obligations.
+The cleanup loop is bounded by `cleanup_budget <= size_mask`, i.e. by the ring
+size, which is concrete, so it is discharged by unwinding with
+`--unwinding-assertions` and needs **no loop contract** -- which keeps this
+proof clear of DFCC issues B and C entirely.
+
+**Result at ring 4, one distinct mbuf per slot:** VERIFICATION SUCCESSFUL,
+0 of 7002 failed, and under the strictest available setting (the
+`cut-path-reporting` binary with `--report-unreachable-properties`) **zero
+UNREACHABLE and zero UNKNOWN**, with the vacuity witness still FAILURE and no
+unmodelled callee reached. `ena_tx_cleanup.unwind.0` is SUCCESS, so the loop
+is fully unwound rather than bounded away.
+
+| obligation | meaning |
+|---|---|
+| `INV_STARTED` preserved | the queue is still usable by any later operation |
+| `INV_SLOT` preserved | free-list entries stay in range, descriptor counts bounded |
+| `OWN_UNIQUE` | no mbuf owned by two slots after cleanup |
+| `OWN_NO_DANGLING` | **no slot still owns a released mbuf** -- the use-after-free clause |
+| `FREE_ONCE` | **no mbuf is released twice** -- checked inside the free model, at the only point where a double free is observable |
+
+Device trust is modelled soundly: `req_id` comes from the completion queue the
+device writes, so `ena_com_tx_comp_req_id_get` returns an arbitrary `req_id`
+or "no more completions". The proof therefore covers a device that replays,
+reorders or invents completions. Worth recording that the driver does guard
+this properly -- `validate_tx_req_id` checks both `req_id < ring_size` **and**
+`tx_info->mbuf != NULL` -- so unlike the EFA kverbs paths in F4/F5 this is a
+guard that exists. Without the second half of that check, the `fast_free`
+branch would dereference `mbuf->nb_segs` on a replayed completion.
+
+### INV_DESC_SUM, discovered by proof failure
+
+`INV_STARTED` initially failed. The counterexample: `tail == next_to_comp ==
+32752` (nothing outstanding) while the slots claimed `total_tx_descs == 16`,
+so `ena_com_comp_ack`, which is just `next_to_comp += elem`, drove
+`next_to_comp` to 32768 and made the apparent in-flight count 65520 against a
+`q_depth` of 8.
+
+The missing invariant is that the descriptors outstanding on the SQ are
+exactly the descriptors of the packets still in flight:
+
+```
+(uint16_t)(tail - next_to_comp) == sum of tx_descs over occupied slots
+```
+
+Our "arbitrary `INV_STARTED` state" was admitting states the driver can never
+reach. This is a **sum**, so unlike every other clause so far it cannot be
+stated by probing one nondeterministic index; the ring size is concrete in
+this harness, so it is computed directly. Carrying it into `ena_inv.h` for the
+xmit step is the obvious next move, and would need the same treatment there.
+
+### Two harness defects worth recording
+
+Both produced failures that looked like driver bugs and were not.
+
+1. **A pigeonhole contradiction.** Slots chose mbufs freely from a pool of 2
+   while the ring had 8 slots, so ownership uniqueness was impossible by
+   construction and the harness was refuting its own setup. Each occupied slot
+   now owns its own mbuf, which is also the real situation and the same
+   application obligation the xmit step has to assume.
+2. **A pool-size override.** The runner passed `-DMBUF_POOL=2` over the
+   header default, so `&pool_mbuf[i]` ran past the pool for `i >= 2`. The
+   runner now defaults the pool to the ring size.
+
+Also fixed: the runner used `set -eu` with a `grep` for the verdict, so a
+timeout exited silently with no output at all. It now says so.
+
+### Cost
+
+Ring 4 completes in a few minutes. Ring 8 did not finish in 2400 s on the
+first attempt, because cleanup iterates the ring acking descriptors and the
+`INV_DESC_SUM` computation adds a second pass, so cost grows with ring size
+faster than the xmit step does.
