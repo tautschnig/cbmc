@@ -1,0 +1,12 @@
+CORE
+main.go
+--go-race-check --unwind 3 --unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\$lit1\.data-race\.\d+\] line 12 data race \(write\): FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Every byte of an access is flagged, and the check of the access that
+starts later (byte 3) sees the flags of the other.

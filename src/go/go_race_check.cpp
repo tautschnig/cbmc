@@ -792,7 +792,13 @@ void go_race_check(goto_modelt &goto_model, message_handlert &message_handler)
               }
               else
               {
-                const exprt bytes = bytes_address(ns, a.lvalue);
+                // Every byte is flagged, but the first byte suffices for the
+                // check: of two overlapping accesses, the one that starts
+                // later has its first byte among those the other flags, and
+                // its check can be scheduled between the other's setting and
+                // resetting of the flags (which commute with the accesses
+                // of the program), whichever access comes first.
+                const exprt &bytes = byte;
                 conflicts.emplace_back(bytes, "W");
                 conflicts.emplace_back(base, "RW");
                 if(a.write)
