@@ -1,6 +1,8 @@
 # Data-race detection for the Go front-end: design
 
-Status: proposal (plan §6, phase 10). Nothing here is implemented yet.
+Status: implemented, opt-in (`--go-race-check`). Sections 1 to 7 are the
+original design; sections 8 to 12 record the implementation and its
+evaluation against Go's runtime/race tests.
 
 ## 1. What must be reported
 
@@ -400,3 +402,65 @@ incomplete: ...", "shadow memory does not resolve the accessed object")
 are not fatal, as they do not say a race happened. A racy harness now
 reports the race and UNKNOWN for nearly every other property;
 `regression/go/race-fatal1` shows this.
+
+## 12. Unwinding, precision, and run K4
+
+**Inconclusive results from unwinding.** Run J had 26 harnesses that
+failed an unwinding assertion. Grouped by the loop that failed:
+
+| Loop | Harnesses | Now |
+|---|---|---|
+| Spin-waits, such as `for atomic.LoadInt32(&s) != 1 { runtime.Gosched() }` | 9 | an await: at most one iteration that continues the loop, then an assumption that the condition fails (`41517a9373`). An iteration that continues writes nothing other goroutines can observe (the condition is read-only, or a failing compare-and-swap; the body calls only `runtime.Gosched` and `time.Sleep`), so removing such iterations keeps adjacent accesses adjacent; the one kept iteration covers the checks of any of them |
+| `for range s {}` | 3 | no loop (`47115f657c`) |
+| `copy` and `append` of elements with pointers, one by one | 5 | by `__CPROVER_array_copy` (`5b1d9668b5`), which keeps pointers since the element-wise lowering of section 10 |
+| comparisons with `"sync: negative WaitGroup counter"` (`rt.StringEqual`) | 2 | comparisons with constants of at most 64 bytes, also through interfaces, compare the length and each byte (`ad859c7571`). Comparing arbitrary strings as arrays of a common symbolic length (`__CPROVER_array_equal`, with a witness of a difference) needs no loop either, but made encoding/json from source 40 times slower |
+| loops of fixed counts above the bound (4 to 1,000,000 iterations, 32 goroutines) | 7 | unchanged: they need a larger bound |
+
+**Precision.**
+
+- `copy` accesses the elements it copies, not the whole objects
+  (`1da8788be7`): range markers `go::$race_read_range` and
+  `go::$race_write_range`, flagged as an array of unsigned chars of
+  symbolic size. Copies of map entries keep no markers (`2c978538d3`),
+  as their accesses are of the map's header. This needed two fixes in
+  CBMC itself: a byte update of symbolic size into an array of elements
+  wider than a byte left its last element unchanged (`5a16a5847d`, also
+  in the 6.x releases), and symex failed on a set_field of symbolic size
+  whose value depends on the path (`731c8613f7`).
+- A failed symbol in a value set makes shadow memory incomplete only if
+  the pointer points to it (`bb98255232`): value sets merge paths, so a
+  pointer that is assigned wherever it is used still has one.
+- Objects that a model's atomic section allocates (the value of a
+  run-time error, with `recover`) are not shared before the section ends,
+  and are not announced (`49146dfe50`): their pointers are not assigned
+  where the section's accesses are announced.
+
+**Run K4 on the whole oracle, `--unwind 4`** (build `036b30283a`, the
+map harnesses rerun with `2c978538d3`):
+
+| | found / clean | incomplete | unwind | error | timeout | silent / false |
+|---|---|---|---|---|---|---|
+| 224 racy tests | 208 (run J: 203) | 3 | 1 | 3 | 6 | 3* |
+| 117 race-free tests | 99 (run J: 79) | 2 | 5 | 1 | 10 | 0 (run J: 1) |
+
+\* As in run J, invalid under the stub `testing` package.
+
+The oracle took 37,580 s in total (run J: 37,535 s).
+
+**Remaining:**
+
+- Observations that do not synchronise (`TestRaceChanSendLen`,
+  `RecvLen`, `SendSend`, `TestNoRaceChanCloseLen`): the check reports
+  them as incomplete. Letting such an observation (len of a channel, a
+  select's default case, a failing TryLock) return any value it could
+  return in some interleaving would remove the order it imposes, and so
+  find these races, but also admits behaviours the program does not have
+  for its other properties.
+- `TestNoRaceProducerConsumerUnbuffered`: values that cross an
+  unbuffered channel have pointers whose value sets are unknown (it timed
+  out in run J).
+- Timeouts: symex itself is slow on goroutines that loop over `select`
+  (`TestNoRaceSelect4`: 187 s of symex without the check, more than 600 s
+  with it).
+- The errors of section 10 (very large values, 2,047 goroutines).
+
