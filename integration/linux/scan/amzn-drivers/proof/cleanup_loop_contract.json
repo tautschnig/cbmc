@@ -1,0 +1,15 @@
+{
+  "functions": [
+    {
+      "ena_tx_cleanup": [
+        {
+          "loop_id": "0",
+          "invariants": "(total_tx_pkts <= cleanup_budget) && (cleanup_budget == __CPROVER_loop_entry(cleanup_budget)) && (next_to_clean < tx_ring->ring_size) && (tx_ring->next_to_clean < tx_ring->ring_size) && (tx_ring->tx_buffer_info[0].mbuf == 0 || tx_ring->tx_buffer_info[0].mbuf == &pool_mbuf[0]) && (tx_ring->tx_buffer_info[1].mbuf == 0 || tx_ring->tx_buffer_info[1].mbuf == &pool_mbuf[1]) && (tx_ring->tx_buffer_info[2].mbuf == 0 || tx_ring->tx_buffer_info[2].mbuf == &pool_mbuf[2]) && (tx_ring->tx_buffer_info[3].mbuf == 0 || tx_ring->tx_buffer_info[3].mbuf == &pool_mbuf[3]) && (g_free_calls == 0 || (tx_ring->tx_buffer_info[0].mbuf != g_watch && tx_ring->tx_buffer_info[1].mbuf != g_watch && tx_ring->tx_buffer_info[2].mbuf != g_watch && tx_ring->tx_buffer_info[3].mbuf != g_watch)) && (g_free_calls <= 1) && (total_tx_descs <= cleanup_budget * 17)",
+          "assigns": "total_tx_pkts, total_tx_descs, next_to_clean, mbuf_cnt, pkt_cnt, tx_ring->next_to_clean, __CPROVER_object_whole(tx_ring->tx_buffer_info), __CPROVER_object_whole(tx_ring->empty_tx_reqs), g_free_calls, tx_ring->ena_com_io_sq->next_to_comp, tx_ring->ena_com_io_cq->head, tx_ring->ena_com_io_cq->phase",
+          "decreases": "cleanup_budget - total_tx_pkts",
+          "symbol_map": "total_tx_pkts,ena_tx_cleanup::1::total_tx_pkts; total_tx_descs,ena_tx_cleanup::1::total_tx_descs; next_to_clean,ena_tx_cleanup::1::next_to_clean; cleanup_budget,ena_tx_cleanup::1::cleanup_budget; mbuf_cnt,ena_tx_cleanup::1::mbuf_cnt; pkt_cnt,ena_tx_cleanup::1::pkt_cnt; tx_ring,ena_tx_cleanup::1::tx_ring"
+        }
+      ]
+    }
+  ]
+}

@@ -1208,3 +1208,61 @@ second reported honestly by the runner as `NO VERDICT` rather than silently.
 Cleanup cost grows with ring size faster than the xmit step because it
 iterates the ring acking descriptors and `INV_DESC_SUM` adds a second pass
 over the slots. Ring 4 remains the proven point for cleanup.
+
+## Two attempts that did not land, and what they established
+
+### A loop contract for the DPDK cleanup is not needed
+
+Tried, and withdrawn as the wrong tool. `cleanup_budget` is
+`(free_pkt_cnt == 0) ? size_mask : free_pkt_cnt`, so the loop looks unbounded
+in the caller's argument, but it also exits as soon as
+`ena_com_tx_comp_req_id_get` reports no further completion, and
+`validate_tx_req_id` rejects a slot whose `mbuf` is NULL. Since the body
+clears each slot it cleans, the loop cannot run more than `ring_size` times.
+At ring 4 the unwinding assertion `ena_tx_cleanup.unwind.0` is **SUCCESS**, so
+the existing unwinding proof is already complete for that geometry and a
+contract adds nothing.
+
+The contract (`cleanup_loop_contract.json`) applies cleanly but the run times
+out at 2400 s, and ring 8 still times out under plain unwinding even with
+`--sat-solver cadical`, which the runner had never used. So the cleanup proof
+stands at ring 4, complete, and widening it is a cost problem rather than a
+soundness one. This is the opposite of the FreeBSD case, where the bound is
+`ENA_TX_BUDGET` (128) irrespective of ring size and the contract was the only
+route.
+
+### The induction: the ena_com cost is gone, the wall moved
+
+`ena_queue_start` establishing `INV_STARTED` is still **not discharged**, but
+two things changed.
+
+`ena_com_create_io_queue` and `ena_com_get_io_handlers` are now replaced by
+**callee models in the harness** stating the weakest post-conditions
+`INV_STARTED` needs: the SQ and CQ sized by the requested queue size, the
+doorbell inside the register BAR, nothing in flight, and a valid LLQ geometry.
+Each may fail, because the device may refuse any admin command. That does what
+it was meant to do -- the remaining gap is now exactly two named statements
+that must be verified against the real `ena_com` code, rather than an
+open-ended cost problem. They are assumed, not proven, and the harness says so
+at the point of definition.
+
+The RX side was also removed (`ena_populate_rx_queue`,
+`rte_pktmbuf_alloc_bulk`, the mempool dequeue path): symex had been exploring
+it even though the harness starts a **TX** ring, driven by the function-pointer
+expansion at `rte_mempool_ops_dequeue_bulk`. Nothing reports
+`no body for callee`, so those bodies really are off the path.
+
+With both changes symex completes -- 48,845 steps -- where before it did not
+finish. The SAT conversion then does not finish, at ring 8 or ring 4, with or
+without the standard checks. So the wall is now the propositional conversion
+for this harness specifically, not the ena_com admin path.
+
+The next thing to measure, rather than guess: the harness holds a
+182144-byte `struct ena_adapter` as a static, and `ena_create_io_queue` writes
+`ring->empty_tx_reqs[i] = i` through a pointer held in one of
+`struct ena_ring`'s **anonymous unions** -- the same union opacity that
+produced `byte_extract` expressions and unresolvable pointers in the stage-1
+work. A union-held pointer written in a loop is a plausible cost driver and is
+cheap to test by pointing `empty_tx_reqs` at a plain static array. Plausible,
+and untested: the record of this project is that an untested mechanism is
+usually the wrong one.

@@ -128,6 +128,72 @@ void *rte_zmalloc_socket(
   return NULL;
 }
 
+/*
+ * CALLEE CONTRACTS for the two ena_com entry points, supplied as harness
+ * models rather than run as real code.
+ *
+ * ena_com_create_io_queue sends admin commands and waits for completions; its
+ * cost is what stopped this base case being discharged (the queue arrays are
+ * memset out of ENA_TOTAL_NUM_QUEUES-sized arrays inside a 182144-byte
+ * adapter, and the DMA allocation underneath is unmodelled).  Replacing the
+ * two calls with their post-conditions localises the remaining gap to exactly
+ * these two statements, which is the point: they are ASSUMED here and must be
+ * verified separately against the real ena_com code.
+ *
+ * The post-conditions are deliberately the weakest that INV_STARTED needs, so
+ * that proving them later is as easy as possible, and each may fail, because
+ * the device may refuse any admin command.
+ */
+int ena_com_create_io_queue(
+  struct ena_com_dev *ena_dev,
+  struct ena_com_create_io_ctx *ctx)
+{
+  struct ena_com_io_sq *sq;
+  struct ena_com_io_cq *cq;
+
+  if(ctx->qid >= ENA_TOTAL_NUM_QUEUES)
+    return ENA_COM_INVAL;
+
+  if(nd_int())
+    return ENA_COM_INVAL; /* the device may refuse */
+
+  sq = &ena_dev->io_sq_queues[ctx->qid];
+  cq = &ena_dev->io_cq_queues[ctx->qid];
+
+  /* POST 1: the SQ and CQ are sized by the requested queue size */
+  sq->q_depth = ctx->queue_size;
+  cq->q_depth = ctx->queue_size;
+  /* POST 2: the doorbell points into the register BAR.  Unvalidated in the
+   * real code -- that is finding F8 -- so this models a cooperative device. */
+  sq->db_addr = (uint32_t *)pool_reg_bar;
+  /* POST 3: nothing is in flight on a freshly created queue */
+  sq->tail = 0;
+  sq->next_to_comp = 0;
+  /* POST 4: the LLQ geometry is valid (established at device init by
+   * ena_com_config_dev_mode; see INV_DEV_LLQ in ena_inv.h) */
+  sq->llq_info.descs_per_entry = 1;
+  sq->llq_info.descs_num_before_header = 1;
+  sq->llq_info.disable_meta_caching = false;
+  return 0;
+}
+
+int ena_com_get_io_handlers(
+  struct ena_com_dev *ena_dev,
+  uint16_t qid,
+  struct ena_com_io_sq **io_sq,
+  struct ena_com_io_cq **io_cq)
+{
+  if(qid >= ENA_TOTAL_NUM_QUEUES)
+    return ENA_COM_INVAL;
+  if(nd_int())
+    return ENA_COM_INVAL;
+
+  /* POST: the handles name the queues create_io_queue set up */
+  *io_sq = &ena_dev->io_sq_queues[qid];
+  *io_cq = &ena_dev->io_cq_queues[qid];
+  return 0;
+}
+
 int main(void)
 {
   static struct rte_eth_dev dev;
