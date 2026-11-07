@@ -648,6 +648,16 @@ void goto_symext::symex_step(
   const get_goto_functiont &get_goto_function,
   statet &state)
 {
+  // Merge the guard into the equation's shared expressions: the steps of
+  // this instruction take it, and merging their guards then finds it at
+  // once rather than comparing it with its merged copy node by node.
+  if constexpr(std::is_same_v<guardt, guard_exprt>)
+  {
+    exprt guard = state.guard.as_expr();
+    target.merge_shared(guard);
+    state.guard = guardt{guard, guard_manager};
+  }
+
   // Print debug statements if they've been enabled.
   print_symex_step(state);
   execute_next_instruction(get_goto_function, state);

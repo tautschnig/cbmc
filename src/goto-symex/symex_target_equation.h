@@ -282,6 +282,15 @@ public:
       step.validate(ns, vm);
   }
 
+  /// Make \p expr share its data with the expressions of the steps (see
+  /// merge_ireps): symex merges the guard of its state, which the steps
+  /// then share, so that merging the steps' guards finds them at once
+  /// rather than comparing them with their merged copies node by node.
+  void merge_shared(exprt &expr)
+  {
+    merge_irep(expr);
+  }
+
 protected:
   messaget log;
 
