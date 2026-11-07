@@ -455,10 +455,35 @@ The shell front-end's sites, in order of the census:
     template, or with a variable template, and `eval "echo
     \${XDG_$1_DIR:-...}"` with an argument that may not be a name); 33
     rather than 24 time out.
-  - The string refinement solver reports `case "$1ab" in *ab*)` as not
-    matching (a false alarm, also before these changes): its not-contains
-    constraints for index_of do not converge, and it then treats the
-    model as a counterexample. This is in the solver (#4).
+  - The string refinement solver reported `case "$1ab" in *ab*)` as not
+    matching (a false alarm, also before these changes): each
+    counter-example instance of index_of's not-contains constraint was at
+    one position of the existential, chosen by the witness function, which
+    the next model moved, until the solver took the model as a
+    counterexample. The counter-example lemmas now instantiate the
+    existential over its whole range in the model (at most 64 positions),
+    at the violating position and at each index term with its value. The
+    reproducers decide in under a second; the C, Java and Python string
+    suites are unchanged in results and time. Instantiating violated
+    universal axioms over their ranges in the same way did not help the
+    remaining case (`case "$(mktemp)" in */tmp.*)`), where the
+    concatenation axioms of a nondeterministic choice of parts do not
+    converge, and was not kept.
+  - Two such pattern matches in one program still do not finish with
+    refined strings (in 30 minutes), although each takes under a second
+    on its own; this was also so before.
+
+- Design for `eval set -- "$(getopt ...)"` (not implemented). getopt's
+  output is a regular language that is not a template: options ` -x` and
+  ` --long`, their arguments and the operands as ` 'value'` with `'\''`
+  for `'`, and ` --` before the operands. Two parts are needed:
+  - a specification of getopt (util-linux): the output for "$@" by the
+    option strings, with permutation of operands, abbreviations of long
+    options, optional arguments (`::`), and status 1 on errors;
+  - a hole class of quoted word lists, whose eval sets each word,
+    dequoted, as a field. Membership is a regular expression, which only
+    native strings have; with refined strings, a bounded decomposition
+    into at most --shell-max-arguments words would be needed.
 
 ## Spikes (5 Nov 2026)
 
