@@ -473,7 +473,7 @@ The shell front-end's sites, in order of the census:
     refined strings (in 30 minutes), although each takes under a second
     on its own; this was also so before.
 
-- `eval set -- "$(getopt ...)"`, with native strings. getopt's output is
+- `eval set -- "$(getopt ...)"`. getopt's output is
   a regular language that is not a template: options ` -x` and
   ` --long`, their arguments and the operands as ` 'value'` with `'\''`
   for `'`, and ` --` before the operands. The design (a regular
@@ -523,6 +523,16 @@ The shell front-end's sites, in order of the census:
     (other statuses leave the output unconstrained), and times out in 6
     (3 in symex, 3 in the solver, one with `eval set -- $args`, whose
     text is not the output).
+  - With refined strings, the output of getopt is any string, and only
+    its fields are made of its words: making the text of the words did
+    not finish in 120 s with two words (nor with eight without quoting
+    the arguments). A WORDS hole is then only getopt's output: the split
+    of the FIELDS alternative makes its axioms even where the part is
+    getopt's output (12 GB for two words). The test script verifies in
+    8.6 s with two words and 82 s with four; a `while`/`case` loop over
+    `"$@"` alone, without getopt, already times out at eight with
+    refined strings (3.3 s at four), so the scaling is a property of the
+    solver on such loops.
   - The string refinement solver depends on the order in which
     identifiers are created: looking up one more symbol name in the
     initialisation (which creates the identifier, even in programs that
