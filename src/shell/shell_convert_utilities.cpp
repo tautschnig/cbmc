@@ -18,6 +18,15 @@
 /// in a directory: $TMPDIR if it is set and not empty, the argument of -p,
 /// or /tmp; the implementations differ in the order of these. BSD's -t
 /// PREFIX also makes PREFIX.XXXXXXXX in that directory.
+///
+/// getopt [-a] [-q] [-n NAME] [-s sh|bash] -o OPTSTRING [-l LONGOPTS]
+/// [--] PARAMETERS (with native strings): where it succeeds or reports
+/// invalid options (status 0 or 1), and GETOPT_COMPATIBLE is not set, the
+/// options that it recognised, each with its argument if it has one, then
+/// --, then the other parameters, each preceded by a space, and each
+/// argument and parameter in single quotes with '\'' for each '
+/// (util-linux and busybox; BSD and macOS getopt do not support -o, and
+/// scripts that use it require one of these), or nothing.
 
 #include "shell_convert_class.h"
 
@@ -76,7 +85,315 @@ std::optional<exprt> shell_convertert::utility_output(
     return {};
   if(*name == "mktemp")
     return mktemp_output(command, dest);
+  if(*name == "getopt")
+    return getopt_output(command, dest);
   return {};
+}
+
+/// The option of getopt that \p word names, as --NAME, -N or --N... (an
+/// unambiguous abbreviation of NAME), with its attached argument, if any.
+static std::optional<std::pair<char, std::optional<std::string>>>
+getopt_option(const std::string &word)
+{
+  static const std::vector<std::pair<std::string, char>> long_names{
+    {"alternative", 'a'},
+    {"help", 'h'},
+    {"longoptions", 'l'},
+    {"name", 'n'},
+    {"options", 'o'},
+    {"quiet", 'q'},
+    {"quiet-output", 'Q'},
+    {"shell", 's'},
+    {"test", 'T'},
+    {"unknown", 'U'},
+    {"unquoted", 'u'},
+    {"version", 'V'}};
+  if(word.size() >= 3 && word[0] == '-' && word[1] == '-')
+  {
+    const auto equals = word.find('=');
+    const std::string name = word.substr(2, equals - 2);
+    std::optional<std::string> argument;
+    if(equals != std::string::npos)
+      argument = word.substr(equals + 1);
+    std::optional<char> found;
+    for(const auto &option : long_names)
+    {
+      if(option.first == name)
+        return std::make_pair(option.second, argument);
+      if(option.first.compare(0, name.size(), name) == 0)
+      {
+        if(found.has_value())
+          return {};
+        found = option.second;
+      }
+    }
+    if(!found.has_value())
+      return {};
+    return std::make_pair(*found, argument);
+  }
+  if(word.size() >= 2 && word[0] == '-' && word[1] != '-')
+  {
+    std::optional<std::string> argument;
+    if(word.size() > 2)
+      argument = word.substr(2);
+    return std::make_pair(word[1], argument);
+  }
+  return {};
+}
+
+std::optional<exprt> shell_convertert::getopt_output(
+  const shell_commandt &command,
+  code_blockt &dest)
+{
+  if(!native())
+    return {};
+  const source_locationt &loc = command.location;
+  std::optional<std::string> optstring;
+  std::string longopts;
+  // getopt's own options, which must be literal text, except for the
+  // name, which is only in messages.
+  for(std::size_t i = 1; i < command.words.size(); ++i)
+  {
+    const auto word = static_text(command.words[i]);
+    if(!word.has_value())
+      return {};
+    if(*word == "--" || word->empty() || (*word)[0] != '-')
+      break;
+    const auto option = getopt_option(*word);
+    if(!option.has_value())
+      return {};
+    const char letter = option->first;
+    if(letter == 'a' || letter == 'q')
+    {
+      if(option->second.has_value())
+        return {};
+      continue;
+    }
+    if(letter != 'o' && letter != 'l' && letter != 'n' && letter != 's')
+      return {};
+    std::optional<std::string> argument = option->second;
+    if(!argument.has_value())
+    {
+      if(++i == command.words.size())
+        return {};
+      if(letter == 'n')
+        continue;
+      argument = static_text(command.words[i]);
+      if(!argument.has_value())
+        return {};
+    }
+    if(letter == 'o')
+      optstring = *argument;
+    else if(letter == 'l')
+      longopts += (longopts.empty() ? "" : ",") + *argument;
+    else if(letter == 's' && *argument != "sh" && *argument != "bash")
+      return {};
+  }
+  // Without -o, the first parameter is the option string, which this
+  // does not support.
+  if(!optstring.has_value())
+    return {};
+  // A leading - outputs the other parameters in place, which this does
+  // not support; + and : do not change the output.
+  std::string letters = *optstring;
+  while(!letters.empty() && (letters[0] == '+' || letters[0] == ':'))
+    letters.erase(0, 1);
+  if(!letters.empty() && letters[0] == '-')
+    return {};
+
+  // The words of the options: each option, and whether it has an
+  // argument.
+  std::vector<std::pair<std::string, bool>> options;
+  for(std::size_t i = 0; i < letters.size(); ++i)
+  {
+    const char c = letters[i];
+    // getopt reports -? as an error, as it reports unknown options with
+    // ?; W; would make -W a long option.
+    if(c == ';')
+      return {};
+    const bool argument = i + 1 < letters.size() && letters[i + 1] == ':';
+    if(c != '?')
+      options.emplace_back(std::string{"-"} + c, argument);
+    while(i + 1 < letters.size() && letters[i + 1] == ':')
+      ++i;
+  }
+  std::size_t from = 0;
+  while(from < longopts.size())
+  {
+    const auto comma = longopts.find(',', from);
+    std::string name = longopts.substr(
+      from, comma == std::string::npos ? std::string::npos : comma - from);
+    from = comma == std::string::npos ? longopts.size() : comma + 1;
+    const bool argument = !name.empty() && name.back() == ':';
+    while(!name.empty() && name.back() == ':')
+      name.pop_back();
+    if(!name.empty())
+      options.emplace_back("--" + name, argument);
+  }
+
+  // getopt outputs the options that it parsed also where some were not
+  // valid, with status 1; it outputs nothing on its own usage errors.
+  // Where GETOPT_COMPATIBLE is in the environment, -o is the option
+  // string instead, and the output is not quoted. The variable is then
+  // set (exported or not).
+  const exprt succeeded = or_exprt{
+    equal_exprt{substitution_status(), from_integer(0, status_type())},
+    equal_exprt{substitution_status(), from_integer(1, status_type())}};
+  const exprt compatible = is_set(variable("GETOPT_COMPATIBLE", loc));
+  const exprt supported = implies_exprt{succeeded, not_exprt{compatible}};
+  check(
+    dest,
+    supported,
+    "shell-unsupported",
+    "GETOPT_COMPATIBLE is not set where getopt outputs options (the "
+    "output of getopt in its compatible mode is not modelled)",
+    loc);
+  add(dest, code_assumet{supported}, loc);
+  // At most max_arguments words, as the fields of a list.
+  const symbol_exprt overflow = temporary(bool_typet{}, dest, loc);
+  assign(dest, overflow, nondet(bool_typet{}, loc), loc);
+  const exprt bounded = implies_exprt{succeeded, not_exprt{overflow}};
+  check(
+    dest,
+    bounded,
+    "shell-argument-count",
+    "the output of getopt has at most --shell-max-arguments (" +
+      std::to_string(max_arguments) + ") words",
+    loc);
+  add(dest, code_assumet{bounded}, loc);
+
+  // The output, made of its words rather than constrained to their
+  // language, which the solvers decide much faster: an option, --, or (as
+  // the argument of an option, or a parameter after --) a quoted string.
+  // The words are the ghost list of fields of the last output of getopt
+  // (see getopt_output_fields), as finding them in the output took cvc5
+  // more than 30 s with three words.
+  const field_listt fields = getopt_output_fields();
+  const symbol_exprt count = temporary(integer_type(), dest, loc);
+  assign(dest, count, nondet(integer_type(), loc), loc);
+  const exprt zero = from_integer(0, integer_type());
+  exprt::operandst constraints{
+    binary_relation_exprt{count, ID_ge, zero},
+    binary_relation_exprt{
+      count, ID_le, from_integer(max_arguments, integer_type())}};
+  // The states: before options (0), before the argument of an option (1),
+  // and after -- (2).
+  const auto state_value = [this](int n) -> exprt
+  { return from_integer(n, integer_type()); };
+  exprt state = state_value(0);
+  const std::size_t dash_dash = options.size();
+  const std::size_t quoted = options.size() + 1;
+  const auto kind_is = [this](const exprt &kind, std::size_t n) -> exprt {
+    return equal_exprt{kind, from_integer(n, integer_type())};
+  };
+  exprt text = payload_literal("");
+  for(std::size_t i = 0;; ++i)
+  {
+    const exprt at = from_integer(i, integer_type());
+    const symbol_exprt current = temporary(integer_type(), dest, loc);
+    assign(dest, current, state, loc);
+    // The output ends after --.
+    constraints.push_back(implies_exprt{
+      equal_exprt{count, at}, equal_exprt{current, state_value(2)}});
+    if(i == max_arguments)
+      break;
+    const symbol_exprt kind = temporary(integer_type(), dest, loc);
+    assign(dest, kind, nondet(integer_type(), loc), loc);
+    const exprt present = binary_relation_exprt{at, ID_lt, count};
+    constraints.push_back(implies_exprt{
+      present,
+      if_exprt{
+        equal_exprt{current, state_value(0)},
+        binary_relation_exprt{
+          kind, ID_le, from_integer(dash_dash, integer_type())},
+        kind_is(kind, quoted)}});
+    // The next state.
+    exprt next =
+      if_exprt{kind_is(kind, dash_dash), state_value(2), state_value(0)};
+    for(std::size_t j = 0; j < options.size(); ++j)
+    {
+      if(options[j].second)
+        next = if_exprt{kind_is(kind, j), state_value(1), next};
+    }
+    state = if_exprt{
+      equal_exprt{current, state_value(0)},
+      next,
+      if_exprt{
+        equal_exprt{current, state_value(1)}, state_value(0), state_value(2)}};
+    // The field, and its word.
+    const exprt argument = payload_of(nondet_string(dest, loc));
+    exprt field = payload_literal("--");
+    for(std::size_t j = 0; j < options.size(); ++j)
+      field =
+        if_exprt{kind_is(kind, j), payload_literal(options[j].first), field};
+    field = if_exprt{kind_is(kind, quoted), argument, field};
+    const symbol_exprt value = temporary(payload_type(), dest, loc);
+    assign(dest, value, field, loc);
+    const exprt quote = payload_literal("'");
+    const exprt word = if_exprt{
+      kind_is(kind, quoted),
+      payload_concat(
+        payload_concat(
+          quote,
+          payload_replace_all(value, "'", "'\\''", dest, loc),
+          dest,
+          loc),
+        quote,
+        dest,
+        loc),
+      exprt{value}};
+    assign(
+      dest,
+      index_exprt{fields.array, from_integer(i, index_type())},
+      make_value(value),
+      loc);
+    const symbol_exprt next_text = temporary(payload_type(), dest, loc);
+    assign(
+      dest,
+      next_text,
+      if_exprt{
+        present,
+        payload_concat(
+          text,
+          payload_concat(payload_literal(" "), word, dest, loc),
+          dest,
+          loc),
+        text},
+      loc);
+    text = next_text;
+  }
+  // busybox reports its own usage errors with status 1, and outputs
+  // nothing then (as where it lacks long options).
+  const symbol_exprt empty = temporary(bool_typet{}, dest, loc);
+  assign(
+    dest,
+    empty,
+    and_exprt{
+      nondet(bool_typet{}, loc),
+      equal_exprt{substitution_status(), from_integer(1, status_type())}},
+    loc);
+  add(
+    dest,
+    code_assumet{implies_exprt{
+      and_exprt{succeeded, not_exprt{empty}}, conjunction(constraints)}},
+    loc);
+  assign(
+    dest,
+    fields.count,
+    typecast_exprt::conditional_cast(
+      if_exprt{empty, zero, exprt{count}}, fields.count.type()),
+    loc);
+  text = if_exprt{empty, payload_literal(""), text};
+  assign(dest, getopt_output_valid(), succeeded, loc);
+  assign(dest, getopt_output_text(), text, loc);
+  // Otherwise, the output is not modelled.
+  const symbol_exprt value = temporary(string_type(), dest, loc);
+  assign(
+    dest,
+    value,
+    if_exprt{succeeded, make_value(text), nondet_string(dest, loc)},
+    loc);
+  return exprt{value};
 }
 
 std::optional<exprt> shell_convertert::mktemp_output(

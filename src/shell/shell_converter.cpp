@@ -57,6 +57,11 @@ void shell_convertert::add_initialize()
     assign(init, exit_trap(), from_integer(0, exit_trap().type()), loc);
   if(symbol_table.has_symbol("shell::in_exit_trap"))
     assign(init, in_exit_trap(), false_exprt{}, loc);
+  // Only where the script calls getopt, and not by looking the symbol up:
+  // a new identifier changes the order of hash tables in the string
+  // refinement solver, which took one kernel from 3 s to 40 s.
+  if(getopt_used && native())
+    assign(init, getopt_output_valid(), false_exprt{}, loc);
   if(posix_increments_used)
     assign(init, posix_increments(), nondet(bool_typet{}, loc), loc);
   initialize_options(init, loc);

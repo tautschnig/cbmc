@@ -1,0 +1,21 @@
+CORE
+getopt.sh
+--resolve-dynamic-sites --cvc5 --shell-max-arguments 4 --unwind 7
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] .* GETOPT_COMPATIBLE is not set where getopt outputs options .*: FAILURE$
+^\[shell-argument-count\.1\] .* the output of getopt has at most --shell-max-arguments \(4\) words: FAILURE$
+^\[shell-dynamic-site\.1\] .*: SUCCESS$
+^\[shell-unsupported\.2\] .* the parts of the text of eval for the holes of "set -- "\* .*: SUCCESS$
+^\[assertion\.1\] .* "an option or --": SUCCESS$
+^\[\.unwind\.0\] .*: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+getopt's output is made of its words: the options of -o and -l, with
+their arguments, then --, then the other parameters, each argument and
+parameter quoted for the shell. The words are the fields of a ghost list,
+which eval of the output uses rather than parsing it, so that the loop
+sees only options and --. The bound on the number of words is a
+property, as getopt may output any number of them.

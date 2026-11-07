@@ -21,6 +21,13 @@
 ///   in '\'' (which ends the quotes, adds a quoted ', and starts them
 ///   again, as quoting a value for the shell does); the ghost variable then
 ///   holds the part with each '\'' replaced by '.
+/// - with native strings, where the script calls getopt, a whole word
+///   that is split into fields: as unquoted in such a word, or the last
+///   output of getopt (see getopt_output), whose fields are known. The
+///   ghost variable is then an array of the fields, and the word is
+///   "${ghost[@]}". Finding the fields of quoted words in the text
+///   instead, by a scan or by a choice of them, took cvc5 more than 30 s
+///   for three words.
 ///
 /// A hole in a command name makes it a dynamic command name (see
 /// convert_dynamic_simple). A hole in the name of a parameter expansion, or
@@ -47,13 +54,20 @@ public:
 
   hole_rewritert(
     const std::vector<std::string> &placeholders,
-    const std::vector<std::string> &ghosts)
-    : placeholders(placeholders), ghosts(ghosts), classes(placeholders.size())
+    const std::vector<std::string> &ghosts,
+    bool words)
+    : placeholders(placeholders),
+      ghosts(ghosts),
+      words(words),
+      classes(placeholders.size())
   {
   }
 
   const std::vector<std::string> &placeholders;
   const std::vector<std::string> &ghosts;
+  /// Whether a hole that is a whole word that is split into fields is of
+  /// class WORDS (rather than FIELDS).
+  const bool words;
   std::vector<std::optional<classt>> classes;
   bool failed = false;
 
@@ -85,7 +99,7 @@ public:
   bool mentions(const shell_command_listt &list) const
   {
     // Rewriting a copy finds the placeholders.
-    hole_rewritert copy{placeholders, ghosts};
+    hole_rewritert copy{placeholders, ghosts, words};
     shell_command_listt rewritten = list;
     copy.rewrite(rewritten);
     for(const auto &found : copy.classes)
@@ -217,6 +231,38 @@ public:
     parts = std::move(result);
   }
 
+  /// If \p word is a placeholder and nothing else, make it "${ghost[@]}",
+  /// the words of the part for the hole as an array.
+  bool whole_word(shell_wordt &word)
+  {
+    using kindt = shell_word_partt::kindt;
+    if(word.size() != 1 || word.front().kind != kindt::LITERAL)
+      return false;
+    for(std::size_t i = 0; i < placeholders.size(); ++i)
+    {
+      if(word.front().text != placeholders[i])
+        continue;
+      const source_locationt loc = word.front().location;
+      shell_word_partt at;
+      at.kind = kindt::LITERAL;
+      at.text = "@";
+      at.location = loc;
+      shell_word_partt reference;
+      reference.kind = kindt::PARAMETER;
+      reference.text = ghosts[i];
+      reference.index.push_back(std::move(at));
+      reference.location = loc;
+      shell_word_partt quoted;
+      quoted.kind = kindt::DOUBLE_QUOTED;
+      quoted.location = loc;
+      quoted.parts.push_back(std::move(reference));
+      word = shell_wordt{std::move(quoted)};
+      found(i, classt::WORDS);
+      return true;
+    }
+    return false;
+  }
+
   /// Record the hole in the name \p name, if it has one.
   void name_hole(const std::string &name)
   {
@@ -272,7 +318,11 @@ public:
                  declaration.count(front.text) != 0;
     }
     for(std::size_t i = 0; i < command.words.size(); ++i)
+    {
+      if(words && i > 0 && !declares && whole_word(command.words[i]))
+        continue;
       rewrite(command.words[i], false, i == 0 || !declares);
+    }
     for(auto &test : command.test)
       rewrite(test);
     for(auto &redirect : command.redirects)
@@ -341,7 +391,11 @@ shell_convertert::parse_template(
            loc,
            [&](shell_command_listt &commands)
            {
-             hole_rewritert rewrite{placeholders, code.ghosts};
+             hole_rewritert rewrite{
+               placeholders,
+               code.ghosts,
+               getopt_used && native() &&
+                 program.dialect != shell_dialectt::ZSH};
              rewrite.rewrite(commands);
              for(std::size_t i = 0; i < placeholders.size(); ++i)
              {
@@ -359,6 +413,8 @@ shell_convertert::parse_template(
                {
                  name_holes[placeholders[i]] = code.ghosts[i];
                }
+               else if(code.classes[i] == hole_classt::WORDS)
+                 arrays.insert(code.ghosts[i]);
              }
              return true;
            });
@@ -419,9 +475,26 @@ exprt shell_convertert::template_decomposition(
   return conjunction(conditions);
 }
 
+/// The bytes that the part for a hole of class FIELDS cannot have.
+static std::bitset<256> fields_forbidden()
+{
+  std::bitset<256> forbidden;
+  forbidden.set();
+  for(int c = 0; c < 256; ++c)
+  {
+    if(
+      std::isalnum(c) ||
+      std::string{"_./:+@%=- \t"}.find(char(c)) != std::string::npos)
+    {
+      forbidden.reset(c);
+    }
+  }
+  return forbidden;
+}
+
 exprt shell_convertert::template_parts(
   const template_codet &code,
-  const template_partst &parts,
+  template_partst &parts,
   code_blockt &dest,
   const source_locationt &loc)
 {
@@ -452,6 +525,26 @@ exprt shell_convertert::template_parts(
     std::bitset<256> forbidden;
     switch(code.classes[i])
     {
+    case hole_classt::WORDS:
+    {
+      // The last output of getopt, whose fields are known, or as FIELDS
+      // (see assign_template_parts).
+      const symbol_exprt getopt = temporary(bool_typet{}, dest, loc);
+      assign(
+        dest,
+        getopt,
+        and_exprt{
+          getopt_output_valid(),
+          payload_equal(
+            payload_substring(v, start, end, dest, loc),
+            getopt_output_text(),
+            dest,
+            loc)},
+        loc);
+      parts.getopt_words[i] = getopt;
+      conditions.push_back(or_exprt{getopt, none_of(fields_forbidden())});
+      continue;
+    }
     case hole_classt::UNQUOTED:
       forbidden.set();
       for(int c = 0; c < 256; ++c)
@@ -466,16 +559,7 @@ exprt shell_convertert::template_parts(
       conditions.push_back(binary_relation_exprt{end, ID_gt, start});
       break;
     case hole_classt::FIELDS:
-      forbidden.set();
-      for(int c = 0; c < 256; ++c)
-      {
-        if(
-          std::isalnum(c) ||
-          std::string{"_./:+@%=- \t"}.find(char(c)) != std::string::npos)
-        {
-          forbidden.reset(c);
-        }
-      }
+      forbidden = fields_forbidden();
       break;
     case hole_classt::DOUBLE_QUOTED:
       for(const unsigned char c : {'"', '\\', '$', '`'})
@@ -529,6 +613,30 @@ void shell_convertert::assign_template_parts(
   {
     exprt part = payload_substring(
       parts.value, parts.bounds[i].first, parts.bounds[i].second, dest, loc);
+    if(code.classes[i] == hole_classt::WORDS)
+    {
+      // The fields of the output of getopt, or the part split at blanks,
+      // as for FIELDS.
+      const field_listt array = array_symbols(code.ghosts[i]);
+      code_blockt copy;
+      const field_listt from = getopt_output_fields();
+      assign(copy, array.array, from.array, loc);
+      assign(copy, array.count, from.count, loc);
+      code_blockt fields;
+      assign(fields, array.count, from_integer(0, count_type()), loc);
+      shell_word_partt ghost;
+      ghost.kind = shell_word_partt::kindt::PARAMETER;
+      ghost.text = code.ghosts[i];
+      ghost.location = loc;
+      split_value(array, make_value(part), ghost, " \t", fields, loc);
+      check_field_list(array, fields, loc);
+      add(
+        dest,
+        code_ifthenelset{
+          parts.getopt_words.at(i), std::move(copy), std::move(fields)},
+        loc);
+      continue;
+    }
     // In single quotes, '\'' is a quoted ' (see template_parts).
     if(code.classes[i] == hole_classt::SINGLE_QUOTED && native())
       part = payload_replace_all(part, "'\\''", "'", dest, loc);

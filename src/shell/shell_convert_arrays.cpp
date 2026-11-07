@@ -15,6 +15,12 @@ void shell_convertert::collect_arrays(const shell_command_listt &list)
 {
   for(const auto &command : list)
   {
+    if(
+      !command.words.empty() &&
+      static_text(command.words.front()) == std::string{"getopt"})
+    {
+      getopt_used = true;
+    }
     for(const auto &assignment : command.assignments)
     {
       if(assignment.is_array || !assignment.index.empty())
@@ -82,6 +88,14 @@ void shell_convertert::initialize_arrays(
   for(const auto &name : array_names_used)
   {
     const field_listt array = array_symbols(name);
+    // The ghost arrays of holes (see shell_convert_templates.cpp) and of
+    // getopt (see shell_convert_utilities.cpp) are set before they are
+    // used.
+    if(name.rfind("__cprover_", 0) == 0)
+    {
+      assign(init, array.count, from_integer(0, count_type()), loc);
+      continue;
+    }
     const exprt value = environment_string(init, loc);
     assign(
       init,

@@ -907,6 +907,23 @@ private:
   utility_output(const shell_word_partt &part, code_blockt &dest);
   std::optional<exprt>
   mktemp_output(const shell_commandt &command, code_blockt &dest);
+  std::optional<exprt>
+  getopt_output(const shell_commandt &command, code_blockt &dest);
+  /// Ghost variables of the last output of getopt that getopt_output
+  /// models: whether there is one, its payload, and its fields, so that
+  /// eval of it need not find them in the text (see template_parts).
+  symbol_exprt getopt_output_valid()
+  {
+    return global_symbol("shell::getopt::valid", "?", bool_typet{});
+  }
+  symbol_exprt getopt_output_text()
+  {
+    return global_symbol("shell::getopt::text", "?", payload_type());
+  }
+  field_listt getopt_output_fields()
+  {
+    return array_symbols("__cprover_getopt");
+  }
   /// eval of text that is not known during conversion: a dynamic site.
   void convert_dynamic_eval(const shell_commandt &command, code_blockt &dest);
   /// The action of a trap on EXIT that is not known during conversion: a
@@ -1381,7 +1398,11 @@ private:
   /// Indexed arrays: see shell_convert_arrays.cpp.
   std::set<std::string> arrays;
   std::set<std::string> array_names_used;
+  /// Collect the arrays, and whether a command is getopt.
   void collect_arrays(const shell_command_listt &list);
+  /// Whether the script (or a script that it runs with .) calls getopt,
+  /// whose output eval may parse (see hole_classt::WORDS).
+  bool getopt_used = false;
   void collect_arrays(const shell_wordt &word);
   field_listt array_symbols(const std::string &name);
   void initialize_arrays(code_blockt &init, const source_locationt &loc);
@@ -1534,7 +1555,10 @@ public:
     /// In the name of a variable, after its start.
     NAME,
     /// At the start of the name of a variable.
-    NAME_START
+    NAME_START,
+    /// A whole word that is split into fields, with native strings: as
+    /// FIELDS, or the last output of getopt.
+    WORDS
   };
 
 private:
@@ -1587,6 +1611,9 @@ private:
   {
     exprt value;
     std::vector<std::pair<exprt, exprt>> bounds;
+    /// For each hole of class WORDS: whether its part is the last output
+    /// of getopt (see template_parts).
+    std::map<std::size_t, exprt> getopt_words;
   };
   /// Whether \p value is in the language of \p pattern; its parts for the
   /// holes, by the first occurrence of each literal part, are \p parts.
@@ -1599,7 +1626,7 @@ private:
   /// Whether \p parts are in the classes of the holes of \p code.
   exprt template_parts(
     const template_codet &code,
-    const template_partst &parts,
+    template_partst &parts,
     code_blockt &dest,
     const source_locationt &loc);
   /// Set the ghost variables of \p code to \p parts.
