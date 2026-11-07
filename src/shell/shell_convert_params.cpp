@@ -68,22 +68,45 @@ void shell_convertert::append_positional_parameters(
   code_blockt &dest,
   const source_locationt &loc)
 {
+  append_fields(list, positional_array(), argument_count(), dest, loc);
+}
+
+void shell_convertert::append_fields(
+  const field_listt &list,
+  const exprt &array,
+  const exprt &count,
+  code_blockt &dest,
+  const source_locationt &loc)
+{
+  // Element i is at the count before them plus i, which is a constant
+  // where that count is. The count after the elements before it is not a
+  // constant where their number is not, and stores at such indices took
+  // cvc5 34 s rather than 0.5 s for eval set -- "$(getopt ...)".
+  // Fields beyond the bound are counted but not stored; see
+  // check_field_list.
+  const symbol_exprt before = temporary(count_type(), dest, loc);
+  assign(dest, before, list.count, loc);
   for(std::size_t i = 0; i < max_arguments; ++i)
   {
-    code_blockt append;
-    append_field(
-      list,
-      index_exprt{positional_array(), from_integer(i, index_type())},
-      append,
+    const exprt at = plus_exprt{before, from_integer(i, count_type())};
+    code_blockt store;
+    assign(
+      store,
+      index_exprt{
+        list.array, typecast_exprt::conditional_cast(at, index_type())},
+      index_exprt{array, from_integer(i, index_type())},
       loc);
     add(
       dest,
       code_ifthenelset{
-        binary_relation_exprt{
-          from_integer(i, count_type()), ID_lt, argument_count()},
-        std::move(append)},
+        and_exprt{
+          binary_relation_exprt{from_integer(i, count_type()), ID_lt, count},
+          binary_relation_exprt{
+            at, ID_lt, from_integer(max_arguments, count_type())}},
+        std::move(store)},
       loc);
   }
+  assign(dest, list.count, plus_exprt{before, count}, loc);
 }
 
 /// Whether \p word is exactly "$@".

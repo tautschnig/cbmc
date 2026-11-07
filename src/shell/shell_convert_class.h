@@ -751,6 +751,13 @@ private:
     const exprt &value,
     code_blockt &dest,
     const source_locationt &loc);
+  /// Append the first \p count elements of \p array to \p list.
+  void append_fields(
+    const field_listt &list,
+    const exprt &array,
+    const exprt &count,
+    code_blockt &dest,
+    const source_locationt &loc);
   /// Check that \p list fits within max_arguments; fields beyond it were
   /// not stored.
   void check_field_list(

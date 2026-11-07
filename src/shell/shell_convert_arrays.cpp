@@ -320,15 +320,17 @@ void shell_convertert::append_array_elements(
   if(!quoted && !ifs_is_white(ifs))
     unsupported(
       loc, "unquoted array expansion with an IFS other than white space");
+  if(quoted)
+  {
+    append_fields(list, array.array, array.count, dest, loc);
+    return;
+  }
   for(std::size_t i = 0; i < max_arguments; ++i)
   {
     code_blockt append;
     const exprt element =
       index_exprt{array.array, from_integer(i, index_type())};
-    if(quoted)
-      append_field(list, element, append, loc);
-    else
-      split_value(list, element, part, ifs, append, loc);
+    split_value(list, element, part, ifs, append, loc);
     add(
       dest,
       code_ifthenelset{
