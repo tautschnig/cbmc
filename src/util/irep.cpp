@@ -300,6 +300,12 @@ bool irept::ordering(const irept &other) const
 /// comments are ignored
 int irept::compare(const irept &i) const
 {
+#ifdef SHARING
+  // Ireps that share their data are equal.
+  if(data == i.data)
+    return 0;
+#endif
+
   int r;
 
   r=id().compare(i.id());
