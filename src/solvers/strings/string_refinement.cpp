@@ -232,16 +232,20 @@ display_index_set(messaget::mstreamt &stream, const index_set_pairt &index_set)
 static std::vector<exprt> generate_instantiations(
   const index_set_pairt &index_set,
   const string_axiomst &axioms,
+  const std::vector<axiom_indexest> &universal_indexes,
   const std::unordered_map<string_not_contains_constraintt, symbol_exprt>
     &not_contain_witnesses)
 {
   std::vector<exprt> lemmas;
   for(const auto &i : index_set.current)
   {
-    for(const auto &univ_axiom : axioms.universal)
+    for(std::size_t k = 0; k < axioms.universal.size(); ++k)
     {
-      for(const auto &j : i.second)
-        lemmas.push_back(instantiate(univ_axiom, i.first, j));
+      for(auto &instance : instantiate(
+            axioms.universal[k], universal_indexes[k], i.first, i.second))
+      {
+        lemmas.push_back(std::move(instance));
+      }
     }
   }
   for(const auto &nc_axiom : axioms.not_contains)
@@ -1085,6 +1089,10 @@ string_refinementt::dec_solve(const exprt &assumption)
       return axiom;
     });
 
+  std::vector<axiom_indexest> universal_indexes;
+  for(const auto &axiom : axioms.universal)
+    universal_indexes.emplace_back(axiom);
+
   // Used to store information about witnesses for not_contains constraints
   std::unordered_map<string_not_contains_constraintt, symbol_exprt>
     not_contain_witnesses;
@@ -1163,8 +1171,8 @@ string_refinementt::dec_solve(const exprt &assumption)
     index_sets.current[entry.first] = entry.second;
   filter_index_set();
   current_constraints.clear();
-  const auto initial_instances =
-    generate_instantiations(index_sets, axioms, not_contain_witnesses);
+  const auto initial_instances = generate_instantiations(
+    index_sets, axioms, universal_indexes, not_contain_witnesses);
   for(const auto &instance : initial_instances)
   {
     add_lemma(substitute_array_access(
@@ -1281,8 +1289,8 @@ string_refinementt::dec_solve(const exprt &assumption)
         }
       }
       current_constraints.clear();
-      const auto instances =
-        generate_instantiations(index_sets, axioms, not_contain_witnesses);
+      const auto instances = generate_instantiations(
+        index_sets, axioms, universal_indexes, not_contain_witnesses);
       for(const auto &instance : instances)
         add_lemma(substitute_array_access(
           instance,
