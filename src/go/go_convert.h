@@ -479,12 +479,16 @@ private:
   exprt string_constant(const std::string &bytes, const source_locationt &);
   /// Code copying \p count elements from \p source to \p dest (pointers
   /// to elements; the ranges may overlap), appended to \p dest_code.
+  /// With \p race_ranges, the data-race check sees accesses of the copied
+  /// elements (range markers); without, of the whole objects (as for the
+  /// entries of maps, which are accesses of the map's header).
   void copy_elements(
     const exprt &dest,
     const exprt &source,
     const exprt &count,
     const source_locationt &location,
-    code_blockt &dest_code);
+    code_blockt &dest_code,
+    bool race_ranges = true);
   /// A new array of \p count elements of type \p element, zeroed if
   /// \p zero; the result points to its first element.
   exprt allocate_elements(

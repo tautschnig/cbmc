@@ -173,7 +173,8 @@ void go_convertert::copy_elements(
   const exprt &source,
   const exprt &count,
   const source_locationt &location,
-  code_blockt &dest_code)
+  code_blockt &dest_code,
+  bool race_ranges)
 {
   // Copy through a new array of exactly count elements, which makes the
   // result "independent of whether the memory referenced by the arguments
@@ -205,8 +206,8 @@ void go_convertert::copy_elements(
       typecast_exprt::conditional_cast(*element_size, size_type())},
     ns);
   const auto constant_bytes = numeric_cast<mp_integer>(bytes);
-  const bool ranges =
-    race_check && (!constant_bytes.has_value() || *constant_bytes <= 1024);
+  const bool ranges = race_check && race_ranges &&
+                      (!constant_bytes.has_value() || *constant_bytes <= 1024);
   if(ranges)
     race_range_marker("go::$race_read_range", from, bytes, location, copy);
   codet array_copy{ID_array_copy, {buffer, from}};

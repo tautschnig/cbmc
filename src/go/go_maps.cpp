@@ -205,8 +205,10 @@ void go_convertert::map_insert(
     allocate_elements(k, capacity, false, location, grow), location, grow);
   const exprt vals = evaluate_once(
     allocate_elements(v, capacity, false, location, grow), location, grow);
-  copy_elements(keys, field(map, "keys"), field(map, "len"), location, grow);
-  copy_elements(vals, field(map, "vals"), field(map, "len"), location, grow);
+  copy_elements(
+    keys, field(map, "keys"), field(map, "len"), location, grow, false);
+  copy_elements(
+    vals, field(map, "vals"), field(map, "len"), location, grow, false);
   grow.add(code_frontend_assignt{field(map, "keys"), keys});
   grow.add(code_frontend_assignt{field(map, "vals"), vals});
   grow.add(code_frontend_assignt{field(map, "cap"), capacity});
@@ -395,7 +397,8 @@ void go_convertert::convert_map_range(
     field(map, "keys"),
     contains_reference(k, ns) ? field(map, "len") : field(map, "cap"),
     location,
-    snapshot);
+    snapshot,
+    false);
   snapshot.add(code_frontend_assignt{
     visited,
     allocate_elements(
