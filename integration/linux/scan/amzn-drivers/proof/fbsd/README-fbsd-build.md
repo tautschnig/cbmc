@@ -133,3 +133,71 @@ argument). With that build the loop contract is applied without error. A run
 with `--unwind 5 --unwinding-assertions --sat-solver cadical` at ring 4 did
 not finish within 1800 s, so the obligations are still not established.
 
+
+## Update: the loop contract applies, and the cost is now tractable
+
+With the five commits of `fbsd-dfcc-findings` cherry-picked, the contract
+applies to `ena_tx_cleanup` and the instance is 4.9x smaller.
+
+**My earlier diagnosis was wrong** and is corrected above: the `malloc`/`free`
+messages are linking warnings that plain `cbmc` prints too. The abort was
+DFCC's handling of the variadic `device_printf`, fixed in `79e4fb92c48`, and
+the kernel allocator signatures caused *wrong write-set checks* rather than a
+failure, fixed in `d5ce47f63ab`. In my own transcript the real signal was the
+`--- begin invariant violation report ---` immediately after the warning, and
+I attributed it to the line above.
+
+### What actually cost the clauses
+
+Not what I guessed either. Narrowing the assigns clause from
+`__CPROVER_object_whole(&ena_dev)` to the fields the loop writes, and pinning
+`io_cq_queues[0].qid = 0`, moved the instance only from 134.9M to 134.8M
+clauses -- reproducing the hand-off note's own finding that pinning `qid` does
+not help. The reason is the `(uintptr_t)` cast inside ENA's `container_of`:
+
+```c
+#define container_of(ptr, type, member) \
+    ((type *)((uintptr_t)__p - offsetof(type, member)))
+```
+
+CBMC loses object identity across the integer cast, so a *concrete* `qid` does
+not recover it. Every field read through that pointer is an 8-byte
+`byte_extract` at a symbolic offset over all 99,648 bytes of
+`struct ena_com_dev`.
+
+The lever is to stop the reads happening at all. `ena_trace` expands to
+`ena_log((ctx)->dmadev, ...)`, so each trace call dereferences that pointer.
+Neutralising `ena_trace` -- including `ena_plat.h` first so its include guard
+stops the real definitions coming back, then redefining -- removes the two
+hot reads in `ena_com_tx_comp_req_id_get`. Logging is in no obligation here,
+so this drops nothing the proof is about.
+
+| configuration | variables | clauses | wall |
+|---|---|---|---|
+| `object_whole(&ena_dev)`, trace live | 30.3M | 134.9M | did not finish in 1500 s |
+| narrowed assigns, `qid` pinned, trace live | 30.3M | 134.8M | did not finish |
+| **narrowed assigns, trace neutralised** | **8.5M** | **27.5M** | **147 s** (12.7 GB) |
+
+### Three genuine harness gaps, surfaced in sequence
+
+Once the run completed it reported real properties, each a missing piece of
+the harness rather than a driver defect:
+
+1. `ena_trigger_reset` writes `adapter->reset_reason` and the flag word on the
+   invalid-req_id path; both were missing from the assigns clause, along with
+   the `tx_stats` counters.
+2. My invariant had `budget >= 0`, but the loop is a `do/while` that
+   decrements at the end, so the loop head always has `budget >= 1`. With
+   `>= 0` the step case may start at `budget == 0`, decrement to -1 and
+   violate the clause.
+3. The tail of `ena_tx_cleanup` reads `tx_ring->ena_com_io_sq`, which the
+   harness never set -- `tx_ring` is a zero-initialised static, so that was a
+   NULL read.
+
+### Still open
+
+After fixing all three, the first failure is
+`ena_com_sq_have_enough_space` line 122, `pointer invalid in
+io_sq->mem_queue_type`, in the cleanup tail. So the four obligations are
+still **not** established. The next step is that pointer's validity, not a
+cost problem.

@@ -26,6 +26,27 @@
 /* ena_tx_cleanup is static, so the translation unit is included wholesale,
  * the same way the DPDK harnesses include ena_ethdev.c.  Link this harness
  * WITHOUT ena_datapath.o to avoid duplicate symbols. */
+/*
+ * Neutralise the ena_com trace macros before any header that USES them is
+ * preprocessed.  ena_trace expands to ena_log((ctx)->dmadev, ...), and ctx is
+ * the pointer ENA's container_of() builds by casting through uintptr_t:
+ *
+ *   container_of(io_cq, struct ena_com_dev, io_cq_queues[io_cq->qid])
+ *
+ * CBMC loses object identity across that integer cast, so every field read
+ * through ctx becomes an 8-byte byte_extract at a symbolic offset over the
+ * whole 99,648-byte struct ena_com_dev.  Two such reads in
+ * ena_com_tx_comp_req_id_get accounted for 79% of the 135M clauses in this
+ * proof.  Logging has no part in any obligation here, so dropping the
+ * expansion costs nothing and is not an abstraction of driver behaviour.
+ *
+ * ena_plat.h is included first so that its include guard stops the real
+ * definitions being restored underneath us.
+ */
+#include "ena-com/ena_plat.h"
+#undef ena_trace
+#define ena_trace(ctx, level, fmt, args...) ((void)0)
+
 #include "ena_datapath.c"
 
 static uint16_t nd_u16(void) { uint16_t v; return v; }
@@ -152,11 +173,22 @@ int main(void)
   tx_ring.tx_buffer_info = pool_tbi;
   tx_ring.free_tx_ids = pool_free_ids;
   adapter.ena_dev = &ena_dev;
+  /* the tail of ena_tx_cleanup reads tx_ring->ena_com_io_sq; tx_ring is a
+   * zero-initialised static, so leaving these unset made that a NULL read */
+  tx_ring.ena_com_io_sq = &ena_dev.io_sq_queues[0];
+  tx_ring.ena_com_io_cq = &ena_dev.io_cq_queues[0];
+  tx_ring.running = true;
 
   /* the completion queue the device writes into */
   ena_dev.io_cq_queues[0].q_depth = RING_SIZE;
   ena_dev.io_cq_queues[0].cdesc_addr.virt_addr = (uint8_t *)pool_cdesc;
   ena_dev.io_cq_queues[0].cdesc_entry_size_in_bytes = sizeof(pool_cdesc[0]);
+  /* qid must be CONCRETE: ena_com derives the containing ena_com_dev with
+   * container_of(io_cq, struct ena_com_dev, io_cq_queues[io_cq->qid]), so a
+   * symbolic qid makes every field read through that pointer an 8-byte
+   * byte_extract at a symbolic offset over a 99,648-byte struct.  Three such
+   * reads accounted for 97% of the clauses in the first attempt. */
+  ena_dev.io_cq_queues[0].qid = 0;
   ena_dev.io_cq_queues[0].head = 0;
   ena_dev.io_cq_queues[0].phase = 1;
   ena_dev.io_sq_queues[0].q_depth = RING_SIZE;
