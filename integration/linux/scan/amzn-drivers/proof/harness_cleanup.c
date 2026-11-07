@@ -223,6 +223,7 @@ int main(void)
    * It is a sum, so it cannot be stated by probing one index; the ring size
    * is concrete here, so the harness computes it directly.
    */
+#ifndef MEASURE_NO_DESC_SUM
   {
     uint16_t desc_sum = 0;
 
@@ -233,6 +234,9 @@ int main(void)
     __CPROVER_assume(
       (uint16_t)(the_sq.tail - the_sq.next_to_comp) == desc_sum);
   }
+#endif /* MEASURE_NO_DESC_SUM: for cost measurement only.  Without the
+        * assumption INV_STARTED is known to FAIL (see the INV_DESC_SUM
+        * note), so a build with this switch proves nothing. */
 
   __CPROVER_assume(INV_STARTED(&ring));
   __CPROVER_assume(INV_SLOT(&ring, g_p1));

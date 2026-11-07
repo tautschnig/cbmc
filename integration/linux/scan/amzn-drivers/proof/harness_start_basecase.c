@@ -144,6 +144,22 @@ void *rte_zmalloc_socket(
  * that proving them later is as easy as possible, and each may fail, because
  * the device may refuse any admin command.
  */
+/* ena_com_destroy_io_queue is reached on the error path when
+ * ena_com_get_io_handlers fails after the queue was created.  Left bodyless it
+ * CUTS that path (DFCC issue A: assert(false); assume(false)), which would make
+ * the error-path obligation vacuous on exactly the path it is about.  The
+ * model frees nothing the proof tracks; it returns the SQ to an empty state,
+ * which is what the real function does to the fields INV_STARTED reads. */
+void ena_com_destroy_io_queue(struct ena_com_dev *ena_dev, uint16_t qid)
+{
+  if(qid >= ENA_TOTAL_NUM_QUEUES)
+    return;
+  ena_dev->io_sq_queues[qid].q_depth = 0;
+  ena_dev->io_cq_queues[qid].q_depth = 0;
+}
+
+static struct ena_adapter *adapter_for_model;
+
 int ena_com_create_io_queue(
   struct ena_com_dev *ena_dev,
   struct ena_com_create_io_ctx *ctx)
@@ -159,6 +175,14 @@ int ena_com_create_io_queue(
 
   sq = &ena_dev->io_sq_queues[ctx->qid];
   cq = &ena_dev->io_cq_queues[ctx->qid];
+
+  /* POST 0: the CQ register pointers.  In the real code both are
+   * reg_bar + a DEVICE-SUPPLIED offset (cq_interrupt_unmask_register_offset,
+   * numa_node_register_offset) with no bound check -- the same class as F8.
+   * A cooperative device is modelled: unmask inside the BAR, NUMA register
+   * absent or inside the BAR. */
+  cq->unmask_reg = (uint32_t *)(pool_reg_bar + 64);
+  cq->numa_node_cfg_reg = nd_int() ? NULL : (uint32_t *)(pool_reg_bar + 128);
 
   /* POST 1: the SQ and CQ are sized by the requested queue size */
   sq->q_depth = ctx->queue_size;
@@ -188,9 +212,26 @@ int ena_com_get_io_handlers(
   if(nd_int())
     return ENA_COM_INVAL;
 
-  /* POST: the handles name the queues create_io_queue set up */
+  /* POST: the handles name the queues create_io_queue set up.
+   *
+   * EXPERIMENT_NAMED_STORE: the driver passes &ring->ena_com_io_sq and
+   * &ring->ena_com_io_cq, which symex normalises to char arithmetic on
+   * &adapter (offset 82752).  A store through that pointer appears to cost
+   * the value set its field sensitivity: reading ring->ena_com_io_cq back
+   * then yields every pointer stored anywhere in adapter.  With the switch
+   * on, the model first ASSERTS that the out-parameters are exactly the
+   * ring's fields -- so nothing is assumed -- and then stores by name. */
+#ifdef EXPERIMENT_NAMED_STORE
+  __CPROVER_assert(
+    io_sq == &adapter_for_model->tx_ring[0].ena_com_io_sq &&
+      io_cq == &adapter_for_model->tx_ring[0].ena_com_io_cq,
+    "model: out-parameters are the ring's own fields");
+  adapter_for_model->tx_ring[0].ena_com_io_sq = &ena_dev->io_sq_queues[qid];
+  adapter_for_model->tx_ring[0].ena_com_io_cq = &ena_dev->io_cq_queues[qid];
+#else
   *io_sq = &ena_dev->io_sq_queues[qid];
   *io_cq = &ena_dev->io_cq_queues[qid];
+#endif
   return 0;
 }
 
@@ -213,8 +254,18 @@ int main(void)
    * terminate.  Zero-initialised statics plus targeted havoc of the fields
    * the proof needs symbolic is both cheaper and more honest about what is
    * being quantified over. */
-  __CPROVER_havoc_object(&adapter.ena_dev.io_sq_queues[0].llq_info);
-  __CPROVER_havoc_object(&adapter.ena_dev.io_cq_queues[0]);
+  /* NOT __CPROVER_havoc_object on a sub-object of adapter: it havocs the
+   * WHOLE enclosing object (confirmed in cbmc-limitations/havoc_subobject.c),
+   * so these two calls used to make all 182,144 bytes of adapter arbitrary,
+   * every pointer included.  io_cq->numa_node_cfg_reg was then a wild
+   * pointer, ena_com_update_numa_node wrote through it, and the resulting
+   * byte_updates over every object in its value set clobbered ring->type, so
+   * symex explored the RX branch and, via the mempool enqueue function
+   * pointer, the devargs parsers -- 12,193 byte_updates and a SAT conversion
+   * that never finished.  Havoc the scalar fields that need it, by
+   * assignment. */
+  adapter.ena_dev.io_sq_queues[0].llq_info.descs_per_entry = nd_u16();
+  adapter.ena_dev.io_sq_queues[0].llq_info.descs_num_before_header = nd_u16();
 
   dev.data = &data;
   data.dev_private = &adapter;
@@ -224,6 +275,7 @@ int main(void)
   data.nb_tx_queues = 1;
 
   r = &adapter.tx_ring[0];
+  adapter_for_model = &adapter;
 
   /* ---- the post-state of ena_tx_queue_setup, i.e. INV_CONFIGURED ---- */
   r->adapter = &adapter;
@@ -253,10 +305,49 @@ int main(void)
   rc = ena_queue_start(&dev, r);
 
   /* ---- the obligation ---- */
+#if VACUITY_CHECK
+  /* must FAIL for each of the two outcomes, or that outcome is unreachable
+   * and the corresponding obligation below is vacuous */
+  __CPROVER_assert(rc != 0, "vacuity witness: a start can succeed");
+  __CPROVER_assert(rc == 0, "vacuity witness: a start can fail");
+#endif
   if(rc == 0)
     __CPROVER_assert(
       INV_STARTED(r),
       "base case: ena_queue_start establishes INV_STARTED");
+
+  /*
+   * The steps assume more than INV_STARTED: the xmit step also assumes
+   * INV_SLOT and OWN_UNIQUE at probe indices, and the cleanup step assumes
+   * INV_DESC_SUM.  If the base case did not establish them the induction would
+   * not compose, so they are asserted here, at nondeterministic probe indices
+   * (universal quantification over slots) and, for the sum, over the concrete
+   * ring.
+   */
+  if(rc == 0)
+  {
+    uint16_t p1 = nd_u16(), p2 = nd_u16();
+    uint16_t sum = 0;
+    unsigned k;
+
+    if(p1 < r->ring_size)
+      __CPROVER_assert(
+        r->empty_tx_reqs[p1] < r->ring_size &&
+          r->tx_buffer_info[p1].num_of_bufs <= ENA_PKT_MAX_BUFS,
+        "base case: INV_SLOT holds at an arbitrary slot");
+    if(p1 < r->ring_size && p2 < r->ring_size && p1 != p2)
+      __CPROVER_assert(
+        r->tx_buffer_info[p1].mbuf == NULL ||
+          r->tx_buffer_info[p1].mbuf != r->tx_buffer_info[p2].mbuf,
+        "base case: OWN_UNIQUE holds at an arbitrary pair of slots");
+    for(k = 0; k < RING; k++)
+      if(r->tx_buffer_info[k].mbuf != NULL)
+        sum = sum + r->tx_buffer_info[k].tx_descs;
+    __CPROVER_assert(
+      (uint16_t)(r->ena_com_io_sq->tail - r->ena_com_io_sq->next_to_comp) ==
+        sum,
+      "base case: INV_DESC_SUM holds");
+  }
 
   /* On failure the queue must not be left looking started, or a later
    * operation would run against a half-built queue.  This is the error-path
