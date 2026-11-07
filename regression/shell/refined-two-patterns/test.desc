@@ -12,5 +12,6 @@ main.sh
 Two pattern matches on concatenations that share their parts: the index
 terms of the string solver move along the cycle of concatenations without
 reaching the positions where the models violate the axioms, so that the
-refinement did not finish in 300 s. After a few rounds, the solver also
-adds its counter-examples, which exclude those models.
+refinement did not finish in 300 s. The solver now also adds the
+counter-examples of not_contains axioms in each round, which exclude those
+models.
