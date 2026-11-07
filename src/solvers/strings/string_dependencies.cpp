@@ -80,13 +80,13 @@ string_dependenciest::get_node(const array_string_exprt &e)
   return string_nodes.back();
 }
 
-std::unique_ptr<const string_dependenciest::string_nodet>
+const string_dependenciest::string_nodet *
 string_dependenciest::node_at(const array_string_exprt &e) const
 {
   const auto &it = node_index_pool.find(e);
   if(it != node_index_pool.end())
-    return std::make_unique<const string_nodet>(string_nodes.at(it->second));
-  return {};
+    return &string_nodes.at(it->second);
+  return nullptr;
 }
 
 string_dependenciest::builtin_function_nodet &string_dependenciest::make_node(
@@ -107,12 +107,25 @@ static void for_each_atomic_string(
   const array_string_exprt &e,
   const std::function<void(const array_string_exprt &)> f)
 {
-  if(e.id() != ID_if)
-    return f(e);
-
-  const auto if_expr = to_if_expr(e);
-  for_each_atomic_string(to_array_string_expr(if_expr.true_case()), f);
-  for_each_atomic_string(to_array_string_expr(if_expr.false_case()), f);
+  // Each node of the DAG once: strings merged at join points of a program
+  // are trees of if-expressions that share their subexpressions, whose
+  // trees had more than a million leaves for one argument.
+  std::unordered_set<const void *> visited;
+  std::vector<std::reference_wrapper<const exprt>> stack({e});
+  while(!stack.empty())
+  {
+    const exprt &current = stack.back();
+    stack.pop_back();
+    if(!visited.insert(&current.read()).second)
+      continue;
+    if(const auto if_expr = expr_try_dynamic_cast<if_exprt>(current))
+    {
+      stack.emplace_back(if_expr->false_case());
+      stack.emplace_back(if_expr->true_case());
+    }
+    else
+      f(to_array_string_expr(current));
+  }
 }
 
 void string_dependenciest::add_dependency(
@@ -121,7 +134,12 @@ void string_dependenciest::add_dependency(
 {
   for_each_atomic_string(e, [&](const array_string_exprt &s) { //NOLINT
     string_nodet &string_node = get_node(s);
-    string_node.dependencies.push_back(builtin_function_node.index);
+    if(
+      string_node.dependencies.empty() ||
+      string_node.dependencies.back() != builtin_function_node.index)
+    {
+      string_node.dependencies.push_back(builtin_function_node.index);
+    }
   });
 }
 
@@ -197,31 +215,49 @@ void string_dependenciest::clean_cache()
     e.reset();
 }
 
-std::optional<exprt> add_node(
+/// add_node, with the results for the shared subexpressions of one
+/// expression, by their nodes: expressions whose representatives of
+/// strings were substituted are DAGs whose trees can be large (728 million
+/// nodes for equations of 287,000).
+static std::optional<exprt> add_node(
   string_dependenciest &dependencies,
   const exprt &expr,
   array_poolt &array_pool,
   symbol_generatort &fresh_symbol,
-  const exprt &guard)
+  const exprt &guard,
+  std::unordered_map<const void *, std::pair<exprt, std::optional<exprt>>>
+    &memo)
 {
   const auto fun_app = expr_try_dynamic_cast<function_application_exprt>(expr);
   if(!fun_app)
   {
+    const void *const node = &expr.read();
+    const auto found = memo.find(node);
+    if(found != memo.end())
+      return found->second.second;
     exprt copy = expr;
     bool copy_differs_from_expr = false;
     for(std::size_t i = 0; i < expr.operands().size(); ++i)
     {
       auto new_op = add_node(
-        dependencies, expr.operands()[i], array_pool, fresh_symbol, guard);
+        dependencies,
+        expr.operands()[i],
+        array_pool,
+        fresh_symbol,
+        guard,
+        memo);
       if(new_op)
       {
         copy.operands()[i] = *new_op;
         copy_differs_from_expr = true;
       }
     }
+    std::optional<exprt> result;
     if(copy_differs_from_expr)
-      return copy;
-    return {};
+      result = copy;
+    // The original is kept, so that its node is not reused.
+    memo.emplace(node, std::make_pair(expr, result));
+    return result;
   }
 
   const exprt return_code = fresh_symbol("string_builtin_return", expr.type());
@@ -257,33 +293,35 @@ std::optional<exprt> add_node(
   return return_code;
 }
 
+std::optional<exprt> add_node(
+  string_dependenciest &dependencies,
+  const exprt &expr,
+  array_poolt &array_pool,
+  symbol_generatort &fresh_symbol,
+  const exprt &guard)
+{
+  std::unordered_map<const void *, std::pair<exprt, std::optional<exprt>>> memo;
+  return add_node(dependencies, expr, array_pool, fresh_symbol, guard, memo);
+}
+
 void string_dependenciest::for_each_dependency(
   const builtin_function_nodet &node,
   const std::function<void(const string_nodet &)> &f) const
 {
   for(const auto &s : node.data->string_arguments())
   {
-    std::vector<std::reference_wrapper<const exprt>> stack({s});
-    while(!stack.empty())
-    {
-      const auto current = stack.back();
-      stack.pop_back();
-      if(const auto if_expr = expr_try_dynamic_cast<if_exprt>(current.get()))
+    for_each_atomic_string(
+      s,
+      [&](const array_string_exprt &atomic)
       {
-        stack.emplace_back(if_expr->true_case());
-        stack.emplace_back(if_expr->false_case());
-      }
-      else
-      {
-        const auto string_node = node_at(to_array_string_expr(current));
+        const auto string_node = node_at(atomic);
         INVARIANT(
           string_node,
           "dependencies of the node should have been added to the graph at "
           "node creation " +
-            current.get().pretty());
+            atomic.pretty());
         f(*string_node);
-      }
-    }
+      });
   }
 }
 

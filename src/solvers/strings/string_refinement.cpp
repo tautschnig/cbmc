@@ -889,6 +889,36 @@ string_refinementt::dec_solve(const exprt &assumption)
 
   log.debug() << "dec_solve: compute dependency graph and remove function "
               << "applications captured by the dependencies:" << messaget::eom;
+  std::unordered_map<const void *, std::pair<exprt, exprt>> resolved_nodes;
+  // The expression with each pointer symbol replaced by its representative
+  // in symbol_resolve where that has the same type.
+  std::function<exprt(const exprt &)> resolve_pointer_symbols =
+    [&](const exprt &expr) -> exprt
+  {
+    const void *const node = &expr.read();
+    const auto found = resolved_nodes.find(node);
+    if(found != resolved_nodes.end())
+      return found->second.second;
+    exprt result = expr;
+    if(expr.id() == ID_symbol && expr.type().id() == ID_pointer)
+    {
+      exprt resolved = symbol_resolve.find(expr);
+      if(resolved != expr && resolved.type() == expr.type())
+        result = std::move(resolved);
+    }
+    else
+    {
+      for(std::size_t i = 0; i < expr.operands().size(); ++i)
+      {
+        exprt op = resolve_pointer_symbols(expr.operands()[i]);
+        if(&op.read() != &expr.operands()[i].read())
+          result.operands()[i] = std::move(op);
+      }
+    }
+    // The original is kept, so that its node is not reused.
+    resolved_nodes.emplace(node, std::make_pair(expr, result));
+    return result;
+  };
   std::vector<exprt> local_equations;
   for(std::size_t eq_index = 0; eq_index < equations.size(); ++eq_index)
   {
@@ -899,24 +929,13 @@ string_refinementt::dec_solve(const exprt &assumption)
     exprt eq_with_char_array_replaced_with_representative_elements =
       replace_expr_copy(symbol_resolve, eq);
     // Also resolve symbols inside struct arguments using find()
-    // (replace_expr may fail due to internal representation differences)
-    for(auto sub_it = eq_with_char_array_replaced_with_representative_elements
-                        .depth_begin();
-        sub_it !=
-        eq_with_char_array_replaced_with_representative_elements.depth_end();)
-    {
-      if(sub_it->id() == ID_symbol && sub_it->type().id() == ID_pointer)
-      {
-        exprt resolved = symbol_resolve.find(*sub_it);
-        if(resolved != *sub_it && resolved.type() == sub_it->type())
-        {
-          sub_it.mutate() = resolved;
-          sub_it.next_sibling_or_parent();
-          continue;
-        }
-      }
-      ++sub_it;
-    }
+    // (replace_expr may fail due to internal representation differences),
+    // once for each node of the DAG: its tree can be large, as
+    // representatives are substituted (728 million nodes for 287,000 nodes
+    // of the equations).
+    eq_with_char_array_replaced_with_representative_elements =
+      resolve_pointer_symbols(
+        eq_with_char_array_replaced_with_representative_elements);
     const std::optional<exprt> new_equation = add_node(
       dependencies,
       eq_with_char_array_replaced_with_representative_elements,
