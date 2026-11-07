@@ -25,6 +25,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "goto_symex.h"
 #include "path_storage.h"
 
+#include <algorithm>
 #include <memory>
 
 symex_configt::symex_configt(const optionst &options)
@@ -369,6 +370,8 @@ symbol_tablet goto_symext::symex_with_state(
     if(should_pause_symex)
       return state.symbol_table;
   }
+
+  report_arrays_over_field_sensitivity_limit(state);
 
   // Clients may need to construct a namespace with both the names in
   // the original goto-program and the names generated during symbolic
@@ -879,4 +882,43 @@ void goto_symext::try_filter_value_sets(
     jump_not_taken_value_set->erase_values_from_entry(
       *entry_index, erase_from_jump_not_taken_value_set);
   }
+}
+
+void goto_symext::report_arrays_over_field_sensitivity_limit(
+  const statet &state) const
+{
+  const auto &over = state.field_sensitivity.arrays_over_limit();
+  if(over.empty())
+    return;
+
+  mp_integer largest = 0;
+  for(const auto &entry : over)
+    largest = std::max(largest, entry.second);
+
+  // The cliff is silent otherwise: nothing tells the user that a struct
+  // inside a large array has lost field sensitivity, and the symptom appears
+  // far away as unknown targets in a points-to set, writes through such a
+  // pointer to every object in scope, and a formula that grows by orders of
+  // magnitude.
+  log.warning() << "field sensitivity was not applied to " << over.size()
+                << " array" << (over.size() == 1 ? "" : "s")
+                << " of structs, unions or pointers with more than "
+                << state.field_sensitivity.max_array_size() << " elements:";
+  std::size_t listed = 0;
+  for(const auto &entry : over)
+  {
+    if(listed++ == 10)
+    {
+      log.warning() << "\n  ... and " << over.size() - 10 << " more";
+      break;
+    }
+    log.warning() << "\n  " << entry.first << " (" << entry.second
+                  << " elements)";
+  }
+  log.warning() << "\nPointers and fields read from their elements are "
+                   "tracked per array, not per element, which can make "
+                   "points-to sets imprecise and the formula much larger. "
+                   "Use --max-field-sensitivity-array-size "
+                << largest << " to apply field sensitivity to all of them."
+                << messaget::eom;
 }

@@ -11,13 +11,62 @@ Author: Michael Tautschnig
 #include <util/arith_tools.h>
 #include <util/byte_operators.h>
 #include <util/c_types.h>
+#include <util/format_expr.h>
 #include <util/pointer_offset_size.h>
+#include <util/suffix.h>
 
 #include "goto_symex_state.h"
 #include "simplify_expr_with_value_set.h"
 #include "symex_target.h"
 
+#include <sstream>
+
 #define ENABLE_ARRAY_FIELD_SENSITIVITY
+
+/// The symbol at the root of a member/index access path, or \p expr itself.
+static const exprt &get_original_name_root(const exprt &expr)
+{
+  const exprt *e = &expr;
+  while(e->id() == ID_member || e->id() == ID_index)
+    e = e->id() == ID_member ? &to_member_expr(*e).compound()
+                             : &to_index_expr(*e).array();
+  return *e;
+}
+
+void field_sensitivityt::note_array_over_limit(
+  const exprt &array,
+  const mp_integer &size) const
+{
+  // Field sensitivity of large arrays of scalars is rarely what matters, and
+  // reporting every char buffer would drown the warning.  Structs, unions and
+  // pointers are the cases where a lost field turns into a lost points-to set.
+  const typet &element_type = to_array_type(array.type()).element_type();
+  if(
+    element_type.id() != ID_struct && element_type.id() != ID_struct_tag &&
+    element_type.id() != ID_union && element_type.id() != ID_union_tag &&
+    element_type.id() != ID_pointer)
+  {
+    return;
+  }
+
+  const exprt &printed =
+    is_ssa_expr(array) ? to_ssa_expr(array).get_original_expr() : array;
+
+  // Skip the placeholder objects that value-set dereferencing creates for
+  // unknown targets (identifiers ending in "$object"): they are a consequence
+  // of imprecision elsewhere, not an array the user can do anything about.
+  const exprt &root = get_original_name_root(printed);
+  if(
+    root.id() == ID_symbol &&
+    has_suffix(id2string(to_symbol_expr(root).identifier()), "$object"))
+  {
+    return;
+  }
+
+  std::ostringstream name;
+  name << format(printed);
+  arrays_over_limit_.emplace(name.str(), size);
+}
 
 exprt field_sensitivityt::apply(
   const namespacet &ns,
@@ -255,6 +304,15 @@ exprt field_sensitivityt::apply(
       }
 
       if(
+        l2_size.is_constant() && max_field_sensitivity_array_size > 0 &&
+        numeric_cast_v<mp_integer>(to_constant_expr(l2_size)) >
+          max_field_sensitivity_array_size)
+      {
+        note_array_over_limit(
+          index.array(), numeric_cast_v<mp_integer>(to_constant_expr(l2_size)));
+      }
+
+      if(
         l2_size.is_constant() &&
         numeric_cast_v<mp_integer>(to_constant_expr(l2_size)) <=
           max_field_sensitivity_array_size)
@@ -347,7 +405,11 @@ exprt field_sensitivityt::get_fields(
     const mp_integer mp_array_size = numeric_cast_v<mp_integer>(
       to_constant_expr(to_array_type(ssa_expr.type()).size()));
     if(mp_array_size < 0 || mp_array_size > max_field_sensitivity_array_size)
+    {
+      if(max_field_sensitivity_array_size > 0 && mp_array_size > 0)
+        note_array_over_limit(ssa_expr, mp_array_size);
       return ssa_expr;
+    }
 
     const array_typet &type = to_array_type(ssa_expr.type());
     const std::size_t array_size = numeric_cast_v<std::size_t>(mp_array_size);
