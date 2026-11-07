@@ -197,7 +197,7 @@ int main(void)
     pool_tbi[i].num_of_bufs = nd_u16();
     __CPROVER_assume(pool_tbi[i].num_of_bufs <= ENA_PKT_MAX_BUFS);
     pool_tbi[i].tx_descs = nd_u16();
-    __CPROVER_assume(pool_tbi[i].tx_descs <= ENA_PKT_MAX_BUFS);
+    __CPROVER_assume(pool_tbi[i].tx_descs <= ENA_MAX_TX_DESCS_PER_PKT);
     pool_etr[i] = nd_u16();
     __CPROVER_assume(pool_etr[i] < RING_SIZE);
   }
@@ -258,6 +258,17 @@ int main(void)
 
   __CPROVER_assert(
     INV_STARTED(&ring), "INV_STARTED preserved by ena_tx_cleanup");
+  {
+    /* The cleanup step ASSUMES INV_DESC_SUM, so it must also preserve it, or
+     * a second cleanup could start from a state the proof never covered. */
+    uint16_t sum_after = 0;
+    for(i = 0; i < RING_SIZE; i++)
+      if(pool_tbi[i].mbuf != NULL)
+        sum_after = (uint16_t)(sum_after + pool_tbi[i].tx_descs);
+    __CPROVER_assert(
+      (uint16_t)(the_sq.tail - the_sq.next_to_comp) == sum_after,
+      "INV_DESC_SUM preserved by ena_tx_cleanup");
+  }
   __CPROVER_assert(
     INV_SLOT(&ring, g_p1), "INV_SLOT preserved for an arbitrary ring slot");
   __CPROVER_assert(

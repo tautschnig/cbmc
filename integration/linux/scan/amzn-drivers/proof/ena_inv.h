@@ -60,6 +60,17 @@ static bool INV_COM(const struct ena_com_io_sq *sq)
   return INV_SQ_ACCOUNTING(sq) && INV_DEV_LLQ(sq);
 }
 
+/*
+ * Upper bound on the hardware descriptors one packet occupies:
+ * ena_com_prepare_tx emits at most one per buffer plus a meta descriptor and a
+ * header descriptor (the stage-1 callee contract for ena_com_prepare_tx states
+ * exactly this).  Every harness must use the same bound: with no bound the
+ * uint16_t sum in INV_DESC_SUM admits states that satisfy it only by
+ * wrap-around, and with different bounds one step can produce a state the
+ * next step does not assume -- both happened.
+ */
+#define ENA_MAX_TX_DESCS_PER_PKT (ENA_PKT_MAX_BUFS + 2)
+
 /* Ring geometry, established by ena_tx_queue_setup and never changed after. */
 static bool INV_GEOMETRY(const struct ena_ring *r)
 {

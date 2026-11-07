@@ -524,3 +524,71 @@ two-argument versions -- see `proof/fbsd/README-fbsd-build.md`. So these four
 obligations stand as written-and-reachable, not proven. F11 is unaffected: it
 is a FAILURE with a concrete trace, which path cutting elsewhere cannot
 manufacture.
+
+## F12: a failed `ena_com_prepare_tx` leaves the packet in its slot, and the reset frees it (DPDK ENA)
+
+Found by the composition check of the induction, not by any single proof: the
+cleanup step assumes `INV_DESC_SUM`, so the xmit step was made to assert it,
+and it failed.
+
+`ena_xmit_mbuf` (`ena_ethdev.c`) records ownership before it knows the
+packet will be accepted:
+
+```c
+req_id = tx_ring->empty_tx_reqs[next_to_use];
+tx_info = &tx_ring->tx_buffer_info[req_id];
+...
+ena_tx_map_mbuf(tx_ring, tx_info, mbuf, ...);   /* line 3065: tx_info->mbuf = mbuf */
+...
+rc = ena_com_prepare_tx(tx_ring->ena_com_io_sq, &ena_tx_ctx, &nb_hw_desc);
+if (unlikely(rc)) {
+        ++tx_ring->tx_stats.prepare_ctx_err;
+        ena_trigger_reset(tx_ring->adapter, ENA_REGS_RESET_DRIVER_INVALID_STATE);
+        return rc;                               /* tx_info->mbuf still set */
+}
+tx_info->tx_descs = nb_hw_desc;
+```
+
+On that error path `eth_ena_xmit_pkts` breaks out of its loop and returns a
+count that **excludes** the packet, so by the `rte_eth_tx_burst` contract the
+caller still owns it -- but `tx_info->mbuf` still points at it, with a stale
+`tx_descs`, and `next_to_use` has not advanced. The error path also requests a
+device reset. The reset path is
+`ena_dev_reset -> eth_ena_dev_uninit -> ena_close -> ena_stop ->
+ena_queue_stop_all -> ena_queue_stop -> ena_tx_queue_release_bufs`, and
+`ena_tx_queue_release_bufs` calls `rte_pktmbuf_free` on every slot whose `mbuf`
+is non-NULL. It therefore frees a packet the application was told was not
+sent. If the application then frees it, retransmits it, or reuses it, that is
+a double free or a use-after-free -- Unveil class B, triggered on an error path,
+which is the dominant shape in their findings.
+
+The slot is overwritten by the next successful transmit on that queue, since
+`next_to_use` did not move, which is why this never shows up in normal
+operation. The window is exactly the case that matters: the error requests a
+reset, and the reset runs before any further transmit.
+
+**Proven, three ways** (`harness_tx_callees.c`, ring 4, one packet, one
+segment, `--max-field-sensitivity-array-size 256`):
+
+| build | result |
+|---|---|
+| plain | `INV_SLOT` and `INV_DESC_SUM` FAIL; trace: `ena_com_prepare_tx` returns 1, `sent = 0`, slot `req_id` holds the packet with a stale `tx_descs` |
+| `-DRELEASE_AFTER_XMIT` (calls `ena_tx_queue_release_bufs` after the burst, with `rte_pktmbuf_free` instrumented) | `RELEASE_SAFE: queue release never frees a packet reported as unsent`: FAILURE, with `sent = 0` and the freed mbuf equal to the unsent packet |
+| `-DASSUME_PREPARE_TX_OK` | all seven xmit obligations SUCCESS, including `INV_SLOT` and `INV_DESC_SUM` |
+
+**Not established:** which inputs make the real `ena_com_prepare_tx` fail in
+practice. Its error returns are a header longer than `tx_max_header_size`, a
+missing push header in LLQ mode, a header that does not fit the bounce-buffer
+entry, and failures creating the meta descriptor; the space check it repeats
+is already passed by `ena_xmit_mbuf`'s own check. Whether an application can
+reach any of them with a legal packet has not been checked. The harness models
+`ena_com_prepare_tx` as able to fail for any reason.
+
+Fix: clear `tx_info->mbuf` on the error path, or set it only after
+`ena_com_prepare_tx` succeeds.
+
+Why the earlier xmit proof did not see it: its slot invariant bounded
+`num_of_bufs` and the identity of `mbuf` but not `tx_descs`, and nothing in
+it related the SQ tail to the slots. Every obligation it stated was true. The
+invariant was just too weak to compose with cleanup, and nothing checked the
+composition until now.

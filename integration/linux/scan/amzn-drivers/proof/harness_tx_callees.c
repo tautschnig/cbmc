@@ -82,6 +82,14 @@ int ena_com_prepare_tx(
   uint16_t descs;
 
   rc = (int)nd_u16();
+#ifdef ASSUME_PREPARE_TX_OK
+  /* Masks F12: when ena_com_prepare_tx fails, ena_xmit_mbuf leaves
+   * tx_info->mbuf pointing at a packet it then reports as unsent, and the
+   * reset it triggers frees that packet in ena_tx_queue_release_bufs.  The
+   * slot invariants (INV_SLOT, INV_DESC_SUM) are violated on exactly that
+   * path, so they are claimed only for a prepare_tx that succeeds. */
+  rc = 0;
+#endif
   if (rc != 0)
     return rc;                      /* the device/queue rejected the request */
 
@@ -135,7 +143,8 @@ static bool INV_SLOT(const struct ena_ring *r, uint16_t p)
     return true;
   return etr[p] < r->ring_size &&
          (tbi[p].mbuf == NULL || tbi[p].mbuf == &segs[0]) &&
-         tbi[p].num_of_bufs <= ENA_PKT_MAX_BUFS;
+         tbi[p].num_of_bufs <= ENA_PKT_MAX_BUFS &&
+         (tbi[p].mbuf == NULL || tbi[p].tx_descs <= ENA_MAX_TX_DESCS_PER_PKT);
 }
 
 /* The same clauses as a quantified assumption over every slot.  Written over
@@ -154,6 +163,9 @@ static bool INV_SLOT(const struct ena_ring *r, uint16_t p)
         __CPROVER_assume(                                                      \
           (tbi)[_i].mbuf == 0 || (tbi)[_i].mbuf == &segs[0]);                  \
         __CPROVER_assume((tbi)[_i].num_of_bufs <= ENA_PKT_MAX_BUFS);            \
+        __CPROVER_assume(                                                      \
+          (tbi)[_i].mbuf == 0 ||                                               \
+          (tbi)[_i].tx_descs <= ENA_MAX_TX_DESCS_PER_PKT);                     \
       }                                                                        \
     } while(0)
 #else
@@ -163,7 +175,9 @@ static bool INV_SLOT(const struct ena_ring *r, uint16_t p)
       _i < RING_SIZE ==> ((etr)[_i] < RING_SIZE &&                             \
                           ((tbi)[_i].mbuf == 0 ||                              \
                            (tbi)[_i].mbuf == &segs[0]) &&                      \
-                          (tbi)[_i].num_of_bufs <= ENA_PKT_MAX_BUFS)           \
+                          (tbi)[_i].num_of_bufs <= ENA_PKT_MAX_BUFS &&         \
+                          ((tbi)[_i].mbuf == 0 ||                              \
+                           (tbi)[_i].tx_descs <= ENA_MAX_TX_DESCS_PER_PKT))     \
     })
 #endif
 
@@ -205,6 +219,39 @@ static struct rte_mbuf *make_wf_mbuf(uint16_t nsegs)
 	segs[0].nb_segs = nsegs;               /* chain length, per the contract */
 	segs[0].pkt_len = total;               /* sum of the segment lengths */
 	return &segs[0];
+}
+
+/* INV_DESC_SUM over the concrete ring: the descriptors outstanding on the SQ
+ * are exactly those of the packets in flight.  The cleanup step assumes it,
+ * so for the induction to compose every operation must preserve it.  It is a
+ * sum, so it cannot be stated at a probe index. */
+#if RELEASE_AFTER_XMIT
+/*
+ * The reset path's release, checked against ownership.  rte_eth_tx_burst
+ * returns the number of packets the driver took; the rest still belong to the
+ * caller.  ena_tx_queue_release_bufs (reached via ena_dev_reset ->
+ * eth_ena_dev_uninit -> ena_close -> ena_stop -> ena_queue_stop) frees every
+ * slot whose mbuf is non-NULL, so it must never free a packet that was
+ * reported unsent.  The runner redirects calls to rte_pktmbuf_free here with
+ * --replace-calls.
+ */
+static struct rte_mbuf *g_unsent;
+void model_pktmbuf_free(struct rte_mbuf *m)
+{
+  __CPROVER_assert(
+    m == NULL || m != g_unsent,
+    "RELEASE_SAFE: queue release never frees a packet reported as unsent");
+}
+#endif
+
+static bool INV_DESC_SUM_RING(const struct ena_ring *r)
+{
+  uint16_t sum = 0;
+  for(unsigned k = 0; k < RING_SIZE; k++)
+    if(r->tx_buffer_info[k].mbuf != NULL)
+      sum = (uint16_t)(sum + r->tx_buffer_info[k].tx_descs);
+  return (uint16_t)(r->ena_com_io_sq->tail - r->ena_com_io_sq->next_to_comp) ==
+         sum;
 }
 
 int main(void)
@@ -263,6 +310,9 @@ int main(void)
 	__CPROVER_assume(INV_STARTED(&ring));
   INV_SLOTS_ASSUME(empty_tx_reqs, tx_buffer_info);
   __CPROVER_assume(OWN_UNIQUE(&ring, g_p1, g_p2));
+#if CHECK_DESC_SUM
+  __CPROVER_assume(INV_DESC_SUM_RING(&ring));
+#endif
 
 	/* ---- caller contract: tx_pkts holds exactly nb_pkts mbufs ---- */
 	nb_pkts = nd_u16();
@@ -328,6 +378,16 @@ int main(void)
 			 "INV_wakeup: no packet left pushed without a doorbell");
 
 	/* ownership map, part 1: uniqueness is preserved */
+#if CHECK_DESC_SUM
+  __CPROVER_assert(
+    INV_DESC_SUM_RING(&ring), "INV_DESC_SUM preserved by eth_ena_xmit_pkts");
+#endif
+#if RELEASE_AFTER_XMIT
+  /* then the queue is stopped, as the reset requested by a failed
+   * ena_com_prepare_tx will do */
+  g_unsent = (sent < nb_pkts) ? tx_pkts[sent] : NULL;
+  ena_tx_queue_release_bufs(&ring);
+#endif
 	__CPROVER_assert(OWN_UNIQUE(&ring, g_p1, g_p2),
 			 "OWN_UNIQUE: no mbuf owned by two tx_buffer_info slots");
 	/* ownership map, part 2: an accepted packet is transferred into the
