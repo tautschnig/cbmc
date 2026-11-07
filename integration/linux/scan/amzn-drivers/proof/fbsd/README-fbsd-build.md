@@ -201,3 +201,68 @@ After fixing all three, the first failure is
 io_sq->mem_queue_type`, in the cleanup tail. So the four obligations are
 still **not** established. The next step is that pointer's validity, not a
 cost problem.
+
+## The FreeBSD cleanup obligations are now established
+
+`run_fbsd_cleanup.sh`, ring size 4, loop contract on `ena_tx_cleanup` with
+`budget` as the ranking function, so the result is **unbounded in the number
+of completions processed** rather than bounded at an unwinding depth:
+
+```
+** 0 of 1487 failed (1 iterations)
+VERIFICATION SUCCESSFUL
+  FREE_ONCE: no mbuf is released twice:                         SUCCESS
+  DMA_UNMAPPED_BEFORE_FREE: no mbuf released while mapped:      SUCCESS
+  INV_NTC: the consumer index stays inside the ring:            SUCCESS
+  OWN_NO_DANGLING: no slot still owns a released mbuf:          SUCCESS
+21 loop-contract properties SUCCESS, including "Check step was unwound"
+UNKNOWN 0   UNREACHABLE 0   vacuity witness FAILURE
+```
+
+`DMA_UNMAPPED_BEFORE_FREE` is the first coverage of **Unveil class A**
+(device DMA into freed memory, 6%): FreeBSD unmaps before `m_freem`, and the
+proof now says so for an unbounded number of completions.
+
+The contract is 18 invariant clauses, 18 assigns targets, `decreases: budget`.
+
+### Under two named device assumptions, which mask F11
+
+`ASSUME_DEVICE_REQ_ID_IN_RANGE` constrains the device to report `req_id`
+inside the ring **and** excludes the corrupted-descriptor path. Both are
+needed because **F11 has two triggers**, and the second is worse:
+
+1. `*req_id` is assigned from the descriptor and then rejected as out of
+   range (`ENA_COM_INVAL`); the caller dereferences it anyway.
+2. On the must-be-zero check the function returns `ENA_COM_FAULT` **before**
+   `*req_id` is assigned at all, so the caller indexes `tx_buffer_info` with
+   an **uninitialised stack value**. Constraining the device's `req_id` range
+   does not mask this, because the value never comes from the descriptor on
+   that path.
+
+### Invariant clauses the proof demanded, and why
+
+* `tx_ring->next_to_clean < ring_size` as well as the local `next_to_clean`.
+  The ring field is in the frame, so the havoc destroys it, and it is written
+  only in the commit branch. Whatever the frame destroys, the invariant must
+  restore.
+* `budget >= 1`, not `>= 0`: the `do/while` decrements at the end, so the loop
+  head always has at least 1 left. With `>= 0` the step case may start at 0,
+  decrement to -1 and break its own clause.
+* Ownership stated **over the concrete ring**, not at a probe index. A probe
+  clause is universal quantification when *asserted*, but when *assumed* in
+  the step case it constrains only that index, and the body frees slot
+  `req_id`. Both the slot-to-mbuf mapping and "once released, no slot holds it
+  again" had to be written out for all four slots -- otherwise the frame havoc
+  may put a released mbuf back into a slot and `FREE_ONCE` fails on a later
+  iteration. This makes the invariant ring-size specific, as `INV_DESC_SUM` is
+  in the DPDK proof.
+
+### `__CPROVER_object_whole` on a field address: third time
+
+`__CPROVER_object_whole(&tx_ring->tx_stats)` in the assigns clause havocked
+**all** of `struct ena_ring`, including `ena_com_io_sq`, which then failed a
+pointer-validity check in the cleanup tail. The trace showed the field being
+assigned correctly and then overwritten to `INVALID`. Naming the field
+(`tx_ring->tx_stats`) is the fix. This is the same trap as `make_wf_mbuf` and
+the `llq_info` havoc: **`object_whole` takes the whole enclosing object, so it
+is never the right way to name a field.**

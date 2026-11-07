@@ -59,7 +59,7 @@ static int nd_int(void) { int v; return v; }
 
 /* ---------------- ghost state for the ownership discipline -------------- */
 static struct mbuf *g_watch;      /* an arbitrary mbuf to follow */
-uint16_t g_probe;                 /* an arbitrary slot index */
+uint16_t g_probe, g_probe2;       /* two arbitrary slot indices */
 static unsigned g_free_calls;     /* times g_watch was freed */
 static unsigned g_dma_loaded;     /* ghost: is g_watch's mapping loaded? */
 static bool g_freed_while_mapped; /* ghost: class A violation witness */
@@ -221,7 +221,38 @@ int main(void)
    */
   __CPROVER_havoc_object(pool_cdesc);
 
+#ifdef ASSUME_DEVICE_REQ_ID_IN_RANGE
+  /*
+   * Constrain the device to report req_ids inside the ring.
+   *
+   * This MASKS F11: without it, ena_get_tx_req_id dereferences
+   * tx_buffer_info[*req_id] for an out-of-range device value, and that
+   * out-of-bounds read is the first failure in the run, which stops every
+   * other obligation from being decided.  The assumption is named and
+   * compiled in, like ASSUME_DEVICE_HONEST_DOORBELL in the start base case,
+   * so the obligations below are explicitly claims about a device that
+   * reports in-range completions -- and the build without it is the
+   * demonstration of F11.
+   */
+  for(i = 0; i < RING_SIZE; i++)
+    __CPROVER_assume(pool_cdesc[i].req_id < RING_SIZE);
+
+  /*
+   * Also exclude the corrupted-descriptor path, which is F11's SECOND and
+   * worse trigger: ena_com_tx_comp_req_id_get returns ENA_COM_FAULT for a
+   * descriptor with the must-be-zero bits set, and that return happens
+   * BEFORE *req_id is assigned at all, so ena_get_tx_req_id then indexes
+   * tx_buffer_info with an uninitialised stack value.  Constraining the
+   * req_id range alone does not mask it, because the value never comes from
+   * the descriptor on that path.
+   */
+  for(i = 0; i < RING_SIZE; i++)
+    __CPROVER_assume(
+      (pool_cdesc[i].flags & ENA_ETH_IO_TX_CDESC_MBZ6_MASK) == 0);
+#endif
+
   g_probe = nd_u16() % RING_SIZE;
+  g_probe2 = nd_u16() % RING_SIZE;
   g_watch = &pool_mbuf[nd_u16() % RING_SIZE];
   g_free_calls = 0;
   g_dma_loaded = 1; /* an in-flight packet has its mapping loaded */
