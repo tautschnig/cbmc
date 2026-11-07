@@ -7,8 +7,7 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 
 #include "union_find_replace.h"
 
-#include <functional>
-#include <unordered_map>
+#include <vector>
 
 /// Merge the set containing `a` and the set containing `b`.
 /// \param a: an expression
@@ -19,7 +18,10 @@ exprt union_find_replacet::make_union(const exprt &a, const exprt &b)
   const exprt &lhs_root = find(a);
   const exprt &rhs_root = find(b);
   if(lhs_root != rhs_root)
+  {
     map[lhs_root] = rhs_root;
+    replaced.clear();
+  }
   return rhs_root;
 }
 
@@ -29,61 +31,70 @@ exprt union_find_replacet::make_union(const exprt &a, const exprt &b)
 /// \return true if expr is left unchanged
 bool union_find_replacet::replace_expr(exprt &expr) const
 {
-  // Replace every sub-expression that is in the map by its representative,
-  // and the representative's sub-expressions in turn, to a fixpoint (the
-  // map is acyclic). Shared sub-expressions are rewritten once (memoised):
-  // a plain tree traversal visits a shared node once per path to it, which
-  // is exponential in the depth of DAG-shaped expressions (merges of merges
-  // of pointers) and exhausted memory on string solver inputs.
-  if(map.empty())
+  exprt result = normal_form(expr);
+  if(&result.read() == &expr.read())
     return true;
-  std::unordered_map<exprt, exprt, irep_hash> memo;
-  std::function<const exprt &(const exprt &)> rec =
-    [&](const exprt &e) -> const exprt &
+  expr = std::move(result);
+  return false;
+}
+
+/// The result of replacing subexpressions until a fixpoint, as repeated
+/// passes of ::replace_expr do: a subexpression that is in the map is
+/// replaced (and its replacement in turn), and otherwise its operands are,
+/// after which it is checked again.
+exprt union_find_replacet::normal_form(const exprt &expr) const
+{
+  const void *const node = &expr.read();
+  const auto found = replaced.find(node);
+  if(found != replaced.end())
+    return found->second.second;
+  exprt result;
+  const auto it = map.find(expr);
+  if(it != map.end())
+    result = normal_form(it->second);
+  else
   {
-    auto mi = memo.find(e);
-    if(mi != memo.end())
-      return mi->second;
-    exprt result;
-    auto findit = map.find(e);
-    if(findit != map.end())
+    result = expr;
+    for(std::size_t i = 0; i < expr.operands().size(); ++i)
     {
-      PRECONDITION_WITH_DIAGNOSTICS(
-        e.type() == findit->second.type(),
-        "types to be replaced should match. old type:\n" + e.type().pretty() +
-          "\nnew type:\n" + findit->second.type().pretty());
-      result = rec(findit->second);
+      exprt op = normal_form(expr.operands()[i]);
+      if(&op.read() != &expr.operands()[i].read())
+        result.operands()[i] = std::move(op);
     }
-    else
+    if(&result.read() != &expr.read())
     {
-      result = e;
-      bool changed = false;
-      exprt::operandst &ops = result.operands();
-      for(std::size_t i = 0; i < ops.size(); ++i)
-      {
-        const exprt &r = rec(e.operands()[i]);
-        if(r != e.operands()[i])
-        {
-          ops[i] = r;
-          changed = true;
-        }
-      }
-      if(!changed)
-        result = e;
+      const auto again = map.find(result);
+      if(again != map.end())
+        result = normal_form(again->second);
     }
-    return memo.emplace(e, std::move(result)).first->second;
-  };
-  exprt replaced = rec(expr);
-  const bool unchanged = replaced == expr;
-  if(!unchanged)
-    expr = std::move(replaced);
-  return unchanged;
+  }
+  replaced.emplace(node, std::make_pair(expr, result));
+  return result;
 }
 
 /// \param expr: an expression
 /// \return representative element of the set `expr` belongs to
 exprt union_find_replacet::find(exprt expr) const
 {
+  // Follow the path from expr itself to the end, and make each expression
+  // on it point to the end: following paths in replace_expr, which
+  // replaces subexpressions until a fixpoint, took one pass for each
+  // expression on a path, and paths may be as long as the number of
+  // unions.
+  auto it = map.find(expr);
+  if(it != map.end())
+  {
+    std::vector<replace_mapt::iterator> path;
+    while(it != map.end())
+    {
+      path.push_back(it);
+      it = map.find(it->second);
+    }
+    const exprt end = path.back()->second;
+    for(auto &on_path : path)
+      on_path->second = end;
+    expr = end;
+  }
   replace_expr(expr);
   return expr;
 }
