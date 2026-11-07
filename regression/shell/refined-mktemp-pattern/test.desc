@@ -1,0 +1,16 @@
+THOROUGH
+main.sh
+--shell-strings refined
+^EXIT=0$
+^SIGNAL=0$
+^\[assertion\.1\] .* 0 = 1: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+treating model as a counterexample
+--
+The name that mktemp makes is a concatenation of parts chosen among the
+possible ones. The models violate the axioms of the concatenations at
+positions that no index term reaches, one more in each round, for 47
+rounds; the solver took the model as a counterexample after 16 such
+rounds, and now goes on while the positions are new. (THOROUGH: 45 s.)

@@ -76,7 +76,7 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
   const std::unordered_map<string_not_contains_constraintt, symbol_exprt>
     &not_contain_witnesses,
   const index_set_pairt &index_sets,
-  std::vector<bool> &of_not_contains);
+  std::vector<std::pair<std::size_t, exprt>> &counter_example_keys);
 
 static void initial_index_set(
   index_set_pairt &index_set,
@@ -1130,9 +1130,11 @@ string_refinementt::dec_solve(const exprt &assumption)
 
   // Initial try without index set
   const auto get = [this](const exprt &expr) { return this->get(expr); };
-  // Whether each counter-example of check_axioms is of a not_contains
-  // axiom.
-  std::vector<bool> of_not_contains;
+  // The axiom (universal ones first, then not_contains ones) and the
+  // position of each counter-example of check_axioms.
+  std::vector<std::pair<std::size_t, exprt>> counter_example_keys;
+  // Those of rounds without new index terms.
+  std::set<std::pair<std::size_t, exprt>> counter_examples_added;
   dependencies.clean_cache();
   const decision_proceduret::resultt initial_result =
     (add_length_definitions(), supert::dec_solve(nil_exprt()));
@@ -1150,7 +1152,7 @@ string_refinementt::dec_solve(const exprt &assumption)
       symbol_resolve,
       not_contain_witnesses,
       index_sets,
-      of_not_contains);
+      counter_example_keys);
     if(satisfied)
     {
       log.debug() << "check_SAT: the model is correct" << messaget::eom;
@@ -1209,7 +1211,7 @@ string_refinementt::dec_solve(const exprt &assumption)
         symbol_resolve,
         not_contain_witnesses,
         index_sets,
-        of_not_contains);
+        counter_example_keys);
       if(satisfied)
       {
         log.debug() << "check_SAT: the model is correct" << messaget::eom;
@@ -1251,9 +1253,19 @@ string_refinementt::dec_solve(const exprt &assumption)
         // after a finite number of consecutive empty-index-set rounds, or
         // when there are no counter-examples to add, fall back to the
         // conservative result.
-        constexpr std::size_t max_empty_index_set_rounds = 16;
+        //
+        // The rounds go on while their counter-examples are at positions
+        // of axioms where none was before: each excludes the model at one
+        // position, and a model that violates an axiom at many positions
+        // needs as many rounds (47 for the name that mktemp makes, whose
+        // pattern match was reported after 16 rounds). The witnesses of
+        // symbolic needles repeat the positions.
+        constexpr std::size_t max_empty_index_set_rounds = 256;
+        bool new_position = false;
+        for(const auto &key : counter_example_keys)
+          new_position |= counter_examples_added.insert(key).second;
         if(
-          counter_examples.empty() ||
+          !new_position ||
           ++empty_index_set_rounds > max_empty_index_set_rounds)
         {
           log.warning() << "dec_solve: current index set is empty after "
@@ -1284,7 +1296,7 @@ string_refinementt::dec_solve(const exprt &assumption)
         // in consecutive rounds).
         for(std::size_t i = 0; i < counter_examples.size(); ++i)
         {
-          if(of_not_contains[i])
+          if(counter_example_keys[i].first >= axioms.universal.size())
             add_lemma(counter_examples[i]);
         }
       }
@@ -2040,9 +2052,9 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
   const std::unordered_map<string_not_contains_constraintt, symbol_exprt>
     &not_contain_witnesses,
   const index_set_pairt &index_sets,
-  std::vector<bool> &of_not_contains)
+  std::vector<std::pair<std::size_t, exprt>> &counter_example_keys)
 {
-  of_not_contains.clear();
+  counter_example_keys.clear();
   stream << "string_refinementt::check_axioms:" << messaget::eom;
 
   stream.message.conditional_output(
@@ -2166,7 +2178,7 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
         replace_expr(axiom.univ_var, val, bounds);
         const implies_exprt counter(bounds, instance);
         lemmas.push_back(counter);
-        of_not_contains.push_back(false);
+        counter_example_keys.emplace_back(v.first, val);
       }
 
       for(const auto &v : violated_not_contains)
@@ -2185,7 +2197,8 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
             ::instantiate_not_contains(axiom, indices, not_contain_witnesses))
         {
           lemmas.push_back(std::move(counter));
-          of_not_contains.push_back(true);
+          counter_example_keys.emplace_back(
+            axioms.universal.size() + v.first, val);
         }
 
         // The instance above is at one position of the existential, by the
@@ -2242,7 +2255,8 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
                    axiom.exists_upper_bound,
                    from_integer(*upper, index_type)}}),
               disjunction(differ)});
-            of_not_contains.push_back(true);
+            counter_example_keys.emplace_back(
+              axioms.universal.size() + v.first, val);
           }
         }
       }
