@@ -1,0 +1,16 @@
+CORE
+main.sh
+--shell-strings refined
+^EXIT=0$
+^SIGNAL=0$
+^\[assertion\.1\] .* 0 = 1: SUCCESS$
+^\[assertion\.2\] .* 0 = 2: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Two pattern matches on concatenations that share their parts: the index
+terms of the string solver move along the cycle of concatenations without
+reaching the positions where the models violate the axioms, so that the
+refinement did not finish in 300 s. After a few rounds, the solver also
+adds its counter-examples, which exclude those models.

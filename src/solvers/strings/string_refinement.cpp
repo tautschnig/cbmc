@@ -1156,6 +1156,9 @@ string_refinementt::dec_solve(const exprt &assumption)
   // for symbolic-length-needle membership (see the empty-index-set handling
   // below).
   std::size_t empty_index_set_rounds = 0;
+  // Rounds that added index terms, after which counter-examples are added
+  // too (see below).
+  std::size_t index_set_rounds = 0;
 
   while((loop_bound_--) > 0)
   {
@@ -1239,6 +1242,19 @@ string_refinementt::dec_solve(const exprt &assumption)
       {
         // Real index-set progress this round; reset the stall counter.
         empty_index_set_rounds = 0;
+        // After some rounds, the counter-examples too: index terms may not
+        // reach the positions where the model violates an axiom for many
+        // rounds, as where they move along a cycle of concatenations (two
+        // pattern matches on concatenations that share their parts did not
+        // finish in 300 s, and take 3 s with them). From the first round,
+        // they slowed a Java test from 0.2 s to 550 s (strings of up to
+        // 10000 characters), whose index set converges in 5 rounds.
+        constexpr std::size_t rounds_before_counter_examples = 4;
+        if(++index_set_rounds > rounds_before_counter_examples)
+        {
+          for(const auto &counter : counter_examples)
+            add_lemma(counter);
+        }
       }
       current_constraints.clear();
       const auto instances =
