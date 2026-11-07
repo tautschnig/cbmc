@@ -80,8 +80,7 @@ public:
 
   string_nodet &get_node(const array_string_exprt &e);
 
-  std::unique_ptr<const string_nodet>
-  node_at(const array_string_exprt &e) const;
+  const string_nodet *node_at(const array_string_exprt &e) const;
 
   builtin_function_nodet &
   make_node(std::unique_ptr<string_builtin_functiont> builtin_function);
