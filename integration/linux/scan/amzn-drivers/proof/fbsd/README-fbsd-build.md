@@ -257,12 +257,24 @@ needed because **F11 has two triggers**, and the second is worse:
   iteration. This makes the invariant ring-size specific, as `INV_DESC_SUM` is
   in the DPDK proof.
 
-### `__CPROVER_object_whole` on a field address: third time
+### `__CPROVER_object_whole(&tx_ring->tx_stats)`: causal, mechanism unexplained
 
-`__CPROVER_object_whole(&tx_ring->tx_stats)` in the assigns clause havocked
-**all** of `struct ena_ring`, including `ena_com_io_sq`, which then failed a
-pointer-validity check in the cleanup tail. The trace showed the field being
-assigned correctly and then overwritten to `INVALID`. Naming the field
-(`tx_ring->tx_stats`) is the fix. This is the same trap as `make_wf_mbuf` and
-the `llq_info` havoc: **`object_whole` takes the whole enclosing object, so it
-is never the right way to name a field.**
+Replacing `__CPROVER_object_whole(&tx_ring->tx_stats)` with
+`tx_ring->tx_stats` in the assigns clause is what made the cleanup tail stop
+failing a pointer-validity check on `tx_ring->ena_com_io_sq`; the trace showed
+that field assigned correctly and then overwritten to `INVALID`. So the change
+was causal.
+
+The explanation first given here -- that `object_whole` on a field address
+widens to the whole enclosing object -- **does not hold up**: two minimal
+cases, including one in this exact shape (struct field reached through a
+pointer parameter, sibling pointer field), show the sibling field surviving.
+See `proof/cbmc-limitations/NOT-REPRODUCED.md`. The mechanism is open;
+`tx_stats` possibly sitting in one of `struct ena_ring`'s anonymous unions is
+the first thing to check, since union-held members are already known to
+produce `byte_extract` expressions that CBMC's pointer analysis cannot
+resolve.
+
+It is **not** the same trap as `make_wf_mbuf` and the `llq_info` havoc: those
+are about `__CPROVER_havoc_object`, whose whole-object behaviour is documented
+and confirmed.

@@ -1,0 +1,15 @@
+{
+  "functions": [
+    {
+      "main": [
+        {
+          "loop_id": "1",
+          "invariants": "(i <= n) && __CPROVER_forall { unsigned _j; _j < 4 ==> g[_j] == 0 }",
+          "assigns": "i, __CPROVER_object_whole(g)",
+          "decreases": "n - i",
+          "symbol_map": "i,main::1::i; n,main::1::n"
+        }
+      ]
+    }
+  ]
+}
