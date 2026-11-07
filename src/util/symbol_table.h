@@ -8,6 +8,9 @@
 
 #include "symbol_table_base.h"
 
+#include <string>
+#include <unordered_map>
+
 /// \brief The symbol table
 /// \ingroup gr_symbol_table
 class symbol_tablet : public symbol_table_baset
@@ -19,6 +22,11 @@ private:
   symbol_base_mapt internal_symbol_base_map;
   /// Value referenced by \ref symbol_table_baset::symbol_module_map.
   symbol_module_mapt internal_symbol_module_map;
+  /// For each prefix of next_unused_suffix, a suffix below which all have
+  /// been found in use, so that generating many names with one prefix does
+  /// not test the existence of all earlier ones every time.
+  mutable std::unordered_map<std::string, std::size_t>
+    next_free_suffix_for_prefix;
 
 public:
   symbol_tablet()
@@ -37,7 +45,8 @@ public:
         internal_symbol_module_map),
       internal_symbols(other.internal_symbols),
       internal_symbol_base_map(other.internal_symbol_base_map),
-      internal_symbol_module_map(other.internal_symbol_module_map)
+      internal_symbol_module_map(other.internal_symbol_module_map),
+      next_free_suffix_for_prefix(other.next_free_suffix_for_prefix)
   {
   }
 
@@ -56,7 +65,8 @@ public:
         internal_symbol_module_map),
       internal_symbols(std::move(other.internal_symbols)),
       internal_symbol_base_map(std::move(other.internal_symbol_base_map)),
-      internal_symbol_module_map(std::move(other.internal_symbol_module_map))
+      internal_symbol_module_map(std::move(other.internal_symbol_module_map)),
+      next_free_suffix_for_prefix(std::move(other.next_free_suffix_for_prefix))
   {
   }
 
@@ -66,6 +76,7 @@ public:
     internal_symbols = std::move(other.internal_symbols);
     internal_symbol_base_map = std::move(other.internal_symbol_base_map);
     internal_symbol_module_map = std::move(other.internal_symbol_module_map);
+    next_free_suffix_for_prefix = std::move(other.next_free_suffix_for_prefix);
     return *this;
   }
 
@@ -76,6 +87,7 @@ public:
     internal_symbols.swap(other.internal_symbols);
     internal_symbol_base_map.swap(other.internal_symbol_base_map);
     internal_symbol_module_map.swap(other.internal_symbol_module_map);
+    next_free_suffix_for_prefix.swap(other.next_free_suffix_for_prefix);
   }
 
 public:
@@ -103,6 +115,17 @@ public:
     internal_symbols.clear();
     internal_symbol_base_map.clear();
     internal_symbol_module_map.clear();
+    next_free_suffix_for_prefix.clear();
+  }
+
+  /// The smallest suffix of \p prefix not in use that is at least the one
+  /// this function returned last for \p prefix plus one: suffixes freed by
+  /// erasing symbols are not reused.
+  std::size_t next_unused_suffix(const std::string &prefix) const override
+  {
+    std::size_t &next = next_free_suffix_for_prefix[prefix];
+    next = symbol_table_baset::next_unused_suffix(prefix, next);
+    return next++;
   }
 
   virtual iteratort begin() override
