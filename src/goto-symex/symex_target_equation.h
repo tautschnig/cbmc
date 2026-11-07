@@ -287,6 +287,10 @@ protected:
 
   // for enforcing sharing in the expressions stored
   merge_irept merge_irep;
+  /// The guard of the step merged last, and its merged copy: consecutive
+  /// steps mostly share their guard, which merging would otherwise compare
+  /// with its merged copy, node by node, for every step.
+  exprt last_guard, last_merged_guard;
   void merge_ireps(SSA_stept &SSA_step);
 
   // for unique I/O identifiers
