@@ -21,6 +21,8 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
 
 #include <util/expr_iterator.h>
 #include <util/expr_util.h>
+#include <util/format.h>
+#include <util/format_expr.h>
 #include <util/format_type.h>
 #include <util/magic.h>
 #include <util/range.h>
@@ -1273,8 +1275,19 @@ string_refinementt::dec_solve(const exprt &assumption)
 /// the same position in the model, so their instances do not exclude the
 /// model. Every instance is implied by its axiom, so deferring some is
 /// sound, and check_axioms still verifies each model.
+///
+/// Of each array's new terms, at most max_new_indices_per_array are kept
+/// per round, the smallest first. Composed terms are larger, and their
+/// instances yield yet larger ones, while instances at a few small terms
+/// usually suffice: on the shell string kernels, with the order of
+/// identifiers varied, this took the total time from 483 s to 91 s and
+/// the longest run from 169 s to 7 s. Keeping all terms in the order of
+/// std::set<exprt> (which depends on the numbers of identifiers) took 3
+/// s to 93 s on one kernel by that order alone; keeping two in that order
+/// did not finish on several.
 void string_refinementt::filter_index_set()
 {
+  constexpr std::size_t max_new_indices_per_array = 2;
   const auto value_of = [this](const exprt &term) -> std::optional<mp_integer>
   {
     const exprt value = simplify_expr(supert::get(term), ns);
@@ -1299,15 +1312,34 @@ void string_refinementt::filter_index_set()
           covered.insert(*value);
       }
     }
-    std::set<exprt> candidates = current;
-    candidates.insert(pending.begin(), pending.end());
+    std::set<exprt> candidate_set = current;
+    candidate_set.insert(pending.begin(), pending.end());
     current.clear();
     pending.clear();
-    for(const auto &term : candidates)
+    // The smallest terms first, then by their text: an order that does
+    // not depend on the numbers of identifiers, as std::set<exprt> does.
+    std::vector<std::pair<std::pair<std::size_t, std::string>, exprt>> keyed;
+    for(const auto &term : candidate_set)
     {
+      std::size_t size = 0;
+      for(auto it = term.depth_cbegin(); it != term.depth_cend(); ++it)
+        ++size;
+      keyed.push_back({{size, format_to_string(term)}, term});
+    }
+    std::stable_sort(
+      keyed.begin(),
+      keyed.end(),
+      [](const auto &a, const auto &b) { return a.first < b.first; });
+    std::size_t kept_here = 0;
+    for(const auto &keyed_term : keyed)
+    {
+      const exprt &term = keyed_term.second;
       const auto value = value_of(term);
-      if(!value.has_value() || covered.insert(*value).second)
+      if(
+        kept_here < max_new_indices_per_array &&
+        (!value.has_value() || covered.insert(*value).second))
       {
+        ++kept_here;
         current.insert(term);
         entry.second.insert(term);
         ++kept;
