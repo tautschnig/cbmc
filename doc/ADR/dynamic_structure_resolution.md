@@ -473,17 +473,64 @@ The shell front-end's sites, in order of the census:
     refined strings (in 30 minutes), although each takes under a second
     on its own; this was also so before.
 
-- Design for `eval set -- "$(getopt ...)"` (not implemented). getopt's
-  output is a regular language that is not a template: options ` -x` and
+- `eval set -- "$(getopt ...)"`, with native strings. getopt's output is
+  a regular language that is not a template: options ` -x` and
   ` --long`, their arguments and the operands as ` 'value'` with `'\''`
-  for `'`, and ` --` before the operands. Two parts are needed:
-  - a specification of getopt (util-linux): the output for "$@" by the
-    option strings, with permutation of operands, abbreviations of long
-    options, optional arguments (`::`), and status 1 on errors;
-  - a hole class of quoted word lists, whose eval sets each word,
-    dequoted, as a field. Membership is a regular expression, which only
-    native strings have; with refined strings, a bounded decomposition
-    into at most --shell-max-arguments words would be needed.
+  for `'`, and ` --` before the operands. The design (a regular
+  expression for the output, and a hole class of quoted words whose
+  fields eval finds in the text) did not survive measurement:
+  - Finding the fields of quoted words in a text is beyond cvc5: a
+    choice of the words with constraints on them took 50 s for four
+    words (0.2 s, 1.2 s, 12 s for one to three); a deterministic scan
+    with `str.indexof` (with `'\''` first replaced by a code point that
+    no value has) did not find a model with three words of a small
+    regular language in 30 s, even as a hand-written SMT-LIB problem of
+    20 lines; z3 answers unknown.
+  - Making the output of its words instead is instant (0.03 s for eight
+    words, in the same hand-written form). So the specification of
+    getopt makes the output of at most --shell-max-arguments words: each
+    is an option, `--`, or a quoted argument or operand, in the order
+    that a small automaton allows; the bound is a property, which fails,
+    as getopt may output any number of words. The words are also the
+    fields of a ghost list, with the output and whether there is one.
+  - A whole-word hole in an argument (class WORDS, where the script calls
+    getopt) becomes `"${ghost[@]}"`: where its part is the last output of
+    getopt, the ghost array is getopt's fields; otherwise the part is
+    split at blanks, as for FIELDS. Its class check is that one of these
+    applies.
+  - Appending the elements of an array to a list stored each at the
+    count after the ones before it, a symbolic index; storing at the
+    count before them plus i instead (a constant where that count is)
+    took `eval set -- "$(getopt ...)"` with four arguments from 34 s to
+    0.5 s with cvc5.
+  - The specification covers util-linux and busybox for status 0 and 1
+    (getopt outputs what it parsed also where an option was invalid;
+    busybox outputs nothing on its own usage errors), where
+    GETOPT_COMPATIBLE is not set (a property: getopt's compatible mode
+    takes -o as its option string). BSD and macOS getopt do not support
+    `-o`. Other statuses (signals, write errors) leave the output
+    unconstrained.
+  - The test script (`-o hvf: -l help,file:` and a `while` loop over
+    `case "$1"`) is verified with cvc5 in 2.8 s with four words and 14 s
+    with eight: only options and `--` reach the loop.
+  - Census (20 scripts call getopt; the specification covers the call in
+    13, the others convert with errors or have option strings in
+    variables; cvc5, 180 s, `--unwind 10`): 2 scripts now finish (2.5 s
+    and 45 s), with only the two getopt properties failing, where none
+    did; the others time out as before, mostly in other parts of the
+    scripts. The class check of the eval alone (`--property`) holds in 3
+    (9 s, 17 s, 84 s), fails in 1 that does not check getopt's status
+    (other statuses leave the output unconstrained), and times out in 6
+    (3 in symex, 3 in the solver, one with `eval set -- $args`, whose
+    text is not the output).
+  - The string refinement solver depends on the order in which
+    identifiers are created: looking up one more symbol name in the
+    initialisation (which creates the identifier, even in programs that
+    never use it) took the csv-loop kernel from 3.3 s to 40 s, with the
+    same GOTO program, symbol table and SSA. Hash tables keyed by
+    expressions iterate in an order that depends on the numbers of
+    identifiers. This is part of the refined non-convergence to
+    investigate; the initialisation now avoids the lookup.
 
 ## Spikes (5 Nov 2026)
 
