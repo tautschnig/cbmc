@@ -1556,8 +1556,9 @@ public:
     NAME,
     /// At the start of the name of a variable.
     NAME_START,
-    /// A whole word that is split into fields, with native strings: as
-    /// FIELDS, or the last output of getopt.
+    /// A whole word that is split into fields, where the script calls
+    /// getopt: the last output of getopt, or (with native strings) as
+    /// FIELDS.
     WORDS
   };
 

@@ -21,9 +21,9 @@
 ///   in '\'' (which ends the quotes, adds a quoted ', and starts them
 ///   again, as quoting a value for the shell does); the ghost variable then
 ///   holds the part with each '\'' replaced by '.
-/// - with native strings, where the script calls getopt, a whole word
-///   that is split into fields: as unquoted in such a word, or the last
-///   output of getopt (see getopt_output), whose fields are known. The
+/// - where the script calls getopt, a whole word that is split into
+///   fields: the last output of getopt (see getopt_output), whose fields
+///   are known, or, with native strings, as unquoted in such a word. The
 ///   ghost variable is then an array of the fields, and the word is
 ///   "${ghost[@]}". Finding the fields of quoted words in the text
 ///   instead, by a scan or by a choice of them, took cvc5 more than 30 s
@@ -394,8 +394,7 @@ shell_convertert::parse_template(
              hole_rewritert rewrite{
                placeholders,
                code.ghosts,
-               getopt_used && native() &&
-                 program.dialect != shell_dialectt::ZSH};
+               getopt_used && program.dialect != shell_dialectt::ZSH};
              rewrite.rewrite(commands);
              for(std::size_t i = 0; i < placeholders.size(); ++i)
              {
@@ -542,7 +541,11 @@ exprt shell_convertert::template_parts(
             loc)},
         loc);
       parts.getopt_words[i] = getopt;
-      conditions.push_back(or_exprt{getopt, none_of(fields_forbidden())});
+      // The string refinement solver makes the axioms of splitting even
+      // where getopt's output is the part, which took 12 GB for two words.
+      conditions.push_back(
+        native() ? exprt{or_exprt{getopt, none_of(fields_forbidden())}}
+                 : exprt{getopt});
       continue;
     }
     case hole_classt::UNQUOTED:
@@ -622,6 +625,11 @@ void shell_convertert::assign_template_parts(
       const field_listt from = getopt_output_fields();
       assign(copy, array.array, from.array, loc);
       assign(copy, array.count, from.count, loc);
+      if(!native())
+      {
+        dest.append(copy);
+        continue;
+      }
       code_blockt fields;
       assign(fields, array.count, from_integer(0, count_type()), loc);
       shell_word_partt ghost;

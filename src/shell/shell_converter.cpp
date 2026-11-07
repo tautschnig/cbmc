@@ -60,7 +60,7 @@ void shell_convertert::add_initialize()
   // Only where the script calls getopt, and not by looking the symbol up:
   // a new identifier changes the order of hash tables in the string
   // refinement solver, which took one kernel from 3 s to 40 s.
-  if(getopt_used && native())
+  if(getopt_used)
     assign(init, getopt_output_valid(), false_exprt{}, loc);
   if(posix_increments_used)
     assign(init, posix_increments(), nondet(bool_typet{}, loc), loc);

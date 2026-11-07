@@ -145,8 +145,6 @@ std::optional<exprt> shell_convertert::getopt_output(
   const shell_commandt &command,
   code_blockt &dest)
 {
-  if(!native())
-    return {};
   const source_locationt &loc = command.location;
   std::optional<std::string> optstring;
   std::string longopts;
@@ -286,7 +284,8 @@ std::optional<exprt> shell_convertert::getopt_output(
   const auto kind_is = [this](const exprt &kind, std::size_t n) -> exprt {
     return equal_exprt{kind, from_integer(n, integer_type())};
   };
-  exprt text = payload_literal("");
+  const symbol_exprt text = temporary(payload_type(), dest, loc);
+  assign(dest, text, payload_literal(""), loc);
   for(std::size_t i = 0;; ++i)
   {
     const exprt at = from_integer(i, integer_type());
@@ -320,48 +319,71 @@ std::optional<exprt> shell_convertert::getopt_output(
       next,
       if_exprt{
         equal_exprt{current, state_value(1)}, state_value(0), state_value(2)}};
-    // The field, and its word.
-    const exprt argument = payload_of(nondet_string(dest, loc));
-    exprt field = payload_literal("--");
-    for(std::size_t j = 0; j < options.size(); ++j)
-      field =
-        if_exprt{kind_is(kind, j), payload_literal(options[j].first), field};
-    field = if_exprt{kind_is(kind, quoted), argument, field};
+    // The field, and its word; assigned in branches, which the string
+    // refinement solver needs rather than conditional expressions.
     const symbol_exprt value = temporary(payload_type(), dest, loc);
-    assign(dest, value, field, loc);
-    const exprt quote = payload_literal("'");
-    const exprt word = if_exprt{
-      kind_is(kind, quoted),
-      payload_concat(
-        payload_concat(
-          quote,
-          payload_replace_all(value, "'", "'\\''", dest, loc),
-          dest,
-          loc),
-        quote,
+    assign(dest, value, payload_literal("--"), loc);
+    for(std::size_t j = 0; j < options.size(); ++j)
+    {
+      code_blockt option;
+      assign(option, value, payload_literal(options[j].first), loc);
+      add(dest, code_ifthenelset{kind_is(kind, j), std::move(option)}, loc);
+    }
+    {
+      code_blockt argument;
+      assign(argument, value, payload_of(nondet_string(argument, loc)), loc);
+      add(
         dest,
-        loc),
-      exprt{value}};
+        code_ifthenelset{kind_is(kind, quoted), std::move(argument)},
+        loc);
+    }
     assign(
       dest,
       index_exprt{fields.array, from_integer(i, index_type())},
       make_value(value),
       loc);
-    const symbol_exprt next_text = temporary(payload_type(), dest, loc);
-    assign(
-      dest,
-      next_text,
-      if_exprt{
-        present,
+    if(!native())
+      continue;
+    const symbol_exprt word = temporary(payload_type(), dest, loc);
+    assign(dest, word, value, loc);
+    {
+      const exprt quote = payload_literal("'");
+      code_blockt argument;
+      assign(
+        argument,
+        word,
         payload_concat(
-          text,
-          payload_concat(payload_literal(" "), word, dest, loc),
-          dest,
+          payload_concat(
+            quote,
+            payload_replace_all(value, "'", "'\\''", argument, loc),
+            argument,
+            loc),
+          quote,
+          argument,
           loc),
-        text},
+        loc);
+      add(
+        dest,
+        code_ifthenelset{kind_is(kind, quoted), std::move(argument)},
+        loc);
+    }
+    code_blockt append;
+    assign(
+      append,
+      text,
+      payload_concat(
+        text,
+        payload_concat(payload_literal(" "), word, append, loc),
+        append,
+        loc),
       loc);
-    text = next_text;
+    add(dest, code_ifthenelset{present, std::move(append)}, loc);
   }
+  // With refined strings, the output is any string: making it of its
+  // words did not finish in 120 s for two words, nor for eight without
+  // the quoting of arguments. Its fields stay those of the words.
+  if(!native())
+    assign(dest, text, payload_of(nondet_string(dest, loc)), loc);
   // busybox reports its own usage errors with status 1, and outputs
   // nothing then (as where it lacks long options).
   const symbol_exprt empty = temporary(bool_typet{}, dest, loc);
@@ -383,15 +405,22 @@ std::optional<exprt> shell_convertert::getopt_output(
     typecast_exprt::conditional_cast(
       if_exprt{empty, zero, exprt{count}}, fields.count.type()),
     loc);
-  text = if_exprt{empty, payload_literal(""), text};
+  {
+    code_blockt nothing;
+    assign(nothing, text, payload_literal(""), loc);
+    add(dest, code_ifthenelset{empty, std::move(nothing)}, loc);
+  }
   assign(dest, getopt_output_valid(), succeeded, loc);
   assign(dest, getopt_output_text(), text, loc);
   // Otherwise, the output is not modelled.
   const symbol_exprt value = temporary(string_type(), dest, loc);
-  assign(
+  code_blockt output;
+  assign(output, value, make_value(text), loc);
+  code_blockt other;
+  assign(other, value, nondet_string(other, loc), loc);
+  add(
     dest,
-    value,
-    if_exprt{succeeded, make_value(text), nondet_string(dest, loc)},
+    code_ifthenelset{succeeded, std::move(output), std::move(other)},
     loc);
   return exprt{value};
 }

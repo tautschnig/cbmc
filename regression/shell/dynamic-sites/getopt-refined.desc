@@ -1,0 +1,18 @@
+CORE
+getopt.sh
+--resolve-dynamic-sites --shell-max-arguments 2 --unwind 5
+^EXIT=10$
+^SIGNAL=0$
+^\[shell-unsupported\.1\] .* GETOPT_COMPATIBLE is not set where getopt outputs options .*: FAILURE$
+^\[shell-argument-count\.1\] .* the output of getopt has at most --shell-max-arguments \(2\) words: FAILURE$
+^\[shell-dynamic-site\.1\] .*: SUCCESS$
+^\[shell-unsupported\.2\] .* the parts of the text of eval for the holes of "set -- "\* .*: SUCCESS$
+^\[assertion\.1\] .* "an option or --": SUCCESS$
+^\[\.unwind\.0\] .*: SUCCESS$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+With refined strings, the output is any string (making it of its words
+did not finish), while its fields are those of the words, so that the
+loop still sees only options and --.
