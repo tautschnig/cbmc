@@ -18,6 +18,7 @@ Author: Jesse Sigal, jesse.sigal@diffblue.com
 #include "string_constraint.h"
 
 #include <algorithm>
+#include <functional>
 #include <list>
 #include <unordered_set>
 
@@ -39,21 +40,47 @@ static bool contains(const exprt &index, const symbol_exprt &qvar)
 static std::unordered_set<exprt, irep_hash>
 find_indexes(const exprt &expr, const exprt &str, const symbol_exprt &qvar)
 {
-  decltype(find_indexes(expr, str, qvar)) result;
-  auto index_str_containing_qvar = [&](const exprt &e) {
-    if(auto index_expr = expr_try_dynamic_cast<index_exprt>(e))
+  // Each node of the DAGs once: the arrays of the accesses are if-expressions
+  // over strings merged at join points of a program, which share their
+  // subexpressions, and whose trees can be very large.
+  std::unordered_map<const void *, bool> has_str;
+  std::function<bool(const exprt &)> mentions_str = [&](const exprt &e)
+  {
+    const void *const node = &e.read();
+    const auto found = has_str.find(node);
+    if(found != has_str.end())
+      return found->second;
+    bool result = e == str;
+    for(const auto &op : e.operands())
     {
-      const auto &arr = index_expr->array();
-      const auto str_it = std::find(arr.depth_begin(), arr.depth_end(), str);
-      return str_it != arr.depth_end() && contains(index_expr->index(), qvar);
+      if(result)
+        break;
+      result = mentions_str(op);
     }
-    return false;
+    has_str.emplace(node, result);
+    return result;
   };
-
-  std::for_each(expr.depth_begin(), expr.depth_end(), [&](const exprt &e) {
-    if(index_str_containing_qvar(e))
-      result.insert(to_index_expr(e).index());
-  });
+  std::unordered_set<exprt, irep_hash> result;
+  std::unordered_set<const void *> visited;
+  std::vector<std::reference_wrapper<const exprt>> stack({expr});
+  while(!stack.empty())
+  {
+    const exprt &e = stack.back();
+    stack.pop_back();
+    if(!visited.insert(&e.read()).second)
+      continue;
+    if(const auto index_expr = expr_try_dynamic_cast<index_exprt>(e))
+    {
+      if(
+        mentions_str(index_expr->array()) &&
+        contains(index_expr->index(), qvar))
+      {
+        result.insert(index_expr->index());
+      }
+    }
+    for(const auto &op : e.operands())
+      stack.emplace_back(op);
+  }
   return result;
 }
 
@@ -172,13 +199,14 @@ std::string linear_functiont::format()
   return stream.str();
 }
 
-exprt instantiate(
+/// The instance of \p axiom for \p val, by its \p indexes on a string.
+static exprt instantiate(
   const string_constraintt &axiom,
-  const exprt &str,
+  const std::unordered_set<exprt, irep_hash> &indexes,
   const exprt &val)
 {
   exprt::operandst conjuncts;
-  for(const auto &index : find_indexes(axiom.body, str, axiom.univ_var))
+  for(const auto &index : indexes)
   {
     const exprt univ_var_value =
       linear_functiont::solve(linear_functiont{index}, axiom.univ_var, val);
@@ -187,10 +215,85 @@ exprt instantiate(
         binary_relation_exprt(axiom.univ_var, ID_ge, axiom.lower_bound),
         binary_relation_exprt(axiom.univ_var, ID_lt, axiom.upper_bound)),
       axiom.body);
-    replace_expr(axiom.univ_var, univ_var_value, instance);
+    replace_expr_shared(axiom.univ_var, univ_var_value, instance);
     conjuncts.push_back(instance);
   }
   return conjunction(conjuncts);
+}
+
+exprt instantiate(
+  const string_constraintt &axiom,
+  const exprt &str,
+  const exprt &val)
+{
+  return instantiate(axiom, find_indexes(axiom.body, str, axiom.univ_var), val);
+}
+
+axiom_indexest::axiom_indexest(const string_constraintt &axiom)
+{
+  // The subexpressions of each array, once for each node of the DAG.
+  std::unordered_map<const void *, std::vector<exprt>> subexpressions;
+  const auto subexpressions_of =
+    [&](const exprt &array) -> const std::vector<exprt> &
+  {
+    auto inserted = subexpressions.emplace(&array.read(), std::vector<exprt>{});
+    if(!inserted.second)
+      return inserted.first->second;
+    std::vector<exprt> &result = inserted.first->second;
+    std::unordered_set<const void *> visited;
+    std::vector<std::reference_wrapper<const exprt>> stack({array});
+    while(!stack.empty())
+    {
+      const exprt &e = stack.back();
+      stack.pop_back();
+      if(!visited.insert(&e.read()).second)
+        continue;
+      result.push_back(e);
+      for(const auto &op : e.operands())
+        stack.emplace_back(op);
+    }
+    return result;
+  };
+  std::unordered_set<const void *> visited;
+  std::vector<std::reference_wrapper<const exprt>> stack({axiom.body});
+  while(!stack.empty())
+  {
+    const exprt &e = stack.back();
+    stack.pop_back();
+    if(!visited.insert(&e.read()).second)
+      continue;
+    if(const auto index_expr = expr_try_dynamic_cast<index_exprt>(e))
+    {
+      if(contains(index_expr->index(), axiom.univ_var))
+      {
+        for(const auto &sub : subexpressions_of(index_expr->array()))
+          by_string[sub].insert(index_expr->index());
+      }
+    }
+    for(const auto &op : e.operands())
+      stack.emplace_back(op);
+  }
+}
+
+const std::unordered_set<exprt, irep_hash> &
+axiom_indexest::of(const exprt &str) const
+{
+  static const std::unordered_set<exprt, irep_hash> none;
+  const auto found = by_string.find(str);
+  return found == by_string.end() ? none : found->second;
+}
+
+std::vector<exprt> instantiate(
+  const string_constraintt &axiom,
+  const axiom_indexest &indexes,
+  const exprt &str,
+  const std::set<exprt> &vals)
+{
+  const auto &of_str = indexes.of(str);
+  std::vector<exprt> result;
+  for(const auto &val : vals)
+    result.push_back(instantiate(axiom, of_str, val));
+  return result;
 }
 
 /// Instantiates a quantified formula representing `not_contains` by

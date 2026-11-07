@@ -16,6 +16,8 @@ Author: Jesse Sigal, jesse.sigal@diffblue.com
 #include <util/std_expr.h> // IWYU pragma: keep
 
 #include <set>
+#include <unordered_map>
+#include <unordered_set>
 
 class string_constraintt;
 struct string_not_contains_constraintt;
@@ -39,6 +41,33 @@ exprt instantiate(
   const string_constraintt &axiom,
   const exprt &str,
   const exprt &val);
+
+/// The index expressions of the accesses of a universal axiom that contain
+/// its universal variable, by each expression that the arrays of the
+/// accesses have as a subexpression: what instantiate finds for each
+/// string, computed once for all of them. The arrays are if-expressions
+/// over strings merged at join points of a program, which share their
+/// subexpressions: searching them for each string of an index set took
+/// 120 s for 14 strings and 132 axioms.
+class axiom_indexest
+{
+public:
+  explicit axiom_indexest(const string_constraintt &axiom);
+  /// The index expressions for \p str (none if it is not in an array).
+  const std::unordered_set<exprt, irep_hash> &of(const exprt &str) const;
+
+private:
+  std::unordered_map<exprt, std::unordered_set<exprt, irep_hash>, irep_hash>
+    by_string;
+};
+
+/// The instances of \p axiom for each of \p vals, as above, with the
+/// indexes of \p axiom by string \p indexes.
+std::vector<exprt> instantiate(
+  const string_constraintt &axiom,
+  const axiom_indexest &indexes,
+  const exprt &str,
+  const std::set<exprt> &vals);
 
 std::vector<exprt> instantiate_not_contains(
   const string_not_contains_constraintt &axiom,
