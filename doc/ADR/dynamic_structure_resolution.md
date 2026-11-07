@@ -542,6 +542,46 @@ The shell front-end's sites, in order of the census:
     identifiers. This is part of the refined non-convergence to
     investigate; the initialisation now avoids the lookup.
 
+- The refined non-convergence (7 Nov 2026). Varying the order of
+  identifiers (by creating unused ones before conversion) gave each
+  kernel a distribution of times: csv-loop took 3 s to 93 s, and the 24
+  kernels with five orders 483 s in all, the longest run 169 s. The
+  time is in MiniSat, on lemmas that the order made more numerous: one
+  run had 2,532 and the slow one 6,923, with 27 million clauses in its
+  last round rather than 4 million.
+  - The order matters where filter_index_set chooses one term among
+    those of the same value in the model, in the order of
+    `std::set<exprt>`, which depends on the numbers of identifiers: a
+    composed term yields instances whose accesses compose further. The
+    filter now takes the smallest terms first, and at most two new ones
+    per array and round: 91 s in all, the longest 7 s, no wrong
+    verdict. Two per round in the old order did not finish on several
+    kernels; the size order alone halved the times.
+  - Two pattern matches on concatenations that share their parts did not
+    finish: index terms moved along the cycle of concatenations (x,
+    x - 3, x - 6, ...) without reaching the positions where the models
+    violated not_contains axioms. Counter-examples of not_contains axioms
+    are now added in each round (4 s). Those of universal axioms slowed
+    an eval with templates from 68 s to more than 300 s, and a Java test
+    with long strings from 0.2 s to 550 s, however they were scheduled
+    (from the first round, after a few, or for axioms violated in
+    consecutive rounds); not_contains ones alone changed neither.
+  - A `while`/`case` loop over `"$@"` (the getopt test without getopt)
+    did not scale with --shell-max-arguments: the solver traversed the
+    trees of expressions whose subexpressions are shared (strings
+    merged at join points). With eight arguments, the equations had
+    287,000 nodes and 728 million in their trees; a string node had 1.2
+    million dependencies, copied at each lookup; each instantiation
+    searched every axiom's arrays for each string. Visiting each node of
+    the DAGs once (replacing by representatives, the dependency graph,
+    the indexes of axioms) took the loop with six arguments from 69 s
+    to 20 s, and the getopt test with four from 82 s to 14 s. With
+    eight it still does not finish in 300 s: preprocessing, conversion
+    and the check of each model each take tens of seconds, repeated for
+    each property.
+  - `case "$(mktemp)" in */tmp.*|"")` is still reported, with a model
+    that check_axioms accepts; not investigated further.
+
 ## Spikes (5 Nov 2026)
 
 Measured on the 244 census scripts that convert and have dynamic command
