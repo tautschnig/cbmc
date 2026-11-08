@@ -284,7 +284,10 @@ int main(void)
   r->configured = 1;
   r->ring_size = RING;
   r->size_mask = RING - 1;
-  r->sgl_size = ENA_PKT_MAX_BUFS;
+  /* sgl_size comes from the device via max_tx_sgl_size, clamped to
+   * ENA_PKT_MAX_BUFS by ena_calc_io_queue_size; any such value is a
+   * configured ring, and INV_CONFIGURED is what the setup base case proves */
+  r->sgl_size = nd_u16();
   r->next_to_use = 0;
   r->next_to_clean = 0;
   r->pkts_without_db = false;
@@ -347,6 +350,8 @@ int main(void)
       (uint16_t)(r->ena_com_io_sq->tail - r->ena_com_io_sq->next_to_comp) ==
         sum,
       "base case: INV_DESC_SUM holds");
+    __CPROVER_assert(
+      INV_FREE_LIST(r, RING), "base case: INV_FREE_LIST holds");
   }
 
   /* On failure the queue must not be left looking started, or a later

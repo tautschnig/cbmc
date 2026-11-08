@@ -35,7 +35,7 @@ done
 
 ( ulimit -v 60000000
   timeout 2400 "$BIN/cbmc" "$OUT/cl_rm.gb" --bounds-check --pointer-check \
-    --unwind $((RING + 4)) --unwinding-assertions > "$OUT/cleanup.log" 2>&1 ) || true
+    --unwind $((RING + 4)) --unwinding-assertions --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula > "$OUT/cleanup.log" 2>&1 ) || true
 
 if ! grep -qE '^VERIFICATION' "$OUT/cleanup.log"; then
   echo "NO VERDICT: cbmc did not finish (timeout or memory cap).  Last lines:"
@@ -47,7 +47,7 @@ echo "obligations:"; grep -E 'main\.assertion|FREE_ONCE' "$OUT/cleanup.log" | se
 echo "vacuity witness (must be FAILURE):"
 ( ulimit -v 60000000
   timeout 2400 "$BIN/cbmc" "$OUT/cl_vac_rm.gb" --bounds-check --pointer-check \
-    --unwind $((RING + 4)) > "$OUT/cleanup_vac.log" 2>&1 ) || true
+    --unwind $((RING + 4)) --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula > "$OUT/cleanup_vac.log" 2>&1 ) || true
 grep -E 'vacuity witness' "$OUT/cleanup_vac.log" | sed 's/^/  /' || echo "  (not run)"
 echo "unmodelled callees actually reached:"
 grep -E 'undefined function should be unreachable.*FAILURE' "$OUT/cleanup.log" | sed 's/^/  /' || echo "  none"

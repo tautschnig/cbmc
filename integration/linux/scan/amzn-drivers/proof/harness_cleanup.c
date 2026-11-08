@@ -239,6 +239,7 @@ int main(void)
         * note), so a build with this switch proves nothing. */
 
   __CPROVER_assume(INV_STARTED(&ring));
+  __CPROVER_assume(INV_FREE_LIST(&ring, RING_SIZE));
   __CPROVER_assume(INV_SLOT(&ring, g_p1));
   __CPROVER_assume(OWN_UNIQUE(&ring, g_p1, g_p2));
   __CPROVER_assume(INV_DEV_LLQ(&the_sq));
@@ -269,6 +270,8 @@ int main(void)
       (uint16_t)(the_sq.tail - the_sq.next_to_comp) == sum_after,
       "INV_DESC_SUM preserved by ena_tx_cleanup");
   }
+  __CPROVER_assert(
+    INV_FREE_LIST(&ring, RING_SIZE), "INV_FREE_LIST preserved by ena_tx_cleanup");
   __CPROVER_assert(
     INV_SLOT(&ring, g_p1), "INV_SLOT preserved for an arbitrary ring slot");
   __CPROVER_assert(

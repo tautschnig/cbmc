@@ -110,4 +110,65 @@ static bool INV_STARTED(const struct ena_ring *r)
          r->ena_com_io_sq->q_depth == r->ring_size;
 }
 
+
+/*
+ * INV_FREE_LIST: the free list names exactly the free slots.
+ *
+ * empty_tx_reqs is a ring of slot indices.  xmit takes the slot named at
+ * next_to_use and advances it; cleanup writes the completed slot back at
+ * next_to_clean and advances that.  With inflight = (next_to_use -
+ * next_to_clean) & size_mask packets outstanding, the window of
+ * ring_size - inflight positions starting at next_to_use is the free list.
+ * The invariant: those positions name pairwise distinct, free slots, and the
+ * number of occupied slots is inflight, so they are exactly the free slots.
+ * Each occupied slot also accounts for at least one descriptor, which is what
+ * keeps inflight below ring_size.
+ *
+ * The driver relies on this -- ena_xmit_mbuf only RTE_ASSERTs that the slot it
+ * takes is free, which is compiled out in release builds -- and neither step
+ * could be proven to compose without it: the xmit loop contract otherwise
+ * admits a state where the slot at next_to_use already holds a packet.
+ *
+ * Stated over the concrete ring size n, because it quantifies over positions
+ * and a probe index cannot express "pairwise distinct".
+ */
+static bool INV_FREE_LIST(const struct ena_ring *r, unsigned n)
+{
+  const uint16_t inflight =
+    (uint16_t)((r->next_to_use - r->next_to_clean) & r->size_mask);
+  const unsigned window = n - inflight;
+  unsigned occupied = 0;
+
+  for(unsigned k = 0; k < n; k++)
+  {
+    if(r->tx_buffer_info[k].mbuf != NULL)
+    {
+      occupied++;
+      if(
+        r->tx_buffer_info[k].tx_descs < 1 ||
+        r->tx_buffer_info[k].tx_descs > ENA_MAX_TX_DESCS_PER_PKT)
+        return false;
+    }
+  }
+  if(occupied != inflight)
+    return false;
+
+  for(unsigned j = 0; j < n; j++)
+  {
+    if(j >= window)
+      break;
+    const uint16_t id = r->empty_tx_reqs[(r->next_to_use + j) & r->size_mask];
+    if(id >= n || r->tx_buffer_info[id].mbuf != NULL)
+      return false;
+    for(unsigned j2 = j + 1; j2 < n; j2++)
+    {
+      if(j2 >= window)
+        break;
+      if(r->empty_tx_reqs[(r->next_to_use + j2) & r->size_mask] == id)
+        return false;
+    }
+  }
+  return true;
+}
+
 #endif /* ENA_INV_H */

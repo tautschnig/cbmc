@@ -1,0 +1,45 @@
+ENA TX induction: ring 4, burst <= 1, segments <= 1
+cbmc: 6.9.0 (cbmc-6.9.0-433-g6677c6dae75-dirty)   flags: --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula
+
+part      verdict                  failures besides known no-body notices
+b1        VERIFICATION SUCCESSFUL  0
+b2        VERIFICATION SUCCESSFUL  0
+s1        VERIFICATION FAILED      0
+s2        VERIFICATION SUCCESSFUL  0
+
+composition check -- each predicate a step assumes, as proven by each part:
+  predicate      base(b2)   xmit(s1)   clean(s2) 
+  INV_STARTED    SUCCESS    SUCCESS    SUCCESS   
+  INV_SLOT       SUCCESS    SUCCESS    SUCCESS   
+  OWN_UNIQUE     SUCCESS    SUCCESS    SUCCESS   
+  INV_DESC_SUM   SUCCESS    SUCCESS    SUCCESS   
+  INV_FREE_LIST  SUCCESS    SUCCESS    SUCCESS   
+  setup -> start: INV_CONFIGURED SUCCESS
+
+step-specific obligations:
+  s1 [main.assertion.1] API: sent <= nb_pkts: SUCCESS
+  s1 [main.assertion.4] INV_wakeup: no packet left pushed without a doorbell: SUCCESS
+  s1 [main.assertion.8] OWN_TRANSFER: accepted mbuf recorded in its req_id slot: SUCCESS
+  s2 [main.assertion.6] OWN_NO_DANGLING: no slot still owns a released mbuf: SUCCESS
+  s2 [rte_pktmbuf_free.assertion.1] FREE_ONCE: no mbuf is released twice: SUCCESS
+  b2 [main.assertion.6] error path: a failed start leaves no usable producer state: SUCCESS
+
+vacuity witnesses (all must be FAILURE):
+  b1 [main.assertion.1] vacuity witness: a setup can succeed: FAILURE
+  b1 [main.assertion.2] vacuity witness: a setup can fail: FAILURE
+  b2 [main.assertion.1] vacuity witness: a start can succeed: FAILURE
+  b2 [main.assertion.2] vacuity witness: a start can fail: FAILURE
+  s1 [main.assertion.1] vacuity witness: a packet can be accepted: FAILURE
+  s2 [main.assertion.1] vacuity witness: a packet can be freed: FAILURE
+
+the induction holds relative to these assumptions, and only these:
+  device   ASSUME_DEVICE_HONEST_DOORBELL  doorbell offset inside the BAR (F8 is that the driver does not check)
+  device   INV_DEV_LLQ                    LLQ geometry from ena_com_config_dev_mode at device init, not proven
+  device   sgl_size <= ENA_PKT_MAX_BUFS   set by ena_init_rings from a clamped device value, not proven
+  device   ena_com_create_io_queue / ena_com_get_io_handlers replaced by stated models (harness_start_basecase.c)
+  driver   ASSUME_PREPARE_TX_OK           ena_com_prepare_tx succeeds; on failure the invariants break (F12)
+  app      packets in a burst are not already in flight (finding 2: undetected by the driver)
+  app      nb_segs < sgl_size (finding 3: advertised, not re-checked)
+  harness  tx_free_thresh == 0, offloads == 0, LLQ mode; burst and segment bounds as printed above
+
+INDUCTION: CLOSED

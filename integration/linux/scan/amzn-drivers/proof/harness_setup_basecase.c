@@ -14,6 +14,7 @@
  * unrolling, so the base case holds for every admissible ring size.
  */
 #include "../dpdk/drivers/net/ena/ena_ethdev.c"
+#include "ena_inv.h"
 
 /* An arbitrary slot index, fixed before the call and referenced by BOTH the
  * loop invariant and the post-condition.  Proving the single instance for a
@@ -88,7 +89,7 @@ int rte_log_register_type_and_pick_level(const char *name, uint32_t level_def)
 
 /* What ena_tx_queue_setup must establish.  `probe_idx` is an arbitrary index,
  * so asserting the per-slot clauses for it proves them for ALL slots. */
-static bool INV_CONFIGURED(const struct ena_ring *r, uint16_t probe_idx)
+static bool INV_CONFIGURED_SLOTS(const struct ena_ring *r, uint16_t probe_idx)
 {
 	bool ok = r->configured == 1 &&
 		  r->tx_buffer_info != NULL &&
@@ -158,14 +159,31 @@ int main(void)
 	adapter.max_tx_ring_size = nd_u16();
 	__CPROVER_assume(nb_desc <= adapter.max_tx_ring_size);
 
-	/* queue 0, not yet configured */
+	/* queue 0, not yet configured.
+	 *
+	 * Device init (ena_init_rings, ena_ethdev.c:2529) has already set
+	 * sgl_size from adapter->max_tx_sgl_size, which ena_calc_io_queue_size
+	 * clamps with RTE_MIN(ENA_PKT_MAX_BUFS, device value).  Setup does not
+	 * touch it, so its bound is a device-init precondition of this base
+	 * case, stated here rather than proven: the same status as INV_DEV_LLQ. */
 	adapter.tx_ring[0].configured = 0;
+	__CPROVER_assume(adapter.tx_ring[0].sgl_size <= ENA_PKT_MAX_BUFS);
 	adapter.tx_ring[0].tx_max_header_size = 96;
 
 	rc = ena_tx_queue_setup(&dev, 0, nb_desc, 0, &tx_conf);
 
+#if VACUITY_CHECK
+	/* both must FAIL, or one outcome is unreachable and its obligation vacuous */
+	__CPROVER_assert(rc != 0, "vacuity witness: a setup can succeed");
+	__CPROVER_assert(rc == 0, "vacuity witness: a setup can fail");
+#endif
 	if (rc == 0)
-		__CPROVER_assert(INV_CONFIGURED(&adapter.tx_ring[0], g_probe_idx),
+	{
+		/* the predicate the next base case (queue start) assumes, from
+		 * ena_inv.h, plus the slot clauses at an arbitrary index */
+		__CPROVER_assert(INV_CONFIGURED(&adapter.tx_ring[0]) &&
+				 INV_CONFIGURED_SLOTS(&adapter.tx_ring[0], g_probe_idx),
 				 "base case: ena_tx_queue_setup establishes INV_CONFIGURED");
+	}
 	return 0;
 }

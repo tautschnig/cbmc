@@ -49,13 +49,13 @@ for V in 0 1; do
   [ "$V" = 0 ] && TAG="" || TAG="_vac"
   ( ulimit -v 32000000
     "$BIN/goto-cc" $(cat "$OUT/flags.txt") -DPEDANTIC \
-      -DMAX_BURST=$BURST -DMAX_SEGS=$SEGS -DRING_SIZE=$RING -DVACUITY_CHECK=$V \
+      -DMAX_BURST=$BURST -DMAX_SEGS=$SEGS -DRING_SIZE=$RING -DVACUITY_CHECK=$V ${EXTRA_DEFS:-} \
       "$HERE/harness_tx_callees.c" "$HERE/rdtsc_stub.c" "$HERE/pktmbuf_read_stub.c" -o "$OUT/i1$TAG.gb" )
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/i1$TAG.gb" "$OUT/i1${TAG}_rm.gb" >/dev/null 2>&1 )
   ( ulimit -v 32000000; "$BIN/goto-instrument" --add-library "$OUT/i1${TAG}_rm.gb" "$OUT/i1${TAG}_lib.gb" >/dev/null 2>&1 )
   ( ulimit -v 32000000
     "$BIN/goto-instrument" --no-malloc-may-fail \
-      --loop-contracts-file "$HERE/tx_loop_contract_fields.json" \
+      --loop-contracts-file "${CONTRACT:-$HERE/tx_loop_contract_fields.json}" \
       --dfcc main --apply-loop-contracts "$OUT/i1${TAG}_lib.gb" "$OUT/i1${TAG}_lc.gb" >/dev/null 2>&1 )
 done
 
@@ -63,7 +63,7 @@ rm -f "$OUT/item1.log" "$OUT/item1_vac.log"
 ( ulimit -v 60000000
   timeout 2400 "$BIN/cbmc" "$OUT/i1_lc.gb" --bounds-check --pointer-check \
     --no-standard-checks \
-    --unwindset ena_tx_map_mbuf.0:$SEGBOUND --unwinding-assertions $EXTRA_CBMC \
+    --unwindset ena_tx_map_mbuf.0:$SEGBOUND --unwinding-assertions --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula $EXTRA_CBMC \
     > "$OUT/item1.log" 2>&1 ) || true
 
 if ! grep -qE '^VERIFICATION' "$OUT/item1.log"; then
@@ -76,7 +76,7 @@ echo "obligations:"; grep -E 'main\.assertion' "$OUT/item1.log" | sed 's/^/  /'
 echo "vacuity witness (must be FAILURE, else the accept path is unreachable):"
 ( ulimit -v 60000000
   timeout 900 "$BIN/cbmc" "$OUT/i1_vac_lc.gb" --bounds-check --pointer-check \
-    --no-standard-checks --unwindset ena_tx_map_mbuf.0:$SEGBOUND \
+    --no-standard-checks --unwindset ena_tx_map_mbuf.0:$SEGBOUND --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula \
     > "$OUT/item1_vac.log" 2>&1 ) || true
 grep -E 'vacuity witness' "$OUT/item1_vac.log" | sed 's/^/  /' || echo "  (not run)"
 echo "loop contract + inner-loop bound:"

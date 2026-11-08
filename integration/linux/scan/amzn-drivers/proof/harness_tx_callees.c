@@ -73,6 +73,8 @@ static uint16_t nd_u16(void);
  * much.  Keeping to that bound is what preserves the SQ accounting clause of
  * INV; a stub that advanced further would (correctly) break it.
  */
+static bool g_prepare_tx_failed;
+
 int ena_com_prepare_tx(
   struct ena_com_io_sq *io_sq,
   struct ena_com_tx_ctx *ena_tx_ctx,
@@ -91,7 +93,10 @@ int ena_com_prepare_tx(
   rc = 0;
 #endif
   if (rc != 0)
+  {
+    g_prepare_tx_failed = true;
     return rc;                      /* the device/queue rejected the request */
+  }
 
   descs = nd_u16();
   __CPROVER_assume(descs >= 1 && descs <= (uint16_t)ena_tx_ctx->num_bufs + 2);
@@ -273,6 +278,13 @@ int main(void)
 	__CPROVER_havoc_object(&io_sq);
 	__CPROVER_havoc_object(&io_cq);
 	__CPROVER_havoc_object(tx_buffer_info);
+	/* The free list must be arbitrary too.  It was a zero-initialised static
+	 * that nothing havocked until the composition check found it: every
+	 * entry was 0, so every proof of this step only ever exercised slot 0,
+	 * and a free list with distinct entries -- which INV_FREE_LIST requires
+	 * for any ring with more than one free slot -- was not even satisfiable.
+	 * The constraints on it come from INV_SLOTS_ASSUME and INV_FREE_LIST. */
+	__CPROVER_havoc_object(empty_tx_reqs);
 	/* struct ena_adapter embeds ena_com_dev by value (ena_ethdev.h:292) */
 	ring.adapter = &adapter;
 	ring.ena_com_io_sq = &io_sq;
@@ -311,7 +323,12 @@ int main(void)
   INV_SLOTS_ASSUME(empty_tx_reqs, tx_buffer_info);
   __CPROVER_assume(OWN_UNIQUE(&ring, g_p1, g_p2));
 #if CHECK_DESC_SUM
+#ifndef NO_ASSUME_DS
   __CPROVER_assume(INV_DESC_SUM_RING(&ring));
+#endif
+#ifndef NO_ASSUME_FL
+  __CPROVER_assume(INV_FREE_LIST(&ring, RING_SIZE));
+#endif
 #endif
 
 	/* ---- caller contract: tx_pkts holds exactly nb_pkts mbufs ---- */
@@ -378,9 +395,17 @@ int main(void)
 			 "INV_wakeup: no packet left pushed without a doorbell");
 
 	/* ownership map, part 1: uniqueness is preserved */
+#if WITNESS_PREPARE_FAIL
+  /* must FAIL: otherwise the prepare_tx error path (F12) is unreachable in
+   * this harness and every obligation is silent about it */
+  __CPROVER_assert(!g_prepare_tx_failed, "witness: prepare_tx can fail");
+#endif
 #if CHECK_DESC_SUM
   __CPROVER_assert(
     INV_DESC_SUM_RING(&ring), "INV_DESC_SUM preserved by eth_ena_xmit_pkts");
+  __CPROVER_assert(
+    INV_FREE_LIST(&ring, RING_SIZE),
+    "INV_FREE_LIST preserved by eth_ena_xmit_pkts");
 #endif
 #if RELEASE_AFTER_XMIT
   /* then the queue is stopped, as the reset requested by a failed
