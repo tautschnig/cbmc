@@ -114,6 +114,31 @@ static uint8_t nd_u8(void) { uint8_t v; return v; }
 static struct rte_mbuf segs[MAX_SEGS];
 static uint8_t seg_bufs[MAX_SEGS][SEG_BUF_LEN];
 
+#if DISTINCT_MBUFS
+/* One mbuf chain per packet of the burst, and a separate pool standing for
+ * the packets already in flight in each slot.  New packets are therefore
+ * distinct from each other and from everything in flight by construction --
+ * which is the application's obligation (finding 2) stated exactly, instead of
+ * assumed at two probe indices. */
+static struct rte_mbuf pkt_segs[MAX_BURST][MAX_SEGS];
+static uint8_t pkt_bufs[MAX_BURST][MAX_SEGS][SEG_BUF_LEN];
+static struct rte_mbuf inflight_pool[RING_SIZE];
+
+static bool IS_NEW_PKT(const struct rte_mbuf *m)
+{
+  for(unsigned b = 0; b < MAX_BURST; b++)
+    if(m == &pkt_segs[b][0])
+      return true;
+  return false;
+}
+#  define SLOT_MBUF_OK(m, p)                                                   \
+    ((m) == NULL || (m) == &inflight_pool[(p)] || IS_NEW_PKT(m))
+#  define SLOT_MBUF_PRE(m, p) ((m) == NULL || (m) == &inflight_pool[(p)])
+#else
+#  define SLOT_MBUF_OK(m, p) ((m) == NULL || (m) == &segs[0])
+#  define SLOT_MBUF_PRE(m, p) ((m) == NULL || (m) == &segs[0])
+#endif
+
 /* ---------------- INV: what a valid ENA TX queue is ---------------- */
 
 /*
@@ -147,7 +172,7 @@ static bool INV_SLOT(const struct ena_ring *r, uint16_t p)
   if(p >= r->ring_size)
     return true;
   return etr[p] < r->ring_size &&
-         (tbi[p].mbuf == NULL || tbi[p].mbuf == &segs[0]) &&
+         SLOT_MBUF_OK(tbi[p].mbuf, p) &&
          tbi[p].num_of_bufs <= ENA_PKT_MAX_BUFS &&
          (tbi[p].mbuf == NULL || tbi[p].tx_descs <= ENA_MAX_TX_DESCS_PER_PKT);
 }
@@ -165,8 +190,7 @@ static bool INV_SLOT(const struct ena_ring *r, uint16_t p)
       for(unsigned _i = 0; _i < RING_SIZE; _i++)                               \
       {                                                                        \
         __CPROVER_assume((etr)[_i] < RING_SIZE);                               \
-        __CPROVER_assume(                                                      \
-          (tbi)[_i].mbuf == 0 || (tbi)[_i].mbuf == &segs[0]);                  \
+        __CPROVER_assume(SLOT_MBUF_PRE((tbi)[_i].mbuf, _i));                 \
         __CPROVER_assume((tbi)[_i].num_of_bufs <= ENA_PKT_MAX_BUFS);            \
         __CPROVER_assume(                                                      \
           (tbi)[_i].mbuf == 0 ||                                               \
@@ -178,8 +202,7 @@ static bool INV_SLOT(const struct ena_ring *r, uint16_t p)
     __CPROVER_assume(__CPROVER_forall {                                        \
       unsigned _i;                                                             \
       _i < RING_SIZE ==> ((etr)[_i] < RING_SIZE &&                             \
-                          ((tbi)[_i].mbuf == 0 ||                              \
-                           (tbi)[_i].mbuf == &segs[0]) &&                      \
+                          SLOT_MBUF_PRE((tbi)[_i].mbuf, _i) &&               \
                           (tbi)[_i].num_of_bufs <= ENA_PKT_MAX_BUFS &&         \
                           ((tbi)[_i].mbuf == 0 ||                              \
                            (tbi)[_i].tx_descs <= ENA_MAX_TX_DESCS_PER_PKT))     \
@@ -199,6 +222,31 @@ int rte_log(uint32_t level, uint32_t logtype, const char *format, ...)
 	return 0;
 }
 
+
+#if DISTINCT_MBUFS
+static struct rte_mbuf *make_wf_mbuf_b(unsigned b, uint16_t nsegs)
+{
+  uint32_t total = 0;
+  for(uint16_t i = 0; i < MAX_SEGS; i++)
+  {
+    struct rte_mbuf *m = &pkt_segs[b][i];
+    m->buf_addr = pkt_bufs[b][i];
+    m->buf_len = SEG_BUF_LEN;
+    m->data_off = nd_u16();
+    m->data_len = nd_u16();
+    __CPROVER_assume(m->data_off <= SEG_BUF_LEN);
+    __CPROVER_assume(m->data_len <= SEG_BUF_LEN - m->data_off);
+    m->buf_iova = 0x1000 * (b * MAX_SEGS + i + 1);
+    m->ol_flags = 0;
+    m->next = (i + 1 < nsegs) ? &pkt_segs[b][i + 1] : NULL;
+    if(i < nsegs)
+      total += m->data_len;
+  }
+  pkt_segs[b][0].nb_segs = nsegs;
+  pkt_segs[b][0].pkt_len = total;
+  return &pkt_segs[b][0];
+}
+#endif
 
 static struct rte_mbuf *make_wf_mbuf(uint16_t nsegs)
 {
@@ -350,7 +398,11 @@ int main(void)
 #endif
 	for (i = 0; i < MAX_BURST; i++)
 		if (i < nb_pkts)
+#if DISTINCT_MBUFS
+			tx_pkts[i] = make_wf_mbuf_b(i, nsegs);
+#else
 			tx_pkts[i] = make_wf_mbuf(nsegs);
+#endif
 
 	/*
 	 * Ownership disjointness across the API boundary.  This is part of the
@@ -375,6 +427,11 @@ int main(void)
 	 * call so the ownership transfer can be stated precisely */
 	uint16_t ntu0 = ring.next_to_use;
 	uint16_t req0 = empty_tx_reqs[ntu0];
+#if DISTINCT_MBUFS
+	uint16_t reqs[MAX_BURST];
+	for (i = 0; i < MAX_BURST; i++)
+		reqs[i] = empty_tx_reqs[(ntu0 + i) & (RING_SIZE - 1)];
+#endif
 
 	/* ---- one arbitrary operation ---- */
 	sent = eth_ena_xmit_pkts(&ring, tx_pkts, nb_pkts);
@@ -417,8 +474,32 @@ int main(void)
 			 "OWN_UNIQUE: no mbuf owned by two tx_buffer_info slots");
 	/* ownership map, part 2: an accepted packet is transferred into the
 	 * slot the free list named, so it is neither lost nor duplicated */
+#if DISTINCT_MBUFS
+	{
+		bool transferred = true, unsent_free = true;
+		for (i = 0; i < MAX_BURST; i++) {
+			if (i < sent && ring.tx_buffer_info[reqs[i]].mbuf != tx_pkts[i])
+				transferred = false;
+			if (i >= sent && i < nb_pkts)
+				for (unsigned k = 0; k < RING_SIZE; k++)
+					if (ring.tx_buffer_info[k].mbuf == tx_pkts[i])
+						unsent_free = false;
+		}
+		__CPROVER_assert(transferred,
+				 "OWN_TRANSFER: every accepted mbuf recorded in its req_id slot");
+		/* F12 stated directly: the caller still owns a packet reported as
+		 * unsent, so no slot may refer to it */
+		__CPROVER_assert(unsent_free,
+				 "OWN_UNSENT: no slot holds a packet reported as unsent");
+#if VACUITY_CHECK
+		__CPROVER_assert(sent < MAX_BURST,
+				 "vacuity witness: a full burst can be accepted");
+#endif
+	}
+#else
 	if (sent >= 1)
 		__CPROVER_assert(ring.tx_buffer_info[req0].mbuf == tx_pkts[0],
 				 "OWN_TRANSFER: accepted mbuf recorded in its req_id slot");
+#endif
 	return 0;
 }

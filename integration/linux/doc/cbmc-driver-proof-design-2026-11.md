@@ -1266,3 +1266,41 @@ work. A union-held pointer written in a loop is a plausible cost driver and is
 cheap to test by pointing `empty_tx_reqs` at a plain static array. Plausible,
 and untested: the record of this project is that an untested mechanism is
 usually the wrong one.
+
+## Burst of two packets, with distinct mbufs
+
+`harness_tx_callees.c -DDISTINCT_MBUFS=1` gives every packet of the burst its
+own mbuf chain (`pkt_segs[b]`) and stands the packets already in flight for a
+separate pool (`inflight_pool`, one per slot). New packets are then distinct
+from each other and from everything in flight **by construction**, which is
+the application obligation of finding 2 stated exactly, instead of assumed at
+two probe indices. The burst-1 harness reused one chain (`segs`) for every
+packet, which is why burst 2 used to fail `OWN_UNIQUE`: it was handing the
+driver the same mbuf twice.
+
+Ownership is now stated for the whole burst: `OWN_TRANSFER` requires every
+accepted packet `i` to sit in the slot named at `next_to_use + i` before the
+call, and the new `OWN_UNSENT` requires that no slot holds a packet reported as
+unsent -- F12 stated directly, which is why the build masks it with
+`ASSUME_PREPARE_TX_OK`.
+
+**Result, ring 8, burst <= 2, one segment, with `CHECK_DESC_SUM` (so all of
+INV_STARTED+ is assumed and asserted):** all nine xmit obligations SUCCESS --
+API, INV_STARTED, INV_SLOT, INV_wakeup, INV_DESC_SUM, INV_FREE_LIST,
+OWN_UNIQUE, OWN_TRANSFER, OWN_UNSENT -- both unwinding assertions SUCCESS,
+and the vacuity witnesses "a packet can be accepted" and "a full burst can be
+accepted" both FAILURE. 538 s, 14.7M clauses.
+
+The cost needed one more measurement. Unwinding everything to 12 gave 836k
+SSA steps and 87M clauses and did not finish; the ring size accounted for
+almost none of it (ring 4: 478k steps, ring 8: 833k, burst 2: 835k). The steps
+were in `ena_tx_map_mbuf.0` (132 unwindings) and `memcmp.0` (96), both
+unrolled far past their real bounds. A per-loop `--unwindset
+eth_ena_xmit_pkts.0:3,ena_tx_map_mbuf.0:3,memcmp.0:9` with unwinding
+assertions -- which pass, so the bounds are real -- took it to 191k steps and
+14.7M clauses.
+
+**What this does not give:** an induction at ring 8. The cleanup step at ring 8
+still does not finish -- 8.8M clauses after the tight unwinding, then CaDiCaL
+search for the full 40 minutes -- so the composed result stands at ring 4,
+burst 1, while the xmit step alone is proven at ring 8, burst 2.
