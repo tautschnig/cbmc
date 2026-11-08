@@ -1,0 +1,12 @@
+CORE
+main.c
+--no-array-field-sensitivity
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+The zero initializer of nested small arrays must not spell out all of their
+2^20 elements (each array alone being small), which made symbolic execution
+take more than 100 seconds.

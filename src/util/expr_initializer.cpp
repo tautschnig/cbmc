@@ -22,6 +22,37 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "std_code.h"
 #include "symbol_table.h"
 
+/// The number of array (and vector) elements that \p expr spells out,
+/// counting those of nested arrays as often as they occur (zero if \p expr
+/// contains no array), and those of an `array_of` as if it were flattened.
+/// Flattening an array of \p expr elements copies these.
+static mp_integer flattened_elements(const exprt &expr)
+{
+  mp_integer result = 0;
+  if(expr.id() == ID_array || expr.id() == ID_vector)
+  {
+    for(const auto &op : expr.operands())
+      result += std::max(flattened_elements(op), mp_integer{1});
+  }
+  else if(expr.id() == ID_struct || expr.id() == ID_union)
+  {
+    for(const auto &op : expr.operands())
+      result += flattened_elements(op);
+  }
+  else if(expr.id() == ID_array_of)
+  {
+    // As many as a flattened array would spell out, so that arrays of
+    // these are not flattened either.
+    const auto size =
+      numeric_cast<mp_integer>(to_array_type(expr.type()).size());
+    result =
+      size.value_or(MAX_FLATTENED_ARRAY_SIZE + 1) *
+      std::max(
+        flattened_elements(to_array_of_expr(expr).what()), mp_integer{1});
+  }
+  return result;
+}
+
 class expr_initializert
 {
 public:
@@ -148,9 +179,13 @@ std::optional<exprt> expr_initializert::expr_initializer_rec(
         return {};
 
       const auto array_size = numeric_cast<mp_integer>(array_type.size());
+      // Flatten only if the copies of the element, with the elements of
+      // its nested arrays, are few: nested small arrays would otherwise
+      // multiply into an exponentially large initializer.
       if(
         array_type.size().id() == ID_infinity || !array_size.has_value() ||
-        *array_size > MAX_FLATTENED_ARRAY_SIZE)
+        *array_size * std::max(flattened_elements(*tmpval), mp_integer{1}) >
+          MAX_FLATTENED_ARRAY_SIZE)
       {
         if(init_expr.id() == ID_nondet)
           return side_effect_expr_nondett(type, source_location);
