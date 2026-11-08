@@ -1635,10 +1635,16 @@ void value_sett::assign(
       }
       else if(rhs.id() == ID_array || rhs.is_constant())
       {
+        const exprt *previous = nullptr;
         for(const auto &op : rhs.operands())
         {
+          // Adding the values of an element that the previous one equals
+          // changes nothing, and (nested) arrays often repeat elements.
+          if(previous != nullptr && add_to_sets && op == *previous)
+            continue;
           assign(lhs_index, op, ns, is_simplified, add_to_sets);
           add_to_sets=true;
+          previous = &op;
         }
       }
       else if(rhs.id()==ID_with)
