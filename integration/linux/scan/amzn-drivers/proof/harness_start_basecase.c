@@ -132,6 +132,13 @@ void *rte_zmalloc_socket(
  * CALLEE CONTRACTS for the two ena_com entry points, supplied as harness
  * models rather than run as real code.
  *
+ * VERIFIED against the real ena_com code by harness_ena_com_create.c: every
+ * post-condition below holds of the real ena_com_create_io_queue and
+ * ena_com_get_io_handlers for the request ena_create_io_queue makes, under
+ * the same device assumptions.  Each value is nondeterministic, constrained
+ * only by what was verified, so the model admits every state the real code
+ * can produce on the fields the rest of this proof reads.
+ *
  * ena_com_create_io_queue sends admin commands and waits for completions; its
  * cost is what stopped this base case being discharged (the queue arrays are
  * memset out of ENA_TOTAL_NUM_QUEUES-sized arrays inside a 182144-byte
@@ -181,22 +188,26 @@ int ena_com_create_io_queue(
    * numa_node_register_offset) with no bound check -- the same class as F8.
    * A cooperative device is modelled: unmask inside the BAR, NUMA register
    * absent or inside the BAR. */
-  cq->unmask_reg = (uint32_t *)(pool_reg_bar + 64);
-  cq->numa_node_cfg_reg = nd_int() ? NULL : (uint32_t *)(pool_reg_bar + 128);
+  cq->unmask_reg = (uint32_t *)(pool_reg_bar + (nd_u16() % 4092));
+  cq->numa_node_cfg_reg =
+    nd_int() ? NULL : (uint32_t *)(pool_reg_bar + (nd_u16() % 4092));
 
   /* POST 1: the SQ and CQ are sized by the requested queue size */
   sq->q_depth = ctx->queue_size;
   cq->q_depth = ctx->queue_size;
   /* POST 2: the doorbell points into the register BAR.  Unvalidated in the
    * real code -- that is finding F8 -- so this models a cooperative device. */
-  sq->db_addr = (uint32_t *)pool_reg_bar;
+  sq->db_addr = (uint32_t *)(pool_reg_bar + (nd_u16() % 4092));
+  /* POST 2b: the placement mode the caller asked for */
+  sq->mem_queue_type = ctx->mem_queue_type;
   /* POST 3: nothing is in flight on a freshly created queue */
   sq->tail = 0;
   sq->next_to_comp = 0;
   /* POST 4: the LLQ geometry is valid (established at device init by
    * ena_com_config_dev_mode; see INV_DEV_LLQ in ena_inv.h) */
-  sq->llq_info.descs_per_entry = 1;
-  sq->llq_info.descs_num_before_header = 1;
+  sq->llq_info.descs_per_entry = nd_u16();
+  sq->llq_info.descs_num_before_header = nd_u16();
+  __CPROVER_assume(INV_DEV_LLQ(sq));
   sq->llq_info.disable_meta_caching = false;
   return 0;
 }
@@ -301,7 +312,12 @@ int main(void)
    * which queue start neither establishes nor disturbs */
   adapter.ena_dev.reg_bar = pool_reg_bar;
   adapter.ena_dev.mem_bar = pool_mem_bar;
-  adapter.ena_dev.tx_mem_queue_type = ENA_ADMIN_PLACEMENT_POLICY_HOST;
+  /* LLQ ("device") placement, the mode the xmit step covers.  This used to
+   * be HOST, so the base case and the step were about different queue
+   * modes and did not compose; nothing in INV_STARTED mentions the mode, so
+   * the composition check could not see it.  INV_STARTED now pins it. */
+  adapter.ena_dev.tx_mem_queue_type = ENA_ADMIN_PLACEMENT_POLICY_DEV;
+  r->tx_mem_queue_type = ENA_ADMIN_PLACEMENT_POLICY_DEV;
   adapter.ena_dev.tx_max_header_size = 96;
   __CPROVER_assume(INV_DEV_LLQ(&adapter.ena_dev.io_sq_queues[0]));
 

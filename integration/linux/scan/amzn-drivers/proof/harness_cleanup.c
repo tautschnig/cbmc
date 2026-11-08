@@ -170,6 +170,9 @@ int main(void)
   ring.ena_com_io_cq = &the_cq;
   the_sq.db_addr = &the_db_reg;
   the_sq.q_depth = RING_SIZE;
+  /* LLQ mode, as INV_STARTED requires (the mode the xmit step covers) */
+  ring.tx_mem_queue_type = ENA_ADMIN_PLACEMENT_POLICY_DEV;
+  the_sq.mem_queue_type = ENA_ADMIN_PLACEMENT_POLICY_DEV;
 
   ring.next_to_use = nd_u16() & (RING_SIZE - 1);
   ring.next_to_clean = nd_u16() & (RING_SIZE - 1);

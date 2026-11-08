@@ -107,7 +107,11 @@ static bool INV_STARTED(const struct ena_ring *r)
          r->empty_tx_reqs != NULL && r->push_buf_intermediate_buf != NULL &&
          INV_GEOMETRY(r) && r->next_to_use <= r->size_mask &&
          r->next_to_clean <= r->size_mask &&
-         r->ena_com_io_sq->q_depth == r->ring_size;
+         r->ena_com_io_sq->q_depth == r->ring_size &&
+         /* the xmit step covers LLQ mode only; pinning it here makes a base
+          * case that starts the queue in another mode fail to compose */
+         r->tx_mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV &&
+         r->ena_com_io_sq->mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV;
 }
 
 

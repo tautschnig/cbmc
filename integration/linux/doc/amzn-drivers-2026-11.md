@@ -592,3 +592,44 @@ Why the earlier xmit proof did not see it: its slot invariant bounded
 it related the SQ tail to the slots. Every obligation it stated was true. The
 invariant was just too weak to compose with cleanup, and nothing checked the
 composition until now.
+
+## F13: DPDK stores the DMA-width error code as the DMA width (DPDK ENA)
+
+Found while verifying the queue-start callee models against the real
+`ena_com` code (`harness_ena_com_create.c`).
+
+`eth_ena_dev_init` (`ena_ethdev.c:1892`) does
+
+```c
+ena_dev->dma_addr_bits = ena_com_get_dma_width(ena_dev);
+```
+
+but `ena_com_get_dma_width` returns a **negative error code** --
+`ENA_COM_TIMER_EXPIRED` (`-ETIME`) when the CAPS register read times out, or
+`ENA_COM_INVAL` (`-EINVAL`) when the device reports a width outside 32..48 --
+and only stores the width itself on success. DPDK assigns the return value
+unconditionally, so on either failure `dma_addr_bits` (a `u32`) holds
+4294967274 or 4294967234. Every later `ena_com_mem_addr_set` evaluates
+`GENMASK_ULL(ena_dev->dma_addr_bits - 1, 0)`, which is then a shift by more
+than the width of the type: undefined behaviour, reported by CBMC as
+
+```
+[ena_com_mem_addr_set.undefined-shift.1] shift distance too large in
+  ~0ull >> (8 * 8 - 1) - (ena_dev->dma_addr_bits - 1): FAILURE
+```
+
+for both error values. On x86 the shift count is masked in hardware, so in
+practice the DMA-address width check uses a garbage mask: it may reject
+valid addresses, or accept addresses wider than the device supports. The value
+comes from a device register, so a device that reports an illegal width, or
+an MMIO read that times out, triggers it.
+
+The Linux and FreeBSD drivers check:
+
+```c
+dma_width = ena_com_get_dma_width(ena_dev);
+if (unlikely(dma_width < 0)) { ...; goto err_mmio_read_less; }
+```
+
+(`ena_netdev.c:4346`, `ena.c:3038`). DPDK has no such check. Low severity,
+cheap fix: the same check DPDK's two siblings already have.
