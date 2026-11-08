@@ -75,6 +75,16 @@ done
 run "$OUT/b2.log"     "$OUT/b2_0_rm.gb" $CHECKS --unwind $((RING + 4))
 run "$OUT/b2_vac.log" "$OUT/b2_1_rm.gb" --unwind $((RING + 4))
 
+# ---- base 2, its two callee models checked against the real ena_com code ---
+for V in 0 1; do
+  cc -DRING=$RING -DASSUME_DEVICE_HONEST_DOORBELL -DVACUITY_CHECK=$V \
+     "$HERE/harness_ena_com_create.c" -o "$OUT/m_$V.gb"
+  inst --replace-calls ena_com_execute_admin_command:model_execute_admin_command \
+       "$OUT/m_$V.gb" "$OUT/m_${V}_r.gb"
+done
+run "$OUT/m.log"     "$OUT/m_0_r.gb" $CHECKS --unwind 10
+run "$OUT/m_vac.log" "$OUT/m_1_r.gb" --unwind 10
+
 # ---- step 1: xmit -----------------------------------------------------------
 for V in 0 1; do
   cc -DMAX_BURST=$BURST -DMAX_SEGS=$SEGS -DRING_SIZE=$RING -DCHECK_DESC_SUM=1 \
@@ -102,7 +112,7 @@ status() { grep -E "$2" "$1" | grep -oE '(SUCCESS|FAILURE|UNKNOWN)$' | sort -u |
 verdict() { grep -oE '^VERIFICATION [A-Z]+|^NO VERDICT' "$1" | head -1; }
 echo
 printf '%-9s %-24s %s\n' part verdict "failures besides known no-body notices"
-for p in b1 b2 s1 s2; do
+for p in b1 b2 m s1 s2; do
   other=$(grep -E ': FAILURE$' "$OUT/$p.log" | grep -vcE 'rte_log_register_type_and_pick_level|rte_pci_register')
   printf '%-9s %-24s %s\n' $p "$(verdict "$OUT/$p.log")" "$other"
 done
@@ -120,6 +130,9 @@ for pred in INV_STARTED INV_SLOT OWN_UNIQUE INV_DESC_SUM INV_FREE_LIST; do
 done
 echo "  setup -> start: INV_CONFIGURED $(status "$OUT/b1.log" 'establishes INV_CONFIGURED')"
 [ "$(status "$OUT/b1.log" 'establishes INV_CONFIGURED')" = SUCCESS ] || fail=1
+m=$(status "$OUT/m.log" 'model|INV_COM holds')
+echo "  start's ena_com models vs the real ena_com: ${m:-MISSING}"
+[ "$m" = SUCCESS ] || fail=1
 
 echo
 echo "step-specific obligations:"
@@ -129,10 +142,10 @@ grep -E 'error path' "$OUT/b2.log" | sed -E 's/\] line [0-9]+ /] /; s/^/  b2 /'
 
 echo
 echo "vacuity witnesses (all must be FAILURE):"
-for p in b1 b2 s1 s2; do
+for p in b1 b2 m s1 s2; do
   grep -E 'vacuity witness' "$OUT/${p}_vac.log" | sed -E "s/\] line [0-9]+ /] /; s/^/  $p /"
 done
-vac_bad=$(cat "$OUT"/b1_vac.log "$OUT"/b2_vac.log "$OUT"/s1_vac.log "$OUT"/s2_vac.log | grep 'vacuity witness' | grep -c ': SUCCESS$')
+vac_bad=$(cat "$OUT"/b1_vac.log "$OUT"/b2_vac.log "$OUT"/m_vac.log "$OUT"/s1_vac.log "$OUT"/s2_vac.log | grep 'vacuity witness' | grep -c ': SUCCESS$')
 [ "$vac_bad" = 0 ] || fail=1
 
 echo
@@ -141,7 +154,7 @@ cat <<'EOF'
   device   ASSUME_DEVICE_HONEST_DOORBELL  doorbell offset inside the BAR (F8 is that the driver does not check)
   device   INV_DEV_LLQ                    LLQ geometry from ena_com_config_dev_mode at device init, not proven
   device   sgl_size <= ENA_PKT_MAX_BUFS   set by ena_init_rings from a clamped device value, not proven
-  device   ena_com_create_io_queue / ena_com_get_io_handlers replaced by stated models (harness_start_basecase.c)
+  device   dma_addr_bits in 32..48        device-init precondition of the ena_com check (F13: DPDK stores the error code)
   driver   ASSUME_PREPARE_TX_OK           ena_com_prepare_tx succeeds; on failure the invariants break (F12)
   app      packets in a burst are not already in flight (finding 2: undetected by the driver)
   app      nb_segs < sgl_size (finding 3: advertised, not re-checked)

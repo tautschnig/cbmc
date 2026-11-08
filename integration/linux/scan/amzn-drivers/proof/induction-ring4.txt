@@ -4,6 +4,7 @@ cbmc: 6.9.0 (cbmc-6.9.0-433-g6677c6dae75-dirty)   flags: --sat-solver cadical --
 part      verdict                  failures besides known no-body notices
 b1        VERIFICATION SUCCESSFUL  0
 b2        VERIFICATION SUCCESSFUL  0
+m         VERIFICATION SUCCESSFUL  0
 s1        VERIFICATION FAILED      0
 s2        VERIFICATION SUCCESSFUL  0
 
@@ -15,6 +16,7 @@ composition check -- each predicate a step assumes, as proven by each part:
   INV_DESC_SUM   SUCCESS    SUCCESS    SUCCESS   
   INV_FREE_LIST  SUCCESS    SUCCESS    SUCCESS   
   setup -> start: INV_CONFIGURED SUCCESS
+  start's ena_com models vs the real ena_com: SUCCESS
 
 step-specific obligations:
   s1 [main.assertion.1] API: sent <= nb_pkts: SUCCESS
@@ -29,6 +31,8 @@ vacuity witnesses (all must be FAILURE):
   b1 [main.assertion.2] vacuity witness: a setup can fail: FAILURE
   b2 [main.assertion.1] vacuity witness: a start can succeed: FAILURE
   b2 [main.assertion.2] vacuity witness: a start can fail: FAILURE
+  m [main.assertion.1] vacuity witness: create can succeed: FAILURE
+  m [main.assertion.2] vacuity witness: create can fail: FAILURE
   s1 [main.assertion.1] vacuity witness: a packet can be accepted: FAILURE
   s2 [main.assertion.1] vacuity witness: a packet can be freed: FAILURE
 
@@ -36,7 +40,7 @@ the induction holds relative to these assumptions, and only these:
   device   ASSUME_DEVICE_HONEST_DOORBELL  doorbell offset inside the BAR (F8 is that the driver does not check)
   device   INV_DEV_LLQ                    LLQ geometry from ena_com_config_dev_mode at device init, not proven
   device   sgl_size <= ENA_PKT_MAX_BUFS   set by ena_init_rings from a clamped device value, not proven
-  device   ena_com_create_io_queue / ena_com_get_io_handlers replaced by stated models (harness_start_basecase.c)
+  device   dma_addr_bits in 32..48        device-init precondition of the ena_com check (F13: DPDK stores the error code)
   driver   ASSUME_PREPARE_TX_OK           ena_com_prepare_tx succeeds; on failure the invariants break (F12)
   app      packets in a burst are not already in flight (finding 2: undetected by the driver)
   app      nb_segs < sgl_size (finding 3: advertised, not re-checked)
