@@ -464,3 +464,58 @@ The oracle took 37,580 s in total (run J: 37,535 s).
   with it).
 - The errors of section 10 (very large values, 2,047 goroutines).
 
+
+## 13. Symex time and very large values
+
+**Symex time.** Five changes to goto-symex and util (`31e9ceed9a` to
+`c15a94ab47`: `irept::compare` of shared data, guards at the end of
+atomic sections, guard merging when the equation shares expressions,
+symbol-table suffixes) bring the symex time of `TestNoRaceSelect4` at
+`--unwind 3` from 199 s to 6.6 s without the race check, and from 479 s
+to 25 s with it (build `47115f657c` against `63c2313a5c`); at
+`--unwind 4`, with the check, from 778 s to 552 s. Rerun
+with a timeout of 1,800 s, the 16 harnesses that timed out in K4 or ran
+out of their bound gave:
+
+| | Now | Build before the changes |
+|---|---|---|
+| `rwmutex.TestNoRaceRWMutexMultipleReaders` | clean, 1,318 s | timeout |
+| `rwmutex.TestRaceRWMutexMultipleReaders` | race, 1,703 s | timeout |
+| `sync.TestRaceAfterFunc3` | race, 1,488 s | race, 1,185 s |
+| `mutex.TestNoRaceMutexPureHappensBefore` | unwind | unwind |
+| 12 others | timeout | not run |
+
+**Very large values.** Three changes, none specific to Go or to the race
+check, remove the exponential cost of nested small arrays such as the
+16 MB `[2][2]...[2]Point` (20 levels) of `TestRaceNestedArrayCopy`:
+
+| Change | 2^20-element copy in C, without threads |
+|---|---|
+| The zero initializer flattens an array only if the elements that flattening copies, those of nested arrays included, are at most 1,000 (`c6fc82d8ba`) | 106 s to 2.5 s with `--no-array-field-sensitivity` |
+| Field sensitivity divides an array only if its elements have at most 64² fields together (`85b1145528`) | out of memory (8 GB) to 18 s |
+| Value sets skip array elements that equal the previous one (`63c2313a5c`) | 18 s to 5.6 s |
+
+The profiling suite is unchanged by them (7.20 s of symex before, 7.23 s
+after).
+
+With the race check, the harnesses with large values still fail:
+
+| Harness | K4 | Now |
+|---|---|---|
+| `TestRaceNestedArrayCopy` | out of memory after 93 s | out of memory after 1,389 s |
+| `TestRaceMapBigKeyInsert` | error | out of memory (12 GB) in the SAT solver's preprocessing; race found in 514 s with `--no-sat-preprocessor` (36.7 million variables, 104 million clauses) |
+| `TestRaceMapBigValInsert` | error | timeout (1,800 s) |
+| `BigKeyAccess1`, `2`, `Delete`, `BigValAccess1`, `2` | race | race (same formulas) |
+
+The cause is the encoding of shared objects under the memory model, not
+the size of any one expression: each shared read of an object is a fresh
+SSA symbol that equals one of the writes it may read from, and each such
+equality covers the whole object. Without the race check,
+`TestRaceMapBigKeyInsert` has 2,442 steps and 3 million variables. With
+it, the flags of each access are read and written inside atomic sections,
+so the 64,000-bit `[1000]*int` key and its shadow memory (typed as the
+object, one byte of flag per byte) take part in many more such
+equalities: 38,929 steps and 36.7 million variables. Making the
+object-level flags (`OW`, `OR`, `RW`, `RR`) one byte per object removed
+only 2.5% of the variables, and shadow memory as a flat array of bytes
+did not change them; neither is committed.
