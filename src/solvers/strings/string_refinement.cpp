@@ -2308,12 +2308,19 @@ static void update_index_set(
 /// \param array_expr: an expression representing an array
 /// \param accu: a vector to which symbols and constant arrays contained in the
 ///   expression will be appended
-static void get_sub_arrays(const exprt &array_expr, std::vector<exprt> &accu)
+static void get_sub_arrays(
+  const exprt &array_expr,
+  std::vector<exprt> &accu,
+  std::unordered_set<const void *> &visited)
 {
+  // Each node once: strings merged at join points of a program are
+  // if-expressions that share their subexpressions.
+  if(!visited.insert(&array_expr.read()).second)
+    return;
   if(array_expr.id() == ID_if)
   {
-    get_sub_arrays(to_if_expr(array_expr).true_case(), accu);
-    get_sub_arrays(to_if_expr(array_expr).false_case(), accu);
+    get_sub_arrays(to_if_expr(array_expr).true_case(), accu, visited);
+    get_sub_arrays(to_if_expr(array_expr).false_case(), accu, visited);
   }
   else
   {
@@ -2325,7 +2332,7 @@ static void get_sub_arrays(const exprt &array_expr, std::vector<exprt> &accu)
     else
     {
       for(const auto &operand : array_expr.operands())
-        get_sub_arrays(operand, accu);
+        get_sub_arrays(operand, accu, visited);
     }
   }
 }
@@ -2353,7 +2360,8 @@ static void add_to_index_set(
   if(!i.is_constant() || is_size_t)
   {
     std::vector<exprt> sub_arrays;
-    get_sub_arrays(s, sub_arrays);
+    std::unordered_set<const void *> visited;
+    get_sub_arrays(s, sub_arrays, visited);
     for(const auto &sub : sub_arrays)
       if(index_set.cumulative[sub].insert(i).second)
         index_set.current[sub].insert(i);
@@ -2381,8 +2389,12 @@ static void initial_index_set(
   const exprt &qvar,
   const exprt &upper_bound,
   const exprt &s,
-  const exprt &i)
+  const exprt &i,
+  std::unordered_set<const void *> &visited)
 {
+  // Each node of the strings once (see get_sub_arrays).
+  if(!visited.insert(&s.read()).second)
+    return;
   PRECONDITION(
     s.id() == ID_symbol || s.id() == ID_nondet_symbol || s.id() == ID_array ||
     s.id() == ID_if);
@@ -2394,8 +2406,10 @@ static void initial_index_set(
   }
   if(auto ite = expr_try_dynamic_cast<if_exprt>(s))
   {
-    initial_index_set(index_set, ns, qvar, upper_bound, ite->true_case(), i);
-    initial_index_set(index_set, ns, qvar, upper_bound, ite->false_case(), i);
+    initial_index_set(
+      index_set, ns, qvar, upper_bound, ite->true_case(), i, visited);
+    initial_index_set(
+      index_set, ns, qvar, upper_bound, ite->false_case(), i, visited);
     return;
   }
   const minus_exprt u_minus_1(upper_bound, from_integer(1, upper_bound.type()));
@@ -2411,19 +2425,34 @@ static void initial_index_set(
 {
   const symbol_exprt &qvar = axiom.univ_var;
   const auto &bound = axiom.upper_bound;
-  auto it = axiom.body.depth_begin();
-  const auto end = axiom.body.depth_end();
-  while(it != end)
+  // Each node of the body once, and of the strings once for each index.
+  std::unordered_set<const void *> visited;
+  std::unordered_map<exprt, std::unordered_set<const void *>, irep_hash>
+    visited_strings;
+  std::vector<std::reference_wrapper<const exprt>> stack({axiom.body});
+  while(!stack.empty())
   {
-    if(it->id() == ID_index && is_char_type(it->type()))
+    const exprt &e = stack.back();
+    stack.pop_back();
+    if(!visited.insert(&e.read()).second)
+      continue;
+    if(e.id() == ID_index && is_char_type(e.type()))
     {
-      const auto &index_expr = to_index_expr(*it);
-      const auto &s = index_expr.array();
-      initial_index_set(index_set, ns, qvar, bound, s, index_expr.index());
-      it.next_sibling_or_parent();
+      const auto &index_expr = to_index_expr(e);
+      initial_index_set(
+        index_set,
+        ns,
+        qvar,
+        bound,
+        index_expr.array(),
+        index_expr.index(),
+        visited_strings[index_expr.index()]);
     }
     else
-      ++it;
+    {
+      for(const auto &op : e.operands())
+        stack.emplace_back(op);
+    }
   }
 }
 
