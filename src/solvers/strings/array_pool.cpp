@@ -109,6 +109,12 @@ array_string_exprt array_poolt::make_char_array_for_char_pointer(
 
   if(char_pointer.id() == ID_if)
   {
+    // Once for each node: strings merged at join points of a program are
+    // if-expressions that share their subexpressions, and their trees can
+    // be very large.
+    const auto found = if_arrays.find(&char_pointer.read());
+    if(found != if_arrays.end() && found->second.type == char_array_type)
+      return found->second.array;
     const if_exprt &if_expr = to_if_expr(char_pointer);
     const array_string_exprt t =
       make_char_array_for_char_pointer(if_expr.true_case(), char_array_type);
@@ -124,7 +130,11 @@ array_string_exprt array_poolt::make_char_array_for_char_pointer(
     // used for any purposes other than passing it to concretization.
     // Array if-exprts must be replaced (using substitute_array_access) before
     // passing the lemmas to the solver.
-    return to_array_string_expr(if_exprt(if_expr.cond(), t, f, array_type));
+    const array_string_exprt result =
+      to_array_string_expr(if_exprt(if_expr.cond(), t, f, array_type));
+    if_arrays.insert_or_assign(
+      &char_pointer.read(), if_arrayt{char_pointer, char_array_type, result});
+    return result;
   }
 
   const bool is_constant_array =

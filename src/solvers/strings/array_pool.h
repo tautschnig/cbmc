@@ -135,6 +135,17 @@ private:
   /// Generate fresh symbols
   symbol_generatort &fresh_symbol;
 
+  /// The arrays that make_char_array_for_char_pointer made for
+  /// if-expressions, by their nodes, with the pointer (kept so that its
+  /// node is not reused) and the type of array that they were made for.
+  struct if_arrayt
+  {
+    exprt pointer;
+    typet type;
+    array_string_exprt array;
+  };
+  std::unordered_map<const void *, if_arrayt> if_arrays;
+
   array_string_exprt make_char_array_for_char_pointer(
     const exprt &char_pointer,
     const typet &char_array_type);
