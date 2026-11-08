@@ -579,8 +579,30 @@ The shell front-end's sites, in order of the census:
     eight it still does not finish in 300 s: preprocessing, conversion
     and the check of each model each take tens of seconds, repeated for
     each property.
-  - `case "$(mktemp)" in */tmp.*|"")` is still reported, with a model
-    that check_axioms accepts; not investigated further.
+  - `case "$(mktemp)" in */tmp.*|"")` was reported because the solver
+    gave up: where a round adds no index term, it adds the
+    counter-examples, and took the model as a counterexample after 16
+    such rounds. The concatenations of the name are violated at one more
+    position each round (no index term reaches them), for 47 rounds. The
+    rounds now go on while the counter-examples are at new positions of
+    their axioms (at most 256; the witnesses of symbolic needles, for
+    which the bound was, repeat positions): verified in 41 s.
+  - Eight arguments (8 Nov 2026). More traversals of trees of shared
+    expressions, found by sampling stacks: the array pool made the
+    array of an if-pointer by recursion over its tree, so its tables
+    compared large fresh trees structurally (the dependency graph, the
+    constraints and their conversion took 13 s, 27 s and 28 s, now about
+    a second each); the initial index set walked the bodies and strings
+    as trees; the rewriting of function applications walked trees and
+    simplified twice. Now, with refined strings, the `"$@"` loop takes
+    37 s with eight arguments (no result in 300 s before) and 9 s with
+    six; the getopt test with eight words verifies in 109 s (no result
+    in 400 s). What remains is mostly MiniSat, the array Ackermann
+    constraints, and the simplification of the arguments of function
+    applications (about a quarter of the getopt test), whose
+    if-expressions the simplifier walks as trees. Hash-consing the
+    equations and axioms, and caching values of the model, gave nothing
+    further once the pool made each array once.
 
 ## Spikes (5 Nov 2026)
 
