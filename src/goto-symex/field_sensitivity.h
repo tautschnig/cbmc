@@ -9,7 +9,11 @@ Author: Michael Tautschnig
 #ifndef CPROVER_GOTO_SYMEX_FIELD_SENSITIVITY_H
 #define CPROVER_GOTO_SYMEX_FIELD_SENSITIVITY_H
 
+#include <util/mp_arith.h>
 #include <util/ssa_expr.h>
+
+#include <limits>
+#include <unordered_map>
 
 class byte_extract_exprt;
 class namespacet;
@@ -100,7 +104,9 @@ inline field_sensitive_ssa_exprt &to_field_sensitive_ssa_expr(exprt &expr)
 /// When `index` is not a constant, `array[index]` is replaced by
 ///  `{array[[0]]; array[[1]]; …index]`.
 /// Note that this process does not apply to arrays whose size is not constant
-/// or whose size exceed the bound \c max_field_sensitivity_array_size.
+/// or whose size exceed the bound \c max_field_sensitivity_array_size, nor to
+/// arrays whose elements would together have more than the square of that
+/// bound of fields (as nested arrays, each of them small, multiply).
 /// See \ref field_sensitivityt::apply.
 ///
 /// ### Constant objects
@@ -231,6 +237,31 @@ private:
 
   const bool should_simplify;
   const irep_idt &language_mode;
+
+  /// The number of fields of types, see fields_of.
+  mutable std::unordered_map<typet, std::size_t, irep_hash> fields_cache;
+
+  /// The number of fields (individual SSA expressions) that an object of
+  /// \p type divides into, at most max_divided_fields() + 1.
+  std::size_t fields_of(const namespacet &ns, const typet &type) const;
+
+  /// The maximal number of fields that an array divides into.
+  std::size_t max_divided_fields() const
+  {
+    const std::size_t n = max_field_sensitivity_array_size;
+    return n != 0 && n > std::numeric_limits<std::size_t>::max() / n
+             ? std::numeric_limits<std::size_t>::max() - 1
+             : n * n;
+  }
+
+  /// Whether an array of \p size elements of type \p element_type is
+  /// divided into fields: \p size is at most
+  /// max_field_sensitivity_array_size, and the elements have at most
+  /// max_divided_fields() fields.
+  bool is_divisible_array(
+    const namespacet &ns,
+    const mp_integer &size,
+    const typet &element_type) const;
 
   /// \p updated_bytes: see field_assignments; \p offset: the byte offset
   /// of \p lhs_fs within the assigned object, if known.

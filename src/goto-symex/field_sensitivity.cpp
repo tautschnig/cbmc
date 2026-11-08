@@ -39,6 +39,58 @@ static bool is_undivided_constant(const namespacet &ns, const ssa_exprt &expr)
          type.get_bool(ID_C_constant);
 }
 
+std::size_t
+field_sensitivityt::fields_of(const namespacet &ns, const typet &type) const
+{
+  const std::size_t limit = max_divided_fields() + 1;
+  if(
+    type.id() == ID_struct || type.id() == ID_struct_tag ||
+    type.id() == ID_union || type.id() == ID_union_tag)
+  {
+    const auto cached = fields_cache.find(type);
+    if(cached != fields_cache.end())
+      return cached->second;
+    const struct_union_typet::componentst &components =
+      (type.id() == ID_struct_tag || type.id() == ID_union_tag)
+        ? ns.follow_tag(to_struct_or_union_tag_type(type)).components()
+        : to_struct_union_type(type).components();
+    std::size_t result = 0;
+    for(const auto &component : components)
+      result = std::min(limit, result + fields_of(ns, component.type()));
+    result = std::max(result, std::size_t{1});
+    fields_cache.emplace(type, result);
+    return result;
+  }
+#ifdef ENABLE_ARRAY_FIELD_SENSITIVITY
+  if(type.id() == ID_array && to_array_type(type).size().is_constant())
+  {
+    const auto cached = fields_cache.find(type);
+    if(cached != fields_cache.end())
+      return cached->second;
+    const auto &array_type = to_array_type(type);
+    const mp_integer size =
+      numeric_cast_v<mp_integer>(to_constant_expr(array_type.size()));
+    const std::size_t result =
+      is_divisible_array(ns, size, array_type.element_type())
+        ? numeric_cast_v<std::size_t>(
+            size * fields_of(ns, array_type.element_type()))
+        : 1;
+    fields_cache.emplace(type, result);
+    return result;
+  }
+#endif
+  return 1;
+}
+
+bool field_sensitivityt::is_divisible_array(
+  const namespacet &ns,
+  const mp_integer &size,
+  const typet &element_type) const
+{
+  return size >= 0 && size <= max_field_sensitivity_array_size &&
+         size * fields_of(ns, element_type) <= max_divided_fields();
+}
+
 exprt field_sensitivityt::apply(
   const namespacet &ns,
   goto_symex_statet &state,
@@ -129,9 +181,11 @@ exprt field_sensitivityt::apply_byte_extract(
 #ifdef ENABLE_ARRAY_FIELD_SENSITIVITY
         if(
           !to_array_type(parent->type()).size().is_constant() ||
-          numeric_cast_v<mp_integer>(
-            to_constant_expr(to_array_type(parent->type()).size())) >
-            max_field_sensitivity_array_size)
+          !is_divisible_array(
+            ns,
+            numeric_cast_v<mp_integer>(
+              to_constant_expr(to_array_type(parent->type()).size())),
+            to_array_type(parent->type()).element_type()))
         {
           for_ssa = parent;
         }
@@ -278,8 +332,10 @@ exprt field_sensitivityt::apply(
 
       if(
         l2_size.is_constant() &&
-        numeric_cast_v<mp_integer>(to_constant_expr(l2_size)) <=
-          max_field_sensitivity_array_size)
+        is_divisible_array(
+          ns,
+          numeric_cast_v<mp_integer>(to_constant_expr(l2_size)),
+          to_array_type(index.array().type()).element_type()))
       {
         if(l2_index.is_constant())
         {
@@ -371,7 +427,8 @@ exprt field_sensitivityt::get_fields(
   {
     const mp_integer mp_array_size = numeric_cast_v<mp_integer>(
       to_constant_expr(to_array_type(ssa_expr.type()).size()));
-    if(mp_array_size < 0 || mp_array_size > max_field_sensitivity_array_size)
+    if(!is_divisible_array(
+         ns, mp_array_size, to_array_type(ssa_expr.type()).element_type()))
       return ssa_expr;
 
     const array_typet &type = to_array_type(ssa_expr.type());
@@ -621,7 +678,7 @@ void field_sensitivityt::field_assignments_rec(
       numeric_cast_v<std::size_t>(to_constant_expr(type->size()));
     PRECONDITION(lhs_fs.operands().size() == array_size);
 
-    if(array_size > max_field_sensitivity_array_size)
+    if(!is_divisible_array(ns, array_size, type->element_type()))
       return;
 
     const auto element_size = pointer_offset_size(type->element_type(), ns);
@@ -724,8 +781,11 @@ bool field_sensitivityt::is_divisible(
   if(
     expr.type().id() == ID_array &&
     to_array_type(expr.type()).size().is_constant() &&
-    numeric_cast_v<mp_integer>(to_constant_expr(
-      to_array_type(expr.type()).size())) <= max_field_sensitivity_array_size)
+    is_divisible_array(
+      ns,
+      numeric_cast_v<mp_integer>(
+        to_constant_expr(to_array_type(expr.type()).size())),
+      to_array_type(expr.type()).element_type()))
   {
     return true;
   }

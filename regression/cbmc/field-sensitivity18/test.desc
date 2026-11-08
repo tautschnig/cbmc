@@ -1,0 +1,13 @@
+CORE
+main.c
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Field sensitivity must not divide nested small arrays into all of their
+fields: each array has fewer elements than --max-field-sensitivity-array-size,
+but together they would have 2^16 fields, which took more than 40 seconds and
+1.4 GB of memory.
