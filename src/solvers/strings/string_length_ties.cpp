@@ -17,6 +17,7 @@ Author: Michael Tautschnig
 #include "array_pool.h"
 
 #include <functional>
+#include <set>
 #include <unordered_set>
 
 /// The number of merges that canonical() follows; each is a join point of
@@ -75,9 +76,17 @@ std::vector<exprt> string_length_tiest::new_ties(const array_poolt &pool)
   // so it is a find of p1 and of p2 with l.
   std::unordered_map<exprt, std::unordered_set<exprt, irep_hash>, irep_hash>
     lengths;
+  // Each pair of nodes once: the if-expressions of strings merged at join
+  // points of a program share their subexpressions.
+  // The lengths are kept, so that their nodes are not reused.
+  std::set<std::pair<const void *, const void *>> visited;
+  std::vector<exprt> visited_lengths;
   std::function<void(const exprt &, const exprt &)> record =
     [&](const exprt &pointer, const exprt &length)
   {
+    if(!visited.emplace(&pointer.read(), &length.read()).second)
+      return;
+    visited_lengths.push_back(length);
     const auto pointer_if = expr_try_dynamic_cast<if_exprt>(pointer);
     if(!pointer_if)
     {

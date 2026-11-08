@@ -841,45 +841,81 @@ string_refinementt::dec_solve(const exprt &assumption)
   log.debug() << "dec_solve: Replacing string ids and simplifying arguments"
                  " in function applications"
               << messaget::eom;
-  for(exprt &expr : equations)
+  // Each node of the equations once: strings merged at join points of a
+  // program are if-expressions that share their subexpressions, whose
+  // trees can be very large.
   {
-    auto it = expr.depth_begin();
-    while(it != expr.depth_end())
+    // The symbols of the arguments resolved by symbol_resolve, where that
+    // keeps their types: replace_expr does not work due to internal
+    // representation differences, but find() does.
+    std::unordered_map<const void *, std::pair<exprt, exprt>> resolved;
+    std::function<exprt(const exprt &)> resolve_symbols =
+      [&](const exprt &e) -> exprt
     {
-      if(can_cast_expr<function_application_exprt>(*it))
+      const auto found = resolved.find(&e.read());
+      if(found != resolved.end())
+        return found->second.second;
+      exprt result = e;
+      if(e.id() == ID_symbol)
       {
-        // Simplification is required because the array pool may not realize
-        // that an expression like
-        // `(unsignedbv[16]*)((signedbv[8]*)&constarray[0] + 0)` is the
-        // same pointer as `&constarray[0]
-        simplify(it.mutate(), ns);
-        string_id_symbol_resolve.replace_expr(it.mutate());
-        // Resolve symbols inside struct arguments using the main symbol_resolve.
-        // replace_expr doesn't work due to internal representation differences,
-        // but find() does. Manually traverse and replace.
-        for(auto &arg : it.mutate().operands())
-        {
-          for(auto sub_it = arg.depth_begin(); sub_it != arg.depth_end();)
-          {
-            if(sub_it->id() == ID_symbol)
-            {
-              exprt resolved = symbol_resolve.find(*sub_it);
-              if(resolved != *sub_it && resolved.type() == sub_it->type())
-              {
-                sub_it.mutate() = resolved;
-                sub_it.next_sibling_or_parent();
-                continue;
-              }
-            }
-            ++sub_it;
-          }
-        }
-        simplify(it.mutate(), ns);
-        it.next_sibling_or_parent();
+        exprt representative = symbol_resolve.find(e);
+        if(representative != e && representative.type() == e.type())
+          result = std::move(representative);
       }
       else
-        ++it;
-    }
+      {
+        for(std::size_t i = 0; i < e.operands().size(); ++i)
+        {
+          exprt op = resolve_symbols(e.operands()[i]);
+          if(&op.read() != &e.operands()[i].read())
+            result.operands()[i] = std::move(op);
+        }
+      }
+      resolved.emplace(&e.read(), std::make_pair(e, result));
+      return result;
+    };
+    std::unordered_map<const void *, std::pair<exprt, exprt>> rewritten;
+    std::function<exprt(const exprt &)> rewrite = [&](const exprt &e) -> exprt
+    {
+      const auto found = rewritten.find(&e.read());
+      if(found != rewritten.end())
+        return found->second.second;
+      exprt result = e;
+      if(can_cast_expr<function_application_exprt>(e))
+      {
+        // Simplification is required because the array pool may not
+        // realize that an expression like
+        // `(unsignedbv[16]*)((signedbv[8]*)&constarray[0] + 0)` is the
+        // same pointer as `&constarray[0]
+        simplify(result, ns);
+        bool unchanged = string_id_symbol_resolve.replace_expr(result);
+        for(auto &arg : result.operands())
+        {
+          exprt resolved_arg = resolve_symbols(arg);
+          if(&resolved_arg.read() != &arg.read())
+          {
+            arg = std::move(resolved_arg);
+            unchanged = false;
+          }
+        }
+        // Simplifying again only where something was replaced.
+        if(!unchanged)
+          simplify(result, ns);
+      }
+      else
+      {
+        for(std::size_t i = 0; i < e.operands().size(); ++i)
+        {
+          exprt op = rewrite(e.operands()[i]);
+          if(&op.read() != &e.operands()[i].read())
+            result.operands()[i] = std::move(op);
+        }
+      }
+      rewritten.emplace(&e.read(), std::make_pair(e, result));
+      return result;
+    };
+    for(exprt &expr : equations)
+      expr = rewrite(expr);
   }
 
   // Constraints start clear at each `dec_solve` call.
