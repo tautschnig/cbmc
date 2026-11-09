@@ -519,3 +519,91 @@ equalities: 38,929 steps and 36.7 million variables. Making the
 object-level flags (`OW`, `OR`, `RW`, `RR`) one byte per object removed
 only 2.5% of the variables, and shadow memory as a flat array of bytes
 did not change them; neither is committed.
+
+## 14. Options for large values
+
+Section 13 left three harnesses failing. Measuring where their variables
+and time go, rather than the size of their expressions, found four
+independent causes. Each was tried behind an environment switch (local
+branch `go-race-large-values-exp`, commit `3ee4f040c2`); none is
+committed to this branch.
+
+**Cause 1: writes that nothing reads are memory-model events.** Every
+shared write gets a clock, a program-order constraint, and write-
+serialization constraints against the other threads' writes to the same
+address, even if no event reads that address. With field sensitivity, a
+whole-object write is one event per field: in a 16 KB `[2]...[2]Point`
+copy under the race check, 10,233 of 10,733 shared writes are to fields
+that no event reads. Such a write cannot change what any read observes:
+given an order of the other events, it can be placed right after its
+predecessor in its thread (or in its atomic section), and nothing orders
+it otherwise. Leaving these writes out of the memory model (`MM_PRUNE`):
+
+| | Without | With |
+|---|---|---|
+| 16 KB nested copy, race check | 947,631 variables, no result in 1,500 s | 408,566 variables, 1 s of solving |
+| Whole oracle, 310 harnesses whose verdict both runs agree on | 23,086 s | 6,916 s (all three switches; `MM_PRUNE` alone gives nearly all of it) |
+| 16 harnesses (8 with the largest gains, 8 at random) | 2,541 s | 740 s (`MM_PRUNE` only) |
+| `cbmc-concurrency`, Go and shadow-memory regression suites | pass | pass |
+| Profiling suite, concurrency benchmarks | | unchanged (up to 3% fewer steps) |
+
+No verdict of the oracle changes (runs K9 and K8, same build). This is
+not specific to Go or to the race check.
+
+**Cause 2: shadow memory repeats symbolic execution.** Shadow memory is
+typed as the object it shadows, so a map header's shadow has a pointer
+field `keys`; set_field writes flag bytes into it, its value set grows,
+and the shared-value summary repeats symbolic execution. In the repeated
+run, the goroutine starts with the summary's values, which include the
+keys array it allocates later itself. Its search loop then reads that
+array at indices 0 to 3, and the array theory instantiates 64,000-bit
+elements for five indices instead of one. Leaving shadow memory out of
+the summary (`SV_NOSM`; shadow values are never dereferenced) removes
+the repetition. The repeated run's assumption that a thread may read its
+own later writes is a separate imprecision, not addressed.
+
+**Cause 3: shadow memory of dynamic arrays has the elements' width.** The
+shadow of `keys` (an array of symbolic size) is an array of
+`[1000]*int`, so each index of it costs 64,000 bits in the array theory.
+An array of bytes instead (`SM_A`) has 8-bit elements. Together with
+`SV_NOSM`, a standalone `map[[1000]*int]int` race goes from 36.7 million
+to 4.5 million variables. Bytes do not help objects of constant size:
+there, field sensitivity divides the typed shadow, and a byte array of
+16 KB was slower (`SM_B`). Object-level flags (`OW`, `OR`, `RW`, `RR`)
+of one byte per object (`SM_OBJ`) changed little once `MM_PRUNE` drops
+the unread fields.
+
+**Cause 4: arrays of constant size are always bit vectors.** `cbmc`
+defaults to `--arrays-uf auto`, but the solver factory maps only `never`
+and `always`, so `auto` behaves as `never` (also on `develop`): every
+array of constant size, 16 MB included, becomes a bit vector, and every
+equality between two versions of it (each shared read has some) costs
+its full width. Using the array theory for arrays wider than 1,000 bits
+(`ARRAYS_AUTO`, which also stops allocating literals for such arrays):
+
+| | Before (run K9: 8 GB, 600 s) | With `ARRAYS_AUTO` and the other switches (14 GB, 1,800 s) |
+|---|---|---|
+| `[1<<20]Point` (16 MB, one dimension) copied while a goroutine writes it | out of memory (8 GB) | race in 0.5 s of solving, 97,000 variables |
+| `BigKeyAccess1`, `2`, `Delete` | 380 to 451 s | 1 to 2 s |
+| `BigKeyInsert` | out of memory | race in 6 s |
+| `BigValAccess1`, `2`, `BigValInsert` | 122 s, 123 s, out of memory | invariant failure: a struct with a large array member |
+| `TestRaceNestedArrayCopy` | timeout | error after 1,748 s |
+| `regression/cbmc` | pass | 3 of 1,191 fail on invariants (a member of a member as an array, and the width of the array's literals) |
+
+The array theory represents nested arrays as arrays of bit vectors, so
+`[2][2]...[2]Point` still costs the width of each sub-array per index.
+Linearizing nested arrays of constant size (an index `a[i][j]` as
+`a'[i*n + j]`) is what `TestRaceNestedArrayCopy` additionally needs.
+
+**Also tried:**
+
+- SMT back ends on the `map[[1000]*int]int` race: Z3 ran out of memory
+  at 23 GB, Bitwuzla answered unknown (it does not fully support
+  equalities over constant arrays), cvc5 rejected the input.
+- CaDiCaL instead of MiniSat: faster on the 16 KB nested copy (546 s
+  against more than 1,500 s for the first call), slower on smaller ones
+  (7 s against 2 s), and no better on the map race.
+- MiniSat's preprocessing runs out of memory on formulas of about 100
+  million clauses; `--no-sat-preprocessor` let `BigValInsert` finish in
+  430 s and `BigKeyInsert` in 514 s. Causes 2 and 3 shrink these
+  formulas instead.
