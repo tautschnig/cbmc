@@ -182,8 +182,48 @@ string_constraint_generatort::add_axioms_for_code_point_before(
   return {result, constraints};
 }
 
-/// add axioms giving approximate bounds on the result of the
-/// String.codePointCount java function
+/// Whether \p str has no surrogate pair (a high surrogate followed by a low
+/// one) that starts in [\p begin, \p end - 1). Adds axioms making the
+/// returned Boolean exact.
+static exprt no_surrogate_pair(
+  string_constraint_generatort &generator,
+  const array_string_exprt &str,
+  const exprt &begin,
+  const exprt &end,
+  string_constraintst &constraints,
+  message_handlert &message_handler)
+{
+  const typet &index_type = str.length_type();
+  const exprt index1 = from_integer(1, index_type);
+  const symbol_exprt no_pair = generator.fresh_symbol("no_surrogate_pair");
+  const symbol_exprt qvar =
+    generator.fresh_symbol("QA_no_surrogate_pair", index_type);
+  constraints.universal.emplace_back(
+    qvar,
+    zero_if_negative(begin),
+    zero_if_negative(minus_exprt{end, index1}),
+    implies_exprt{
+      no_pair,
+      not_exprt{and_exprt{
+        is_high_surrogate(str[qvar]),
+        is_low_surrogate(str[plus_exprt{qvar, index1}])}}},
+    generator.ns,
+    message_handler);
+  const symbol_exprt witness =
+    generator.fresh_symbol("surrogate_pair_witness", index_type);
+  constraints.existential.push_back(implies_exprt{
+    not_exprt{no_pair},
+    conjunction(
+      {binary_relation_exprt{witness, ID_ge, begin},
+       binary_relation_exprt{witness, ID_ge, from_integer(0, index_type)},
+       binary_relation_exprt{witness, ID_lt, minus_exprt{end, index1}},
+       is_high_surrogate(str[witness]),
+       is_low_surrogate(str[plus_exprt{witness, index1}])})});
+  return no_pair;
+}
+
+/// Add axioms for the result of the String.codePointCount java function,
+/// exact for a range without surrogate pairs and bounded otherwise.
 /// \param f: function application with three arguments string `str`, integer
 ///   `begin` and integer `end`.
 /// \return an integer expression
@@ -193,45 +233,74 @@ string_constraint_generatort::add_axioms_for_code_point_count(
 {
   PRECONDITION(f.arguments().size() == 3);
   string_constraintst constraints;
+  const array_string_exprt str = get_string_expr(array_pool, f.arguments()[0]);
   const exprt &begin = f.arguments()[1];
   const exprt &end = f.arguments()[2];
   const typet &return_type = f.type();
   const symbol_exprt result = fresh_symbol("code_point_count", return_type);
   const minus_exprt length(end, begin);
+  const exprt no_pair =
+    no_surrogate_pair(*this, str, begin, end, constraints, message_handler);
+  constraints.existential.push_back(
+    implies_exprt{no_pair, equal_exprt{result, length}});
+  // A pair counts once, so with a pair the count is at most length - 1 and
+  // at least half the length.
   const div_exprt minimum(length, from_integer(2, length.type()));
-  constraints.existential.push_back(
-    binary_relation_exprt(result, ID_le, length));
-  constraints.existential.push_back(
-    binary_relation_exprt(result, ID_ge, minimum));
-
-  approximation_warning("codePointCount", "is only bounded");
+  constraints.existential.push_back(implies_exprt{
+    not_exprt{no_pair},
+    and_exprt{
+      binary_relation_exprt{result, ID_lt, length},
+      binary_relation_exprt{result, ID_ge, minimum}}});
+  approximation_warning(
+    "codePointCount",
+    "is only modelled exactly for strings without surrogate pairs");
   return {result, constraints};
 }
 
-/// add axioms giving approximate bounds on the result of the
-/// String.offsetByCodePointCount java function. We approximate the result by
-/// saying the result is between index + offset and index + 2 * offset
-/// \param f: function application with arguments string `str`, integer `index`
-///           and integer `offset`.
-/// \return a new string expression
+/// Add axioms for the result of the String.offsetByCodePoints java function,
+/// exact for a string without surrogate pairs. Otherwise the result is
+/// between index + offset and index + 2 * offset.
+/// \param f: function application with arguments string `str`, integer
+///           `index` and integer `offset`.
+/// \return an integer expression
 std::pair<exprt, string_constraintst>
 string_constraint_generatort::add_axioms_for_offset_by_code_point(
   const function_application_exprt &f)
 {
   PRECONDITION(f.arguments().size() == 3);
   string_constraintst constraints;
+  const array_string_exprt str = get_string_expr(array_pool, f.arguments()[0]);
   const exprt &index = f.arguments()[1];
   const exprt &offset = f.arguments()[2];
   const typet &return_type = f.type();
   const symbol_exprt result = fresh_symbol("offset_by_code_point", return_type);
 
-  const exprt minimum = plus_exprt(index, offset);
-  const exprt maximum = plus_exprt(minimum, offset);
+  const exprt no_pair = no_surrogate_pair(
+    *this,
+    str,
+    from_integer(0, str.length_type()),
+    array_pool.get_or_create_length(str),
+    constraints,
+    message_handler);
+  const plus_exprt by_units(index, offset);
   constraints.existential.push_back(
-    binary_relation_exprt(result, ID_le, maximum));
-  constraints.existential.push_back(
-    binary_relation_exprt(result, ID_ge, minimum));
-
-  approximation_warning("offsetByCodePoints", "is only bounded");
+    implies_exprt{no_pair, equal_exprt{result, by_units}});
+  // Each code point is one or two units, in the direction of the offset.
+  const plus_exprt by_pairs(by_units, offset);
+  const binary_relation_exprt forwards(
+    offset, ID_ge, from_integer(0, offset.type()));
+  constraints.existential.push_back(implies_exprt{
+    not_exprt{no_pair},
+    if_exprt{
+      forwards,
+      and_exprt{
+        binary_relation_exprt{result, ID_ge, by_units},
+        binary_relation_exprt{result, ID_le, by_pairs}},
+      and_exprt{
+        binary_relation_exprt{result, ID_le, by_units},
+        binary_relation_exprt{result, ID_ge, by_pairs}}}});
+  approximation_warning(
+    "offsetByCodePoints",
+    "is only modelled exactly for strings without surrogate pairs");
   return {result, constraints};
 }
