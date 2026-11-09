@@ -127,7 +127,9 @@ string_constraint_generatort::add_axioms_for_index_of(
 ///   5. \f$ \forall n \in [{\tt from\_index},|{\tt haystack}|-|{\tt needle}|]
 ///          .\ \lnot contains \Rightarrow (\exists m \in [0,|{\tt needle}|)
 ///          .\ {\tt haystack}[m+n] \ne {\tt needle}[m]) \f$
-///   6. \f$ |{\tt needle}| = 0 \Rightarrow \tt{index} = from_index \f$
+///   6. \f$ |{\tt needle}| = 0 \Rightarrow \tt{index} = start \f$
+/// where \f$ start = min(max(from\_index, 0), |{\tt haystack}|) \f$, which
+/// replaces from_index in the others.
 /// \param haystack: an array of character expression
 /// \param needle: an array of character expression
 /// \param from_index: an integer expression
@@ -149,11 +151,17 @@ string_constraint_generatort::add_axioms_for_index_of_string(
   const typet &index_type = haystack.length_type();
   symbol_exprt offset = fresh_symbol("index_of", index_type);
   symbol_exprt contains = fresh_symbol("contains_substring");
+  // The search starts at from_index within [0, |haystack|], as in Java: an
+  // empty needle is found there even where from_index is negative or beyond
+  // the end. (Without this, a6 contradicted a1 and a2 for an empty needle
+  // after the end, which made such paths infeasible.)
+  const exprt start = minimum(
+    zero_if_negative(from_index), array_pool.get_or_create_length(haystack));
 
   implies_exprt a1(
     contains,
     and_exprt(
-      binary_relation_exprt(from_index, ID_le, offset),
+      binary_relation_exprt(start, ID_le, offset),
       binary_relation_exprt(
         offset,
         ID_le,
@@ -179,7 +187,7 @@ string_constraint_generatort::add_axioms_for_index_of_string(
   // string_not contains_constraintt are formulas of the form:
   // forall x in [lb,ub[. p(x) => exists y in [lb,ub[. s1[x+y] != s2[y]
   const string_not_contains_constraintt a4 = {
-    from_index,
+    start,
     offset,
     contains,
     from_integer(0, index_type),
@@ -189,7 +197,7 @@ string_constraint_generatort::add_axioms_for_index_of_string(
   constraints.not_contains.push_back(a4);
 
   const string_not_contains_constraintt a5 = {
-    from_index,
+    start,
     plus_exprt( // Add 1 for inclusive upper bound.
       minus_exprt(
         array_pool.get_or_create_length(haystack),
@@ -205,7 +213,7 @@ string_constraint_generatort::add_axioms_for_index_of_string(
   const implies_exprt a6(
     equal_exprt(
       array_pool.get_or_create_length(needle), from_integer(0, index_type)),
-    equal_exprt(offset, from_index));
+    equal_exprt(offset, start));
   constraints.existential.push_back(a6);
 
   return {offset, std::move(constraints)};
@@ -235,7 +243,8 @@ string_constraint_generatort::add_axioms_for_index_of_string(
 ///          .\ \lnot contains \Rightarrow
 ///          (\exists m \in [0,|{\tt needle}|)
 ///          .\ {\tt haystack}[m+n] \ne {\tt needle}[m]) \f$
-///   6. \f$ |{\tt needle}| = 0 \Rightarrow index = from_index \f$
+///   6. \f$ |{\tt needle}| = 0 \Rightarrow index = (from\_index < 0 ? -1
+///          : min(from\_index, |{\tt haystack}|)) \f$
 /// \param haystack: an array of characters expression
 /// \param needle: an array of characters expression
 /// \param from_index: integer expression
@@ -314,10 +323,19 @@ string_constraint_generatort::add_axioms_for_last_index_of_string(
     needle};
   constraints.not_contains.push_back(a5);
 
+  // An empty needle is found at from_index within [0, |haystack|], and not
+  // at all for a negative from_index, as in Java. (offset == from_index
+  // contradicted a1 and a2 for an empty needle after the end, which made
+  // such paths infeasible.)
   const implies_exprt a6(
     equal_exprt(
       array_pool.get_or_create_length(needle), from_integer(0, index_type)),
-    equal_exprt(offset, from_index));
+    equal_exprt(
+      offset,
+      if_exprt{
+        binary_relation_exprt{from_index, ID_lt, from_integer(0, index_type)},
+        from_integer(-1, index_type),
+        minimum(from_index, array_pool.get_or_create_length(haystack))}));
   constraints.existential.push_back(a6);
 
   return {offset, std::move(constraints)};
