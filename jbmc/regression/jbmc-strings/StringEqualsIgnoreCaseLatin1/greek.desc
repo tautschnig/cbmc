@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.greek --max-nondet-string-length 10 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+^string refinement: .* so a counterexample may be spurious$
+--
+--
+The comparison of characters from U+0100 is not modelled.

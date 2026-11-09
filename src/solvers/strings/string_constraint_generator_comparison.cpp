@@ -81,49 +81,55 @@ string_constraint_generatort::add_axioms_for_equals(
   return {tc_eq, std::move(constraints)};
 }
 
-/// Returns an expression which is true when the two given characters are equal
-/// when ignoring case for ASCII
-/// \todo The extra constant character arguments are not needed.
-/// \param char1: character expression
-/// \param char2: character expression
-/// \param char_a: constant character 'a'
-/// \param char_A: constant character 'A'
-/// \param char_Z: constant character 'Z'
-/// \return a expression of Boolean type
-static exprt character_equals_ignore_case(
-  const exprt &char1,
-  const exprt &char2,
-  const exprt &char_a,
-  const exprt &char_A,
-  const exprt &char_Z)
+/// Whether \p c is an upper-case letter of ASCII or, for characters of more
+/// than 8 bits (UTF-16 code units), of Latin-1.
+static exprt is_upper_case_letter(const exprt &c, bool latin1)
 {
-  const and_exprt is_upper_case_1(
-    binary_relation_exprt(char_A, ID_le, char1),
-    binary_relation_exprt(char1, ID_le, char_Z));
-  const and_exprt is_upper_case_2(
-    binary_relation_exprt(char_A, ID_le, char2),
-    binary_relation_exprt(char2, ID_le, char_Z));
+  const auto in_range = [&c](unsigned lower, unsigned upper)
+  {
+    return and_exprt{
+      binary_relation_exprt{from_integer(lower, c.type()), ID_le, c},
+      binary_relation_exprt{c, ID_le, from_integer(upper, c.type())}};
+  };
+  if(!latin1)
+    return in_range('A', 'Z');
+  return or_exprt{
+    in_range('A', 'Z'), in_range(0xc0, 0xd6), in_range(0xd8, 0xde)};
+}
 
-  // Three possibilities:
-  // p1 : char1=char2
-  // p2 : (is_up1&&'a'-'A'+char1=char2)
-  // p3 : (is_up2&&'a'-'A'+char2=char1)
-  const equal_exprt p1(char1, char2);
-  const minus_exprt diff(char_a, char_A);
+/// Whether two characters are equal when ignoring case, as Java's
+/// String.equalsIgnoreCase compares them, where both are ASCII or, for
+/// UTF-16 code units, Latin-1: there the upper-case letters are those of
+/// is_upper_case_letter, and their lower case is 0x20 above.
+static exprt
+character_equals_ignore_case(const exprt &c1, const exprt &c2, bool latin1)
+{
+  const exprt diff = from_integer(0x20, c1.type());
+  return or_exprt{
+    equal_exprt{c1, c2},
+    and_exprt{
+      is_upper_case_letter(c1, latin1), equal_exprt{plus_exprt{c1, diff}, c2}},
+    and_exprt{
+      is_upper_case_letter(c2, latin1), equal_exprt{plus_exprt{c2, diff}, c1}}};
+}
 
-  // Overflow is not a problem here because is_upper_case conditions
-  // ensure that we are within a safe range.
-  const exprt p2 =
-    and_exprt(is_upper_case_1, equal_exprt(plus_exprt(diff, char1), char2));
-  const exprt p3 =
-    and_exprt(is_upper_case_2, equal_exprt(plus_exprt(diff, char2), char1));
-  return or_exprt(p1, p2, p3);
+/// Whether the comparison of \p c1 and \p c2 ignoring case is modelled, see
+/// character_equals_ignore_case.
+static exprt
+character_case_is_modelled(const exprt &c1, const exprt &c2, bool latin1)
+{
+  const exprt bound = from_integer(latin1 ? 0x100 : 0x80, c1.type());
+  return and_exprt{
+    binary_relation_exprt{c1, ID_lt, bound},
+    binary_relation_exprt{c2, ID_lt, bound}};
 }
 
 /// Equality of the content ignoring case of characters
 ///
 /// Add axioms ensuring the result is true when the two strings
-/// are equal if case is ignored.
+/// are equal if case is ignored. Where the comparison of two characters is
+/// not modelled (see character_case_is_modelled), they may be equal and may
+/// differ.
 /// These axioms are:
 ///   1. \f$ eq \Rightarrow |s_1|=|s_2|\f$
 ///   2. \f$ \forall i \in [0, |s_1|).
@@ -144,10 +150,25 @@ string_constraint_generatort::add_axioms_for_equals_ignore_case(
   const array_string_exprt s1 = get_string_expr(array_pool, f.arguments()[0]);
   const array_string_exprt s2 = get_string_expr(array_pool, f.arguments()[1]);
   const typet char_type = to_type_with_subtype(s1.content().type()).subtype();
-  const exprt char_a = from_integer('a', char_type);
-  const exprt char_A = from_integer('A', char_type);
-  const exprt char_Z = from_integer('Z', char_type);
+  const bool latin1 = to_bitvector_type(char_type).get_width() > 8;
   const typet index_type = s1.length_type();
+  approximation_warning(
+    "equalsIgnoreCase",
+    latin1 ? "is only modelled for characters below U+0100"
+           : "is only modelled for ASCII characters");
+  // Characters whose comparison is not modelled may be equal and may differ.
+  const auto may_equal = [&](const exprt &c1, const exprt &c2)
+  {
+    return or_exprt{
+      not_exprt{character_case_is_modelled(c1, c2, latin1)},
+      character_equals_ignore_case(c1, c2, latin1)};
+  };
+  const auto may_differ = [&](const exprt &c1, const exprt &c2)
+  {
+    return or_exprt{
+      not_exprt{character_case_is_modelled(c1, c2, latin1)},
+      not_exprt{character_equals_ignore_case(c1, c2, latin1)}};
+  };
 
   const implies_exprt a1(
     eq,
@@ -157,12 +178,10 @@ string_constraint_generatort::add_axioms_for_equals_ignore_case(
   constraints.existential.push_back(a1);
 
   const symbol_exprt qvar = fresh_symbol("QA_equal_ignore_case", index_type);
-  const exprt constr2 =
-    character_equals_ignore_case(s1[qvar], s2[qvar], char_a, char_A, char_Z);
   const string_constraintt a2(
     qvar,
     zero_if_negative(array_pool.get_or_create_length(s1)),
-    implies_exprt(eq, constr2),
+    implies_exprt(eq, may_equal(s1[qvar], s2[qvar])),
     ns,
     message_handler);
   constraints.universal.push_back(a2);
@@ -173,16 +192,13 @@ string_constraint_generatort::add_axioms_for_equals_ignore_case(
   const and_exprt bound_witness(
     binary_relation_exprt(witness, ID_lt, array_pool.get_or_create_length(s1)),
     binary_relation_exprt(witness, ID_ge, zero));
-  const exprt witness_eq = character_equals_ignore_case(
-    s1[witness], s2[witness], char_a, char_A, char_Z);
-  const not_exprt witness_diff(witness_eq);
   const implies_exprt a3(
     not_exprt(eq),
     or_exprt(
       notequal_exprt(
         array_pool.get_or_create_length(s1),
         array_pool.get_or_create_length(s2)),
-      and_exprt(bound_witness, witness_diff)));
+      and_exprt(bound_witness, may_differ(s1[witness], s2[witness]))));
   constraints.existential.push_back(a3);
 
   return {typecast_exprt(eq, f.type()), std::move(constraints)};
