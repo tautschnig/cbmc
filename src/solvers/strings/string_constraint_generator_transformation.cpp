@@ -11,10 +11,12 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 /// Generates string constraints for string transformations, that is, functions
 ///   taking one string and returning another
 
-#include "string_constraint_generator.h"
-
 #include <util/arith_tools.h>
 #include <util/mathematical_expr.h>
+
+#include "string_constraint_generator.h"
+
+#include <algorithm>
 
 /// Reduce or extend a string to have the given length
 ///
@@ -366,6 +368,61 @@ static std::optional<std::pair<exprt, exprt>> to_char_pair(
   return {};
 }
 
+/// The characters of \p s if its length and content are constant.
+static std::optional<std::vector<exprt>>
+constant_characters(const array_string_exprt &s, array_poolt &array_pool)
+{
+  const auto length =
+    numeric_cast<std::size_t>(array_pool.get_or_create_length(s));
+  if(!length.has_value() || s.content().id() != ID_array)
+    return {};
+  const auto &operands = s.content().operands();
+  if(operands.size() < *length)
+    return {};
+  std::vector<exprt> result;
+  for(std::size_t i = 0; i < *length; ++i)
+  {
+    if(!operands[i].is_constant())
+      return {};
+    result.push_back(operands[i]);
+  }
+  return result;
+}
+
+/// Java's String.replace(CharSequence, CharSequence) on constants: each
+/// occurrence of \p target from left to right is replaced, and an empty
+/// target matches before each character and at the end.
+static std::vector<exprt> replace_constant(
+  const std::vector<exprt> &str,
+  const std::vector<exprt> &target,
+  const std::vector<exprt> &replacement)
+{
+  std::vector<exprt> result;
+  if(target.empty())
+  {
+    for(const auto &c : str)
+    {
+      result.insert(result.end(), replacement.begin(), replacement.end());
+      result.push_back(c);
+    }
+    result.insert(result.end(), replacement.begin(), replacement.end());
+    return result;
+  }
+  for(std::size_t i = 0; i < str.size();)
+  {
+    if(
+      i + target.size() <= str.size() &&
+      std::equal(target.begin(), target.end(), str.begin() + i))
+    {
+      result.insert(result.end(), replacement.begin(), replacement.end());
+      i += target.size();
+    }
+    else
+      result.push_back(str[i++]);
+  }
+  return result;
+}
+
 /// Replace a character by another in a string
 ///
 /// Add axioms ensuring that `res` corresponds to `str` where occurences of
@@ -422,6 +479,29 @@ string_constraint_generatort::add_axioms_for_replace(
     constraints.universal.push_back(a2);
     return {from_integer(0, f.type()), std::move(constraints)};
   }
+  const auto str_chars = constant_characters(str, array_pool);
+  const auto target_chars = constant_characters(
+    get_string_expr(array_pool, f.arguments()[3]), array_pool);
+  const auto replacement_chars = constant_characters(
+    get_string_expr(array_pool, f.arguments()[4]), array_pool);
+  if(str_chars && target_chars && replacement_chars)
+  {
+    const std::vector<exprt> replaced =
+      replace_constant(*str_chars, *target_chars, *replacement_chars);
+    const typet &index_type = res.length_type();
+    constraints.existential.push_back(equal_exprt{
+      array_pool.get_or_create_length(res),
+      from_integer(replaced.size(), index_type)});
+    for(std::size_t i = 0; i < replaced.size(); ++i)
+    {
+      constraints.existential.push_back(equal_exprt{
+        res[from_integer(i, index_type)],
+        typecast_exprt::conditional_cast(replaced[i], res[0].type())});
+    }
+    return {from_integer(0, f.type()), std::move(constraints)};
+  }
+  approximation_warning(
+    "replace", "is only modelled for a character or constant arguments");
   return {from_integer(1, f.type()), std::move(constraints)};
 }
 

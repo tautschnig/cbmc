@@ -96,7 +96,11 @@ string_constraint_generatort::add_axioms_for_cprover_string(
   else if(const auto constant_expr = expr_try_dynamic_cast<constant_exprt>(arg))
     return add_axioms_for_constant(res, constant_expr->get_value(), guard);
   else
+  {
+    approximation_warning(
+      "a string literal", "that is not a constant is not modelled");
     return {from_integer(1, get_return_code_type()), {}};
+  }
 }
 
 /// String corresponding to an internal cprover string
