@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.symbolicFail --max-nondet-string-length 1000 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+The empty-needle axioms must not make the path with a start index beyond
+the end infeasible.
