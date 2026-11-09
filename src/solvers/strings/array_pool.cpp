@@ -273,7 +273,17 @@ array_string_exprt get_string_expr(array_poolt &array_pool, const exprt &expr)
     return array_pool.find(str.content(), str.length());
   }
   // For non-struct expressions (symbols, member_exprt, etc.),
-  // decompose into length and content via known field names.
+  // decompose into length and content: by the components of a struct type
+  // (refined_string_typet has "length" and "content"), and by the fields of
+  // the Python string struct for a tag, which cannot be resolved without a
+  // namespace.
+  if(expr.type().id() == ID_struct)
+  {
+    const auto &components = to_struct_type(expr.type()).components();
+    PRECONDITION(components.size() == 2);
+    return array_pool.find(
+      member_exprt{expr, components[1]}, member_exprt{expr, components[0]});
+  }
   exprt length = member_exprt(expr, "length", signedbv_typet{64});
   exprt content =
     member_exprt(expr, "data", pointer_typet(unsignedbv_typet{8}, 64));

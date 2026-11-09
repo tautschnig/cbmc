@@ -7,11 +7,11 @@ Author: Diffblue Ltd.
 
 \*******************************************************************/
 
-#include <testing-utils/use_catch.h>
+#include <util/pointer_expr.h>
+#include <util/refined_string_type.h>
 
 #include <solvers/strings/array_pool.h>
-
-#include <util/pointer_expr.h>
+#include <testing-utils/use_catch.h>
 
 SCENARIO("array_pool", "[core][solvers][strings][string_constraint_generator]")
 {
@@ -190,6 +190,23 @@ SCENARIO("array_pool", "[core][solvers][strings][string_constraint_generator]")
 
         REQUIRE(associated_array == recomposed_array);
       }
+    }
+  }
+
+  GIVEN("A symbol of the refined string type")
+  {
+    symbol_generatort symbol_generator;
+    array_poolt pool(symbol_generator);
+    const refined_string_typet string_type{length_type, pointer_type};
+    const symbol_exprt string{"string", string_type};
+
+    THEN("Its string is the array of its content component")
+    {
+      const array_string_exprt array = get_string_expr(pool, string);
+      const array_string_exprt expected = pool.find(
+        member_exprt{string, "content", pointer_type},
+        member_exprt{string, "length", length_type});
+      REQUIRE(array == expected);
     }
   }
 }
