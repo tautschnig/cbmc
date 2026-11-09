@@ -74,6 +74,13 @@ public:
 
   void insert(const exprt &pointer_expr, const array_string_exprt &array);
 
+  /// Whether insert was called for a pointer with an array other than the
+  /// one already associated with it.
+  bool has_conflicting_association() const
+  {
+    return conflicting_association;
+  }
+
   /// Creates a new array if the pointer is not pointing to an array
   array_string_exprt find(const exprt &pointer, const exprt &length);
 
@@ -145,6 +152,8 @@ private:
     array_string_exprt array;
   };
   std::unordered_map<const void *, if_arrayt> if_arrays;
+
+  bool conflicting_association = false;
 
   array_string_exprt make_char_array_for_char_pointer(
     const exprt &char_pointer,

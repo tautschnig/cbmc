@@ -221,18 +221,17 @@ void array_poolt::insert(
   const auto it_bool =
     arrays_of_pointers.insert(std::make_pair(pointer_expr, array_expr));
 
-  // Allow re-insertion even with a different array. This happens when
-  // a frontend emits associate calls inside a function body that gets
-  // inlined multiple times: the pointer expression (e.g.
-  // address_of(sym[0])) is structurally identical across inlined
-  // copies because the symbols are global, but the array content
-  // differs between calls. In this case, keep the FIRST association
-  // — the solver will see the first call's array, and subsequent
-  // calls will get fresh arrays via make_char_array_for_char_pointer's
-  // fallback path. This is sound because each SSA copy of the array
-  // is independently constrained.
+  // A pointer associated with two different arrays (as where the same
+  // address of an array is associated with different versions of its
+  // content) is not modelled: the strings of the pointer would be those of
+  // the first array. It is recorded, so that the solver reports that it
+  // cannot decide the formula.
   if(!it_bool.second)
+  {
+    if(it_bool.first->second != array_expr)
+      conflicting_association = true;
     return;
+  }
 
   if(length_of_array.find(array_expr) == length_of_array.end())
   {

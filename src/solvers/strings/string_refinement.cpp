@@ -926,6 +926,13 @@ string_refinementt::dec_solve(const exprt &assumption)
   string_constraintst constraints;
   for(auto &expr : equations)
     make_char_array_pointer_associations(generator, expr);
+  if(generator.array_pool.has_conflicting_association())
+  {
+    log.warning() << "string refinement: a pointer is associated with two "
+                  << "different arrays, which is not supported, so the "
+                  << "result is not known" << messaget::eom;
+    return resultt::D_ERROR;
+  }
 
 #ifdef DEBUG
   output_equations(log.debug(), equations);

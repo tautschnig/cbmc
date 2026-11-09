@@ -48,6 +48,29 @@ SCENARIO("array_pool", "[core][solvers][strings][string_constraint_generator]")
       }
     }
 
+    WHEN("Associating a pointer with two arrays")
+    {
+      const symbol_exprt pointer("my_pointer", pointer_type);
+      const array_typet array_type(char_type, infinity_exprt{length_type});
+      const array_string_exprt first =
+        to_array_string_expr(symbol_exprt("first_array", array_type));
+      const array_string_exprt second =
+        to_array_string_expr(symbol_exprt("second_array", array_type));
+      pool.insert(pointer, first);
+
+      THEN("The same array again is no conflict")
+      {
+        pool.insert(pointer, first);
+        REQUIRE_FALSE(pool.has_conflicting_association());
+      }
+
+      THEN("Another array is recorded as a conflict")
+      {
+        pool.insert(pointer, second);
+        REQUIRE(pool.has_conflicting_association());
+      }
+    }
+
     WHEN("Looking for a pointer symbol with a constant length")
     {
       const symbol_exprt pointer("my_pointer", pointer_type);
