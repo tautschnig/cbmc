@@ -633,3 +633,83 @@ if (unlikely(dma_width < 0)) { ...; goto err_mmio_read_less; }
 
 (`ena_netdev.c:4346`, `ena.c:3038`). DPDK has no such check. Low severity,
 cheap fix: the same check DPDK's two siblings already have.
+
+## F14: a device-reported TX-burst limit makes ena_com_prepare_tx fail on the first packet (DPDK ENA)
+
+This answers the open question behind F12 -- can a legal packet make the real
+`ena_com_prepare_tx` fail? -- and it can, for a reason the device controls.
+
+`harness_llq_path.c` runs the whole LLQ path on the real code: device init
+(`ena_set_queues_placement_policy` -> `ena_com_config_dev_mode`,
+`ena_calc_io_queue_size`, `ena_init_rings`), `ena_tx_queue_setup`,
+`ena_queue_start` (real `ena_com_create_io_queue`), then
+`eth_ena_xmit_pkts` on a well-formed single-segment packet. Every device
+value is nondeterministic. At ring 8, one packet:
+
+```
+[main.assertion.4] PREPARE_OK: ena_com_prepare_tx never fails on a legal packet: FAILURE
+```
+
+Trace: the device advertises `ENA_ADMIN_LIMIT_TX_BURST` with
+`max_tx_burst_size = 511` and a 256-byte LLQ entry, so
+`ena_com_config_llq_info` sets
+
+```c
+max_entries_in_tx_burst = max_tx_burst_size / llq_ring_entry_size_value = 511 / 256 = 1
+```
+
+A single packet is written to the device as more than one LLQ line --
+`ena_com_prepare_tx` fills the descriptor line and then
+`ena_com_close_bounce_buffer` writes the final line -- and each line calls
+`ena_com_write_bounce_buffer_to_dev`, which decrements
+`entries_in_tx_burst_left` and returns `ENA_COM_NO_SPACE` when it is already
+zero. So with a burst budget of one, the second line of the first packet
+fails. `ena_com_is_doorbell_needed`, which is supposed to force a doorbell (and
+reset the budget) before the burst is exhausted, counts `num_entries_needed`
+differently from the number of `write_bounce_buffer_to_dev` calls the packet
+actually makes, so it does not fire in time.
+
+The consequence is F12: `ena_xmit_mbuf` returns the error, leaving
+`tx_info->mbuf` set on a packet it reports as unsent, and triggers a reset
+whose release path frees it. So F12 is not hypothetical; it fires whenever the
+device constrains the TX burst tightly enough, which a device chooses.
+
+**The precondition, verified.** Re-running with
+`ASSUME_TX_BURST_UNLIMITED` -- the device imposes no TX-burst limit, or
+`max_tx_burst_size >= 4096` -- gives PREPARE_OK SUCCESS, the bounce-buffer
+copy in bounds, the vacuity witnesses FAILURE. So the induction's
+`ASSUME_PREPARE_TX_OK` is exactly this device precondition, now stated as such
+rather than as a bare assumption.
+
+Severity depends on whether a real device ever reports a small
+`max_tx_burst_size`; that is a device-firmware question this cannot answer.
+The driver-side defect is the accounting mismatch between
+`ena_com_is_doorbell_needed` and the per-line budget in
+`ena_com_write_bounce_buffer_to_dev`, and, once it fails, F12.
+
+## #4 result: the device-init preconditions are established, with one caveat
+
+The same harness checks, with no transmit (`-DDEVINIT_ONLY`), what the
+induction states as device-init facts but does not prove. At ring 8:
+
+| device-init obligation | result |
+|---|---|
+| the LLQ geometry of INV_DEV_LLQ (`descs_per_entry` in 1..16, `descs_num_before_header` <= 16) | SUCCESS |
+| `sgl_size <= ENA_PKT_MAX_BUFS` | SUCCESS |
+| a maximal pushed header fits in one LLQ entry | SUCCESS |
+
+So `ena_com_config_dev_mode` and `ena_calc_io_queue_size` really do establish
+them from an arbitrary device response -- these come off the induction's
+ledger of bare assumptions and become proven consequences of device init.
+
+**Caveat, and a correction to INV_DEV_LLQ.** The `disable_meta_caching ==
+false` clause of INV_DEV_LLQ is *not* established: the device may advertise
+`ENA_ADMIN_DISABLE_META_CACHING`, and init passes it straight through to
+`llq_info.disable_meta_caching`. So that clause is a genuine restriction of the
+induction (it covers meta-caching-enabled queues only), not a device-init
+fact, and the harness asserts the LLQ-geometry clauses without it.
+
+`sgl_size` can also be 0 if the device reports `max_per_packet_tx_descs == 0`;
+the base case assumes `sgl_size >= 1`. With `sgl_size == 0` no packet is ever
+accepted (the vacuity witness would fail), so it is not a safety problem, but
+it is another unchecked device value in `ena_calc_io_queue_size`.
