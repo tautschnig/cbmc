@@ -634,58 +634,100 @@ if (unlikely(dma_width < 0)) { ...; goto err_mmio_read_less; }
 (`ena_netdev.c:4346`, `ena.c:3038`). DPDK has no such check. Low severity,
 cheap fix: the same check DPDK's two siblings already have.
 
-## F14: a device-reported TX-burst limit makes ena_com_prepare_tx fail on the first packet (DPDK ENA)
+## F14: the TX-burst check under-counts a fully pushed packet (shared ena_com; DPDK, Linux, FreeBSD)
 
-This answers the open question behind F12 -- can a legal packet make the real
-`ena_com_prepare_tx` fail? -- and it can, for a reason the device controls.
+*This section replaces the version committed in `00d204a8b38`. That version
+gave the mechanism without having read the code, and said the failure needed
+a small `max_tx_burst_size`; neither held up.*
 
-`harness_llq_path.c` runs the whole LLQ path on the real code: device init
-(`ena_set_queues_placement_policy` -> `ena_com_config_dev_mode`,
-`ena_calc_io_queue_size`, `ena_init_rings`), `ena_tx_queue_setup`,
-`ena_queue_start` (real `ena_com_create_io_queue`), then
-`eth_ena_xmit_pkts` on a well-formed single-segment packet. Every device
-value is nondeterministic. At ring 8, one packet:
+When the device advertises `ENA_ADMIN_LIMIT_TX_BURST`, each LLQ line written
+to the device spends one unit of `entries_in_tx_burst_left`, and
+`ena_com_write_bounce_buffer_to_dev` returns `ENA_COM_NO_SPACE` (Linux:
+`-ENOSPC`) when none is left. All three drivers follow the same per-packet
+protocol: call `ena_com_is_doorbell_needed(sq, ctx)`, ring the doorbell if it
+returns true (which resets the budget to `max_entries_in_tx_burst`), and then
+call `ena_com_prepare_tx`. That protocol is safe only if
+`ena_com_is_doorbell_needed` predicts the lines `ena_com_prepare_tx` will
+write.
 
-```
-[main.assertion.4] PREPARE_OK: ena_com_prepare_tx never fails on a legal packet: FAILURE
-```
+It does not. The estimate starts from `num_descs = ctx->num_bufs`, plus one
+for a meta descriptor. But `ena_com_prepare_tx` always writes one data
+descriptor (`ena_eth_com.c:520`), even when `num_bufs == 0`. That happens when
+the whole packet fits in the pushed header: `ena_tx_map_mbuf` pushes
+`min(pkt_len, tx_max_header_size)` bytes and creates no DMA buffer for a
+packet that short. The data descriptor is the same one that carries the first
+buffer when `num_bufs >= 1`, so only the `num_bufs == 0` case is
+under-counted, by one descriptor.
 
-Trace: the device advertises `ENA_ADMIN_LIMIT_TX_BURST` with
-`max_tx_burst_size = 511` and a 256-byte LLQ entry, so
-`ena_com_config_llq_info` sets
+That descriptor needs a second line only when `descs_num_before_header == 1`
+and the packet also has a meta descriptor. The meta descriptor then fills the
+header line (`get_sq_desc_llq` decrements `descs_left_in_line` to 0, and
+`ena_com_sq_update_llq_tail` writes the line out). The data descriptor goes on
+a new line, which `ena_com_close_bounce_buffer` writes. That is two lines,
+against an estimate of one. If exactly one unit of budget is left when such a
+packet arrives, the check doesn't ring the doorbell and the second line write
+fails.
 
-```c
-max_entries_in_tx_burst = max_tx_burst_size / llq_ring_entry_size_value = 511 / 256 = 1
-```
+**Ingredients.** Each of these is needed, and none is a value the driver
+validates:
+- The device advertises `LIMIT_TX_BURST`. Any `max_tx_burst_size` large
+  enough to hold one packet can still fail: the counterexample uses a budget
+  of 5 lines, spent by two 3-buffer packets before a pushed-only one.
+- `descs_num_before_header == 1`. DPDK and Linux request 2, but
+  `ena_com_config_llq_info` (`ena_com.c:742`) falls back to 1 when the device
+  doesn't support 2. This is also why `tx_max_header_size` is 240
+  (256 - 1 * 16) in the earlier trace. I had expected 224, which assumed the
+  requested value of 2.
+- The packet has a meta descriptor, either because the device set
+  `DISABLE_META_CACHING` or because an offload changed the meta.
+- The packet is no longer than `tx_max_header_size`: 240 bytes for 256-byte
+  entries, 112 for 128-byte entries. Packets that small are common.
 
-A single packet is written to the device as more than one LLQ line --
-`ena_com_prepare_tx` fills the descriptor line and then
-`ena_com_close_bounce_buffer` writes the final line -- and each line calls
-`ena_com_write_bounce_buffer_to_dev`, which decrements
-`entries_in_tx_burst_left` and returns `ENA_COM_NO_SPACE` when it is already
-zero. So with a burst budget of one, the second line of the first packet
-fails. `ena_com_is_doorbell_needed`, which is supposed to force a doorbell (and
-reset the budget) before the burst is exhausted, counts `num_entries_needed`
-differently from the number of `write_bounce_buffer_to_dev` calls the packet
-actually makes, so it does not fire in time.
+**Evidence.** `proof/harness_doorbell_budget.c` with
+`proof/run_doorbell_budget.sh` runs the real `ena_eth_com.c` protocol on a
+sequence of 3 packets of up to 3 buffers. It starts from the SQ state
+`ena_com_init_io_sq` leaves, with the LLQ geometry, meta caching and burst
+budget (1..64) all chosen by the device. The budget is assumed to cover one
+maximal packet. The checked property is that `ena_com_prepare_tx` never
+returns `ENA_COM_NO_SPACE`.
 
-The consequence is F12: `ena_xmit_mbuf` returns the error, leaving
-`tx_info->mbuf` set on a packet it reports as unsent, and triggers a reset
-whose release path frees it. So F12 is not hypothetical; it fires whenever the
-device constrains the TX burst tightly enough, which a device chooses.
+| configuration | result |
+|---|---|
+| real code, no offloads | FAILED |
+| real code, offloads | FAILED |
+| `descs_num_before_header >= 2` only | SUCCESSFUL |
+| meta caching on, no offloads | SUCCESSFUL |
+| meta caching on, offloads | FAILED |
+| `num_bufs >= 1` only | SUCCESSFUL |
+| estimate counts `max(num_bufs, 1)` | SUCCESSFUL; both vacuity witnesses FAIL |
 
-**The precondition, verified.** Re-running with
-`ASSUME_TX_BURST_UNLIMITED` -- the device imposes no TX-burst limit, or
-`max_tx_burst_size >= 4096` -- gives PREPARE_OK SUCCESS, the bounce-buffer
-copy in bounds, the vacuity witnesses FAILURE. So the induction's
-`ASSUME_PREPARE_TX_OK` is exactly this device precondition, now stated as such
-rather than as a bare assumption.
+Every run has no other failing property and no failing unwinding assertion.
+The result is bounded at 3 packets, 3 buffers and a budget of at most 64; it
+is not an unbounded proof of the fix.
 
-Severity depends on whether a real device ever reports a small
-`max_tx_burst_size`; that is a device-firmware question this cannot answer.
-The driver-side defect is the accounting mismatch between
-`ena_com_is_doorbell_needed` and the per-line budget in
-`ena_com_write_bounce_buffer_to_dev`, and, once it fails, F12.
+**Consequence.**
+- **DPDK:** this is the F12 trigger. The slot keeps an mbuf that the
+  application was told was not sent, and the reset frees it.
+- **Linux** (`ena_netdev.c:135-147`) and **FreeBSD** (`ena_datapath.c:1033`):
+  every error other than `ENOMEM` resets the device, so F14 is a reset
+  triggered by a short packet.
+- **Same code in all three:** `ena_com_is_doorbell_needed` is identical in
+  the DPDK, Linux and FreeBSD copies. `ena_com_close_bounce_buffer` and
+  `ena_com_sq_update_llq_tail` are identical apart from Linux returning 0
+  where the others return `ENA_COM_OK`.
+
+**Fix.** In `ena_com_is_doorbell_needed`, start from
+`num_descs = max(num_bufs, 1)`. This is the variant the table shows to be
+safe within the bounds above.
+
+**Not established:**
+- whether any shipping ENA device advertises `LIMIT_TX_BURST` without
+  supporting two descriptors before the header;
+- the run I made earlier with "no limit, or `max_tx_burst_size >= 4096`" is
+  safe only because a budget of at least 4096 / 256 = 16 lines can't run out
+  within the one-packet harness. It is **not** a sound device precondition
+  for longer bursts. The precondition the induction may state instead is
+  "`LIMIT_TX_BURST` absent, or `descs_num_before_header >= 2`".
 
 ## #4 result: the device-init preconditions are established, with one caveat
 
@@ -709,7 +751,17 @@ false` clause of INV_DEV_LLQ is *not* established: the device may advertise
 induction (it covers meta-caching-enabled queues only), not a device-init
 fact, and the harness asserts the LLQ-geometry clauses without it.
 
-`sgl_size` can also be 0 if the device reports `max_per_packet_tx_descs == 0`;
-the base case assumes `sgl_size >= 1`. With `sgl_size == 0` no packet is ever
-accepted (the vacuity witness would fail), so it is not a safety problem, but
-it is another unchecked device value in `ena_calc_io_queue_size`.
+`sgl_size` can also be 0 if the device reports `max_per_packet_tx_descs ==
+0`. An earlier version of this note called that harmless without checking. On
+the TX path, `sgl_size` bounds no array access; the per-slot `bufs` array is
+sized by `ENA_PKT_MAX_BUFS`. Its uses are:
+- `eth_ena_prep_pkts` rejects every packet (`nb_segs >= 0`);
+- `dev_info` reports `nb_seg_max = 0`;
+- `eth_ena_xmit_pkts` doesn't consult it.
+
+So applications that skip `rte_eth_tx_prepare` still transmit normally. The
+RX analogue, `max_rx_sgl_size == 0`, is different. `ena_com_rx_pkt` returns
+`ENA_COM_NO_SPACE` for any completion (`nb_hw_desc > max_bufs`), and
+`eth_ena_recv_pkts` turns that into a reset. That is read from the code, not
+proven, since the RX path has no harness yet.
+
