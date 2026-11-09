@@ -241,13 +241,21 @@ int main(void)
   adapter.llq_header_policy = 1 + nd_u8() % 3;
 
 #ifdef ASSUME_TX_BURST_UNLIMITED
-  /* The device either imposes no TX-burst limit, or one large enough that a
-   * single packet cannot exhaust it.  This is exactly the precondition under
-   * which ena_com_prepare_tx does not return NO_SPACE (finding F14), so it is
-   * the honest statement of the induction's ASSUME_PREPARE_TX_OK. */
+  /* Kept for reproducing the 00d204a8b38 run.  NOT a sound precondition:
+   * a budget of >= 16 lines only cannot run out within this harness's single
+   * packet.  Use ASSUME_NO_F14 instead (see harness_doorbell_budget.c). */
   __CPROVER_assume(
     !(llq_feat.accel_mode.u.get.supported_flags & BIT(ENA_ADMIN_LIMIT_TX_BURST)) ||
     llq_feat.accel_mode.u.get.max_tx_burst_size >= 4096);
+#endif
+#ifdef ASSUME_NO_F14
+  /* The device-side precondition under which ena_com_is_doorbell_needed is
+   * a sound predictor (F14): no TX-burst limit, or the device supports two
+   * descriptors before the header, which DPDK requests and then gets. */
+  __CPROVER_assume(
+    !(llq_feat.accel_mode.u.get.supported_flags & BIT(ENA_ADMIN_LIMIT_TX_BURST)) ||
+    (llq_feat.desc_num_before_header_supported &
+     ENA_ADMIN_LLQ_NUM_DESCS_BEFORE_HEADER_2));
 #endif
   bool use_large_llq_hdr =
     ena_use_large_llq_hdr(&adapter, llq_feat.entry_size_recommended);
