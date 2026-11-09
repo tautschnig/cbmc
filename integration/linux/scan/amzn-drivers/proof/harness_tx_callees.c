@@ -98,12 +98,26 @@ int ena_com_prepare_tx(
     return rc;                      /* the device/queue rejected the request */
   }
 
+  /* The contract harness_prepare_tx.c proves for the real ena_eth_com.c
+   * (ddf9fc11956): it writes at most num_bufs + 2 lines, at least one unless
+   * the packet is empty (header_len == 0 and num_bufs == 0), stays inside the
+   * queue, and reports nb_hw_desc = (int)new_tail - (int)old_tail, which is
+   * negative when the u16 tail wraps. */
   descs = nd_u16();
-  __CPROVER_assume(descs >= 1 && descs <= (uint16_t)ena_tx_ctx->num_bufs + 2);
+  __CPROVER_assume(descs <= (uint16_t)ena_tx_ctx->num_bufs + 2);
+#ifdef ASSUME_NONEMPTY_PKT
+  /* application obligation: no zero-length packets */
+  __CPROVER_assume(ena_tx_ctx->header_len != 0 || ena_tx_ctx->num_bufs != 0);
+#endif
+  if(ena_tx_ctx->header_len != 0 || ena_tx_ctx->num_bufs != 0)
+    __CPROVER_assume(descs >= 1);
   __CPROVER_assume(
     (uint16_t)(io_sq->tail + descs - io_sq->next_to_comp) <= io_sq->q_depth - 1);
-  *nb_hw_desc = (int)descs;
-  io_sq->tail = (uint16_t)(io_sq->tail + descs);
+  {
+    const uint16_t old_tail = io_sq->tail;
+    io_sq->tail = (uint16_t)(io_sq->tail + descs);
+    *nb_hw_desc = (int)io_sq->tail - (int)old_tail;
+  }
   return 0;
 }
 
@@ -174,7 +188,7 @@ static bool INV_SLOT(const struct ena_ring *r, uint16_t p)
   return etr[p] < r->ring_size &&
          SLOT_MBUF_OK(tbi[p].mbuf, p) &&
          tbi[p].num_of_bufs <= ENA_PKT_MAX_BUFS &&
-         (tbi[p].mbuf == NULL || tbi[p].tx_descs <= ENA_MAX_TX_DESCS_PER_PKT);
+         (tbi[p].mbuf == NULL || TX_DESCS(tbi[p]) <= ENA_MAX_TX_DESCS_PER_PKT);
 }
 
 /* The same clauses as a quantified assumption over every slot.  Written over
@@ -194,7 +208,7 @@ static bool INV_SLOT(const struct ena_ring *r, uint16_t p)
         __CPROVER_assume((tbi)[_i].num_of_bufs <= ENA_PKT_MAX_BUFS);            \
         __CPROVER_assume(                                                      \
           (tbi)[_i].mbuf == 0 ||                                               \
-          (tbi)[_i].tx_descs <= ENA_MAX_TX_DESCS_PER_PKT);                     \
+          TX_DESCS((tbi)[_i]) <= ENA_MAX_TX_DESCS_PER_PKT);                     \
       }                                                                        \
     } while(0)
 #else
@@ -205,7 +219,7 @@ static bool INV_SLOT(const struct ena_ring *r, uint16_t p)
                           SLOT_MBUF_PRE((tbi)[_i].mbuf, _i) &&               \
                           (tbi)[_i].num_of_bufs <= ENA_PKT_MAX_BUFS &&         \
                           ((tbi)[_i].mbuf == 0 ||                              \
-                           (tbi)[_i].tx_descs <= ENA_MAX_TX_DESCS_PER_PKT))     \
+                           TX_DESCS((tbi)[_i]) <= ENA_MAX_TX_DESCS_PER_PKT))     \
     })
 #endif
 
@@ -302,7 +316,7 @@ static bool INV_DESC_SUM_RING(const struct ena_ring *r)
   uint16_t sum = 0;
   for(unsigned k = 0; k < RING_SIZE; k++)
     if(r->tx_buffer_info[k].mbuf != NULL)
-      sum = (uint16_t)(sum + r->tx_buffer_info[k].tx_descs);
+      sum = (uint16_t)(sum + TX_DESCS(r->tx_buffer_info[k]));
   return (uint16_t)(r->ena_com_io_sq->tail - r->ena_com_io_sq->next_to_comp) ==
          sum;
 }
@@ -433,8 +447,19 @@ int main(void)
 		reqs[i] = empty_tx_reqs[(ntu0 + i) & (RING_SIZE - 1)];
 #endif
 
+	/* the packet in flight at an arbitrary slot, before the call */
+	struct rte_mbuf *const held_p1 =
+		g_p1 < RING_SIZE ? tx_buffer_info[g_p1].mbuf : NULL;
+
 	/* ---- one arbitrary operation ---- */
 	sent = eth_ena_xmit_pkts(&ring, tx_pkts, nb_pkts);
+
+	/* xmit takes only free slots: a packet already in flight is still in
+	 * its slot afterwards (otherwise it is overwritten and leaked, and its
+	 * completion later releases the wrong packet) */
+	if (held_p1 != NULL)
+		__CPROVER_assert(tx_buffer_info[g_p1].mbuf == held_p1,
+				 "OWN_NO_LOSS: a packet in flight keeps its slot");
 
 	/* ---- obligations ---- */
 #if VACUITY_CHECK

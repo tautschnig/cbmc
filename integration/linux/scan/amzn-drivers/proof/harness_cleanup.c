@@ -199,8 +199,8 @@ int main(void)
     pool_tbi[i].mbuf = nd_int() ? &pool_mbuf[i] : NULL;
     pool_tbi[i].num_of_bufs = nd_u16();
     __CPROVER_assume(pool_tbi[i].num_of_bufs <= ENA_PKT_MAX_BUFS);
-    pool_tbi[i].tx_descs = nd_u16();
-    __CPROVER_assume(pool_tbi[i].tx_descs <= ENA_MAX_TX_DESCS_PER_PKT);
+    pool_tbi[i].tx_descs = nd_u32(); /* any unsigned, read mod 2^16 */
+    __CPROVER_assume(TX_DESCS(pool_tbi[i]) <= ENA_MAX_TX_DESCS_PER_PKT);
     pool_etr[i] = nd_u16();
     __CPROVER_assume(pool_etr[i] < RING_SIZE);
   }
@@ -232,7 +232,7 @@ int main(void)
 
     for(i = 0; i < RING_SIZE; i++)
       if(pool_tbi[i].mbuf != NULL)
-        desc_sum = desc_sum + pool_tbi[i].tx_descs;
+        desc_sum = desc_sum + TX_DESCS(pool_tbi[i]);
 
     __CPROVER_assume(
       (uint16_t)(the_sq.tail - the_sq.next_to_comp) == desc_sum);
@@ -268,7 +268,7 @@ int main(void)
     uint16_t sum_after = 0;
     for(i = 0; i < RING_SIZE; i++)
       if(pool_tbi[i].mbuf != NULL)
-        sum_after = (uint16_t)(sum_after + pool_tbi[i].tx_descs);
+        sum_after = (uint16_t)(sum_after + TX_DESCS(pool_tbi[i]));
     __CPROVER_assert(
       (uint16_t)(the_sq.tail - the_sq.next_to_comp) == sum_after,
       "INV_DESC_SUM preserved by ena_tx_cleanup");

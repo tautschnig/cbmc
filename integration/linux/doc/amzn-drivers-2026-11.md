@@ -729,6 +729,71 @@ safe within the bounds above.
   for longer bursts. The precondition the induction may state instead is
   "`LIMIT_TX_BURST` absent, or `descs_num_before_header >= 2`".
 
+## F15: a zero-length mbuf is accepted with no descriptor, and enough of them overwrite in-flight packets (DPDK ENA)
+
+Found while checking the xmit step's `ena_com_prepare_tx` stub against the
+real code (`harness_prepare_tx.c`, `PTX_DESCS_MIN`). The stub had claimed at
+least one descriptor per packet.
+
+Consider a single-segment mbuf with `pkt_len == 0`. `ena_tx_map_mbuf` pushes
+`min(0, tx_max_header_size) = 0` bytes and creates no DMA buffer, so
+`header_len == 0` and `num_bufs == 0`. When meta caching is on and no meta
+descriptor is due, `ena_com_prepare_tx` takes its "caller doesn't want to send
+packets" exit (`ena_eth_com.c:511`) and returns 0 with `nb_hw_desc == 0`.
+`ena_xmit_mbuf` then counts the packet as sent:
+- it records the mbuf in the slot with `tx_descs = 0`;
+- it advances `next_to_use`.
+
+Nothing reaches the device, so no completion ever returns that slot.
+
+The SQ space check (`ena_com_sq_have_enough_space`) counts descriptors, and
+these packets use none. So it never stops them, and `ring_size` of them in
+flight fill every slot. At ring 4 with a burst of 2 (`ALLOW_EMPTY_IN_FLIGHT`),
+the xmit step fails `OWN_NO_LOSS` from this pre-state:
+- three empty packets in flight;
+- slot 0 free, `next_to_use = 0`.
+
+The first new packet takes slot 0. The second takes
+`empty_tx_reqs[1] = 2`, and slot 2 still holds an in-flight mbuf. It is
+overwritten (`RTE_ASSERT(tx_info->mbuf == NULL)` is compiled out in release
+builds), and the old mbuf is leaked. `INV_FREE_LIST` and `OWN_TRANSFER` fail
+in the same run. With a burst of 1 the step fails `INV_FREE_LIST`: the ring
+ends with 4 occupied slots and an apparent in-flight count of 0.
+
+Recovery: each stuck slot has a nonzero `timestamp`, so
+`check_for_tx_completion_in_queue` eventually counts it as a missed completion
+and resets the device. The reset frees what is still in the slots, but an
+overwritten mbuf is already lost. The overrun needs only `ring_size` sends,
+which is far faster than the watchdog.
+
+Ingredients:
+- the application passes a zero-length mbuf;
+- meta caching is on (the default) and no offload meta is due.
+
+Neither `eth_ena_prep_pkts` nor `eth_ena_xmit_pkts` checks `pkt_len`. This is
+an application error the driver turns into a leak, a stuck-slot reset and
+corruption of its own slot state, so it belongs with the driver-contract
+items. It is more serious than those because the damage outlives the bad
+packet. The fix is to reject `pkt_len == 0` in `ena_xmit_mbuf`, or in
+`eth_ena_prep_pkts`.
+
+Evidence: `proof/run_xmit_variant.sh` with `-DALLOW_EMPTY_IN_FLIGHT`, at ring 4,
+burst 1 and burst 2. The induction states the application obligation as
+`ASSUME_NONEMPTY_PKT`, and with it the xmit step proves `OWN_NO_LOSS`,
+`INV_FREE_LIST` and the rest. The Linux and FreeBSD paths compute the same
+`header_len == 0, num_bufs == 0` context for an empty packet. Whether a
+zero-length skb or mbuf can reach their xmit routines has not been assessed.
+
+**A second stub error found by the same check.** `nb_hw_desc` is
+`io_sq->tail - start_tail` on two `u16`s, computed in `int`. So it is negative
+(`lines - 65536`) whenever the tail wraps. It is stored in the unsigned
+`tx_descs`, summed in cleanup, and passed through `ena_com_comp_ack`'s `u16`
+parameter. The driver is therefore correct modulo 2^16 in DPDK, Linux and
+FreeBSD. That holds only because every consumer truncates. The invariants now
+read the field as `(uint16_t)tx_descs` (`TX_DESCS` in `ena_inv.h`). The
+previous "`tx_descs` in 1..19" was false of the real code, and the old stub
+hid that.
+
 ## #4 result: the device-init preconditions are established, with one caveat
 
 The same harness checks, with no transmit (`-DDEVINIT_ONLY`), what the

@@ -116,11 +116,7 @@ int main(void)
     pool_tbi[i].mbuf = nd_int() ? &pool_mbuf[i] : NULL;
     pool_tbi[i].num_of_bufs = nd_u16();
     __CPROVER_assume(pool_tbi[i].num_of_bufs <= ENA_PKT_MAX_BUFS);
-    pool_tbi[i].tx_descs = nd_u16();
-    __CPROVER_assume(
-      pool_tbi[i].mbuf == NULL ||
-      (pool_tbi[i].tx_descs >= 1 &&
-       pool_tbi[i].tx_descs <= ENA_MAX_TX_DESCS_PER_PKT));
+    pool_tbi[i].tx_descs = nd_u32(); /* any unsigned, read mod 2^16 */
     pool_etr[i] = nd_u16();
     __CPROVER_assume(pool_etr[i] < RING_SIZE);
   }
@@ -157,21 +153,10 @@ int main(void)
   __CPROVER_assert(
     ring.tx_buffer_info[g_probe].mbuf == NULL,
     "STOP_NO_DANGLING: no slot refers to an mbuf after stop");
-  /* restart: ena_queue_start resets next_to_use/next_to_clean and
-   * ena_create_io_queue rewrites empty_tx_reqs, so what the start base case
-   * needs beyond that is a configured ring with every slot empty */
-  {
-    bool empty = true;
-    for(i = 0; i < RING_SIZE; i++)
-      if(ring.tx_buffer_info[i].mbuf != NULL)
-        empty = false;
-    __CPROVER_assert(
-      empty && ring.configured == 1 && ring.tx_buffer_info != NULL &&
-        ring.empty_tx_reqs != NULL && ring.push_buf_intermediate_buf != NULL &&
-        INV_GEOMETRY(&ring),
-      "STOP_RESTARTABLE: the post-state is a configured ring with no slot "
-      "occupied, which is what ena_queue_start starts from");
-  }
+  /* restart: what ena_queue_start assumes (shared with the setup base case) */
+  __CPROVER_assert(
+    INV_STARTABLE(&ring, RING_SIZE),
+    "STOP_RESTARTABLE: ena_tx_queue_release_bufs establishes INV_STARTABLE");
 
 #if VACUITY_CHECK
   /* both must FAIL */

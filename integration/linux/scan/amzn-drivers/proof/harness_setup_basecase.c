@@ -184,6 +184,10 @@ int main(void)
 		__CPROVER_assert(INV_CONFIGURED(&adapter.tx_ring[0]) &&
 				 INV_CONFIGURED_SLOTS(&adapter.tx_ring[0], g_probe_idx),
 				 "base case: ena_tx_queue_setup establishes INV_CONFIGURED");
+#ifdef CONCRETE_RING
+		__CPROVER_assert(INV_STARTABLE(&adapter.tx_ring[0], CONCRETE_RING),
+				 "base case: ena_tx_queue_setup establishes INV_STARTABLE");
+#endif
 	}
 	return 0;
 }

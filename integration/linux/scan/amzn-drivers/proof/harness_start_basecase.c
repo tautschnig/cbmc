@@ -288,7 +288,7 @@ int main(void)
   r = &adapter.tx_ring[0];
   adapter_for_model = &adapter;
 
-  /* ---- the post-state of ena_tx_queue_setup, i.e. INV_CONFIGURED ---- */
+  /* ---- the pre-state: an INV_STARTABLE ring (after setup, or after stop) ---- */
   r->adapter = &adapter;
   r->type = ENA_RING_TYPE_TX;
   r->id = 0;
@@ -299,14 +299,27 @@ int main(void)
    * ENA_PKT_MAX_BUFS by ena_calc_io_queue_size; any such value is a
    * configured ring, and INV_CONFIGURED is what the setup base case proves */
   r->sgl_size = nd_u16();
-  r->next_to_use = 0;
-  r->next_to_clean = 0;
-  r->pkts_without_db = false;
+  /* Any INV_STARTABLE ring: the first start after setup, or a restart after
+   * ena_queue_stop.  The producer/consumer indices, the doorbell flag, the
+   * free list and the stale per-slot fields are whatever the previous life
+   * of the queue left; only the slot-ownership clauses are constrained. */
+  r->next_to_use = nd_u16();
+  r->next_to_clean = nd_u16();
+  r->pkts_without_db = nd_u16() & 1;
+  {
+    unsigned k;
+    for(k = 0; k < RING; k++)
+    {
+      struct ena_tx_buffer b; /* nondet */
+      pool_tbi[k] = b;
+      pool_etr[k] = nd_u16();
+    }
+  }
   r->tx_buffer_info = pool_tbi;
   r->empty_tx_reqs = pool_etr;
   r->push_buf_intermediate_buf = pool_push;
   r->numa_socket_id = 0;
-  __CPROVER_assume(INV_CONFIGURED(r));
+  __CPROVER_assume(INV_STARTABLE(r, RING));
 
   /* the device-level state established earlier by ena_com_config_dev_mode,
    * which queue start neither establishes nor disturbs */
@@ -361,7 +374,7 @@ int main(void)
         "base case: OWN_UNIQUE holds at an arbitrary pair of slots");
     for(k = 0; k < RING; k++)
       if(r->tx_buffer_info[k].mbuf != NULL)
-        sum = sum + r->tx_buffer_info[k].tx_descs;
+        sum = sum + TX_DESCS(r->tx_buffer_info[k]);
     __CPROVER_assert(
       (uint16_t)(r->ena_com_io_sq->tail - r->ena_com_io_sq->next_to_comp) ==
         sum,

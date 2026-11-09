@@ -71,6 +71,29 @@ static bool INV_COM(const struct ena_com_io_sq *sq)
  */
 #define ENA_MAX_TX_DESCS_PER_PKT (ENA_PKT_MAX_BUFS + 2)
 
+/*
+ * The descriptor count a slot records.  ena_xmit_mbuf stores the int
+ * nb_hw_desc = (int)new_tail - (int)old_tail into the unsigned tx_descs, so
+ * when the u16 SQ tail wraps it holds (unsigned)(lines - 65536).  Every
+ * consumer sums tx_descs and passes the sum through ena_com_comp_ack's u16,
+ * so the driver is correct modulo 2^16; the invariants state it that way.
+ * (harness_prepare_tx.c, PTX_NB.)
+ */
+#define TX_DESCS(b) ((uint16_t)(b).tx_descs)
+
+/*
+ * The lower bound on a slot's descriptor count.  ena_com_prepare_tx writes no
+ * descriptor for an empty packet (header_len == 0, num_bufs == 0, no meta
+ * descriptor) and still returns success (PTX_DESCS_MIN), so an in-flight
+ * packet can hold 0 descriptors unless the application never sends one.
+ * -DALLOW_EMPTY_IN_FLIGHT states the invariant without that obligation.
+ */
+#ifdef ALLOW_EMPTY_IN_FLIGHT
+#  define TX_DESCS_MIN 0
+#else
+#  define TX_DESCS_MIN 1
+#endif
+
 /* Ring geometry, established by ena_tx_queue_setup and never changed after. */
 static bool INV_GEOMETRY(const struct ena_ring *r)
 {
@@ -91,6 +114,30 @@ static bool INV_CONFIGURED(const struct ena_ring *r)
          r->empty_tx_reqs != NULL && r->push_buf_intermediate_buf != NULL &&
          INV_GEOMETRY(r) && r->next_to_use == 0 && r->next_to_clean == 0 &&
          r->pkts_without_db == false;
+}
+
+/*
+ * INV_STARTABLE: what ena_queue_start needs of a TX ring, and what both ways
+ * of reaching it must establish -- ena_tx_queue_setup (first start) and
+ * ena_queue_stop's ena_tx_queue_release_bufs (restart after stop or reset).
+ * Weaker than INV_CONFIGURED on purpose: a stopped ring keeps its old
+ * next_to_use / next_to_clean / pkts_without_db and a stale free list, and
+ * ena_queue_start rewrites the first two and ena_create_io_queue the free
+ * list.  What it does not rewrite is the slots, so every slot must be free;
+ * and a stale num_of_bufs must still be in range for INV_SLOT.
+ */
+static bool INV_STARTABLE(const struct ena_ring *r, unsigned n)
+{
+  if(!(r->configured == 1 && r->tx_buffer_info != NULL &&
+       r->empty_tx_reqs != NULL && r->push_buf_intermediate_buf != NULL &&
+       INV_GEOMETRY(r) && r->ring_size == n))
+    return false;
+  for(unsigned k = 0; k < n; k++)
+    if(
+      r->tx_buffer_info[k].mbuf != NULL ||
+      r->tx_buffer_info[k].num_of_bufs > ENA_PKT_MAX_BUFS)
+      return false;
+  return true;
 }
 
 /*
@@ -149,8 +196,8 @@ static bool INV_FREE_LIST(const struct ena_ring *r, unsigned n)
     {
       occupied++;
       if(
-        r->tx_buffer_info[k].tx_descs < 1 ||
-        r->tx_buffer_info[k].tx_descs > ENA_MAX_TX_DESCS_PER_PKT)
+        TX_DESCS(r->tx_buffer_info[k]) < TX_DESCS_MIN ||
+        TX_DESCS(r->tx_buffer_info[k]) > ENA_MAX_TX_DESCS_PER_PKT)
         return false;
     }
   }

@@ -2,11 +2,14 @@ ENA TX induction: ring 4, burst <= 1, segments <= 1
 cbmc: 6.9.0 (cbmc-6.9.0-433-g6677c6dae75-dirty)   flags: --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula
 
 part      verdict                  failures besides known no-body notices
+d         VERIFICATION SUCCESSFUL  0
 b1        VERIFICATION SUCCESSFUL  0
 b2        VERIFICATION SUCCESSFUL  0
 m         VERIFICATION SUCCESSFUL  0
 s1        VERIFICATION FAILED      0
+p         VERIFICATION SUCCESSFUL  0
 s2        VERIFICATION SUCCESSFUL  0
+s3        VERIFICATION SUCCESSFUL  0
 
 composition check -- each predicate a step assumes, as proven by each part:
   predicate      base(b2)   xmit(s1)   clean(s2) 
@@ -15,35 +18,65 @@ composition check -- each predicate a step assumes, as proven by each part:
   OWN_UNIQUE     SUCCESS    SUCCESS    SUCCESS   
   INV_DESC_SUM   SUCCESS    SUCCESS    SUCCESS   
   INV_FREE_LIST  SUCCESS    SUCCESS    SUCCESS   
-  setup -> start: INV_CONFIGURED SUCCESS
+  INV_STARTABLE (start assumes it): setup(b1) SUCCESS  stop(s3) SUCCESS
+  stop(s3) assumes INV_STARTED, INV_FREE_LIST and INV_SLOT, proven above by b2, s1, s2
+  device init(d) -> INV_DEV_LLQ geometry, sgl_size bound: SUCCESS
+  xmit's prepare_tx stub vs real ena_com_prepare_tx(p): SUCCESS
+  stop(s3): --unwind 4 fails an unwinding assertion, so --unwind 6 is complete
   start's ena_com models vs the real ena_com: SUCCESS
 
 step-specific obligations:
-  s1 [main.assertion.1] API: sent <= nb_pkts: SUCCESS
-  s1 [main.assertion.4] INV_wakeup: no packet left pushed without a doorbell: SUCCESS
-  s1 [main.assertion.8] OWN_TRANSFER: accepted mbuf recorded in its req_id slot: SUCCESS
+  s1 [main.assertion.1] OWN_NO_LOSS: a packet in flight keeps its slot: SUCCESS
+  s1 [main.assertion.2] API: sent <= nb_pkts: SUCCESS
+  s1 [main.assertion.5] INV_wakeup: no packet left pushed without a doorbell: SUCCESS
+  s1 [main.assertion.8] OWN_UNIQUE: no mbuf owned by two tx_buffer_info slots: SUCCESS
+  s1 [main.assertion.9] OWN_TRANSFER: every accepted mbuf recorded in its req_id slot: SUCCESS
+  s1 [main.assertion.10] OWN_UNSENT: no slot holds a packet reported as unsent: SUCCESS
+  s2 [main.assertion.5] OWN_UNIQUE: no mbuf owned by two slots after cleanup: SUCCESS
   s2 [main.assertion.6] OWN_NO_DANGLING: no slot still owns a released mbuf: SUCCESS
   s2 [rte_pktmbuf_free.assertion.1] FREE_ONCE: no mbuf is released twice: SUCCESS
+  s3 [main.assertion.1] STOP_FREES_EXACTLY_INFLIGHT: an mbuf is released iff it was in flight, and then exactly once: SUCCESS
+  s3 [main.assertion.2] STOP_FREE_COUNT: the number of releases equals the in-flight count: SUCCESS
+  s3 [main.assertion.3] STOP_NO_DANGLING: no slot refers to an mbuf after stop: SUCCESS
+  s3 [main.assertion.4] STOP_RESTARTABLE: ena_tx_queue_release_bufs establishes INV_STARTABLE: SUCCESS
+  s3 [rte_pktmbuf_free.assertion.1] FREE_ONCE: no mbuf is released twice: SUCCESS
   b2 [main.assertion.6] error path: a failed start leaves no usable producer state: SUCCESS
 
 vacuity witnesses (all must be FAILURE):
+  d [main.assertion.1] vacuity witness: LLQ device init completes: FAILURE
   b1 [main.assertion.1] vacuity witness: a setup can succeed: FAILURE
   b1 [main.assertion.2] vacuity witness: a setup can fail: FAILURE
   b2 [main.assertion.1] vacuity witness: a start can succeed: FAILURE
   b2 [main.assertion.2] vacuity witness: a start can fail: FAILURE
   m [main.assertion.1] vacuity witness: create can succeed: FAILURE
   m [main.assertion.2] vacuity witness: create can fail: FAILURE
-  s1 [main.assertion.1] vacuity witness: a packet can be accepted: FAILURE
+  s1 [main.assertion.2] vacuity witness: a packet can be accepted: FAILURE
+  s1 [main.assertion.12] vacuity witness: a full burst can be accepted: FAILURE
+  p [main.assertion.7] vacuity witness: a two-line packet is sent: FAILURE
+  p [main.assertion.9] vacuity witness: a packet wraps the tail: FAILURE
+  p [main.assertion.10] vacuity witness: a packet is sent after a burst doorbell: FAILURE
+  p [main.assertion.11] vacuity witness: a maximal packet is sent: FAILURE
   s2 [main.assertion.1] vacuity witness: a packet can be freed: FAILURE
+  s3 [main.assertion.5] vacuity witness: a stop can free the watched packet: FAILURE
+  s3 [main.assertion.6] vacuity witness: a stop can face two in-flight packets: FAILURE
+  16 witnesses, 0 not FAILURE
 
 the induction holds relative to these assumptions, and only these:
-  device   ASSUME_DEVICE_HONEST_DOORBELL  doorbell offset inside the BAR (F8 is that the driver does not check)
-  device   INV_DEV_LLQ                    LLQ geometry from ena_com_config_dev_mode at device init, not proven
-  device   sgl_size <= ENA_PKT_MAX_BUFS   set by ena_init_rings from a clamped device value, not proven
-  device   dma_addr_bits in 32..48        device-init precondition of the ena_com check (F13: DPDK stores the error code)
-  driver   ASSUME_PREPARE_TX_OK           ena_com_prepare_tx succeeds; on failure the invariants break (F12)
-  app      packets in a burst are not already in flight (finding 2: undetected by the driver)
-  app      nb_segs < sgl_size (finding 3: advertised, not re-checked)
-  harness  tx_free_thresh == 0, offloads == 0, LLQ mode; burst and segment bounds as printed above
+  device   ASSUME_DEVICE_HONEST_DOORBELL  doorbell offset inside the BAR (F8: the driver does not check)
+  device   dma_addr_bits in 32..48        DPDK stores ena_com_get_dma_width's error code (F13)
+  device   ASSUME_NO_F14                  no TX-burst limit, or descs_num_before_header >= 2 and a budget
+                                          holding one maximal packet (F14: the doorbell check under-counts)
+  device   meta caching enabled           a restriction: the device may set DISABLE_META_CACHING, and
+                                          the xmit step covers only queues where it did not
+  device   sgl_size >= 1                  0 is possible from the device; xmit is unaffected, not covered
+  app      packets in a burst are not already in flight (nothing in the driver detects it)
+  app      ASSUME_NONEMPTY_PKT            no zero-length mbuf (F15: accepted with no descriptor; the slot
+                                          is never completed, and ring_size of them overrun the free list)
+  app      nb_segs < sgl_size             advertised, not re-checked
+  harness  tx_free_thresh == 0, offloads == 0, LLQ mode; ring, burst and segment bounds as printed above
+
+  discharged since the last version of this list, by parts of this run:
+           INV_DEV_LLQ geometry, sgl_size <= ENA_PKT_MAX_BUFS     d (device init)
+           ASSUME_PREPARE_TX_OK -> the real ena_com_prepare_tx    p, under ASSUME_NO_F14
 
 INDUCTION: CLOSED
