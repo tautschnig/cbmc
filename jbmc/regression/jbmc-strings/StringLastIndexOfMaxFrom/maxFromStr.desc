@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.maxFromStr --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+As maxFrom, for a needle of one character given as a string.

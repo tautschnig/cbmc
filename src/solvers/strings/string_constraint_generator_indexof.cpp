@@ -458,11 +458,12 @@ string_constraint_generatort::add_axioms_for_last_index_of(
   constraints.existential.push_back(a3);
 
   const exprt index1 = from_integer(1, index_type);
-  const plus_exprt from_index_plus_one(from_index, index1);
+  // min(from_index + 1, |str|), comparing before adding so that a maximal
+  // from_index does not overflow.
   const if_exprt end_index(
     binary_relation_exprt(
-      from_index_plus_one, ID_le, array_pool.get_or_create_length(str)),
-    from_index_plus_one,
+      from_index, ID_lt, array_pool.get_or_create_length(str)),
+    plus_exprt(from_index, index1),
     array_pool.get_or_create_length(str));
 
   const symbol_exprt n = fresh_symbol("QA_last_index_of1", index_type);
