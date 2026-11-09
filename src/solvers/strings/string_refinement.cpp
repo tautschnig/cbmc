@@ -47,7 +47,8 @@ static std::optional<exprt> find_counter_example(
   const namespacet &ns,
   const exprt &axiom,
   const symbol_exprt &var,
-  message_handlert &message_handler);
+  message_handlert &message_handler,
+  bool &undecided);
 
 /// Check axioms takes the model given by the underlying solver and answers
 /// whether it satisfies the string constraints.
@@ -76,7 +77,8 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
   const std::unordered_map<string_not_contains_constraintt, symbol_exprt>
     &not_contain_witnesses,
   const index_set_pairt &index_sets,
-  std::vector<std::pair<std::size_t, exprt>> &counter_example_keys);
+  std::vector<std::pair<std::size_t, exprt>> &counter_example_keys,
+  bool &undecided);
 
 static void initial_index_set(
   index_set_pairt &index_set,
@@ -241,6 +243,8 @@ static std::vector<exprt> generate_instantiations(
   {
     for(std::size_t k = 0; k < axioms.universal.size(); ++k)
     {
+      if(!axioms.instantiable[k])
+        continue;
       for(auto &instance : instantiate(
             axioms.universal[k], universal_indexes[k], i.first, i.second))
       {
@@ -1096,23 +1100,23 @@ string_refinementt::dec_solve(const exprt &assumption)
   for(string_constraintt &constraint : constraints.universal)
   {
     constraint.replace_expr(symbol_resolve);
-    if(is_valid_string_constraint(log.error(), ns, constraint))
-      axioms.universal.push_back(std::move(constraint));
-    else
+    // Universal constraints that are not of the form that instantiation
+    // needs (every access to a string at the same index, linear in the
+    // universal variable; the Python frontend emits others, as for
+    // multi-slot dict-of-string lookups expanded into a chain over keys)
+    // are kept: they are checked in each model, and their counter-examples
+    // added, rather than dropped, which made models that violate them
+    // counterexamples.
+    const bool instantiable =
+      is_valid_string_constraint(log.debug(), ns, constraint);
+    if(!instantiable)
     {
-      // Skip universal constraints whose body the validator can't
-      // confirm well-formed. Historically this was a DATA_INVARIANT
-      // that aborted CBMC; in practice the validation is conservative
-      // (it requires every reference to a given string array to use
-      // the same index expression) and rejects patterns the Python
-      // frontend legitimately emits (e.g. multi-slot dict-of-string
-      // lookups expanded into a chain over keys[0..N-1]). Dropping
-      // the axiom is sound for over-approximation: we just don't
-      // enforce that universal property, which may produce false
-      // positives but not false negatives.
-      log.warning() << "string_refinement: dropping malformed universal "
-                    << "constraint" << messaget::eom;
+      log.debug() << "string_refinement: universal constraint not of the "
+                  << "form for instantiation: " << to_string(constraint)
+                  << messaget::eom;
     }
+    axioms.instantiable.push_back(instantiable);
+    axioms.universal.push_back(std::move(constraint));
   }
 
   std::transform(
@@ -1166,6 +1170,22 @@ string_refinementt::dec_solve(const exprt &assumption)
 
   // Initial try without index set
   const auto get = [this](const exprt &expr) { return this->get(expr); };
+  // Whether check_axioms could not decide some axiom in the model.
+  bool undecided = false;
+  // A model in which check_axioms found no violated axiom is a model of the
+  // string semantics only if it decided all of them.
+  const auto model_checked = [this](bool undecided) -> resultt
+  {
+    if(undecided)
+    {
+      log.warning() << "string refinement: the axioms could not all be "
+                    << "checked in the model, so the result is not known"
+                    << messaget::eom;
+      return resultt::D_ERROR;
+    }
+    log.debug() << "check_SAT: the model is correct" << messaget::eom;
+    return resultt::D_SATISFIABLE;
+  };
   // The axiom (universal ones first, then not_contains ones) and the
   // position of each counter-example of check_axioms.
   std::vector<std::pair<std::size_t, exprt>> counter_example_keys;
@@ -1188,12 +1208,10 @@ string_refinementt::dec_solve(const exprt &assumption)
       symbol_resolve,
       not_contain_witnesses,
       index_sets,
-      counter_example_keys);
+      counter_example_keys,
+      undecided);
     if(satisfied)
-    {
-      log.debug() << "check_SAT: the model is correct" << messaget::eom;
-      return resultt::D_SATISFIABLE;
-    }
+      return model_checked(undecided);
     log.debug() << "check_SAT: got SAT but the model is not correct"
                 << messaget::eom;
   }
@@ -1247,12 +1265,10 @@ string_refinementt::dec_solve(const exprt &assumption)
         symbol_resolve,
         not_contain_witnesses,
         index_sets,
-        counter_example_keys);
+        counter_example_keys,
+        undecided);
       if(satisfied)
-      {
-        log.debug() << "check_SAT: the model is correct" << messaget::eom;
-        return resultt::D_SATISFIABLE;
-      }
+        return model_checked(undecided);
 
       log.debug()
         << "check_SAT: got SAT but the model is not correct, refining..."
@@ -1277,18 +1293,15 @@ string_refinementt::dec_solve(const exprt &assumption)
         // next iteration. The original upstream code only did this for
         // not_contains axioms and otherwise bailed with D_ERROR.
         //
-        // This branch's anti-hang invariant: when the model is unrefinable we
-        // terminate conservatively with a sound D_SATISFIABLE (treat the
-        // model as a real counterexample -- no missed bugs) rather than spin
-        // or surface D_ERROR ("VERIFICATION ERROR"). The risk with c7fb's
-        // "keep adding counter-examples" is needles with a *symbolic* length:
-        // their violation witnesses are distinct symbolic expressions each
-        // round, never dedupe to a fixpoint, and -- with refinement_bound
-        // effectively unbounded -- would spin. So bound the counter-example
-        // rounds: try them (precision for cases that converge quickly), but
-        // after a finite number of consecutive empty-index-set rounds, or
-        // when there are no counter-examples to add, fall back to the
-        // conservative result.
+        // When the model cannot be excluded, the result is not known
+        // (D_ERROR, "VERIFICATION ERROR"): the model is not one of the
+        // string semantics, so taking it as a counterexample would report
+        // a failure that may not exist, with a trace that does not
+        // explain it. The risk with c7fb's "keep adding counter-examples"
+        // is needles with a *symbolic* length: their violation witnesses
+        // are distinct symbolic expressions each round, never dedupe to a
+        // fixpoint, and -- with refinement_bound effectively unbounded --
+        // would spin. So bound the counter-example rounds.
         //
         // The rounds go on while their counter-examples are at positions
         // of axioms where none was before: each excludes the model at one
@@ -1300,15 +1313,22 @@ string_refinementt::dec_solve(const exprt &assumption)
         bool new_position = false;
         for(const auto &key : counter_example_keys)
           new_position |= counter_examples_added.insert(key).second;
-        if(
-          !new_position ||
-          ++empty_index_set_rounds > max_empty_index_set_rounds)
+        if(!new_position)
         {
-          log.warning() << "dec_solve: current index set is empty after "
-                        << "refinement and no further counter-example "
-                        << "progress, treating model as a counterexample"
-                        << messaget::eom;
-          return resultt::D_SATISFIABLE;
+          log.warning() << "string refinement: the model violates the "
+                        << "string axioms, and neither index terms nor "
+                        << "counter-examples at new positions exclude it, "
+                        << "so the result is not known" << messaget::eom;
+          return resultt::D_ERROR;
+        }
+        if(++empty_index_set_rounds > max_empty_index_set_rounds)
+        {
+          log.warning() << "string refinement: the model still violates "
+                        << "the string axioms after "
+                        << max_empty_index_set_rounds
+                        << " rounds of counter-examples without index "
+                        << "terms, so the result is not known" << messaget::eom;
+          return resultt::D_ERROR;
         }
         log.debug() << "dec_solve: current index set is empty, adding "
                     << counter_examples.size() << " counter examples"
@@ -1330,10 +1350,15 @@ string_refinementt::dec_solve(const exprt &assumption)
         // shell eval with templates from 68 s to more than 300 s (also
         // where added only after four rounds, or only for axioms violated
         // in consecutive rounds).
+        // The same for universal axioms that are not instantiated at index
+        // terms.
         for(std::size_t i = 0; i < counter_examples.size(); ++i)
         {
-          if(counter_example_keys[i].first >= axioms.universal.size())
+          const std::size_t axiom = counter_example_keys[i].first;
+          if(axiom >= axioms.universal.size() || !axioms.instantiable[axiom])
+          {
             add_lemma(counter_examples[i]);
+          }
         }
       }
       current_constraints.clear();
@@ -2088,9 +2113,11 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
   const std::unordered_map<string_not_contains_constraintt, symbol_exprt>
     &not_contain_witnesses,
   const index_set_pairt &index_sets,
-  std::vector<std::pair<std::size_t, exprt>> &counter_example_keys)
+  std::vector<std::pair<std::size_t, exprt>> &counter_example_keys,
+  bool &undecided)
 {
   counter_example_keys.clear();
+  undecided = false;
   stream << "string_refinementt::check_axioms:" << messaget::eom;
 
   stream.message.conditional_output(
@@ -2143,7 +2170,8 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
         ns,
         with_concretized_arrays,
         axiom.univ_var,
-        stream.message.get_message_handler()))
+        stream.message.get_message_handler(),
+        undecided))
     {
       stream << std::string(4, ' ')
              << "- violated_for: " << format(axiom.univ_var) << "="
@@ -2175,7 +2203,11 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
 
     if(
       const auto witness = find_counter_example(
-        ns, negated_axiom, univ_var, stream.message.get_message_handler()))
+        ns,
+        negated_axiom,
+        univ_var,
+        stream.message.get_message_handler(),
+        undecided))
     {
       stream << std::string(4, ' ')
              << "- violated_for: " << univ_var.identifier() << "="
@@ -2319,8 +2351,11 @@ static void initial_index_set(
   const namespacet &ns,
   const string_axiomst &axioms)
 {
-  for(const auto &axiom : axioms.universal)
-    initial_index_set(index_set, ns, axiom);
+  for(std::size_t k = 0; k < axioms.universal.size(); ++k)
+  {
+    if(axioms.instantiable[k])
+      initial_index_set(index_set, ns, axioms.universal[k]);
+  }
   for(const auto &axiom : axioms.not_contains)
     initial_index_set(index_set, ns, axiom);
 }
@@ -2757,16 +2792,25 @@ static std::optional<exprt> find_counter_example(
   const namespacet &ns,
   const exprt &axiom,
   const symbol_exprt &var,
-  message_handlert &message_handler)
+  message_handlert &message_handler,
+  bool &undecided)
 {
   satcheck_no_simplifiert sat_check(message_handler);
   bv_pointerst solver(ns, sat_check, message_handler);
   solver << axiom;
 
-  if(solver() == decision_proceduret::resultt::D_SATISFIABLE)
+  switch(solver())
+  {
+  case decision_proceduret::resultt::D_SATISFIABLE:
     return solver.get(var);
-  else
+  case decision_proceduret::resultt::D_UNSATISFIABLE:
     return {};
+  case decision_proceduret::resultt::D_ERROR:
+    // Not known to hold in the model.
+    undecided = true;
+    return {};
+  }
+  UNREACHABLE;
 }
 
 /// \related string_constraintt
@@ -2867,22 +2911,40 @@ static bool is_valid_string_constraint(
       }
     }
 
-    // Condition 2: f must be linear in the quantified variable
-    if(!is_linear_arithmetic_expr(rep, constraint.univ_var))
+    // Condition 2: f must be linear in the quantified variable, with the
+    // coefficient 1 or -1 where it occurs (as linear_functiont::solve,
+    // which instantiation uses, requires), for each index.
+    for(const auto &index : pair.second)
     {
-      stream << "f is not linear: " << to_string(constraint)
-             << ", str: " << format(pair.first) << messaget::eom;
-      return false;
+      if(!is_linear_arithmetic_expr(index, constraint.univ_var))
+      {
+        stream << "f is not linear: " << to_string(constraint)
+               << ", str: " << format(pair.first) << messaget::eom;
+        return false;
+      }
+      const mp_integer coefficient =
+        linear_functiont{index}.coefficient(constraint.univ_var);
+      const bool mentions_variable =
+        std::find(
+          index.depth_begin(), index.depth_end(), constraint.univ_var) !=
+        index.depth_end();
+      if(mentions_variable && coefficient != 1 && coefficient != -1)
+      {
+        stream << "the coefficient of the universal variable is not 1 or -1: "
+               << to_string(constraint) << ", str: " << format(pair.first)
+               << messaget::eom;
+        return false;
+      }
     }
+  }
 
-    // Condition 3: the quantified variable can only occur in indices in the
-    // body
-    if(!universal_only_in_index(constraint))
-    {
-      stream << "Universal variable outside of index:" << to_string(constraint)
-             << messaget::eom;
-      return false;
-    }
+  // Condition 3: the quantified variable can only occur in indices in the
+  // body
+  if(!universal_only_in_index(constraint))
+  {
+    stream << "Universal variable outside of index:" << to_string(constraint)
+           << messaget::eom;
+    return false;
   }
 
   return true;
