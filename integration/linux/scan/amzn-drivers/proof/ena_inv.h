@@ -222,4 +222,69 @@ static bool INV_FREE_LIST(const struct ena_ring *r, unsigned n)
   return true;
 }
 
+/*
+ * INV_RX_STARTED: a started RX queue.  The RX analogue of INV_STARTED, over
+ * the rx_buffer_info / empty_rx_reqs arrays.
+ *
+ *   - the handles and pool are non-NULL, geometry is consistent, LLQ is not
+ *     used on RX (the SQ carries posted buffers, placement is HOST);
+ *   - every posted buffer is owned by exactly one slot: the occupied slots
+ *     are exactly those an in-flight (posted-not-completed) descriptor names.
+ *     As with TX this is stated through the free list: the window of
+ *     ring_size - inflight positions of empty_rx_reqs starting at
+ *     next_to_use names pairwise-distinct free (mbuf == NULL) slots, so the
+ *     occupied slots are exactly the inflight ones.
+ *
+ * inflight here is the number of buffers the device has not yet completed,
+ * (next_to_use - next_to_clean) & size_mask, the same accounting as TX.
+ */
+static bool INV_RX_STARTED(const struct ena_ring *r, unsigned n)
+{
+  if(!(r->adapter != NULL && r->ena_com_io_sq != NULL &&
+       r->ena_com_io_cq != NULL && r->rx_buffer_info != NULL &&
+       r->empty_rx_reqs != NULL && r->rx_refill_buffer != NULL &&
+       r->mb_pool != NULL && INV_GEOMETRY(r) && r->ring_size == n &&
+       r->next_to_use <= r->size_mask && r->next_to_clean <= r->size_mask &&
+       r->ena_com_io_sq->q_depth == r->ring_size &&
+       /* the device has not completed more than was posted: used entries are
+        * in range, so free entries are in 0..q_depth-1 */
+       (uint16_t)(r->ena_com_io_sq->tail - r->ena_com_io_sq->next_to_comp) <=
+         r->ena_com_io_sq->q_depth - 1))
+    return false;
+
+  /* Copy the anonymous-union members into typed locals: accessing
+   * r->rx_buffer_info / r->empty_rx_reqs directly builds a byte_extract over
+   * the union whose object CBMC's pointer analysis cannot size, so the
+   * bounds checks come back ERROR. */
+  struct ena_rx_buffer *const rbi = r->rx_buffer_info;
+  uint16_t *const err = r->empty_rx_reqs;
+  const uint16_t inflight =
+    (uint16_t)(((uint16_t)(r->next_to_use - r->next_to_clean)) & r->size_mask);
+  const unsigned window = n - inflight;
+  unsigned occupied = 0;
+
+  for(unsigned k = 0; k < n; k++)
+    if(rbi[k].mbuf != NULL)
+      occupied++;
+  if(occupied != inflight)
+    return false;
+
+  for(unsigned j = 0; j < n; j++)
+  {
+    if(j >= window)
+      break;
+    const uint16_t id = err[(r->next_to_use + j) & r->size_mask];
+    if(id >= n || rbi[id].mbuf != NULL)
+      return false;
+    for(unsigned j2 = j + 1; j2 < n; j2++)
+    {
+      if(j2 >= window)
+        break;
+      if(err[(r->next_to_use + j2) & r->size_mask] == id)
+        return false;
+    }
+  }
+  return true;
+}
+
 #endif /* ENA_INV_H */

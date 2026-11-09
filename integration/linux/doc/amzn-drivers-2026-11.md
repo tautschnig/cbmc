@@ -794,6 +794,58 @@ read the field as `(uint16_t)tx_descs` (`TX_DESCS` in `ena_inv.h`). The
 previous "`tx_descs` in 1..19" was false of the real code, and the old stub
 hid that.
 
+## F16: DPDK ena_rx_mbuf dereferences a device-chosen req_id's slot without a NULL check (DPDK ENA)
+
+Found starting the RX path. On RX the device, not the driver, chooses which
+posted buffer each completion refers to, via the `req_id` field of the
+completion descriptor. `ena_com_rx_pkt` validates `req_id < q_depth`
+(`ena_eth_com.c:663`, returns `ENA_COM_EIO` otherwise), so the index is in
+range. It does **not** check that the slot is actually posted.
+
+`ena_rx_mbuf` (`ena_ethdev.c:2700-2705`) then does:
+
+```c
+rx_info = &rx_ring->rx_buffer_info[req_id];
+mbuf = rx_info->mbuf;
+RTE_ASSERT(mbuf != NULL);
+ena_init_rx_mbuf(mbuf, len);   /* writes mbuf->data_len, ->data_off, ... */
+```
+
+`RTE_ASSERT` is compiled out in release builds. If the device returns a
+completion whose `req_id` names a slot with no posted buffer
+(`rx_buffer_info[req_id].mbuf == NULL`) -- which it may, the slot being free is
+a normal state -- the driver dereferences NULL in `ena_init_rx_mbuf`. The same
+unchecked dereference is in the chain loop (`ena_ethdev.c:2724`,
+`RTE_ASSERT(rx_info->mbuf != NULL)` then `mbuf->next = rx_info->mbuf`).
+
+Linux and FreeBSD check and reset instead:
+- Linux `ena_rx_skb` (`ena_netdev.c:959`): `if (unlikely(!rx_info->page)) {
+  ... ena_reset_device(adapter, ENA_REGS_RESET_INV_RX_REQ_ID); return NULL; }`;
+- FreeBSD `ena_rx_mbuf` (`ena_datapath.c:430` and `:474`):
+  `if (unlikely(rx_info->mbuf == NULL)) { ... ena_trigger_reset(...); return
+  NULL; }`.
+
+So DPDK is missing a check its siblings have. This is the RX analogue of the
+device-trust class F1-F9: an in-range but semantically invalid device value
+used without validation.
+
+**Evidence.** `proof/harness_rx_reqid.c` calls the real `ena_rx_mbuf` with one
+single-buffer completion from an `INV_RX_STARTED` queue, `req_id` constrained
+only to `< ring_size` (what `ena_com_rx_pkt` guarantees), length nonzero.
+`RX_REQID_POSTED` (`rx_buffer_info[req_id].mbuf != NULL`) FAILS, with a NULL
+dereference in `ena_init_rx_mbuf` on the counterexample; the `-DWITNESS` build
+confirms a free-slot `req_id` is reachable under the invariant. At ring 4,
+`--bounds-check --pointer-check`.
+
+**Fix.** Add the NULL check DPDK is missing, matching Linux and FreeBSD:
+reset the device on a `req_id` whose slot is not posted, rather than
+dereferencing it.
+
+**Severity.** A malfunctioning or malicious device triggers a NULL dereference
+in the datapath. It needs a device that returns a completion for an unposted
+req_id, which a correct device does not do; it is a device-trust robustness
+gap, the same kind this project's Linux findings cover.
+
 ## #4 result: the device-init preconditions are established, with one caveat
 
 The same harness checks, with no transmit (`-DDEVINIT_ONLY`), what the
