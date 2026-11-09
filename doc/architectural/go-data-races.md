@@ -525,8 +525,9 @@ did not change them; neither is committed.
 Section 13 left three harnesses failing. Measuring where their variables
 and time go, rather than the size of their expressions, found four
 independent causes. Each was tried behind an environment switch (local
-branch `go-race-large-values-exp`, commit `3ee4f040c2`); none is
-committed to this branch.
+branch `go-race-large-values-exp`, commit `3ee4f040c2`). The fixes for
+causes 1 and 2 are now committed; see the status at the end of this
+section.
 
 **Cause 1: writes that nothing reads are memory-model events.** Every
 shared write gets a clock, a program-order constraint, and write-
@@ -607,3 +608,29 @@ Linearizing nested arrays of constant size (an index `a[i][j]` as
   million clauses; `--no-sat-preprocessor` let `BigValInsert` finish in
   430 s and `BigKeyInsert` in 514 s. Causes 2 and 3 shrink these
   formulas instead.
+
+**Status.**
+
+- Cause 1 is fixed by `12fde03b52`: writes to addresses that no event
+  reads are no events of the memory model, and traces keep them in their
+  place (`regression/cbmc-concurrency/unread-shared-writes1`).
+- Cause 2 is fixed by `bf65092c0b`: `is_shared_object` excludes shadow
+  memory (`regression/go/race-map-insert1`).
+- Cause 3 is not fixed. Bytes help the race check, which flags at most 64
+  bytes per byte and larger accesses at the object, but hurt other users
+  of shadow memory: a C program that sets the field of a whole 1,024-byte
+  element of a malloc'd array, at a symbolic index, needs 1,024 updates
+  of a byte array instead of one of an element. With `long` elements it
+  ran out of memory (8 GB) instead of taking 137 s; with pointer elements
+  it took 96 s and 17.9 million variables instead of 0.4 s. After the two
+  fixes, bytes changed only the two insertion harnesses
+  (`BigKeyInsert`: timeout at 1,200 s to a race in 1,092 s;
+  `BigValInsert`: error to timeout).
+- Cause 4 is a project of its own.
+
+Run K10, the whole oracle with `bf65092c0b` (8 GB, 600 s), against run
+K9 (the build before these fixes, same limits): no verdict changed apart
+from `BigKeyInsert` (error to timeout) and
+`TestNoRaceMutexPureHappensBefore` (timeout to unwind, after 306 s); the
+310 harnesses with the same conclusive verdict took 7,245 s instead of
+23,086 s; all 341 took 18,905 s instead of 35,832 s.
