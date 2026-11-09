@@ -68,6 +68,10 @@ struct index_set_pairt
 struct string_axiomst
 {
   std::vector<string_constraintt> universal;
+  /// Whether each of \ref universal has the form that instantiation at
+  /// index terms needs (see is_valid_string_constraint). The others are
+  /// only checked in each model, and their counter-examples added.
+  std::vector<bool> instantiable;
   std::vector<string_not_contains_constraintt> not_contains;
 };
 

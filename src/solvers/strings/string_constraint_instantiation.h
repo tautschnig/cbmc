@@ -98,6 +98,13 @@ public:
   /// returns the expression `v - x`.
   static exprt solve(linear_functiont f, const exprt &var, const exprt &val);
 
+  /// The coefficient of \p var (0 if it does not occur).
+  mp_integer coefficient(const exprt &var) const
+  {
+    const auto it = coefficients.find(var);
+    return it == coefficients.end() ? mp_integer{0} : it->second;
+  }
+
   /// Format the linear function as a string, can be used for debugging
   std::string format();
 
