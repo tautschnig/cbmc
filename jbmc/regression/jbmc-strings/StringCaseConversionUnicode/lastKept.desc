@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.lastKept --max-nondet-string-length 10 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Where the length may change, the conversion of the last character is still known.

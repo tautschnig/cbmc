@@ -1,0 +1,9 @@
+CORE
+main.py
+--function check
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The case conversion of ASCII characters is exact.
