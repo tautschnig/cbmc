@@ -63,6 +63,14 @@ protected:
   /// 1) the _address_map_ (with a list of reads/writes for the address of each
   ///   event)
   /// 2) the _numbering_ map (with per-thread unique number of every event)
+  ///
+  /// A shared write to an address that no shared read reads is no event (it
+  /// is in neither map): no read can observe it, so its order relative to
+  /// the other writes is not constrained (read-from and from-read relate
+  /// writes only through reads); and given an order of the remaining events,
+  /// it can be placed right after its predecessor in its thread (or in its
+  /// atomic section). With field sensitivity, a whole-object assignment
+  /// writes each field, most of which are often never read.
   /// \param equation: the target equation (containing the events to be
   ///   processed)
   /// \param message_handler: message handler to output statistics

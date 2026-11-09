@@ -1,0 +1,16 @@
+CORE
+main.c
+--trace
+^EXIT=10$
+^SIGNAL=0$
+^\[main\.assertion\.1\] line 26 bounded: SUCCESS$
+^\[main\.assertion\.2\] line 27 copied last: FAILURE$
+^State \d+ file main\.c function writer line 16 thread 1$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+`a = b` writes each of the 1024 fields of a, but only one of them is read:
+the writes to the others are no events of the memory model (no read can
+observe them), which took the solver from 7 s to under 1 s. The trace still
+shows them, and the writer's write after the copy.

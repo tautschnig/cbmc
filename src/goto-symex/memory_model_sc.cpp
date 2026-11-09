@@ -68,6 +68,10 @@ void memory_model_sct::build_per_thread_map(
        !e_it->is_spawn() &&
        !e_it->is_memory_barrier()) continue;
 
+    // a write that is no event (see build_event_lists)
+    if(e_it->is_shared_write() && numbering.find(e_it) == numbering.end())
+      continue;
+
     dest[e_it->source.thread_nr].push_back(e_it);
   }
 }

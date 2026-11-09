@@ -273,10 +273,12 @@ void build_goto_trace(
           symbol_exprt::typeless(partial_order_concurrencyt::rw_clock_id(it)));
 
         const auto cv = numeric_cast<mp_integer>(clock_value);
-        if(cv.has_value())
-          current_time = *cv;
-        else
-          current_time = 0;
+        // A write that is no event of the memory model (no read observes
+        // it, see partial_order_concurrencyt::build_event_lists) has no
+        // clock: it stays where it is, after its predecessor in its thread.
+        if(!cv.has_value())
+          continue;
+        current_time = *cv;
       }
       else if(it->is_atomic_end() && current_time<0)
         current_time*=-1;

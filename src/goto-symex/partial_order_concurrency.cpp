@@ -78,14 +78,34 @@ void partial_order_concurrencyt::build_event_lists(
 {
   add_init_writes(equation);
 
+  // The addresses that some event reads. A write to another address is not
+  // an event: no read can observe it, and leaving it out of the program
+  // order keeps the order of the remaining events (see build_event_lists in
+  // partial_order_concurrency.h).
+  std::unordered_set<irep_idt> read_addresses;
+  for(const auto &step : equation.SSA_steps)
+  {
+    if(step.is_shared_read())
+      read_addresses.insert(remove_level_2(step.ssa_lhs).get_identifier());
+  }
+
   // a per-thread counter
   std::map<unsigned, unsigned> counter;
+  std::size_t unread_writes = 0;
 
   for(eventst::const_iterator
       e_it=equation.SSA_steps.begin();
       e_it!=equation.SSA_steps.end();
       e_it++)
   {
+    if(
+      e_it->is_shared_write() &&
+      read_addresses.find(address(e_it)) == read_addresses.end())
+    {
+      ++unread_writes;
+      continue;
+    }
+
     if(e_it->is_shared_read() ||
        e_it->is_shared_write() ||
        e_it->is_spawn())
@@ -109,6 +129,8 @@ void partial_order_concurrencyt::build_event_lists(
   }
 
   messaget log{message_handler};
+  log.statistics() << "Shared writes that no event reads: " << unread_writes
+                   << messaget::eom;
   for(address_mapt::const_iterator
       a_it=address_map.begin();
       a_it!=address_map.end();
