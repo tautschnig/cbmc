@@ -249,7 +249,16 @@ static bool INV_RX_STARTED(const struct ena_ring *r, unsigned n)
        /* the device has not completed more than was posted: used entries are
         * in range, so free entries are in 0..q_depth-1 */
        (uint16_t)(r->ena_com_io_sq->tail - r->ena_com_io_sq->next_to_comp) <=
-         r->ena_com_io_sq->q_depth - 1))
+         r->ena_com_io_sq->q_depth - 1 &&
+       /* RX accounting, the analogue of INV_DESC_SUM: the ring's in-flight
+        * count and the SQ's used entries are the same number.  Refill
+        * advances both next_to_use and sq->tail; recv advances next_to_clean
+        * and (through ena_com_rx_pkt) sq->next_to_comp.  Without this clause
+        * the number of free slots and the number of free SQ entries are
+        * unrelated, and refill called with the free SQ entries -- which is
+        * what eth_ena_recv_pkts passes -- can overrun the free list. */
+       ((uint16_t)((r->next_to_use - r->next_to_clean) & r->size_mask)) ==
+         (uint16_t)(r->ena_com_io_sq->tail - r->ena_com_io_sq->next_to_comp)))
     return false;
 
   /* Copy the anonymous-union members into typed locals: accessing
