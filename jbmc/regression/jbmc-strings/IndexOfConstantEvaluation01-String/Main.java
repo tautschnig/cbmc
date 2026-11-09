@@ -9,6 +9,6 @@ public class Main {
     assert s1.indexOf(s2, 3) == 4;
     assert s1.indexOf("cd") == -1;
     assert s1.indexOf(s2, 10) == -1;
-    assert s1.indexOf("", 10) == -1;
+    assert s1.indexOf("", 10) == 6;
   }
 }
