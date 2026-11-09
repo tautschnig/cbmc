@@ -63,4 +63,24 @@ SCENARIO(
       }
     }
   }
+  WHEN("the integer has 64 bits")
+  {
+    const typet type64 = signedbv_typet(64);
+    const std::vector<std::pair<mp_integer, int>> cases = {
+      {12345678901, 11},
+      {power(2, 63) - 1, 19},
+      {-power(2, 63), 20},
+      {-1000000000000, 14}};
+    for(const auto &c : cases)
+    {
+      const exprt actual =
+        length_of_decimal_int(from_integer(c.first, type64), type, 10);
+      THEN("the length of " << c.first << " is " << c.second)
+      {
+        const int actual_int = *numeric_cast<int>(
+          to_constant_expr(simplify_expr(actual, empty_namespace)));
+        REQUIRE(actual_int == c.second);
+      }
+    }
+  }
 }

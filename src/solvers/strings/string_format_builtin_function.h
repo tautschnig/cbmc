@@ -126,7 +126,7 @@ exprt length_of_decimal_int(
   const typet &length_type,
   const unsigned long base);
 
-exprt length_for_format_specifier(
+std::optional<exprt> length_for_format_specifier(
   const format_specifiert &fs,
   const array_string_exprt &arg,
   const typet &index_type,

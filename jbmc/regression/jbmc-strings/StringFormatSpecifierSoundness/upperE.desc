@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.upperE --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+%E used to recurse without bound when computing the length; the
+result is not modelled, so the assertion cannot be proved.

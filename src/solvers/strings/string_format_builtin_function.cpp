@@ -134,20 +134,32 @@ add_axioms_for_format_specifier(
       res, format_arg_from_string(string_arg, ID_int, array_pool), 0);
     return {res, std::move(return_code.second)};
   case format_specifiert::HEXADECIMAL_INTEGER:
+  {
+    // Java prints a negative value as the two's complement of its own type,
+    // which the serialisation of the argument as a long does not record, so
+    // only a non-negative value determines the result.
+    const exprt arg = format_arg_from_string(string_arg, ID_int, array_pool);
+    const array_string_exprt digits =
+      array_pool.fresh_string(index_type, char_type);
     return_code = generator.add_axioms_for_string_of_int_with_radix(
-      res,
-      format_arg_from_string(string_arg, ID_int, array_pool),
-      from_integer(16, index_type),
-      16);
+      digits, arg, from_integer(16, index_type), 16);
+    const binary_relation_exprt non_negative{
+      arg, ID_ge, from_integer(0, arg.type())};
+    return_code.second.existential.push_back(implies_exprt{
+      non_negative,
+      equal_exprt{
+        array_pool.get_or_create_length(res),
+        array_pool.get_or_create_length(digits)}});
+    const symbol_exprt qvar =
+      generator.fresh_symbol("QA_format_hex", index_type);
+    return_code.second.universal.emplace_back(
+      qvar,
+      zero_if_negative(array_pool.get_or_create_length(digits)),
+      implies_exprt{non_negative, equal_exprt{res[qvar], digits[qvar]}},
+      generator.ns,
+      message_handler);
     return {res, std::move(return_code.second)};
-  case format_specifiert::SCIENTIFIC:
-    return_code = generator.add_axioms_from_float_scientific_notation(
-      res, format_arg_from_string(string_arg, ID_float, array_pool));
-    return {res, std::move(return_code.second)};
-  case format_specifiert::DECIMAL_FLOAT:
-    return_code = generator.add_axioms_for_string_of_float(
-      res, format_arg_from_string(string_arg, ID_float, array_pool));
-    return {res, std::move(return_code.second)};
+  }
   case format_specifiert::CHARACTER:
   {
     exprt arg_string = format_arg_from_string(string_arg, ID_char, array_pool);
@@ -192,6 +204,7 @@ add_axioms_for_format_specifier(
   case format_specifiert::PERCENT_SIGN:
     return_code = generator.add_axioms_for_constant(res, "%");
     return {res, std::move(return_code.second)};
+  case format_specifiert::HEXADECIMAL_INTEGER_UPPER:
   case format_specifiert::SCIENTIFIC_UPPER:
   case format_specifiert::GENERAL_UPPER:
   case format_specifiert::HEXADECIMAL_FLOAT_UPPER:
@@ -215,6 +228,10 @@ add_axioms_for_format_specifier(
     merge(upper_case_constraints, std::move(format_specifier_result.second));
     return {res, std::move(upper_case_constraints)};
   }
+  case format_specifiert::SCIENTIFIC:
+  case format_specifiert::DECIMAL_FLOAT:
+    /// \todo The Java models pass floating-point arguments truncated to a
+    /// long, so their value is not available here.
   case format_specifiert::OCTAL_INTEGER:
     /// \todo Conversion of octal is not implemented.
   case format_specifiert::GENERAL:
@@ -237,7 +254,7 @@ add_axioms_for_format_specifier(
 }
 
 /// Deserialize an argument for format from \p string.
-/// \p id should be one of: string_expr, int, char, boolean, float.
+/// \p id should be one of: string_expr, int, char, boolean.
 /// The primitive values are expected to all be encoded using 4 characters.
 /// The characters of `string` must be of type `unsignedbv_typet(16)`.
 static exprt format_arg_from_string(
@@ -276,12 +293,6 @@ static exprt format_arg_from_string(
     return if_exprt{is_null(string, array_pool),
                     false_exprt{},
                     typecast_exprt{string[3], bool_typet()}};
-  }
-  if(id == ID_float)
-  {
-    // Deserialize an int and cast to float
-    const exprt as_int = format_arg_from_string(string, ID_int, array_pool);
-    return typecast_exprt{as_int, floatbv_typet{}};
   }
   UNHANDLED_CASE;
 }
@@ -427,8 +438,8 @@ static bool eval_is_null(const std::vector<mp_integer> &string)
 }
 
 /// Return the string to replace the format specifier, as a vector of
-/// characters.
-static std::vector<mp_integer> eval_format_specifier(
+/// characters, or an empty optional if it cannot be computed.
+static std::optional<std::vector<mp_integer>> eval_format_specifier(
   const format_specifiert &fs,
   const std::vector<mp_integer> &arg)
 {
@@ -445,6 +456,10 @@ static std::vector<mp_integer> eval_format_specifier(
     if(eval_is_null(arg))
       return std::vector<mp_integer>{'n', 'u', 'l', 'l'};
     auto upper_case_hex = deserialize_constant_int_arg(arg, 16);
+    // A negative value is printed in the two's complement of a type that the
+    // argument does not record.
+    if(!upper_case_hex.empty() && upper_case_hex[0] == '-')
+      return {};
     // convert to lower case
     return make_range(upper_case_hex).map([](const mp_integer &c) {
       if('A' <= c && c <= 'Z')
@@ -454,14 +469,23 @@ static std::vector<mp_integer> eval_format_specifier(
   }
   case format_specifiert::HEXADECIMAL_INTEGER_UPPER:
   {
-    if(eval_is_null(arg))
-      return std::vector<mp_integer>{'n', 'u', 'l', 'l'};
-    return deserialize_constant_int_arg(arg, 16);
+    format_specifiert fs_lower = fs;
+    fs_lower.conversion = format_specifiert::HEXADECIMAL_INTEGER;
+    auto lower_case = eval_format_specifier(fs_lower, arg);
+    if(!lower_case.has_value())
+      return {};
+    return make_range(*lower_case)
+      .map(
+        [](const mp_integer &c)
+        {
+          if('a' <= c && c <= 'z')
+            return c - 0x20;
+          return c;
+        });
   }
   case format_specifiert::SCIENTIFIC:
-    UNIMPLEMENTED;
   case format_specifiert::DECIMAL_FLOAT:
-    UNIMPLEMENTED;
+    return {};
   case format_specifiert::CHARACTER:
   {
     if(eval_is_null(arg))
@@ -477,7 +501,7 @@ static std::vector<mp_integer> eval_format_specifier(
   case format_specifiert::STRING:
     return arg;
   case format_specifiert::HASHCODE:
-    UNIMPLEMENTED;
+    return {};
   case format_specifiert::LINE_SEPARATOR:
     // TODO: the constant should depend on the system: System.lineSeparator()
     return std::vector<mp_integer>{'\n'};
@@ -495,12 +519,17 @@ static std::vector<mp_integer> eval_format_specifier(
     format_specifiert fs_lower = fs;
     fs_lower.conversion = tolower(fs.conversion);
     auto lower_case = eval_format_specifier(fs_lower, arg);
-    return make_range(lower_case).map([](const mp_integer &c) {
-      // TODO: incomplete
-      if('a' <= c && c <= 'z')
-        return c - 0x20;
-      return c;
-    });
+    if(!lower_case.has_value())
+      return {};
+    return make_range(*lower_case)
+      .map(
+        [](const mp_integer &c)
+        {
+          // TODO: incomplete
+          if('a' <= c && c <= 'z')
+            return c - 0x20;
+          return c;
+        });
   }
   case format_specifiert::OCTAL_INTEGER:
     /// \todo Conversion of octal is not implemented.
@@ -510,7 +539,7 @@ static std::vector<mp_integer> eval_format_specifier(
     /// \todo Conversion of hexadecimal float is not implemented.
   case format_specifiert::DATE_TIME:
     /// \todo Conversion of date-time is not implemented
-    UNIMPLEMENTED;
+    return {};
   }
 
   INVARIANT(false, "format specifier must belong to [bBhHsScCdoxXeEfgGaAtT%n]");
@@ -543,10 +572,13 @@ std::optional<exprt> string_format_builtin_functiont::eval(
           INVARIANT(
             arg_count < inputs.size(),
             "number of format must match specifiers");
-          if(auto arg_value = eval_string(inputs[arg_count++], get_value))
-            evaluated_char_vector = eval_format_specifier(fs, *arg_value);
-          else
+          auto arg_value = eval_string(inputs[arg_count++], get_value);
+          if(!arg_value.has_value())
             return {};
+          auto evaluated = eval_format_specifier(fs, *arg_value);
+          if(!evaluated.has_value())
+            return {};
+          evaluated_char_vector = std::move(*evaluated);
         }
         else
         {
@@ -556,10 +588,13 @@ std::optional<exprt> string_format_builtin_functiont::eval(
             "number of format must match specifiers");
 
           // first argument `args[0]` corresponds to index 1
-          if(auto arg_value = eval_string(inputs[fs.index - 1], get_value))
-            evaluated_char_vector = eval_format_specifier(fs, *arg_value);
-          else
+          auto arg_value = eval_string(inputs[fs.index - 1], get_value);
+          if(!arg_value.has_value())
             return {};
+          auto evaluated = eval_format_specifier(fs, *arg_value);
+          if(!evaluated.has_value())
+            return {};
+          evaluated_char_vector = std::move(*evaluated);
         }
         std::move(
           evaluated_char_vector.begin(),
@@ -605,46 +640,10 @@ string_constraintst string_format_builtin_functiont::constraints(
   return result_constraint_pair.second;
 }
 
-/// Return an new expression representing the length of the representation of
-/// `integer`.
-/// If max_length is less than the length of `integer`, the returned
-/// expression will represent max_length.
-/// \param pos_integer: positive (but not necessarily constant) integer for
-///                     which to compute the length of the decimal
-///                     representation.
-/// \param max_length: max length of the decimal representation. If `max_length`
-///                    is less than the length of `integer`, the returned
-///                    expression will represent `max_length`. Choosing a value
-///                    greater than the actual max possible length is harmless
-///                    but will result in useless constraints.
-/// \param length_type: type to give to the created expression
-/// \param radix: radix of the output representation.
-/// \return: An `exprt` representing the length of `integer`
-static exprt length_of_positive_decimal_int(
-  const exprt &pos_integer,
-  int max_length,
-  const typet &length_type,
-  const unsigned long radix)
-{
-  if(max_length <= 1)
-    return from_integer(1, length_type);
-
-  // If the current value doesn't fit in a smaller size representation, we have
-  // found the number of digits needed to represent that value.
-  const mp_integer max_value_for_smaller_size =
-    pow((mp_integer)radix, max_length - 1);
-  return if_exprt{
-    less_than(
-      pos_integer,
-      from_integer(max_value_for_smaller_size, pos_integer.type())),
-    length_of_positive_decimal_int(
-      pos_integer, max_length - 1, length_type, radix),
-    from_integer(max_length, length_type)};
-}
-
-/// Compute the length of the decimal representation of an integer.
-/// \param integer: (not necessarily constant) integer for which to compute the
-///                 length of the decimal representation.
+/// Compute the length of the representation of an integer in a radix, as
+/// printed by Java's Long.toString(long, int).
+/// \param integer: (not necessarily constant) signed integer for which to
+///   compute the length of the representation.
 /// \param length_type: type to give to the created expression
 /// \param radix: radix of the output representation.
 /// \return: An `exprt` representing the length of `integer`
@@ -653,35 +652,53 @@ exprt length_of_decimal_int(
   const typet &length_type,
   const unsigned long radix)
 {
-  int max_pos_int_length;
-  if(length_type == signedbv_typet(32))
+  PRECONDITION(integer.type().id() == ID_signedbv);
+  PRECONDITION(radix >= 2);
+  const std::size_t width = to_signedbv_type(integer.type()).get_width();
+  const mp_integer max_value = power(2, width - 1) - 1;
+
+  // The number of digits of the largest magnitude, 2^(width-1).
+  std::size_t max_digits = 0;
+  for(mp_integer m = max_value + 1; m > 0; m /= radix)
+    ++max_digits;
+
+  // Without a sign, x has at most k digits iff x < radix^k, and a negative
+  // x has at most k digits after the sign iff x > -radix^k. Comparing with
+  // the bound rather than negating x avoids overflow for the minimum.
+  exprt positive_length = from_integer(max_digits, length_type);
+  exprt negative_length = from_integer(max_digits + 1, length_type);
+  for(std::size_t k = max_digits - 1; k >= 1; --k)
   {
-    if(radix == 10)
-      max_pos_int_length = 10;
-    else if(radix == 16)
-      max_pos_int_length = 8;
+    const mp_integer bound = power(radix, k);
+    if(bound <= max_value)
+    {
+      positive_length = if_exprt{
+        binary_relation_exprt{
+          integer, ID_lt, from_integer(bound, integer.type())},
+        from_integer(k, length_type),
+        std::move(positive_length)};
+    }
     else
-      UNIMPLEMENTED;
-  }
-  else
-  {
-    // We only handle 32-bit signed integer type for now.
-    UNIMPLEMENTED;
+      positive_length = from_integer(k, length_type);
+    negative_length = if_exprt{
+      binary_relation_exprt{
+        integer, ID_gt, from_integer(-bound, integer.type())},
+      from_integer(k + 1, length_type),
+      std::move(negative_length)};
   }
 
   return if_exprt{
-    greater_or_equal_to(integer, from_integer(0, integer.type())),
-    length_of_positive_decimal_int(
-      integer, max_pos_int_length, length_type, radix),
-    plus_exprt{
-      length_of_positive_decimal_int(
-        unary_minus_exprt{integer}, max_pos_int_length, length_type, radix),
-      from_integer(1, length_type)}};
+    binary_relation_exprt{integer, ID_ge, from_integer(0, integer.type())},
+    std::move(positive_length),
+    std::move(negative_length)};
 }
 
 /// Return an expression representing the length of the format specifier
 /// Does not assume that arg is constant.
-exprt length_for_format_specifier(
+/// \return the length, or an empty optional for specifiers whose length has
+///   no formula here; the length of the result is then only constrained by
+///   the content axioms of the format function.
+std::optional<exprt> length_for_format_specifier(
   const format_specifiert &fs,
   const array_string_exprt &arg,
   const typet &index_type,
@@ -700,13 +717,20 @@ exprt length_for_format_specifier(
   case format_specifiert::HEXADECIMAL_INTEGER:
   case format_specifiert::HEXADECIMAL_INTEGER_UPPER:
   {
-    return length_of_decimal_int(
-      format_arg_from_string(arg, ID_int, array_pool), index_type, 16);
+    // The length of a negative value is not determined, see
+    // add_axioms_for_format_specifier.
+    const exprt integer = format_arg_from_string(arg, ID_int, array_pool);
+    const typet &char_type =
+      to_type_with_subtype(arg.content().type()).subtype();
+    return if_exprt{
+      binary_relation_exprt{integer, ID_ge, from_integer(0, integer.type())},
+      length_of_decimal_int(integer, index_type, 16),
+      array_pool.get_or_create_length(
+        array_pool.fresh_string(index_type, char_type))};
   }
   case format_specifiert::SCIENTIFIC:
-    UNIMPLEMENTED;
   case format_specifiert::DECIMAL_FLOAT:
-    UNIMPLEMENTED;
+    return {};
   case format_specifiert::CHARACTER:
   case format_specifiert::CHARACTER_UPPER:
   {
@@ -734,7 +758,7 @@ exprt length_for_format_specifier(
     return array_pool.get_or_create_length(string_expr);
   }
   case format_specifiert::HASHCODE:
-    UNIMPLEMENTED;
+    return {};
   case format_specifiert::LINE_SEPARATOR:
     // TODO: the constant should depend on the system: System.lineSeparator()
     return from_integer(1, index_type);
@@ -746,7 +770,10 @@ exprt length_for_format_specifier(
   case format_specifiert::DATE_TIME_UPPER:
   case format_specifiert::HASHCODE_UPPER:
   {
-    return length_for_format_specifier(fs, arg, index_type, array_pool);
+    // Upper-casing preserves the length.
+    format_specifiert fs_lower = fs;
+    fs_lower.conversion = tolower(fs.conversion);
+    return length_for_format_specifier(fs_lower, arg, index_type, array_pool);
   }
   case format_specifiert::OCTAL_INTEGER:
     /// \todo Conversion of octal is not implemented.
@@ -756,8 +783,9 @@ exprt length_for_format_specifier(
     /// \todo Conversion of hexadecimal float is not implemented.
   case format_specifiert::DATE_TIME:
     /// \todo Conversion of date-time is not implemented
-    // For all these unimplemented cases we return a non-deterministic string
-    UNIMPLEMENTED;
+    // For all these unimplemented cases the content is a non-deterministic
+    // string.
+    return {};
   }
 
   INVARIANT(false, "format specifier must belong to [bBhHsScCdoxXeEfgGaAtT%n]");
@@ -803,8 +831,15 @@ exprt string_format_builtin_functiont::length_constraint() const
           arg = inputs[fs.index - 1];
         }
       }
-      intermediary_string_lengths.push_back(
-        length_for_format_specifier(fs, arg, index_type, array_pool));
+      std::optional<exprt> length =
+        length_for_format_specifier(fs, arg, index_type, array_pool);
+      if(!length.has_value())
+      {
+        // Leave the length of the result to the content axioms.
+        return equal_exprt{
+          return_code, from_integer(0, get_return_code_type())};
+      }
+      intermediary_string_lengths.push_back(std::move(*length));
     }
     else
     {
