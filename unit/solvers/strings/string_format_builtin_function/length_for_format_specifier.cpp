@@ -60,12 +60,43 @@ SCENARIO(
         {'b', 'a', 'r'}, char_type, length_type, pointer_type, array_pool);
       format_specifiert fs{0, "", 0, 0, false, format_specifiert::STRING};
       const exprt actual =
-        length_for_format_specifier(fs, arg, length_type, array_pool);
+        length_for_format_specifier(fs, arg, length_type, array_pool).value();
       THEN("length constraint represents 3")
       {
         int to_int = *numeric_cast<int>(to_constant_expr(actual));
         REQUIRE(to_int == 3);
       }
+    }
+  }
+
+  WHEN("format specifier = %S")
+  {
+    WHEN("arg = serialized(\"bar\")")
+    {
+      array_string_exprt arg = from_char_vector(
+        {'b', 'a', 'r'}, char_type, length_type, pointer_type, array_pool);
+      format_specifiert fs{0, "", 0, 0, false, format_specifiert::STRING_UPPER};
+      const exprt actual =
+        length_for_format_specifier(fs, arg, length_type, array_pool).value();
+      THEN("length constraint represents 3")
+      {
+        int to_int = *numeric_cast<int>(to_constant_expr(actual));
+        REQUIRE(to_int == 3);
+      }
+    }
+  }
+
+  WHEN("format specifier = %E")
+  {
+    const array_string_exprt arg = from_char_vector(
+      {0, 0, 0, 12}, char_type, length_type, pointer_type, array_pool);
+    format_specifiert fs{
+      0, "", 0, 0, false, format_specifiert::SCIENTIFIC_UPPER};
+    THEN("there is no length formula")
+    {
+      REQUIRE_FALSE(
+        length_for_format_specifier(fs, arg, length_type, array_pool)
+          .has_value());
     }
   }
 
@@ -78,7 +109,7 @@ SCENARIO(
       format_specifiert fs{
         0, "", 0, 0, false, format_specifiert::DECIMAL_INTEGER};
       const exprt actual =
-        length_for_format_specifier(fs, arg, length_type, array_pool);
+        length_for_format_specifier(fs, arg, length_type, array_pool).value();
       const exprt simpl_actual = simplify_expr(actual, ns);
       THEN("length constraint represents 2")
       {
@@ -101,7 +132,7 @@ SCENARIO(
       format_specifiert fs{
         0, "", 0, 0, false, format_specifiert::DECIMAL_INTEGER};
       const exprt actual =
-        length_for_format_specifier(fs, arg, length_type, array_pool);
+        length_for_format_specifier(fs, arg, length_type, array_pool).value();
       const exprt simpl_actual = simplify_expr(actual, ns);
       THEN("length constraint represents 2")
       {
@@ -124,7 +155,7 @@ SCENARIO(
       format_specifiert fs{
         0, "", 0, 0, false, format_specifiert::DECIMAL_INTEGER};
       const exprt actual =
-        length_for_format_specifier(fs, arg, length_type, array_pool);
+        length_for_format_specifier(fs, arg, length_type, array_pool).value();
       const exprt simpl_actual = simplify_expr(actual, ns);
       THEN("length constraint represents 11")
       {
@@ -143,7 +174,7 @@ SCENARIO(
       format_specifiert fs{
         0, "", 0, 0, false, format_specifiert::DECIMAL_INTEGER};
       const exprt actual =
-        length_for_format_specifier(fs, arg, length_type, array_pool);
+        length_for_format_specifier(fs, arg, length_type, array_pool).value();
       const exprt simpl_actual = simplify_expr(actual, ns);
       THEN("length constraint represents 4")
       {
@@ -162,7 +193,7 @@ SCENARIO(
       format_specifiert fs{
         0, "", 0, 0, false, format_specifiert::HEXADECIMAL_INTEGER};
       const exprt actual =
-        length_for_format_specifier(fs, arg, length_type, array_pool);
+        length_for_format_specifier(fs, arg, length_type, array_pool).value();
       const exprt simpl_actual = simplify_expr(actual, ns);
       THEN("length constraint represents 1")
       {
@@ -180,7 +211,7 @@ SCENARIO(
         {0, 0, 0, 'c'}, char_type, length_type, pointer_type, array_pool);
       format_specifiert fs{0, "", 0, 0, false, format_specifiert::CHARACTER};
       const exprt actual =
-        length_for_format_specifier(fs, arg, length_type, array_pool);
+        length_for_format_specifier(fs, arg, length_type, array_pool).value();
       const exprt simpl_actual = simplify_expr(actual, ns);
       THEN("length constraint represents 1")
       {
@@ -198,7 +229,7 @@ SCENARIO(
         {'n', 'u', 'l', 'l'}, char_type, length_type, pointer_type, array_pool);
       format_specifiert fs{0, "", 0, 0, false, format_specifiert::CHARACTER};
       const exprt actual =
-        length_for_format_specifier(fs, arg, length_type, array_pool);
+        length_for_format_specifier(fs, arg, length_type, array_pool).value();
       const exprt simpl_actual = simplify_expr(actual, ns);
       THEN("length constraint represents 4")
       {
@@ -216,7 +247,7 @@ SCENARIO(
         {0, 0, 0, 0}, char_type, length_type, pointer_type, array_pool);
       format_specifiert fs{0, "", 0, 0, false, format_specifiert::BOOLEAN};
       const exprt actual =
-        length_for_format_specifier(fs, arg, length_type, array_pool);
+        length_for_format_specifier(fs, arg, length_type, array_pool).value();
       const exprt simpl_actual = simplify_expr(actual, ns);
       THEN("length constraint represents 5")
       {
@@ -231,7 +262,7 @@ SCENARIO(
         {0, 0, 0, 1}, char_type, length_type, pointer_type, array_pool);
       format_specifiert fs{0, "", 0, 0, false, format_specifiert::BOOLEAN};
       const exprt actual =
-        length_for_format_specifier(fs, arg, length_type, array_pool);
+        length_for_format_specifier(fs, arg, length_type, array_pool).value();
       const exprt simpl_actual = simplify_expr(actual, ns);
       THEN("length constraint represents 4")
       {
@@ -246,7 +277,7 @@ SCENARIO(
         {'n', 'u', 'l', 'l'}, char_type, length_type, pointer_type, array_pool);
       format_specifiert fs{0, "", 0, 0, false, format_specifiert::BOOLEAN};
       const exprt actual =
-        length_for_format_specifier(fs, arg, length_type, array_pool);
+        length_for_format_specifier(fs, arg, length_type, array_pool).value();
       const exprt simpl_actual = simplify_expr(actual, ns);
       THEN(
         "length constraint represents 5 (because it should 'false', not 'null'")
