@@ -1,17 +1,4 @@
 /*
- * STATUS: NOT ESTABLISHED.  This harness is written and reaches
- * ena_tx_queue_release_bufs, but no configuration tried makes it non-vacuous:
- * the vacuity witness "a stop can free a packet" does not FAIL, i.e. the
- * instrumented rte_pktmbuf_free is not observed to run on the watched mbuf.
- * The call in ena_tx_queue_release_bufs is to the `static inline`
- * rte_pktmbuf_free in rte_mbuf.h; the cleanup harness binds an identical
- * extern definition and is non-vacuous, so the two differ in a way not yet
- * pinned down (the pktmbuf_read separate-TU forwarding pattern is the likely
- * fix).  Do NOT read the three SUCCESS obligations here as proven: by the
- * vacuity witness they are about a release that frees nothing.  Left in the
- * tree as the starting point, not as a result.
- */
-/*
  * The third operation of the induction: ena_queue_stop (teardown).
  *
  * This is the operation F12/F14 reach -- xmit's error path triggers a reset,
@@ -25,15 +12,22 @@
  * ena_com_destroy_io_queue (device queue teardown) and then
  * ena_tx_queue_release_bufs, which frees every slot's mbuf.  The obligations:
  *
- *   FREE_ONCE         each in-flight mbuf is released exactly once
- *   STOP_NO_DANGLING  no slot still refers to a released mbuf afterwards
- *   STOP_UNCONFIGURED a stopped queue is no longer usable: configured is
- *                     cleared or the handles are gone, so a later xmit cannot
- *                     run against a torn-down queue
+ *   FREE_ONCE                    no mbuf is released twice
+ *   STOP_FREES_EXACTLY_INFLIGHT  an mbuf is released iff it was in flight
+ *   STOP_FREE_COUNT              releases == in-flight count
+ *   STOP_NO_DANGLING             no slot refers to an mbuf afterwards
+ *   STOP_RESTARTABLE             post-state is what ena_queue_start needs
  *
- * Device trust: ena_com_destroy_io_queue frees DMA memory and touches no slot;
- * it is left as real code.  The mbuf free is instrumented, as in the cleanup
- * harness, to observe the discipline.
+ * "In flight" is "occupies a slot": under INV_FREE_LIST the occupied slots
+ * are exactly the in-flight packets.  F12 is precisely a state that breaks
+ * that (a slot keeps an mbuf the application was told was not sent), so
+ * F12/F14 shows up here as the pre-state obligation INV_FREE_LIST, which the
+ * xmit step must re-establish -- and does only under the F14 device
+ * precondition.
+ *
+ * Scope: ena_tx_queue_release_bufs only.  ena_com_destroy_io_queue writes no
+ * tx_buffer_info slot; it is not part of this step.  The mbuf free is
+ * instrumented to observe the discipline.
  */
 #include "../dpdk/drivers/net/ena/ena_ethdev.c"
 #include "ena_inv.h"
@@ -49,6 +43,7 @@ static int nd_int(void) { int v; return v; }
 /* ghost: follow one arbitrary mbuf */
 static struct rte_mbuf *g_watch;
 static unsigned g_free_calls;
+static unsigned g_total_frees;
 uint16_t g_probe;
 
 static struct ena_adapter adapter;
@@ -67,10 +62,8 @@ void rte_pktmbuf_free(struct rte_mbuf *m)
     "FREE_ONCE: no mbuf is released twice");
   if(m == g_watch)
     g_free_calls++;
+  g_total_frees++;
 }
-
-/* ena_com_destroy_io_queue reaches the DMA free macros; model them as no-ops
- * on memory this harness does not track. */
 
 
 int rte_log(uint32_t level, uint32_t logtype, const char *format, ...)
@@ -78,11 +71,6 @@ int rte_log(uint32_t level, uint32_t logtype, const char *format, ...)
   (void)level;
   (void)logtype;
   (void)format;
-#if VACUITY_CHECK
-  /* must FAIL: a stop can free the watched mbuf, so the obligations are not
-   * about a no-op teardown */
-  __CPROVER_assert(g_free_calls == 0, "vacuity witness: a stop can free a packet");
-#endif
   return 0;
 }
 int rte_log_register_type_and_pick_level(const char *name, uint32_t level_def)
@@ -138,35 +126,57 @@ int main(void)
   }
 
   g_probe = nd_u16() % RING_SIZE;
-  g_watch = &pool_mbuf[nd_u16() % RING_SIZE];
+  const uint16_t w = nd_u16() % RING_SIZE;
+  g_watch = &pool_mbuf[w];
   g_free_calls = 0;
+  g_total_frees = 0;
 
   /* entry state: a started, invariant-satisfying queue */
   __CPROVER_assume(INV_STARTED(&ring));
   __CPROVER_assume(INV_FREE_LIST_LOCAL(&ring));
 
+  const bool watched_in_flight = pool_tbi[w].mbuf != NULL;
+  const uint16_t inflight =
+    (uint16_t)((ring.next_to_use - ring.next_to_clean) & ring.size_mask);
+
   /* ---- one teardown operation ----
    * The mbuf-freeing half of ena_queue_stop.  ena_com_destroy_io_queue is the
-   * other half (it frees the DMA rings and sends the device a destroy-queue
-   * admin command); it touches no tx_buffer_info slot, so it is out of scope
-   * for the ownership discipline and modelling its admin path would add the
-   * untrusted-device machinery of harness_llq_path.c for no obligation. */
+   * other half: it frees the DMA rings and sends a destroy-queue admin
+   * command, and writes no tx_buffer_info slot, so the ownership obligations
+   * below do not depend on it. */
   ena_tx_queue_release_bufs(&ring);
 
   /* ---- obligations ---- */
   __CPROVER_assert(
-    g_free_calls == 0 ||
-      (g_probe >= RING_SIZE || ring.tx_buffer_info[g_probe].mbuf != g_watch),
-    "STOP_NO_DANGLING: no slot refers to a released mbuf after stop");
-
+    g_free_calls == (watched_in_flight ? 1u : 0u),
+    "STOP_FREES_EXACTLY_INFLIGHT: an mbuf is released iff it was in flight, "
+    "and then exactly once");
+  __CPROVER_assert(
+    g_total_frees == inflight,
+    "STOP_FREE_COUNT: the number of releases equals the in-flight count");
+  __CPROVER_assert(
+    ring.tx_buffer_info[g_probe].mbuf == NULL,
+    "STOP_NO_DANGLING: no slot refers to an mbuf after stop");
+  /* restart: ena_queue_start resets next_to_use/next_to_clean and
+   * ena_create_io_queue rewrites empty_tx_reqs, so what the start base case
+   * needs beyond that is a configured ring with every slot empty */
   {
-    bool any = false;
+    bool empty = true;
     for(i = 0; i < RING_SIZE; i++)
       if(ring.tx_buffer_info[i].mbuf != NULL)
-        any = true;
+        empty = false;
     __CPROVER_assert(
-      !any, "STOP_ALL_RELEASED: no slot still owns an mbuf after stop");
+      empty && ring.configured == 1 && ring.tx_buffer_info != NULL &&
+        ring.empty_tx_reqs != NULL && ring.push_buf_intermediate_buf != NULL &&
+        INV_GEOMETRY(&ring),
+      "STOP_RESTARTABLE: the post-state is a configured ring with no slot "
+      "occupied, which is what ena_queue_start starts from");
   }
 
+#if VACUITY_CHECK
+  /* both must FAIL */
+  __CPROVER_assert(g_free_calls == 0, "vacuity witness: a stop can free the watched packet");
+  __CPROVER_assert(inflight < 2, "vacuity witness: a stop can face two in-flight packets");
+#endif
   return 0;
 }
