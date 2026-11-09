@@ -9,17 +9,19 @@ Author: Romain Brenguier, Joel Allred
 /// \file
 ///  Built-in function for String.format
 
-#include <iterator>
-#include <string>
-
-#include "format_specifier.h"
 #include "string_format_builtin_function.h"
-#include "string_refinement_util.h"
 
 #include <util/bitvector_expr.h>
 #include <util/message.h>
 #include <util/range.h>
 #include <util/simplify_expr.h>
+#include <util/symbol_table.h>
+
+#include "format_specifier.h"
+#include "string_refinement_util.h"
+
+#include <iterator>
+#include <string>
 
 static exprt format_arg_from_string(
   const array_string_exprt &string,
@@ -145,6 +147,12 @@ add_axioms_for_format_specifier(
       digits, arg, from_integer(16, index_type), 16);
     const binary_relation_exprt non_negative{
       arg, ID_ge, from_integer(0, arg.type())};
+    if(!simplify_expr(non_negative, generator.ns).is_true())
+    {
+      generator.approximation_warning(
+        "String.format",
+        "is not modelled for the format specifier %x of a negative value");
+    }
     return_code.second.existential.push_back(implies_exprt{
       non_negative,
       equal_exprt{
@@ -242,9 +250,10 @@ add_axioms_for_format_specifier(
   {
     /// \todo Conversion of date-time is not implemented
     // For all these unimplemented cases we return a non-deterministic string
-    messaget message{message_handler};
-    message.warning() << "unimplemented format specifier: " << fs.conversion
-                      << message.eom;
+    generator.approximation_warning(
+      "String.format",
+      std::string{"is not modelled for the format specifier %"} +
+        fs.conversion);
     return {array_pool.fresh_string(index_type, char_type), {}};
   }
   }
@@ -627,7 +636,11 @@ string_constraintst string_format_builtin_functiont::constraints(
 {
   // When `format_string` was not set, leave the result non-deterministic
   if(!format_string.has_value())
+  {
+    generator.approximation_warning(
+      "String.format", "is only modelled for a constant format string");
     return {};
+  }
 
   auto result_constraint_pair = add_axioms_for_format(
     generator, result, format_string.value(), inputs, message_handler);
@@ -722,8 +735,13 @@ std::optional<exprt> length_for_format_specifier(
     const exprt integer = format_arg_from_string(arg, ID_int, array_pool);
     const typet &char_type =
       to_type_with_subtype(arg.content().type()).subtype();
-    return if_exprt{
+    const exprt non_negative = simplify_expr(
       binary_relation_exprt{integer, ID_ge, from_integer(0, integer.type())},
+      namespacet{symbol_tablet{}});
+    if(non_negative.is_true())
+      return length_of_decimal_int(integer, index_type, 16);
+    return if_exprt{
+      non_negative,
       length_of_decimal_int(integer, index_type, 16),
       array_pool.get_or_create_length(
         array_pool.fresh_string(index_type, char_type))};
@@ -789,6 +807,62 @@ std::optional<exprt> length_for_format_specifier(
   }
 
   INVARIANT(false, "format specifier must belong to [bBhHsScCdoxXeEfgGaAtT%n]");
+}
+
+bool string_format_builtin_functiont::length_is_exact() const
+{
+  if(!format_string.has_value())
+    return false;
+  std::size_t arg_count = 0;
+  for(const format_elementt &fe : parse_format_string(format_string.value()))
+  {
+    if(!fe.is_format_specifier())
+      continue;
+    const format_specifiert &fs = fe.get_format_specifier();
+    if(
+      fs.conversion == format_specifiert::PERCENT_SIGN ||
+      fs.conversion == format_specifiert::LINE_SEPARATOR)
+    {
+      continue;
+    }
+    const std::size_t index =
+      fs.index == -1 ? arg_count++ : static_cast<std::size_t>(fs.index - 1);
+    if(index >= inputs.size())
+      return false;
+    switch(fs.conversion)
+    {
+    case format_specifiert::HEXADECIMAL_INTEGER:
+    case format_specifiert::HEXADECIMAL_INTEGER_UPPER:
+    {
+      // Open for a negative value, see length_for_format_specifier.
+      const exprt integer =
+        format_arg_from_string(inputs[index], ID_int, array_pool);
+      const exprt non_negative = simplify_expr(
+        binary_relation_exprt{integer, ID_ge, from_integer(0, integer.type())},
+        namespacet{symbol_tablet{}});
+      if(!non_negative.is_true())
+        return false;
+      break;
+    }
+    case format_specifiert::SCIENTIFIC:
+    case format_specifiert::SCIENTIFIC_UPPER:
+    case format_specifiert::DECIMAL_FLOAT:
+    case format_specifiert::HASHCODE:
+    case format_specifiert::HASHCODE_UPPER:
+    case format_specifiert::OCTAL_INTEGER:
+    case format_specifiert::GENERAL:
+    case format_specifiert::GENERAL_UPPER:
+    case format_specifiert::HEXADECIMAL_FLOAT:
+    case format_specifiert::HEXADECIMAL_FLOAT_UPPER:
+    case format_specifiert::DATE_TIME:
+    case format_specifiert::DATE_TIME_UPPER:
+      // No length formula.
+      return false;
+    default:
+      break;
+    }
+  }
+  return true;
 }
 
 exprt string_format_builtin_functiont::length_constraint() const

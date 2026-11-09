@@ -438,6 +438,13 @@ string_constraintst string_of_int_builtin_functiont::constraints(
   return pair.second;
 }
 
+bool string_of_int_builtin_functiont::length_is_exact() const
+{
+  const auto radix_value = numeric_cast<unsigned long>(radix);
+  return radix_value.has_value() && *radix_value >= 2 && *radix_value <= 36 &&
+         arg.type().id() == ID_signedbv;
+}
+
 exprt string_of_int_builtin_functiont::length_constraint() const
 {
   const auto radix_value = numeric_cast<unsigned long>(radix);

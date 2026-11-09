@@ -33,6 +33,8 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 
 #include <functional>
 #include <limits>
+#include <set>
+#include <string>
 
 class function_application_exprt;
 
@@ -74,8 +76,15 @@ public:
     const exprt &return_code,
     const function_application_exprt &expr);
 
+  /// Warn that the axioms for \p function over-approximate its result, so
+  /// that a counterexample may be spurious: \p reason says where. Each
+  /// warning is given once.
+  void
+  approximation_warning(const std::string &function, const std::string &reason);
+
 private:
   message_handlert &message_handler;
+  std::set<std::pair<std::string, std::string>> approximation_warnings;
 
   exprt associate_array_to_pointer(
     const exprt &return_code,

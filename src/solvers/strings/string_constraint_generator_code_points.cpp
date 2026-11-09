@@ -204,6 +204,7 @@ string_constraint_generatort::add_axioms_for_code_point_count(
   constraints.existential.push_back(
     binary_relation_exprt(result, ID_ge, minimum));
 
+  approximation_warning("codePointCount", "is only bounded");
   return {result, constraints};
 }
 
@@ -231,5 +232,6 @@ string_constraint_generatort::add_axioms_for_offset_by_code_point(
   constraints.existential.push_back(
     binary_relation_exprt(result, ID_ge, minimum));
 
+  approximation_warning("offsetByCodePoints", "is only bounded");
   return {result, constraints};
 }

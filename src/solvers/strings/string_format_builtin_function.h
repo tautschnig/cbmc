@@ -102,6 +102,8 @@ public:
 
   exprt length_constraint() const override;
 
+  bool length_is_exact() const override;
+
   /// In principle this function could return true, because the content of the
   /// string sometimes needs to be propagated.
   /// This is the case for methods under test that have a test on the length of

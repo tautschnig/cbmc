@@ -21,6 +21,7 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 #include <util/deprecate.h>
 #include <util/interval_constraint.h>
 #include <util/mathematical_expr.h>
+#include <util/message.h>
 #include <util/simplify_expr.h>
 #include <util/ssa_expr.h>
 #include <util/string_constant.h>
@@ -36,6 +37,17 @@ string_constraint_generatort::string_constraint_generatort(
   message_handlert &message_handler)
   : array_pool(fresh_symbol), ns(ns), message_handler(message_handler)
 {
+}
+
+void string_constraint_generatort::approximation_warning(
+  const std::string &function,
+  const std::string &reason)
+{
+  if(!approximation_warnings.emplace(function, reason).second)
+    return;
+  messaget log{message_handler};
+  log.warning() << "string refinement: " << function << ' ' << reason
+                << ", so a counterexample may be spurious" << messaget::eom;
 }
 
 exprt sum_overflows(const plus_exprt &sum)
@@ -316,6 +328,9 @@ string_constraint_generatort::add_axioms_for_function_application(
           return {from_integer(*decided ? 1 : 0, expr.type()), {}};
       }
     }
+    approximation_warning(
+      "regular expression matching",
+      "is only modelled for constant supported patterns and subjects");
     return {expr, {}};
   }
   else if(
@@ -347,6 +362,9 @@ string_constraint_generatort::add_axioms_for_function_application(
         }
       }
     }
+    approximation_warning(
+      "regular expression search positions",
+      "are only modelled for constant supported patterns and subjects");
     return {expr, {}};
   }
   else if(id == ID_cprover_string_re_sub_func)
@@ -375,6 +393,9 @@ string_constraint_generatort::add_axioms_for_function_application(
       }
     }
     // Sound nondet: the result string is left unconstrained.
+    approximation_warning(
+      "re.sub",
+      "is only modelled for constant supported patterns and arguments");
     return {from_integer(0, expr.type()), {}};
   }
   else if(
@@ -389,6 +410,7 @@ string_constraint_generatort::add_axioms_for_function_application(
     // sound nondet result with no axioms today; real axioms
     // will be added in Phase 3's follow-up PRs when the
     // frontend migrates the call-sites one at a time.
+    approximation_warning(id2string(id), "is not modelled");
     return {expr, {}};
   }
   else if(id == ID_cprover_string_index_of_func)

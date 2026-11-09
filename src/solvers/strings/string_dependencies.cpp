@@ -416,7 +416,16 @@ string_constraintst string_dependenciest::add_constraints(
       node_constraints = builtin.data->constraints(generator, message_handler);
     }
     else
+    {
       node_constraints.existential.push_back(node.data->length_constraint());
+      if(!node.data->length_is_exact())
+      {
+        generator.approximation_warning(
+          node.data->name(),
+          "is only modelled for some arguments when only the length of its "
+          "result is used");
+      }
+    }
     if(!node.guard.is_true())
     {
       for(auto &existential : node_constraints.existential)

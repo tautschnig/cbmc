@@ -107,6 +107,13 @@ public:
   /// the function call.
   virtual exprt length_constraint() const = 0;
 
+  /// Whether length_constraint() determines the length of the result, where
+  /// the function has one.
+  virtual bool length_is_exact() const
+  {
+    return true;
+  }
+
   exprt return_code;
 
   /// Tells whether the builtin function can be a testing function, that is a
@@ -390,6 +397,8 @@ public:
     message_handlert &message_handler) const override;
 
   exprt length_constraint() const override;
+
+  bool length_is_exact() const override;
 
 private:
   exprt radix;
