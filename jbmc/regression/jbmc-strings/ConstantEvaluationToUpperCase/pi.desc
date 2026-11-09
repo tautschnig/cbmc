@@ -1,13 +1,12 @@
 CORE
 Main
 --function Main.pi --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
-^Generated [1-9]\d* VCC\(s\), [1-9]\d* remaining after simplification$
-^EXIT=0$
+^EXIT=10$
 ^SIGNAL=0$
-^VERIFICATION SUCCESSFUL$
+^VERIFICATION FAILED$
+^string refinement: upper-case conversion is only modelled for characters below U\+0100 that convert within that range, so a counterexample may be spurious$
 --
 --
-This is technically wrong (as pi has an uppercase) but our current implementation
-only constant props things within the 0 - 128 range due to the tolower/toupper methods
-currently being used. If this ever changes to be a true all-character case change,
-just modify the test.
+"π".toUpperCase() is "Π" in Java, so the assertion fails. The conversion of
+characters from U+0100 is not modelled, which used to leave them unchanged
+and prove the assertion.

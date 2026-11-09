@@ -1,0 +1,12 @@
+CORE
+main.py
+--function check
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+^string refinement: upper-case conversion is only modelled for ASCII characters, so a counterexample may be spurious$
+--
+--
+"\u00e9".upper() is "\u00c9". Strings are UTF-8 bytes here, and the bytes of
+non-ASCII characters used to be converted as Latin-1 characters or left
+unchanged, which proved the assertion.

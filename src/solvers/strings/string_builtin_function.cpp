@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <vector>
 
 string_transformation_builtin_functiont::
   string_transformation_builtin_functiont(
@@ -217,165 +218,313 @@ exprt string_set_char_builtin_functiont::length_constraint() const
     equal_exprt(return_code, return_value));
 }
 
-static bool eval_is_upper_case(const mp_integer &c)
+/// Whether characters of \p width bits are bytes of UTF-8, rather than
+/// UTF-16 code units.
+static bool is_utf8(std::size_t width)
 {
-  // Characters between 'A' and 'Z' are upper-case
-  // Characters between 0xc0 (latin capital A with grave)
-  // and 0xd6 (latin capital O with diaeresis) are upper-case
-  // Characters between 0xd8 (latin capital O with stroke)
-  // and 0xde (latin capital thorn) are upper-case
-  return ('A' <= c && c <= 'Z') || (0xc0 <= c && c <= 0xd6) ||
-         (0xd8 <= c && c <= 0xde);
+  return width <= 8;
+}
+
+/// Whether the case conversion of character \p c is modelled: for UTF-8
+/// bytes, those of ASCII, as other characters have several bytes; for UTF-16,
+/// those below U+0100 that convert within that range, as the upper case of
+/// µ (U+00B5), ß (U+00DF, "SS") and ÿ (U+00FF) is outside it.
+static bool
+eval_case_is_modelled(const mp_integer &c, std::size_t width, bool to_upper)
+{
+  if(is_utf8(width))
+    return c < 0x80;
+  return c < 0x100 && !(to_upper && (c == 0xb5 || c == 0xdf || c == 0xff));
+}
+
+/// Whether \p c is an upper-case letter of ASCII or, for UTF-16, of
+/// Latin-1.
+static bool eval_is_upper_case(const mp_integer &c, std::size_t width)
+{
+  return ('A' <= c && c <= 'Z') ||
+         (!is_utf8(width) &&
+          ((0xc0 <= c && c <= 0xd6) || (0xd8 <= c && c <= 0xde)));
+}
+
+/// The case conversion of a modelled character \p c.
+static mp_integer
+eval_case_convert(const mp_integer &c, std::size_t width, bool to_upper)
+{
+  if(to_upper)
+    return eval_is_upper_case(c - 0x20, width) ? c - 0x20 : c;
+  return eval_is_upper_case(c, width) ? c + 0x20 : c;
+}
+
+static std::size_t char_width(const array_string_exprt &s)
+{
+  return to_bitvector_type(to_type_with_subtype(s.content().type()).subtype())
+    .get_width();
+}
+
+/// The case conversion of \p input, if all its characters are modelled.
+static std::optional<exprt> eval_case_conversion(
+  const array_string_exprt &input,
+  const array_string_exprt &result,
+  bool to_upper,
+  const std::function<exprt(const exprt &)> &get_value)
+{
+  auto input_opt = eval_string(input, get_value);
+  if(!input_opt)
+    return {};
+  const std::size_t width = char_width(input);
+  for(mp_integer &c : input_opt.value())
+  {
+    if(!eval_case_is_modelled(c, width, to_upper))
+      return {};
+    c = eval_case_convert(c, width, to_upper);
+  }
+  const auto length =
+    from_integer(input_opt.value().size(), result.length_type());
+  const array_typet type(to_type_with_subtype(result.type()).subtype(), length);
+  return make_string(input_opt.value(), type);
 }
 
 std::optional<exprt> string_to_lower_case_builtin_functiont::eval(
   const std::function<exprt(const exprt &)> &get_value) const
 {
-  auto input_opt = eval_string(input, get_value);
-  if(!input_opt)
-    return {};
-  for(mp_integer &c : input_opt.value())
-  {
-    if(eval_is_upper_case(c))
-      c += 0x20;
-  }
-  const auto length =
-    from_integer(input_opt.value().size(), result.length_type());
-  const array_typet type(to_type_with_subtype(result.type()).subtype(), length);
-  return make_string(input_opt.value(), type);
-}
-
-/// Expression which is true for uppercase characters of the Basic Latin and
-/// Latin-1 supplement of unicode.
-static exprt is_upper_case(const exprt &character)
-{
-  const exprt char_A = from_integer('A', character.type());
-  const exprt char_Z = from_integer('Z', character.type());
-  exprt::operandst upper_case;
-  // Characters between 'A' and 'Z' are upper-case
-  upper_case.push_back(and_exprt(
-    binary_relation_exprt(char_A, ID_le, character),
-    binary_relation_exprt(character, ID_le, char_Z)));
-
-  // Characters between 0xc0 (latin capital A with grave)
-  // and 0xd6 (latin capital O with diaeresis) are upper-case
-  upper_case.push_back(and_exprt(
-    binary_relation_exprt(
-      from_integer(0xc0, character.type()), ID_le, character),
-    binary_relation_exprt(
-      character, ID_le, from_integer(0xd6, character.type()))));
-
-  // Characters between 0xd8 (latin capital O with stroke)
-  // and 0xde (latin capital thorn) are upper-case
-  upper_case.push_back(and_exprt(
-    binary_relation_exprt(
-      from_integer(0xd8, character.type()), ID_le, character),
-    binary_relation_exprt(
-      character, ID_le, from_integer(0xde, character.type()))));
-  return disjunction(upper_case);
-}
-
-/// Expression which is true for lower_case characters of the Basic Latin and
-/// Latin-1 supplement of unicode.
-static exprt is_lower_case(const exprt &character)
-{
-  return is_upper_case(
-    minus_exprt(character, from_integer(0x20, character.type())));
-}
-
-/// Set of constraints ensuring `result` corresponds to `input` in which
-/// uppercase characters have been converted to lowercase.
-/// These constraints are:
-///   1. result.length = input.length && return_code = 0
-///   2. forall i < input.length.
-///        result[i] = is_upper_case(input[i]) ? input[i] + diff : input[i]
-///
-/// Where `diff` is the difference between lower case and upper case
-/// characters: `diff = 'a'-'A' = 0x20` and `is_upper_case` is true for the
-/// upper case characters of Basic Latin and Latin-1 supplement of unicode.
-string_constraintst string_to_lower_case_builtin_functiont::constraints(
-  string_constraint_generatort &generator,
-  message_handlert &message_handler) const
-{
-  // \todo for now, only characters in Basic Latin and Latin-1 supplement
-  // are supported (up to 0x100), we should add others using case mapping
-  // information from the UnicodeData file.
-  string_constraintst constraints;
-  constraints.existential.push_back(length_constraint());
-  constraints.universal.push_back([&] {
-    const symbol_exprt idx =
-      generator.fresh_symbol("QA_lower_case", result.length_type());
-    const exprt conditional_convert = [&] {
-      // The difference between upper-case and lower-case for the basic
-      // latin and latin-1 supplement is 0x20.
-      const typet &char_type = to_type_with_subtype(result.type()).subtype();
-      const exprt diff = from_integer(0x20, char_type);
-      const exprt converted =
-        equal_exprt(result[idx], plus_exprt(input[idx], diff));
-      const exprt non_converted = equal_exprt(result[idx], input[idx]);
-      return if_exprt(is_upper_case(input[idx]), converted, non_converted);
-    }();
-    return string_constraintt(
-      idx,
-      zero_if_negative(array_pool.get_or_create_length(result)),
-      conditional_convert,
-      generator.ns,
-      message_handler);
-  }());
-  return constraints;
+  return eval_case_conversion(input, result, false, get_value);
 }
 
 std::optional<exprt> string_to_upper_case_builtin_functiont::eval(
   const std::function<exprt(const exprt &)> &get_value) const
 {
-  auto input_opt = eval_string(input, get_value);
-  if(!input_opt)
-    return {};
-  for(mp_integer &c : input_opt.value())
-  {
-    if(eval_is_upper_case(c - 0x20))
-      c -= 0x20;
-  }
-  const auto length =
-    from_integer(input_opt.value().size(), result.length_type());
-  const array_typet type(to_type_with_subtype(result.type()).subtype(), length);
-  return make_string(input_opt.value(), type);
+  return eval_case_conversion(input, result, true, get_value);
 }
 
-/// Set of constraints ensuring `result` corresponds to `input` in which
-/// lowercase characters of Basic Latin and Latin-1 supplement of unicode
-/// have been converted to uppercase. These constraints are:
-///   1. res.length = str.length && return_code = 0
-///   2. forall i < str.length.
-///        is_lower_case(str[i]) ? res[i] = str[i] - 0x20 : res[i] = str[i]
-///
-/// \param fresh_symbol: generator of fresh symbols
-/// \param message_handler: message handler
-/// \return set of constraints
-string_constraintst string_to_upper_case_builtin_functiont::constraints(
-  symbol_generatort &fresh_symbol,
-  const namespacet &ns,
+static exprt in_range(const exprt &c, unsigned lower, unsigned upper)
+{
+  return and_exprt{
+    binary_relation_exprt{from_integer(lower, c.type()), ID_le, c},
+    binary_relation_exprt{c, ID_le, from_integer(upper, c.type())}};
+}
+
+/// As eval_is_upper_case, for a character expression.
+static exprt is_upper_case(const exprt &c, std::size_t width)
+{
+  if(is_utf8(width))
+    return in_range(c, 'A', 'Z');
+  return or_exprt{
+    in_range(c, 'A', 'Z'), in_range(c, 0xc0, 0xd6), in_range(c, 0xd8, 0xde)};
+}
+
+/// As eval_case_is_modelled, for a character expression.
+static exprt case_is_modelled(const exprt &c, std::size_t width, bool to_upper)
+{
+  if(is_utf8(width))
+    return binary_relation_exprt{c, ID_lt, from_integer(0x80, c.type())};
+  exprt::operandst conjuncts{
+    binary_relation_exprt{c, ID_lt, from_integer(0x100, c.type())}};
+  if(to_upper)
+  {
+    for(const unsigned special : {0xb5, 0xdf, 0xff})
+      conjuncts.push_back(notequal_exprt{c, from_integer(special, c.type())});
+  }
+  return conjunction(conjuncts);
+}
+
+/// As eval_case_convert, for a character expression.
+static exprt case_convert(const exprt &c, std::size_t width, bool to_upper)
+{
+  const exprt diff = from_integer(0x20, c.type());
+  if(to_upper)
+  {
+    // c - 0x20 wraps around for c < 0x20, which is not upper case then.
+    const minus_exprt shifted{c, diff};
+    return if_exprt{is_upper_case(shifted, width), shifted, c};
+  }
+  return if_exprt{is_upper_case(c, width), plus_exprt{c, diff}, c};
+}
+
+/// Whether the case conversion of \p c is a single character, so that it
+/// keeps the positions of the other characters: for UTF-8 bytes and for
+/// upper case, exactly where it is modelled; Java's lower case only maps
+/// U+0130 (I with dot above) to two characters.
+static exprt case_keeps_length(const exprt &c, std::size_t width, bool to_upper)
+{
+  if(is_utf8(width))
+    return case_is_modelled(c, width, to_upper);
+  if(!to_upper)
+    return notequal_exprt{c, from_integer(0x130, c.type())};
+  // The characters of the Basic Multilingual Plane whose upper case has
+  // several characters (SpecialCasing.txt of Unicode).
+  static const std::vector<std::pair<unsigned, unsigned>> several = {
+    {0xdf, 0xdf},     {0x149, 0x149},   {0x1f0, 0x1f0},   {0x390, 0x390},
+    {0x3b0, 0x3b0},   {0x587, 0x587},   {0x1e96, 0x1e9a}, {0x1f50, 0x1f50},
+    {0x1f52, 0x1f52}, {0x1f54, 0x1f54}, {0x1f56, 0x1f56}, {0x1f80, 0x1faf},
+    {0x1fb2, 0x1fb4}, {0x1fb6, 0x1fb7}, {0x1fbc, 0x1fbc}, {0x1fc2, 0x1fc4},
+    {0x1fc6, 0x1fc7}, {0x1fcc, 0x1fcc}, {0x1fd2, 0x1fd3}, {0x1fd6, 0x1fd7},
+    {0x1fe2, 0x1fe4}, {0x1fe6, 0x1fe7}, {0x1ff2, 0x1ff4}, {0x1ff6, 0x1ff7},
+    {0x1ffc, 0x1ffc}, {0xfb00, 0xfb06}, {0xfb13, 0xfb17}};
+  exprt::operandst conjuncts;
+  for(const auto &range : several)
+    conjuncts.push_back(not_exprt{in_range(c, range.first, range.second)});
+  return conjunction(conjuncts);
+}
+
+/// Constraints ensuring that \p result is \p input with its case converted.
+/// The conversion of a character whose conversion keeps the length (see
+/// case_keeps_length) is a single character, of another one is longer. So
+/// with first the position of the first of the others (|input| if there is
+/// none):
+///   1. return_code = 0
+///   2. forall i < first. keeps(input[i]) &&
+///        (is_modelled(input[i]) => result[i] = convert(input[i]))
+///   3. there is none => |result| = |input|
+///   4. there is one => 0 <= first < |input| && !keeps(input[first]) &&
+///        |input| < |result| <= growth * |input|
+///   5. there is one => keeps(input[|input| - 1]) &&
+///        is_modelled(input[|input| - 1]) =>
+///          result[|result| - 1] = convert(input[|input| - 1])
+/// The other characters of the result are unconstrained. (Constraining all
+/// those after the last such character, with a universal axiom at a shift by
+/// |result| - |input|, made the index sets grow without bound.)
+static string_constraintst case_conversion_constraints(
+  const exprt &return_code,
+  const array_string_exprt &result,
+  const array_string_exprt &input,
+  bool to_upper,
+  string_constraint_generatort &generator,
+  message_handlert &message_handler)
+{
+  array_poolt &array_pool = generator.array_pool;
+  const std::size_t width = char_width(input);
+  const typet &index_type = input.length_type();
+  const exprt input_length = array_pool.get_or_create_length(input);
+  const exprt result_length = array_pool.get_or_create_length(result);
+  string_constraintst constraints;
+  constraints.existential.push_back(
+    equal_exprt{return_code, from_integer(0, return_code.type())});
+
+  // All characters are modelled when the input is constant and they are.
+  bool known_modelled = false;
+  const auto length_value = numeric_cast<std::size_t>(input_length);
+  if(
+    length_value.has_value() && input.content().id() == ID_array &&
+    input.content().operands().size() >= *length_value)
+  {
+    const auto &operands = input.content().operands();
+    known_modelled = std::all_of(
+      operands.begin(),
+      operands.begin() + *length_value,
+      [&](const exprt &c)
+      {
+        const auto value = numeric_cast<mp_integer>(c);
+        return value.has_value() &&
+               eval_case_is_modelled(*value, width, to_upper);
+      });
+  }
+  if(!known_modelled)
+  {
+    generator.approximation_warning(
+      to_upper ? "upper-case conversion" : "lower-case conversion",
+      is_utf8(width) ? "is only modelled for ASCII characters"
+                     : "is only modelled for characters below U+0100 that "
+                       "convert within that range");
+  }
+
+  // The conversion of a character at position i of the input to position j
+  // of the result.
+  const auto converted = [&](const exprt &i, const exprt &j)
+  {
+    const exprt c = input[i];
+    return and_exprt{
+      case_keeps_length(c, width, to_upper),
+      implies_exprt{
+        case_is_modelled(c, width, to_upper),
+        equal_exprt{result[j], case_convert(c, width, to_upper)}}};
+  };
+
+  if(known_modelled)
+  {
+    constraints.existential.push_back(equal_exprt{result_length, input_length});
+    const symbol_exprt idx = generator.fresh_symbol(
+      to_upper ? "QA_upper_case" : "QA_lower_case", index_type);
+    constraints.universal.emplace_back(
+      idx,
+      zero_if_negative(input_length),
+      converted(idx, idx),
+      generator.ns,
+      message_handler);
+    return constraints;
+  }
+
+  const symbol_exprt keeps = generator.fresh_symbol("case_conversion_keeps");
+  const symbol_exprt first =
+    generator.fresh_symbol("case_conversion_first", index_type);
+  constraints.existential.push_back(implies_exprt{
+    keeps,
+    and_exprt{
+      equal_exprt{first, input_length},
+      equal_exprt{result_length, input_length}}});
+  constraints.existential.push_back(implies_exprt{
+    not_exprt{keeps},
+    conjunction(
+      {binary_relation_exprt{first, ID_ge, from_integer(0, index_type)},
+       binary_relation_exprt{first, ID_lt, input_length},
+       not_exprt{case_keeps_length(input[first], width, to_upper)},
+       binary_relation_exprt{result_length, ID_gt, input_length},
+       // A character converts to at most three (two for lower case in
+       // Java, and for UTF-8 bytes a byte of a character of up to four
+       // bytes converts to a character of up to four bytes).
+       binary_relation_exprt{
+         result_length,
+         ID_le,
+         mult_exprt{
+           input_length,
+           from_integer(
+             is_utf8(width) ? 4
+             : to_upper     ? 3
+                            : 2,
+             index_type)}}})});
+
+  // The last character of the input, where its conversion keeps the
+  // length, is converted to the last of the result. (The last two made a
+  // test with strings of up to 1000 characters go from 0.4 s to 26 s.)
+  {
+    const exprt one = from_integer(1, index_type);
+    const minus_exprt i{input_length, one};
+    const exprt c = input[i];
+    constraints.existential.push_back(implies_exprt{
+      conjunction(
+        {not_exprt{keeps},
+         case_keeps_length(c, width, to_upper),
+         case_is_modelled(c, width, to_upper)}),
+      equal_exprt{
+        result[minus_exprt{result_length, one}],
+        case_convert(c, width, to_upper)}});
+  }
+
+  const symbol_exprt prefix_idx = generator.fresh_symbol(
+    to_upper ? "QA_upper_case" : "QA_lower_case", index_type);
+  constraints.universal.emplace_back(
+    prefix_idx,
+    zero_if_negative(first),
+    converted(prefix_idx, prefix_idx),
+    generator.ns,
+    message_handler);
+
+  return constraints;
+}
+
+string_constraintst string_to_lower_case_builtin_functiont::constraints(
+  string_constraint_generatort &generator,
   message_handlert &message_handler) const
 {
-  string_constraintst constraints;
-  constraints.existential.push_back(length_constraint());
-  constraints.universal.push_back([&] {
-    const symbol_exprt idx =
-      fresh_symbol("QA_upper_case", result.length_type());
-    const typet &char_type =
-      to_type_with_subtype(input.content().type()).subtype();
-    const exprt converted =
-      minus_exprt(input[idx], from_integer(0x20, char_type));
-    return string_constraintt(
-      idx,
-      zero_if_negative(array_pool.get_or_create_length(result)),
-      equal_exprt(
-        result[idx],
-        if_exprt(is_lower_case(input[idx]), converted, input[idx])),
-      ns,
-      message_handler);
-  }());
-  return constraints;
+  return case_conversion_constraints(
+    return_code, result, input, false, generator, message_handler);
+}
+
+string_constraintst string_to_upper_case_builtin_functiont::constraints(
+  string_constraint_generatort &generator,
+  message_handlert &message_handler) const
+{
+  return case_conversion_constraints(
+    return_code, result, input, true, generator, message_handler);
 }
 
 /// Constructor from arguments of a function application.

@@ -277,14 +277,17 @@ public:
     string_constraint_generatort &generator,
     message_handlert &message_handler) const override;
 
+  /// The length is that of the input only where all characters are
+  /// modelled, which only the constraints express.
   exprt length_constraint() const override
   {
-    return and_exprt(
-      equal_exprt(
-        array_pool.get_or_create_length(result),
-        array_pool.get_or_create_length(input)),
-      equal_exprt(return_code, from_integer(0, return_code.type())));
-  };
+    return equal_exprt(return_code, from_integer(0, return_code.type()));
+  }
+
+  bool length_is_exact() const override
+  {
+    return false;
+  }
 };
 
 /// Converting each lowercase character of Basic Latin and Latin-1 supplement
@@ -323,25 +326,20 @@ public:
   }
 
   string_constraintst constraints(
-    class symbol_generatort &fresh_symbol,
-    const namespacet &ns,
-    message_handlert &message_handler) const;
-
-  string_constraintst constraints(
     string_constraint_generatort &generator,
-    message_handlert &message_handler) const override
-  {
-    return constraints(generator.fresh_symbol, generator.ns, message_handler);
-  };
+    message_handlert &message_handler) const override;
 
+  /// The length is that of the input only where all characters are
+  /// modelled, which only the constraints express.
   exprt length_constraint() const override
   {
-    return and_exprt(
-      equal_exprt(
-        array_pool.get_or_create_length(result),
-        array_pool.get_or_create_length(input)),
-      equal_exprt(return_code, from_integer(0, return_code.type())));
-  };
+    return equal_exprt(return_code, from_integer(0, return_code.type()));
+  }
+
+  bool length_is_exact() const override
+  {
+    return false;
+  }
 };
 
 /// String creation from other types

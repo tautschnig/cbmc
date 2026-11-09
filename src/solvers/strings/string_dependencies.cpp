@@ -410,22 +410,15 @@ string_constraintst string_dependenciest::add_constraints(
   for(const auto &node : builtin_function_nodes)
   {
     string_constraintst node_constraints;
-    if(test_dependencies.count(nodet(node)))
+    // Where the length constraint does not determine the length, the
+    // constraints do, as far as they are exact.
+    if(test_dependencies.count(nodet(node)) || !node.data->length_is_exact())
     {
       const auto &builtin = builtin_function_nodes[node.index];
       node_constraints = builtin.data->constraints(generator, message_handler);
     }
     else
-    {
       node_constraints.existential.push_back(node.data->length_constraint());
-      if(!node.data->length_is_exact())
-      {
-        generator.approximation_warning(
-          node.data->name(),
-          "is only modelled for some arguments when only the length of its "
-          "result is used");
-      }
-    }
     if(!node.guard.is_true())
     {
       for(auto &existential : node_constraints.existential)
