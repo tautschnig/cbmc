@@ -858,7 +858,8 @@ protected:
   std::map<std::string, std::size_t> object_counters;
 
   /// Whether the object with name \p name may be shared between threads:
-  /// it is not thread-local, or it is a local whose address is taken.
+  /// it is not thread-local, or it is a local whose address is taken. Shadow
+  /// memory is not, for the purposes of shared_value_summary.
   bool is_shared_object(const irep_idt &name) const;
 
   /// Value sets of objects shared between threads (see

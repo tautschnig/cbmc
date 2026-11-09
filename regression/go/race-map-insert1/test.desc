@@ -1,0 +1,18 @@
+CORE
+main.go
+--go-race-check --unwind 4
+^EXIT=10$
+^SIGNAL=0$
+^\[go::main\.main\.data-race\.\d+\] line 11 data race \(write\): FAILURE$
+^\[go::main\.main\$lit1\.data-race\.\d+\] line 8 data race \(read\): FAILURE$
+^VERIFICATION FAILED$
+--
+Repeating symbolic execution
+shadow memory does not resolve the accessed object: FAILURE
+^warning: ignoring
+--
+The goroutine's insertion sets flags in the shadow memory of the map's
+header, which has the header's type: the flag values written into its
+`keys` pointer must not count as values of a shared pointer, which made
+symbolic execution repeat, with the goroutine seeing the keys array that it
+allocates only later.

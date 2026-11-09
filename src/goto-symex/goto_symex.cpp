@@ -1234,8 +1234,15 @@ bool goto_symext::is_shared_object(const irep_idt &name) const
   if(name == goto_symex_statet::guard_identifier())
     return false;
   const symbolt *symbol = nullptr;
-  return (!ns.lookup(name, symbol) && symbol->is_shared()) ||
-         path_storage.dirty(name);
+  if(ns.lookup(name, symbol))
+    return path_storage.dirty(name);
+  // Shadow memory holds flags, never pointers that are dereferenced, even if
+  // it has the type of the object it shadows: the values that set_field
+  // writes into its pointer-typed parts must not make symbolic execution
+  // repeat (see shared_value_summaryt).
+  if(symbol->base_name.starts_with(SHADOW_MEMORY_PREFIX))
+    return false;
+  return symbol->is_shared() || path_storage.dirty(name);
 }
 
 symbolt &goto_symext::fresh_object_symbol(
