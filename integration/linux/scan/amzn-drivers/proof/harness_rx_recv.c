@@ -69,6 +69,7 @@ static struct rte_mempool the_pool;
  * contract; the device still chooses the values within it. */
 static uint16_t g_rx_qdepth;
 static struct ena_rx_buffer *g_rbi;
+static uint16_t g_max_descs; /* ghost: the largest chain the device reported */
 int ena_com_rx_pkt(struct ena_com_io_cq *io_cq, struct ena_com_io_sq *io_sq,
                    struct ena_com_rx_ctx *ctx)
 {
@@ -78,6 +79,8 @@ int ena_com_rx_pkt(struct ena_com_io_cq *io_cq, struct ena_com_io_sq *io_sq,
   uint16_t descs = nd_u16();
   __CPROVER_assume(descs <= ctx->max_bufs);
   ctx->descs = descs;
+  if(descs > g_max_descs)
+    g_max_descs = descs;
   ctx->pkt_offset = 0;
   for(unsigned b = 0; b < descs && b < ENA_PKT_MAX_BUFS; b++)
   {
@@ -86,8 +89,14 @@ int ena_com_rx_pkt(struct ena_com_io_cq *io_cq, struct ena_com_io_sq *io_sq,
     ctx->ena_bufs[b].req_id = nd_u16();
     __CPROVER_assume(ctx->ena_bufs[b].req_id < g_rx_qdepth); /* the EIO check */
 #ifdef ASSUME_NO_F16
-    /* the device names a posted slot (F16: the driver does not check) */
+    /* F16, both facets: the device names a posted slot, and does not repeat a
+     * req_id within one packet's descriptor chain.  ena_rx_mbuf NULLs
+     * rx_info->mbuf as it consumes each slot, so a repeat would make the
+     * second reference a NULL dereference just as an unposted slot does.
+     * Neither is checked by the driver. */
     __CPROVER_assume(g_rbi[ctx->ena_bufs[b].req_id].mbuf != NULL);
+    for(unsigned b2 = 0; b2 < b; b2++)
+      __CPROVER_assume(ctx->ena_bufs[b2].req_id != ctx->ena_bufs[b].req_id);
 #endif
   }
   /* the device cannot complete more buffers than are posted */
@@ -164,6 +173,7 @@ int main(void)
   cq->q_depth = RING_SIZE;
   g_rx_qdepth = RING_SIZE;
   g_rbi = pool_rbi;
+  g_max_descs = 0;
 
   /* occupancy: each slot has a distinct posted buffer or is free */
   for(i = 0; i < RING_SIZE; i++)
@@ -213,6 +223,9 @@ int main(void)
 
 #if VACUITY_CHECK
   __CPROVER_assert(got == 0, "vacuity witness: a packet can be received");
+  __CPROVER_assert(
+    g_max_descs < 2,
+    "vacuity witness: a multi-descriptor packet can be received");
   __CPROVER_assert(
     !adapter.trigger_reset,
     "vacuity witness: a device completion can trigger a reset");

@@ -839,7 +839,8 @@ confirms a free-slot `req_id` is reachable under the invariant. At ring 4,
 
 **Fix.** Add the NULL check DPDK is missing, matching Linux and FreeBSD:
 reset the device on a `req_id` whose slot is not posted, rather than
-dereferencing it.
+dereferencing it. One check covers both triggers, since a repeated `req_id`
+presents as an unposted slot on the second reference.
 
 **Severity.** A malfunctioning or malicious device triggers a NULL dereference
 in the datapath. It needs a device that returns a completion for an unposted
