@@ -223,6 +223,28 @@ static bool INV_FREE_LIST(const struct ena_ring *r, unsigned n)
 }
 
 /*
+ * INV_RX_STARTABLE: what ena_queue_start needs of an RX ring.  The RX
+ * analogue of INV_STARTABLE, and for the same reason: ena_create_io_queue
+ * rewrites empty_rx_reqs and the indices, but not the slots, and
+ * ena_queue_start then calls ena_populate_rx_queue(ring_size - 1), which
+ * would overwrite any slot that still held a buffer.  So every slot must be
+ * free.  Both ena_rx_queue_setup (first start) and ena_queue_stop's
+ * ena_rx_queue_release_bufs (restart after stop or reset) must establish it.
+ */
+static bool INV_RX_STARTABLE(const struct ena_ring *r, unsigned n)
+{
+  if(!(r->configured == 1 && r->rx_buffer_info != NULL &&
+       r->empty_rx_reqs != NULL && r->rx_refill_buffer != NULL &&
+       r->mb_pool != NULL && INV_GEOMETRY(r) && r->ring_size == n))
+    return false;
+  struct ena_rx_buffer *const rbi = r->rx_buffer_info;
+  for(unsigned k = 0; k < n; k++)
+    if(rbi[k].mbuf != NULL)
+      return false;
+  return true;
+}
+
+/*
  * INV_RX_STARTED: a started RX queue.  The RX analogue of INV_STARTED, over
  * the rx_buffer_info / empty_rx_reqs arrays.
  *
