@@ -189,6 +189,10 @@ private:
   std::vector<exprt> access_definitions;
 
   void add_lemma(const exprt &lemma, bool simplify_lemma = true);
+  /// Add a counter-example lemma of check_axioms, rewriting its array
+  /// accesses as for instances (see substitute_array_access): it may access
+  /// merged strings, whose if-expressions over arrays are not well typed.
+  void add_counter_example(const exprt &lemma);
 };
 
 exprt substitute_array_lists(exprt expr, std::size_t string_max_length);
