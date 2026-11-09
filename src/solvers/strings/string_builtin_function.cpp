@@ -1,13 +1,14 @@
 /// Module: String solver
 /// Author: Diffblue Ltd.
 
-#include "array_pool.h"
 #include "string_builtin_function.h"
+
+#include "array_pool.h"
+#include "string_constraint_generator.h"
+#include "string_format_builtin_function.h"
 
 #include <algorithm>
 #include <iterator>
-
-#include "string_constraint_generator.h"
 
 string_transformation_builtin_functiont::
   string_transformation_builtin_functiont(
@@ -439,32 +440,17 @@ string_constraintst string_of_int_builtin_functiont::constraints(
 
 exprt string_of_int_builtin_functiont::length_constraint() const
 {
-  const typet &type = result.length_type();
-  const auto radix_opt = numeric_cast<std::size_t>(radix);
-  const auto radix_value = radix_opt.has_value() ? radix_opt.value() : 2;
-  const std::size_t upper_bound =
-    max_printed_string_length(arg.type(), radix_value);
-  const exprt negative_arg =
-    binary_relation_exprt(arg, ID_le, from_integer(0, type));
-  const exprt absolute_arg =
-    if_exprt(negative_arg, unary_minus_exprt(arg), arg);
-
-  exprt size_expr = from_integer(1, type);
-  exprt min_int_with_current_size = from_integer(1, radix.type());
-  for(std::size_t current_size = 2; current_size <= upper_bound + 1;
-      ++current_size)
+  const auto radix_value = numeric_cast<unsigned long>(radix);
+  // Without a constant radix the length is left to the content axioms.
+  if(
+    !radix_value.has_value() || *radix_value < 2 || *radix_value > 36 ||
+    arg.type().id() != ID_signedbv)
   {
-    min_int_with_current_size = mult_exprt(radix, min_int_with_current_size);
-    const exprt at_least_current_size =
-      binary_relation_exprt(absolute_arg, ID_ge, min_int_with_current_size);
-    size_expr = if_exprt(
-      at_least_current_size, from_integer(current_size, type), size_expr);
+    return true_exprt{};
   }
-
-  const exprt size_expr_with_sign = if_exprt(
-    negative_arg, plus_exprt(size_expr, from_integer(1, type)), size_expr);
-  return equal_exprt(
-    array_pool.get_or_create_length(result), size_expr_with_sign);
+  return equal_exprt{
+    array_pool.get_or_create_length(result),
+    length_of_decimal_int(arg, result.length_type(), *radix_value)};
 }
 
 string_builtin_function_with_no_evalt::string_builtin_function_with_no_evalt(
