@@ -2449,6 +2449,24 @@ std::optional<exprt> python_convertert::try_string_method(
           // struct operands keep the bit-vector convention.
           const bool native_iof = obj.type().id() == ID_string;
           const typet app_type = native_iof ? typet{integer_typet{}} : int_type;
+          // Python's start: a negative one counts from the end (and is at
+          // least 0), and beyond the end nothing is found, not even an
+          // empty substring. index_of searches from a start in [0, len]
+          // (Java's semantics; SMT-LIB's for native strings).
+          std::optional<exprt> start_beyond_end;
+          if(has_start)
+          {
+            exprt hay_length = native_or_member_string_length(obj);
+            hay_length = safe_typecast(hay_length, int_type);
+            const exprt zero = from_integer(0, int_type);
+            const exprt from_end = plus_exprt{hay_length, from};
+            from = if_exprt{
+              binary_relation_exprt{from, ID_lt, zero},
+              if_exprt{
+                binary_relation_exprt{from_end, ID_lt, zero}, zero, from_end},
+              from};
+            start_beyond_end = binary_relation_exprt{from, ID_gt, hay_length};
+          }
           const exprt from_arg =
             native_iof ? exprt{typecast_exprt{from, integer_typet{}}} : from;
           // index_of takes (hay, ndl, from); last_index_of takes (hay, ndl)
@@ -2486,9 +2504,12 @@ std::optional<exprt> python_convertert::try_string_method(
             symbol_table.add(rs);
           }
           const symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
-          pending_checks.push_back(code_frontend_assignt{
-            res,
-            native_iof ? exprt{typecast_exprt{app, int_type}} : exprt{app}});
+          exprt found =
+            native_iof ? exprt{typecast_exprt{app, int_type}} : exprt{app};
+          if(start_beyond_end.has_value())
+            found = if_exprt{
+              *start_beyond_end, from_integer(-1, int_type), std::move(found)};
+          pending_checks.push_back(code_frontend_assignt{res, found});
           if(method_name == "index" || method_name == "rindex")
           {
             // str.index/str.rindex raise ValueError when the substring is
