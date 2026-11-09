@@ -1,0 +1,9 @@
+CORE
+main.py
+--function check --cvc5 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+As test.desc, but with native SMT strings.

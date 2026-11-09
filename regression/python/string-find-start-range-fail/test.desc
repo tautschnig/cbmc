@@ -1,0 +1,10 @@
+CORE
+main.py
+--function check
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+str.find with a start argument: a negative start counts from the end and a
+start beyond the end finds nothing, even for an empty needle.
