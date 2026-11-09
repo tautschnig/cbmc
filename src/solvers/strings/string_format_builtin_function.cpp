@@ -306,6 +306,28 @@ static exprt format_arg_from_string(
   UNHANDLED_CASE;
 }
 
+/// Whether \p fs takes an argument.
+static bool takes_argument(const format_specifiert &fs)
+{
+  return fs.conversion != format_specifiert::PERCENT_SIGN &&
+         fs.conversion != format_specifiert::LINE_SEPARATOR;
+}
+
+/// The position in the arguments of the argument of \p fs, if it takes one
+/// and the specifier is modelled with \p argument_count arguments.
+static std::optional<std::size_t>
+argument_position(const format_specifiert &fs, std::size_t argument_count)
+{
+  if(
+    !fs.is_modelled() || fs.index < 1 ||
+    static_cast<std::size_t>(fs.index) > argument_count)
+  {
+    return {};
+  }
+  // The first argument has index 1.
+  return static_cast<std::size_t>(fs.index - 1);
+}
+
 /// Parse `s` and add axioms ensuring the output corresponds to the output of
 /// String.format.
 /// \param generator: constraint generator
@@ -325,7 +347,6 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
   array_poolt &array_pool = generator.array_pool;
   const std::vector<format_elementt> format_strings = parse_format_string(s);
   std::vector<array_string_exprt> intermediary_strings;
-  std::size_t arg_count = 0;
   const typet &char_type = to_type_with_subtype(res.content().type()).subtype();
   const typet &index_type = res.length_type();
 
@@ -336,28 +357,19 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
     if(fe.is_format_specifier())
     {
       const format_specifiert &fs = fe.get_format_specifier();
-
-      if(
-        fs.conversion != format_specifiert::PERCENT_SIGN &&
-        fs.conversion != format_specifiert::LINE_SEPARATOR)
+      const auto position = argument_position(fs, args.size());
+      if(!fs.is_modelled() || (takes_argument(fs) && !position.has_value()))
       {
-        if(fs.index == -1)
-        {
-          INVARIANT(
-            arg_count < args.size(), "number of format must match specifiers");
-          string_arg = args[arg_count++];
-        }
-        else
-        {
-          INVARIANT(fs.index > 0, "index in format should be positive");
-          INVARIANT(
-            static_cast<std::size_t>(fs.index) <= args.size(),
-            "number of format must match specifiers");
-
-          // first argument `args[0]` corresponds to index 1
-          string_arg = args[fs.index - 1];
-        }
+        generator.approximation_warning(
+          "String.format",
+          "is not modelled for flags, widths, precisions or missing "
+          "arguments");
+        intermediary_strings.push_back(
+          array_pool.fresh_string(index_type, char_type));
+        continue;
       }
+      if(takes_argument(fs))
+        string_arg = args[*position];
 
       auto result = add_axioms_for_format_specifier(
         generator, fs, string_arg, index_type, char_type, message_handler);
@@ -563,48 +575,26 @@ std::optional<exprt> string_format_builtin_functiont::eval(
   const std::vector<format_elementt> format_strings =
     parse_format_string(format_string.value());
   std::vector<mp_integer> result_vector;
-  std::size_t arg_count = 0;
 
   for(const format_elementt &fe : format_strings)
   {
     if(fe.is_format_specifier())
     {
       const format_specifiert &fs = fe.get_format_specifier();
-      if(
-        fs.conversion != format_specifiert::PERCENT_SIGN &&
-        fs.conversion != format_specifiert::LINE_SEPARATOR)
+      if(!fs.is_modelled())
+        return {};
+      if(takes_argument(fs))
       {
-        std::vector<mp_integer> evaluated_char_vector;
-
-        if(fs.index == -1)
-        {
-          INVARIANT(
-            arg_count < inputs.size(),
-            "number of format must match specifiers");
-          auto arg_value = eval_string(inputs[arg_count++], get_value);
-          if(!arg_value.has_value())
-            return {};
-          auto evaluated = eval_format_specifier(fs, *arg_value);
-          if(!evaluated.has_value())
-            return {};
-          evaluated_char_vector = std::move(*evaluated);
-        }
-        else
-        {
-          INVARIANT(fs.index > 0, "index in format should be positive");
-          INVARIANT(
-            static_cast<std::size_t>(fs.index) <= inputs.size(),
-            "number of format must match specifiers");
-
-          // first argument `args[0]` corresponds to index 1
-          auto arg_value = eval_string(inputs[fs.index - 1], get_value);
-          if(!arg_value.has_value())
-            return {};
-          auto evaluated = eval_format_specifier(fs, *arg_value);
-          if(!evaluated.has_value())
-            return {};
-          evaluated_char_vector = std::move(*evaluated);
-        }
+        const auto position = argument_position(fs, inputs.size());
+        if(!position.has_value())
+          return {};
+        auto arg_value = eval_string(inputs[*position], get_value);
+        if(!arg_value.has_value())
+          return {};
+        auto evaluated = eval_format_specifier(fs, *arg_value);
+        if(!evaluated.has_value())
+          return {};
+        std::vector<mp_integer> evaluated_char_vector = std::move(*evaluated);
         std::move(
           evaluated_char_vector.begin(),
           evaluated_char_vector.end(),
@@ -813,22 +803,19 @@ bool string_format_builtin_functiont::length_is_exact() const
 {
   if(!format_string.has_value())
     return false;
-  std::size_t arg_count = 0;
   for(const format_elementt &fe : parse_format_string(format_string.value()))
   {
     if(!fe.is_format_specifier())
       continue;
     const format_specifiert &fs = fe.get_format_specifier();
-    if(
-      fs.conversion == format_specifiert::PERCENT_SIGN ||
-      fs.conversion == format_specifiert::LINE_SEPARATOR)
-    {
-      continue;
-    }
-    const std::size_t index =
-      fs.index == -1 ? arg_count++ : static_cast<std::size_t>(fs.index - 1);
-    if(index >= inputs.size())
+    if(!fs.is_modelled())
       return false;
+    if(!takes_argument(fs))
+      continue;
+    const auto position = argument_position(fs, inputs.size());
+    if(!position.has_value())
+      return false;
+    const std::size_t index = *position;
     switch(fs.conversion)
     {
     case format_specifiert::HEXADECIMAL_INTEGER:
@@ -874,7 +861,6 @@ exprt string_format_builtin_functiont::length_constraint() const
   const std::vector<format_elementt> format_strings =
     parse_format_string(format_string.value());
   std::vector<exprt> intermediary_string_lengths;
-  std::size_t arg_count = 0;
   const typet &index_type = result.length_type();
 
   for(const format_elementt &fe : format_strings)
@@ -882,31 +868,13 @@ exprt string_format_builtin_functiont::length_constraint() const
     if(fe.is_format_specifier())
     {
       const format_specifiert &fs = fe.get_format_specifier();
+      const auto position = argument_position(fs, inputs.size());
       array_string_exprt arg;
-      if(
-        fs.conversion != format_specifiert::PERCENT_SIGN &&
-        fs.conversion != format_specifiert::LINE_SEPARATOR)
-      {
-        if(fs.index == -1)
-        {
-          INVARIANT(
-            arg_count < inputs.size(),
-            "number of format must match specifiers");
-          arg = inputs[arg_count++];
-        }
-        else
-        {
-          INVARIANT(fs.index > 0, "index in format should be positive");
-          INVARIANT(
-            static_cast<std::size_t>(fs.index) <= inputs.size(),
-            "number of format must match specifiers");
-
-          // first argument `args[0]` corresponds to index 1
-          arg = inputs[fs.index - 1];
-        }
-      }
-      std::optional<exprt> length =
-        length_for_format_specifier(fs, arg, index_type, array_pool);
+      if(position.has_value())
+        arg = inputs[*position];
+      std::optional<exprt> length;
+      if(fs.is_modelled() && (!takes_argument(fs) || position.has_value()))
+        length = length_for_format_specifier(fs, arg, index_type, array_pool);
       if(!length.has_value())
       {
         // Leave the length of the result to the content axioms.

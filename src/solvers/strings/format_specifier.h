@@ -54,6 +54,16 @@ public:
   // date/time
   bool dt = false;
   char conversion;
+  /// Whether the specifier cannot be modelled, as for a '<' flag without a
+  /// previous argument.
+  bool unsupported = false;
+
+  /// Whether the specifier is one that the string solver models: one
+  /// without flags, width or precision, as these are not modelled.
+  bool is_modelled() const
+  {
+    return !unsupported && flag.empty() && width == -1 && precision == -1;
+  }
 
   format_specifiert(
     int _index,
