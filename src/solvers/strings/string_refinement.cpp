@@ -1341,7 +1341,7 @@ string_refinementt::dec_solve(const exprt &assumption)
                     << counter_examples.size() << " counter examples"
                     << messaget::eom;
         for(const auto &counter : counter_examples)
-          add_lemma(counter);
+          add_counter_example(counter);
       }
       else
       {
@@ -1364,7 +1364,7 @@ string_refinementt::dec_solve(const exprt &assumption)
           const std::size_t axiom = counter_example_keys[i].first;
           if(axiom >= axioms.universal.size() || !axioms.instantiable[axiom])
           {
-            add_lemma(counter_examples[i]);
+            add_counter_example(counter_examples[i]);
           }
         }
       }
@@ -1536,6 +1536,16 @@ void string_refinementt::add_length_definitions()
   {
     add_lemma(definition, false);
   }
+}
+
+void string_refinementt::add_counter_example(const exprt &lemma)
+{
+  add_lemma(substitute_array_access(
+    lemma,
+    substitution_memo,
+    generator.fresh_symbol,
+    true,
+    access_definitions));
 }
 
 /// Add the given lemma to the solver.
