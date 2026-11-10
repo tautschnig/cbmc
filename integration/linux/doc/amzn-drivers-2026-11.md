@@ -983,6 +983,71 @@ failing, which is the condition the code is already trying to handle.
 paths (`ena_enable_msix` and `ena_setup_mgmnt_intr`), so there is no
 corresponding function to compare against.
 
+## F19: ena_rss_reta_query reads past a stack array and copies it to the application (DPDK ENA)
+
+Found in the config/query phase. The update and query paths of the same file
+disagree about validating the same parameter.
+
+`ena_rss_reta_update` checks it (`ena_rss.c:84-89`):
+
+```c
+if (reta_size > ENA_RX_RSS_TABLE_SIZE) { ...; return -EINVAL; }
+```
+
+`ena_rss_reta_query` does not. It declares a local table, fills it from the
+device, and then copies out `reta_size` entries:
+
+```c
+132   uint32_t indirect_table[ENA_RX_RSS_TABLE_SIZE];     /* 128 entries */
+...
+149   rc = ena_mp_indirect_table_get(adapter, indirect_table);
+...
+156   for (i = 0 ; i < reta_size ; i++) {
+157           reta_conf_idx = i / RTE_ETH_RETA_GROUP_SIZE;
+158           reta_idx = i % RTE_ETH_RETA_GROUP_SIZE;
+159           if (TEST_BIT(reta_conf[reta_conf_idx].mask, reta_idx))
+160                   reta_conf[reta_conf_idx].reta[reta_idx] =
+161                           ENA_IO_RXQ_IDX_REV(indirect_table[i]);
+162   }
+```
+
+So with `reta_size > 128` the loop reads off the end of a 128-entry stack
+array and writes what it finds into the application's buffer: an
+out-of-bounds stack read, and a disclosure of adjacent stack contents to the
+caller (Unveil classes G and J).
+
+**The ethdev layer does not bound it either.**
+`rte_eth_dev_rss_reta_query` (`rte_ethdev.c:4773`) rejects only a NULL config
+and then calls `eth_check_reta_mask` (`:4677`), which merely requires one mask
+bit to be set. Neither compares `reta_size` with `dev_info.reta_size`, which
+ENA reports as `ENA_RX_RSS_TABLE_SIZE` (`ena_ethdev.c:2646`). So an
+application passing a larger size reaches the loop.
+
+**Evidence.** `proof/harness_rss_reta.c` with `proof/run_rss_reta.sh` calls
+the real `ena_rss_reta_query` with `reta_size` in 1..512 and a model of
+`ena_mp_indirect_table_get` that fills exactly the 128 entries its contract
+covers. The single failing property is
+
+```
+[ena_rss_reta_query.array_bounds.3] array 'indirect_table' upper bound
+    in indirect_table[(signed long int)i]: FAILURE
+```
+
+Both vacuity witnesses FAIL: the query can succeed, and an oversized
+`reta_size` does reach the driver. With `-DWITH_UPDATE_CHECK`, which adds the
+bound the update path already has, the run is VERIFICATION SUCCESSFUL.
+
+**Fix.** Add to `ena_rss_reta_query` the check `ena_rss_reta_update` already
+performs. One line, and it is already written three functions earlier in the
+same file.
+
+**Severity.** Reachable by an application that passes a `reta_size` larger
+than the advertised `reta_size`, which the API says not to do but nothing
+enforces. No device misbehaviour is needed. It leaks stack bytes to the
+caller, which is worse than the NULL dereferences of F10 and F17 in kind,
+though it needs the same sort of API misuse. Same class as those: a driver
+entry point reached with an argument it does not validate.
+
 ## Observation: the FreeBSD header-skip loop indexes segs[] with no nsegs guard
 
 Not a finding: no counterexample exists under the DMA layer's contract. It is
