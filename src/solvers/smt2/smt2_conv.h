@@ -69,6 +69,10 @@ public:
   bool use_check_sat_assuming = false;
   bool use_datatypes = false;
   bool use_lambda_for_array = false;
+  /// When set, the values of constants of type string_typet are UTF-8 and
+  /// each code point becomes one SMT-LIB character (as for Python's str);
+  /// otherwise each byte does (as for shell strings).
+  bool utf8_string_constants = false;
   bool emit_set_logic = true;
 
   exprt handle(const exprt &expr) override;

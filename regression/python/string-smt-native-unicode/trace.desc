@@ -1,0 +1,10 @@
+CORE
+trace.py
+--cvc5 --python-smt-strings --trace
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 5 Python assertion: FAILURE$
+^  s='é'
+^VERIFICATION FAILED$
+--
+^warning: ignoring

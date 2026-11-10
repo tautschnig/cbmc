@@ -40,6 +40,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/string_constant.h>
 #include <util/symbol.h>
 #include <util/threeval.h>
+#include <util/unicode.h>
 
 #include <solvers/flattening/boolbv_width.h>
 #include <solvers/flattening/c_bit_field_replacement_type.h>
@@ -971,6 +972,55 @@ smt2_convt::parse_struct(const irept &src, const struct_typet &type)
   return result;
 }
 
+/// Decode the \\u escapes (\\ud₃d₂d₁d₀ and \\u{d₀} to \\u{d₄d₃d₂d₁d₀}) of an
+/// SMT-LIB string literal \p text, whose "" escape has already been removed.
+/// Each character becomes its UTF-8 encoding when \p utf8 is set, and a single
+/// byte otherwise; a character beyond a byte is then kept escaped.
+static std::string
+decode_smt2_string_literal(const std::string &text, bool utf8)
+{
+  std::string result;
+  std::size_t i = 0;
+  while(i < text.size())
+  {
+    std::size_t end = i;
+    std::string hex;
+    if(text.compare(i, 2, "\\u") == 0)
+    {
+      if(i + 2 < text.size() && text[i + 2] == '{')
+      {
+        const std::size_t close = text.find('}', i + 3);
+        if(close != std::string::npos && close > i + 3 && close <= i + 8)
+        {
+          hex = text.substr(i + 3, close - i - 3);
+          end = close + 1;
+        }
+      }
+      else if(i + 6 <= text.size())
+      {
+        hex = text.substr(i + 2, 4);
+        end = i + 6;
+      }
+    }
+    if(
+      hex.empty() ||
+      hex.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
+    {
+      result += text[i++];
+      continue;
+    }
+    const unsigned long code = std::stoul(hex, nullptr, 16);
+    if(utf8)
+      result += utf32_native_endian_to_utf8(std::u32string(1, char32_t(code)));
+    else if(code <= 0xff)
+      result += static_cast<char>(code);
+    else
+      result += text.substr(i, end - i);
+    i = end;
+  }
+  return result;
+}
+
 exprt smt2_convt::parse_rec(const irept &src, const typet &type)
 {
   if(src.get_sub().size() == 3 && src.get_sub()[0].id() == ID_let)
@@ -1013,10 +1063,11 @@ exprt smt2_convt::parse_rec(const irept &src, const typet &type)
   else if(type.id() == ID_string)
   {
     // SMT-LIB String model value (Plan A): the tokenizer stores the
-    // de-quoted string content in the irep id, so surface it as an
-    // smt_string constant for the trace. (CVC5 \u{XX} escapes for
-    // non-printable bytes are not decoded here -- rare in traces.)
-    return constant_exprt{src.id(), string_typet{}};
+    // de-quoted string content in the irep id. Decode the \u escapes, the
+    // inverse of the constant encoding in convert_constant.
+    return constant_exprt{
+      decode_smt2_string_literal(id2string(src.id()), utf8_string_constants),
+      string_typet{}};
   }
   else if(type.id()==ID_pointer)
   {
@@ -5260,19 +5311,35 @@ void smt2_convt::convert_constant(const constant_exprt &expr)
   {
     // SMT-LIB 2.6 string literal. The only in-string escape is "" for a double
     // quote (backslash is literal). Only printable ASCII may appear verbatim;
-    // control and non-ASCII bytes are encoded with the \u{...} hex escape.
+    // other characters are encoded with the \u{...} hex escape. Each byte of
+    // the value is a character unless utf8_string_constants is set, in which
+    // case each UTF-8 encoded code point is.
     const std::string &value = id2string(expr.get_value());
-    out << '"';
-    for(char ch : value)
+    std::u32string chars;
+    if(utf8_string_constants)
+      chars = utf8_to_utf32(value);
+    else
     {
-      const auto c = static_cast<unsigned char>(ch);
+      for(char ch : value)
+        chars.push_back(static_cast<unsigned char>(ch));
+    }
+    out << '"';
+    for(char32_t c : chars)
+    {
       if(c == '"')
         out << "\"\"";
       else if(c >= 0x20 && c <= 0x7e)
-        out << ch;
-      else
-        out << "\\u{" << std::hex << static_cast<unsigned>(c) << std::dec
+        out << static_cast<char>(c);
+      else if(c <= 0x2ffff)
+        out << "\\u{" << std::hex << static_cast<unsigned long>(c) << std::dec
             << '}';
+      else
+      {
+        throw unsupported_operation_exceptiont{
+          "string constant with the code point " +
+          std::to_string(static_cast<unsigned long>(c)) +
+          ", which is beyond the SMT-LIB character range (at most 0x2FFFF)"};
+      }
     }
     out << '"';
   }

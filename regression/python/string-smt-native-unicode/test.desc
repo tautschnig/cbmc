@@ -1,0 +1,10 @@
+CORE
+main.py
+--cvc5 --python-smt-strings
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+The SMT encoder escaped each UTF-8 byte, so "é" had length 2 and ord 195.

@@ -541,6 +541,9 @@ solver_factoryt::get_smt2(smt2_dect::solvert solver)
 
     if(options.get_bool_option("fpa"))
       smt2_dec->use_FPA_theory = true;
+    // Python's str is a sequence of code points; its constants are UTF-8.
+    if(options.get_bool_option("python-smt-strings"))
+      smt2_dec->utf8_string_constants = true;
 
     set_decision_procedure_time_limit(*smt2_dec);
 
@@ -558,6 +561,9 @@ solver_factoryt::get_smt2(smt2_dect::solvert solver)
 
     if(options.get_bool_option("fpa"))
       smt2_conv->use_FPA_theory = true;
+    // Python's str is a sequence of code points; its constants are UTF-8.
+    if(options.get_bool_option("python-smt-strings"))
+      smt2_conv->utf8_string_constants = true;
 
     return std::make_unique<solvert>(std::move(smt2_conv));
   }
@@ -575,6 +581,9 @@ solver_factoryt::get_smt2(smt2_dect::solvert solver)
 
     if(options.get_bool_option("fpa"))
       smt2_conv->use_FPA_theory = true;
+    // Python's str is a sequence of code points; its constants are UTF-8.
+    if(options.get_bool_option("python-smt-strings"))
+      smt2_conv->utf8_string_constants = true;
 
     return std::make_unique<solvert>(std::move(smt2_conv), std::move(out));
   }
