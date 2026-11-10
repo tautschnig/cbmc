@@ -1,0 +1,12 @@
+CORE
+main.py
+--z3 --python-smt-strings
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^SMT2 solver returned error message
+--
+str.to_int returns an Int but was declared as a 64-bit bit-vector, which z3
+rejected as a sort error.

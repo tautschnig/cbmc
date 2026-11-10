@@ -1,0 +1,9 @@
+CORE
+negative.py
+--cvc5 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 3 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring

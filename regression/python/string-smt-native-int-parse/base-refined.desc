@@ -1,0 +1,11 @@
+CORE
+base.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 5 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The refined string solver also parses base 10 only.

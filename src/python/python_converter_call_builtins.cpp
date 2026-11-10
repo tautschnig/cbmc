@@ -6809,12 +6809,33 @@ exprt python_convertert::emit_native_int_parse(
   const source_locationt &loc)
 {
   // Native SMT strings: the refined-string parse intrinsics have no SMT
-  // encoding (they were unconstrained: int("0", 16) gave -1). For 1..K
-  // digits of the base the value is exact (native_digit_string); any other
-  // string (a sign, other accepted spellings, longer numerals, invalid
-  // input) gets an unconstrained value.
+  // encoding (they were unconstrained: int("0", 16) gave -1). For an
+  // optional sign and 1..K digits of the base the value is exact
+  // (native_digit_string); any other string (other accepted spellings,
+  // longer numerals, invalid input) gets an unconstrained value.
   const typet &it = python_int_type();
-  const auto [valid, val] = native_digit_string(str, base, 0);
+  const integer_typet Z;
+  const string_typet S;
+  const exprt len =
+    native_string_app(ID_cprover_string_length_func, {S}, {str}, Z);
+  const exprt first = native_string_app(
+    ID_cprover_string_substring_func,
+    {S, Z, Z},
+    {str, from_integer(0, Z), from_integer(1, Z)},
+    S);
+  const exprt minus = equal_exprt{first, constant_exprt{"-", S}};
+  const exprt sign =
+    or_exprt{minus, equal_exprt{first, constant_exprt{"+", S}}};
+  const exprt digits = if_exprt{
+    sign,
+    native_string_app(
+      ID_cprover_string_substring_func,
+      {S, Z, Z},
+      {str, from_integer(1, Z), minus_exprt{len, from_integer(1, Z)}},
+      S),
+    str};
+  const auto [valid, magnitude] = native_digit_string(digits, base, 0);
+  const exprt val = if_exprt{minus, unary_minus_exprt{magnitude}, magnitude};
   // Unbounded ints: every K-digit value is exact; the 64-bit model:
   // values beyond it are unconstrained (they wrap in that model).
   const exprt fits =
@@ -6822,9 +6843,9 @@ exprt python_convertert::emit_native_int_parse(
       ? exprt{and_exprt{
           valid,
           binary_relation_exprt{
-            val,
+            magnitude,
             ID_le,
-            from_integer(to_signedbv_type(it).largest(), val.type())}}}
+            from_integer(to_signedbv_type(it).largest(), magnitude.type())}}}
       : valid;
   return if_exprt{
     fits, typecast_exprt{val, it}, side_effect_expr_nondett{it, loc}};
