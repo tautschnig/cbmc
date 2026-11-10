@@ -9,6 +9,9 @@ of the system and the surrounding infrastructure.
 ## Symex ready goto form
 \subpage symex-ready-goto
 
+## What the results of the string solver mean
+\subpage string-solver-results
+
 ## Release & Packaging
 
 * \subpage release-process

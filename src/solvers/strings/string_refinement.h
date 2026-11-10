@@ -16,6 +16,9 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
 ///   described in the PASS paper at HVC'13: "PASS: String Solving with
 ///   Parameterized Array and Interval Automaton" by Guodong Li and Indradeep
 ///   Ghosh
+///
+/// What its results, its ERROR verdicts and its approximation warnings mean
+/// is described in \ref string-solver-results.
 
 #ifndef CPROVER_SOLVERS_REFINEMENT_STRING_REFINEMENT_H
 #define CPROVER_SOLVERS_REFINEMENT_STRING_REFINEMENT_H
