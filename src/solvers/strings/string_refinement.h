@@ -193,6 +193,12 @@ private:
   /// accesses as for instances (see substitute_array_access): it may access
   /// merged strings, whose if-expressions over arrays are not well typed.
   void add_counter_example(const exprt &lemma);
+  /// Whether the results of the conversions of floating-point values to
+  /// strings that the axioms leave open (see
+  /// string_constraint_generatort::float_conversions) are right in the
+  /// current model. Otherwise, add lemmas giving the result for the value
+  /// of each wrong one.
+  bool check_float_conversions();
 };
 
 exprt substitute_array_lists(exprt expr, std::size_t string_max_length);

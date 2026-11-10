@@ -415,7 +415,13 @@ string_constraintst string_dependenciest::add_constraints(
     if(test_dependencies.count(nodet(node)) || !node.data->length_is_exact())
     {
       const auto &builtin = builtin_function_nodes[node.index];
+      const std::size_t conversions = generator.float_conversions.size();
       node_constraints = builtin.data->constraints(generator, message_handler);
+      for(std::size_t i = conversions; i < generator.float_conversions.size();
+          ++i)
+      {
+        generator.float_conversions[i].guard = node.guard;
+      }
     }
     else
       node_constraints.existential.push_back(node.data->length_constraint());

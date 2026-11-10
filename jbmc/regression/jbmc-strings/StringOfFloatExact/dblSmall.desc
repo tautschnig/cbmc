@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.dblSmall --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The lower bound of plain notation for doubles is that of double precision.

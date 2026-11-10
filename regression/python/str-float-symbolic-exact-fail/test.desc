@@ -1,0 +1,10 @@
+CORE
+main.py
+--function check
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+str(1/3) is "0.3333333333333333"; the solver used to give it single-precision
+digits, which proved this assertion.
