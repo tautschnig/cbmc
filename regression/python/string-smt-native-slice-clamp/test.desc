@@ -1,0 +1,11 @@
+CORE
+main.py
+--cvc5 --python-smt-strings --isolate-properties
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+A negative position or length reached str.substr as a huge unsigned value,
+so s[3:1] was "lo" and s[-9:] was "".

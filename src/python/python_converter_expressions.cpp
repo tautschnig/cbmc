@@ -1619,7 +1619,30 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
       {
         // Native SMT-String back-end (Plan A): s[a:b] = str.substr(s, a,
         // b-a). The result is a native SMT String (no res_len truncation).
-        return string_substr(value, lo_e, minus_exprt{hi_e, lo_e});
+        // Python clamps both bounds into [0, len(s)] and yields "" when
+        // b <= a. string_substr reads its operands as unsigned, so clamp
+        // here: a negative position or length must not become a huge one.
+        const signedbv_typet i64{64};
+        const exprt zero = from_integer(0, i64);
+        auto clamp = [&](const exprt &bound) -> exprt
+        {
+          return if_exprt{
+            binary_relation_exprt{bound, ID_lt, zero},
+            zero,
+            if_exprt{
+              binary_relation_exprt{bound, ID_gt, str_length},
+              str_length,
+              bound}};
+        };
+        const exprt lo_c = clamp(lo_e);
+        const exprt hi_c = clamp(hi_e);
+        return string_substr(
+          value,
+          lo_c,
+          if_exprt{
+            binary_relation_exprt{hi_c, ID_lt, lo_c},
+            zero,
+            minus_exprt{hi_c, lo_c}});
       }
       exprt src_struct =
         (value.id() == ID_struct && value.operands().size() == 2)
