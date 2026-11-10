@@ -593,6 +593,22 @@ it related the SQ tail to the slots. Every obligation it stated was true. The
 invariant was just too weak to compose with cleanup, and nothing checked the
 composition until now.
 
+### Both sibling drivers already have the fix (found while starting the FreeBSD TX side)
+
+The fix F12 asks for is not hypothetical: Linux and FreeBSD both do it, on the
+same error path, and DPDK is the only one of the three that does not.
+
+| driver | after `ena_com_prepare_tx` fails | clears the slot? |
+|---|---|---|
+| DPDK `ena_xmit_mbuf` (`ena_ethdev.c:3178-3183`) | bumps `prepare_ctx_err`, calls `ena_trigger_reset`, `return rc` | **no** |
+| Linux `ena_xmit_tx_buff` (`ena_netdev.c:2652` -> `error_unmap_dma:` at `:2697`) | `ena_unmap_tx_buff(...); tx_info->skb = NULL;` | yes (`:2699`) |
+| FreeBSD `ena_xmit_mbuf` (`ena_datapath.c:1044` -> `dma_error:` at `:1096`) | `tx_info->mbuf = NULL; bus_dmamap_unload(...)` | yes (`:1097`) |
+
+So the one-line change F12 proposes for DPDK is exactly what the other two
+copies of this driver already do. That also explains why F12 shows up only in
+the DPDK proof: in Linux and FreeBSD the slot is released before the reset
+path can reach it.
+
 ## F13: DPDK stores the DMA-width error code as the DMA width (DPDK ENA)
 
 Found while verifying the queue-start callee models against the real
