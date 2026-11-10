@@ -1,0 +1,11 @@
+CORE
+uncaught.py
+--cvc5 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 3 uncaught exception: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The native back end returned "" without raising IndexError.

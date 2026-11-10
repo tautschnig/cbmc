@@ -2047,6 +2047,38 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
       pending_checks.push_back(std::move(te_block));
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
     }
+    // PLR §6.10.1: string subscript out-of-range raises IndexError. Set the
+    // __exception_active flag and the exception type so try/except
+    // IndexError catches the path; the downstream uncaught_exception
+    // assertion catches the uncaught case.
+    auto emit_index_error =
+      [&](const exprt &adjusted_idx, const exprt &length, const typet &type)
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym == nullptr)
+        return;
+      exprt in_range = and_exprt{
+        binary_relation_exprt{adjusted_idx, ID_ge, safe_zero(type)},
+        binary_relation_exprt{adjusted_idx, ID_lt, length}};
+      exprt out_of_range = not_exprt{in_range};
+      // exc_active := exc_active || out_of_range
+      pending_checks.push_back(code_frontend_assignt{
+        exc_sym->symbol_expr(),
+        or_exprt{exc_sym->symbol_expr(), out_of_range}});
+      if(exc_type_sym != nullptr)
+      {
+        long h = exception_type_hash("IndexError");
+        pending_checks.push_back(code_frontend_assignt{
+          exc_type_sym->symbol_expr(),
+          if_exprt{
+            out_of_range,
+            from_integer(h, exc_type_sym->type),
+            exc_type_sym->symbol_expr()}});
+      }
+    };
     if(use_smt_string_native)
     {
       // Native SMT-String back-end (Plan A): s[i] = str.substr(s, adj, 1),
@@ -2062,6 +2094,7 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
           idx64, ID_lt, from_integer(0, signedbv_typet{64})},
         plus_exprt{len_e, idx64},
         idx64};
+      emit_index_error(adj, len_e, adj.type());
       return string_substr(value, adj, from_integer(1, signedbv_typet{64}));
     }
     exprt length = python_lift_to_index_domain(
@@ -2090,38 +2123,7 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
       }
     }
     if(!elide_str_idx_check)
-    {
-      // PLR §6.10.1: string subscript out-of-range raises
-      // IndexError. Set the __exception_active flag and the
-      // exception type so try/except IndexError catches the
-      // path; the downstream uncaught_exception assertion
-      // catches the uncaught case.
-      const symbolt *exc_sym =
-        symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
-      if(exc_sym != nullptr)
-      {
-        exprt in_range = and_exprt{
-          binary_relation_exprt{adjusted_idx, ID_ge, safe_zero(slice.type())},
-          binary_relation_exprt{adjusted_idx, ID_lt, length}};
-        exprt out_of_range = not_exprt{in_range};
-        // exc_active := exc_active || out_of_range
-        pending_checks.push_back(code_frontend_assignt{
-          exc_sym->symbol_expr(),
-          or_exprt{exc_sym->symbol_expr(), out_of_range}});
-        if(exc_type_sym != nullptr)
-        {
-          long h = exception_type_hash("IndexError");
-          pending_checks.push_back(code_frontend_assignt{
-            exc_type_sym->symbol_expr(),
-            if_exprt{
-              out_of_range,
-              from_integer(h, exc_type_sym->type),
-              exc_type_sym->symbol_expr()}});
-        }
-      }
-    }
+      emit_index_error(adjusted_idx, length, slice.type());
     // Constant-string optimization for indexing
     {
       auto sv = extract_string_value(value);
