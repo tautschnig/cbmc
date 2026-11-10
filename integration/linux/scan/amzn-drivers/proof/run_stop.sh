@@ -22,6 +22,7 @@ for V in 0 1; do
   ( cd /tmp/dpdk/build-ql && ulimit -v 32000000 &&
     "$B/goto-cc" $(cat /tmp/ena-proof/flags.txt) -DPEDANTIC -DRING_SIZE=$RING \
       -DVACUITY_CHECK=$V "$P/harness_stop.c" "$P/rdtsc_stub.c" -o "$W/s$V.gb" ) || exit 1
+    [ -f "$W/s$V.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
   ( ulimit -v 32000000; "$B/goto-instrument" $RM "$W/s$V.gb" "$W/s${V}r.gb" >/dev/null ) || exit 1
 done
 ( ulimit -v 120000000; timeout 2400 "$B/cbmc" "$W/s0r.gb" --bounds-check \

@@ -22,6 +22,7 @@ for V in 0 1; do
     "$BIN/goto-cc" $(cat /tmp/ena-proof/flags.txt) -DPEDANTIC -DRING_SIZE=$RING \
       -DMBUF_POOL=$RING -DVACUITY_CHECK=$V $DEFS "$HERE/harness_cleanup.c" \
       "$HERE/rdtsc_stub.c" -o "$OUT/c$V.gb" 2>&1 | grep -i error | head ) || exit 1
+    [ -f "$OUT/c$V.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/c$V.gb" "$OUT/c${V}_rm.gb" >/dev/null 2>&1 )
   ( ulimit -v 32000000; "$BIN/goto-instrument" --add-library "$OUT/c${V}_rm.gb" "$OUT/c${V}_lib.gb" >/dev/null 2>&1 )
   ( ulimit -v 32000000; "$BIN/goto-instrument" --no-malloc-may-fail \

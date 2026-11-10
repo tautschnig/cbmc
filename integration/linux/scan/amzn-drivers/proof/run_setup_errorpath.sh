@@ -25,6 +25,7 @@ for R in 0 1; do
     "$BIN/goto-cc" $(cat "$OUT/flags.txt") -DPEDANTIC -DCONCRETE_RING=$RING \
       -DRELEASE_AFTER_FAILURE=$R \
       "$HERE/harness_setup_errorpath.c" "$HERE/rdtsc_stub.c" -o "$OUT/ep$R.gb" )
+    [ -f "$OUT/ep$R.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/ep$R.gb" "$OUT/ep${R}_rm.gb" >/dev/null 2>&1 )
   rm -f "$OUT/ep$R.log"
   ( ulimit -v 60000000

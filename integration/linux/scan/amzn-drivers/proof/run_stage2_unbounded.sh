@@ -18,6 +18,7 @@ cd "$DPDK/build-ql"
 ( ulimit -v 32000000
   "$BIN/goto-cc" $(cat "$OUT/flags.txt") -DPEDANTIC \
     "$HERE/harness_tx_unbounded.c" -o "$OUT/s2.gb" )
+  [ -f "$OUT/s2.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
 
 RM=""
 for f in rte_pktmbuf_free rte_pktmbuf_free_seg rte_pktmbuf_read \

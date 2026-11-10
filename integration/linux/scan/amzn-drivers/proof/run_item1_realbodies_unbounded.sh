@@ -51,6 +51,7 @@ for V in 0 1; do
     "$BIN/goto-cc" $(cat "$OUT/flags.txt") -DPEDANTIC \
       -DMAX_BURST=$BURST -DMAX_SEGS=$SEGS -DRING_SIZE=$RING -DVACUITY_CHECK=$V ${EXTRA_DEFS:-} \
       "$HERE/harness_tx_callees.c" "$HERE/rdtsc_stub.c" "$HERE/pktmbuf_read_stub.c" -o "$OUT/i1$TAG.gb" )
+    [ -f "$OUT/i1$TAG.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/i1$TAG.gb" "$OUT/i1${TAG}_rm.gb" >/dev/null 2>&1 )
   ( ulimit -v 32000000; "$BIN/goto-instrument" --add-library "$OUT/i1${TAG}_rm.gb" "$OUT/i1${TAG}_lib.gb" >/dev/null 2>&1 )
   ( ulimit -v 32000000

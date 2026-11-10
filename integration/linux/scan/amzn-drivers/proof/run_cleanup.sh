@@ -30,6 +30,7 @@ for V in 0 1; do
     "$BIN/goto-cc" $(cat "$OUT/flags.txt") -DPEDANTIC \
       -DRING_SIZE=$RING -DMBUF_POOL=$POOL -DVACUITY_CHECK=$V \
       "$HERE/harness_cleanup.c" "$HERE/rdtsc_stub.c" -o "$OUT/cl$TAG.gb" )
+    [ -f "$OUT/cl$TAG.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/cl$TAG.gb" "$OUT/cl${TAG}_rm.gb" >/dev/null 2>&1 )
 done
 

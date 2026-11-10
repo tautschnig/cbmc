@@ -21,6 +21,7 @@ for V in 0 1; do
     "$B/goto-cc" $(cat /tmp/ena-proof/flags.txt) -DPEDANTIC -DRING_SIZE=$RING \
       -DVACUITY_CHECK=$V "$P/harness_rx_refill.c" "$P/rdtsc_stub.c" \
       -o "$W/f$V.gb" 2>&1 | grep -i error | head ) || exit 1
+    [ -f "$W/f$V.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
   ( ulimit -v 32000000; "$B/goto-instrument" $RM "$W/f$V.gb" "$W/f${V}r.gb" >/dev/null 2>&1 )
 done
 ( ulimit -v 150000000; timeout 3000 "$B/cbmc" "$W/f0r.gb" --bounds-check \

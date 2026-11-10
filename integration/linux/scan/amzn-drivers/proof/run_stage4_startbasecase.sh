@@ -44,6 +44,7 @@ for V in 0 1; do
     "$BIN/goto-cc" $(cat "$OUT/flags.txt") -DPEDANTIC -DCONCRETE_RING=$RING \
       -DASSUME_DEVICE_HONEST_DOORBELL -DVACUITY_CHECK=$V \
       "$HERE/harness_start_basecase.c" -o "$OUT/s4_$V.gb" )
+    [ -f "$OUT/s4_$V.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/s4_$V.gb" "$OUT/s4_${V}_rm.gb" >/dev/null 2>&1 )
 done
 

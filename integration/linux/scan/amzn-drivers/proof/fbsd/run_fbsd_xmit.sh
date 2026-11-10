@@ -21,6 +21,7 @@ for V in 0 1; do
   ( ulimit -v 32000000
     "$BIN/goto-cc" -c $(cat flags.txt) -DRING_SIZE=$RING -DVACUITY_CHECK=$V \
       -DASSUME_NO_F14 "$HERE/harness_fbsd_xmit.c" -o "$OUT/h$V.o" ) || exit 1
+    [ -f "$OUT/h$V.o" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
   ( ulimit -v 32000000
     "$BIN/goto-cc" "$OUT/h$V.o" ena.o ena_com.o -o "$OUT/g$V.gb" ) 2>/dev/null
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/g$V.gb" "$OUT/m$V.gb" >/dev/null 2>&1 )
