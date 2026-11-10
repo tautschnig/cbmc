@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.regexSymbolic --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+^string refinement: regular expression matching is only modelled for constant supported patterns and subjects, so a counterexample may be spurious$
+--
+--
+Matching a symbolic subject is not modelled, which is reported.

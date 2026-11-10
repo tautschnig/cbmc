@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.longMin --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^string refinement: .* so a counterexample may be spurious$
+--
+Behaviour that was already right and must stay so: the string of a constant Long.MIN_VALUE.

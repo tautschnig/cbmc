@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.replaceSymbolic --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+^string refinement: replace is only modelled for a character or constant arguments, so a counterexample may be spurious$
+--
+--
+replace with a symbolic target is not modelled: the assertion holds in Java, and the counterexample is reported as possibly spurious.

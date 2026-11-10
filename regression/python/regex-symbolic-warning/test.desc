@@ -1,0 +1,11 @@
+CORE
+main.py
+--function check
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+^string refinement: regular expression matching is only modelled for constant supported patterns and subjects, so a counterexample may be spurious$
+--
+--
+The assertion holds in CPython; matching a symbolic subject is not modelled,
+which is reported.
