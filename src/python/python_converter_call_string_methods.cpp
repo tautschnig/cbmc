@@ -1519,6 +1519,49 @@ std::optional<exprt> python_convertert::try_string_method(
           symbol_table.lookup_ref(fn).symbol_expr(), {obj, old_expr, new_expr}};
         app.type() = string_typet{};
 
+        auto old_sv = extract_string_value(old_expr);
+        auto new_sv = extract_string_value(new_expr);
+
+        // An empty `old` makes CPython insert `new` at each of the
+        // len(obj)+1 boundaries, whereas SMT-LIB's str.replace_all leaves
+        // the string unchanged. For an `old` that may be empty, use a fresh
+        // string that starts and ends with `new` in that case (sound: the
+        // true result is one such string).
+        if(!old_sv.has_value() || old_sv->empty())
+        {
+          static unsigned er_ctr = 0;
+          const std::string nm =
+            "__replace_sym_empty_" + std::to_string(er_ctr++);
+          const irep_idt rid{qualify_name(nm)};
+          if(symbol_table.lookup(rid) == nullptr)
+          {
+            symbolt sy{rid, string_typet{}, "python"};
+            sy.base_name = nm;
+            sy.is_lvalue = true;
+            sy.is_state_var = true;
+            symbol_table.add(sy);
+          }
+          const symbol_exprt r = symbol_table.lookup_ref(rid).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{
+            r, side_effect_expr_nondett{string_typet{}, get_location(expr)}});
+          pending_checks.push_back(code_assumet{native_string_app(
+            ID_cprover_string_startswith_func,
+            {string_typet{}, string_typet{}},
+            {r, new_expr},
+            bool_typet{})});
+          pending_checks.push_back(code_assumet{native_string_app(
+            ID_cprover_string_endswith_func,
+            {string_typet{}, string_typet{}},
+            {r, new_expr},
+            bool_typet{})});
+          if(old_sv.has_value())
+            return std::move(r);
+          return if_exprt{
+            equal_exprt{old_expr, constant_exprt{irep_idt{""}, string_typet{}}},
+            r,
+            std::move(app)};
+        }
+
         // Length hint: str.replace_all changes the length by
         // (len(new) - len(old)) per replaced occurrence. The exact result
         // length is count-dependent (hard for the solver), but with CONSTANT
@@ -1527,9 +1570,7 @@ std::optional<exprt> python_convertert::try_string_method(
         //   len(new) == len(old)  =>  len(result) == len(s)
         //   len(new)  > len(old)  =>  len(result) >= len(s)
         //   len(new)  < len(old)  =>  len(result) <= len(s)
-        auto old_sv = extract_string_value(old_expr);
-        auto new_sv = extract_string_value(new_expr);
-        if(old_sv.has_value() && new_sv.has_value())
+        if(new_sv.has_value())
         {
           static unsigned rep_ctr = 0;
           const std::string nm = "__replace_len_" + std::to_string(rep_ctr++);

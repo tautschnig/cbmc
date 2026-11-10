@@ -1,0 +1,12 @@
+CORE
+unchanged.py
+--cvc5 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 5 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+str.replace_all leaves the subject unchanged for an empty pattern, so this
+false assertion was proved.

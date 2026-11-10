@@ -1,0 +1,9 @@
+CORE
+empty-new.py
+--z3 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 4 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
