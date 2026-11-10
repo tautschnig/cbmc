@@ -936,21 +936,41 @@ code_blockt java_string_library_preprocesst::make_float_to_string_code(
   const exprt str = allocate_fresh_string(
     type.return_type(), loc, function_id, symbol_table, code);
 
-  // Expression representing 0.0
+  // Constants in the precision of the argument.
   const ieee_float_spect float_spec{to_floatbv_type(params[0].type())};
-  ieee_float_valuet zero_float(float_spec);
-  zero_float.from_float(0.0);
-  const constant_exprt zero = zero_float.to_expr();
+  const bool is_double = float_spec == ieee_float_spect::double_precision();
+  INVARIANT(
+    is_double || float_spec == ieee_float_spect::single_precision(),
+    "Java floating-point values are floats or doubles");
+  const auto constant = [is_double](double value)
+  {
+    ieee_float_valuet result;
+    if(is_double)
+      result.from_double(value);
+    else
+      result.from_float(static_cast<float>(value));
+    return result.to_expr();
+  };
+
+  // Expression representing 0.0
+  const constant_exprt zero = constant(0.0);
 
   // For each possible case with have a condition and a string_exprt
   std::vector<exprt> condition_list;
   std::vector<refined_string_exprt> string_expr_list;
 
+  // The digits are those of the magnitude, which the string functions below
+  // are given: they are called whatever the case, and the conversions of a
+  // negative value (as the fractional part of a negative number) had no
+  // solution, which made every path through a negative value infeasible.
+  const if_exprt magnitude{
+    binary_relation_exprt{arg, ID_lt, zero}, unary_minus_exprt{arg}, arg};
+
   // Case of computerized scientific notation
   condition_list.push_back(binary_relation_exprt(arg, ID_ge, zero));
   const refined_string_exprt sci_notation = string_expr_of_function(
     ID_cprover_string_of_float_scientific_notation_func,
-    {arg},
+    {magnitude},
     loc,
     symbol_table,
     code);
@@ -996,30 +1016,24 @@ code_blockt java_string_library_preprocesst::make_float_to_string_code(
   string_expr_list.push_back(zero_string);
 
   // Case of -0.0
-  ieee_float_valuet minus_zero_float(float_spec);
-  minus_zero_float.from_float(-0.0f);
-  condition_list.push_back(equal_exprt(arg, minus_zero_float.to_expr()));
+  condition_list.push_back(equal_exprt(arg, constant(-0.0)));
   const refined_string_exprt minus_zero_string =
     string_literal_to_string_expr("-0.0", loc, symbol_table, code);
   string_expr_list.push_back(minus_zero_string);
 
   // Case of simple notation
-  auto rm = ieee_floatt::rounding_modet::ROUND_TO_EVEN;
-  ieee_floatt bound_inf_float(float_spec, rm);
-  ieee_floatt bound_sup_float(float_spec, rm);
-  bound_inf_float.from_float(1e-3f);
-  bound_sup_float.from_float(1e7f);
-  bound_inf_float.change_spec(float_spec);
-  bound_sup_float.change_spec(float_spec);
-  const constant_exprt bound_inf = bound_inf_float.to_expr();
-  const constant_exprt bound_sup = bound_sup_float.to_expr();
+  // Java uses plain notation for magnitudes in [10^-3, 10^7). The closest
+  // value to 10^-3 is above it in both precisions, so comparing with it is
+  // exact.
+  const constant_exprt bound_inf = constant(1e-3);
+  const constant_exprt bound_sup = constant(1e7);
 
   const and_exprt is_simple_float{binary_relation_exprt(arg, ID_ge, bound_inf),
                                   binary_relation_exprt(arg, ID_lt, bound_sup)};
   condition_list.push_back(is_simple_float);
 
   const refined_string_exprt simple_notation = string_expr_of_function(
-    ID_cprover_string_of_float_func, {arg}, loc, symbol_table, code);
+    ID_cprover_string_of_float_func, {magnitude}, loc, symbol_table, code);
   string_expr_list.push_back(simple_notation);
 
   // Case of a negative number in simple notation
@@ -1697,6 +1711,19 @@ void java_string_library_preprocesst::initialize_conversion_table()
       ID_cprover_string_of_long_func;
   conversion_table
     ["java::org.cprover.CProverString.toString:(F)Ljava/lang/String;"] =
+      std::bind(
+        &java_string_library_preprocesst::make_float_to_string_code,
+        this,
+        std::placeholders::_1,
+        std::placeholders::_2,
+        std::placeholders::_3,
+        std::placeholders::_4,
+        std::placeholders::_5);
+  // Doubles in their own precision: the models narrow them with
+  // CProver.doubleToFloat, which assumes that the double is a float, and so
+  // made every other double infeasible.
+  conversion_table
+    ["java::org.cprover.CProverString.toString:(D)Ljava/lang/String;"] =
       std::bind(
         &java_string_library_preprocesst::make_float_to_string_code,
         this,

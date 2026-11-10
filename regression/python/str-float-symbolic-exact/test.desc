@@ -1,0 +1,10 @@
+CORE
+main.py
+--function check
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+str of a symbolic float is CPython's repr: the sign, the shortest digits
+that read back as the value, and scientific notation from 1e16.

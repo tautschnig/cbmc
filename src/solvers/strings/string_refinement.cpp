@@ -24,6 +24,7 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
 #include <util/format.h>
 #include <util/format_expr.h>
 #include <util/format_type.h>
+#include <util/ieee_float.h>
 #include <util/magic.h>
 #include <util/range.h>
 #include <util/simplify_expr.h>
@@ -33,6 +34,7 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
 #include "equation_symbol_mapping.h"
 #include "string_constraint_instantiation.h"
 #include "string_dependencies.h"
+#include "string_float_format.h"
 #include "string_refinement_invariant.h"
 
 #include <stack>
@@ -1201,7 +1203,15 @@ string_refinementt::dec_solve(const exprt &assumption)
   dependencies.clean_cache();
   const decision_proceduret::resultt initial_result =
     (add_length_definitions(), supert::dec_solve(nil_exprt()));
-  if(initial_result == resultt::D_SATISFIABLE)
+  // The conversions of floating-point values are checked first: their
+  // results are otherwise unconstrained, and the axioms of the strings made
+  // from them took many rounds for models with arbitrary lengths.
+  if(initial_result == resultt::D_SATISFIABLE && !check_float_conversions())
+  {
+    log.debug() << "check_SAT: got SAT but a conversion of a floating-point "
+                << "value is wrong" << messaget::eom;
+  }
+  else if(initial_result == resultt::D_SATISFIABLE)
   {
     bool satisfied;
     std::vector<exprt> counter_examples;
@@ -1251,6 +1261,8 @@ string_refinementt::dec_solve(const exprt &assumption)
   // for symbolic-length-needle membership (see the empty-index-set handling
   // below).
   std::size_t empty_index_set_rounds = 0;
+  // Rounds that only corrected conversions of floating-point values.
+  std::size_t float_rounds = 0;
 
   while((loop_bound_--) > 0)
   {
@@ -1258,6 +1270,20 @@ string_refinementt::dec_solve(const exprt &assumption)
     const decision_proceduret::resultt refined_result =
       (add_length_definitions(), supert::dec_solve(nil_exprt()));
 
+    if(refined_result == resultt::D_SATISFIABLE && !check_float_conversions())
+    {
+      // Each round excludes the value of a conversion in the model; the
+      // values that a constraint on the strings allows may be many.
+      constexpr std::size_t max_float_rounds = 256;
+      if(++float_rounds > max_float_rounds)
+      {
+        log.warning() << "string refinement: the strings of floating-point "
+                      << "values were still wrong after " << max_float_rounds
+                      << " rounds, so the result is not known" << messaget::eom;
+        return resultt::D_ERROR;
+      }
+      continue;
+    }
     if(refined_result == resultt::D_SATISFIABLE)
     {
       bool satisfied;
@@ -1546,6 +1572,57 @@ void string_refinementt::add_counter_example(const exprt &lemma)
     generator.fresh_symbol,
     true,
     access_definitions));
+}
+
+bool string_refinementt::check_float_conversions()
+{
+  bool all_right = true;
+  for(const auto &conversion : generator.float_conversions)
+  {
+    if(simplify_expr(get(conversion.guard), ns).is_false())
+      continue;
+    const exprt value = simplify_expr(get(conversion.value), ns);
+    if(!value.is_constant() || value.type().id() != ID_floatbv)
+      continue;
+    const ieee_float_valuet constant{to_constant_expr(value)};
+    const bool single = constant.spec == ieee_float_spect::single_precision();
+    if(!single && constant.spec != ieee_float_spect::double_precision())
+      continue;
+    const std::string expected = format_float(
+      single ? constant.to_float() : constant.to_double(),
+      single,
+      conversion.format);
+
+    const array_string_exprt &result = conversion.result;
+    const exprt length = generator.array_pool.get_or_create_length(result);
+    const typet &index_type = result.length_type();
+    const typet &char_type =
+      to_type_with_subtype(result.content().type()).subtype();
+    bool right = numeric_cast<std::size_t>(simplify_expr(get(length), ns)) ==
+                 expected.size();
+    for(std::size_t i = 0; right && i < expected.size(); ++i)
+    {
+      const auto c = numeric_cast<mp_integer>(simplify_expr(
+        get(index_exprt{result.content(), from_integer(i, index_type)}), ns));
+      right = c == mp_integer{static_cast<unsigned char>(expected[i])};
+    }
+    if(right)
+      continue;
+
+    all_right = false;
+    exprt::operandst string_is_expected{
+      equal_exprt{length, from_integer(expected.size(), index_type)}};
+    for(std::size_t i = 0; i < expected.size(); ++i)
+    {
+      string_is_expected.push_back(equal_exprt{
+        result[from_integer(i, index_type)],
+        from_integer(static_cast<unsigned char>(expected[i]), char_type)});
+    }
+    add_lemma(implies_exprt{
+      and_exprt{conversion.guard, equal_exprt{conversion.value, value}},
+      conjunction(string_is_expected)});
+  }
+  return all_right;
 }
 
 /// Add the given lemma to the solver.

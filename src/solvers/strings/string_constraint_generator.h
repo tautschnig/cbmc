@@ -30,11 +30,13 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 #include <solvers/strings/string_constraint.h>
 
 #include "array_pool.h"
+#include "string_float_format.h"
 
 #include <functional>
 #include <limits>
 #include <set>
 #include <string>
+#include <vector>
 
 class function_application_exprt;
 
@@ -242,31 +244,24 @@ public:
   std::pair<exprt, string_constraintst>
   add_axioms_for_last_index_of(const function_application_exprt &f);
 
-  /// \todo The specifications of these functions is only partial.
-  /// We currently only specify that the string for NaN is "NaN", for infinity
-  /// and minus infinity the string are "Infinity" and "-Infinity respectively
-  /// otherwise the string contains only characters in [0123456789.] and '-' at
-  /// the start for negative number
-  std::pair<exprt, string_constraintst>
-  add_axioms_for_string_of_float(const function_application_exprt &f);
-  std::pair<exprt, string_constraintst>
-  add_axioms_for_string_of_float(const array_string_exprt &res, const exprt &f);
-  std::pair<exprt, string_constraintst> add_axioms_for_fractional_part(
-    const array_string_exprt &res,
-    const exprt &int_expr,
-    size_t max_size);
-  std::pair<exprt, string_constraintst>
-  add_axioms_from_float_scientific_notation(
-    const array_string_exprt &res,
-    const exprt &f);
-  std::pair<exprt, string_constraintst>
-  add_axioms_from_float_scientific_notation(
-    const function_application_exprt &f);
+  /// The string of a floating-point value (see format_float): for a constant
+  /// value, axioms make it exact; otherwise it is recorded in
+  /// float_conversions, for the refinement to check in each model.
+  std::pair<exprt, string_constraintst> add_axioms_for_string_of_float(
+    const function_application_exprt &f,
+    float_formatt format);
 
-  /// Add axioms corresponding to the String.valueOf(D) java function
-  /// \todo The specifications is only partial.
-  std::pair<exprt, string_constraintst>
-  add_axioms_from_double(const function_application_exprt &f);
+  /// A conversion of a floating-point value to a string whose result the
+  /// axioms leave open.
+  struct float_conversiont
+  {
+    exprt value;
+    array_string_exprt result;
+    float_formatt format;
+    /// Where the conversion happens (see string_dependenciest).
+    exprt guard = true_exprt{};
+  };
+  std::vector<float_conversiont> float_conversions;
 
   std::pair<exprt, string_constraintst>
   add_axioms_for_replace(const function_application_exprt &f);

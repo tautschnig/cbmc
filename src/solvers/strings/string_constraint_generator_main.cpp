@@ -454,11 +454,11 @@ string_constraint_generatort::add_axioms_for_function_application(
   else if(id == ID_cprover_string_of_int_hex_func)
     return add_axioms_from_int_hex(expr);
   else if(id == ID_cprover_string_of_float_func)
-    return add_axioms_for_string_of_float(expr);
+    return add_axioms_for_string_of_float(expr, float_formatt::JAVA_PLAIN);
   else if(id == ID_cprover_string_of_float_scientific_notation_func)
-    return add_axioms_from_float_scientific_notation(expr);
+    return add_axioms_for_string_of_float(expr, float_formatt::JAVA_SCIENTIFIC);
   else if(id == ID_cprover_string_of_double_func)
-    return add_axioms_from_double(expr);
+    return add_axioms_for_string_of_float(expr, float_formatt::PYTHON);
   else if(id == ID_cprover_string_of_long_func)
     return add_axioms_from_long(expr);
   else if(id == ID_cprover_string_set_length_func)

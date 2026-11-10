@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.negBad --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+The digits of a negative value used to be contradictory, which made the path infeasible.
