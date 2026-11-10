@@ -80,9 +80,11 @@ part, vacuity witnesses that must fail, and an assumption ledger.
    **F16**, an unchecked device `req_id` dereferenced in `ena_rx_mbuf`, which
    Linux and FreeBSD both check.
 
-   Still open on RX: `ena_rx_queue_intr_enable/disable`; the `max_rx_sgl_size
-   == 0` reset question from the F14 notes; ring 8 with chains (does not
-   finish in 3000 s); and `ena_rx_queue_release`'s F10 shape.
+   RX leftovers now settled: `ena_rx_queue_intr_enable/disable` gave **F17**
+   (the device queue is dereferenced before the port is started), and
+   `ena_rx_queue_release`'s F10 shape is proven rather than read
+   (`harness_rx_errorpath.c`). Still open on RX: the `max_rx_sgl_size == 0`
+   reset question, and ring 8 with chains (does not finish in 3000 s).
 3. **Device lifecycle and error paths** (class C, and the 61%
    error-path-triggered findings). `ena_start`, `ena_stop`, `ena_close` and
    `ena_dev_reset` act on every queue. Each is proven to take `INV_DEV` to
@@ -127,9 +129,16 @@ part, vacuity witnesses that must fail, and an assumption ledger.
 
    Each pair is one harness. This covers named pairs, not all interleavings.
 9. **Scale and other targets.**
-   - Ring 8 and larger through loop contracts: the cleanup contract is still
-     incomplete, and the xmit step has been checked at ring 8 / burst 2.
-   - The FreeBSD xmit side.
+   - Ring 8 and larger through loop contracts. The cleanup attempt is
+     measured and written up in `ena-cleanup-ring8-2026-11.md`: **not
+     proven**, and the remaining obstacle is that the invariant does not
+     carry `INV_DESC_SUM` or `INV_FREE_LIST`, not performance. The xmit step
+     has been checked at ring 8 / burst 2.
+   - **The FreeBSD xmit side is done** for the submit step
+     (`harness_fbsd_xmit.c`): seven obligations including `FBX_NO_UNSENT`,
+     which is the F12 check FreeBSD passes and DPDK fails, and
+     `FBX_DMA_ORDER`, a class A obligation DPDK cannot express. FreeBSD RX
+     and its queue lifecycle are not started.
    - The Linux ENA driver, where most Unveil findings sit and which shares
      `ena_com`. Phases 1–5 transfer with new harness glue, not new
      invariants.
@@ -158,7 +167,7 @@ part, vacuity witnesses that must fail, and an assumption ledger.
 | H NULL deref | 7% | pointer checks in every part, error paths (3) |
 | C stale after failure | 9% | error-path obligations (3) |
 | D leak | 9% | ghost allocation counter (6) |
-| A DMA into freed memory | 6% | ghost device-access set (7) |
+| A DMA into freed memory | 6% | ghost device-access set (7). First instance done: `FBX_DMA_ORDER` on the FreeBSD submit step, which has a real `bus_dma` layer to track |
 | E deadlock | 3% | lock-order ghost. DPDK ENA takes `adapter->admin_lock` in 4 places in `ena_ethdev.c` and `ena_com` takes its own spinlocks 12 times, so this goes with 5 and 8 |
 | I, J | 2% | conversion and bounds checks, uninitialised locals via goto-instrument's experimental `--uninitialized-check` |
 | concurrency trigger | 21% | named pairs (8) |

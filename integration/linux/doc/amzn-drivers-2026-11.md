@@ -915,6 +915,49 @@ same harness (`-DRELEASE_AFTER_FAILURE=1`) confirms it: after a failed
 check. `RX_RELEASE_NONNULL` FAILS, and with the release performed CBMC
 reports the NULL dereference directly.
 
+## Observation: the FreeBSD header-skip loop indexes segs[] with no nsegs guard
+
+Not a finding: no counterexample exists under the DMA layer's contract. It is
+recorded because the proof had to assume the contract explicitly, which makes
+the dependency worth stating.
+
+`ena_tx_map_mbuf` (FreeBSD, `ena_datapath.c:931`) skips the bytes already
+pushed into the LLQ header:
+
+```c
+offset = tx_ring->tx_max_header_size;
+while (offset > 0) {
+        if (offset >= segs[iseg].ds_len) {
+                offset -= segs[iseg].ds_len;
+        } else {
+                ... ena_buf->len = segs[iseg].ds_len - offset; offset = 0;
+        }
+        iseg++;
+}
+```
+
+The loop condition is `offset > 0`; there is no `iseg < nsegs` test. `segs` is
+the local `bus_dma_segment_t segs[ENA_BUS_DMA_SEGS]` (32 entries) that
+`bus_dmamap_load_mbuf_sg` filled with `nsegs` of them. Termination inside the
+filled prefix relies on two properties of `bus_dma`:
+
+- the segment lengths sum to the mapped mbuf's length, and
+- the guard above the loop (`ena_datapath.c:921`) has already returned when
+  `m_pkthdr.len <= tx_max_header_size`, so the sum strictly exceeds `offset`.
+
+Both hold for a correct `bus_dma`, so the loop is safe. The proof is sensitive
+to it: a first version of `harness_fbsd_xmit.c` modelled
+`bus_dmamap_load_mbuf_sg` as returning segments with arbitrary nonzero
+lengths, and CBMC then read past `segs[]`. The harness now states the
+partition property explicitly, which is the right place for it.
+
+A zero-length segment would be worse than an overrun: `offset` would never
+decrease and `iseg` would walk the array indefinitely. `bus_dma` does not
+produce those.
+
+The DPDK equivalent (`ena_tx_map_mbuf`, `ena_ethdev.c:3108`) walks
+`mbuf->next` instead and has no analogous array, so this is FreeBSD-specific.
+
 ## #4 result: the device-init preconditions are established, with one caveat
 
 The same harness checks, with no transmit (`-DDEVINIT_ONLY`), what the
