@@ -20,7 +20,7 @@ and `ena_rss.c` 590. Every way control enters the driver:
 | TX data | `eth_ena_xmit_pkts`, `ena_tx_cleanup` (also `.tx_done_cleanup`), `eth_ena_prep_pkts` | TX ring, LLQ | xmit and cleanup proven at ring 4. Prep not started. |
 | RX queue | `ena_rx_queue_setup`, `ena_queue_start` (RX, `ena_populate_rx_queue`), `ena_queue_stop` (RX), `ena_rx_queue_release` | `ena_ring` (RX) | setup, start and stop proven (RX induction closed at ring 4). `ena_rx_queue_release` still has the F10 shape. |
 | RX data | `eth_ena_recv_pkts` (with its refill), `ena_rx_queue_intr_enable/disable` | RX ring, device completions | recv and refill proven at ring 4, chains of 2, under `ASSUME_NO_F16`. The interrupt-enable pair is not started. |
-| device lifecycle | probe (`eth_ena_dev_init`), `ena_dev_configure`, `ena_start`, `ena_stop`, `ena_close`, `ena_dev_reset`, remove (`eth_ena_dev_uninit`) | adapter state, all queues, admin queue, AENQ, timers | device init's LLQ and sgl facts proven. Everything else is not started. |
+| device lifecycle | probe (`eth_ena_dev_init`), `ena_dev_configure`, `ena_start`, `ena_stop`, `ena_close`, `ena_dev_reset`, remove (`eth_ena_dev_uninit`) | adapter state, all queues, admin queue, AENQ, timers | device init's LLQ and sgl facts proven; `ena_start`, `ena_stop` and `ena_close` proven at ring 4 (`run_dev_start.sh`, `run_dev_lifecycle.sh`), closing the lifecycle loop at device level. `ena_dev_configure`, probe, remove and `ena_dev_reset` not started. |
 | async | `ena_control_path_handler` / `_poll_handler` (admin completions, AENQ: link change, notification, keep-alive), `ena_timer_wd_callback` (keep-alive, admin state, TX completion check, `trigger_reset`) | adapter, AENQ ring, per-queue timestamps | not started |
 | config and query | `ena_mtu_set`, RSS reta/hash update and query, `ena_stats_get`, xstats (4 functions), `ena_infos_get`, `ena_link_update` | admin queue, RSS table | not started |
 | multi-process | `ena_mp_primary_handle` (requests from secondary processes) | admin queue, adapter | not started |
@@ -85,13 +85,23 @@ part, vacuity witnesses that must fail, and an assumption ledger.
    `ena_rx_queue_release`'s F10 shape is proven rather than read
    (`harness_rx_errorpath.c`). Still open on RX: the `max_rx_sgl_size == 0`
    reset question, and ring 8 with chains (does not finish in 3000 s).
-3. **Device lifecycle and error paths** (class C, and the 61%
-   error-path-triggered findings). `ena_start`, `ena_stop`, `ena_close` and
-   `ena_dev_reset` act on every queue. Each is proven to take `INV_DEV` to
-   `INV_DEV` on success. On failure, the obligation is that the device is
-   left either unchanged or in a state from which close or reset still
-   works. Allocation failure and admin-command failure are injected the way
-   the setup and start harnesses already do. F10 is this kind of finding.
+3. **Device lifecycle and error paths -- largely done** (class C, and the 61%
+   error-path-triggered findings). `ena_stop` and `ena_close`
+   (`run_dev_lifecycle.sh`, ring 4, one and two queues per direction) and
+   `ena_start` (`run_dev_start.sh`, ring 4, one queue) are proven, with the
+   error-path obligation `DS_ERR_NO_HALF_START` holding.
+
+   The payoff is the composition: `LC_STOP_TX_STARTABLE` /
+   `LC_STOP_RX_STARTABLE` and `DS_TX_STARTED` / `DS_RX_STARTED` are exactly
+   the predicates the per-queue inductions use, so the device operations and
+   the per-queue data paths now compose over **every** queue rather than the
+   one a per-queue harness drives.
+
+   This phase produced **F18** (`ena_setup_rx_intr` returns success after
+   undoing its own setup) and, with the RX work, **F17**. Still open:
+   `ena_dev_configure`, probe (`eth_ena_dev_init`), remove, and
+   `ena_dev_reset`; and two queues per direction for `ena_start` does not
+   finish in 3000 s.
 4. **Async handlers** (classes F and K):
    - AENQ handlers with an untrusted entry. `ena_com_get_specific_aenq_cb`
      checks the device-supplied group against `ENA_MAX_HANDLERS`, so the
@@ -165,7 +175,7 @@ part, vacuity witnesses that must fail, and an assumption ledger.
 | F lost event / stuck | 9% | `INV_wakeup` (done), async handlers (4), F15-style stuck slots |
 | G OOB / corruption | 4% | bounds checks in every part, untrusted device (2, 4, 5) |
 | H NULL deref | 7% | pointer checks in every part, error paths (3) |
-| C stale after failure | 9% | error-path obligations (3) |
+| C stale after failure | 9% | error-path obligations (3). Done for start/stop/close: `DS_ERR_NO_HALF_START`, plus `LC_CLOSE_IDEMPOTENT` and `LC_DRV_STATS_ONCE` |
 | D leak | 9% | ghost allocation counter (6) |
 | A DMA into freed memory | 6% | ghost device-access set (7). First instance done: `FBX_DMA_ORDER` on the FreeBSD submit step, which has a real `bus_dma` layer to track |
 | E deadlock | 3% | lock-order ghost. DPDK ENA takes `adapter->admin_lock` in 4 places in `ena_ethdev.c` and `ena_com` takes its own spinlocks 12 times, so this goes with 5 and 8 |
