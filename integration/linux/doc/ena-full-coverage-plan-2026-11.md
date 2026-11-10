@@ -118,20 +118,25 @@ part, vacuity witnesses that must fail, and an assumption ledger.
    Still open: the admin-completion half of `ena_control_path_handler`, and
    "a reset request is eventually consumed by `ena_dev_reset`", which needs
    the reset operation itself (phase 3 leftover).
-5. **Config and query operations** (class G). Untrusted admin responses
-   indexed into driver arrays are the F8/F9 shape, for example the RSS
-   indirection table size and the xstats counts.
-6. **Leaks** (class D). Add a ghost allocation counter over `rte_zmalloc`,
-   `rte_memzone` and mbuf get/put. The obligation is that across a full
-   setup→start→…→stop→close sequence, live allocations equal those reachable
-   from driver state. F15's overwritten mbuf is a leak this would catch
-   directly.
-7. **DMA after free** (class A). Add a ghost "device may access" set. A
-   region enters it when it is given to the device (queue create, RX post)
-   and leaves when the device is told to stop (destroy-queue admin
-   completion). The obligation is that nothing in the set is freed. This
-   needs the real `ena_com_destroy_io_queue` admin path, which the stop step
-   currently leaves out.
+5. **Config and query operations -- done for the two array-indexing ones**
+   (class G). `ena_xstats_get_by_id` is proven with arbitrary
+   application-supplied ids (`run_xstats.sh`), and the RSS hash-key paths are
+   ruled out by reading the ethdev layer, which does bound `rss_key_len`.
+   The RSS indirection table gave **F19**. Not covered: `ena_mtu_set`,
+   `ena_dev_configure`, the remaining xstats entry points.
+6. **Leaks -- done for the queue lifecycle** (class D, `run_leaks.sh`).
+   `LK_BALANCED`, `LK_NO_DOUBLE`, `LK_NO_WILD` over setup→start→stop→close,
+   and `LK_SETUP_FAIL` with every allocation able to fail, which is the
+   leak-on-error-path case. Not covered: the probe/remove path and the mbuf
+   pool accounting that would catch F15's overwritten mbuf directly.
+7. **DMA after free -- done, and it found F20** (class A,
+   `run_dma_order.sh`). The ghost "device may access" set is maintained by
+   replacing the platform memory macros. With both destroy admin commands
+   succeeding the discipline holds; when either fails,
+   `DMA_NO_FREE_WHILE_LIVE` fails, because `ena_com_destroy_io_queue`
+   discards both return values and frees the rings regardless. That is
+   **F20**, in shared code, so it affects all three drivers. The data-path
+   side of the same discipline holds on FreeBSD (`FBX_DMA_ORDER`).
 8. **Concurrency** (the 21%). CBMC's thread support does not scale to this
    code, so the plan is bounded interleaving by hand: two operations whose
    shared accesses are interleaved at nondeterministic scheduling points.
@@ -143,6 +148,12 @@ part, vacuity witnesses that must fail, and an assumption ledger.
    - secondary-process requests run against the primary's control path.
 
    Each pair is one harness. This covers named pairs, not all interleavings.
+
+   **Pair 1 is done** (`run_conc_reset.sh`): the reset-request handshake.
+   No reset request is ever swallowed by a concurrent one, in either store
+   order. With the permitted store reordering a reader can see the flag set
+   and read a stale reason, which is recorded as an observation (a wrong
+   reset reason, not corruption). The remaining pairs are not started.
 9. **Scale and other targets.**
    - Ring 8 and larger through loop contracts. The cleanup attempt is
      measured and written up in `ena-cleanup-ring8-2026-11.md`: **not
@@ -181,8 +192,8 @@ part, vacuity witnesses that must fail, and an assumption ledger.
 | G OOB / corruption | 4% | bounds checks in every part, untrusted device (2, 4, 5) |
 | H NULL deref | 7% | pointer checks in every part, error paths (3) |
 | C stale after failure | 9% | error-path obligations (3). Done for start/stop/close: `DS_ERR_NO_HALF_START`, plus `LC_CLOSE_IDEMPOTENT` and `LC_DRV_STATS_ONCE` |
-| D leak | 9% | ghost allocation counter (6) |
-| A DMA into freed memory | 6% | ghost device-access set (7). First instance done: `FBX_DMA_ORDER` on the FreeBSD submit step, which has a real `bus_dma` layer to track |
+| D leak | 9% | ghost allocation ledger (6), done for the queue lifecycle including the error path |
+| A DMA into freed memory | 6% | ghost device-access set (7), done. The data path holds (`FBX_DMA_ORDER`, FreeBSD); the control path does not, which is F20 |
 | E deadlock | 3% | lock-order ghost. DPDK ENA takes `adapter->admin_lock` in 4 places in `ena_ethdev.c` and `ena_com` takes its own spinlocks 12 times, so this goes with 5 and 8 |
 | I, J | 2% | conversion and bounds checks, uninitialised locals via goto-instrument's experimental `--uninitialized-check` |
-| concurrency trigger | 21% | named pairs (8) |
+| concurrency trigger | 21% | named pairs (8). Pair 1 done; the rest not started |
