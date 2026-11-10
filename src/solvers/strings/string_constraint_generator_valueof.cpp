@@ -11,13 +11,15 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 /// Generates string constraints for functions generating strings from other
 ///   types, in particular int, long, float, double, char, bool
 
-#include "string_constraint_generator.h"
-
 #include <util/deprecate.h>
 #include <util/mathematical_expr.h>
 #include <util/simplify_expr.h>
 
+#include "string_constraint_generator.h"
+
 #include <cmath>
+#include <optional>
+#include <vector>
 
 /// If the expression is a constant expression then we get the value of it as
 /// an unsigned long. If not we return a default value.
@@ -357,6 +359,70 @@ string_constraint_generatort::get_conjuncts_for_correct_number_format(
   return conjuncts;
 }
 
+/// The prefixes of the magnitude of the integer that \p str represents,
+/// sum_j := radix * sum_{j-1} + digit_j in \p type, and for each length
+/// from 2 to \p max_string_length where it may fail (see
+/// add_axioms_for_characters_in_integer_string), the condition that the
+/// prefix of that length does not overflow:
+///   sum_{j-1} == radix * sum_{j-1} / radix &&
+///   (sum_j >= radix * sum_{j-1} || res[0] == '-' && sum_j == min)
+/// where, for a known radix, the first conjunct is sum_{j-1} <= max / radix,
+/// as the prefixes are not negative, which avoids a division.
+/// The magnitude of the minimum wraps around to the minimum, which is then
+/// its value; that used to count as an overflow, which made the string of
+/// the minimum contradictory.
+static std::vector<exprt> integer_string_prefixes(
+  const array_string_exprt &str,
+  const typet &type,
+  const bool strict_formatting,
+  const std::size_t max_string_length,
+  const exprt &radix,
+  const unsigned long radix_ul,
+  std::vector<std::optional<exprt>> &no_overflow)
+{
+  const typet &char_type = to_type_with_subtype(str.content().type()).subtype();
+  const equal_exprt starts_with_minus(str[0], from_integer('-', char_type));
+  const exprt min_value =
+    from_integer(-power(2, to_signedbv_type(type).get_width() - 1), type);
+  std::vector<exprt> sums;
+  sums.push_back(get_numeric_value_from_character(
+    str[0], char_type, type, strict_formatting, radix_ul));
+  no_overflow.assign(max_string_length + 1, std::nullopt);
+  for(std::size_t size = 2; size <= max_string_length; ++size)
+  {
+    const exprt &sum = sums.back();
+    const mult_exprt radix_sum(sum, radix);
+    const exprt new_sum = plus_exprt(
+      radix_sum,
+      get_numeric_value_from_character(
+        str[size - 1], char_type, type, strict_formatting, radix_ul));
+    // An overflow can happen when reaching the last index which can contain
+    // a digit, which is `max_string_length - 2` because of the space left
+    // for a minus sign. That assumes that we were able to identify the
+    // radix. If we weren't then we check for overflow on every index.
+    if(size - 1 >= max_string_length - 2 || radix_ul == 0)
+    {
+      const exprt no_multiplication_overflow =
+        radix_ul == 0
+          ? exprt{equal_exprt(sum, div_exprt(radix_sum, radix))}
+          : exprt{binary_relation_exprt{
+              sum,
+              ID_le,
+              from_integer(
+                (power(2, to_signedbv_type(type).get_width() - 1) - 1) /
+                  radix_ul,
+                type)}};
+      no_overflow[size] = and_exprt{
+        no_multiplication_overflow,
+        or_exprt{
+          binary_relation_exprt(new_sum, ID_ge, radix_sum),
+          and_exprt{starts_with_minus, equal_exprt{new_sum, min_value}}}};
+    }
+    sums.push_back(new_sum);
+  }
+  return sums;
+}
+
 /// Add axioms connecting the characters in the input string to the value of the
 /// output integer. It is constructive because it gives a formula for input_int
 /// in terms of the characters in str.
@@ -383,73 +449,49 @@ string_constraint_generatort::add_axioms_for_characters_in_integer_string(
   const typet &char_type = to_type_with_subtype(str.content().type()).subtype();
 
   const equal_exprt starts_with_minus(str[0], from_integer('-', char_type));
-  const constant_exprt zero_expr = from_integer(0, type);
 
-  exprt sum = get_numeric_value_from_character(
-    str[0], char_type, type, strict_formatting, radix_ul);
+  // sum_j and no_overflow_j as in integer_string_prefixes. For all
+  // 1<=size<=max_string_length we add axioms:
+  // a5 : |res| >= size => no_overflow_size (only added when overflow possible)
+  // a6 : |res| == size && res[0] is a digit for radix =>
+  //        input_int == sum_{size-1}
+  // a7 : |res| == size && res[0] == '-' => input_int == -sum_{size-1}
+  std::vector<std::optional<exprt>> no_overflow;
+  const std::vector<exprt> sums = integer_string_prefixes(
+    str,
+    type,
+    strict_formatting,
+    max_string_length,
+    radix,
+    radix_ul,
+    no_overflow);
 
   /// Deal with size==1 case separately. There are axioms from
   /// add_axioms_for_correct_number_format which say that the string must
   /// contain at least one digit, so we don't have to worry about "+" or "-".
   constraints.existential.push_back(implies_exprt(
     equal_to(array_pool.get_or_create_length(str), 1),
-    equal_exprt(input_int, sum)));
+    equal_exprt(input_int, sums[0])));
 
+  const exprt length_expr = array_pool.get_or_create_length(str);
   for(size_t size = 2; size <= max_string_length; size++)
   {
-    // sum_0 := numeric value of res[0] (which is 0 if res[0] is '-')
-    // For each 1<=j<max_string_length, we have:
-    // sum_j := radix * sum_{j-1} + numeric value of res[j]
-    // no_overflow_j := sum_{j-1} == (radix * sum_{j-1} / radix)
-    //                  && sum_j >= sum_{j - 1}
-    //   (the first part avoid overflows in the multiplication and the second
-    //     one in the addition of the definition of sum_j)
-    // For all 1<=size<=max_string_length we add axioms:
-    // a5 : |res| >= size => no_overflow_j (only added when overflow possible)
-    // a6 : |res| == size && res[0] is a digit for radix =>
-    //        input_int == sum_{size-1}
-    // a7 : |res| == size && res[0] == '-' => input_int == -sum_{size-1}
-
-    const mult_exprt radix_sum(sum, radix);
-    // new_sum = radix * sum + (numeric value of res[j])
-    const exprt new_sum = plus_exprt(
-      radix_sum,
-      get_numeric_value_from_character(
-        str[size - 1], char_type, type, strict_formatting, radix_ul));
-
-    // An overflow can happen when reaching the last index which can contain
-    // a digit, which is `max_string_length - 2` because of the space left for
-    // a minus sign. That assumes that we were able to identify the radix. If we
-    // weren't then we check for overflow on every index.
-    std::optional<exprt> no_overflow;
-    if(size - 1 >= max_string_length - 2 || radix_ul == 0)
-    {
-      no_overflow = and_exprt{equal_exprt(sum, div_exprt(radix_sum, radix)),
-                              binary_relation_exprt(new_sum, ID_ge, radix_sum)};
-    }
-    sum = new_sum;
-
-    exprt length_expr = array_pool.get_or_create_length(str);
-
-    if(no_overflow.has_value())
+    const exprt &sum = sums[size - 1];
+    if(no_overflow[size].has_value())
     {
       const binary_predicate_exprt string_length_ge_size{
         length_expr, ID_ge, from_integer(size, length_expr.type())};
-      const implies_exprt a5(string_length_ge_size, *no_overflow);
-      constraints.existential.push_back(a5);
+      constraints.existential.push_back(
+        implies_exprt(string_length_ge_size, *no_overflow[size]));
     }
 
     const equal_exprt string_length_equals_size = equal_to(length_expr, size);
-
-    const implies_exprt a6(
+    constraints.existential.push_back(implies_exprt(
       and_exprt(string_length_equals_size, not_exprt(starts_with_minus)),
-      equal_exprt(input_int, sum));
-    constraints.existential.push_back(a6);
-
-    const implies_exprt a7(
+      equal_exprt(input_int, sum)));
+    constraints.existential.push_back(implies_exprt(
       and_exprt(string_length_equals_size, starts_with_minus),
-      equal_exprt(input_int, unary_minus_exprt(sum)));
-    constraints.existential.push_back(a7);
+      equal_exprt(input_int, unary_minus_exprt(sum))));
   }
   return constraints;
 }
@@ -510,6 +552,27 @@ string_constraint_generatort::add_axioms_for_is_valid_int(
     args.radix_ul,
     args.max_string_length,
     strict_formatting);
+  // Java's parseInt and parseLong reject values outside the range, which
+  // add_axioms_for_parse_int makes infeasible.
+  std::vector<std::optional<exprt>> no_overflow;
+  integer_string_prefixes(
+    args.str,
+    target_int_type,
+    strict_formatting,
+    args.max_string_length,
+    args.radix,
+    args.radix_ul,
+    no_overflow);
+  const exprt length = array_pool.get_or_create_length(args.str);
+  for(std::size_t size = 2; size < no_overflow.size(); ++size)
+  {
+    if(no_overflow[size].has_value())
+    {
+      conjuncts.push_back(implies_exprt{
+        binary_relation_exprt{length, ID_ge, from_integer(size, length.type())},
+        *no_overflow[size]});
+    }
+  }
 
   return {typecast_exprt{conjunction(conjuncts), f.type()}, {}};
 }
