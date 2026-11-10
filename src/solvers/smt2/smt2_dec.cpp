@@ -16,6 +16,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "smt2irep.h"
 
 #include <fstream>
+#include <iterator>
 
 std::string smt2_dect::decision_procedure_text() const
 {
@@ -157,6 +158,35 @@ decision_proceduret::resultt smt2_dect::dec_solve(const exprt &assumption)
     messaget log{message_handler};
     log.error() << "error running SMT2 solver" << messaget::eom;
     return decision_proceduret::resultt::D_ERROR;
+  }
+
+  // cvc5 cannot print a model with strings longer than its
+  // --strings-model-max-len and prints witness terms instead, which are not
+  // values. Ask again with finite model finding for strings, which makes cvc5
+  // look for a model with short strings first. Only a satisfying assignment
+  // of the second run is used; anything else keeps the ERROR.
+  if(solver == solvert::CVC5)
+  {
+    std::ifstream err(temp_file_stderr());
+    const std::string err_text{
+      std::istreambuf_iterator<char>{err}, std::istreambuf_iterator<char>{}};
+    if(err_text.find("strings-model-max-len") != std::string::npos)
+    {
+      messaget log{message_handler};
+      log.status() << "cvc5 could not print a model with long strings, "
+                   << "trying again with --strings-fmf" << messaget::eom;
+      argv.insert(argv.begin() + 1, "--strings-fmf");
+      res = run(
+        argv[0], argv, stdin_filename, temp_file_stdout(), temp_file_stderr());
+      if(res < 0)
+      {
+        log.error() << "error running SMT2 solver" << messaget::eom;
+        return decision_proceduret::resultt::D_ERROR;
+      }
+      std::ifstream in(temp_file_stdout());
+      const auto result = read_result(in);
+      return result == resultt::D_SATISFIABLE ? result : resultt::D_ERROR;
+    }
   }
 
   std::ifstream in(temp_file_stdout());

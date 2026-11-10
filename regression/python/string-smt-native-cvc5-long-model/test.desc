@@ -1,0 +1,13 @@
+CORE
+main.py
+--cvc5 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 9 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+^VERIFICATION ERROR$
+--
+Without the second run the witness terms failed to parse and the result was
+VERIFICATION ERROR.
