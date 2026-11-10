@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 Test
 --max-nondet-string-length 1000 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar` --function Test.main
 ^EXIT=10$
