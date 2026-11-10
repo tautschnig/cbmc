@@ -4,6 +4,7 @@ Test
 ^EXIT=10$
 ^SIGNAL=0$
 ^VERIFICATION FAILED$
+^string refinement: String.format is not modelled for the format specifier %e, so a counterexample may be spurious$
 --
 --
 %E used to build a floating-point type without a width; the result
