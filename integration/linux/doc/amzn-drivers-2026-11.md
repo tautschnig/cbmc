@@ -863,6 +863,58 @@ in the datapath. It needs a device that returns a completion for an unposted
 req_id, which a correct device does not do; it is a device-trust robustness
 gap, the same kind this project's Linux findings cover.
 
+## F17: the RX interrupt-enable path dereferences the device queue before the port is started (DPDK ENA)
+
+Found while closing out the RX path.
+
+`ena_rx_queue_intr_enable` and `_disable` both call `ena_rx_queue_intr_set`
+(`ena_ethdev.c:3880`), which takes `&adapter->rx_ring[queue_id]` and calls
+`ena_com_unmask_intr`. That writes through `io_cq->unmask_reg` after reading
+`io_cq->bus` (`ena_eth_com.h:79-83`). Neither function checks that the queue
+has been started, and `ena_com_io_cq` together with its `unmask_reg` is filled
+in only by `ena_queue_start` -> `ena_create_io_queue` ->
+`ena_com_create_io_queue`.
+
+The call order that reaches it is legitimate:
+1. `rte_eth_rx_queue_setup` succeeds, and the ethdev layer publishes the queue
+   (`ena_ethdev.c:1749` sets `dev->data->rx_queues[queue_idx]`);
+2. the application calls `rte_eth_dev_rx_intr_enable` before
+   `rte_eth_dev_start`;
+3. `eth_dev_validate_rx_queue` (`rte_ethdev.c:767-783`) checks only
+   `queue_id < nb_rx_queues` and `rx_queues[queue_id] != NULL`. It does **not**
+   check that the device is started;
+4. so the PMD op runs on a configured-but-unstarted queue, where
+   `ena_com_io_cq` is still the zero the private-data allocation left.
+
+**Evidence.** `proof/harness_rx_errorpath.c` with `-DINTR_ON_UNSTARTED=1`
+runs the real `ena_rx_queue_setup`, assumes it succeeded, and then calls
+`ena_rx_queue_intr_enable`. Nothing in the harness forces the field; it is
+left exactly as a successful setup leaves it. CBMC reports NULL dereferences
+of `io_cq->bus` and `io_cq->unmask_reg` in `ena_com_unmask_intr`, ending in a
+write through a NULL address in `rte_write32_relaxed`.
+
+**Fix.** Check that the queue is started before touching the device queue --
+either a `rx_ring[queue_id].ena_com_io_cq != NULL` test in
+`ena_rx_queue_intr_set`, or an adapter-state check against
+`ENA_ADAPTER_STATE_RUNNING` as the datapath functions do under
+`RTE_ETHDEV_DEBUG_RX`.
+
+**Severity.** An application-triggered NULL write, needing no device
+misbehaviour, but it does need an unusual call order (enabling queue
+interrupts before starting the port). Unlike F8-F9 and F16 this is not a
+device-trust issue; it is the same class as F10, a driver entry point reached
+in a state it does not expect.
+
+### The F10 shape on the RX side, now proven rather than read
+
+F10 noted that `ena_rx_queue_release` has the same shape as the TX one. The
+same harness (`-DRELEASE_AFTER_FAILURE=1`) confirms it: after a failed
+`ena_rx_queue_setup` the ethdev layer never publishes the queue, so
+`dev->data->rx_queues[i]` stays NULL, and `ena_rx_queue_release_all` ->
+`ena_rx_queue_release` dereferences it at `ena_ethdev.c:992-995` with no NULL
+check. `RX_RELEASE_NONNULL` FAILS, and with the release performed CBMC
+reports the NULL dereference directly.
+
 ## #4 result: the device-init preconditions are established, with one caveat
 
 The same harness checks, with no transmit (`-DDEVINIT_ONLY`), what the
