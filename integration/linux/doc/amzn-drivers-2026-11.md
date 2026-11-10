@@ -1103,6 +1103,60 @@ should be visible to the caller, which it currently is not.
 mbuf is never freed while its DMA mapping is loaded. F20 is the control-path
 side, and it does not hold.
 
+## Observation: the reset-request handshake is an unsynchronised read-modify-write
+
+Not reported as a finding: the consequence is a wrong reset reason, not
+memory unsafety. Recorded because it is a real data race and the proof
+pinpoints its only observable effect.
+
+`ena_trigger_reset` (`ena_ethdev.c:643-650`) is called from the watchdog, the
+data path (`validate_tx_req_id`, `:797`) and the control-path poll handler
+(`:1966`), on different threads, with no lock and no barrier:
+
+```c
+if (likely(!adapter->trigger_reset)) {
+        adapter->reset_reason = reason;
+        adapter->trigger_reset = true;
+}
+```
+
+`ena_stop` reads the pair (`:1382-1386`) as two separate loads:
+
+```c
+if (adapter->trigger_reset)
+        rc = ena_com_dev_reset(ena_dev, adapter->reset_reason);
+```
+
+`proof/harness_conc_reset.c` interleaves two requesters and the reader at
+every access to the shared pair, splitting `ena_trigger_reset` into its guard
+load and its two stores so the reader can run between them. Both store orders
+are modelled explicitly, since nothing in the source forbids the compiler or a
+weakly-ordered CPU from swapping two plain stores to different fields.
+
+| store order | CC_RESET_NOT_LOST | CC_REASON_SOUND |
+|---|---|---|
+| reason then flag, as written | SUCCESS | SUCCESS |
+| flag then reason, the permitted reordering | SUCCESS | **FAILURE** |
+
+So **no reset request is ever swallowed** by a concurrent one, in either
+order, which is the property that would matter for availability. What can go
+wrong is narrower: with the stores reordered, a reader that sees
+`trigger_reset` set may read `reset_reason` before it was written and pass the
+pre-existing value to `ena_com_dev_reset`. The device is then told the wrong
+reason for the reset. That is a diagnostic inaccuracy, not corruption, which
+is why this is an observation rather than a finding.
+
+It is more than theoretical on arm64, where store-store reordering is
+permitted and where these drivers run on Graviton instances. The fix, if
+wanted, is a release store for the flag and an acquire load in the reader, or
+simply to read the reason into a local before testing the flag.
+
+An earlier version of this harness executed `ena_trigger_reset` atomically in
+one interleaving step. Both obligations then held even in the reordered
+variant -- the harness could not express the window it was about. That is the
+hazard with hand-interleaved concurrency proofs, and the reason the step
+granularity is spelled out in the harness.
+
 ## Observation: the FreeBSD header-skip loop indexes segs[] with no nsegs guard
 
 Not a finding: no counterexample exists under the DMA layer's contract. It is
