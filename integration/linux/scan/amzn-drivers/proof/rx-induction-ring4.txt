@@ -1,0 +1,50 @@
+ENA RX induction: ring 4
+cbmc: 6.9.0 (cbmc-6.9.0-433-g6677c6dae75-dirty)
+
+
+part verdict                    clean
+u    VERIFICATION SUCCESSFUL    yes
+t    VERIFICATION SUCCESSFUL    yes
+c    VERIFICATION SUCCESSFUL    yes
+r    VERIFICATION SUCCESSFUL    yes
+f    VERIFICATION SUCCESSFUL    yes
+s    VERIFICATION SUCCESSFUL    yes
+
+composition check:
+  INV_RX_STARTABLE (start assumes it):  setup(u) SUCCESS   stop(s) SUCCESS
+  INV_RX_STARTED (steps assume it):     start(t) SUCCESS   recv(r) SUCCESS   refill(f) SUCCESS
+  recv's ena_com_rx_pkt stub vs real:   contract(c) SUCCESS
+
+vacuity witnesses (all must be FAILURE):
+  u [main.assertion.1] vacuity witness: an rx setup can succeed: FAILURE
+  u [main.assertion.2] vacuity witness: an rx setup can fail: FAILURE
+  t [main.assertion.1] vacuity witness: an rx start can succeed: FAILURE
+  t [main.assertion.2] vacuity witness: an rx start can fail: FAILURE
+  c [main.assertion.5] vacuity witness: a completion can be reported: FAILURE
+  c [main.assertion.6] vacuity witness: a non-empty packet can be reported: FAILURE
+  c [main.assertion.7] vacuity witness: a bad req_id is rejected with EIO: FAILURE
+  c [main.assertion.8] vacuity witness: too many descriptors is rejected with NO_SPACE: FAILURE
+  c [main.assertion.9] vacuity witness: a malformed cdesc is rejected: FAILURE
+  r [main.assertion.5] vacuity witness: a packet can be received: FAILURE
+  r [main.assertion.6] vacuity witness: a multi-descriptor packet can be received: FAILURE
+  r [main.assertion.7] vacuity witness: a device completion can trigger a reset: FAILURE
+  f [main.assertion.5] vacuity witness: refill can post a buffer: FAILURE
+  f [main.assertion.6] vacuity witness: refill can post two buffers: FAILURE
+  f [main.assertion.7] vacuity witness: refill can post fewer than requested: FAILURE
+  s [main.assertion.5] vacuity witness: a release can free the watched buffer: FAILURE
+  s [main.assertion.6] vacuity witness: a release can face two posted buffers: FAILURE
+  17 witnesses, 0 not FAILURE
+
+the RX induction holds relative to these assumptions, and only these:
+  device   ASSUME_NO_F16                  the device names a posted slot, and does not repeat a
+                                          req_id within one packet's chain (F16: ena_rx_mbuf checks
+                                          neither, unlike Linux and FreeBSD)
+  device   ASSUME_DEVICE_HONEST_DOORBELL  the CQ unmask/NUMA/doorbell offsets are inside the BAR
+                                          (F8/F9: the driver does not check)
+  model    ena_com_create_io_queue and ena_com_get_io_handlers are replaced by the post-conditions
+           harness_ena_com_create.c verifies against the real ena_com code (as on TX)
+  app      the mempool hands out distinct buffers the driver does not already own (DPDK's contract)
+  harness  rx_free_thresh forces refill to be a separate step; offloads == 0; host placement;
+           ring and chain bounds as printed above
+
+RX INDUCTION: CLOSED
