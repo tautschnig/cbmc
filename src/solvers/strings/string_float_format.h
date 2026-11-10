@@ -13,7 +13,10 @@ Author: Diffblue Ltd.
 #ifndef CPROVER_SOLVERS_STRINGS_STRING_FLOAT_FORMAT_H
 #define CPROVER_SOLVERS_STRINGS_STRING_FLOAT_FORMAT_H
 
+#include <cstddef>
+#include <optional>
 #include <string>
+#include <utility>
 
 /// Which representation of a floating-point value to give.
 enum class float_formatt
@@ -36,5 +39,27 @@ enum class float_formatt
 /// are those among floats.
 std::string
 format_float(double value, bool single_precision, float_formatt format);
+
+/// The smallest and the largest length of format_float of any value of the
+/// precision in \p format, special values included.
+std::pair<std::size_t, std::size_t>
+float_string_length_bounds(bool single_precision, float_formatt format);
+
+/// The value that \p text represents in \p format, if \p text is
+/// format_float of a value of the precision: that value, or for "NaN" and
+/// "nan" any NaN.
+std::optional<double> parse_float_string(
+  const std::string &text,
+  bool single_precision,
+  float_formatt format);
+
+/// The length of the longest prefix of \p text that is a prefix of a string
+/// of the shape of format_float in \p format: digits, a point and digits,
+/// or the scientific notation of the format, after a sign in the signed
+/// formats, or a special value. A string longer than that is not
+/// format_float of any value, nor is any string that starts with one
+/// character more of \p text.
+std::size_t
+float_string_viable_prefix(const std::string &text, float_formatt format);
 
 #endif // CPROVER_SOLVERS_STRINGS_STRING_FLOAT_FORMAT_H

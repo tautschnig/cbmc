@@ -1,0 +1,9 @@
+CORE
+main.py
+--function check
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+The float whose string is given is found.

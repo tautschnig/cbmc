@@ -1,0 +1,9 @@
+KNOWNBUG
+Test
+--function Test.doubleLengthFound --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Some have 24, as -2.2250738585072014E-308, but finding one takes more than 256 rounds of the conversion check: each excludes a value and a string, and few doubles have strings of that length.

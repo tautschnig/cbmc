@@ -118,29 +118,41 @@ The string of a float or double (Java's `Float.toString` and
 computed by `format_float` (`string_float_format.cpp`): the shortest
 decimal that reads back as the value, with Java's rule of two digits where
 one would do, in the notation of the language. A constant value gets the
-axioms of its string. For a symbolic value, the result is left
-unconstrained by the axioms and recorded; in each model, before the
-axioms are checked, the solver compares the result with `format_float` of
-the value in that model. Where they differ, it adds the lemma that this
-value gives this string (under the guard of the call) and solves again.
-A model is accepted only if every reached conversion is right. Each such
-round excludes one value, so a constraint on the strings that many values
-satisfy can take many rounds; after 256, the result is ERROR.
+axioms of its string. For a symbolic value, axioms that hold for the
+string of every value constrain the result: the bounds of its length
+overall and in the range of plain notation, the strings of NaN, the
+infinities and the zeros, a minus sign exactly for negative values, a
+first and last digit, and the first digit and point of magnitudes in
+[k, k + 1) for k up to 9. These decide many properties outright (that the
+string of a float has at least 3 characters, that of a negative value
+starts with '-').
+
+The conversion is also recorded, and in each model that satisfies the
+axioms the solver compares its result with `format_float` of the value in
+that model. Where they differ, it adds lemmas (under the guard of the
+call) that exclude both the value and the string of the model: the value
+gives its own string; the string comes only from the value that it
+represents (`parse_float_string`), or from none; and if no value has a
+string with its prefix (`float_string_viable_prefix`), no string with that
+prefix is possible. A model is accepted only if every reached conversion
+is right. A property that needs a rare string can still take many rounds;
+after 256, the result is ERROR.
 
 ## Known limits
 
 Probed in October 2026 (tests `StringOfFloatSymbolic`,
 `str-float-symbolic-length`):
 
-- **Properties over all values of a symbolic float.** Each round of the
-  conversion check excludes one value, so a property that holds for all
-  floats (`String.valueOf(f).length() >= 3`, or that a string equal to
-  `"2.75"` comes from `2.75f`) reaches the cap of 256 rounds and is
-  reported as ERROR. A property that some float violates is usually found
-  within a few rounds. The previous axioms gave wrong results in both
-  directions, so these cases went from wrong to ERROR. General axioms (the
-  bounds of the length, the sign, the digits of a range of values) would
-  decide many of them.
+- **Rare strings of symbolic floats.** With the general axioms and the
+  lemmas that exclude the strings of models, properties over all values
+  (the length of the string of a float is at least 3; a string equal to
+  `"2.75"` comes from `2.75f`; the first digit of a value in [1, 2)) are
+  decided in about a second, and so are values with a given string or
+  prefix (up to 9 s). A property that only rare values violate, such as a
+  double whose string has 24 characters, still reaches the cap of 256
+  rounds and is ERROR (`StringOfFloatSymbolic/doubleLengthFound`, a known
+  bug). Constraining every character to the set of the format made several
+  of these slower or undecided, and was left out.
 - **`contains` and `indexOf` with a symbolic needle.** Some properties of
   the form "s does not contain t" with both strings symbolic do not
   terminate: each round finds new index terms, so neither cap applies, and

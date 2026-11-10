@@ -21,6 +21,7 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
 
 #include <util/expr_iterator.h>
 #include <util/expr_util.h>
+#include <util/floatbv_expr.h>
 #include <util/format.h>
 #include <util/format_expr.h>
 #include <util/format_type.h>
@@ -37,6 +38,7 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
 #include "string_float_format.h"
 #include "string_refinement_invariant.h"
 
+#include <cmath>
 #include <stack>
 #include <unordered_set>
 
@@ -1214,15 +1216,7 @@ string_refinementt::dec_solve(const exprt &assumption)
   dependencies.clean_cache();
   const decision_proceduret::resultt initial_result =
     (add_length_definitions(), supert::dec_solve(nil_exprt()));
-  // The conversions of floating-point values are checked first: their
-  // results are otherwise unconstrained, and the axioms of the strings made
-  // from them took many rounds for models with arbitrary lengths.
-  if(initial_result == resultt::D_SATISFIABLE && !check_float_conversions())
-  {
-    log.debug() << "check_SAT: got SAT but a conversion of a floating-point "
-                << "value is wrong" << messaget::eom;
-  }
-  else if(initial_result == resultt::D_SATISFIABLE)
+  if(initial_result == resultt::D_SATISFIABLE)
   {
     bool satisfied;
     std::vector<exprt> counter_examples;
@@ -1238,7 +1232,10 @@ string_refinementt::dec_solve(const exprt &assumption)
       index_sets,
       counter_example_keys,
       undecided);
-    if(satisfied)
+    // The conversions of floating-point values are checked in models of
+    // the axioms: before, the strings that they are compared with are not
+    // yet those of the program.
+    if(satisfied && check_float_conversions())
       return model_checked(undecided);
     log.debug() << "check_SAT: got SAT but the model is not correct"
                 << messaget::eom;
@@ -1281,20 +1278,6 @@ string_refinementt::dec_solve(const exprt &assumption)
     const decision_proceduret::resultt refined_result =
       (add_length_definitions(), supert::dec_solve(nil_exprt()));
 
-    if(refined_result == resultt::D_SATISFIABLE && !check_float_conversions())
-    {
-      // Each round excludes the value of a conversion in the model; the
-      // values that a constraint on the strings allows may be many.
-      constexpr std::size_t max_float_rounds = 256;
-      if(++float_rounds > max_float_rounds)
-      {
-        log.warning() << "string refinement: the strings of floating-point "
-                      << "values were still wrong after " << max_float_rounds
-                      << " rounds, so the result is not known" << messaget::eom;
-        return resultt::D_ERROR;
-      }
-      continue;
-    }
     if(refined_result == resultt::D_SATISFIABLE)
     {
       bool satisfied;
@@ -1312,7 +1295,22 @@ string_refinementt::dec_solve(const exprt &assumption)
         counter_example_keys,
         undecided);
       if(satisfied)
-        return model_checked(undecided);
+      {
+        if(check_float_conversions())
+          return model_checked(undecided);
+        // Each round excludes a value and a string of a conversion in the
+        // model; a constraint that many values satisfy can take many.
+        constexpr std::size_t max_float_rounds = 256;
+        if(++float_rounds > max_float_rounds)
+        {
+          log.warning() << "string refinement: the strings of floating-point "
+                        << "values were still wrong after " << max_float_rounds
+                        << " rounds, so the result is not known"
+                        << messaget::eom;
+          return resultt::D_ERROR;
+        }
+        continue;
+      }
 
       log.debug()
         << "check_SAT: got SAT but the model is not correct, refining..."
@@ -1609,29 +1607,126 @@ bool string_refinementt::check_float_conversions()
     const typet &index_type = result.length_type();
     const typet &char_type =
       to_type_with_subtype(result.content().type()).subtype();
-    bool right = numeric_cast<std::size_t>(simplify_expr(get(length), ns)) ==
-                 expected.size();
-    for(std::size_t i = 0; right && i < expected.size(); ++i)
+    // The string in the model, if its length is known.
+    // get of the array concretizes it to the length in the model, with a
+    // fixed character where the model leaves one open. The characters are
+    // kept as they are, for the lemmas, and as text where they are ASCII,
+    // for parse_float_string and float_string_viable_prefix: other
+    // characters become '\x01', which no string of a float has.
+    std::optional<std::string> actual;
+    std::vector<mp_integer> actual_characters;
+    const exprt model_string = get(result);
+    const auto n = numeric_cast<std::size_t>(simplify_expr(get(length), ns));
+    if(
+      n.has_value() && model_string.id() == ID_array &&
+      model_string.operands().size() >= *n)
     {
-      const auto c = numeric_cast<mp_integer>(simplify_expr(
-        get(index_exprt{result.content(), from_integer(i, index_type)}), ns));
-      right = c == mp_integer{static_cast<unsigned char>(expected[i])};
+      actual = std::string{};
+      for(std::size_t i = 0; actual.has_value() && i < *n; ++i)
+      {
+        const auto c = numeric_cast<mp_integer>(model_string.operands()[i]);
+        if(!c.has_value())
+          actual.reset();
+        else
+        {
+          actual_characters.push_back(*c);
+          actual->push_back(
+            *c > 0 && *c < 128 ? static_cast<char>(c->to_ulong()) : '\x01');
+        }
+      }
     }
-    if(right)
+    if(actual == expected)
       continue;
 
     all_right = false;
-    exprt::operandst string_is_expected{
-      equal_exprt{length, from_integer(expected.size(), index_type)}};
-    for(std::size_t i = 0; i < expected.size(); ++i)
+    // This value gives this string.
+    const auto string_is = [&](const std::string &text)
     {
-      string_is_expected.push_back(equal_exprt{
-        result[from_integer(i, index_type)],
-        from_integer(static_cast<unsigned char>(expected[i]), char_type)});
-    }
+      exprt::operandst conjuncts{
+        equal_exprt{length, from_integer(text.size(), index_type)}};
+      for(std::size_t i = 0; i < text.size(); ++i)
+      {
+        conjuncts.push_back(equal_exprt{
+          result[from_integer(i, index_type)],
+          from_integer(static_cast<unsigned char>(text[i]), char_type)});
+      }
+      return conjunction(conjuncts);
+    };
     add_lemma(implies_exprt{
       and_exprt{conversion.guard, equal_exprt{conversion.value, value}},
-      conjunction(string_is_expected)});
+      string_is(expected)});
+    // And the string in the model comes only from the value it represents,
+    // if any: one round excludes the string as well as the value, so that
+    // a constraint on the string is decided in one round rather than one
+    // per value.
+    // The string of the model, with its characters as they are.
+    const auto model_string_is = [&]()
+    {
+      exprt::operandst conjuncts{equal_exprt{
+        length, from_integer(actual_characters.size(), index_type)}};
+      for(std::size_t i = 0; i < actual_characters.size(); ++i)
+      {
+        conjuncts.push_back(equal_exprt{
+          result[from_integer(i, index_type)],
+          from_integer(actual_characters[i], char_type)});
+      }
+      return conjunction(conjuncts);
+    };
+    if(actual.has_value())
+    {
+      const std::optional<double> source =
+        parse_float_string(*actual, single, conversion.format);
+      exprt from_source = false_exprt{};
+      if(source.has_value() && std::isnan(*source))
+        from_source = isnan_exprt{conversion.value};
+      else if(source.has_value())
+      {
+        ieee_float_valuet v;
+        if(single)
+          v.from_float(static_cast<float>(*source));
+        else
+          v.from_double(*source);
+        from_source = equal_exprt{conversion.value, v.to_expr()};
+      }
+      // A string that no value gives is excluded by its shortest prefix
+      // that no such string has, which excludes all strings that start
+      // with it.
+      const std::size_t viable =
+        float_string_viable_prefix(*actual, conversion.format);
+      if(!source.has_value() && viable < actual->size())
+      {
+        exprt::operandst prefix{binary_relation_exprt{
+          length, ID_gt, from_integer(viable, index_type)}};
+        for(std::size_t i = 0; i <= viable; ++i)
+        {
+          prefix.push_back(equal_exprt{
+            result[from_integer(i, index_type)],
+            from_integer(actual_characters[i], char_type)});
+        }
+        add_lemma(
+          implies_exprt{conversion.guard, not_exprt{conjunction(prefix)}});
+      }
+      else
+      {
+        add_lemma(implies_exprt{
+          and_exprt{conversion.guard, model_string_is()}, from_source});
+        // The value that the string reads as gives its own string, which
+        // offers the next model a consistent pair near this one.
+        if(source.has_value() && !std::isnan(*source))
+        {
+          const std::string source_string =
+            format_float(*source, single, conversion.format);
+          if(source_string != *actual)
+          {
+            const exprt source_value = to_equal_expr(from_source).rhs();
+            add_lemma(implies_exprt{
+              and_exprt{
+                conversion.guard, equal_exprt{conversion.value, source_value}},
+              string_is(source_string)});
+          }
+        }
+      }
+    }
   }
   return all_right;
 }

@@ -251,6 +251,11 @@ public:
     const function_application_exprt &f,
     float_formatt format);
 
+  string_constraintst float_string_axioms(
+    const array_string_exprt &res,
+    const exprt &value,
+    float_formatt format);
+
   /// A conversion of a floating-point value to a string whose result the
   /// axioms leave open.
   struct float_conversiont

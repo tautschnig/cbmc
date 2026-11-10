@@ -16,8 +16,12 @@ Author: Diffblue Ltd.
 #include <util/invariant.h>
 #include <util/mp_arith.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <optional>
+#include <vector>
 
 /// \p value * 2^\p binary * 10^\p decimal, compared with \p other *
 /// 2^\p other_binary: the sign of the difference.
@@ -262,4 +266,198 @@ format_float(double value, bool single_precision, float_formatt format)
                      : python_scientific(digits, exponent));
   }
   UNREACHABLE;
+}
+
+std::pair<std::size_t, std::size_t>
+float_string_length_bounds(bool single_precision, float_formatt format)
+{
+  // At most this many significant digits; decimal exponents of the first
+  // digit from -min_exponent to max_exponent; and the longest exponent with
+  // its sign.
+  const std::size_t digits = single_precision ? 9 : 17;
+  const std::size_t min_exponent = single_precision ? 45 : 324;
+  const std::size_t max_exponent = single_precision ? 38 : 308;
+  const std::size_t exponent_length = single_precision ? 3 : 4;
+  // "0.0", "1.0", "NaN" and "inf" are the shortest.
+  const std::size_t shortest = 3;
+  switch(format)
+  {
+  case float_formatt::JAVA_PLAIN:
+    // "0." and the zeros before the digits of the smallest value, or the
+    // integer digits of the largest and ".0".
+    return {
+      shortest,
+      std::max(2 + (min_exponent - 1) + digits, max_exponent + 1 + 2)};
+  case float_formatt::JAVA_SCIENTIFIC:
+    // "d.", the other digits (at least one), "E" and the exponent.
+    return {shortest, 2 + (digits - 1) + 1 + exponent_length};
+  case float_formatt::JAVA:
+    // A sign, and plain notation from 10^-3 ("0.00" and the digits) up to
+    // 10^7 (7 integer digits and the others), or scientific notation.
+    return {
+      shortest,
+      1 + std::max(
+            {4 + digits,
+             7 + 1 + (digits - 7),
+             2 + (digits - 1) + 1 + exponent_length})};
+  case float_formatt::PYTHON:
+    // A sign, and plain notation from 10^-4 ("0.000" and the digits) up to
+    // 10^16 (16 integer digits and ".0", or the digits and a point), or
+    // scientific notation ("d.", the other digits, "e", the sign and at
+    // least two exponent digits).
+    return {
+      shortest,
+      1 + std::max(
+            {5 + digits,
+             std::size_t{18},
+             digits + 1,
+             2 + (digits - 1) + 2 + (exponent_length - 1)})};
+  }
+  UNREACHABLE;
+}
+
+std::optional<double> parse_float_string(
+  const std::string &text,
+  bool single_precision,
+  float_formatt format)
+{
+  // The digits, points, exponents, signs and special words of the formats,
+  // all of which strtod reads.
+  if(text.empty() || text.size() > 400)
+    return {};
+  for(const char c : text)
+  {
+    if(
+      !std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '-' &&
+      c != '+')
+    {
+      return {};
+    }
+  }
+  // Read in the precision itself: rounding to a double first could round
+  // differently.
+  char *end = nullptr;
+  const double value = single_precision
+                         ? static_cast<double>(std::strtof(text.c_str(), &end))
+                         : std::strtod(text.c_str(), &end);
+  if(end != text.c_str() + text.size())
+    return {};
+  if(format_float(value, single_precision, format) != text)
+    return {};
+  return value;
+}
+
+namespace
+{
+/// A part of a pattern: a character of \p characters, repeated from
+/// \p min_count times up to \p max_count times (0 for no limit).
+struct float_pattern_partt
+{
+  std::string characters;
+  std::size_t min_count;
+  std::size_t max_count;
+};
+
+using float_patternt = std::vector<float_pattern_partt>;
+} // namespace
+
+/// Whether \p text from \p position is a prefix of a match of the parts
+/// of \p pattern from \p part on.
+static bool viable(
+  const std::string &text,
+  std::size_t position,
+  const float_patternt &pattern,
+  std::size_t part)
+{
+  if(position == text.size())
+    return true;
+  if(part == pattern.size())
+    return false;
+  const float_pattern_partt &p = pattern[part];
+  for(std::size_t count = 0;; ++count)
+  {
+    const std::size_t i = position + count;
+    if(count >= p.min_count && viable(text, i, pattern, part + 1))
+      return true;
+    if(i == text.size())
+      return true;
+    if(p.max_count != 0 && count == p.max_count)
+      return false;
+    if(p.characters.find(text[i]) == std::string::npos)
+      return false;
+  }
+}
+
+std::size_t
+float_string_viable_prefix(const std::string &text, float_formatt format)
+{
+  const std::string digits = "0123456789";
+  const std::string non_zero = "123456789";
+  const bool python = format == float_formatt::PYTHON;
+  const bool signed_format =
+    format == float_formatt::JAVA || format == float_formatt::PYTHON;
+  const float_pattern_partt sign{"-", 0, 1};
+
+  const auto literal = [&](const std::string &word, bool with_sign)
+  {
+    float_patternt pattern;
+    if(with_sign && signed_format)
+      pattern.push_back(sign);
+    for(const char c : word)
+      pattern.push_back({std::string(1, c), 1, 1});
+    return pattern;
+  };
+  const auto with_sign = [&](float_patternt pattern)
+  {
+    if(signed_format)
+      pattern.insert(pattern.begin(), sign);
+    return pattern;
+  };
+
+  std::vector<float_patternt> patterns;
+  if(format != float_formatt::JAVA_SCIENTIFIC)
+    patterns.push_back(
+      with_sign({{digits, 1, 0}, {".", 1, 1}, {digits, 1, 0}}));
+  if(format != float_formatt::JAVA_PLAIN)
+  {
+    if(python)
+    {
+      patterns.push_back(with_sign(
+        {{non_zero, 1, 1},
+         {".", 0, 1},
+         {digits, 0, 0},
+         {"e", 1, 1},
+         {"+-", 1, 1},
+         {digits, 2, 0}}));
+    }
+    else
+    {
+      patterns.push_back(with_sign(
+        {{non_zero, 1, 1},
+         {".", 1, 1},
+         {digits, 1, 0},
+         {"E", 1, 1},
+         {"-", 0, 1},
+         {digits, 1, 0}}));
+    }
+  }
+  patterns.push_back(literal(python ? "nan" : "NaN", false));
+  patterns.push_back(literal(python ? "inf" : "Infinity", true));
+  if(format == float_formatt::JAVA_SCIENTIFIC)
+    patterns.push_back(literal("0.0", false));
+
+  std::size_t longest = 0;
+  for(std::size_t n = 1; n <= text.size(); ++n)
+  {
+    const std::string prefix = text.substr(0, n);
+    const bool any = std::any_of(
+      patterns.begin(),
+      patterns.end(),
+      [&](const float_patternt &pattern)
+      { return viable(prefix, 0, pattern, 0); });
+    if(!any)
+      break;
+    longest = n;
+  }
+  return longest;
 }
