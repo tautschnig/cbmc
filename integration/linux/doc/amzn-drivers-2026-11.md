@@ -915,6 +915,74 @@ same harness (`-DRELEASE_AFTER_FAILURE=1`) confirms it: after a failed
 check. `RX_RELEASE_NONNULL` FAILS, and with the release performed CBMC
 reports the NULL dereference directly.
 
+## F18: ena_setup_rx_intr returns success after failing and undoing its own setup (DPDK ENA)
+
+Found starting the device-lifecycle phase, by reading `ena_start`'s error
+paths and then checking with CBMC.
+
+`ena_setup_rx_intr` (`ena_ethdev.c:3813-3878`) sets `rc` only on its first two
+failures. After `rte_intr_efd_enable` succeeds, `rc` is 0, and two later
+failures jump into the unwind chain without touching it:
+
+```c
+3853   rc = rte_intr_efd_enable(intr_handle, vectors_nb);
+3854   if (rc != 0)
+3855           goto free_intr_vec;              /* rc set: fine */
+3857   if (!rte_intr_allow_others(intr_handle)) {
+3860           goto disable_intr_efd;           /* rc still 0 */
+3861   }
+3863   for (i = 0; i < vectors_nb; ++i)
+3864           if (rte_intr_vec_list_index_set(intr_handle, i,
+3865                                           RTE_INTR_VEC_RXTX_OFFSET + i))
+3866                   goto disable_intr_efd;   /* rc still 0 */
+3868   rte_intr_enable(intr_handle);
+3869   return 0;
+3871 disable_intr_efd:
+3872   rte_intr_efd_disable(intr_handle);
+3873 free_intr_vec:
+3874   rte_intr_vec_list_free(intr_handle);
+3875 enable_intr:
+3876   rte_intr_enable(intr_handle);
+3877   return rc;                                /* 0 on both paths above */
+```
+
+So on either path the function disables the event file descriptors, frees the
+interrupt vector list, and reports success.
+
+**Consequence.** `ena_start` (`ena_ethdev.c:1319-1321`) treats a zero return as
+success, continues, sets `ENA_ADAPTER_STATE_RUNNING` and marks every queue
+started. The port comes up with Rx queue interrupts requested by the
+application but not configured, so they never fire and nothing reports an
+error. That is Unveil class F, a lost event / stuck queue, and it is silent:
+the application has no way to learn that the interrupt setup it asked for was
+torn down.
+
+**Evidence.** `proof/harness_setup_rx_intr.c` with
+`proof/run_setup_rx_intr.sh` runs the real function with the EAL interrupt
+calls modelled by ghosts that record what actually happened, and asserts the
+contract the caller depends on: a zero return implies the event descriptors
+are enabled and the vector list allocated. `F18_SETUP_RC` **FAILS**. All three
+vacuity witnesses FAIL, so success, failure and the efd-disabled outcome are
+each reachable. No other failing property, no reached bodyless callee, no
+failing unwinding assertion.
+
+Both paths were then confirmed separately, since a single counterexample only
+exhibits one: `-DONLY_ALLOW_OTHERS_FAILS` (vector-index-set forced to succeed)
+and `-DONLY_INDEX_SET_FAILS` (`allow_others` forced to pass) each still fail
+the obligation.
+
+**Fix.** Set `rc` on both paths, for example `rc = -ENOTSUP;` before
+`goto disable_intr_efd` at line 3860 and `rc = -EINVAL;` (or `-ENOTSUP`) in
+the loop at line 3866.
+
+**Not a device-trust issue.** Like F10 and F17 this is driver glue reached in
+a state it mishandles; no device misbehaviour is needed, only an EAL call
+failing, which is the condition the code is already trying to handle.
+
+**DPDK-specific.** Linux and FreeBSD configure MSI-X through their own kernel
+paths (`ena_enable_msix` and `ena_setup_mgmnt_intr`), so there is no
+corresponding function to compare against.
+
 ## Observation: the FreeBSD header-skip loop indexes segs[] with no nsegs guard
 
 Not a finding: no counterexample exists under the DMA layer's contract. It is
