@@ -18,8 +18,8 @@ and `ena_rss.c` 590. Every way control enters the driver:
 |---|---|---|---|
 | TX queue | `ena_tx_queue_setup`, `ena_queue_start` (TX), `ena_queue_stop` (TX), `ena_tx_queue_release` | `ena_ring` (TX), io SQ/CQ | setup, start and stop proven. Release has F10. |
 | TX data | `eth_ena_xmit_pkts`, `ena_tx_cleanup` (also `.tx_done_cleanup`), `eth_ena_prep_pkts` | TX ring, LLQ | xmit and cleanup proven at ring 4. Prep not started. |
-| RX queue | `ena_rx_queue_setup`, `ena_queue_start` (RX, `ena_populate_rx_queue`), `ena_queue_stop` (RX), `ena_rx_queue_release` | `ena_ring` (RX) | not started. Release has the F10 shape. |
-| RX data | `eth_ena_recv_pkts` (with its refill), `ena_rx_queue_intr_enable/disable` | RX ring, device completions | not started |
+| RX queue | `ena_rx_queue_setup`, `ena_queue_start` (RX, `ena_populate_rx_queue`), `ena_queue_stop` (RX), `ena_rx_queue_release` | `ena_ring` (RX) | setup, start and stop proven (RX induction closed at ring 4). `ena_rx_queue_release` still has the F10 shape. |
+| RX data | `eth_ena_recv_pkts` (with its refill), `ena_rx_queue_intr_enable/disable` | RX ring, device completions | recv and refill proven at ring 4, chains of 2, under `ASSUME_NO_F16`. The interrupt-enable pair is not started. |
 | device lifecycle | probe (`eth_ena_dev_init`), `ena_dev_configure`, `ena_start`, `ena_stop`, `ena_close`, `ena_dev_reset`, remove (`eth_ena_dev_uninit`) | adapter state, all queues, admin queue, AENQ, timers | device init's LLQ and sgl facts proven. Everything else is not started. |
 | async | `ena_control_path_handler` / `_poll_handler` (admin completions, AENQ: link change, notification, keep-alive), `ena_timer_wd_callback` (keep-alive, admin state, TX completion check, `trigger_reset`) | adapter, AENQ ring, per-queue timestamps | not started |
 | config and query | `ena_mtu_set`, RSS reta/hash update and query, `ena_stats_get`, xstats (4 functions), `ena_infos_get`, `ena_link_update` | admin queue, RSS table | not started |
@@ -29,12 +29,15 @@ and `ena_rss.c` 590. Every way control enters the driver:
 
 * **Per TX queue: `INV_STARTED+` and `INV_STARTABLE` (have).** These cover
   slot ownership, the free list, the descriptor sum and LLQ state.
-* **Per RX queue (new): `INV_RX_STARTED`.** It needs four parts:
-  - `empty_rx_reqs` names exactly the free slots;
-  - each posted buffer is owned by exactly one slot;
-  - the refill accounting between `next_to_use` and the SQ tail is exact;
-  - no mbuf is handed to the application while the device can still write
-    to it.
+* **Per RX queue: `INV_RX_STARTED` and `INV_RX_STARTABLE` (have).**
+  `INV_RX_STARTED` has the free list over `empty_rx_reqs`, one owner per
+  posted buffer, and the accounting clause tying the ring's in-flight count
+  to the SQ's used entries -- which the refill proof showed is needed, since
+  without it "free slots" and "free SQ entries" are unrelated and refill
+  called with the latter can overrun the free list. `INV_RX_STARTABLE` is
+  what `ena_queue_start` assumes: configured, geometry, every slot free.
+  Still missing: "no mbuf is handed to the application while the device can
+  still write to it", which belongs with phase 7.
 * **Per device (new): `INV_DEV`.** It covers:
   - the adapter state machine (init, configured, running, stopped, closed,
     with `trigger_reset`);
@@ -68,16 +71,18 @@ part, vacuity witnesses that must fail, and an assumption ledger.
    offloads (`offloads == 0` is a harness restriction), host-placement mode,
    `tx_free_thresh > 0` (xmit calling cleanup) and meta caching disabled.
    Each is one more configuration of an existing harness.
-2. **RX path**, which is the largest uncovered surface. The harnesses are
-   `rx_setup`, `rx_start` (populate), `recv` with refill under untrusted
-   completions, and `rx_stop`/`release`. The obligations, by class:
-   - B: `FREE_ONCE`, plus no mbuf delivered twice;
-   - G, H: no out-of-bounds access from a device-chosen `req_id` or
-     descriptor count;
-   - the `max_rx_sgl_size == 0` reset question from the F14 notes.
+2. **RX path -- done for the datapath and lifecycle** (`run_rx_induction.sh`,
+   RX INDUCTION: CLOSED at ring 4). Six parts: setup, start, the
+   `ena_com_rx_pkt` contract against the real code, recv, refill and
+   release. B is covered (`RXS_FREE_ONCE`, `RX_OWN_ONCE`, `RXS_FREES_POSTED`);
+   G and H are covered for these operations by the bounds and pointer checks.
+   It did find the DPDK device-trust gap the Linux F1-F7 class predicted:
+   **F16**, an unchecked device `req_id` dereferenced in `ena_rx_mbuf`, which
+   Linux and FreeBSD both check.
 
-   This is where the Linux F1–F7 classes of device-trust bugs would show up,
-   if the DPDK port has them.
+   Still open on RX: `ena_rx_queue_intr_enable/disable`; the `max_rx_sgl_size
+   == 0` reset question from the F14 notes; ring 8 with chains (does not
+   finish in 3000 s); and `ena_rx_queue_release`'s F10 shape.
 3. **Device lifecycle and error paths** (class C, and the 61%
    error-path-triggered findings). `ena_start`, `ena_stop`, `ena_close` and
    `ena_dev_reset` act on every queue. Each is proven to take `INV_DEV` to
