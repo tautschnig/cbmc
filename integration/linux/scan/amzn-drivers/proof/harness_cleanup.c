@@ -242,7 +242,9 @@ int main(void)
         * note), so a build with this switch proves nothing. */
 
   __CPROVER_assume(INV_STARTED(&ring));
+#ifndef NO_FREE_LIST
   __CPROVER_assume(INV_FREE_LIST(&ring, RING_SIZE));
+#endif
   __CPROVER_assume(INV_SLOT(&ring, g_p1));
   __CPROVER_assume(OWN_UNIQUE(&ring, g_p1, g_p2));
   __CPROVER_assume(INV_DEV_LLQ(&the_sq));
@@ -273,8 +275,15 @@ int main(void)
       (uint16_t)(the_sq.tail - the_sq.next_to_comp) == sum_after,
       "INV_DESC_SUM preserved by ena_tx_cleanup");
   }
+#ifndef NO_FREE_LIST
+  /* INV_FREE_LIST is a permutation property over the whole ring; evaluating it
+   * twice (assume and assert) is the dominant cost at ring 8 even under the
+   * loop contract, so -DNO_FREE_LIST splits it off.  Dropping it WEAKENS the
+   * pre-state too, so the remaining obligations are proven from LESS, not
+   * more: the split is sound in that direction. */
   __CPROVER_assert(
     INV_FREE_LIST(&ring, RING_SIZE), "INV_FREE_LIST preserved by ena_tx_cleanup");
+#endif
   __CPROVER_assert(
     INV_SLOT(&ring, g_p1), "INV_SLOT preserved for an arbitrary ring slot");
   __CPROVER_assert(
