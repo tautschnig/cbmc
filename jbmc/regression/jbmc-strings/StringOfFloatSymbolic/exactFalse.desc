@@ -1,0 +1,9 @@
+KNOWNBUG
+Test
+--function Test.exactFalse --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+The string of a symbolic float is checked per model, one value per round, so a property over many values ends in ERROR after 256 rounds; general axioms (length bounds, sign, digits of a range) are needed.

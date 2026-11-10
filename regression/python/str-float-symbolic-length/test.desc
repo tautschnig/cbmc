@@ -1,0 +1,11 @@
+KNOWNBUG
+main.py
+--function check
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The string of a symbolic float is checked per model, one value per round, so
+a property over all values ends in ERROR after 256 rounds; axioms bounding
+the length are needed. The previous axioms proved this.

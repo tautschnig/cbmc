@@ -68,6 +68,7 @@ unless noted):
 | `the model violates the string axioms, and neither index terms nor counter-examples at new positions exclude it, so the result is not known` | The refinement cannot make progress: no new index terms, and the counter-examples repeat positions already used. |
 | `the model still violates the string axioms after 256 rounds of counter-examples without index terms, so the result is not known` | The counter-examples were at new positions in 256 consecutive rounds without new index terms. |
 | `the strings of floating-point values were still wrong after 256 rounds, so the result is not known` | See the conversions of floating-point values below. |
+| `SAT checker ran out of memory` (an error of the SAT solver, not of the string solver) | The propositional problem grew beyond the available memory; the properties are then reported as ERROR. |
 
 The refinement loop itself is unbounded by default (`refinement_bound`),
 so the last two caps are what bound the rounds that only counter-examples
@@ -125,6 +126,29 @@ value gives this string (under the guard of the call) and solves again.
 A model is accepted only if every reached conversion is right. Each such
 round excludes one value, so a constraint on the strings that many values
 satisfy can take many rounds; after 256, the result is ERROR.
+
+## Known limits
+
+Probed in October 2026 (tests `StringOfFloatSymbolic`,
+`str-float-symbolic-length`):
+
+- **Properties over all values of a symbolic float.** Each round of the
+  conversion check excludes one value, so a property that holds for all
+  floats (`String.valueOf(f).length() >= 3`, or that a string equal to
+  `"2.75"` comes from `2.75f`) reaches the cap of 256 rounds and is
+  reported as ERROR. A property that some float violates is usually found
+  within a few rounds. The previous axioms gave wrong results in both
+  directions, so these cases went from wrong to ERROR. General axioms (the
+  bounds of the length, the sign, the digits of a range of values) would
+  decide many of them.
+- **`contains` and `indexOf` with a symbolic needle.** Some properties of
+  the form "s does not contain t" with both strings symbolic do not
+  terminate: each round finds new index terms, so neither cap applies, and
+  the refinement loop is unbounded by default. The solver also needs a lot
+  of memory there: one such property took 405 s and 18 GB, and with 8 GB it
+  stops with `SAT checker ran out of memory`. This was so before the audit.
+  `--max-node-refinement` bounds the refinement of the bit-vector solver,
+  not these rounds.
 
 ## Alternatives considered
 
