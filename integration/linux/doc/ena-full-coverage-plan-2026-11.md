@@ -21,7 +21,7 @@ and `ena_rss.c` 590. Every way control enters the driver:
 | RX queue | `ena_rx_queue_setup`, `ena_queue_start` (RX, `ena_populate_rx_queue`), `ena_queue_stop` (RX), `ena_rx_queue_release` | `ena_ring` (RX) | setup, start and stop proven (RX induction closed at ring 4). `ena_rx_queue_release` still has the F10 shape. |
 | RX data | `eth_ena_recv_pkts` (with its refill), `ena_rx_queue_intr_enable/disable` | RX ring, device completions | recv and refill proven at ring 4, chains of 2, under `ASSUME_NO_F16`. The interrupt-enable pair is not started. |
 | device lifecycle | probe (`eth_ena_dev_init`), `ena_dev_configure`, `ena_start`, `ena_stop`, `ena_close`, `ena_dev_reset`, remove (`eth_ena_dev_uninit`) | adapter state, all queues, admin queue, AENQ, timers | device init's LLQ and sgl facts proven; `ena_start`, `ena_stop` and `ena_close` proven at ring 4 (`run_dev_start.sh`, `run_dev_lifecycle.sh`), closing the lifecycle loop at device level. `ena_dev_configure`, probe, remove and `ena_dev_reset` not started. |
-| async | `ena_control_path_handler` / `_poll_handler` (admin completions, AENQ: link change, notification, keep-alive), `ena_timer_wd_callback` (keep-alive, admin state, TX completion check, `trigger_reset`) | adapter, AENQ ring, per-queue timestamps | not started |
+| async | `ena_control_path_handler` / `_poll_handler` (admin completions, AENQ: link change, notification, keep-alive), `ena_timer_wd_callback` (keep-alive, admin state, TX completion check, `trigger_reset`) | adapter, AENQ ring, per-queue timestamps | the watchdog (`run_watchdog.sh`) and the AENQ dispatch (`run_aenq.sh`) proven. The admin-completion half of the control-path handler is not started. |
 | config and query | `ena_mtu_set`, RSS reta/hash update and query, `ena_stats_get`, xstats (4 functions), `ena_infos_get`, `ena_link_update` | admin queue, RSS table | not started |
 | multi-process | `ena_mp_primary_handle` (requests from secondary processes) | admin queue, adapter | not started |
 
@@ -102,17 +102,22 @@ part, vacuity witnesses that must fail, and an assumption ledger.
    `ena_dev_configure`, probe (`eth_ena_dev_init`), remove, and
    `ena_dev_reset`; and two queues per direction for `ena_start` does not
    finish in 3000 s.
-4. **Async handlers** (classes F and K):
-   - AENQ handlers with an untrusted entry. `ena_com_get_specific_aenq_cb`
-     checks the device-supplied group against `ENA_MAX_HANDLERS`, so the
-     handler payload parsing is what is left to check;
-   - the watchdog's `trigger_reset` path, and the missing-completion check
-     that F15 relies on for recovery;
-   - keep-alive.
+4. **Async handlers -- done for the two main entry points** (classes F and K).
+   - The **watchdog** (`run_watchdog.sh`): `WD_QID`, `WD_RESET_STICKY`,
+     `WD_EVENT`, `WD_NO_FREE`, under `--div-by-zero-check` as well, including
+     the zero-TX-queue configuration. This is the mechanism F15 relies on for
+     recovery.
+   - The **AENQ dispatch** (`run_aenq.sh`): `AQ_HEAD`, `AQ_PHASE`,
+     `AQ_NO_RESET`, `AQ_KEEPALIVE`, over a ring of arbitrary device bytes
+     with the real handler table.
 
-   The obligations are memory safety plus "a reset request is eventually
-   acted on", stated as a safety property: the flag is consumed by the next
-   `ena_dev_reset`.
+   `AQ_PHASE` is the class F property for this path: flipping the phase
+   without a wrap would skip live events, failing to flip on a wrap would
+   re-read consumed ones.
+
+   Still open: the admin-completion half of `ena_control_path_handler`, and
+   "a reset request is eventually consumed by `ena_dev_reset`", which needs
+   the reset operation itself (phase 3 leftover).
 5. **Config and query operations** (class G). Untrusted admin responses
    indexed into driver arrays are the F8/F9 shape, for example the RSS
    indirection table size and the xstats counts.
@@ -172,7 +177,7 @@ part, vacuity witnesses that must fail, and an assumption ledger.
 |---|---|---|
 | B lifetime | 9% | ownership invariants, TX (done) and RX (2) |
 | K wrong state / outage | 16% | lifecycle induction (1, 3), reset path (4) |
-| F lost event / stuck | 9% | `INV_wakeup` (done), async handlers (4), F15-style stuck slots |
+| F lost event / stuck | 9% | `INV_wakeup` (done), async handlers done: `WD_RESET_STICKY`, `WD_EVENT`, `AQ_PHASE`, `AQ_KEEPALIVE`. F18 is a class F finding from this phase |
 | G OOB / corruption | 4% | bounds checks in every part, untrusted device (2, 4, 5) |
 | H NULL deref | 7% | pointer checks in every part, error paths (3) |
 | C stale after failure | 9% | error-path obligations (3). Done for start/stop/close: `DS_ERR_NO_HALF_START`, plus `LC_CLOSE_IDEMPOTENT` and `LC_DRV_STATS_ONCE` |
