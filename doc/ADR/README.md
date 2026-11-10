@@ -12,6 +12,9 @@ of the system and the surrounding infrastructure.
 ## Resolving program structure that depends on string values
 \subpage dynamic-structure-resolution
 
+## What the results of the string solver mean
+\subpage string-solver-results
+
 ## Release & Packaging
 
 * \subpage release-process
