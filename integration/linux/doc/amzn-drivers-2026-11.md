@@ -1048,6 +1048,61 @@ caller, which is worse than the NULL dereferences of F10 and F17 in kind,
 though it needs the same sort of API misuse. Same class as those: a driver
 entry point reached with an argument it does not validate.
 
+## F20: the DMA rings are freed even when the device never acknowledged the destroy (shared ena_com; DPDK, Linux, FreeBSD)
+
+Found in the DMA-ownership phase (Unveil class A).
+
+`ena_com_destroy_io_queue` tears an IO queue down in three steps
+(`ena_com.c:2237-2240`, identical in all three drivers):
+
+```c
+ena_com_destroy_io_sq(ena_dev, io_sq);          /* admin command */
+ena_com_destroy_io_cq(ena_dev, io_cq);          /* admin command */
+ena_com_io_queue_free(ena_dev, io_sq, io_cq);   /* frees the DMA rings */
+```
+
+The ordering is right: tell the device first, free afterwards. But **both
+return values are discarded, and the free is unconditional.** Each destroy is
+an admin command that can fail or time out -- `ena_com_destroy_io_sq` returns
+`ENA_COM_TIMER_EXPIRED` when the device does not complete it. On that path the
+driver has no evidence the device stopped using the SQ and CQ rings, and frees
+them anyway. The memory is then returned to the allocator while the device may
+still be writing descriptors into it.
+
+This is in the shared base layer, so one fix covers DPDK, Linux and FreeBSD.
+
+**Evidence.** `proof/harness_dma_order.c` with `proof/run_dma_order.sh` runs
+the real `ena_com_destroy_io_queue` with the platform memory macros replaced by
+ones that maintain a ghost "the device may still access this region" set,
+cleared only when a destroy command succeeds.
+
+| configuration | result |
+|---|---|
+| both destroy commands succeed | SUCCESSFUL: `DMA_NO_FREE_WHILE_LIVE`, `DMA_ALL_RELEASED`, `DMA_NO_DOUBLE_FREE` |
+| either may fail (`-DADMIN_FAILS`) | **`DMA_NO_FREE_WHILE_LIVE` FAILS**, and `DMA_ALL_RELEASED` fails with it |
+
+The vacuity witness (the teardown really frees both rings) FAILS in both. No
+other failing property, no reached bodyless callee, no UNKNOWN.
+
+**Severity, stated carefully.** How bad this is depends on what a device does
+after failing to acknowledge a destroy, which this work cannot determine. The
+alternative to freeing -- leaking the rings -- is also unattractive, so the
+usual remedy is not to skip the free but to escalate first: perform a device
+reset, which stops all DMA at the hardware level, before releasing the
+memory. DPDK's `ena_stop` does reset the device, but only
+`if (adapter->trigger_reset)` and only **after** `ena_queue_stop_all` has
+already freed the rings (`ena_ethdev.c:1379-1386`), so the reset does not
+protect this window.
+
+**Fix.** Check the return values, and on failure request a device reset before
+`ena_com_io_queue_free`, or have the caller do so. At minimum the failure
+should be visible to the caller, which it currently is not.
+
+**Relation to the FreeBSD TX result.** `FBX_DMA_ORDER` in
+`harness_fbsd_xmit.c` proves the data-path side of the same discipline: an
+mbuf is never freed while its DMA mapping is loaded. F20 is the control-path
+side, and it does not hold.
+
 ## Observation: the FreeBSD header-skip loop indexes segs[] with no nsegs guard
 
 Not a finding: no counterexample exists under the DMA layer's contract. It is
