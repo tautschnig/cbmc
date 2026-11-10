@@ -236,6 +236,18 @@ int rte_log(uint32_t level, uint32_t logtype, const char *format, ...)
 	return 0;
 }
 
+/* DPDK's RTE_INIT constructors call these before main.  Left bodyless they are
+ * reached and cut, which shows up as four "no body for callee" failures and,
+ * in principle, could make the obligations vacuous; the other harnesses stub
+ * them for the same reason. */
+int rte_log_register_type_and_pick_level(const char *name, uint32_t level_def)
+{
+  (void)name;
+  (void)level_def;
+  return 0;
+}
+void rte_pci_register(struct rte_pci_driver *driver) { (void)driver; }
+
 
 #if DISTINCT_MBUFS
 static struct rte_mbuf *make_wf_mbuf_b(unsigned b, uint16_t nsegs)
