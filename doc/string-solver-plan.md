@@ -110,8 +110,10 @@ hit the counter-example cap, to see whether realistic programs reach them.
 
 ## 8. Documentation
 
-Status: open
+Status: done (`doc/ADR/string_solver_results.md`, referenced from
+`string_refinement.h`)
 
-Extend `doc/ADR/dynamic_structure_resolution.md` (or a new ADR) with: when
-the string solver reports ERROR, the approximation warnings and how to read
-them, and the per-model check of float conversions.
+A new ADR documents when the string solver reports ERROR (each message and
+its cause), the approximation warnings and how to read them, and the
+per-model check of float conversions. Keep it in step when warnings or
+ERROR cases are added or removed.
