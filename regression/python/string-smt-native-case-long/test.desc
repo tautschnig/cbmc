@@ -1,0 +1,11 @@
+CORE
+main.py
+--cvc5 --python-smt-strings --python-max-string-length 4
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+The case maps of a string longer than the per-position bound are exact on
+the first --python-max-string-length characters.

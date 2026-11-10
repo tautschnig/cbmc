@@ -1,0 +1,13 @@
+CORE
+long.py
+--z3 --python-smt-strings --python-max-string-length 4
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 7 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Asserting that the result equals the per-position concatenation made every
+execution with a subject longer than the bound infeasible, so this false
+assertion was proved.

@@ -380,14 +380,12 @@ std::optional<exprt> python_convertert::try_string_method(
   // The naive `str.++` concat alone makes the content exact but makes a
   // `len()` over the result expensive: the solver must reconstruct the
   // concatenation's length position by position, which times out on an
-  // unconstrained symbolic string. We therefore alias the concat to a fresh
-  // result symbol r and additionally assert `str.len(r) == str.len(obj)`. That
-  // equality is implied by the concat (each in-range position contributes one
-  // character and out-of-range positions contribute ""), so it adds no new
-  // models -- it is purely a hint that lets `len(result)` queries short-circuit
-  // via congruence on `len(r)` without folding the 64-deep concat. Content
-  // queries still expand `r == concat(...)` exactly as before. ASCII only
-  // (A-Z <-> a-z); other code points pass through unchanged.
+  // unconstrained symbolic string. We therefore define a fresh result symbol r
+  // by the concat (see below for inputs longer than the concat covers) and
+  // `str.len(r) == str.len(obj)`; the length equality lets `len(result)`
+  // queries short-circuit via congruence on `len(r)` without folding the
+  // 64-deep concat. ASCII only (A-Z <-> a-z); other code points pass through
+  // unchanged.
   //
   // mapped_char(i) returns the transformed 1-character smt_string for position
   // i of obj (str.from_code(-1) == "" for i >= len(obj)).
@@ -412,11 +410,28 @@ std::optional<exprt> python_convertert::try_string_method(
     const symbol_exprt r = symbol_table.lookup_ref(id).symbol_expr();
     pending_checks.push_back(code_frontend_assignt{
       r, side_effect_expr_nondett{string_typet{}, get_location(expr)}});
-    // r is exactly the concatenated result (content definition) ...
-    pending_checks.push_back(code_assumet{equal_exprt{r, concat}});
-    // ... and its length equals the input's (length hint for len() queries).
-    pending_checks.push_back(code_assumet{equal_exprt{
-      native_or_member_string_length(r), native_or_member_string_length(obj)}});
+    // r is exactly the concatenated characters when obj has at most
+    // PYTHON_MAX_STRING_LENGTH of them ...
+    const exprt obj_len = native_or_member_string_length(obj);
+    const exprt fits = binary_relation_exprt{
+      obj_len, ID_le, from_integer(PYTHON_MAX_STRING_LENGTH, obj_len.type())};
+    pending_checks.push_back(
+      code_assumet{implies_exprt{fits, equal_exprt{r, concat}}});
+    // ... and otherwise starts with them: a longer obj (a concatenation of
+    // bounded strings, say) gets an r whose remaining characters are
+    // unconstrained, an over-approximation. Asserting r == concat
+    // unconditionally would rule out every execution with a longer obj.
+    pending_checks.push_back(code_assumet{or_exprt{
+      fits,
+      native_string_app(
+        ID_cprover_string_startswith_func,
+        {string_typet{}, string_typet{}},
+        {r, concat},
+        bool_typet{})}});
+    // In both cases r has obj's length, which also lets len() queries over r
+    // short-circuit.
+    pending_checks.push_back(
+      code_assumet{equal_exprt{native_or_member_string_length(r), obj_len}});
     return std::move(r);
   };
 
@@ -432,7 +447,7 @@ std::optional<exprt> python_convertert::try_string_method(
     const bool to_lower =
       (method_name == "lower" || method_name == "casefold" ||
        method_name == "swapcase");
-    const signedbv_typet i32{32};
+    const integer_typet code_t{};
     const signedbv_typet i64{64};
     return build_length_preserving(
       [&](std::size_t i) -> exprt
@@ -445,21 +460,21 @@ std::optional<exprt> python_convertert::try_string_method(
             {string_typet{}},
             {ch},
             integer_typet{}),
-          i32}};
+          code_t}};
         exprt mapped = code;
         if(to_upper)
           mapped = if_exprt{
             and_exprt{
-              binary_relation_exprt{code, ID_ge, from_integer('a', i32)},
-              binary_relation_exprt{code, ID_le, from_integer('z', i32)}},
-            minus_exprt{code, from_integer(32, i32)},
+              binary_relation_exprt{code, ID_ge, from_integer('a', code_t)},
+              binary_relation_exprt{code, ID_le, from_integer('z', code_t)}},
+            minus_exprt{code, from_integer(32, code_t)},
             mapped};
         if(to_lower)
           mapped = if_exprt{
             and_exprt{
-              binary_relation_exprt{code, ID_ge, from_integer('A', i32)},
-              binary_relation_exprt{code, ID_le, from_integer('Z', i32)}},
-            plus_exprt{code, from_integer(32, i32)},
+              binary_relation_exprt{code, ID_ge, from_integer('A', code_t)},
+              binary_relation_exprt{code, ID_le, from_integer('Z', code_t)}},
+            plus_exprt{code, from_integer(32, code_t)},
             mapped};
         return native_string_app(
           ID_cprover_string_from_code_func,
@@ -479,23 +494,23 @@ std::optional<exprt> python_convertert::try_string_method(
     (method_name == "capitalize" || method_name == "title"))
   {
     const bool is_title = (method_name == "title");
-    const signedbv_typet i32{32};
+    const integer_typet code_t{};
     const signedbv_typet i64{64};
     auto in_range = [&](const exprt &c, int lo, int hi) -> exprt
     {
       return and_exprt{
-        binary_relation_exprt{c, ID_ge, from_integer(lo, i32)},
-        binary_relation_exprt{c, ID_le, from_integer(hi, i32)}};
+        binary_relation_exprt{c, ID_ge, from_integer(lo, code_t)},
+        binary_relation_exprt{c, ID_le, from_integer(hi, code_t)}};
     };
     auto upper_map = [&](const exprt &c) -> exprt
     {
       return if_exprt{
-        in_range(c, 'a', 'z'), minus_exprt{c, from_integer(32, i32)}, c};
+        in_range(c, 'a', 'z'), minus_exprt{c, from_integer(32, code_t)}, c};
     };
     auto lower_map = [&](const exprt &c) -> exprt
     {
       return if_exprt{
-        in_range(c, 'A', 'Z'), plus_exprt{c, from_integer(32, i32)}, c};
+        in_range(c, 'A', 'Z'), plus_exprt{c, from_integer(32, code_t)}, c};
     };
     return build_length_preserving(
       [&](std::size_t i) -> exprt
@@ -508,7 +523,7 @@ std::optional<exprt> python_convertert::try_string_method(
             {string_typet{}},
             {ch},
             integer_typet{}),
-          i32}};
+          code_t}};
         exprt mapped;
         if(i == 0)
           mapped = upper_map(code); // start of string is always a word start
@@ -525,7 +540,7 @@ std::optional<exprt> python_convertert::try_string_method(
               {string_typet{}},
               {prev},
               integer_typet{}),
-            i32}};
+            code_t}};
           exprt prev_is_alpha = or_exprt{
             in_range(prev_code, 'a', 'z'), in_range(prev_code, 'A', 'Z')};
           mapped = if_exprt{

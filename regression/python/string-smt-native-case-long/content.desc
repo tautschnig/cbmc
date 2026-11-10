@@ -1,0 +1,9 @@
+CORE
+content.py
+--cvc5 --python-smt-strings --python-max-string-length 4
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 7 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
