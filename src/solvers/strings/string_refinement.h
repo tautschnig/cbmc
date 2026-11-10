@@ -62,7 +62,11 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
   " {y--refine-strings} \t use string refinement (experimental)\n"             \
   " {y--string-printable} \t restrict to printable strings (experimental)\n"
 
-#define DEFAULT_MAX_NB_REFINEMENT std::numeric_limits<size_t>::max()
+/// The default bound on the rounds of the refinement loop, after which the
+/// result is ERROR. The regression tests and benchmarks need at most 113
+/// rounds (October 2026); some properties of strings with symbolic needles
+/// find new index terms in every round and would not terminate.
+#define DEFAULT_MAX_NB_REFINEMENT 1000
 
 class string_refinementt final : public bv_refinementt
 {
@@ -202,6 +206,9 @@ private:
   /// current model. Otherwise, add lemmas giving the result for the value
   /// of each wrong one.
   bool check_float_conversions();
+  /// Explain an ERROR of the propositional solver, which ends the
+  /// refinement.
+  void warn_propositional_error();
 };
 
 exprt substitute_array_lists(exprt expr, std::size_t string_max_length);

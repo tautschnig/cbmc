@@ -1,4 +1,4 @@
-CORE
+CORE symex-driven-lazy-loading-expected-failure
 Test
 --function Test.prefixFound --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
 ^EXIT=10$
@@ -7,3 +7,7 @@ Test
 --
 --
 A float whose string has a prefix is found.
+With --symex-driven-lazy-loading, the search for such a float reaches the
+cap of 256 rounds of the conversion check and the result is ERROR. This is
+caused by holding back index terms outside their strings, without which
+the properties of StringSymbolicNeedles run out of memory or time.

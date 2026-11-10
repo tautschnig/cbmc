@@ -68,13 +68,14 @@ unless noted):
 | `the model violates the string axioms, and neither index terms nor counter-examples at new positions exclude it, so the result is not known` | The refinement cannot make progress: no new index terms, and the counter-examples repeat positions already used. |
 | `the model still violates the string axioms after 256 rounds of counter-examples without index terms, so the result is not known` | The counter-examples were at new positions in 256 consecutive rounds without new index terms. |
 | `the strings of floating-point values were still wrong after 256 rounds, so the result is not known` | See the conversions of floating-point values below. |
-| `SAT checker ran out of memory` (an error of the SAT solver, not of the string solver) | The propositional problem grew beyond the available memory; the properties are then reported as ERROR. |
+| `the model still violates the string axioms after 1000 rounds of refinement, so the result is not known` | The refinement loop reached its bound (`DEFAULT_MAX_NB_REFINEMENT`; the regression tests and benchmarks need at most 113 rounds). |
+| `the propositional solver returned ERROR (for example, as it ran out of memory), so the result is not known` | The SAT solver failed, for example with `SAT checker ran out of memory`. |
 
-The refinement loop itself is unbounded by default (`refinement_bound`),
-so the last two caps are what bound the rounds that only counter-examples
-or conversion lemmas advance. The caps are constants
-(`max_empty_index_set_rounds`, `max_float_rounds` in
-`string_refinement.cpp`); there is no command-line option for them.
+The caps are constants (`max_empty_index_set_rounds`, `max_float_rounds`
+in `string_refinement.cpp`, `DEFAULT_MAX_NB_REFINEMENT` in
+`string_refinement.h`); there is no command-line option for them. The
+rounds of the loop were unbounded by default until October 2026. It bounds rounds,
+not time: rounds get slower as lemmas accumulate.
 
 A universal axiom whose form the instantiation does not support (for
 example, a universal variable with a coefficient other than ±1) is not
@@ -141,7 +142,7 @@ after 256, the result is ERROR.
 ## Known limits
 
 Probed in October 2026 (tests `StringOfFloatSymbolic`,
-`str-float-symbolic-length`):
+`StringSymbolicNeedles`, `str-float-symbolic-*`):
 
 - **Rare strings of symbolic floats.** With the general axioms and the
   lemmas that exclude the strings of models, properties over all values
@@ -153,12 +154,17 @@ Probed in October 2026 (tests `StringOfFloatSymbolic`,
   rounds and is ERROR (`StringOfFloatSymbolic/doubleLengthFound`, a known
   bug). Constraining every character to the set of the format made several
   of these slower or undecided, and was left out.
-- **`contains` and `indexOf` with a symbolic needle.** Some properties of
-  the form "s does not contain t" with both strings symbolic do not
-  terminate: each round finds new index terms, so neither cap applies, and
-  the refinement loop is unbounded by default. The solver also needs a lot
-  of memory there: one such property took 405 s and 18 GB, and with 8 GB it
-  stops with `SAT checker ran out of memory`. This was so before the audit.
+- **`contains` and `indexOf` with a symbolic needle.** Instances of the
+  axioms of `contains` with both strings symbolic generate index terms
+  outside the strings without bound, and some properties ("s does not
+  contain t") did not terminate or exhausted memory (405 s and 18 GB for
+  one). Index terms whose value lies outside their array in the model are
+  now held back, and held-back terms are no longer all released when no
+  term is new (`filter_index_set`). With strings of up to 10 characters,
+  these properties are decided in 1 to 42 s (`StringSymbolicNeedles`);
+  with up to 50, several still do not finish within 300 s. Holding back
+  such terms makes one search for a float with a given prefix end in ERROR
+  with `--symex-driven-lazy-loading` (`StringOfFloatSymbolic/prefixFound`).
   `--max-node-refinement` bounds the refinement of the bit-vector solver,
   not these rounds.
 

@@ -1,0 +1,9 @@
+THOROUGH
+Test
+--function Test.twoNeedles --max-nondet-string-length 10 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+With both strings symbolic, instances of the axioms of contains generated index terms outside the strings without bound, and releasing held-back terms made the refinement run out of time or memory (out of memory before; 31 s now).

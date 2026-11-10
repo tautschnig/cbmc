@@ -1243,6 +1243,8 @@ string_refinementt::dec_solve(const exprt &assumption)
   else
   {
     log.debug() << "check_SAT: got UNSAT or ERROR" << messaget::eom;
+    if(initial_result == resultt::D_ERROR)
+      warn_propositional_error();
     return initial_result;
   }
 
@@ -1418,18 +1420,30 @@ string_refinementt::dec_solve(const exprt &assumption)
     {
       log.debug() << "check_SAT: default return "
                   << static_cast<int>(refined_result) << messaget::eom;
+      if(refined_result == resultt::D_ERROR)
+        warn_propositional_error();
       return refined_result;
     }
   }
-  log.debug() << "string_refinementt::dec_solve reached the maximum number"
-              << "of steps allowed" << messaget::eom;
+  log.warning() << "string refinement: the model still violates the string "
+                << "axioms after " << config_.refinement_bound
+                << " rounds of refinement, so the result is not known"
+                << messaget::eom;
   return resultt::D_ERROR;
 }
 /// Keep only the new index terms whose value in the current model is not
 /// already the value of an index term of the same array, and hold back
 /// the others for later rounds. If every new term would be held back, the
-/// held-back terms are all released, so that the refinement instantiates
-/// at least as much as without the filter, only later.
+/// refinement goes on with counter-examples, and the held-back terms are
+/// considered again in each round, with the values of its model. Terms
+/// whose value is outside their array in the model are held back too: their
+/// instances do not exclude the model. With symbolic needles, instances
+/// generate such terms without bound (strings of up to 3 characters got two
+/// new terms per round, at -18 to 21, without end), and releasing all
+/// held-back terms when none was new made the refinement run out of memory
+/// or time on them. Not releasing them changed the verdict of none of the
+/// regression tests or kernels, and refined-mktemp-pattern went from 31 s
+/// to 24 s.
 ///
 /// Instantiating a universal axiom at an index term substitutes the term
 /// into the axiom, whose array accesses yield further terms. Through
@@ -1460,11 +1474,23 @@ void string_refinementt::filter_index_set()
   };
   std::size_t kept = 0;
   std::size_t held = 0;
+  std::size_t outside = 0;
   for(auto &entry : index_sets.cumulative)
   {
     const exprt &array = entry.first;
     std::set<exprt> &current = index_sets.current[array];
     std::set<exprt> &pending = pending_indices[array];
+    // The length of the array in this model, if known.
+    std::optional<mp_integer> array_length;
+    if(array.type().id() == ID_array)
+    {
+      if(
+        const auto length = generator.array_pool.get_length_if_exists(
+          to_array_string_expr(array)))
+      {
+        array_length = value_of(*length);
+      }
+    }
     // The positions that terms instantiated earlier cover in this model.
     std::set<mp_integer> covered;
     for(const auto &term : entry.second)
@@ -1498,6 +1524,17 @@ void string_refinementt::filter_index_set()
     {
       const exprt &term = keyed_term.second;
       const auto value = value_of(term);
+      // A term outside the array in this model gives instances that do not
+      // exclude it; it waits for a model in which it is inside.
+      if(
+        value.has_value() && array_length.has_value() &&
+        (*value < 0 || *value >= *array_length))
+      {
+        pending.insert(term);
+        entry.second.erase(term);
+        ++outside;
+        continue;
+      }
       if(
         kept_here < max_new_indices_per_array &&
         (!value.has_value() || covered.insert(*value).second))
@@ -1515,24 +1552,11 @@ void string_refinementt::filter_index_set()
       }
     }
   }
-  if(kept == 0 && held > 0)
-  {
-    for(auto &entry : pending_indices)
-    {
-      for(const auto &term : entry.second)
-      {
-        index_sets.current[entry.first].insert(term);
-        index_sets.cumulative[entry.first].insert(term);
-      }
-      entry.second.clear();
-    }
-    kept = held;
-    held = 0;
-  }
   for(auto it = index_sets.current.begin(); it != index_sets.current.end();)
     it = it->second.empty() ? index_sets.current.erase(it) : std::next(it);
   log.debug() << "filter_index_set: " << kept << " new index terms, " << held
-              << " held back" << messaget::eom;
+              << " held back, " << outside << " outside their arrays"
+              << messaget::eom;
 }
 
 irept string_refinementt::lemma_mergert::merged(const irept &irep)
@@ -1581,6 +1605,13 @@ void string_refinementt::add_counter_example(const exprt &lemma)
     generator.fresh_symbol,
     true,
     access_definitions));
+}
+
+void string_refinementt::warn_propositional_error()
+{
+  log.warning() << "string refinement: the propositional solver returned "
+                << "ERROR (for example, as it ran out of memory), so the "
+                << "result is not known" << messaget::eom;
 }
 
 bool string_refinementt::check_float_conversions()
