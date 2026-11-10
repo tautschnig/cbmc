@@ -185,7 +185,7 @@ gc does), which keeps later properties from failing because of torn
 reads of multi-word values (interfaces, slices, strings), at the price
 of not checking anything after the first race on that path.
 
-## 8. Spike results (branch go-race-spike)
+## 8. Spike results
 
 The spike is a goto-level pass (`src/go/go_race_check.cpp`, option
 `--go-race-check`) rather than front-end hooks: it instruments the goto
@@ -525,7 +525,7 @@ did not change them; neither is committed.
 Section 13 left three harnesses failing. Measuring where their variables
 and time go, rather than the size of their expressions, found four
 independent causes. Each was tried behind an environment switch (local
-branch `go-race-large-values-exp`, commit `3ee4f040c2`). The fixes for
+tag `exp/go-race-large-values`, commit `3ee4f040c2`). The fixes for
 causes 1 and 2 are now committed; see the status at the end of this
 section.
 
