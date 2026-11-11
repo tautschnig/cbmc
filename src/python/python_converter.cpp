@@ -3408,6 +3408,65 @@ exprt python_convertert::native_or_member_string_length(const exprt &s)
   return member_exprt{s, "length", signedbv_typet{64}};
 }
 
+std::pair<exprt, exprt> python_convertert::python_adjusted_indices(
+  const exprt &len,
+  const std::optional<exprt> &start,
+  const std::optional<exprt> &end)
+{
+  const typet &t = len.type();
+  const exprt zero = from_integer(0, t);
+  auto from_end = [&](const exprt &position) -> exprt
+  {
+    const exprt p = typecast_exprt::conditional_cast(position, t);
+    const exprt wrapped = plus_exprt{p, len};
+    return if_exprt{
+      binary_relation_exprt{p, ID_lt, zero},
+      if_exprt{binary_relation_exprt{wrapped, ID_lt, zero}, zero, wrapped},
+      p};
+  };
+  exprt start_n = start.has_value() ? from_end(*start) : zero;
+  exprt end_n = len;
+  if(end.has_value())
+  {
+    const exprt e = from_end(*end);
+    end_n = if_exprt{binary_relation_exprt{e, ID_gt, len}, len, e};
+  }
+  return {std::move(start_n), std::move(end_n)};
+}
+
+exprt python_convertert::python_string_slice(
+  const exprt &s,
+  const std::optional<exprt> &start,
+  const std::optional<exprt> &end)
+{
+  const exprt len = native_or_member_string_length(s);
+  auto [start_n, end_n] = python_adjusted_indices(len, start, end);
+  // A slice also limits the start by the length, and is empty when the end
+  // is not after the start.
+  const exprt lo =
+    if_exprt{binary_relation_exprt{start_n, ID_gt, len}, len, start_n};
+  const exprt hi = if_exprt{binary_relation_exprt{end_n, ID_lt, lo}, lo, end_n};
+  if(s.type().id() == ID_string)
+    return string_substr(s, lo, minus_exprt{hi, lo});
+  const exprt src_struct =
+    (s.id() == ID_struct && s.operands().size() == 2)
+      ? s
+      : exprt(struct_exprt{
+          {member_exprt{s, "length", signedbv_typet{64}},
+           member_exprt{s, "data", pointer_typet(unsignedbv_typet{8}, 64)}},
+          s.type()});
+  return emit_string_function(
+    ID_cprover_string_substring_func,
+    {src_struct,
+     typecast_exprt::conditional_cast(lo, signedbv_typet{64}),
+     typecast_exprt::conditional_cast(hi, signedbv_typet{64})},
+    symbol_table,
+    pending_checks,
+    loop_depth > 0,
+    // Scoped, as for the slices in convert_subscript (see there).
+    current_function);
+}
+
 exprt python_convertert::bounded_nondet_string(const source_locationt &loc)
 {
   // Refined (default) back-end: a string is a {length, data} struct, not an

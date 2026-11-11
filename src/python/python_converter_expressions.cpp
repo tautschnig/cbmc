@@ -1588,83 +1588,14 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
           return side_effect_expr_nondett{
             python_string_type(), source_locationt{}};
       }
-      exprt str_length =
-        (use_smt_string_native && is_python_string_type(value.type()))
-          ? emit_string_int_function(
-              ID_cprover_string_length_func,
-              value,
-              symbol_table,
-              pending_checks)
-          : exprt(member_exprt{value, "length", signedbv_typet{64}});
-      auto normalize_bound = [&](exprt bound) -> exprt
-      {
-        if(bound.type() != signedbv_typet{64})
-          bound = safe_typecast(bound, signedbv_typet{64});
-        // wrapped = bound < 0 ? bound + length : bound
-        exprt wrapped = if_exprt{
-          binary_relation_exprt{
-            bound, ID_lt, from_integer(0, signedbv_typet{64})},
-          plus_exprt{bound, str_length},
-          bound};
-        return wrapped;
-      };
-      exprt lo_e = lower_json.is_null()
-                     ? from_integer(0, signedbv_typet{64})
-                     : normalize_bound(convert_expression(lower_json));
-      exprt hi_e = upper_json.is_null()
-                     ? exprt{str_length}
-                     : normalize_bound(convert_expression(upper_json));
-      if(use_smt_string_native)
-      {
-        // Native SMT-String back-end (Plan A): s[a:b] = str.substr(s, a,
-        // b-a). The result is a native SMT String (no res_len truncation).
-        // Python clamps both bounds into [0, len(s)] and yields "" when
-        // b <= a. string_substr reads its operands as unsigned, so clamp
-        // here: a negative position or length must not become a huge one.
-        const signedbv_typet i64{64};
-        const exprt zero = from_integer(0, i64);
-        auto clamp = [&](const exprt &bound) -> exprt
-        {
-          return if_exprt{
-            binary_relation_exprt{bound, ID_lt, zero},
-            zero,
-            if_exprt{
-              binary_relation_exprt{bound, ID_gt, str_length},
-              str_length,
-              bound}};
-        };
-        const exprt lo_c = clamp(lo_e);
-        const exprt hi_c = clamp(hi_e);
-        return string_substr(
-          value,
-          lo_c,
-          if_exprt{
-            binary_relation_exprt{hi_c, ID_lt, lo_c},
-            zero,
-            minus_exprt{hi_c, lo_c}});
-      }
-      exprt src_struct =
-        (value.id() == ID_struct && value.operands().size() == 2)
-          ? value
-          : exprt(struct_exprt{
-              {member_exprt{value, "length", signedbv_typet{64}},
-               member_exprt{
-                 value, "data", pointer_typet(unsignedbv_typet{8}, 64)}},
-              value.type()});
-      return emit_string_function(
-        ID_cprover_string_substring_func,
-        {src_struct, lo_e, hi_e},
-        symbol_table,
-        pending_checks,
-        loop_depth > 0,
-        // Scoped (soundness outranks precision): with GLOBAL symbols this
-        // substring site is a live instance of the twice-called-function
-        // vacuity FALSE PROOF (the `slice` probe / CORE
-        // string-slice-twice-called-function). Scoping it costs the
-        // re.IGNORECASE|DOTALL flags precision (re-ignorecase-dotall-flags,
-        // downgraded to KNOWNBUG) -- a sound false alarm, the acceptable
-        // direction under the PLR guardrail.
-        current_function);
+      // Python clamps both bounds into [0, len(s)] and yields "" when the
+      // stop is not after the start (python_string_slice).
+      std::optional<exprt> lo, hi;
+      if(!lower_json.is_null())
+        lo = convert_expression(lower_json);
+      if(!upper_json.is_null())
+        hi = convert_expression(upper_json);
+      return python_string_slice(value, lo, hi);
     }
 
     const auto &st = to_struct_type(value.type());

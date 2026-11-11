@@ -3357,6 +3357,23 @@ private:
 
   /// Substring s[start : start+len] (returns a string).
   exprt string_substr(const exprt &s, const exprt &start, const exprt &len);
+
+  /// Python's adjusted positions for a symbolic string of length \p len, as
+  /// CPython's ADJUST_INDICES computes them for find/startswith/...: a
+  /// negative position counts from the end and is then at least 0, and the
+  /// end is at most \p len. The start is not limited by the end or \p len.
+  /// Absent positions are 0 and \p len. The result type is that of \p len.
+  std::pair<exprt, exprt> python_adjusted_indices(
+    const exprt &len,
+    const std::optional<exprt> &start,
+    const std::optional<exprt> &end);
+
+  /// The slice s[start:end] of a symbolic string, for both string back ends;
+  /// absent positions are those of `s[:]`.
+  exprt python_string_slice(
+    const exprt &s,
+    const std::optional<exprt> &start,
+    const std::optional<exprt> &end);
   exprt native_string_of_int(const exprt &n);
 
   /// Content equality a == b (returns bool).
