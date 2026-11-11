@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+The bytes are read through the string solver; a string of 2 to 4 bytes
+that is not one character raises TypeError.

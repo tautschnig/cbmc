@@ -1890,23 +1890,122 @@ std::optional<exprt> python_convertert::try_builtin_call(
           return from_integer(cp, python_int_type());
         }
         // Symbolic: a string that is not exactly one character long raises
-        // TypeError. A refined string holds UTF-8 bytes, and its bytes are
-        // not available here (a dereference of its data pointer does not
-        // read the string solver's characters), so it is only known to be
-        // invalid when empty or longer than 4 bytes.
+        // TypeError.
+        if(!sv.has_value() && arg.type().id() != ID_string)
+        {
+          // A refined string holds UTF-8 bytes: its first byte gives the
+          // length of the first character, and the character's bytes its
+          // code point. The bytes are read with char_at, from the string
+          // solver (a dereference of the data pointer does not read the
+          // solver's characters).
+          const unsignedbv_typet u8{8};
+          const signedbv_typet i64{64};
+          const exprt view = string_struct_view(arg);
+          const irep_idt fn{ID_cprover_string_char_at_func};
+          if(symbol_table.lookup(fn) == nullptr)
+          {
+            symbolt fs{
+              fn,
+              mathematical_function_typet({view.type(), i64}, u8),
+              "python"};
+            fs.base_name = id2string(fn);
+            symbol_table.add(fs);
+          }
+          auto byte = [&](int i) -> exprt
+          {
+            function_application_exprt app{
+              symbol_table.lookup_ref(fn).symbol_expr(),
+              {view, from_integer(i, i64)}};
+            app.type() = u8;
+            static unsigned ctr = 0;
+            const std::string nm = "__ord_byte_" + std::to_string(ctr++);
+            const irep_idt id{qualify_name(nm)};
+            if(symbol_table.lookup(id) == nullptr)
+            {
+              symbolt sy{id, u8, "python"};
+              sy.base_name = nm;
+              sy.is_lvalue = true;
+              sy.is_state_var = true;
+              symbol_table.add(sy);
+            }
+            const symbol_exprt b = symbol_table.lookup_ref(id).symbol_expr();
+            pending_checks.push_back(code_frontend_assignt{b, app});
+            return typecast_exprt{b, i64};
+          };
+          const exprt b0 = byte(0);
+          auto below = [&](const exprt &b, int bound) {
+            return binary_relation_exprt{b, ID_lt, from_integer(bound, i64)};
+          };
+          const exprt cp_bytes = if_exprt{
+            below(b0, 0xC0),
+            from_integer(1, i64),
+            if_exprt{
+              below(b0, 0xE0),
+              from_integer(2, i64),
+              if_exprt{
+                below(b0, 0xF0), from_integer(3, i64), from_integer(4, i64)}}};
+          // (A single byte is taken as one character, also beyond ASCII,
+          // where it stands for some character of a nondet string.)
+          const exprt len = native_or_member_string_length(arg);
+          emit_conditional_exception(
+            or_exprt{
+              equal_exprt{len, from_integer(0, i64)},
+              and_exprt{
+                notequal_exprt{len, from_integer(1, i64)},
+                notequal_exprt{len, cp_bytes}}},
+            "TypeError");
+          // the low bits of byte i, shifted into place
+          auto bits = [&](const exprt &b, int mask, int shift) -> exprt
+          {
+            return shl_exprt{
+              bitand_exprt{b, from_integer(mask, i64)},
+              from_integer(shift, i64)};
+          };
+          const exprt b1 = byte(1), b2 = byte(2), b3 = byte(3);
+          // some character beyond ASCII
+          static unsigned beyond_ctr = 0;
+          const std::string bnm =
+            "__ord_beyond_" + std::to_string(beyond_ctr++);
+          const irep_idt bid{qualify_name(bnm)};
+          if(symbol_table.lookup(bid) == nullptr)
+          {
+            symbolt sy{bid, i64, "python"};
+            sy.base_name = bnm;
+            sy.is_lvalue = true;
+            sy.is_state_var = true;
+            symbol_table.add(sy);
+          }
+          const symbol_exprt beyond =
+            symbol_table.lookup_ref(bid).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{
+            beyond, side_effect_expr_nondett{i64, get_location(expr)}});
+          pending_checks.push_back(code_assumet{and_exprt{
+            binary_relation_exprt{beyond, ID_ge, from_integer(0x80, i64)},
+            binary_relation_exprt{
+              beyond, ID_le, from_integer(0x10FFFF, i64)}}});
+          const exprt cp = if_exprt{
+            equal_exprt{len, from_integer(1, i64)},
+            if_exprt{below(b0, 0x80), b0, exprt{beyond}},
+            if_exprt{
+              equal_exprt{len, from_integer(2, i64)},
+              bitor_exprt{bits(b0, 0x1F, 6), bits(b1, 0x3F, 0)},
+              if_exprt{
+                equal_exprt{len, from_integer(3, i64)},
+                bitor_exprt{
+                  bitor_exprt{bits(b0, 0x0F, 12), bits(b1, 0x3F, 6)},
+                  bits(b2, 0x3F, 0)},
+                bitor_exprt{
+                  bitor_exprt{bits(b0, 0x07, 18), bits(b1, 0x3F, 12)},
+                  bitor_exprt{bits(b2, 0x3F, 6), bits(b3, 0x3F, 0)}}}}};
+          return safe_typecast(cp, python_int_type());
+        }
         if(!sv.has_value())
         {
-          if(arg.type().id() != ID_string)
-            log_overapprox(
-              "ord() of a refined string: TypeError only when it is empty or "
-              "longer than 4 bytes");
           const exprt len = native_or_member_string_length(arg);
-          const exprt max_len =
-            from_integer(arg.type().id() == ID_string ? 1 : 4, len.type());
           emit_conditional_exception(
             or_exprt{
               equal_exprt{len, from_integer(0, len.type())},
-              binary_relation_exprt{len, ID_gt, max_len}},
+              binary_relation_exprt{len, ID_gt, from_integer(1, len.type())}},
             "TypeError");
         }
         // Symbolic: return first byte
