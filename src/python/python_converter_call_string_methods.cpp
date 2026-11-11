@@ -395,6 +395,9 @@ std::optional<exprt> python_convertert::try_string_method(
     exprt concat = constant_exprt{irep_idt{""}, string_typet{}};
     for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
       concat = string_concat(concat, mapped_char(i));
+    log_overapprox(
+      method_name + "() of a native string: characters after the first " +
+      std::to_string(PYTHON_MAX_STRING_LENGTH) + " are unconstrained");
 
     static unsigned case_ctr = 0;
     const std::string nm = "__case_" + std::to_string(case_ctr++);
@@ -1529,6 +1532,9 @@ std::optional<exprt> python_convertert::try_string_method(
         // true result is one such string).
         if(!old_sv.has_value() || old_sv->empty())
         {
+          log_overapprox(
+            "replace() of a native string with an `old` that may be empty: "
+            "the result is a nondet string starting and ending with `new`");
           static unsigned er_ctr = 0;
           const std::string nm =
             "__replace_sym_empty_" + std::to_string(er_ctr++);

@@ -1655,6 +1655,8 @@ std::optional<exprt> python_convertert::try_builtin_call(
         // SMT-LIB characters stop at 0x2FFFF (str.from_code is "" beyond),
         // whereas Python's code points go up to 0x10FFFF. A larger code
         // point yields an unconstrained one-character string.
+        log_overapprox(
+          "chr() of a native code point: a nondet character beyond 0x2FFFF");
         static unsigned chr_ctr = 0;
         const std::string nm = "__chr_beyond_smt_" + std::to_string(chr_ctr++);
         const irep_idt rid{qualify_name(nm)};
@@ -1830,6 +1832,10 @@ std::optional<exprt> python_convertert::try_builtin_call(
         // invalid when empty or longer than 4 bytes.
         if(!sv.has_value())
         {
+          if(arg.type().id() != ID_string)
+            log_overapprox(
+              "ord() of a refined string: TypeError only when it is empty or "
+              "longer than 4 bytes");
           const exprt len = native_or_member_string_length(arg);
           const exprt max_len =
             from_integer(arg.type().id() == ID_string ? 1 : 4, len.type());
@@ -6660,7 +6666,12 @@ exprt python_convertert::emit_int_parse(
   // take (0 = auto-detect, or non-constant) yields an
   // unconstrained int: sound, imprecise.
   if(base != 10 && (base < 2 || base > 36 || base_nonconst))
+  {
+    log_overapprox(
+      "int() of a symbolic string in base 0 or a non-constant base: "
+      "returning nondet");
     return side_effect_expr_nondett{python_int_type(), loc};
+  }
   if(str.type().id() == ID_string)
     return emit_native_int_parse(str, base, loc);
   // Parse into 128 bits. The solver's parse axioms exclude every input
