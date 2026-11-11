@@ -2259,7 +2259,9 @@ exprt substitute_array_access(
 /// \param univ_var: the universal variable for the negation of the axiom
 /// \param get: valuation function, the result should have been simplified
 /// \return the negation of the axiom under the current evaluation
-static exprt negation_of_not_contains_constraint(
+/// \return the negation, or nullopt if the model's existential range is too
+///   long to unroll (the axiom can then not be checked in this model)
+static std::optional<exprt> negation_of_not_contains_constraint(
   const string_not_contains_constraintt &constraint,
   const symbol_exprt &univ_var,
   const std::function<exprt(const exprt &)> &get)
@@ -2286,6 +2288,11 @@ static exprt negation_of_not_contains_constraint(
   // nothing to do (and the reserve call would fail).
   if(ube < lbe)
     return and_exprt(univ_bounds, premise);
+  // A model can give the strings huge lengths (one that is not otherwise
+  // constrained, say); unrolling them is not feasible.
+  constexpr std::size_t max_unrolling = 1 << 16;
+  if(ube - lbe > max_unrolling)
+    return std::nullopt;
 
   std::vector<exprt> conjuncts;
   conjuncts.reserve(numeric_cast_v<std::size_t>(ube - lbe));
@@ -2423,10 +2430,18 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
     const string_not_contains_constraintt &nc_axiom = axioms.not_contains[i];
     const symbol_exprt univ_var = generator.fresh_symbol(
       "not_contains_univ_var", nc_axiom.s0.length_type());
-    const exprt negated_axiom = negation_of_not_contains_constraint(
+    const auto negated_axiom_opt = negation_of_not_contains_constraint(
       nc_axiom,
       univ_var,
       [&](const exprt &expr) { return simplify_expr(get(expr), ns); });
+    if(!negated_axiom_opt.has_value())
+    {
+      stream << std::string(2, ' ') << i << ". too long to unroll in this model"
+             << messaget::eom;
+      undecided = true;
+      continue;
+    }
+    const exprt &negated_axiom = *negated_axiom_opt;
 
     stream << std::string(2, ' ') << i << ".\n";
     debug_check_axioms_step(
