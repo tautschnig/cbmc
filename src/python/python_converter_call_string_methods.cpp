@@ -3090,7 +3090,10 @@ std::optional<exprt> python_convertert::try_string_method(
           auto native_backward_search = [&](const exprt &hay) -> exprt
           {
             // In mathematical integers: bit-vector positions converted to
-            // and from Int made cvc5 time out on these constraints.
+            // and from Int made cvc5 time out on these constraints. The
+            // result r is the length of a fresh string minus one: cvc5 took
+            // seconds to convert an integer variable to a bit-vector, even
+            // to prove r >= -1, and is fast on str.len.
             const integer_typet int_t;
             static unsigned last_ctr = 0;
             const std::string nm =
@@ -3098,20 +3101,21 @@ std::optional<exprt> python_convertert::try_string_method(
             const irep_idt rid{qualify_name(nm)};
             if(symbol_table.lookup(rid) == nullptr)
             {
-              symbolt rs{rid, int_t, "python"};
+              symbolt rs{rid, string_typet{}, "python"};
               rs.base_name = nm;
               rs.is_lvalue = true;
               rs.is_state_var = true;
               symbol_table.add(rs);
             }
-            const symbol_exprt r = symbol_table.lookup_ref(rid).symbol_expr();
+            const symbol_exprt w = symbol_table.lookup_ref(rid).symbol_expr();
             pending_checks.push_back(code_frontend_assignt{
-              r, side_effect_expr_nondett{int_t, get_location(expr)}});
+              w, side_effect_expr_nondett{string_typet{}, get_location(expr)}});
             auto str_len = [&](const exprt &x)
             {
               return native_string_app(
                 ID_cprover_string_length_func, {string_typet{}}, {x}, int_t);
             };
+            const exprt r = minus_exprt{str_len(w), from_integer(1, int_t)};
             const exprt hay_len = str_len(hay);
             const exprt ndl_len = str_len(needle);
             const exprt zero = from_integer(0, int_t);
@@ -3161,7 +3165,7 @@ std::optional<exprt> python_convertert::try_string_method(
                        needle},
                       bool_typet{})}}}}}});
             pending_checks.push_back(
-              code_assumet{binary_relation_exprt{r, ID_ge, minus_one_int}});
+              code_assumet{binary_relation_exprt{r, ID_le, hay_len}});
             return r;
           };
           auto backward_search = [&](const exprt &hay) -> exprt
