@@ -3439,15 +3439,46 @@ exprt python_convertert::python_string_slice(
   const std::optional<exprt> &start,
   const std::optional<exprt> &end)
 {
-  const exprt len = native_or_member_string_length(s);
+  // For native strings the length is a variable: the int2bv conversion
+  // repeated in every bound made cvc5 time out finding models.
+  const exprt len =
+    s.type().id() == ID_string
+      ? emit_string_int_function(
+          ID_cprover_string_length_func, s, symbol_table, pending_checks)
+      : native_or_member_string_length(s);
+  if(s.type().id() == ID_string)
+  {
+    // The bounds wrapped from the end and clamped into [0, len]
+    // independently, which is the same slice: the nested form below made
+    // cvc5 time out finding models.
+    const typet &t = len.type();
+    const exprt zero = from_integer(0, t);
+    auto clamp = [&](const exprt &bound) -> exprt
+    {
+      const exprt b = typecast_exprt::conditional_cast(bound, t);
+      const exprt wrapped =
+        if_exprt{binary_relation_exprt{b, ID_lt, zero}, plus_exprt{b, len}, b};
+      return if_exprt{
+        binary_relation_exprt{wrapped, ID_lt, zero},
+        zero,
+        if_exprt{binary_relation_exprt{wrapped, ID_gt, len}, len, wrapped}};
+    };
+    const exprt lo_c = start.has_value() ? clamp(*start) : zero;
+    const exprt hi_c = end.has_value() ? clamp(*end) : len;
+    return string_substr(
+      s,
+      lo_c,
+      if_exprt{
+        binary_relation_exprt{hi_c, ID_lt, lo_c},
+        zero,
+        minus_exprt{hi_c, lo_c}});
+  }
   auto [start_n, end_n] = python_adjusted_indices(len, start, end);
   // A slice also limits the start by the length, and is empty when the end
   // is not after the start.
   const exprt lo =
     if_exprt{binary_relation_exprt{start_n, ID_gt, len}, len, start_n};
   const exprt hi = if_exprt{binary_relation_exprt{end_n, ID_lt, lo}, lo, end_n};
-  if(s.type().id() == ID_string)
-    return string_substr(s, lo, minus_exprt{hi, lo});
   const exprt src_struct =
     (s.id() == ID_struct && s.operands().size() == 2)
       ? s
