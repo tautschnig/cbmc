@@ -1,0 +1,9 @@
+CORE
+prefix.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 3 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring

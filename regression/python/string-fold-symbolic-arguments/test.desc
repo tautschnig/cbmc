@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 6 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A width that was not constant was taken as 0.

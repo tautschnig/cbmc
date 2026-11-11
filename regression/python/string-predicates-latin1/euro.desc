@@ -1,0 +1,12 @@
+CORE
+euro.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 2 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Its first UTF-8 byte (0xe2) counted as a letter, which proved this
+assertion.

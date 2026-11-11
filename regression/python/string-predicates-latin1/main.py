@@ -1,0 +1,16 @@
+# The string predicates of constant strings, for characters of Latin-1 as
+# CPython classifies them.
+assert "Café".isalpha()
+assert not " ".islower()
+assert not "0 ".isupper()
+assert "a1".islower()
+assert "ª".islower()
+assert "µ1".islower()
+assert "\xa0".isspace()
+assert "\x1c".isspace()
+assert "²".isdigit()
+assert not "²".isdecimal()
+assert "ÀÉ".isupper()
+assert "é_1".isidentifier()
+assert not "1é".isidentifier()
+assert not "×".isalpha()

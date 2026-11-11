@@ -27,6 +27,7 @@
 #include <util/string_constant.h>
 #include <util/string_expr.h>
 #include <util/symbol.h>
+#include <util/unicode.h>
 
 #include "python_converter.h"
 #include "python_converter_helpers.h"
@@ -43,6 +44,49 @@
 #include <optional>
 #include <sstream>
 #include <string>
+
+// Properties of the Latin-1 characters, as CPython 3.12 reports them for
+// one-character strings (str.isalpha and so on; the identifier ones are
+// c.isidentifier() and ('a' + c).isidentifier()).
+enum : unsigned
+{
+  latin1_alpha = 1u << 0,
+  latin1_alnum = 1u << 1,
+  latin1_digit = 1u << 2,
+  latin1_numeric = 1u << 3,
+  latin1_decimal = 1u << 4,
+  latin1_space = 1u << 5,
+  latin1_upper = 1u << 6,
+  latin1_lower = 1u << 7,
+  latin1_id_start = 1u << 8,
+  latin1_id_continue = 1u << 9
+};
+static const std::uint16_t latin1_properties[256] = {
+  0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x020, 0x020,
+  0x020, 0x020, 0x020, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000,
+  0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x020, 0x020, 0x020, 0x020, 0x020,
+  0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000,
+  0x000, 0x000, 0x000, 0x000, 0x21e, 0x21e, 0x21e, 0x21e, 0x21e, 0x21e, 0x21e,
+  0x21e, 0x21e, 0x21e, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x343,
+  0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343,
+  0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343,
+  0x343, 0x343, 0x343, 0x000, 0x000, 0x000, 0x000, 0x300, 0x000, 0x383, 0x383,
+  0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383,
+  0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383,
+  0x383, 0x383, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000,
+  0x000, 0x020, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000,
+  0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000,
+  0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x020, 0x000, 0x000, 0x000, 0x000,
+  0x000, 0x000, 0x000, 0x000, 0x000, 0x383, 0x000, 0x000, 0x000, 0x000, 0x000,
+  0x000, 0x000, 0x00e, 0x00e, 0x000, 0x383, 0x000, 0x200, 0x000, 0x00e, 0x383,
+  0x000, 0x00a, 0x00a, 0x00a, 0x000, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343,
+  0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x343,
+  0x343, 0x343, 0x343, 0x343, 0x343, 0x343, 0x000, 0x343, 0x343, 0x343, 0x343,
+  0x343, 0x343, 0x343, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383,
+  0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383, 0x383,
+  0x383, 0x383, 0x383, 0x383, 0x383, 0x000, 0x383, 0x383, 0x383, 0x383, 0x383,
+  0x383, 0x383, 0x383,
+};
 
 /// True when \p s has only ASCII characters.
 static bool is_ascii_string(const std::string &s)
@@ -902,8 +946,11 @@ std::optional<exprt> python_convertert::try_string_method(
       (method_name == "strip" || method_name == "lstrip" ||
        method_name == "rstrip" || method_name == "capitalize" ||
        method_name == "title" || method_name == "swapcase" ||
-       method_name == "casefold"))
+       method_name == "casefold" || method_name == "center" ||
+       method_name == "ljust" || method_name == "rjust" ||
+       method_name == "zfill" || method_name == "expandtabs"))
     {
+      // (and widths count characters, not bytes)
       str_val.reset();
     }
     if(str_val.has_value())
@@ -1010,14 +1057,18 @@ std::optional<exprt> python_convertert::try_string_method(
         {
           auto ait = as_array(args).begin();
           auto wv = try_eval_double(convert_expression(*ait));
-          if(wv.has_value())
-            width = static_cast<int>(wv.value());
+          if(!wv.has_value())
+            return bounded_nondet_string(get_location(expr));
+          width = static_cast<int>(wv.value());
           ++ait;
           if(ait != as_array(args).end())
           {
+            // A fill character that is not a known ASCII constant: the
+            // result is left nondet (a non-ASCII one has several bytes).
             auto fv = extract_string_value(convert_expression(*ait));
-            if(fv.has_value() && !fv.value().empty())
-              fill = fv.value()[0];
+            if(!fv.has_value() || fv->size() != 1 || !is_ascii_string(*fv))
+              return bounded_nondet_string(get_location(expr));
+            fill = fv.value()[0];
           }
         }
         if(static_cast<int>(s.size()) >= width)
@@ -1049,8 +1100,9 @@ std::optional<exprt> python_convertert::try_string_method(
         {
           auto tv =
             try_eval_double(convert_expression(*as_array(args).begin()));
-          if(tv.has_value())
-            tabsize = static_cast<int>(tv.value());
+          if(!tv.has_value())
+            return bounded_nondet_string(get_location(expr));
+          tabsize = static_cast<int>(tv.value());
         }
         result.clear();
         int col = 0;
@@ -1081,8 +1133,9 @@ std::optional<exprt> python_convertert::try_string_method(
         {
           auto pv =
             extract_string_value(convert_expression(*as_array(args).begin()));
-          if(pv.has_value())
-            prefix = pv.value();
+          if(!pv.has_value())
+            return bounded_nondet_string(get_location(expr));
+          prefix = pv.value();
         }
         if(!prefix.empty() && s.find(prefix) == 0)
           result = s.substr(prefix.size());
@@ -1096,8 +1149,9 @@ std::optional<exprt> python_convertert::try_string_method(
         {
           auto sv2 =
             extract_string_value(convert_expression(*as_array(args).begin()));
-          if(sv2.has_value())
-            suffix = sv2.value();
+          if(!sv2.has_value())
+            return bounded_nondet_string(get_location(expr));
+          suffix = sv2.value();
         }
         if(
           !suffix.empty() && s.size() >= suffix.size() &&
@@ -1113,8 +1167,9 @@ std::optional<exprt> python_convertert::try_string_method(
         {
           auto wv =
             try_eval_double(convert_expression(*as_array(args).begin()));
-          if(wv.has_value())
-            width = static_cast<int>(wv.value());
+          if(!wv.has_value())
+            return bounded_nondet_string(get_location(expr));
+          width = static_cast<int>(wv.value());
         }
         if(static_cast<int>(s.size()) >= width)
           result = s;
@@ -2271,58 +2326,68 @@ std::optional<exprt> python_convertert::try_string_method(
     method_name == "isalnum" || method_name == "isupper" ||
     method_name == "islower" || method_name == "isspace" ||
     method_name == "isascii" || method_name == "isnumeric" ||
-    method_name == "isidentifier")
+    method_name == "isidentifier" || method_name == "isdecimal")
   {
-    // Constant-string optimization
+    // Constant-string optimization, for strings of Latin-1 characters (whose
+    // properties are tabulated); others are left to the symbolic model.
     auto sv = extract_string_value(obj);
     if(sv.has_value())
     {
-      const std::string &s = sv.value();
-      bool result = !s.empty();
-      // isidentifier has a different shape: first char must be
-      // alpha or '_'; subsequent chars alpha-numeric or '_'.
-      // Python's str.isidentifier returns True for keywords.
-      if(method_name == "isidentifier")
+      const std::u32string chars = utf8_to_utf32(*sv);
+      const bool latin1 = std::all_of(
+        chars.begin(), chars.end(), [](char32_t c) { return c <= 0xff; });
+      if(method_name == "isascii")
       {
-        if(s.empty())
-          result = false;
+        const bool ascii = std::all_of(
+          chars.begin(), chars.end(), [](char32_t c) { return c < 0x80; });
+        return ascii ? exprt{true_exprt{}} : exprt{false_exprt{}};
+      }
+      if(latin1)
+      {
+        auto has = [](char32_t c, unsigned property)
+        { return (latin1_properties[c] & property) != 0; };
+        bool result;
+        if(method_name == "isidentifier")
+        {
+          result = !chars.empty() && has(chars[0], latin1_id_start) &&
+                   std::all_of(
+                     chars.begin() + 1,
+                     chars.end(),
+                     [&](char32_t c) { return has(c, latin1_id_continue); });
+        }
+        else if(method_name == "isupper" || method_name == "islower")
+        {
+          // all cased characters in the case, and at least one
+          const unsigned want =
+            method_name == "isupper" ? latin1_upper : latin1_lower;
+          const unsigned other =
+            method_name == "isupper" ? latin1_lower : latin1_upper;
+          result = std::any_of(
+                     chars.begin(),
+                     chars.end(),
+                     [&](char32_t c) { return has(c, want); }) &&
+                   std::none_of(
+                     chars.begin(),
+                     chars.end(),
+                     [&](char32_t c) { return has(c, other); });
+        }
         else
         {
-          unsigned char first = static_cast<unsigned char>(s[0]);
-          result = std::isalpha(first) || first == '_' || first >= 0x80;
-          for(std::size_t i = 1; i < s.size() && result; ++i)
-          {
-            unsigned char uc = static_cast<unsigned char>(s[i]);
-            result = std::isalnum(uc) || uc == '_' || uc >= 0x80;
-          }
+          const unsigned property =
+            method_name == "isalpha"     ? latin1_alpha
+            : method_name == "isalnum"   ? latin1_alnum
+            : method_name == "isdigit"   ? latin1_digit
+            : method_name == "isnumeric" ? latin1_numeric
+            : method_name == "isdecimal" ? latin1_decimal
+                                         : latin1_space;
+          result =
+            !chars.empty() && std::all_of(
+                                chars.begin(),
+                                chars.end(),
+                                [&](char32_t c) { return has(c, property); });
         }
         return result ? exprt{true_exprt{}} : exprt{false_exprt{}};
       }
-      for(char c : s)
-      {
-        unsigned char uc = static_cast<unsigned char>(c);
-        if(
-          method_name == "isdigit" || method_name == "isdecimal" ||
-          method_name == "isnumeric")
-          result = result && std::isdigit(uc);
-        else if(method_name == "isalpha")
-          result = result && (std::isalpha(uc) || uc >= 0x80);
-        else if(method_name == "isalnum")
-          result = result && (std::isalnum(uc) || uc >= 0x80);
-        else if(method_name == "isupper")
-          result = result && (!std::isalpha(uc) || std::isupper(uc));
-        else if(method_name == "islower")
-          result = result && (!std::isalpha(uc) || std::islower(uc));
-        else if(method_name == "isspace")
-          // CPython str.isspace() also counts \x1c-\x1f (FS GS RS US), which
-          // C-locale std::isspace does not.
-          result = result && (std::isspace(uc) || (uc >= 0x1c && uc <= 0x1f));
-        else if(method_name == "isascii")
-          result = result && (uc < 128);
-      }
-      if(method_name == "isascii" && s.empty())
-        result = true; // empty string is ASCII
-      return result ? exprt{true_exprt{}} : exprt{false_exprt{}};
     }
     // Non-constant string predicate: try to read the first
     // byte through the string struct's data pointer and apply
@@ -2366,24 +2431,13 @@ std::optional<exprt> python_convertert::try_string_method(
         byte_pred = byte_in_range('0', '9');
       else if(method_name == "isalpha")
       {
-        byte_pred = or_exprt{
-          byte_in_range('A', 'Z'),
-          or_exprt{
-            byte_in_range('a', 'z'),
-            // High-byte (UTF-8 leading byte) approximated as alpha.
-            binary_relation_exprt{
-              byte0, ID_ge, from_integer(0x80, byte0.type())}}};
+        byte_pred = or_exprt{byte_in_range('A', 'Z'), byte_in_range('a', 'z')};
       }
       else if(method_name == "isalnum")
       {
         byte_pred = or_exprt{
           byte_in_range('0', '9'),
-          or_exprt{
-            byte_in_range('A', 'Z'),
-            or_exprt{
-              byte_in_range('a', 'z'),
-              binary_relation_exprt{
-                byte0, ID_ge, from_integer(0x80, byte0.type())}}}};
+          or_exprt{byte_in_range('A', 'Z'), byte_in_range('a', 'z')}};
       }
       else if(method_name == "isupper")
         byte_pred = byte_in_range('A', 'Z');
@@ -2401,13 +2455,23 @@ std::optional<exprt> python_convertert::try_string_method(
                 equal_exprt{byte0, from_integer('\r', byte0.type())},
                 or_exprt{
                   equal_exprt{byte0, from_integer('\v', byte0.type())},
-                  equal_exprt{byte0, from_integer('\f', byte0.type())}}}}}};
+                  or_exprt{
+                    equal_exprt{byte0, from_integer('\f', byte0.type())},
+                    // CPython also counts \x1c-\x1f (FS GS RS US).
+                    byte_in_range('\x1c', '\x1f')}}}}}};
       }
       else if(method_name == "isascii")
       {
         byte_pred =
           binary_relation_exprt{byte0, ID_lt, from_integer(0x80, byte0.type())};
       }
+      // A character beyond ASCII (whose first UTF-8 byte is at least 0x80)
+      // is not classified here: '€'.isalpha() is False, 'é'.isalpha() True.
+      if(method_name != "isascii")
+        byte_pred = if_exprt{
+          binary_relation_exprt{byte0, ID_ge, from_integer(0x80, byte0.type())},
+          side_effect_expr_nondett{bool_typet{}, source_locationt{}},
+          byte_pred};
       // PLR semantics: empty string returns False for all
       // these predicates except isascii (which returns True).
       exprt empty_result =
@@ -2452,6 +2516,15 @@ std::optional<exprt> python_convertert::try_string_method(
           symbol_table,
           pending_checks);
       }
+    }
+    // A positioned call is not converted above: its arguments are still
+    // evaluated, for their exceptions.
+    if(
+      (method_name == "startswith" || method_name == "endswith") &&
+      args.is_array() && !fold_covers_call_shape(expr, 1))
+    {
+      for(const auto &a : as_array(args))
+        convert_expression(a);
     }
     return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
   }

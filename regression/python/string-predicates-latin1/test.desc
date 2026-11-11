@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+isupper/islower held without a cased character (" ".islower()), and
+every byte beyond ASCII counted as a letter.
