@@ -131,8 +131,9 @@ std::optional<exprt> python_convertert::native_affix_or_padding(
   if((method == "removeprefix" || method == "removesuffix") && nargs == 1)
   {
     const exprt affix = convert_expression(*as_array(args).begin());
+    // converted: not to be evaluated again
     if(affix.type().id() != ID_string)
-      return std::nullopt;
+      return bounded_nondet_string(get_location(expr));
     if(method == "removeprefix")
       return if_exprt{
         native_string_app(
@@ -158,8 +159,10 @@ std::optional<exprt> python_convertert::native_affix_or_padding(
     return std::nullopt;
   auto it = as_array(args).begin();
   const exprt width = convert_expression(*it);
+  // The arguments are converted from here on: they must not be evaluated
+  // again, so the result of a call that is not modelled is nondet.
   if(width.type().id() != ID_signedbv)
-    return std::nullopt;
+    return bounded_nondet_string(get_location(expr));
   std::string fill = method == "zfill" ? "0" : " ";
   if(++it != as_array(args).end())
   {
@@ -167,7 +170,7 @@ std::optional<exprt> python_convertert::native_affix_or_padding(
     // a symbolic or non-ASCII fill (or one that raises TypeError) is not
     // modelled here
     if(!fv.has_value() || fv->size() != 1 || !is_ascii_string(*fv))
-      return std::nullopt;
+      return bounded_nondet_string(get_location(expr));
     fill = *fv;
   }
   const exprt w = typecast_exprt{width, int_t};
