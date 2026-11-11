@@ -21,6 +21,7 @@
 #include <util/std_expr.h>
 #include <util/std_types.h>
 #include <util/symbol.h>
+#include <util/unicode.h>
 
 #include "python_converter.h"
 #include "python_converter_helpers.h"
@@ -1458,11 +1459,7 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
         is_reverse = true;
       // PLR §6.3.3: a slice step of 0 raises ValueError.
       else if(step_d.has_value() && *step_d == 0.0)
-        add_check(
-          false_exprt{},
-          "exception",
-          "ValueError: slice step cannot be zero",
-          get_location(expr));
+        emit_conditional_exception(true_exprt{}, "ValueError");
       // Any other step (|step| >= 2, or a symbolic/non-foldable step) is NOT
       // modelled by the step-1 path; a constant step over a CONSTANT list is
       // folded precisely below (precise_step_fold); otherwise it is soundly
@@ -1501,8 +1498,11 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
         try_eval_double(convert_expression(upper_json)).has_value();
       if(sv.has_value() && (is_reverse || (lo_const && hi_const)))
       {
-        std::string s = sv.value();
+        // Positions are code points (PLR: a str is a sequence of them).
+        const std::u32string s = utf8_to_utf32(sv.value());
         int len = static_cast<int>(s.size());
+        auto literal = [&](const std::u32string &chars)
+        { return python_string_literal(utf32_native_endian_to_utf8(chars)); };
         // `is_reverse` (step == -1) is only a FULL reversal when BOTH
         // bounds are omitted (`s[::-1]`). With explicit bounds, e.g.
         // `s[5:0:-1]`, CPython walks start..stop+1 downward and STOPS
@@ -1514,8 +1514,7 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
           is_reverse && lower_json.is_null() && upper_json.is_null();
         if(bare_reverse)
         {
-          std::string rev(s.rbegin(), s.rend());
-          return python_string_literal(rev);
+          return literal(std::u32string(s.rbegin(), s.rend()));
         }
         else
         {
@@ -1558,18 +1557,18 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
               hi = len;
             if(lo >= hi)
               return python_string_literal("");
-            std::string r;
+            std::u32string r;
             for(int i = lo; i < hi; i += step)
               r += s[i];
-            return python_string_literal(r);
+            return literal(r);
           }
           // step < 0: walk downward, STOP before `hi` (exclusive).
           if(lo > len - 1)
             lo = len - 1;
-          std::string r;
+          std::u32string r;
           for(int i = lo; i > hi && i >= 0; i += step)
             r += s[i];
-          return python_string_literal(r);
+          return literal(r);
         }
       }
       // Non-constant string: emit cprover_string_substring(s, lo, hi)

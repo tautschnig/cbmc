@@ -3,7 +3,7 @@ main.py
 
 ^EXIT=10$
 ^SIGNAL=0$
-^\[exception\.\d+\] .*ValueError: slice step cannot be zero: FAILURE$
+^\[exception\.\d+\] .* line 3 uncaught exception: FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring

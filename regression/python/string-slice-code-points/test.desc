@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+'é '[:2] was folded over bytes, giving 'é'; a step of 0 was a failing
+property instead of an exception.
