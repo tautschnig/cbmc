@@ -97,6 +97,148 @@ static bool is_ascii_string(const std::string &s)
     [](char c) { return (static_cast<unsigned char>(c) & 0x80) == 0; });
 }
 
+std::optional<exprt> python_convertert::native_affix_or_padding(
+  const jsont &expr,
+  const exprt &s,
+  const std::string &method,
+  const jsont &args)
+{
+  const string_typet str_t;
+  const integer_typet int_t;
+  if(!args.is_array() || as_array(args).empty())
+    return std::nullopt;
+  const std::size_t nargs = as_array(args).size();
+  auto len = [&](const exprt &x)
+  {
+    return native_string_app(
+      ID_cprover_string_length_func, {str_t}, {x}, int_t);
+  };
+  auto substr = [&](const exprt &x, const exprt &start, const exprt &count)
+  {
+    return native_string_app(
+      ID_cprover_string_substring_func,
+      {str_t, int_t, int_t},
+      {x, start, count},
+      str_t);
+  };
+  auto concat = [&](const exprt &a, const exprt &b)
+  {
+    return native_string_app(
+      ID_cprover_string_concat_func, {str_t, str_t}, {a, b}, str_t);
+  };
+  const exprt zero = from_integer(0, int_t);
+
+  if((method == "removeprefix" || method == "removesuffix") && nargs == 1)
+  {
+    const exprt affix = convert_expression(*as_array(args).begin());
+    if(affix.type().id() != ID_string)
+      return std::nullopt;
+    if(method == "removeprefix")
+      return if_exprt{
+        native_string_app(
+          ID_cprover_string_startswith_func,
+          {str_t, str_t},
+          {s, affix},
+          bool_typet{}),
+        substr(s, len(affix), len(s)),
+        s};
+    return if_exprt{
+      native_string_app(
+        ID_cprover_string_endswith_func,
+        {str_t, str_t},
+        {s, affix},
+        bool_typet{}),
+      substr(s, zero, minus_exprt{len(s), len(affix)}),
+      s};
+  }
+
+  const bool padding = method == "ljust" || method == "rjust" ||
+                       method == "center" || method == "zfill";
+  if(!padding || nargs > (method == "zfill" ? 1u : 2u))
+    return std::nullopt;
+  auto it = as_array(args).begin();
+  const exprt width = convert_expression(*it);
+  if(width.type().id() != ID_signedbv)
+    return std::nullopt;
+  std::string fill = method == "zfill" ? "0" : " ";
+  if(++it != as_array(args).end())
+  {
+    const auto fv = extract_string_value(convert_expression(*it));
+    // a symbolic or non-ASCII fill (or one that raises TypeError) is not
+    // modelled here
+    if(!fv.has_value() || fv->size() != 1 || !is_ascii_string(*fv))
+      return std::nullopt;
+    fill = *fv;
+  }
+  const exprt w = typecast_exprt{width, int_t};
+  // The padding: a fresh string of `count` fill characters.
+  auto pad = [&](const exprt &count) -> exprt
+  {
+    static unsigned pad_ctr = 0;
+    const std::string nm = "__pad_" + std::to_string(pad_ctr++);
+    const irep_idt id{qualify_name(nm)};
+    if(symbol_table.lookup(id) == nullptr)
+    {
+      symbolt sy{id, str_t, "python"};
+      sy.base_name = nm;
+      sy.is_lvalue = true;
+      sy.is_state_var = true;
+      symbol_table.add(sy);
+    }
+    const symbol_exprt p = symbol_table.lookup_ref(id).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{
+      p, side_effect_expr_nondett{str_t, get_location(expr)}});
+    const typet re_t{ID_regex};
+    pending_checks.push_back(code_assumet{and_exprt{
+      equal_exprt{len(p), count},
+      native_string_app(
+        ID_cprover_string_in_regex_func,
+        {str_t, re_t},
+        {p,
+         native_string_app(
+           ID_cprover_regex_star_func,
+           {re_t},
+           {native_string_app(
+             ID_cprover_string_to_regex_func,
+             {str_t},
+             {constant_exprt{fill, str_t}},
+             re_t)},
+           re_t)},
+        bool_typet{})}});
+    return p;
+  };
+  // the number of fill characters: max(0, width - len(s))
+  const exprt margin = minus_exprt{w, len(s)};
+  const exprt count =
+    if_exprt{binary_relation_exprt{margin, ID_lt, zero}, zero, margin};
+  if(method == "ljust")
+    return concat(s, pad(count));
+  if(method == "rjust")
+    return concat(pad(count), s);
+  if(method == "center")
+  {
+    // CPython: left = marg / 2 + (marg & width & 1)
+    const exprt two = from_integer(2, int_t);
+    const exprt one = from_integer(1, int_t);
+    const exprt odd_both = and_exprt{
+      equal_exprt{mod_exprt{count, two}, one},
+      equal_exprt{mod_exprt{w, two}, one}};
+    const exprt left =
+      plus_exprt{div_exprt{count, two}, if_exprt{odd_both, one, zero}};
+    return concat(concat(pad(left), s), pad(minus_exprt{count, left}));
+  }
+  // zfill: the zeros go after a leading sign
+  const exprt first = substr(s, zero, from_integer(1, int_t));
+  const exprt sign = or_exprt{
+    equal_exprt{first, constant_exprt{"+", str_t}},
+    equal_exprt{first, constant_exprt{"-", str_t}}};
+  const exprt zeros = pad(count);
+  return if_exprt{
+    sign,
+    concat(concat(first, zeros), substr(s, from_integer(1, int_t), len(s))),
+    concat(zeros, s)};
+}
+
 exprt python_convertert::native_string_predicate(
   const exprt &s,
   const std::string &method,
@@ -1598,6 +1740,13 @@ std::optional<exprt> python_convertert::try_string_method(
         pending_checks,
         loop_depth > 0,
         current_function);
+    }
+    // Native strings: removeprefix/removesuffix and the padding methods with
+    // a constant fill character, exactly.
+    if(obj.type().id() == ID_string)
+    {
+      if(auto r = native_affix_or_padding(expr, obj, method_name, args))
+        return std::move(*r);
     }
     // Return nondet string with constraints for symbolic strings
     {

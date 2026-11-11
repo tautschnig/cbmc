@@ -3378,6 +3378,14 @@ private:
   /// str.isalpha() and the other predicates \p method of a native SMT string
   /// \p s, as regular-expression memberships over the classes of the Latin-1
   /// characters; nondet where characters beyond Latin-1 leave it open.
+  /// removeprefix/removesuffix, and ljust/rjust/center/zfill with a
+  /// constant one-character fill, of a native SMT string \p s; nullopt for
+  /// other methods or argument shapes.
+  std::optional<exprt> native_affix_or_padding(
+    const jsont &expr,
+    const exprt &s,
+    const std::string &method,
+    const jsont &args);
   exprt native_string_predicate(
     const exprt &s,
     const std::string &method,

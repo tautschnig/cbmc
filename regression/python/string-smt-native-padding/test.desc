@@ -1,0 +1,10 @@
+CORE
+main.py
+--cvc5 --python-smt-strings --isolate-properties
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+These methods were nondet for native strings.
