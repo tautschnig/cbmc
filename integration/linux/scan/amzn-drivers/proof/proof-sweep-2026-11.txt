@@ -21,8 +21,13 @@ xstats             VERIFICATION SUCCESSFUL  1            2               0      
 leaks              VERIFICATION SUCCESSFUL  3            1               0       0
 dma_order          VERIFICATION SUCCESSFUL  3            1               0       0
 conc_reset         VERIFICATION SUCCESSFUL  3            6               0       0
+conc_admin         EXPECTED-FAIL            -            4               0       0
+dev_configure      VERIFICATION SUCCESSFUL  5            3               0       0
+reset_flag         EXPECTED-FAIL            -            1               0       0
+rss_reta           EXPECTED-FAIL            -            2               0       0
 
-The two EXPECTED-FAIL rows reproduce findings rather than proving properties:
+The EXPECTED-FAIL rows reproduce findings or observations rather than proving
+properties:
 
   prepare_tx  configuration `real` fails PTX_OK -- that is F14.  `no_f14` and
               `fixed` are SUCCESSFUL; `nb_positive` fails by design (the
@@ -31,6 +36,15 @@ The two EXPECTED-FAIL rows reproduce findings rather than proving properties:
               fail -- the three F14 reproductions.  `no_b1`,
               `no_meta_disabled_no_offl`, `no_pushed_only` and `fixed` are
               SUCCESSFUL, which is the table in the F14 writeup.
+  reset_flag  the stale-flag configuration fails F21_WD_RUNS -- that is F21.
+              The `control_no_reset` and `with_fix` configurations are
+              SUCCESSFUL, which is what shows the harness measures the stale
+              flag and not something else.
+  rss_reta    the default configuration fails the indirect_table bound -- that
+              is F19.  -DWITH_UPDATE_CHECK, the proposed fix, is SUCCESSFUL.
+  conc_admin  the arbitrary-device configuration fails CC2_NO_STALE_CQE;
+              -DWELL_BEHAVED_DEVICE is SUCCESSFUL.  That difference is the
+              result, recorded as an observation.
 
 * watchdog: its three witnesses do fail, but the sweep's per-runner timeout
   cut the script off before it printed them; confirmed directly in the

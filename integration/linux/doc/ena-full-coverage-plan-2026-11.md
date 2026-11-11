@@ -149,7 +149,12 @@ part, vacuity witnesses that must fail, and an assumption ledger.
 
    Each pair is one harness. This covers named pairs, not all interleavings.
 
-   **Pair 1 is done** (`run_conc_reset.sh`): the reset-request handshake.
+   **Pairs 1 and 2 are done.** Pair 2 (`run_conc_admin.sh`) is the admin
+   submit/complete handshake, where only the submit side takes a lock: it is
+   sound exactly under the assumption that the device never sends a stale or
+   unsolicited completion, recorded as an observation.
+
+   Pair 1 (`run_conc_reset.sh`): the reset-request handshake.
    No reset request is ever swallowed by a concurrent one, in either store
    order. With the permitted store reordering a reader can see the flag set
    and read a stale reason, which is recorded as an observation (a wrong
@@ -188,7 +193,7 @@ part, vacuity witnesses that must fail, and an assumption ledger.
 |---|---|---|
 | B lifetime | 9% | ownership invariants, TX (done) and RX (2) |
 | K wrong state / outage | 16% | lifecycle induction (1, 3), reset path (4) |
-| F lost event / stuck | 9% | `INV_wakeup` (done), async handlers done: `WD_RESET_STICKY`, `WD_EVENT`, `AQ_PHASE`, `AQ_KEEPALIVE`. F18 is a class F finding from this phase |
+| F lost event / stuck | 9% | `INV_wakeup` (done), async handlers done: `WD_RESET_STICKY`, `WD_EVENT`, `AQ_PHASE`, `AQ_KEEPALIVE`, `CFG_AENQ_FAIL`. F18 and F21 are class F findings from these phases |
 | G OOB / corruption | 4% | bounds checks in every part, untrusted device (2, 4, 5) |
 | H NULL deref | 7% | pointer checks in every part, error paths (3) |
 | C stale after failure | 9% | error-path obligations (3). Done for start/stop/close: `DS_ERR_NO_HALF_START`, plus `LC_CLOSE_IDEMPOTENT` and `LC_DRV_STATS_ONCE` |
@@ -196,4 +201,4 @@ part, vacuity witnesses that must fail, and an assumption ledger.
 | A DMA into freed memory | 6% | ghost device-access set (7), done. The data path holds (`FBX_DMA_ORDER`, FreeBSD); the control path does not, which is F20 |
 | E deadlock | 3% | lock-order ghost. DPDK ENA takes `adapter->admin_lock` in 4 places in `ena_ethdev.c` and `ena_com` takes its own spinlocks 12 times, so this goes with 5 and 8 |
 | I, J | 2% | conversion and bounds checks, uninitialised locals via goto-instrument's experimental `--uninitialized-check` |
-| concurrency trigger | 21% | named pairs (8). Pair 1 done; the rest not started |
+| concurrency trigger | 21% | named pairs (8). Pairs 1 and 2 done; the secondary-process pair and the datapath-vs-control pair not started |

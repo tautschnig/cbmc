@@ -32,7 +32,9 @@ one() {
     "${nobody:-?}" "${unk:-?}" \
     "$(case " ${EXPECT_FAIL:-} " in *" $name "*) echo 'EXPECTED-FAIL (reproduces F14)';; *) [ "$other" = 0 ] && [ "${v:-}" = "VERIFICATION SUCCESSFUL" ] && echo || echo CHECK;; esac)"
 }
-EXPECT_FAIL="prepare_tx doorbell"
+# reset_flag, rss_reta and conc_admin also fail by design: each reproduces a
+# finding (F21, F19) or an observation in its first configuration.
+EXPECT_FAIL="prepare_tx doorbell reset_flag rss_reta conc_admin"
 one stop          run_stop.sh
 one rx_recv       run_rx_recv.sh
 one rx_refill     run_rx_refill.sh
@@ -51,3 +53,7 @@ one xstats        run_xstats.sh
 one leaks         run_leaks.sh
 one dma_order     run_dma_order.sh
 one conc_reset    run_conc_reset.sh
+one conc_admin    run_conc_admin.sh
+one dev_configure run_dev_configure.sh
+one reset_flag    run_reset_flag.sh
+one rss_reta      run_rss_reta.sh
