@@ -3170,6 +3170,57 @@ std::optional<exprt> python_convertert::try_string_method(
     method_name == "istitle" || method_name == "isidentifier" ||
     method_name == "isprintable")
   {
+    // Constant ASCII strings: fold istitle/isidentifier/isprintable.
+    if(method_name != "startswith" && method_name != "endswith")
+    {
+      const auto sv = extract_string_value(obj);
+      if(sv.has_value() && is_ascii_string(*sv))
+      {
+        const std::string &s = *sv;
+        auto upper = [](char c) { return c >= 'A' && c <= 'Z'; };
+        auto lower = [](char c) { return c >= 'a' && c <= 'z'; };
+        auto digit = [](char c) { return c >= '0' && c <= '9'; };
+        bool result = true;
+        if(method_name == "istitle")
+        {
+          // An uppercase character only after an uncased one, a lowercase
+          // one only after a cased one, and at least one cased character.
+          bool cased_before = false, any_cased = false;
+          for(char c : s)
+          {
+            if(upper(c))
+            {
+              if(cased_before)
+                result = false;
+              cased_before = any_cased = true;
+            }
+            else if(lower(c))
+            {
+              if(!cased_before)
+                result = false;
+              cased_before = any_cased = true;
+            }
+            else
+              cased_before = false;
+          }
+          result = result && any_cased;
+        }
+        else if(method_name == "isidentifier")
+        {
+          result = !s.empty() && !digit(s[0]);
+          for(char c : s)
+            if(!upper(c) && !lower(c) && !digit(c) && c != '_')
+              result = false;
+        }
+        else
+        {
+          for(char c : s)
+            if(c < 0x20 || c > 0x7e)
+              result = false;
+        }
+        return result ? exprt{true_exprt{}} : exprt{false_exprt{}};
+      }
+    }
     // Use solver for startswith/endswith on non-constant strings
     if(
       (method_name == "startswith" || method_name == "endswith") &&

@@ -2613,7 +2613,7 @@ std::optional<exprt> python_convertert::try_method_call(
         "isalnum",      "isupper",      "islower",      "isspace",
         "isascii",      "isnumeric",    "isidentifier", "isdecimal",
         "removeprefix", "removesuffix", "ljust",        "rjust",
-        "center",       "zfill"};
+        "center",       "zfill",        "istitle",      "isprintable"};
       if(native_supported.count(method_name))
       {
         if(

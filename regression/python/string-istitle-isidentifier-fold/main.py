@@ -1,0 +1,15 @@
+# istitle/isidentifier/isprintable of constant ASCII strings.
+assert not 'aa'.istitle()
+assert 'Aa Bb'.istitle()
+assert not 'AA'.istitle()
+assert not ' 0'.istitle()
+assert 'A1b'.istitle() == False
+assert 'Ab1C'.istitle()
+assert not ''.istitle()
+assert '_a1'.isidentifier()
+assert not '1a'.isidentifier()
+assert not ''.isidentifier()
+assert not 'a b'.isidentifier()
+assert 'a b~'.isprintable()
+assert not 'a\tb'.isprintable()
+assert ''.isprintable()
