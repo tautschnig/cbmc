@@ -26,6 +26,16 @@
 #include "../dpdk/drivers/net/ena/ena_ethdev.c"
 #include "ena_inv.h"
 
+/* INV_FREE_LIST has two equivalent forms, proven equivalent by
+ * harness_freelist_equiv.c.  The pairwise one is O(n^2) and is evaluated
+ * twice per run; the bitmask one is O(n), which is what lets this step reach
+ * larger rings.  -DSLOW_FREE_LIST selects the original. */
+#ifdef SLOW_FREE_LIST
+#  define FL(r, n) INV_FREE_LIST((r), (n))
+#else
+#  define FL(r, n) INV_FREE_LIST_FAST((r), (n))
+#endif
+
 #ifndef MAX_BURST
 #define MAX_BURST 2
 #endif
@@ -401,7 +411,7 @@ int main(void)
   __CPROVER_assume(INV_DESC_SUM_RING(&ring));
 #endif
 #ifndef NO_ASSUME_FL
-  __CPROVER_assume(INV_FREE_LIST(&ring, RING_SIZE));
+  __CPROVER_assume(FL(&ring, RING_SIZE));
 #endif
 #endif
 
@@ -498,7 +508,7 @@ int main(void)
   __CPROVER_assert(
     INV_DESC_SUM_RING(&ring), "INV_DESC_SUM preserved by eth_ena_xmit_pkts");
   __CPROVER_assert(
-    INV_FREE_LIST(&ring, RING_SIZE),
+    FL(&ring, RING_SIZE),
     "INV_FREE_LIST preserved by eth_ena_xmit_pkts");
 #endif
 #if RELEASE_AFTER_XMIT
