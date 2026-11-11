@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+The join of symbolic strings was nondet, and that of an empty list literal
+raised TypeError (its element type defaults to int).

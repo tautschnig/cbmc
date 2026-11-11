@@ -3067,7 +3067,7 @@ std::optional<exprt> python_convertert::try_string_method(
     {
       exprt list_arg = convert_expression(*as_array(args).begin());
       auto sep_val = extract_string_value(obj);
-      if(sep_val.has_value() && is_python_list_type(list_arg.type()))
+      if(is_python_list_type(list_arg.type()))
       {
         // Look up list literal for symbols
         const exprt *list_val = &list_arg;
@@ -3080,6 +3080,13 @@ std::optional<exprt> python_convertert::try_string_method(
         }
         const auto &list_st = to_struct_type(list_arg.type());
         to_array_type(list_st.components()[1].type());
+        // An empty list literal joins to "" (its element type says nothing).
+        if(
+          list_val->id() == ID_struct && list_val->operands().size() >= 2 &&
+          list_val->operands()[0].is_zero())
+        {
+          return python_string_literal("");
+        }
         // PLR §4.7.3: str.join requires every element to be a str. A concretely
         // non-str element type raises TypeError ('sequence item: expected str').
         // python_value (Any) is not flagged -- a violation cannot be proven.
@@ -3101,9 +3108,9 @@ std::optional<exprt> python_convertert::try_string_method(
           if(!to_integer(to_constant_expr(list_val->operands()[0]), len))
           {
             std::string result;
-            bool all_const = true;
+            bool all_const = sep_val.has_value();
             const exprt &data_arr = list_val->operands()[1];
-            for(mp_integer i = 0; i < len; ++i)
+            for(mp_integer i = 0; i < len && all_const; ++i)
             {
               auto idx = i.to_ulong();
               if(idx < data_arr.operands().size())
@@ -3121,6 +3128,30 @@ std::optional<exprt> python_convertert::try_string_method(
             }
             if(all_const)
               return python_string_literal(result);
+            // A list literal of strings: the concatenation of its elements
+            // separated by the (possibly symbolic) separator. (Only for a
+            // literal argument: a named list may have changed since.)
+            const bool all_strings =
+              list_val == &list_arg && data_arr.id() == ID_array &&
+              len <= data_arr.operands().size() &&
+              std::all_of(
+                data_arr.operands().begin(),
+                data_arr.operands().begin() + len.to_long(),
+                [&](const exprt &e)
+                {
+                  return is_python_string_type(e.type()) &&
+                         e.type().id() == obj.type().id();
+                });
+            if(all_strings && is_python_string_type(obj.type()))
+            {
+              if(len == 0)
+                return python_string_literal("");
+              exprt joined = data_arr.operands()[0];
+              for(std::size_t i = 1; i < len.to_ulong(); ++i)
+                joined = string_concat(
+                  string_concat(joined, obj), data_arr.operands()[i]);
+              return joined;
+            }
           }
         }
       }
