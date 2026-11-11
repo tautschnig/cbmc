@@ -1103,6 +1103,76 @@ should be visible to the caller, which it currently is not.
 mbuf is never freed while its DMA mapping is loaded. F20 is the control-path
 side, and it does not hold.
 
+## F21: a stop/start cycle leaves the reset flag set and permanently disables the watchdog (DPDK ENA)
+
+Found while answering the question phase 4 left open -- is a reset request
+ever consumed? Through `rte_eth_dev_reset` it is, because
+`eth_ena_dev_init` does `memset(adapter, 0, sizeof(*adapter))`. Through a
+stop/start cycle it is not.
+
+`adapter->trigger_reset` is set by `ena_trigger_reset` (`ena_ethdev.c:648`)
+from the watchdog, the data path and the control path. **Nothing in the DPDK
+driver ever clears it**; the only place it becomes false again is that
+`memset`, reached only through probe or `rte_eth_dev_reset`.
+
+`ena_stop` acts on the flag and leaves it set (`:1382-1386`):
+
+```c
+if (adapter->trigger_reset) {
+        rc = ena_com_dev_reset(ena_dev, adapter->reset_reason);
+        ...
+}
+```
+
+The device has been reset, so the flag is now stale. But
+`rte_eth_dev_stop` followed by `rte_eth_dev_start` is a legal sequence that
+does not go through `eth_ena_dev_init`, so on the restarted port the flag is
+still true, and every watchdog tick begins (`:2083`):
+
+```c
+if (unlikely(adapter->trigger_reset))
+        return;
+```
+
+So the keep-alive check, the admin-state check and the missing-Tx-completion
+check never run again on that port. The last of those is the mechanism F15
+relies on for recovery, so after this the driver can no longer detect a stuck
+queue; and since `ena_stop` will see the flag again, every later stop
+re-issues a device reset.
+
+**Both sibling drivers clear the flag explicitly**, which makes this an
+oversight rather than a design choice:
+
+| driver | clears the reset flag |
+|---|---|
+| DPDK | only via the `memset` in `eth_ena_dev_init` (`:2296`) |
+| Linux | `clear_bit(ENA_FLAG_TRIGGER_RESET, &adapter->flags)` (`ena_netdev.c:3292`) |
+| FreeBSD | `ENA_FLAG_CLEAR_ATOMIC(ENA_FLAG_TRIGGER_RESET, adapter)` (`ena.c:3617`) |
+
+**Evidence.** `proof/harness_reset_flag.c` with `proof/run_reset_flag.sh`
+requests a reset, runs the real `ena_stop`, puts the adapter back into the
+state a successful restart leaves, and takes one real watchdog tick. The
+obligation is that the tick still performs its checks, observed through a
+ghost set by the first check it reaches.
+
+| configuration | F21_WD_RUNS |
+|---|---|
+| a reset was requested before the stop | **FAILURE** |
+| no reset was ever requested (control) | SUCCESS |
+| the flag is cleared once `ena_stop` has acted on it (the fix) | SUCCESS |
+
+The control case matters: without it the harness could have been measuring
+something other than the stale flag. The vacuity witness (the restarted port
+is running) FAILS. No other failing property, no reached bodyless callee, no
+UNKNOWN.
+
+**Fix.** Clear `trigger_reset` in `ena_stop` once `ena_com_dev_reset` has been
+issued, as Linux and FreeBSD do.
+
+**Severity.** No memory unsafety, but the driver silently loses its own
+failure detection for the remaining life of the port, after an event that is
+itself a sign of trouble. Unveil classes F and K.
+
 ## Observation: the reset-request handshake is an unsynchronised read-modify-write
 
 Not reported as a finding: the consequence is a wrong reset reason, not
