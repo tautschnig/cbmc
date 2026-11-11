@@ -3563,9 +3563,15 @@ exprt python_convertert::bounded_nondet_string(const source_locationt &loc)
   const symbol_exprt sym = symbol_table.lookup_ref(id).symbol_expr();
   pending_checks.push_back(
     code_frontend_assignt{sym, side_effect_expr_nondett{string_typet{}, loc}});
-  // Constrain length to [0, PYTHON_MAX_STRING_LENGTH]. The lower bound rules
-  // out the spurious negative (int2bv-wrapped) length models; the upper bound
-  // matches the refined backend.
+  // Constrain the length to [0, PYTHON_MAX_STRING_LENGTH], matching the
+  // refined backend. The lower bound rules out the spurious negative
+  // (int2bv-wrapped) length models. The bound is stated on the 64-bit
+  // conversion and on the mathematical integer str.len: without the latter,
+  // cvc5 took minutes to refute properties combining count and rfind.
+  const exprt len_int = native_string_app(
+    ID_cprover_string_length_func, {string_typet{}}, {sym}, integer_typet{});
+  pending_checks.push_back(code_assumet{binary_relation_exprt{
+    len_int, ID_le, from_integer(PYTHON_MAX_STRING_LENGTH, integer_typet{})}});
   const exprt len = native_or_member_string_length(sym);
   const typet lt = len.type();
   pending_checks.push_back(code_assumet{and_exprt{
