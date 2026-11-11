@@ -51,6 +51,32 @@ std::optional<exprt> python_convertert::try_string_method(
   const std::string &method_name,
   const jsont &args)
 {
+  // PLib stdtypes: split/rsplit/partition/rpartition raise ValueError
+  // ("empty separator") for an empty separator.
+  if(
+    (method_name == "split" || method_name == "rsplit" ||
+     method_name == "partition" || method_name == "rpartition") &&
+    args.is_array() && !as_array(args).empty() &&
+    !(is_node_type(*as_array(args).begin(), "Constant") &&
+      json_member(*as_array(args).begin(), "value").is_null()))
+  {
+    const exprt sep = convert_expression(*as_array(args).begin());
+    if(is_python_string_type(sep.type()))
+    {
+      const auto sep_sv = extract_string_value(sep);
+      if(sep_sv.has_value())
+      {
+        if(sep_sv->empty())
+          emit_conditional_exception(true_exprt{}, "ValueError");
+      }
+      else
+      {
+        const exprt sep_len = native_or_member_string_length(sep);
+        emit_conditional_exception(
+          equal_exprt{sep_len, from_integer(0, sep_len.type())}, "ValueError");
+      }
+    }
+  }
   // PLib stdtypes: String methods
   if(method_name == "splitlines")
   {
