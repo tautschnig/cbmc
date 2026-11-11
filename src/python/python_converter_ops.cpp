@@ -9,6 +9,7 @@
 #include <util/bitvector_expr.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
+#include <util/expr_util.h>
 #include <util/floatbv_expr.h>
 #include <util/ieee_float.h>
 #include <util/json.h>
@@ -2640,6 +2641,29 @@ exprt python_convertert::convert_bool_op(const jsont &expr)
     extract_len_lower_bound(*as_array(values).begin());
 
   auto it = std::next(as_array(values).begin());
+  // An operand is used more than once below (its truthiness selects it as
+  // the result), so one with side effects (a nondet, say) is evaluated once
+  // into a temporary first.
+  auto evaluate_once = [&](exprt e) -> exprt
+  {
+    if(!has_subexpr(e, ID_side_effect))
+      return e;
+    static unsigned boolop_ctr = 0;
+    const std::string nm = "__boolop_" + std::to_string(boolop_ctr++);
+    const irep_idt id{qualify_name(nm)};
+    if(symbol_table.lookup(id) == nullptr)
+    {
+      symbolt sy{id, e.type(), "python"};
+      sy.base_name = nm;
+      sy.is_lvalue = true;
+      sy.is_state_var = true;
+      symbol_table.add(sy);
+    }
+    const symbol_exprt v = symbol_table.lookup_ref(id).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{v, std::move(e)});
+    return v;
+  };
+  result = evaluate_once(std::move(result));
   for(; it != as_array(values).end(); ++it)
   {
     // PLR §6.11: 'and' / 'or' short-circuit. The right
@@ -2711,6 +2735,8 @@ exprt python_convertert::convert_bool_op(const jsont &expr)
         list_min_lengths.erase(id);
       return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
     }
+    if(std::next(it) != as_array(values).end())
+      result = evaluate_once(std::move(result));
   }
 
   for(const auto &id : length_bounds_added)

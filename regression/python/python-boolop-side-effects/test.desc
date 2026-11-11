@@ -1,0 +1,10 @@
+CORE
+main.py
+--cvc5 --python-smt-strings
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+`p or q` became `p ? p : q`, and a p with a nondet was evaluated twice.
