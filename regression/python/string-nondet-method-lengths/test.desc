@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 8 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+cbmc ended with "vector::reserve".

@@ -1,0 +1,13 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+The constant folding of find and count took a symbolic start as 0, an end
+of -1 as no end, and count("") past the end as len + 1; count dropped the
+exceptions of its arguments; index() of a symbolic string raised an
+exception without a type.

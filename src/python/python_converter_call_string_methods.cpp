@@ -915,12 +915,24 @@ std::optional<exprt> python_convertert::try_string_method(
         method_name == "rstrip")
       {
         std::string chars_to_strip = " \t\n\r\f\v\x1c\x1d\x1e\x1f";
-        if(args.is_array() && !as_array(args).empty())
+        if(
+          args.is_array() && !as_array(args).empty() &&
+          !(is_node_type(*as_array(args).begin(), "Constant") &&
+            json_member(*as_array(args).begin(), "value").is_null()))
         {
           auto cv =
             extract_string_value(convert_expression(*as_array(args).begin()));
-          if(cv.has_value())
-            chars_to_strip = cv.value();
+          // Characters that are not known (or not ASCII, which the byte-wise
+          // stripping below would split): a nondet result.
+          if(!cv.has_value() || !is_ascii_string(*cv))
+          {
+            log_overapprox(
+              method_name +
+              "() of a constant string with characters that "
+              "are not known constants: returning nondet");
+            return bounded_nondet_string(get_location(expr));
+          }
+          chars_to_strip = cv.value();
         }
         if(method_name == "strip")
         {
@@ -1427,23 +1439,40 @@ std::optional<exprt> python_convertert::try_string_method(
         ID_cprover_string_length_func, tv, symbol_table, pending_checks);
       exprt input_len_intr = emit_string_int_function(
         ID_cprover_string_length_func, obj, symbol_table, pending_checks);
-      // strip/lstrip/rstrip: result length <= input length
+      // strip/lstrip/rstrip (also with characters), removeprefix and
+      // removesuffix: result length <= input length
       if(
         method_name == "strip" || method_name == "lstrip" ||
-        method_name == "rstrip")
+        method_name == "rstrip" || method_name == "removeprefix" ||
+        method_name == "removesuffix")
       {
         pending_checks.push_back(code_assumet{and_exprt{
           binary_relation_exprt{
             result_len_intr, ID_ge, from_integer(0, signedbv_typet{64})},
           binary_relation_exprt{result_len_intr, ID_le, input_len_intr}}});
       }
-      // capitalize/title/swapcase/casefold: same length
+      // capitalize/title/swapcase/casefold: empty exactly for an empty
+      // input. (Case maps can change the length beyond ASCII, and refined
+      // strings count UTF-8 bytes: 'ı'.upper() == 'I' is shorter.)
       else if(
         method_name == "capitalize" || method_name == "title" ||
         method_name == "swapcase" || method_name == "casefold")
       {
-        pending_checks.push_back(
-          code_assumet{equal_exprt{result_len_intr, input_len_intr}});
+        const exprt zero = from_integer(0, signedbv_typet{64});
+        pending_checks.push_back(code_assumet{and_exprt{
+          binary_relation_exprt{result_len_intr, ID_ge, zero},
+          equal_exprt{
+            equal_exprt{result_len_intr, zero},
+            equal_exprt{input_len_intr, zero}}}});
+      }
+      // center/ljust/rjust/zfill/expandtabs: result length >= input length
+      else if(
+        method_name == "center" || method_name == "ljust" ||
+        method_name == "rjust" || method_name == "zfill" ||
+        method_name == "expandtabs")
+      {
+        pending_checks.push_back(code_assumet{
+          binary_relation_exprt{result_len_intr, ID_ge, input_len_intr}});
       }
       return std::move(tv);
     }
@@ -2441,10 +2470,19 @@ std::optional<exprt> python_convertert::try_string_method(
       if(it != string_constants.end())
         str_val = it->second;
     }
+    // Each argument is converted once, here or below.
+    std::vector<std::optional<exprt>> converted(
+      args.is_array() ? as_array(args).size() : 0);
+    auto arg_at = [&](std::size_t i) -> exprt
+    {
+      if(!converted[i].has_value())
+        converted[i] =
+          convert_expression(*std::next(as_array(args).begin(), i));
+      return *converted[i];
+    };
     if(str_val.has_value() && args.is_array() && !as_array(args).empty())
     {
-      auto ait = as_array(args).begin();
-      exprt arg_expr = convert_expression(*ait);
+      exprt arg_expr = arg_at(0);
       auto arg_val = extract_string_value(arg_expr);
       if(!arg_val.has_value() && arg_expr.id() == ID_symbol)
       {
@@ -2453,34 +2491,43 @@ std::optional<exprt> python_convertert::try_string_method(
         if(it2 != string_constants.end())
           arg_val = it2->second;
       }
-      // Parse optional start/end range
-      int start = 0, end = -1;
-      ++ait;
-      if(ait != as_array(args).end())
+      // Parse optional start/end range; a symbolic one prevents folding.
+      std::optional<long long> start_arg, end_arg;
+      bool range_known = true;
+      for(std::size_t i = 1; i < converted.size() && i < 3; ++i)
       {
-        auto sv2 = try_eval_double(convert_expression(*ait));
-        if(sv2.has_value())
-          start = static_cast<int>(sv2.value());
-        ++ait;
-        if(ait != as_array(args).end())
-        {
-          auto ev = try_eval_double(convert_expression(*ait));
-          if(ev.has_value())
-            end = static_cast<int>(ev.value());
-        }
+        const auto v = try_eval_double(arg_at(i));
+        if(!v.has_value())
+          range_known = false;
+        else if(i == 1)
+          start_arg = static_cast<long long>(*v);
+        else
+          end_arg = static_cast<long long>(*v);
       }
-      if(arg_val.has_value())
+      // Positions are code points, so the folding is ASCII only.
+      if(
+        arg_val.has_value() && range_known && is_ascii_string(*str_val) &&
+        is_ascii_string(*arg_val))
       {
         std::string s = str_val.value();
-        int slen = static_cast<int>(s.size());
-        if(start < 0)
-          start += slen;
-        if(start < 0)
-          start = 0;
-        if(end < 0)
-          end = slen;
-        if(end > slen)
-          end = slen;
+        const int slen = static_cast<int>(s.size());
+        // PLR: start and end are interpreted as in slice notation.
+        long long start_ll = start_arg.value_or(0);
+        if(start_ll < 0)
+          start_ll += slen;
+        if(start_ll < 0)
+          start_ll = 0;
+        long long end_ll = end_arg.value_or(slen);
+        if(end_ll < 0)
+          end_ll += slen;
+        if(end_ll < 0)
+          end_ll = 0;
+        if(end_ll > slen)
+          end_ll = slen;
+        // start may exceed slen (then nothing is found, not even "").
+        const int start =
+          static_cast<int>(std::min<long long>(start_ll, slen + 1));
+        const int end = static_cast<int>(end_ll);
         std::string slice = (start < end) ? s.substr(start, end - start) : "";
         const std::string &sub = arg_val.value();
         // CPython empty-substring search: the empty string is "found" only
@@ -2542,7 +2589,7 @@ std::optional<exprt> python_convertert::try_string_method(
             pos += sub.empty() ? 1 : sub.size();
           }
           if(sub.empty())
-            cnt = static_cast<long long>(slice.size() + 1);
+            cnt = empty_found ? static_cast<long long>(slice.size() + 1) : 0;
           return from_integer(cnt, python_int_type());
         }
       }
@@ -2563,18 +2610,18 @@ std::optional<exprt> python_convertert::try_string_method(
         (is_forward || is_backward) && args.is_array() &&
         !as_array(args).empty())
       {
-        auto ait2 = as_array(args).begin();
-        exprt needle = convert_expression(*ait2);
+        exprt needle = arg_at(0);
         exprt from = from_integer(0, signedbv_typet{64});
         bool has_start = false, has_end = false;
-        ++ait2;
-        if(ait2 != as_array(args).end())
+        if(converted.size() >= 2)
         {
-          from = safe_typecast(convert_expression(*ait2), signedbv_typet{64});
+          from = safe_typecast(arg_at(1), signedbv_typet{64});
           has_start = true;
-          ++ait2;
-          if(ait2 != as_array(args).end())
+          if(converted.size() >= 3)
+          {
             has_end = true;
+            arg_at(2);
+          }
         }
         const bool precise_ok =
           is_python_string_type(needle.type()) &&
@@ -2674,14 +2721,8 @@ std::optional<exprt> python_convertert::try_string_method(
           {
             // str.index/str.rindex raise ValueError when the substring is
             // absent (index_of/last_index_of return -1).
-            const symbolt *exc_sym =
-              symbol_table.lookup("python::__exception_active");
-            if(exc_sym != nullptr)
-              pending_checks.push_back(code_frontend_assignt{
-                exc_sym->symbol_expr(),
-                or_exprt{
-                  exc_sym->symbol_expr(),
-                  equal_exprt{res, from_integer(-1, int_type)}}});
+            emit_conditional_exception(
+              equal_exprt{res, from_integer(-1, int_type)}, "ValueError");
           }
           return safe_typecast(res, python_int_type());
         }
@@ -2689,6 +2730,9 @@ std::optional<exprt> python_convertert::try_string_method(
     }
     // Constrained nondet for symbolic find/count
     {
+      // The arguments are still evaluated, for their exceptions.
+      for(std::size_t i = 0; i < converted.size(); ++i)
+        arg_at(i);
       static unsigned find_ctr = 0;
       std::string tn = "__find_" + std::to_string(find_ctr++);
       std::string tq = qualify_name(tn);

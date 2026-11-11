@@ -1,0 +1,11 @@
+CORE
+strip.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 4 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The folding stripped whitespace when the characters were not constant.
