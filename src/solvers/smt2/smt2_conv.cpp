@@ -4825,13 +4825,14 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
     else if(src_type.id() == ID_signedbv)
     {
       // signed bitvector -> mathematical integer (used e.g. by str(int)'s
-      // native str.from_int lowering). Sign-aware: negatives map to the
-      // negated magnitude.
+      // native str.from_int lowering): the unsigned value, less 2^w for a
+      // negative one. (Negating the bit-vector first, as before, made cvc5
+      // time out on some string problems with a negative position.)
       const std::size_t w = to_bitvector_type(src_type).get_width();
       out << "(let ((?sbv2int ";
       convert_expr(src);
-      out << ")) (ite (bvslt ?sbv2int (_ bv0 " << w
-          << ")) (- (bv2nat (bvneg ?sbv2int))) (bv2nat ?sbv2int)))";
+      out << ")) (- (bv2nat ?sbv2int) (ite (bvslt ?sbv2int (_ bv0 " << w
+          << ")) " << power(2, w) << " 0)))";
     }
     else
       UNEXPECTEDCASE("Unknown typecast "+src_type.id_string()+" -> integer");
