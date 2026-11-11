@@ -178,6 +178,132 @@ bool python_convertert::emit_range_arg_checks(
   return false;
 }
 
+/// Parse \p text as CPython's int(text, base) does: surrounding
+/// whitespace, an optional sign, for base 0 or a matching base a 0x/0o/0b
+/// prefix, and digits separated by single underscores (base 0 rejects
+/// leading zeros). Returns the value, an empty optional if CPython raises
+/// ValueError, or nullopt if the text has characters (non-ASCII ones, or
+/// the ASCII separators 0x1c to 0x1f) whose treatment is not modelled.
+static std::optional<std::optional<mp_integer>>
+parse_python_int_literal(const std::string &text, int base)
+{
+  const std::optional<mp_integer> invalid;
+  for(char c : text)
+  {
+    const auto uc = static_cast<unsigned char>(c);
+    if(uc >= 0x80 || (uc >= 0x1c && uc <= 0x1f))
+      return std::nullopt;
+  }
+  if(base != 0 && (base < 2 || base > 36))
+    return invalid;
+  auto is_space = [](char c) { return c == ' ' || (c >= '\t' && c <= '\r'); };
+  std::size_t a = 0, b = text.size();
+  while(a < b && is_space(text[a]))
+    ++a;
+  while(b > a && is_space(text[b - 1]))
+    --b;
+  std::string body = text.substr(a, b - a);
+  bool negative = false;
+  if(!body.empty() && (body[0] == '+' || body[0] == '-'))
+  {
+    negative = body[0] == '-';
+    body = body.substr(1);
+  }
+  auto prefix_base = [&]() -> int
+  {
+    if(body.size() < 2 || body[0] != '0')
+      return 0;
+    const char p = static_cast<char>(std::tolower(body[1]));
+    return p == 'x' ? 16 : p == 'o' ? 8 : p == 'b' ? 2 : 0;
+  };
+  bool had_prefix = false;
+  const int pb = prefix_base();
+  if(pb != 0 && (base == 0 || base == pb))
+  {
+    base = pb;
+    body = body.substr(2);
+    had_prefix = true;
+  }
+  const bool base_zero_decimal = base == 0;
+  if(base == 0)
+    base = 10;
+  // one underscore may follow a prefix
+  if(had_prefix && !body.empty() && body[0] == '_')
+    body = body.substr(1);
+  if(body.empty() || body.front() == '_' || body.back() == '_')
+    return invalid;
+  mp_integer value = 0;
+  bool previous_underscore = false;
+  for(char c : body)
+  {
+    if(c == '_')
+    {
+      if(previous_underscore)
+        return invalid;
+      previous_underscore = true;
+      continue;
+    }
+    previous_underscore = false;
+    int digit;
+    if(c >= '0' && c <= '9')
+      digit = c - '0';
+    else if(std::isalpha(static_cast<unsigned char>(c)))
+      digit = std::tolower(static_cast<unsigned char>(c)) - 'a' + 10;
+    else
+      return invalid;
+    if(digit >= base)
+      return invalid;
+    value = value * base + digit;
+  }
+  // base 0 without a prefix: no leading zeros unless the value is 0
+  if(base_zero_decimal && !had_prefix && body[0] == '0' && value != 0)
+    return invalid;
+  return std::optional<mp_integer>{negative ? -value : value};
+}
+
+/// The text of a CPython float() argument in the form strtod reads: without
+/// surrounding whitespace and without the underscores CPython allows between
+/// digits. Returns "" for text CPython rejects although strtod may accept it
+/// (hexadecimal, "nan(...)", misplaced underscores), and nullopt for text with
+/// characters (non-ASCII ones, or the ASCII separators 0x1c to 0x1f) whose
+/// treatment is not modelled.
+static std::optional<std::string>
+python_float_literal_text(const std::string &text)
+{
+  for(char c : text)
+  {
+    const auto uc = static_cast<unsigned char>(c);
+    if(uc >= 0x80 || (uc >= 0x1c && uc <= 0x1f))
+      return std::nullopt;
+  }
+  auto is_space = [](char c) { return c == ' ' || (c >= '\t' && c <= '\r'); };
+  std::size_t a = 0, b = text.size();
+  while(a < b && is_space(text[a]))
+    ++a;
+  while(b > a && is_space(text[b - 1]))
+    --b;
+  std::string result;
+  for(std::size_t i = a; i < b; ++i)
+  {
+    const char c = text[i];
+    if(c == 'x' || c == 'X' || c == '(' || is_space(c))
+      return std::string{};
+    if(c == '_')
+    {
+      auto digit = [&](std::size_t j)
+      {
+        return j >= a && j < b &&
+               std::isdigit(static_cast<unsigned char>(text[j]));
+      };
+      if(!digit(i - 1) || !digit(i + 1))
+        return std::string{};
+      continue;
+    }
+    result += c;
+  }
+  return result;
+}
+
 std::optional<exprt> python_convertert::try_builtin_call(
   const jsont &expr,
   const std::string &func_name,
@@ -1097,85 +1223,18 @@ std::optional<exprt> python_convertert::try_builtin_call(
           auto sv = extract_string_value(arg);
           if(sv.has_value())
           {
-            // Strip ASCII whitespace from both ends per CPython.
-            std::string trimmed = sv.value();
-            std::size_t a = 0;
-            while(a < trimmed.size() &&
-                  std::isspace(static_cast<unsigned char>(trimmed[a])))
-              a++;
-            std::size_t b = trimmed.size();
-            while(b > a &&
-                  std::isspace(static_cast<unsigned char>(trimmed[b - 1])))
-              b--;
-            std::string body = trimmed.substr(a, b - a);
-            // Optional sign.
-            std::string sign;
-            if(!body.empty() && (body[0] == '+' || body[0] == '-'))
+            const auto parsed = parse_python_int_literal(*sv, parse_base);
+            if(parsed.has_value() && parsed->has_value())
+              return from_integer(**parsed, python_int_type());
+            if(parsed.has_value())
+              emit_conditional_exception(true_exprt{}, "ValueError");
+            else
             {
-              sign = body.substr(0, 1);
-              body = body.substr(1);
+              log_overapprox(
+                "int() of a constant string with non-ASCII or unusual "
+                "whitespace characters: returning nondet");
+              emit_may_raise("ValueError");
             }
-            // PLR §6.4.4: int(x, 0) auto-detects the base from a
-            // prefix (0x/0X => 16, 0b/0B => 2, 0o/0O => 8) and
-            // falls back to base 10 when no prefix is present.
-            // For an explicit base, Python accepts the matching
-            // prefix and strips it before parsing.
-            int effective_base = parse_base;
-            if(effective_base == 0)
-            {
-              if(
-                body.size() >= 2 && body[0] == '0' &&
-                (body[1] == 'x' || body[1] == 'X'))
-              {
-                effective_base = 16;
-                body = body.substr(2);
-              }
-              else if(
-                body.size() >= 2 && body[0] == '0' &&
-                (body[1] == 'b' || body[1] == 'B'))
-              {
-                effective_base = 2;
-                body = body.substr(2);
-              }
-              else if(
-                body.size() >= 2 && body[0] == '0' &&
-                (body[1] == 'o' || body[1] == 'O'))
-              {
-                effective_base = 8;
-                body = body.substr(2);
-              }
-              else
-              {
-                effective_base = 10;
-              }
-            }
-            else if(
-              effective_base == 16 && body.size() >= 2 && body[0] == '0' &&
-              (body[1] == 'x' || body[1] == 'X'))
-              body = body.substr(2);
-            else if(
-              effective_base == 2 && body.size() >= 2 && body[0] == '0' &&
-              (body[1] == 'b' || body[1] == 'B'))
-              body = body.substr(2);
-            else if(
-              effective_base == 8 && body.size() >= 2 && body[0] == '0' &&
-              (body[1] == 'o' || body[1] == 'O'))
-              body = body.substr(2);
-
-            errno = 0;
-            char *endp = nullptr;
-            std::string full = sign + body;
-            long long val = std::strtoll(full.c_str(), &endp, effective_base);
-            if(!body.empty() && endp == full.c_str() + full.size())
-              return from_integer(val, python_int_type());
-            // Constant string that can't be parsed: surface a
-            // ValueError.
-            add_check(
-              false_exprt{},
-              "exception",
-              "ValueError: invalid literal for int() with base " +
-                std::to_string(parse_base),
-              get_location(expr));
             return side_effect_expr_nondett{
               python_int_type(), get_location(expr)};
           }
@@ -1230,21 +1289,26 @@ std::optional<exprt> python_convertert::try_builtin_call(
             // strtod is exception-free; std::stod throws on
             // out-of-range denormals like "1e-308" (libstdc++ quirk)
             // and on unparseable inputs.
+            const auto text = python_float_literal_text(*sv);
+            if(!text.has_value())
+            {
+              log_overapprox(
+                "float() of a constant string with non-ASCII or unusual "
+                "whitespace characters: returning nondet");
+              emit_may_raise("ValueError");
+              return side_effect_expr_nondett{
+                double_type(), get_location(expr)};
+            }
             errno = 0;
             char *endp = nullptr;
-            const double v = std::strtod(sv->c_str(), &endp);
-            if(endp == sv->c_str() + sv->size())
+            const double v = std::strtod(text->c_str(), &endp);
+            if(!text->empty() && endp == text->c_str() + text->size())
             {
               fv.from_double(v);
               return fv.to_expr();
             }
-            // A constant string float() cannot parse raises
-            // ValueError (mirrors int()'s invalid-literal check).
-            add_check(
-              false_exprt{},
-              "exception",
-              "ValueError: could not convert string to float: '" + *sv + "'",
-              get_location(expr));
+            // A constant string float() cannot parse raises ValueError.
+            emit_conditional_exception(true_exprt{}, "ValueError");
             return side_effect_expr_nondett{double_type(), get_location(expr)};
           }
         }

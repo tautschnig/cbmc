@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+An invalid constant literal was a failing property rather than an exception,
+so `except ValueError` was unreachable; "1_000" and " 2.5 " were invalid.
