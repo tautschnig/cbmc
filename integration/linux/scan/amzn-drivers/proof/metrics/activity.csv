@@ -1,0 +1,4 @@
+ts,category,subject,note
+2026-11-11T18:29:56+00:00,DOC,methodology,"write-up of the transferable method"
+2026-11-11T18:29:56+00:00,DOC,metrics,"write-up of the process metrics"
+2026-11-11T18:29:56+00:00,TOOL,metrics-instrumentation,"built and tested metrics/bin wrappers"

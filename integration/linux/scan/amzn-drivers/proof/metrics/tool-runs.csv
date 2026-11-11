@@ -1,0 +1,5 @@
+ts,tool,label,wall_s,rc
+2026-11-11T18:25:39+00:00,goto-cc,freelist_equiv,12.7,0
+2026-11-11T18:25:39+00:00,goto-instrument,freelist_equiv,0.2,0
+2026-11-11T18:25:52+00:00,goto-cc,freelist_equiv,12.5,0
+2026-11-11T18:25:52+00:00,goto-instrument,freelist_equiv,0.2,0

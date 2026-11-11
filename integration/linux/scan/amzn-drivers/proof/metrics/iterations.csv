@@ -1,0 +1,7 @@
+artefact,cbmc_runs_to_final,invariant_versions,harness_errors_found,notes
+tx_stop_step,>=4,1,4,"witness in wrong function; static-inline misdiagnosis; bodyless destroy cut the path; free binding"
+dev_lifecycle,>=3,0,3,"vacuous entry state; secondary-process early return; bodyless admin teardown"
+cleanup_large_ring,>=4,2,4,"loop contract on wrong loop; unbounded inner loops; invariant too weak; uint16 wrap in accounting"
+rx_recv,>=3,2,2,"symbolic CQ solver-hard; union pointer-check ERROR; INV_RX_STARTED needed accounting clause"
+aenq,>=3,0,2,"stale binaries verified; phase model wrong after a wrap"
+conc_reset,>=2,0,2,"interleaving too coarse; asked-bookkeeping wrong"

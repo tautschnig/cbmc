@@ -1,0 +1,12 @@
+#!/bin/bash
+# Logging wrapper for the non-solver tools, so "time spent running other
+# tools" is measured rather than estimated.
+TOOL=$(basename "$0")
+REAL=${METRICS_REAL_BIN:-/home/ubuntu/cbmc-github.git/build/bin}/$TOOL
+CSV=${METRICS_TOOLCSV:-$(cd "$(dirname "$0")/.." && pwd)/tool-runs.csv}
+start=$(date +%s.%N)
+"$REAL" "$@"; rc=$?
+wall=$(echo "$(date +%s.%N) - $start" | bc)
+[ -f "$CSV" ] || echo "ts,tool,label,wall_s,rc" > "$CSV"
+printf '%s,%s,%s,%.1f,%s\n' "$(date -Is)" "$TOOL" "${METRICS_LABEL:-unknown}" "$wall" "$rc" >> "$CSV"
+exit $rc

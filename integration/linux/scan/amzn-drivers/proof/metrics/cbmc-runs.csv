@@ -1,0 +1,3 @@
+ts,label,step,wall_s,cpu_s,peak_rss_kb,verdict,failures,vcc,vcc_remaining,ssa_vars,clauses,symex_s,ssa_s,solver_s
+2026-11-11T18:25:54+00:00,freelist_equiv,final,2.5,2.5,88240,SUCCESSFUL,0,655,29,16618,60024,0.60727,0.0266551,0.177744
+2026-11-11T18:25:56+00:00,freelist_equiv,final,1.7,1.6,52700,FAILED,2,3,3,15883,57399,0.452524,0.0260037,0.0702188

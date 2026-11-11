@@ -1,0 +1,44 @@
+#!/bin/bash
+# Logging wrapper around cbmc.  Every runner takes its tool directory from
+# $BIN or $B, so pointing those at metrics/bin instruments the whole suite
+# without editing a single runner:
+#
+#   BIN=.../proof/metrics/bin B=.../proof/metrics/bin ./run_all.sh
+#
+# One CSV row per invocation: when, what, how long, the verdict, and the
+# phase breakdown cbmc itself reports.  CPU and peak RSS come from /usr/bin/time.
+REAL=${METRICS_REAL_BIN:-/home/ubuntu/cbmc-github.git/build/bin}/cbmc
+CSV=${METRICS_CSV:-$(cd "$(dirname "$0")/.." && pwd)/cbmc-runs.csv}
+LABEL=${METRICS_LABEL:-$(basename "${1:-unknown}" .gb)}
+STEP=${METRICS_STEP:-}
+TMP=$(mktemp); TIMES=$(mktemp)
+start=$(date +%s.%N)
+# --verbosity 9 is what makes cbmc print its per-phase "Runtime ...:" lines
+# and the VCC counts; without it those columns come out empty.  It only adds
+# output, it does not change what is verified.
+/usr/bin/time -f 'TIMEFIELDS %e %U %S %M' -o "$TIMES" \
+  "$REAL" "$@" --verbosity 9 > "$TMP" 2>&1
+rc=$?
+wall=$(echo "$(date +%s.%N) - $start" | bc)
+cat "$TMP"
+rt() { grep -oE "Runtime $1[^:]*: [0-9.]+" "$TMP" | tail -1 | grep -oE '[0-9.]+$'; }
+convert_ssa() { grep -oE "Runtime Convert SSA[^:]*: [0-9.]+" "$TMP" | tail -1 | grep -oE '[0-9.]+$'; }
+verdict=$(grep -oE '^VERIFICATION [A-Z]+' "$TMP" | head -1 | sed 's/VERIFICATION //')
+[ -z "$verdict" ] && verdict=$(grep -qi "out of memory" "$TMP" && echo OOM || echo NO_VERDICT)
+vcc=$(grep -oE 'Generated [0-9]+ VCC' "$TMP" | tail -1 | grep -oE '[0-9]+')
+rem=$(grep -oE '[0-9]+ remaining' "$TMP" | tail -1 | grep -oE '[0-9]+')
+clauses=$(grep -oE '[0-9]+ clauses' "$TMP" | tail -1 | grep -oE '[0-9]+')
+vars=$(grep -oE '[0-9]+ variables' "$TMP" | tail -1 | grep -oE '[0-9]+')
+fails=$(grep -cE ': FAILURE$' "$TMP")
+# /usr/bin/time adds a "Command exited with non-zero status" line when the
+# command fails, so pick the tagged line rather than the first one.
+read -r _tag _e _u _s _m <<< "$(grep '^TIMEFIELDS' "$TIMES" 2>/dev/null)"
+unset _tag
+[ -f "$CSV" ] || echo "ts,label,step,wall_s,cpu_s,peak_rss_kb,verdict,failures,vcc,vcc_remaining,ssa_vars,clauses,symex_s,ssa_s,solver_s" > "$CSV"
+printf '%s,%s,%s,%.1f,%.1f,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+  "$(date -Is)" "$LABEL" "${STEP:-final}" "$wall" \
+  "$(echo "${_u:-0} + ${_s:-0}" | bc)" "${_m:-}" "$verdict" "$fails" \
+  "${vcc:-}" "${rem:-}" "${vars:-}" "${clauses:-}" "$(rt Symex)" \
+  "$(convert_ssa)" "$(rt Solver)" >> "$CSV"
+rm -f "$TMP" "$TIMES"
+exit $rc
