@@ -317,8 +317,11 @@ static simplify_exprt::resultt<> simplify_string_contains(
 
   const array_exprt &second_value = second_value_opt->get();
 
-  // Is our 'contains' array directly contained in our target.
+  // Is our 'contains' array directly contained in our target. (std::search
+  // finds an empty needle at the start, which is the end of an empty
+  // haystack.)
   const bool includes =
+    second_value.operands().empty() ||
     std::search(
       first_value.operands().begin(),
       first_value.operands().end(),
