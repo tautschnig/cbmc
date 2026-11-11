@@ -2604,11 +2604,13 @@ std::optional<exprt> python_convertert::try_method_call(
     if(obj_base_type.id() == ID_string)
     {
       static const std::set<std::string> native_supported = {
-        "upper",     "lower",      "casefold", "swapcase", "capitalize",
-        "title",     "startswith", "endswith", "find",     "index",
-        "rfind",     "rindex",     "count",    "replace",  "strip",
-        "lstrip",    "rstrip",     "split",    "rsplit",   "splitlines",
-        "partition", "rpartition"};
+        "upper",        "lower",      "casefold", "swapcase", "capitalize",
+        "title",        "startswith", "endswith", "find",     "index",
+        "rfind",        "rindex",     "count",    "replace",  "strip",
+        "lstrip",       "rstrip",     "split",    "rsplit",   "splitlines",
+        "partition",    "rpartition", "isdigit",  "isalpha",  "isalnum",
+        "isupper",      "islower",    "isspace",  "isascii",  "isnumeric",
+        "isidentifier", "isdecimal"};
       if(native_supported.count(method_name))
       {
         if(

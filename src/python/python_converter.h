@@ -3375,6 +3375,13 @@ private:
     const std::optional<exprt> &start,
     const std::optional<exprt> &end);
   exprt native_string_of_int(const exprt &n);
+  /// str.isalpha() and the other predicates \p method of a native SMT string
+  /// \p s, as regular-expression memberships over the classes of the Latin-1
+  /// characters; nondet where characters beyond Latin-1 leave it open.
+  exprt native_string_predicate(
+    const exprt &s,
+    const std::string &method,
+    const source_locationt &loc);
 
   /// Content equality a == b (returns bool).
   exprt string_equal(const exprt &a, const exprt &b);

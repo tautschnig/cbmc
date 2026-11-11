@@ -1,0 +1,20 @@
+# Native SMT-String back-end: the string predicates of symbolic strings,
+# exact for Latin-1 characters.
+s = nondet_str()
+t = nondet_str()
+if s == "Café" and t == " 1a":
+    assert s.isalpha()
+    assert not t.isalpha()
+    assert not t.isspace()
+    assert " \t".replace("x", "") .isspace()
+    assert not s.isupper()
+    assert not s.islower()
+    assert not t.isdigit()
+    assert t[1].isdigit()
+    assert t[2].isalnum()
+    assert not t.isidentifier()
+    assert s.isidentifier()
+    assert t.isascii()
+    assert not s.isascii()
+    assert not t.isupper()
+    assert t.islower()

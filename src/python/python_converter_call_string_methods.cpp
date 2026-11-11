@@ -97,6 +97,148 @@ static bool is_ascii_string(const std::string &s)
     [](char c) { return (static_cast<unsigned char>(c) & 0x80) == 0; });
 }
 
+exprt python_convertert::native_string_predicate(
+  const exprt &s,
+  const std::string &method,
+  const source_locationt &loc)
+{
+  const typet re_t{ID_regex};
+  const string_typet str_t;
+  auto character = [&](char32_t c)
+  {
+    return constant_exprt{
+      utf32_native_endian_to_utf8(std::u32string(1, c)), str_t};
+  };
+  auto range = [&](char32_t lo, char32_t hi)
+  {
+    return native_string_app(
+      ID_cprover_regex_range_func,
+      {str_t, str_t},
+      {character(lo), character(hi)},
+      re_t);
+  };
+  auto re2 = [&](const irep_idt &fn, const exprt &a, const exprt &b) {
+    return native_string_app(fn, {re_t, re_t}, {a, b}, re_t);
+  };
+  auto re1 = [&](const irep_idt &fn, const exprt &a)
+  { return native_string_app(fn, {re_t}, {a}, re_t); };
+  const exprt all =
+    native_string_app(ID_cprover_regex_allchar_func, {}, {}, re_t);
+  const exprt any_string = re1(ID_cprover_regex_star_func, all);
+  // The Latin-1 characters with a property, as a union of ranges.
+  auto latin1_class = [&](const std::function<bool(unsigned)> &has) -> exprt
+  {
+    std::optional<exprt> result;
+    for(unsigned c = 0; c < 256;)
+    {
+      if(!has(latin1_properties[c]))
+      {
+        ++c;
+        continue;
+      }
+      unsigned end = c;
+      while(end + 1 < 256 && has(latin1_properties[end + 1]))
+        ++end;
+      const exprt r = range(c, end);
+      result =
+        result.has_value() ? re2(ID_cprover_regex_union_func, *result, r) : r;
+      c = end + 1;
+    }
+    return result.has_value()
+             ? *result
+             : native_string_app(ID_cprover_regex_none_func, {}, {}, re_t);
+  };
+  const exprt beyond = range(0x100, 0x2ffff);
+  auto in = [&](const exprt &re)
+  {
+    return native_string_app(
+      ID_cprover_string_in_regex_func, {str_t, re_t}, {s, re}, bool_typet{});
+  };
+  auto decide = [&](const exprt &yes, const exprt &no) -> exprt
+  {
+    return if_exprt{
+      yes,
+      true_exprt{},
+      if_exprt{no, false_exprt{}, side_effect_expr_nondett{bool_typet{}, loc}}};
+  };
+  auto with = [](unsigned property)
+  {
+    return std::function<bool(unsigned)>{[property](unsigned p)
+                                         { return (p & property) != 0; }};
+  };
+  auto without = [](unsigned property)
+  {
+    return std::function<bool(unsigned)>{[property](unsigned p)
+                                         { return (p & property) == 0; }};
+  };
+  auto containing = [&](const exprt &re)
+  {
+    return re2(
+      ID_cprover_regex_concat_func,
+      any_string,
+      re2(ID_cprover_regex_concat_func, re, any_string));
+  };
+  const exprt empty = equal_exprt{s, constant_exprt{"", str_t}};
+
+  if(method == "isascii")
+    return in(re1(ID_cprover_regex_star_func, range(0, 0x7f)));
+  if(method == "isupper" || method == "islower")
+  {
+    const unsigned want = method == "isupper" ? latin1_upper : latin1_lower;
+    const unsigned other = method == "isupper" ? latin1_lower : latin1_upper;
+    // all cased characters in the case, and at least one
+    const exprt not_other =
+      re1(ID_cprover_regex_star_func, latin1_class(without(other)));
+    const exprt yes = in(re2(
+      ID_cprover_regex_concat_func,
+      not_other,
+      re2(ID_cprover_regex_concat_func, latin1_class(with(want)), not_other)));
+    const exprt no = or_exprt{
+      in(containing(latin1_class(with(other)))),
+      in(re1(ID_cprover_regex_star_func, latin1_class(without(want | other))))};
+    return decide(yes, no);
+  }
+  if(method == "isidentifier")
+  {
+    const exprt yes = in(re2(
+      ID_cprover_regex_concat_func,
+      latin1_class(with(latin1_id_start)),
+      re1(ID_cprover_regex_star_func, latin1_class(with(latin1_id_continue)))));
+    const exprt no = or_exprt{
+      empty,
+      or_exprt{
+        in(re2(
+          ID_cprover_regex_concat_func,
+          latin1_class(without(latin1_id_start)),
+          any_string)),
+        in(re2(
+          ID_cprover_regex_concat_func,
+          all,
+          containing(latin1_class(without(latin1_id_continue)))))}};
+    return decide(yes, no);
+  }
+  const unsigned property = method == "isalpha"     ? latin1_alpha
+                            : method == "isalnum"   ? latin1_alnum
+                            : method == "isdigit"   ? latin1_digit
+                            : method == "isnumeric" ? latin1_numeric
+                            : method == "isdecimal" ? latin1_decimal
+                            : method == "isspace"   ? latin1_space
+                                                    : 0;
+  if(property == 0)
+    return side_effect_expr_nondett{bool_typet{}, loc};
+  // all characters with the property (and at least one); not so if a
+  // Latin-1 character lacks it or the string is empty
+  const exprt yes =
+    in(re1(ID_cprover_regex_plus_func, latin1_class(with(property))));
+  const exprt no = or_exprt{
+    empty,
+    not_exprt{in(re1(
+      ID_cprover_regex_star_func,
+      re2(
+        ID_cprover_regex_union_func, latin1_class(with(property)), beyond)))}};
+  return decide(yes, no);
+}
+
 std::optional<exprt> python_convertert::try_string_method(
   const jsont &expr,
   const exprt &obj,
@@ -2389,6 +2531,11 @@ std::optional<exprt> python_convertert::try_string_method(
         return result ? exprt{true_exprt{}} : exprt{false_exprt{}};
       }
     }
+    // Native strings: regular-expression membership over the classes of the
+    // Latin-1 characters (latin1_properties); a string with a character
+    // beyond Latin-1 that the classes do not decide gives a nondet result.
+    if(obj.type().id() == ID_string)
+      return native_string_predicate(obj, method_name, get_location(expr));
     // Non-constant string predicate: try to read the first
     // byte through the string struct's data pointer and apply
     // the predicate as a byte-level check. This is exact for
