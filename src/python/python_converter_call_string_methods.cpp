@@ -1907,6 +1907,39 @@ std::optional<exprt> python_convertert::try_string_method(
       if(auto r = native_affix_or_padding(expr, obj, method_name, args))
         return std::move(*r);
     }
+    // Refined strings: removeprefix/removesuffix by is_prefix/is_suffix and a
+    // slice.
+    else if(
+      (method_name == "removeprefix" || method_name == "removesuffix") &&
+      args.is_array() && as_array(args).size() == 1)
+    {
+      const exprt affix = convert_expression(*as_array(args).begin());
+      if(
+        is_python_string_type(affix.type()) &&
+        is_python_string_type(obj.type()))
+      {
+        const bool prefix = method_name == "removeprefix";
+        const exprt has_affix = emit_string_bool_function(
+          prefix ? ID_cprover_string_is_prefix_func
+                 : ID_cprover_string_is_suffix_func,
+          affix,
+          obj,
+          symbol_table,
+          pending_checks);
+        const exprt affix_len = native_or_member_string_length(affix);
+        const exprt rest =
+          prefix
+            ? python_string_slice(obj, affix_len, std::nullopt)
+            : python_string_slice(
+                obj,
+                std::nullopt,
+                minus_exprt{native_or_member_string_length(obj), affix_len});
+        if(rest.type() == obj.type())
+          return if_exprt{has_affix, rest, obj};
+      }
+      // The argument is converted: it must not be evaluated again.
+      return bounded_nondet_string(get_location(expr));
+    }
     // Return nondet string with constraints for symbolic strings
     {
       // The arguments are still evaluated, for their exceptions and other

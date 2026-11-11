@@ -1,0 +1,10 @@
+__assert_k = nondet_int(); s = nondet_str()
+p = nondet_str()
+if s == "abcab" and p == "ab":
+    assert __assert_k != 0 or (s.removeprefix(p) != "cab")
+    assert __assert_k != 1 or (s.removesuffix(p) != "abc")
+    assert __assert_k != 2 or (s.removeprefix("b") != "abcab")
+    assert __assert_k != 3 or (s.removesuffix("") != "abcab")
+    assert __assert_k != 4 or (s.removeprefix(s) != "")
+    assert __assert_k != 5 or (s.removesuffix("abcabx") != "abcab")
+    assert __assert_k != 6 or (len(s.removeprefix(p)) != 3)

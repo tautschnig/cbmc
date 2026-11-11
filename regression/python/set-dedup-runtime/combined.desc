@@ -1,0 +1,16 @@
+FUTURE
+combined.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Invariant check failed
+--
+main.py, ints.py, comprehension.py and concat.py in one program. Each part
+takes about a second; together they did not finish in 300 s (4 s before
+asserts became `assert; assume`, PLR 7.3). The assumed conditions of
+`x in s` (line 19), `len(t) == 2` (line 25) and `d == {"a1", "b1"}`
+(line 36) make the bit-vector refinement's SAT query (about 170000
+variables and 610000 clauses) hard: assuming any one of these three alone
+after its assert takes over 30 s, assuming any other one alone about 2 s.
