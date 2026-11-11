@@ -1910,6 +1910,9 @@ private:
   /// See convert_expression: the argument nodes of the method calls being
   /// converted, with their conversions once converted.
   std::map<const jsont *, std::optional<exprt>> evaluated_arguments;
+  /// The nesting of the expressions being converted (see
+  /// convert_expression).
+  unsigned expression_depth = 0;
 
   /// Convert a type annotation to a CBMC typet.
   typet convert_type_annotation(const jsont &annotation);

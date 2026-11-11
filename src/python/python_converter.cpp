@@ -6783,7 +6783,32 @@ exprt python_convertert::convert_expression(const jsont &expr)
   }
   const auto it = evaluated_arguments.find(&expr);
   if(it == evaluated_arguments.end())
-    return convert_expression_impl(expr);
+  {
+    ++expression_depth;
+    exprt result = convert_expression_impl(expr);
+    --expression_depth;
+    // A call within another expression is evaluated exactly once, where it
+    // occurs: the conversions that use its result may read it several
+    // times (the length and the data of a string, say), and its side
+    // effects must not repeat. (A call that is a whole statement value, the
+    // right-hand side of an assignment say, is kept: the tracking of
+    // returned lambdas and literals inspects it.)
+    if(
+      expression_depth > 0 &&
+      json_string(json_member(expr, "_type")) == "Call" &&
+      result.type().id() != ID_empty &&
+      has_subexpr(
+        result,
+        [](const exprt &e)
+        {
+          return e.id() == ID_side_effect &&
+                 to_side_effect_expr(e).get_statement() == ID_function_call;
+        }))
+    {
+      return evaluate_once(std::move(result));
+    }
+    return result;
+  }
   if(!it->second.has_value())
   {
     exprt result = evaluate_once(convert_expression_impl(expr));
