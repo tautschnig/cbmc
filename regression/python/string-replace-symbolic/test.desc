@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+replace() of symbolic strings was nondet with the refined string solver.

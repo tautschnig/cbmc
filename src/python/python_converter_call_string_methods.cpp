@@ -540,6 +540,145 @@ exprt python_convertert::native_replace_with_count(
   return out;
 }
 
+exprt python_convertert::refined_replace(
+  const jsont &expr,
+  const exprt &s,
+  const std::string &old,
+  const exprt &new_s,
+  const exprt &count)
+{
+  const signedbv_typet i64{64};
+  const source_locationt loc = get_location(expr);
+  const exprt zero = from_integer(0, i64);
+  const exprt one = from_integer(1, i64);
+  auto fresh = [&](const typet &t, const std::optional<exprt> &value) -> exprt
+  {
+    static unsigned ctr = 0;
+    const std::string nm = "__replace_refined_" + std::to_string(ctr++);
+    const irep_idt id{qualify_name(nm)};
+    if(symbol_table.lookup(id) == nullptr)
+    {
+      symbolt sy{id, t, "python"};
+      sy.base_name = nm;
+      sy.is_lvalue = true;
+      sy.is_state_var = true;
+      symbol_table.add(sy);
+    }
+    const symbol_exprt v = symbol_table.lookup_ref(id).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{
+      v, value.has_value() ? *value : side_effect_expr_nondett{t, loc}});
+    return v;
+  };
+  auto len = [&](const exprt &x) { return native_or_member_string_length(x); };
+  const exprt old_s = python_string_literal(old);
+  const exprt old_view = string_struct_view(old_s);
+  auto index_of = [&](const exprt &x) -> exprt
+  {
+    const exprt hay = string_struct_view(x);
+    const irep_idt fn{ID_cprover_string_index_of_func};
+    if(symbol_table.lookup(fn) == nullptr)
+    {
+      symbolt fs{
+        fn,
+        mathematical_function_typet({hay.type(), old_view.type(), i64}, i64),
+        "python"};
+      fs.base_name = id2string(fn);
+      symbol_table.add(fs);
+    }
+    function_application_exprt app{
+      symbol_table.lookup_ref(fn).symbol_expr(), {hay, old_view, zero}};
+    app.type() = i64;
+    return fresh(i64, exprt{app});
+  };
+  const exprt k = fresh(i64, typecast_exprt::conditional_cast(count, i64));
+  const exprt old_len = from_integer(old.size(), i64);
+
+  // The replacements one by one, up to `levels` of them; x[j] is what is
+  // left of s after j of them. A non-empty `old` is replaced at its first
+  // occurrence in x[j]. An empty `old` is inserted before the first
+  // character of x[j], which is then kept, and once more at the end.
+  constexpr std::size_t max_levels = 4;
+  std::size_t levels = max_levels;
+  if(count.is_constant())
+  {
+    const auto n = numeric_cast<mp_integer>(to_constant_expr(count));
+    if(n.has_value() && *n >= 0 && *n < max_levels)
+      levels = numeric_cast_v<std::size_t>(*n);
+  }
+  std::vector<exprt> x{s};
+  std::vector<exprt> found;
+  std::vector<exprt> head;
+  exprt alive = true_exprt{};
+  for(std::size_t j = 0; j < levels; ++j)
+  {
+    if(old.empty())
+    {
+      found.push_back(alive);
+      head.push_back(
+        string_concat(new_s, python_string_slice(x[j], std::nullopt, one)));
+      alive = binary_relation_exprt{len(x[j]), ID_gt, zero};
+      x.push_back(
+        fresh(s.type(), python_string_slice(x[j], one, std::nullopt)));
+    }
+    else
+    {
+      const exprt at = index_of(x[j]);
+      found.push_back(binary_relation_exprt{at, ID_ge, zero});
+      head.push_back(
+        string_concat(python_string_slice(x[j], std::nullopt, at), new_s));
+      x.push_back(fresh(
+        s.type(),
+        python_string_slice(x[j], plus_exprt{at, old_len}, std::nullopt)));
+    }
+  }
+
+  // After the unrolled replacements: none is left to make when the count is
+  // used up or `old` does not occur any more. Otherwise, for a non-empty
+  // `old`, between one more and as many as fit are made, at most the
+  // remaining count, each changing the length by len(new) - len(old); the
+  // characters are unconstrained.
+  const exprt rest = x[levels];
+  const exprt more =
+    old.empty() ? alive
+                : exprt{binary_relation_exprt{index_of(rest), ID_ge, zero}};
+  const exprt done =
+    or_exprt{equal_exprt{k, from_integer(levels, i64)}, not_exprt{more}};
+  const exprt unknown = fresh(s.type(), std::nullopt);
+  if(!old.empty())
+  {
+    const exprt m = fresh(i64, std::nullopt);
+    pending_checks.push_back(code_assumet{implies_exprt{
+      not_exprt{done},
+      and_exprt{
+        binary_relation_exprt{m, ID_ge, one},
+        binary_relation_exprt{mult_exprt{m, old_len}, ID_le, len(rest)},
+        or_exprt{
+          binary_relation_exprt{k, ID_lt, zero},
+          binary_relation_exprt{
+            m, ID_le, minus_exprt{k, from_integer(levels, i64)}}},
+        equal_exprt{
+          len(unknown),
+          plus_exprt{
+            len(rest), mult_exprt{m, minus_exprt{len(new_s), old_len}}}}}}});
+  }
+  if(levels == max_levels)
+    log_overapprox(
+      "replace() with the refined string solver: beyond " +
+      std::to_string(max_levels) +
+      " replacements, at most the length of the result is known");
+  exprt out = fresh(s.type(), exprt{if_exprt{done, rest, unknown}});
+  for(std::size_t j = levels; j-- > 0;)
+  {
+    out = fresh(
+      s.type(),
+      exprt{if_exprt{
+        or_exprt{equal_exprt{k, from_integer(j, i64)}, not_exprt{found[j]}},
+        x[j],
+        string_concat(head[j], out)}});
+  }
+  return out;
+}
+
 std::optional<exprt> python_convertert::try_string_method(
   const jsont &expr,
   const exprt &obj,
@@ -2173,6 +2312,24 @@ std::optional<exprt> python_convertert::try_string_method(
       // a new multi-char solver intrinsic. Falls through
       // to nondet for now.
       //
+      // Refined strings with a constant `old`: the replacements one by one.
+      if(
+        !use_smt_string_native && obj.type().id() != ID_string &&
+        is_python_string_type(obj.type()) &&
+        is_python_string_type(new_expr.type()) &&
+        extract_string_value(old_expr).has_value() &&
+        (!symbolic_count.has_value() ||
+         symbolic_count->type().id() == ID_signedbv))
+      {
+        return refined_replace(
+          expr,
+          obj,
+          *extract_string_value(old_expr),
+          new_expr,
+          symbolic_count.has_value()
+            ? *symbolic_count
+            : from_integer(max_count, signedbv_typet{64}));
+      }
       // Native strings with a count: the replacements one by one.
       if(
         use_smt_string_native && obj.type().id() == ID_string &&

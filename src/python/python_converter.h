@@ -3399,6 +3399,16 @@ private:
     const exprt &old,
     const exprt &new_s,
     const exprt &count);
+  /// s.replace(old, new, count) of refined strings \p s and \p new_s with a
+  /// constant \p old and a 64-bit \p count (negative: all occurrences): the
+  /// first replacements one by one, beyond those only the length of the
+  /// result is known for a non-empty \p old.
+  exprt refined_replace(
+    const jsont &expr,
+    const exprt &s,
+    const std::string &old,
+    const exprt &new_s,
+    const exprt &count);
 
   /// Content equality a == b (returns bool).
   exprt string_equal(const exprt &a, const exprt &b);
