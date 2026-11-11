@@ -12,4 +12,5 @@ if s == "aZ":
     assert s.upper() == "AZ"
     assert s.lower() == "az"
     assert s.swapcase() == "Az"
-assert len(u) == len(t)
+if s == "ab":
+    assert len(u) == 6

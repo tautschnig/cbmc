@@ -1,0 +1,12 @@
+CORE
+main.py
+--cvc5 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 6 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Characters beyond ASCII were taken to be caseless, which proved this
+assertion.

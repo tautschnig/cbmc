@@ -44,6 +44,15 @@
 #include <sstream>
 #include <string>
 
+/// True when \p s has only ASCII characters.
+static bool is_ascii_string(const std::string &s)
+{
+  return std::all_of(
+    s.begin(),
+    s.end(),
+    [](char c) { return (static_cast<unsigned char>(c) & 0x80) == 0; });
+}
+
 std::optional<exprt> python_convertert::try_string_method(
   const jsont &expr,
   const exprt &obj,
@@ -410,11 +419,34 @@ std::optional<exprt> python_convertert::try_string_method(
   // by the concat (see below for inputs longer than the concat covers) and
   // `str.len(r) == str.len(obj)`; the length equality lets `len(result)`
   // queries short-circuit via congruence on `len(r)` without folding the
-  // 64-deep concat. ASCII only (A-Z <-> a-z); other code points pass through
-  // unchanged.
+  // 64-deep concat. The mapping is exact for ASCII (A-Z <-> a-z); see
+  // case_mapped below for other characters.
   //
-  // mapped_char(i) returns the transformed 1-character smt_string for position
-  // i of obj (str.from_code(-1) == "" for i >= len(obj)).
+  // mapped_char(i) returns the transformed smt_string for position i of obj
+  // (str.from_code(-1) == "" for i >= len(obj)).
+  // The mapped character at position i of obj: `ascii` (a code point) for
+  // an ASCII `code`, and otherwise the value of an uninterpreted function of
+  // obj and the position. Beyond ASCII, case maps can change the length
+  // ('ß'.upper() == 'SS') and depend on the context (a final 'Σ' lowers to
+  // 'ς'), so the result is a string and depends on the whole of obj.
+  [[maybe_unused]] auto case_mapped =
+    [&](const exprt &code, const exprt &ascii, std::size_t i) -> exprt
+  {
+    const exprt ascii_char = native_string_app(
+      ID_cprover_string_from_code_func,
+      {integer_typet{}},
+      {typecast_exprt::conditional_cast(ascii, integer_typet{})},
+      string_typet{});
+    const exprt other = native_string_app(
+      irep_idt{"python::__case_map_" + method_name},
+      {string_typet{}, integer_typet{}},
+      {obj, from_integer(i, integer_typet{})},
+      string_typet{});
+    return if_exprt{
+      binary_relation_exprt{code, ID_lt, from_integer(0x80, code.type())},
+      ascii_char,
+      other};
+  };
   [[maybe_unused]] auto build_length_preserving =
     [&](const std::function<exprt(std::size_t)> &mapped_char) -> exprt
   {
@@ -457,10 +489,27 @@ std::optional<exprt> python_convertert::try_string_method(
         {string_typet{}, string_typet{}},
         {r, concat},
         bool_typet{})}});
-    // In both cases r has obj's length, which also lets len() queries over r
-    // short-circuit.
-    pending_checks.push_back(
-      code_assumet{equal_exprt{native_or_member_string_length(r), obj_len}});
+    // In both cases r has obj's length if obj is ASCII, which also lets len()
+    // queries over r short-circuit. (Beyond ASCII, case maps can change the
+    // length.)
+    const typet regex_type{ID_regex};
+    const exprt ascii = native_string_app(
+      ID_cprover_string_in_regex_func,
+      {string_typet{}, regex_type},
+      {obj,
+       native_string_app(
+         ID_cprover_regex_star_func,
+         {regex_type},
+         {native_string_app(
+           ID_cprover_regex_range_func,
+           {string_typet{}, string_typet{}},
+           {constant_exprt{std::string(1, '\0'), string_typet{}},
+            constant_exprt{std::string(1, '\x7f'), string_typet{}}},
+           regex_type)},
+         regex_type)},
+      bool_typet{});
+    pending_checks.push_back(code_assumet{implies_exprt{
+      ascii, equal_exprt{native_or_member_string_length(r), obj_len}}});
     return std::move(r);
   };
 
@@ -505,11 +554,7 @@ std::optional<exprt> python_convertert::try_string_method(
               binary_relation_exprt{code, ID_le, from_integer('Z', code_t)}},
             plus_exprt{code, from_integer(32, code_t)},
             mapped};
-        return native_string_app(
-          ID_cprover_string_from_code_func,
-          {integer_typet{}},
-          {typecast_exprt{mapped, integer_typet{}}},
-          string_typet{});
+        return case_mapped(code, mapped, i);
       });
   }
 
@@ -570,16 +615,22 @@ std::optional<exprt> python_convertert::try_string_method(
               {prev},
               integer_typet{}),
             code_t}};
-          exprt prev_is_alpha = or_exprt{
-            in_range(prev_code, 'a', 'z'), in_range(prev_code, 'A', 'Z')};
+          // A character beyond ASCII may be cased or not.
+          exprt prev_is_alpha = if_exprt{
+            binary_relation_exprt{
+              prev_code, ID_lt, from_integer(0x80, prev_code.type())},
+            or_exprt{
+              in_range(prev_code, 'a', 'z'), in_range(prev_code, 'A', 'Z')},
+            native_string_app(
+              irep_idt{"python::__case_is_cased"},
+              {integer_typet{}},
+              {typecast_exprt::conditional_cast(prev_code, integer_typet{})},
+              bool_typet{})};
+          // (Whether a character is cased depends on it alone.)
           mapped = if_exprt{
             not_exprt{prev_is_alpha}, upper_map(code), lower_map(code)};
         }
-        return native_string_app(
-          ID_cprover_string_from_code_func,
-          {integer_typet{}},
-          {typecast_exprt{mapped, integer_typet{}}},
-          string_typet{});
+        return case_mapped(code, mapped, i);
       });
   }
 
@@ -595,7 +646,8 @@ std::optional<exprt> python_convertert::try_string_method(
       if(it != string_constants.end())
         sv = it->second;
     }
-    if(sv.has_value())
+    // Characters beyond ASCII are not caseless ('é'.upper() == 'É').
+    if(sv.has_value() && is_ascii_string(*sv))
     {
       std::string result = sv.value();
       for(auto &c : result)
@@ -842,6 +894,18 @@ std::optional<exprt> python_convertert::try_string_method(
     }
     // Try exact computation for constant strings
     auto str_val = extract_string_value(obj);
+    // The folds below treat characters beyond ASCII as caseless and not
+    // whitespace, which is wrong for most of them ('é'.upper() == 'É',
+    // '\xa0'.strip() == '').
+    if(
+      str_val.has_value() && !is_ascii_string(*str_val) &&
+      (method_name == "strip" || method_name == "lstrip" ||
+       method_name == "rstrip" || method_name == "capitalize" ||
+       method_name == "title" || method_name == "swapcase" ||
+       method_name == "casefold"))
+    {
+      str_val.reset();
+    }
     if(str_val.has_value())
     {
       std::string s = str_val.value();

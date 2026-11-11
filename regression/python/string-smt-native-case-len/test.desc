@@ -9,4 +9,5 @@ main.py
 --
 Native SMT-String back-end: len() over upper/lower/casefold/swapcase/
 capitalize/title of a symbolic string must verify. Regression for the
-str.++ concat length-folding perf cliff (now carries a len()==len() hint).
+str.++ concat length-folding perf cliff (now carries a len()==len() hint
+for ASCII input).
