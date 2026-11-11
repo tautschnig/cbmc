@@ -3320,6 +3320,136 @@ std::optional<exprt> python_convertert::try_string_method(
         return typecast_exprt{length(c), python_int_type()};
       }
     }
+    // Refined count: the occurrences one by one, each searched with index_of
+    // after the end of the previous one, up to `levels` of them. With
+    // positions, of the slice s[start:end].
+    if(
+      method_name == "count" && obj.type().id() != ID_string &&
+      is_python_string_type(obj.type()) && args.is_array() &&
+      !as_array(args).empty() && fold_covers_call_shape(expr, 3))
+    {
+      const exprt needle = arg_at(0);
+      std::optional<exprt> start, end;
+      for(std::size_t i = 1; i < converted.size() && i < 3; ++i)
+      {
+        const jsont &j = *std::next(as_array(args).begin(), i);
+        const exprt e = arg_at(i);
+        if(is_node_type(j, "Constant") && json_member(j, "value").is_null())
+          continue;
+        (i == 1 ? start : end) = e;
+      }
+      const bool int_positions =
+        (!start.has_value() || start->type().id() == ID_signedbv) &&
+        (!end.has_value() || end->type().id() == ID_signedbv);
+      if(
+        is_python_string_type(needle.type()) &&
+        needle.type().id() != ID_string && int_positions)
+      {
+        auto as_str_struct = [](const exprt &s) -> exprt
+        {
+          if(s.id() == ID_struct && s.operands().size() == 2)
+            return s;
+          return struct_exprt(
+            {member_exprt(s, "length", signedbv_typet{64}),
+             member_exprt(s, "data", pointer_typet(unsignedbv_typet{8}, 64))},
+            s.type());
+        };
+        const signedbv_typet i64{64};
+        const exprt zero = from_integer(0, i64);
+        const exprt one = from_integer(1, i64);
+        const exprt minus_one = from_integer(-1, i64);
+        const exprt len = native_or_member_string_length(obj);
+        const auto [start_n, end_n] = python_adjusted_indices(len, start, end);
+        const exprt hay = as_str_struct(
+          (start.has_value() || end.has_value())
+            ? python_string_slice(obj, start, end)
+            : obj);
+        const exprt ndl = as_str_struct(needle);
+        const exprt hay_len = member_exprt{hay, "length", i64};
+        const exprt ndl_len = member_exprt{ndl, "length", i64};
+        const irep_idt fn{ID_cprover_string_index_of_func};
+        if(symbol_table.lookup(fn) == nullptr)
+        {
+          symbolt fs{
+            fn,
+            mathematical_function_typet({hay.type(), ndl.type(), i64}, i64),
+            "python"};
+          fs.base_name = id2string(fn);
+          symbol_table.add(fs);
+        }
+        auto fresh = [&](const exprt &value) -> exprt
+        {
+          static unsigned ctr = 0;
+          const std::string nm = "__count_at_" + std::to_string(ctr++);
+          const irep_idt id{qualify_name(nm)};
+          if(symbol_table.lookup(id) == nullptr)
+          {
+            symbolt sy{id, i64, "python"};
+            sy.base_name = nm;
+            sy.is_lvalue = true;
+            sy.is_state_var = true;
+            symbol_table.add(sy);
+          }
+          const symbol_exprt v = symbol_table.lookup_ref(id).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{v, value});
+          return v;
+        };
+        auto index_of = [&](const exprt &from) -> exprt
+        {
+          function_application_exprt app{
+            symbol_table.lookup_ref(fn).symbol_expr(), {hay, ndl, from}};
+          app.type() = i64;
+          return fresh(app);
+        };
+        // at[j]: the position of the j-th occurrence, or -1
+        constexpr std::size_t levels = 8;
+        exprt counted = zero;
+        exprt at = index_of(zero);
+        for(std::size_t j = 0; j < levels; ++j)
+        {
+          const exprt found = binary_relation_exprt{at, ID_ge, zero};
+          counted = plus_exprt{counted, if_exprt{found, one, zero}};
+          at = fresh(
+            if_exprt{found, index_of(plus_exprt{at, ndl_len}), minus_one});
+        }
+        // More than `levels` occurrences: between levels + 1 and
+        // len(hay) / len(needle).
+        static unsigned many_ctr = 0;
+        const std::string nm = "__count_many_" + std::to_string(many_ctr++);
+        const irep_idt id{qualify_name(nm)};
+        if(symbol_table.lookup(id) == nullptr)
+        {
+          symbolt sy{id, i64, "python"};
+          sy.base_name = nm;
+          sy.is_lvalue = true;
+          sy.is_state_var = true;
+          symbol_table.add(sy);
+        }
+        const symbol_exprt many = symbol_table.lookup_ref(id).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{
+          many, side_effect_expr_nondett{i64, get_location(expr)}});
+        const exprt more = binary_relation_exprt{at, ID_ge, zero};
+        pending_checks.push_back(code_assumet{implies_exprt{
+          and_exprt{more, notequal_exprt{ndl_len, zero}},
+          and_exprt{
+            binary_relation_exprt{many, ID_gt, from_integer(levels, i64)},
+            binary_relation_exprt{
+              mult_exprt{many, ndl_len}, ID_le, hay_len}}}});
+        log_overapprox(
+          "count() with the refined string solver: beyond " +
+          std::to_string(levels) + " occurrences, the count is only bounded");
+        // "" occurs at each position of the slice, if it is not empty
+        // because the start is after the end.
+        const exprt result = if_exprt{
+          equal_exprt{ndl_len, zero},
+          if_exprt{
+            binary_relation_exprt{start_n, ID_le, end_n},
+            plus_exprt{hay_len, one},
+            zero},
+          if_exprt{more, exprt{many}, counted}};
+        return typecast_exprt::conditional_cast(result, python_int_type());
+      }
+    }
     // Precise symbolic find/index/rfind/rindex via the index_of /
     // last_index_of intrinsics (refined) or str.indexof (native). These are
     // queries (return an int; no result string, hence no backing), so they
