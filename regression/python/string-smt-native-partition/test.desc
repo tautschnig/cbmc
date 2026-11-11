@@ -1,0 +1,12 @@
+CORE
+main.py
+--cvc5 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 7 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The result was a nondet string, and [0] its first character, which proved
+this assertion.

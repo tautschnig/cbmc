@@ -2604,24 +2604,11 @@ std::optional<exprt> python_convertert::try_method_call(
     if(obj_base_type.id() == ID_string)
     {
       static const std::set<std::string> native_supported = {
-        "upper",
-        "lower",
-        "casefold",
-        "swapcase",
-        "capitalize",
-        "title",
-        "startswith",
-        "endswith",
-        "find",
-        "index",
-        "rfind",
-        "rindex",
-        "count",
-        "replace",
-        "strip",
-        "lstrip",
-        "rstrip",
-        "split"};
+        "upper",     "lower",      "casefold", "swapcase", "capitalize",
+        "title",     "startswith", "endswith", "find",     "index",
+        "rfind",     "rindex",     "count",    "replace",  "strip",
+        "lstrip",    "rstrip",     "split",    "rsplit",   "splitlines",
+        "partition", "rpartition"};
       if(native_supported.count(method_name))
       {
         if(
@@ -2651,6 +2638,17 @@ std::optional<exprt> python_convertert::try_method_call(
       static const std::set<std::string> int_methods = {};
       if(int_methods.count(method_name))
         return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+      // List-returning methods: a nondet list of strings, not a string.
+      if(
+        method_name == "split" || method_name == "rsplit" ||
+        method_name == "splitlines")
+        return side_effect_expr_nondett{
+          python_list_type(python_string_type()), get_location(expr)};
+      if(method_name == "partition" || method_name == "rpartition")
+        return side_effect_expr_nondett{
+          python_tuple_type(
+            {python_string_type(), python_string_type(), python_string_type()}),
+          get_location(expr)};
       return bounded_nondet_string(get_location(expr));
     }
 
