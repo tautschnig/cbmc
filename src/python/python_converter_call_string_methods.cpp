@@ -1675,6 +1675,134 @@ std::optional<exprt> python_convertert::try_string_method(
         }
       }
     }
+    // str.encode: bytes (a list of uint8), not a str; a str result made
+    // s.encode() == b"..." false.
+    if(method_name == "encode" && fold_covers_call_shape(expr, 2))
+    {
+      const typet u8 = unsignedbv_typet{8};
+      const typet bytes_t = python_list_type(u8);
+      std::optional<std::string> codec{"utf-8"}, errors{"strict"};
+      if(args.is_array())
+      {
+        auto it = as_array(args).begin();
+        if(it != as_array(args).end())
+        {
+          codec = extract_string_value(convert_expression(*it));
+          if(++it != as_array(args).end())
+            errors = extract_string_value(convert_expression(*it));
+        }
+      }
+      std::string nm;
+      if(codec.has_value())
+        for(char ch : *codec)
+        {
+          ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+          nm += (ch == '_' || ch == ' ') ? '-' : ch;
+        }
+      static const std::set<std::string> utf8_names = {
+        "utf-8", "utf8", "u8", "utf", "cp65001"};
+      static const std::set<std::string> ascii_names = {
+        "ascii", "us-ascii", "646"};
+      static const std::set<std::string> latin1_names = {
+        "latin-1",
+        "latin1",
+        "latin",
+        "iso-8859-1",
+        "iso8859-1",
+        "8859",
+        "cp819",
+        "l1"};
+      const bool utf8 = codec.has_value() && utf8_names.count(nm) > 0;
+      const bool ascii = codec.has_value() && ascii_names.count(nm) > 0;
+      const bool latin1 = codec.has_value() && latin1_names.count(nm) > 0;
+      // Nondet bytes: a length from 0 to the capacity of the list.
+      auto nondet_bytes = [&]() -> exprt
+      {
+        static unsigned ctr = 0;
+        const std::string bn = "__encoded_" + std::to_string(ctr++);
+        const irep_idt id{qualify_name(bn)};
+        if(symbol_table.lookup(id) == nullptr)
+        {
+          symbolt sy{id, bytes_t, "python"};
+          sy.base_name = bn;
+          sy.is_lvalue = true;
+          sy.is_state_var = true;
+          symbol_table.add(sy);
+        }
+        const symbol_exprt b = symbol_table.lookup_ref(id).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{
+          b, side_effect_expr_nondett{bytes_t, get_location(expr)}});
+        const auto &data_type =
+          to_array_type(to_struct_type(bytes_t).components()[1].type());
+        const member_exprt len{b, "length", signedbv_typet{64}};
+        pending_checks.push_back(code_assumet{and_exprt{
+          binary_relation_exprt{
+            len, ID_ge, from_integer(0, signedbv_typet{64})},
+          binary_relation_exprt{
+            len,
+            ID_le,
+            typecast_exprt::conditional_cast(
+              data_type.size(), signedbv_typet{64})}}});
+        return b;
+      };
+      const auto sv = extract_string_value(obj);
+      if(sv.has_value() && (utf8 || ascii || latin1))
+      {
+        // the code points, from the UTF-8 bytes
+        std::vector<unsigned long> cps;
+        for(std::size_t i = 0; i < sv->size();)
+        {
+          const unsigned char c0 = static_cast<unsigned char>((*sv)[i]);
+          const std::size_t n = c0 < 0xC0   ? 1
+                                : c0 < 0xE0 ? 2
+                                : c0 < 0xF0 ? 3
+                                            : 4;
+          unsigned long cp = n == 1   ? c0
+                             : n == 2 ? (c0 & 0x1F)
+                             : n == 3 ? (c0 & 0x0F)
+                                      : (c0 & 0x07);
+          for(std::size_t k = 1; k < n && i + k < sv->size(); ++k)
+            cp = (cp << 6) | (static_cast<unsigned char>((*sv)[i + k]) & 0x3F);
+          cps.push_back(cp);
+          i += n;
+        }
+        std::vector<unsigned char> bytes;
+        bool fails = false;
+        if(utf8)
+          bytes.assign(sv->begin(), sv->end());
+        else
+          for(unsigned long cp : cps)
+          {
+            if(cp > (ascii ? 0x7Fu : 0xFFu))
+              fails = true;
+            else
+              bytes.push_back(static_cast<unsigned char>(cp));
+          }
+        if(!fails)
+        {
+          const auto &data_type =
+            to_array_type(to_struct_type(bytes_t).components()[1].type());
+          exprt::operandst elems;
+          for(unsigned char b : bytes)
+            elems.push_back(from_integer(b, u8));
+          return struct_exprt{
+            {from_integer(
+               static_cast<long long>(bytes.size()), signedbv_typet{64}),
+             build_list_data(std::move(elems), data_type)},
+            bytes_t};
+        }
+        if(errors.has_value() && *errors == "strict")
+          emit_conditional_exception(true_exprt{}, "UnicodeEncodeError");
+        return nondet_bytes();
+      }
+      // A symbolic string, codec or error handler: nondet bytes, and an
+      // encoding other than UTF-8 may fail.
+      if(!utf8)
+        emit_conditional_exception(
+          side_effect_expr_nondett{bool_typet{}, get_location(expr)},
+          "UnicodeEncodeError");
+      return nondet_bytes();
+    }
     // Try exact computation for constant strings
     auto str_val = extract_string_value(obj);
     // The folds below treat characters beyond ASCII as caseless and not
