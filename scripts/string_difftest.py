@@ -112,6 +112,11 @@ PY_OPS = [
      "int"),
     ("rfind", "{0}.rfind({1})", ["str", "str"], "int"),
     ("rfind-start", "{0}.rfind({1}, {2})", ["str", "str", "int"], "int"),
+    ("rfind-range", "{0}.rfind({1}, {2}, {3})", ["str", "str", "int", "int"],
+     "int"),
+    ("index-range", "{0}.index({1}, {2}, {3})", ["str", "str", "int", "int"],
+     "int"),
+    ("rindex-start", "{0}.rindex({1}, {2})", ["str", "str", "int"], "int"),
     ("index-of", "{0}.index({1})", ["str", "str"], "int"),
     ("rindex", "{0}.rindex({1})", ["str", "str"], "int"),
     ("count", "{0}.count({1})", ["str", "str"], "int"),
@@ -124,7 +129,11 @@ PY_OPS = [
     ("startswith", "{0}.startswith({1})", ["str", "str"], "bool"),
     ("startswith-start", "{0}.startswith({1}, {2})", ["str", "str", "int"],
      "bool"),
+    ("startswith-range", "{0}.startswith({1}, {2}, {3})",
+     ["str", "str", "int", "int"], "bool"),
     ("endswith", "{0}.endswith({1})", ["str", "str"], "bool"),
+    ("endswith-start", "{0}.endswith({1}, {2})", ["str", "str", "int"],
+     "bool"),
     ("endswith-range", "{0}.endswith({1}, {2}, {3})",
      ["str", "str", "int", "int"], "bool"),
     ("in", "({1} in {0})", ["str", "str"], "bool"),
@@ -286,10 +295,14 @@ class Generator:
             rendered.append(e)
         return template.format(*rendered), names
 
-    def case(self):
-        typ = self.rng.choice(["str", "int", "bool"])
-        candidates = [op for op in self.ops if op[3] == typ]
-        name, template, args, _ = self.rng.choice(candidates)
+    def case(self, only=None):
+        if only:
+            candidates = [op for op in self.ops if op[0] in only]
+        else:
+            typ = self.rng.choice(["str", "int", "bool"])
+            candidates = [op for op in self.ops if op[3] == typ]
+        typ = None
+        name, template, args, typ = self.rng.choice(candidates)
         rendered, names = [], [name]
         for a in args:
             if a == "str" and self.depth > 1 and self.rng.random() < 0.3:
@@ -581,7 +594,8 @@ def generate(args, rng):
     while len(cases) < args.count and attempts < args.count * 50:
         attempts += 1
         g = Generator(rng, args.lang, args.depth)
-        expr, typ, names = g.case()
+        expr, typ, names = g.case(
+            set(args.ops.split(",")) if args.ops else None)
         if expr in seen:
             continue
         seen.add(expr)
@@ -642,6 +656,9 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--cbmc", default=str(REPO / "build/bin/cbmc"))
     ap.add_argument("--jbmc", default=str(REPO / "build/bin/jbmc"))
+    ap.add_argument("--ops", default=None,
+                    help="comma-separated operation names: generate only "
+                    "cases whose outermost operation is one of them")
     ap.add_argument("--replay", default=None,
                     help="results.jsonl of an earlier run: check its cases "
                     "again instead of generating new ones")
