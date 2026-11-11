@@ -1823,6 +1823,22 @@ std::optional<exprt> python_convertert::try_builtin_call(
                  (static_cast<unsigned char>(s[3]) & 0x3F);
           return from_integer(cp, python_int_type());
         }
+        // Symbolic: a string that is not exactly one character long raises
+        // TypeError. A refined string holds UTF-8 bytes, and its bytes are
+        // not available here (a dereference of its data pointer does not
+        // read the string solver's characters), so it is only known to be
+        // invalid when empty or longer than 4 bytes.
+        if(!sv.has_value())
+        {
+          const exprt len = native_or_member_string_length(arg);
+          const exprt max_len =
+            from_integer(arg.type().id() == ID_string ? 1 : 4, len.type());
+          emit_conditional_exception(
+            or_exprt{
+              equal_exprt{len, from_integer(0, len.type())},
+              binary_relation_exprt{len, ID_gt, max_len}},
+            "TypeError");
+        }
         // Symbolic: return first byte
         if(use_smt_string_native && arg.type().id() == ID_string)
         {

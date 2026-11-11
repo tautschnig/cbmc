@@ -1,0 +1,11 @@
+CORE
+refined.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+A refined string's bytes are not available to the front end, so only
+strings that are empty or longer than 4 bytes raise TypeError.

@@ -1,0 +1,11 @@
+CORE
+empty.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 4 uncaught exception: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Only constant strings were checked, so this TypeError was missed.
