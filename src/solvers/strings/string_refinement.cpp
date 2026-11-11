@@ -2288,6 +2288,17 @@ static std::optional<exprt> negation_of_not_contains_constraint(
   // nothing to do (and the reserve call would fail).
   if(ube < lbe)
     return and_exprt(univ_bounds, premise);
+  // If no value of the universal variable is in range, the negation is
+  // false, whatever the existential range.
+  const exprt univ_lower = get(constraint.univ_lower_bound);
+  const exprt univ_upper = get(constraint.univ_upper_bound);
+  if(univ_lower.is_constant() && univ_upper.is_constant())
+  {
+    const auto ul = numeric_cast<mp_integer>(to_constant_expr(univ_lower));
+    const auto uu = numeric_cast<mp_integer>(to_constant_expr(univ_upper));
+    if(ul.has_value() && uu.has_value() && *uu <= *ul)
+      return false_exprt{};
+  }
   // A model can give the strings huge lengths (one that is not otherwise
   // constrained, say); unrolling them is not feasible.
   constexpr std::size_t max_unrolling = 1 << 16;
