@@ -1,0 +1,12 @@
+CORE
+wrong.py
+--z3 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 5 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+z3 4.16 proved wrong results with an encoding of the last occurrence that
+used an equality with str.substr and nested position conditionals.

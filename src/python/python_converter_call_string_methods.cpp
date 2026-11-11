@@ -2708,46 +2708,38 @@ std::optional<exprt> python_convertert::try_string_method(
         }
       }
     }
-    // Precise symbolic find/index/rfind/rindex via the refined-string
-    // index_of / last_index_of axioms. These are queries (return an int; no
-    // result string, hence no backing), so they are safe in loops. Forward
-    // search (find/index) supports an optional start argument; backward
-    // search (rfind/rindex) routes to last_index_of, whose third argument is
-    // an *upper* bound (not a start), so its precise path is only taken with
-    // no start/end restriction (searching the whole string from the end).
-    // Other cases fall back to the constrained nondet below.
+    // Precise symbolic find/index/rfind/rindex via the index_of /
+    // last_index_of intrinsics (refined) or str.indexof (native). These are
+    // queries (return an int; no result string, hence no backing), so they
+    // are safe in loops. A forward search with only a start searches from
+    // that start; any other positioned search searches the slice
+    // s[start:end] and adds the start. Native strings have no
+    // last_index_of: the last occurrence is constrained instead.
     {
       const bool is_forward = (method_name == "find" || method_name == "index");
       const bool is_backward =
         (method_name == "rfind" || method_name == "rindex");
       if(
         (is_forward || is_backward) && args.is_array() &&
-        !as_array(args).empty())
+        !as_array(args).empty() && fold_covers_call_shape(expr, 3))
       {
         exprt needle = arg_at(0);
-        exprt from = from_integer(0, signedbv_typet{64});
-        bool has_start = false, has_end = false;
-        if(converted.size() >= 2)
+        auto position = [&](std::size_t i) -> std::optional<exprt>
         {
-          from = safe_typecast(arg_at(1), signedbv_typet{64});
-          has_start = true;
-          if(converted.size() >= 3)
-          {
-            has_end = true;
-            arg_at(2);
-          }
-        }
-        const bool precise_ok =
-          is_python_string_type(needle.type()) &&
-          (is_forward
-             ? !has_end
-             : (!has_start && !has_end &&
-                // last_index_of has no native SMT-String lowering (SMT-LIB has
-                // no str.last_indexof), so the precise backward path is refined
-                // only; a native smt_string rfind/rindex falls to the sound
-                // nondet below.
-                obj.type().id() != ID_string));
-        if(precise_ok)
+          if(i >= converted.size())
+            return std::nullopt;
+          const jsont &j = *std::next(as_array(args).begin(), i);
+          const exprt e = arg_at(i);
+          if(is_node_type(j, "Constant") && json_member(j, "value").is_null())
+            return std::nullopt;
+          return e;
+        };
+        const std::optional<exprt> start = position(1);
+        const std::optional<exprt> end = position(2);
+        const bool int_positions =
+          (!start.has_value() || start->type().id() == ID_signedbv) &&
+          (!end.has_value() || end->type().id() == ID_signedbv);
+        if(is_python_string_type(needle.type()) && int_positions)
         {
           auto as_str_struct = [](const exprt &s) -> exprt
           {
@@ -2760,83 +2752,261 @@ std::optional<exprt> python_convertert::try_string_method(
                member_exprt(s, "data", pointer_typet(unsignedbv_typet{8}, 64))},
               s.type());
           };
-          const exprt hay = as_str_struct(obj);
-          const exprt ndl = as_str_struct(needle);
           const typet int_type = signedbv_typet{64};
-          // Direction B (native SMT String): index_of lowers via the shared
-          // encoder to (str.indexof hay ndl from) with a native Int result and
-          // an Int `from` position. Typecast the i64 position in and the Int
-          // result out; convert_typecast supplies bv2nat / int2bv. Refined
-          // struct operands keep the bit-vector convention.
-          const bool native_iof = obj.type().id() == ID_string;
-          const typet app_type = native_iof ? typet{integer_typet{}} : int_type;
-          // Python's start: a negative one counts from the end (and is at
-          // least 0), and beyond the end nothing is found, not even an
-          // empty substring. index_of searches from a start in [0, len]
-          // (Java's semantics; SMT-LIB's for native strings).
-          std::optional<exprt> start_beyond_end;
-          if(has_start)
+          const exprt minus_one = from_integer(-1, int_type);
+          const exprt ndl = as_str_struct(needle);
+          const bool native = obj.type().id() == ID_string;
+          // index_of / last_index_of application over refined or native
+          // operands, as an i64. Direction B (native): Int positions and
+          // result, bridged by typecasts.
+          auto intrinsic = [&](const irep_idt &fn, exprt::operandst call_args)
           {
-            exprt hay_length = native_or_member_string_length(obj);
-            hay_length = safe_typecast(hay_length, int_type);
-            const exprt zero = from_integer(0, int_type);
-            const exprt from_end = plus_exprt{hay_length, from};
-            from = if_exprt{
-              binary_relation_exprt{from, ID_lt, zero},
+            const typet app_type =
+              native ? typet{integer_typet{}} : typet{int_type};
+            if(symbol_table.lookup(fn) == nullptr)
+            {
+              std::vector<typet> ats;
+              for(const auto &x : call_args)
+                ats.push_back(x.type());
+              symbolt fs{
+                fn,
+                mathematical_function_typet(std::move(ats), app_type),
+                "python"};
+              fs.base_name = id2string(fn);
+              symbol_table.add(fs);
+            }
+            function_application_exprt app{
+              symbol_table.lookup_ref(fn).symbol_expr(), std::move(call_args)};
+            app.type() = app_type;
+            return native ? exprt{typecast_exprt{app, int_type}} : exprt{app};
+          };
+          auto forward_search = [&](const exprt &hay, const exprt &from)
+          {
+            return intrinsic(
+              ID_cprover_string_index_of_func,
+              {as_str_struct(hay),
+               ndl,
+               native ? exprt{typecast_exprt{from, integer_typet{}}} : from});
+          };
+          // The last occurrence in a native string: -1 exactly when there is
+          // none, and otherwise a position where the needle occurs with no
+          // occurrence after it; an empty needle is found at the end.
+          auto native_backward_search = [&](const exprt &hay) -> exprt
+          {
+            // In mathematical integers: bit-vector positions converted to
+            // and from Int made cvc5 time out on these constraints.
+            const integer_typet int_t;
+            static unsigned last_ctr = 0;
+            const std::string nm =
+              "__last_index_of_" + std::to_string(last_ctr++);
+            const irep_idt rid{qualify_name(nm)};
+            if(symbol_table.lookup(rid) == nullptr)
+            {
+              symbolt rs{rid, int_t, "python"};
+              rs.base_name = nm;
+              rs.is_lvalue = true;
+              rs.is_state_var = true;
+              symbol_table.add(rs);
+            }
+            const symbol_exprt r = symbol_table.lookup_ref(rid).symbol_expr();
+            pending_checks.push_back(code_frontend_assignt{
+              r, side_effect_expr_nondett{int_t, get_location(expr)}});
+            auto str_len = [&](const exprt &x)
+            {
+              return native_string_app(
+                ID_cprover_string_length_func, {string_typet{}}, {x}, int_t);
+            };
+            const exprt hay_len = str_len(hay);
+            const exprt ndl_len = str_len(needle);
+            const exprt zero = from_integer(0, int_t);
+            const exprt minus_one_int = from_integer(-1, int_t);
+            auto index_of = [&](const exprt &from)
+            {
+              return native_string_app(
+                ID_cprover_string_index_of_func,
+                {string_typet{}, string_typet{}, int_t},
+                {hay, needle, from},
+                int_t);
+            };
+            // (str.prefixof rather than an equality with str.substr: z3 4.16
+            // proved wrong results with the latter.)
+            const exprt occurs_at_r = native_string_app(
+              ID_cprover_string_startswith_func,
+              {string_typet{}, string_typet{}},
+              {native_string_app(
+                 ID_cprover_string_substring_func,
+                 {string_typet{}, int_t, int_t},
+                 {hay, r, hay_len},
+                 string_typet{}),
+               needle},
+              bool_typet{});
+            const exprt empty_needle = equal_exprt{ndl_len, zero};
+            pending_checks.push_back(code_assumet{
+              implies_exprt{empty_needle, equal_exprt{r, hay_len}}});
+            pending_checks.push_back(code_assumet{implies_exprt{
+              not_exprt{empty_needle},
+              and_exprt{
+                equal_exprt{
+                  equal_exprt{r, minus_one_int},
+                  equal_exprt{index_of(zero), minus_one_int}},
+                implies_exprt{
+                  binary_relation_exprt{r, ID_ge, zero},
+                  and_exprt{
+                    occurs_at_r,
+                    // no occurrence from r + 1 on
+                    not_exprt{native_string_app(
+                      ID_cprover_string_contains_func,
+                      {string_typet{}, string_typet{}},
+                      {native_string_app(
+                         ID_cprover_string_substring_func,
+                         {string_typet{}, int_t, int_t},
+                         {hay, plus_exprt{r, from_integer(1, int_t)}, hay_len},
+                         string_typet{}),
+                       needle},
+                      bool_typet{})}}}}}});
+            pending_checks.push_back(
+              code_assumet{binary_relation_exprt{r, ID_ge, minus_one_int}});
+            return r;
+          };
+          auto backward_search = [&](const exprt &hay) -> exprt
+          {
+            if(native)
+              return typecast_exprt{native_backward_search(hay), int_type};
+            return intrinsic(
+              ID_cprover_string_last_index_of_func, {as_str_struct(hay), ndl});
+          };
+
+          exprt found;
+          if(is_forward && !end.has_value())
+          {
+            // Python's start: a negative one counts from the end (and is at
+            // least 0), and beyond the end nothing is found, not even an
+            // empty substring. index_of searches from a start in [0, len]
+            // (Java's semantics; SMT-LIB's for native strings).
+            const exprt len = typecast_exprt::conditional_cast(
+              native_or_member_string_length(obj), int_type);
+            const exprt from =
+              python_adjusted_indices(len, start, std::nullopt).first;
+            found = forward_search(obj, from);
+            if(start.has_value())
+              found = if_exprt{
+                binary_relation_exprt{from, ID_gt, len}, minus_one, found};
+          }
+          else if(!start.has_value() && !end.has_value())
+            found = backward_search(obj);
+          else
+          {
+            // s[start:end], and nothing found when it is shorter than the
+            // needle (as CPython checks first, also for an empty needle).
+            // Native strings compute this in mathematical integers, which
+            // cvc5 solves far better than bit-vector positions.
+            const typet pos_type =
+              native ? typet{integer_typet{}} : typet{int_type};
+            auto length_of = [&](const exprt &x) -> exprt
+            {
+              if(native)
+                return native_string_app(
+                  ID_cprover_string_length_func,
+                  {string_typet{}},
+                  {x},
+                  integer_typet{});
+              return typecast_exprt::conditional_cast(
+                native_or_member_string_length(x), int_type);
+            };
+            // Native positions and bounds as fresh integers: the nested
+            // conversions and conditionals, repeated in every string term,
+            // made z3 4.16 prove wrong results and cvc5 slow.
+            auto fresh_int = [&](const exprt &value) -> exprt
+            {
+              static unsigned pos_ctr = 0;
+              const std::string nm =
+                "__search_position_" + std::to_string(pos_ctr++);
+              const irep_idt id{qualify_name(nm)};
+              if(symbol_table.lookup(id) == nullptr)
+              {
+                symbolt sy{id, integer_typet{}, "python"};
+                sy.base_name = nm;
+                sy.is_lvalue = true;
+                sy.is_state_var = true;
+                symbol_table.add(sy);
+              }
+              const symbol_exprt v = symbol_table.lookup_ref(id).symbol_expr();
+              pending_checks.push_back(code_frontend_assignt{
+                v,
+                side_effect_expr_nondett{integer_typet{}, get_location(expr)}});
+              pending_checks.push_back(code_assumet{equal_exprt{v, value}});
+              return v;
+            };
+            const exprt len = length_of(obj);
+            auto as_int =
+              [&](const std::optional<exprt> &p) -> std::optional<exprt>
+            {
+              if(!native || !p.has_value())
+                return p;
+              return fresh_int(typecast_exprt{*p, integer_typet{}});
+            };
+            const auto [start_n, end_n] =
+              python_adjusted_indices(len, as_int(start), as_int(end));
+            exprt in_slice;
+            if(native)
+            {
+              const exprt lo = fresh_int(if_exprt{
+                binary_relation_exprt{start_n, ID_gt, len}, len, start_n});
+              const exprt hi = fresh_int(
+                if_exprt{binary_relation_exprt{end_n, ID_lt, lo}, lo, end_n});
+              const exprt slice = native_string_app(
+                ID_cprover_string_substring_func,
+                {string_typet{}, integer_typet{}, integer_typet{}},
+                {obj, lo, minus_exprt{hi, lo}},
+                string_typet{});
+              in_slice =
+                is_forward
+                  ? native_string_app(
+                      ID_cprover_string_index_of_func,
+                      {string_typet{}, string_typet{}, integer_typet{}},
+                      {slice, needle, from_integer(0, integer_typet{})},
+                      integer_typet{})
+                  : native_backward_search(slice);
+            }
+            else
+            {
+              const exprt slice = python_string_slice(obj, start, end);
+              in_slice = is_forward
+                           ? forward_search(slice, from_integer(0, int_type))
+                           : backward_search(slice);
+            }
+            const exprt not_found = from_integer(-1, pos_type);
+            found = typecast_exprt::conditional_cast(
               if_exprt{
-                binary_relation_exprt{from_end, ID_lt, zero}, zero, from_end},
-              from};
-            start_beyond_end = binary_relation_exprt{from, ID_gt, hay_length};
+                binary_relation_exprt{
+                  minus_exprt{end_n, start_n}, ID_lt, length_of(needle)},
+                not_found,
+                if_exprt{
+                  equal_exprt{in_slice, not_found},
+                  not_found,
+                  plus_exprt{in_slice, start_n}}},
+              int_type);
           }
-          const exprt from_arg =
-            native_iof ? exprt{typecast_exprt{from, integer_typet{}}} : from;
-          // index_of takes (hay, ndl, from); last_index_of takes (hay, ndl)
-          // and defaults its upper bound to |hay| (whole-string backward).
-          const irep_idt fn =
-            is_forward ? irep_idt{ID_cprover_string_index_of_func}
-                       : irep_idt{ID_cprover_string_last_index_of_func};
-          exprt::operandst call_args = is_forward
-                                         ? exprt::operandst{hay, ndl, from_arg}
-                                         : exprt::operandst{hay, ndl};
-          if(symbol_table.lookup(fn) == nullptr)
-          {
-            std::vector<typet> ats;
-            ats.reserve(call_args.size());
-            for(const auto &a : call_args)
-              ats.push_back(a.type());
-            symbolt fs{
-              fn,
-              mathematical_function_typet(std::move(ats), app_type),
-              "python"};
-            fs.base_name = id2string(fn);
-            symbol_table.add(fs);
-          }
-          function_application_exprt app{
-            symbol_table.lookup_ref(fn).symbol_expr(), std::move(call_args)};
-          app.type() = app_type;
+
           static unsigned iof_ctr = 0;
-          const irep_idt rid{"python::__index_of_" + std::to_string(iof_ctr++)};
+          const std::string rnm = "__index_of_" + std::to_string(iof_ctr++);
+          const irep_idt rid{"python::" + rnm};
           if(symbol_table.lookup(rid) == nullptr)
           {
             symbolt rs{rid, int_type, "python"};
-            rs.base_name = "__index_of_" + std::to_string(iof_ctr - 1);
+            rs.base_name = rnm;
             rs.is_lvalue = true;
             rs.is_state_var = true;
             symbol_table.add(rs);
           }
           const symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
-          exprt found =
-            native_iof ? exprt{typecast_exprt{app, int_type}} : exprt{app};
-          if(start_beyond_end.has_value())
-            found = if_exprt{
-              *start_beyond_end, from_integer(-1, int_type), std::move(found)};
           pending_checks.push_back(code_frontend_assignt{res, found});
           if(method_name == "index" || method_name == "rindex")
           {
             // str.index/str.rindex raise ValueError when the substring is
             // absent (index_of/last_index_of return -1).
             emit_conditional_exception(
-              equal_exprt{res, from_integer(-1, int_type)}, "ValueError");
+              equal_exprt{res, minus_one}, "ValueError");
           }
           return safe_typecast(res, python_int_type());
         }

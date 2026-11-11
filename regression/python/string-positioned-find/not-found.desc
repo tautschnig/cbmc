@@ -1,0 +1,8 @@
+CORE
+not-found.py
+--z3 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^warning: ignoring

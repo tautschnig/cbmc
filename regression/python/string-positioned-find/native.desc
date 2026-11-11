@@ -1,0 +1,8 @@
+CORE
+native.py
+--cvc5 --python-smt-strings --isolate-properties
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
