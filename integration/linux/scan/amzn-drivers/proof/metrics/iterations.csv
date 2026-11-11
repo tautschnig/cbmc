@@ -5,3 +5,4 @@ cleanup_large_ring,>=4,2,4,"loop contract on wrong loop; unbounded inner loops; 
 rx_recv,>=3,2,2,"symbolic CQ solver-hard; union pointer-check ERROR; INV_RX_STARTED needed accounting clause"
 aenq,>=3,0,2,"stale binaries verified; phase model wrong after a wrap"
 conc_reset,>=2,0,2,"interleaving too coarse; asked-bookkeeping wrong"
+xmit_step,3,1,1,"F12 surfaced as XS_FREE_LIST+XS_DESC_SUM failure; needed ASSUME_PREPARE_TX_OK (instrumented from the start)"
