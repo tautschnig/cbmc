@@ -25,6 +25,8 @@ conc_admin         EXPECTED-FAIL            -            4               0      
 dev_configure      VERIFICATION SUCCESSFUL  5            3               0       0
 reset_flag         EXPECTED-FAIL            -            1               0       0
 rss_reta           EXPECTED-FAIL            -            2               0       0
+freelist_eq        VERIFICATION SUCCESSFUL  1            2               0       0
+cleanup_step       VERIFICATION SUCCESSFUL  3 parts      3               0       0
 
 The EXPECTED-FAIL rows reproduce findings or observations rather than proving
 properties:
@@ -49,6 +51,12 @@ properties:
 * watchdog: its three witnesses do fail, but the sweep's per-runner timeout
   cut the script off before it printed them; confirmed directly in the
   vacuity log.  EACH is now 5400s to avoid that.
+
+cleanup_step is the ring-size-independent cleanup result: three parts, each
+checked separately, all SUCCESSFUL at ring 8, 16 and 32 (see
+doc/ena-cleanup-ring8-2026-11.md).  freelist_eq proves the cheap bitmask form
+of INV_FREE_LIST equivalent to the pairwise one, which is what the cleanup
+result and the xmit substitution rest on.
 
 Reading of the columns:
   obligations     properties reported SUCCESS (includes the memory-safety

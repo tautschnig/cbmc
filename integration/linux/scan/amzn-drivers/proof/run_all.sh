@@ -57,3 +57,5 @@ one conc_admin    run_conc_admin.sh
 one dev_configure run_dev_configure.sh
 one reset_flag    run_reset_flag.sh
 one rss_reta      run_rss_reta.sh
+one freelist_eq   run_freelist_equiv.sh
+one cleanup_step  run_cleanup_step.sh
