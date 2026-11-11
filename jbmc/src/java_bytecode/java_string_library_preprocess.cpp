@@ -1382,6 +1382,48 @@ code_blockt java_string_library_preprocesst::make_matches_function_from_call(
   return code;
 }
 
+/// Provide code for String.compareToIgnoreCase(String). Java compares the
+/// characters c of both strings by Character.toLowerCase(
+/// Character.toUpperCase(c)), and the result is that of compareTo on the
+/// strings with all characters so mapped.
+/// \param function_id: name of the Java method being replaced
+/// \param type: type of the function
+/// \param loc: location in the source
+/// \param symbol_table: symbol table
+/// \return Code corresponding to:
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// return cprover_string_compare_to(
+///   toLowerCase(toUpperCase(this)), toLowerCase(toUpperCase(str)))
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+code_blockt java_string_library_preprocesst::make_compare_to_ignore_case_code(
+  const irep_idt &function_id,
+  const java_method_typet &type,
+  const source_locationt &loc,
+  symbol_table_baset &symbol_table)
+{
+  code_blockt code;
+  const exprt::operandst args =
+    process_parameters(type.parameters(), loc, function_id, symbol_table, code);
+  PRECONDITION(args.size() == 2);
+  const auto fold = [&](const exprt &s) -> exprt
+  {
+    const refined_string_exprt upper = string_expr_of_function(
+      ID_cprover_string_to_upper_case_func, {s}, loc, symbol_table, code);
+    return string_expr_of_function(
+      ID_cprover_string_to_lower_case_func, {upper}, loc, symbol_table, code);
+  };
+  const exprt this_folded = fold(args[0]);
+  const exprt str_folded = fold(args[1]);
+  code.add(
+    code_return_function_application(
+      ID_cprover_string_compare_to_func,
+      {this_folded, str_folded},
+      type.return_type(),
+      symbol_table),
+    loc);
+  return code;
+}
+
 /// Generates code for a function which copies a string object to a new string
 /// object.
 /// \param type: type of the function
@@ -1884,6 +1926,18 @@ void java_string_library_preprocesst::initialize_conversion_table()
       message_handlert &)
   {
     return make_matches_function_from_call(
+      function_id, type, loc, symbol_table);
+  };
+  conversion_table
+    ["java::java.lang.String.compareToIgnoreCase:(Ljava/lang/String;)I"] =
+      [this](
+        const java_method_typet &type,
+        const source_locationt &loc,
+        const irep_idt &function_id,
+        symbol_table_baset &symbol_table,
+        message_handlert &)
+  {
+    return make_compare_to_ignore_case_code(
       function_id, type, loc, symbol_table);
   };
   // java.util.regex.Matcher model hooks: the model's find()/lookingAt()

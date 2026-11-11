@@ -1,0 +1,8 @@
+CORE
+Main
+--function Main.fail --java-assume-inputs-non-null --max-nondet-string-length 100 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^\[java::Main.fail:.*assertion.1\] .*: FAILURE$
+^VERIFICATION FAILED$
+--
