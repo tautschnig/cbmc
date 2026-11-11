@@ -164,13 +164,25 @@ decision_proceduret::resultt smt2_dect::dec_solve(const exprt &assumption)
   // --strings-model-max-len and prints witness terms instead, which are not
   // values. Ask again with finite model finding for strings, which makes cvc5
   // look for a model with short strings first. Only a satisfying assignment
-  // of the second run is used; anything else keeps the ERROR.
+  // of the second run is used; anything else keeps the ERROR. cvc5 also
+  // prints the warning for candidate models it then refutes: an "unsat"
+  // answer is kept.
   if(solver == solvert::CVC5)
   {
     std::ifstream err(temp_file_stderr());
     const std::string err_text{
       std::istreambuf_iterator<char>{err}, std::istreambuf_iterator<char>{}};
-    if(err_text.find("strings-model-max-len") != std::string::npos)
+    const bool long_strings =
+      err_text.find("strings-model-max-len") != std::string::npos;
+    bool unsat = false;
+    if(long_strings)
+    {
+      std::ifstream first{temp_file_stdout()};
+      std::string answer;
+      first >> answer;
+      unsat = answer == "unsat";
+    }
+    if(long_strings && !unsat)
     {
       messaget log{message_handler};
       log.status() << "cvc5 could not print a model with long strings, "
