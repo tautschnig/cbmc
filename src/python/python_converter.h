@@ -3403,6 +3403,11 @@ private:
   /// Content equality a == b (returns bool).
   exprt string_equal(const exprt &a, const exprt &b);
 
+  /// The lexicographic comparison of the strings \p a and \p b, of either
+  /// back end: a variable that is negative, zero or positive as a is less
+  /// than, equal to or greater than b.
+  exprt string_compare_to(const exprt &a, const exprt &b);
+
   /// PLR §3.1: rebuild a list-struct expression so its element type
   /// is `python_value`. Each existing data element is `wrap_value`'d
   /// individually. Used when promoting an escaped mutable's storage

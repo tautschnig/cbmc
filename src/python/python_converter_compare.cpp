@@ -1555,14 +1555,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
       member_exprt rda{right, "data", rdata};
 
       // Build a per-element less-than comparator. For numeric
-      // element types use the natural ordering; for strings
-      // we approximate with a first-byte comparison which is
-      // exact for the single-character strings that dominate
-      // list-lex-compare test patterns ('A' < 'B', etc.) and a
-      // sound approximation otherwise — strings of length > 1
-      // that share a first character may give nondet ordering,
-      // but the comparator at least respects strict-equality
-      // axioms (a == b implies a not < b).
+      // element types use the natural ordering; strings are
+      // compared lexicographically by string_compare_to.
       auto element_lt = [&](const exprt &a, const exprt &b) -> exprt
       {
         // PLR §6.10.1: element-wise ordering of two provably-incompatible
@@ -1582,29 +1576,9 @@ exprt python_convertert::convert_compare(const jsont &expr)
         }
         if(is_python_string_type(a.type()) && is_python_string_type(b.type()))
         {
-          const auto &adt = pointer_typet(unsignedbv_typet{8}, 64);
-          member_exprt al{a, "length", signedbv_typet{64}};
-          member_exprt bl{b, "length", signedbv_typet{64}};
-          member_exprt ad{a, "data", adt};
-          member_exprt bd{b, "data", adt};
-          exprt zero = from_integer(0, signedbv_typet{64});
-          exprt ach = dereference_exprt{plus_exprt{ad, zero}};
-          exprt bch = dereference_exprt{plus_exprt{bd, zero}};
-          exprt a_empty = equal_exprt{al, zero};
-          exprt b_empty = equal_exprt{bl, zero};
-          exprt char_lt = binary_relation_exprt{ach, ID_lt, bch};
-          exprt char_eq = equal_exprt{ach, bch};
-          exprt len_lt = binary_relation_exprt{al, ID_lt, bl};
-          return if_exprt{
-            a_empty,
-            not_exprt{b_empty},
-            if_exprt{
-              b_empty,
-              false_exprt{},
-              if_exprt{
-                char_lt,
-                true_exprt{},
-                if_exprt{char_eq, len_lt, false_exprt{}}}}};
+          // Comparing only the first characters made ["ab"] < ["ac"] false.
+          const exprt res = string_compare_to(a, b);
+          return binary_relation_exprt{res, ID_lt, from_integer(0, res.type())};
         }
         // Heterogeneous tagged-union elements: promote each to
         // float and compare. (Bool & int both unwrap as float
@@ -1773,63 +1747,16 @@ exprt python_convertert::convert_compare(const jsont &expr)
           return result ? exprt(true_exprt()) : exprt(false_exprt());
         }
       }
-      // PLR §6.10.1: lexicographic ordering on string data
-      // arrays. For 1-char operands (the common is_digit /
-      // isalpha pattern), comparing data[0] is exact. For
-      // longer operands the first-byte compare is a sound
-      // approximation that respects strict-equality axioms.
-      // Same shape as the list-of-strings element_lt path.
+      // PLR §6.10.1: lexicographic ordering on string data, by the string
+      // solver's compare_to. Comparing only the first characters, as before,
+      // made "ab" < "ac" false.
       {
-        const auto &data_ptr_t = pointer_typet{unsignedbv_typet{8}, 64};
-        member_exprt left_data{current_left, "data", data_ptr_t};
-        member_exprt right_data{right, "data", data_ptr_t};
-        member_exprt left_len{current_left, "length", signedbv_typet{64}};
-        member_exprt right_len{right, "length", signedbv_typet{64}};
-        exprt zero = from_integer(0, signedbv_typet{64});
-        exprt left_byte = dereference_exprt{plus_exprt{left_data, zero}};
-        exprt right_byte = dereference_exprt{plus_exprt{right_data, zero}};
-        exprt left_empty = equal_exprt{left_len, zero};
-        exprt right_empty = equal_exprt{right_len, zero};
-        // Empty-vs-empty is equal, empty-vs-non depends on op.
-        // For non-empty operands compare the first byte. For
-        // mixed empty/non-empty, the empty side is "less than"
-        // a non-empty side.
-        if(op == "Lt")
-        {
-          // a < b: !a_empty? (!b_empty? a[0] < b[0]
-          //                          : false)
-          //                 : !b_empty
-          exprt char_cmp = binary_relation_exprt{left_byte, ID_lt, right_byte};
-          cmp = if_exprt{
-            left_empty,
-            not_exprt{right_empty},
-            if_exprt{right_empty, false_exprt{}, char_cmp}};
-        }
-        else if(op == "LtE")
-        {
-          exprt char_cmp = binary_relation_exprt{left_byte, ID_le, right_byte};
-          cmp = if_exprt{
-            left_empty,
-            true_exprt{},
-            if_exprt{right_empty, false_exprt{}, char_cmp}};
-        }
-        else if(op == "Gt")
-        {
-          exprt char_cmp = binary_relation_exprt{left_byte, ID_gt, right_byte};
-          cmp = if_exprt{
-            right_empty,
-            not_exprt{left_empty},
-            if_exprt{left_empty, false_exprt{}, char_cmp}};
-        }
-        else
-        {
-          // GtE
-          exprt char_cmp = binary_relation_exprt{left_byte, ID_ge, right_byte};
-          cmp = if_exprt{
-            right_empty,
-            true_exprt{},
-            if_exprt{left_empty, false_exprt{}, char_cmp}};
-        }
+        const exprt res = string_compare_to(current_left, right);
+        cmp = binary_relation_exprt{
+          res,
+          op == "Lt" ? ID_lt
+                     : (op == "LtE" ? ID_le : (op == "Gt" ? ID_gt : ID_ge)),
+          from_integer(0, res.type())};
         goto done_cmp;
       }
     }
@@ -4300,4 +4227,51 @@ exprt python_convertert::convert_compare(const jsont &expr)
   }
 
   return result;
+}
+
+exprt python_convertert::string_compare_to(const exprt &a, const exprt &b)
+{
+  // A query (an int result and no result string), so safe in loops.
+  auto as_str_struct = [](const exprt &s) -> exprt
+  {
+    if(s.type().id() == ID_string)
+      return s;
+    if(s.id() == ID_struct && s.operands().size() == 2)
+      return s;
+    return struct_exprt(
+      {member_exprt(s, "length", signedbv_typet{64}),
+       member_exprt(s, "data", pointer_typet(unsignedbv_typet{8}, 64))},
+      s.type());
+  };
+  const exprt l = as_str_struct(a);
+  const exprt r = as_str_struct(b);
+  // Refined: 64 bits, which the length difference fits in. Native: the
+  // 32 bits of the existing native comparisons, which smt2_conv lowers to
+  // str.< and str.<=.
+  const signedbv_typet res_t{l.type().id() == ID_string ? 32u : 64u};
+  const irep_idt fn{ID_cprover_string_compare_to_func};
+  if(symbol_table.lookup(fn) == nullptr)
+  {
+    symbolt fs{
+      fn, mathematical_function_typet({l.type(), r.type()}, res_t), "python"};
+    fs.base_name = id2string(fn);
+    symbol_table.add(fs);
+  }
+  function_application_exprt app{
+    symbol_table.lookup_ref(fn).symbol_expr(), {l, r}};
+  app.type() = res_t;
+  static unsigned cmp_ctr = 0;
+  const std::string nm = "__str_cmp_" + std::to_string(cmp_ctr++);
+  const irep_idt rid{qualify_name(nm)};
+  if(symbol_table.lookup(rid) == nullptr)
+  {
+    symbolt rs{rid, res_t, "python"};
+    rs.base_name = nm;
+    rs.is_lvalue = true;
+    rs.is_state_var = true;
+    symbol_table.add(rs);
+  }
+  const symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{res, app});
+  return res;
 }
