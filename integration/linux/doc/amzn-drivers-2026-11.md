@@ -1173,6 +1173,68 @@ issued, as Linux and FreeBSD do.
 failure detection for the remaining life of the port, after an event that is
 itself a sign of trouble. Unveil classes F and K.
 
+## Observation: the admin submit/complete handshake publishes the slot before the buffer
+
+Recorded as an observation rather than a finding because triggering it needs
+both a misbehaving device and a two-instruction race window. The proof
+pinpoints the precondition precisely, and the fix is a reordering.
+
+The two sides of the admin queue are not mutually excluded. Submission runs
+under `admin_queue->q_lock` (`ena_com.c:313-324`); the completion handler,
+on the interrupt or alarm thread, takes **no lock at all**
+(`ena_com_handle_admin_completion`, `:489-524`).
+
+Submission publishes the slot in this order (`:253-259`), with
+`get_comp_ctxt(..., capture = true)` setting `occupied`:
+
+```c
+comp_ctx = get_comp_ctxt(admin_queue, cmd_id, true);   /* occupied = 1 */
+comp_ctx->status    = ENA_CMD_SUBMITTED;
+comp_ctx->comp_size = comp_size_in_bytes;
+comp_ctx->user_cqe  = comp;                            /* published last */
+```
+
+and the completion handler gates on `occupied` and then writes through
+`user_cqe` (`:476-483`):
+
+```c
+if (!comp_ctx->occupied)
+        return;
+...
+if (comp_ctx->user_cqe)
+        memcpy(comp_ctx->user_cqe, (void *)cqe, comp_ctx->comp_size);
+```
+
+So between the first and last of those stores the slot reads as occupied while
+`user_cqe` still points at the **previous** command's response buffer, whose
+waiter has already returned. Many callers pass a stack-allocated response
+struct, so that pointer can be a dead stack frame.
+
+`proof/harness_conc_admin.c` with `proof/run_conc_admin.sh` interleaves the
+submit's four steps with the completion handler and tracks whether a write
+lands in a released buffer:
+
+| device model | CC2_NO_STALE_CQE | CC2_NO_LOST |
+|---|---|---|
+| arbitrary: may complete a command it was never told about | **FAILURE** | SUCCESS |
+| well behaved: completes only commands it was told about | SUCCESS | SUCCESS |
+
+Both vacuity witnesses FAIL in each configuration.
+
+**So the handshake is sound exactly under the assumption that the device never
+sends a stale or unsolicited completion.** That is the same kind of assumption
+F8, F9 and F16 are about, and this project does not grant it elsewhere. The
+difference here is that exploiting it also requires hitting a two-instruction
+window, which is why this is an observation.
+
+**Fix.** Publish `user_cqe` and `comp_size` before `occupied`, so that a
+completion which observes the slot as occupied necessarily sees the matching
+buffer. On a weakly-ordered machine that needs a release store for `occupied`
+and an acquire load in the handler.
+
+This is in the shared `ena_com` layer, so it reads the same in all three
+drivers.
+
 ## Observation: the reset-request handshake is an unsynchronised read-modify-write
 
 Not reported as a finding: the consequence is a wrong reset reason, not
