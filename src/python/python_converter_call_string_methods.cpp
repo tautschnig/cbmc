@@ -1328,6 +1328,14 @@ std::optional<exprt> python_convertert::try_string_method(
     }
     // Return nondet string with constraints for symbolic strings
     {
+      // The arguments are still evaluated, for their exceptions and other
+      // side effects. (For a constant receiver the folding above has
+      // converted them.)
+      if(!extract_string_value(obj).has_value() && args.is_array())
+      {
+        for(const auto &a : as_array(args))
+          convert_expression(a);
+      }
       static unsigned str_method_ctr = 0;
       std::string tn = "__str_meth_" + std::to_string(str_method_ctr++);
       std::string tq = qualify_name(tn);
