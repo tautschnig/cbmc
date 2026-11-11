@@ -1,0 +1,12 @@
+CORE
+wrong.py
+--cvc5 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 4 Python assertion: SUCCESS$
+^\[.*\] .* line 5 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+count() counts non-overlapping occurrences, so "aaa".count("aa") is 1.

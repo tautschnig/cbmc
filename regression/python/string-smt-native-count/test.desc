@@ -1,0 +1,12 @@
+CORE
+main.py
+--cvc5 --python-smt-strings --isolate-properties
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+count() was nondet for native strings; it is now the number of characters
+that str.replace_all removes, divided by the needle length, on the slice
+given by the positions.

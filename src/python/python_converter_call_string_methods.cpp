@@ -3004,6 +3004,104 @@ std::optional<exprt> python_convertert::try_string_method(
         }
       }
     }
+    // Native count: the occurrences that str.replace_all removes are the
+    // non-overlapping ones that count() counts, so count(t) is
+    // (len(s) - len(s.replace_all(t, ""))) / len(t), and len(s) + 1 for an
+    // empty t. With positions, of the slice s[start:end].
+    if(
+      method_name == "count" && obj.type().id() == ID_string &&
+      args.is_array() && !as_array(args).empty() &&
+      fold_covers_call_shape(expr, 3))
+    {
+      const exprt needle = arg_at(0);
+      std::optional<exprt> start, end;
+      for(std::size_t i = 1; i < converted.size() && i < 3; ++i)
+      {
+        const jsont &j = *std::next(as_array(args).begin(), i);
+        const exprt e = arg_at(i);
+        if(is_node_type(j, "Constant") && json_member(j, "value").is_null())
+          continue;
+        (i == 1 ? start : end) = e;
+      }
+      const bool int_positions =
+        (!start.has_value() || start->type().id() == ID_signedbv) &&
+        (!end.has_value() || end->type().id() == ID_signedbv);
+      if(needle.type().id() == ID_string && int_positions)
+      {
+        const string_typet str_t;
+        const integer_typet int_t;
+        auto length = [&](const exprt &x)
+        {
+          return native_string_app(
+            ID_cprover_string_length_func, {str_t}, {x}, int_t);
+        };
+        auto as_int = [&](const std::optional<exprt> &p) -> std::optional<exprt>
+        {
+          if(!p.has_value())
+            return p;
+          return exprt{typecast_exprt{*p, int_t}};
+        };
+        const exprt len = length(obj);
+        const auto [start_n, end_n] =
+          python_adjusted_indices(len, as_int(start), as_int(end));
+        const exprt zero = from_integer(0, int_t);
+        exprt hay = obj;
+        if(start.has_value() || end.has_value())
+        {
+          const exprt lo =
+            if_exprt{binary_relation_exprt{start_n, ID_gt, len}, len, start_n};
+          const exprt hi =
+            if_exprt{binary_relation_exprt{end_n, ID_lt, lo}, lo, end_n};
+          hay = native_string_app(
+            ID_cprover_string_substring_func,
+            {str_t, int_t, int_t},
+            {obj, lo, minus_exprt{hi, lo}},
+            str_t);
+        }
+        const exprt ndl_len = length(needle);
+        const exprt removed = native_string_app(
+          ID_cprover_string_replace_all_func,
+          {str_t, str_t, str_t},
+          {hay, needle, constant_exprt{"", str_t}},
+          str_t);
+        const exprt counted = if_exprt{
+          equal_exprt{ndl_len, zero},
+          // "" occurs at each position of the slice, if it is not empty
+          // because the start is after the end
+          if_exprt{
+            binary_relation_exprt{start_n, ID_le, end_n},
+            plus_exprt{length(hay), from_integer(1, int_t)},
+            zero},
+          div_exprt{minus_exprt{length(hay), length(removed)}, ndl_len}};
+        // The count is the length of a fresh string, with bounds that hold
+        // for every string. As an integer variable, or as a bit-vector
+        // related by bv2nat, the conversion to a 64-bit integer took cvc5
+        // minutes even when the strings were constants; str.len is fast.
+        static unsigned count_ctr = 0;
+        const std::string nm = "__native_count_" + std::to_string(count_ctr++);
+        const irep_idt id{qualify_name(nm)};
+        if(symbol_table.lookup(id) == nullptr)
+        {
+          symbolt sy{id, str_t, "python"};
+          sy.base_name = nm;
+          sy.is_lvalue = true;
+          sy.is_state_var = true;
+          symbol_table.add(sy);
+        }
+        const symbol_exprt c = symbol_table.lookup_ref(id).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{
+          c, side_effect_expr_nondett{str_t, get_location(expr)}});
+        pending_checks.push_back(code_assumet{and_exprt{
+          equal_exprt{length(c), counted},
+          binary_relation_exprt{
+            length(c),
+            ID_le,
+            plus_exprt{length(hay), from_integer(1, int_t)}}}});
+        // len(s) < 2^63 bounds the length of every slice of s
+        native_or_member_string_length(obj);
+        return typecast_exprt{length(c), python_int_type()};
+      }
+    }
     // Precise symbolic find/index/rfind/rindex via the index_of /
     // last_index_of intrinsics (refined) or str.indexof (native). These are
     // queries (return an int; no result string, hence no backing), so they
