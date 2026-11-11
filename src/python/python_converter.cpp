@@ -30,6 +30,7 @@
 #include <util/c_types.h>
 #include <util/config.h>
 #include <util/cprover_prefix.h>
+#include <util/expr_util.h>
 #include <util/floatbv_expr.h>
 #include <util/ieee_float.h>
 #include <util/json.h>
@@ -6739,6 +6740,26 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
 // PLR §6: Expressions
 // "This chapter explains the meaning of the elements of expressions in Python."
 
+exprt python_convertert::evaluate_once(exprt e)
+{
+  if(!has_subexpr(e, ID_side_effect) || e.type().id() == ID_empty)
+    return e;
+  static unsigned ctr = 0;
+  const std::string nm = "__evaluated_" + std::to_string(ctr++);
+  const irep_idt id{qualify_name(nm)};
+  if(symbol_table.lookup(id) == nullptr)
+  {
+    symbolt sy{id, e.type(), "python"};
+    sy.base_name = nm;
+    sy.is_lvalue = true;
+    sy.is_state_var = true;
+    symbol_table.add(sy);
+  }
+  const symbol_exprt v = symbol_table.lookup_ref(id).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{v, std::move(e)});
+  return v;
+}
+
 exprt python_convertert::convert_expression(const jsont &expr)
 {
   struct nesting_guardt
@@ -6760,6 +6781,21 @@ exprt python_convertert::convert_expression(const jsont &expr)
     if(pre != preconverted_values.end())
       return pre->second;
   }
+  const auto it = evaluated_arguments.find(&expr);
+  if(it == evaluated_arguments.end())
+    return convert_expression_impl(expr);
+  if(!it->second.has_value())
+  {
+    exprt result = evaluate_once(convert_expression_impl(expr));
+    // (the conversion may have added entries, but not removed this one)
+    evaluated_arguments[&expr] = result;
+    return result;
+  }
+  return *it->second;
+}
+
+exprt python_convertert::convert_expression_impl(const jsont &expr)
+{
   std::string node_type = json_string(json_member(expr, "_type"));
 
   exprt result = nil_exprt{};

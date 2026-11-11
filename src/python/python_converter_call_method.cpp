@@ -2622,7 +2622,15 @@ std::optional<exprt> python_convertert::try_method_call(
           return std::move(*r);
       }
       // Unsupported under native (no SMT-LIB String primitive): sound nondet
-      // of the method's natural return type.
+      // of the method's natural return type. The arguments are still
+      // evaluated, for their side effects (try_string_method has evaluated
+      // them for the methods it is given).
+      if(!native_supported.count(method_name) && args.is_array())
+      {
+        for(const auto &a : as_array(args))
+          if(json_has_call(a))
+            evaluate_once(convert_expression(a));
+      }
       static const std::set<std::string> bool_methods = {
         "isdigit",
         "isalpha",

@@ -1890,8 +1890,22 @@ private:
   codet convert_statement_inner(const jsont &stmt);
   codet convert_statement_body(const jsont &stmt);
 
-  /// Convert an expression node to an exprt.
+  /// Convert an expression node to an exprt. A node in
+  /// evaluated_arguments (an argument of a method call being converted)
+  /// is converted once: a result with side effects (a call, say) is
+  /// assigned to a temporary, so that it is evaluated exactly once even
+  /// when the conversion of the call uses it several times, or not at all.
   exprt convert_expression(const jsont &expr);
+  exprt convert_expression_impl(const jsont &expr);
+  /// \p e when it has no side effects, and otherwise a temporary that
+  /// \p e is assigned to (in pending_checks).
+  exprt evaluate_once(exprt e);
+  /// True when the JSON AST \p j contains a call (or another expression
+  /// with side effects) outside of a lambda.
+  static bool json_has_call(const jsont &j);
+  /// See convert_expression: the argument nodes of the method calls being
+  /// converted, with their conversions once converted.
+  std::map<const jsont *, std::optional<exprt>> evaluated_arguments;
 
   /// Convert a type annotation to a CBMC typet.
   typet convert_type_annotation(const jsont &annotation);

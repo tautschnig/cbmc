@@ -88,6 +88,34 @@ static const std::uint16_t latin1_properties[256] = {
   0x383, 0x383, 0x383,
 };
 
+/// True when the JSON AST \p j contains a call (or another expression
+/// with side effects: an assignment expression, yield or await) outside
+/// of a lambda.
+bool python_convertert::json_has_call(const jsont &j)
+{
+  if(j.is_object())
+  {
+    const jsont &type = j["_type"];
+    const std::string t = type.is_string() ? type.value : std::string{};
+    if(
+      t == "Call" || t == "NamedExpr" || t == "Yield" || t == "YieldFrom" ||
+      t == "Await")
+      return true;
+    if(t == "Lambda")
+      return false;
+    for(const auto &m : to_json_object(j))
+      if(json_has_call(m.second))
+        return true;
+  }
+  else if(j.is_array())
+  {
+    for(const auto &e : to_json_array(j))
+      if(json_has_call(e))
+        return true;
+  }
+  return false;
+}
+
 /// True when \p s has only ASCII characters.
 static bool is_ascii_string(const std::string &s)
 {
@@ -684,11 +712,47 @@ exprt python_convertert::refined_replace(
 
 std::optional<exprt> python_convertert::try_string_method(
   const jsont &expr,
-  const exprt &obj,
+  const exprt &receiver,
   const typet &obj_base_type,
   const std::string &method_name,
   const jsont &args)
 {
+  // The receiver is evaluated once, too (see below).
+  const exprt obj = evaluate_once(receiver);
+  // The arguments are evaluated once, before the call: many of the
+  // conversions below use an argument several times (as_str_struct reads
+  // its length and data), or not at all (folding, nondet results).
+  struct evaluate_oncet
+  {
+    std::map<const jsont *, std::optional<exprt>> &nodes;
+    std::vector<const jsont *> added;
+    evaluate_oncet(
+      std::map<const jsont *, std::optional<exprt>> &n,
+      const jsont &args)
+      : nodes(n)
+    {
+      if(!args.is_array())
+        return;
+      for(const auto &a : to_json_array(args))
+        if(nodes.emplace(&a, std::nullopt).second)
+          added.push_back(&a);
+    }
+    ~evaluate_oncet()
+    {
+      for(const jsont *a : added)
+        nodes.erase(a);
+    }
+  } evaluate_arguments{evaluated_arguments, args};
+  // An argument with a call is evaluated now, in order, so that a
+  // conversion that does not use it (folding, a nondet result) still
+  // evaluates it, before the call.
+  if(args.is_array())
+  {
+    for(const auto &a : as_array(args))
+      if(json_has_call(a))
+        convert_expression(a);
+  }
+
   // PLib stdtypes: split/rsplit/partition/rpartition raise ValueError
   // ("empty separator") for an empty separator.
   if(
