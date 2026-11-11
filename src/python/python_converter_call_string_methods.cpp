@@ -2517,6 +2517,47 @@ std::optional<exprt> python_convertert::try_string_method(
           pending_checks);
       }
     }
+    // Positioned form: s.startswith(p, start, end) tests s[start:end],
+    // and is False when the adjusted start is after the adjusted end (also
+    // for an empty p, unlike the slice: "ab".startswith("", 3) is False).
+    if(
+      (method_name == "startswith" || method_name == "endswith") &&
+      args.is_array() && as_array(args).size() >= 2 &&
+      fold_covers_call_shape(expr, 3))
+    {
+      auto it = as_array(args).begin();
+      const exprt prefix = convert_expression(*it);
+      auto position = [&](const jsont &j) -> std::optional<exprt>
+      {
+        if(is_node_type(j, "Constant") && json_member(j, "value").is_null())
+          return std::nullopt;
+        return convert_expression(j);
+      };
+      const std::optional<exprt> start = position(*++it);
+      std::optional<exprt> end;
+      if(++it != as_array(args).end())
+        end = position(*it);
+      const bool int_positions =
+        (!start.has_value() || start->type().id() == ID_signedbv) &&
+        (!end.has_value() || end->type().id() == ID_signedbv);
+      if(is_python_string_type(prefix.type()) && int_positions)
+      {
+        const exprt len = native_or_member_string_length(obj);
+        const auto [start_n, end_n] = python_adjusted_indices(len, start, end);
+        const exprt slice = python_string_slice(obj, start, end);
+        const exprt matches = emit_string_bool_function(
+          method_name == "startswith" ? ID_cprover_string_is_prefix_func
+                                      : ID_cprover_string_is_suffix_func,
+          prefix,
+          slice,
+          symbol_table,
+          pending_checks);
+        return and_exprt{
+          typecast_exprt::conditional_cast(matches, bool_typet{}),
+          binary_relation_exprt{start_n, ID_le, end_n}};
+      }
+      return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
+    }
     // A positioned call is not converted above: its arguments are still
     // evaluated, for their exceptions.
     if(
