@@ -1549,6 +1549,10 @@ private:
   /// runtime, so they never raise NameError. Disables the
   /// undefined-annotation-name check below.
   bool future_annotations = false;
+  /// The version of the parsing interpreter (reported by the AST payload),
+  /// which the conversion follows where the semantics differ.
+  int python_major_version = 3;
+  int python_minor_version = 12;
 
   /// PLR §4.2.1: if `ann` is a *bare-name* annotation (`x: T` / `-> T`,
   /// not a subscript / attribute / string forward-ref) whose name is bound

@@ -1248,6 +1248,11 @@ bool python_convertert::convert()
       const int maj = to_int(*it);
       ++it;
       const int min = to_int(*it);
+      if(maj >= 0 && min >= 0)
+      {
+        python_major_version = maj;
+        python_minor_version = min;
+      }
       if(maj > 3 || (maj == 3 && min >= 14))
         future_annotations = true;
     }

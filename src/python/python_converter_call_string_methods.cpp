@@ -717,6 +717,96 @@ std::optional<exprt> python_convertert::try_string_method(
   const std::string &method_name,
   const jsont &args)
 {
+  // Keyword arguments: the methods that take them by keyword get them in
+  // their positions (as the handlers below read only positional
+  // arguments); any other keyword raises TypeError, as in CPython. A
+  // **mapping makes the result nondet.
+  {
+    const jsont &kws = json_member(expr, "keywords");
+    if(
+      kws.is_array() && !as_array(kws).empty() && method_name != "format" &&
+      method_name != "format_map")
+    {
+      static const std::map<std::string, std::vector<std::string>>
+        keyword_params = {
+          {"split", {"sep", "maxsplit"}},
+          {"rsplit", {"sep", "maxsplit"}},
+          {"splitlines", {"keepends"}},
+          {"expandtabs", {"tabsize"}},
+          {"encode", {"encoding", "errors"}},
+          {"decode", {"encoding", "errors"}}};
+      std::vector<std::string> params;
+      std::size_t first_keyword = 0;
+      if(const auto p = keyword_params.find(method_name);
+         p != keyword_params.end())
+        params = p->second;
+      else if(
+        method_name == "replace" &&
+        (python_major_version > 3 ||
+         (python_major_version == 3 && python_minor_version >= 13)))
+      {
+        // Python 3.13: count may be given by keyword, old and new not
+        params = {"old", "new", "count"};
+        first_keyword = 2;
+      }
+      std::vector<jsont> positional;
+      if(args.is_array())
+        for(const auto &a : as_array(args))
+          positional.push_back(a);
+      bool type_error = false, spread = false;
+      for(const auto &kw : as_array(kws))
+      {
+        const jsont &name = json_member(kw, "arg");
+        const jsont &value = json_member(kw, "value");
+        // A value that is not passed on is still evaluated, before the
+        // call (the others are evaluated with the positional arguments).
+        if(!name.is_string())
+        {
+          evaluate_once(convert_expression(value));
+          spread = true;
+          continue;
+        }
+        const auto slot =
+          std::find(params.begin(), params.end(), json_string(name));
+        const std::size_t i = static_cast<std::size_t>(slot - params.begin());
+        if(slot == params.end() || i < first_keyword || i < positional.size())
+        {
+          // unexpected, or given twice
+          evaluate_once(convert_expression(value));
+          type_error = true;
+          continue;
+        }
+        if(positional.size() <= i)
+        {
+          json_objectt none;
+          none["_type"] = json_stringt{"Constant"};
+          none["value"] = json_nullt{};
+          positional.resize(i + 1, none);
+        }
+        positional[i] = value;
+      }
+      if(type_error)
+        emit_conditional_exception(true_exprt{}, "TypeError");
+      jsont call = expr;
+      json_arrayt new_args;
+      for(const auto &p : positional)
+        new_args.push_back(p);
+      to_json_object(call)["args"] = new_args;
+      to_json_object(call)["keywords"] = json_arrayt{};
+      auto result = try_string_method(
+        call, receiver, obj_base_type, method_name, call["args"]);
+      if(spread && result.has_value())
+      {
+        // A **mapping may hold any keyword, or raise TypeError.
+        emit_conditional_exception(
+          side_effect_expr_nondett{bool_typet{}, get_location(expr)},
+          "TypeError");
+        return exprt{
+          side_effect_expr_nondett{result->type(), get_location(expr)}};
+      }
+      return result;
+    }
+  }
   // The receiver is evaluated once, too (see below).
   const exprt obj = evaluate_once(receiver);
   // The arguments are evaluated once, before the call: many of the

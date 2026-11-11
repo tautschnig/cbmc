@@ -1,0 +1,11 @@
+CORE
+wrong.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion.1\] .* FAILURE$
+^\[assertion.2\] .* FAILURE$
+^\[assertion.3\] .* FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring

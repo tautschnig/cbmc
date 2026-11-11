@@ -1,0 +1,12 @@
+CORE
+main.py
+--cvc5 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion.5\] .* line 8 Python assertion: SUCCESS$
+^\[assertion.7\] .* line 10 Python assertion: SUCCESS$
+--
+^warning: ignoring
+--
+The assertions on the symbolic string fail (split items are imprecise);
+those on constants hold.
