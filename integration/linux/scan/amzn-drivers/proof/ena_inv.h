@@ -318,4 +318,144 @@ static bool INV_RX_STARTED(const struct ena_ring *r, unsigned n)
   return true;
 }
 
+/*
+ * INV_FREE_LIST_FAST: the same predicate as INV_FREE_LIST, stated with two
+ * bitmasks instead of a pairwise comparison of window positions.
+ *
+ * The pairwise form is O(n^2) and is evaluated twice per proof run (once
+ * assumed, once asserted), which made it the dominant cost of the cleanup
+ * step and is why ring 8 did not finish.  This form is O(n):
+ *
+ *   window_mask  the ids named by the free window, as a bit per slot
+ *   free_mask    the slots that are actually free, as a bit per slot
+ *
+ * and the three clauses are: every window id is in range, the two masks are
+ * equal, and the mask has exactly `window` bits set.  The last two give
+ * distinctness without comparing pairs -- a repeated id sets one bit twice,
+ * so the popcount would come out below `window`.
+ *
+ * harness_freelist_equiv.c proves the two forms accept exactly the same
+ * states, so this one can be used wherever the other was.  The mask is 64
+ * bits, so n <= 64; at ring 64 a 32-bit mask reported "shift distance too
+ * large", which is how the limit was found rather than assumed.  Beyond 64 it
+ * would need an array of words, or the pairwise form, which has no width
+ * limit but is O(n^2).
+ */
+static bool INV_FREE_LIST_FAST(const struct ena_ring *r, unsigned n)
+{
+  struct ena_tx_buffer *const tbi = r->tx_buffer_info;
+  uint16_t *const etr = r->empty_tx_reqs;
+  const uint16_t inflight =
+    (uint16_t)((r->next_to_use - r->next_to_clean) & r->size_mask);
+  const unsigned window = n - inflight;
+  uint64_t window_mask = 0;
+  uint64_t free_mask = 0;
+  unsigned bits = 0;
+
+  for(unsigned k = 0; k < n; k++)
+  {
+    if(tbi[k].mbuf == NULL)
+      free_mask |= (uint64_t)1 << k;
+    else if(
+      TX_DESCS(tbi[k]) < TX_DESCS_MIN ||
+      TX_DESCS(tbi[k]) > ENA_MAX_TX_DESCS_PER_PKT)
+      return false;
+  }
+  for(unsigned j = 0; j < n; j++)
+  {
+    if(j >= window)
+      break;
+    const uint16_t id = etr[(r->next_to_use + j) & r->size_mask];
+    if(id >= n)
+      return false;
+    window_mask |= (uint64_t)1 << id;
+  }
+  for(unsigned k = 0; k < n; k++)
+    if(free_mask & ((uint64_t)1 << k))
+      bits++;
+  return window_mask == free_mask && bits == window;
+}
+
+/*
+ * INV_CLEAN: the MID-LOOP invariant of ena_tx_cleanup, generalised over the
+ * loop's local cursor and accumulator.
+ *
+ * Why a separate predicate.  ena_tx_cleanup copies next_to_clean into a local,
+ * advances the local on every completion, and writes the ring's field back
+ * only after the loop (ena_ethdev.c:3207, 3252, 3258).  The same is true of
+ * the descriptor accounting: ena_com_comp_ack is called once, at the end.  So
+ * INV_FREE_LIST and INV_DESC_SUM are FALSE in the middle of the loop -- slots
+ * have been freed but the ring's cursors do not know it yet -- and neither can
+ * serve as a loop invariant.  INV_CLEAN is the version parameterised by the
+ * local cursor `ntc` and the descriptors accumulated so far `acked`:
+ *
+ *   INV_CLEAN(r, n, r->next_to_clean, 0)  ==  INV_FREE_LIST and INV_DESC_SUM
+ *
+ * so it holds on entry, and after the loop writes the cursor back and acks
+ * the descriptors it collapses to the two originals again.
+ *
+ * Stated with the bitmask form, so it is O(n) rather than O(n^2).
+ */
+static bool INV_CLEAN(
+  const struct ena_ring *r,
+  unsigned n,
+  uint16_t ntc,
+  uint16_t acked)
+{
+  struct ena_tx_buffer *const tbi = r->tx_buffer_info;
+  uint16_t *const etr = r->empty_tx_reqs;
+  const struct ena_com_io_sq *const sq = r->ena_com_io_sq;
+  const uint16_t inflight = (uint16_t)((r->next_to_use - ntc) & r->size_mask);
+  const unsigned window = n - inflight;
+  uint64_t window_mask = 0;
+  uint64_t free_mask = 0;
+  unsigned bits = 0;
+  /* 32-bit, deliberately.  Stated as a uint16_t sum the clause below would be
+   * satisfiable by wrap-around: desc_sum 60000 and acked 5540 sum to 4 mod
+   * 2^16, which passes the equality while leaving desc_sum far above the
+   * queue depth, and INV_SQ_ACCOUNTING then fails after the ack.  Part 3 of
+   * harness_cleanup_step.c found exactly that. */
+  uint32_t desc_sum = 0;
+
+  if(ntc > r->size_mask)
+    return false;
+
+  for(unsigned k = 0; k < n; k++)
+  {
+    if(tbi[k].mbuf == NULL)
+      free_mask |= (uint64_t)1 << k;
+    else
+    {
+      if(
+        TX_DESCS(tbi[k]) < TX_DESCS_MIN ||
+        TX_DESCS(tbi[k]) > ENA_MAX_TX_DESCS_PER_PKT)
+        return false;
+      desc_sum += TX_DESCS(tbi[k]);
+    }
+  }
+  for(unsigned j = 0; j < n; j++)
+  {
+    if(j >= window)
+      break;
+    const uint16_t id = etr[(r->next_to_use + j) & r->size_mask];
+    if(id >= n)
+      return false;
+    window_mask |= (uint64_t)1 << id;
+  }
+  for(unsigned k = 0; k < n; k++)
+    if(free_mask & ((uint64_t)1 << k))
+      bits++;
+  if(!(window_mask == free_mask && bits == window))
+    return false;
+
+  /* The descriptors the device has not yet acknowledged are those of the
+   * packets still in flight, plus those this cleanup has collected but not
+   * yet acked.  The no-wrap bound is what keeps INV_SQ_ACCOUNTING true after
+   * the ack: without it the equality alone admits a wrapped desc_sum. */
+  if((uint32_t)desc_sum + (uint32_t)acked > (uint32_t)sq->q_depth - 1)
+    return false;
+  return (uint16_t)(sq->tail - sq->next_to_comp) ==
+         (uint16_t)(desc_sum + acked);
+}
+
 #endif /* ENA_INV_H */

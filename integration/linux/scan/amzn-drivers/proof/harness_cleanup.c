@@ -28,6 +28,16 @@
 #include "../dpdk/drivers/net/ena/ena_ethdev.c"
 #include "ena_inv.h"
 
+/* INV_FREE_LIST has two equivalent forms (proven equivalent at ring 4 and 8
+ * by harness_freelist_equiv.c).  The pairwise one is O(n^2) and is evaluated
+ * twice per run, which is what stopped ring 8 finishing; the bitmask one is
+ * O(n).  -DSLOW_FREE_LIST selects the original for comparison. */
+#ifdef SLOW_FREE_LIST
+#  define FL(r, n) INV_FREE_LIST((r), (n))
+#else
+#  define FL(r, n) INV_FREE_LIST_FAST((r), (n))
+#endif
+
 #ifndef RING_SIZE
 #define RING_SIZE 8
 #endif
@@ -243,7 +253,7 @@ int main(void)
 
   __CPROVER_assume(INV_STARTED(&ring));
 #ifndef NO_FREE_LIST
-  __CPROVER_assume(INV_FREE_LIST(&ring, RING_SIZE));
+  __CPROVER_assume(FL(&ring, RING_SIZE));
 #endif
   __CPROVER_assume(INV_SLOT(&ring, g_p1));
   __CPROVER_assume(OWN_UNIQUE(&ring, g_p1, g_p2));
@@ -282,7 +292,7 @@ int main(void)
    * pre-state too, so the remaining obligations are proven from LESS, not
    * more: the split is sound in that direction. */
   __CPROVER_assert(
-    INV_FREE_LIST(&ring, RING_SIZE), "INV_FREE_LIST preserved by ena_tx_cleanup");
+    FL(&ring, RING_SIZE), "INV_FREE_LIST preserved by ena_tx_cleanup");
 #endif
   __CPROVER_assert(
     INV_SLOT(&ring, g_p1), "INV_SLOT preserved for an arbitrary ring slot");
