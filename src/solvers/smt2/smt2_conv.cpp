@@ -7269,6 +7269,8 @@ void smt2_convt::find_symbols(const exprt &expr)
     expr.operands()[0].id() == ID_index &&
     expr.operands()[0].operands()[0].id() == ID_array &&
     to_index_expr(expr.operands()[0]).index().is_zero() &&
+    expr.operands()[0].type().id() == ID_unsignedbv &&
+    to_unsignedbv_type(expr.operands()[0].type()).get_width() == 8 &&
     refined_string_literal_pointers.find(expr) ==
       refined_string_literal_pointers.end())
   {
