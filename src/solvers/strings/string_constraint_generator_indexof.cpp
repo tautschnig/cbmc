@@ -445,9 +445,13 @@ string_constraint_generatort::add_axioms_for_last_index_of(
   const symbol_exprt contains = fresh_symbol("contains_in_last_index_of");
 
   const exprt minus1 = from_integer(-1, index_type);
+  // index <= from_index unless nothing is found: a from_index below -1 (as
+  // in Java's lastIndexOf(c, -5)) only allows -1.
   const and_exprt a1(
     binary_relation_exprt(index, ID_ge, minus1),
-    binary_relation_exprt(index, ID_le, from_index),
+    or_exprt{
+      binary_relation_exprt(index, ID_le, from_index),
+      equal_exprt{index, minus1}},
     binary_relation_exprt(index, ID_lt, array_pool.get_or_create_length(str)));
   constraints.existential.push_back(a1);
 

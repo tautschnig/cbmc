@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.charNeedle --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^\[.*assertion.1\] .* line 21 .*: FAILURE$
+^VERIFICATION FAILED$
+--
+--
