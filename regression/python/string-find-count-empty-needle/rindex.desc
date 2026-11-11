@@ -1,0 +1,11 @@
+CORE
+rindex.py
+--cvc5 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 9 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The handler was unreachable.

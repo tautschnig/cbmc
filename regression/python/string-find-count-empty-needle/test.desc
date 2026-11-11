@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 7 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The nondet count was bounded by len(s), which proved ''.count('') != 1.

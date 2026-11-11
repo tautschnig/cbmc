@@ -2641,14 +2641,22 @@ std::optional<exprt> python_convertert::try_string_method(
       if(slen.type() != signedbv_typet{64} && slen.type() != tv.type())
         slen = safe_typecast(slen, signedbv_typet{64});
       slen = python_lift_to_index_domain(std::move(slen), tv.type());
+      // count('') is len + 1, and find('', start) may be len.
       if(method_name == "count")
         pending_checks.push_back(code_assumet{and_exprt{
           binary_relation_exprt{tv, ID_ge, from_integer(0, python_int_type())},
-          binary_relation_exprt{tv, ID_le, slen}}});
+          binary_relation_exprt{
+            tv, ID_le, plus_exprt{slen, from_integer(1, slen.type())}}}});
       else // find, rfind, index, rindex
+      {
         pending_checks.push_back(code_assumet{and_exprt{
           binary_relation_exprt{tv, ID_ge, from_integer(-1, python_int_type())},
-          binary_relation_exprt{tv, ID_lt, slen}}});
+          binary_relation_exprt{tv, ID_le, slen}}});
+        // index/rindex raise ValueError where find/rfind return -1.
+        if(method_name == "index" || method_name == "rindex")
+          emit_conditional_exception(
+            equal_exprt{tv, from_integer(-1, python_int_type())}, "ValueError");
+      }
       return std::move(tv);
     }
   }
