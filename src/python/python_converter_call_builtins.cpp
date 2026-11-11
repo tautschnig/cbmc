@@ -1652,7 +1652,31 @@ std::optional<exprt> python_convertert::try_builtin_call(
           symbol_table.lookup_ref(fn).symbol_expr(),
           {typecast_exprt{code_point, integer_typet{}}}};
         app.type() = string_typet{};
-        return std::move(app);
+        // SMT-LIB characters stop at 0x2FFFF (str.from_code is "" beyond),
+        // whereas Python's code points go up to 0x10FFFF. A larger code
+        // point yields an unconstrained one-character string.
+        static unsigned chr_ctr = 0;
+        const std::string nm = "__chr_beyond_smt_" + std::to_string(chr_ctr++);
+        const irep_idt rid{qualify_name(nm)};
+        if(symbol_table.lookup(rid) == nullptr)
+        {
+          symbolt sy{rid, string_typet{}, "python"};
+          sy.base_name = nm;
+          sy.is_lvalue = true;
+          sy.is_state_var = true;
+          symbol_table.add(sy);
+        }
+        const symbol_exprt r = symbol_table.lookup_ref(rid).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{
+          r, side_effect_expr_nondett{string_typet{}, get_location(expr)}});
+        const exprt r_len = native_or_member_string_length(r);
+        pending_checks.push_back(
+          code_assumet{equal_exprt{r_len, from_integer(1, r_len.type())}});
+        return if_exprt{
+          binary_relation_exprt{
+            code_point, ID_le, from_integer(0x2ffff, code_point.type())},
+          std::move(app),
+          r};
       }
       const auto &data_type = array_typet(
         unsignedbv_typet{8},

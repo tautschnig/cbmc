@@ -1,0 +1,11 @@
+CORE
+empty.py
+--cvc5 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 4 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+str.from_code yields "" beyond 0x2FFFF, which proved this assertion.
