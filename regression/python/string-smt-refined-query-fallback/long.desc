@@ -1,0 +1,9 @@
+CORE
+long.py
+--z3
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 5 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring

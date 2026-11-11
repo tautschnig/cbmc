@@ -134,6 +134,14 @@ protected:
   std::map<irep_idt, exprt> strtab_sym_defs;
   std::map<mp_integer, exprt> strtab_const_defs;
 
+  /// The constant character arrays pointed to by the refined-string data
+  /// pointers seen by find_symbols (`address_of(index(<array>, 0))`), keyed
+  /// by that pointer. A refined string whose data pointer equals one of them
+  /// has a prefix of that array as content, which lets the string equality
+  /// decide a comparison of a literal with a string whose characters are not
+  /// reachable (a dict key read from an array, say).
+  std::map<exprt, std::string> refined_string_literal_pointers;
+
   /// Recover the constant text of `strtab(<harg>)`: consult strtab_defs
   /// at each chase step, follow recorded bv64 SSA definitions, resolve
   /// interned-constant ids through the front-end's intern symbols, and

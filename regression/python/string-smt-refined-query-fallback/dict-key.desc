@@ -1,0 +1,11 @@
+CORE
+dict-key.py
+--z3 --python-smt-containers
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 7 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Strings with different data pointers were taken to be different.

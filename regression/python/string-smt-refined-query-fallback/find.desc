@@ -1,0 +1,11 @@
+CORE
+find.py
+--z3
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* line 3 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+The query fell back to a definite 0, which proved this assertion.

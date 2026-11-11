@@ -3401,38 +3401,140 @@ void smt2_convt::convert_expr(const exprt &expr)
       // emit_smt_string can build an SMT String term from it.
       auto reachable = [&](const exprt &e)
       {
-        return e.type().id() == ID_string ||
-               (e.id() == ID_struct && e.operands().size() == 2 &&
-                e.operands()[1].id() == ID_address_of);
+        if(e.type().id() == ID_string)
+          return true;
+        if(e.id() != ID_struct || e.operands().size() != 2)
+          return false;
+        const exprt &data_op = e.operands()[1];
+        return data_op.id() == ID_address_of &&
+               data_op.operands().size() == 1 &&
+               data_op.operands()[0].id() == ID_index &&
+               data_op.operands()[0].operands().size() == 2 &&
+               data_op.operands()[0].operands()[0].type().id() == ID_array;
       };
-      // cprover_string_equal_func(s1, s2) → sound structural equality
-      // Compares both length AND data pointer. This is sound:
-      // - Same pointer = same content (from deduplication of constants)
-      // - Different pointer = conservatively not equal (may produce wrong-fail)
-      // Never produces wrong-pass (unsound results).
+      // emit_smt_string only covers the first SMT_STRING_BOUND bytes of a
+      // refined-string operand. This is the condition under which every
+      // refined-string operand among the first \p n arguments fits.
+      auto fits = [&](std::size_t n) -> exprt
+      {
+        exprt::operandst conjuncts;
+        for(std::size_t i = 0; i < n && i < args.size(); ++i)
+        {
+          if(args[i].type().id() == ID_string)
+            continue;
+          const exprt &len_op = args[i].operands()[0];
+          conjuncts.push_back(binary_relation_exprt{
+            len_op, ID_le, from_integer(SMT_STRING_BOUND, len_op.type())});
+        }
+        return conjunction(conjuncts);
+      };
+      // The fresh nondet declared in find_symbols for a query with a
+      // refined-string operand, used whenever its characters are not
+      // available here. A definite answer would be unsound.
+      auto emit_nondet = [&]()
+      {
+        auto it = defined_expressions.find(expr);
+        CHECK_RETURN(it != defined_expressions.end());
+        out << it->second;
+      };
+      // Emit `precise` when the operands fit, the nondet otherwise.
+      auto emit_guarded =
+        [&](std::size_t n, const std::function<void()> &precise)
+      {
+        const exprt guard = fits(n);
+        if(guard.is_true())
+        {
+          precise();
+          return;
+        }
+        out << "(ite ";
+        convert_expr(guard);
+        out << ' ';
+        precise();
+        out << ' ';
+        emit_nondet();
+        out << ')';
+      };
+      // cprover_string_equal_func(s1, s2): content equality when both
+      // operands' characters are reachable. Otherwise equal structs (length
+      // and data pointer) are equal strings, and anything else is unknown.
       if(fn_id == ID_cprover_string_equal_func && args.size() == 2)
       {
         std::size_t width = boolbv_width(expr.type());
         if(width == 0)
           width = 8;
-        // SMT-String back-end: precise content equality (= str1 str2) when
-        // both operands' arrays are reachable; otherwise fall back to the
-        // structural (length + data-pointer) comparison, which is sound
-        // (same pointer ⇒ equal; different pointer ⇒ conservatively unequal).
-        out << "(ite (= ";
         if(reachable(args[0]) && reachable(args[1]))
         {
-          emit_smt_string(args[0]);
-          out << " ";
-          emit_smt_string(args[1]);
+          emit_guarded(
+            2,
+            [&]()
+            {
+              out << "(ite (= ";
+              emit_smt_string(args[0]);
+              out << " ";
+              emit_smt_string(args[1]);
+              out << ") (_ bv1 " << width << ") (_ bv0 " << width << "))";
+            });
         }
         else
         {
+          // Equal structs (length and data pointer) are equal strings,
+          // strings of different lengths differ, and a string whose data
+          // pointer is one of the known constant arrays can be compared
+          // with a literal. Anything else is unknown.
+          out << "(ite (= ";
           convert_expr(args[0]);
           out << " ";
           convert_expr(args[1]);
+          out << ") (_ bv1 " << width << ") ";
+          std::optional<std::string> literal =
+            try_extract_string_literal(args[1]);
+          const exprt *other = &args[0];
+          if(!literal.has_value())
+          {
+            literal = try_extract_string_literal(args[0]);
+            other = &args[1];
+          }
+          const typet &other_type =
+            other->type().id() == ID_struct_tag
+              ? ns.follow_tag(to_struct_tag_type(other->type()))
+              : other->type();
+          if(
+            literal.has_value() && other_type.id() == ID_struct &&
+            to_struct_type(other_type).components().size() == 2)
+          {
+            const auto &components = to_struct_type(other_type).components();
+            const exprt length = other->id() == ID_struct
+                                   ? other->operands()[0]
+                                   : exprt{member_exprt{*other, components[0]}};
+            const exprt data = other->id() == ID_struct
+                                 ? other->operands()[1]
+                                 : exprt{member_exprt{*other, components[1]}};
+            exprt::operandst same_content, other_content;
+            for(const auto &[pointer, bytes] : refined_string_literal_pointers)
+            {
+              const equal_exprt points_there{
+                data, typecast_exprt::conditional_cast(pointer, data.type())};
+              if(bytes.compare(0, literal->size(), *literal) == 0)
+                same_content.push_back(points_there);
+              else
+                other_content.push_back(points_there);
+            }
+            out << "(ite ";
+            convert_expr(notequal_exprt{
+              length, from_integer(literal->size(), length.type())});
+            out << " (_ bv0 " << width << ") (ite ";
+            convert_expr(disjunction(same_content));
+            out << " (_ bv1 " << width << ") (ite ";
+            convert_expr(disjunction(other_content));
+            out << " (_ bv0 " << width << ") ";
+            emit_nondet();
+            out << ")))";
+          }
+          else
+            emit_nondet();
+          out << ')';
         }
-        out << ") (_ bv1 " << width << ") (_ bv0 " << width << "))";
         return;
       }
       // cprover_string_concat_func(res_len, res_ptr, s1, s2)
@@ -3487,24 +3589,20 @@ void smt2_convt::convert_expr(const exprt &expr)
         // prefix/suffix it is (str.prefixof needle hay).
         if(args.size() == 2 && reachable(args[0]) && reachable(args[1]))
         {
-          out << "(ite (" << op << " ";
-          if(fn_id == ID_cprover_string_contains_func)
-          {
-            emit_smt_string(args[0]); // haystack
-            out << " ";
-            emit_smt_string(args[1]); // needle
-          }
-          else
-          {
-            emit_smt_string(args[0]); // affix (prefix/suffix)
-            out << " ";
-            emit_smt_string(args[1]); // full string
-          }
-          out << ") (_ bv1 " << width << ") (_ bv0 " << width << "))";
+          emit_guarded(
+            2,
+            [&]()
+            {
+              out << "(ite (" << op << " ";
+              emit_smt_string(args[0]);
+              out << " ";
+              emit_smt_string(args[1]);
+              out << ") (_ bv1 " << width << ") (_ bv0 " << width << "))";
+            });
           return;
         }
-        // Otherwise: the uninterpreted application below (a constant
-        // "false" here proved e.g. `not s.startswith(t)`).
+        emit_nondet();
+        return;
       }
       // cprover_string_compare_to_func(s1, s2) → lexicographic sign
       // SMT-String back-end: lower to a signed -1/0/+1 result via str.<
@@ -3518,18 +3616,25 @@ void smt2_convt::convert_expr(const exprt &expr)
           width = 32;
         if(reachable(args[0]) && reachable(args[1]))
         {
-          out << "(ite (= ";
-          emit_smt_string(args[0]);
-          out << " ";
-          emit_smt_string(args[1]);
-          out << ") (_ bv0 " << width << ") (ite (str.< ";
-          emit_smt_string(args[0]);
-          out << " ";
-          emit_smt_string(args[1]);
-          out << ") (bvneg (_ bv1 " << width << ")) (_ bv1 " << width << ")))";
+          emit_guarded(
+            2,
+            [&]()
+            {
+              out << "(ite (= ";
+              emit_smt_string(args[0]);
+              out << " ";
+              emit_smt_string(args[1]);
+              out << ") (_ bv0 " << width << ") (ite (str.< ";
+              emit_smt_string(args[0]);
+              out << " ";
+              emit_smt_string(args[1]);
+              out << ") (bvneg (_ bv1 " << width << ")) (_ bv1 " << width
+                  << ")))";
+            });
           return;
         }
-        // Otherwise: the uninterpreted application below.
+        emit_nondet();
+        return;
       }
       // cprover_string_length_func over smt_string is handled by the shared
       // encoder above (converged, Direction B): the front-end declares it
@@ -3547,23 +3652,29 @@ void smt2_convt::convert_expr(const exprt &expr)
           width = 64;
         if(reachable(args[0]) && reachable(args[1]))
         {
-          out << "((_ int2bv " << width << ") (str.indexof ";
-          emit_smt_string(args[0]);
-          out << " ";
-          emit_smt_string(args[1]);
-          out << " ";
-          if(args.size() == 3)
-          {
-            out << "(bv2nat ";
-            convert_expr(args[2]);
-            out << ")";
-          }
-          else
-            out << "0";
-          out << "))";
+          emit_guarded(
+            2,
+            [&]()
+            {
+              out << "((_ int2bv " << width << ") (str.indexof ";
+              emit_smt_string(args[0]);
+              out << " ";
+              emit_smt_string(args[1]);
+              out << " ";
+              if(args.size() == 3)
+              {
+                out << "(bv2nat ";
+                convert_expr(args[2]);
+                out << ")";
+              }
+              else
+                out << "0";
+              out << "))";
+            });
           return;
         }
-        // Otherwise: the uninterpreted application below.
+        emit_nondet();
+        return;
       }
       // Native SMT-String producing ops (Plan A): return an SMT String.
       // Operands are already SMT String (smt_string); results carry their own
@@ -7153,6 +7264,29 @@ void smt2_convt::find_symbols(const exprt &expr)
   // recursive call on type
   find_symbols(expr.type());
 
+  if(
+    expr.id() == ID_address_of && expr.operands().size() == 1 &&
+    expr.operands()[0].id() == ID_index &&
+    expr.operands()[0].operands()[0].id() == ID_array &&
+    to_index_expr(expr.operands()[0]).index().is_zero() &&
+    refined_string_literal_pointers.find(expr) ==
+      refined_string_literal_pointers.end())
+  {
+    std::string bytes;
+    bool all_constant = true;
+    for(const auto &op : expr.operands()[0].operands()[0].operands())
+    {
+      mp_integer ch;
+      if(!op.is_constant() || to_integer(to_constant_expr(op), ch))
+      {
+        all_constant = false;
+        break;
+      }
+      bytes += static_cast<char>(ch.to_ulong());
+    }
+    if(all_constant)
+      refined_string_literal_pointers.emplace(expr, bytes);
+  }
   if(expr.id() == ID_exists || expr.id() == ID_forall)
   {
     std::unordered_map<irep_idt, std::optional<identifiert>> shadowed_syms;
@@ -7662,7 +7796,32 @@ void smt2_convt::find_symbols(const exprt &expr)
     const irep_idt &fid =
       to_symbol_expr(to_function_application_expr(expr).function())
         .get_identifier();
+    const auto &fargs = to_function_application_expr(expr).arguments();
     if(
+      (fid == ID_cprover_string_equal_func ||
+       fid == ID_cprover_string_contains_func ||
+       fid == ID_cprover_string_is_prefix_func ||
+       fid == ID_cprover_string_is_suffix_func ||
+       fid == ID_cprover_string_compare_to_func ||
+       fid == ID_cprover_string_index_of_func) &&
+      std::any_of(
+        fargs.begin(),
+        fargs.end(),
+        [](const exprt &a) {
+          return a.type().id() == ID_struct || a.type().id() == ID_struct_tag;
+        }) &&
+      defined_expressions.find(expr) == defined_expressions.end())
+    {
+      // The string queries over refined-string operands whose characters are
+      // not reachable here (see emit_smt_string) fall back to this nondet.
+      const irep_idt id =
+        "string_query_nondet." + std::to_string(defined_expressions.size());
+      out << "(declare-fun " << id << " () ";
+      convert_type(expr.type());
+      out << ")\n";
+      defined_expressions[expr] = id;
+    }
+    else if(
       fid == ID_cprover_string_re_sub_func &&
       defined_expressions.find(expr) == defined_expressions.end())
     {
