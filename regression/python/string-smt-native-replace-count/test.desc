@@ -1,0 +1,11 @@
+CORE
+main.py
+--cvc5 --python-smt-strings --isolate-properties
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+replace(old, new, count) of native strings: the first replacements are made
+one by one, for constant and symbolic counts, empty and non-empty `old`.

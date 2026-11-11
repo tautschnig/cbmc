@@ -381,6 +381,165 @@ exprt python_convertert::native_string_predicate(
   return decide(yes, no);
 }
 
+exprt python_convertert::native_replace_with_count(
+  const jsont &expr,
+  const exprt &s,
+  const exprt &old,
+  const exprt &new_s,
+  const exprt &count)
+{
+  const string_typet str_t;
+  const integer_typet int_t;
+  const source_locationt loc = get_location(expr);
+  auto len = [&](const exprt &x)
+  {
+    return native_string_app(
+      ID_cprover_string_length_func, {str_t}, {x}, int_t);
+  };
+  auto substr = [&](const exprt &x, const exprt &start, const exprt &n)
+  {
+    return native_string_app(
+      ID_cprover_string_substring_func,
+      {str_t, int_t, int_t},
+      {x, start, n},
+      str_t);
+  };
+  auto concat = [&](const exprt &a, const exprt &b)
+  {
+    return native_string_app(
+      ID_cprover_string_concat_func, {str_t, str_t}, {a, b}, str_t);
+  };
+  auto replace_all = [&](const exprt &x, const exprt &by)
+  {
+    return native_string_app(
+      ID_cprover_string_replace_all_func,
+      {str_t, str_t, str_t},
+      {x, old, by},
+      str_t);
+  };
+  // A fresh variable equal to \p value (nullopt: unconstrained): the
+  // repeated terms stay small, and z3 4.16 proved wrong results with
+  // nested positions.
+  auto fresh = [&](const typet &t, const std::optional<exprt> &value) -> exprt
+  {
+    static unsigned ctr = 0;
+    const std::string nm = "__replace_count_" + std::to_string(ctr++);
+    const irep_idt id{qualify_name(nm)};
+    if(symbol_table.lookup(id) == nullptr)
+    {
+      symbolt sy{id, t, "python"};
+      sy.base_name = nm;
+      sy.is_lvalue = true;
+      sy.is_state_var = true;
+      symbol_table.add(sy);
+    }
+    const symbol_exprt v = symbol_table.lookup_ref(id).symbol_expr();
+    pending_checks.push_back(
+      code_frontend_assignt{v, side_effect_expr_nondett{t, loc}});
+    if(value.has_value())
+      pending_checks.push_back(code_assumet{equal_exprt{v, *value}});
+    return v;
+  };
+  const exprt zero = from_integer(0, int_t);
+  const exprt one = from_integer(1, int_t);
+  const exprt k = fresh(int_t, exprt{typecast_exprt{count, int_t}});
+  const exprt old_len = len(old);
+  const exprt empty_old = equal_exprt{old_len, zero};
+
+  // The replacements are made one by one, up to `levels` of them; x[j] is
+  // what is left of s after j of them. A non-empty `old` is replaced at its
+  // first occurrence in x[j]. An empty `old` is inserted before the first
+  // character of x[j], which is then kept, and once more at the end.
+  constexpr std::size_t max_levels = 8;
+  std::size_t levels = max_levels;
+  if(count.is_constant())
+  {
+    const auto n = numeric_cast<mp_integer>(to_constant_expr(count));
+    if(n.has_value() && *n >= 0 && *n < max_levels)
+      levels = numeric_cast_v<std::size_t>(*n);
+  }
+  std::vector<exprt> x{s};
+  std::vector<exprt> found;
+  std::vector<exprt> head;
+  exprt alive = true_exprt{};
+  for(std::size_t j = 0; j < levels; ++j)
+  {
+    const exprt at = fresh(
+      int_t,
+      exprt{native_string_app(
+        ID_cprover_string_index_of_func,
+        {str_t, str_t, int_t},
+        {x[j], old, zero},
+        int_t)});
+    found.push_back(and_exprt{
+      alive, or_exprt{empty_old, binary_relation_exprt{at, ID_ge, zero}}});
+    head.push_back(if_exprt{
+      empty_old,
+      concat(new_s, substr(x[j], zero, one)),
+      concat(substr(x[j], zero, at), new_s)});
+    const exprt consumed = if_exprt{empty_old, one, plus_exprt{at, old_len}};
+    // after the insertion at the end, an empty `old` has no place left
+    alive = or_exprt{
+      not_exprt{empty_old}, binary_relation_exprt{len(x[j]), ID_gt, zero}};
+    x.push_back(fresh(str_t, substr(x[j], consumed, len(x[j]))));
+  }
+
+  // After the unrolled replacements: none is left to make when the count is
+  // used up or `old` does not occur any more. A non-empty `old` is replaced
+  // in all of the rest when the count is negative or covers all of its
+  // occurrences. Otherwise the rest is unconstrained.
+  const exprt rest = x[levels];
+  const exprt more = and_exprt{
+    alive,
+    or_exprt{
+      empty_old,
+      native_string_app(
+        ID_cprover_string_contains_func,
+        {str_t, str_t},
+        {rest, old},
+        bool_typet{})}};
+  const exprt occurrences = div_exprt{
+    minus_exprt{len(rest), len(replace_all(rest, constant_exprt{"", str_t}))},
+    old_len};
+  const exprt remaining = minus_exprt{k, from_integer(levels, int_t)};
+  const exprt all_covered = and_exprt{
+    not_exprt{empty_old},
+    or_exprt{
+      binary_relation_exprt{k, ID_lt, zero},
+      binary_relation_exprt{remaining, ID_ge, occurrences}}};
+  const exprt done =
+    or_exprt{equal_exprt{k, from_integer(levels, int_t)}, not_exprt{more}};
+  // When the count is neither used up nor covers all occurrences of a
+  // non-empty `old`, exactly `remaining` more replacements are made, each
+  // changing the length by len(new) - len(old); the characters are
+  // unconstrained.
+  const exprt unknown = fresh(str_t, std::nullopt);
+  pending_checks.push_back(code_assumet{implies_exprt{
+    and_exprt{not_exprt{done}, not_exprt{all_covered}, not_exprt{empty_old}},
+    equal_exprt{
+      len(unknown),
+      plus_exprt{
+        len(rest), mult_exprt{remaining, minus_exprt{len(new_s), old_len}}}}}});
+  if(levels == max_levels)
+    log_overapprox(
+      "replace() of a native string with a count that may exceed " +
+      std::to_string(max_levels) +
+      ": beyond that, only the length of the result is known, if the count "
+      "does not cover all occurrences of a non-empty `old`");
+  exprt out = if_exprt{
+    done, rest, if_exprt{all_covered, replace_all(rest, new_s), unknown}};
+  for(std::size_t j = levels; j-- > 0;)
+  {
+    out = fresh(
+      str_t,
+      exprt{if_exprt{
+        or_exprt{equal_exprt{k, from_integer(j, int_t)}, not_exprt{found[j]}},
+        x[j],
+        concat(head[j], out)}});
+  }
+  return out;
+}
+
 std::optional<exprt> python_convertert::try_string_method(
   const jsont &expr,
   const exprt &obj,
@@ -1838,12 +1997,18 @@ std::optional<exprt> python_convertert::try_string_method(
       // PLR: optional 3rd arg is the maximum number of
       // replacements; default is 'unlimited'. -1 sentinel.
       long long max_count = -1;
+      // The count when it is not a constant: neither folding nor
+      // str.replace_all applies then.
+      std::optional<exprt> symbolic_count;
       ++ait;
       if(ait != as_array(args).end())
       {
-        auto cv = try_eval_double(convert_expression(*ait));
+        const exprt count_expr = convert_expression(*ait);
+        auto cv = try_eval_double(count_expr);
         if(cv.has_value())
           max_count = static_cast<long long>(cv.value());
+        else
+          symbolic_count = count_expr;
       }
       // Extract all three as constant strings, distinguishing a constant
       // EMPTY string (has_value()=="") from a non-constant/symbolic
@@ -1852,7 +2017,9 @@ std::optional<exprt> python_convertert::try_string_method(
       auto src_opt = extract_string_value(obj);
       auto old_opt = extract_string_value(old_expr);
       auto new_opt = extract_string_value(new_expr);
-      if(src_opt.has_value() && old_opt.has_value() && new_opt.has_value())
+      if(
+        !symbolic_count.has_value() && src_opt.has_value() &&
+        old_opt.has_value() && new_opt.has_value())
       {
         const std::string &src = src_opt.value();
         const std::string &old_s = old_opt.value();
@@ -1919,8 +2086,8 @@ std::optional<exprt> python_convertert::try_string_method(
         auto old_sv = extract_string_value(old_expr);
         auto new_sv = extract_string_value(new_expr);
         if(
-          max_count < 0 && old_sv.has_value() && old_sv->empty() &&
-          new_sv.has_value())
+          max_count < 0 && !symbolic_count.has_value() && old_sv.has_value() &&
+          old_sv->empty() && new_sv.has_value())
         {
           const long long ln = static_cast<long long>(new_sv->size());
           static unsigned er_ctr = 0;
@@ -1973,10 +2140,28 @@ std::optional<exprt> python_convertert::try_string_method(
       // a new multi-char solver intrinsic. Falls through
       // to nondet for now.
       //
+      // Native strings with a count: the replacements one by one.
+      if(
+        use_smt_string_native && obj.type().id() == ID_string &&
+        old_expr.type().id() == ID_string &&
+        new_expr.type().id() == ID_string &&
+        (max_count >= 0 || (symbolic_count.has_value() &&
+                            (symbolic_count->type().id() == ID_signedbv ||
+                             symbolic_count->type().id() == ID_integer))))
+      {
+        return native_replace_with_count(
+          expr,
+          obj,
+          old_expr,
+          new_expr,
+          symbolic_count.has_value()
+            ? *symbolic_count
+            : from_integer(max_count, signedbv_typet{64}));
+      }
       // Native SMT-String back-end (Plan A): replace(old, new) with no count
       // limit is exactly str.replace_all over native SMT Strings.
       if(
-        use_smt_string_native && max_count < 0 &&
+        use_smt_string_native && max_count < 0 && !symbolic_count.has_value() &&
         is_python_string_type(old_expr.type()) &&
         is_python_string_type(new_expr.type()))
       {
