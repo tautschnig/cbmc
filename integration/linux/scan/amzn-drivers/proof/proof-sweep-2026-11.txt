@@ -1,0 +1,44 @@
+Full proof sweep, every self-contained runner rebuilt from scratch.
+Produced by run_all.sh; the two induction runners have their own reports
+(induction-ring4.txt, rx-induction-ring4.txt).
+
+runner             verdict                  obligations  witnesses_fail  nobody  unknown
+stop               VERIFICATION SUCCESSFUL  5            2               0       0
+rx_recv            VERIFICATION SUCCESSFUL  238          2               0       0
+rx_refill          VERIFICATION SUCCESSFUL  4            3               0       0
+rx_setup           VERIFICATION SUCCESSFUL  4            2               0       0
+rx_start           VERIFICATION SUCCESSFUL  3            2               0       0
+rx_stop            VERIFICATION SUCCESSFUL  5            2               0       0
+rx_com             VERIFICATION SUCCESSFUL  8            5               0       0
+prepare_tx         EXPECTED-FAIL            41           10              0       0
+doorbell           EXPECTED-FAIL            -            2               0       0
+dev_lifecycle      VERIFICATION SUCCESSFUL  7            3               0       0
+dev_start          VERIFICATION SUCCESSFUL  6            2               0       0
+watchdog           VERIFICATION SUCCESSFUL  4            3 *             0       0
+aenq               VERIFICATION SUCCESSFUL  3            3               0       0
+admin_cq           VERIFICATION SUCCESSFUL  4            3               0       0
+xstats             VERIFICATION SUCCESSFUL  1            2               0       0
+leaks              VERIFICATION SUCCESSFUL  3            1               0       0
+dma_order          VERIFICATION SUCCESSFUL  3            1               0       0
+conc_reset         VERIFICATION SUCCESSFUL  3            6               0       0
+
+The two EXPECTED-FAIL rows reproduce findings rather than proving properties:
+
+  prepare_tx  configuration `real` fails PTX_OK -- that is F14.  `no_f14` and
+              `fixed` are SUCCESSFUL; `nb_positive` fails by design (the
+              PTX_NB_POSITIVE claim is false, as documented).
+  doorbell    `original`, `original_offloads` and `no_meta_disabled_offl`
+              fail -- the three F14 reproductions.  `no_b1`,
+              `no_meta_disabled_no_offl`, `no_pushed_only` and `fixed` are
+              SUCCESSFUL, which is the table in the F14 writeup.
+
+* watchdog: its three witnesses do fail, but the sweep's per-runner timeout
+  cut the script off before it printed them; confirmed directly in the
+  vacuity log.  EACH is now 5400s to avoid that.
+
+Reading of the columns:
+  obligations     properties reported SUCCESS (includes the memory-safety
+                  checks, so the counts are not comparable between runners)
+  witnesses_fail  vacuity witnesses that FAILED, as they must
+  nobody          reached bodyless callees -- must be 0, or paths were cut
+  unknown         properties CBMC could not decide -- must be 0
