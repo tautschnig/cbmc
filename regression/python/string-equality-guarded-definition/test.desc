@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Both assertions failed: the slicer removed the definition of the guard of
+the third equality.

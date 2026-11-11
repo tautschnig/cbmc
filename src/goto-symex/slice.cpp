@@ -153,6 +153,10 @@ void symex_slicet::slice_assignment(SSA_stept &SSA_step)
     if(contains_string_refinement_intrinsic(SSA_step.ssa_rhs))
     {
       get_symbols(SSA_step.ssa_rhs);
+      // The string solver makes such a definition conditional on its guard
+      // (decision_proceduret::set_definition), so the guard must stay
+      // defined.
+      get_symbols(SSA_step.guard);
       return;
     }
     // we don't really need it
@@ -163,6 +167,8 @@ void symex_slicet::slice_assignment(SSA_stept &SSA_step)
     // we have resolved this dependency
     depends.erase(entry);
     get_symbols(SSA_step.ssa_rhs);
+    if(contains_string_refinement_intrinsic(SSA_step.ssa_rhs))
+      get_symbols(SSA_step.guard);
   }
 }
 
