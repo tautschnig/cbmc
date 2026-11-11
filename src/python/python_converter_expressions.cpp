@@ -2056,28 +2056,14 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
     {
       const symbolt *exc_sym =
         symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
       if(exc_sym == nullptr)
         return;
       exprt in_range = and_exprt{
         binary_relation_exprt{adjusted_idx, ID_ge, safe_zero(type)},
         binary_relation_exprt{adjusted_idx, ID_lt, length}};
       exprt out_of_range = not_exprt{in_range};
-      // exc_active := exc_active || out_of_range
-      pending_checks.push_back(code_frontend_assignt{
-        exc_sym->symbol_expr(),
-        or_exprt{exc_sym->symbol_expr(), out_of_range}});
-      if(exc_type_sym != nullptr)
-      {
-        long h = exception_type_hash("IndexError");
-        pending_checks.push_back(code_frontend_assignt{
-          exc_type_sym->symbol_expr(),
-          if_exprt{
-            out_of_range,
-            from_integer(h, exc_type_sym->type),
-            exc_type_sym->symbol_expr()}});
-      }
+      // The first exception raised wins.
+      emit_conditional_exception(out_of_range, "IndexError");
     };
     if(use_smt_string_native)
     {
@@ -2366,8 +2352,6 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
       // exception type so try/except IndexError catches it.
       const symbolt *exc_sym =
         symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
       if(exc_sym != nullptr)
       {
         exprt in_range = and_exprt{
@@ -2375,19 +2359,8 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
             effective_idx, ID_ge, safe_zero(effective_idx.type())},
           binary_relation_exprt{effective_idx, ID_lt, length}};
         exprt out_of_range = not_exprt{in_range};
-        pending_checks.push_back(code_frontend_assignt{
-          exc_sym->symbol_expr(),
-          or_exprt{exc_sym->symbol_expr(), out_of_range}});
-        if(exc_type_sym != nullptr)
-        {
-          long h = exception_type_hash("IndexError");
-          pending_checks.push_back(code_frontend_assignt{
-            exc_type_sym->symbol_expr(),
-            if_exprt{
-              out_of_range,
-              from_integer(h, exc_type_sym->type),
-              exc_type_sym->symbol_expr()}});
-        }
+        // The first exception raised wins.
+        emit_conditional_exception(out_of_range, "IndexError");
       }
     }
 
@@ -2474,8 +2447,6 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
       }
       const symbolt *exc_sym =
         symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
       if(exc_sym != nullptr)
       {
         // Normalise negatives (idx + len) then require 0 <= eff < len.
@@ -2488,19 +2459,8 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
           binary_relation_exprt{eff, ID_ge, safe_zero(eff.type())},
           binary_relation_exprt{eff, ID_lt, from_integer(tup_len, eff.type())}};
         exprt out_of_range = not_exprt{in_range};
-        pending_checks.push_back(code_frontend_assignt{
-          exc_sym->symbol_expr(),
-          or_exprt{exc_sym->symbol_expr(), out_of_range}});
-        if(exc_type_sym != nullptr)
-        {
-          long h = exception_type_hash("IndexError");
-          pending_checks.push_back(code_frontend_assignt{
-            exc_type_sym->symbol_expr(),
-            if_exprt{
-              out_of_range,
-              from_integer(h, exc_type_sym->type),
-              exc_type_sym->symbol_expr()}});
-        }
+        // The first exception raised wins.
+        emit_conditional_exception(out_of_range, "IndexError");
       }
     }
     // With a non-constant index we cannot pick a specific element statically;

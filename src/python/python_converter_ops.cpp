@@ -550,23 +550,10 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     {
       const symbolt *exc_sym =
         symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
       if(exc_sym != nullptr)
       {
-        pending_checks.push_back(code_frontend_assignt{
-          exc_sym->symbol_expr(),
-          or_exprt{exc_sym->symbol_expr(), non_numeric}});
-        if(exc_type_sym != nullptr)
-        {
-          long h = exception_type_hash("TypeError");
-          pending_checks.push_back(code_frontend_assignt{
-            exc_type_sym->symbol_expr(),
-            if_exprt{
-              non_numeric,
-              from_integer(h, exc_type_sym->type),
-              exc_type_sym->symbol_expr()}});
-        }
+        // The first exception raised wins.
+        emit_conditional_exception(non_numeric, "TypeError");
       }
     }
   }
@@ -921,25 +908,12 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         {
           const symbolt *exc_sym =
             symbol_table.lookup("python::__exception_active");
-          const symbolt *exc_type_sym =
-            symbol_table.lookup("python::__exception_type");
           if(exc_sym != nullptr)
           {
             exprt is_zero_denom =
               ieee_float_equal_exprt{denom, safe_zero(double_type())};
-            pending_checks.push_back(code_frontend_assignt{
-              exc_sym->symbol_expr(),
-              or_exprt{exc_sym->symbol_expr(), is_zero_denom}});
-            if(exc_type_sym != nullptr)
-            {
-              long h = exception_type_hash("ZeroDivisionError");
-              pending_checks.push_back(code_frontend_assignt{
-                exc_type_sym->symbol_expr(),
-                if_exprt{
-                  is_zero_denom,
-                  from_integer(h, exc_type_sym->type),
-                  exc_type_sym->symbol_expr()}});
-            }
+            // The first exception raised wins.
+            emit_conditional_exception(is_zero_denom, "ZeroDivisionError");
           }
         }
         return struct_exprt{

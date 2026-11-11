@@ -784,23 +784,11 @@ std::optional<exprt> python_convertert::try_dict_method(
     {
       const symbolt *exc_sym =
         symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
       if(exc_sym != nullptr)
       {
         exprt missing = not_exprt{found};
-        pending_checks.push_back(code_frontend_assignt{
-          exc_sym->symbol_expr(), or_exprt{exc_sym->symbol_expr(), missing}});
-        if(exc_type_sym != nullptr)
-        {
-          long h = exception_type_hash("KeyError");
-          pending_checks.push_back(code_frontend_assignt{
-            exc_type_sym->symbol_expr(),
-            if_exprt{
-              missing,
-              from_integer(h, exc_type_sym->type),
-              exc_type_sym->symbol_expr()}});
-        }
+        // The first exception raised wins.
+        emit_conditional_exception(missing, "KeyError");
       }
     }
     if(obj.id() == ID_symbol)
@@ -821,24 +809,12 @@ std::optional<exprt> python_convertert::try_dict_method(
     {
       const symbolt *exc_sym =
         symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
       if(exc_sym != nullptr)
       {
         exprt empty = binary_relation_exprt{
           length, ID_le, from_integer(0, signedbv_typet{64})};
-        pending_checks.push_back(code_frontend_assignt{
-          exc_sym->symbol_expr(), or_exprt{exc_sym->symbol_expr(), empty}});
-        if(exc_type_sym != nullptr)
-        {
-          long h = exception_type_hash("KeyError");
-          pending_checks.push_back(code_frontend_assignt{
-            exc_type_sym->symbol_expr(),
-            if_exprt{
-              empty,
-              from_integer(h, exc_type_sym->type),
-              exc_type_sym->symbol_expr()}});
-        }
+        // The first exception raised wins.
+        emit_conditional_exception(empty, "KeyError");
       }
     }
     // Snapshot the pre-popitem length so the (key, value) we
