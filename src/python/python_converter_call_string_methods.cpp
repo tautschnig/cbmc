@@ -2082,6 +2082,83 @@ std::optional<exprt> python_convertert::try_string_method(
       // The argument is converted: it must not be evaluated again.
       return bounded_nondet_string(get_location(expr));
     }
+    // Refined strings: ljust/rjust/center with a constant one-character
+    // fill, the padding as a slice of a literal of fill characters.
+    else if(
+      (method_name == "ljust" || method_name == "rjust" ||
+       method_name == "center") &&
+      args.is_array() && !as_array(args).empty() &&
+      as_array(args).size() <= 2 && is_python_string_type(obj.type()))
+    {
+      auto it = as_array(args).begin();
+      const exprt width = convert_expression(*it);
+      std::optional<std::string> fill{" "};
+      if(++it != as_array(args).end())
+        fill = extract_string_value(convert_expression(*it));
+      if(
+        width.type().id() == ID_signedbv && fill.has_value() &&
+        fill->size() == 1 && is_ascii_string(*fill))
+      {
+        const signedbv_typet i64{64};
+        const exprt zero = from_integer(0, i64);
+        const exprt w = typecast_exprt::conditional_cast(width, i64);
+        // A literal of as many fill characters as the padding can have: the
+        // width if it is a constant, and otherwise the maximum length of a
+        // nondet string, beyond which the padding is unconstrained.
+        std::size_t pad_max = PYTHON_MAX_STRING_LENGTH;
+        bool exact = false;
+        if(width.is_constant())
+        {
+          const auto n = numeric_cast<mp_integer>(to_constant_expr(width));
+          if(n.has_value() && *n <= 256)
+          {
+            pad_max = *n < 0 ? 0 : numeric_cast_v<std::size_t>(*n);
+            exact = true;
+          }
+        }
+        const exprt fills =
+          python_string_literal(std::string(pad_max, *fill->begin()));
+        const exprt margin =
+          minus_exprt{w, native_or_member_string_length(obj)};
+        const exprt count =
+          if_exprt{binary_relation_exprt{margin, ID_lt, zero}, zero, margin};
+        if(!exact)
+          log_overapprox(
+            method_name +
+            "() of a refined string with a symbolic width: a "
+            "padding longer than " +
+            std::to_string(pad_max) + " characters is unconstrained");
+        auto pad = [&](const exprt &n) -> exprt
+        {
+          const exprt p = python_string_slice(fills, std::nullopt, n);
+          if(exact)
+            return p;
+          return if_exprt{
+            binary_relation_exprt{n, ID_le, from_integer(pad_max, i64)},
+            p,
+            bounded_nondet_string(get_location(expr))};
+        };
+        exprt result;
+        if(method_name == "ljust")
+          result = string_concat(obj, pad(count));
+        else if(method_name == "rjust")
+          result = string_concat(pad(count), obj);
+        else
+        {
+          // CPython: left = marg / 2 + (marg & width & 1)
+          const exprt one = from_integer(1, i64);
+          const exprt left = plus_exprt{
+            div_exprt{count, from_integer(2, i64)},
+            bitand_exprt{bitand_exprt{count, w}, one}};
+          result = string_concat(
+            string_concat(pad(left), obj), pad(minus_exprt{count, left}));
+        }
+        if(result.type() == obj.type())
+          return result;
+      }
+      // The arguments are converted: they must not be evaluated again.
+      return bounded_nondet_string(get_location(expr));
+    }
     // Return nondet string with constraints for symbolic strings
     {
       // The arguments are still evaluated, for their exceptions and other
