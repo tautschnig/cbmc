@@ -16,6 +16,13 @@
 #   TOOL       running something other than cbmc (CodeQL, builds, greps)
 #   DOC        writing up a finding or a method note
 #   WAIT       waiting on a long background verification
+#
+# Discipline that makes the numbers mean something: log an event when the
+# activity CHANGES, including when you start waiting on a background run
+# (WAIT) and when you come back to real work.  report.sh also subtracts
+# concurrent CBMC wall time from each interval, so a missed WAIT degrades the
+# figure rather than destroying it -- but only report.sh's `net` column is
+# safe to read as human effort.
 set -u
 CSV=${METRICS_ACTIVITY:-$(cd "$(dirname "$0")" && pwd)/activity.csv}
 CAT=${1:?category}; SUBJ=${2:?subject}; shift 2 || true

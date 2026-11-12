@@ -182,16 +182,65 @@ That is now a CBMC commit awaiting upstreaming.
 
 ---
 
+## 3.6 First instrumented artefact: the xmit step-wise decomposition
+
+The xmit depth work was measured from the start. 16 CBMC runs, 1.8 h of
+solver wall time.
+
+| question asked | measured answer |
+|---|---|
+| where CBMC's time goes | **solver 98%**, symex 2%, SSA conversion 0% |
+| final runs vs iterations | 8 final (1.66 h), 8 iteration (0.14 h) |
+| other tools | 44 invocations, 0.14 h — all of it `goto-cc` |
+| runs to a usable result | 3 for part 1, 1 harness error, 1 invariant version |
+
+Two of these correct expectations from §3.4 and §4:
+
+* **Solver share was 98%, not "roughly half".** The retrospective figure came
+  from the heavier end-to-end configurations where symex is substantial. For
+  a focused step proof the formula is small but hard, so the solver dominates
+  almost entirely. The lesson is that "where does CBMC's time go" has no
+  single answer — it depends on the shape of the harness, and only
+  per-artefact measurement tells you which lever to pull.
+* **Final-run time *exceeded* iteration time, 1.66 h against 0.14 h.** I
+  predicted the opposite. The reason is visible in the per-artefact table: the
+  iterations were all at ring 8 and cheap (30–200 s), while the *finals* were
+  the ring-16 and ring-32 scaling runs at 2774–3141 s each. So for depth work
+  the prediction inverts: iterations are cheap because you debug at the small
+  size, and the expensive runs are the ones that establish the reach. I would
+  expect the original prediction to hold for breadth work, where each new
+  artefact is debugged at its final size.
+
+### A flaw in the activity journal, and what I did about it
+
+The first activity report attributed **7.15 h to `TOOL`** and ~0 to reading,
+harness-writing and invariant work. That is an artefact of the design, not a
+finding: durations are derived from consecutive events, so an interval
+containing a long background verification charges that machine time to
+whatever category was logged before it.
+
+`report.sh` now reports two columns — `gross` elapsed and `net` after
+subtracting CBMC wall time that overlaps the interval — which brought `TOOL`
+to 5.46 h. That is an improvement but still wrong, because overlapping
+background runs and runs killed by `timeout` are not fully captured.
+
+**So the activity split is not yet trustworthy, and should not be quoted.**
+The CBMC-side numbers above are. What the journal needs is the discipline now
+documented in `journal.sh`: log a `WAIT` event when launching a background
+run, and another when returning to real work. Until a stretch of work is
+logged that way, treat §3.5's "cannot reconstruct" as still applying to the
+activity split.
+
 ## 4. What I expect the collected data to answer
 
 Once a few more artefacts have gone through instrumented, `report.sh` will
 answer directly:
 
-* **How much time is in the final runs versus the iterations before them.** My
-  expectation from the retrospective is that final runs are a *minority* of
-  solver time — the 34 self-correcting commits each implied at least one full
-  run — and that the iteration count, not the final run cost, is what
-  determines how long an artefact takes.
+* **How much time is in the final runs versus the iterations before them.**
+  Answered for one artefact, and it refuted my expectation: see §3.6. The
+  prediction that finals are a minority of solver time holds for breadth work
+  but inverts for depth work, where the expensive runs are the ones probing
+  the reach.
 * **Whether invariant discovery is separable from triage.** I expect not, and
   if the `INVARIANT` and `TRIAGE` categories track each other closely that is
   worth reporting as a finding about the method.
