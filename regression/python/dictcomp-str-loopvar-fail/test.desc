@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] file main.py line 3 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+uncaught exception: FAILURE
+--
+The values of a dict comprehension over strings are exact.

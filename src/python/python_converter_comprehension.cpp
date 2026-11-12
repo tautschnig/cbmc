@@ -3279,6 +3279,22 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
         subst(op);
     };
 
+    // Bind the iteration variables' types and string values for THIS
+    // combination before converting the filters, key and value (as the list
+    // comprehension does): the symbols carry a placeholder int type, so a
+    // string variable in `x + "v"` would otherwise raise a TypeError.
+    for(const auto &[sym_id, val] : bindings)
+    {
+      if(val.is_nil())
+        continue;
+      symbol_table.get_writeable_ref(sym_id).type = val.type();
+      auto sv = extract_string_value(val);
+      if(sv.has_value())
+        string_constants[sym_id] = sv.value();
+      else
+        string_constants.erase(sym_id);
+    }
+
     // Check filter 'if' clauses.
     bool passes = true;
     for(std::size_t g = 0; g < gens.size() && passes; g++)
@@ -3307,6 +3323,8 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
             log_overapprox(
               "dict comprehension with non-constant filter: "
               "using nondet dict");
+            for(const auto &[sym_id, val] : bindings)
+              string_constants.erase(sym_id);
             return side_effect_expr_nondett{
               python_dict_type(python_value_type(), python_value_type()),
               source_locationt{}};
@@ -3383,6 +3401,11 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
       v = std::move(folded_v);
     pairs.emplace_back(std::move(k), std::move(v));
   }
+
+  // The per-combination string values are conversion-scope only.
+  for(const auto &gi : gens)
+    for(const auto &vn : gi.var_names)
+      string_constants.erase(irep_idt{qualify_name(vn)});
 
   // Assemble through build_dict_value -- the ONE dict constructor.
   // It implements Python's clash rule for duplicate keys (PLR 6.2.7,
