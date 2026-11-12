@@ -13,12 +13,30 @@ LABEL=${METRICS_LABEL:-$(basename "${1:-unknown}" .gb)}
 STEP=${METRICS_STEP:-}
 TMP=$(mktemp); TIMES=$(mktemp)
 start=$(date +%s.%N)
+
+# Runners wrap this script in `timeout`, which therefore kills the WRAPPER and
+# not the real cbmc underneath it.  Without this trap the row is never written,
+# so every run that hit its timeout was silently absent from the metrics --
+# which is exactly the set of runs it is most important to record.  On a
+# signal: kill the child, log the run as TIMEOUT, and exit.
+child=
+on_signal() {
+  [ -n "$child" ] && kill "$child" 2>/dev/null
+  wall=$(echo "$(date +%s.%N) - $start" | bc)
+  [ -f "$CSV" ] || echo "ts,label,step,wall_s,cpu_s,peak_rss_kb,verdict,failures,vcc,vcc_remaining,ssa_vars,clauses,symex_s,ssa_s,solver_s" > "$CSV"
+  printf '%s,%s,%s,%.1f,,,TIMEOUT,,,,,,,,\n' "$(date -Is)" "$LABEL" "${STEP:-final}" "$wall" >> "$CSV"
+  exit 124
+}
+trap on_signal TERM INT
 # --verbosity 9 is what makes cbmc print its per-phase "Runtime ...:" lines
 # and the VCC counts; without it those columns come out empty.  It only adds
 # output, it does not change what is verified.
 /usr/bin/time -f 'TIMEFIELDS %e %U %S %M' -o "$TIMES" \
-  "$REAL" "$@" --verbosity 9 > "$TMP" 2>&1
+  "$REAL" "$@" --verbosity 9 > "$TMP" 2>&1 &
+child=$!
+wait "$child"
 rc=$?
+child=
 wall=$(echo "$(date +%s.%N) - $start" | bc)
 cat "$TMP"
 rt() { grep -oE "Runtime $1[^:]*: [0-9.]+" "$TMP" | tail -1 | grep -oE '[0-9.]+$'; }

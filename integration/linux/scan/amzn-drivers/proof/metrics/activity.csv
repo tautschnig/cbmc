@@ -13,3 +13,6 @@ ts,category,subject,note
 2026-11-11T22:32:02+00:00,DOC,xmit_step,"committing the ring-8 result"
 2026-11-12T00:13:24+00:00,TOOL,xmit_step,"ring 16 part 1 alone, 2h budget, to find the scaling edge"
 2026-11-12T01:49:20+00:00,DOC,xmit_step,"recording the ring-16 result and the measured scaling"
+2026-11-12T07:35:54+00:00,TOOL,solver_comparison,"benchmarking SAT and SMT backends on identical goto-binaries"
+2026-11-12T08:00:08+00:00,TRIAGE,z3_smt2_backend,"z3 and cvc5 abort with internal map::at on the xmit model"
+2026-11-12T08:50:57+00:00,TOOL,solver_retest,"re-running the ring-32 negatives with minisat2, since 4.5x on xmit may change the reach"
