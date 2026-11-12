@@ -529,22 +529,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
       exprt arg = convert_expression(*as_array(args).begin());
       if(!arg.is_nil() && is_python_none(arg, symbol_table))
       {
-        const symbolt *exc_sym =
-          symbol_table.lookup("python::__exception_active");
-        const symbolt *exc_type_sym =
-          symbol_table.lookup("python::__exception_type");
-        if(exc_sym != nullptr)
-        {
-          pending_checks.push_back(
-            code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-          if(exc_type_sym != nullptr)
-          {
-            long h = exception_type_hash("TypeError");
-            pending_checks.push_back(code_frontend_assignt{
-              exc_type_sym->symbol_expr(),
-              from_integer(h, exc_type_sym->type)});
-          }
-        }
+        pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
         return side_effect_expr_nondett{
           python_value_type(), get_location(expr)};
       }
@@ -563,22 +548,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
       // iter(None) above.
       if(!arg.is_nil() && is_python_none(arg, symbol_table))
       {
-        const symbolt *exc_sym =
-          symbol_table.lookup("python::__exception_active");
-        const symbolt *exc_type_sym =
-          symbol_table.lookup("python::__exception_type");
-        if(exc_sym != nullptr)
-        {
-          pending_checks.push_back(
-            code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-          if(exc_type_sym != nullptr)
-          {
-            long h = exception_type_hash("TypeError");
-            pending_checks.push_back(code_frontend_assignt{
-              exc_type_sym->symbol_expr(),
-              from_integer(h, exc_type_sym->type)});
-          }
-        }
+        pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
         return side_effect_expr_nondett{
           python_value_type(), get_location(expr)};
       }
@@ -619,12 +589,9 @@ std::optional<exprt> python_convertert::try_builtin_call(
           if(exc_sym != nullptr && exc_type_sym != nullptr)
           {
             exprt cond = binary_relation_exprt{cursor, ID_ge, length};
+            // (only when no exception is active: the first one raised wins)
             code_blockt then_block;
-            then_block.add(
-              code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-            long h = exception_type_hash("StopIteration");
-            then_block.add(code_frontend_assignt{
-              exc_type_sym->symbol_expr(), from_integer(h, python_int_type())});
+            then_block.add(raise_if(true_exprt{}, "StopIteration"));
             code_blockt else_block;
             else_block.add(code_frontend_assignt{
               cursor, plus_exprt{cursor, from_integer(1, signedbv_typet{64})}});
@@ -833,22 +800,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
                           len_arg_id == ID_integer || len_arg_id == ID_bool;
         if(none_arg || scalar_arg)
         {
-          const symbolt *exc_sym =
-            symbol_table.lookup("python::__exception_active");
-          const symbolt *exc_type_sym =
-            symbol_table.lookup("python::__exception_type");
-          if(exc_sym != nullptr)
-          {
-            pending_checks.push_back(
-              code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-            if(exc_type_sym != nullptr)
-            {
-              long h = exception_type_hash("TypeError");
-              pending_checks.push_back(code_frontend_assignt{
-                exc_type_sym->symbol_expr(),
-                from_integer(h, exc_type_sym->type)});
-            }
-          }
+          pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
           return side_effect_expr_nondett{
             python_int_type(), get_location(expr)};
         }
@@ -1686,13 +1638,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
               code_point, ID_lt, from_integer(0, code_point.type())},
             binary_relation_exprt{
               code_point, ID_gt, from_integer(0x10ffff, code_point.type())}};
-          code_blockt set_exc;
-          set_exc.add(
-            code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-          long h = exception_type_hash("ValueError");
-          set_exc.add(code_frontend_assignt{
-            exc_type_sym->symbol_expr(), from_integer(h, python_int_type())});
-          code_ifthenelset cond_raise{out_of_range, std::move(set_exc)};
+          codet cond_raise = raise_if(out_of_range, "ValueError");
           cond_raise.add_source_location() = get_location(expr);
           pending_checks.push_back(std::move(cond_raise));
         }

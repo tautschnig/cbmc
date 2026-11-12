@@ -1743,16 +1743,7 @@ codet python_convertert::convert_for(const jsont &stmt)
   {
     code_blockt b;
     code_blockt raise;
-    const symbolt *exc = symbol_table.lookup("python::__exception_active");
-    const symbolt *exct = symbol_table.lookup("python::__exception_type");
-    if(exc != nullptr)
-    {
-      raise.add(code_frontend_assignt{exc->symbol_expr(), true_exprt{}});
-      if(exct != nullptr)
-        raise.add(code_frontend_assignt{
-          exct->symbol_expr(),
-          from_integer(exception_type_hash("RuntimeError"), exct->type)});
-    }
+    raise.add(raise_if(true_exprt{}, "RuntimeError"));
     raise.add(code_breakt{});
     b.add(code_ifthenelset{
       notequal_exprt{cm_dict_len(), *cm_snapshot}, std::move(raise)});

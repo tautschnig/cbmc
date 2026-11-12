@@ -874,22 +874,7 @@ std::optional<exprt> python_convertert::try_method_call(
         }
         if(any_complex)
         {
-          const symbolt *exc_sym =
-            symbol_table.lookup("python::__exception_active");
-          const symbolt *exc_type_sym =
-            symbol_table.lookup("python::__exception_type");
-          if(exc_sym != nullptr)
-          {
-            pending_checks.push_back(
-              code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-          }
-          if(exc_type_sym != nullptr)
-          {
-            long type_hash = exception_type_hash("TypeError");
-            pending_checks.push_back(code_frontend_assignt{
-              exc_type_sym->symbol_expr(),
-              from_integer(type_hash, python_int_type())});
-          }
+          pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
           static const std::set<std::string> int_returning = {
             "factorial",
             "gcd",
@@ -996,20 +981,7 @@ std::optional<exprt> python_convertert::try_method_call(
         const jsont &kw = json_member(expr, "keywords");
         if(kw.is_array() && !as_array(kw).empty())
         {
-          const symbolt *exc_sym =
-            symbol_table.lookup("python::__exception_active");
-          const symbolt *exc_type_sym =
-            symbol_table.lookup("python::__exception_type");
-          if(exc_sym != nullptr)
-            pending_checks.push_back(
-              code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-          if(exc_type_sym != nullptr)
-          {
-            long type_hash = exception_type_hash("TypeError");
-            pending_checks.push_back(code_frontend_assignt{
-              exc_type_sym->symbol_expr(),
-              from_integer(type_hash, python_int_type())});
-          }
+          pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
           // Return a nondet python_complex struct to keep
           // downstream code well-typed.
           struct_typet::componentst comps;
@@ -1355,20 +1327,7 @@ std::optional<exprt> python_convertert::try_method_call(
         }
         if(any_non_int)
         {
-          const symbolt *exc_sym =
-            symbol_table.lookup("python::__exception_active");
-          const symbolt *exc_type_sym =
-            symbol_table.lookup("python::__exception_type");
-          if(exc_sym != nullptr)
-            pending_checks.push_back(
-              code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-          if(exc_type_sym != nullptr)
-          {
-            long type_hash = exception_type_hash("TypeError");
-            pending_checks.push_back(code_frontend_assignt{
-              exc_type_sym->symbol_expr(),
-              from_integer(type_hash, python_int_type())});
-          }
+          pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
           return side_effect_expr_nondett{
             python_int_type(), get_location(expr)};
         }
@@ -2330,22 +2289,7 @@ std::optional<exprt> python_convertert::try_method_call(
             if(kconst && kval < 0)
             {
               // Definitely raises ValueError.
-              const symbolt *exc_sym =
-                symbol_table.lookup("python::__exception_active");
-              const symbolt *exc_type_sym =
-                symbol_table.lookup("python::__exception_type");
-              if(exc_sym != nullptr)
-              {
-                pending_checks.push_back(
-                  code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-                if(exc_type_sym != nullptr)
-                {
-                  long h = exception_type_hash("ValueError");
-                  pending_checks.push_back(code_frontend_assignt{
-                    exc_type_sym->symbol_expr(),
-                    from_integer(h, python_int_type())});
-                }
-              }
+              pending_checks.push_back(raise_if(true_exprt{}, "ValueError"));
               return from_integer(0, python_int_type());
             }
             if(kconst && kval > 0 && kval < 64)
@@ -3453,16 +3397,7 @@ std::optional<exprt> python_convertert::try_method_call(
               symbol_table.lookup(exc_id) != nullptr)
             {
               code_blockt err_block;
-              err_block.add(code_frontend_assignt{
-                symbol_table.lookup_ref(exc_id).symbol_expr(), true_exprt{}});
-              irep_idt etype_id{"python::__exception_type"};
-              if(symbol_table.lookup(etype_id) != nullptr)
-              {
-                long h = exception_type_hash("AttributeError");
-                err_block.add(code_frontend_assignt{
-                  symbol_table.lookup_ref(etype_id).symbol_expr(),
-                  from_integer(h, python_int_type())});
-              }
+              err_block.add(raise_if(true_exprt{}, "AttributeError"));
               // Definitively-unhandled-AttributeError detection.
               // If no enclosing except catches AttributeError (nor a
               // catch-all), emit a dedicated ASSERT false that is

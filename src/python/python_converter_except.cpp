@@ -301,22 +301,7 @@ codet python_convertert::convert_with(const jsont &stmt)
       }
       if(ctx_is_none)
       {
-        const symbolt *exc_sym =
-          symbol_table.lookup("python::__exception_active");
-        const symbolt *exc_type_sym =
-          symbol_table.lookup("python::__exception_type");
-        if(exc_sym != nullptr)
-        {
-          block.add(
-            code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-          if(exc_type_sym != nullptr)
-          {
-            long h = exception_type_hash("AttributeError");
-            block.add(code_frontend_assignt{
-              exc_type_sym->symbol_expr(),
-              from_integer(h, exc_type_sym->type)});
-          }
-        }
+        block.add(raise_if(true_exprt{}, "AttributeError"));
         continue;
       }
 
@@ -334,20 +319,7 @@ codet python_convertert::convert_with(const jsont &stmt)
           class_types.count(cn) && (!class_mro_defines(cn, "__enter__") ||
                                     !class_mro_defines(cn, "__exit__")))
         {
-          const symbolt *exc_sym =
-            symbol_table.lookup("python::__exception_active");
-          const symbolt *exc_type_sym =
-            symbol_table.lookup("python::__exception_type");
-          if(exc_sym != nullptr)
-          {
-            block.add(
-              code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-            if(exc_type_sym != nullptr)
-              block.add(code_frontend_assignt{
-                exc_type_sym->symbol_expr(),
-                from_integer(
-                  exception_type_hash("TypeError"), exc_type_sym->type)});
-          }
+          block.add(raise_if(true_exprt{}, "TypeError"));
           continue;
         }
       }

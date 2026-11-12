@@ -2287,6 +2287,10 @@ private:
   /// tag for `exc_type`. For data-conditional raises (e.g.
   /// ValueError when a search finds nothing).
   void emit_conditional_exception(const exprt &cond, const char *exc_type);
+  /// The code that raises \p exc_type when \p cond holds and no exception
+  /// is active: the first exception raised on a path wins (PLR §8.3). A
+  /// skip when the exception variables do not exist.
+  codet raise_if(const exprt &cond, const char *exc_type);
 
   /// Validate a dunder's return-type contract. If \p dunder_sym's
   /// declared/inferred return type concretely violates the contract for

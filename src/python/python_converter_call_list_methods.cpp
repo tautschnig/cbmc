@@ -204,12 +204,9 @@ std::optional<exprt> python_convertert::try_list_method(
       if(exc_sym != nullptr && exc_type_sym != nullptr)
       {
         exprt cond = binary_relation_exprt{cursor, ID_ge, length};
+        // (only when no exception is active: the first one raised wins)
         code_blockt then_block;
-        then_block.add(
-          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-        long h = exception_type_hash("StopIteration");
-        then_block.add(code_frontend_assignt{
-          exc_type_sym->symbol_expr(), from_integer(h, python_int_type())});
+        then_block.add(raise_if(true_exprt{}, "StopIteration"));
         code_blockt else_block;
         else_block.add(code_frontend_assignt{
           cursor, plus_exprt{cursor, from_integer(1, signedbv_typet{64})}});

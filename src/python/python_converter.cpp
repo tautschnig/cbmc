@@ -6136,35 +6136,14 @@ std::optional<exprt> python_convertert::math_function_domain(
 
 void python_convertert::emit_value_error(const exprt &in_domain)
 {
-  const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
-  const symbolt *exc_type_sym = symbol_table.lookup("python::__exception_type");
-  if(exc_sym == nullptr)
-    return;
   if(in_domain.is_true())
     return; // no domain violation possible
-  const long type_hash = exception_type_hash("ValueError");
-  if(in_domain.is_false() || in_domain.is_nil())
-  {
-    // Definitely out of domain — raise unconditionally.
-    pending_checks.push_back(
-      code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-    if(exc_type_sym != nullptr)
-      pending_checks.push_back(code_frontend_assignt{
-        exc_type_sym->symbol_expr(),
-        from_integer(type_hash, python_int_type())});
-    return;
-  }
-  // Conditional raise: if !in_domain, set exception flags.
-  exprt out_of_domain = not_exprt{in_domain};
-  pending_checks.push_back(code_ifthenelset{
-    out_of_domain,
-    code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
-  if(exc_type_sym != nullptr)
-    pending_checks.push_back(code_ifthenelset{
-      out_of_domain,
-      code_frontend_assignt{
-        exc_type_sym->symbol_expr(),
-        from_integer(type_hash, python_int_type())}});
+  // Definitely out of domain (false or nil) or conditionally; only when no
+  // exception is active (the first one raised wins).
+  emit_conditional_exception(
+    in_domain.is_false() || in_domain.is_nil() ? exprt{true_exprt{}}
+                                               : exprt{not_exprt{in_domain}},
+    "ValueError");
 }
 
 exprt python_convertert::safe_zero(const typet &type) const

@@ -3680,25 +3680,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
         !obj.is_nil() &&
         (is_python_tuple_type(obj.type()) || is_python_string_type(obj.type())))
       {
-        code_blockt type_error;
-        const symbolt *exc_sym =
-          symbol_table.lookup("python::__exception_active");
-        const symbolt *exc_type_sym =
-          symbol_table.lookup("python::__exception_type");
-        if(exc_sym != nullptr)
-        {
-          type_error.add(
-            code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-        }
-        if(exc_type_sym != nullptr)
-        {
-          // TypeError hash
-          long type_hash = exception_type_hash("TypeError");
-          type_error.add(code_frontend_assignt{
-            exc_type_sym->symbol_expr(),
-            from_integer(type_hash, python_int_type())});
-        }
-        block.add(std::move(type_error));
+        block.add(raise_if(true_exprt{}, "TypeError"));
         continue;
       }
 
@@ -3714,17 +3696,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
           if(is_unhashable_type(key.type()))
           {
             code_blockt type_error;
-            const symbolt *ea =
-              symbol_table.lookup("python::__exception_active");
-            const symbolt *et = symbol_table.lookup("python::__exception_type");
-            if(ea != nullptr)
-              type_error.add(
-                code_frontend_assignt{ea->symbol_expr(), true_exprt{}});
-            if(et != nullptr)
-              type_error.add(code_frontend_assignt{
-                et->symbol_expr(),
-                from_integer(
-                  exception_type_hash("TypeError"), python_int_type())});
+            type_error.add(raise_if(true_exprt{}, "TypeError"));
             block.add(std::move(type_error));
             continue;
           }
@@ -4097,32 +4069,12 @@ codet python_convertert::convert_assign(const jsont &stmt)
             idx};
         }
         {
-          const symbolt *exc_sym =
-            symbol_table.lookup("python::__exception_active");
-          const symbolt *exc_type_sym =
-            symbol_table.lookup("python::__exception_type");
-          if(exc_sym != nullptr)
-          {
-            exprt in_range = and_exprt{
-              binary_relation_exprt{eff_idx, ID_ge, safe_zero(eff_idx.type())},
-              // length_d: the domain-lifted length (the raw i64 member
-              // would mix types under --python-unbounded-ints).
-              binary_relation_exprt{eff_idx, ID_lt, length_d}};
-            exprt out_of_range = not_exprt{in_range};
-            block.add(code_frontend_assignt{
-              exc_sym->symbol_expr(),
-              or_exprt{exc_sym->symbol_expr(), out_of_range}});
-            if(exc_type_sym != nullptr)
-            {
-              long h = exception_type_hash("IndexError");
-              block.add(code_frontend_assignt{
-                exc_type_sym->symbol_expr(),
-                if_exprt{
-                  out_of_range,
-                  from_integer(h, exc_type_sym->type),
-                  exc_type_sym->symbol_expr()}});
-            }
-          }
+          exprt in_range = and_exprt{
+            binary_relation_exprt{eff_idx, ID_ge, safe_zero(eff_idx.type())},
+            // length_d: the domain-lifted length (the raw i64 member
+            // would mix types under --python-unbounded-ints).
+            binary_relation_exprt{eff_idx, ID_lt, length_d}};
+          block.add(raise_if(not_exprt{in_range}, "IndexError"));
         }
         index_exprt lhs{data, eff_idx};
         exprt typed_rhs = rhs;
@@ -6274,26 +6226,19 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   // Div-by-zero check for /= and //= and %=
   if(op == "Div" || op == "FloorDiv" || op == "Mod")
   {
-    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
-    if(exc_sym != nullptr)
-    {
-      exprt divisor = rhs;
-      exprt is_zero = equal_exprt{divisor, safe_zero(divisor.type())};
-      pending_checks.push_back(code_ifthenelset{
-        is_zero, code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
-    }
+    // (a float zero is also -0.0)
+    emit_conditional_exception(
+      rhs.type().id() == ID_floatbv
+        ? exprt{ieee_float_equal_exprt{rhs, safe_zero(rhs.type())}}
+        : exprt{equal_exprt{rhs, safe_zero(rhs.type())}},
+      "ZeroDivisionError");
   }
   // Negative shift check for <<= and >>=
   if(op == "LShift" || op == "RShift")
   {
-    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
-    if(exc_sym != nullptr)
-    {
-      exprt neg =
-        binary_relation_exprt{rhs, ID_lt, from_integer(0, rhs.type())};
-      pending_checks.push_back(code_ifthenelset{
-        neg, code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
-    }
+    emit_conditional_exception(
+      binary_relation_exprt{rhs, ID_lt, from_integer(0, rhs.type())},
+      "ValueError");
   }
 
   // Dict-subscript augmented assignment: d[key] += rhs.

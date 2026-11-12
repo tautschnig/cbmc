@@ -421,20 +421,7 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
   if(callee_is_none)
   {
-    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
-    const symbolt *exc_type_sym =
-      symbol_table.lookup("python::__exception_type");
-    if(exc_sym != nullptr)
-    {
-      pending_checks.push_back(
-        code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-      if(exc_type_sym != nullptr)
-      {
-        long h = exception_type_hash("TypeError");
-        pending_checks.push_back(code_frontend_assignt{
-          exc_type_sym->symbol_expr(), from_integer(h, exc_type_sym->type)});
-      }
-    }
+    pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
     return side_effect_expr_nondett{python_value_type(), get_location(expr)};
   }
 

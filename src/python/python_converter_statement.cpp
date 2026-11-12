@@ -235,19 +235,10 @@ codet python_convertert::convert_statement_body(const jsont &stmt)
           {
             const symbolt *exc_sym =
               symbol_table.lookup("python::__exception_active");
-            const symbolt *exc_type_sym =
-              symbol_table.lookup("python::__exception_type");
+
             if(exc_sym != nullptr)
             {
-              import_block.add(
-                code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-              if(exc_type_sym != nullptr)
-              {
-                long h = exception_type_hash("ImportError");
-                import_block.add(code_frontend_assignt{
-                  exc_type_sym->symbol_expr(),
-                  from_integer(h, exc_type_sym->type)});
-              }
+              import_block.add(raise_if(true_exprt{}, "ImportError"));
               has_assigns = true;
             }
           }
@@ -649,24 +640,9 @@ codet python_convertert::convert_statement_body(const jsont &stmt)
               // the missing-key bug.
               const symbolt *exc_sym =
                 symbol_table.lookup("python::__exception_active");
-              const symbolt *exc_type_sym =
-                symbol_table.lookup("python::__exception_type");
+
               if(exc_sym != nullptr)
-              {
-                exprt missing = not_exprt{found};
-                del_block.add(code_ifthenelset{
-                  missing,
-                  code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
-                if(exc_type_sym != nullptr)
-                {
-                  long type_hash = exception_type_hash("KeyError");
-                  del_block.add(code_ifthenelset{
-                    missing,
-                    code_frontend_assignt{
-                      exc_type_sym->symbol_expr(),
-                      from_integer(type_hash, python_int_type())}});
-                }
-              }
+                del_block.add(raise_if(not_exprt{found}, "KeyError"));
             }
           }
         }

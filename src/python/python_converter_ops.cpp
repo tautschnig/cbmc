@@ -578,21 +578,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       is_python_list_type(right.type()) || is_python_tuple_type(right.type()) ||
       is_python_dict_type(right.type()))
     {
-      const symbolt *exc_sym =
-        symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
-      if(exc_sym != nullptr)
-      {
-        pending_checks.push_back(
-          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-        if(exc_type_sym != nullptr)
-        {
-          long h = exception_type_hash("TypeError");
-          pending_checks.push_back(code_frontend_assignt{
-            exc_type_sym->symbol_expr(), from_integer(h, exc_type_sym->type)});
-        }
-      }
+      pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
       return left; // value irrelevant; exception will dominate
     }
     struct_typet ct = to_struct_type(left.type());
@@ -605,21 +591,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       is_python_string_type(left.type()) || is_python_list_type(left.type()) ||
       is_python_tuple_type(left.type()) || is_python_dict_type(left.type()))
     {
-      const symbolt *exc_sym =
-        symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
-      if(exc_sym != nullptr)
-      {
-        pending_checks.push_back(
-          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-        if(exc_type_sym != nullptr)
-        {
-          long h = exception_type_hash("TypeError");
-          pending_checks.push_back(code_frontend_assignt{
-            exc_type_sym->symbol_expr(), from_integer(h, exc_type_sym->type)});
-        }
-      }
+      pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
       return right;
     }
     struct_typet ct = to_struct_type(right.type());
@@ -645,20 +617,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     // PLR §6.7: FloorDiv and Mod on complex raise TypeError
     if(op == "FloorDiv" || op == "Mod")
     {
-      const symbolt *exc_sym =
-        symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
-      if(exc_sym != nullptr)
-        pending_checks.push_back(
-          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-      if(exc_type_sym != nullptr)
-      {
-        long type_hash = exception_type_hash("TypeError");
-        pending_checks.push_back(code_frontend_assignt{
-          exc_type_sym->symbol_expr(),
-          from_integer(type_hash, python_int_type())});
-      }
+      pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
       return from_integer(0, python_int_type());
     }
     if(op == "Div")
@@ -673,8 +632,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       // exception flag so try/except catches it.
       const symbolt *exc_sym_d =
         symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym_d =
-        symbol_table.lookup("python::__exception_type");
+
       if(exc_sym_d != nullptr)
       {
         ieee_floatt fz{
@@ -684,19 +642,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         exprt zero = fz.to_expr();
         exprt is_zero_denom = and_exprt{
           ieee_float_equal_exprt{rr, zero}, ieee_float_equal_exprt{ri, zero}};
-        pending_checks.push_back(code_frontend_assignt{
-          exc_sym_d->symbol_expr(),
-          or_exprt{exc_sym_d->symbol_expr(), is_zero_denom}});
-        if(exc_type_sym_d != nullptr)
-        {
-          long h = exception_type_hash("ZeroDivisionError");
-          pending_checks.push_back(code_frontend_assignt{
-            exc_type_sym_d->symbol_expr(),
-            if_exprt{
-              is_zero_denom,
-              from_integer(h, exc_type_sym_d->type),
-              exc_type_sym_d->symbol_expr()}});
-        }
+        emit_conditional_exception(is_zero_denom, "ZeroDivisionError");
       }
       return struct_exprt{
         {div_exprt{real_num, denom}, div_exprt{imag_num, denom}}, ct};
@@ -1254,16 +1200,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       is_python_string_type(right.type())))
   {
     // String + non-string: TypeError in Python
-    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
-    if(exc_sym != nullptr)
-      pending_checks.push_back(
-        code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-    const symbolt *exc_type_sym =
-      symbol_table.lookup("python::__exception_type");
-    if(exc_type_sym != nullptr)
-      pending_checks.push_back(code_frontend_assignt{
-        exc_type_sym->symbol_expr(),
-        from_integer(exception_type_hash("TypeError"), python_int_type())});
+    pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
     return side_effect_expr_nondett{python_string_type(), source_locationt{}};
   }
 
@@ -1702,44 +1639,18 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     // PLR §6.7: Complex // anything raises TypeError
     if(is_complex(left.type()) || is_complex(right.type()))
     {
-      const symbolt *exc_sym =
-        symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
-      if(exc_sym != nullptr)
-        pending_checks.push_back(
-          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-      if(exc_type_sym != nullptr)
-      {
-        long type_hash = exception_type_hash("TypeError");
-        pending_checks.push_back(code_frontend_assignt{
-          exc_type_sym->symbol_expr(),
-          from_integer(type_hash, python_int_type())});
-      }
+      pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
       return from_integer(0, python_int_type());
     }
     // Python handles division by zero as ZeroDivisionError exception,
     // not as a property check. Set the exception flag instead.
-    {
-      const symbolt *exc_sym =
-        symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
-      if(exc_sym != nullptr)
-      {
-        exprt is_zero = equal_exprt{right, safe_zero(right.type())};
-        pending_checks.push_back(code_ifthenelset{
-          is_zero,
-          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
-        if(exc_type_sym != nullptr)
-          pending_checks.push_back(code_ifthenelset{
-            is_zero,
-            code_frontend_assignt{
-              exc_type_sym->symbol_expr(),
-              from_integer(
-                exception_type_hash("ZeroDivisionError"), python_int_type())}});
-      }
-    }
+    // (only when no exception is active: the first one raised wins; a
+    // float zero is also -0.0)
+    emit_conditional_exception(
+      right.type().id() == ID_floatbv
+        ? exprt{ieee_float_equal_exprt{right, safe_zero(right.type())}}
+        : exprt{equal_exprt{right, safe_zero(right.type())}},
+      "ZeroDivisionError");
     // PLR §6.7: Floor division rounds toward negative infinity
     // Constant evaluation
     if(
@@ -1843,43 +1754,17 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     // PLR §6.7: Complex % anything raises TypeError
     if(is_complex(left.type()) || is_complex(right.type()))
     {
-      const symbolt *exc_sym =
-        symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
-      if(exc_sym != nullptr)
-        pending_checks.push_back(
-          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-      if(exc_type_sym != nullptr)
-      {
-        long type_hash = exception_type_hash("TypeError");
-        pending_checks.push_back(code_frontend_assignt{
-          exc_type_sym->symbol_expr(),
-          from_integer(type_hash, python_int_type())});
-      }
+      pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
       return from_integer(0, python_int_type());
     }
     // Python handles modulo by zero as ZeroDivisionError exception
-    {
-      const symbolt *exc_sym =
-        symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
-      if(exc_sym != nullptr)
-      {
-        exprt is_zero = equal_exprt{right, safe_zero(right.type())};
-        pending_checks.push_back(code_ifthenelset{
-          is_zero,
-          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
-        if(exc_type_sym != nullptr)
-          pending_checks.push_back(code_ifthenelset{
-            is_zero,
-            code_frontend_assignt{
-              exc_type_sym->symbol_expr(),
-              from_integer(
-                exception_type_hash("ZeroDivisionError"), python_int_type())}});
-      }
-    }
+    // (only when no exception is active: the first one raised wins; a
+    // float zero is also -0.0)
+    emit_conditional_exception(
+      right.type().id() == ID_floatbv
+        ? exprt{ieee_float_equal_exprt{right, safe_zero(right.type())}}
+        : exprt{equal_exprt{right, safe_zero(right.type())}},
+      "ZeroDivisionError");
     // PLR §6.7: Python modulo: result has same sign as divisor
     if(left.type().id() == ID_signedbv || left.type().id() == ID_unsignedbv)
     {
@@ -2169,26 +2054,13 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     }
     typet float_type = double_type();
     // Set ZeroDivisionError for division by zero
-    {
-      const symbolt *exc_sym =
-        symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
-      if(exc_sym != nullptr)
-      {
-        exprt is_zero = equal_exprt{right, safe_zero(right.type())};
-        pending_checks.push_back(code_ifthenelset{
-          is_zero,
-          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
-        if(exc_type_sym != nullptr)
-          pending_checks.push_back(code_ifthenelset{
-            is_zero,
-            code_frontend_assignt{
-              exc_type_sym->symbol_expr(),
-              from_integer(
-                exception_type_hash("ZeroDivisionError"), python_int_type())}});
-      }
-    }
+    // (only when no exception is active: the first one raised wins; a
+    // float zero is also -0.0)
+    emit_conditional_exception(
+      right.type().id() == ID_floatbv
+        ? exprt{ieee_float_equal_exprt{right, safe_zero(right.type())}}
+        : exprt{equal_exprt{right, safe_zero(right.type())}},
+      "ZeroDivisionError");
     exprt fl = safe_typecast(left, float_type);
     exprt fr = safe_typecast(right, float_type);
     return if_exprt{
@@ -2289,15 +2161,9 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     // Negative shift raises ValueError (both int widths).
     auto emit_neg_shift_check = [&]()
     {
-      const symbolt *exc_sym =
-        symbol_table.lookup("python::__exception_active");
-      if(exc_sym != nullptr)
-      {
-        exprt neg =
-          binary_relation_exprt{right, ID_lt, from_integer(0, right.type())};
-        pending_checks.push_back(code_ifthenelset{
-          neg, code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
-      }
+      emit_conditional_exception(
+        binary_relation_exprt{right, ID_lt, from_integer(0, right.type())},
+        "ValueError");
     };
     if(left.type().id() == ID_integer)
     {
@@ -2334,15 +2200,9 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   {
     auto emit_neg_shift_check = [&]()
     {
-      const symbolt *exc_sym =
-        symbol_table.lookup("python::__exception_active");
-      if(exc_sym != nullptr)
-      {
-        exprt neg =
-          binary_relation_exprt{right, ID_lt, from_integer(0, right.type())};
-        pending_checks.push_back(code_ifthenelset{
-          neg, code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
-      }
+      emit_conditional_exception(
+        binary_relation_exprt{right, ID_lt, from_integer(0, right.type())},
+        "ValueError");
     };
     if(left.type().id() == ID_integer)
     {
@@ -2499,20 +2359,7 @@ exprt python_convertert::convert_unary_op(const jsont &expr)
     // return nondet so the GOTO stays well-typed.
     if(operand.type().id() == ID_floatbv)
     {
-      const symbolt *exc_sym =
-        symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
-      if(exc_sym != nullptr)
-      {
-        pending_checks.push_back(
-          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-        if(exc_type_sym != nullptr)
-          pending_checks.push_back(code_frontend_assignt{
-            exc_type_sym->symbol_expr(),
-            from_integer(
-              exception_type_hash("TypeError"), exc_type_sym->type)});
-      }
+      pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
       return side_effect_expr_nondett{python_int_type(), get_location(expr)};
     }
     // PLR §6.7: bitwise ~x. Promote bool to int, then bitnot.

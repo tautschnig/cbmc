@@ -2892,22 +2892,7 @@ std::optional<exprt> python_convertert::try_string_method(
             if(mapping_keys.count(name) == 0)
             {
               missing = true;
-              const symbolt *exc_sym =
-                symbol_table.lookup("python::__exception_active");
-              const symbolt *exc_type_sym =
-                symbol_table.lookup("python::__exception_type");
-              if(exc_sym != nullptr)
-              {
-                pending_checks.push_back(
-                  code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-                if(exc_type_sym != nullptr)
-                {
-                  long h = exception_type_hash("KeyError");
-                  pending_checks.push_back(code_frontend_assignt{
-                    exc_type_sym->symbol_expr(),
-                    from_integer(h, python_int_type())});
-                }
-              }
+              pending_checks.push_back(raise_if(true_exprt{}, "KeyError"));
               break;
             }
           }
@@ -3095,22 +3080,7 @@ std::optional<exprt> python_convertert::try_string_method(
               }
               if(!found_kw)
               {
-                const symbolt *exc_sym =
-                  symbol_table.lookup("python::__exception_active");
-                const symbolt *exc_type_sym =
-                  symbol_table.lookup("python::__exception_type");
-                if(exc_sym != nullptr)
-                {
-                  pending_checks.push_back(code_frontend_assignt{
-                    exc_sym->symbol_expr(), true_exprt{}});
-                  if(exc_type_sym != nullptr)
-                  {
-                    long h = exception_type_hash("KeyError");
-                    pending_checks.push_back(code_frontend_assignt{
-                      exc_type_sym->symbol_expr(),
-                      from_integer(h, python_int_type())});
-                  }
-                }
+                pending_checks.push_back(raise_if(true_exprt{}, "KeyError"));
                 all_const = false;
                 continue;
               }
@@ -3131,22 +3101,7 @@ std::optional<exprt> python_convertert::try_string_method(
               // when a positional placeholder index has
               // no matching argument (e.g. '{1}'.format('a')
               // or '{} {}'.format('a')).
-              const symbolt *exc_sym =
-                symbol_table.lookup("python::__exception_active");
-              const symbolt *exc_type_sym =
-                symbol_table.lookup("python::__exception_type");
-              if(exc_sym != nullptr)
-              {
-                pending_checks.push_back(
-                  code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-                if(exc_type_sym != nullptr)
-                {
-                  long h = exception_type_hash("IndexError");
-                  pending_checks.push_back(code_frontend_assignt{
-                    exc_type_sym->symbol_expr(),
-                    from_integer(h, python_int_type())});
-                }
-              }
+              pending_checks.push_back(raise_if(true_exprt{}, "IndexError"));
               all_const = false;
               continue;
             }

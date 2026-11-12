@@ -3046,19 +3046,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
               concrete_class_lacks_dunder(dec_expr.type(), "__call__");
             if(noncallable)
             {
-              const symbolt *ea =
-                symbol_table.lookup("python::__exception_active");
-              const symbolt *et =
-                symbol_table.lookup("python::__exception_type");
-              if(ea != nullptr)
-              {
-                dec_block.add(
-                  code_frontend_assignt{ea->symbol_expr(), true_exprt{}});
-                if(et != nullptr)
-                  dec_block.add(code_frontend_assignt{
-                    et->symbol_expr(),
-                    from_integer(exception_type_hash("TypeError"), et->type)});
-              }
+              dec_block.add(raise_if(true_exprt{}, "TypeError"));
             }
           }
           continue;

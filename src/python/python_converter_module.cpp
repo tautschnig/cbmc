@@ -109,17 +109,10 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
               {
                 const symbolt *ea =
                   symbol_table.lookup("python::__exception_active");
-                const symbolt *et =
-                  symbol_table.lookup("python::__exception_type");
+
                 if(ea != nullptr)
                 {
-                  block.add(
-                    code_frontend_assignt{ea->symbol_expr(), true_exprt{}});
-                  if(et != nullptr)
-                    block.add(code_frontend_assignt{
-                      et->symbol_expr(),
-                      from_integer(
-                        exception_type_hash("TypeError"), et->type)});
+                  block.add(raise_if(true_exprt{}, "TypeError"));
                   // The FunctionDef statement is otherwise skipped for the
                   // per-statement uncaught-exception assert below, so emit one
                   // here so the def-time TypeError is actually verified.

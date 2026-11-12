@@ -74,9 +74,16 @@ void python_convertert::emit_conditional_exception(
   const exprt &cond,
   const char *exc_type)
 {
+  codet code = raise_if(cond, exc_type);
+  if(code.get_statement() != ID_skip)
+    pending_checks.push_back(std::move(code));
+}
+
+codet python_convertert::raise_if(const exprt &cond, const char *exc_type)
+{
   const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
   if(exc_sym == nullptr)
-    return;
+    return code_skipt{};
   code_blockt body;
   body.add(code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
   const symbolt *exc_type_sym = symbol_table.lookup("python::__exception_type");
@@ -90,8 +97,8 @@ void python_convertert::emit_conditional_exception(
   // not-found ValueError) must NOT overwrite it, or a `try/except ValueError`
   // would wrongly catch the IndexError (a false proof). Guard the raise with
   // `not __exception_active` so only the first exception sets active + type.
-  pending_checks.push_back(code_ifthenelset{
-    and_exprt{cond, not_exprt{exc_sym->symbol_expr()}}, std::move(body)});
+  return code_ifthenelset{
+    and_exprt{cond, not_exprt{exc_sym->symbol_expr()}}, std::move(body)};
 }
 
 // Validate a dunder's return-type contract (PLR §3.3). See the header.
@@ -736,20 +743,7 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
   // None.attr, None() shapes.
   if(is_python_none(value, symbol_table))
   {
-    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
-    const symbolt *exc_type_sym =
-      symbol_table.lookup("python::__exception_type");
-    if(exc_sym != nullptr)
-    {
-      pending_checks.push_back(
-        code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-      if(exc_type_sym != nullptr)
-      {
-        long h = exception_type_hash("TypeError");
-        pending_checks.push_back(code_frontend_assignt{
-          exc_type_sym->symbol_expr(), from_integer(h, exc_type_sym->type)});
-      }
-    }
+    pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
     return side_effect_expr_nondett{python_value_type(), get_location(expr)};
   }
 
@@ -2215,20 +2209,7 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
       slice.type().id() != ID_signedbv && slice.type().id() != ID_unsignedbv &&
       slice.type().id() != ID_integer && slice.type().id() != ID_bool)
     {
-      const symbolt *exc_sym =
-        symbol_table.lookup("python::__exception_active");
-      const symbolt *exc_type_sym =
-        symbol_table.lookup("python::__exception_type");
-      if(exc_sym != nullptr)
-        pending_checks.push_back(
-          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-      if(exc_type_sym != nullptr)
-      {
-        long type_hash = exception_type_hash("TypeError");
-        pending_checks.push_back(code_frontend_assignt{
-          exc_type_sym->symbol_expr(),
-          from_integer(type_hash, python_int_type())});
-      }
+      pending_checks.push_back(raise_if(true_exprt{}, "TypeError"));
       return from_integer(0, python_int_type());
     }
     exprt length = python_lift_to_index_domain(
@@ -3160,16 +3141,7 @@ std::optional<codet> python_convertert::emit_property_set(
     if(!is_readonly_property)
       return std::nullopt;
     code_blockt blk;
-    const symbolt *ea = symbol_table.lookup("python::__exception_active");
-    const symbolt *et = symbol_table.lookup("python::__exception_type");
-    if(ea != nullptr)
-    {
-      blk.add(code_frontend_assignt{ea->symbol_expr(), true_exprt{}});
-      if(et != nullptr)
-        blk.add(code_frontend_assignt{
-          et->symbol_expr(),
-          from_integer(exception_type_hash("AttributeError"), et->type)});
-    }
+    blk.add(raise_if(true_exprt{}, "AttributeError"));
     return std::move(blk);
   }
   const symbolt *ssym = symbol_table.lookup(irep_idt{setter_id});
@@ -4187,20 +4159,7 @@ exprt python_convertert::convert_attribute_impl(const jsont &expr)
   // the iter-None / ordering-with-None / len(None) shape.
   if(is_python_none(value, symbol_table))
   {
-    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
-    const symbolt *exc_type_sym =
-      symbol_table.lookup("python::__exception_type");
-    if(exc_sym != nullptr)
-    {
-      pending_checks.push_back(
-        code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
-      if(exc_type_sym != nullptr)
-      {
-        long h = exception_type_hash("AttributeError");
-        pending_checks.push_back(code_frontend_assignt{
-          exc_type_sym->symbol_expr(), from_integer(h, exc_type_sym->type)});
-      }
-    }
+    pending_checks.push_back(raise_if(true_exprt{}, "AttributeError"));
     return side_effect_expr_nondett{python_value_type(), get_location(expr)};
   }
 
