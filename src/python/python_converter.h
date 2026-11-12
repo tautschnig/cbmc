@@ -3491,6 +3491,22 @@ private:
   /// constants and within the range of int64, a nondet string beyond (with
   /// the ValueError of the digit limit).
   exprt python_string_of_int(const exprt &n, const source_locationt &loc);
+  /// The position (an Int) of the last occurrence of \p needle in the native
+  /// string \p hay: -1 when there is none, the length of \p hay for an empty
+  /// needle.
+  exprt native_last_index_of(
+    const exprt &hay,
+    const exprt &needle,
+    const source_locationt &loc);
+  /// s.partition(sep) or s.rpartition(sep) (\p last) of symbolic strings,
+  /// for both back ends: the 3-tuple of the substrings of \p s before, at
+  /// and after the first (last) occurrence of \p sep. (An empty \p sep
+  /// raises ValueError before.)
+  exprt symbolic_partition(
+    const exprt &s,
+    const exprt &sep,
+    bool last,
+    const source_locationt &loc);
   /// removeprefix/removesuffix, and ljust/rjust/center/zfill with a
   /// constant one-character fill, of a native SMT string \p s; nullopt for
   /// other methods or argument shapes.

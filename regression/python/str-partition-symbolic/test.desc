@@ -1,0 +1,9 @@
+CORE
+main.py
+--unwind 4
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+partition and rpartition of symbolic strings are exact.

@@ -1,0 +1,12 @@
+CORE
+main.py
+--cvc5 --python-smt-strings --unwind 4
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+ERROR
+--
+partition and rpartition of native symbolic strings are exact; they were
+unconstrained tuples, whose strings could be too long for cvc5 to print a
+model.

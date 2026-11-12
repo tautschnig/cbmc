@@ -4138,94 +4138,12 @@ std::optional<exprt> python_convertert::try_string_method(
                ndl,
                native ? exprt{typecast_exprt{from, integer_typet{}}} : from});
           };
-          // The last occurrence in a native string: -1 exactly when there is
-          // none, and otherwise a position where the needle occurs with no
-          // occurrence after it; an empty needle is found at the end.
-          auto native_backward_search = [&](const exprt &hay) -> exprt
-          {
-            // In mathematical integers: bit-vector positions converted to
-            // and from Int made cvc5 time out on these constraints. The
-            // result r is the length of a fresh string minus one: cvc5 took
-            // seconds to convert an integer variable to a bit-vector, even
-            // to prove r >= -1, and is fast on str.len.
-            const integer_typet int_t;
-            static unsigned last_ctr = 0;
-            const std::string nm =
-              "__last_index_of_" + std::to_string(last_ctr++);
-            const irep_idt rid{qualify_name(nm)};
-            if(symbol_table.lookup(rid) == nullptr)
-            {
-              symbolt rs{rid, string_typet{}, "python"};
-              rs.base_name = nm;
-              rs.is_lvalue = true;
-              rs.is_state_var = true;
-              symbol_table.add(rs);
-            }
-            const symbol_exprt w = symbol_table.lookup_ref(rid).symbol_expr();
-            pending_checks.push_back(code_frontend_assignt{
-              w, side_effect_expr_nondett{string_typet{}, get_location(expr)}});
-            auto str_len = [&](const exprt &x)
-            {
-              return native_string_app(
-                ID_cprover_string_length_func, {string_typet{}}, {x}, int_t);
-            };
-            const exprt r = minus_exprt{str_len(w), from_integer(1, int_t)};
-            const exprt hay_len = str_len(hay);
-            const exprt ndl_len = str_len(needle);
-            const exprt zero = from_integer(0, int_t);
-            const exprt minus_one_int = from_integer(-1, int_t);
-            auto index_of = [&](const exprt &from)
-            {
-              return native_string_app(
-                ID_cprover_string_index_of_func,
-                {string_typet{}, string_typet{}, int_t},
-                {hay, needle, from},
-                int_t);
-            };
-            // (str.prefixof rather than an equality with str.substr: z3 4.16
-            // proved wrong results with the latter.)
-            const exprt occurs_at_r = native_string_app(
-              ID_cprover_string_startswith_func,
-              {string_typet{}, string_typet{}},
-              {native_string_app(
-                 ID_cprover_string_substring_func,
-                 {string_typet{}, int_t, int_t},
-                 {hay, r, hay_len},
-                 string_typet{}),
-               needle},
-              bool_typet{});
-            const exprt empty_needle = equal_exprt{ndl_len, zero};
-            pending_checks.push_back(code_assumet{
-              implies_exprt{empty_needle, equal_exprt{r, hay_len}}});
-            pending_checks.push_back(code_assumet{implies_exprt{
-              not_exprt{empty_needle},
-              and_exprt{
-                equal_exprt{
-                  equal_exprt{r, minus_one_int},
-                  equal_exprt{index_of(zero), minus_one_int}},
-                implies_exprt{
-                  binary_relation_exprt{r, ID_ge, zero},
-                  and_exprt{
-                    occurs_at_r,
-                    // no occurrence from r + 1 on
-                    not_exprt{native_string_app(
-                      ID_cprover_string_contains_func,
-                      {string_typet{}, string_typet{}},
-                      {native_string_app(
-                         ID_cprover_string_substring_func,
-                         {string_typet{}, int_t, int_t},
-                         {hay, plus_exprt{r, from_integer(1, int_t)}, hay_len},
-                         string_typet{}),
-                       needle},
-                      bool_typet{})}}}}}});
-            pending_checks.push_back(
-              code_assumet{binary_relation_exprt{r, ID_le, hay_len}});
-            return r;
-          };
           auto backward_search = [&](const exprt &hay) -> exprt
           {
             if(native)
-              return typecast_exprt{native_backward_search(hay), int_type};
+              return typecast_exprt{
+                native_last_index_of(hay, needle, get_location(expr)),
+                int_type};
             return intrinsic(
               ID_cprover_string_last_index_of_func, {as_str_struct(hay), ndl});
           };
@@ -4320,7 +4238,7 @@ std::optional<exprt> python_convertert::try_string_method(
                       {string_typet{}, string_typet{}, integer_typet{}},
                       {slice, needle, from_integer(0, integer_typet{})},
                       integer_typet{})
-                  : native_backward_search(slice);
+                  : native_last_index_of(slice, needle, get_location(expr));
             }
             else
             {
@@ -4600,11 +4518,214 @@ std::optional<exprt> python_convertert::try_string_method(
           ttype};
       }
     }
-    // Non-constant fallback: nondet 3-tuple.
+    // A symbolic string or separator: the substrings around the occurrence.
+    if(args.is_array() && as_array(args).size() == 1)
+    {
+      const exprt sep = convert_expression(*as_array(args).begin());
+      if(
+        is_python_string_type(sep.type()) &&
+        (sep.type().id() == ID_string) == (obj.type().id() == ID_string))
+        return symbolic_partition(
+          obj, sep, method_name == "rpartition", get_location(expr));
+    }
+    // Other shapes: a nondet 3-tuple.
     struct_typet ttype = python_tuple_type(
       {python_string_type(), python_string_type(), python_string_type()});
     return side_effect_expr_nondett{ttype, get_location(expr)};
   }
 
   return std::nullopt;
+}
+
+exprt python_convertert::native_last_index_of(
+  const exprt &hay,
+  const exprt &needle,
+  const source_locationt &loc)
+{
+  // In mathematical integers: bit-vector positions converted to
+  // and from Int made cvc5 time out on these constraints. The
+  // result r is the length of a fresh string minus one: cvc5 took
+  // seconds to convert an integer variable to a bit-vector, even
+  // to prove r >= -1, and is fast on str.len.
+  const integer_typet int_t;
+  static unsigned last_ctr = 0;
+  const std::string nm = "__last_index_of_" + std::to_string(last_ctr++);
+  const irep_idt rid{qualify_name(nm)};
+  if(symbol_table.lookup(rid) == nullptr)
+  {
+    symbolt rs{rid, string_typet{}, "python"};
+    rs.base_name = nm;
+    rs.is_lvalue = true;
+    rs.is_state_var = true;
+    symbol_table.add(rs);
+  }
+  const symbol_exprt w = symbol_table.lookup_ref(rid).symbol_expr();
+  pending_checks.push_back(
+    code_frontend_assignt{w, side_effect_expr_nondett{string_typet{}, loc}});
+  auto str_len = [&](const exprt &x)
+  {
+    return native_string_app(
+      ID_cprover_string_length_func, {string_typet{}}, {x}, int_t);
+  };
+  const exprt r = minus_exprt{str_len(w), from_integer(1, int_t)};
+  const exprt hay_len = str_len(hay);
+  const exprt ndl_len = str_len(needle);
+  const exprt zero = from_integer(0, int_t);
+  const exprt minus_one_int = from_integer(-1, int_t);
+  auto index_of = [&](const exprt &from)
+  {
+    return native_string_app(
+      ID_cprover_string_index_of_func,
+      {string_typet{}, string_typet{}, int_t},
+      {hay, needle, from},
+      int_t);
+  };
+  // (str.prefixof rather than an equality with str.substr: z3 4.16
+  // proved wrong results with the latter.)
+  const exprt occurs_at_r = native_string_app(
+    ID_cprover_string_startswith_func,
+    {string_typet{}, string_typet{}},
+    {native_string_app(
+       ID_cprover_string_substring_func,
+       {string_typet{}, int_t, int_t},
+       {hay, r, hay_len},
+       string_typet{}),
+     needle},
+    bool_typet{});
+  const exprt empty_needle = equal_exprt{ndl_len, zero};
+  pending_checks.push_back(
+    code_assumet{implies_exprt{empty_needle, equal_exprt{r, hay_len}}});
+  pending_checks.push_back(code_assumet{implies_exprt{
+    not_exprt{empty_needle},
+    and_exprt{
+      equal_exprt{
+        equal_exprt{r, minus_one_int},
+        equal_exprt{index_of(zero), minus_one_int}},
+      implies_exprt{
+        binary_relation_exprt{r, ID_ge, zero},
+        and_exprt{
+          occurs_at_r,
+          // no occurrence from r + 1 on
+          not_exprt{native_string_app(
+            ID_cprover_string_contains_func,
+            {string_typet{}, string_typet{}},
+            {native_string_app(
+               ID_cprover_string_substring_func,
+               {string_typet{}, int_t, int_t},
+               {hay, plus_exprt{r, from_integer(1, int_t)}, hay_len},
+               string_typet{}),
+             needle},
+            bool_typet{})}}}}}});
+  pending_checks.push_back(
+    code_assumet{binary_relation_exprt{r, ID_le, hay_len}});
+  return r;
+}
+
+exprt python_convertert::symbolic_partition(
+  const exprt &s,
+  const exprt &sep,
+  bool last,
+  const source_locationt &loc)
+{
+  const signedbv_typet i64{64};
+  const bool native = s.type().id() == ID_string;
+  auto fresh = [&](const exprt &value)
+  {
+    static unsigned ctr = 0;
+    const irep_idt id{qualify_name("__partition_" + std::to_string(ctr++))};
+    symbolt sy{id, value.type(), "python"};
+    sy.base_name = id2string(id);
+    sy.is_lvalue = true;
+    sy.is_state_var = true;
+    symbol_table.add(sy);
+    const symbol_exprt e = symbol_table.lookup_ref(id).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{e, value});
+    return e;
+  };
+  auto refined_app = [&](const irep_idt &fn, exprt::operandst call_args)
+  {
+    if(symbol_table.lookup(fn) == nullptr)
+    {
+      std::vector<typet> ats;
+      for(const auto &x : call_args)
+        ats.push_back(x.type());
+      symbolt fs{
+        fn, mathematical_function_typet(std::move(ats), i64), "python"};
+      fs.base_name = id2string(fn);
+      symbol_table.add(fs);
+    }
+    function_application_exprt app{
+      symbol_table.lookup_ref(fn).symbol_expr(), std::move(call_args)};
+    app.type() = i64;
+    return exprt{app};
+  };
+
+  const struct_typet tuple_type = python_tuple_type(
+    {python_string_type(), python_string_type(), python_string_type()});
+  if(native)
+  {
+    // In mathematical integers throughout: positions converted between
+    // bit-vectors and Int make cvc5 time out.
+    const integer_typet int_t;
+    const string_typet str_t;
+    auto len = [&](const exprt &x)
+    {
+      return native_string_app(
+        ID_cprover_string_length_func, {str_t}, {x}, int_t);
+    };
+    auto substr = [&](const exprt &x, const exprt &start, const exprt &n)
+    {
+      return native_string_app(
+        ID_cprover_string_substring_func,
+        {str_t, int_t, int_t},
+        {x, start, n},
+        str_t);
+    };
+    const exprt p = fresh(
+      last ? native_last_index_of(s, sep, loc)
+           : native_string_app(
+               ID_cprover_string_index_of_func,
+               {str_t, str_t, int_t},
+               {s, sep, from_integer(0, int_t)},
+               int_t));
+    const exprt zero = from_integer(0, int_t);
+    const exprt found = binary_relation_exprt{p, ID_ge, zero};
+    const exprt not_found_split = last ? zero : len(s);
+    const exprt tail_start =
+      if_exprt{found, plus_exprt{p, len(sep)}, not_found_split};
+    return struct_exprt{
+      {substr(s, zero, if_exprt{found, p, not_found_split}),
+       substr(sep, zero, if_exprt{found, len(sep), zero}),
+       substr(s, tail_start, minus_exprt{len(s), tail_start})},
+      tuple_type};
+  }
+
+  // The position of the occurrence, or -1.
+  exprt position;
+  {
+    const exprt hay = string_struct_view(s);
+    const exprt ndl = string_struct_view(sep);
+    position =
+      last
+        ? refined_app(ID_cprover_string_last_index_of_func, {hay, ndl})
+        : refined_app(
+            ID_cprover_string_index_of_func, {hay, ndl, from_integer(0, i64)});
+  }
+  const exprt p = fresh(position);
+  const exprt length = fresh(
+    typecast_exprt::conditional_cast(native_or_member_string_length(s), i64));
+  const exprt sep_length = fresh(
+    typecast_exprt::conditional_cast(native_or_member_string_length(sep), i64));
+  const exprt zero = from_integer(0, i64);
+  const exprt found = binary_relation_exprt{p, ID_ge, zero};
+  // Not found: partition gives (s, "", ""), rpartition ("", "", s).
+  const exprt not_found_split = last ? zero : length;
+  const exprt head_length = if_exprt{found, p, not_found_split};
+  const exprt tail_start =
+    if_exprt{found, plus_exprt{p, sep_length}, not_found_split};
+  const exprt head = string_substr(s, zero, head_length);
+  const exprt mid = string_substr(sep, zero, if_exprt{found, sep_length, zero});
+  const exprt tail =
+    string_substr(s, tail_start, minus_exprt{length, tail_start});
+  return struct_exprt{{head, mid, tail}, tuple_type};
 }
