@@ -1,6 +1,6 @@
 CORE
 main.py
---cvc5 --python-smt-strings
+--cvc5 --python-smt-strings --unwind 5
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$

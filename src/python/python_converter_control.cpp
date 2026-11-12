@@ -30,7 +30,7 @@
 // into a program."
 codet python_convertert::convert_assert(const jsont &stmt)
 {
-  exprt test = convert_expression(json_member(stmt, "test"));
+  exprt test = convert_nested_expression(json_member(stmt, "test"));
   if(test.is_nil())
   {
     // Fail-closed (PLR §7.3: the assert statement evaluates its
@@ -427,7 +427,7 @@ codet python_convertert::convert_if(const jsont &stmt)
     }
   }
 
-  exprt test = convert_expression(json_member(stmt, "test"));
+  exprt test = convert_nested_expression(json_member(stmt, "test"));
   if(test.is_nil())
     return code_skipt{};
 
@@ -718,7 +718,7 @@ codet python_convertert::convert_while(const jsont &stmt)
   // is a no-op when the test has no side effects.
   std::vector<codet> test_side_effects;
   pending_checks.swap(test_side_effects);
-  exprt test = convert_expression(json_member(stmt, "test"));
+  exprt test = convert_nested_expression(json_member(stmt, "test"));
   std::vector<codet> test_pending;
   pending_checks.swap(test_pending);
   pending_checks.swap(test_side_effects); // restore outer state
@@ -854,7 +854,7 @@ codet python_convertert::convert_for(const jsont &stmt)
     if(early_exit_scan)
     {
       const typet len_t = signedbv_typet{64};
-      exprt seq = convert_expression(iter);
+      exprt seq = convert_nested_expression(iter);
       if(!seq.is_nil() && is_python_value_type(seq.type()))
       {
         // Boxed SoA field (resp['items']): deref through the box
@@ -1142,7 +1142,7 @@ codet python_convertert::convert_for(const jsont &stmt)
       }
       else
       {
-        exprt seq = convert_expression(iter);
+        exprt seq = convert_nested_expression(iter);
         if(!seq.is_nil() && is_python_list_type(seq.type()))
         {
           const auto &lst = to_struct_type(seq.type());
@@ -1661,7 +1661,7 @@ codet python_convertert::convert_for(const jsont &stmt)
   // for x in iterable (list or string)
   // Desugar to: __idx = 0; while(__idx < iterable.length) {
   //   x = iterable.data[__idx]; body; __idx += 1; }
-  exprt iterable = convert_expression(iter);
+  exprt iterable = convert_nested_expression(iter);
   if(iterable.is_nil())
     return finalize_for(code_skipt{});
   flush_header_checks();

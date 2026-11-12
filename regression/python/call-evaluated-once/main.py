@@ -22,3 +22,16 @@ assert n == 5
 c = nondet_int()
 r6 = c > 0 and f() + "a" == "*a"
 assert (n == 6) == (c > 0)
+m = n
+if f():
+    pass
+assert n == m + 1
+assert f()
+assert n == m + 2
+for ch in f():
+    pass
+assert n == m + 3
+k = 0
+while f() and k < 2:
+    k += 1
+assert n == m + 6

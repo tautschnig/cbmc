@@ -1901,6 +1901,16 @@ private:
   /// when the conversion of the call uses it several times, or not at all.
   exprt convert_expression(const jsont &expr);
   exprt convert_expression_impl(const jsont &expr);
+  /// convert_expression for an expression whose value a statement reads
+  /// more than once (a test, an iterable): a call is evaluated once, as
+  /// within an expression.
+  exprt convert_nested_expression(const jsont &expr)
+  {
+    ++expression_depth;
+    exprt result = convert_expression(expr);
+    --expression_depth;
+    return result;
+  }
   /// \p e when it has no side effects, and otherwise a temporary that
   /// \p e is assigned to (in pending_checks).
   exprt evaluate_once(exprt e);
