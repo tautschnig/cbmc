@@ -3864,6 +3864,103 @@ exprt python_convertert::native_string_of_int(const exprt &n_in)
     from_int_app(n)};
 }
 
+void python_convertert::emit_int_digit_limit(const exprt &exceeds)
+{
+  // The limit (CVE-2020-10735) is in CPython 3.11 and in security releases
+  // of 3.7 to 3.10.
+  const int version = python_major_version * 100 + python_minor_version;
+  if(version >= 311)
+    emit_conditional_exception(exceeds, "ValueError");
+  else if(version >= 307 && !exceeds.is_false())
+    emit_conditional_exception(
+      and_exprt{exceeds, side_effect_expr_nondett{bool_typet{}, {}}},
+      "ValueError");
+}
+
+exprt python_convertert::python_string_of_int(
+  const exprt &n,
+  const source_locationt &loc)
+{
+  PRECONDITION(n.type().id() == ID_signedbv || n.type().id() == ID_integer);
+  // str() of an int of more than 4300 digits raises ValueError.
+  const mp_integer limit = power(10, 4300);
+  if(n.is_constant())
+  {
+    mp_integer v;
+    if(!to_integer(to_constant_expr(n), v))
+    {
+      if(v >= limit || v <= -limit)
+      {
+        emit_int_digit_limit(true_exprt{});
+        return bounded_nondet_string(loc);
+      }
+      return python_string_literal(integer2string(v));
+    }
+  }
+  const signedbv_typet i64{64};
+  const integer_typet int_t;
+  if(n.type() == int_t)
+    emit_int_digit_limit(or_exprt{
+      binary_relation_exprt{n, ID_ge, from_integer(limit, int_t)},
+      binary_relation_exprt{n, ID_le, from_integer(-limit, int_t)}});
+  if(use_smt_string_native)
+    return native_string_of_int(n);
+
+  auto ensure_fn = [&](const irep_idt &fid)
+  {
+    if(symbol_table.lookup(fid) != nullptr)
+      return;
+    array_typet inf_array_type{
+      unsignedbv_typet{8}, infinity_exprt(signedbv_typet{64})};
+    std::vector<typet> at{inf_array_type};
+    if(fid == ID_cprover_associate_array_to_pointer_func)
+      at.push_back(pointer_typet(unsignedbv_typet{8}, 64));
+    else
+      at.push_back(signedbv_typet{64});
+    symbolt fs{
+      fid,
+      mathematical_function_typet(std::move(at), signedbv_typet{32}),
+      "python"};
+    fs.base_name = id2string(fid);
+    symbol_table.add(fs);
+  };
+  auto of_i64 = [&](const exprt &v)
+  {
+    exprt r = known_ascii(emit_string_function(
+      ID_cprover_string_of_int_func,
+      {v},
+      symbol_table,
+      pending_checks,
+      loop_depth > 0,
+      current_function));
+    ensure_fn(ID_cprover_associate_array_to_pointer_func);
+    ensure_fn(ID_cprover_associate_length_to_array_func);
+    return r;
+  };
+  if(n.type() != integer_typet{})
+    return of_i64(n.type() == i64 ? n : safe_typecast(n, i64));
+
+  // An unbounded int: exact within the range of int64, a nondet string
+  // beyond.
+  const exprt in_range = and_exprt{
+    binary_relation_exprt{n, ID_ge, from_integer(i64.smallest(), int_t)},
+    binary_relation_exprt{n, ID_le, from_integer(i64.largest(), int_t)}};
+  const exprt exact = of_i64(typecast_exprt{n, i64});
+  static unsigned ctr = 0;
+  const irep_idt id{qualify_name("__str_of_int_" + std::to_string(ctr++))};
+  symbolt s{id, python_string_type(), "python"};
+  s.base_name = id2string(id);
+  s.is_lvalue = true;
+  s.is_state_var = true;
+  symbol_table.add(s);
+  const symbol_exprt result = symbol_table.lookup_ref(id).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{
+    result, side_effect_expr_nondett{python_string_type(), loc}});
+  pending_checks.push_back(
+    code_ifthenelset{in_range, code_frontend_assignt{result, exact}});
+  return result;
+}
+
 exprt python_convertert::string_substr(
   const exprt &s,
   const exprt &start,
@@ -7716,16 +7813,7 @@ exprt python_convertert::convert_expression_impl(const jsont &expr)
             exprt base = inner_pad;
             if(!is_str)
             {
-              const exprt as_i64 =
-                typecast_exprt::conditional_cast(inner_pad, i64);
-              base = use_smt_string_native ? native_string_of_int(as_i64)
-                                           : emit_string_function(
-                                               ID_cprover_string_of_int_func,
-                                               {as_i64},
-                                               symbol_table,
-                                               pending_checks,
-                                               loop_depth > 0,
-                                               current_function);
+              base = python_string_of_int(inner_pad, get_location(expr));
               if(!use_smt_string_native)
               {
                 ensure_fn(ID_cprover_associate_array_to_pointer_func);
@@ -7853,29 +7941,7 @@ exprt python_convertert::convert_expression_impl(const jsont &expr)
           continue;
         }
         if(inner.type().id() == ID_signedbv || inner.type().id() == ID_integer)
-        {
-          exprt i64 = inner.type() == signedbv_typet{64}
-                        ? inner
-                        : safe_typecast(inner, signedbv_typet{64});
-          if(use_smt_string_native)
-          {
-            // Native: str(n) composes sign handling over the GENERIC from_int
-            // id (see native_string_of_int).
-            parts.push_back(native_string_of_int(i64));
-          }
-          else
-          {
-            parts.push_back(known_ascii(emit_string_function(
-              ID_cprover_string_of_int_func,
-              {i64},
-              symbol_table,
-              pending_checks,
-              loop_depth > 0,
-              current_function)));
-            ensure_fn(ID_cprover_associate_array_to_pointer_func);
-            ensure_fn(ID_cprover_associate_length_to_array_func);
-          }
-        }
+          parts.push_back(python_string_of_int(inner, get_location(v)));
         else if(inner.type().id() == ID_floatbv)
         {
           // CONSTANT float: fold to CPython repr (py_float_repr) -- precise

@@ -3297,51 +3297,12 @@ std::optional<exprt> python_convertert::try_string_method(
         }
         // Symbolic int fast path: template is just "{}"
         // or "{0}" with no format spec, single int arg.
-        // Emit cprover_string_of_int_func.
         if(
           (fmt == "{}" || fmt == "{0}") && arg_exprs.size() == 1 &&
           (arg_exprs[0].type().id() == ID_signedbv ||
            arg_exprs[0].type().id() == ID_integer))
         {
-          exprt as_i64 = arg_exprs[0].type() == signedbv_typet{64}
-                           ? arg_exprs[0]
-                           : safe_typecast(arg_exprs[0], signedbv_typet{64});
-          exprt r = known_ascii(emit_string_function(
-            ID_cprover_string_of_int_func,
-            {as_i64},
-            symbol_table,
-            pending_checks,
-            loop_depth > 0,
-            // global (documented): see emit_string_function scope invariant.
-            std::string{}));
-          auto ensure_fn = [&](const irep_idt &fid)
-          {
-            if(symbol_table.lookup(fid) == nullptr)
-            {
-              array_typet inf_array_type{
-                unsignedbv_typet{8}, infinity_exprt(signedbv_typet{64})};
-              std::vector<typet> at;
-              if(fid == ID_cprover_associate_array_to_pointer_func)
-              {
-                at.push_back(inf_array_type);
-                at.push_back(pointer_typet(unsignedbv_typet{8}, 64));
-              }
-              else
-              {
-                at.push_back(inf_array_type);
-                at.push_back(signedbv_typet{64});
-              }
-              symbolt fs{
-                fid,
-                mathematical_function_typet(std::move(at), signedbv_typet{32}),
-                "python"};
-              fs.base_name = id2string(fid);
-              symbol_table.add(fs);
-            }
-          };
-          ensure_fn(ID_cprover_associate_array_to_pointer_func);
-          ensure_fn(ID_cprover_associate_length_to_array_func);
-          return r;
+          return python_string_of_int(arg_exprs[0], get_location(expr));
         }
       }
     }

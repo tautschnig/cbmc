@@ -184,9 +184,15 @@ bool python_convertert::emit_range_arg_checks(
 /// leading zeros). Returns the value, an empty optional if CPython raises
 /// ValueError, or nullopt if the text has characters (non-ASCII ones, or
 /// the ASCII separators 0x1c to 0x1f) whose treatment is not modelled.
-static std::optional<std::optional<mp_integer>>
-parse_python_int_literal(const std::string &text, int base)
+/// \param [out] over_digit_limit: set when the text is a valid literal of
+///   more than 4300 digits in a base that is not a power of two, which
+///   CPython rejects with its default sys.get_int_max_str_digits().
+static std::optional<std::optional<mp_integer>> parse_python_int_literal(
+  const std::string &text,
+  int base,
+  bool &over_digit_limit)
 {
+  over_digit_limit = false;
   const std::optional<mp_integer> invalid;
   for(char c : text)
   {
@@ -234,6 +240,7 @@ parse_python_int_literal(const std::string &text, int base)
     return invalid;
   mp_integer value = 0;
   bool previous_underscore = false;
+  std::size_t digits = 0;
   for(char c : body)
   {
     if(c == '_')
@@ -254,10 +261,13 @@ parse_python_int_literal(const std::string &text, int base)
     if(digit >= base)
       return invalid;
     value = value * base + digit;
+    ++digits;
   }
   // base 0 without a prefix: no leading zeros unless the value is 0
   if(base_zero_decimal && !had_prefix && body[0] == '0' && value != 0)
     return invalid;
+  const bool power_of_two = (base & (base - 1)) == 0;
+  over_digit_limit = !power_of_two && digits > 4300;
   return std::optional<mp_integer>{negative ? -value : value};
 }
 
@@ -1320,7 +1330,11 @@ std::optional<exprt> python_convertert::try_builtin_call(
           auto sv = extract_string_value(arg);
           if(sv.has_value())
           {
-            const auto parsed = parse_python_int_literal(*sv, parse_base);
+            bool over_digit_limit;
+            const auto parsed =
+              parse_python_int_literal(*sv, parse_base, over_digit_limit);
+            if(over_digit_limit)
+              emit_int_digit_limit(true_exprt{});
             if(parsed.has_value() && parsed->has_value())
               return from_integer(**parsed, python_int_type());
             if(parsed.has_value())
@@ -4373,16 +4387,6 @@ std::optional<exprt> python_convertert::try_builtin_call(
           return python_string_literal(s);
         }
       }
-      // str(int_constant) — legacy path
-      if(arg.is_constant() && arg.type().id() == ID_signedbv)
-      {
-        mp_integer iv;
-        if(!to_integer(to_constant_expr(arg), iv))
-        {
-          std::string s = integer2string(iv);
-          return python_string_literal(s);
-        }
-      }
       // str(float_constant): CPython repr (see py_float_repr).
       if(arg.is_constant() && arg.type().id() == ID_floatbv)
       {
@@ -4390,56 +4394,9 @@ std::optional<exprt> python_convertert::try_builtin_call(
         if(fev.has_value())
           return python_string_literal(py_float_repr(*fev));
       }
-      // Symbolic int: emit cprover_string_of_int_func so the
-      // solver knows the result's content and length
-      // precisely.
+      // An int: exact (also beyond int64 for constants).
       if(arg.type().id() == ID_signedbv || arg.type().id() == ID_integer)
-      {
-        exprt as_i64 = arg.type() == signedbv_typet{64}
-                         ? arg
-                         : safe_typecast(arg, signedbv_typet{64});
-        if(use_smt_string_native)
-        {
-          // Native: str(n) composes sign handling over the GENERIC from_int
-          // id (see native_string_of_int).
-          return native_string_of_int(as_i64);
-        }
-        exprt result = known_ascii(emit_string_function(
-          ID_cprover_string_of_int_func,
-          {as_i64},
-          symbol_table,
-          pending_checks,
-          loop_depth > 0,
-          current_function));
-        auto ensure_fn = [&](const irep_idt &fid)
-        {
-          if(symbol_table.lookup(fid) == nullptr)
-          {
-            array_typet inf_array_type{
-              unsignedbv_typet{8}, infinity_exprt(signedbv_typet{64})};
-            std::vector<typet> at;
-            if(fid == ID_cprover_associate_array_to_pointer_func)
-            {
-              at.push_back(inf_array_type);
-              at.push_back(pointer_typet(unsignedbv_typet{8}, 64));
-            }
-            else
-            {
-              at.push_back(inf_array_type);
-              at.push_back(signedbv_typet{64});
-            }
-            symbolt fs{
-              fid,
-              mathematical_function_typet(std::move(at), signedbv_typet{32}),
-              "python"};
-            fs.base_name = id2string(fid);
-            symbol_table.add(fs);
-          }
-        };
-        ensure_fn(ID_cprover_associate_array_to_pointer_func);
-        ensure_fn(ID_cprover_associate_length_to_array_func);
-        return result;
-      }
+        return python_string_of_int(arg, get_location(expr));
       // Symbolic float: emit cprover_string_of_double_func
       // (Python floats are double-precision) so the solver
       // knows the result's content precisely.

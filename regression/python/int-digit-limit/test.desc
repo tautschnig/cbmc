@@ -1,0 +1,10 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+int() of a constant str of more than 4300 digits raises ValueError, as with
+CPython's default sys.get_int_max_str_digits().

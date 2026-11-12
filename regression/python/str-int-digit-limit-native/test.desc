@@ -1,0 +1,10 @@
+CORE
+main.py
+--python-unbounded-ints --python-smt-strings --cvc5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+str() and f-strings of unbounded ints are exact, and raise ValueError beyond
+4300 digits.

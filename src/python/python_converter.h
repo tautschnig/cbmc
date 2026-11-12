@@ -3483,6 +3483,14 @@ private:
     const std::optional<exprt> &start,
     const std::optional<exprt> &end);
   exprt native_string_of_int(const exprt &n);
+  /// Raise the ValueError of CPython's limit of 4300 digits on conversions
+  /// between int and str when \p exceeds holds: always from Python 3.11, and
+  /// possibly (depending on the security release) from 3.7.
+  void emit_int_digit_limit(const exprt &exceeds);
+  /// str(n) of an int \p n of either back end, for any int type: exact for
+  /// constants and within the range of int64, a nondet string beyond (with
+  /// the ValueError of the digit limit).
+  exprt python_string_of_int(const exprt &n, const source_locationt &loc);
   /// removeprefix/removesuffix, and ljust/rjust/center/zfill with a
   /// constant one-character fill, of a native SMT string \p s; nullopt for
   /// other methods or argument shapes.
