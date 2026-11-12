@@ -257,6 +257,42 @@ string_constraint_generatort::add_axioms_for_code_point_count(
   return {result, constraints};
 }
 
+/// Whether all characters of a string are below 128, the characters that
+/// are one code point each in UTF-8 and UTF-16.
+///   * \f$ res \Rightarrow \forall i < |s|.\ s[i] < 128 \f$
+///   * \f$ \lnot res \Rightarrow \exists w.\ 0 \le w < |s| \land
+///         s[w] \ge 128 \f$
+/// \param f: function application with a string argument
+/// \return a Boolean expression
+std::pair<exprt, string_constraintst>
+string_constraint_generatort::add_axioms_for_is_ascii(
+  const function_application_exprt &f)
+{
+  PRECONDITION(f.arguments().size() == 1);
+  string_constraintst constraints;
+  const array_string_exprt str = get_string_expr(array_pool, f.arguments()[0]);
+  const typet &index_type = str.length_type();
+  const exprt length = array_pool.get_or_create_length(str);
+  const typet &char_type = to_type_with_subtype(str.content().type()).subtype();
+  const exprt bound = from_integer(128, char_type);
+  const symbol_exprt res = fresh_symbol("is_ascii");
+  const symbol_exprt qvar = fresh_symbol("QA_is_ascii", index_type);
+  constraints.universal.emplace_back(
+    qvar,
+    zero_if_negative(length),
+    implies_exprt{res, binary_relation_exprt{str[qvar], ID_lt, bound}},
+    ns,
+    message_handler);
+  const symbol_exprt witness = fresh_symbol("is_ascii_witness", index_type);
+  constraints.existential.push_back(implies_exprt{
+    not_exprt{res},
+    conjunction(
+      {binary_relation_exprt{witness, ID_ge, from_integer(0, index_type)},
+       binary_relation_exprt{witness, ID_lt, length},
+       binary_relation_exprt{str[witness], ID_ge, bound}})});
+  return {typecast_exprt::conditional_cast(res, f.type()), constraints};
+}
+
 /// Add axioms for the result of the String.offsetByCodePoints java function,
 /// exact for a string without surrogate pairs. Otherwise the result is
 /// between index + offset and index + 2 * offset.

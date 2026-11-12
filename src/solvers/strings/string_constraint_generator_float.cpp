@@ -84,6 +84,17 @@ string_constraintst string_constraint_generatort::float_string_axioms(
     format == float_formatt::JAVA || format == float_formatt::PYTHON;
 
   const auto bounds = float_string_length_bounds(single, format);
+  // The characters are ASCII (digits, signs, the point, the exponent mark,
+  // and the letters of inf and nan).
+  {
+    const symbol_exprt qvar = fresh_symbol("QA_float_ascii", index_type);
+    constraints.universal.emplace_back(
+      qvar,
+      zero_if_negative(length),
+      binary_relation_exprt{res[qvar], ID_lt, from_integer(128, char_type)},
+      ns,
+      message_handler);
+  }
   constraints.existential.push_back(and_exprt{
     binary_relation_exprt{
       length, ID_ge, from_integer(bounds.first, index_type)},

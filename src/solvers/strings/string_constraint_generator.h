@@ -318,6 +318,8 @@ public:
   DEPRECATED(SINCE(2017, 10, 5, "Java specific, should be implemented in Java"))
   std::pair<exprt, string_constraintst>
   add_axioms_for_code_point_count(const function_application_exprt &f);
+  std::pair<exprt, string_constraintst>
+  add_axioms_for_is_ascii(const function_application_exprt &f);
 
   /// Add axioms corresponding the String.offsetByCodePointCount java function
   /// \todo This function is underspecified, it should return the index within
