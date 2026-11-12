@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Invariant check failed
+--
+Set displays, set comprehensions and set() drop equal elements, deciding
+equality of non-constant elements at run time.

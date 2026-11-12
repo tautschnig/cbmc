@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 6
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] file main.py line 5 Python assertion: FAILURE$
+^\[.*\] file main.py line 7 Python assertion: FAILURE$
+^\[.*\] file main.py line 10 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+A set may have fewer elements than its display or comprehension lists.

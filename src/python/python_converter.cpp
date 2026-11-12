@@ -7047,6 +7047,15 @@ exprt python_convertert::convert_expression_impl(const jsont &expr)
   {
     // PLR §6.2.6: Set displays — bitmap for int sets, list for others
     const jsont &elts = json_member(expr, "elts");
+    // The elements are converted more than once below: evaluate those with
+    // a call once.
+    std::vector<const jsont *> elts_with_calls;
+    if(elts.is_array())
+      for(const auto &elt : as_array(elts))
+        if(json_has_call(elt))
+          elts_with_calls.push_back(&elt);
+    const evaluate_argumentst evaluate_elements{
+      evaluated_arguments, elts_with_calls};
     if(!elts.is_array() || as_array(elts).empty())
     {
       result = struct_exprt{
@@ -7231,7 +7240,18 @@ exprt python_convertert::convert_expression_impl(const jsont &expr)
             }
           }
         }
-        if(uniq.size() != total)
+        bool symbolic_elt = false;
+        for(const auto &k : ukeys)
+          if(!k.has_value())
+            symbolic_elt = true;
+        // An element without a canonical key may equal another element at
+        // run time: deduplicate at run time.
+        exprt runtime_set = symbolic_elt
+                              ? set_of_elements(uniq, ukeys, get_location(expr))
+                              : exprt{nil_exprt{}};
+        if(runtime_set.is_not_nil())
+          result = std::move(runtime_set);
+        else if(uniq.size() != total)
         {
           // A duplicate was removed. Build the deduped set-semantic list: keep
           // a str element type when every element is a string (unchanged), else
@@ -7258,7 +7278,8 @@ exprt python_convertert::convert_expression_impl(const jsont &expr)
           const auto &data_t = to_array_type(list_st.components()[1].type());
           exprt::operandst ops;
           for(auto &e : uniq)
-            ops.push_back((as_str || all_ptr) ? e : wrap_value(e));
+            ops.push_back(coerce_element(
+              (as_str || all_ptr) ? e : wrap_value(e), data_t.element_type()));
           struct_exprt se{
             {from_integer((long)uniq.size(), signedbv_typet{64}),
              build_list_data(std::move(ops), data_t)},
@@ -7316,6 +7337,7 @@ exprt python_convertert::convert_expression_impl(const jsont &expr)
           mp_integer v;
           if(
             !e.is_constant() || e.type().id() != ID_signedbv ||
+            is_python_string_handle_type(e.type()) ||
             to_integer(to_constant_expr(e), v) || v < 0 || v >= 64)
           {
             all_small_int = false;
@@ -7335,8 +7357,33 @@ exprt python_convertert::convert_expression_impl(const jsont &expr)
              from_integer(popcount, signedbv_typet{64})},
             python_set_type()};
         }
+        else if(!entries->empty())
+        {
+          // PLR §6.2.6: equal elements are dropped (decided at run time for
+          // those without a canonical key).
+          std::vector<exprt> elems;
+          std::vector<std::optional<std::string>> keys;
+          for(const exprt &e : *entries)
+          {
+            // A native string handle is compared by its string.
+            elems.push_back(e);
+            keys.push_back(canonical_key(
+              is_python_string_handle_type(e.type())
+                ? string_handle_to_string(e)
+                : e));
+          }
+          exprt deduped = set_of_elements(elems, keys, get_location(expr));
+          if(deduped.is_not_nil())
+            result = std::move(deduped);
+        }
       }
     }
+    // A comprehension lowered to a loop yields a list held in a symbol.
+    if(
+      node_type == "SetComp" && result.id() == ID_symbol &&
+      is_python_list_type(result.type()) &&
+      set_semantic_symbols.count(to_symbol_expr(result).get_identifier()) == 0)
+      result = set_of_list(result, get_location(expr));
   }
   // PLR §6.2.7: dict comprehension. Built on top of the same
   // generator/unrolling logic as list comprehensions but emits a

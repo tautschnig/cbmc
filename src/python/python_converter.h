@@ -2700,6 +2700,26 @@ private:
     const exprt &b,
     std::vector<codet> *sink = nullptr);
 
+  /// Python equality of two list elements as stored in a list's data array:
+  /// container_slot_equal, after reading a native string-id handle back as
+  /// its string (two handles of equal strings need not be equal).
+  exprt list_element_equal(const exprt &a, const exprt &b);
+
+  /// The set of the elements \p elems (PLR §6.2.6: later elements equal to
+  /// an earlier one are dropped), as a set-semantic list held in a fresh
+  /// symbol. \p keys holds the canonical_key of each element: pairs with
+  /// known keys are compared at conversion time, the others at run time.
+  /// Returns nil when the elements have no common list representation.
+  exprt set_of_elements(
+    const std::vector<exprt> &elems,
+    const std::vector<std::optional<std::string>> &keys,
+    const source_locationt &loc);
+
+  /// The set of the elements of the list value \p list (PLR §6.2.6), as a
+  /// set-semantic list held in a fresh symbol: elements equal to an earlier
+  /// element are dropped, deciding equality at run time.
+  exprt set_of_list(const exprt &list, const source_locationt &loc);
+
   /// Guarded per-slot key match for a bounded dict scan:
   /// (i < length) AND container_slot_equal(unbox(keys[i]),
   /// unbox(probe)). The single spelling of the dict-lookup step

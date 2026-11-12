@@ -80,6 +80,184 @@ exprt python_convertert::container_slot_equal(
   return equal_exprt{a, rhs};
 }
 
+exprt python_convertert::list_element_equal(const exprt &a, const exprt &b)
+{
+  const exprt as =
+    is_python_string_handle_type(a.type()) ? string_handle_to_string(a) : a;
+  const exprt bs =
+    is_python_string_handle_type(b.type()) ? string_handle_to_string(b) : b;
+  return container_slot_equal(as, bs);
+}
+
+exprt python_convertert::set_of_elements(
+  const std::vector<exprt> &elems,
+  const std::vector<std::optional<std::string>> &keys,
+  const source_locationt &loc)
+{
+  PRECONDITION(elems.size() == keys.size());
+  if(
+    elems.empty() ||
+    (!python_smt_containers_flag() && elems.size() > PYTHON_MAX_LIST_LENGTH))
+    return nil_exprt{};
+
+  // A common element type: the elements' own type when they agree, else a
+  // python_value boxing each scalar.
+  auto scalar = [](const typet &t)
+  {
+    return t.id() == ID_signedbv || t.id() == ID_unsignedbv ||
+           t.id() == ID_floatbv || t.id() == ID_bool ||
+           is_python_string_type(t) || is_python_value_type(t);
+  };
+  bool same_type = true;
+  for(const exprt &e : elems)
+  {
+    if(!scalar(e.type()))
+      return nil_exprt{};
+    if(e.type() != elems.front().type())
+      same_type = false;
+  }
+  const typet elem_t =
+    same_type ? elems.front().type() : typet{python_value_type()};
+  const struct_typet list_t = python_list_type(elem_t);
+  const array_typet &data_t = to_array_type(list_t.components()[1].type());
+  const typet &stored_t = data_t.element_type();
+
+  static unsigned set_ctr = 0;
+  auto fresh = [&](const std::string &prefix, const typet &t)
+  {
+    const irep_idt id{qualify_name(prefix + std::to_string(set_ctr++))};
+    symbolt s{id, t, "python"};
+    s.base_name = id2string(id);
+    s.is_lvalue = true;
+    s.is_state_var = true;
+    s.is_static_lifetime = current_function.empty();
+    symbol_table.add(s);
+    return symbol_table.lookup_ref(id).symbol_expr();
+  };
+
+  // Evaluate each element once: it is both stored and compared.
+  std::vector<exprt> stored;
+  for(const exprt &e : elems)
+  {
+    exprt s = same_type ? e : wrap_value(e);
+    s = coerce_element(s, stored_t);
+    if(!s.is_constant() && s.id() != ID_symbol)
+    {
+      const symbol_exprt t = fresh("__set_elem_", s.type());
+      pending_checks.push_back(code_frontend_assignt{t, std::move(s)});
+      s = t;
+    }
+    stored.push_back(std::move(s));
+  }
+
+  const symbol_exprt result = fresh("__set_of_", list_t);
+  pending_checks.push_back(
+    code_frontend_assignt{result, side_effect_expr_nondett{list_t, loc}});
+  const signedbv_typet i64{64};
+  const member_exprt length{result, "length", i64};
+  const member_exprt data{result, "data", data_t};
+  pending_checks.push_back(code_frontend_assignt{length, from_integer(0, i64)});
+
+  for(std::size_t i = 0; i < stored.size(); ++i)
+  {
+    // Keep the element unless an earlier element equals it.
+    exprt::operandst distinct;
+    bool duplicate = false;
+    for(std::size_t j = 0; j < i && !duplicate; ++j)
+    {
+      if(keys[i].has_value() && keys[j].has_value())
+        duplicate = *keys[i] == *keys[j];
+      else
+        distinct.push_back(not_exprt{list_element_equal(stored[j], stored[i])});
+    }
+    if(duplicate)
+      continue;
+    code_blockt add;
+    add.add(code_frontend_assignt{index_exprt{data, length}, stored[i]});
+    add.add(
+      code_frontend_assignt{length, plus_exprt{length, from_integer(1, i64)}});
+    if(distinct.empty())
+      pending_checks.push_back(std::move(add));
+    else
+      pending_checks.push_back(
+        code_ifthenelset{conjunction(std::move(distinct)), std::move(add)});
+  }
+
+  set_semantic_symbols.insert(result.get_identifier());
+  return result;
+}
+
+exprt python_convertert::set_of_list(
+  const exprt &list,
+  const source_locationt &loc)
+{
+  PRECONDITION(is_python_list_type(list.type()));
+  const auto &list_st = to_struct_type(list.type());
+  const auto &data_type = to_array_type(list_st.components()[1].type());
+  const signedbv_typet i64{64};
+
+  static unsigned set_ctr = 0;
+  auto fresh = [&](const std::string &prefix, const typet &t)
+  {
+    const irep_idt id{qualify_name(prefix + std::to_string(set_ctr++))};
+    symbolt s{id, t, "python"};
+    s.base_name = id2string(id);
+    s.is_lvalue = true;
+    s.is_state_var = true;
+    s.is_static_lifetime = current_function.empty();
+    symbol_table.add(s);
+    return symbol_table.lookup_ref(id).symbol_expr();
+  };
+
+  // The source is read many times: evaluate it once.
+  exprt src = list;
+  if(src.id() != ID_symbol)
+  {
+    const symbol_exprt t = fresh("__set_src_", list.type());
+    pending_checks.push_back(code_frontend_assignt{t, list});
+    src = t;
+  }
+  const member_exprt src_data{src, "data", data_type};
+  const member_exprt src_len{src, "length", i64};
+  // Only the first PYTHON_MAX_LIST_LENGTH elements are scanned.
+  emit_scan_bound_guard(src_len, loc, -1);
+
+  const symbol_exprt tmp = fresh("__set_", list.type());
+  const member_exprt dst_data{tmp, "data", data_type};
+  const member_exprt dst_len{tmp, "length", i64};
+  pending_checks.push_back(
+    code_frontend_assignt{dst_len, from_integer(0, i64)});
+
+  // Add each element not equal to one already added.
+  for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+  {
+    const exprt idx = from_integer(i, i64);
+    const exprt elem = index_exprt{src_data, idx};
+    const symbol_exprt found = fresh("__set_found_", bool_typet{});
+    pending_checks.push_back(code_frontend_assignt{found, false_exprt{}});
+    for(std::size_t j = 0; j < i; j++)
+    {
+      const exprt jdx = from_integer(j, i64);
+      const exprt j_in_result = binary_relation_exprt{jdx, ID_lt, dst_len};
+      const exprt match = list_element_equal(index_exprt{dst_data, jdx}, elem);
+      pending_checks.push_back(code_ifthenelset{
+        and_exprt{j_in_result, match},
+        code_frontend_assignt{found, true_exprt{}}});
+    }
+    code_blockt add_block;
+    add_block.add(code_frontend_assignt{index_exprt{dst_data, dst_len}, elem});
+    add_block.add(code_frontend_assignt{
+      dst_len, plus_exprt{dst_len, from_integer(1, i64)}});
+    pending_checks.push_back(code_ifthenelset{
+      and_exprt{binary_relation_exprt{idx, ID_lt, src_len}, not_exprt{found}},
+      std::move(add_block)});
+  }
+
+  // PLR §3.2: equality treats the result as a multiset.
+  set_semantic_symbols.insert(tmp.get_identifier());
+  return tmp;
+}
+
 exprt python_convertert::dict_slot_match(
   const exprt &keys_array,
   const exprt &length,

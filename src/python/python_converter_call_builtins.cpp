@@ -2811,7 +2811,10 @@ std::optional<exprt> python_convertert::try_builtin_call(
         is_python_list_type(arg.type()) &&
         to_array_type(to_struct_type(arg.type()).components()[1].type())
             .element_type()
-            .id() == ID_signedbv)
+            .id() == ID_signedbv &&
+        !is_python_string_handle_type(
+          to_array_type(to_struct_type(arg.type()).components()[1].type())
+            .element_type()))
       {
         const auto &list_st = to_struct_type(arg.type());
         const auto &data_type = to_array_type(list_st.components()[1].type());
@@ -2858,82 +2861,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
           {bm, from_integer(0, signedbv_typet{64})}, python_set_type()};
       }
       if(is_python_list_type(arg.type()))
-      {
-        const auto &list_st = to_struct_type(arg.type());
-        const auto &data_type = to_array_type(list_st.components()[1].type());
-        member_exprt src_data{arg, "data", data_type};
-        member_exprt src_len{arg, "length", signedbv_typet{64}};
-
-        // Create result list
-        static unsigned set_counter = 0;
-        std::string tmp_name = "__set_" + std::to_string(set_counter++);
-        std::string tmp_qname = qualify_name(tmp_name);
-        irep_idt tmp_id{tmp_qname};
-        if(symbol_table.lookup(tmp_id) == nullptr)
-        {
-          symbolt tmp_sym{tmp_id, arg.type(), "python"};
-          tmp_sym.base_name = tmp_name;
-          tmp_sym.is_lvalue = true;
-          tmp_sym.is_state_var = true;
-          symbol_table.add(tmp_sym);
-        }
-        symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
-        member_exprt dst_data{tmp, "data", data_type};
-        member_exprt dst_len{tmp, "length", signedbv_typet{64}};
-
-        // Initialize result length to 0
-        pending_checks.push_back(
-          code_frontend_assignt{dst_len, from_integer(0, signedbv_typet{64})});
-
-        // For each input element, check if already in result
-        for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
-        {
-          exprt idx = from_integer(i, signedbv_typet{64});
-          exprt in_bounds = binary_relation_exprt{idx, ID_lt, src_len};
-          exprt elem = index_exprt{src_data, idx};
-
-          // Check if elem is already in result[0..dst_len)
-          // Build: found = result[0]==elem || result[1]==elem || ...
-          static unsigned found_ctr = 0;
-          std::string fn = "__set_found_" + std::to_string(found_ctr++);
-          std::string fq = qualify_name(fn);
-          irep_idt fi{fq};
-          if(symbol_table.lookup(fi) == nullptr)
-          {
-            symbolt fs{fi, bool_typet{}, "python"};
-            fs.base_name = fn;
-            fs.is_lvalue = true;
-            fs.is_state_var = true;
-            symbol_table.add(fs);
-          }
-          symbol_exprt found = symbol_table.lookup_ref(fi).symbol_expr();
-          pending_checks.push_back(code_frontend_assignt{found, false_exprt{}});
-
-          for(std::size_t j = 0; j < PYTHON_MAX_LIST_LENGTH; j++)
-          {
-            exprt jdx = from_integer(j, signedbv_typet{64});
-            exprt j_in_result = binary_relation_exprt{jdx, ID_lt, dst_len};
-            exprt match = equal_exprt{index_exprt{dst_data, jdx}, elem};
-            pending_checks.push_back(code_ifthenelset{
-              and_exprt{j_in_result, match},
-              code_frontend_assignt{found, true_exprt{}}});
-          }
-
-          // If not found and in bounds, add to result
-          code_blockt add_block;
-          add_block.add(
-            code_frontend_assignt{index_exprt{dst_data, dst_len}, elem});
-          add_block.add(code_frontend_assignt{
-            dst_len, plus_exprt{dst_len, from_integer(1, signedbv_typet{64})}});
-          pending_checks.push_back(code_ifthenelset{
-            and_exprt{in_bounds, not_exprt{found}}, std::move(add_block)});
-        }
-
-        // PLR §3.2: tag the resulting symbol as set-semantic so
-        // equality comparison treats it as a multiset.
-        set_semantic_symbols.insert(tmp_id);
-        return std::move(tmp);
-      }
+        return set_of_list(arg, get_location(expr));
     }
     // PLR §6.10.2: set() with no argument (or with a non-list
     // argument we can't statically expand) returns an empty set.
