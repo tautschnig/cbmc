@@ -1235,6 +1235,79 @@ and an acquire load in the handler.
 This is in the shared `ena_com` layer, so it reads the same in all three
 drivers.
 
+## F22: the fast-free cleanup path's bounds invariant depends on an unvalidated mbuf field (DPDK ENA)
+
+Found by proving the one cleanup path every earlier harness excluded. All of
+them set `offloads == 0`, so the `RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE` branch of
+`ena_tx_cleanup` had never been verified.
+
+That branch batches completions instead of freeing them individually
+(`ena_ethdev.c:3233-3241`):
+
+```c
+if (fast_free) {
+        pkts_to_clean[pkt_cnt++] = mbuf;
+        mbuf_cnt += mbuf->nb_segs;
+        if (mbuf_cnt >= ENA_CLEANUP_BUF_THRESH) {   /* 256 */
+                rte_pktmbuf_free_bulk(pkts_to_clean, pkt_cnt);
+                mbuf_cnt = 0;
+                pkt_cnt = 0;
+        }
+}
+```
+
+`pkts_to_clean` is a local array of 256 pointers and **nothing bounds
+`pkt_cnt` directly**. What keeps the write in bounds is the loop-head pair
+
+```
+pkt_cnt <= mbuf_cnt   and   mbuf_cnt < 256
+```
+
+because the flush resets both as soon as `mbuf_cnt` reaches 256, and each
+iteration adds 1 to `pkt_cnt` and `nb_segs` to `mbuf_cnt`. The first conjunct
+holds **only while `nb_segs >= 1`**.
+
+**`nb_segs == 0` is not rejected anywhere on the way in.**
+`eth_ena_prep_pkts` checks only the upper bound, `m->nb_segs >= sgl_size`
+(`ena_ethdev.c:2910`); `ena_xmit_mbuf` uses `mbuf->nb_segs + 2` for its space
+check (`:3141`) and is satisfied by 2. So a zero-segment mbuf passes
+validation, is stored in a slot, and reaches the accounting above.
+
+**Evidence.** `proof/harness_cleanup_fastfree.c` with
+`proof/run_cleanup_fastfree.sh` takes one iteration of the branch from an
+arbitrary state satisfying the invariant:
+
+| configuration | FF_INDEX | FF_INV | FF_BULK |
+|---|---|---|---|
+| arbitrary mbuf | SUCCESS | **FAILURE** | SUCCESS |
+| `nb_segs >= 1` assumed (DPDK's contract) | SUCCESS | SUCCESS | SUCCESS |
+
+Both vacuity witnesses FAIL in each configuration, confirming a flush is
+reachable. No other failing property, no reached bodyless callee.
+
+**What is and is not shown.** What is machine-checked is that the invariant
+bounding the write is *not preserved* by one iteration when `nb_segs` may be
+0. The overflow itself is not machine-checked: it needs the broken invariant
+to compound over at least 256 completions without a flush, which also needs a
+ring or a caller-supplied `free_pkt_cnt` above 256. Proving that directly
+would require unwinding 256 iterations, which is why the invariant was checked
+step-wise instead. The step-wise result is the sound part; the overflow is the
+consequence of the bound it establishes being the only thing protecting the
+write.
+
+**Fix.** Either reject `nb_segs == 0` in `eth_ena_prep_pkts` (which would also
+address F15, the zero-length packet), or bound the batch directly in the
+cleanup loop — `if (pkt_cnt == ENA_CLEANUP_BUF_THRESH) flush;` — so the array
+write does not depend on an application-supplied field at all. The second is
+the more robust shape, since it removes the dependency rather than validating
+it.
+
+**Severity.** Needs three things together: the fast-free offload enabled, a
+malformed mbuf with `nb_segs == 0`, and a ring or cleanup budget above 256. No
+device misbehaviour. It is the second consequence found of the driver not
+validating mbuf geometry — F15 was the first — and the more serious of the
+two, since the eventual write is to a stack array rather than a ring slot.
+
 ## Observation: the reset-request handshake is an unsynchronised read-modify-write
 
 Not reported as a finding: the consequence is a wrong reset reason, not
