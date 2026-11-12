@@ -82,6 +82,94 @@ Fixed: the wrapper now traps `TERM`/`INT`, kills its child, writes a
 directions — a timed-out run logs `TIMEOUT`, a normal run still logs the full
 phase breakdown, and no orphan solver is left behind.
 
+
+## SMT2 backends: works, fails, CPU and memory
+
+Measured across five models and eight backends (45 runs), with CPU and peak
+RSS from `/usr/bin/time` so the SMT2 child processes are included. Raw data in
+`proof/metrics/solver-bench.csv`.
+
+### Does it work at all
+
+| backend | kind | successful | crash | cannot decide | timeout |
+|---|---|---|---|---|---|
+| minisat2 | SAT | 5 | – | – | – |
+| cadical | SAT | 5 | – | – | – |
+| glucose | SAT | 5 | – | – | – |
+| **bitwuzla** | SMT2 | **6** | – | – | – |
+| z3 | SMT2 | 1 | 4 | – | 1 |
+| `--smt2` (default Z3) | SMT2 | 1 | 4 | – | 1 |
+| cvc5 | SMT2 | 1 | 4 | 1 | – |
+| cprover-smt2 | SMT2 | – | – | 6 | – |
+
+**Only one SMT2 backend is usable on this code: Bitwuzla.** It solved
+everything put to it and agreed with the SAT backends every time. The reason
+it differs from the others is that `--bitwuzla` goes through CBMC's native API
+binding, while `--z3`, `--cvc5` and `--smt2` go through the SMT2 *text*
+writer — and that writer is where the bug is.
+
+* **Z3, CVC5 and `--smt2` crash with `map::at`** on four of five models. They
+  succeed only on `aenq`, the one model that does not `#include ena_ethdev.c`
+  and therefore lacks DPDK's large `rte_eth_devices` arrays and anonymous
+  unions. So it is a property of the model, and the failing models are the
+  normal case for driver work.
+* **`cprover-smt2` decides nothing on any model.** It returns `ERROR` for the
+  byte-extract properties over the driver's anonymous unions — the same
+  limitation that makes `--pointer-check` report ERROR there — so every run
+  came back `VERIFICATION ERROR`.
+
+### Cost, where a verdict was reached
+
+| model | props | minisat2 | cadical | glucose | bitwuzla | z3 |
+|---|---|---|---|---|---|---|
+| `freelist_eq` ring 4 | 7128 | 2.7 s | 2.5 s | 2.7 s | 3.1 s | crash |
+| `aenq` depth 4 | 11808 | **7.1 s** | 8.8 s | 7.1 s | 42.6 s | 8.8 s |
+| `cleanup_step` p2 ring 8 | 6709 | **13.4 s** | 21.8 s | 13.4 s | 20.9 s | crash |
+| `admin_cq` depth 4 | — | **24.0 s** | 63.4 s | 24.4 s | 304.7 s | timeout |
+| `xmit_step` p1 ring 8 | 7689 | **38.4 s** | 171.4 s | 38.2 s | 64.3 s | crash |
+
+**Bitwuzla is 1.1–12.7× slower than MiniSat2** where both finish, worst on
+`admin_cq`. So it is a usable cross-check, not a faster option.
+
+### Memory
+
+Worst-case peak RSS per backend across the five models:
+
+| backend | peak RSS |
+|---|---|
+| z3 / cvc5 / `--smt2` | **2409 MB** |
+| bitwuzla | 1522 MB |
+| cadical | 770 MB |
+| minisat2 / glucose | 432 MB |
+| cprover-smt2 | 410 MB |
+
+The SMT2 text backends cost **5.6× the memory of MiniSat2** and, on these
+models, mostly crash before using it productively. CaDiCaL also costs 1.8×
+MiniSat2's memory — consistent with it being slower here rather than trading
+memory for speed.
+
+### A caveat on SMT2 CPU figures
+
+For `z3` and `--smt2` on `admin_cq` the wall/CPU ratio is 6.8 (1800 s wall,
+265 s CPU). CBMC writes an SMT2 file and invokes the solver as a separate
+process, and `/usr/bin/time` on CBMC does not reliably attribute a
+grandchild's CPU. **So CPU for the SMT2 text backends is an underestimate and
+only their wall time and RSS should be compared.** Bitwuzla, being in-process,
+reports wall and CPU within 0.1% of each other and is directly comparable.
+
+### Conclusion for this project
+
+* Default to **MiniSat2**; Glucose is interchangeable.
+* Keep **Bitwuzla** as an independent cross-check on any result that matters,
+  since it is a genuinely different decision procedure that agreed on all six
+  runs. It costs several times the time and memory, so use it on final runs
+  only.
+* **Do not use the SMT2 text backends on driver models** until the `map::at`
+  bug is fixed.
+* The `map::at` crash and the `cprover-smt2` anonymous-union `ERROR` are both
+  worth minimal reproducers and upstream reports, separate from the two
+  commits already queued.
+
 ## How to repeat this
 
 ```sh
@@ -89,5 +177,13 @@ metrics/solver_bench.sh MODEL.gb LABEL [cbmc flags...]
 ```
 
 Run it on any artefact that takes more than a minute, before deciding the
-backend. The script checks verdicts as well as times, so a backend that
-disagrees shows up as a discrepancy rather than a speedup.
+backend. The script records outcome, wall, CPU and peak RSS, and classifies
+non-verdicts as `CRASH`, `ERROR`, `UNSUPPORTED`, `TIMEOUT` or `OOM` rather
+than lumping them together — the distinction matters, as the SMT2 results
+above show. Verdicts are recorded too, so a backend that disagrees shows up as
+a discrepancy rather than a speedup.
+
+`BACKENDS` overrides the list; spaces inside an option are written as `~`,
+because the list is word-split. (The first version of the script did not do
+this, and the resulting three bogus `CRASH` rows for the SAT backends were
+purged from the CSV once identified.)
