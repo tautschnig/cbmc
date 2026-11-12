@@ -1920,6 +1920,31 @@ private:
   /// See convert_expression: the argument nodes of the method calls being
   /// converted, with their conversions once converted.
   std::map<const jsont *, std::optional<exprt>> evaluated_arguments;
+  /// Registers argument nodes in evaluated_arguments for its lifetime.
+  class evaluate_argumentst
+  {
+  public:
+    evaluate_argumentst(
+      std::map<const jsont *, std::optional<exprt>> &nodes,
+      const std::vector<const jsont *> &arguments)
+      : nodes(nodes)
+    {
+      for(const jsont *a : arguments)
+        if(nodes.emplace(a, std::nullopt).second)
+          added.push_back(a);
+    }
+    evaluate_argumentst(const evaluate_argumentst &) = delete;
+    evaluate_argumentst &operator=(const evaluate_argumentst &) = delete;
+    ~evaluate_argumentst()
+    {
+      for(const jsont *a : added)
+        nodes.erase(a);
+    }
+
+  private:
+    std::map<const jsont *, std::optional<exprt>> &nodes;
+    std::vector<const jsont *> added;
+  };
   /// The nesting of the expressions being converted (see
   /// convert_expression).
   unsigned expression_depth = 0;

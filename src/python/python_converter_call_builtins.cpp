@@ -309,6 +309,106 @@ std::optional<exprt> python_convertert::try_builtin_call(
   const std::string &func_name,
   const jsont &args)
 {
+  // A builtin called with too few or too many positional arguments raises
+  // TypeError.
+  if(args.is_array())
+  {
+    static const std::map<std::string, std::pair<std::size_t, std::size_t>>
+      arity = {
+        {"abs", {1, 1}},        {"all", {1, 1}},        {"any", {1, 1}},
+        {"ascii", {1, 1}},      {"bin", {1, 1}},        {"bool", {0, 1}},
+        {"callable", {1, 1}},   {"chr", {1, 1}},        {"divmod", {2, 2}},
+        {"enumerate", {1, 2}},  {"float", {0, 1}},      {"hash", {1, 1}},
+        {"hex", {1, 1}},        {"id", {1, 1}},         {"int", {0, 2}},
+        {"isinstance", {2, 2}}, {"issubclass", {2, 2}}, {"iter", {1, 2}},
+        {"len", {1, 1}},        {"list", {0, 1}},       {"tuple", {0, 1}},
+        {"set", {0, 1}},        {"frozenset", {0, 1}},  {"dict", {0, 1}},
+        {"next", {1, 2}},       {"oct", {1, 1}},        {"ord", {1, 1}},
+        {"pow", {2, 3}},        {"repr", {1, 1}},       {"reversed", {1, 1}},
+        {"round", {1, 2}},      {"sorted", {1, 1}},     {"sum", {1, 2}},
+        {"range", {1, 3}},      {"format", {1, 2}},     {"getattr", {2, 3}},
+        {"setattr", {3, 3}},    {"hasattr", {2, 2}},    {"delattr", {2, 2}},
+        {"filter", {2, 2}},     {"min", {1, SIZE_MAX}}, {"max", {1, SIZE_MAX}},
+        {"map", {2, SIZE_MAX}}};
+    const auto a = arity.find(func_name);
+    if(a != arity.end())
+    {
+      bool starred = false;
+      for(const auto &x : as_array(args))
+        starred = starred || is_node_type(x, "Starred");
+      const jsont &kws = json_member(expr, "keywords");
+      const bool keywords = kws.is_array() && !as_array(kws).empty();
+      const std::size_t n = as_array(args).size();
+      if(
+        !starred &&
+        (n > a->second.second || (!keywords && n < a->second.first)))
+        emit_conditional_exception(true_exprt{}, "TypeError");
+    }
+  }
+  // A builtin that iterates over an argument raises TypeError for one that
+  // is not iterable (a number, a bool, None or a complex). The argument is
+  // converted once here, and the handlers below reuse the conversion.
+  std::optional<evaluate_argumentst> evaluated;
+  if(args.is_array() && !as_array(args).empty())
+  {
+    static const std::set<std::string> first_iterated = {
+      "list",
+      "tuple",
+      "set",
+      "frozenset",
+      "dict",
+      "iter",
+      "sorted",
+      "sum",
+      "enumerate",
+      "any",
+      "all",
+      "reversed"};
+    std::vector<const jsont *> iterated;
+    const auto &a = as_array(args);
+    if(first_iterated.count(func_name))
+      iterated.push_back(&*a.begin());
+    else if(func_name == "zip")
+      for(const auto &x : a)
+        iterated.push_back(&x);
+    else if((func_name == "min" || func_name == "max") && a.size() == 1)
+      iterated.push_back(&*a.begin());
+    else if((func_name == "map" || func_name == "filter") && a.size() >= 2)
+      for(auto it = std::next(a.begin()); it != a.end(); ++it)
+        iterated.push_back(&*it);
+    // Displays and comprehensions are iterable, and comprehensions are
+    // converted in their own context.
+    iterated.erase(
+      std::remove_if(
+        iterated.begin(),
+        iterated.end(),
+        [&](const jsont *x)
+        {
+          return is_node_type(*x, "GeneratorExp") ||
+                 is_node_type(*x, "ListComp") || is_node_type(*x, "SetComp") ||
+                 is_node_type(*x, "DictComp") || is_node_type(*x, "List") ||
+                 is_node_type(*x, "Tuple") || is_node_type(*x, "Set") ||
+                 is_node_type(*x, "Dict") || is_node_type(*x, "Starred");
+        }),
+      iterated.end());
+    if(!iterated.empty())
+    {
+      evaluated.emplace(evaluated_arguments, iterated);
+      for(const jsont *x : iterated)
+      {
+        const exprt v = convert_expression(*x);
+        const irep_idt &id = v.type().id();
+        const bool not_iterable =
+          id == ID_signedbv || id == ID_unsignedbv || id == ID_floatbv ||
+          id == ID_bool || id == ID_c_bool || id == ID_integer ||
+          is_python_none(v, symbol_table) ||
+          (id == ID_struct &&
+           to_struct_type(v.type()).get_tag() == "python_complex");
+        if(not_iterable)
+          emit_conditional_exception(true_exprt{}, "TypeError");
+      }
+    }
+  }
   if(func_name == "map")
   {
     if(args.is_array() && as_array(args).size() >= 2)
@@ -1060,10 +1160,17 @@ std::optional<exprt> python_convertert::try_builtin_call(
       exprt arg = convert_expression(*as_array(args).begin());
       if(!arg.is_nil())
       {
+        // int(None) raises TypeError
+        if(is_python_none(arg, symbol_table))
+        {
+          emit_conditional_exception(true_exprt{}, "TypeError");
+          return side_effect_expr_nondett{
+            python_int_type(), get_location(expr)};
+        }
+
         // PLR §6.10: int(x) of a floating-point infinity raises OverflowError
         // ('cannot convert float infinity to integer'); a NaN raises
-        // ValueError ('cannot convert float NaN to integer'). Detect a
-        // constant inf/nan operand (a symbolic float is not flagged).
+        // ValueError ('cannot convert float NaN to integer').
         if(arg.type().id() == ID_floatbv)
         {
           auto dv = try_eval_double(arg);
@@ -1078,6 +1185,11 @@ std::optional<exprt> python_convertert::try_builtin_call(
             emit_conditional_exception(true_exprt{}, "ValueError");
             return side_effect_expr_nondett{
               python_int_type(), get_location(expr)};
+          }
+          if(!dv.has_value())
+          {
+            emit_conditional_exception(isinf_exprt{arg}, "OverflowError");
+            emit_conditional_exception(isnan_exprt{arg}, "ValueError");
           }
         }
 
@@ -1212,6 +1324,12 @@ std::optional<exprt> python_convertert::try_builtin_call(
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
+      // float(None) raises TypeError
+      if(is_python_none(arg, symbol_table))
+      {
+        emit_conditional_exception(true_exprt{}, "TypeError");
+        return side_effect_expr_nondett{double_type(), get_location(expr)};
+      }
       if(!arg.is_nil())
       {
         // For constant integers, use ieee_floatt for exact conversion
@@ -1599,6 +1717,15 @@ std::optional<exprt> python_convertert::try_builtin_call(
   // PLib builtins: hash/id — return nondet int
   else if(func_name == "hash")
   {
+    // The argument is evaluated; a list, dict, set or other unhashable
+    // value raises TypeError.
+    if(args.is_array() && !as_array(args).empty())
+    {
+      const exprt arg =
+        evaluate_once(convert_expression(*as_array(args).begin()));
+      if(is_unhashable_type(arg.type()))
+        emit_conditional_exception(true_exprt{}, "TypeError");
+    }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
   // chr(n) → single-character string
@@ -1613,11 +1740,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
       // type at conversion time.
       if(code_point.type().id() == ID_floatbv)
       {
-        add_check(
-          false_exprt{},
-          "exception",
-          "TypeError: an integer is required",
-          get_location(expr));
+        emit_conditional_exception(true_exprt{}, "TypeError");
       }
       // PLR §builtins: chr(i) raises ValueError when i is
       // outside [0, 0x10ffff]. Route through the
@@ -5927,11 +6050,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
           is_python_string_type(arg.type()) ||
           is_python_list_type(arg.type()) || is_python_dict_type(arg.type()))
         {
-          add_check(
-            false_exprt{},
-            "exception",
-            "TypeError: bad operand type for abs()",
-            get_location(expr));
+          emit_conditional_exception(true_exprt{}, "TypeError");
         }
         return side_effect_expr_nondett{arg.type(), get_location(expr)};
       }
@@ -6309,12 +6428,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
           const auto &tuple_st = to_struct_type(arg.type());
           if(tuple_st.components().empty())
           {
-            add_check(
-              false_exprt{},
-              "exception",
-              std::string{"ValueError: "} + func_name +
-                "() arg is an empty sequence",
-              get_location(expr));
+            emit_conditional_exception(true_exprt{}, "ValueError");
             return side_effect_expr_nondett{
               python_int_type(), get_location(expr)};
           }

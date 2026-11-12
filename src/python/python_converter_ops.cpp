@@ -751,13 +751,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
                      is_zero_const(right.operands()[1]);
       if(base_is_zero && exp_is_neg)
       {
-        // Direct property assertion (FALSE) — equivalent to a
-        // raise ZeroDivisionError that's never caught here.
-        add_check(
-          false_exprt{},
-          "exception",
-          "ZeroDivisionError: 0.0 to a negative power",
-          source_locationt{});
+        emit_conditional_exception(true_exprt{}, "ZeroDivisionError");
       }
       // PLR §6.5: complex Pow constant-fold via
       //   z**w = exp(w * log(z))
@@ -889,11 +883,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
             // PLR §6.5: (0+0j) ** w raises ZeroDivisionError
             // when w has negative real part (1/(0+0j) is
             // zero division) or any non-zero imaginary part.
-            add_check(
-              false_exprt{},
-              "exception",
-              "ZeroDivisionError: 0.0 to a negative or complex power",
-              source_locationt{});
+            emit_conditional_exception(true_exprt{}, "ZeroDivisionError");
             return side_effect_expr_nondett{ct, source_locationt{}};
           }
         }

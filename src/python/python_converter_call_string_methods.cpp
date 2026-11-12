@@ -91,6 +91,18 @@ static const std::uint16_t latin1_properties[256] = {
 /// True when the JSON AST \p j contains a call (or another expression
 /// with side effects: an assignment expression, yield or await) outside
 /// of a lambda.
+/// True when the JSON AST \p j is a comprehension, which is converted in
+/// its own context.
+static bool is_comprehension(const jsont &j)
+{
+  if(!j.is_object())
+    return false;
+  const jsont &type = j["_type"];
+  return type.is_string() &&
+         (type.value == "GeneratorExp" || type.value == "ListComp" ||
+          type.value == "SetComp" || type.value == "DictComp");
+}
+
 bool python_convertert::json_has_call(const jsont &j)
 {
   if(j.is_object())
@@ -812,35 +824,70 @@ std::optional<exprt> python_convertert::try_string_method(
   // The arguments are evaluated once, before the call: many of the
   // conversions below use an argument several times (as_str_struct reads
   // its length and data), or not at all (folding, nondet results).
-  struct evaluate_oncet
-  {
-    std::map<const jsont *, std::optional<exprt>> &nodes;
-    std::vector<const jsont *> added;
-    evaluate_oncet(
-      std::map<const jsont *, std::optional<exprt>> &n,
-      const jsont &args)
-      : nodes(n)
-    {
-      if(!args.is_array())
-        return;
-      for(const auto &a : to_json_array(args))
-        if(nodes.emplace(&a, std::nullopt).second)
-          added.push_back(&a);
-    }
-    ~evaluate_oncet()
-    {
-      for(const jsont *a : added)
-        nodes.erase(a);
-    }
-  } evaluate_arguments{evaluated_arguments, args};
+  std::vector<const jsont *> argument_nodes;
+  if(args.is_array())
+    for(const auto &a : as_array(args))
+      argument_nodes.push_back(&a);
+  const evaluate_argumentst evaluate_arguments{
+    evaluated_arguments, argument_nodes};
   // An argument with a call is evaluated now, in order, so that a
   // conversion that does not use it (folding, a nondet result) still
   // evaluates it, before the call.
   if(args.is_array())
   {
     for(const auto &a : as_array(args))
-      if(json_has_call(a))
+      if(json_has_call(a) && !is_comprehension(a))
         convert_expression(a);
+  }
+  // A call with too few or too many arguments raises TypeError.
+  {
+    static const std::map<std::string, std::pair<std::size_t, std::size_t>>
+      arity = {{"capitalize", {0, 0}},   {"casefold", {0, 0}},
+               {"center", {1, 2}},       {"count", {1, 3}},
+               {"encode", {0, 2}},       {"endswith", {1, 3}},
+               {"expandtabs", {0, 1}},   {"find", {1, 3}},
+               {"format_map", {1, 1}},   {"index", {1, 3}},
+               {"isalnum", {0, 0}},      {"isalpha", {0, 0}},
+               {"isascii", {0, 0}},      {"isdecimal", {0, 0}},
+               {"isdigit", {0, 0}},      {"isidentifier", {0, 0}},
+               {"islower", {0, 0}},      {"isnumeric", {0, 0}},
+               {"isprintable", {0, 0}},  {"isspace", {0, 0}},
+               {"istitle", {0, 0}},      {"isupper", {0, 0}},
+               {"join", {1, 1}},         {"ljust", {1, 2}},
+               {"lower", {0, 0}},        {"lstrip", {0, 1}},
+               {"partition", {1, 1}},    {"removeprefix", {1, 1}},
+               {"removesuffix", {1, 1}}, {"replace", {2, 3}},
+               {"rfind", {1, 3}},        {"rindex", {1, 3}},
+               {"rjust", {1, 2}},        {"rpartition", {1, 1}},
+               {"rsplit", {0, 2}},       {"rstrip", {0, 1}},
+               {"split", {0, 2}},        {"splitlines", {0, 1}},
+               {"startswith", {1, 3}},   {"strip", {0, 1}},
+               {"swapcase", {0, 0}},     {"title", {0, 0}},
+               {"translate", {1, 1}},    {"upper", {0, 0}},
+               {"zfill", {1, 1}}};
+    const auto a = arity.find(method_name);
+    if(a != arity.end() && args.is_array())
+    {
+      bool starred = false;
+      for(const auto &x : as_array(args))
+        starred = starred || is_node_type(x, "Starred");
+      const std::size_t n = as_array(args).size();
+      if(!starred && (n < a->second.first || n > a->second.second))
+        emit_conditional_exception(true_exprt{}, "TypeError");
+      // join iterates over its argument
+      if(
+        method_name == "join" && n == 1 && !starred &&
+        !is_comprehension(*as_array(args).begin()))
+      {
+        const exprt v = convert_expression(*as_array(args).begin());
+        const irep_idt &id = v.type().id();
+        if(
+          id == ID_signedbv || id == ID_unsignedbv || id == ID_floatbv ||
+          id == ID_bool || id == ID_c_bool || id == ID_integer ||
+          is_python_none(v, symbol_table))
+          emit_conditional_exception(true_exprt{}, "TypeError");
+      }
+    }
   }
 
   // PLib stdtypes: split/rsplit/partition/rpartition raise ValueError

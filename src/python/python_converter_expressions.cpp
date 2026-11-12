@@ -3644,6 +3644,13 @@ bool python_convertert::is_unhashable_type(const typet &t)
 {
   if(is_python_list_type(t) || is_python_dict_type(t) || is_python_set_type(t))
     return true;
+  // a tuple with an unhashable element
+  if(is_python_tuple_type(t) && t.id() == ID_struct)
+  {
+    for(const auto &c : to_struct_type(t).components())
+      if(is_unhashable_type(c.type()))
+        return true;
+  }
   // PLR §3.3.1: an instance of a class whose own body defines __eq__ without
   // __hash__ (or sets `__hash__ = None`) is unhashable.
   if(!class_eq_without_hash.empty())

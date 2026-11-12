@@ -1735,12 +1735,10 @@ std::optional<exprt> python_convertert::try_method_call(
             // these inputs, which silently swallows the bug.
             // Surface it as a property violation so callers see
             // FAIL instead of SUCCESS on NaN/inf inputs.
-            add_check(
-              not_exprt{or_exprt{isnan_exprt{math_arg}, isinf_exprt{math_arg}}},
-              "exception",
-              std::string{"ValueError: math."} + func_name +
-                "() argument must be finite",
-              get_location(expr));
+            // (math.floor/ceil of NaN raise ValueError, of an infinity
+            // OverflowError)
+            emit_conditional_exception(isnan_exprt{math_arg}, "ValueError");
+            emit_conditional_exception(isinf_exprt{math_arg}, "OverflowError");
           }
           if(func_name == "ceil")
             return plus_exprt{

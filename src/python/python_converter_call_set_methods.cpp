@@ -111,8 +111,7 @@ std::optional<exprt> python_convertert::try_set_method(
     exprt bit = shl_exprt{from_integer(1, unsignedbv_typet{64}), *shamt};
     exprt present = notequal_exprt{
       bitand_exprt{bm, bit}, from_integer(0, unsignedbv_typet{64})};
-    add_check(
-      present, "exception", "KeyError: element not in set", get_location(expr));
+    emit_conditional_exception(not_exprt{present}, "KeyError");
     exprt new_bm = bitand_exprt{bm, bitnot_exprt{bit}};
     pending_checks.push_back(code_frontend_assignt{bm, new_bm});
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
