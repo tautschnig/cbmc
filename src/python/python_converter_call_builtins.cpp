@@ -2728,9 +2728,25 @@ std::optional<exprt> python_convertert::try_builtin_call(
   // PLib stdtypes: set(iterable) — deduplicate elements
   else if(func_name == "dict")
   {
-    // dict(a=1, b=2) — construct from keyword arguments
     const jsont &keywords = json_member(expr, "keywords");
-    if(keywords.is_array() && !as_array(keywords).empty())
+    const bool has_keywords =
+      keywords.is_array() && !as_array(keywords).empty();
+    // dict(mapping) or dict(iterable of pairs)
+    if(args.is_array() && as_array(args).size() == 1 && !has_keywords)
+    {
+      const exprt arg = convert_expression(*as_array(args).begin());
+      // a copy of the dict
+      if(is_python_dict_type(arg.type()))
+        return arg;
+      if(is_python_list_type(arg.type()))
+      {
+        exprt d = dict_of_pairs(arg, get_location(expr));
+        if(d.is_not_nil())
+          return d;
+      }
+    }
+    // dict(a=1, b=2) — construct from keyword arguments
+    if(has_keywords && (!args.is_array() || as_array(args).empty()))
     {
       typet dict_type =
         python_dict_type(python_string_type(), python_int_type());

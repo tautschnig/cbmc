@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+uncaught exception: FAILURE
+--
+dict() of a list of pairs and of a dict.

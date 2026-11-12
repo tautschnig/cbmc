@@ -2735,6 +2735,12 @@ private:
   exprt
   join_list(const exprt &sep, const exprt &list, const source_locationt &loc);
 
+  /// dict(list) of a list of pairs (2-tuples) \p list: built by
+  /// build_dict_value when its elements are known, and otherwise by storing
+  /// the pairs one by one (a later value of a key replaces an earlier one).
+  /// Returns nil for lists of other elements.
+  exprt dict_of_pairs(const exprt &list, const source_locationt &loc);
+
   /// Guarded per-slot key match for a bounded dict scan:
   /// (i < length) AND container_slot_equal(unbox(keys[i]),
   /// unbox(probe)). The single spelling of the dict-lookup step

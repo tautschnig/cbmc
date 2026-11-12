@@ -1861,3 +1861,88 @@ exprt python_convertert::join_list(
   }
   return joined;
 }
+
+exprt python_convertert::dict_of_pairs(
+  const exprt &list_in,
+  const source_locationt &loc)
+{
+  PRECONDITION(is_python_list_type(list_in.type()));
+  const signedbv_typet i64{64};
+  const auto &data_type =
+    to_array_type(to_struct_type(list_in.type()).components()[1].type());
+  const typet &pair_type = data_type.element_type();
+  if(
+    !is_python_tuple_type(pair_type) || pair_type.id() != ID_struct ||
+    to_struct_type(pair_type).components().size() != 2)
+    return nil_exprt{};
+  const auto &comps = to_struct_type(pair_type).components();
+  const typet &key_type = comps[0].type();
+  const typet &value_type = comps[1].type();
+  if(is_unhashable_type(key_type))
+  {
+    emit_conditional_exception(true_exprt{}, "TypeError");
+    return side_effect_expr_nondett{
+      python_dict_type(python_value_type(), value_type), loc};
+  }
+  auto key_of = [&](const exprt &pair) {
+    return member_exprt{pair, comps[0].get_name(), key_type};
+  };
+  auto value_of = [&](const exprt &pair) {
+    return member_exprt{pair, comps[1].get_name(), value_type};
+  };
+
+  // known elements
+  if(auto elements = list_literal_leading(list_in))
+  {
+    std::vector<std::pair<exprt, exprt>> pairs;
+    for(const exprt &e : *elements)
+    {
+      if(e.id() == ID_struct && e.operands().size() == 2)
+        pairs.emplace_back(e.operands()[0], e.operands()[1]);
+      else
+        pairs.emplace_back(key_of(e), value_of(e));
+    }
+    return build_dict_value(std::move(pairs), loc);
+  }
+
+  // the pairs one by one
+  const exprt list = evaluate_once(list_in);
+  const member_exprt src_len{list, "length", i64};
+  const member_exprt src_data{list, "data", data_type};
+  const struct_typet dict_type = python_dict_type(key_type, value_type);
+  const auto &keys_type = to_array_type(dict_type.components()[1].type());
+  const auto &values_type = to_array_type(dict_type.components()[2].type());
+  static unsigned ctr = 0;
+  const irep_idt id{qualify_name("__dict_of_pairs_" + std::to_string(ctr++))};
+  symbolt sy{id, dict_type, "python"};
+  sy.base_name = id2string(id);
+  sy.is_lvalue = true;
+  sy.is_state_var = true;
+  sy.is_static_lifetime = current_function.empty();
+  symbol_table.add(sy);
+  const symbol_exprt result = symbol_table.lookup_ref(id).symbol_expr();
+  const member_exprt length{result, "length", i64};
+  const member_exprt keys{result, "keys", keys_type};
+  const member_exprt values{result, "values", values_type};
+
+  emit_scan_bound_guard(src_len, loc, -1);
+  code_blockt block;
+  block.add(code_frontend_assignt{result, safe_zero(dict_type)});
+  for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; ++i)
+  {
+    const exprt idx = from_integer(i, i64);
+    const index_exprt pair{src_data, idx};
+    exprt key = key_of(pair);
+    exprt value = value_of(pair);
+    if(key.type() != keys_type.element_type())
+      key = coerce_element(key, keys_type.element_type());
+    if(value.type() != values_type.element_type())
+      value = coerce_element(value, values_type.element_type());
+    code_blockt store;
+    emit_dict_store(store, keys, values, length, key, value, loc);
+    block.add(code_ifthenelset{
+      binary_relation_exprt{idx, ID_lt, src_len}, std::move(store)});
+  }
+  pending_checks.push_back(std::move(block));
+  return result;
+}
