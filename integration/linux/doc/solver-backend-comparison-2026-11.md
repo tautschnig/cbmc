@@ -103,20 +103,58 @@ RSS from `/usr/bin/time` so the SMT2 child processes are included. Raw data in
 | cprover-smt2 | SMT2 | – | – | 6 | – |
 
 **Only one SMT2 backend is usable on this code: Bitwuzla.** It solved
-everything put to it and agreed with the SAT backends every time. The reason
-it differs from the others is that `--bitwuzla` goes through CBMC's native API
-binding, while `--z3`, `--cvc5` and `--smt2` go through the SMT2 *text*
-writer — and that writer is where the bug is.
+everything put to it and agreed with the SAT backends every time.
 
-* **Z3, CVC5 and `--smt2` crash with `map::at`** on four of five models. They
-  succeed only on `aenq`, the one model that does not `#include ena_ethdev.c`
-  and therefore lacks DPDK's large `rte_eth_devices` arrays and anonymous
-  unions. So it is a property of the model, and the failing models are the
-  normal case for driver work.
-* **`cprover-smt2` decides nothing on any model.** It returns `ERROR` for the
-  byte-extract properties over the driver's anonymous unions — the same
-  limitation that makes `--pointer-check` report ERROR there — so every run
-  came back `VERIFICATION ERROR`.
+**Why, corrected.** An earlier version of this note said Bitwuzla uses a
+native in-memory API while the others go through the SMT2 text writer. That is
+wrong. All of them use the same text writer: `smt2_dec.cpp:73-95` writes the
+problem to a temporary file and invokes the solver binary as a child process,
+Bitwuzla included (`:77`). There is no in-memory interface.
+
+The real difference is the **per-solver encoding** chosen in
+`smt2_conv.cpp:78-125`:
+
+| backend | `use_datatypes` |
+|---|---|
+| Z3 | **true** (`:125`) |
+| CVC5 | **true** (`:110`) |
+| Bitwuzla | not set (`:84-91`) |
+| cprover-smt2 | not set (`:96-103`) |
+
+and `map::at` is `datatype_map.at(type)` in `type2id`
+(`smt2_conv.cpp:1170`), reached for a `struct_tag` **only when
+`use_datatypes` is set**:
+
+```cpp
+else if(type.id() == ID_struct_tag)
+{
+  if(use_datatypes)
+    return datatype_map.at(type);     /* throws when type is unregistered */
+  else
+    return "S" + std::to_string(boolbv_width(type));
+}
+```
+
+So Bitwuzla is not more robust — **it simply never exercises the datatype
+encoding**, because CBMC does not enable datatypes for it. The bug is in the
+struct/datatype encoding path, and any backend configured with
+`use_datatypes` would hit it. That is a more useful conclusion than the one it
+replaces: it localises the defect rather than crediting a solver.
+
+`cprover-smt2` also leaves `use_datatypes` unset, so its failure is unrelated:
+it returns `ERROR` for the byte-extract properties over the driver's anonymous
+unions, the same limitation that makes `--pointer-check` report ERROR there.
+
+**I could not reduce the crash to a minimal reproducer.** Five synthetic
+shapes under `--z3` all verify normally: a self-referential struct through a
+pointer, a struct with an anonymous union, one with a named union containing a
+struct, one with an array of structs, and one with an array of self-pointers.
+So the trigger is none of those alone. The four models that crash all
+`#include ena_ethdev.c` and the one that does not (`aenq`) is the one that
+survives, which points at something in DPDK's type graph, but that is a
+correlation across five models and not a diagnosis. Producing a reproducer
+needs reduction from a real model and is open work — stated here rather than
+guessed at.
 
 ### Cost, where a verdict was reached
 
@@ -148,27 +186,34 @@ models, mostly crash before using it productively. CaDiCaL also costs 1.8×
 MiniSat2's memory — consistent with it being slower here rather than trading
 memory for speed.
 
-### A caveat on SMT2 CPU figures
+### A caveat on CPU figures, corrected
 
 For `z3` and `--smt2` on `admin_cq` the wall/CPU ratio is 6.8 (1800 s wall,
-265 s CPU). CBMC writes an SMT2 file and invokes the solver as a separate
-process, and `/usr/bin/time` on CBMC does not reliably attribute a
-grandchild's CPU. **So CPU for the SMT2 text backends is an underestimate and
-only their wall time and RSS should be compared.** Bitwuzla, being in-process,
-reports wall and CPU within 0.1% of each other and is directly comparable.
+265 s CPU). An earlier version of this note attributed that to CBMC invoking
+the solver as a separate process whose CPU `/usr/bin/time` misses. The data
+refutes that: **every completed run has a wall/CPU ratio of 1.00**, SMT2
+backends included, so child CPU *is* attributed.
+
+The 6.8 ratio appears only on the two `TIMEOUT` rows. The cause is the
+timeout itself — `timeout` kills the process and the child solver is never
+reaped, so its `rusage` is lost. **CPU is therefore an underestimate for
+timed-out runs only**, whatever the backend, and is directly comparable
+everywhere else.
 
 ### Conclusion for this project
 
 * Default to **MiniSat2**; Glucose is interchangeable.
-* Keep **Bitwuzla** as an independent cross-check on any result that matters,
-  since it is a genuinely different decision procedure that agreed on all six
-  runs. It costs several times the time and memory, so use it on final runs
-  only.
+* Keep **Bitwuzla** as an independent cross-check on any result that matters:
+  it is a different decision procedure, it agreed on all six runs, and it
+  reaches CBMC through a different encoding (no datatypes). It costs several
+  times the time and memory, so use it on final runs only.
 * **Do not use the SMT2 text backends on driver models** until the `map::at`
   bug is fixed.
 * The `map::at` crash and the `cprover-smt2` anonymous-union `ERROR` are both
-  worth minimal reproducers and upstream reports, separate from the two
-  commits already queued.
+  worth upstream reports, separate from the two commits already queued. The
+  first now has a localised cause — an unregistered `struct_tag` in
+  `datatype_map` under `use_datatypes` — but still needs a reproducer reduced
+  from a real model.
 
 ## How to repeat this
 
