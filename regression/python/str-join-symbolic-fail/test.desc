@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] file main.py line 4 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+uncaught exception: FAILURE
+--
+"".join(reversed(s)) is not over-approximated.

@@ -3210,10 +3210,12 @@ std::optional<exprt> python_convertert::try_builtin_call(
         }
         if(func_name == "reversed")
           std::reverse(chars.begin(), chars.end());
-        const typet elem_type = python_string_type();
         const std::size_t sz =
           std::max<std::size_t>(PYTHON_MAX_LIST_LENGTH, chars.size());
-        struct_typet list_type = python_list_type(elem_type);
+        struct_typet list_type = python_list_type(python_string_type());
+        // the stored type: a string handle under the native back end
+        const typet elem_type =
+          to_array_type(list_type.components()[1].type()).element_type();
         {
           auto &comps = list_type.components();
           if(comps.size() == 2)
@@ -3223,7 +3225,8 @@ std::optional<exprt> python_convertert::try_builtin_call(
         array_typet data_type{elem_type, from_integer(sz, signedbv_typet{64})};
         exprt::operandst data_elems;
         for(const auto &c : chars)
-          data_elems.push_back(python_string_literal(c));
+          data_elems.push_back(
+            coerce_element(python_string_literal(c), elem_type));
         while(data_elems.size() < sz)
           data_elems.push_back(safe_zero(elem_type));
         return struct_exprt{
@@ -3232,6 +3235,10 @@ std::optional<exprt> python_convertert::try_builtin_call(
            build_list_data(std::move(data_elems), data_type)},
           list_type};
       }
+      // A symbolic string: the list of its characters.
+      if(is_python_string_type(arg.type()))
+        return list_of_characters(
+          arg, func_name == "reversed", get_location(expr));
     }
     return side_effect_expr_nondett{
       python_list_type(python_int_type()), get_location(expr)};

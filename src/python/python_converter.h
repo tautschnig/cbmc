@@ -2720,6 +2720,21 @@ private:
   /// element are dropped, deciding equality at run time.
   exprt set_of_list(const exprt &list, const source_locationt &loc);
 
+  /// list(s) or reversed(s) (\p reversed) of a symbolic string \p s: the
+  /// list of its characters, which are nondet beyond ASCII in a refined
+  /// string. A string longer than the list capacity is reported as a model
+  /// bound.
+  exprt list_of_characters(
+    const exprt &s,
+    bool reversed,
+    const source_locationt &loc);
+
+  /// sep.join(list) of a list of strings \p list (of the representation of
+  /// \p sep) whose elements are not known: the concatenation, element by
+  /// element up to the list capacity.
+  exprt
+  join_list(const exprt &sep, const exprt &list, const source_locationt &loc);
+
   /// Guarded per-slot key match for a bounded dict scan:
   /// (i < length) AND container_slot_equal(unbox(keys[i]),
   /// unbox(probe)). The single spelling of the dict-lookup step

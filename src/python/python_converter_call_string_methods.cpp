@@ -4401,7 +4401,9 @@ std::optional<exprt> python_convertert::try_string_method(
         {
           const typet &jet =
             to_array_type(list_st.components()[1].type()).element_type();
-          if(!is_python_string_type(jet) && !is_python_value_type(jet))
+          if(
+            !is_python_string_type(jet) && !is_python_value_type(jet) &&
+            !is_python_string_handle_type(jet))
           {
             emit_conditional_exception(true_exprt{}, "TypeError");
             return side_effect_expr_nondett{
@@ -4461,6 +4463,17 @@ std::optional<exprt> python_convertert::try_string_method(
               return joined;
             }
           }
+        }
+        // Any other list of strings: the elements one by one.
+        {
+          const typet &jet =
+            to_array_type(list_st.components()[1].type()).element_type();
+          const bool native = obj.type().id() == ID_string;
+          if(
+            is_python_string_type(obj.type()) &&
+            (native ? is_python_string_handle_type(jet)
+                    : jet == python_string_type()))
+            return join_list(obj, list_arg, get_location(expr));
         }
       }
     }

@@ -1748,3 +1748,116 @@ symbol_exprt python_convertert::mint_witness_symbol(
     w, side_effect_expr_nondett{result_type, source_locationt{}}});
   return w;
 }
+
+exprt python_convertert::list_of_characters(
+  const exprt &s_in,
+  bool reversed,
+  const source_locationt &loc)
+{
+  PRECONDITION(is_python_string_type(s_in.type()));
+  const signedbv_typet i64{64};
+  const exprt s = evaluate_once(s_in);
+  const bool native = s.type().id() == ID_string;
+
+  // the number of characters, and whether they are the bytes
+  const exprt count =
+    native
+      ? typecast_exprt::conditional_cast(native_or_member_string_length(s), i64)
+      : refined_code_point_count(s, loc);
+  const exprt ascii = native ? exprt{true_exprt{}} : refined_is_ascii(s);
+
+  const struct_typet list_type = python_list_type(python_string_type());
+  const array_typet &data_type =
+    to_array_type(list_type.components()[1].type());
+  static unsigned ctr = 0;
+  const irep_idt id{qualify_name("__str_chars_" + std::to_string(ctr++))};
+  symbolt sy{id, list_type, "python"};
+  sy.base_name = id2string(id);
+  sy.is_lvalue = true;
+  sy.is_state_var = true;
+  sy.is_static_lifetime = current_function.empty();
+  symbol_table.add(sy);
+  const symbol_exprt result = symbol_table.lookup_ref(id).symbol_expr();
+
+  const long cap = static_cast<long>(PYTHON_MAX_LIST_LENGTH);
+  emit_count_capacity_guard(pending_checks, count, cap, loc);
+  pending_checks.push_back(
+    code_frontend_assignt{result, side_effect_expr_nondett{list_type, loc}});
+  pending_checks.push_back(
+    code_frontend_assignt{member_exprt{result, "length", i64}, count});
+  const member_exprt data{result, "data", data_type};
+  for(long i = 0; i < cap; ++i)
+  {
+    const exprt idx = from_integer(i, i64);
+    const exprt position =
+      reversed
+        ? exprt{minus_exprt{minus_exprt{count, from_integer(1, i64)}, idx}}
+        : idx;
+    code_blockt store;
+    // The checks of the character are made only for an element that exists.
+    std::vector<codet> saved;
+    saved.swap(pending_checks);
+    exprt character = string_substr(s, position, from_integer(1, i64));
+    if(!ascii.is_true())
+    {
+      const exprt any = bounded_nondet_string(loc);
+      character = any.type() == character.type()
+                    ? exprt{if_exprt{ascii, character, any}}
+                    : any;
+    }
+    const exprt stored = coerce_element(character, data_type.element_type());
+    for(auto &c : pending_checks)
+      store.add(std::move(c));
+    saved.swap(pending_checks);
+    store.add(code_frontend_assignt{index_exprt{data, idx}, stored});
+    pending_checks.push_back(code_ifthenelset{
+      binary_relation_exprt{idx, ID_lt, count}, std::move(store)});
+  }
+  return result;
+}
+
+exprt python_convertert::join_list(
+  const exprt &sep,
+  const exprt &list_in,
+  const source_locationt &loc)
+{
+  PRECONDITION(is_python_list_type(list_in.type()));
+  const signedbv_typet i64{64};
+  const exprt list = evaluate_once(list_in);
+  const auto &data_type =
+    to_array_type(to_struct_type(list.type()).components()[1].type());
+  const member_exprt length{list, "length", i64};
+  const member_exprt data{list, "data", data_type};
+  emit_scan_bound_guard(length, loc, -1);
+
+  static unsigned ctr = 0;
+  const irep_idt id{qualify_name("__joined_" + std::to_string(ctr++))};
+  symbolt sy{id, python_string_type(), "python"};
+  sy.base_name = id2string(id);
+  sy.is_lvalue = true;
+  sy.is_state_var = true;
+  symbol_table.add(sy);
+  const symbol_exprt joined = symbol_table.lookup_ref(id).symbol_expr();
+  pending_checks.push_back(
+    code_frontend_assignt{joined, python_string_literal("")});
+
+  for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; ++i)
+  {
+    const exprt idx = from_integer(i, i64);
+    std::vector<codet> saved;
+    saved.swap(pending_checks);
+    exprt element = index_exprt{data, idx};
+    if(is_python_string_handle_type(element.type()))
+      element = string_handle_to_string(element);
+    const exprt value =
+      i == 0 ? element : string_concat(string_concat(joined, sep), element);
+    code_blockt append;
+    for(auto &c : pending_checks)
+      append.add(std::move(c));
+    saved.swap(pending_checks);
+    append.add(code_frontend_assignt{joined, value});
+    pending_checks.push_back(code_ifthenelset{
+      binary_relation_exprt{idx, ID_lt, length}, std::move(append)});
+  }
+  return joined;
+}

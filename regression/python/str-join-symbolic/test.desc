@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+uncaught exception: FAILURE
+--
+list()/reversed() of a symbolic string and str.join of a list of strings.
