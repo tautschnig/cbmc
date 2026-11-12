@@ -128,6 +128,261 @@ exprt python_convertert::safe_address_of(
   return address_of_exprt{std::move(tsym)};
 }
 
+/// Whether a value of the built-in type \p kind ("str", "set", "float" or
+/// "complex") has the attribute \p name (dir() of CPython 3.12).
+static bool
+builtin_has_attribute(const std::string &kind, const std::string &name)
+{
+  static const std::map<std::string, std::set<std::string>> attributes = {
+    {"str",
+     {"__add__",
+      "__class__",
+      "__contains__",
+      "__delattr__",
+      "__dir__",
+      "__doc__",
+      "__eq__",
+      "__format__",
+      "__ge__",
+      "__getattribute__",
+      "__getitem__",
+      "__getnewargs__",
+      "__getstate__",
+      "__gt__",
+      "__hash__",
+      "__init__",
+      "__init_subclass__",
+      "__iter__",
+      "__le__",
+      "__len__",
+      "__lt__",
+      "__mod__",
+      "__mul__",
+      "__ne__",
+      "__new__",
+      "__reduce__",
+      "__reduce_ex__",
+      "__repr__",
+      "__rmod__",
+      "__rmul__",
+      "__setattr__",
+      "__sizeof__",
+      "__str__",
+      "__subclasshook__",
+      "capitalize",
+      "casefold",
+      "center",
+      "count",
+      "encode",
+      "endswith",
+      "expandtabs",
+      "find",
+      "format",
+      "format_map",
+      "index",
+      "isalnum",
+      "isalpha",
+      "isascii",
+      "isdecimal",
+      "isdigit",
+      "isidentifier",
+      "islower",
+      "isnumeric",
+      "isprintable",
+      "isspace",
+      "istitle",
+      "isupper",
+      "join",
+      "ljust",
+      "lower",
+      "lstrip",
+      "maketrans",
+      "partition",
+      "removeprefix",
+      "removesuffix",
+      "replace",
+      "rfind",
+      "rindex",
+      "rjust",
+      "rpartition",
+      "rsplit",
+      "rstrip",
+      "split",
+      "splitlines",
+      "startswith",
+      "strip",
+      "swapcase",
+      "title",
+      "translate",
+      "upper",
+      "zfill"}},
+    {"set",
+     {"__and__",
+      "__class__",
+      "__class_getitem__",
+      "__contains__",
+      "__delattr__",
+      "__dir__",
+      "__doc__",
+      "__eq__",
+      "__format__",
+      "__ge__",
+      "__getattribute__",
+      "__getstate__",
+      "__gt__",
+      "__hash__",
+      "__iand__",
+      "__init__",
+      "__init_subclass__",
+      "__ior__",
+      "__isub__",
+      "__iter__",
+      "__ixor__",
+      "__le__",
+      "__len__",
+      "__lt__",
+      "__ne__",
+      "__new__",
+      "__or__",
+      "__rand__",
+      "__reduce__",
+      "__reduce_ex__",
+      "__repr__",
+      "__ror__",
+      "__rsub__",
+      "__rxor__",
+      "__setattr__",
+      "__sizeof__",
+      "__str__",
+      "__sub__",
+      "__subclasshook__",
+      "__xor__",
+      "add",
+      "clear",
+      "copy",
+      "difference",
+      "difference_update",
+      "discard",
+      "intersection",
+      "intersection_update",
+      "isdisjoint",
+      "issubset",
+      "issuperset",
+      "pop",
+      "remove",
+      "symmetric_difference",
+      "symmetric_difference_update",
+      "union",
+      "update"}},
+    {"float",
+     {"__abs__",
+      "__add__",
+      "__bool__",
+      "__ceil__",
+      "__class__",
+      "__delattr__",
+      "__dir__",
+      "__divmod__",
+      "__doc__",
+      "__eq__",
+      "__float__",
+      "__floor__",
+      "__floordiv__",
+      "__format__",
+      "__ge__",
+      "__getattribute__",
+      "__getformat__",
+      "__getnewargs__",
+      "__getstate__",
+      "__gt__",
+      "__hash__",
+      "__init__",
+      "__init_subclass__",
+      "__int__",
+      "__le__",
+      "__lt__",
+      "__mod__",
+      "__mul__",
+      "__ne__",
+      "__neg__",
+      "__new__",
+      "__pos__",
+      "__pow__",
+      "__radd__",
+      "__rdivmod__",
+      "__reduce__",
+      "__reduce_ex__",
+      "__repr__",
+      "__rfloordiv__",
+      "__rmod__",
+      "__rmul__",
+      "__round__",
+      "__rpow__",
+      "__rsub__",
+      "__rtruediv__",
+      "__setattr__",
+      "__sizeof__",
+      "__str__",
+      "__sub__",
+      "__subclasshook__",
+      "__truediv__",
+      "__trunc__",
+      "as_integer_ratio",
+      "conjugate",
+      "fromhex",
+      "hex",
+      "imag",
+      "is_integer",
+      "real"}},
+    {"complex",
+     {"__abs__",
+      "__add__",
+      "__bool__",
+      "__class__",
+      "__complex__",
+      "__delattr__",
+      "__dir__",
+      "__doc__",
+      "__eq__",
+      "__format__",
+      "__ge__",
+      "__getattribute__",
+      "__getnewargs__",
+      "__getstate__",
+      "__gt__",
+      "__hash__",
+      "__init__",
+      "__init_subclass__",
+      "__le__",
+      "__lt__",
+      "__mul__",
+      "__ne__",
+      "__neg__",
+      "__new__",
+      "__pos__",
+      "__pow__",
+      "__radd__",
+      "__reduce__",
+      "__reduce_ex__",
+      "__repr__",
+      "__rmul__",
+      "__rpow__",
+      "__rsub__",
+      "__rtruediv__",
+      "__setattr__",
+      "__sizeof__",
+      "__str__",
+      "__sub__",
+      "__subclasshook__",
+      "__truediv__",
+      "conjugate",
+      "imag",
+      "real"}},
+  };
+  const auto it = attributes.find(kind);
+  return it == attributes.end() || it->second.count(name) > 0;
+}
+
 std::optional<exprt> python_convertert::try_method_call(
   const jsont &expr,
   std::string &func_name,
@@ -2435,6 +2690,46 @@ std::optional<exprt> python_convertert::try_method_call(
           return side_effect_expr_nondett{
             python_value_type(), get_location(expr)};
         }
+      }
+    }
+
+    // A method that a concrete built-in receiver does not have raises
+    // AttributeError (`"a".foo()`). Lists, tuples, dicts and ints also model
+    // other objects (generators, arrays, named tuples, counters, int
+    // subclasses), so they are not checked.
+    {
+      const typet &t = obj_base_type;
+      std::string kind;
+      if(is_python_string_type(t) || t.id() == ID_string)
+        kind = "str";
+      else if(is_python_list_type(t) && t.id() == ID_struct)
+        kind = to_array_type(to_struct_type(t).components()[1].type())
+                     .element_type() == unsignedbv_typet{8}
+                 ? "bytes"
+                 : "list";
+      else if(is_python_dict_type(t))
+        kind = "dict";
+      else if(is_python_set_type(t))
+        kind = "set";
+      else if(is_python_tuple_type(t))
+        kind = "tuple";
+      else if(
+        t.id() == ID_signedbv || t.id() == ID_integer || t.id() == ID_bool ||
+        t.id() == ID_c_bool)
+        kind = "int";
+      else if(t.id() == ID_floatbv)
+        kind = "float";
+      else if(
+        t.id() == ID_struct && to_struct_type(t).get_tag() == "python_complex")
+        kind = "complex";
+      if(
+        (kind == "str" || kind == "set" || kind == "float" ||
+         kind == "complex") &&
+        !builtin_has_attribute(kind, method_name))
+      {
+        emit_conditional_exception(true_exprt{}, "AttributeError");
+        return side_effect_expr_nondett{
+          python_value_type(), get_location(expr)};
       }
     }
 
