@@ -130,8 +130,9 @@ exprt python_convertert::safe_address_of(
 
 /// Whether a value of the built-in type \p kind ("str", "set", "float" or
 /// "complex") has the attribute \p name (dir() of CPython 3.12).
-static bool
-builtin_has_attribute(const std::string &kind, const std::string &name)
+bool python_convertert::builtin_has_attribute(
+  const std::string &kind,
+  const std::string &name)
 {
   static const std::map<std::string, std::set<std::string>> attributes = {
     {"str",

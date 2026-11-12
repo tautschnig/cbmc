@@ -21,3 +21,13 @@ try:
     assert False
 except AttributeError:
     pass
+try:
+    y = "a".foo
+    assert False
+except AttributeError:
+    pass
+try:
+    z = {1}.foo
+    assert False
+except AttributeError:
+    pass

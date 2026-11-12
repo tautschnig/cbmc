@@ -4271,6 +4271,18 @@ exprt python_convertert::convert_attribute_impl(const jsont &expr)
       return side_effect_expr_nondett{python_value_type(), get_location(expr)};
     }
   }
+  // An attribute that a str or a set does not have raises AttributeError.
+  {
+    const typet &vt = value.type();
+    const char *kind = is_python_string_type(vt) || vt.id() == ID_string
+                         ? "str"
+                         : (is_python_set_type(vt) ? "set" : nullptr);
+    if(kind != nullptr && !builtin_has_attribute(kind, attr))
+    {
+      emit_conditional_exception(true_exprt{}, "AttributeError");
+      return side_effect_expr_nondett{python_value_type(), get_location(expr)};
+    }
+  }
 
   // If value is a pointer (self in a method), dereference first
   if(value.type().id() == ID_pointer)
