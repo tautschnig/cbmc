@@ -3,6 +3,11 @@
 # cost no longer grows with the ring size.  Target: ring 8, which did not
 # finish under unwinding (8.8M clauses, no verdict in 40 min).
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-8}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -31,7 +36,7 @@ for V in 0 1; do
       > "$OUT/inst$V.log" 2>&1 || { echo "instrumentation failed:"; tail -5 "$OUT/inst$V.log"; exit 1; }
 done
 ( ulimit -v 150000000; timeout ${TO:-3000} "$BIN/cbmc" "$OUT/c0_lc.gb" \
-  --bounds-check --pointer-check --unwinding-assertions --sat-solver cadical \
+  --bounds-check --pointer-check --unwinding-assertions $SOLVER \
   --max-field-sensitivity-array-size 256 --slice-formula ) > "$OUT/cl.log" 2>&1
 grep -qE '^VERIFICATION' "$OUT/cl.log" || { echo "NO VERDICT"; tail -3 "$OUT/cl.log"; }
 sed -E 's/\] line [0-9]+ /] /' "$OUT/cl.log" |
@@ -39,5 +44,5 @@ sed -E 's/\] line [0-9]+ /] /' "$OUT/cl.log" |
 echo "other FAILURE: $(grep -E ': FAILURE$' "$OUT/cl.log" | grep -vcE 'main\.assertion|FREE_ONCE')"
 echo "UNKNOWN: $(grep -c ': UNKNOWN$' "$OUT/cl.log")   ERROR: $(grep -c ': ERROR$' "$OUT/cl.log")"
 ( ulimit -v 150000000; timeout ${TO:-3000} "$BIN/cbmc" "$OUT/c1_lc.gb" \
-  --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula ) > "$OUT/cl_vac.log" 2>&1
+  $SOLVER --max-field-sensitivity-array-size 256 --slice-formula ) > "$OUT/cl_vac.log" 2>&1
 sed -E 's/\] line [0-9]+ /] /' "$OUT/cl_vac.log" | grep 'vacuity witness'

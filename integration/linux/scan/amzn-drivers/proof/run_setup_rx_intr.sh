@@ -1,6 +1,11 @@
 #!/bin/bash
 # F18: ena_setup_rx_intr returns 0 after failing and undoing its own setup.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof/rxintr}; mkdir -p "$OUT"
@@ -20,11 +25,11 @@ for V in 0 1; do
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/i$V.gb" "$OUT/r$V.gb" >/dev/null 2>&1 )
 done
 ( ulimit -v 60000000; timeout 1200 "$BIN/cbmc" "$OUT/r0.gb" --bounds-check \
-  --pointer-check --unwind 8 --unwinding-assertions --sat-solver cadical \
+  --pointer-check --unwind 8 --unwinding-assertions $SOLVER \
   --max-field-sensitivity-array-size 256 --slice-formula --trace ) > "$OUT/x.log" 2>&1
 sed -E 's/\] line [0-9]+ /] /' "$OUT/x.log" | grep -E 'F18_SETUP_RC|^VERIFICATION'
 echo "other FAILURE: $(grep -E ': FAILURE$' "$OUT/x.log" | grep -vcE 'F18_')"
 echo "no-body reached: $(grep -cE 'no body for callee.*FAILURE' "$OUT/x.log")   unwind FAIL: $(grep -cE 'unwind.*: FAILURE$' "$OUT/x.log")"
 ( ulimit -v 60000000; timeout 1200 "$BIN/cbmc" "$OUT/r1.gb" --unwind 8 \
-  --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula ) > "$OUT/v.log" 2>&1
+  $SOLVER --max-field-sensitivity-array-size 256 --slice-formula ) > "$OUT/v.log" 2>&1
 sed -E 's/\] line [0-9]+ /] /' "$OUT/v.log" | grep 'vacuity witness'

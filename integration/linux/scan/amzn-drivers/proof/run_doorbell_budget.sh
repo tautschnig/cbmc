@@ -2,12 +2,17 @@
 # F14: is ena_com_is_doorbell_needed a sound predictor of the LLQ lines
 # ena_com_prepare_tx writes?  One CBMC run per configuration.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 B=${B:-/home/ubuntu/cbmc-github.git/build/bin}
 P=$(cd "$(dirname "$0")" && pwd)
 W=${W:-/tmp/ena-proof/doorbell}
 mkdir -p "$W"
 FLAGS="--bounds-check --pointer-check --unwind 20 --unwindset memcmp.0:9 \
-  --unwinding-assertions --sat-solver cadical \
+  --unwinding-assertions $SOLVER \
   --max-field-sensitivity-array-size 256 --slice-formula"
 run() {
   local name=$1; shift

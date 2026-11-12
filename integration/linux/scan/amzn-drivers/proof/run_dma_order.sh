@@ -2,11 +2,16 @@
 # Phase 7: no DMA region is freed while the device may still access it
 # (Unveil class A).
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof/dma}; mkdir -p "$OUT"
 rm -f "$OUT"/g0.gb "$OUT"/g1.gb "$OUT"/i0.gb "$OUT"/i1.gb
-FLAGS="--unwind 20 --sat-solver cadical \
+FLAGS="--unwind 20 $SOLVER \
   --max-field-sensitivity-array-size 256 --slice-formula"
 for V in 0 1; do
   D="${DEFS:-}"; [ $V = 1 ] && D="$D -DVACUITY_CHECK"

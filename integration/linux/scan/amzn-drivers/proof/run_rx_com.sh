@@ -2,11 +2,16 @@
 # The ena_com_rx_pkt contract the recv step stubs, against the real
 # ena_eth_com.c with an arbitrary device completion-descriptor ring.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 QD=${QD:-4}; MAXB=${MAXB:-2}
 B=${B:-/home/ubuntu/cbmc-github.git/build/bin}
 P=$(cd "$(dirname "$0")" && pwd)
 W=${W:-/tmp/ena-proof/rx-com}; mkdir -p "$W"
-FLAGS="--unwind $((QD + 3)) --sat-solver cadical \
+FLAGS="--unwind $((QD + 3)) $SOLVER \
   --max-field-sensitivity-array-size 256 --slice-formula"
 run() {
   local name=$1; shift

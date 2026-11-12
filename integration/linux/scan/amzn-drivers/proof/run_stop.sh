@@ -2,6 +2,11 @@
 # Queue-stop step of the induction: ena_tx_queue_release_bufs from any
 # INV_STARTED && INV_FREE_LIST state.  Obligations plus vacuity witnesses.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-8}
 B=${B:-/home/ubuntu/cbmc-github.git/build/bin}
 P=$(cd "$(dirname "$0")" && pwd)
@@ -16,7 +21,7 @@ for f in eth_ena_prep_pkts eth_ena_xmit_pkts eth_ena_recv_pkts ena_xmit_mbuf \
          ena_rx_queue_release_bufs rte_mempool_cache_flush; do
   RM="$RM --remove-function-body $f"
 done
-FLAGS="--unwind $((RING + 2)) --sat-solver cadical \
+FLAGS="--unwind $((RING + 2)) $SOLVER \
   --max-field-sensitivity-array-size 256 --slice-formula"
 for V in 0 1; do
   ( cd /tmp/dpdk/build-ql && ulimit -v 32000000 &&
@@ -34,7 +39,7 @@ echo "other FAILURE: $(grep -E ': FAILURE$' "$W/stop.log" | grep -vc STOP_)"
 # unwind limit and generates no unwinding assertion.  Show the bound is real:
 # one unwinding short must produce a FAILING unwinding assertion.
 ( ulimit -v 32000000; timeout 900 "$B/cbmc" "$W/s0r.gb" --unwinding-assertions \
-  --unwind "$RING" --sat-solver cadical --max-field-sensitivity-array-size 256 \
+  --unwind "$RING" $SOLVER --max-field-sensitivity-array-size 256 \
   --slice-formula ) 2>&1 | grep -qE "unwinding assertion.*FAILURE" &&
   echo "unwind check: --unwind $RING fails an unwinding assertion, --unwind $((RING + 2)) generates none (complete)"
 echo "no-body FAILURE: $(grep -cE 'no body for callee.*FAILURE' "$W/stop.log")"

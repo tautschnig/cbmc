@@ -37,7 +37,7 @@ done
 # a pointer read back from them has `unknown` in its points-to set, and the
 # free-list initialisation in ena_create_io_queue becomes a write to anything.
 # See cbmc-limitations/field_sensitivity_array_limit.sh.
-CHECKS="--unwind $((RING + 4)) --sat-solver cadical --max-field-sensitivity-array-size 256"
+CHECKS="--unwind $((RING + 4)) $SOLVER --max-field-sensitivity-array-size 256"
 
 for V in 0 1; do
   ( ulimit -v 32000000

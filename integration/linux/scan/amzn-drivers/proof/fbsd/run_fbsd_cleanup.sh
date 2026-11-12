@@ -4,6 +4,11 @@
 # build of README-fbsd-build.md in $FB and a goto-instrument carrying the
 # fbsd-dfcc-findings fixes.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 FB=${FB:-/tmp/fbsd-build}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -26,7 +31,7 @@ done
 
 ( ulimit -v 200000000
   timeout 2400 "$BIN/cbmc" "$OUT/lc0.gb" --unwind $((RING + 1)) \
-    --unwinding-assertions --sat-solver cadical --max-field-sensitivity-array-size 256 > "$OUT/proof.log" 2>&1 )
+    --unwinding-assertions $SOLVER --max-field-sensitivity-array-size 256 > "$OUT/proof.log" 2>&1 )
 if ! grep -qE '^VERIFICATION' "$OUT/proof.log"; then
   echo "NO VERDICT: cbmc did not finish"; tail -3 "$OUT/proof.log"; exit 1
 fi
@@ -39,6 +44,6 @@ echo "UNKNOWN $(grep -c ': UNKNOWN' "$OUT/proof.log")  UNREACHABLE $(grep -c ': 
 
 ( ulimit -v 200000000
   timeout 2400 "$BIN/cbmc" "$OUT/lc1.gb" --unwind $((RING + 1)) \
-    --sat-solver cadical --max-field-sensitivity-array-size 256 > "$OUT/vac.log" 2>&1 )
+    $SOLVER --max-field-sensitivity-array-size 256 > "$OUT/vac.log" 2>&1 )
 echo "vacuity witness (must be FAILURE):"
 grep -E 'vacuity witness' "$OUT/vac.log" | sed 's/^/  /'

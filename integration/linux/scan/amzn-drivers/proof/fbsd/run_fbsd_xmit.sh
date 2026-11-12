@@ -3,6 +3,11 @@
 # (FBX_NO_UNSENT) that DPDK fails and FreeBSD should pass, and the
 # DMA-ownership obligation DPDK cannot express.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 FB=${FB:-/tmp/fbsd-build}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -32,7 +37,7 @@ for V in 0 1; do
 done
 U="--unwind $((RING + 6)) --unwindset ena_tx_map_mbuf.0:$((RING + 2)),bus_dmamap_load_mbuf_sg.0:4,memcmp.0:9,fbsd_memcpy_model.0:98"
 ( ulimit -v 200000000; timeout ${TO:-3000} "$BIN/cbmc" "$OUT/r0.gb" --bounds-check \
-  --pointer-check --unwinding-assertions $U --sat-solver cadical \
+  --pointer-check --unwinding-assertions $U $SOLVER \
   --max-field-sensitivity-array-size 256 --slice-formula ) > "$OUT/x.log" 2>&1
 grep -qE '^VERIFICATION' "$OUT/x.log" || { echo "NO VERDICT"; tail -3 "$OUT/x.log"; }
 sed -E 's/\] line [0-9]+ /] /' "$OUT/x.log" | grep -E 'FBX_|^VERIFICATION'
@@ -40,5 +45,5 @@ echo "other FAILURE: $(grep -E ': FAILURE$' "$OUT/x.log" | grep -vcE 'FBX_')"
 echo "no-body reached: $(grep -cE 'no body for callee.*FAILURE' "$OUT/x.log")"
 echo "UNKNOWN: $(grep -c ': UNKNOWN$' "$OUT/x.log")   ERROR: $(grep -c ': ERROR$' "$OUT/x.log")   unwind FAIL: $(grep -cE 'unwind.*: FAILURE$' "$OUT/x.log")"
 ( ulimit -v 200000000; timeout ${TO:-3000} "$BIN/cbmc" "$OUT/r1.gb" $U \
-  --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula ) > "$OUT/x_vac.log" 2>&1
+  $SOLVER --max-field-sensitivity-array-size 256 --slice-formula ) > "$OUT/x_vac.log" 2>&1
 sed -E 's/\] line [0-9]+ /] /' "$OUT/x_vac.log" | grep 'vacuity witness'

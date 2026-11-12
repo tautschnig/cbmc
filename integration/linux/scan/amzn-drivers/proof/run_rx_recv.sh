@@ -2,6 +2,11 @@
 # RX data-path step: eth_ena_recv_pkts from an INV_RX_STARTED state, untrusted
 # device completions.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-4}; NB=${NB:-1}; MC=${MC:-1}
 B=${B:-/home/ubuntu/cbmc-github.git/build/bin}
 P=$(cd "$(dirname "$0")" && pwd)
@@ -16,7 +21,7 @@ for f in eth_ena_prep_pkts eth_ena_xmit_pkts ena_xmit_mbuf ena_tx_map_mbuf \
   rte_pktmbuf_alloc_bulk rte_mempool_get_bulk; do
   RM="$RM --remove-function-body $f"; done
 FLAGS="--unwind $((RING + 2)) --unwindset eth_ena_recv_pkts.0:$((NB + 1)),ena_rx_mbuf.0:$((MC + 1)),ena_com_cdesc_rx_pkt_get.0:$((MC + 2)) \
-  --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula"
+  $SOLVER --max-field-sensitivity-array-size 256 --slice-formula"
 for V in 0 1; do
   ( cd /tmp/dpdk/build-ql && ulimit -v 32000000 &&
     "$B/goto-cc" $(cat /tmp/ena-proof/flags.txt) -DPEDANTIC -DRING_SIZE=$RING \
@@ -37,6 +42,6 @@ sed -E 's/\] line [0-9]+ /] /' "$W/rx_vac.log" | grep 'vacuity witness'
 # must fail an unwinding assertion, so the bound above is complete
 ( ulimit -v 90000000; timeout 900 "$B/cbmc" "$W/r0r.gb" --unwinding-assertions \
   --unwind 3 --unwindset eth_ena_recv_pkts.0:1,ena_rx_mbuf.0:2,ena_com_cdesc_rx_pkt_get.0:3 \
-  --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula ) 2>&1 |
+  $SOLVER --max-field-sensitivity-array-size 256 --slice-formula ) 2>&1 |
   grep -qE 'unwinding assertion.*FAILURE' &&
   echo "unwind check: one short fails an unwinding assertion (bound complete)"

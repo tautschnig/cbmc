@@ -2,6 +2,11 @@
 # The xmit loop invariant by hand, in two machine-checked parts, with no bound
 # on the burst length.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-8}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -15,7 +20,7 @@ for f in eth_ena_prep_pkts eth_ena_recv_pkts ena_tx_cleanup ena_xstats_get \
   rte_pktmbuf_prefree_seg rte_mempool_put rte_mbuf_raw_free; do
   RM="$RM --remove-function-body $f"; done
 FLAGS="--unwind $((RING + 4)) --unwindset ena_tx_map_mbuf.0:3,memcmp.0:9 \
-  --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula"
+  $SOLVER --max-field-sensitivity-array-size 256 --slice-formula"
 for P in 1 2; do
   for V in 0 1; do
     D=""; [ $V = 1 ] && D=-DVACUITY_CHECK

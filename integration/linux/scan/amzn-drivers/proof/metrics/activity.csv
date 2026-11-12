@@ -17,3 +17,4 @@ ts,category,subject,note
 2026-11-12T08:00:08+00:00,TRIAGE,z3_smt2_backend,"z3 and cvc5 abort with internal map::at on the xmit model"
 2026-11-12T08:50:57+00:00,TOOL,solver_retest,"re-running the ring-32 negatives with minisat2, since 4.5x on xmit may change the reach"
 2026-11-12T17:19:57+00:00,TOOL,smt2_bench,"extending the benchmark to SMT2 backends with CPU and peak RSS"
+2026-11-12T20:20:10+00:00,HARNESS,runners,"switching the pinned backend to a SOLVER variable defaulting to minisat2"

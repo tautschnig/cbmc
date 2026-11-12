@@ -2,6 +2,11 @@
 # RX error paths: the F10 shape in ena_rx_queue_release, and the interrupt
 # ops on a queue that was never started.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof/rx-err}; mkdir -p "$OUT"
@@ -21,7 +26,7 @@ run() {
       2>&1 | grep -i error | head ) || return 1
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/$tag.gb" "$OUT/${tag}_rm.gb" >/dev/null 2>&1 )
   ( ulimit -v 60000000; timeout 1200 "$BIN/cbmc" "$OUT/${tag}_rm.gb" --bounds-check \
-    --pointer-check --unwind $((RING + 3)) --sat-solver cadical \
+    --pointer-check --unwind $((RING + 3)) $SOLVER \
     --max-field-sensitivity-array-size 256 --slice-formula ) > "$OUT/$tag.log" 2>&1
   echo "== $tag: $(grep -E '^VERIFICATION' "$OUT/$tag.log")"
   sed -E 's/\] line [0-9]+ /] /; s/^/    /' "$OUT/$tag.log" |

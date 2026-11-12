@@ -4,6 +4,11 @@
 #   run_llq_path.sh devinit            # -DDEVINIT_ONLY (#4)
 #   run_llq_path.sh xmit [DEFINES...]  # PREPARE_OK, plus the vacuity build
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 MODE=${1:-xmit}; shift || true
 RING=${RING:-8}
 B=${B:-/home/ubuntu/cbmc-github.git/build/bin}
@@ -13,7 +18,7 @@ mkdir -p "$W"
 DEFS="-DVACUITY_CHECK=0 -DRING=$RING -DBURST=1 -DSEGS=1 $*"
 [ "$MODE" = devinit ] && DEFS="$DEFS -DDEVINIT_ONLY"
 FLAGS="--unwind 10 --unwindset eth_ena_xmit_pkts.0:3,ena_tx_map_mbuf.0:3,memcmp.0:9 \
-  --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula"
+  $SOLVER --max-field-sensitivity-array-size 256 --slice-formula"
 build() {
   ( cd /tmp/dpdk/build-ql && ulimit -v 32000000 &&
     "$B/goto-cc" $(cat /tmp/ena-proof/flags.txt) -DPEDANTIC $DEFS "$@" \

@@ -3,6 +3,11 @@
 #   F15: run_xmit_variant.sh B -DALLOW_EMPTY_IN_FLIGHT; BURST=2 ... for OWN_NO_LOSS
 # s1 (xmit step) variants for the empty-packet question
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-4}; BURST=${BURST:-1}
 B=/home/ubuntu/cbmc-github.git/build/bin; P=/home/ubuntu/cbmc-github.git/integration/linux/scan/amzn-drivers/proof
 W=${W:-/tmp/ena-proof/s1var}; mkdir -p $W
@@ -12,6 +17,6 @@ name=$1; shift
 ( ulimit -v 32000000; $B/goto-instrument $RM $W/$name.gb $W/${name}_rm.gb >/dev/null 2>&1 )
 U="--unwind $((RING + 6)) --unwindset eth_ena_xmit_pkts.0:$((BURST+2)),ena_tx_map_mbuf.0:3,memcmp.0:9"
 case "$*" in *VACUITY_CHECK=1*) CH="--no-standard-checks";; *) CH="--bounds-check --pointer-check --unwinding-assertions";; esac
-( ulimit -v 150000000; timeout 3600 $B/cbmc $W/${name}_rm.gb $CH $U --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula --trace ) > $W/$name.log 2>&1
+( ulimit -v 150000000; timeout 3600 $B/cbmc $W/${name}_rm.gb $CH $U $SOLVER --max-field-sensitivity-array-size 256 --slice-formula --trace ) > $W/$name.log 2>&1
 echo "== $name: $(grep -E '^VERIFICATION' $W/$name.log)"
 sed -E 's/\] line [0-9]+ /] /' $W/$name.log | grep -E ': (SUCCESS|FAILURE)$' | grep -E 'main\.|FREE_ONCE|RELEASE|witness|unwind.*FAIL|no body.*FAIL' | sort -u

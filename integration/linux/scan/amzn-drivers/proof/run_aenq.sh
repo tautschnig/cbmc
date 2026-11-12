@@ -1,6 +1,11 @@
 #!/bin/bash
 # Async operation 2: the AENQ dispatch over a device-written ring.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 QD=${QD:-4}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -15,7 +20,7 @@ for f in eth_ena_prep_pkts eth_ena_xmit_pkts eth_ena_recv_pkts ena_xmit_mbuf \
   ena_com_wait_and_process_admin_cq; do
   RM="$RM --remove-function-body $f"; done
 FLAGS="--unwind $((QD + 16)) --unwindset ena_com_aenq_intr_handler.0:$((QD + 2)),ena_suboptimal_configuration.1:65 \
-  --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula"
+  $SOLVER --max-field-sensitivity-array-size 256 --slice-formula"
 rm -f "$OUT"/a0.gb "$OUT"/a1.gb "$OUT"/r0.gb "$OUT"/r1.gb
 for V in 0 1; do
   D="${DEFS:-}"; [ $V = 1 ] && D="$D -DVACUITY_CHECK"

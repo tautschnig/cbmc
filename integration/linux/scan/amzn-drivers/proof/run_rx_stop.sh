@@ -1,6 +1,11 @@
 #!/bin/bash
 # RX teardown step: ena_rx_queue_release_bufs from an INV_RX_STARTED state.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-8}
 B=${B:-/home/ubuntu/cbmc-github.git/build/bin}
 P=$(cd "$(dirname "$0")" && pwd)
@@ -15,7 +20,7 @@ for f in eth_ena_prep_pkts eth_ena_xmit_pkts eth_ena_recv_pkts ena_xmit_mbuf \
   ena_tx_queue_release_bufs rte_mempool_cache_flush rte_mempool_put_bulk \
   rte_mempool_generic_put rte_mempool_do_generic_put; do
   RM="$RM --remove-function-body $f"; done
-FLAGS="--unwind $((RING + 2)) --sat-solver cadical \
+FLAGS="--unwind $((RING + 2)) $SOLVER \
   --max-field-sensitivity-array-size 256 --slice-formula"
 for V in 0 1; do
   ( cd /tmp/dpdk/build-ql && ulimit -v 32000000 &&
@@ -35,6 +40,6 @@ echo "UNKNOWN: $(grep -c ': UNKNOWN$' "$W/rs.log")   ERROR: $(grep -c ': ERROR$'
 sed -E 's/\] line [0-9]+ /] /' "$W/rs_vac.log" | grep 'vacuity witness'
 # the loop bound is RING; one short must fail an unwinding assertion
 ( ulimit -v 90000000; timeout 900 "$B/cbmc" "$W/s0r.gb" --unwinding-assertions \
-  --unwind "$RING" --sat-solver cadical --max-field-sensitivity-array-size 256 \
+  --unwind "$RING" $SOLVER --max-field-sensitivity-array-size 256 \
   --slice-formula ) 2>&1 | grep -qE 'unwinding assertion.*FAILURE' &&
   echo "unwind check: one short fails an unwinding assertion (bound complete)"

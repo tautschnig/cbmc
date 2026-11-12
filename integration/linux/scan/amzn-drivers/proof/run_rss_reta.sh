@@ -2,6 +2,11 @@
 # F19: ena_rss_reta_query reads past its stack indirection table when
 # reta_size exceeds ENA_RX_RSS_TABLE_SIZE, which only the update path checks.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof/rss}; mkdir -p "$OUT"
@@ -13,7 +18,7 @@ for f in eth_ena_prep_pkts eth_ena_xmit_pkts eth_ena_recv_pkts ena_xmit_mbuf \
   eth_ena_pci_probe eth_ena_pci_remove ena_populate_rx_queue \
   ena_interrupt_handler_rte ena_timer_wd_callback; do
   RM="$RM --remove-function-body $f"; done
-FLAGS="--unwind 600 --sat-solver cadical \
+FLAGS="--unwind 600 $SOLVER \
   --max-field-sensitivity-array-size 256 --slice-formula"
 for V in 0 1; do
   D="${DEFS:-}"; [ $V = 1 ] && D="$D -DVACUITY_CHECK"

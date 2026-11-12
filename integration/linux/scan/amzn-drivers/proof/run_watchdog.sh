@@ -1,6 +1,11 @@
 #!/bin/bash
 # Async operation 1: the watchdog timer ena_timer_wd_callback.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-4}; NQ=${NQ:-2}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -14,7 +19,7 @@ for f in eth_ena_prep_pkts eth_ena_xmit_pkts eth_ena_recv_pkts ena_xmit_mbuf \
   ena_interrupt_handler_rte; do
   RM="$RM --remove-function-body $f"; done
 FLAGS="--unwind $((RING + 3)) --unwindset check_for_tx_completions.0:$((NQ + 2)),check_for_tx_completion_in_queue.0:$((RING + 1)) \
-  --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula"
+  $SOLVER --max-field-sensitivity-array-size 256 --slice-formula"
 for V in 0 1; do
   D="${DEFS:-}"; [ $V = 1 ] && D="$D -DVACUITY_CHECK"
   ( cd /tmp/dpdk/build-ql && ulimit -v 32000000 &&

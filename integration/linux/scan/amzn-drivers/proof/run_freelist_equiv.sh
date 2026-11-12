@@ -1,6 +1,11 @@
 #!/bin/bash
 # Prove the cheap bitmask form of INV_FREE_LIST equivalent to the pairwise one.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-4}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -13,7 +18,7 @@ for f in eth_ena_prep_pkts eth_ena_xmit_pkts eth_ena_recv_pkts ena_xmit_mbuf \
   ena_rss_configure eth_ena_pci_probe eth_ena_pci_remove ena_populate_rx_queue \
   ena_interrupt_handler_rte ena_timer_wd_callback; do
   RM="$RM --remove-function-body $f"; done
-FLAGS="--unwind $((RING + 2)) --sat-solver cadical \
+FLAGS="--unwind $((RING + 2)) $SOLVER \
   --max-field-sensitivity-array-size 256 --slice-formula"
 for V in 0 1; do
   D=""; [ $V = 1 ] && D=-DVACUITY_CHECK

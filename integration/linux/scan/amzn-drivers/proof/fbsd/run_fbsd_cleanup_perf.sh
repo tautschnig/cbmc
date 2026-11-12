@@ -5,6 +5,11 @@
 # fixes on branch fbsd-dfcc-findings.  Takes about 15 minutes and up to
 # 52 GB of memory.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 FB=${FB:-/tmp/fbsd-build}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -21,7 +26,7 @@ cd "$OUT"
   echo "goto-instrument failed, see $OUT/instrument.log"; exit 1; }
 # --stop-on-fail: the first, and dominant, solver call only
 ( ulimit -v 67108864; timeout 1800 "$BIN/cbmc" fbc_lc.gb --unwind 5 \
-    --unwinding-assertions --sat-solver cadical --stop-on-fail --verbosity 8 \
+    --unwinding-assertions $SOLVER --stop-on-fail --verbosity 8 \
     --write-solver-stats-to hardness.json 2>&1 ) \
   | grep -E "Runtime|size of program|VCC|variables|^VERIFICATION" | tee cbmc.log
 ( ulimit -v 100000000; timeout 1500 python3 "$HERE/solver_hardness_summary.py" \

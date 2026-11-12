@@ -1,13 +1,18 @@
 #!/bin/bash
 # Async operation 3: the admin completion queue over a device-written ring.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 QD=${QD:-4}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof/admincq}; mkdir -p "$OUT"
 rm -f "$OUT"/a0.gb "$OUT"/a1.gb
 FLAGS="--unwind $((QD + 4)) --unwindset ena_com_handle_admin_completion.0:$((QD + 2)) \
-  --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula"
+  $SOLVER --max-field-sensitivity-array-size 256 --slice-formula"
 for V in 0 1; do
   D="${DEFS:-}"; [ $V = 1 ] && D="$D -DVACUITY_CHECK"
   ( cd /tmp/dpdk/build-ql && ulimit -v 32000000 &&

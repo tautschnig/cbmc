@@ -2,11 +2,16 @@
 # The ena_com_prepare_tx contract the xmit step stubs, checked against the
 # real ena_eth_com.c from an arbitrary between-packets SQ state.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 B=${B:-/home/ubuntu/cbmc-github.git/build/bin}
 P=$(cd "$(dirname "$0")" && pwd)
 W=${W:-/tmp/ena-proof/prepare_tx}
 mkdir -p "$W"
-FLAGS="--unwind 20 --unwindset memcmp.0:9 --sat-solver cadical \
+FLAGS="--unwind 20 --unwindset memcmp.0:9 $SOLVER \
   --max-field-sensitivity-array-size 256 --slice-formula"
 run() {
   local name=$1; shift

@@ -23,6 +23,11 @@
 # Named assumptions are compiled in and listed at the end.  The induction holds
 # relative to them and to nothing else.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 DPDK=${DPDK:-/tmp/dpdk}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -36,7 +41,7 @@ FLAGS=${FLAGS:-/tmp/ena-proof/flags.txt}
 [ -f "$FLAGS" ] || { echo "run run.sh first (it writes flags.txt)"; exit 1; }
 cd "$DPDK/build-ql" || exit 1
 
-COMMON="--sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula"
+COMMON="$SOLVER --max-field-sensitivity-array-size 256 --slice-formula"
 CHECKS="--bounds-check --pointer-check --unwinding-assertions"
 cc()   { ( ulimit -v 32000000; "$BIN/goto-cc" $(cat "$FLAGS") -DPEDANTIC "$@" ); }
 inst() { ( ulimit -v 32000000; "$BIN/goto-instrument" "$@" >/dev/null 2>&1 ); }

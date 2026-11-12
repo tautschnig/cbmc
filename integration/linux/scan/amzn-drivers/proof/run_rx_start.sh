@@ -2,6 +2,11 @@
 # RX start base case: ena_queue_start takes INV_RX_STARTABLE to
 # INV_RX_STARTED, with the real ena_populate_rx_queue inside.
 set -u
+# Backend is a variable, not a constant: measured on five models, cadical
+# loses to minisat2 on four of them and by 4.5x on one
+# (doc/solver-backend-comparison-2026-11.md).  Override with
+#   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
+SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-4}
 B=${B:-/home/ubuntu/cbmc-github.git/build/bin}
 P=$(cd "$(dirname "$0")" && pwd)
@@ -15,7 +20,7 @@ for f in eth_ena_prep_pkts eth_ena_xmit_pkts eth_ena_recv_pkts ena_xmit_mbuf \
   ena_interrupt_handler_rte ena_timer_wd_callback check_for_tx_completion_in_queue; do
   RM="$RM --remove-function-body $f"; done
 FLAGS="--unwind $((RING + 3)) --unwindset ena_populate_rx_queue.0:$((RING + 1)),rte_pktmbuf_alloc_bulk.0:$((RING + 1)),ena_create_io_queue.0:$((RING + 1)),ena_create_io_queue.1:$((RING + 1)) \
-  --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula"
+  $SOLVER --max-field-sensitivity-array-size 256 --slice-formula"
 for V in 0 1; do
   ( cd /tmp/dpdk/build-ql && ulimit -v 32000000 &&
     "$B/goto-cc" $(cat /tmp/ena-proof/flags.txt) -DPEDANTIC -DRING=$RING \

@@ -64,7 +64,7 @@ rm -f "$OUT/item1.log" "$OUT/item1_vac.log"
 ( ulimit -v 60000000
   timeout 2400 "$BIN/cbmc" "$OUT/i1_lc.gb" --bounds-check --pointer-check \
     --no-standard-checks \
-    --unwindset ena_tx_map_mbuf.0:$SEGBOUND --unwinding-assertions --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula $EXTRA_CBMC \
+    --unwindset ena_tx_map_mbuf.0:$SEGBOUND --unwinding-assertions $SOLVER --max-field-sensitivity-array-size 256 --slice-formula $EXTRA_CBMC \
     > "$OUT/item1.log" 2>&1 ) || true
 
 if ! grep -qE '^VERIFICATION' "$OUT/item1.log"; then
@@ -77,7 +77,7 @@ echo "obligations:"; grep -E 'main\.assertion' "$OUT/item1.log" | sed 's/^/  /'
 echo "vacuity witness (must be FAILURE, else the accept path is unreachable):"
 ( ulimit -v 60000000
   timeout 900 "$BIN/cbmc" "$OUT/i1_vac_lc.gb" --bounds-check --pointer-check \
-    --no-standard-checks --unwindset ena_tx_map_mbuf.0:$SEGBOUND --sat-solver cadical --max-field-sensitivity-array-size 256 --slice-formula \
+    --no-standard-checks --unwindset ena_tx_map_mbuf.0:$SEGBOUND $SOLVER --max-field-sensitivity-array-size 256 --slice-formula \
     > "$OUT/item1_vac.log" 2>&1 ) || true
 grep -E 'vacuity witness' "$OUT/item1_vac.log" | sed 's/^/  /' || echo "  (not run)"
 echo "loop contract + inner-loop bound:"
