@@ -1608,7 +1608,21 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
         lo = convert_expression(lower_json);
       if(!upper_json.is_null())
         hi = convert_expression(upper_json);
-      return python_string_slice(value, lo, hi);
+      const exprt sliced = python_string_slice(value, lo, hi);
+      // A refined string's positions count bytes: beyond ASCII, the slice
+      // at character positions is nondet.
+      if(value.type().id() != ID_string && (lo.has_value() || hi.has_value()))
+      {
+        const exprt ascii = refined_is_ascii(value);
+        if(!ascii.is_true())
+        {
+          const exprt any = bounded_nondet_string(get_location(expr));
+          if(ascii.is_false() || any.type() != sliced.type())
+            return any;
+          return if_exprt{ascii, sliced, any};
+        }
+      }
+      return sliced;
     }
 
     const auto &st = to_struct_type(value.type());
@@ -2026,8 +2040,34 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
       emit_index_error(adj, len_e, adj.type());
       return string_substr(value, adj, from_integer(1, signedbv_typet{64}));
     }
+    // A refined string's length counts bytes; beyond ASCII the index counts
+    // characters, and the character at it is nondet (below).
+    const exprt ascii = refined_is_ascii(value);
     exprt length = python_lift_to_index_domain(
       member_exprt{value, "length", signedbv_typet{64}}, slice.type());
+    {
+      auto known = extract_string_value(value);
+      if(!known.has_value() && value.id() == ID_symbol)
+      {
+        auto it = string_constants.find(to_symbol_expr(value).get_identifier());
+        if(it != string_constants.end())
+          known = it->second;
+      }
+      if(known.has_value())
+      {
+        long long cp = 0;
+        for(char c : *known)
+        {
+          const unsigned char uc = static_cast<unsigned char>(c);
+          if(uc < 0x80 || uc >= 0xC0)
+            ++cp;
+        }
+        length = from_integer(cp, length.type());
+      }
+      else
+        length = typecast_exprt::conditional_cast(
+          refined_code_point_count(value, get_location(expr)), length.type());
+    }
     // PLR §6.3.3: negative indices count from the end
     exprt adjusted_idx = if_exprt{
       binary_relation_exprt{slice, ID_lt, from_integer(0, slice.type())},
@@ -2146,6 +2186,40 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
       }
       if(sv.has_value())
         value_has_known_bytes = true;
+    }
+    // Beyond ASCII the byte at the index is not the character.
+    if(!ascii.is_true())
+    {
+      const exprt any_char = bounded_nondet_string(get_location(expr));
+      if(ascii.is_false())
+        return any_char;
+      value_has_known_bytes = false;
+      const exprt byte_char = [&]() -> exprt
+      {
+        exprt src_struct =
+          (value.id() == ID_struct && value.operands().size() == 2)
+            ? value
+            : exprt(struct_exprt{
+                {member_exprt{value, "length", signedbv_typet{64}},
+                 member_exprt{
+                   value, "data", pointer_typet(unsignedbv_typet{8}, 64)}},
+                value.type()});
+        exprt start64 = adjusted_idx;
+        if(start64.type() != signedbv_typet{64})
+          start64 = safe_typecast(start64, signedbv_typet{64});
+        return emit_string_function(
+          ID_cprover_string_substring_func,
+          {src_struct,
+           start64,
+           plus_exprt{start64, from_integer(1, signedbv_typet{64})}},
+          symbol_table,
+          pending_checks,
+          loop_depth > 0,
+          current_function);
+      }();
+      if(byte_char.type() == any_char.type())
+        return if_exprt{ascii, byte_char, any_char};
+      return any_char;
     }
     if(value_has_known_bytes)
     {

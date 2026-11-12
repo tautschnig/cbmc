@@ -960,6 +960,9 @@ std::optional<exprt> python_convertert::try_builtin_call(
           }
           exprt result = emit_string_int_function(
             ID_cprover_string_length_func, arg, symbol_table, pending_checks);
+          // A refined string counts bytes: beyond ASCII, fewer characters.
+          if(arg.type().id() != ID_string)
+            result = refined_code_point_count(arg, get_location(expr));
           if(result.type() != python_int_type())
             result = safe_typecast(result, python_int_type());
           return result;
@@ -2103,23 +2106,12 @@ std::optional<exprt> python_convertert::try_builtin_call(
           auto below = [&](const exprt &b, int bound) {
             return binary_relation_exprt{b, ID_lt, from_integer(bound, i64)};
           };
-          const exprt cp_bytes = if_exprt{
-            below(b0, 0xC0),
-            from_integer(1, i64),
-            if_exprt{
-              below(b0, 0xE0),
-              from_integer(2, i64),
-              if_exprt{
-                below(b0, 0xF0), from_integer(3, i64), from_integer(4, i64)}}};
-          // (A single byte is taken as one character, also beyond ASCII,
-          // where it stands for some character of a nondet string.)
+          // A string that is not one character raises TypeError.
           const exprt len = native_or_member_string_length(arg);
           emit_conditional_exception(
-            or_exprt{
-              equal_exprt{len, from_integer(0, i64)},
-              and_exprt{
-                notequal_exprt{len, from_integer(1, i64)},
-                notequal_exprt{len, cp_bytes}}},
+            notequal_exprt{
+              refined_code_point_count(arg, get_location(expr)),
+              from_integer(1, i64)},
             "TypeError");
           // the low bits of byte i, shifted into place
           auto bits = [&](const exprt &b, int mask, int shift) -> exprt
@@ -4484,13 +4476,13 @@ std::optional<exprt> python_convertert::try_builtin_call(
           // id (see native_string_of_int).
           return native_string_of_int(as_i64);
         }
-        exprt result = emit_string_function(
+        exprt result = known_ascii(emit_string_function(
           ID_cprover_string_of_int_func,
           {as_i64},
           symbol_table,
           pending_checks,
           loop_depth > 0,
-          current_function);
+          current_function));
         auto ensure_fn = [&](const irep_idt &fid)
         {
           if(symbol_table.lookup(fid) == nullptr)
@@ -4530,13 +4522,13 @@ std::optional<exprt> python_convertert::try_builtin_call(
           // No SMT primitive for str(float); sound nondet SMT String.
           return bounded_nondet_string(get_location(expr));
         }
-        exprt result = emit_string_function(
+        exprt result = known_ascii(emit_string_function(
           ID_cprover_string_of_double_func,
           {arg},
           symbol_table,
           pending_checks,
           loop_depth > 0,
-          current_function);
+          current_function));
         auto ensure_fn2 = [&](const irep_idt &fid)
         {
           if(symbol_table.lookup(fid) == nullptr)

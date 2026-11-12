@@ -3611,6 +3611,158 @@ exprt python_convertert::string_struct_view(const exprt &s)
     s.type()};
 }
 
+exprt python_convertert::known_ascii(exprt s)
+{
+  if(s.id() == ID_symbol)
+    known_ascii_strings.insert(to_symbol_expr(s).get_identifier());
+  return s;
+}
+
+bool python_convertert::is_known_ascii(const exprt &s) const
+{
+  if(s.id() == ID_symbol)
+    return known_ascii_strings.count(to_symbol_expr(s).get_identifier()) > 0;
+  if(s.id() == ID_if)
+    return is_known_ascii(to_if_expr(s).true_case()) &&
+           is_known_ascii(to_if_expr(s).false_case());
+  return false;
+}
+
+exprt python_convertert::refined_is_ascii(const exprt &s)
+{
+  if(is_known_ascii(s))
+    return true_exprt{};
+  if(const auto sv = extract_string_value(s))
+  {
+    for(char c : *sv)
+      if((static_cast<unsigned char>(c) & 0x80) != 0)
+        return false_exprt{};
+    return true_exprt{};
+  }
+  const exprt view = string_struct_view(s);
+  const irep_idt fn{ID_cprover_string_is_ascii_func};
+  if(symbol_table.lookup(fn) == nullptr)
+  {
+    symbolt fs{
+      fn, mathematical_function_typet({view.type()}, bool_typet{}), "python"};
+    fs.base_name = id2string(fn);
+    symbol_table.add(fs);
+  }
+  function_application_exprt app{
+    symbol_table.lookup_ref(fn).symbol_expr(), {view}};
+  app.type() = bool_typet{};
+  static unsigned ctr = 0;
+  const std::string nm = "__is_ascii_" + std::to_string(ctr++);
+  const irep_idt id{qualify_name(nm)};
+  if(symbol_table.lookup(id) == nullptr)
+  {
+    symbolt sy{id, bool_typet{}, "python"};
+    sy.base_name = nm;
+    sy.is_lvalue = true;
+    sy.is_state_var = true;
+    symbol_table.add(sy);
+  }
+  const symbol_exprt r = symbol_table.lookup_ref(id).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{r, std::move(app)});
+  return r;
+}
+
+exprt python_convertert::refined_code_point_count(
+  const exprt &s,
+  const source_locationt &loc)
+{
+  const signedbv_typet i64{64};
+  if(const auto sv = extract_string_value(s))
+  {
+    long long cp = 0;
+    for(char c : *sv)
+    {
+      const unsigned char uc = static_cast<unsigned char>(c);
+      if(uc < 0x80 || uc >= 0xC0)
+        ++cp;
+    }
+    return from_integer(cp, i64);
+  }
+  const exprt view = string_struct_view(s);
+  const exprt bytes = member_exprt{view, "length", i64};
+  const exprt ascii = refined_is_ascii(s);
+  // A fresh number. (Keyed by the data pointer and the length, nondet
+  // strings whose pointers coincide would have had to have the same number,
+  // which made paths infeasible.)
+  static unsigned n_ctr = 0;
+  const std::string nn = "__code_points_" + std::to_string(n_ctr++);
+  const irep_idt nid{qualify_name(nn)};
+  if(symbol_table.lookup(nid) == nullptr)
+  {
+    symbolt sy{nid, i64, "python"};
+    sy.base_name = nn;
+    sy.is_lvalue = true;
+    sy.is_state_var = true;
+    symbol_table.add(sy);
+  }
+  const symbol_exprt n = symbol_table.lookup_ref(nid).symbol_expr();
+  pending_checks.push_back(
+    code_frontend_assignt{n, side_effect_expr_nondett{i64, loc}});
+  // Beyond ASCII, a character has 2 to 4 bytes: between a quarter of the
+  // bytes and one less than them. Up to 32 bytes, the characters are counted
+  // exactly: the bytes that do not continue a character.
+  exprt::operandst leads;
+  {
+    const unsignedbv_typet u8{8};
+    const irep_idt char_at{ID_cprover_string_char_at_func};
+    if(symbol_table.lookup(char_at) == nullptr)
+    {
+      symbolt fs{
+        char_at, mathematical_function_typet({view.type(), i64}, u8), "python"};
+      fs.base_name = id2string(char_at);
+      symbol_table.add(fs);
+    }
+    static unsigned byte_ctr = 0;
+    for(int i = 0; i < 32; ++i)
+    {
+      function_application_exprt app{
+        symbol_table.lookup_ref(char_at).symbol_expr(),
+        {view, from_integer(i, i64)}};
+      app.type() = u8;
+      const std::string bn = "__cp_byte_" + std::to_string(byte_ctr++);
+      const irep_idt bid{qualify_name(bn)};
+      if(symbol_table.lookup(bid) == nullptr)
+      {
+        symbolt sy{bid, u8, "python"};
+        sy.base_name = bn;
+        sy.is_lvalue = true;
+        sy.is_state_var = true;
+        symbol_table.add(sy);
+      }
+      const symbol_exprt b = symbol_table.lookup_ref(bid).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{b, std::move(app)});
+      leads.push_back(if_exprt{
+        and_exprt{
+          binary_relation_exprt{from_integer(i, i64), ID_lt, bytes},
+          notequal_exprt{
+            bitand_exprt{b, from_integer(0xC0, u8)}, from_integer(0x80, u8)}},
+        from_integer(1, i64),
+        from_integer(0, i64)});
+    }
+  }
+  exprt counted = from_integer(0, i64);
+  for(const auto &l : leads)
+    counted = plus_exprt{counted, l};
+  code_assumet bounds{if_exprt{
+    ascii,
+    equal_exprt{n, bytes},
+    and_exprt{
+      binary_relation_exprt{n, ID_ge, from_integer(0, i64)},
+      binary_relation_exprt{n, ID_lt, bytes},
+      binary_relation_exprt{mult_exprt{n, from_integer(4, i64)}, ID_ge, bytes},
+      or_exprt{
+        binary_relation_exprt{bytes, ID_gt, from_integer(32, i64)},
+        equal_exprt{n, counted}}}}};
+  bounds.add_source_location() = loc;
+  pending_checks.push_back(std::move(bounds));
+  return if_exprt{ascii, bytes, n};
+}
+
 exprt python_convertert::string_concat(const exprt &a, const exprt &b)
 {
   if(a.type().id() == ID_string && b.type().id() == ID_string)
@@ -3624,13 +3776,29 @@ exprt python_convertert::string_concat(const exprt &a, const exprt &b)
       {a.type(), b.type()},
       {a, b},
       string_typet{});
-  return emit_string_function(
+  exprt result = emit_string_function(
     ID_cprover_string_concat_func,
     {string_struct_view(a), string_struct_view(b)},
     symbol_table,
     pending_checks,
     loop_depth > 0,
     current_function);
+  // a concatenation of ASCII strings is ASCII
+  auto ascii = [&](const exprt &x)
+  {
+    if(is_known_ascii(x))
+      return true;
+    const auto sv = extract_string_value(x);
+    return sv.has_value() &&
+           std::all_of(
+             sv->begin(),
+             sv->end(),
+             [](char c)
+             { return (static_cast<unsigned char>(c) & 0x80) == 0; });
+  };
+  if(ascii(a) && ascii(b))
+    return known_ascii(std::move(result));
+  return result;
 }
 
 exprt python_convertert::bind_string_length_hint(
@@ -7492,10 +7660,62 @@ exprt python_convertert::convert_expression_impl(const jsont &expr)
                 python_string_type(), get_location(expr)}});
             exprt len_intr = emit_string_int_function(
               ID_cprover_string_length_func, tv, symbol_table, pending_checks);
-            // The width is a MINIMUM (a value wider than it is not
-            // truncated: f"{123:02}" is "123"); the content is unconstrained.
-            pending_checks.push_back(code_assumet{binary_relation_exprt{
-              len_intr, ID_ge, from_integer(width, signedbv_typet{64})}});
+            // The value is padded to the width, and longer values are kept
+            // whole: the length is max(width, len(str(value))). (Only the
+            // length is modelled.)
+            const signedbv_typet i64{64};
+            const exprt width_e = from_integer(width, i64);
+            const bool is_str = is_python_string_type(inner_pad.type());
+            exprt base = inner_pad;
+            if(!is_str)
+            {
+              const exprt as_i64 =
+                typecast_exprt::conditional_cast(inner_pad, i64);
+              base = use_smt_string_native ? native_string_of_int(as_i64)
+                                           : emit_string_function(
+                                               ID_cprover_string_of_int_func,
+                                               {as_i64},
+                                               symbol_table,
+                                               pending_checks,
+                                               loop_depth > 0,
+                                               current_function);
+              if(!use_smt_string_native)
+              {
+                ensure_fn(ID_cprover_associate_array_to_pointer_func);
+                ensure_fn(ID_cprover_associate_length_to_array_func);
+              }
+            }
+            auto at_least_width = [&](const exprt &n) -> exprt {
+              return if_exprt{
+                binary_relation_exprt{n, ID_lt, width_e}, width_e, n};
+            };
+            if(use_smt_string_native)
+            {
+              const exprt base_len = typecast_exprt::conditional_cast(
+                native_or_member_string_length(base), i64);
+              pending_checks.push_back(
+                code_assumet{equal_exprt{len_intr, at_least_width(base_len)}});
+            }
+            else
+            {
+              // bytes: those of the value and one per fill character
+              const exprt base_bytes =
+                member_exprt{string_struct_view(base), "length", i64};
+              const exprt base_chars =
+                is_str ? refined_code_point_count(base, get_location(expr))
+                       : base_bytes;
+              pending_checks.push_back(code_assumet{equal_exprt{
+                len_intr,
+                plus_exprt{
+                  base_bytes,
+                  minus_exprt{at_least_width(base_chars), base_chars}}}});
+              pending_checks.push_back(code_assumet{
+                equal_exprt{member_exprt{tv, "length", i64}, len_intr}});
+              const exprt tv_ascii = refined_is_ascii(tv);
+              pending_checks.push_back(code_assumet{equal_exprt{
+                tv_ascii,
+                is_str ? refined_is_ascii(base) : exprt{true_exprt{}}}});
+            }
             parts.push_back(std::move(tv));
             part_len.push_back(std::nullopt);
             handled_by_pad_spec = true;
@@ -7598,13 +7818,13 @@ exprt python_convertert::convert_expression_impl(const jsont &expr)
           }
           else
           {
-            parts.push_back(emit_string_function(
+            parts.push_back(known_ascii(emit_string_function(
               ID_cprover_string_of_int_func,
               {i64},
               symbol_table,
               pending_checks,
               loop_depth > 0,
-              current_function));
+              current_function)));
             ensure_fn(ID_cprover_associate_array_to_pointer_func);
             ensure_fn(ID_cprover_associate_length_to_array_func);
           }
@@ -7628,13 +7848,13 @@ exprt python_convertert::convert_expression_impl(const jsont &expr)
           }
           else
           {
-            parts.push_back(emit_string_function(
+            parts.push_back(known_ascii(emit_string_function(
               ID_cprover_string_of_double_func,
               {inner},
               symbol_table,
               pending_checks,
               loop_depth > 0,
-              current_function));
+              current_function)));
             ensure_fn(ID_cprover_associate_array_to_pointer_func);
             ensure_fn(ID_cprover_associate_length_to_array_func);
           }

@@ -2447,8 +2447,9 @@ std::optional<exprt> python_convertert::try_string_method(
         }
         const exprt fills =
           python_string_literal(std::string(pad_max, *fill->begin()));
+        // (the width counts characters; the fill is one byte each)
         const exprt margin =
-          minus_exprt{w, native_or_member_string_length(obj)};
+          minus_exprt{w, refined_code_point_count(obj, get_location(expr))};
         const exprt count =
           if_exprt{binary_relation_exprt{margin, ID_lt, zero}, zero, margin};
         if(!exact)
@@ -2483,7 +2484,17 @@ std::optional<exprt> python_convertert::try_string_method(
             string_concat(pad(left), obj), pad(minus_exprt{count, left}));
         }
         if(result.type() == obj.type())
+        {
+          // the fill is ASCII: the characters are those of obj and the
+          // padding
+          const exprt n_obj = refined_code_point_count(obj, get_location(expr));
+          pending_checks.push_back(code_assumet{and_exprt{
+            equal_exprt{refined_is_ascii(result), refined_is_ascii(obj)},
+            equal_exprt{
+              refined_code_point_count(result, get_location(expr)),
+              plus_exprt{n_obj, count}}}});
           return result;
+        }
       }
       // The arguments are converted: they must not be evaluated again.
       return bounded_nondet_string(get_location(expr));
@@ -2707,9 +2718,33 @@ std::optional<exprt> python_convertert::try_string_method(
               code_assumet{equal_exprt{member_exprt{r, "length", i64}, rl}});
             const exprt sl = emit_string_int_function(
               ID_cprover_string_length_func, obj, symbol_table, pending_checks);
+            // `new` is inserted once per character and once more; the
+            // lengths count bytes
+            const exprt chars =
+              refined_code_point_count(obj, get_location(expr));
             const exprt rhs = plus_exprt{
-              mult_exprt{sl, from_integer(1 + ln, i64)}, from_integer(ln, i64)};
+              sl,
+              mult_exprt{
+                plus_exprt{chars, from_integer(1, i64)},
+                from_integer(ln, i64)}};
             pending_checks.push_back(code_assumet{equal_exprt{rl, rhs}});
+            long long new_chars = 0;
+            for(char c : *new_sv)
+            {
+              const unsigned char uc = static_cast<unsigned char>(c);
+              if(uc < 0x80 || uc >= 0xC0)
+                ++new_chars;
+            }
+            const bool new_ascii = new_chars == ln;
+            pending_checks.push_back(code_assumet{and_exprt{
+              equal_exprt{
+                refined_is_ascii(r),
+                new_ascii ? refined_is_ascii(obj) : exprt{false_exprt{}}},
+              equal_exprt{
+                refined_code_point_count(r, get_location(expr)),
+                plus_exprt{
+                  mult_exprt{chars, from_integer(1 + new_chars, i64)},
+                  from_integer(new_chars, i64)}}}});
           }
           return std::move(r);
         }
@@ -3271,14 +3306,14 @@ std::optional<exprt> python_convertert::try_string_method(
           exprt as_i64 = arg_exprs[0].type() == signedbv_typet{64}
                            ? arg_exprs[0]
                            : safe_typecast(arg_exprs[0], signedbv_typet{64});
-          exprt r = emit_string_function(
+          exprt r = known_ascii(emit_string_function(
             ID_cprover_string_of_int_func,
             {as_i64},
             symbol_table,
             pending_checks,
             loop_depth > 0,
             // global (documented): see emit_string_function scope invariant.
-            std::string{});
+            std::string{}));
           auto ensure_fn = [&](const irep_idt &fid)
           {
             if(symbol_table.lookup(fid) == nullptr)
@@ -3638,9 +3673,21 @@ std::optional<exprt> python_convertert::try_string_method(
           slice,
           symbol_table,
           pending_checks);
-        return and_exprt{
+        exprt positioned_result = and_exprt{
           typecast_exprt::conditional_cast(matches, bool_typet{}),
           binary_relation_exprt{start_n, ID_le, end_n}};
+        // A refined string's positions count bytes: beyond ASCII the
+        // result is nondet.
+        if(obj.type().id() != ID_string)
+        {
+          const exprt ascii = refined_is_ascii(obj);
+          if(!ascii.is_true())
+            positioned_result = if_exprt{
+              ascii,
+              positioned_result,
+              side_effect_expr_nondett{bool_typet{}, get_location(expr)}};
+        }
+        return positioned_result;
       }
       return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
     }
@@ -4012,13 +4059,41 @@ std::optional<exprt> python_convertert::try_string_method(
           std::to_string(levels) + " occurrences, the count is only bounded");
         // "" occurs at each position of the slice, if it is not empty
         // because the start is after the end.
-        const exprt result = if_exprt{
+        // A refined string counts bytes: "" occurs once per character and
+        // once more; beyond ASCII, positions select some part of it.
+        const exprt ascii = refined_is_ascii(obj);
+        const bool positioned = start.has_value() || end.has_value();
+        exprt result = if_exprt{
           equal_exprt{ndl_len, zero},
           if_exprt{
             binary_relation_exprt{start_n, ID_le, end_n},
-            plus_exprt{hay_len, one},
+            plus_exprt{
+              positioned ? hay_len
+                         : refined_code_point_count(obj, get_location(expr)),
+              one},
             zero},
           if_exprt{more, exprt{many}, counted}};
+        if(positioned && !ascii.is_true())
+        {
+          static unsigned na_ctr = 0;
+          const std::string nn =
+            "__count_beyond_ascii_" + std::to_string(na_ctr++);
+          const irep_idt nid{qualify_name(nn)};
+          if(symbol_table.lookup(nid) == nullptr)
+          {
+            symbolt sy{nid, i64, "python"};
+            sy.base_name = nn;
+            sy.is_lvalue = true;
+            sy.is_state_var = true;
+            symbol_table.add(sy);
+          }
+          const symbol_exprt any = symbol_table.lookup_ref(nid).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{
+            any, side_effect_expr_nondett{i64, get_location(expr)}});
+          pending_checks.push_back(
+            code_assumet{binary_relation_exprt{any, ID_ge, zero}});
+          result = if_exprt{ascii, result, any};
+        }
         return typecast_exprt::conditional_cast(result, python_int_type());
       }
     }
@@ -4304,6 +4379,42 @@ std::optional<exprt> python_convertert::try_string_method(
                   not_found,
                   plus_exprt{in_slice, start_n}}},
               int_type);
+          }
+
+          // A refined string's positions count bytes. Beyond ASCII the
+          // position found is some position, and with a start or end the
+          // search is of some part of the string.
+          if(!native)
+          {
+            const exprt ascii = refined_is_ascii(obj);
+            if(!ascii.is_true())
+            {
+              const bool positioned = start.has_value() || end.has_value();
+              static unsigned na_ctr = 0;
+              const std::string nn =
+                "__index_of_beyond_ascii_" + std::to_string(na_ctr++);
+              const irep_idt nid{qualify_name(nn)};
+              if(symbol_table.lookup(nid) == nullptr)
+              {
+                symbolt sy{nid, int_type, "python"};
+                sy.base_name = nn;
+                sy.is_lvalue = true;
+                sy.is_state_var = true;
+                symbol_table.add(sy);
+              }
+              const symbol_exprt any =
+                symbol_table.lookup_ref(nid).symbol_expr();
+              pending_checks.push_back(code_frontend_assignt{
+                any, side_effect_expr_nondett{int_type, get_location(expr)}});
+              pending_checks.push_back(code_assumet{binary_relation_exprt{
+                any, ID_ge, from_integer(positioned ? -1 : 0, int_type)}});
+              // without positions, whether the needle occurs is exact
+              const exprt beyond =
+                positioned ? exprt{any}
+                           : exprt{if_exprt{
+                               equal_exprt{found, minus_one}, minus_one, any}};
+              found = if_exprt{ascii, found, beyond};
+            }
           }
 
           static unsigned iof_ctr = 0;

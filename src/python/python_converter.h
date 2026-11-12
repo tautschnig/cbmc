@@ -3410,6 +3410,22 @@ private:
 
   /// Refined-backend {length,data} struct view of a string expression.
   exprt string_struct_view(const exprt &s);
+  /// Whether the refined string \p s holds only ASCII characters, whose
+  /// UTF-8 bytes are one character each (a constant for a constant string).
+  /// Positions and lengths of a refined string count bytes, so beyond
+  /// ASCII they are not the characters' positions.
+  exprt refined_is_ascii(const exprt &s);
+  /// \p s, recorded as a refined string of only ASCII characters (the
+  /// digits of a number, say), which refined_is_ascii then knows.
+  exprt known_ascii(exprt s);
+  /// Whether refined_is_ascii knows \p s to be ASCII without the solver.
+  bool is_known_ascii(const exprt &s) const;
+  std::set<irep_idt> known_ascii_strings;
+  /// The number of characters of the refined string \p s (an i64): its
+  /// bytes when it is ASCII, and otherwise the bytes that do not continue a
+  /// character when there are at most 32 bytes, and a number of at least a
+  /// quarter of the bytes and less than them beyond.
+  exprt refined_code_point_count(const exprt &s, const source_locationt &loc);
 
   /// Concatenation a + b (returns a string of the active representation).
   exprt string_concat(const exprt &a, const exprt &b);

@@ -2858,6 +2858,9 @@ skip_string_unroll:;
       body_block.add(std::move(st));
   }
 
+  // Whether a refined string iterated over is ASCII (see below).
+  exprt iter_ascii = true_exprt{};
+  std::vector<codet> iter_ascii_code;
   // x = iterable.data[__idx] (typecast if needed). For native string
   // iteration this placeholder is overwritten by the str.substr branch below.
   exprt elem_val =
@@ -3033,6 +3036,32 @@ skip_string_unroll:;
     }
     else if(elem_val.type() != loop_var.type())
       elem_val = safe_typecast(elem_val, loop_var.type());
+    // A refined string iterates over bytes: beyond ASCII a character is
+    // some string, and there are fewer of them (see for_cond).
+    if(
+      is_string && !native_str_iter && iterable.type().id() != ID_string &&
+      is_python_string_type(loop_var.type()))
+    {
+      const std::size_t pre_size = pending_checks.size();
+      iter_ascii = refined_is_ascii(iterable);
+      for(std::size_t k = pre_size; k < pending_checks.size(); ++k)
+        iter_ascii_code.push_back(std::move(pending_checks[k]));
+      pending_checks.erase(
+        pending_checks.begin() + pre_size, pending_checks.end());
+      if(!iter_ascii.is_true())
+      {
+        const std::size_t pre = pending_checks.size();
+        const exprt any = bounded_nondet_string(loc);
+        for(std::size_t k = pre; k < pending_checks.size(); ++k)
+          body_block.add(std::move(pending_checks[k]));
+        pending_checks.erase(
+          pending_checks.begin() + pre, pending_checks.end());
+        if(any.type() == elem_val.type())
+          elem_val = if_exprt{iter_ascii, elem_val, any};
+        else
+          elem_val = any;
+      }
+    }
     body_block.add(code_frontend_assignt{loop_var, elem_val});
   } // end else (non-tuple target)
 
@@ -3050,6 +3079,14 @@ skip_string_unroll:;
   // constant-range variant's note: continue must reach the increment).
   exprt for_cond =
     cm_bound(idx_var, binary_relation_exprt{idx_var, ID_lt, length});
+  // Beyond ASCII a refined string has fewer characters than bytes: the
+  // loop may end after any iteration.
+  for(auto &c : iter_ascii_code)
+    result.add(std::move(c));
+  if(!iter_ascii.is_true())
+    for_cond = and_exprt{
+      for_cond,
+      or_exprt{iter_ascii, side_effect_expr_nondett{bool_typet{}, loc}}};
   // Fail-closed truncation report (see cm_bound): emitted HERE, after
   // the iterable's materialising assignments already in `result`, so
   // the guard reads the actual length (via pending it ran before them

@@ -1,0 +1,19 @@
+CORE
+wrong.py
+--unwind 6
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion.1\] .* line 8 Python assertion: FAILURE$
+^\[assertion.2\] .* line 13 Python assertion: FAILURE$
+^\[assertion.3\] .* line 14 Python assertion: FAILURE$
+^\[assertion.4\] .* line 15 Python assertion: FAILURE$
+^\[assertion.5\] .* line 16 Python assertion: FAILURE$
+^\[assertion.6\] .* line 17 Python assertion: FAILURE$
+^\[assertion.7\] .* line 18 Python assertion: FAILURE$
+^\[assertion.8\] .* line 19 Python assertion: FAILURE$
+^\[assertion.9\] .* line 20 Python assertion: FAILURE$
+^\[assertion.10\] .* line 21 Python assertion: FAILURE$
+^\[assertion.11\] .* line 25 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring

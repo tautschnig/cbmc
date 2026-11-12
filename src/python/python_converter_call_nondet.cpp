@@ -410,7 +410,20 @@ std::optional<exprt> python_convertert::try_nondet_call(
     {
       exprt size = convert_expression(*as_array(args).begin());
       exprt size_i64 = safe_typecast(size, signedbv_typet{64});
-      pending_checks.push_back(code_assumet{equal_exprt{len_intr, size_i64}});
+      // `size` characters, which are `size` bytes when ASCII and up to four
+      // times as many beyond (the length here counts bytes). Beyond ASCII the
+      // bytes are also at most 32, the most that the characters are counted
+      // of exactly (refined_code_point_count).
+      const signedbv_typet i64{64};
+      pending_checks.push_back(code_assumet{and_exprt{
+        binary_relation_exprt{len_intr, ID_ge, size_i64},
+        binary_relation_exprt{
+          len_intr, ID_le, mult_exprt{size_i64, from_integer(4, i64)}},
+        or_exprt{
+          equal_exprt{len_intr, size_i64},
+          binary_relation_exprt{len_intr, ID_le, from_integer(32, i64)}}}});
+      pending_checks.push_back(code_assumet{equal_exprt{
+        refined_code_point_count(tmp, get_location(expr)), size_i64}});
     }
     else
     {
