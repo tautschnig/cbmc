@@ -37,6 +37,21 @@ std::optional<exprt> python_convertert::try_list_method(
   const std::string &method_name,
   const jsont &args)
 {
+  // A call with too few or too many arguments raises TypeError.
+  static const std::map<std::string, std::pair<std::size_t, std::size_t>>
+    arity = {
+      {"append", {1, 1}},
+      {"extend", {1, 1}},
+      {"insert", {2, 2}},
+      {"remove", {1, 1}},
+      {"pop", {0, 1}},
+      {"clear", {0, 0}},
+      {"index", {1, 3}},
+      {"count", {1, 1}},
+      {"sort", {0, 0}},
+      {"reverse", {0, 0}},
+      {"copy", {0, 0}}};
+  check_method_arity(arity, method_name, expr, args);
   // Extraction-then-mutate soundness: if `obj` aliases a container element
   // (`r = c[i]`) and this is an in-place mutator, havoc the source container.
   invalidate_extracted_source_on_mutation(obj, method_name);

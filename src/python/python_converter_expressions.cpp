@@ -79,6 +79,25 @@ void python_convertert::emit_conditional_exception(
     pending_checks.push_back(std::move(code));
 }
 
+void python_convertert::check_method_arity(
+  const std::map<std::string, std::pair<std::size_t, std::size_t>> &arity,
+  const std::string &method,
+  const jsont &expr,
+  const jsont &args)
+{
+  const auto a = arity.find(method);
+  if(a == arity.end() || !args.is_array())
+    return;
+  for(const auto &x : as_array(args))
+    if(is_node_type(x, "Starred"))
+      return;
+  const jsont &kws = json_member(expr, "keywords");
+  const bool keywords = kws.is_array() && !as_array(kws).empty();
+  const std::size_t n = as_array(args).size();
+  if(n > a->second.second || (!keywords && n < a->second.first))
+    emit_conditional_exception(true_exprt{}, "TypeError");
+}
+
 codet python_convertert::raise_if(const exprt &cond, const char *exc_type)
 {
   const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");

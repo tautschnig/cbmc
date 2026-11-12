@@ -39,6 +39,20 @@ std::optional<exprt> python_convertert::try_dict_method(
   const std::string &method_name,
   const jsont &args)
 {
+  // A call with too few or too many arguments raises TypeError.
+  static const std::map<std::string, std::pair<std::size_t, std::size_t>>
+    arity = {
+      {"get", {1, 2}},
+      {"keys", {0, 0}},
+      {"values", {0, 0}},
+      {"items", {0, 0}},
+      {"pop", {1, 2}},
+      {"popitem", {0, 0}},
+      {"setdefault", {1, 2}},
+      {"update", {0, 1}},
+      {"clear", {0, 0}},
+      {"copy", {0, 0}}};
+  check_method_arity(arity, method_name, expr, args);
   if(method_name == "get")
   {
     // d.get(key, default) — scan keys array
@@ -856,7 +870,30 @@ std::optional<exprt> python_convertert::try_dict_method(
   if(
     method_name == "setdefault" || method_name == "pop" ||
     method_name == "popitem")
+  {
+    // A dict that is not a variable (a display, say): the same, on a
+    // temporary.
+    if(
+      obj.id() != ID_symbol && obj.id() != ID_dereference &&
+      obj_base_type.id() == ID_struct)
+    {
+      static unsigned tmp_ctr = 0;
+      const std::string nm = "__dict_tmp_" + std::to_string(tmp_ctr++);
+      const irep_idt id{qualify_name(nm)};
+      if(symbol_table.lookup(id) == nullptr)
+      {
+        symbolt sy{id, obj.type(), "python"};
+        sy.base_name = nm;
+        sy.is_lvalue = true;
+        sy.is_state_var = true;
+        symbol_table.add(sy);
+      }
+      const symbol_exprt tmp = symbol_table.lookup_ref(id).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{tmp, obj});
+      return try_dict_method(expr, tmp, obj_base_type, method_name, args);
+    }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+  }
 
   return std::nullopt;
 }

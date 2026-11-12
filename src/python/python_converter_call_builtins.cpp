@@ -376,8 +376,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
     else if((func_name == "map" || func_name == "filter") && a.size() >= 2)
       for(auto it = std::next(a.begin()); it != a.end(); ++it)
         iterated.push_back(&*it);
-    // Displays and comprehensions are iterable, and comprehensions are
-    // converted in their own context.
+    // Comprehensions are iterable, and converted in their own context.
     iterated.erase(
       std::remove_if(
         iterated.begin(),
@@ -386,9 +385,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
         {
           return is_node_type(*x, "GeneratorExp") ||
                  is_node_type(*x, "ListComp") || is_node_type(*x, "SetComp") ||
-                 is_node_type(*x, "DictComp") || is_node_type(*x, "List") ||
-                 is_node_type(*x, "Tuple") || is_node_type(*x, "Set") ||
-                 is_node_type(*x, "Dict") || is_node_type(*x, "Starred");
+                 is_node_type(*x, "DictComp") || is_node_type(*x, "Starred");
         }),
       iterated.end());
     if(!iterated.empty())
@@ -406,6 +403,39 @@ std::optional<exprt> python_convertert::try_builtin_call(
            to_struct_type(v.type()).get_tag() == "python_complex");
         if(not_iterable)
           emit_conditional_exception(true_exprt{}, "TypeError");
+        // the types of the elements, of a list or a tuple
+        std::vector<typet> elements;
+        if(is_python_list_type(v.type()) && v.type().id() == ID_struct)
+        {
+          const auto &comps = to_struct_type(v.type()).components();
+          if(comps.size() >= 2 && comps[1].type().id() == ID_array)
+            elements.push_back(to_array_type(comps[1].type()).element_type());
+        }
+        else if(is_python_tuple_type(v.type()) && v.type().id() == ID_struct)
+          for(const auto &c : to_struct_type(v.type()).components())
+            elements.push_back(c.type());
+        // set and frozenset hash their elements; dict takes pairs
+        if(func_name == "set" || func_name == "frozenset")
+        {
+          for(const auto &t : elements)
+            if(is_unhashable_type(t))
+              emit_conditional_exception(true_exprt{}, "TypeError");
+        }
+        else if(func_name == "dict" && x == &*a.begin())
+        {
+          for(const auto &t : elements)
+          {
+            const irep_idt &eid = t.id();
+            if(
+              eid == ID_signedbv || eid == ID_unsignedbv || eid == ID_floatbv ||
+              eid == ID_bool || eid == ID_c_bool || eid == ID_integer)
+              emit_conditional_exception(true_exprt{}, "TypeError");
+            else if(
+              is_python_tuple_type(t) && t.id() == ID_struct &&
+              to_struct_type(t).components().size() != 2)
+              emit_conditional_exception(true_exprt{}, "ValueError");
+          }
+        }
       }
     }
   }
@@ -1715,6 +1745,74 @@ std::optional<exprt> python_convertert::try_builtin_call(
     return side_effect_expr_nondett{python_string_type(), get_location(expr)};
   }
   // PLib builtins: hash/id — return nondet int
+  else if(func_name == "bytes" || func_name == "bytearray")
+  {
+    // bytes(), bytes(n) and bytes(iterable of ints); other forms (a str
+    // with an encoding, the buffer protocol) are nondet bytes.
+    const typet u8 = unsignedbv_typet{8};
+    const typet bytes_t = python_list_type(u8);
+    const auto &data_type =
+      to_array_type(to_struct_type(bytes_t).components()[1].type());
+    const signedbv_typet i64{64};
+    if(!args.is_array() || as_array(args).empty())
+      return exprt{struct_exprt{
+        {from_integer(0, i64), build_list_data({}, data_type)}, bytes_t}};
+    const exprt arg =
+      evaluate_once(convert_expression(*as_array(args).begin()));
+    for(auto it = std::next(as_array(args).begin()); it != as_array(args).end();
+        ++it)
+      evaluate_once(convert_expression(*it));
+    const irep_idt &aid = arg.type().id();
+    if(as_array(args).size() == 1 && (aid == ID_signedbv || aid == ID_integer))
+    {
+      // n zero bytes; a negative n raises ValueError
+      const exprt n = typecast_exprt::conditional_cast(arg, i64);
+      emit_conditional_exception(
+        binary_relation_exprt{n, ID_lt, from_integer(0, i64)}, "ValueError");
+      return exprt{struct_exprt{{n, build_list_data({}, data_type)}, bytes_t}};
+    }
+    if(
+      as_array(args).size() == 1 && is_python_list_type(arg.type()) &&
+      arg.type().id() == ID_struct)
+    {
+      const auto &comps = to_struct_type(arg.type()).components();
+      const auto &arr_t = to_array_type(comps[1].type());
+      const typet &elem_t = arr_t.element_type();
+      const auto size = numeric_cast<std::size_t>(arr_t.size());
+      if(
+        size.has_value() &&
+        (elem_t.id() == ID_signedbv || elem_t.id() == ID_unsignedbv ||
+         elem_t.id() == ID_integer))
+      {
+        // each element must be in range(256)
+        const member_exprt len{arg, "length", i64};
+        const member_exprt data{arg, "data", arr_t};
+        exprt::operandst out_of_range;
+        exprt::operandst elems;
+        for(std::size_t i = 0; i < *size; ++i)
+        {
+          const index_exprt v{data, from_integer(i, i64)};
+          out_of_range.push_back(and_exprt{
+            binary_relation_exprt{from_integer(i, i64), ID_lt, len},
+            or_exprt{
+              binary_relation_exprt{v, ID_lt, from_integer(0, elem_t)},
+              binary_relation_exprt{v, ID_gt, from_integer(255, elem_t)}}});
+          elems.push_back(typecast_exprt{v, u8});
+        }
+        emit_conditional_exception(disjunction(out_of_range), "ValueError");
+        const auto bytes_size = numeric_cast<std::size_t>(data_type.size());
+        if(bytes_size.has_value() && elems.size() <= *bytes_size)
+          return exprt{struct_exprt{
+            {len, build_list_data(std::move(elems), data_type)}, bytes_t}};
+      }
+    }
+    if(is_python_string_type(arg.type()) && as_array(args).size() == 1)
+    {
+      // a str needs an encoding
+      emit_conditional_exception(true_exprt{}, "TypeError");
+    }
+    return side_effect_expr_nondett{bytes_t, get_location(expr)};
+  }
   else if(func_name == "hash")
   {
     // The argument is evaluated; a list, dict, set or other unhashable

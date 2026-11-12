@@ -2316,6 +2316,14 @@ private:
   /// is active: the first exception raised on a path wins (PLR §8.3). A
   /// skip when the exception variables do not exist.
   codet raise_if(const exprt &cond, const char *exc_type);
+  /// Raise TypeError when the call \p expr of \p method passes a number of
+  /// positional arguments \p args outside of \p method's range in
+  /// \p arity (a method that is not in it is not checked).
+  void check_method_arity(
+    const std::map<std::string, std::pair<std::size_t, std::size_t>> &arity,
+    const std::string &method,
+    const jsont &expr,
+    const jsont &args);
 
   /// Validate a dunder's return-type contract. If \p dunder_sym's
   /// declared/inferred return type concretely violates the contract for

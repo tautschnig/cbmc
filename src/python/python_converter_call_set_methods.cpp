@@ -34,6 +34,21 @@ std::optional<exprt> python_convertert::try_set_method(
   const std::string &method_name,
   const jsont &args)
 {
+  // A call with too few or too many arguments raises TypeError.
+  static const std::map<std::string, std::pair<std::size_t, std::size_t>>
+    arity = {
+      {"add", {1, 1}},
+      {"remove", {1, 1}},
+      {"discard", {1, 1}},
+      {"pop", {0, 0}},
+      {"clear", {0, 0}},
+      {"copy", {0, 0}},
+      {"symmetric_difference", {1, 1}},
+      {"issubset", {1, 1}},
+      {"issuperset", {1, 1}},
+      {"isdisjoint", {1, 1}},
+      {"symmetric_difference_update", {1, 1}}};
+  check_method_arity(arity, method_name, expr, args);
   member_exprt bm{obj, "bitmap", unsignedbv_typet{64}};
   member_exprt off{obj, "offset", signedbv_typet{64}};
 
