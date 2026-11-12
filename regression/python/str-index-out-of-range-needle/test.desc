@@ -1,0 +1,13 @@
+CORE
+main.py
+--python-raising-ops-check
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] file main.py line 8 Python assertion: SUCCESS$
+^\[.*\] file main.py line 10 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+ERROR
+--
+The subscript of a string with known bytes reads a byte within the string
+also on the path that raises IndexError.

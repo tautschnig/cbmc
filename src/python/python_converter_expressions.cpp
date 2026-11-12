@@ -2176,6 +2176,7 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
     // (constant struct content, or tracked via string_constants),
     // (b) otherwise.
     bool value_has_known_bytes = false;
+    std::size_t known_bytes = 0;
     {
       auto sv = extract_string_value(value);
       if(!sv.has_value() && value.id() == ID_symbol)
@@ -2185,7 +2186,10 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
           sv = it->second;
       }
       if(sv.has_value())
+      {
         value_has_known_bytes = true;
+        known_bytes = sv->size();
+      }
     }
     // Beyond ASCII the byte at the index is not the character.
     if(!ascii.is_true())
@@ -2232,7 +2236,24 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
       // are captured at the subscript point.
       member_exprt data_ptr(
         value, "data", pointer_typet(unsignedbv_typet{8}, 64));
-      dereference_exprt ch(plus_exprt(data_ptr, adjusted_idx));
+      // An index out of range raises IndexError (above); reading out of
+      // the bytes on that path would leave the string solver a byte it
+      // cannot model, so read byte 0 instead.
+      exprt read_idx = adjusted_idx;
+      if(known_bytes > 0)
+      {
+        const exprt zero = from_integer(0, adjusted_idx.type());
+        read_idx = if_exprt{
+          and_exprt{
+            binary_relation_exprt{adjusted_idx, ID_ge, zero},
+            binary_relation_exprt{
+              adjusted_idx,
+              ID_lt,
+              from_integer(known_bytes, adjusted_idx.type())}},
+          adjusted_idx,
+          zero};
+      }
+      dereference_exprt ch(plus_exprt(data_ptr, read_idx));
       exprt::operandst chars;
       chars.push_back(ch);
       array_typet at(unsignedbv_typet{8}, from_integer(1, signedbv_typet{64}));
