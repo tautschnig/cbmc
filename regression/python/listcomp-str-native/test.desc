@@ -1,0 +1,11 @@
+CORE
+main.py
+--cvc5 --python-smt-strings --unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Invariant check failed
+--
+A list comprehension of strings under the native string backend coerces each
+element to the list's stored element type (a string handle).

@@ -1,0 +1,12 @@
+CORE
+main.py
+--cvc5 --python-smt-strings --unwind 6
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] file main.py line 3 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+Invariant check failed
+--
+The element values of a native list comprehension of strings are not
+over-approximated.

@@ -1893,10 +1893,12 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
   struct_typet list_type = python_list_type(elem_type);
   const auto &data_type = to_array_type(list_type.components()[1].type());
 
+  // Coerce to the STORED element type: under the native string backend a
+  // str element is stored as a string-id handle, not as the string itself.
   exprt::operandst data_elems;
   for(auto &e : elements)
   {
-    e = coerce_element(e, elem_type);
+    e = coerce_element(e, data_type.element_type());
     data_elems.push_back(e);
   }
 
