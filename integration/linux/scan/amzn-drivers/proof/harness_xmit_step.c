@@ -28,7 +28,20 @@
  *           pushed without a doorbell.
  *
  * Together they give the xmit step for an unbounded burst at a fixed ring
- * size.  What is not machine-checked is the splice: that part 1 iterated and
+ * size.  MEASURED REACH, from metrics/cbmc-runs.csv:
+ *
+ *   part 1 (STEP)  ring 8: 171 s, 1.30 M clauses
+ *                  ring 16: 3141 s, 2.56 M clauses
+ *                  ring 32: no verdict in 3000 s
+ *   part 2 (EXIT)  ring 8: 9 s; ring 16: 14 s; ring 32: 22 s
+ *
+ * So the burst bound is gone outright, and the ring reach doubles from 8 to
+ * 16, but the step does not scale the way the cleanup decomposition did: the
+ * exit block is nearly free while the step costs ~18x per doubling.  The
+ * remaining cost is the ena_xmit_mbuf -> ena_tx_map_mbuf path writing a
+ * symbolic slot index into tx_buffer_info[n], which no amount of invariant
+ * restatement removes -- unlike cleanup, where the O(n^2) predicate was the
+ * bottleneck.  What is not machine-checked is the splice: that part 1 iterated and
  * then part 2 is the whole function.  The loop body is CALLED here rather
  * than transcribed -- ena_xmit_mbuf is a real function, unlike the cleanup
  * loop body -- so there is no transcription gap on this one.

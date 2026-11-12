@@ -98,4 +98,21 @@ that entirely, at the cost of the unchecked splice noted above.
   pairwise form.
 * The fast-free branch of the loop (`offloads & MBUF_FAST_FREE`), excluded
   here; it batches frees through `pkts_to_clean` and needs its own clause.
-* The same treatment for the xmit loop, which is still unwound.
+* The xmit loop has had the same treatment, in
+  `proof/harness_xmit_step.c`, with a different outcome worth recording. Its
+  burst bound is gone outright -- the step holds for any burst length -- and
+  its ring reach doubled from 8 to 16, but it does not scale as cleanup did:
+
+  | | ring 8 | ring 16 | ring 32 |
+  |---|---|---|---|
+  | part 1 STEP | 171 s, 1.30 M clauses | 3141 s, 2.56 M clauses | no verdict in 3000 s |
+  | part 2 EXIT | 9 s | 14 s | 22 s |
+
+  The decomposition was also *simpler* there, because `ena_xmit_mbuf` updates
+  `next_to_use` itself so the mid-loop invariant is the full invariant. What
+  does not go away is the cost of writing a symbolic slot index into
+  `tx_buffer_info[n]` along the `ena_tx_map_mbuf` path. For cleanup the
+  bottleneck was the O(n^2) predicate and restating it helped; for xmit the
+  bottleneck is the driver's own data flow, and restating predicates does not
+  touch it. **A decomposition removes the bound its loop imposes and nothing
+  else** -- worth knowing before applying the technique elsewhere.

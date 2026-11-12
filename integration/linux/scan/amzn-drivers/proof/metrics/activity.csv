@@ -11,3 +11,5 @@ ts,category,subject,note
 2026-11-11T20:47:55+00:00,TOOL,xmit_step,"scaling runs: rings 16, 32, 64"
 2026-11-11T22:32:02+00:00,TOOL,xmit_step,"scaling runs rings 16 and 32, launched in background"
 2026-11-11T22:32:02+00:00,DOC,xmit_step,"committing the ring-8 result"
+2026-11-12T00:13:24+00:00,TOOL,xmit_step,"ring 16 part 1 alone, 2h budget, to find the scaling edge"
+2026-11-12T01:49:20+00:00,DOC,xmit_step,"recording the ring-16 result and the measured scaling"
