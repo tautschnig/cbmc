@@ -409,6 +409,31 @@ public:
     irep_idt main_class;
 
     static const std::size_t default_object_bits = 16;
+
+    /// The feature versions of the Java runtimes that may run the program
+    /// (17 for Java 17): from min_version to max_version, 0 for no limit.
+    /// Their libraries differ, as Double.toString of Java 18 and earlier
+    /// from that of Java 19 and later, and analyses take the behaviours of
+    /// all of them. --java-version sets both bounds; otherwise min_version
+    /// is that of the newest class file loaded (see
+    /// note_class_file_version), as a runtime runs only class files of its
+    /// version and earlier.
+    std::size_t min_version = 8;
+    std::size_t max_version = 0;
+    /// Whether --java-version set the version.
+    bool version_is_set = false;
+
+    /// Whether a runtime of a version from \p first to \p last (0 for no
+    /// limit) may run the program.
+    bool may_run_on(std::size_t first, std::size_t last) const
+    {
+      return (last == 0 || min_version <= last) &&
+             (max_version == 0 || max_version >= first);
+    }
+
+    /// Note a class file of the major version \p major_version (52 for Java
+    /// 8), which the runtimes must run.
+    void note_class_file_version(std::size_t major_version);
   } java;
 
   struct bv_encodingt

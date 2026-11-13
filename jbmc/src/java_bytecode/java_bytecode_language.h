@@ -49,7 +49,8 @@ Author: Daniel Kroening, kroening@kroening.com
   "(java-load-class):" \
   "(java-no-load-class):" \
   "(static-values):" \
-  "(java-lift-clinit-calls)"
+  "(java-lift-clinit-calls)" \
+  "(java-version):"
 
 #define JAVA_BYTECODE_LANGUAGE_OPTIONS_HELP \
   " {y--disable-uncaught-exception-check} \t " \
@@ -120,6 +121,11 @@ Author: Daniel Kroening, kroening@kroening.com
   "if there are cyclic dependencies between static initializers due to " \
   "potentially changing their order of execution, or if static initializers " \
   "have side-effects such as updating another class' static field.\n" \
+  " {y--java-version} {uN} \t " \
+  "the feature version of the Java runtime that runs the program (as 17), " \
+  "whose libraries behave as in that version, as Double.toString, which " \
+  "takes other digits up to Java 18. By default, any version from that of " \
+  "the newest class file loaded on, with the behaviours of all of them.\n" \
 
 #ifdef _WIN32
   #define JAVA_CLASSPATH_SEPARATOR ";"

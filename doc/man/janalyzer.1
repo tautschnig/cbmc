@@ -266,6 +266,14 @@ cyclic dependencies between static initializers due
 to potentially changing their order of execution,
 or if static initializers have side\-effects such as
 updating another class' static field.
+.TP
+\fB\-\-java\-version\fR \fIN\fR
+The feature version of the Java runtime that runs the
+program (as 17), whose libraries behave as in that
+version, as Double.toString, which takes other digits
+up to Java 18. By default, any version from that of the
+newest class file loaded on, with the behaviours of all
+of them.
 .SS "Platform options:"
 .TP
 \fB\-\-arch\fR \fIarch\fR

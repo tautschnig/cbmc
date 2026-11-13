@@ -14,11 +14,13 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "exception_utils.h"
 #include "namespace.h"
 #include "pointer_expr.h"
+#include "prefix.h"
 #include "simplify_expr.h"
 #include "string2int.h"
 #include "string_utils.h"
 #include "symbol_table_base.h"
 
+#include <algorithm>
 #include <climits>
 #include <cstdlib>
 #include <type_traits>
@@ -1041,6 +1043,23 @@ bool configt::set(const cmdlinet &cmdline)
   if(cmdline.isset("main-class"))
     java.main_class=cmdline.get_value("main-class");
 
+  if(cmdline.isset("java-version"))
+  {
+    // the feature version, also as 1.8 for Java 8
+    std::string text = cmdline.get_value("java-version");
+    if(has_prefix(text, "1."))
+      text = text.substr(2);
+    const auto version = string2optional_size_t(text);
+    if(!version.has_value() || *version < 1)
+    {
+      throw invalid_command_line_argument_exceptiont{
+        "the version must be a positive integer, as 17", "--java-version"};
+    }
+    java.min_version = *version;
+    java.max_version = *version;
+    java.version_is_set = true;
+  }
+
   if(cmdline.isset("include"))
     ansi_c.include_files=cmdline.get_values("include");
 
@@ -1660,6 +1679,14 @@ irep_idt configt::this_architecture()
   return this_arch;
 }
 // clang-format on
+
+void configt::javat::note_class_file_version(std::size_t major_version)
+{
+  // major version 45 is Java 1.1, 52 Java 8, 61 Java 17
+  if(version_is_set || major_version < 52)
+    return;
+  min_version = std::max(min_version, major_version - 44);
+}
 
 void configt::set_classpath(const std::string &cp)
 {

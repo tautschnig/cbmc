@@ -8,14 +8,11 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "java_bytecode_parser.h"
 
-#include <algorithm>
-#include <fstream>
-#include <map>
-#include <string>
-
 #include <util/arith_tools.h>
+#include <util/config.h>
 #include <util/ieee_float.h>
 #include <util/parser.h>
+#include <util/prefix.h>
 #include <util/std_expr.h>
 #include <util/string_constant.h>
 
@@ -23,6 +20,11 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "java_bytecode_parse_tree.h"
 #include "java_string_literal_expr.h"
 #include "java_types.h"
+
+#include <algorithm>
+#include <fstream>
+#include <map>
+#include <string>
 
 class java_bytecode_parsert final : public parsert
 {
@@ -478,6 +480,17 @@ void java_bytecode_parsert::rClassFile()
   parsed_class.is_annotation = (access_flags & ACC_ANNOTATION) != 0;
   parsed_class.name=
     constant(this_class).type().get(ID_C_base_name);
+
+  // The runtimes that run the program run this class file, unless it is one
+  // of their libraries (or of the models of JBMC).
+  const std::string &class_name = id2string(parsed_class.name);
+  if(
+    !has_prefix(class_name, "java.") && !has_prefix(class_name, "javax.") &&
+    !has_prefix(class_name, "jdk.") && !has_prefix(class_name, "sun.") &&
+    !has_prefix(class_name, "org.cprover."))
+  {
+    config.java.note_class_file_version(major_version);
+  }
 
   if(super_class!=0)
     parsed_class.super_class = constant(super_class).type().get(ID_C_base_name);
