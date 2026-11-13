@@ -1641,6 +1641,69 @@ obligation that FreeBSD's MTU path fails, DPDK's passes. A contrast pair is
 worth more than either half: it shows the obligation is satisfiable and that
 failing it is a choice the code makes, not an artefact of how it was written.
 
+## Class R confirmed: a response delivered to the wrong request (shared `ena_com`)
+
+Class R was the only group in the whole 181 that looked as though it needed a
+new technique. It did not; it needed the admin-queue model extended with an
+identity the hardware does not carry.
+
+Two class Z findings are this shape, both Velocity Labs':
+
+* *"Wrong admin response returned after abort and command-ID reuse"* (shared
+  `ena_com`)
+* *"An admin command returns another command's response when the device
+  duplicates a completion"* (Linux EFA)
+
+**Confirmed, and the cause is structural.** A command's only identity is its
+slot index:
+
+* `__ena_com_submit_admin_cmd` takes `cmd_id = admin_queue->curr_cmd_id` and
+  advances that counter modulo the queue depth (`ena_com.c:245-267`), so ids
+  are reused as soon as the ring wraps;
+* `ena_com_handle_single_admin_completion` looks a completion up by that id
+  alone and, when the slot is occupied, copies the device's entry into
+  whatever buffer the slot currently names (`ena_com.c:459-487`);
+* `ena_com_abort_admin_commands` sets `status = ENA_CMD_ABORTED` but leaves
+  `occupied` set and `user_cqe` still pointing at the abandoned submitter's
+  buffer (`ena_com.c:2237-2254`).
+
+Nothing in a completion descriptor distinguishes the first user of an id from
+the second. `harness_admin_cq.c` already proved the easy half -- a completion
+aimed at an *unoccupied* slot changes nothing (`AC_UNOCCUPIED`), because the
+driver checks `occupied`. This is the hard half: the slot is occupied, by a
+different command than the completion belongs to.
+
+**Evidence.** `proof/harness_admin_reuse.c` with `proof/run_admin_reuse.sh`
+gives each submission a ghost generation -- which no protocol field holds --
+and runs the real `ena_com_admin_q_comp_intr_handler` over a late completion
+for an abandoned command whose id has been reused:
+
+| configuration | `AR_NO_STALE_STATUS` | `AR_RIGHT_REQUEST` |
+|---|---|---|
+| as-is | **FAILURE** | **FAILURE** |
+| `-DWITH_GENERATION_CHECK` | SUCCESS | SUCCESS |
+
+Clean runs throughout -- no other failing property, no reached bodyless
+callee, no UNKNOWN, no failing unwinding assertion -- both witnesses failing,
+and both configurations adjudicated by `check_hygiene.sh`.
+
+**On the fix.** `-DWITH_GENERATION_CHECK` is **a model of what a fix must
+achieve, not a patch**. There is no field in the completion descriptor to
+carry a generation, so a driver cannot implement this check as written. The
+real remedy is to not reuse a command id while a completion may still arrive
+for it -- which means either retiring ids for a round after an abort, or
+waiting out the device before releasing the context. The configuration exists
+to show which obligation such a change would restore, and to make clear that
+the obligation is satisfiable at all.
+
+**Severity.** Needs a command to be abandoned -- abort happens on admin
+timeout and during reset -- and a late or duplicated completion for it. The
+consequence is a submitter reading another command's status as its own, which
+is a wrong answer rather than a crash, and so can go unnoticed. Shared
+`ena_com`, so all three drivers carry it; the EFA instance Velocity Labs
+reported reaches the same place through a duplicated completion instead of an
+abort.
+
 ## Observation: `req_id` range is validated in shared `ena_com`, not in the drivers
 
 Checked while scoping the FreeBSD RX work, and it narrows F16 rather than

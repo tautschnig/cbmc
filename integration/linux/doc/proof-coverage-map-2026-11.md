@@ -234,3 +234,17 @@ points turned up one new defect, re-classified three, and confirmed one of
 theirs. That is a better return than any depth work in the same period, and it
 is the argument for finishing the sweep on Linux ENA and EFA rather than
 pushing ring sizes further.
+
+## Class S and R: what is left, and one environment blocker
+
+After the sweep, the class S sites still unproven are:
+
+| site | status |
+|---|---|
+| FreeBSD `ena_netmap_reg` | **blocked, environment.** `ena_netmap_reg` overwrites `ena_up`'s failure with `ena_restore_device`'s result (`ena_netmap.c:311-319`), so a failed bring-up returns 0 -- the shape of the reported finding. The harness does not build here: `netmap_kern.h` selects a Linux branch without `__FreeBSD__`, and with it `netmap_mbq.h` needs `safe_spinlock_t`. That is build scaffolding, not proof work, and is recorded rather than attempted further. |
+| Linux ENA `ethtool -G` ring-size backoff | not attempted: no Linux ENA build in this tree |
+| Linux ENA AF_XDP wakeup | same |
+| shared `ena_com` `ethtool -N rx-flow-hash` | the DPDK sibling `ena_rss_hash_update` HOLDS (`SM_HASH_RC`), so if the Linux path fails it does so in the Linux wrapper rather than in `ena_com` |
+
+The last row is worth keeping: proving the DPDK sibling narrows where the
+Linux finding can be, without a Linux build.

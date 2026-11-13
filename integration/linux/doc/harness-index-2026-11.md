@@ -4,7 +4,7 @@
 
 One row per harness: what it puts under test, the obligations it asserts, whether it carries a vacuity witness, and -- the column this index exists for -- what each configuration macro assumes away. A finding was once reported and retracted because that last column did not exist anywhere.
 
-47 harnesses.
+48 harnesses.
 
 ## Harnesses with no vacuity witness
 
@@ -26,6 +26,23 @@ Async operation 3: the admin completion queue, the other half of ena_control_pat
 * run by `run_admin_cq.sh`: no restricting macros
 
 * vacuity witness: yes, 3
+
+### `harness_admin_reuse.c`
+
+Class R: a response attributed to the wrong request.
+
+| obligation | asserts |
+|---|---|
+| `AR_NO_STALE_STATUS` | a submitter does not observe a status belonging to |
+| `AR_RIGHT_REQUEST` | a completion written into a slot's buffer carries the |
+
+| configuration | assumes |
+|---|---|
+| `-DWITH_GENERATION_CHECK` | models a per-slot generation check for class R; no protocol field carries a generation, so it is a model of what a fix must achieve rather than a patch |
+
+* run by `run_admin_reuse.sh`: `-DWITH_GENERATION_CHECK`
+
+* vacuity witness: yes, 2
 
 ### `harness_aenq.c`
 
