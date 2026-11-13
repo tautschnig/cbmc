@@ -66,11 +66,14 @@ public:
   bool unknown_conversion = false;
 
   /// Whether the specifier is one that the string solver models: one
-  /// without flags, width or precision, as these are not modelled.
+  /// without flags or width, and without a precision but for a
+  /// floating-point conversion, as these are not modelled.
   bool is_modelled() const
   {
+    const bool takes_precision =
+      !dt && std::string{"eEfgGaA"}.find(conversion) != std::string::npos;
     return !unsupported && !unknown_conversion && flag.empty() && width == -1 &&
-           precision == -1;
+           (precision == -1 || takes_precision);
   }
 
   format_specifiert(

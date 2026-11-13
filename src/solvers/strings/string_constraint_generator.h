@@ -265,8 +265,23 @@ public:
     float_formatt format;
     /// Where the conversion happens (see string_dependenciest).
     exprt guard = true_exprt{};
+    /// For a conversion of java.util.Formatter, its conversion ('e', 'f',
+    /// 'g' or 'a', see java_format_float) rather than \ref format, and its
+    /// precision.
+    char java_conversion = 0;
+    int java_precision = -1;
   };
   std::vector<float_conversiont> float_conversions;
+
+  /// What java.util.Formatter prints for the double \p value with the
+  /// conversion \p conversion and the precision \p precision (see
+  /// java_format_float): exact for a constant value, and otherwise recorded
+  /// in float_conversions for the refinement.
+  string_constraintst add_axioms_for_java_format_float(
+    const array_string_exprt &res,
+    const exprt &value,
+    char conversion,
+    int precision);
 
   std::pair<exprt, string_constraintst>
   add_axioms_for_replace(const function_application_exprt &f);

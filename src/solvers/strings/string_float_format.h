@@ -40,6 +40,35 @@ enum class float_formatt
 std::string
 format_float(double value, bool single_precision, float_formatt format);
 
+/// What java.util.Formatter of Java 21 and later prints for \p value with
+/// the conversion \p conversion ('e', 'f', 'g' or 'a') and the precision
+/// \p precision (-1 for none), without flags or width, in lower case. (Java
+/// 17 takes other digits for some values, as for Double.toString.)
+std::string java_format_float(double value, char conversion, int precision);
+
+/// The largest length of java_format_float with \p conversion and
+/// \p precision (an upper bound).
+std::size_t java_format_float_max_length(char conversion, int precision);
+
+/// The doubles whose java_format_float is a text (see
+/// java_format_float_preimage): any NaN, or those of a sign whose magnitude
+/// is in [low, high], or none.
+struct java_format_float_preimaget
+{
+  bool nan = false;
+  bool empty = true;
+  bool negative = false;
+  double low = 0;
+  double high = 0;
+};
+
+/// The doubles whose java_format_float with \p conversion and \p precision
+/// is \p text.
+java_format_float_preimaget java_format_float_preimage(
+  const std::string &text,
+  char conversion,
+  int precision);
+
 /// The smallest and the largest length of format_float of any value of the
 /// precision in \p format, special values included.
 std::pair<std::size_t, std::size_t>

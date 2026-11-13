@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.c29 --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+String.format("%a", 1.5f) gives "0x1.8p0", as in Java 21 and 25.

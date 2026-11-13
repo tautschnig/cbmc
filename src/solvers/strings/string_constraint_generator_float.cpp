@@ -344,3 +344,37 @@ string_constraint_generatort::add_axioms_for_string_of_float(
     from_integer(0, get_return_code_type()),
     float_string_axioms(res, value, format)};
 }
+
+string_constraintst
+string_constraint_generatort::add_axioms_for_java_format_float(
+  const array_string_exprt &res,
+  const exprt &value,
+  char conversion,
+  int precision)
+{
+  PRECONDITION(value.type() == ieee_float_spect::double_precision().to_type());
+  const exprt simplified = simplify_expr(value, ns);
+  if(simplified.is_constant())
+  {
+    const ieee_float_valuet constant{to_constant_expr(simplified)};
+    return add_axioms_for_constant(
+             res,
+             java_format_float(constant.to_double(), conversion, precision))
+      .second;
+  }
+  float_conversiont conversion_record{value, res, float_formatt::JAVA};
+  conversion_record.java_conversion = conversion;
+  conversion_record.java_precision = precision;
+  float_conversions.push_back(conversion_record);
+  // the length, which keeps the strings of the models short
+  const exprt length = array_pool.get_or_create_length(res);
+  string_constraintst constraints;
+  constraints.existential.push_back(and_exprt{
+    binary_relation_exprt{length, ID_ge, from_integer(1, length.type())},
+    binary_relation_exprt{
+      length,
+      ID_le,
+      from_integer(
+        java_format_float_max_length(conversion, precision), length.type())}});
+  return constraints;
+}

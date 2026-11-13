@@ -207,6 +207,13 @@ private:
   /// current model. Otherwise, add lemmas giving the result for the value
   /// of each wrong one.
   bool check_float_conversions();
+
+  /// check_float_conversions for a conversion of java.util.Formatter with
+  /// the value \p constant in the model: whether its string is right, and
+  /// the lemmas that exclude the model otherwise.
+  bool check_java_format_float(
+    const string_constraint_generatort::float_conversiont &conversion,
+    const ieee_float_valuet &constant);
   /// For a conversion whose model value \p value has the string
   /// \p expected in scientific notation: every normal value of the same
   /// sign between the nearest values to d * 10^e and (d + 1) * 10^e, for the

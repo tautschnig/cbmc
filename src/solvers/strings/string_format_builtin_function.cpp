@@ -12,15 +12,18 @@ Author: Romain Brenguier, Joel Allred
 #include "string_format_builtin_function.h"
 
 #include <util/bitvector_expr.h>
+#include <util/ieee_float.h>
 #include <util/message.h>
 #include <util/range.h>
 #include <util/simplify_expr.h>
 #include <util/symbol_table.h>
 
 #include "format_specifier.h"
+#include "string_float_format.h"
 #include "string_refinement_util.h"
 
 #include <cstdint>
+#include <cstring>
 #include <iterator>
 #include <string>
 
@@ -176,6 +179,14 @@ static exprt unsigned_value(const array_string_exprt &arg, array_poolt &pool)
       kind_is(arg, kind_short),
       bits(16),
       if_exprt{kind_is(arg, kind_int), bits(32), bits(64)}}};
+}
+
+/// The double value of a Float or Double \p arg, from its bits.
+static exprt double_value(const array_string_exprt &arg, array_poolt &pool)
+{
+  return typecast_exprt{
+    typecast_exprt{format_arg_from_string(arg, ID_int, pool), bv_typet{64}},
+    ieee_float_spect::double_precision().to_type()};
 }
 
 /// The hash code of \p arg, as an unsigned int, which %h prints.
@@ -496,12 +507,26 @@ add_axioms_for_format_specifier(
   case format_specifiert::GENERAL:
   case format_specifiert::HEXADECIMAL_FLOAT:
   {
-    /// \todo The floating-point conversions are not implemented.
-    generator.approximation_warning(
-      "String.format",
-      std::string{"is not modelled for the format specifier %"} +
-        fs.conversion);
-    return {array_pool.fresh_string(index_type, char_type), {}};
+    // Formatter's string of the double value of a Float or Double (see
+    // java_format_float), or "null" (that of a BigDecimal is not modelled)
+    const exprt null = is_null(string_arg, array_pool);
+    const array_string_exprt printed =
+      array_pool.fresh_string(index_type, char_type);
+    constraints = generator.add_axioms_for_java_format_float(
+      printed,
+      double_value(string_arg, array_pool),
+      fs.conversion,
+      fs.precision);
+    constraints.existential.push_back(
+      string_is_constant_if(null, res, "null", array_pool));
+    string_equals_if(
+      generator,
+      kind_is_one_of(string_arg, std::string{kind_float, kind_double}),
+      res,
+      printed,
+      constraints,
+      message_handler);
+    return {res, std::move(constraints)};
   }
   }
 
@@ -788,7 +813,17 @@ static std::optional<std::vector<mp_integer>> eval_format_specifier(
   case format_specifiert::DECIMAL_FLOAT:
   case format_specifiert::GENERAL:
   case format_specifiert::HEXADECIMAL_FLOAT:
-    return {};
+  {
+    if(eval_is_null(arg))
+      return std::vector<mp_integer>{'n', 'u', 'l', 'l'};
+    if(arg[0] != kind_float && arg[0] != kind_double)
+      return {};
+    const auto bits = static_cast<std::uint64_t>(eval_long_arg(arg).to_long());
+    double value;
+    std::memcpy(&value, &bits, sizeof(value));
+    return characters(
+      java_format_float(value, fs.conversion, fs.precision), false);
+  }
   case format_specifiert::CHARACTER:
   {
     if(eval_is_null(arg))

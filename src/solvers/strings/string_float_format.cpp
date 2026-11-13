@@ -19,7 +19,10 @@ Author: Diffblue Ltd.
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -266,6 +269,427 @@ format_float(double value, bool single_precision, float_formatt format)
                      : python_scientific(digits, exponent));
   }
   UNREACHABLE;
+}
+
+/// The decimal f * 10^e of n digits (n = 0 for zero) of the fields of
+/// FormattedFPDecimal of Java 21, whose operations these follow.
+struct formatted_decimalt
+{
+  unsigned long long f = 0;
+  int e = 0;
+  int n = 0;
+
+  /// Round to \p pp digits, half up.
+  void round(long long pp)
+  {
+    if(n == 0 || pp < 0)
+    {
+      f = 0;
+      e = 0;
+      n = 1;
+      return;
+    }
+    if(pp >= n)
+      return;
+    const int p = static_cast<int>(pp);
+    e += n - p;
+    unsigned long long pow10 = 1;
+    for(int i = 0; i < n - p; ++i)
+      pow10 *= 10;
+    f = (f + pow10 / 2) / pow10;
+    if(p == 0)
+    {
+      n = 1;
+      if(f == 0)
+        e = 0;
+      return;
+    }
+    n = p;
+    unsigned long long pow10_p = 1;
+    for(int i = 0; i < p; ++i)
+      pow10_p *= 10;
+    if(f == pow10_p)
+    {
+      f /= 10;
+      e += 1;
+    }
+  }
+
+  int exponent_rounded() const
+  {
+    return n + e - 1;
+  }
+
+  /// The n digits of f.
+  std::string digits() const
+  {
+    std::string result = std::to_string(f);
+    if(static_cast<int>(result.size()) < n)
+      result.insert(0, static_cast<std::size_t>(n) - result.size(), '0');
+    return result;
+  }
+
+  std::string plain_chars() const
+  {
+    const std::string d = digits();
+    if(e >= 0)
+      return d + std::string(static_cast<std::size_t>(e), '0');
+    if(n + e > 0)
+    {
+      const auto point = static_cast<std::size_t>(n + e);
+      return d.substr(0, point) + '.' + d.substr(point);
+    }
+    return "0." + std::string(static_cast<std::size_t>(-e - n), '0') + d;
+  }
+
+  std::string scientific_chars(int prec) const
+  {
+    const std::string d = digits();
+    if(prec == 0)
+      return d.substr(0, 1);
+    return d.substr(0, 1) + '.' + d.substr(1);
+  }
+
+  /// The sign and at least two digits of the exponent.
+  std::string exponent_chars() const
+  {
+    const int er = exponent_rounded();
+    std::string magnitude = std::to_string(er < 0 ? -er : er);
+    if(magnitude.size() < 2)
+      magnitude.insert(0, 1, '0');
+    return (er >= 0 ? "+" : "-") + magnitude;
+  }
+};
+
+/// Formatter.addZeros: the digits after the point of \p mantissa, as many
+/// as \p prec.
+static void add_zeros(std::string &mantissa, int prec)
+{
+  const std::size_t point = mantissa.find('.');
+  const bool need_dot = point == std::string::npos;
+  const int out_prec =
+    need_dot ? 0 : static_cast<int>(mantissa.size() - point - 1);
+  if(out_prec >= prec)
+    return;
+  if(need_dot)
+    mantissa += '.';
+  mantissa.append(static_cast<std::size_t>(prec - out_prec), '0');
+}
+
+/// Double.toHexString of a finite \p d >= 0, without its "0x".
+static std::string hex_string(double d)
+{
+  if(d == 0)
+    return "0.0p0";
+  std::uint64_t bits;
+  std::memcpy(&bits, &d, sizeof(bits));
+  const bool subnormal = d < std::numeric_limits<double>::min();
+  const std::uint64_t significand = bits & 0x000FFFFFFFFFFFFFULL;
+  std::string hex;
+  for(int shift = 48; shift >= 0; shift -= 4)
+    hex += "0123456789abcdef"[(significand >> shift) & 0xF];
+  const std::size_t last = hex.find_last_not_of('0');
+  hex = last == std::string::npos ? "0" : hex.substr(0, last + 1);
+  const int exponent = subnormal ? -1022 : std::ilogb(d);
+  return std::string{subnormal ? "0." : "1."} + hex + 'p' +
+         std::to_string(exponent);
+}
+
+/// Formatter.hexDouble of a finite \p d >= 0: the digits of %a with the
+/// precision \p prec (0 for all), without "0x".
+static std::string hex_double(double d, int prec)
+{
+  if(d == 0 || prec == 0 || prec >= 13)
+    return hex_string(d);
+  const bool subnormal = d < std::numeric_limits<double>::min();
+  if(subnormal)
+    d *= std::ldexp(1.0, 54);
+  const int shift = 52 - 4 * prec;
+  std::uint64_t bits;
+  std::memcpy(&bits, &d, sizeof(bits));
+  std::uint64_t significand = (bits & 0x7FFFFFFFFFFFFFFFULL) >> shift;
+  const std::uint64_t rounding_bits = bits & ~(~0ULL << shift);
+  const bool least_zero = (significand & 1) == 0;
+  const bool round = ((1ULL << (shift - 1)) & rounding_bits) != 0;
+  const bool sticky =
+    shift > 1 && (~(1ULL << (shift - 1)) & rounding_bits) != 0;
+  if((least_zero && round && sticky) || (!least_zero && round))
+    ++significand;
+  const std::uint64_t rounded_bits =
+    (bits & 0x8000000000000000ULL) | (significand << shift);
+  double result;
+  std::memcpy(&result, &rounded_bits, sizeof(result));
+  if(std::isinf(result))
+    return "1.0p1024";
+  const std::string text = hex_string(result);
+  if(!subnormal)
+    return text;
+  const std::size_t p = text.find('p');
+  return text.substr(0, p) + 'p' +
+         std::to_string(std::stoi(text.substr(p + 1)) - 54);
+}
+
+std::string java_format_float(double value, char conversion, int precision)
+{
+  if(std::isnan(value))
+    return "NaN";
+  const std::string sign = std::signbit(value) ? "-" : "";
+  const double v = std::fabs(value);
+  if(std::isinf(v))
+    return sign + "Infinity";
+
+  if(conversion == 'a')
+  {
+    const int prec = precision == -1 ? 0 : precision == 0 ? 1 : precision;
+    const std::string s = hex_double(v, prec);
+    const std::size_t p = s.find('p');
+    std::string mantissa = s.substr(0, p);
+    if(prec != 0)
+      add_zeros(mantissa, prec);
+    return sign + "0x" + mantissa + s.substr(p);
+  }
+
+  // DoubleToDecimal.split: the shortest decimal (see shortest_digits)
+  formatted_decimalt fd;
+  if(v != 0)
+  {
+    int exponent;
+    const std::string digits = shortest_digits(v, false, true, exponent);
+    fd.f = std::stoull(digits);
+    fd.n = static_cast<int>(digits.size());
+    fd.e = exponent - fd.n + 1;
+  }
+  if(conversion == 'e')
+  {
+    const int prec = precision == -1 ? 6 : precision;
+    fd.round(prec + 1LL);
+    std::string mantissa = fd.scientific_chars(prec);
+    add_zeros(mantissa, prec);
+    return sign + mantissa + 'e' + (v == 0 ? "+00" : fd.exponent_chars());
+  }
+  if(conversion == 'f')
+  {
+    const int prec = precision == -1 ? 6 : precision;
+    fd.round(static_cast<long long>(fd.n) + fd.e + prec);
+    std::string mantissa = fd.plain_chars();
+    add_zeros(mantissa, prec);
+    return sign + mantissa;
+  }
+  PRECONDITION(conversion == 'g');
+  int prec = precision == -1 ? 6 : precision == 0 ? 1 : precision;
+  std::string mantissa;
+  std::optional<std::string> exponent;
+  if(v == 0)
+  {
+    mantissa = "0";
+    prec -= 1;
+  }
+  else
+  {
+    fd.round(prec);
+    const int er = fd.exponent_rounded();
+    if(-4 <= er && er < prec)
+    {
+      mantissa = fd.plain_chars();
+      prec -= er + 1;
+    }
+    else
+    {
+      mantissa = fd.scientific_chars(prec - 1);
+      exponent = fd.exponent_chars();
+      prec -= 1;
+    }
+  }
+  add_zeros(mantissa, prec);
+  return sign + mantissa + (exponent.has_value() ? 'e' + *exponent : "");
+}
+
+std::size_t java_format_float_max_length(char conversion, int precision)
+{
+  // a sign, and the digits of the largest exponent or integer part
+  const std::size_t prec =
+    precision < 0 ? 6 : static_cast<std::size_t>(precision);
+  switch(conversion)
+  {
+  case 'f':
+    return 1 + 309 + 1 + prec;
+  case 'e':
+  case 'g':
+    return 1 + 2 + std::max<std::size_t>(prec, 1) + 6;
+  default:
+    PRECONDITION(conversion == 'a');
+    return 1 + 4 + std::max<std::size_t>(prec, 13) + 6;
+  }
+}
+
+/// The exact value of a magnitude that java_format_float prints with the
+/// conversion \p conversion: m * 10^exponent (m * 2^exponent for 'a'), or
+/// infinity.
+struct printed_magnitudet
+{
+  bool infinite = false;
+  mp_integer m = 0;
+  int exponent = 0;
+};
+
+/// The value of \p text, a magnitude printed by java_format_float with the
+/// conversion \p conversion, if it has the shape of one.
+static std::optional<printed_magnitudet>
+parse_printed_magnitude(const std::string &text, char conversion)
+{
+  printed_magnitudet result;
+  if(text == "Infinity")
+  {
+    result.infinite = true;
+    return result;
+  }
+  std::size_t i = 0;
+  const bool hex = conversion == 'a';
+  const unsigned radix = hex ? 16 : 10;
+  if(hex)
+  {
+    if(text.compare(0, 2, "0x") != 0)
+      return {};
+    i = 2;
+  }
+  const auto digit = [&](char c) -> int
+  {
+    if(c >= '0' && c <= '9')
+      return c - '0';
+    if(hex && c >= 'a' && c <= 'f')
+      return c - 'a' + 10;
+    return -1;
+  };
+  std::size_t count = 0;
+  int fraction_digits = 0;
+  bool point = false;
+  for(; i < text.size(); ++i)
+  {
+    if(text[i] == '.' && !point)
+    {
+      point = true;
+      continue;
+    }
+    const int d = digit(text[i]);
+    if(d < 0)
+      break;
+    result.m = result.m * radix + d;
+    ++count;
+    if(point)
+      ++fraction_digits;
+  }
+  if(count == 0 || count > 400)
+    return {};
+  // the scale of the fraction digits
+  result.exponent = hex ? -4 * fraction_digits : -fraction_digits;
+  const char mark = hex ? 'p' : 'e';
+  if(i < text.size())
+  {
+    if(text[i] != mark || i + 1 >= text.size())
+      return {};
+    ++i;
+    bool negative = false;
+    if(text[i] == '-' || text[i] == '+')
+    {
+      negative = text[i] == '-';
+      ++i;
+    }
+    if(i >= text.size() || text.size() - i > 5)
+      return {};
+    int exponent = 0;
+    for(; i < text.size(); ++i)
+    {
+      if(text[i] < '0' || text[i] > '9')
+        return {};
+      exponent = exponent * 10 + (text[i] - '0');
+    }
+    result.exponent += negative ? -exponent : exponent;
+  }
+  return result;
+}
+
+/// The sign of \p a - \p b, for magnitudes of the same conversion, whose
+/// exponents are of the base \p base.
+static int compare_printed(
+  const printed_magnitudet &a,
+  const printed_magnitudet &b,
+  unsigned base)
+{
+  if(a.infinite || b.infinite)
+    return a.infinite == b.infinite ? 0 : a.infinite ? 1 : -1;
+  mp_integer x = a.m;
+  mp_integer y = b.m;
+  if(a.exponent > b.exponent)
+    x *= power(base, a.exponent - b.exponent);
+  else
+    y *= power(base, b.exponent - a.exponent);
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+java_format_float_preimaget java_format_float_preimage(
+  const std::string &text,
+  char conversion,
+  int precision)
+{
+  java_format_float_preimaget result;
+  if(text == "NaN")
+  {
+    result.nan = true;
+    return result;
+  }
+  result.negative = !text.empty() && text[0] == '-';
+  const std::string magnitude_text = text.substr(result.negative ? 1 : 0);
+  const auto target = parse_printed_magnitude(magnitude_text, conversion);
+  if(!target.has_value())
+    return result;
+  const unsigned base = conversion == 'a' ? 2 : 10;
+  // the magnitude printed for the non-negative double of bits \p bits
+  const auto printed = [&](std::uint64_t bits)
+  {
+    double d;
+    std::memcpy(&d, &bits, sizeof(d));
+    const auto value = parse_printed_magnitude(
+      java_format_float(d, conversion, precision), conversion);
+    INVARIANT(value.has_value(), "java_format_float prints a magnitude");
+    return *value;
+  };
+  // The printed magnitude does not decrease with the value, and the
+  // non-negative doubles are ordered as their bits, up to infinity.
+  const std::uint64_t infinity = 0x7FF0000000000000ULL;
+  // the first bits whose magnitude is at least the target
+  std::uint64_t low = 0;
+  std::uint64_t high = infinity + 1;
+  while(low < high)
+  {
+    const std::uint64_t middle = low + (high - low) / 2;
+    if(compare_printed(printed(middle), *target, base) >= 0)
+      high = middle;
+    else
+      low = middle + 1;
+  }
+  const std::uint64_t first = low;
+  // the first bits whose magnitude is beyond the target
+  high = infinity + 1;
+  while(low < high)
+  {
+    const std::uint64_t middle = low + (high - low) / 2;
+    if(compare_printed(printed(middle), *target, base) > 0)
+      high = middle;
+    else
+      low = middle + 1;
+  }
+  if(first >= low)
+    return result;
+  double d;
+  std::memcpy(&d, &first, sizeof(d));
+  // the target as it is printed, as text may differ (as "1.50" from "1.5")
+  if(java_format_float(d, conversion, precision) != magnitude_text)
+    return result;
+  result.empty = false;
+  result.low = d;
+  const std::uint64_t last = low - 1;
+  std::memcpy(&result.high, &last, sizeof(result.high));
+  return result;
 }
 
 std::pair<std::size_t, std::size_t>

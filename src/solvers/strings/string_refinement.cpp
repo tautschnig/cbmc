@@ -1632,6 +1632,12 @@ bool string_refinementt::check_float_conversions()
     const bool single = constant.spec == ieee_float_spect::single_precision();
     if(!single && constant.spec != ieee_float_spect::double_precision())
       continue;
+    if(conversion.java_conversion != 0)
+    {
+      if(!check_java_format_float(conversion, constant))
+        all_right = false;
+      continue;
+    }
     const std::string expected = format_float(
       single ? constant.to_float() : constant.to_double(),
       single,
@@ -1794,6 +1800,112 @@ bool string_refinementt::check_float_conversions()
     }
   }
   return all_right;
+}
+
+/// The string of the model of \p result, if its length and characters are
+/// known, as its characters.
+static std::optional<std::vector<mp_integer>> model_characters(
+  const array_string_exprt &result,
+  const std::function<exprt(const exprt &)> &get,
+  array_poolt &array_pool,
+  const namespacet &ns)
+{
+  const exprt length = array_pool.get_or_create_length(result);
+  const auto n = numeric_cast<std::size_t>(simplify_expr(get(length), ns));
+  const exprt model_string = get(result);
+  if(
+    !n.has_value() || model_string.id() != ID_array ||
+    model_string.operands().size() < *n)
+  {
+    return {};
+  }
+  std::vector<mp_integer> characters;
+  for(std::size_t i = 0; i < *n; ++i)
+  {
+    const auto c = numeric_cast<mp_integer>(model_string.operands()[i]);
+    if(!c.has_value())
+      return {};
+    characters.push_back(*c);
+  }
+  return characters;
+}
+
+bool string_refinementt::check_java_format_float(
+  const string_constraint_generatort::float_conversiont &conversion,
+  const ieee_float_valuet &constant)
+{
+  const std::string expected = java_format_float(
+    constant.to_double(),
+    conversion.java_conversion,
+    conversion.java_precision);
+  const array_string_exprt &result = conversion.result;
+  const exprt length = generator.array_pool.get_or_create_length(result);
+  const typet &index_type = result.length_type();
+  const typet &char_type =
+    to_type_with_subtype(result.content().type()).subtype();
+  const auto actual = model_characters(
+    result,
+    [this](const exprt &e) { return get(e); },
+    generator.array_pool,
+    ns);
+  const auto string_is = [&](const std::vector<mp_integer> &text)
+  {
+    exprt::operandst conjuncts{
+      equal_exprt{length, from_integer(text.size(), index_type)}};
+    for(std::size_t i = 0; i < text.size(); ++i)
+    {
+      conjuncts.push_back(equal_exprt{
+        result[from_integer(i, index_type)], from_integer(text[i], char_type)});
+    }
+    return conjunction(conjuncts);
+  };
+  std::vector<mp_integer> expected_characters;
+  for(const char c : expected)
+    expected_characters.emplace_back(static_cast<unsigned char>(c));
+  if(actual == expected_characters)
+    return true;
+  log.debug() << "string refinement: a float of String.format is " << expected
+              << " rather than another string in the model" << messaget::eom;
+  // This value gives this string.
+  add_lemma(implies_exprt{
+    and_exprt{
+      conversion.guard, equal_exprt{conversion.value, constant.to_expr()}},
+    string_is(expected_characters)});
+  if(
+    !actual.has_value() ||
+    actual->size() > java_format_float_max_length(
+                       conversion.java_conversion, conversion.java_precision))
+  {
+    return false;
+  }
+  // And the string in the model comes only from the values that give it
+  // (none for a character beyond ASCII).
+  std::string text;
+  for(const mp_integer &c : *actual)
+    text.push_back(c > 0 && c < 128 ? static_cast<char>(c.to_ulong()) : '\x01');
+  const java_format_float_preimaget preimage = java_format_float_preimage(
+    text, conversion.java_conversion, conversion.java_precision);
+  const exprt &value = conversion.value;
+  exprt from_preimage = false_exprt{};
+  if(preimage.nan)
+    from_preimage = isnan_exprt{value};
+  else if(!preimage.empty)
+  {
+    // the magnitude in [low, high], so the value in [-high, -low] for a
+    // negative one; and the sign, as -0.0 == 0.0
+    ieee_float_valuet low;
+    low.from_double(preimage.negative ? -preimage.high : preimage.low);
+    ieee_float_valuet high;
+    high.from_double(preimage.negative ? -preimage.low : preimage.high);
+    const exprt negative = sign_exprt{value};
+    from_preimage = conjunction(
+      {preimage.negative ? negative : not_exprt{negative},
+       binary_relation_exprt{value, ID_ge, low.to_expr()},
+       binary_relation_exprt{value, ID_le, high.to_expr()}});
+  }
+  add_lemma(implies_exprt{
+    and_exprt{conversion.guard, string_is(*actual)}, from_preimage});
+  return false;
 }
 
 exprt string_refinementt::float_prefix_lemma(

@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.c33Bad --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+String.format("%f", new java.math.BigDecimal("1.5")) gives "1.500000", as in Java 21 and 25, which is not modelled: the negation is not proved.
