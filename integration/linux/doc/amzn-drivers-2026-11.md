@@ -1453,6 +1453,81 @@ flow through `eth_ena_dev_init` that reaches them is the driver's own, and the
 missing `goto` is plain in the source, so the modelling affects how the leak
 is *observed*, not whether it is there.
 
+## Class S confirmations: the return code and what the device did
+
+Class S is the largest group the Unveil class list had no name for -- an
+operation the device **rejected** reported to the caller as **success**. Six
+of the forty class Z findings are this shape. Two obligations of it already
+existed here (`F18_SETUP_RC`, `CFG_AENQ_FAIL`) and F18 is our own finding of
+it, so nothing had to be invented; it just had to be applied.
+
+| entry point | obligation | result |
+|---|---|---|
+| DPDK `ena_mtu_set` | `SM_MTU_RC`, `SM_MTU_PUBLISH` | **holds** |
+| DPDK `ena_rss_reta_update` | `SM_RETA_RC` | **holds** |
+| DPDK `ena_rx_queue_intr_enable` | `SM_INTR_RC` | **FAILS** |
+| FreeBSD `SIOCSIFMTU` | `SM_RC_SOUND`, `SM_NO_SILENT` | **FAILS** |
+
+Every run clean: no other failing property, no reached bodyless callee, no
+UNKNOWN, no failing unwinding assertion, witnesses failing, and each
+adjudicated by `check_hygiene.sh`.
+
+### Confirming one of Velocity Labs' findings by proof
+
+Their class Z item, FreeBSD: *"MTU change reported as successful although the
+device rejected it."* **Confirmed.** This is their finding, not ours; what is
+new is the proof and the located cause.
+
+`ena_change_mtu` is careful -- it refuses an out-of-range MTU with `EINVAL`,
+asks the device, and calls `if_setmtu` only when the device accepted
+(`ena.c:331-352`). Its caller throws the result away (`ena.c:2420-2430`):
+
+```c
+case SIOCSIFMTU:
+        if (if_getmtu(ifp) == ifr->ifr_mtu)
+                break;
+        ENA_LOCK_LOCK();
+        ena_down(adapter);
+        ena_change_mtu(ifp, ifr->ifr_mtu);     /* return value discarded */
+        rc = ena_up(adapter);
+        ENA_LOCK_UNLOCK();
+        break;
+```
+
+so the ioctl reports `ena_up`'s result, and a rejected MTU looks like success
+while the interface keeps the MTU it had. `SM_MTU_RANGE` confirms
+`ena_change_mtu`'s own check is sound, which locates the defect in the caller
+rather than the helper. With `-DWITH_RC_FIX` propagating the result, all three
+obligations hold -- so the fix is one line and is verified, not asserted.
+
+### F17 is a class S finding too
+
+`ena_rx_queue_intr_enable` returns 0 unconditionally, because the function it
+calls is `void` (`ena_ethdev.c:3892-3898`):
+
+```c
+static int ena_rx_queue_intr_enable(struct rte_eth_dev *dev, uint16_t queue_id)
+{
+        ena_rx_queue_intr_set(dev, queue_id, true);
+        return 0;
+}
+```
+
+`SM_INTR_RC` fails: the caller is told the interrupt is enabled whether or not
+the queue was ever started. F17 was recorded as a device-access finding -- the
+write through `unmask_reg` on a configured-but-unstarted queue -- and it is
+also a false success. That matters for the fix: propagating a status is not
+enough on its own, the queue state has to be checked.
+
+### And where DPDK is right
+
+`ena_mtu_set` returns the device's `rc` directly (`ena_ethdev.c:1297-1303`)
+and `rte_eth_dev_set_mtu` publishes `dev->data->mtu` only when the driver
+returned 0 (`rte_ethdev.c:4190-4192`), so both halves propagate. The same
+obligation that FreeBSD's MTU path fails, DPDK's passes. A contrast pair is
+worth more than either half: it shows the obligation is satisfiable and that
+failing it is a choice the code makes, not an artefact of how it was written.
+
 ## Observation: `req_id` range is validated in shared `ena_com`, not in the drivers
 
 Checked while scoping the FreeBSD RX work, and it narrows F16 rather than

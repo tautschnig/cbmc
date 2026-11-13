@@ -4,7 +4,7 @@
 
 One row per harness: what it puts under test, the obligations it asserts, whether it carries a vacuity witness, and -- the column this index exists for -- what each configuration macro assumes away. A finding was once reported and retracted because that last column did not exist anywhere.
 
-44 harnesses.
+46 harnesses.
 
 ## Harnesses with no vacuity witness
 
@@ -43,6 +43,21 @@ Async operation 2: the AENQ dispatch, ena_com_aenq_intr_handler, with the driver
 | `-DONLY_KEEPALIVE` | forces AENQ dispatch through ena_keep_alive so the keepalive obligation is about that handler |
 
 * run by `run_aenq.sh`: no restricting macros
+
+* vacuity witness: yes, 3
+
+### `harness_class_s.c`
+
+Class S for the DPDK setters: does the return code reflect what the device actually did?
+
+| obligation | asserts |
+|---|---|
+| `SM_MTU_RC` | ena_mtu_set returns 0 only if the device accepted the MTU |
+| `SM_MTU_PUBLISH` | a refused MTU is not published to the application |
+| `SM_RETA_RC` | ena_rss_reta_update returns 0 only if the device accepted |
+| `SM_INTR_RC` | ena_rx_queue_intr_enable returns 0 only if the queue was |
+
+* run by `run_class_s.sh`: no restricting macros
 
 * vacuity witness: yes, 3
 
@@ -100,6 +115,7 @@ The cleanup step without a ring-size bound: a hand-written loop invariant, machi
 | `CS_EXIT_DS` | after the ack INV_DESC_SUM holds again |
 | `CS_EXIT_STARTED` | INV_STARTED still holds |
 
+* run by `run_all.sh`: no restricting macros
 * run by `run_cleanup_step.sh`: no restricting macros
 
 * vacuity witness: yes, 2
@@ -744,6 +760,24 @@ FreeBSD ENA: ena_tx_cleanup, with the free discipline and the DMA-ownership obli
 * run by `run_fbsd_cleanup_perf.sh`: no restricting macros
 
 * vacuity witness: yes, 2
+
+### `fbsd/harness_fbsd_mtu.c`
+
+Class S, the largest group the Unveil class list had no name for: an operation the device REJECTED reported to the caller as SUCCESS.  Six of the forty class Z findings are this shape, and two of our own (F18, F21).
+
+| obligation | asserts |
+|---|---|
+| `SM_MTU_RANGE` | the MTU handed to the device is one it advertised |
+| `SM_RC_SOUND` | the ioctl returns 0 only if the interface MTU is the one |
+| `SM_NO_SILENT` | the ioctl does not return 0 when the device rejected the |
+
+| configuration | assumes |
+|---|---|
+| `-DWITH_RC_FIX` | applies the fix for the FreeBSD SIOCSIFMTU class S defect, propagating ena_change_mtu's result instead of discarding it |
+
+* run by `run_fbsd_mtu.sh`: `-DWITH_RC_FIX`
+
+* vacuity witness: yes, 3
 
 ### `fbsd/harness_fbsd_rx.c`
 

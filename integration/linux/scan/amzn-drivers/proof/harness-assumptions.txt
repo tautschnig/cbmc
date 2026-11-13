@@ -74,3 +74,4 @@ BREAK_RETA_UNLOCK: mutation test -- drops the first unlock in ena_rss_reta_updat
 PROBE: NOT A RESULT YET -- drives eth_ena_dev_init's error ladder, but the ledger does not see ena_com's ENA_MEM_ALLOC allocations, so the obligations are vacuous on the acquisition side
 MAXCHAIN_FBSD: see MAXCHAIN -- bound on descriptors per received packet in the FreeBSD RX harness; the device may name more
 PROBE: drives eth_ena_dev_init's error ladder with ena_com's five acquire/release pairs modelled against the leak ledger; reproduces F25 by design
+WITH_RC_FIX: applies the fix for the FreeBSD SIOCSIFMTU class S defect, propagating ena_change_mtu's result instead of discarding it
