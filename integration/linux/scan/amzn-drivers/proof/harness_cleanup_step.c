@@ -182,28 +182,36 @@ int main(void)
     return 0; /* the loop breaks; nothing to preserve */
 
   /*
-   * The loop body, ena_ethdev.c:3229-3253, with the fast-free branch excluded
-   * (offloads == 0 above):
+   * The loop body of ena_tx_cleanup, SLICED from ena_ethdev.c:3229-3253 by
+   * gen_cleanup_body.py rather than retyped.  Until 2026-11-13 these lines
+   * were a hand transcription, so the ring 8/16/32 results rested on it
+   * matching the driver; they now compile the driver's own statements.
+   * gen_cleanup_body.py --check fails if the slice goes stale, and
+   * check_citations.py fails if the cited range changes at all.
    *
-   *   tx_info = &tx_ring->tx_buffer_info[req_id];
-   *   tx_info->timestamp = 0;
-   *   mbuf = tx_info->mbuf;
-   *   rte_pktmbuf_free(mbuf);
-   *   tx_info->mbuf = NULL;
-   *   tx_ring->empty_tx_reqs[next_to_clean] = req_id;
-   *   total_tx_descs += tx_info->tx_descs;
-   *   total_tx_pkts++;
-   *   next_to_clean = ENA_IDX_NEXT_MASKED(next_to_clean, tx_ring->size_mask);
+   * The driver's names are bound to this harness's state here, and read back
+   * immediately after.  The fast-free branch is present but dead, because
+   * fast_free is false under offloads == 0; enabling it is now a harness
+   * change rather than a re-transcription.
    */
-  struct ena_tx_buffer *tx_info = &ring.tx_buffer_info[req_id];
-  const uint16_t descs_here = TX_DESCS(*tx_info);
-  tx_info->timestamp = 0;
-  struct rte_mbuf *mbuf = tx_info->mbuf;
-  rte_pktmbuf_free(mbuf);
-  tx_info->mbuf = NULL;
-  ring.empty_tx_reqs[ntc] = req_id;
+  struct ena_ring *const tx_ring = &ring;
+  struct ena_tx_buffer *tx_info;
+  struct rte_mbuf *mbuf;
+  uint16_t next_to_clean = ntc;
+  unsigned int total_tx_descs = 0;
+  unsigned int total_tx_pkts = 0;
+  const bool fast_free = ring.offloads & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
+  struct rte_mbuf *pkts_to_clean[ENA_CLEANUP_BUF_THRESH];
+  size_t pkt_cnt = 0;
+  size_t mbuf_cnt = 0;
+
+  const uint16_t descs_here = TX_DESCS(ring.tx_buffer_info[req_id]);
+
+#include "cleanup_body_generated.h"
+
+  /* read the driver's locals back into the harness's terms */
   const uint16_t acked_next = (uint16_t)(acked + descs_here);
-  const uint16_t ntc_next = ENA_IDX_NEXT_MASKED(ntc, ring.size_mask);
+  const uint16_t ntc_next = next_to_clean;
 
   __CPROVER_assert(
     INV_CLEAN(&ring, RING, ntc_next, acked_next),

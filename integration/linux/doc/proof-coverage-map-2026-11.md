@@ -43,16 +43,33 @@ stop's post-state, so the cycle closes rather than only the forward path.
 
 | artefact | reach | how |
 |---|---|---|
-| cleanup step | **ring 8, 16, 32**, loop not unwound | `INV_CLEAN` mid-loop invariant plus a 3-part manual induction (ENTRY/STEP/EXIT); needed `INV_FREE_LIST_FAST` (bitmask, O(n), proved equivalent to the pairwise form by `FL_EQUIV`) and a 32-bit no-wrap bound. **Proves a transcription, not the driver** -- see the fidelity caveat below. |
+| cleanup step | **ring 8 and 16** over the driver's own sliced body; ring 32 parts 1 and 3 | `INV_CLEAN` mid-loop invariant plus a 3-part manual induction (ENTRY/STEP/EXIT); needed `INV_FREE_LIST_FAST` (bitmask, O(n), proved equivalent to the pairwise form by `FL_EQUIV`) and a 32-bit no-wrap bound. Body sliced by `gen_cleanup_body.py`, not transcribed -- see below. |
 | xmit step | **burst bound removed entirely**, ring 8 and 16 | 2-part decomposition (STEP/EXIT) |
 | xmit step with offloads | **`offloads == 0` restriction lifted**, ring 8 | `harness_xmit_step_offloads.c`; the meta-descriptor path is live and the invariants needed no strengthening. Found F24. |
 
 ### A fidelity caveat on the cleanup depth results
 
-`harness_cleanup_step.c` makes **no call to driver code at all**. To remove the
-ring-size bound it transcribes the loop body from `ena_ethdev.c:3229-3253` and
-proves the invariant over the transcription. So the ring 8, 16 and 32 cleanup
-results are only as good as that transcription.
+**Resolved 2026-11-13: the body is now sliced from the driver, not retyped.**
+
+`harness_cleanup_step.c` still makes no *call* to `ena_tx_cleanup` -- that is
+what removes the ring-size bound -- but it no longer contains a hand copy of
+the loop body either. `gen_cleanup_body.py` slices
+`ena_ethdev.c:3229-3253` verbatim into `cleanup_body_generated.h`, which the
+harness includes after binding the driver's variable names to its own state.
+The generator makes no editorial choice: nothing is rewritten and no branch is
+dropped, so the fast-free branch is present too, dead under `offloads == 0`.
+`gen_cleanup_body.py --check` fails when the slice goes stale.
+
+So the invariant is now proven over the driver's own statements. What is still
+not machine-checked is the *composition* -- that the three parts add up to the
+loop -- which `ena-cleanup-ring8-2026-11.md` has always said.
+
+**It costs more.** With the faithful body, ring 8 and ring 16 prove in all
+three parts, as before. Ring 32 part 2 no longer finishes in the budget the
+transcription needed; parts 1 and 3 still do. The extra cost comes from the
+fast-free branch being present in the formula even though it is unreachable,
+which is the price of removing the editorial step. Ring 32 is therefore
+**re-established at parts 1 and 3 only** until that run lands.
 
 *Attribution, corrected: `ena-cleanup-ring8-2026-11.md` already said this when
 that artefact was written -- "it is a transcription, not the compiled source" --
