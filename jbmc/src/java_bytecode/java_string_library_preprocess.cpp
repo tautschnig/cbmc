@@ -1799,6 +1799,11 @@ void java_string_library_preprocesst::initialize_conversion_table()
   cprover_equivalent_to_java_function
     ["java::org.cprover.CProverString.isValidLong:(Ljava/lang/String;I)Z"] =
       ID_cprover_string_is_valid_long_func;
+  // The number of arguments a format string uses (a helper of the
+  // String.format model, which throws MissingFormatArgumentException).
+  cprover_equivalent_to_java_function
+    ["java::java.lang.String.cproverFormatArgumentCount:(Ljava/lang/"
+     "String;)I"] = ID_cprover_string_format_argument_count_func;
 
   // String library
   conversion_table["java::java.lang.String.<init>:(Ljava/lang/String;)V"] =

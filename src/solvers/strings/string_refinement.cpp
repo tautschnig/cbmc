@@ -376,6 +376,7 @@ static bool is_cprover_string_application(const function_application_exprt &fa)
     ID_cprover_string_is_valid_int_func,
     ID_cprover_string_is_valid_long_func,
     ID_cprover_string_is_ascii_func,
+    ID_cprover_string_format_argument_count_func,
     ID_cprover_string_replace_func,
     ID_cprover_string_set_length_func,
     ID_cprover_string_startswith_func,

@@ -911,3 +911,51 @@ exprt string_format_builtin_functiont::length_constraint() const
 
   return conjunction(constraints);
 }
+
+/// The number of arguments that the format string of Java's String.format
+/// uses: the largest argument index of a specifier that takes an argument,
+/// or the largest int for a `%<` specifier without a previous argument
+/// (Java throws MissingFormatArgumentException for both). For a format
+/// string that is not constant the result is any non-negative number.
+/// \param f: function application with a string argument
+/// \return an integer expression
+std::pair<exprt, string_constraintst>
+string_constraint_generatort::add_axioms_for_format_argument_count(
+  const function_application_exprt &f)
+{
+  PRECONDITION(f.arguments().size() == 1);
+  string_constraintst constraints;
+  const array_string_exprt str = get_string_expr(array_pool, f.arguments()[0]);
+  const typet &return_type = f.type();
+  const exprt length = array_pool.get_or_create_length(str);
+  if(length.is_constant() && str.content().id() == ID_array)
+  {
+    const auto n = numeric_cast_v<std::size_t>(to_constant_expr(length));
+    const std::string format =
+      utf16_constant_array_to_java(to_array_expr(str.content()), n);
+    mp_integer count = 0;
+    for(const format_elementt &fe : parse_format_string(format))
+    {
+      if(!fe.is_format_specifier())
+        continue;
+      const format_specifiert &fs = fe.get_format_specifier();
+      if(!takes_argument(fs))
+        continue;
+      if(fs.unsupported || fs.index < 1)
+      {
+        // `%<` without a previous argument
+        count = to_signedbv_type(return_type).largest();
+        break;
+      }
+      count = std::max(count, mp_integer{fs.index});
+    }
+    return {from_integer(count, return_type), constraints};
+  }
+  approximation_warning(
+    "String.format", "only checks the arguments of a constant format string");
+  const symbol_exprt result =
+    fresh_symbol("format_argument_count", return_type);
+  constraints.existential.push_back(
+    binary_relation_exprt{result, ID_ge, from_integer(0, return_type)});
+  return {result, constraints};
+}
