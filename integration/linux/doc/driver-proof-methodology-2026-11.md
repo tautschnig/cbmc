@@ -258,3 +258,40 @@ deliberately, and say which you are doing.
   `proof-process-metrics-2026-11.md`.
 * A findings document with one section per finding, and the refuted
   hypotheses kept alongside.
+
+## Added 2026-11-12: four traps from one harness
+
+The doorbell harness (`harness_doorbell.c`, F23) needed six rounds before it
+checked anything. Every round looked like a clean pass. All four causes are
+worth knowing because each produces *a proof that holds for want of anything
+to violate it*, which no verdict distinguishes from a real one.
+
+1. **A zeroed field makes the whole path infeasible.** The harness never set
+   `io_sq->tx_max_header_size`. Being a static struct it was 0, so
+   `ena_com_prepare_tx` returned `ENA_COM_INVAL` for every packet and the
+   property was never reached. Fields you forget are not nondeterministic;
+   they are zero, and zero is often a rejecting value.
+
+2. **`--unwindset` aimed at the wrong loop silently truncates the path.** The
+   intended target was the packet loop, but a buffer-initialisation loop
+   earlier in `main` was loop 0, so `main.0:3` cut the initialisation at 3 of
+   10 iterations and everything after it became unreachable. Prefer making
+   setup loop-free so the loop under test is the only one, and read loop
+   numbers rather than assuming them.
+
+3. **Geometry the device cannot ask for produces counterexamples that are not
+   bugs.** The first violation used `descs_num_before_header == 7`;
+   `ena_com` only ever installs 1, 2, 4 or 8. Constrain device-supplied values
+   to the set the code actually installs, then re-run before believing a
+   counterexample.
+
+4. **Two pointers into one object make the copy overlap.** Pointing both
+   `push_header` and the bounce buffer at the same array turned a normal
+   `memcpy` into a reported overlap. Distinct objects for distinct roles.
+
+The witnesses are what caught all of this. A witness asserting *the state the
+property is about can actually arise* -- here "an LLQ line can be completed
+and written" -- failed to fail in rounds 1 to 5, and that was the only signal
+that the passing verdict meant nothing. A vacuity witness that merely says
+"some path reaches the end of the harness" would have passed all six rounds.
+Witness the specific state, not reachability.
