@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 5
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] file main.py line 14 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+The statements after an exception in a function used to run.

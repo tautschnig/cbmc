@@ -1,0 +1,9 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+An exception leaves the rest of the blocks up to its handler.
