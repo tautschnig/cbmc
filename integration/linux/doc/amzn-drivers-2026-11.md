@@ -1381,6 +1381,78 @@ path live**, provided the application honours the TSO header contract
 (`offl_contract` above). The invariants did not need strengthening to survive
 the meta path, which was the open question.
 
+## F25: one failure path in `eth_ena_dev_init` bypasses the cleanup ladder and leaks (DPDK ENA)
+
+Found by finishing the probe ledger, and it is the thing that ledger existed
+to find.
+
+`eth_ena_dev_init` acquires five resources in order and unwinds them through a
+cascade of labels:
+
+```
+err_control_path_destroy:  rte_free(adapter->drv_stats);
+err_rss_destroy:           ena_com_rss_destroy(ena_dev);
+err_delete_debug_area:     ena_com_delete_debug_area(ena_dev);
+err_device_destroy:        ena_com_delete_host_info(ena_dev);
+                           ena_com_admin_destroy(ena_dev);
+err_metrics_delete:        ena_com_delete_customer_metrics_buffer(ena_dev);
+err:                       return rc;
+```
+
+Six of the seven failure exits between the first acquisition
+(`ena_ethdev.c:2341`) and that ladder (`:2452`) jump into it. **One does
+not.** When `ena_set_queues_placement_policy` fails, the driver returns
+directly (`ena_ethdev.c:2362-2366`):
+
+```c
+rc = ena_set_queues_placement_policy(adapter, ena_dev,
+                                     &get_feat_ctx.llq, &llq_config);
+if (unlikely(rc)) {
+        PMD_INIT_LOG_LINE(CRIT, "Failed to set placement policy");
+        return rc;                 /* not goto err_device_destroy */
+}
+```
+
+By that point the driver holds the customer-metrics buffer (`:2341`) and,
+through `ena_device_init` (`:2348`), the mmio read request (`:1866`) and the
+admin queue (`:1895`). All of it leaks: probe failure means
+`eth_ena_dev_uninit` is never called, so nothing frees them later.
+
+**Evidence.** `proof/harness_leaks.c -DPROBE` with `proof/run_probe.sh` runs
+the real `eth_ena_dev_init` with `ena_com`'s five acquire/release pairs
+modelled against the leak ledger, every allocator able to fail:
+
+| obligation | result |
+|---|---|
+| `PR_NO_LEAK` -- a failed probe releases everything it acquired | **FAILURE** |
+| `PR_LADDER_RUN` -- a failing probe enters its cleanup ladder | **FAILURE** |
+| `PR_NO_HALF_INIT`, `PR_NO_DOUBLE`, `PR_NO_WILD` | SUCCESS |
+
+with no other failing property, no reached bodyless callee, no UNKNOWN, no
+failing unwinding assertion, and both vacuity witnesses FAILING. The
+counterexample leaves three tracked blocks live -- the metrics buffer, the
+admin queue and the host info -- on a probe that returned non-zero.
+
+`PR_LADDER_RUN` is what makes this decisive rather than inferred: it fails,
+so there is a failing path that never enters the ladder at all, which matches
+the single bare `return rc` the source reading found.
+
+**Fix.** `goto err_device_destroy;` in place of `return rc;`. That is the
+label the two neighbouring failure paths already use.
+
+**Severity.** Needs `ena_set_queues_placement_policy` to fail, which happens
+when the device's LLQ configuration is not acceptable -- a device-influenced
+but not device-controlled condition. The consequence is a permanent leak of
+the admin queue, the mmio read-request buffer and the metrics buffer per
+failed probe, with no path that recovers them. Unveil class D. DPDK-specific:
+this is DPDK's own probe function.
+
+**Caveat on the evidence.** `ena_com.c` is not in this build, so the five
+acquire/release pairs are models rather than the real allocators. The control
+flow through `eth_ena_dev_init` that reaches them is the driver's own, and the
+missing `goto` is plain in the source, so the modelling affects how the leak
+is *observed*, not whether it is there.
+
 ## Observation: `req_id` range is validated in shared `ena_com`, not in the drivers
 
 Checked while scoping the FreeBSD RX work, and it narrows F16 rather than
