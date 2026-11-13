@@ -29,7 +29,12 @@ def adjudicate(text, expect_fail):
     """-> (ok, [reasons]) for one runner's captured output."""
     reasons = []
 
-    verdicts = re.findall(r"^VERIFICATION ([A-Z]+)", text, re.M)
+    # The verdict is not reliably at line start: runners indent their captured
+    # output, and some prefix it ("part 2  VERIFICATION SUCCESSFUL").
+    # Anchoring at line start reported "no verdict at all" for runners whose
+    # proofs were fine, and an adjudicator that cries wolf gets switched off --
+    # which is the failure it exists to prevent.
+    verdicts = re.findall(r"VERIFICATION ([A-Z]+)", text)
     if not verdicts:
         reasons.append("no verdict at all (timeout, build failure, or a "
                        "solver binary that could not be executed)")
@@ -66,8 +71,18 @@ def adjudicate(text, expect_fail):
             reasons.append("marked EXPECTED-FAIL but nothing failed: it no "
                            "longer reproduces the finding it claims to")
     elif verdicts and set(verdicts) != {"SUCCESSFUL"}:
-        bad = sorted(set(verdicts) - {"SUCCESSFUL"})
-        reasons.append(f"verdict {', '.join(bad)} but not marked EXPECTED-FAIL")
+        # A FAILED verdict is EXPECTED from the vacuity run, whose whole point
+        # is that the witnesses fail; runners capture both runs in one file.
+        # So only complain when something other than a witness failed, which
+        # the counters above already cover.  Treating every FAILED as a
+        # problem flagged four sound proofs.
+        unexplained = [ln for ln in text.splitlines()
+                       if ln.rstrip().endswith(": FAILURE")
+                       and "witness" not in ln]
+        if unexplained:
+            reasons.append(
+                f"verdict FAILED with {len(unexplained)} non-witness "
+                f"failure(s) and not marked EXPECTED-FAIL")
 
     return (not reasons), reasons
 

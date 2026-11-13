@@ -34,7 +34,11 @@ one() {
 }
 # reset_flag, rss_reta and conc_admin also fail by design: each reproduces a
 # finding (F21, F19) or an observation in its first configuration.
-EXPECT_FAIL="prepare_tx doorbell reset_flag rss_reta conc_admin"
+# conc_reset belongs here too: under STORE_ORDER=1 -- the reordering the
+# driver's missing barrier permits -- CC_REASON_SOUND fails, and that failure
+# IS the unsynchronised-RMW observation the harness was written to make.  It
+# was omitted, so the sweep adjudicator reported it as an unsupported claim.
+EXPECT_FAIL="prepare_tx doorbell reset_flag rss_reta conc_admin conc_reset"
 one stop          run_stop.sh
 # MC=2 so the multi-descriptor chain path is covered: at the default MC=1
 # it cannot arise, and the witness for it passed, which the sweep
@@ -68,6 +72,14 @@ one cleanup_step  run_cleanup_step.sh
 # that PASSED, or with no witness at all, was indistinguishable from a clean
 # run -- and a passing witness is exactly the signal that a proof may be
 # empty.  check_sweep.py applies the check_hygiene.sh rules across the corpus.
+# Citations rot: a harness's `file.c:N-M` claim is about a location, and
+# harness_cleanup_step.c goes further and SLICES its citation into the proof.
+# Check both before believing any verdict below.
+echo
+echo "== source citations"
+"$HERE/check_citations.py" || echo "  CITATIONS DRIFTED -- re-read the harnesses that cite the changed regions"
+"$HERE/gen_cleanup_body.py" --check || echo "  the sliced cleanup body is stale"
+
 echo
 echo "== adjudication"
 "$HERE/check_sweep.py" "$LOG" --expect-fail "$(echo ${EXPECT_FAIL:-} | tr ' ' ',')"

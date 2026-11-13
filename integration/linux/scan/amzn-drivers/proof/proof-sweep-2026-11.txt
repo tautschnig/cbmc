@@ -64,3 +64,63 @@ Reading of the columns:
   witnesses_fail  vacuity witnesses that FAILED, as they must
   nobody          reached bodyless callees -- must be 0, or paths were cut
   unknown         properties CBMC could not decide -- must be 0
+
+
+================================================================
+Adjudicated 2026-11-13 by check_sweep.py, which applies the
+check_hygiene.sh rules across the corpus rather than trusting the
+per-runner summary above.  That summary counted witness FAILURES, so a
+harness with a witness that PASSED, or with none at all, was
+indistinguishable from a clean run.
+
+24 of 24 runner claims stand.
+
+Getting to that number took four fixes to the ADJUDICATOR, not to any
+proof -- worth recording, because a checker that cries wolf gets
+switched off, which is the failure it exists to prevent:
+
+  * the verdict is not reliably at line start (runners indent, and some
+    prefix it with "part 2"), so anchoring there reported "no verdict at
+    all" for four sound runners;
+  * a FAILED verdict is EXPECTED from the vacuity run, whose point is that
+    the witnesses fail, and runners capture both runs in one file -- so
+    only non-witness failures count;
+  * witnesses are labelled "witness:" as well as "vacuity witness:", and
+    matching only the longer form undercounted them;
+  * conc_reset reproduces the unsynchronised-RMW observation by design
+    under STORE_ORDER=1 and was missing from EXPECT_FAIL.
+
+One real coverage gap was found, and fixed in the harness rather than the
+checker: run_all.sh ran rx_recv at the default MC=1, where a
+multi-descriptor chain cannot arise, so the witness for one passed
+legitimately and the chain path -- where F16's repeat trigger lives -- was
+never covered by the sweep.  It now runs at MC=2.
+
+runner               claim          reasons
+------------------------------------------------------------------------------
+admin_cq             proved         STANDS
+aenq                 proved         STANDS
+cleanup_step         proved         STANDS
+conc_admin           expected-fail  STANDS
+conc_reset           expected-fail  STANDS
+dev_configure        proved         STANDS
+dev_lifecycle        proved         STANDS
+dev_start            proved         STANDS
+dma_order            proved         STANDS
+doorbell             expected-fail  STANDS
+freelist_eq          proved         STANDS
+leaks                proved         STANDS
+prepare_tx           expected-fail  STANDS
+reset_flag           expected-fail  STANDS
+rss_reta             expected-fail  STANDS
+rx_com               proved         STANDS
+rx_recv              proved         STANDS
+rx_refill            proved         STANDS
+rx_setup             proved         STANDS
+rx_start             proved         STANDS
+rx_stop              proved         STANDS
+stop                 proved         STANDS
+watchdog             proved         STANDS
+xstats               proved         STANDS
+
+24 of 24 runner claims stand
