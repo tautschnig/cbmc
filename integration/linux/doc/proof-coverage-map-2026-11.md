@@ -45,6 +45,7 @@ stop's post-state, so the cycle closes rather than only the forward path.
 |---|---|---|
 | cleanup step | **ring 8, 16, 32**, loop not unwound | `INV_CLEAN` mid-loop invariant plus a 3-part manual induction (ENTRY/STEP/EXIT); needed `INV_FREE_LIST_FAST` (bitmask, O(n), proved equivalent to the pairwise form by `FL_EQUIV`) and a 32-bit no-wrap bound |
 | xmit step | **burst bound removed entirely**, ring 8 and 16 | 2-part decomposition (STEP/EXIT) |
+| xmit step with offloads | **`offloads == 0` restriction lifted**, ring 8 | `harness_xmit_step_offloads.c`; the meta-descriptor path is live and the invariants needed no strengthening. Found F24. |
 
 Measured limit: ring 32 for xmit and ring 64 for cleanup reach no verdict in
 9000 s under minisat2. The xmit bottleneck is the driver's data flow -- a
@@ -96,7 +97,7 @@ Share is of the 179 Unveil findings.
 | D | leak (memory, resource, IRQ, ID) | 17 (9%) | **covered for the paths modelled**, by the `harness_leaks.c` ledger: every acquire paired with a release on every exit path, including the setup-failure path. Was "not covered -- needs a ghost allocation counter"; that counter now exists. |
 | A | device DMA or CQ writes into freed memory | 11 (6%) | **covered for the paths modelled**, by the `harness_dma_order.c` ghost mapped-set and FreeBSD's `DMA_UNMAPPED_BEFORE_FREE`. This is the class that found F20. Was "not covered". |
 | C | stale or still-live resource after a failed path | 18 (9%) | **partial, and see the caveat above.** `ERR_NO_PUBLISH`, `ERR_NOT_CONFIGURED`, `ERR_NO_LEAK`, `DS_ERR_NO_HALF_START`, `RX_RELEASE_NONNULL` and `F18_SETUP_RC` address it, and F10/F18 are this class, but three of the backing harnesses have no vacuity witness. |
-| G | memory corruption / out-of-bounds | 9 (4%) | **partial.** Bounds checks are on in every run across both queue types, the lifecycle and the async paths. F19 (RSS reta overread) and F22 (fast-free batch) are this class and were found by proof, not only by taint analysis -- a change from the previous assessment. |
+| G | memory corruption / out-of-bounds | 9 (4%) | **partial.** Bounds checks are on in every run across both queue types, the lifecycle and the async paths. F19 (RSS reta overread), F22 (fast-free batch) and F24 (TSO header offset) are this class and were found by proof, not only by taint analysis -- a change from the previous assessment. |
 | H | NULL / invalid dereference | 13 (7%) | **partial**, same basis, now across both queue types rather than TX alone. F10 and F16 are this class. |
 | E | deadlock / hang / lockup | 7 (3%) | **not covered.** Still needs a ghost lock-order invariant. Unchanged. |
 | I, J | integer wrap; uninitialised / info exposure | 3 (2%) | **partial** via conversion and bounds checks; F13 (negative error stored as a width) is this class. |
