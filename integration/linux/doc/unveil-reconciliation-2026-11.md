@@ -34,7 +34,7 @@ but the class assignment is keyword-based and worth +/- a few per row).
 | G | memory corruption / out-of-bounds | 9 (4%) |
 | E | deadlock / hang / lockup | 7 (3%) |
 | I, J | integer wrap; uninitialised / info exposure | 3 (2%) |
-| Z | other | 40 (22%) |
+| Z | other | 40 (22%) -- **now classified, see below** |
 
 And by **trigger**, which is the more useful cut:
 
@@ -201,3 +201,70 @@ test that stubs the kernel and plays the device. Both of our teams are
 reasoning about models; the two reports I read in detail held up against the
 source, which is a good sign, but a sample of two is not a basis for assuming
 all 179 do.
+
+## 5. Class Z classified (2026-11-13)
+
+Z was the largest bucket, larger than any class we had proven anything about,
+and targets were being chosen without knowing what was in it. Forty is small
+enough to assign by reading rather than by keyword, so
+`triage/classify_z.py` does that: every assignment is explicit, attributed to
+the finding's own wording, and reviewable. `--check` fails if any finding
+lacks one.
+
+| | group | n | in reach of the obligations we already write? |
+|---|---|---|---|
+| K | wrong state / outage | 9 | yes -- lifecycle invariants, restartability |
+| S | **success reported for an operation that was rejected** | 6 | yes, and two already exist |
+| N | not a safety class (cost, cosmetics, portability) | 5 | out of scope, and better said than counted |
+| C | stale resource after a failed path | 4 | yes -- error-path obligations |
+| A | device DMA/CQ writes into freed memory | 3 | yes -- the ghost mapped-set |
+| F | lost event / no progress | 2 | yes -- the doorbell/wakeup obligations |
+| D | leak | 2 | yes -- the leak ledger |
+| H | invalid address | 2 | yes -- pointer checks |
+| P | driver offers device or application malformed work | 2 | yes -- F14 and F24 are this |
+| R | response attributed to the wrong request | 2 | partly |
+| B | release of something never acquired | 1 | yes -- `LK_NO_WILD` |
+| E | hang / lockup | 1 | yes -- the ghost lock counter |
+| G | out-of-bounds | 1 | yes -- bounds checks |
+
+**Twenty-five of the forty were never "other".** They belong to classes the
+first pass already tracked and missed only because the wording dodged its
+keywords: "blocks 30 s on a queue nothing completes" rather than *hang*,
+"keeps DMA addresses of freed host_info" rather than *DMA into freed memory*,
+"Orphaned NVIDIA page registration" rather than *leak*. The keyword pass was
+described at the time as "+/- a few per row"; on this bucket it was out by
+twenty-five.
+
+**Five are not safety findings at all** -- futile wakeup syscalls, a wrong
+field in a log line, a metrics sample arriving early, an ENOMEM on 64 KiB
+page kernels. Saying so is better than carrying them as an unexplained gap.
+
+### The finding that matters for what we build next
+
+The largest group the class list had no name for is **success reported for an
+operation the device rejected** (6 of 40). An `ethtool -N` hash change, an
+MTU set, a ring-size change, a sysctl write, a netmap registration and an
+AF_XDP wakeup all return success after the device or the driver refused the
+request.
+
+This is **not new to us**, and I checked before claiming it was:
+`F18_SETUP_RC` ("ena_setup_rx_intr returns 0 only if the Rx interrupt was
+really set up") and `CFG_AENQ_FAIL` ("a rejected AENQ configuration is not
+recorded as applied") are already obligations of exactly this shape, and F18
+is our own finding of this class. What was missing is the *name*, so nothing
+counted how much of Unveil sits here.
+
+That makes it the best-value next target in the corpus: the obligation shape
+is already proven to work, the counting now says it covers 6 Z findings plus
+F18 and F21, and applying it is mechanical -- for each set/get entry point, a
+ghost recording what the device answered and a postcondition tying the
+caller's return code to it. Nothing new has to be invented, which is rare on
+this list.
+
+### What would need something new
+
+Only `R`, two findings: a response attributed to the wrong request, after
+command-ID reuse or a duplicated device completion. `harness_admin_cq.c`'s
+`AC_*` obligations are the right shape but model neither ID reuse nor
+duplicate completions, so this needs the admin-queue model extended rather
+than a new technique.
