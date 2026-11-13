@@ -1381,6 +1381,27 @@ path live**, provided the application honours the TSO header contract
 (`offl_contract` above). The invariants did not need strengthening to survive
 the meta path, which was the open question.
 
+## Observation: `req_id` range is validated in shared `ena_com`, not in the drivers
+
+Checked while scoping the FreeBSD RX work, and it narrows F16 rather than
+widening it. `ena_com_rx_pkt` rejects an out-of-range `req_id` itself:
+
+```c
+ena_buf[i].req_id = cdesc->req_id;
+if (unlikely(ena_buf[i].req_id >= q_depth))
+        return ENA_COM_EIO;
+```
+
+(`ena-com/ena_eth_com.c:638-640`). So neither driver can see an
+out-of-**range** RX `req_id`, there is no RX counterpart to F11, and F16's two
+triggers -- an unposted slot, and a `req_id` repeated within one chain -- are
+both in-range cases, which is how they were stated. The FreeBSD RX harness
+supplies in-range ids for that reason.
+
+I had suspected an unvalidated index because `ena_rx_mbuf` indexes
+`rx_buffer_info[req_id]` at two sites with no local check. The check exists one
+layer down. Recorded so the next reader does not re-derive it.
+
 ## Retracted: "F23" (2026-11-12)
 
 A section numbered F23 was committed in `d4f73ec48ad` and is withdrawn. It

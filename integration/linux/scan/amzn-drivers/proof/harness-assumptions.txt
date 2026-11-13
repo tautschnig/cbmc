@@ -72,3 +72,4 @@ ASSUME_HEADERS_INSIDE_PACKET: assumes DPDK's TSO contract that l2_len + l3_len +
 WITH_FAST_FREE: withdrawn -- harness_cleanup_step.c transcribes the loop body and has no fast-free branch to enable; the branch is covered by harness_cleanup_fastfree.c
 BREAK_RETA_UNLOCK: mutation test -- drops the first unlock in ena_rss_reta_update so LKO_RELEASED must catch a missing unlock
 PROBE: NOT A RESULT YET -- drives eth_ena_dev_init's error ladder, but the ledger does not see ena_com's ENA_MEM_ALLOC allocations, so the obligations are vacuous on the acquisition side
+MAXCHAIN_FBSD: see MAXCHAIN -- bound on descriptors per received packet in the FreeBSD RX harness; the device may name more

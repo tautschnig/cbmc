@@ -87,6 +87,7 @@ so this is not a solver or budget problem.
 | `harness_conc_reset.c`, `harness_conc_admin.c` | `CC_RESET_NOT_LOST`, `CC_REASON_SOUND`, `CC2_NO_STALE_CQE`, `CC2_NO_LOST` |
 | `fbsd/harness_fbsd_xmit.c` | `FBX_LLQ_COPY`, `FBX_MEMCPY`, `FBX_NO_UNSENT`, `FBX_PRODUCER`, `FBX_OWN`, `FBX_DMA_ORDER` |
 | `fbsd/harness_fbsd_cleanup.c` | `FREE_ONCE`, `DMA_UNMAPPED_BEFORE_FREE`, `INV_NTC`, `OWN_NO_DANGLING` |
+| `fbsd/harness_fbsd_rx.c` | `FBR_POSTED`, `FBR_NO_REUSE`, `FBR_DMA_ORDER`, `FBR_NTC` -- the RX assembly step, carrying **both F16 checks DPDK fails**: an unposted slot and a `req_id` repeated inside one chain. Ring 4 chain 2 and ring 8 chain 3, all clean, three witnesses failing. |
 
 Sweep status: 25 runners `VERIFICATION SUCCESSFUL`, 5 marked `EXPECTED-FAIL`
 because they reproduce a finding by design (`proof-sweep-2026-11.txt`).

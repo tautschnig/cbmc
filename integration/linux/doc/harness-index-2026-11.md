@@ -4,7 +4,7 @@
 
 One row per harness: what it puts under test, the obligations it asserts, whether it carries a vacuity witness, and -- the column this index exists for -- what each configuration macro assumes away. A finding was once reported and retracted because that last column did not exist anywhere.
 
-43 harnesses.
+44 harnesses.
 
 ## Harnesses with no vacuity witness
 
@@ -742,6 +742,25 @@ FreeBSD ENA: ena_tx_cleanup, with the free discipline and the DMA-ownership obli
 * run by `run_fbsd_cleanup_perf.sh`: no restricting macros
 
 * vacuity witness: yes, 2
+
+### `fbsd/harness_fbsd_rx.c`
+
+FreeBSD ENA ena_rx_mbuf: the RX assembly step.
+
+| obligation | asserts |
+|---|---|
+| `FBR_DMA_ORDER` | no mbuf is freed while its DMA mapping is loaded |
+| `FBR_NO_REUSE` | no mbuf is freed twice |
+| `FBR_POSTED` | a consumed slot is left unposted for refill |
+| `FBR_NTC` | next_to_clean advances on success |
+
+| configuration | assumes |
+|---|---|
+| `-DMAXCHAIN` | bound on descriptors per received packet; the device could name more |
+
+* run by `run_fbsd_rx.sh`: `-DMAXCHAIN`
+
+* vacuity witness: yes, 3
 
 ### `fbsd/harness_fbsd_xmit.c`
 
