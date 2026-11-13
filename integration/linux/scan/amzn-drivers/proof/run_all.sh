@@ -36,7 +36,10 @@ one() {
 # finding (F21, F19) or an observation in its first configuration.
 EXPECT_FAIL="prepare_tx doorbell reset_flag rss_reta conc_admin"
 one stop          run_stop.sh
-one rx_recv       run_rx_recv.sh
+# MC=2 so the multi-descriptor chain path is covered: at the default MC=1
+# it cannot arise, and the witness for it passed, which the sweep
+# adjudicator flagged as a possibly-empty proof.
+MC=2 one rx_recv       run_rx_recv.sh
 one rx_refill     run_rx_refill.sh
 one rx_setup      run_rx_setup.sh
 one rx_start      run_rx_start.sh

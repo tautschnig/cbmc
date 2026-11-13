@@ -223,9 +223,16 @@ int main(void)
 
 #if VACUITY_CHECK
   __CPROVER_assert(got == 0, "vacuity witness: a packet can be received");
+#  if MAXCHAIN >= 2
+  /* Only meaningful when the configuration permits a chain: at MAXCHAIN=1 a
+   * multi-descriptor packet cannot arise, so this witness would pass
+   * legitimately.  run_all.sh therefore runs this harness at MC=2, so the
+   * chain path -- where F16's repeat trigger lives -- is actually covered by
+   * the sweep rather than silently skipped. */
   __CPROVER_assert(
     g_max_descs < 2,
     "vacuity witness: a multi-descriptor packet can be received");
+#  endif
   __CPROVER_assert(
     !adapter.trigger_reset,
     "vacuity witness: a device completion can trigger a reset");
