@@ -26,11 +26,30 @@ Date:   June 2019
 static format_specifiert format_specifier_of_match(std::smatch &m)
 {
   PRECONDITION(m.size() == 7);
-  int index = m[1].str().empty() ? -1 : std::stoi(m[1].str());
+  // Java throws for a number beyond the range of int (see
+  // java_format_parse).
+  bool out_of_range = false;
+  const auto number = [&out_of_range](const std::string &digits)
+  {
+    long long value = 0;
+    for(const char c : digits)
+    {
+      if(c < '0' || c > '9')
+        break;
+      value = value * 10 + (c - '0');
+      if(value > 2147483647LL)
+      {
+        out_of_range = true;
+        return 0;
+      }
+    }
+    return static_cast<int>(value);
+  };
+  int index = m[1].str().empty() ? -1 : number(m[1].str());
   std::string flag = m[2].str();
-  int width = m[3].str().empty() ? -1 : std::stoi(m[3].str());
+  int width = m[3].str().empty() ? -1 : number(m[3].str());
   // The precision is matched with its leading '.'.
-  int precision = m[4].str().empty() ? -1 : std::stoi(m[4].str().substr(1));
+  int precision = m[4].str().empty() ? -1 : number(m[4].str().substr(1));
   // `tT` values:  "t" = date/time, "T" = uppercase date/time
   std::string tT = m[5].str();
 
@@ -43,6 +62,9 @@ static format_specifiert format_specifier_of_match(std::smatch &m)
   char conversion = dt ? tT[0] : m[6].str()[0];
 
   format_specifiert fs(index, flag, width, precision, dt, conversion);
+  if(dt)
+    fs.date_time_field = m[6].str()[0];
+  fs.unsupported = out_of_range;
   const std::string known = dt ? "tT" : "bBhHsScCdoxXeEfgGaAtT%n";
   if(known.find(conversion) == std::string::npos)
     fs.unknown_conversion = true;

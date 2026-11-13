@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.c25Bad --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+The negation of c25: String.format("%+o", 5L) gives FormatFlagsConversionMismatchException with the message "Conversion = o, Flags = +", as in Java 17.

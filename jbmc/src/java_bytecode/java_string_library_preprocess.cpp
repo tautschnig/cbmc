@@ -1848,16 +1848,20 @@ void java_string_library_preprocesst::initialize_conversion_table()
   cprover_equivalent_to_java_function
     ["java::org.cprover.CProverString.isValidLong:(Ljava/lang/String;I)Z"] =
       ID_cprover_string_is_valid_long_func;
-  // The first error of a call of String.format (a helper of the
-  // String.format model, which throws the exception of the error).
+  // The first error of a call of String.format, and the calls of toString
+  // and hashCode that it makes (helpers of the String.format model).
   {
-    std::string signature = "java::java.lang.String.cproverFormatError:(";
-    for(std::size_t i = 0; i < 11; ++i)
+    std::string signature =
+      "java::java.lang.String.cproverFormatError:(Ljava/lang/String;I";
+    for(std::size_t i = 0; i < MAX_FORMAT_ARGS; ++i)
       signature += "Ljava/lang/String;";
-    signature += ")I";
-    cprover_equivalent_to_java_function[signature] =
+    signature += ")Ljava/lang/String;";
+    cprover_equivalent_to_java_string_returning_function[signature] =
       ID_cprover_string_format_error_func;
   }
+  cprover_equivalent_to_java_function
+    ["java::java.lang.String.cproverFormatUses:(Ljava/lang/String;)I"] =
+      ID_cprover_string_format_uses_func;
 
   // String library
   conversion_table["java::java.lang.String.<init>:(Ljava/lang/String;)V"] =

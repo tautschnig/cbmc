@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.c12Bad --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+The negation of c12: String.format("%o %x", Integer.MIN_VALUE, Integer.MIN_VALUE) gives "20000000000 80000000", as in Java 17.

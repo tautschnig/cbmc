@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.c38 --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+String.format("%11$s %1$d", 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) gives "11 1", as in Java 17: the argument beyond the tenth is not modelled, but its errors are checked, so that no other error is possible.

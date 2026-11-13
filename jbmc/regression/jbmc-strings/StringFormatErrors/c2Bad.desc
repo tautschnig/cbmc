@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.c2Bad --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+The negation of c2: String.format("%99999999999$d", 1) gives IllegalFormatArgumentIndexException with the message "Format argument index: (not representable as int)", as in Java 17.

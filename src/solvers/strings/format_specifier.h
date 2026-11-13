@@ -55,6 +55,8 @@ public:
   int precision;
   // date/time
   bool dt = false;
+  /// The field of a date/time conversion, as 'Q' for %tQ.
+  char date_time_field = 0;
   char conversion;
   /// Whether the specifier cannot be modelled, as for a '<' flag without a
   /// previous argument.
@@ -215,7 +217,8 @@ const char flags_mismatch = 'X';      // the conversion, then the flags
 const char missing_width = 'M';       // the specifier
 const char missing_argument = 'A';    // the specifier
 const char conversion_mismatch = 'C'; // the conversion, then the argument
-const char code_point = 'K';          // the argument, from 0
+const char date_time_mismatch = 'T';  // the field, then the argument
+const char code_point = 'K';          // the argument
 } // namespace java_format_errort
 
 /// Formatter's Flags bits.

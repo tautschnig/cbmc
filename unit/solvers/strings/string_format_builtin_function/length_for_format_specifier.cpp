@@ -41,12 +41,14 @@ array_string_exprt from_char_vector(
 
 // The encoding of an argument of String.format by cproverFormatArgument of
 // the Java models: its kind, its value as a long in four 16-bit characters,
-// and its text.
+// its hash code in two (zero here), its properties (none here) and its
+// text.
 static std::vector<mp_integer>
 encoded(char kind, std::vector<mp_integer> value, const std::string &text)
 {
   std::vector<mp_integer> result{kind};
   result.insert(result.end(), value.begin(), value.end());
+  result.insert(result.end(), {0, 0, 0});
   for(const char c : text)
     result.push_back(c);
   return result;
