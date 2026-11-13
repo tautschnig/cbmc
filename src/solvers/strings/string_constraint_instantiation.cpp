@@ -183,7 +183,10 @@ exprt linear_functiont::solve(
   // Transform `f` into `f(var <- 0)`
   f.coefficients.erase(it);
   // Transform `f(var <- 0)` into `f(var <- 0) - val`
-  f.add(linear_functiont{unary_minus_exprt{val}});
+  // (An index of another type, as of a char array that is accessed through
+  // a byte extract, is converted: any instance of an axiom is sound.)
+  f.add(linear_functiont{
+    unary_minus_exprt{typecast_exprt::conditional_cast(val, f.type)}});
 
   // If the coefficient of var is 1 then solution `val - f(var <- 0),
   // otherwise `f(var <- 0) - val`
