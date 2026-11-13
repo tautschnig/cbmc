@@ -348,3 +348,17 @@ TEST_CASE(
   REQUIRE(java_format_float_preimage("0x1.8p1", 'e', -1).empty);
   REQUIRE(java_format_float_preimage("abc", 'g', -1).empty);
 }
+
+TEST_CASE(
+  "java_format_float_lengths",
+  "[core][solvers][strings][string_float_format]")
+{
+  // NaN, Infinity, -Infinity, and 1.000000e+00 with a sign or an exponent
+  // of 3 digits
+  const std::vector<std::pair<std::size_t, std::size_t>> e{
+    {3, 3}, {8, 9}, {12, 14}};
+  REQUIRE(java_format_float_lengths('e', -1) == e);
+  // 1 to 309 digits before the point and 2 after it, a sign, or NaN
+  const std::vector<std::pair<std::size_t, std::size_t>> f{{3, 313}};
+  REQUIRE(java_format_float_lengths('f', 2) == f);
+}

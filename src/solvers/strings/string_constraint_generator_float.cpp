@@ -366,15 +366,31 @@ string_constraint_generatort::add_axioms_for_java_format_float(
   conversion_record.java_conversion = conversion;
   conversion_record.java_precision = precision;
   float_conversions.push_back(conversion_record);
-  // the length, which keeps the strings of the models short
+  // the lengths that the strings have, which also keeps the strings of the
+  // models short
   const exprt length = array_pool.get_or_create_length(res);
+  exprt::operandst lengths;
+  for(const auto &interval : java_format_float_lengths(conversion, precision))
+  {
+    lengths.push_back(and_exprt{
+      binary_relation_exprt{
+        length, ID_ge, from_integer(interval.first, length.type())},
+      binary_relation_exprt{
+        length, ID_le, from_integer(interval.second, length.type())}});
+  }
   string_constraintst constraints;
-  constraints.existential.push_back(and_exprt{
-    binary_relation_exprt{length, ID_ge, from_integer(1, length.type())},
+  constraints.existential.push_back(disjunction(lengths));
+  // The characters are ASCII.
+  const symbol_exprt qvar =
+    fresh_symbol("QA_format_float_ascii", length.type());
+  constraints.universal.emplace_back(
+    qvar,
+    zero_if_negative(length),
     binary_relation_exprt{
-      length,
-      ID_le,
-      from_integer(
-        java_format_float_max_length(conversion, precision), length.type())}});
+      res[qvar],
+      ID_lt,
+      from_integer(128, to_type_with_subtype(res.content().type()).subtype())},
+    ns,
+    message_handler);
   return constraints;
 }

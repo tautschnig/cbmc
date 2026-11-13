@@ -17,6 +17,7 @@ Author: Diffblue Ltd.
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 /// Which representation of a floating-point value to give.
 enum class float_formatt
@@ -49,6 +50,11 @@ std::string java_format_float(double value, char conversion, int precision);
 /// The largest length of java_format_float with \p conversion and
 /// \p precision (an upper bound).
 std::size_t java_format_float_max_length(char conversion, int precision);
+
+/// The lengths of java_format_float of the doubles with \p conversion and
+/// \p precision, as disjoint intervals [first, second] in order.
+std::vector<std::pair<std::size_t, std::size_t>>
+java_format_float_lengths(char conversion, int precision);
 
 /// The doubles whose java_format_float is a text (see
 /// java_format_float_preimage): any NaN, or those of a sign whose magnitude

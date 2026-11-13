@@ -522,6 +522,85 @@ std::size_t java_format_float_max_length(char conversion, int precision)
   }
 }
 
+std::vector<std::pair<std::size_t, std::size_t>>
+java_format_float_lengths(char conversion, int precision)
+{
+  // the lengths of the magnitudes of the finite values
+  std::vector<std::size_t> magnitudes;
+  // the largest decimal exponent of the first digit of a double
+  const int max_exponent = 308;
+  // an exponent of 2 or 3 digits and its sign and mark
+  const std::size_t exponents[] = {4, 5};
+  if(conversion == 'f')
+  {
+    const std::size_t fraction =
+      precision == 0 ? 0 : 1 + (precision < 0 ? 6 : precision);
+    // 1 to 309 digits before the point
+    for(std::size_t digits = 1; digits <= 309; ++digits)
+      magnitudes.push_back(digits + fraction);
+  }
+  else if(conversion == 'e')
+  {
+    const std::size_t prec = precision < 0 ? 6 : precision;
+    const std::size_t mantissa = prec == 0 ? 1 : 2 + prec;
+    for(const std::size_t e : exponents)
+      magnitudes.push_back(mantissa + e);
+  }
+  else if(conversion == 'g')
+  {
+    const int prec = precision < 0 ? 6 : precision == 0 ? 1 : precision;
+    // zero
+    magnitudes.push_back(prec == 1 ? 1 : 1 + prec);
+    // plain for the exponents in [-4, prec), scientific otherwise
+    for(int er = -4; er < prec && er <= max_exponent; ++er)
+    {
+      const int fraction = prec - er - 1;
+      magnitudes.push_back(
+        er >= 0
+          ? static_cast<std::size_t>(er + 1 + (fraction > 0 ? 1 + fraction : 0))
+          : static_cast<std::size_t>(prec - er + 1));
+    }
+    const std::size_t mantissa = prec == 1 ? 1 : 1 + prec;
+    // exponents of 2 digits (from -99 to -5) and of 3 digits (from -324 to
+    // -100)
+    for(const std::size_t e : exponents)
+      magnitudes.push_back(mantissa + e);
+  }
+  else
+  {
+    PRECONDITION(conversion == 'a');
+    // "0x", a digit and a point, the hexadecimal digits, 'p' and an
+    // exponent from -1074 to 1024 (of 1 to 5 characters)
+    std::size_t min_digits = 1;
+    std::size_t max_digits = 13;
+    if(precision > 0)
+      min_digits = max_digits = static_cast<std::size_t>(precision);
+    for(std::size_t digits = min_digits; digits <= max_digits; ++digits)
+    {
+      for(std::size_t e = 1; e <= 5; ++e)
+        magnitudes.push_back(5 + digits + e);
+    }
+  }
+  // NaN, Infinity and -Infinity, and the magnitudes with and without a
+  // sign
+  std::vector<std::size_t> lengths{3, 8, 9};
+  for(const std::size_t m : magnitudes)
+  {
+    lengths.push_back(m);
+    lengths.push_back(m + 1);
+  }
+  std::sort(lengths.begin(), lengths.end());
+  std::vector<std::pair<std::size_t, std::size_t>> intervals;
+  for(const std::size_t l : lengths)
+  {
+    if(!intervals.empty() && l <= intervals.back().second + 1)
+      intervals.back().second = std::max(intervals.back().second, l);
+    else
+      intervals.emplace_back(l, l);
+  }
+  return intervals;
+}
+
 /// The exact value of a magnitude that java_format_float prints with the
 /// conversion \p conversion: m * 10^exponent (m * 2^exponent for 'a'), or
 /// infinity.
