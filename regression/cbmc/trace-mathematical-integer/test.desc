@@ -1,0 +1,12 @@
+CORE
+main.c
+--trace --json-ui
+^EXIT=10$
+^SIGNAL=0$
+"value": null
+--
+Invariant check failed
+--
+A counterexample trace with a mathematical integer under the bit-vector
+back end reports its value as unknown; building the trace used to fail an
+invariant in bv_get.

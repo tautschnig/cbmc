@@ -232,9 +232,12 @@ exprt boolbvt::bv_get_rec(const exprt &expr, const bvt &bv, std::size_t offset)
   switch(bvtype)
   {
   case bvtypet::IS_UNKNOWN:
-    PRECONDITION(
-      type.id() == ID_string || type.id() == ID_empty ||
-      type.id() == ID_enumeration);
+    // A type without a bit-vector encoding (a mathematical integer, say):
+    // its value is unknown.
+    if(
+      type.id() != ID_string && type.id() != ID_empty &&
+      type.id() != ID_enumeration)
+      return nil_exprt{};
     if(type.id()==ID_string)
     {
       mp_integer int_value=binary2integer(value, false);

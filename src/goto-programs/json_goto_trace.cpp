@@ -116,12 +116,8 @@ void convert_decl(
 
   full_lhs_string = from_expr(ns, identifier, simplified);
 
-  const symbolt *symbol;
+  const symbolt *symbol = nullptr;
   irep_idt base_name, display_name;
-
-  DATA_INVARIANT(
-    step.full_lhs_value.is_not_nil(),
-    "full_lhs_value in assignment must not be nil");
 
   if(!ns.lookup(identifier, symbol))
   {
@@ -131,16 +127,26 @@ void convert_decl(
       type_string = from_type(ns, identifier, symbol->type);
 
     json_assignment["mode"] = json_stringt(symbol->mode);
-    const exprt simplified_expr = simplify_expr(step.full_lhs_value, ns);
-
-    full_lhs_value = json(simplified_expr, ns, symbol->mode);
   }
   else
-  {
-    full_lhs_value = json(step.full_lhs_value, ns, ID_unknown);
-  }
+    symbol = nullptr;
 
-  json_assignment["value"] = full_lhs_value;
+  // The value is unknown when the decision procedure cannot represent it
+  // (a mathematical integer under a bit-vector back end, say).
+  if(step.full_lhs_value.is_nil())
+    json_assignment["value"] = json_nullt{};
+  else
+  {
+    if(symbol != nullptr)
+    {
+      const exprt simplified_expr = simplify_expr(step.full_lhs_value, ns);
+
+      full_lhs_value = json(simplified_expr, ns, symbol->mode);
+    }
+    else
+      full_lhs_value = json(step.full_lhs_value, ns, ID_unknown);
+    json_assignment["value"] = full_lhs_value;
+  }
   json_assignment["lhs"] = json_stringt(full_lhs_string);
   if(trace_options.json_full_lhs)
   {

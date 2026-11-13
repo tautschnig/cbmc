@@ -1,0 +1,12 @@
+CORE
+main.c
+--trace
+^EXIT=10$
+^SIGNAL=0$
+^  k=\(assignment removed\)$
+^VERIFICATION FAILED$
+--
+Invariant check failed
+--
+The text trace shows the value of a mathematical integer under the
+bit-vector back end as unknown.
