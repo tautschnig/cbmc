@@ -263,6 +263,10 @@ Phase 6: leaks (Unveil class D, 17 findings / 9%).
 
 | obligation | asserts |
 |---|---|
+| `PR_NO_LEAK` | a failed probe releases everything it acquired |
+| `PR_NO_HALF_INIT` | a failed probe does not leave the adapter initialised |
+| `PR_NO_DOUBLE` | the probe ladder frees nothing twice |
+| `PR_NO_WILD` | the probe ladder frees nothing it did not allocate |
 | `LK_SETUP_FAIL` | a setup that fails leaves nothing allocated |
 | `LK_BALANCED` | after close every tracked allocation has been freed |
 | `LK_NO_DOUBLE` | nothing is freed twice |
@@ -270,11 +274,12 @@ Phase 6: leaks (Unveil class D, 17 findings / 9%).
 
 | configuration | assumes |
 |---|---|
+| `-DPROBE` | NOT A RESULT YET -- drives eth_ena_dev_init's error ladder, but the ledger does not see ena_com's ENA_MEM_ALLOC allocations, so the obligations are vacuous on the acquisition side |
 | `-DSETUP_FAIL` | forces the allocator to fail, exercising the setup-failure leak ledger |
 
 * run by `run_leaks.sh`: no restricting macros
 
-* vacuity witness: yes, 2
+* vacuity witness: yes, 5
 
 ### `harness_llq_path.c`
 

@@ -39,6 +39,20 @@
 static uint16_t nd_u16(void) { uint16_t v; return v; }
 static int nd_int(void) { int v; return v; }
 
+#ifdef PROBE
+/* Models for the two EAL services ena_init_once touches.  Both are reached on
+ * the probe path, and a REACHED bodyless callee cuts it -- which would leave
+ * the ladder obligations holding for want of a path rather than because the
+ * ladder is correct. */
+int rte_mp_action_register(const char *name, rte_mp_t action)
+{
+  (void)name;
+  (void)action;
+  return nd_int();
+}
+int rte_timer_subsystem_init(void) { return nd_int(); }
+#endif
+
 /* the allocation ledger: one entry per static pool we hand out */
 /* generous: a too-small pool makes an allocation return NULL, the setup
  * fail, and the assume(rc == 0) below cut the whole run -- which the vacuity
@@ -241,6 +255,76 @@ int main(void)
   g_double_frees = 0;
   g_wild_frees = 0;
 
+#ifdef PROBE
+  /* NOT A RESULT YET.  Read the note below before quoting anything from this
+   * configuration.
+   *
+   * Probe, the lifecycle end nothing covered: eth_ena_dev_init's error ladder.
+   * It acquires five things in order -- the customer-metrics buffer, the admin
+   * queue and host info, the debug area, the RSS table and drv_stats -- and
+   * unwinds them through a cascade of labels
+   * (err_control_path_destroy -> err_rss_destroy -> err_delete_debug_area ->
+   * err_device_destroy -> err_metrics_delete -> err).  With allocations able
+   * to fail at any step, every one of those exits must leave the ledger
+   * empty. */
+  g_alloc_fails = true;
+  for(int i = 0; i < NSLOTS; i++)
+  {
+    live[i] = false;
+    ever[i] = false;
+  }
+  adapter.drv_stats = NULL;
+  const int rc_probe = eth_ena_dev_init(&dev);
+  if(rc_probe != 0)
+  {
+    unsigned live_cnt = 0;
+    for(int i = 0; i < NSLOTS; i++)
+      if(live[i])
+        live_cnt++;
+    __CPROVER_assert(
+      live_cnt == 0,
+      "PR_NO_LEAK: a failed probe releases everything it acquired");
+    __CPROVER_assert(
+      adapter.state != ENA_ADAPTER_STATE_INIT,
+      "PR_NO_HALF_INIT: a failed probe does not leave the adapter initialised");
+  }
+  __CPROVER_assert(
+    g_double_frees == 0, "PR_NO_DOUBLE: the probe ladder frees nothing twice");
+  __CPROVER_assert(
+    g_wild_frees == 0,
+    "PR_NO_WILD: the probe ladder frees nothing it did not allocate");
+  /*
+   * Why this is not yet a result: the four obligations above all pass, and
+   * the witness "the probe acquires at least one resource" ALSO passes, which
+   * means the probe acquires nothing the ledger can see.  The ledger tracks
+   * rte_zmalloc_socket, but the probe's five acquisitions go through
+   * ena_com's own ENA_MEM_ALLOC / ENA_MEM_ALLOC_COHERENT macros
+   * (ena_plat_dpdk.h), which this harness does not interpose.  So PR_NO_LEAK
+   * currently says "nothing the ledger saw was leaked", which is true and
+   * empty.
+   *
+   * To finish it, interpose the ena_plat_dpdk allocation macros the same way
+   * harness_lock_order.c interposes rte_spinlock_lock: define them after the
+   * plat header is parsed and before ena_ethdev.c is included, routing them
+   * to the ledger.  Then the witness should fail and the obligations acquire
+   * content.
+   */
+#  ifdef VACUITY_CHECK
+  /* Both must FAIL: the probe must be able to fail, and to acquire something
+   * before it does, or the obligations above are empty. */
+  __CPROVER_assert(rc_probe == 0, "witness: the probe can fail");
+  {
+    unsigned ever_cnt = 0;
+    for(int i = 0; i < NSLOTS; i++)
+      if(ever[i])
+        ever_cnt++;
+    __CPROVER_assert(
+      ever_cnt == 0, "witness: the probe acquires at least one resource");
+  }
+#  endif
+  return 0;
+#endif
+
   static struct rte_eth_txconf tx_conf;
   static struct rte_eth_rxconf rx_conf;
   tx_conf.tx_free_thresh = 0;
@@ -288,13 +372,15 @@ int main(void)
     g_wild_frees == 0, "LK_NO_WILD: nothing is freed that was never allocated");
 #endif
 
-#ifdef VACUITY_CHECK
+#if defined(VACUITY_CHECK) && !defined(PROBE)
   {
     unsigned ever_cnt = 0;
     for(int i = 0; i < NSLOTS; i++)
       if(ever[i])
         ever_cnt++;
-    /* must FAIL: the cycle really does allocate several things */
+    /* must FAIL: the cycle really does allocate several things.  Guarded
+     * against PROBE, which returns before this point, so leaving it
+     * unguarded reported a passing witness for a path that is not taken. */
     __CPROVER_assert(ever_cnt < 4, "vacuity witness: the cycle allocates");
   }
 #endif
