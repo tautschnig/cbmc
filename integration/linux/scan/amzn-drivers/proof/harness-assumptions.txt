@@ -1,0 +1,70 @@
+# What each harness configuration macro assumes away.
+#
+# Format: MACRO: one line, in the form "assumes <what>" or "restricts <what>".
+# Read by gen_harness_index.py, which fails if a macro used by a harness has
+# no line here.  That check exists because a finding was reported against a
+# configuration (BUDGET_FITS_PACKET) that had already been excluded on
+# purpose, and nothing summarised the exclusion.
+#
+# Be exact about which direction a macro runs: some ADD an assumption (making
+# the proof weaker), some REMOVE one (making it stronger), and some apply a
+# proposed fix.  Say which.
+
+# ---- device-behaviour assumptions: these WEAKEN the proof ----
+ASSUME_DEVICE_HONEST_DOORBELL: assumes the device returns an in-range sq_doorbell_offset, i.e. assumes F8 away
+ASSUME_DEVICE_REQ_ID_IN_RANGE: assumes every device-supplied req_id indexes a real slot, i.e. assumes F11 away (FreeBSD)
+ASSUME_NO_F14: assumes the device-side precondition under which the LLQ doorbell estimate is sound, i.e. assumes F14 away
+ASSUME_NO_F16: assumes the device names only posted slots and never repeats a req_id within one chain, i.e. assumes both facets of F16 away
+ASSUME_TX_BURST_UNLIMITED: assumes the device advertises no tx-burst limit or a very large one -- NOT a sound precondition, kept only to reproduce the 00d204a8b38 run
+WELL_BEHAVED_DEVICE: assumes the admin device completes only commands it was actually told about
+BUDGET_FITS_PACKET: assumes the device's tx-burst budget covers at least one maximal packet; without it no packet can be sent whatever the driver does, so every doorbell_budget configuration sets it
+ADMIN_FAILS: makes the admin command fail (ENA_COM_TIMER_EXPIRED) instead of succeeding -- a device-behaviour case, not an assumption
+
+# ---- application-contract assumptions: these WEAKEN the proof ----
+ASSUME_NONEMPTY_PKT: assumes the application submits no zero-length packet, i.e. assumes F15 away
+ASSUME_WELL_FORMED_MBUF: assumes DPDK's mbuf contract nb_segs >= 1, i.e. assumes F22 away
+ASSUME_PREPARE_TX_OK: assumes ena_com_prepare_tx never fails, which masks F12 (the slot keeps the mbuf on failure)
+
+# ---- assumptions the harness REMOVES: these STRENGTHEN the proof ----
+NO_ASSUME_DS: drops the INV_DESC_SUM_RING assumption, so the descriptor-sum invariant must be re-established rather than assumed
+NO_ASSUME_FL: drops the free-list assumption, so it must be re-established rather than assumed
+NO_FREE_LIST: drops the free-list assumption in the cleanup harness
+
+# ---- proposed fixes under test ----
+CLEAR_ON_STOP: applies the proposed F21 fix, clearing trigger_reset once ena_stop has acted on it
+WITH_UPDATE_CHECK: applies the proposed F19 fix, bounding reta_size as ena_rss_reta_update already does
+FIXED_ESTIMATE: replaces the doorbell predicate with one counting the descriptor prepare_tx always writes, the proposed F14 fix
+WITH_OFFLOADS: enables offloads, so meta_valid and the meta fields are nondeterministic as ena_tx_mbuf_prepare leaves them
+
+# ---- path selection: narrows which code is reached, not what is assumed ----
+ONLY_KEEPALIVE: forces AENQ dispatch through ena_keep_alive so the keepalive obligation is about that handler
+ONLY_B_GE_2: restricts descs_num_before_header to >= 2, removing one ingredient of F14
+ONLY_META_CACHING: restricts to meta caching enabled, removing one ingredient of F14
+ONLY_NUM_BUFS_POSITIVE: restricts to num_bufs >= 1, removing the fully-pushed-packet ingredient of F14
+ONLY_ALLOW_OTHERS_FAILS: makes the earlier call succeed so only the allow_others failure path remains
+ONLY_INDEX_SET_FAILS: makes the earlier check pass so only the vec_list_index_set failure path remains
+NO_PRIOR_RESET: control case in which no reset was ever requested, so the watchdog should run normally
+DEVINIT_ONLY: stops after device init, covering probe without the datapath
+SETUP_FAIL: forces the allocator to fail, exercising the setup-failure leak ledger
+DOUBLE_CLOSE: closes the device twice, as rte_eth_dev_close can be reached directly and through the PMD
+NQ_ZERO: the zero-queue configuration in which the watchdog's modulo would divide by zero
+F13_DMA_WIDTH_ERROR: stores the negative error ena_com_get_dma_width returns, reproducing F13
+CLAIM_NB_POSITIVE: asserts nb_hw_desc >= 1, which is false because the count wraps
+STORE_ORDER: selects which store order the concurrency harness explores
+MEASURE_NO_DESC_SUM: measurement variant that recomputes the descriptor sum rather than tracking it
+
+# ---- model bounds: a bound IS an assumption about what inputs are covered ----
+SLOW_FREE_LIST: selects the O(n^2) pairwise INV_FREE_LIST instead of the O(n) bitmask form, which are proved equivalent for n <= 64
+MAXB: bound on buffers per packet (17, ENA_PKT_MAX_BUFS)
+MAXCHAIN: bound on descriptors per received packet; the device could name more
+MAXSEGS: bound on DMA segments per packet; ENA_BUS_DMA_SEGS is 32, so this is a restriction
+MAX_BURST: bound on packets per transmit burst
+MAX_SEGS: bound on segments in the segment-mapping harness
+MBUF_POOL: size of the mbuf pool, tied to the ring size
+NB_PKTS: bound on packets per receive burst
+NIDS: number of xstats ids queried
+SEGS: bound on segments in the LLQ-path harness
+SEGS_ASSUMED: bound on segments assumed in the tx-callees harness
+SEGS_LEGAL: whether segment counts are restricted to legal values
+SLOTS_BY_LOOP: selects whether slots are established by a loop or in closed form
+BURST: bound on the burst length in the LLQ-path harness
