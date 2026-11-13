@@ -1,0 +1,12 @@
+CORE
+Test
+--function Test.longReachable --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+assertion at file Test.java line .*: FAILURE
+^VERIFICATION FAILED$
+--
+--
+A string with more leading zeros than the length of the longest value may
+be valid; it was always invalid, which made the code after a successful
+parse unreachable.

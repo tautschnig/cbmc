@@ -574,7 +574,20 @@ string_constraint_generatort::add_axioms_for_is_valid_int(
     }
   }
 
-  return {typecast_exprt{conjunction(conjuncts), f.type()}, {}};
+  // The conjuncts decide strings of at most the length of the longest value
+  // (which they require). Java accepts any number of leading zeros, so a
+  // longer string may be valid: whether it is, is not known.
+  const symbol_exprt longer_is_valid = fresh_symbol("is_valid_int_long");
+  return {
+    typecast_exprt{
+      or_exprt{
+        conjunction(conjuncts),
+        and_exprt{
+          binary_relation_exprt{
+            length, ID_gt, from_integer(args.max_string_length, length.type())},
+          longer_is_valid}},
+      f.type()},
+    {}};
 }
 
 /// Integer value represented by a string
