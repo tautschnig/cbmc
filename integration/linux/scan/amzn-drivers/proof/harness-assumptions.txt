@@ -69,3 +69,4 @@ SEGS_LEGAL: whether segment counts are restricted to legal values
 SLOTS_BY_LOOP: selects whether slots are established by a loop or in closed form
 BURST: bound on the burst length in the LLQ-path harness
 ASSUME_HEADERS_INSIDE_PACKET: assumes DPDK's TSO contract that l2_len + l3_len + sizeof(rte_tcp_hdr) lies within data_len, i.e. assumes F24 away
+WITH_FAST_FREE: withdrawn -- harness_cleanup_step.c transcribes the loop body and has no fast-free branch to enable; the branch is covered by harness_cleanup_fastfree.c

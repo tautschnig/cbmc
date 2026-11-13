@@ -43,9 +43,29 @@ stop's post-state, so the cycle closes rather than only the forward path.
 
 | artefact | reach | how |
 |---|---|---|
-| cleanup step | **ring 8, 16, 32**, loop not unwound | `INV_CLEAN` mid-loop invariant plus a 3-part manual induction (ENTRY/STEP/EXIT); needed `INV_FREE_LIST_FAST` (bitmask, O(n), proved equivalent to the pairwise form by `FL_EQUIV`) and a 32-bit no-wrap bound |
+| cleanup step | **ring 8, 16, 32**, loop not unwound | `INV_CLEAN` mid-loop invariant plus a 3-part manual induction (ENTRY/STEP/EXIT); needed `INV_FREE_LIST_FAST` (bitmask, O(n), proved equivalent to the pairwise form by `FL_EQUIV`) and a 32-bit no-wrap bound. **Proves a transcription, not the driver** -- see the fidelity caveat below. |
 | xmit step | **burst bound removed entirely**, ring 8 and 16 | 2-part decomposition (STEP/EXIT) |
 | xmit step with offloads | **`offloads == 0` restriction lifted**, ring 8 | `harness_xmit_step_offloads.c`; the meta-descriptor path is live and the invariants needed no strengthening. Found F24. |
+
+### A fidelity caveat on the cleanup depth results
+
+`harness_cleanup_step.c` makes **no call to driver code at all**. To remove the
+ring-size bound it transcribes the loop body from `ena_ethdev.c:3229-3253` and
+proves the invariant over the transcription. So the ring 8, 16 and 32 cleanup
+results are only as good as that transcription, and nothing automatic will
+notice if the driver's loop changes underneath it.
+
+The comparison is the useful part: `harness_xmit_step.c` **does** call the
+driver, so the xmit depth results do not carry this caveat, and
+`harness_cleanup.c` calls the real `ena_tx_cleanup` but reaches only ring 4 by
+full unwinding. The driver's own cleanup loop is therefore proven at ring 4;
+beyond that it is a transcription.
+
+This also means the `offloads == 0` restriction **cannot** be lifted in the
+cleanup step: the fast-free branch is not in the harness to enable. Setting
+`ring.offloads` there would change nothing while looking like coverage, which
+is worse than leaving it at zero. The branch is covered step-wise by
+`harness_cleanup_fastfree.c` (F22) instead, which is where lifting it belongs.
 
 Measured limit: ring 32 for xmit and ring 64 for cleanup reach no verdict in
 9000 s under minisat2. The xmit bottleneck is the driver's data flow -- a

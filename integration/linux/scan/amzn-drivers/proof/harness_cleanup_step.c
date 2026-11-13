@@ -36,6 +36,24 @@
  * itself -- that parts 1, 2 and 3 compose -- and that the reproduced body in
  * part 2 matches the source.  Both are stated here so the gap is visible.
  *
+ * FIDELITY, important when reading what this proves.  This harness does NOT
+ * call ena_tx_cleanup.  To remove the ring-size bound, the loop body is
+ * TRANSCRIBED below from ena_ethdev.c:3229-3253 and the invariant is proven
+ * over the transcription.  Two consequences:
+ *
+ *   * the result is only as good as the transcription.  It must be re-checked
+ *     against the driver whenever that loop changes, and nothing automatic
+ *     will notice if it drifts;
+ *   * the fast-free branch is absent, so `offloads` cannot be lifted here.
+ *     Setting ring.offloads would change nothing, which is worse than leaving
+ *     it at 0 because it would look like coverage.  That branch is covered
+ *     step-wise by harness_cleanup_fastfree.c (F22) instead.
+ *
+ * harness_cleanup.c, which calls the real ena_tx_cleanup, is the artefact
+ * that covers the driver's own loop; it reaches ring 4 by full unwinding.
+ * harness_xmit_step.c does call the driver, so the xmit depth results do not
+ * carry this caveat.
+ *
  * Switches: RING, PART, VACUITY_CHECK.
  */
 #include "../dpdk/drivers/net/ena/ena_ethdev.c"
@@ -48,6 +66,7 @@
 #define PART 2
 #endif
 
+static uint64_t nd_u64(void) { uint64_t v; return v; }
 static uint16_t nd_u16(void) { uint16_t v; return v; }
 static uint32_t nd_u32(void) { uint32_t v; return v; }
 static int nd_int(void) { int v; return v; }
@@ -116,11 +135,15 @@ int main(void)
   the_sq.next_to_comp = nd_u16();
   ring.next_to_use = nd_u16() & (RING - 1);
   ring.next_to_clean = nd_u16() & (RING - 1);
-  ring.offloads = 0; /* no fast-free: that path is a separate configuration */
+  /* offloads is immaterial here, and setting it would be misleading: this
+   * harness does not call ena_tx_cleanup, so there is no fast-free branch in
+   * it to enable.  See the fidelity note at the top. */
+  ring.offloads = 0;
 
   for(i = 0; i < RING; i++)
   {
     pool_tbi[i].mbuf = nd_int() ? &pool_mbuf[i] : NULL;
+
     pool_tbi[i].tx_descs = nd_u32();
     pool_tbi[i].num_of_bufs = nd_u16();
     __CPROVER_assume(pool_tbi[i].num_of_bufs <= ENA_PKT_MAX_BUFS);
